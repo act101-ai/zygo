@@ -30,3 +30,13 @@ The proxy reads this row; it holds no other values for the type.
 - Claude Code reads the session token (in `ANTHROPIC_CUSTOM_HEADERS`) once at start. The session must stay within the 24 h idle TTL; after that, relaunch.
 - A `/model` switch mid-session does not move the lead guard.
 - `GET /anthropic/v1/models` still lists the role names. Role names do not work in passthrough: use a vendor model id.
+
+## Several logins on one machine
+
+Each Claude Code config directory holds its own claude.ai login. `--config-dir` sets `CLAUDE_CONFIG_DIR` for the launch, so one machine can run several subscription logins side by side:
+
+```
+zygo claude --passthrough --config-dir ~/.claude-interns/<name>
+```
+
+The directory must exist. Run `/login` once in each directory. The flag wins over an inherited `CLAUDE_CONFIG_DIR`.

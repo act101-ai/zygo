@@ -53,10 +53,13 @@ fn every_command_exists() {
 #[test]
 fn flags() {
     let h = help_of(&["claude"]);
-    for f in ["--passthrough", "--profile", "--server", "--compact", "--yolo"] {
+    for f in ["--passthrough", "--profile", "--server", "--compact", "--yolo", "--config-dir"] {
         assert!(h.contains(f), "claude lacks {f}");
     }
-    assert!(!help_of(&["opencode"]).contains("--passthrough"));
+    assert!(h.contains("Claude Code config directory (sets CLAUDE_CONFIG_DIR)"));
+    let o = help_of(&["opencode"]);
+    assert!(!o.contains("--passthrough"));
+    assert!(!o.contains("--config-dir"));
     let h = help_of(&["marketplace", "add"]);
     for f in ["--name", "--ref", "--enable"] {
         assert!(h.contains(f), "marketplace add lacks {f}");
@@ -208,6 +211,21 @@ fn hook_table_names() {
     for h in zygo::cmd::hook::TABLE {
         assert_eq!(h.reads_stdin, h.name != "token", "reads_stdin of {}", h.name);
     }
+}
+
+/// `--config-dir` is checked before any agent launch: exit 2, one stderr line.
+#[test]
+fn claude_config_dir_missing_exits_2() {
+    let h = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let absent = h.path().join("absent");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+    common::scratch_home(&mut cmd, h.path());
+    let o = cmd.args(["claude", "--config-dir"]).arg(&absent).env("PATH", bin.path()).env_remove("ZYGO_SESSION_DIR").env_remove("ZYGO_AGENT")
+        .current_dir(h.path()).stdin(Stdio::null()).output().unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(2), "{err}");
+    assert!(err.contains("not a directory") && err.lines().count() == 1, "{err:?}");
 }
 
 // ---- N72: verb and config errors are escaped ----

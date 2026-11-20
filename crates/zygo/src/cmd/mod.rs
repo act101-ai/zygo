@@ -100,6 +100,9 @@ struct Launch {
     /// Skip permission prompts
     #[arg(long)]
     yolo: bool,
+    /// Claude Code config directory (sets CLAUDE_CONFIG_DIR)
+    #[arg(long)]
+    config_dir: Option<String>,
     /// Arguments passed to the agent
     #[arg(last = true)]
     rest: Vec<String>,
