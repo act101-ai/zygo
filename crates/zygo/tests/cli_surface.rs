@@ -53,10 +53,13 @@ fn every_command_exists() {
 #[test]
 fn flags() {
     let h = help_of(&["claude"]);
-    for f in ["--passthrough", "--profile", "--server", "--compact", "--yolo"] {
+    for f in ["--passthrough", "--profile", "--server", "--compact", "--yolo", "--config-dir"] {
         assert!(h.contains(f), "claude lacks {f}");
     }
-    assert!(!help_of(&["opencode"]).contains("--passthrough"));
+    assert!(h.contains("Claude Code config directory (sets CLAUDE_CONFIG_DIR)"));
+    let o = help_of(&["opencode"]);
+    assert!(!o.contains("--passthrough"));
+    assert!(!o.contains("--config-dir"));
     let h = help_of(&["marketplace", "add"]);
     for f in ["--name", "--ref", "--enable"] {
         assert!(h.contains(f), "marketplace add lacks {f}");
