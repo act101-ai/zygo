@@ -1,0 +1,72 @@
+# Evidence for each rule is in crates/zygo-config/tests/builtin.rs (EVIDENCE). Checked 2026-11-18.
+[[schema_rule]]
+family = "anthropic"
+code = "map_object"
+severity = "refuse"
+
+[[schema_rule]]
+family = "openai"
+code = "map_object"
+severity = "refuse"
+
+[[schema_rule]]
+family = "anthropic"
+code = "one_of"
+severity = "refuse"
+
+[[schema_rule]]
+family = "anthropic"
+code = "all_of"
+severity = "refuse"
+
+[[schema_rule]]
+family = "openai"
+code = "all_of"
+severity = "refuse"
+
+[[schema_rule]]
+family = "openai"
+code = "conditional"
+severity = "refuse"
+
+[[schema_rule]]
+family = "anthropic"
+code = "closed_object"
+severity = "refuse"
+
+[[schema_rule]]
+family = "openai"
+code = "closed_object"
+severity = "refuse"
+
+[[schema_rule]]
+family = "anthropic"
+code = "numeric_bounds"
+severity = "refuse"
+
+[[schema_rule]]
+family = "anthropic"
+code = "string_length"
+severity = "refuse"
+
+[[schema_rule]]
+family = "anthropic"
+code = "array_bounds"
+severity = "refuse"
+limit = 1
+
+[[schema_rule]]
+family = "anthropic"
+code = "pattern"
+severity = "warn"
+
+[[schema_rule]]
+family = "openai"
+code = "optional_property"
+severity = "refuse"
+
+[[schema_rule]]
+family = "anthropic"
+code = "optional_properties_max"
+severity = "refuse"
+limit = 24

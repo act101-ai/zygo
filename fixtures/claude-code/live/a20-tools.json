@@ -1,0 +1,36 @@
+{
+  "agents": {
+    "zygo-review": {
+      "description": "Reviews a change it did not make.",
+      "prompt": "[omitted]",
+      "model": "review",
+      "disallowedTools": [
+        "Edit",
+        "Write",
+        "NotebookEdit"
+      ]
+    }
+  },
+  "review_tools": [
+    "Agent",
+    "Bash",
+    "DeferredToolPlaceholder",
+    "ListAgents",
+    "Read",
+    "ReportFindings",
+    "Skill",
+    "ToolSearch"
+  ],
+  "code_tools": [
+    "Agent",
+    "Bash",
+    "DeferredToolPlaceholder",
+    "Edit",
+    "ListAgents",
+    "Read",
+    "ReportFindings",
+    "Skill",
+    "ToolSearch",
+    "Write"
+  ]
+}

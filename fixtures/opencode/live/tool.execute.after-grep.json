@@ -1,0 +1,18 @@
+{
+  "input": {
+    "tool": "grep",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_01_grep",
+    "args": {
+      "pattern": "tracer"
+    }
+  },
+  "output": {
+    "title": "tracer",
+    "metadata": {
+      "matches": 5,
+      "truncated": false
+    },
+    "output": "Found 5 matches\n/repo/files/README.txt:\n  Line 1: tracer readme line one\n\n  Line 2: tracer readme line two\n\n\n/repo/files/nb.ipynb:\n  Line 10:     \"print('tracer notebook')\"\n\n\n/repo/files/doc.pdf:\n  Line 14: BT /F1 12 Tf 10 50 Td (tracer pdf text) Tj ET\n\n\n/repo/files/page.html:\n  Line 1: <html><body><h1>tracer page</h1><p>tracer page text</p></body></html>\n"
+  }
+}

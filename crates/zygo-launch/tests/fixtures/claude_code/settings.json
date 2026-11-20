@@ -1,0 +1,23 @@
+{"apiKeyHelper":"<ZYGO> hook token","model":"lead","availableModels":["code","design","lead","read","probe"],
+ "modelPicker":{"options":[
+  {"model":"code","label":"code","description":"D-code"},
+  {"model":"design","label":"design","description":"D-design","behavesAs":"claude-fable-5"},
+  {"model":"lead","label":"lead","description":"D-lead","behavesAs":"claude-opus-5-5"},
+  {"model":"read","label":"read","description":"D-read","behavesAs":"claude-haiku-4-5"},
+  {"model":"probe","label":"probe","description":"D-probe","behavesAs":"claude-haiku-4-5"}]},
+ "disableAllHooks":false,
+ "statusLine":{"type":"command","command":"<ZYGO> hook statusline","refreshInterval":30},
+ "hooks":{
+  "PreToolUse":[
+   {"matcher":"Edit|Write|NotebookEdit","hooks":[{"type":"command","command":"<ZYGO> hook role-guard"}]},
+   {"matcher":"Edit|Write|NotebookEdit|Read|Bash","hooks":[{"type":"command","command":"<ZYGO> hook guard"}]},
+   {"matcher":"mcp__zygo__work_begin","hooks":[{"type":"command","command":"<ZYGO> hook work --event begin"}]},
+   {"matcher":"mcp__zygo__work_verdict","hooks":[{"type":"command","command":"<ZYGO> hook work --event verdict"}]}],
+  "PostToolUse":[
+   {"matcher":"Bash|Read|Grep|Glob|WebFetch","hooks":[{"type":"command","command":"<ZYGO> hook trim"}]},
+   {"matcher":"*","hooks":[{"type":"command","command":"<ZYGO> hook work"}]}],
+  "PostToolUseFailure":[{"matcher":"*","hooks":[{"type":"command","command":"<ZYGO> hook work"}]}],
+  "SubagentStop":[{"hooks":[{"type":"command","command":"<ZYGO> hook work"}]}],
+  "SessionStart":[{"hooks":[{"type":"command","command":"<ZYGO> hook session-start"}]}],
+  "UserPromptSubmit":[{"hooks":[{"type":"command","command":"<ZYGO> hook prompt"}]}],
+  "PreCompact":[{"hooks":[{"type":"command","command":"<ZYGO> hook pre-compact"}]}]}}

@@ -1,0 +1,11 @@
+{
+  "mode": "files_with_matches",
+  "filenames": [
+    "nb.ipynb",
+    "doc.pdf",
+    "page.html",
+    "README.txt"
+  ],
+  "numFiles": 4,
+  "totalFiles": 4
+}

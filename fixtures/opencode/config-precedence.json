@@ -1,0 +1,60 @@
+{
+ "resolved": {
+  "model": "zygo/lead",
+  "provider.zygo.options.headers": {
+   "X-Layer": "inline",
+   "X-Layer-user": "1",
+   "X-Layer-project": "1",
+   "X-Layer-inline": "1"
+  },
+  "provider.zygo.models (keys)": [
+   "lead",
+   "project-model",
+   "user-model"
+  ],
+  "provider.zygo.models.lead.limit.context": 333333,
+  "agent.build": {
+   "model": "zygo/lead",
+   "options": {},
+   "permission": {
+    "edit": "deny"
+   }
+  },
+  "permission": {
+   "edit": "deny",
+   "bash": "allow",
+   "user-only": "allow",
+   "project-only": "allow",
+   "inline-only": "allow"
+  },
+  "mcp (keys)": [
+   "project-mcp",
+   "user-mcp",
+   "zygo"
+  ],
+  "mcp.zygo.command (project adds a \"project\" argument)": [
+   "python3",
+   "-I",
+   "/zygo/scripts/premises/mcp_probe.py"
+  ]
+ },
+ "winner_per_key": {
+  "model": [
+   "inline"
+  ],
+  "provider.zygo.models.lead.limit.context": [
+   "inline"
+  ],
+  "agent.build.model": [
+   "inline"
+  ],
+  "permission.edit": [
+   "inline"
+  ]
+ },
+ "objects": {
+  "provider.zygo.options.headers": "merged",
+  "mcp": "merged",
+  "permission": "merged"
+ }
+}

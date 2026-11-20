@@ -1,0 +1,21 @@
+{
+  "input": {
+    "tool": "write",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_04_write",
+    "args": {
+      "filePath": "/repo/new.txt",
+      "content": "tracer write"
+    }
+  },
+  "output": {
+    "title": "../../../../../../../../../../repo/new.txt",
+    "metadata": {
+      "diagnostics": {},
+      "filepath": "/repo/new.txt",
+      "exists": false,
+      "truncated": false
+    },
+    "output": "Wrote file successfully."
+  }
+}

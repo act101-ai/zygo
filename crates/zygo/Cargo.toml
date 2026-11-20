@@ -1,0 +1,46 @@
+[package]
+name = "zygo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-hooks = ["zygo-hooks/test-hooks"]
+
+[dependencies]
+zygo-core.workspace = true
+zygo-config.workspace = true
+zygo-proxy.workspace = true
+zygo-redact.workspace = true
+zygo-usage.workspace = true
+zygo-results.workspace = true
+zygo-mcp.workspace = true
+zygo-work.workspace = true
+zygo-hooks.workspace = true
+zygo-plugins.workspace = true
+zygo-launch.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rpassword.workspace = true
+semver.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+sha2.workspace = true
+regex.workspace = true
+hex.workspace = true
+which.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+walkdir.workspace = true
+tempfile.workspace = true
+fs4.workspace = true
+ulid.workspace = true
+zygo = { path = ".", features = ["test-hooks"] }
+
+[[test]]
+name = "forbidden_content"
+path = "../../tests/forbidden_content.rs"

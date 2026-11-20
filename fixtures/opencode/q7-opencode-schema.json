@@ -1,0 +1,31 @@
+{
+  "provider": true,
+  "model": true,
+  "agent": true,
+  "permission": true,
+  "mcp": true,
+  "limit.context (paths in schema)": [
+    "/$defs/ProviderConfig/properties/models/additionalProperties/properties/limit/properties/context",
+    "/$defs/Config.ModelEncoded/properties/limit/properties/context"
+  ],
+  "agent mode/prompt/model/permission in AgentConfig": [
+    "description",
+    "mode",
+    "model",
+    "permission",
+    "prompt"
+  ],
+  "McpLocalConfig keys": [
+    "command",
+    "cwd",
+    "enabled",
+    "environment",
+    "timeout",
+    "type"
+  ],
+  "provider npm/options in ProviderConfig": [
+    "models",
+    "npm",
+    "options"
+  ]
+}

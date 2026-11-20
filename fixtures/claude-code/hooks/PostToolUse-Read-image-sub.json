@@ -1,0 +1,33 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a1a80dd100f197242",
+  "agent_type": "claude",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/repo/img.png"
+  },
+  "tool_response": {
+    "type": "image",
+    "file": {
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC",
+      "type": "image/png",
+      "originalSize": 75,
+      "dimensions": {
+        "originalWidth": 8,
+        "originalHeight": 8,
+        "displayWidth": 8,
+        "displayHeight": 8
+      }
+    }
+  },
+  "tool_use_id": "toolu_p3_sub_02_read",
+  "duration_ms": 2
+}

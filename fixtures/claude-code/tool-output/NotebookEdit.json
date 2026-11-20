@@ -1,0 +1,12 @@
+{
+  "new_source": "print('tracer main')",
+  "old_source": "print('tracer notebook')",
+  "cell_type": "code",
+  "language": "python",
+  "edit_mode": "replace",
+  "cell_id": "c1",
+  "error": "",
+  "notebook_path": "/repo/nb.ipynb",
+  "original_file": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"execution_count\": null,\n   \"outputs\": [],\n   \"source\": [\n    \"print('tracer notebook')\"\n   ]\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}",
+  "updated_file": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"execution_count\": null,\n   \"outputs\": [],\n   \"source\": \"print('tracer main')\"\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}"
+}

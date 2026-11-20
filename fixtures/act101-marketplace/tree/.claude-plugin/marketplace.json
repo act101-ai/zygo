@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "act101-marketplace",
+  "description": "AST-aware code transformation tools for AI agents. 141 refactoring operations across 41 languages.",
+  "owner": {
+    "name": "act101",
+    "url": "act101"
+  },
+  "plugins": [
+    {
+      "name": "act-lite",
+      "description": "AST-aware code queries, code-health and dependency analysis for AI agents across 43 languages.",
+      "version": "1.2.3",
+      "author": {
+        "name": "act101",
+        "url": "act101"
+      },
+      "source": "./plugin-act-lite",
+      "category": "development",
+      "homepage": "https://github.com/act101-ai/act-lite"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "input": {
+    "tool": "grep",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_01_grep"
+  },
+  "output": {
+    "args": {
+      "pattern": "tracer"
+    }
+  }
+}

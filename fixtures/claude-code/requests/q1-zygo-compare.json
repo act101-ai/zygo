@@ -1,0 +1,38 @@
+{
+  "SubagentStop inputs, matcher *": [
+    [
+      "zygo-code",
+      "acfd66ba917fc3494"
+    ],
+    [
+      "zygo-code",
+      "acfd66ba917fc3494"
+    ],
+    [
+      "claude",
+      "a2f18d1a250a40eed"
+    ]
+  ],
+  "SubagentStop inputs, matcher ^zygo-": [
+    [
+      "zygo-code",
+      "acfd66ba917fc3494"
+    ],
+    [
+      "zygo-code",
+      "acfd66ba917fc3494"
+    ]
+  ],
+  "zygo-code hook agent_id values": [
+    "acfd66ba917fc3494"
+  ],
+  "x-claude-code-agent-id of the zygo-code requests": [
+    "acfd66ba917fc3494"
+  ],
+  "x-claude-code-agent-type of the zygo-code requests": [
+    "custom"
+  ],
+  "zygo-code requests": 3,
+  "zygo-code request after the block holds the reason": true,
+  "main-loop requests with an agent id header": 0
+}

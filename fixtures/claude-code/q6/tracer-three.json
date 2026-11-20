@@ -1,0 +1,7 @@
+{
+  "tracer": "tracer three",
+  "request_class": "auxiliary",
+  "user_blocks": [
+    "<session>\n/echo-a tracer three\necho a\n</session>\n\nWrite the title in the predominant language of the session — a stray word or code token in another language doesn't change it, and neither does the English of these instructions."
+  ]
+}

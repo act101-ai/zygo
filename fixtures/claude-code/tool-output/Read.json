@@ -1,0 +1,10 @@
+{
+  "type": "text",
+  "file": {
+    "filePath": "/repo/README.txt",
+    "content": "tracer readme line one\ntracer readme line two\n",
+    "numLines": 3,
+    "startLine": 1,
+    "totalLines": 3
+  }
+}

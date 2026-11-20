@@ -1,0 +1,9 @@
+{
+  "input": {
+    "modelID": "lead",
+    "providerID": "zygo"
+  },
+  "output": {
+    "systemEntries": 2
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a1a80dd100f197242",
+  "agent_type": "claude",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Grep",
+  "tool_input": {
+    "pattern": "tracer",
+    "path": "/repo"
+  },
+  "tool_response": {
+    "mode": "files_with_matches",
+    "filenames": [
+      "nb.ipynb",
+      "doc.pdf",
+      "page.html",
+      "README.txt"
+    ],
+    "numFiles": 4,
+    "totalFiles": 4
+  },
+  "tool_use_id": "toolu_p3_sub_05_grep",
+  "duration_ms": 16
+}

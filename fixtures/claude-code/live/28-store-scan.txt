@@ -1,0 +1,6 @@
+store scan 2026-11-19: grep -aF, login token prefix and zygo session token prefix
+scanned: ~/.local/share/zygo (21 files) and ~/.cache/zygo (117 files), symbolic links followed only inside these dirs, raw usage.db usage.db-shm usage.db-wal
+read errors: 0
+refused links (target outside the zygo dirs, not read): 0
+login prefix hits: 0
+session prefix hits: 0

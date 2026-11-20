@@ -1,0 +1,7 @@
+# The built-in marketplace (§15.9). scripts/pin-builtin-marketplace.sh writes ref and commit; do not edit them.
+[[marketplace]]
+name = "act101"
+source = "github:act101-ai/act101"
+ref = "v2.9.2"
+commit = "409b9dad5da85a9857e8d584d1c6a9fe4136c3e3"
+default_on = ["act-lite"]

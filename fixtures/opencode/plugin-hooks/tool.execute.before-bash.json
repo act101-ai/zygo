@@ -1,0 +1,13 @@
+{
+  "input": {
+    "tool": "bash",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_oc_00_bash"
+  },
+  "output": {
+    "args": {
+      "command": "echo tracer-oc-bash-original",
+      "description": "echo"
+    }
+  }
+}

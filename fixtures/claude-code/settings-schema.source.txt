@@ -1,0 +1,5 @@
+source: https://json.schemastore.org/claude-code-settings.json
+retrieved: 2026-11-18
+sha256: f26f028ad94a1e2a28e9dad1f80832ab196a8e080bd3a7d7a32e6428a15e0611
+note: verbatim (not scrubbed); its example paths are upstream text. modelPicker is absent from it;
+      the pinned binary's validation texts for modelPicker are in settings-binary-excerpt.txt.

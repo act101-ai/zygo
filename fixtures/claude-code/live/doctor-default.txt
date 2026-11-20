@@ -1,0 +1,11 @@
+agent claude-code: 2.1.328 (minimum 2.1.328)
+agent opencode: 1.18.16 (minimum 1.18.16)
+act-lite: not found
+secret store: file (0600)
+provider anthropic: env:ANTHROPIC_API_KEY unset
+provider openai: env:OPENAI_API_KEY unset
+server: local mode
+plugin store: manifest missing
+plugin act101:act-lite: not in store; run zygo plugins sync
+plugin act101:act-lite: also installed in Claude Code as act-lite@act101-marketplace; it would load twice
+repo policy: defaults

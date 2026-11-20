@@ -1,0 +1,39 @@
+{
+ "model": "code",
+ "max_tokens": 64,
+ "tools": [
+  {
+   "name": "t",
+   "description": "Strict-schema probe.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "v": {
+      "oneOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "integer"
+       }
+      ]
+     }
+    },
+    "required": [
+     "v"
+    ]
+   },
+   "strict": true
+  }
+ ],
+ "tool_choice": {
+  "type": "tool",
+  "name": "t"
+ },
+ "messages": [
+  {
+   "role": "user",
+   "content": "Call t (anthropic-one_of)."
+  }
+ ]
+}

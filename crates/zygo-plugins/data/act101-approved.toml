@@ -1,0 +1,8 @@
+# Written by scripts/pin-builtin-marketplace.sh. Do not edit.
+ref = "v2.9.2"
+commit = "409b9dad5da85a9857e8d584d1c6a9fe4136c3e3"
+
+[[approval]]
+marketplace = "act101"
+plugin = "act-lite"
+digest = "8f7ac593245afb9c4cf3ca294e83d2648d76310026ac1f7865acb8476eda496d"

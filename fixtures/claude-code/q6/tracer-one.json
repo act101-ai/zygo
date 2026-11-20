@@ -1,0 +1,8 @@
+{
+  "tracer": "tracer one",
+  "request_class": "main",
+  "user_blocks": [
+    "<command-message>echo-a</command-message>\n<command-name>/echo-a</command-name>\n<command-args>tracer one</command-args>\n",
+    "Command A body. Arguments here: tracer one. End of A.\n"
+  ]
+}

@@ -1,0 +1,50 @@
+plugin act101:act-lite: act-lite not found
+ ▐▛███▛█   Claude Code v2.1.328
+▝▜██████▀  lead · API Usage Billing
+ ▝▝   ▝▝   /repo
+
+⚠ Model "lead" isn't recognized · context assumed to be 1m tokens · update Claude Code, or see https://code.claude.com/docs/en/model-config
+
+❯ tracer-n28 say hi
+
+⏺ ok
+
+✻ Worked for 0s · done 4:25 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  zygo ◇ branch:main ◇ - ◇ ctx -/777k ◇ compact 777k ◇ cache - ◇ trimmed 0
+  ⏸ manual mode on
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,14 @@
+{
+  "input": {
+    "tool": "edit",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_05_edit"
+  },
+  "output": {
+    "args": {
+      "filePath": "/repo/new.txt",
+      "oldString": "tracer write",
+      "newString": "tracer edited"
+    }
+  }
+}

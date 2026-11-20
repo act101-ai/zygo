@@ -1,0 +1,74 @@
+plugin act101:act-lite: act-lite not found
+ ▐▛███▛█   Claude Code v2.1.328
+▝▜██████▀  design[1m] · API Usage Billing
+ ▝▝   ▝▝   /repo
+
+
+❯ /context
+  ⎿  Context usage
+     ⛀ ⛀ ⛀ ⛀ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   design[1m]
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   2.7k/1m tokens (0.3%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Estimated usage by category
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System prompt: 150 tokens (<0.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Custom agents: 60 tokens (<0.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Skills: 2.5k tokens (0.2%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Messages: 10 tokens (<0.1%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛶ Free space: 997.3k tokens (100%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶
+
+     MCP tools · /mcp
+     ├ mcp__zygo__compact: 0 tokens
+     ├ mcp__zygo__result_search: 0 tokens
+     ├ mcp__zygo__result_tree: 0 tokens
+     ├ mcp__zygo__result_view: 0 tokens
+     ├ mcp__zygo__work_begin: 0 tokens
+     └ mcp__zygo__work_verdict: 0 tokens
+
+     Custom agents · .claude/agents/
+
+     Flag
+     ├ zygo-code: 10 tokens
+     ├ zygo-design: 10 tokens
+     ├ zygo-plan: 10 tokens
+     ├ zygo-read: 10 tokens
+     ├ zygo-review: 10 tokens
+     └ zygo-triage: 10 tokens
+
+     Skills · /skills
+
+     Plugin (act-lite)
+     ├ act-lite:execute-work: ~140 tokens
+     ├ act-lite:plan-work: ~130 tokens
+     ├ act-lite:deliver-work: ~120 tokens
+     ├ act-lite:define-work: ~90 tokens
+     ├ act-lite:diagnose-defect: ~90 tokens
+     ├ act-lite:work-graph: ~80 tokens
+     ├ act-lite:review-change: ~70 tokens
+     ├ act-lite:audit-debt: ~70 tokens
+     └ act-lite:map-repo: ~70 tokens
+
+     Plugin (zygo)
+     └ zygo:zygo-cli: ~50 tokens
+
+     Built-in
+     ├ dataviz: ~360 tokens
+     ├ claude-api: ~290 tokens
+     ├ code-review: ~210 tokens
+     ├ update-config: ~180 tokens
+     ├ run: ~90 tokens
+     ├ loop: ~90 tokens
+     ├ plugin-authoring: ~70 tokens
+     ├ workflow-authoring: ~60 tokens
+     ├ keybindings-help: ~60 tokens
+     ├ fewer-permission-prompts: ~50 tokens
+     ├ simplify: ~50 tokens
+     ├ security-review: ~20 tokens
+     └ init: < 20 tokens
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  zygo ◇ branch:main ◇ - ◇ ctx -/- ◇ cache - ◇ trimmed 0
+  ⏸ manual mode on · ← for agents
+

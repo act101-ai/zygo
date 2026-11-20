@@ -1,0 +1,8 @@
+{
+  "tracer": "tracer two",
+  "request_class": "main",
+  "user_blocks": [
+    "<command-message>echo-b</command-message>\n<command-name>/echo-b</command-name>\n<command-args>tracer two</command-args>\n",
+    "Command B body without a placeholder.\n\n\nARGUMENTS: tracer two"
+  ]
+}

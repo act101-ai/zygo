@@ -1,0 +1,27 @@
+{
+  "input": {
+    "tool": "edit",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_05_edit",
+    "args": {
+      "filePath": "/repo/new.txt",
+      "oldString": "tracer write",
+      "newString": "tracer edited"
+    }
+  },
+  "output": {
+    "metadata": {
+      "diagnostics": {},
+      "diff": "Index: /repo/new.txt\n===================================================================\n--- /repo/new.txt\n+++ /repo/new.txt\n@@ -1,1 +1,1 @@\n-tracer write\n\\ No newline at end of file\n+tracer edited\n\\ No newline at end of file\n",
+      "filediff": {
+        "file": "/repo/new.txt",
+        "patch": "Index: /repo/new.txt\n===================================================================\n--- /repo/new.txt\n+++ /repo/new.txt\n@@ -1,1 +1,1 @@\n-tracer write\n\\ No newline at end of file\n+tracer edited\n\\ No newline at end of file\n",
+        "additions": 1,
+        "deletions": 1
+      },
+      "truncated": false
+    },
+    "title": "../../../../../../../../../../repo/new.txt",
+    "output": "Edit applied successfully."
+  }
+}

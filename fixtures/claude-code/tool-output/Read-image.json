@@ -1,0 +1,14 @@
+{
+  "type": "image",
+  "file": {
+    "base64": "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC",
+    "type": "image/png",
+    "originalSize": 75,
+    "dimensions": {
+      "originalWidth": 8,
+      "originalHeight": 8,
+      "displayWidth": 8,
+      "displayHeight": 8
+    }
+  }
+}

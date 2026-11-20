@@ -1,0 +1,414 @@
+{
+  "act_lite": "v1.2.3",
+  "retrieved_from": "https://github.com/act101-ai/act-lite/tree/v1.2.3",
+  "file_names_from": "https://github.com/act101-ai/act-lite/blob/v1.2.3/README.md#languages",
+  "languages_count": 43,
+  "same_names_as_mcp_status_tool": true,
+  "languages": [
+    {
+      "language": "Astro",
+      "id": "astro",
+      "extensions": [
+        "astro"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/astro.rs"
+    },
+    {
+      "language": "Bash",
+      "id": "bash",
+      "extensions": [
+        "sh",
+        "bash"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/bash.rs"
+    },
+    {
+      "language": "C",
+      "id": "c",
+      "extensions": [
+        "c",
+        "h"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/c.rs"
+    },
+    {
+      "language": "CMake",
+      "id": "cmake",
+      "extensions": [
+        "cmake"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/cmake.rs",
+      "file_names": [
+        "CMakeLists.txt"
+      ]
+    },
+    {
+      "language": "C++",
+      "id": "cpp",
+      "extensions": [
+        "cpp",
+        "cc",
+        "cxx",
+        "hpp",
+        "h"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/cpp.rs"
+    },
+    {
+      "language": "C#",
+      "id": "csharp",
+      "extensions": [
+        "cs",
+        "csx"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/csharp.rs"
+    },
+    {
+      "language": "CSS",
+      "id": "css",
+      "extensions": [
+        "css"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/css.rs"
+    },
+    {
+      "language": "Dart",
+      "id": "dart",
+      "extensions": [
+        "dart"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/dart.rs"
+    },
+    {
+      "language": "Dockerfile",
+      "id": "dockerfile",
+      "extensions": [
+        "dockerfile"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/dockerfile.rs"
+    },
+    {
+      "language": "Elixir",
+      "id": "elixir",
+      "extensions": [
+        "ex",
+        "exs"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/elixir.rs"
+    },
+    {
+      "language": "Go",
+      "id": "go",
+      "extensions": [
+        "go"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/go.rs"
+    },
+    {
+      "language": "GraphQL",
+      "id": "graphql",
+      "extensions": [
+        "graphql",
+        "graphqls",
+        "gql"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/graphql.rs"
+    },
+    {
+      "language": "HCL/Terraform",
+      "id": "hcl_terraform",
+      "extensions": [
+        "hcl",
+        "tf"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/hcl_terraform.rs"
+    },
+    {
+      "language": "HTML",
+      "id": "html",
+      "extensions": [
+        "html",
+        "htm"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/html.rs"
+    },
+    {
+      "language": "Java",
+      "id": "java",
+      "extensions": [
+        "java"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/java.rs"
+    },
+    {
+      "language": "JavaScript",
+      "id": "javascript",
+      "extensions": [
+        "js",
+        "mjs",
+        "cjs"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/javascript.rs"
+    },
+    {
+      "language": "JSON",
+      "id": "json",
+      "extensions": [
+        "json"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/json.rs"
+    },
+    {
+      "language": "JSONC",
+      "id": "jsonc",
+      "extensions": [
+        "jsonc",
+        "code-workspace"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/jsonc.rs",
+      "file_names": [
+        "tsconfig.json",
+        "jsconfig.json",
+        "tsconfig.*.json",
+        "jsconfig.*.json",
+        "devcontainer.json",
+        ".devcontainer.json",
+        ".eslintrc.json"
+      ]
+    },
+    {
+      "language": "JSX",
+      "id": "jsx",
+      "extensions": [
+        "jsx"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/jsx.rs"
+    },
+    {
+      "language": "Julia",
+      "id": "julia",
+      "extensions": [
+        "jl"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/julia.rs"
+    },
+    {
+      "language": "Kotlin",
+      "id": "kotlin",
+      "extensions": [
+        "kt",
+        "kts"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/kotlin.rs"
+    },
+    {
+      "language": "Lua",
+      "id": "lua",
+      "extensions": [
+        "lua"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/lua.rs"
+    },
+    {
+      "language": "Make",
+      "id": "make",
+      "extensions": [
+        "mk",
+        "mak"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/make.rs",
+      "file_names": [
+        "Makefile",
+        "makefile",
+        "GNUmakefile"
+      ]
+    },
+    {
+      "language": "Markdown",
+      "id": "markdown",
+      "extensions": [
+        "md",
+        "markdown",
+        "mdown",
+        "mkd",
+        "mkdn"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/markdown.rs"
+    },
+    {
+      "language": "Nix",
+      "id": "nix",
+      "extensions": [
+        "nix"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/nix.rs"
+    },
+    {
+      "language": "PHP",
+      "id": "php",
+      "extensions": [
+        "php"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/php.rs"
+    },
+    {
+      "language": "Protocol Buffers",
+      "id": "protobuf",
+      "extensions": [
+        "proto"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/protobuf.rs"
+    },
+    {
+      "language": "Python",
+      "id": "python",
+      "extensions": [
+        "py",
+        "pyi",
+        "pyw"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/python.rs"
+    },
+    {
+      "language": "R",
+      "id": "r",
+      "extensions": [
+        "R",
+        "r"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/r.rs",
+      "file_names": [
+        ".Rprofile"
+      ]
+    },
+    {
+      "language": "Ruby",
+      "id": "ruby",
+      "extensions": [
+        "rb",
+        "rake"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/ruby.rs"
+    },
+    {
+      "language": "Rust",
+      "id": "rust",
+      "extensions": [
+        "rs"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/rust.rs"
+    },
+    {
+      "language": "Scala",
+      "id": "scala",
+      "extensions": [
+        "scala",
+        "sc"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/scala.rs"
+    },
+    {
+      "language": "SCSS",
+      "id": "scss",
+      "extensions": [
+        "scss"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/scss.rs"
+    },
+    {
+      "language": "SQL",
+      "id": "sql",
+      "extensions": [
+        "sql"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/sql.rs"
+    },
+    {
+      "language": "Svelte",
+      "id": "svelte",
+      "extensions": [
+        "svelte"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/svelte.rs"
+    },
+    {
+      "language": "Swift",
+      "id": "swift",
+      "extensions": [
+        "swift"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/swift.rs"
+    },
+    {
+      "language": "TOML",
+      "id": "toml",
+      "extensions": [
+        "toml"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/toml.rs"
+    },
+    {
+      "language": "TSX",
+      "id": "tsx",
+      "extensions": [
+        "tsx"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/tsx.rs"
+    },
+    {
+      "language": "TypeScript",
+      "id": "typescript",
+      "extensions": [
+        "ts",
+        "mts",
+        "cts"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/typescript.rs"
+    },
+    {
+      "language": "Vue",
+      "id": "vue",
+      "extensions": [
+        "vue"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/vue.rs"
+    },
+    {
+      "language": "XML",
+      "id": "xml",
+      "extensions": [
+        "xml",
+        "xsd",
+        "xsl",
+        "xslt",
+        "svg",
+        "plist",
+        "csproj",
+        "fsproj",
+        "vbproj",
+        "props",
+        "targets",
+        "resx",
+        "xaml"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/xml.rs"
+    },
+    {
+      "language": "YAML",
+      "id": "yaml",
+      "extensions": [
+        "yaml",
+        "yml"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/yaml.rs"
+    },
+    {
+      "language": "Zig",
+      "id": "zig",
+      "extensions": [
+        "zig"
+      ],
+      "source": "https://github.com/act101-ai/act-lite/blob/v1.2.3/crates/act-lite-parser/src/languages/zig.rs"
+    }
+  ]
+}

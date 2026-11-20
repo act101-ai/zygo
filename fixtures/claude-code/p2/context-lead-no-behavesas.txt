@@ -1,0 +1,6 @@
+Claude Code doesn't recognize the model "lead", so it assumes a context window of 1m tokens. Update Claude Code, or see https://code.claude.com/docs/en/model-config#correct-the-window-for-a-gateway-or-custom-model-id to set the window.
+## Context Usage
+
+**Model:** lead  
+**Tokens:** 2.2k / 1m (0%)
+

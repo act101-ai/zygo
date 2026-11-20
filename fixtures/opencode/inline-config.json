@@ -1,0 +1,70 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "zygo/lead",
+  "provider": {
+    "zygo": {
+      "npm": "@ai-sdk/anthropic",
+      "options": {
+        "baseURL": "http://127.0.0.1:53243/v1",
+        "apiKey": "[omitted]",
+        "headers": {
+          "X-Layer": "inline",
+          "X-Layer-inline": "1"
+        }
+      },
+      "models": {
+        "lead": {
+          "limit": {
+            "context": 333333,
+            "output": 4000
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "model": "zygo/lead",
+      "permission": {
+        "edit": "deny"
+      }
+    },
+    "zygo-code": {
+      "mode": "subagent",
+      "description": "tracer-oc-agent-description",
+      "prompt": "tracer-oc-agent-prompt",
+      "model": "zygo/lead",
+      "permission": {
+        "edit": "deny"
+      }
+    },
+    "zygo-steps": {
+      "mode": "primary",
+      "description": "turn cap probe",
+      "model": "zygo/lead",
+      "steps": 2
+    }
+  },
+  "permission": {
+    "edit": "deny",
+    "bash": "allow",
+    "inline-only": "allow"
+  },
+  "mcp": {
+    "zygo": {
+      "type": "local",
+      "command": [
+        "python3",
+        "-I",
+        "/zygo/scripts/premises/mcp_probe.py"
+      ],
+      "enabled": true
+    }
+  },
+  "command": {
+    "zygo-cmd": {
+      "description": "tracer-oc-command description",
+      "template": "tracer-oc-command body: $ARGUMENTS"
+    }
+  }
+}

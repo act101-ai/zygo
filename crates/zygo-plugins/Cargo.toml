@@ -1,0 +1,27 @@
+[package]
+name = "zygo-plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zygo-core.workspace = true
+zygo-config.workspace = true
+anyhow.workspace = true
+fs4.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order", "arbitrary_precision"] }
+toml.workspace = true
+toml_edit.workspace = true
+sha2.workspace = true
+hex.workspace = true
+walkdir.workspace = true
+semver.workspace = true
+which.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

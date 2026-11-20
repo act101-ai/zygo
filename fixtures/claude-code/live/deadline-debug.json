@@ -1,0 +1,23 @@
+[
+  {
+    "request_class": "auxiliary",
+    "status": 200,
+    "latency_ms": 118,
+    "input_tokens": 10,
+    "redactions": "[]"
+  },
+  {
+    "request_class": "main",
+    "status": 503,
+    "latency_ms": 210,
+    "input_tokens": 0,
+    "redactions": "[]"
+  },
+  {
+    "request_class": "main",
+    "status": 200,
+    "latency_ms": 80,
+    "input_tokens": 10,
+    "redactions": "[]"
+  }
+]

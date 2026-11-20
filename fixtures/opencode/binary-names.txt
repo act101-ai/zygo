@@ -1,0 +1,7 @@
+# OpenCode 1.18.16 executable: env names and plugin hook triggers (strings | grep -o | uniq -c)
+  10 OPENCODE_CONFIG_CONTENT
+  12 OPENCODE_CONFIG_DIR
+   2 trigger("experimental.chat.system.transform"
+   1 trigger("experimental.session.compacting"
+   7 trigger("tool.execute.after"
+   7 trigger("tool.execute.before"

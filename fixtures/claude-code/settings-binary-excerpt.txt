@@ -1,0 +1,7 @@
+# Strings from the Claude Code 2.1.328 executable (strings -n 6 | grep), selected lines.
+" isn't described by this version's model catalog; update Claude Code, or map it with behavesAs on a modelPicker row (or modelOverrides, if it is a provider id of a model this version knows). Until then auto-compact keeps this session within 
+" must be an object with an "options" array of { model, label?, description?, behavesAs? } rows; received 
+", so it assumes a context window of 
+"replaceBuiltInOptions" must be true or false; received E
+PostToolUse hook returned updatedToolOutput that does not match 
+updatedToolOutput:ae().optional().describe("Replaces the tool output before it is sent to the model")

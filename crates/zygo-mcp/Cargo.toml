@@ -1,0 +1,19 @@
+[package]
+name = "zygo-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zygo-core.workspace = true
+zygo-config.workspace = true
+zygo-results.workspace = true
+zygo-work.workspace = true
+zygo-usage.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

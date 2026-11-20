@@ -1,0 +1,27 @@
+[package]
+name = "zygo-redact"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zygo-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+regex.workspace = true
+rustrict.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+dirs = "7.0.0"
+zygo-config.workspace = true
+thiserror.workspace = true
+
+[features]
+# Test hooks (lookup delay); only the self dev-dependency enables it.
+test-hooks = []
+
+[dev-dependencies]
+tempfile.workspace = true
+zygo-redact = { path = ".", features = ["test-hooks"] }

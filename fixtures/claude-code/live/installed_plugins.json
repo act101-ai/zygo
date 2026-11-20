@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "plugins": {
+    "act-lite@act101-marketplace": [
+      {
+        "scope": "user",
+        "installPath": "/home/user/.claude/plugins/cache/act101-marketplace/act-lite/1.2.7",
+        "version": "1.2.7",
+        "installedAt": "2026-11-20T00:26:15.961Z",
+        "lastUpdated": "2026-11-20T00:26:15.961Z",
+        "gitCommitSha": "16f1dcdc4acb359262f79df4a80a478c0d3990e0"
+      }
+    ]
+  }
+}

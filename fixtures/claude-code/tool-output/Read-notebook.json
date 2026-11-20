@@ -1,0 +1,14 @@
+{
+  "type": "notebook",
+  "file": {
+    "filePath": "/repo/nb.ipynb",
+    "cells": [
+      {
+        "cellType": "code",
+        "source": "print('tracer notebook')",
+        "cell_id": "c1",
+        "language": "python"
+      }
+    ]
+  }
+}

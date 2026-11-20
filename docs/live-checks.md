@@ -1,0 +1,106 @@
+# Live checks (node N38)
+
+Checks on the real pinned agents, one dated result per check. Spec: `docs/specs/2026-11-18-zygo-design.md` §20 #16b, #21, #28, #40; §19 P1; §7.6; the N24, N25, N14, N15, N28, N33, N34, N35 notes.
+
+Claude Code: 2.1.328
+OpenCode: 1.18.16
+
+## Method
+
+- Harness: `scripts/premises/live-*.sh`, on the N2 harness (`lib.sh`, `mock_upstream.py`, `steps.py`, `hook_log.py`, `scrub.py`) plus `live.sh`. They run by hand only: no CI job and no Rust test calls them, and `run-all.sh` does not.
+- Setup, once per shell: `cargo build -p zygo --release` (the scripts use `target/release/zygo`; a debug build misses the 200 ms secret-redaction deadline on an interactive Claude Code body and answers 503: `sh scripts/premises/live-deadline.sh`, mock upstream, 2026-11-19, `fixtures/claude-code/live/deadline-debug.json` shows the first `main` request at 503 after 210 ms, then a second `main` request at 200 after 80 ms, and `fixtures/claude-code/live/deadline-release.json` the same `main` request at 200 after 15 ms), then the pinned Claude Code first on `PATH`: `export N2_SCRATCH=$(mktemp -d)`; `mkdir -p "$N2_SCRATCH/bin" && ln -sf ~/.local/share/claude/versions/2.1.328 "$N2_SCRATCH/bin/claude" && export PATH="$N2_SCRATCH/bin:$PATH"` (when that version is gone: `npm install --prefix "$N2_SCRATCH/npm" @anthropic-ai/claude-code@2.1.328` and link `"$N2_SCRATCH/npm/node_modules/.bin/claude"`). Each script stops unless `claude --version` and `opencode --version` are the pinned versions above.
+- Isolation: every run except #28 gets a temporary `HOME` (`CLAUDE_CONFIG_DIR`, `XDG_*` under it), `ZYGO_CONFIG` = the run's own config file, and an environment emptied of every variable except the provider keys the check names. Auto-update is off (`DISABLE_AUTOUPDATER`, `OPENCODE_DISABLE_AUTOUPDATE`).
+- Upstream per row: **mock** = `mock_upstream.py` behind zygo, answering only a dummy key built at run time, with authored replies (not model output); **real** = the vendor API with the owner's key; #28 uses the claude.ai login Claude Code already stores; N35-D reaches GitHub only.
+- Keys: only in the environment, read at a hidden prompt; never on a command line, never in a file. zygo reads them as `env:` references; the strict and effort checks hand them to `curl` on stdin (`-H @-`). An interactive (tmux) run refuses to start when a key is named.
+- Cleanup: each script removes its scratch tree (raw requests, hook logs, panes, debug files, usage copies) on exit, after the scrubbed fixtures are written. The traps (EXIT, INT, TERM, HUP) also kill the mock and web servers, the background processes and tmux sessions the script started, and the whole process group of a command under the wall-clock bound; tmux targets are exact (`=name`), and a session the script did not start is left alone. These were tested under `dash`: `dash scripts/premises/live-selftest.sh` (local only, no agent, no key) checks Ctrl-C, TERM and HUP during a bounded command, the `--scan-only` failure cases of #28 (links outside the zygo dirs, the strict liveness probe), the scan cases below, and the tmux targets on a private tmux server. It puts stub `claude`, `opencode` and `zygo` programs first on `PATH` and a dead loopback port in `MOCK_URL`, and stops unless the stubs resolve, so it cannot start a real agent; run it only on the scripts of the same checkout, never on older versions.
+- Fixtures pass `scrub.py` (run paths, home, user name, host name, e-mail addresses, header credentials and plain-text `x-api-key` values, bearer words, key forms, organization and project ids, zygo tokens, GitHub tokens, JWTs, Windows user paths, names with spaces included); `python3 -I scripts/premises/scrub_test.py` tests each rule. `scripts/check-premises.sh` scans `fixtures/`, the live scripts and their helpers, this file, and the spec and conformance lines that name N38. Keys, ids, tokens, the user name and host names are also found right after a JSON backslash escape (`\n`, `\t`, `\uXXXX`) in nested JSON text; host names come from `hostname` and, on macOS, `scutil` (`LocalHostName`, `ComputerName`); a host name shorter than 4 characters or `localhost` is skipped with a note.
+
+## Owner-run checks
+
+Each needs a provider key. Enter keys at a hidden prompt, never as a literal on the command line:
+
+```sh
+printf 'Anthropic key: '; read -rs ANTHROPIC_API_KEY; echo; export ANTHROPIC_API_KEY
+printf 'OpenAI key: '; read -rs OPENAI_API_KEY; echo; export OPENAI_API_KEY
+```
+
+Then, from the checkout, after the setup above (each prints `LIVE <id> <result> (agent <version>): …` lines to paste into the table, and writes its fixtures):
+
+- **21, P1**: `sh scripts/premises/live-window.sh`. Environment: the Anthropic API key. Pass: 21: a `main` row over 40,000 prompt tokens carries `context_signal`, the next non-auxiliary row has `compaction = 1`, and a `PreCompact` hook ran with `trigger: auto` (no crossing row: `not-crossed`, not a fail). P1: 21 passes, and the `mcp__zygo__compact` call gives a `context_compact` row, then a compaction row, then a `main` row. Fixtures `21-usage.json`, `p1-tooluse-usage.json`.
+- **16b**: `LIVE_SMALL_MODEL=<model id> sh scripts/premises/live-16b.sh`. Environment: the OpenAI API key; `LIVE_SMALL_MODEL` = an OpenAI-dialect model whose real input limit is at most 128,000 tokens; optional `LIVE_SMALL_BASE_URL` (default `https://api.openai.com`). The `zygo-code` subagent reads 26 files of about 30,000 characters (at least 130,104 tokens in all, the fewest files that cross 128,000). Pass: exit 0; `prompt is too long` in Claude Code's debug file (read once, deleted at exit); one subagent's rows show a 400, then `compaction = 1`, then a 200. Fixture `16b-usage.json`.
+- **N14-S, N14-E**: `sh scripts/premises/live-strict.sh`. Environment: both keys. Pass: N14-S: every rewritten schema (one per built-in `refuse` rule, captured at the mock) gets HTTP 200 in strict mode from its vendor: Messages (`claude-haiku-5-5`); Responses and chat (`gpt-6.2-astra`). N14-E: Responses `reasoning.effort` and chat `reasoning_effort` get HTTP 200 for `low`, `medium`, `high`, `xhigh`, `max`. Fixtures `n14-strict.json`, `n14-effort.json`. `sh scripts/premises/live-strict.sh --capture-only` runs the mock capture alone, with no key and no network, and prints `live: captured <n> of 18 rewritten schemas:` and the `<family>-<code>.<api>` name of each schema found by its `(family-code)` marker (2026-11-19: 18 of 18).
+- **R-RT**: `sh scripts/premises/live-rt.sh`. Environment: both keys. Pass: per vendor (`gpt-6.2-sol` translated, then `claude-haiku-5-5` native): exit 0, at least three `main` rows with status 200, no row with `thinking_dropped`. Fixture `rt-usage.json`.
+
+Spend bounds and cost estimates (prices from `crates/zygo-config/data/catalog.toml`, per million tokens; Claude Code's own prompt and tools are taken as about 20,000 tokens a request; no prompt caching counted, so the real cost is lower):
+
+| Owner script | Bound | Estimate |
+|---|---|---|
+| `live-window.sh` | `--max-turns 4` and 600 s per run (two runs) | `claude-haiku-5-5` ($0.10 input, $0.50 output): about 250,000 input and 10,000 output tokens, about $0.03 |
+| `live-16b.sh` | lead `--max-turns 3`; 26 subagent turns (one per file); 1800 s | the owner's model: about 1,800,000 input tokens (the subagent's context grows to the 128,000 limit over about 24 turns, then a few short turns after compaction) and 10,000 output tokens; about $3.70 at $2.00/$10.00 (the price of `gpt-6.2-sol`) |
+| `live-strict.sh` | no agent; 46 single requests, `max_tokens` 64 or 32, curl `-m 60` each | 16 Messages requests on `claude-haiku-5-5` (under $0.01) and 30 Responses or chat requests on `gpt-6.2-astra` ($8.00 input, $40.00 output, about $0.12) |
+| `live-rt.sh` | `--max-turns 5` and 600 s per vendor | `gpt-6.2-sol` ($2.00, $10.00): about 100,000 input and 2,000 output tokens, about $0.22; `claude-haiku-5-5`: about $0.01 |
+
+Without its key each script prints `live: <NAME> is not set; this check calls the real provider` and exits 1 before any network call.
+
+When done, remove the keys from the shell and delete the scratch folder (the pinned link, `results.txt`):
+
+```sh
+unset ANTHROPIC_API_KEY OPENAI_API_KEY LIVE_SMALL_MODEL LIVE_SMALL_BASE_URL
+rm -rf "$N2_SCRATCH"
+```
+
+## Windows checks
+
+For a Windows tester (x86_64 or arm64); N38 closes without them. Every command is PowerShell 7 (`pwsh`), run from the zygo checkout. The checks use `claude-haiku-5-5` for every role ($0.10 input, $0.50 output per million tokens); all three cost under $0.05.
+
+1. Install Rust (`rustup`), Node 20 or later, Git for Windows, SQLite (`winget install SQLite.SQLite`, gives `sqlite3`) and the pinned Claude Code: `npm install -g @anthropic-ai/claude-code@2.1.328` (this gives the `claude.cmd` shim). Open a new PowerShell after the installs.
+2. Build zygo as a release build and put it first on `PATH` for this session:
+   ```powershell
+   cargo build -p zygo --release
+   $env:Path = "$PWD\target\release;" + $env:Path
+   zygo --version; claude --version   # claude prints 2.1.328 (Claude Code)
+   ```
+3. **W-SHELL, part 1** (no zygo, and no key in the session: a key in the environment outranks `apiKeyHelper`, spec §8.4, so the helper would not run): `Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue`. Write `probe.json`. Its two commands parse under bash, cmd, Windows PowerShell 5.1 and PowerShell 7 (no `&&`: the pipe `|` separates the two parts in all four) and print one marker per shell; the helper appends them to `zygo-probe-key.txt` in the current folder and prints `probe-key`:
+   ```json
+   {"apiKeyHelper": "echo bash=$0 cmd=%COMSPEC% ps=$($PSVersionTable.PSVersion) >> zygo-probe-key.txt | echo probe-key",
+    "statusLine": {"type": "command", "command": "echo bash=$0 cmd=%COMSPEC% ps=$($PSVersionTable.PSVersion)"}}
+   ```
+   What each shell prints: bash: `bash=` shows `bash` or a path, `cmd=%COMSPEC%` stays literal, `ps=` is empty; cmd: `cmd=` shows the path of `cmd.exe`, `bash=$0` stays literal; PowerShell: `ps=` shows the version (`5.1.…` for Windows PowerShell, `7.…` for PowerShell 7), and each word may be on its own line. Save the path: `$saved = $env:Path`. Run `claude --settings probe.json` (interactive). With no key in the session, Claude Code runs the helper and gets `probe-key`; it is not a real key, so the first request fails, which is expected. Read the status line, quit with `/exit`, then `Get-Content zygo-probe-key.txt`. Record `Get-Command bash` (Git for Windows present or not). Then remove Git for Windows from `PATH`: `$env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch '\\Git\\' }) -join ';'`; if Claude Code still starts, `Remove-Item zygo-probe-key.txt`, repeat and record. Restore Git for Windows: `$env:Path = $saved`.
+4. Set the Anthropic API key for the session from a hidden prompt, never as a literal: `$env:ANTHROPIC_API_KEY = Read-Host -MaskInput 'Anthropic key'`.
+5. Cheap-model config, kept out of the tester's own zygo config:
+   ```powershell
+   $roles = 'lead','design','plan','triage','review','code','read'
+   ($roles | ForEach-Object { "[role.$_]`nmodel = `"claude-haiku-5-5`"`n" }) -join "`n" | Set-Content -Encoding utf8 live-win.toml
+   $env:ZYGO_CONFIG = "$PWD\live-win.toml"
+   zygo config check
+   ```
+6. **W-SHELL, part 2**: `zygo claude` (interactive) shows `zygo ◇` in its status line. Pass (parts 1 and 2): in each setup of part 1 the shell is bash or cmd (zygo's double-quoted path runs there), and the status line of part 2 shows `zygo ◇`. Fail: PowerShell (a quoted path needs `&` there; conformance A-1, A-9).
+7. **W-SHIM**: `zygo claude -- -p --max-turns 1 "Reply with the single word ready."` gives a reply, exit 0 (`$LASTEXITCODE`), and `sqlite3 "$env:LOCALAPPDATA\zygo\usage.db" "select status, agent_version from requests order by ts desc limit 1"` prints `200|2.1.328`.
+8. **W-AGENTS**: `zygo claude -- -p --max-turns 1 "List the names of the subagents you can use, one per line."`: the reply names `zygo-code` and `zygo-review`.
+9. Clean up: `Remove-Item Env:ANTHROPIC_API_KEY, Env:ZYGO_CONFIG; Remove-Item probe.json, zygo-probe-key.txt, live-win.toml`.
+10. Report three lines `W-<id> pass|fail: <shell or output>` with the date to the owner; the rows below are then filled.
+
+## Results
+
+| Id | Check | Agent | Version | Date | Result | Evidence |
+|---|---|---|---|---|---|---|
+| 16b | Subagent on a small-window model overruns, gets the mapped `prompt is too long`, recovers by reactive compaction (§20 #16b) | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | `scripts/premises/live-16b.sh` → `fixtures/claude-code/live/16b-usage.json`; §20 #16b |
+| 21 | A low `soft_context_window` makes Claude Code compact after the crossing turn (§20 #21) | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | `scripts/premises/live-window.sh` → `fixtures/claude-code/live/21-usage.json`; §20 #21 |
+| P1 | P1 through zygo on the real Anthropic API: `end_turn` (from 21) and `tool_use` (zygo `compact` tool) (§19 P1) | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | `scripts/premises/live-window.sh` → `fixtures/claude-code/live/p1-tooluse-usage.json`; §19 P1 |
+| 28 | One `zygo claude --passthrough -p` answer on the stored claude.ai login; no login token and no session token in any zygo file (§20 #28) | Claude Code | 2.1.328 | 2026-11-19 | pass | `fixtures/claude-code/live/28-usage.json`: reply `ready`, exit 0, one row `role_served = subscription`, `passthrough = 1`, `status = 200`, `estimated_usd = 0.0`. Run leak scan (`grep -raF`, the claude.ai login token prefix and the zygo session token prefix) over the session's `.dump requests` lines, stdout, stderr and the scrubbed capture: found nothing. The recorded 2026-11-19 run cannot show that a `session.log` copy existed: the script of that day did not require one and kept no record of it, so the `session.log` scan is unproven for that run. The pass rests on the usage row, stdout, stderr, the capture and the whole-store scan. (The script now records a run without a copy as a `fail`; the copy is polled every 0.2 s while the session runs, so lines written in the last 0.2 s before zygo removes the folder at exit may be missing from it.) `fixtures/claude-code/live/28-store-scan.txt`: the same two prefixes over every file of `~/.local/share/zygo` (21 files) and `~/.cache/zygo` (117 files), raw `usage.db`, `usage.db-wal`, `usage.db-shm` included, symbolic links followed only when their target is inside these two dirs (any other link is refused, named as a failure and not read), read errors counted; run read-only after the #28 run with `live-passthrough.sh --scan-only`, which rewrites this file only when the scan passes; 0 read errors, 0 refused links, 0 hits (two earlier scans of the same day, one without link following or the read-error count and one that followed every link, also found 138 files and 0 hits). With a session id, another session's token file is not counted only when its `url` is exactly `http://127.0.0.1:<port>` or `http://[::1]:<port>` and `<url>/healthz` answers with no proxy; any other `url` counts its token file. Side effects on the owner's real `HOME`: the test row stays in the owner's usage store; zygo creates or refreshes `~/.local/share/zygo/plugins`; Claude Code writes a transcript folder under `~/.claude/projects/` (named after the run's temporary repository) and possibly a `projects` entry in `~/.claude.json` (the owner may delete the transcript folder; the script does not); the script now sets `DISABLE_AUTOUPDATER=1` and takes the session id from the run's usage row (the 2026-11-19 run had neither; its id came from the new session folder). §20 #28 |
+| P-N24-1 | A `Bash` command with a non-zero exit fires `PostToolUseFailure`; an interrupted command's `tool_response.interrupted` is true (§13.3) | Claude Code | 2.1.328 | 2026-11-19 | fail | `fixtures/claude-code/live/p-n24-1-exit.json` (`exit 3` fires `PostToolUseFailure`: holds), `fixtures/claude-code/live/p-n24-1-interrupt.json` (a running command interrupted with Escape fires neither `PostToolUse` nor `PostToolUseFailure` within 30 s: no `interrupted` input exists); §13.3 |
+| P-N25-1 | A `SubagentStop` hook's `additionalContext` (no `decision`) reaches the subagent or the lead (§13.4) | Claude Code | 2.1.328 | 2026-11-19 | pass | `fixtures/claude-code/live/p-n25-1.json`: the subagent's next request carries the text as a `<system-reminder>`; §13.4 |
+| P-N28-1 | The status line is shown to the user and its text is in no upstream request (§17, C7) | Claude Code | 2.1.328 | 2026-11-19 | pass | `fixtures/claude-code/live/p-n28-1-pane.txt` (`zygo ◇ … ◇ compact 777k`); no recorded request holds `◇`, `777k` or `777000`; §17 + C7 |
+| N15-1M | Window `/context` shows for `design[1m]` whose model is 200k (§10.2.2) | Claude Code | 2.1.328 | 2026-11-19 | fail | `fixtures/claude-code/live/n15-1m-context.txt`: `/context` shows `2.7k/1m tokens`; the `[1m]` suffix sizes the window at 1M, not the 200k of v1's formula. Control run (`live-claude.sh n15c`, `--model design`, same config, no `[1m]`): `fixtures/claude-code/live/n15-control-context.txt` shows `2.2k/200k tokens`, so the 1M comes from the suffix alone; §10.2.2 |
+| A-20 | `disallowedTools` in an `--agents` entry removes the edit tools from that subagent (conformance A-20) | Claude Code | 2.1.328 | 2026-11-19 | pass | `fixtures/claude-code/live/a20-tools.json`: `zygo-review` has `disallowedTools` and its requests list no `Edit`, `Write` or `NotebookEdit`; `zygo-code` lists `Edit`; §8.1 A-20 |
+| 40 | The pinned Claude Code loads the delivered snapshot's skill as `<plugin>:<skill>` (§20 #40) | Claude Code | 2.1.328 | 2026-11-19 | pass | `fixtures/claude-code/live/40-skills.json` (`zygo:zygo-cli`); §20 #40 |
+| N35-D | `claude plugin install` plus zygo's selection gives the `zygo doctor` line; `installed_plugins.json` place and layout (§15.3) | Claude Code | 2.1.328 | 2026-11-19 | pass | `fixtures/claude-code/live/doctor-default.txt`, `fixtures/claude-code/live/doctor-custom-dir.txt`, `fixtures/claude-code/live/installed_plugins.json`: `<config dir>/plugins/installed_plugins.json`, top-level `version` (2) and `plugins` keyed `<plugin>@<marketplace>`; the act101-ai/act101 marketplace registers as `act101-marketplace`; §15.3 |
+| N14-S | Each built-in `refuse` rule's rewritten schema is accepted in strict mode by its vendor (§7.6) | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | `scripts/premises/live-strict.sh` → `fixtures/claude-code/live/n14-strict.json`; §7.6 |
+| N14-E | `reasoning.effort` (Responses) and `reasoning_effort` (chat) are accepted for each catalog effort level (§7.6) | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | `scripts/premises/live-strict.sh` → `fixtures/claude-code/live/n14-effort.json`; §7.6 |
+| R-RT | Reasoning round trip in a tool loop against each vendor (§7.6) | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | `scripts/premises/live-rt.sh` → `fixtures/claude-code/live/rt-usage.json`; §7.6 |
+| OC-THROW | A guard deny thrown in `tool.execute.before` blocks the tool | OpenCode | 1.18.16 | 2026-11-19 | pass | `fixtures/opencode/live/oc-throw.json`: the write did not happen; the tool result is the redaction guard's text with `is_error: true` |
+| OC-SHAPES | `tool.execute.before/after` payloads for `read`, `grep`, `glob`, `webfetch`, `edit`, `write` | OpenCode | 1.18.16 | 2026-11-19 | pass | `fixtures/opencode/live/tool.execute.before-edit.json` and the 11 other files: `edit` args `filePath`, `oldString`, `newString`; `write` args `filePath`, `content` (as `hook_opencode::normalize` expects). Run as role `code`: zygo removes `edit`/`write` from the main role |
+| OC-AUTO | `opencode --auto run …` (flag before the subcommand) runs | OpenCode | 1.18.16 | 2026-11-19 | fail | `fixtures/opencode/live/oc-auto.txt`: `zygo opencode --yolo -- run …` starts `opencode --auto run …`, which prints the help and exits 1; `opencode run --auto …` runs |
+| W-SHELL | Windows: the shell that runs `apiKeyHelper` and `statusLine`; zygo's double-quoted path works there | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | runbook above; §8.1 A-1/A-9 |
+| W-SHIM | Windows: the npm `claude.cmd` shim as the program | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | runbook above |
+| W-AGENTS | Windows: inline `--agents` JSON reaches Claude Code intact on the shim path | Claude Code | — | — | not run: deferred after release (owner, 2026-11-19) | runbook above |

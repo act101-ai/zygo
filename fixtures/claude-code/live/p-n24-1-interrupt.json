@@ -1,0 +1,11 @@
+{
+  "hook_events": [
+    "PreToolUse-Bash-main",
+    "SessionStart-main",
+    "UserPromptSubmit-main"
+  ],
+  "pane": [
+    "⏺ Bash(python3 -c \"import time; time.sleep(120)\")",
+    "⎿  Interrupted · What should Claude do instead?"
+  ]
+}

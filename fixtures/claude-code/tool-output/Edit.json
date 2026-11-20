@@ -1,0 +1,20 @@
+{
+  "filePath": "/repo/new-main.txt",
+  "oldString": "alpha",
+  "newString": "beta",
+  "originalFile": "alpha\n",
+  "structuredPatch": [
+    {
+      "oldStart": 1,
+      "oldLines": 1,
+      "newStart": 1,
+      "newLines": 1,
+      "lines": [
+        "-alpha",
+        "+beta"
+      ]
+    }
+  ],
+  "userModified": false,
+  "replaceAll": false
+}

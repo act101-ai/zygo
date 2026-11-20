@@ -1,0 +1,18 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "acfd66ba917fc3494",
+  "agent_type": "zygo-code",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001/subagents/agent-acfd66ba917fc3494.jsonl",
+  "last_assistant_message": "q1z zygo-code first report",
+  "background_tasks": [],
+  "session_crons": []
+}

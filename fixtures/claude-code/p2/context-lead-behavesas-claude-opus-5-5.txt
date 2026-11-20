@@ -1,0 +1,6 @@
+## Context Usage
+
+**Model:** lead  
+**Tokens:** 2.2k / 1m (0%)
+
+### Estimated usage by category

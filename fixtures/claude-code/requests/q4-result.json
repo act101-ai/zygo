@@ -1,0 +1,159 @@
+[
+  {
+    "tool": "Bash",
+    "tool_use_id": "toolu_q4_00_bash",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "stdout": "Q4-REPLACED-Bash",
+          "stderr": "",
+          "interrupted": false,
+          "isImage": false,
+          "noOutputExpected": false
+        }
+      }
+    },
+    "tool_result_seen_by_model": "Q4-REPLACED-Bash",
+    "replaced": true
+  },
+  {
+    "tool": "Read",
+    "tool_use_id": "toolu_q4_01_read",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "type": "text",
+          "file": {
+            "filePath": "/repo/README.txt",
+            "content": "Q4-REPLACED-Read line one\nQ4-REPLACED-Read line two",
+            "numLines": 3,
+            "startLine": 1,
+            "totalLines": 3
+          }
+        }
+      }
+    },
+    "tool_result_seen_by_model": "1\tQ4-REPLACED-Read line one\n2\tQ4-REPLACED-Read line two",
+    "replaced": true
+  },
+  {
+    "tool": "Read",
+    "tool_use_id": "toolu_q4_02_read",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "type": "text",
+          "file": {
+            "filePath": "/repo/README2.txt",
+            "content": "Q4-REPLACED-Read line one\nQ4-REPLACED-Read line two",
+            "numLines": 2,
+            "startLine": 1,
+            "totalLines": 2
+          }
+        }
+      }
+    },
+    "tool_result_seen_by_model": "1\tQ4-REPLACED-Read line one\n2\tQ4-REPLACED-Read line two",
+    "replaced": true
+  },
+  {
+    "tool": "Grep",
+    "tool_use_id": "toolu_q4_03_grep",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "mode": "files_with_matches",
+          "filenames": [
+            "Q4-REPLACED-Grep-files.txt"
+          ],
+          "numFiles": 5,
+          "totalFiles": 5
+        }
+      }
+    },
+    "tool_result_seen_by_model": "Found 5 files\nQ4-REPLACED-Grep-files.txt",
+    "replaced": true
+  },
+  {
+    "tool": "Grep",
+    "tool_use_id": "toolu_q4_04_grep",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "mode": "files_with_matches",
+          "filenames": [
+            "Q4-REPLACED-Grep-files.txt"
+          ],
+          "numFiles": 1,
+          "totalFiles": 2
+        }
+      }
+    },
+    "tool_result_seen_by_model": "Found 1 file\nQ4-REPLACED-Grep-files.txt",
+    "replaced": true
+  },
+  {
+    "tool": "Grep",
+    "tool_use_id": "toolu_q4_05_grep",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "mode": "content",
+          "numFiles": 0,
+          "filenames": [],
+          "content": "Q4-REPLACED-Grep-content",
+          "numLines": 1,
+          "totalLines": 2
+        }
+      }
+    },
+    "tool_result_seen_by_model": "Q4-REPLACED-Grep-content",
+    "replaced": true
+  },
+  {
+    "tool": "Glob",
+    "tool_use_id": "toolu_q4_06_glob",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "filenames": [
+            "Q4-REPLACED-Glob.txt"
+          ],
+          "durationMs": 17,
+          "numFiles": 1,
+          "truncated": false,
+          "totalMatches": 2,
+          "countIsComplete": true
+        }
+      }
+    },
+    "tool_result_seen_by_model": "Q4-REPLACED-Glob.txt",
+    "replaced": true
+  },
+  {
+    "tool": "WebFetch",
+    "tool_use_id": "toolu_q4_07_webfetch",
+    "hook_output": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "updatedToolOutput": {
+          "bytes": 70,
+          "code": 200,
+          "codeText": "OK",
+          "result": "Q4-REPLACED-WebFetch",
+          "durationMs": 140,
+          "url": "https://127.0.0.1:52984/page.html"
+        }
+      }
+    },
+    "tool_result_seen_by_model": "Q4-REPLACED-WebFetch",
+    "replaced": true
+  }
+]

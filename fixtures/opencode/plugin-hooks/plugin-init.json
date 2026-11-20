@@ -1,0 +1,14 @@
+{
+  "input": {
+    "contextKeys": [
+      "$",
+      "client",
+      "directory",
+      "experimental_workspace",
+      "project",
+      "serverUrl",
+      "worktree"
+    ]
+  },
+  "output": null
+}

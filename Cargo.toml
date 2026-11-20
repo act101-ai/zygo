@@ -1,0 +1,68 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/zygo",
+    "crates/zygo-core",
+    "crates/zygo-config",
+    "crates/zygo-proxy",
+    "crates/zygo-redact",
+    "crates/zygo-usage",
+    "crates/zygo-results",
+    "crates/zygo-mcp",
+    "crates/zygo-work",
+    "crates/zygo-hooks",
+    "crates/zygo-plugins",
+    "crates/zygo-launch",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+zygo-core = { path = "crates/zygo-core" }
+zygo-config = { path = "crates/zygo-config" }
+zygo-proxy = { path = "crates/zygo-proxy" }
+zygo-redact = { path = "crates/zygo-redact" }
+zygo-usage = { path = "crates/zygo-usage" }
+zygo-results = { path = "crates/zygo-results" }
+zygo-mcp = { path = "crates/zygo-mcp" }
+zygo-work = { path = "crates/zygo-work" }
+zygo-hooks = { path = "crates/zygo-hooks" }
+zygo-plugins = { path = "crates/zygo-plugins" }
+zygo-launch = { path = "crates/zygo-launch" }
+anyhow = "1.0.104"
+axum = "0.8.9"
+axum-server = { version = "0.9.2", features = ["tls-rustls-no-provider"] }
+base64 = "0.23.1"
+bytes = "1.12.2"
+clap = { version = "4.6.8", features = ["derive"] }
+fs4 = "1.1.0"
+futures-util = "0.3.34"
+hex = "0.4.3"
+http = "1.5.0"
+keyring = "4.2.0"
+libc = "0.2.191"
+rand = "0.10.4"
+rcgen = "0.14.8"
+rpassword = "7.5.4"
+regex = "1.13.2"
+regex-syntax = "0.8.12"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "stream", "json"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustrict = { version = "0.7.39", default-features = false, features = ["censor"] }
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+time = { version = "0.3.55", features = ["formatting", "parsing"] }
+tokio = { version = "1.54.1", features = ["full"] }
+toml = "1.2.1"
+toml_edit = "0.25.19"
+ulid = "3.0.0"
+walkdir = "2.5.0"
+which = "8.0.6"

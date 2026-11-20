@@ -1,0 +1,28 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Glob",
+  "tool_input": {
+    "pattern": "*.txt",
+    "path": "/repo"
+  },
+  "tool_response": {
+    "filenames": [
+      "README.txt"
+    ],
+    "durationMs": 17,
+    "numFiles": 1,
+    "truncated": false,
+    "totalMatches": 1,
+    "countIsComplete": true
+  },
+  "tool_use_id": "toolu_p3_main_06_glob",
+  "duration_ms": 17
+}

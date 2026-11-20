@@ -1,0 +1,80 @@
+{
+  "serverInfo": {
+    "name": "act-lite",
+    "version": "1.2.3"
+  },
+  "tools": [
+    {
+      "name": "analyze_clones",
+      "description": "Find duplicated code: exact and renamed duplicate syntax subtrees of at least 50 tokens, with member ranges, normalized size and variants. Exact matching ignores formatting and comments; renamed match"
+    },
+    {
+      "name": "analyze_coupling",
+      "description": "Count each file's dependencies: fan_in (distinct analyzed files that import it), fan_out (distinct workspace files it imports), degree = fan_in + fan_out and instability = fan_out / degree, with its e"
+    },
+    {
+      "name": "analyze_cycles",
+      "description": "Find file-level dependency cycles: each finding is a set of files in which every file reaches every other one through imports, with its members and one shortest path around the cycle as import steps. "
+    },
+    {
+      "name": "analyze_hotspots",
+      "description": "Rank files by where investigation should start: score = sum over a file's functions of complexity × lines. Each file comes with its top 5 functions, their locations and raw metrics; the formula is in "
+    },
+    {
+      "name": "analyze_impact",
+      "description": "List the files that depend on the focus files, directly or through other files, each with its depth and the chain of imports that reaches a focus file. A dependent is a file that imports a focus file,"
+    },
+    {
+      "name": "analyze_patterns",
+      "description": "Find functions with structural problems: more than 50 code lines, nesting deeper than 4, cyclomatic complexity above 10, or more than 5 parameters. Each finding gives the function, its location, the m"
+    },
+    {
+      "name": "callers",
+      "description": "Find every call site of a function or method across the codebase. Use to understand who depends on a function before changing its signature. Requires a language server; the server starts on the first "
+    },
+    {
+      "name": "definition",
+      "description": "Jump to definition — find where a symbol is defined given a usage location. Uses AST-based parsing, no language server required. Params: symbol (string), file (string), line (u32), column (u32)"
+    },
+    {
+      "name": "graph",
+      "description": "Get the file dependency edges of a scope: each edge is a source file, the workspace file it imports, the relationship kinds (import, require, reexport, module, include and others) and the import range"
+    },
+    {
+      "name": "references",
+      "description": "Find every usage of a symbol across the entire codebase — all files, not just the current one. Use before changing or deleting a symbol to understand full impact. Uses the language server when one is "
+    },
+    {
+      "name": "repo_outline",
+      "description": "Get a compressed overview of the repository — file tree with languages and line counts. Scope it: unscoped on a medium repo this is ~10,000 tokens that stay in context for the rest of the session, whe"
+    },
+    {
+      "name": "skeleton",
+      "description": "Get a file's structure — function signatures, class declarations, type definitions — without implementation bodies. Read it before the full file when you need only the API. Typically 5-10x fewer token"
+    },
+    {
+      "name": "status",
+      "description": "Get act-lite status: the supported languages and, for each language server, whether it is ready or not installed. Params: none"
+    },
+    {
+      "name": "symbols",
+      "description": "List all symbols (functions, classes, variables, types, constants) defined in a file with their locations and kinds. Read it before the full file when you need to know what is defined in it; it costs "
+    },
+    {
+      "name": "symbols_batch",
+      "description": "Retrieve symbols from multiple files in a single call, instead of calling symbols() in a loop. Pass `pattern` (name regex) or `kinds` unless you genuinely need every symbol: three medium files unfilte"
+    }
+  ],
+  "call": {
+    "tool": "status",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"name\":\"act-lite\",\"version\":\"1.2.3\",\"root\":\"/repo\",\"languages\":[\"Astro\",\"Bash\",\"C\",\"CMake\",\"C++\",\"C#\",\"CSS\",\"Dart\",\"Dockerfile\",\"Elixir\",\"Go\",\"GraphQL\",\"HCL/Terraform\",\"HTML\",\"Java\",\"JavaScript\",\"JSX\",\"JSON\",\"JSONC\",\"Julia\",\"Kotlin\",\"Lua\",\"Make\",\"Markdown\",\"Nix\",\"PHP\",\"Protocol Buffers\",\"Python\",\"R\",\"Ruby\",\"Rust\",\"Scala\",\"SQL\",\"SCSS\",\"Svelte\",\"Swift\",\"TOML\",\"TSX\",\"TypeScript\",\"Vue\",\"XML\",\"YAML\",\"Zig\"],\"lsp\":{\"typescript-language-server\":\"not_installed\",\"OmniSharp\":\"not_installed\",\"pyright-langserver\":\"not_installed\",\"rust-analyzer\":\"not_installed\",\"gopls\":\"not_installed\",\"elixir-ls\":\"not_installed\",\"jdtls\":\"not_installed\",\"kotlin-language-server\":\"not_installed\",\"clangd\":\"ready\",\"ruby-lsp\":\"not_installed\",\"sqls\":\"not_installed\",\"intelephense\":\"not_installed\",\"metals\":\"not_installed\",\"sourcekit-lsp\":\"ready\",\"dart\":\"not_installed\"}}"
+        }
+      ],
+      "isError": false
+    }
+  }
+}

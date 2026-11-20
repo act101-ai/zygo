@@ -1,0 +1,19 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "p3 subagent",
+    "prompt": "tracer-p3-sub run the tools",
+    "subagent_type": "claude",
+    "run_in_background": false
+  },
+  "tool_use_id": "toolu_p3_main_12_agent"
+}

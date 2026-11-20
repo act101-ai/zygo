@@ -1,0 +1,120 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "zygo/lead",
+  "provider": {
+    "zygo": {
+      "npm": "@ai-sdk/anthropic",
+      "options": {
+        "baseURL": "http://127.0.0.1:53243/v1",
+        "apiKey": "[omitted]",
+        "headers": {
+          "X-Layer": "inline",
+          "X-Layer-user": "1",
+          "X-Layer-project": "1",
+          "X-Layer-inline": "1"
+        }
+      },
+      "models": {
+        "user-model": {
+          "limit": {
+            "context": 111111,
+            "output": 4000
+          }
+        },
+        "lead": {
+          "limit": {
+            "context": 333333,
+            "output": 4000
+          }
+        },
+        "project-model": {
+          "limit": {
+            "context": 222222,
+            "output": 4000
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "model": "zygo/lead",
+      "options": {},
+      "permission": {
+        "edit": "deny"
+      }
+    },
+    "zygo-code": {
+      "mode": "subagent",
+      "description": "tracer-oc-agent-description",
+      "prompt": "tracer-oc-agent-prompt",
+      "model": "zygo/lead",
+      "permission": {
+        "edit": "deny"
+      },
+      "options": {}
+    },
+    "zygo-steps": {
+      "mode": "primary",
+      "description": "turn cap probe",
+      "model": "zygo/lead",
+      "steps": 2,
+      "options": {},
+      "permission": {}
+    }
+  },
+  "permission": {
+    "edit": "deny",
+    "bash": "allow",
+    "user-only": "allow",
+    "project-only": "allow",
+    "inline-only": "allow"
+  },
+  "mcp": {
+    "user-mcp": {
+      "type": "local",
+      "command": [
+        "python3",
+        "-I",
+        "/zygo/scripts/premises/mcp_probe.py"
+      ],
+      "enabled": true
+    },
+    "project-mcp": {
+      "type": "local",
+      "command": [
+        "python3",
+        "-I",
+        "/zygo/scripts/premises/mcp_probe.py"
+      ],
+      "enabled": true
+    },
+    "zygo": {
+      "type": "local",
+      "command": [
+        "python3",
+        "-I",
+        "/zygo/scripts/premises/mcp_probe.py"
+      ],
+      "enabled": true
+    }
+  },
+  "mode": {},
+  "plugin": [
+    "file:///tmp/run/ocdir/plugins/zygo.js"
+  ],
+  "command": {
+    "zygo-cmd": {
+      "description": "tracer-oc-command description",
+      "template": "tracer-oc-command body: $ARGUMENTS"
+    }
+  },
+  "plugin_origins": [
+    {
+      "spec": "file:///tmp/run/ocdir/plugins/zygo.js",
+      "source": "/tmp/run/ocdir",
+      "scope": "global"
+    }
+  ],
+  "username": "unknown"
+}

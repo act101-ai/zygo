@@ -1,0 +1,105 @@
+{
+ "model": "code",
+ "max_tokens": 64,
+ "tools": [
+  {
+   "name": "t",
+   "description": "Strict-schema probe.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "p01": {
+      "type": "string"
+     },
+     "p02": {
+      "type": "string"
+     },
+     "p03": {
+      "type": "string"
+     },
+     "p04": {
+      "type": "string"
+     },
+     "p05": {
+      "type": "string"
+     },
+     "p06": {
+      "type": "string"
+     },
+     "p07": {
+      "type": "string"
+     },
+     "p08": {
+      "type": "string"
+     },
+     "p09": {
+      "type": "string"
+     },
+     "p10": {
+      "type": "string"
+     },
+     "p11": {
+      "type": "string"
+     },
+     "p12": {
+      "type": "string"
+     },
+     "p13": {
+      "type": "string"
+     },
+     "p14": {
+      "type": "string"
+     },
+     "p15": {
+      "type": "string"
+     },
+     "p16": {
+      "type": "string"
+     },
+     "p17": {
+      "type": "string"
+     },
+     "p18": {
+      "type": "string"
+     },
+     "p19": {
+      "type": "string"
+     },
+     "p20": {
+      "type": "string"
+     },
+     "p21": {
+      "type": "string"
+     },
+     "p22": {
+      "type": "string"
+     },
+     "p23": {
+      "type": "string"
+     },
+     "p24": {
+      "type": "string"
+     },
+     "p25": {
+      "type": "string"
+     },
+     "p26": {
+      "type": "string"
+     }
+    },
+    "required": []
+   },
+   "strict": true
+  }
+ ],
+ "tool_choice": {
+  "type": "tool",
+  "name": "t"
+ },
+ "messages": [
+  {
+   "role": "user",
+   "content": "Call t (anthropic-optional_properties_max)."
+  }
+ ]
+}

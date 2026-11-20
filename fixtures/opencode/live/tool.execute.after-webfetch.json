@@ -1,0 +1,18 @@
+{
+  "input": {
+    "tool": "webfetch",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_03_webfetch",
+    "args": {
+      "url": "https://127.0.0.1:54618/page.html",
+      "format": "text"
+    }
+  },
+  "output": {
+    "output": "tracer pagetracer page text",
+    "title": "https://127.0.0.1:54618/page.html (text/html)",
+    "metadata": {
+      "truncated": false
+    }
+  }
+}

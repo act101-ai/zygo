@@ -1,0 +1,18 @@
+{
+  "input": {
+    "tool": "glob",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_02_glob",
+    "args": {
+      "pattern": "**/*.txt"
+    }
+  },
+  "output": {
+    "title": "",
+    "metadata": {
+      "count": 1,
+      "truncated": false
+    },
+    "output": "/repo/files/README.txt"
+  }
+}

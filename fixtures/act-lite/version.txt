@@ -1,0 +1,4 @@
+tag: v1.2.3
+asset: act-lite-v1.2.3-aarch64-apple-darwin.tar.gz
+sha256: e24b9a25a48e7d99f1c9b2e32281c0470cffac765cf1705a443b9ff493ecd818 (matches act-lite-v1.2.3-aarch64-apple-darwin.tar.gz.sha256)
+--version: act-lite 1.2.3

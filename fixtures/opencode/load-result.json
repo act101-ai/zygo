@@ -1,0 +1,230 @@
+{
+ "P5 loading": {
+  "agent list has zygo-code": true,
+  "mcp list": [
+   "\u25cf  \u2713 user-mcp \u001b[90mconnected",
+   "\u2502      \u001b[90mpython3 -I /zygo/scripts/premises/mcp_probe.py",
+   "\u25cf  \u2713 project-mcp \u001b[90mconnected",
+   "\u2502      \u001b[90mpython3 -I /zygo/scripts/premises/mcp_probe.py",
+   "\u25cf  \u2713 zygo \u001b[90mconnected",
+   "\u2502      \u001b[90mpython3 -I /zygo/scripts/premises/mcp_probe.py"
+  ],
+  "debug skill has zygo-probe-skill": true,
+  "debug config command keys": [
+   "zygo-cmd"
+  ],
+  "debug config agent keys": [
+   "build",
+   "zygo-code",
+   "zygo-steps"
+  ],
+  "debug config plugin": [
+   "file:///tmp/run/ocdir/plugins/zygo.js"
+  ],
+  "run: tool names in main request": [
+   "bash",
+   "glob",
+   "grep",
+   "project-mcp_probe_tool",
+   "read",
+   "skill",
+   "task",
+   "todowrite",
+   "user-mcp_probe_tool",
+   "webfetch",
+   "zygo_probe_tool"
+  ],
+  "run: zygo-code named in a main request": true,
+  "run: skill named in a main request": true,
+  "run --command zygo-cmd: expanded template seen": true,
+  "plugin loaded (plugin-init logged)": true
+ },
+ "plugin hooks": {
+  "logged": [
+   "experimental.chat.system.transform",
+   "experimental.session.compacting",
+   "plugin-init",
+   "tool.execute.after-bash",
+   "tool.execute.before-bash"
+  ],
+  "tool.execute.after replacement seen in next request": true,
+  "original bash output seen in a request": false,
+  "session context text in system": true,
+  "pre-compaction hook text (output.context) seen in the compaction request": true,
+  "compaction requests (summarization system prompt) after a reply whose usage is over limit.context": [
+   4
+  ]
+ },
+ "A-20 turn cap (agent steps = 2, two tool calls scripted)": [
+  {
+   "seq": 9,
+   "reply": "ocs-00",
+   "tools": 11,
+   "tool_choice": {
+    "type": "auto"
+   },
+   "last message": "{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"\\\"tracer-oc-steps run two commands\\\"\", \"cache_control\": {\"type\": \"ephemeral\"}}]}"
+  },
+  {
+   "seq": 10,
+   "reply": "default",
+   "tools": 11,
+   "tool_choice": {
+    "type": "auto"
+   },
+   "last message": "{\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"CRITICAL - MAXIMUM STEPS REACHED\\n\\nThe maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.\\n\\nSTRICT REQUIREMENTS:\\n1. Do NOT make any tool calls (no reads, writ"
+  }
+ ],
+ "run requests": [
+  {
+   "seq": 1,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 0,
+   "reply": "default",
+   "messages": 1,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 2,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 11,
+   "reply": "oc-00",
+   "messages": 1,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 3,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 11,
+   "reply": "oc-01",
+   "messages": 3,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 4,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 0,
+   "reply": "default",
+   "messages": 1,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 5,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 11,
+   "reply": "default",
+   "messages": 3,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 6,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 0,
+   "reply": "default",
+   "messages": 1,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 7,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 11,
+   "reply": "default",
+   "messages": 1,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 8,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 0,
+   "reply": "default",
+   "messages": 1,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 9,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 11,
+   "reply": "ocs-00",
+   "messages": 1,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  },
+  {
+   "seq": 10,
+   "model": "lead",
+   "x-layer": "inline",
+   "x-layer-headers": [
+    "x-layer-inline",
+    "x-layer-project",
+    "x-layer-user"
+   ],
+   "tools": 11,
+   "reply": "default",
+   "messages": 4,
+   "system has plugin context text": true,
+   "max_tokens": 4000
+  }
+ ]
+}

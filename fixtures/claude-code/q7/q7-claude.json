@@ -1,0 +1,207 @@
+{
+  "apiKeyHelper": {
+    "ANTHROPIC_API_KEY_set": false,
+    "mock_accepted_requests": 7,
+    "credential_headers_of_first_request": [
+      "authorization",
+      "x-api-key"
+    ]
+  },
+  "model": {
+    "main_request_models": [
+      "lead"
+    ]
+  },
+  "availableModels": {
+    "--model claude-haiku-4-5 outside the list -> request model": "lead",
+    "output": "Model \"claude-haiku-4-5\" is restricted by your organization's settings. Using lead[1m] instead.\n[claude-code:unrecognized_model] {\"model\":\"lead[1m]\",\"query_source\":\"sdk\"}\nok\n"
+  },
+  "env": {
+    "ZYGO_Q7_ENV in a Bash tool_result": true
+  },
+  "ANTHROPIC_CUSTOM_HEADERS (set in settings env)": {
+    "x-zygo-session": "tracer-q7-session",
+    "x-zygo-repo": "example.com/tracer/repo"
+  },
+  "aliases (ANTHROPIC_DEFAULT_*_MODEL)": {
+    "opus": {
+      "model": "lead",
+      "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,thinking-token-count-2026-05-13,advanced-tool-use-2025-11-20,effort-2025-11-24"
+    },
+    "sonnet": {
+      "model": "code",
+      "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,thinking-token-count-2026-05-13,advanced-tool-use-2025-11-20,effort-2025-11-24"
+    },
+    "haiku": {
+      "model": "read",
+      "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,context-management-2025-06-27,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,thinking-token-count-2026-05-13,advanced-tool-use-2025-11-20,effort-2025-11-24"
+    },
+    "fable": {
+      "model": "design",
+      "anthropic-beta": "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,thinking-token-count-2026-05-13,advanced-tool-use-2025-11-20,effort-2025-11-24"
+    }
+  },
+  "--agents model": {
+    "zygo-code request models": [
+      "code"
+    ]
+  },
+  "CLAUDE_CODE_SUBAGENT_MODEL": {
+    "built-in claude subagent request models": [
+      "code"
+    ]
+  },
+  "subagent identity": {
+    "x-claude-code-agent-type of zygo-code requests": [
+      "custom"
+    ],
+    "x-claude-code-agent-type of built-in claude requests": [
+      "claude"
+    ],
+    "hook agent_type values in subagent hook inputs": [
+      "claude",
+      "zygo-code"
+    ]
+  },
+  "--agents": {
+    "init agents": [
+      "claude",
+      "Explore",
+      "general-purpose",
+      "Plan",
+      "statusline-setup",
+      "zygo-code"
+    ],
+    "subagent requests": 2,
+    "main request tool names": [
+      "Agent",
+      "Bash",
+      "DeferredToolPlaceholder",
+      "Edit",
+      "ListAgents",
+      "Read",
+      "ReportFindings",
+      "ScheduleWakeup",
+      "Skill",
+      "ToolSearch",
+      "Workflow",
+      "Write"
+    ],
+    "subagent tool names": [
+      "Agent",
+      "Bash",
+      "DeferredToolPlaceholder",
+      "ListAgents",
+      "Read",
+      "ReportFindings",
+      "Skill",
+      "ToolSearch"
+    ],
+    "prompt text in subagent system": true,
+    "description in main request": true,
+    "maxTurns=2: requests the subagent sent (3 tool turns scripted)": 2,
+    "maxTurns=2: text the lead got back": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_q7_main_01_agent\", \"type\": \"tool_result\", \"content\": [{\"type\": \"text\", \"text\": \"  NOTE: this agent stopped at its 2-turn limit before finishing. It was still calling tools and had produced no report. Send the agent a message (SendMessage) to let it"
+  },
+  "--plugin-dir": {
+    "init plugins": [
+      {
+        "name": "zygo-probe",
+        "path": "/tmp/run/plugins/zygo-probe",
+        "source": "zygo-probe@inline",
+        "version": "0.0.1"
+      },
+      {
+        "name": "cc-plugin-agents-md",
+        "path": "builtin",
+        "source": "cc-plugin-agents-md@builtin"
+      },
+      {
+        "name": "cc-plugin-telemetry",
+        "path": "builtin",
+        "source": "cc-plugin-telemetry@builtin"
+      },
+      {
+        "name": "cc-plugin-privacy",
+        "path": "builtin",
+        "source": "cc-plugin-privacy@builtin"
+      },
+      {
+        "name": "cc-plugin-plugin-authoring",
+        "path": "builtin",
+        "source": "cc-plugin-plugin-authoring@builtin"
+      }
+    ],
+    "plugin skill in main request": true,
+    "plugin command in init slash_commands": [
+      "zygo-probe:probe",
+      "zygo-probe:probe-skill"
+    ]
+  },
+  "--mcp-config": {
+    "init mcp_servers": [
+      {
+        "name": "probe",
+        "status": "connected",
+        "source": "dynamic"
+      }
+    ],
+    "probe tool named in main request": true
+  },
+  "DISABLE_LOGIN_COMMAND / DISABLE_LOGOUT_COMMAND": {
+    "interactive '/log' suggestions, set": [
+      "    /debug                      Turn on debug logging and investigate problems"
+    ],
+    "interactive '/log' suggestions, unset": [
+      "  ❯ /login                      Switch Anthropic accounts",
+      "    /logout                     Sign out from your Anthropic account",
+      "    /debug                      Turn on debug logging and investigate problems"
+    ],
+    "set: login or logout in init slash_commands": [],
+    "unset (control): login or logout in init slash_commands": []
+  },
+  "CLAUDE_CODE_GATEWAY_HINT_HEADERS": {
+    "with (A1 main) x-claude-code-* headers": [
+      "x-claude-code-prompt-id",
+      "x-claude-code-request-class",
+      "x-claude-code-session-id"
+    ],
+    "without": [
+      "x-claude-code-session-id"
+    ]
+  },
+  "hooks": {
+    "events logged in A1": [
+      "PostToolUse",
+      "PreToolUse",
+      "SessionStart",
+      "SubagentStop",
+      "UserPromptSubmit"
+    ]
+  },
+  "disableAllHooks": {
+    "false (A1-A4): hook inputs logged": 25,
+    "true (A5): new hook inputs": 0
+  },
+  "allowManagedHooksOnly": {
+    "note": "managed-only key; CLAUDE_CODE_MANAGED_SETTINGS_PATH is not honored by this build (A6 run: --settings hooks still ran), so the effect needs the system managed-settings file (administrator rights), which N2 does not write",
+    "new hook inputs from --settings hooks with the A6 file": 2
+  },
+  "statusLine refreshInterval 2": {
+    "statusline runs in about 16 s": 8,
+    "first input keys": [
+      "context_window",
+      "cost",
+      "cwd",
+      "effort",
+      "exceeds_200k_tokens",
+      "fast_mode",
+      "model",
+      "output_style",
+      "session_id",
+      "thinking",
+      "transcript_path",
+      "version",
+      "workspace"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a47a5756291c7f553",
+  "agent_type": "",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001/subagents/agent-a47a5756291c7f553.jsonl",
+  "last_assistant_message": "<analysis>The conversation so far: the user sent tracer turns; the assistant answered and ran one command.</analysis>\n<summary>1. Primary request: answer the tracer turns.\n2. Work done: one command ran and printed its tracer output.\n3. Pending: none.\n4. Next step: wait for the next user message.</summary>",
+  "background_tasks": [],
+  "session_crons": []
+}

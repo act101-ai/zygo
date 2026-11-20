@@ -1,0 +1,40 @@
+{
+ "model": "read",
+ "max_tokens": 64,
+ "tools": [
+  {
+   "name": "t",
+   "description": "Strict-schema probe.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "o": {
+      "type": "object",
+      "properties": {
+       "a": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "a"
+      ]
+     }
+    },
+    "required": [
+     "o"
+    ]
+   },
+   "strict": true
+  }
+ ],
+ "tool_choice": {
+  "type": "tool",
+  "name": "t"
+ },
+ "messages": [
+  {
+   "role": "user",
+   "content": "Call t (openai-closed_object)."
+  }
+ ]
+}

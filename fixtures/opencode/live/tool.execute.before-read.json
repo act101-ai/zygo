@@ -1,0 +1,12 @@
+{
+  "input": {
+    "tool": "read",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_00_read"
+  },
+  "output": {
+    "args": {
+      "filePath": "/repo/files/README.txt"
+    }
+  }
+}

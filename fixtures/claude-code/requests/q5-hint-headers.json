@@ -1,0 +1,214 @@
+{
+  "runs": [
+    "P1-endturn-iter",
+    "P1-endturn-noiter",
+    "P1-interactive",
+    "P1-subagent-iter",
+    "P1-subagent-noiter",
+    "P1-tooluse-iter",
+    "P1-tooluse-noiter",
+    "P1-unrecognized-300k",
+    "P1-unrecognized-full",
+    "P3",
+    "Q1",
+    "Q4",
+    "Q6",
+    "Q7"
+  ],
+  "requests": 102,
+  "by_request_class": {
+    "main": {
+      "requests": 60,
+      "headers": {
+        "x-claude-code-session-id": {
+          "present_in": 60,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-1p-request-class": {
+          "present_in": 60,
+          "values": [
+            "main"
+          ]
+        },
+        "x-claude-code-prompt-id": {
+          "present_in": 56,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-code-request-class": {
+          "present_in": 60,
+          "values": [
+            "main"
+          ]
+        },
+        "x-claude-code-context-compacted": {
+          "present_in": 7,
+          "values": [
+            "auto"
+          ]
+        },
+        "x-claude-code-prev-tool-durations": {
+          "present_in": 29,
+          "values": [
+            "Agent=<ms>",
+            "Bash=<ms>",
+            "Edit=<ms>",
+            "Glob=<ms>",
+            "Grep=<ms>",
+            "NotebookEdit=<ms>",
+            "Read=<ms>",
+            "WebFetch=<ms>",
+            "Write=<ms>"
+          ]
+        }
+      }
+    },
+    "compaction": {
+      "requests": 10,
+      "headers": {
+        "x-claude-code-session-id": {
+          "present_in": 10,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-1p-request-class": {
+          "present_in": 10,
+          "values": [
+            "main"
+          ]
+        },
+        "x-claude-code-compaction": {
+          "present_in": 10,
+          "values": [
+            "auto"
+          ]
+        },
+        "x-claude-code-request-class": {
+          "present_in": 10,
+          "values": [
+            "compaction"
+          ]
+        },
+        "x-claude-code-agent-id": {
+          "present_in": 3,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-code-prompt-id": {
+          "present_in": 3,
+          "values": [
+            "<id>"
+          ]
+        }
+      }
+    },
+    "auxiliary": {
+      "requests": 8,
+      "headers": {
+        "x-claude-code-session-id": {
+          "present_in": 8,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-1p-request-class": {
+          "present_in": 8,
+          "values": [
+            "followup-generation",
+            "main",
+            "summary-extraction"
+          ]
+        },
+        "x-claude-code-request-class": {
+          "present_in": 8,
+          "values": [
+            "auxiliary"
+          ]
+        },
+        "x-claude-code-agent-id": {
+          "present_in": 1,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-code-prompt-id": {
+          "present_in": 1,
+          "values": [
+            "<id>"
+          ]
+        }
+      }
+    },
+    "subagent": {
+      "requests": 23,
+      "headers": {
+        "x-claude-code-session-id": {
+          "present_in": 23,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-1p-request-class": {
+          "present_in": 23,
+          "values": [
+            "blocking-subagent"
+          ]
+        },
+        "x-claude-code-agent-id": {
+          "present_in": 23,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-code-agent-type": {
+          "present_in": 23,
+          "values": [
+            "claude",
+            "custom"
+          ]
+        },
+        "x-claude-code-prompt-id": {
+          "present_in": 23,
+          "values": [
+            "<id>"
+          ]
+        },
+        "x-claude-code-request-class": {
+          "present_in": 23,
+          "values": [
+            "subagent"
+          ]
+        },
+        "x-claude-code-prev-tool-durations": {
+          "present_in": 16,
+          "values": [
+            "Bash=<ms>",
+            "Edit=<ms>",
+            "Glob=<ms>",
+            "Grep=<ms>",
+            "NotebookEdit=<ms>",
+            "Read=<ms>",
+            "WebFetch=<ms>",
+            "Write=<ms>"
+          ]
+        }
+      }
+    },
+    "(none)": {
+      "requests": 1,
+      "headers": {
+        "x-claude-code-session-id": {
+          "present_in": 1,
+          "values": [
+            "<id>"
+          ]
+        }
+      }
+    }
+  }
+}

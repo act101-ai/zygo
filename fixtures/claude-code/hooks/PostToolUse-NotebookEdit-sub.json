@@ -1,0 +1,34 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "agent_id": "a1a80dd100f197242",
+  "agent_type": "claude",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "NotebookEdit",
+  "tool_input": {
+    "notebook_path": "/repo/nb.ipynb",
+    "cell_id": "c1",
+    "new_source": "print('tracer sub')",
+    "edit_mode": "replace"
+  },
+  "tool_response": {
+    "new_source": "print('tracer sub')",
+    "old_source": "print('tracer main')",
+    "cell_type": "code",
+    "language": "python",
+    "edit_mode": "replace",
+    "cell_id": "c1",
+    "error": "",
+    "notebook_path": "/repo/nb.ipynb",
+    "original_file": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"execution_count\": null,\n   \"outputs\": [],\n   \"source\": \"print('tracer main')\"\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}",
+    "updated_file": "{\n \"cells\": [\n  {\n   \"cell_type\": \"code\",\n   \"id\": \"c1\",\n   \"metadata\": {},\n   \"execution_count\": null,\n   \"outputs\": [],\n   \"source\": \"print('tracer sub')\"\n  }\n ],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}"
+  },
+  "tool_use_id": "toolu_p3_sub_10_notebookedit",
+  "duration_ms": 3
+}

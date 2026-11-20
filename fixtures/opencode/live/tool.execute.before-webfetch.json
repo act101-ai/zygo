@@ -1,0 +1,13 @@
+{
+  "input": {
+    "tool": "webfetch",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_03_webfetch"
+  },
+  "output": {
+    "args": {
+      "url": "https://127.0.0.1:54618/page.html",
+      "format": "text"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+Claude Code doesn't recognize the model "lead", so it assumes a context window of 1m tokens. Update Claude Code, or see https://code.claude.com/docs/en/model-config#correct-the-window-for-a-gateway-or-custom-model-id to set the window.
+These settings entries were skipped; the rest of each file is in effect:
+  /tmp/run/s-array.json (modelPicker): "modelPicker" must be an object with an "options" array of { model, label?, description?, behavesAs? } rows; received array. This field was ignored.
+## Context Usage
+
+**Model:** lead  

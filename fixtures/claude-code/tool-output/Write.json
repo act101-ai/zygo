@@ -1,0 +1,8 @@
+{
+  "type": "create",
+  "filePath": "/repo/new-main.txt",
+  "content": "alpha\n",
+  "structuredPatch": [],
+  "originalFile": null,
+  "userModified": false
+}

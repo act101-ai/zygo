@@ -1,0 +1,34 @@
+{
+ "model": "code",
+ "max_tokens": 64,
+ "tools": [
+  {
+   "name": "t",
+   "description": "Strict-schema probe.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "n": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+     }
+    },
+    "required": [
+     "n"
+    ]
+   },
+   "strict": true
+  }
+ ],
+ "tool_choice": {
+  "type": "tool",
+  "name": "t"
+ },
+ "messages": [
+  {
+   "role": "user",
+   "content": "Call t (anthropic-numeric_bounds)."
+  }
+ ]
+}

@@ -1,0 +1,979 @@
+[
+  {
+    "seq": 1,
+    "path": "/api/hello",
+    "reply": "401-no-credential",
+    "hint_headers": {},
+    "model": null,
+    "messages": 0,
+    "thinking": null,
+    "output_config": null,
+    "context_management": null,
+    "max_tokens": null,
+    "tools": 0,
+    "last_message": null
+  },
+  {
+    "seq": 2,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-00",
+    "hint_headers": {
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 2,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nT"
+  },
+  {
+    "seq": 3,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-01",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Bash=78",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 4,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_00_bash\", \"type\": \"tool_result\", \"content\": \"tracer-bash-out-main\", \"is_error\": false, \"cache_contro"
+  },
+  {
+    "seq": 4,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-02",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Read=6",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 6,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_01_read\", \"type\": \"tool_result\", \"content\": \"1\\ttracer readme line one\\n2\\ttracer readme line two\\n3"
+  },
+  {
+    "seq": 5,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-03",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Read=3",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 8,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_02_read\", \"type\": \"tool_result\", \"content\": [{\"type\": \"image\", \"source\": {\"type\": \"base64\", \"data\": "
+  },
+  {
+    "seq": 6,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-04",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Read=47",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 10,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_03_read\", \"type\": \"tool_result\", \"content\": [{\"type\": \"text\", \"text\": \"PDF file read: /repo/doc.pdf "
+  },
+  {
+    "seq": 7,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-05",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Read=2",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 13,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_04_read\", \"type\": \"tool_result\", \"content\": [{\"text\": \"<cell id=\\\"c1\\\">print('tracer notebook')</cel"
+  },
+  {
+    "seq": 8,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-06",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Grep=19",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 15,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_05_grep\", \"type\": \"tool_result\", \"content\": \"Found 4 files\\nnb.ipynb\\ndoc.pdf\\npage.html\\nREADME.txt"
+  },
+  {
+    "seq": 9,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-07",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Glob=17",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 17,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_06_glob\", \"type\": \"tool_result\", \"content\": \"README.txt\", \"cache_control\": {\"type\": \"ephemeral\"}}]}"
+  },
+  {
+    "seq": 10,
+    "path": "/v1/messages?beta=true",
+    "reply": "default",
+    "hint_headers": {
+      "x-claude-code-request-class": "auxiliary"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 1,
+    "thinking": null,
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": null,
+    "max_tokens": 128000,
+    "tools": 0,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"\\nWeb page content:\\n---\\ntracer page\\n===========\\n\\ntracer page text\\n---\\n\\nGive the heading.\\n\\nProvi"
+  },
+  {
+    "seq": 11,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-08",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "WebFetch=128",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 19,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_07_webfetch\", \"type\": \"tool_result\", \"content\": \"ok\", \"cache_control\": {\"type\": \"ephemeral\"}}]}"
+  },
+  {
+    "seq": 12,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-09",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Write=9",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 21,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_08_write\", \"type\": \"tool_result\", \"content\": \"File created successfully at: /repo/new-main.txt (file"
+  },
+  {
+    "seq": 13,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-10",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Edit=4",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 24,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_09_edit\", \"type\": \"tool_result\", \"content\": \"The file /repo/new-main.txt has been updated successful"
+  },
+  {
+    "seq": 14,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-11",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "NotebookEdit=3",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 26,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_10_notebookedit\", \"type\": \"tool_result\", \"content\": \"Updated cell c1 with print('tracer main')\", \"ca"
+  },
+  {
+    "seq": 15,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-12",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Read=2",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 28,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"tool_result\", \"content\": \"File does not exist. Note: your current working directory is /repo.\", \"is_error\": true, \"tool_u"
+  },
+  {
+    "seq": 16,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-00",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 2,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# gitStatus\\nT"
+  },
+  {
+    "seq": 17,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-01",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Bash=13",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 5,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_00_bash\", \"type\": \"tool_result\", \"content\": \"tracer-bash-out-sub\", \"is_error\": false}]}"
+  },
+  {
+    "seq": 18,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-02",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Read=1",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 7,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_01_read\", \"type\": \"tool_result\", \"content\": \"1\\ttracer readme line one\\n2\\ttracer readme line two\\n3\\"
+  },
+  {
+    "seq": 19,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-03",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Read=2",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 9,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_02_read\", \"type\": \"tool_result\", \"content\": [{\"type\": \"image\", \"source\": {\"type\": \"base64\", \"data\": \""
+  },
+  {
+    "seq": 20,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-04",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Read=24",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 11,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_03_read\", \"type\": \"tool_result\", \"content\": [{\"type\": \"text\", \"text\": \"PDF file read: /repo/doc.pdf ("
+  },
+  {
+    "seq": 21,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-05",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Read=2",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 13,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_04_read\", \"type\": \"tool_result\", \"content\": [{\"text\": \"<cell id=\\\"c1\\\">print('tracer main')</cell id="
+  },
+  {
+    "seq": 22,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-06",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Grep=16",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 15,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_05_grep\", \"type\": \"tool_result\", \"content\": \"Found 4 files\\nnb.ipynb\\ndoc.pdf\\npage.html\\nREADME.txt\""
+  },
+  {
+    "seq": 23,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-07",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Glob=18",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 17,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_06_glob\", \"type\": \"tool_result\", \"content\": \"README.txt\\nnew-main.txt\", \"cache_control\": {\"type\": \"ep"
+  },
+  {
+    "seq": 24,
+    "path": "/v1/messages?beta=true",
+    "reply": "default",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-request-class": "auxiliary"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 1,
+    "thinking": null,
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": null,
+    "max_tokens": 128000,
+    "tools": 0,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"\\nWeb page content:\\n---\\ntracer page\\n===========\\n\\ntracer page text\\n---\\n\\nGive the heading.\\n\\nProvi"
+  },
+  {
+    "seq": 25,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-08",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "WebFetch=7",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 19,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_07_webfetch\", \"type\": \"tool_result\", \"content\": \"ok\", \"cache_control\": {\"type\": \"ephemeral\"}}]}"
+  },
+  {
+    "seq": 26,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-09",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Write=4",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 21,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_08_write\", \"type\": \"tool_result\", \"content\": \"File created successfully at: /repo/new-sub.txt (file s"
+  },
+  {
+    "seq": 27,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-10",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Edit=3",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 23,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_09_edit\", \"type\": \"tool_result\", \"content\": \"The file /repo/new-sub.txt has been updated successfully"
+  },
+  {
+    "seq": 28,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-11",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "NotebookEdit=3",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 25,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_10_notebookedit\", \"type\": \"tool_result\", \"content\": \"Updated cell c1 with print('tracer sub')\", \"cach"
+  },
+  {
+    "seq": 29,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-sub-12",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Read=1",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 27,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"tool_result\", \"content\": \"File does not exist. Note: your current working directory is /repo.\", \"is_error\": true, \"tool_u"
+  },
+  {
+    "seq": 30,
+    "path": "/v1/messages?beta=true",
+    "reply": "default-summary",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-compaction": "auto",
+      "x-claude-code-request-class": "compaction"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 27,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"tool_result\", \"content\": \"File does not exist. Note: your current working directory is /repo.\", \"is_error\": true, \"tool_u"
+  },
+  {
+    "seq": 31,
+    "path": "/v1/messages?beta=true",
+    "reply": "default",
+    "hint_headers": {
+      "x-claude-code-agent-id": "a1a80dd100f197242",
+      "x-claude-code-agent-type": "claude",
+      "x-claude-code-prev-tool-durations": "Bash=23",
+      "x-claude-code-request-class": "subagent"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 5,
+    "thinking": {
+      "type": "adaptive",
+      "display": "omitted"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_sub_12_bash\", \"type\": \"tool_result\", \"content\": \"tracer-sub-last\", \"is_error\": false}, {\"type\": \"text\", \""
+  },
+  {
+    "seq": 32,
+    "path": "/v1/messages?beta=true",
+    "reply": "p3-main-13",
+    "hint_headers": {
+      "x-claude-code-prev-tool-durations": "Agent=5040",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 30,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"tool_use_id\": \"toolu_p3_main_12_agent\", \"type\": \"tool_result\", \"content\": [{\"type\": \"text\", \"text\": \"[Subagent hand-back] The tex"
+  },
+  {
+    "seq": 33,
+    "path": "/v1/messages?beta=true",
+    "reply": "default-summary",
+    "hint_headers": {
+      "x-claude-code-compaction": "auto",
+      "x-claude-code-request-class": "compaction"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 32,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": \"CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\\n\\n- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.\\n-"
+  },
+  {
+    "seq": 34,
+    "path": "/v1/messages?beta=true",
+    "reply": "default",
+    "hint_headers": {
+      "x-claude-code-context-compacted": "auto",
+      "x-claude-code-request-class": "main"
+    },
+    "model": "claude-opus-5-5",
+    "messages": 6,
+    "thinking": {
+      "type": "adaptive",
+      "display": "updates"
+    },
+    "output_config": {
+      "effort": "medium"
+    },
+    "context_management": {
+      "edits": [
+        {
+          "type": "clear_thinking_20251015",
+          "keep": "all"
+        }
+      ]
+    },
+    "max_tokens": 128000,
+    "tools": 10,
+    "last_message": "{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"<system-reminder>\\nResult of calling the Read tool:\\n[{\\\"text\\\":\\\"<cell id=\\\\\\\"c1\\\\\\\">print('tracer sub')"
+  }
+]

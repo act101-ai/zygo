@@ -1,0 +1,46 @@
+[package]
+name = "zygo-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zygo-core.workspace = true
+zygo-config.workspace = true
+zygo-redact.workspace = true
+zygo-usage.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+# arbitrary_precision: numbers keep their text when a body is serialized again (§7.3). raw_value: the usage splice (§10.2.2).
+serde_json = { workspace = true, features = ["arbitrary_precision", "raw_value"] }
+tokio.workspace = true
+axum.workspace = true
+axum-server.workspace = true
+rustls.workspace = true
+reqwest.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+http.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+time.workspace = true
+rand.workspace = true
+regex.workspace = true
+toml_edit.workspace = true
+fs4.workspace = true
+toml.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[features]
+# Test hooks (upstream name overrides, in-flight hold, usage wait); only the self dev-dependency enables it.
+test-hooks = []
+
+[dev-dependencies]
+zygo-proxy = { path = ".", features = ["test-hooks"] }
+tempfile.workspace = true
+toml.workspace = true
+rcgen.workspace = true

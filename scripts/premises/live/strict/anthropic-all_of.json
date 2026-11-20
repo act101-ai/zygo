@@ -1,0 +1,55 @@
+{
+ "model": "code",
+ "max_tokens": 64,
+ "tools": [
+  {
+   "name": "t",
+   "description": "Strict-schema probe.",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "v": {
+      "allOf": [
+       {
+        "type": "object",
+        "properties": {
+         "a": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "a"
+        ]
+       },
+       {
+        "type": "object",
+        "properties": {
+         "b": {
+          "type": "integer"
+         }
+        },
+        "required": [
+         "b"
+        ]
+       }
+      ]
+     }
+    },
+    "required": [
+     "v"
+    ]
+   },
+   "strict": true
+  }
+ ],
+ "tool_choice": {
+  "type": "tool",
+  "name": "t"
+ },
+ "messages": [
+  {
+   "role": "user",
+   "content": "Call t (anthropic-all_of)."
+  }
+ ]
+}

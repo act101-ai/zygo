@@ -1,0 +1,14 @@
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "tool_result",
+      "tool_use_id": "toolu_oct_00_write",
+      "content": "`[REDACTED:<id>]` marks a secret zygo removed; never write it into a file.",
+      "is_error": true,
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ]
+}

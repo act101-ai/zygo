@@ -1,0 +1,26 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "WebFetch",
+  "tool_input": {
+    "url": "https://127.0.0.1:52941/page.html",
+    "prompt": "Give the heading."
+  },
+  "tool_response": {
+    "bytes": 70,
+    "code": 200,
+    "codeText": "OK",
+    "result": "ok",
+    "durationMs": 127,
+    "url": "https://127.0.0.1:52941/page.html"
+  },
+  "tool_use_id": "toolu_p3_main_07_webfetch",
+  "duration_ms": 128
+}

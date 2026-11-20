@@ -1,0 +1,32 @@
+{
+ "zygo-code": {
+  "description": "D-code",
+  "prompt": "P-code @MECH@",
+  "model": "code"
+ },
+ "zygo-design": {
+  "description": "D-design",
+  "prompt": "P-design @MECH@",
+  "model": "design"
+ },
+ "zygo-read": {
+  "description": "D-read",
+  "prompt": "P-read @MECH@",
+  "model": "read",
+  "disallowedTools": [
+   "Edit",
+   "Write",
+   "NotebookEdit"
+  ]
+ },
+ "zygo-probe": {
+  "description": "D-probe",
+  "prompt": "P-probe @MECH@",
+  "model": "probe",
+  "disallowedTools": [
+   "Edit",
+   "Write",
+   "NotebookEdit"
+  ]
+ }
+}

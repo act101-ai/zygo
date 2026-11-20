@@ -1,0 +1,81 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "p3 subagent",
+    "prompt": "tracer-p3-sub run the tools",
+    "subagent_type": "claude",
+    "run_in_background": false
+  },
+  "tool_response": {
+    "status": "completed",
+    "prompt": "tracer-p3-sub run the tools",
+    "agentId": "a1a80dd100f197242",
+    "agentType": "claude",
+    "toolsUsed": [
+      "Bash",
+      "Edit",
+      "Glob",
+      "Grep",
+      "NotebookEdit",
+      "Read",
+      "WebFetch",
+      "Write"
+    ],
+    "harnessNoteCount": 0,
+    "harnessTailCount": 0,
+    "harnessSectionHash": "5b76de768ca662b0",
+    "content": [
+      {
+        "type": "text",
+        "text": "ok"
+      }
+    ],
+    "resolvedModel": "claude-opus-5-5",
+    "totalDurationMs": 5040,
+    "totalTokens": 11,
+    "totalToolUseCount": 13,
+    "usage": {
+      "output_tokens_details": {
+        "thinking_tokens": 0
+      },
+      "input_tokens": 10,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "output_tokens": 1,
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "",
+      "iterations": [],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "toolStats": {
+      "readCount": 5,
+      "searchCount": 2,
+      "bashCount": 2,
+      "editFileCount": 3,
+      "linesAdded": 4,
+      "linesRemoved": 1,
+      "otherToolCount": 1
+    },
+    "canContinueAgent": false
+  },
+  "tool_use_id": "toolu_p3_main_12_agent",
+  "duration_ms": 5040
+}

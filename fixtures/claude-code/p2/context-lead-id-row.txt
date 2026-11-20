@@ -1,0 +1,6 @@
+Claude Code doesn't recognize the model "lead", so it assumes a context window of 1m tokens. Update Claude Code, or see https://code.claude.com/docs/en/model-config#correct-the-window-for-a-gateway-or-custom-model-id to set the window.
+These settings entries were skipped; the rest of each file is in effect:
+  /tmp/run/s-id-row.json (modelPicker.options.0): modelPicker row "model" Invalid input: expected string, received undefined. This row was ignored; the other rows still apply.
+## Context Usage
+
+**Model:** lead  

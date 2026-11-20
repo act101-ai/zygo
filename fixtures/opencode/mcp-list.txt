@@ -1,0 +1,14 @@
+[0m
+┌  MCP Servers
+│
+●  ✓ user-mcp [90mconnected
+│      [90mpython3 -I /zygo/scripts/premises/mcp_probe.py
+│
+●  ✓ project-mcp [90mconnected
+│      [90mpython3 -I /zygo/scripts/premises/mcp_probe.py
+│
+●  ✓ zygo [90mconnected
+│      [90mpython3 -I /zygo/scripts/premises/mcp_probe.py
+│
+└  3 server(s)
+

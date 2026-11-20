@@ -1,0 +1,24 @@
+{
+ "hook_agent_ids": [
+  "a1a80dd100f197242"
+ ],
+ "header_agent_ids": [
+  "a1a80dd100f197242"
+ ],
+ "equal": true,
+ "subagent_requests_with_header": 16,
+ "main_requests": 15,
+ "main_requests_with_agent_id_header": 0,
+ "hook_inputs_without_agent_id": 34,
+ "hook_inputs_with_agent_id_and_empty_agent_type": [
+  [
+   "SubagentStop",
+   "a47a5756291c7f553"
+  ],
+  [
+   "SubagentStop",
+   "a5968fcb5eec40530"
+  ]
+ ],
+ "empty_agent_type_ids_seen_in_request_headers": []
+}

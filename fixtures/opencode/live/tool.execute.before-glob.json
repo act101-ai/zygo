@@ -1,0 +1,12 @@
+{
+  "input": {
+    "tool": "glob",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_ocs_02_glob"
+  },
+  "output": {
+    "args": {
+      "pattern": "**/*.txt"
+    }
+  }
+}
