@@ -90,6 +90,8 @@ struct Env<'a> {
     agent: Option<&'a str>,
     /// Sets `ZYGO_TEST_STATUSLINE_BLOCK`: the status line's fetch blocks (feature `test-hooks`).
     block_fetch: bool,
+    /// Sets `NO_COLOR=1`; else `NO_COLOR` is removed.
+    no_color: bool,
 }
 
 fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, String) {
@@ -105,6 +107,11 @@ fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, St
             Some(v) => cmd.env(k, v),
             None => cmd.env_remove(k),
         };
+    }
+    if env.no_color {
+        cmd.env("NO_COLOR", "1");
+    } else {
+        cmd.env_remove("NO_COLOR");
     }
     if env.block_fetch {
         cmd.env("ZYGO_TEST_STATUSLINE_BLOCK", "1");
@@ -285,10 +292,13 @@ fn statusline_with_and_without_override() {
     let (_h, _id, dir) = proxy(d.path());
     let env = Env { session: None, dir: Some(&dir), agent: None, ..Default::default() };
     let (code, out, _) = zygo(d.path(), &["hook", "statusline"], &env, b"{}");
-    assert_eq!((code, out.as_str()), (0, "zygo ◇ ENG-42 ◇ - ◇ ctx -/800k ◇ cache - ◇ trimmed -"));
+    assert_eq!((code, out.as_str()), (0, "\u{1b}[31m▌\u{1b}[33m▌\u{1b}[36m▌\u{1b}[0m zygo ◇ ENG-42 ◇ - ◇ ctx -/800k ◇ cache - ◇ trimmed -"));
+    let cached = std::fs::read_to_string(dir.join("statusline.json")).unwrap();
+    assert!(cached.contains(r#""line":"zygo ◇ ENG-42"#), "{cached}");
     assert!(!paths(d.path()).usage_db.exists());
     std::fs::remove_file(dir.join("statusline.json")).unwrap();
     SessionClient::from_session_dir(&dir).unwrap().set_compact(WindowArg::Tokens(600_000)).unwrap();
+    let env = Env { no_color: true, ..env };
     let (code, out, _) = zygo(d.path(), &["hook", "statusline"], &env, b"{}");
     assert_eq!((code, out.as_str()), (0, "zygo ◇ ENG-42 ◇ - ◇ ctx -/600k ◇ compact 600k ◇ cache - ◇ trimmed -"));
     assert!(!paths(d.path()).usage_db.exists());
@@ -320,6 +330,6 @@ fn statusline_ends_within_the_bound_when_the_fetch_blocks() {
     let t = std::time::Instant::now();
     let (code, out, _) = zygo(d.path(), &["hook", "statusline"], &env, b"{}");
     let took = t.elapsed();
-    assert_eq!((code, out.as_str()), (0, "zygo ◇ cached"));
+    assert_eq!((code, out.as_str()), (0, "\u{1b}[31m▌\u{1b}[33m▌\u{1b}[36m▌\u{1b}[0m zygo ◇ cached"));
     assert!(took < limit, "stale cache: took {took:?}");
 }

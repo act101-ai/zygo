@@ -45,7 +45,15 @@ pub fn run(_input: &HookInput) -> anyhow::Result<HookOutput> {
         });
         rx.recv_timeout(left).unwrap_or_else(|_| Err(anyhow!("no reply within the deadline")))
     };
-    Ok(HookOutput::Text(line_in(&dir, now, deadline, &fetch)?))
+    let line = line_in(&dir, now, deadline, &fetch)?;
+    let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+    Ok(HookOutput::Text(stripe(&line, color)))
+}
+
+/// The line after a three-bar ANSI color stripe (red, yellow, cyan); `color` false gives the line unchanged
+/// (https://no-color.org: `NO_COLOR` set and non-empty). The cached line has no stripe.
+pub fn stripe(line: &str, color: bool) -> String {
+    if color { format!("\x1b[31m▌\x1b[33m▌\x1b[36m▌\x1b[0m {line}") } else { line.to_string() }
 }
 
 /// The session status and the session's trimmed bytes, rendered.
@@ -110,8 +118,8 @@ fn write_cache(root: &Path, path: &Path, now: u64, line: &str) {
     }
 }
 
-/// `zygo ◇ <work> ◇ <profile> ◇ ctx <used>/<effective>[ ◇ compact <n|off>] ◇ cache <pct> ◇ trimmed <bytes>`; an
-/// absent value is `-`.
+/// `zygo ◇ <work> ◇ <profile> ◇ ctx <used>/<effective>[ ◇ compact <n|off>] ◇ cache <pct> ◇ trimmed <n>`; token
+/// counts and trimmed bytes print as `short`; an absent value is `-`.
 pub fn render(s: &SessionStatus, trimmed: Option<u64>) -> String {
     let text = |v: &Option<String>| v.as_deref().map_or_else(|| "-".into(), zygo_core::esc);
     let tokens = |v: Option<u64>| v.map_or_else(|| "-".into(), short);
@@ -127,7 +135,7 @@ pub fn render(s: &SessionStatus, trimmed: Option<u64>) -> String {
         Some(WindowArg::Off) => out.push_str(" ◇ compact off"),
         None => {}
     }
-    let trimmed = trimmed.map_or_else(|| "-".into(), |n| n.to_string());
+    let trimmed = trimmed.map_or_else(|| "-".into(), short);
     out.push_str(&format!(" ◇ cache {} ◇ trimmed {trimmed}", pct(s.cache_read_share)));
     out
 }
@@ -205,15 +213,15 @@ mod tests {
 
     #[test]
     fn render_with_override() {
-        assert_eq!(render(&s(), Some(92_160)), "zygo ◇ ENG-42 ◇ p1 ◇ ctx 412k/600k ◇ compact 600k ◇ cache 60% ◇ trimmed 92160");
+        assert_eq!(render(&s(), Some(92_160)), "zygo ◇ ENG-42 ◇ p1 ◇ ctx 412k/600k ◇ compact 600k ◇ cache 60% ◇ trimmed 92k");
     }
 
     #[test]
     fn render_without_override_and_off() {
         let none = SessionStatus { compact: None, effective_window: Some(800_000), ..s() };
-        assert_eq!(render(&none, Some(92_160)), "zygo ◇ ENG-42 ◇ p1 ◇ ctx 412k/800k ◇ cache 60% ◇ trimmed 92160");
+        assert_eq!(render(&none, Some(92_160)), "zygo ◇ ENG-42 ◇ p1 ◇ ctx 412k/800k ◇ cache 60% ◇ trimmed 92k");
         let off = SessionStatus { compact: Some(WindowArg::Off), effective_window: None, ..s() };
-        assert_eq!(render(&off, Some(92_160)), "zygo ◇ ENG-42 ◇ p1 ◇ ctx 412k/- ◇ compact off ◇ cache 60% ◇ trimmed 92160");
+        assert_eq!(render(&off, Some(92_160)), "zygo ◇ ENG-42 ◇ p1 ◇ ctx 412k/- ◇ compact off ◇ cache 60% ◇ trimmed 92k");
     }
 
     #[test]
@@ -246,6 +254,12 @@ mod tests {
         let e = line_in(&sd, 1_000, far(), &fetch).unwrap_err();
         assert_eq!(e.to_string(), "statusline: bad: one\\ntwo\\u{1b}[31m");
     } // mutation: `esc` removed at :100 (raw ESC; the hook wrapper folds only `\n` and `\r`)
+
+    #[test]
+    fn stripe_on_and_off() {
+        assert_eq!(stripe("zygo ◇ x", true), "\u{1b}[31m▌\u{1b}[33m▌\u{1b}[36m▌\u{1b}[0m zygo ◇ x");
+        assert_eq!(stripe("zygo ◇ x", false), "zygo ◇ x");
+    }
 
     #[test]
     fn short_forms() {
