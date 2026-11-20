@@ -213,6 +213,21 @@ fn hook_table_names() {
     }
 }
 
+/// `--config-dir` is checked before any agent launch: exit 2, one stderr line.
+#[test]
+fn claude_config_dir_missing_exits_2() {
+    let h = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let absent = h.path().join("absent");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+    common::scratch_home(&mut cmd, h.path());
+    let o = cmd.args(["claude", "--config-dir"]).arg(&absent).env("PATH", bin.path()).env_remove("ZYGO_SESSION_DIR").env_remove("ZYGO_AGENT")
+        .current_dir(h.path()).stdin(Stdio::null()).output().unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert_eq!(o.status.code(), Some(2), "{err}");
+    assert!(err.contains("not a directory") && err.lines().count() == 1, "{err:?}");
+}
+
 // ---- N72: verb and config errors are escaped ----
 
 const FORGED_PROFILE: &str = "[profile.\"x\\u001b[2K\\nforged\"]\nprompt = 1\n";

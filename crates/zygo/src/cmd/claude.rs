@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use zygo_core::paths::Paths;
 use zygo_launch::claude_code::ClaudeCode;
@@ -35,7 +35,7 @@ fn launch_opts(l: &Launch, mut env: Env, cwd: PathBuf, paths: Paths) -> Result<L
         },
     };
     if let Some(d) = l.config_dir.as_deref() {
-        set_config_dir(&mut env, d)?;
+        set_config_dir(&mut env, d, &cwd)?;
     }
     let mut o = LaunchOpts::new(env, cwd, paths);
     o.args = l.rest.clone();
@@ -47,20 +47,21 @@ fn launch_opts(l: &Launch, mut env: Env, cwd: PathBuf, paths: Paths) -> Result<L
     Ok(o)
 }
 
-/// `--config-dir`: expands a leading `~`, checks for a directory, and sets `CLAUDE_CONFIG_DIR` in `env` (the flag wins).
-fn set_config_dir(env: &mut Env, d: &str) -> Result<(), String> {
+/// `--config-dir`: expands a leading `~`, makes a relative path absolute against `cwd` (not canonicalized), checks for a directory, and
+/// sets `CLAUDE_CONFIG_DIR` in `env` (the flag wins).
+fn set_config_dir(env: &mut Env, d: &str, cwd: &Path) -> Result<(), String> {
     const VAR: &str = "CLAUDE_CONFIG_DIR";
     let rest = if d == "~" { Some("") } else { d.strip_prefix("~/") };
     let dir = match rest {
         Some(r) => {
-            let home = env.get(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty());
-            match home.map(PathBuf::from).or_else(std::env::home_dir) {
+            let home = env.get(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).filter(|h| h.is_absolute());
+            match home.or_else(std::env::home_dir) {
                 Some(h) if r.is_empty() => h,
                 Some(h) => h.join(r),
                 None => return Err(format!("zygo claude: --config-dir {d}: no home directory")),
             }
         }
-        None => PathBuf::from(d),
+        None => cwd.join(d),
     };
     if !dir.is_dir() {
         return Err(format!("zygo claude: --config-dir {d}: not a directory"));
@@ -98,6 +99,10 @@ mod tests {
     }
 
     fn opts_env(l: &Launch, env: Env) -> Result<zygo_launch::LaunchOpts, String> {
+        opts_cwd(l, env, PathBuf::from("w"))
+    }
+
+    fn opts_cwd(l: &Launch, env: Env, cwd: PathBuf) -> Result<zygo_launch::LaunchOpts, String> {
         let p = |s: &str| PathBuf::from(s);
         let paths = Paths {
             config_file: p("c"),
@@ -109,7 +114,7 @@ mod tests {
             approvals_file: p("a"),
             usage_db: p("u"),
         };
-        launch_opts(l, env, p("w"), paths)
+        launch_opts(l, env, cwd, paths)
     }
 
     fn with_dir(dir: &str) -> Launch {
@@ -140,6 +145,37 @@ mod tests {
         let e = env(&[(home, &t.path().to_string_lossy())]);
         let o = opts_env(&with_dir("~/maya"), e).unwrap();
         assert_eq!(config_dir(&o), Some(t.path().join("maya").to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn config_dir_bare_tilde_is_home() {
+        let t = tempfile::tempdir().unwrap();
+        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let o = opts_env(&with_dir("~"), env(&[(home, &t.path().to_string_lossy())])).unwrap();
+        assert_eq!(config_dir(&o), Some(t.path().to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn config_dir_relative_is_absolute_against_cwd() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join(".claude-x")).unwrap();
+        let o = opts_cwd(&with_dir(".claude-x"), Env::default(), t.path().to_path_buf()).unwrap();
+        assert_eq!(config_dir(&o), Some(t.path().join(".claude-x").to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn config_dir_ignores_relative_home() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("rel-home")).unwrap();
+        let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let r = opts_cwd(&with_dir("~"), env(&[(home, "rel-home")]), t.path().to_path_buf());
+        match r {
+            Ok(o) => {
+                let d = PathBuf::from(config_dir(&o).unwrap());
+                assert!(d.is_absolute() && !d.starts_with(t.path().join("rel-home")) && !d.starts_with("rel-home"), "{d:?}");
+            }
+            Err(e) => assert_eq!(e, "zygo claude: --config-dir ~: no home directory"),
+        }
     }
 
     #[test]
