@@ -58,7 +58,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | — | TODO | implementation | — |
 | PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | TODO | implementation | — |
-| HUD-1 | Usage store: Store::bytes_trimmed | — | IN-PROGRESS | implementation | wt .worktrees/phase2/HUD-1 |
+| HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
 | HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/HUD-2 |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | TODO | implementation | — |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | TODO | judgment | — |
@@ -92,3 +92,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | HUD-1 and HUD-2 planned; plan verification passed (HUD-1 one round; HUD-2 three rounds, all confirmed findings fixed). New edge HUD-8 → HUD-2 (both change Cargo.lock). |
 | 2026-11-21 | PRB-1 plan draft committed with its review open (22 findings). Held until the operator approves the OpenCode HUD design (docs/specs/2026-11-21-opencode-hud-design.md), which changes PH13 and HUD-3, -8, -9, -11. |
 | 2026-11-21 | PRB-2 added from PRB-1 planning: docs/premises.md and docs/live-checks.md describe pins as exact; scripts/premises/lib.sh leaves N2_SCRATCH (with results.txt) after each live run. W3 moved to backlog.md (25-row cap). |
+| 2026-11-21 | HUD-1 DONE (0f7ec77). Review: 4 low findings, all refuted (diff-range brief error; node-file ticks required; ANALYZE plan choice not a defect; error cases match summary). Floor scoped to zygo-usage per CLAUDE.md. |

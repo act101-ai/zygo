@@ -47,6 +47,10 @@ fn u64_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<u64> {
     })
 }
 
+#[doc(hidden)]
+pub const BYTES_TRIMMED_SQL: &str =
+    "SELECT COALESCE(SUM(MAX(stored_bytes - view_bytes, 0)), 0) FROM trims WHERE session = ?1";
+
 impl Store {
     /// The sessions marked by `mark_sync_pending`, sorted.
     pub fn sync_pending(&self) -> Result<Vec<String>> {
@@ -198,5 +202,36 @@ impl Store {
             }
         }
         Ok(sum)
+    }
+
+    /// The session's trimmed bytes: one SUM on the `trims_session` index (H§7.4). Equal to
+    /// `summary(&Filter { session: Some(session.to_string()), since: None })?.bytes_trimmed`.
+    pub fn bytes_trimmed(&self, session: &str) -> Result<u64> {
+        let mut q = self.conn.prepare_cached(BYTES_TRIMMED_SQL)?;
+        Ok(q.query_row([session], |r| u64_at(r, 0))?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::StatementStatus::{FullscanStep, Run};
+
+    #[test]
+    fn bytes_trimmed_runs_the_indexed_statement() { // H§7.4: one indexed SUM per call
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let s = Store { conn };
+        for (session, stored, view) in [("A", 1000, 100), ("B", 300, 0), ("C", 50, 0)] {
+            s.insert_trim(&TrimRow { ts: 1, session: session.into(), agent_id: None, tool: "Bash".into(),
+                                     kind: "head".into(), stored_bytes: stored, view_bytes: view }).unwrap();
+        }
+        assert_eq!(s.bytes_trimmed("A").unwrap(), 900);
+        let st = s.conn.prepare_cached(BYTES_TRIMMED_SQL).unwrap();
+        assert_eq!(st.get_status(Run), 1); // the method ran this exact text, once, through the cache
+        assert_eq!(st.get_status(FullscanStep), 0); // by the index, not by a scan
+        let mut scan = s.conn.prepare("SELECT COALESCE(SUM(MAX(stored_bytes - view_bytes, 0)), 0) FROM trims WHERE (?1 IS NULL OR session = ?1)").unwrap();
+        scan.query_row(["A"], |r| r.get::<_, i64>(0)).unwrap();
+        assert!(scan.get_status(FullscanStep) > 0); // control: the summary form scans
     }
 }

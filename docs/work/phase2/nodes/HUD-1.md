@@ -10,7 +10,7 @@
 
 Premises checked 2026-11-21 against the live code: `summary` sums trims at `crates/zygo-usage/src/query.rs:179-183` with `(?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2)`; index `trims_session ON trims(session)` at `crates/zygo-usage/src/schema.rs:63`; `Store::open_read_only` at `crates/zygo-usage/src/store.rs:111`; `Store.conn` is `pub(crate)` (`store.rs:12`); `u64_at` at `query.rs:43`. rusqlite 0.43.0 has only the features `bundled`, `cache`, `hashlink`, `modern_sqlite` and `ffi-sqlite-wasm-rs` here (`cargo tree -p zygo-usage -e features -i rusqlite`), so `trace` and `hooks` are off; `Statement::get_status(StatementStatus)` has no feature gate (rusqlite `src/statement.rs:736`), and `CachedStatement` keeps its counters when it goes back to the cache (it only clears bindings, rusqlite `src/cache.rs:156`). A scratch probe on rusqlite 0.43.0 `bundled`, with the three trim rows of the step 1 unit test, gave: the cached spec statement after one `query_row` → `Run` 1, `FullscanStep` 0; the `summary` form → `FullscanStep` 2. Plans on the bundled SQLite 3.54.1 (`libsqlite3-sys` 0.40.0, `sqlite3.h:149`; the same plans on the sqlite3 3.53.4 CLI): the spec query → `SEARCH trims USING INDEX trims_session (session=?)`; the `summary` form → `SCAN trims`.
 
-- [ ] **1. Write the failing tests.** Append to `crates/zygo-usage/tests/store.rs` (it already has `Tmp`, `trim(session, ts, stored, view)`, `Connection` and `use zygo_usage::*;`):
+- [x] **1. Write the failing tests.** Append to `crates/zygo-usage/tests/store.rs` (it already has `Tmp`, `trim(session, ts, stored, view)`, `Connection` and `use zygo_usage::*;`):
 
   ```rust
   #[test]
@@ -70,9 +70,9 @@ Premises checked 2026-11-21 against the live code: `summary` sums trims at `crat
   }
   ```
 
-- [ ] **2. Run them and see them fail.** `cargo test -p zygo-usage bytes_trimmed` → compile errors: no method `bytes_trimmed` on `Store` (E0599) and no value `BYTES_TRIMMED_SQL` (E0425), in both the `zygo-usage` lib test target and `tests/store.rs`. This is the only red state here that has no fake code: the method does not exist yet, and a wrong temporary body is a stub, which the project forbids. The behavioral discrimination is in the test itself: the control assertion in `bytes_trimmed_runs_the_indexed_statement` shows a scanning query fails the `FullscanStep` check, and a method that does not run the cached `BYTES_TRIMMED_SQL` fails the `Run == 1` check.
+- [x] **2. Run them and see them fail.** `cargo test -p zygo-usage bytes_trimmed` → compile errors: no method `bytes_trimmed` on `Store` (E0599) and no value `BYTES_TRIMMED_SQL` (E0425), in both the `zygo-usage` lib test target and `tests/store.rs`. This is the only red state here that has no fake code: the method does not exist yet, and a wrong temporary body is a stub, which the project forbids. The behavioral discrimination is in the test itself: the control assertion in `bytes_trimmed_runs_the_indexed_statement` shows a scanning query fails the `FullscanStep` check, and a method that does not run the cached `BYTES_TRIMMED_SQL` fails the `Run == 1` check.
 
-- [ ] **3. Implement.** In `crates/zygo-usage/src/query.rs`, add above `impl Store` (`#[doc(hidden)]` as on `Store::busy_timeout_ms`, `store.rs:126`; the constant exists so the plan test checks the text the method runs):
+- [x] **3. Implement.** In `crates/zygo-usage/src/query.rs`, add above `impl Store` (`#[doc(hidden)]` as on `Store::busy_timeout_ms`, `store.rs:126`; the constant exists so the plan test checks the text the method runs):
 
   ```rust
   #[doc(hidden)]
@@ -95,11 +95,11 @@ Premises checked 2026-11-21 against the live code: `summary` sums trims at `crat
 
   Do not change `summary` or `lib.rs` (`pub mod query` already exports the constant; `Store` is already re-exported).
 
-- [ ] **4. Run them and see them pass.** `cargo test -p zygo-usage bytes_trimmed` → lib target `1 passed; 0 failed` (`query::tests::bytes_trimmed_runs_the_indexed_statement`) and `tests/store.rs` `2 passed; 0 failed`.
+- [x] **4. Run them and see them pass.** `cargo test -p zygo-usage bytes_trimmed` → lib target `1 passed; 0 failed` (`query::tests::bytes_trimmed_runs_the_indexed_statement`) and `tests/store.rs` `2 passed; 0 failed`.
 
-- [ ] **5. Run the node's Acceptance check exactly as written.** `cargo test -p zygo-usage && cargo test --workspace --locked --no-run` → exit 0; every `zygo-usage` test passes, including `bytes_trimmed_equals_summary_for_the_session`, `bytes_trimmed_query_uses_the_session_index` and `query::tests::bytes_trimmed_runs_the_indexed_statement`; every workspace test target compiles; `Cargo.lock` is unchanged.
+- [x] **5. Run the node's Acceptance check exactly as written.** `cargo test -p zygo-usage && cargo test --workspace --locked --no-run` → exit 0; every `zygo-usage` test passes, including `bytes_trimmed_equals_summary_for_the_session`, `bytes_trimmed_query_uses_the_session_index` and `query::tests::bytes_trimmed_runs_the_indexed_statement`; every workspace test target compiles; `Cargo.lock` is unchanged.
 
-- [ ] **6. Commit** `crates/zygo-usage/src/query.rs` and `crates/zygo-usage/tests/store.rs` with this message:
+- [x] **6. Commit** `crates/zygo-usage/src/query.rs` and `crates/zygo-usage/tests/store.rs` with this message:
 
   ```
   feat(usage): add Store::bytes_trimmed, an indexed per-session trimmed-bytes read
