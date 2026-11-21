@@ -26,10 +26,11 @@ digest() {
     fi
 }
 
-# mkfix <dir> <bytes>: a release directory holding the binary and a correct SHA256SUMS.
+# mkfix <dir> <marker>: a release directory holding a stub zygo and a correct SHA256SUMS. The stub logs its
+# arguments to $ZYGO_STUB_LOG and fails when ZYGO_STUB_FAIL is set; line 2 is the marker comment.
 mkfix() {
     mkdir -p "$1"
-    printf '%s' "$2" >"$1/zygo-$TRIPLE"
+    printf '#!/bin/sh\n# %s\necho "zygo $*" >>"$ZYGO_STUB_LOG"\n[ -z "${ZYGO_STUB_FAIL:-}" ]\n' "$2" >"$1/zygo-$TRIPLE"
     printf '%s  zygo-%s\n' "$(digest "$1/zygo-$TRIPLE")" "$TRIPLE" >"$1/SHA256SUMS"
 }
 
@@ -55,16 +56,44 @@ echo called >"$T/sudo-called"
 exit 1
 EOS
     chmod +x "$T/shim/uname" "$T/shim/sudo"
+    # The host tools install.sh uses; no host act or act-lite is reachable.
+    mkdir -p "$T/tools" "$T/acts" "$T/al"
+    for tool in sh grep head awk curl mkdir rm cmp chmod mv cat sha256sum shasum; do
+        p=$(command -v "$tool") && ln -sf "$p" "$T/tools/$tool"
+    done
+    cat >"$T/al/install.sh" <<'EOS'
+echo "act-lite-installer" >>"$ZYGO_STUB_LOG"
+[ -z "${AL_FAIL:-}" ]
+EOS
 }
+
+# acts <names>: puts stubs of act101's act, act-lite or nektos/act (named nektos) on PATH, and nothing else.
+acts() {
+    rm -f "$T/acts/"*
+    for a in "$@"; do
+        case $a in
+            act) printf '#!/bin/sh\necho "act 2.9.2"\n' >"$T/acts/act" ;;
+            nektos) printf '#!/bin/sh\necho "act version 0.2.61"\n' >"$T/acts/act" ;;
+            act-lite) printf '#!/bin/sh\necho "act-lite 1.2.7"\n' >"$T/acts/act-lite" ;;
+        esac
+    done
+    chmod +x "$T/acts/"* 2>/dev/null || true
+}
+
+marker() { sed -n 2p "$1"; }
+log() { cat "$T/log" 2>/dev/null || true; }
 
 # inst [args]: runs install.sh with the fixture base, a private HOME and the shims first on PATH.
 inst() {
     RC=0
+    rm -f "$T/log"
     OUT=$(
         HOME="$T/home"
         ZYGO_BASE_URL="file://$T/rel"
-        PATH="$T/shim:$PATH"
-        export HOME ZYGO_BASE_URL PATH
+        ZYGO_ACT_LITE_INSTALLER="file://$T/al/install.sh"
+        ZYGO_STUB_LOG="$T/log"
+        PATH="$T/shim:$T/acts:$T/tools"
+        export HOME ZYGO_BASE_URL ZYGO_ACT_LITE_INSTALLER ZYGO_STUB_LOG PATH
         if [ -z "${NO_DIR:-}" ]; then
             ZYGO_INSTALL_DIR="${DIR:-$T/bin}"
             export ZYGO_INSTALL_DIR
@@ -141,7 +170,7 @@ mkfix "$T/rel/latest/download" changed-binary
 printf '%s  zygo-%s\n' "0000000000000000000000000000000000000000000000000000000000000000" "$TRIPLE" >"$T/rel/latest/download/SHA256SUMS"
 ZYGO_TARGET=$TRIPLE inst
 [ "$RC" -ne 0 ] || fail "exit 0"
-[ "$(cat "$T/bin/zygo")" = fixture-binary ] || fail "installed file changed"
+[ "$(marker "$T/bin/zygo")" = "# fixture-binary" ] || fail "installed file changed"
 expect_no_temp
 
 CASE=version_flag_uses_the_tagged_path
@@ -149,7 +178,7 @@ fixtures
 rm -rf "$T/bin"
 ZYGO_TARGET=$TRIPLE inst --version v1.2.3
 expect_ok
-[ "$(cat "$T/bin/zygo")" = tagged-binary ] || fail "wrong bytes"
+[ "$(marker "$T/bin/zygo")" = "# tagged-binary" ] || fail "wrong bytes"
 
 CASE=default_dir_is_home_local_bin
 rm -rf "$T/home"
@@ -186,6 +215,72 @@ for v in abc 1.2; do
     expect_rc 2
     [ ! -e "$T/bin" ] || fail "created the install dir for $v"
 done
+
+CASE=no_navigation_tool_installs_act_lite
+DIR= # see NO_DIR above
+fixtures
+rm -rf "$T/bin"
+acts
+ZYGO_TARGET=$TRIPLE inst
+expect_ok
+expect_out "using plugin act101:act-lite"
+[ "$(log)" = "act-lite-installer
+zygo plugins enable act101:act-lite --yes
+zygo plugins disable act101:act101" ] || fail "log: $(log)"
+expect_no_temp
+
+CASE=act_lite_found_is_used_and_not_reinstalled
+acts act-lite
+ZYGO_TARGET=$TRIPLE inst
+expect_ok
+expect_out "using plugin act101:act-lite"
+[ "$(log)" = "zygo plugins enable act101:act-lite --yes
+zygo plugins disable act101:act101" ] || fail "log: $(log)"
+
+CASE=act_found_selects_the_act101_plugin
+acts act act-lite
+ZYGO_TARGET=$TRIPLE inst
+expect_ok
+expect_out "found act: using plugin act101:act101"
+[ "$(log)" = "zygo plugins enable act101:act101 --yes
+zygo plugins disable act101:act-lite" ] || fail "log: $(log)"
+
+CASE=nektos_act_is_not_act101
+acts nektos
+ZYGO_TARGET=$TRIPLE inst
+expect_ok
+expect_out "using plugin act101:act-lite"
+case "$(log)" in act-lite-installer*) ;; *) fail "act-lite not installed: $(log)" ;; esac
+
+CASE=dry_run_reports_the_navigation_choice
+rm -rf "$T/bin"
+for pair in "act:found act: would enable act101:act101 and disable act101:act-lite" \
+    "act-lite:found act-lite: would enable act101:act-lite and disable act101:act101" \
+    ":would install act-lite with file://$T/al/install.sh"; do
+    acts ${pair%%:*}
+    ZYGO_TARGET=$TRIPLE inst --dry-run
+    expect_ok
+    expect_out "${pair#*:}"
+    [ -z "$(log)" ] || fail "dry run ran: $(log)"
+done
+[ ! -e "$T/bin" ] || fail "dry run created $T/bin"
+
+CASE=plugin_failure_exits_1
+acts act
+ZYGO_STUB_FAIL=1 ZYGO_TARGET=$TRIPLE inst
+expect_rc 1
+expect_out "zygo plugins enable act101:act101 --yes failed"
+[ -x "$T/bin/zygo" ] || fail "zygo was not installed"
+ZYGO_STUB_FAIL=
+
+CASE=act_lite_install_failure_exits_1
+acts
+AL_FAIL=1 ZYGO_TARGET=$TRIPLE inst
+expect_rc 1
+expect_out "act-lite install failed"
+case "$(log)" in *plugins*) fail "plugins ran after a failed act-lite install" ;; esac
+AL_FAIL=
+expect_no_temp
 
 CASE=missing_checksum_line_is_refused
 rm -rf "$T/bin"

@@ -11,13 +11,14 @@ curl -fsSL https://raw.githubusercontent.com/act101-ai/zygo/main/scripts/install
 Pass flags after `sh -s --`:
 
 - `--version <v>`: install that release (for example `v0.1.0`) instead of the latest.
-- `--dry-run`: print the target, the two URLs and the install path; download and write nothing.
+- `--dry-run`: print the target, the two URLs, the install path and the code-navigation choice; download and write nothing.
 
 Environment variables:
 
 - `ZYGO_INSTALL_DIR`: install directory (default `$HOME/.local/bin`).
 - `ZYGO_BASE_URL`: use a mirror of the release downloads (default `https://github.com/act101-ai/zygo/releases`).
 - `ZYGO_TARGET`: force a target triple instead of detecting it.
+- `ZYGO_ACT_LITE_INSTALLER`: URL of act-lite's installer (default `https://raw.githubusercontent.com/act101-ai/act-lite/main/install.sh`, or `install.ps1` on Windows).
 
 The script does not edit a shell profile. If the install directory is not on `PATH`, it prints `add <dir> to PATH`.
 
@@ -30,6 +31,20 @@ irm https://raw.githubusercontent.com/act101-ai/zygo/main/scripts/install.ps1 | 
 ```
 
 zygo goes to `%LOCALAPPDATA%\zygo\bin\zygo.exe`. To pass parameters (`-Version v0.1.0`, `-DryRun`), save the script and run it: `pwsh install.ps1 -Version v0.1.0`. The same three environment variables apply. No registry value or `PATH` entry is changed.
+
+## Code navigation
+
+After zygo is installed, the installers choose the plugin that gives agents code navigation:
+
+| Found on `PATH` | Result |
+|---|---|
+| act101's `act` (its `act --version` prints `act <version>`) | `act101:act101` is enabled and approved; `act101:act-lite` is disabled |
+| `act-lite` | `act101:act-lite` is enabled; `act101:act101` is disabled |
+| neither | act-lite's own installer runs (its defaults and `ACT_LITE_*` variables apply), then as for `act-lite` |
+
+nektos/act, the GitHub Actions runner, is also named `act`. Its `act --version` prints `act version <version>`, so it does not count as act101's `act`. The choice is written with `zygo plugins enable` and `zygo plugins disable`. To change it later, run those commands yourself. If a step fails, the installer names the command and exits 1. The zygo binary stays installed.
+
+On Windows, act-lite's installer adds its own directory to the user `PATH`.
 
 ## Platforms
 

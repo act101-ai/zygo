@@ -1,6 +1,9 @@
 # Installs zygo from a release: no administrator rights, no profile or registry edit.
 # Usage: install.ps1 [-Version <v>] [-DryRun]
-# Environment: ZYGO_INSTALL_DIR (default %LOCALAPPDATA%\zygo\bin), ZYGO_BASE_URL (mirror), ZYGO_TARGET (target triple).
+# Environment: ZYGO_INSTALL_DIR (default %LOCALAPPDATA%\zygo\bin), ZYGO_BASE_URL (mirror), ZYGO_TARGET (target triple),
+# ZYGO_ACT_LITE_INSTALLER (URL of act-lite's install.ps1).
+# Code navigation: act101's `act` found -> plugin act101:act101; else `act-lite` found -> act101:act-lite;
+# else act-lite is installed by its own installer and act101:act-lite is used.
 param(
     [string]$Version = '',
     [switch]$DryRun
@@ -59,6 +62,16 @@ function Install-Zygo {
     }
     $dir = if ($env:ZYGO_INSTALL_DIR) { $env:ZYGO_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'zygo\bin' }
     $dest = Join-Path $dir 'zygo.exe'
+    $actLiteInstaller = if ($env:ZYGO_ACT_LITE_INSTALLER) { $env:ZYGO_ACT_LITE_INSTALLER } else { 'https://raw.githubusercontent.com/act101-ai/act-lite/main/install.ps1' }
+
+    # act101's act prints `act <version>`; nektos/act (GitHub Actions runner) prints `act version <version>`.
+    $nav = 'none'
+    $act = Get-Command act -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($act) {
+        try { $line = & $act.Source --version 2>$null | Select-Object -First 1 } catch { $line = '' }
+        if ("$line" -match '^act [0-9]') { $nav = 'act' }
+    }
+    if ($nav -eq 'none' -and (Get-Command act-lite -CommandType Application -ErrorAction SilentlyContinue)) { $nav = 'act-lite' }
 
     if ($DryRun) {
         Write-Output "target: $target"
@@ -66,12 +79,21 @@ function Install-Zygo {
         Write-Output "would download $urlDir/SHA256SUMS"
         Write-Output 'would verify checksum'
         Write-Output "would install $dest"
+        switch ($nav) {
+            'act' { Write-Output 'found act: would enable act101:act101 and disable act101:act-lite' }
+            'act-lite' { Write-Output 'found act-lite: would enable act101:act-lite and disable act101:act101' }
+            default {
+                Write-Output "would install act-lite with $actLiteInstaller"
+                Write-Output 'would enable act101:act-lite and disable act101:act101'
+            }
+        }
         return
     }
 
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $tmp = Join-Path $dir ".zygo-install.$PID.exe"
     $sums = Join-Path $dir ".zygo-install.$PID.sums"
+    $alps = Join-Path $dir ".zygo-install.$PID.act-lite.ps1"
     try {
         Get-Remote "$urlDir/SHA256SUMS" $sums
         $expected = $null
@@ -95,8 +117,24 @@ function Install-Zygo {
             Move-Item -Force -LiteralPath $tmp -Destination $dest
             Write-Output "installed zygo $label to $dest"
         }
+
+        # act-lite's installer runs in a child process, so nothing it does can end this host.
+        if ($nav -eq 'none') {
+            Get-Remote $actLiteInstaller $alps
+            $hostExe = (Get-Process -Id $PID).Path
+            & $hostExe -NoProfile -ExecutionPolicy Bypass -File $alps
+            if ($LASTEXITCODE -ne 0) { Fail 'act-lite install failed; see https://github.com/act101-ai/act-lite#install' }
+            $nav = 'act-lite'
+        }
+        # The plugin selection is written with the zygo just installed (spec §15.2), with empty input.
+        $use = if ($nav -eq 'act') { @('act101:act101', 'act101:act-lite') } else { @('act101:act-lite', 'act101:act101') }
+        foreach ($step in @(@('enable', $use[0], '--yes'), @('disable', $use[1]))) {
+            $null | & $dest plugins @step | Out-Null
+            if ($LASTEXITCODE -ne 0) { Fail "zygo plugins $($step -join ' ') failed; run it again when the cause is fixed" }
+        }
+        if ($nav -eq 'act') { Write-Output 'found act: using plugin act101:act101' } else { Write-Output 'using plugin act101:act-lite' }
     } finally {
-        Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $tmp, $sums
+        Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $tmp, $sums, $alps
     }
 
     if (-not (($env:PATH -split ';') -contains $dir)) { Write-Output "add $dir to PATH" }
