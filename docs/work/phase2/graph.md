@@ -57,7 +57,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2 | TODO | implementation | — |
-| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | PLANNED | implementation | — |
+| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | IN-PROGRESS | implementation | wt .worktrees/phase2/PRB-2 |
 | HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
 | HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/HUD-2 |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | TODO | implementation | — |
