@@ -56,13 +56,13 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | — | TODO | implementation | — |
-| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | TODO | implementation | — |
+| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2 | TODO | implementation | — |
+| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | PLANNED | implementation | — |
 | HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
 | HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/HUD-2 |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | TODO | implementation | — |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | TODO | judgment | — |
-| HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | — | TODO | judgment | — |
+| HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | TODO | judgment | — |
 | HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | TODO | judgment | — |
 | HUD-7 | SessionView statusline_style with Default; overrides statusline; launcher writes the style | HUD-3 | TODO | implementation | — |
 | HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, PRB-1, HUD-2 | TODO | judgment | — |
@@ -93,3 +93,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | PRB-1 plan draft committed with its review open (22 findings). Held until the operator approves the OpenCode HUD design (docs/specs/2026-11-21-opencode-hud-design.md), which changes PH13 and HUD-3, -8, -9, -11. |
 | 2026-11-21 | PRB-2 added from PRB-1 planning: docs/premises.md and docs/live-checks.md describe pins as exact; scripts/premises/lib.sh leaves N2_SCRATCH (with results.txt) after each live run. W3 moved to backlog.md (25-row cap). |
 | 2026-11-21 | HUD-1 DONE (0f7ec77). Review: 4 low findings, all refuted (diff-range brief error; node-file ticks required; ANALYZE plan choice not a defect; error cases match summary). Floor scoped to zygo-usage per CLAUDE.md. |
+| 2026-11-21 | Controller decision: PRB-2 owns the whole pin-minimum code change (scripts/premises/ver.sh, live.sh pinned_agents and live_end, check-premises.sh agent rows, docs). PRB-1 keeps only the LIVE_VER sites in live-*.sh; edge PRB-1 → PRB-2. |
+| 2026-11-21 | PRB-2 planned; plan verification passed after three review rounds (all confirmed findings fixed). New edges PRB-1 → HUD-2 and HUD-5 → HUD-2: HUD-2 now edits the HUD spec (H§7.5, AU11), which both also change. |
+| 2026-11-21 | HUD-2 round 2 (review fixes cdb0e63); CI green on ubuntu, macos and windows (run 44962380990). OpenCode HUD design: comprehension read passed after 3 runs; critic read running. |
