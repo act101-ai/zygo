@@ -1,6 +1,6 @@
 # Agent premises (node N2)
 
-Pinned versions, one dated result per premise. Spec: `docs/specs/2026-11-18-zygo-design.md` §19, §19a.
+Pinned versions, one dated result per premise. A pinned agent version is a minimum (operator, 2026-11-21): Claude Code 2.1.328 or later, OpenCode 1.18.16 or later. The header lines below give each minimum as a bare version (scripts and tests read them). An agent row's version is the minimum or a later version that the check ran on; an act-lite row's version is the release checked. Spec: `docs/specs/2026-11-18-zygo-design.md` §19, §19a.
 
 Claude Code: 2.1.328
 OpenCode: 1.18.16
@@ -13,6 +13,7 @@ act-lite: 1.2.3
 - Mock replies are **synthetic**: the SSE files under `fixtures/claude-code/sse/` and `fixtures/opencode/sse/` were authored for these experiments by `scripts/premises/sse.py` and `steps.py`; they are not recorded model output. A request no rule matches gets a one-word `end_turn` reply, except a Claude Code compaction request, which gets a realistic `<analysis>…</analysis><summary>…</summary>` reply.
 - Fixture hygiene (`scripts/premises/scrub.py`): run paths become `/home/user`, `/repo`, `/tmp/run`; the zygo checkout becomes `/zygo`; session and prompt UUIDs and OpenCode `ses_` ids become numbered placeholders; a request's `metadata.user_id` (device id) is omitted; request `system` text and tool `description` fields become `"[omitted]"`; `authorization` and `x-api-key` values and any `Bearer <word>` become `[omitted]`; e-mail addresses become `[e-mail omitted]`. `messages` are kept as captured. `fixtures/claude-code/settings-schema.json` is the upstream schema verbatim, not scrubbed; its source, date and checksum are in `fixtures/claude-code/settings-schema.source.txt`.
 - `scripts/check-premises.sh` checks this file, the fixtures and the spec notes; `N2_FORBIDDEN_NAMES` (given at run time) adds a scan for names such as the operator's user name.
+- Scratch: when `N2_SCRATCH` is not set, `lib.sh` (and `run-all.sh` through it) makes a scratch folder and prints its path; it removes the folder after exit 0 and keeps it after an error or a signal, with a `premises: kept <folder> (exit <n>)` line. Set `N2_SCRATCH` to keep the captures (isolated HOMEs, raw requests) in every case.
 
 ## Results
 

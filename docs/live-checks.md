@@ -1,14 +1,14 @@
 # Live checks (node N38)
 
-Checks on the real pinned agents, one dated result per check. Spec: `docs/specs/2026-11-18-zygo-design.md` §20 #16b, #21, #28, #40; §19 P1; §7.6; the N24, N25, N14, N15, N28, N33, N34, N35 notes.
+Checks on the real pinned agents, one dated result per check. A pinned agent version is a minimum (operator, 2026-11-21). Spec: `docs/specs/2026-11-18-zygo-design.md` §20 #16b, #21, #28, #40; §19 P1; §7.6; the N24, N25, N14, N15, N28, N33, N34, N35 notes.
 
-Claude Code: 2.1.328
-OpenCode: 1.18.16
+Claude Code: 2.1.328 or later
+OpenCode: 1.18.16 or later
 
 ## Method
 
 - Harness: `scripts/premises/live-*.sh`, on the N2 harness (`lib.sh`, `mock_upstream.py`, `steps.py`, `hook_log.py`, `scrub.py`) plus `live.sh`. They run by hand only: no CI job and no Rust test calls them, and `run-all.sh` does not.
-- Setup, once per shell: `cargo build -p zygo --release` (the scripts use `target/release/zygo`; a debug build misses the 200 ms secret-redaction deadline on an interactive Claude Code body and answers 503: `sh scripts/premises/live-deadline.sh`, mock upstream, 2026-11-19, `fixtures/claude-code/live/deadline-debug.json` shows the first `main` request at 503 after 210 ms, then a second `main` request at 200 after 80 ms, and `fixtures/claude-code/live/deadline-release.json` the same `main` request at 200 after 15 ms), then the pinned Claude Code first on `PATH`: `export N2_SCRATCH=$(mktemp -d)`; `mkdir -p "$N2_SCRATCH/bin" && ln -sf ~/.local/share/claude/versions/2.1.328 "$N2_SCRATCH/bin/claude" && export PATH="$N2_SCRATCH/bin:$PATH"` (when that version is gone: `npm install --prefix "$N2_SCRATCH/npm" @anthropic-ai/claude-code@2.1.328` and link `"$N2_SCRATCH/npm/node_modules/.bin/claude"`). Each script stops unless `claude --version` and `opencode --version` are the pinned versions above.
+- Setup, once per shell: `cargo build -p zygo --release` (the scripts use `target/release/zygo`; a debug build misses the 200 ms secret-redaction deadline on an interactive Claude Code body and answers 503: `sh scripts/premises/live-deadline.sh`, mock upstream, 2026-11-19, `fixtures/claude-code/live/deadline-debug.json` shows the first `main` request at 503 after 210 ms, then a second `main` request at 200 after 80 ms, and `fixtures/claude-code/live/deadline-release.json` the same `main` request at 200 after 15 ms), then Claude Code 2.1.328 or later first on `PATH` (the commands below link 2.1.328): `export N2_SCRATCH=$(mktemp -d)`; `mkdir -p "$N2_SCRATCH/bin" && ln -sf ~/.local/share/claude/versions/2.1.328 "$N2_SCRATCH/bin/claude" && export PATH="$N2_SCRATCH/bin:$PATH"` (when that version is gone: `npm install --prefix "$N2_SCRATCH/npm" @anthropic-ai/claude-code@2.1.328` and link `"$N2_SCRATCH/npm/node_modules/.bin/claude"`). Each script stops unless `claude --version` and `opencode --version` are at or above the minimum versions above.
 - Isolation: every run except #28 gets a temporary `HOME` (`CLAUDE_CONFIG_DIR`, `XDG_*` under it), `ZYGO_CONFIG` = the run's own config file, and an environment emptied of every variable except the provider keys the check names. Auto-update is off (`DISABLE_AUTOUPDATER`, `OPENCODE_DISABLE_AUTOUPDATE`).
 - Upstream per row: **mock** = `mock_upstream.py` behind zygo, answering only a dummy key built at run time, with authored replies (not model output); **real** = the vendor API with the owner's key; #28 uses the claude.ai login Claude Code already stores; N35-D reaches GitHub only.
 - Keys: only in the environment, read at a hidden prompt; never on a command line, never in a file. zygo reads them as `env:` references; the strict and effort checks hand them to `curl` on stdin (`-H @-`). An interactive (tmux) run refuses to start when a key is named.
@@ -53,12 +53,12 @@ rm -rf "$N2_SCRATCH"
 
 For a Windows tester (x86_64 or arm64); N38 closes without them. Every command is PowerShell 7 (`pwsh`), run from the zygo checkout. The checks use `claude-haiku-5-5` for every role ($0.10 input, $0.50 output per million tokens); all three cost under $0.05.
 
-1. Install Rust (`rustup`), Node 20 or later, Git for Windows, SQLite (`winget install SQLite.SQLite`, gives `sqlite3`) and the pinned Claude Code: `npm install -g @anthropic-ai/claude-code@2.1.328` (this gives the `claude.cmd` shim). Open a new PowerShell after the installs.
+1. Install Rust (`rustup`), Node 20 or later, Git for Windows, SQLite (`winget install SQLite.SQLite`, gives `sqlite3`) and Claude Code 2.1.328 or later (the pinned version: `npm install -g @anthropic-ai/claude-code@2.1.328`) (this gives the `claude.cmd` shim). Open a new PowerShell after the installs.
 2. Build zygo as a release build and put it first on `PATH` for this session:
    ```powershell
    cargo build -p zygo --release
    $env:Path = "$PWD\target\release;" + $env:Path
-   zygo --version; claude --version   # claude prints 2.1.328 (Claude Code)
+   zygo --version; claude --version   # claude prints 2.1.328 (Claude Code) or a later version
    ```
 3. **W-SHELL, part 1** (no zygo, and no key in the session: a key in the environment outranks `apiKeyHelper`, spec §8.4, so the helper would not run): `Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue`. Write `probe.json`. Its two commands parse under bash, cmd, Windows PowerShell 5.1 and PowerShell 7 (no `&&`: the pipe `|` separates the two parts in all four) and print one marker per shell; the helper appends them to `zygo-probe-key.txt` in the current folder and prints `probe-key`:
    ```json
