@@ -549,7 +549,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: `git status --short` shows none of the six files.
 
-- [ ] **13. Acceptance.** `cargo test -p zygo-work --test hud_git && cargo test --workspace --locked --no-run` → all pass: a `git` wrapper passed to `hud_git_with` sees only the two H§7.5 commands with `GIT_NO_LAZY_FETCH=1` and the `git_run` settings; the 400 ms budget kills a stalled fake git; fake-git output above 4 KiB is cut (these three are `cfg(unix)`); a real repository with no upstream gives no ahead/behind (all platforms).
+- [x] **13. Acceptance.** `cargo test -p zygo-work --test hud_git && cargo test --workspace --locked --no-run` → all pass: a `git` wrapper passed to `hud_git_with` sees only the two H§7.5 commands with `GIT_NO_LAZY_FETCH=1` and the `git_run` settings; the 400 ms budget kills a stalled fake git; fake-git output above 4 KiB is cut (these three are `cfg(unix)`); a real repository with no upstream gives no ahead/behind (all platforms).
 
 ### Interfaces
 
