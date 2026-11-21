@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** PRB-1, HUD-1, HUD-2
+**Next:** PRB-1, HUD-1, HUD-2, PRB-2
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -58,8 +58,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | — | TODO | implementation | — |
 | PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | TODO | implementation | — |
-| HUD-1 | Usage store: Store::bytes_trimmed | — | PLANNED | implementation | — |
-| HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | PLANNED | judgment | — |
+| HUD-1 | Usage store: Store::bytes_trimmed | — | IN-PROGRESS | implementation | wt .worktrees/phase2/HUD-1 |
+| HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/HUD-2 |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | TODO | implementation | — |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | TODO | judgment | — |
 | HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | — | TODO | judgment | — |
