@@ -1,4 +1,4 @@
-# HG — zygo-work: bounded HUD git function (rev-parse, rev-list only)
+# HUD-2 — zygo-work: bounded HUD git function (rev-parse, rev-list only)
 
 **Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§7.5, AU6, OP14, H§13 (one or two functions)
 **Files:** `crates/zygo-work/src/repo.rs`, `crates/zygo-work/tests/hud_git.rs`

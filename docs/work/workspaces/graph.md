@@ -3,7 +3,7 @@
 <!-- work-graph -->
 
 **Goal:** Build zygo phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume of each agent in its own conversation) as the approved design specifies.
-**Authority:** `docs/specs/2026-11-20-workspaces-design.md` (W§n; approved by the operator 2026-11-21), `docs/specs/2026-11-18-zygo-design.md` (§n; base spec, changed only where W§15 says)
+**Authority:** `docs/specs/2026-11-20-workspaces-design.md` (W§n; approved by the operator 2026-11-21), `docs/specs/2026-11-18-zygo-design.md` (§n; base spec, changed only where W§15 says), `docs/specs/2026-11-21-statusline-hud-design.md` (H§n; node H2), `docs/specs/2026-11-21-auto-update-design.md` (node M5)
 **Run:** parallel=3 · worktrees=.worktrees/workspaces/ · disk-per-node=—
 **Next:** P1, P2
 
@@ -11,6 +11,7 @@ To continue in any session: "resume the work in `docs/work/workspaces/graph.md`"
 
 ## Global constraints
 
+- Starts after `docs/work/hud-update/graph.md` is complete (operator-approved order is the lead's decision, 2026-11-21: sequential programs); nodes build on the HUD code as it then exists — lead, 2026-11-21
 - Base constraints C1-C10 apply; C6 applies to every new hook: a hook never breaks the agent — docs/specs/2026-11-20-workspaces-design.md W§4 W-C1
 - No daemon; tmux is the only long-lived process — docs/specs/2026-11-20-workspaces-design.md W§4 W-C2, W§2 W-G6, AU1
 - tmux options and hooks only on zygo's own sessions; never a global option or hook — docs/specs/2026-11-20-workspaces-design.md W§4 W-C3
@@ -66,13 +67,13 @@ To continue in any session: "resume the work in `docs/work/workspaces/graph.md`"
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3 | TODO | judgment | — |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2 | TODO | judgment | — |
+| H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, H1 | TODO | implementation | — |
 | M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
-| D1 | Base-spec amendments of W§15 | E2 | DROPPED(base-spec ownership moved to docs/work/hud-update/ node HD; coordinator, 2026-11-21) | mechanical | — |
 
 ## Log
 
@@ -80,4 +81,4 @@ To continue in any session: "resume the work in `docs/work/workspaces/graph.md`"
 |------|-------|
 | 2026-11-21 | Graph created from `docs/specs/2026-11-20-workspaces-design.md` (25 nodes; premises P1, P2 gate the nodes that depend on them; fallback nodes enter only on a failed premise, W§19). |
 | 2026-11-21 | Larger-node graph approved (operator, 2026-11-21). Review: 17 findings verified and fixed; R1 folded into M1, D1 added for W§15; tmux test gate per operator decision. |
-| 2026-11-21 | C1: `SessionView` gains `Default` and literal sites use `..Default::default()` (HUD H§17 note 1). D1 DROPPED: one owner for the base spec, node HD of `docs/work/hud-update/graph.md`. |
+| 2026-11-21 | Sequential programs (lead): HUD first. C1, X1, L1, W9 rebased on the HUD code; D1 restored (TODO, owns W§15); H2 (phase segment) and M5 (`zygo up` check) moved in; M5, D1 wait in backlog.md (25 open-row cap). |
