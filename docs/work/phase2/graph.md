@@ -37,6 +37,8 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
 ## Review focus
 
+Convention: an acceptance item number (W§18, H§14, auto-update) appears only in its owner node's file; earlier nodes test their own contract and cite AU or section ids.
+
 1. CI runners without tmux (macos-latest has none by default) — tmux tests print a skip reason and pass — test in W3 (`require_tmux`) — operator, 2026-11-21
 2. `zygo-workspace` and `zygo-hooks` build on windows-latest with unix-only code behind `cfg` — compiles; verbs exit 2 — test in M1 (W§18 #64) — `docs/specs/2026-11-20-workspaces-design.md` OP5
 3. A streamed body that the client drops before its end — `requests_in_flight` returns to 0 — test in X1 — `docs/specs/2026-11-20-workspaces-design.md` AU91, W§19
@@ -73,8 +75,8 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | — | TODO | implementation | — |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
-| C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7 | TODO | judgment | — |
-| X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10 | TODO | judgment | — |
+| C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | TODO | judgment | — |
+| X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | TODO | judgment | — |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | TODO | implementation | — |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | TODO | judgment | — |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | TODO | judgment | — |

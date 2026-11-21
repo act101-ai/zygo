@@ -39,7 +39,7 @@ The check runs in `zygo claude`, `zygo opencode` and `zygo up`, before the launc
 - `-p` or `--print` is given.
 - The command is `zygo serve`.
 - The command runs inside a zygo session (`ZYGO_SESSION` is set).
-- The command runs in a workspace pane (`ZYGO_WORKSPACE` is set): the workspace's `zygo up` already asked. `ws run` never reaches the start check.
+- The command runs in a workspace pane (`ZYGO_WORKSPACE` is set): the workspace's `zygo up` already asked. `ws run` runs the check before it cleans its environment, so it sees the session's `ZYGO_WORKSPACE` and skips too.
 - `zygo up` asks one time for the whole workspace.
 
 ### Check
@@ -123,3 +123,4 @@ All cited line numbers were verified against the repo on 2026-11-21 (branch feat
 | 2026-11-21 | Citation corrections (last bullet) | author's call (lead decision: one merged graph) | The workspaces graph moved to `docs/work/phase2/`; the pointer names the new path and node M5. |
 | 2026-11-21 | When the check is skipped | author's call | The intent "workspace panes never ask" was false for a member started by hand in a pane: `up` and `ws run` remove `ZYGO_SESSION` from the pane environment (W§18 #17), but the pane keeps `ZYGO_WORKSPACE` (AU93). |
 | 2026-11-21 | Acceptance #5 | author's call | Matches the `ZYGO_WORKSPACE` skip added to "When the check is skipped". |
+| 2026-11-21 | When the check is skipped (`ZYGO_WORKSPACE` bullet) | author's call | `ws run` now passes through the start check, so a test can prove that the `ZYGO_WORKSPACE` skip is what keeps panes from asking. |
