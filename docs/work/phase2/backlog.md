@@ -11,7 +11,7 @@ Open rows that wait for a slot in `graph.md` (full-machinery: at most 25 open ro
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
-| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5 | TODO | judgment | — |
+| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | TODO | judgment | — |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | TODO | judgment | — |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
