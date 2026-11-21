@@ -1411,6 +1411,28 @@ fn limits_inflight_waits_then_busy() {
     assert!(t0.elapsed() >= Duration::from_millis(200));
 }
 
+/// A busy reply to a client that sent its whole body reads the body first: the reply is followed by a clean close,
+/// not a reset (on Windows a reset also discards the reply the client already received; Linux keeps it, so there this
+/// test passes either way).
+#[test]
+fn limits_busy_reads_the_body_before_replying() {
+    let t = setup_with(|_, _| "[proxy]\nmax_inflight_mib = 1\n".into(), |o, _| o.busy_wait = Duration::from_millis(200));
+    let g = session(&t.h, Agent::ClaudeCode, None);
+    let _hold = t.h.hold_inflight(900 << 10);
+    let body = big(200 << 10);
+    let mut s = std::net::TcpStream::connect(format!("127.0.0.1:{}", t.h.url().port().unwrap())).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(s, "POST /{M} HTTP/1.1\r\nhost: x\r\nx-api-key: {}\r\nx-zygo-session: {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", g.token, g.session, body.len()).unwrap();
+    // The body arrives after the busy wait ended: it sits unread unless the server drains it.
+    std::thread::sleep(Duration::from_millis(400));
+    s.write_all(&body).unwrap();
+    let mut got = Vec::new();
+    s.read_to_end(&mut got).expect("a clean close after the reply");
+    let text = String::from_utf8_lossy(&got);
+    assert!(text.starts_with("HTTP/1.1 503"), "{text}");
+    assert!(text.contains("zygo_busy"), "{text}");
+}
+
 /// A chunked request holding permits never waits for more while holding them (no hold-and-wait): A (chunked, 2 ×
 /// 100 KiB) and B (200 KiB, content-length, queued between A's chunks) both get 200 within a 1 MiB budget.
 #[test]

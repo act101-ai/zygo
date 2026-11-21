@@ -360,7 +360,8 @@ fn install_plugin(
     let Ok(v) = serde_json::from_slice::<Value>(mcp) else { return Ok(()) };
     let servers = v.get("mcpServers").filter(|s| s.is_object()).unwrap_or(&v);
     let home = homepage(files);
-    let here = root.to_string_lossy();
+    // A verbatim root (`\\?\C:\…`) does not read `/` as a separator: hand out the plain form.
+    let here = zygo_core::paths::plain(&root).to_string_lossy().into_owned();
     let sub = |s: &str| s.replace(ROOT_VAR, &here);
     let mut missing: Vec<&str> = vec![];
     for (name, s) in servers.as_object().into_iter().flatten() {

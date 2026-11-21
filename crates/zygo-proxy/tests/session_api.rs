@@ -794,6 +794,8 @@ fn client_build_errors_are_session_errors() {
     let k = SessionClient::from_session_dir(&write_session_dir(&root, &g.session, h.url().as_str(), &format!("{}\nX", g.token)));
     let r = k.and_then(|k| k.status().map(|_| ()));
     assert!(matches!(r, Err(ClientError::Session(_))), "token with a newline: {r:?}");
+    // Windows refuses a control character in a file name (os error 123): no such session directory can exist.
+    if cfg!(windows) { return; }
     let k = SessionClient::from_session_dir(&write_session_dir(&root, &format!("{}\u{1}", g.session), h.url().as_str(), &g.token));
     let r = k.and_then(|k| k.status().map(|_| ()));
     assert!(matches!(r, Err(ClientError::Session(_))), "session id with a control character: {r:?}");

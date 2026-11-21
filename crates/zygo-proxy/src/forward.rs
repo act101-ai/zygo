@@ -849,17 +849,16 @@ async fn read_charged(app: &App, req: Request) -> Result<(Bytes, Option<OwnedSem
     let unreadable = |_| ZygoError::bad_request("unreadable body");
     if let Some(n) = len {
         if n > BODY_LIMIT {
-            let mut s = req.into_body().into_data_stream();
-            let mut seen = 0u64;
-            while let Some(Ok(c)) = next_within(&mut s, app.body_idle).await {
-                seen += c.len() as u64;
-                if seen > BODY_LIMIT {
-                    break;
-                }
-            }
+            discard(&mut req.into_body().into_data_stream(), app.body_idle, 0).await;
             return Err(too_large());
         }
-        let permit = charge(&app.inflight, cost(n)?, deadline).await?;
+        let permit = match charge(&app.inflight, cost(n)?, deadline).await {
+            Ok(p) => p,
+            Err(e) => {
+                discard(&mut req.into_body().into_data_stream(), app.body_idle, 0).await;
+                return Err(e);
+            }
+        };
         // Hyper's HTTP/1 decoder ends the body at `content-length` (≤ BODY_LIMIT); serve mode speaks only HTTP/1.1.
         let mut buf = BytesMut::new();
         let mut s = req.into_body().into_data_stream();
@@ -879,23 +878,44 @@ async fn read_charged(app: &App, req: Request) -> Result<(Bytes, Option<OwnedSem
         // No hold-and-wait: a request holding permits takes more only when they are free at once; else it releases
         // them and waits for the total as one acquisition (FIFO), so it never waits behind a request waiting for it.
         let more = cost(c.len() as u64)?;
-        permit = match permit.take() {
-            None => charge(&app.inflight, more, deadline).await?,
+        let charged = match permit.take() {
+            None => charge(&app.inflight, more, deadline).await,
             Some(mut held) => match app.inflight.clone().try_acquire_many_owned(more) {
                 Ok(m) => {
                     held.merge(m);
-                    Some(held)
+                    Ok(Some(held))
                 }
                 Err(_) => {
                     let total = u32::try_from(held.num_permits()).map_err(|_| too_large())?.saturating_add(more);
                     drop(held);
-                    charge(&app.inflight, total, deadline).await?
+                    charge(&app.inflight, total, deadline).await
                 }
             },
+        };
+        permit = match charged {
+            Ok(p) => p,
+            Err(e) => {
+                let seen = (buf.len() + c.len()) as u64;
+                drop(buf);
+                discard(&mut s, app.body_idle, seen).await;
+                return Err(e);
+            }
         };
         buf.extend_from_slice(&c);
     }
     Ok((buf.freeze(), permit))
+}
+
+/// Reads and discards the rest of a request body before an early error reply, until `BODY_LIMIT` bytes in all
+/// (`seen` already read) or a read error or stall: a client still sending would otherwise get a reset instead of the
+/// reply (on Windows the reset also discards the reply the client already received).
+async fn discard<S: Stream<Item = Result<Bytes, axum::Error>> + Unpin>(s: &mut S, idle: Option<Duration>, mut seen: u64) {
+    while let Some(Ok(c)) = next_within(s, idle).await {
+        seen += c.len() as u64;
+        if seen > BODY_LIMIT {
+            break;
+        }
+    }
 }
 
 /// A whole upstream body of at most COPY_MAX bytes (§14), else `502 zygo_upstream_too_large`.

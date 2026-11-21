@@ -877,8 +877,8 @@ fn delivery_writes_the_opencode_forms() {
     assert_eq!(a["acme-helper"], json!({"mode": "subagent", "description": "say \"hi\"", "prompt": "You help.\n"}));
     assert_eq!(a["acme-crlf"], json!({"mode": "subagent", "description": "Crlf one", "prompt": "Body\r\n"}));
     assert_eq!(cfg["command"]["acme-ship"], json!({"description": "Ship it", "template": "Ship $ARGUMENTS\n"}));
-    let r = root.to_string_lossy();
-    assert_eq!(cfg["mcp"]["acme-srv"], json!({"type": "local", "command": [format!("{r}/bin/srv"), "--root", r], "environment": {"K": format!("{r}/d")}}));
+    let r = zygo_core::paths::plain(&root).to_string_lossy().into_owned();
+    assert_eq!(cfg["mcp"]["acme-srv"], json!({"type": "local", "command": [format!("{r}/bin/srv"), "--root", &r], "environment": {"K": format!("{r}/d")}}));
     assert!(cfg["mcp"].get("acme-gone").is_none());
     assert!(cfg["mcp"].get("acme-far").is_none());
     assert_eq!(

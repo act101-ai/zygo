@@ -75,7 +75,7 @@ impl<'a> Probe<'a> {
 
     /// The tree at `commit`, checked as sync checks it.
     fn checkout_check(&self, commit: &str, deadline: Instant) -> anyhow::Result<CheckReport> {
-        g(self.git.run(&self.dir, &["checkout", "--quiet", "--detach", "--force", "--end-of-options", commit], deadline))?;
+        g(self.git.checkout_detached(&self.dir, commit, deadline))?;
         let modes = git_modes_by(self.git.command(&self.dir), deadline);
         Ok(check_dir_modes(&self.dir, deadline, modes))
     }

@@ -181,6 +181,7 @@ struct Seen {
     plugin_ids: Vec<String>,
     delivered: Option<bool>,
     compact: Option<WindowArg>,
+    #[cfg_attr(not(unix), allow(dead_code))]
     agent_version: String,
     repo: Option<String>,
     work: Option<String>,
@@ -1027,6 +1028,7 @@ const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 /// A launch in its own process (`harness_launch`); unix: its own process group; Windows: its own console and group.
 struct Harness {
     child: std::process::Child,
+    #[cfg_attr(not(unix), allow(dead_code))]
     pid: u32,
     root: PathBuf,
     reaped: bool,

@@ -5,9 +5,12 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
+#[cfg(unix)]
 use std::time::Duration;
 use tempfile::TempDir;
-use zygo::cmd::doctor::{absolute_entries, compiled_act_lite_version, probe_version, report as doctor_report, Env, Probe};
+use zygo::cmd::doctor::{absolute_entries, compiled_act_lite_version, report as doctor_report, Env, Probe};
+#[cfg(unix)]
+use zygo::cmd::doctor::probe_version;
 use zygo::cmd::usage::{self, Args};
 use zygo::cmd::verbs::VerbCtx;
 use zygo::cmd::UsageError;

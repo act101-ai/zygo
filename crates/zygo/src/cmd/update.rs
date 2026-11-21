@@ -197,15 +197,40 @@ fn swap_in(tmp: &Path, target: &Path) -> std::io::Result<()> {
     std::fs::rename(tmp, target)
 }
 
+/// Windows error 32 (`ERROR_SHARING_VIOLATION`).
+#[cfg(windows)]
+const SHARING_VIOLATION: i32 = 32;
+
+/// How long a rename retries a sharing violation. A real-time scanner opens a freshly started or written `.exe` for
+/// about a second (measured on Windows 11 with Defender: 35 MB binary, renames refused from 22 ms to 1062 ms after
+/// launch), so one attempt is not enough.
+#[cfg(windows)]
+const SHARING_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// `std::fs::rename`, retried while another process holds `from` without delete sharing; the error names `what`.
+#[cfg(windows)]
+fn rename_retrying(from: &Path, to: &Path, what: &str) -> std::io::Result<()> {
+    let deadline = std::time::Instant::now() + SHARING_RETRY;
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.raw_os_error() == Some(SHARING_VIOLATION) && std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(std::io::Error::new(e.kind(), format!("{what}: {e}"))),
+        }
+    }
+}
+
 #[cfg(windows)]
 fn swap_in(tmp: &Path, target: &Path) -> std::io::Result<()> {
     let mut old = target.as_os_str().to_owned();
     old.push(".old");
     let old = PathBuf::from(old);
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(target, &old)?;
-    if let Err(e) = std::fs::rename(tmp, target) {
-        let _ = std::fs::rename(&old, target);
+    rename_retrying(target, &old, "moving it aside")?;
+    if let Err(e) = rename_retrying(tmp, target, "moving the new binary in") {
+        let _ = rename_retrying(&old, target, "restoring it");
         return Err(e);
     }
     let _ = std::fs::remove_file(&old);
@@ -329,5 +354,27 @@ mod tests {
             assert_eq!(std::fs::read(&victim).unwrap(), b"victim-bytes");
             assert_eq!(std::fs::read(&target).unwrap(), b"old");
         }
+    }
+
+    /// A file held open without delete sharing (as a scanner holds a new `.exe`) is renamed once it is released.
+    #[cfg(windows)]
+    #[test]
+    fn rename_waits_out_a_sharing_violation() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let (from, to) = (d.path().join("zygo.exe"), d.path().join("zygo.exe.old"));
+        std::fs::write(&from, b"bin").unwrap();
+        // FILE_SHARE_READ only: a rename needs delete sharing.
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0x1).open(&from).unwrap();
+        assert_eq!(std::fs::rename(&from, &to).unwrap_err().raw_os_error(), Some(SHARING_VIOLATION));
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            drop(held);
+        });
+        let t0 = Instant::now();
+        rename_retrying(&from, &to, "moving it aside").unwrap();
+        assert!(t0.elapsed() >= Duration::from_millis(300), "{:?}", t0.elapsed());
+        release.join().unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"bin");
     }
 }

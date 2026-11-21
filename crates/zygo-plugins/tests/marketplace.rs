@@ -530,7 +530,13 @@ mod adding {
         let (old, fresh) = (probe(), probe());
         for d in [&old, &fresh] { std::fs::create_dir_all(d).unwrap(); }
         let ago = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
-        std::fs::File::open(&old).unwrap().set_modified(ago).unwrap();
+        let mut o = std::fs::OpenOptions::new();
+        // Windows opens a directory handle only with FILE_FLAG_BACKUP_SEMANTICS, and sets its time only for write.
+        #[cfg(windows)]
+        std::os::windows::fs::OpenOptionsExt::custom_flags(o.write(true), 0x0200_0000);
+        #[cfg(not(windows))]
+        o.read(true);
+        o.open(&old).unwrap().set_modified(ago).unwrap();
         add_plain(&t, &r.src()).unwrap();
         assert!(!old.exists() && fresh.exists());
     }
@@ -684,7 +690,7 @@ mod updating {
     fn builtin_entry_moves_ref_and_commit_only() {
         let t = T::new();
         let r = market(&t);
-        let builtin = format!("[[marketplace]]\nname = \"act101\"\nsource = \"{}\"\nref = \"v1.0.0\"\ndefault_on = [\"demo\"]\n", r.src());
+        let builtin = format!("[[marketplace]]\nname = \"act101\"\nsource = {}\nref = \"v1.0.0\"\ndefault_on = [\"demo\"]\n", toml::Value::String(r.src()));
         release(&r, "1.1.0", "echo two\n");
         with_layers(&t, &builtin, None, |env| update_in(env, Some("act101"), false, true)).unwrap();
         let to = rev(&r, "v1.1.0");

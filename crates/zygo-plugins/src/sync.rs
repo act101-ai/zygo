@@ -124,7 +124,8 @@ pub fn clone_url(source: &str) -> anyhow::Result<String> {
     } else if let Some(rest) = source.strip_prefix("git+ssh://") {
         Some(format!("ssh://{rest}"))
     } else if Path::new(source).is_absolute() {
-        Some(source.to_string())
+        // git reads `\\?\C:\…` as a host name: give it the plain form.
+        zygo_core::paths::plain(Path::new(source)).to_str().map(str::to_string)
     } else {
         None
     };
@@ -221,6 +222,14 @@ impl Git {
         let mut c = self.command(cwd);
         c.args(args);
         run_bounded(c, deadline).map(|b| String::from_utf8_lossy(&b).trim().to_string()).map_err(|e| e.to_string())
+    }
+
+    /// `checkout --detach --force <commit>` in `cwd`. Git 2.30–2.42 refuses `--end-of-options` in `checkout` ("does
+    /// not take a path argument"), so `commit` must be a hex object id (40 or 64 hex): it never reads as an option.
+    pub(crate) fn checkout_detached(&self, cwd: &Path, commit: &str, deadline: Instant) -> Result<String, String> {
+        let hex = matches!(commit.len(), 40 | 64) && commit.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if !hex { return Err("git failed: commit is not a hex object id".into()); }
+        self.run(cwd, &["checkout", "--quiet", "--detach", "--force", commit], deadline)
     }
 
     /// D2: once per sync, before the first git call of the first attempted marketplace.
@@ -378,8 +387,11 @@ pub(crate) fn key_seg(s: &str) -> String {
     }
 }
 
-/// `check failed: <rule> <path>`.
-pub(crate) fn check_failed(v: &Violation) -> String { format!("check failed: {} {}", v.rule.as_str(), v.path) }
+/// `check failed: <rule> <path> (<detail>)`; the detail says why (`malformed .` alone could be a deadline or an I/O error).
+pub(crate) fn check_failed(v: &Violation) -> String {
+    let detail = if v.detail.is_empty() { String::new() } else { format!(" ({})", v.detail) };
+    format!("check failed: {} {}{detail}", v.rule.as_str(), v.path)
+}
 
 fn sync_marketplace(ctx: &Ctx, m: &Marketplace, layer: &str, deadline: Instant, report: &mut SyncReport) -> Result<Status, String> {
     if Instant::now() >= deadline { return Err("git timed out".into()); }
@@ -461,7 +473,7 @@ fn sync_marketplace(ctx: &Ctx, m: &Marketplace, layer: &str, deadline: Instant, 
     }
 
     let checkout = || -> Result<(), String> {
-        ctx.git.run(&cache, &["checkout", "--quiet", "--detach", "--force", "--end-of-options", &pin], deadline)?;
+        ctx.git.checkout_detached(&cache, &pin, deadline)?;
         ctx.git.run(&cache, &["clean", "-ffdxq"], deadline).map(drop)
     };
     // N46 item 1: a pin git cannot check out is marked in the cache, so a later launch does not reclone for it.
@@ -692,7 +704,7 @@ fn parse_config(cache: &Path) -> HashMap<&'static str, String> {
             continue;
         }
         let Some((k, v)) = l.split_once('=') else { continue };
-        let (k, v) = (k.trim().to_ascii_lowercase(), v.trim().trim_matches('"').to_string());
+        let (k, v) = (k.trim().to_ascii_lowercase(), config_value(v));
         let slot = match (section.as_str(), k.as_str()) {
             ("core", "repositoryformatversion") if matches!(v.as_str(), "0" | "1") => "repositoryformatversion",
             ("core", "ignorecase") if matches!(v.as_str(), "true" | "false") => "ignorecase",
@@ -703,6 +715,30 @@ fn parse_config(cache: &Path) -> HashMap<&'static str, String> {
         };
         out.insert(slot, v);
     }
+    out
+}
+
+/// A git config value as git reads it: quotes removed, `\\`, `\"`, `\n`, `\t`, `\b` unescaped, a `#` or `;` outside
+/// quotes starts a comment, unquoted trailing blanks dropped. `rewrite_config` writes a Windows path as `C:\\x`.
+fn config_value(raw: &str) -> String {
+    let (mut out, mut keep, mut quoted) = (String::new(), 0, false);
+    let mut it = raw.trim_start().chars();
+    while let Some(c) = it.next() {
+        match c {
+            '"' => { quoted = !quoted; keep = out.len(); continue; }
+            '\\' => match it.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('b') => out.push('\u{8}'),
+                Some(e) => out.push(e),
+                None => {}
+            },
+            '#' | ';' if !quoted => break,
+            c => { out.push(c); if !quoted && c.is_whitespace() { continue; } }
+        }
+        keep = out.len();
+    }
+    out.truncate(keep);
     out
 }
 
@@ -735,4 +771,22 @@ fn replace_file(dir: &Path, name: &str, text: &str) -> anyhow::Result<()> {
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, dir.join(name)).inspect_err(|_| { let _ = std::fs::remove_file(&tmp); })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::config_value;
+
+    #[test]
+    fn config_values_read_as_git_reads_them() {
+        assert_eq!(config_value(r#""C:\\Users\\a b\\mk""#), r"C:\Users\a b\mk"); // what rewrite_config writes
+        assert_eq!(config_value(r"C:\\Users\\mk"), r"C:\Users\mk");
+        assert_eq!(config_value("https://x/y.git"), "https://x/y.git");
+        assert_eq!(config_value(r#""a \"q\" \t\n\b""#), "a \"q\" \t\n\u{8}");
+        assert_eq!(config_value(r#" "keep  "  ; comment"#), "keep  ");
+        assert_eq!(config_value("x # comment"), "x");
+        assert_eq!(config_value(r#""a # b""#), "a # b");
+        assert_eq!(config_value("a   b  "), "a   b");
+        assert_eq!(config_value(""), "");
+    }
 }

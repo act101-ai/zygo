@@ -159,7 +159,7 @@ pub fn git_tracer(fx: &Fx) -> (PathBuf, PathBuf) {
 #[cfg(windows)]
 pub fn git_tracer(fx: &Fx) -> (PathBuf, PathBuf) {
     let log = fx.path("trace.log");
-    let script = fx.write("bin/trace-git.bat", format!("@echo %* >> \"{}\"\r\n@git %*\r\n", log.display()));
+    let script = fx.write("bin/trace-git.bat", format!("@>> \"{}\" echo %*\r\n@git %*\r\n", log.display()));
     (script, log)
 }
 

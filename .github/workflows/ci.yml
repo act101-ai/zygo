@@ -19,8 +19,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Test
-        # Windows tests report but do not block until node N78 fixes them (owner decision 2026-11-20).
-        continue-on-error: ${{ matrix.os == 'windows-latest' }}
         run: cargo test --workspace --locked --no-fail-fast
       - name: Install script (sh)
         if: matrix.os != 'windows-latest'
