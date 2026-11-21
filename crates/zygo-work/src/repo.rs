@@ -59,7 +59,8 @@ pub(crate) fn run_bounded_err(cmd: Command, deadline: Instant) -> Result<Vec<u8>
 }
 
 /// The end of a bounded run that exited: exit success, stdout (at most the cut), whether stdout passed the cut,
-/// and up to 64 KiB of stderr (read only on a non-zero exit, else empty).
+/// and up to 64 KiB of stderr (read only on a non-zero exit, else empty). In the unix cut mode, a child that the kernel
+/// reaped (SIGCHLD ignored) has an unknown status, and `ok` is true.
 struct Ran {
     ok: bool,
     out: Vec<u8>,
@@ -108,8 +109,9 @@ fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Res
         let _ = std::io::copy(&mut err, &mut std::io::sink());
         let _ = etx.send(buf);
     });
+    // `None`: the kernel reaped the child (unix cut mode, SIGCHLD ignored), so it has exited with an unknown status.
     #[cfg_attr(not(unix), allow(unused_labels))] // the label is used by the unix block only
-    let status = 'wait: {
+    let status: Option<std::process::ExitStatus> = 'wait: {
         // Unix cut mode: kill the group before the leader is reaped (author's call 4). The first `waitid` error
         // (e.g. ECHILD under an ignored SIGCHLD) falls through to the plain loop, with no group kill after it.
         #[cfg(unix)]
@@ -119,7 +121,7 @@ fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Res
                     Ok(true) => {
                         zygo_config::repo_file::kill_group(&child);
                         match child.wait() {
-                            Ok(s) => break 'wait s,
+                            Ok(s) => break 'wait Some(s),
                             Err(_) => return Err(RunError::Failed),
                         }
                     }
@@ -134,8 +136,12 @@ fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Res
         }
         loop {
             match child.try_wait() {
-                Ok(Some(s)) => break s,
+                Ok(Some(s)) => break Some(s),
                 Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                // Unix cut mode with SIGCHLD ignored: the kernel reaped the child, so it has exited. No kill, because
+                // its PID may already be reused; stdout is read as usual.
+                #[cfg(unix)]
+                Err(e) if cut.is_some() && e.raw_os_error() == Some(libc::ECHILD) => break None,
                 _ => {
                     if cfg!(windows) && cut.is_some() {
                         zygo_config::repo_file::kill_tree(&mut child);
@@ -150,7 +156,8 @@ fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Res
     };
     let left = || deadline.saturating_duration_since(Instant::now());
     let (out, over) = rx.recv_timeout(left()).map_err(|_| RunError::TimedOut)?;
-    let ok = status.success();
+    // An unknown status counts as success: the caller's checks of the output decide.
+    let ok = status.is_none_or(|s| s.success());
     let err = if ok { Vec::new() } else { erx.recv_timeout(left()).unwrap_or_default() };
     Ok(Ran { ok, out, cut: over, err })
 }
@@ -225,7 +232,8 @@ pub struct HudGit {
     pub top: PathBuf,
     pub git_dir: PathBuf,
     pub common_dir: PathBuf,
-    /// `None` when detached (`rev-parse` prints `HEAD`) or the line is empty.
+    /// The fourth `rev-parse` line (`--symbolic-full-name HEAD`) without `refs/heads/`; `None` when detached
+    /// (`HEAD`), empty, or not under `refs/heads/`.
     pub branch: Option<String>,
     /// Both `None` with no upstream, any `rev-list` error, or output past the cut.
     pub ahead: Option<u32>,
@@ -239,7 +247,10 @@ pub fn hud_git(cwd: &Path, budget: Duration) -> Option<HudGit> {
 
 /// The two HUD git calls (H§7.5) in `cwd` within `budget` (`rev-parse` gets 3/8 of it), each with
 /// `GIT_NO_LAZY_FETCH=1` and at most 4 KiB of stdout. On unix each call runs in its own process group, which is
-/// killed at the deadline and when the call exits. On Windows the call's process tree is killed at the deadline.
+/// killed at the deadline and when the call exits. Exception (SIGCHLD ignored, so the kernel reaps git): after the
+/// first `waitid` error the call is watched with `try_wait` only and no group kill runs, because the PID may be
+/// reused; at the deadline only the child itself is killed, and ECHILD from `try_wait` counts as an exit with an
+/// unknown status, whose output is then checked as usual. On Windows the call's process tree is killed at the deadline.
 /// None when `rev-parse` fails, times out, passes the cut, or does not print four lines that start with three
 /// existing paths.
 pub fn hud_git_with(git: &Path, cwd: &Path, budget: Duration) -> Option<HudGit> {
@@ -253,7 +264,7 @@ pub fn hud_git_with(git: &Path, cwd: &Path, budget: Duration) -> Option<HudGit> 
         run_bounded_out(c, deadline, Some(HUD_CUT))
     };
 
-    let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"];
+    let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--symbolic-full-name", "HEAD"];
     let Ran { ok: true, out, cut: false, .. } = run(&args, rev_parse_deadline).ok()? else { return None };
     let text = out.strip_suffix(b"\n").unwrap_or(&out);
     let lines: Vec<&[u8]> = text.split(|&b| b == b'\n').collect();
@@ -266,9 +277,12 @@ pub fn hud_git_with(git: &Path, cwd: &Path, budget: Duration) -> Option<HudGit> 
         p.canonicalize().ok()
     };
     let (top, git_dir, common_dir) = (path(top)?, path(git_dir)?, path(common_dir)?);
-    let branch = (!head.is_empty() && head != b"HEAD").then(|| String::from_utf8_lossy(head).into_owned());
+    // `refs/heads/<name>` on a branch, also when a tag has the same name (`--abbrev-ref` would give `heads/<name>`);
+    // `HEAD` when detached.
+    let branch = head.strip_prefix(b"refs/heads/").filter(|b| !b.is_empty()).map(|b| String::from_utf8_lossy(b).into_owned());
 
-    let marks = match run(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], deadline) {
+    // `--` ends the revisions: a file named like the range cannot make the argument ambiguous.
+    let marks = match run(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}", "--"], deadline) {
         Ok(Ran { ok: true, out, cut: false, .. }) => std::str::from_utf8(&out).ok().and_then(|s| {
             let (a, b) = s.trim_end().split_once('\t')?;
             Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))

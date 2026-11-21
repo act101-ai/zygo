@@ -3746,6 +3746,7 @@ dependencies = [
  "anyhow",
  "fs4",
  "hex",
+ "libc",
  "regex",
  "serde",
  "serde_json",

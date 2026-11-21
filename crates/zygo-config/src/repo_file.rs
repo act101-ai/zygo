@@ -287,3 +287,54 @@ pub fn read_default_branch(repo: &Path) -> RepoFile {
     }
     RepoFile::Found { branch, table, ignored }
 }
+
+#[cfg(all(test, unix))]
+mod process_tests {
+    use super::*;
+    use std::io::BufRead;
+    use std::os::unix::process::CommandExt;
+
+    /// No process `pid`, or a zombie not yet reaped by init.
+    fn gone(pid: &str) -> bool {
+        let o = Command::new("ps").args(["-o", "stat=", "-p", pid]).output().unwrap();
+        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        s.is_empty() || s.starts_with('Z')
+    }
+
+    #[test] // kill_group ends the child's whole group and does not reap the child
+    fn kill_group_kills_the_childs_group() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "sleep 30 & echo $!; wait"]).stdin(Stdio::null()).stdout(Stdio::piped());
+        c.process_group(0);
+        let mut child = c.spawn().unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let grandchild = line.trim().to_string();
+        assert!(!grandchild.is_empty() && !gone(&grandchild), "grandchild {grandchild:?} did not start");
+        kill_group(&child);
+        let status = child.wait().expect("kill_group must not reap the child");
+        assert_eq!(std::os::unix::process::ExitStatusExt::signal(&status), Some(libc::SIGKILL));
+        let until = Instant::now() + Duration::from_secs(2);
+        while !gone(&grandchild) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(gone(&grandchild), "grandchild {grandchild} still runs");
+    }
+
+    #[test] // exited_unreaped: false while the child runs, true after it exits, and the status stays for wait
+    fn exited_unreaped_tells_an_exit_without_reaping() {
+        let mut running = Command::new("sleep").arg("30").spawn().unwrap();
+        assert!(!exited_unreaped(&running).unwrap());
+        let _ = running.kill();
+        let _ = running.wait();
+
+        let mut child = Command::new("sh").args(["-c", "exit 3"]).spawn().unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while !exited_unreaped(&child).unwrap() {
+            assert!(Instant::now() < until, "child did not exit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(exited_unreaped(&child).unwrap(), "a second look must still see the exit: not reaped");
+        assert_eq!(child.try_wait().unwrap().and_then(|s| s.code()), Some(3));
+    }
+}

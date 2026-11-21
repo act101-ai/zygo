@@ -75,6 +75,30 @@ fn assert_gone(pid_file: &Path) {
     while !gone() && Instant::now() < until { std::thread::sleep(Duration::from_millis(20)); }
     assert!(gone(), "process {pid} still runs");
 }
+/// `<t>/m/sleep`: a link to the system `sleep`. Exec'd by its full path, the process's arguments hold the unique
+/// temporary path `t`; the base name stays `sleep` for a multi-call coreutils binary.
+#[cfg(unix)]
+fn marked_sleep(t: &Path) -> PathBuf {
+    let o = Command::new("sh").args(["-c", "command -v sleep"]).output().unwrap();
+    let real = String::from_utf8(o.stdout).unwrap().trim().to_string();
+    std::fs::create_dir(t.join("m")).unwrap();
+    let p = t.join("m").join("sleep");
+    std::os::unix::fs::symlink(real, &p).unwrap();
+    p
+}
+/// Asserts that within 2 s no process has `marker` in its arguments (`ps -A -ww -o args=`; a zombie shows only its
+/// name).
+#[cfg(unix)]
+fn assert_no_process_with(marker: &str) {
+    let found = || {
+        let o = Command::new("ps").args(["-A", "-ww", "-o", "args="]).output().unwrap();
+        assert!(o.status.success(), "ps failed");
+        String::from_utf8_lossy(&o.stdout).lines().any(|l| l.contains(marker))
+    };
+    let until = Instant::now() + Duration::from_secs(2);
+    while found() && Instant::now() < until { std::thread::sleep(Duration::from_millis(20)); }
+    assert!(!found(), "a process with {marker} in its arguments still runs");
+}
 /// [`fake_rev_parse`] whose `rev-list` prints `rev_list` (from `<t>/list`) and exits 0.
 #[cfg(unix)]
 fn fake_both(t: &Path, rev_parse: &str, rev_list: &str) -> PathBuf {
@@ -144,6 +168,52 @@ fn hud_git_outside_child() {
     std::fs::write(mark, "none").unwrap();
 }
 
+#[test] // review L1: a file named like the range does not make `rev-list` ambiguous (`--` ends the revisions)
+fn hud_git_file_named_like_the_range_keeps_the_marks() {
+    let _f = forks();
+    let (_t, w) = repo(true);
+    git(&w, &["checkout", "-q", "-b", "feat"]);
+    git(&w, &["commit", "-q", "--allow-empty", "-m", "b"]);
+    git(&w, &["branch", "-q", "--set-upstream-to=main"]);
+    std::fs::write(w.join("HEAD...@{upstream}"), "").unwrap();
+    let g = hud_git(&w, REAL).unwrap();
+    assert_eq!((g.branch.as_deref(), g.ahead, g.behind), (Some("feat"), Some(1), Some(0)));
+}
+
+#[test] // review L2: a tag named like the branch keeps the plain branch name (`--abbrev-ref` gives `heads/main`)
+fn hud_git_tag_named_like_the_branch_keeps_the_branch() {
+    let _f = forks();
+    let (_t, w) = repo(true);
+    git(&w, &["tag", "main"]);
+    assert_eq!(hud_git(&w, REAL).unwrap().branch.as_deref(), Some("main"));
+}
+
+#[cfg(unix)]
+#[test] // review M2: under SIGCHLD = SIG_IGN the kernel reaps git; the result still comes in
+fn hud_git_sigchld_ignored_still_gives_the_branch() {
+    let _f = forks();
+    let (t, w) = repo(true);
+    let mark = t.path().join("mark");
+    run_child("hud_git_sigchld_child", &[("HUD_GIT_SIGCHLD_REPO", w.as_os_str()), ("HUD_GIT_MARK", mark.as_os_str())]);
+    assert_eq!(std::fs::read_to_string(&mark).unwrap(), "main"); // the child ran the assertion
+}
+
+/// Run only by `hud_git_sigchld_ignored_still_gives_the_branch`, in a child process; passes when run alone.
+#[cfg(unix)]
+#[test]
+#[ignore = "run by hud_git_sigchld_ignored_still_gives_the_branch"]
+fn hud_git_sigchld_child() {
+    let (Some(w), Some(mark)) = (std::env::var_os("HUD_GIT_SIGCHLD_REPO"), std::env::var_os("HUD_GIT_MARK")) else {
+        return;
+    };
+    // SAFETY: sets this process's SIGCHLD disposition; the child process runs this one test alone.
+    unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
+    let w = PathBuf::from(w);
+    let g = hud_git(&w, REAL).unwrap();
+    assert_eq!((g.top, g.branch.as_deref()), (canon(&w), Some("main")));
+    std::fs::write(mark, "main").unwrap();
+}
+
 #[test] // author's call 6 (C6): the largest budget does not panic
 fn hud_git_max_budget_does_not_overflow() {
     let _f = forks();
@@ -173,8 +243,8 @@ fn hud_git_wrapper_sees_only_two_commands() {
     let pre = format!("-c core.fsmonitor=false -C {}", w.display());
     let env = "|1|0|0|C|unset|unset|unset";
     assert_eq!(std::fs::read_to_string(&log).unwrap(), format!(
-        "{pre} rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir --abbrev-ref HEAD{env}\n\
-         {pre} rev-list --left-right --count HEAD...@{{upstream}}{env}\n"));
+        "{pre} rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir --symbolic-full-name HEAD{env}\n\
+         {pre} rev-list --left-right --count HEAD...@{{upstream}} --{env}\n"));
 }
 
 /// Run only by `hud_git_wrapper_sees_only_two_commands`, in a child process; passes when run alone.
@@ -193,12 +263,18 @@ fn hud_git_rev_parse_has_150_ms() {
     let _f = forks();
     let t = TempDir::new().unwrap();
     let pid = t.path().join("pid");
-    let fake = fake_git(t.path(), &format!("echo $$ > '{}'; exec sleep 5", pid.display()));
+    // Every process of this fake has the unique path `t` in its arguments: `/bin/sh <t>/git …`, then `<t>/m/sleep 5`.
+    let stall = marked_sleep(t.path());
+    let fake = fake_git(t.path(), &format!("echo $$ > '{}'; exec '{}' 5", pid.display(), stall.display()));
     let start = Instant::now();
     assert_eq!(hud_git_with(&fake, t.path(), HUD), None);
     let took = start.elapsed();
     assert!(took >= Duration::from_millis(150) && took < HUD, "{took:?}");
-    assert_gone(&pid);
+    // On a slow runner the kill can come before sh writes its PID; the marker check below covers that case.
+    if std::fs::read_to_string(&pid).is_ok_and(|s| !s.trim().is_empty()) {
+        assert_gone(&pid);
+    }
+    assert_no_process_with(&t.path().display().to_string());
 }
 
 #[cfg(unix)]
@@ -208,11 +284,13 @@ fn hud_git_budget_kills_stalled_rev_list() {
     let t = TempDir::new().unwrap();
     let (w, paths) = fake_tree(t.path());
     let pid = t.path().join("pid");
-    let fake = fake_rev_parse(t.path(), &format!("{paths}main\n"), &format!("echo $$ > '{}'; exec sleep 5", pid.display()));
+    let fake = fake_rev_parse(t.path(), &format!("{paths}refs/heads/main\n"), &format!("echo $$ > '{}'; exec sleep 5", pid.display()));
     let start = Instant::now();
     let g = hud_git_with(&fake, &w, HUD).unwrap();
     let took = start.elapsed();
-    assert!(took >= HUD && took < Duration::from_secs(1), "{took:?}");
+    // The lower bound is the spec budget. The upper bound gives a slow runner 1 s past it for two process starts, the
+    // 10 ms polls and the kill, so the test checks that the kill ends the call, not how fast the runner is.
+    assert!(took >= HUD && took < HUD + Duration::from_secs(1), "{took:?}");
     assert_eq!((g.top, g.branch.as_deref(), g.ahead, g.behind), (canon(&w), Some("main"), None, None));
     assert_gone(&pid);
 }
@@ -221,6 +299,16 @@ fn hud_git_budget_kills_stalled_rev_list() {
 #[test] // author's call 5: a stalled fake `git.cmd` is killed at the 150 ms rev-parse deadline; bound budget + 2 s
 fn hud_git_windows_deadline_kills_stalled_fake() {
     let _f = forks();
+    // The fake's descendant is `ping.exe` (cmd.exe → ping.exe). ping takes no free marker argument, so the test counts
+    // PING.EXE processes before and after: `forks()` serializes this binary's tests and cargo runs test binaries one
+    // at a time, so no other ping.exe of this suite starts between the counts. A count after that is not above the
+    // count before shows that the tree kill also ended the fake's ping.exe.
+    let pings = || {
+        let o = Command::new("tasklist").args(["/FI", "IMAGENAME eq PING.EXE", "/NH", "/FO", "CSV"]).output().unwrap();
+        assert!(o.status.success(), "tasklist failed");
+        String::from_utf8_lossy(&o.stdout).lines().filter(|l| l.to_ascii_uppercase().starts_with("\"PING.EXE\"")).count()
+    };
+    let before = pings();
     let t = TempDir::new().unwrap();
     let fake = t.path().join("git.cmd");
     std::fs::write(&fake, "@ping -n 6 127.0.0.1 >NUL\r\n").unwrap();
@@ -228,6 +316,9 @@ fn hud_git_windows_deadline_kills_stalled_fake() {
     assert_eq!(hud_git_with(&fake, t.path(), HUD), None);
     let took = start.elapsed();
     assert!(took >= Duration::from_millis(150) && took < HUD + Duration::from_secs(2), "{took:?}");
+    let until = Instant::now() + Duration::from_secs(2);
+    while pings() > before && Instant::now() < until { std::thread::sleep(Duration::from_millis(50)); }
+    assert!(pings() <= before, "the fake's ping.exe still runs");
 }
 
 #[cfg(unix)]
@@ -248,7 +339,7 @@ fn hud_git_cut_rev_list_gives_no_marks() {
     let _f = forks();
     let t = TempDir::new().unwrap();
     let (w, paths) = fake_tree(t.path());
-    let fake = fake_both(t.path(), &format!("{paths}main\n"), &format!("1\t2{}\n", " ".repeat(1 << 20)));
+    let fake = fake_both(t.path(), &format!("{paths}refs/heads/main\n"), &format!("1\t2{}\n", " ".repeat(1 << 20)));
     let g = hud_git_with(&fake, &w, REAL).unwrap();
     assert_eq!((g.branch.as_deref(), g.ahead, g.behind), (Some("main"), None, None));
 }
@@ -259,7 +350,7 @@ fn hud_git_needs_exactly_four_lines() {
     let _f = forks();
     let t = TempDir::new().unwrap();
     let (w, paths) = fake_tree(t.path());
-    let fake = fake_rev_parse(t.path(), &format!("{paths}main\nx\n"), "exit 1");
+    let fake = fake_rev_parse(t.path(), &format!("{paths}refs/heads/main\nx\n"), "exit 1");
     assert_eq!(hud_git_with(&fake, &w, REAL), None);
 }
 
@@ -292,7 +383,7 @@ fn hud_git_malformed_rev_list_gives_no_marks() {
     for list in ["12\n", "x\t1\n"] {
         let t = TempDir::new().unwrap();
         let (w, paths) = fake_tree(t.path());
-        let fake = fake_both(t.path(), &format!("{paths}main\n"), list);
+        let fake = fake_both(t.path(), &format!("{paths}refs/heads/main\n"), list);
         let g = hud_git_with(&fake, &w, REAL).unwrap();
         assert_eq!((g.branch.as_deref(), g.ahead, g.behind), (Some("main"), None, None), "{list:?}");
     }
@@ -306,7 +397,7 @@ fn hud_git_kills_a_descendant_holding_stdout() {
     let (w, paths) = fake_tree(t.path());
     let pid = t.path().join("pid");
     let out = t.path().join("out");
-    std::fs::write(&out, format!("{paths}main\n")).unwrap();
+    std::fs::write(&out, format!("{paths}refs/heads/main\n")).unwrap();
     let fake = fake_git(t.path(), &format!(
         "case \"$*\" in\n  *rev-parse*) cat '{}'; sleep 7 & echo $! > '{}' ;;\n  *) exit 1 ;;\nesac",
         out.display(), pid.display()));

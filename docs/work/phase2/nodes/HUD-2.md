@@ -1,7 +1,7 @@
 # HUD-2 — zygo-work: bounded HUD git function (rev-parse, rev-list only)
 
 **Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§7.5, AU6, OP14, H§13 (one or two functions). Every test that uses a fake `git` shell script is `cfg(unix)`: the wrapper test, the 400 ms budget test (a stalled fake git) and the 4 KiB cut test (a fake git that writes more than 4 KiB), because a real git neither stalls nor writes 4 KiB (H§7.5). The no-upstream test uses a real `git init` repository and no fake git, so it also runs on Windows. `hud_git` calls `hud_git_with` with the program `git`; the wrapper, budget and cut tests pass their fake `git` script path to `hud_git_with`, so no test changes the process environment
-**Files:** `crates/zygo-work/src/repo.rs`, `crates/zygo-work/tests/hud_git.rs`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-config/Cargo.toml`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`
+**Files:** `crates/zygo-work/src/repo.rs`, `crates/zygo-work/tests/hud_git.rs`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-config/Cargo.toml`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`, `crates/zygo-work/Cargo.toml`, `docs/specs/2026-11-21-statusline-hud-design.md`
 **Consumes:** —
 **Produces:** `repo::HudGit { top: PathBuf, git_dir: PathBuf, common_dir: PathBuf, branch: Option<String>, ahead: Option<u32>, behind: Option<u32> }`, `repo::hud_git(cwd: &Path, budget: Duration) -> Option<HudGit>`, `repo::hud_git_with(git: &Path, cwd: &Path, budget: Duration) -> Option<HudGit>`, `zygo_config::repo_file::git_command_for(program: &OsStr) -> Command`, `zygo_config::repo_file::{kill_group, kill_tree, exited_unreaped}`
 **Acceptance:** `cargo test -p zygo-work --test hud_git && cargo test --workspace --locked --no-run` → all pass: a `git` wrapper passed to `hud_git_with` sees only the two H§7.5 commands with `GIT_NO_LAZY_FETCH=1` and the `git_run` settings; the 400 ms budget kills a stalled fake git; fake-git output above 4 KiB is cut (these three are `cfg(unix)`); a real repository with no upstream gives no ahead/behind (all platforms)
@@ -573,3 +573,16 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   - `fn run_bounded_out(cmd: Command, deadline: Instant, cut: Option<u64>) -> Result<Ran, RunError>`
   - `fn git_cmd(program: &OsStr, cwd: &Path, args: &[&str]) -> Command`
   - `run_bounded`, `run_bounded_err` and `git_run` keep their signatures and behavior.
+
+### Round 2
+
+Diff-review findings, confirmed by the coordinator; each fixed test first.
+
+- [x] **R1 (M2).** SIGCHLD set to `SIG_IGN` by the parent: in the cut mode, ECHILD from `try_wait` after the `waitid` fallback means the child has exited (the kernel reaped it); stdout is read as usual, with no group kill. Plain mode unchanged. Test: `hud_git_sigchld_ignored_still_gives_the_branch` (cfg(unix), child process sets `SIG_IGN` through libc).
+- [x] **R2 (L1).** `rev-list ... HEAD...@{upstream} --`; the wrapper test's expected line gains `--`. Test: `hud_git_file_named_like_the_range_keeps_the_marks`.
+- [x] **R3 (L2).** Branch read with `--symbolic-full-name HEAD` (git 2.55.0: `refs/heads/main` on a branch and with a tag `main`, `HEAD` when detached, exit 128 when unborn); `refs/heads/` stripped, anything else → no branch. Test: `hud_git_tag_named_like_the_branch_keeps_the_branch`.
+- [x] **R4 (L3).** `hud_git_rev_parse_has_150_ms`: a missing or empty PID file does not panic; no process with the fake's unique marker remains (`ps -A -ww -o args=`). `hud_git_budget_kills_stalled_rev_list`: bound budget + 1 s, with the reason in a comment.
+- [x] **R5 (L4).** Windows test: the `ping.exe` that the fake starts is gone after the call (`tasklist` count before and after; reason in a comment). Unverified until windows-latest CI runs.
+- [x] **R6 (L5).** `hud_git_with` doc comment states the fallback (no group kill after a `waitid` error; ECHILD from `try_wait` counts as an exit).
+- [x] **R7 (L6).** zygo-config unit tests for `kill_group` and `exited_unreaped`; the `child.wait()` error → `Failed` path, or the reason it cannot be reached without fakes. Tests: `kill_group_kills_the_childs_group`, `exited_unreaped_tells_an_exit_without_reaping`. The `child.wait()` error path has no test: it needs a third party to reap the leader between `waitid(WNOWAIT)` seeing the exit and `child.wait()`. std has no hook in that gap. A `waitpid(-1)` thread or a `SIG_IGN` set at that moment is a race, not a fixed order. With `SIG_IGN` set before the call, `waitid` gives ECHILD first, which is the R1 path.
+- [x] **R8.** H§7.5 (and the AU11 detached-head note) rewritten as final text for R2 and R3; one `## Change log` line; spec added to the Files line.
