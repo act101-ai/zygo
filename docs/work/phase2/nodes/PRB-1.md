@@ -1,6 +1,6 @@
 # PRB-1 — Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13
 
-**Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (probe first), H§6.3 (the two OP13 `printf` commands), H§17 note 4. Needs the operator's machine (live login); pinned Claude Code in a terminal. Adds PH3, PH6, PH7 (visible in the same capture) and PH13 (OpenCode help) to the H§12 list; PH8 and PH10 need Windows and Git Bash, so LIV-1 records them. Results are dated notes in the H§12 table. The executor stops and asks the operator to run this node on their machine. PH4 includes the status area width, read from the probe capture, so HUD-8 is planned with it. LIV-2 records PH8 and PH10
+**Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (probe first), H§6.3 (the two OP13 `printf` commands), H§17 note 4. Needs the operator's machine (live login); pinned Claude Code in a terminal. Adds PH3, PH6, PH7 (visible in the same capture) and PH13 (OpenCode help) to the H§12 list; PH8 and PH10 need Windows and Git Bash, so LIV-2 records them. Results are dated notes in the H§12 table. The executor stops and asks the operator to run this node on their machine. PH4 includes the status area width, read from the probe capture, so HUD-8 is planned with it. LIV-2 records PH8 and PH10
 **Files:** `scripts/premises/live-hud-probe.sh`, `fixtures/claude-code/hud/`, `docs/specs/2026-11-21-statusline-hud-design.md`
 **Consumes:** —
 **Produces:** —
