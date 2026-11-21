@@ -72,7 +72,7 @@ To continue in any session: "resume the work in `docs/work/workspaces/graph.md`"
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
-| D1 | Base-spec amendments of W§15 | E2 | TODO | mechanical | — |
+| D1 | Base-spec amendments of W§15 | E2 | DROPPED(base-spec ownership moved to docs/work/hud-update/ node HD; coordinator, 2026-11-21) | mechanical | — |
 
 ## Log
 
@@ -80,3 +80,4 @@ To continue in any session: "resume the work in `docs/work/workspaces/graph.md`"
 |------|-------|
 | 2026-11-21 | Graph created from `docs/specs/2026-11-20-workspaces-design.md` (25 nodes; premises P1, P2 gate the nodes that depend on them; fallback nodes enter only on a failed premise, W§19). |
 | 2026-11-21 | Larger-node graph approved (operator, 2026-11-21). Review: 17 findings verified and fixed; R1 folded into M1, D1 added for W§15; tmux test gate per operator decision. |
+| 2026-11-21 | C1: `SessionView` gains `Default` and literal sites use `..Default::default()` (HUD H§17 note 1). D1 DROPPED: one owner for the base spec, node HD of `docs/work/hud-update/graph.md`. |
