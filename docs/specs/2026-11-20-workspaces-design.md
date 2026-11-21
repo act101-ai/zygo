@@ -1,0 +1,819 @@
+# zygo phase 2: workspaces — design
+
+**Status:** approved by the operator 2026-11-21
+**Date:** 2026-11-20
+**Release:** phase 2
+**Base spec:** `docs/specs/2026-11-18-zygo-design.md`.
+
+**Citation rule.** A bare `§n` is a section of the base spec. `W§n` is a section of this document. This document changes the base spec only where W§15 says so.
+
+Each decision has a mark. **(operator)**: the operator made the decision. **(author)**: the author of this document made the decision; the operator can change it before approval. Code references are `file:line` at commit `48f9583`.
+
+---
+
+## 1. Intent
+
+The operator runs several agents in tmux. The operator must stop them for two reasons:
+
+1. **Reason 1:** to free resources, so that the operator can use the workstation for other work.
+2. **Reason 2:** to restart the coding harness after an upgrade (for example, a new Claude Code version).
+
+Today zygo cannot pause or resume. A zygo session is one launch of one agent (§5). At exit the launcher deletes `~/.cache/zygo/sessions/<ULID>/` except `results/` (`crates/zygo-launch/src/launcher.rs:599-624`, §8.2 step 6). zygo does not record the agent's own session id. Thus, after a stop, the operator must find each conversation again by hand and rebuild the tmux layout by hand.
+
+With elephant-goldfish (§9), a lead agent is usually idle at its prompt while its subagents work. The operator, or an agent that the operator tells to, runs `zygo down`.
+
+Phase 2 adds **workspaces**. `zygo down` waits until each agent of one repository has ended its turn and its subagents (the drain), then saves the state and stops the agents. `zygo up` brings back the tmux layout and resumes each agent in its own conversation, with its saved launch flags, its session overrides and its compaction override (OP12).
+
+## 2. Goals
+
+- **W-G1** `zygo up` creates or restores one tmux session per repository, with its layout and its agents.
+- **W-G2** `zygo down` drains, then saves and stops all agents of the workspace.
+- **W-G3** `zygo up` after `zygo down`, after a reboot, or after a crash of the tmux server resumes each agent in its own conversation.
+- **W-G4** A loadout in user config sets the first layout and the agent panes of a workspace.
+- **W-G5** CLI verbs list, attach, and forget workspaces.
+- **W-G6** No daemon. tmux is the only long-lived process.
+
+## 3. Non-goals
+
+These items are out of scope for phase 2 **(operator)**. Reason: the scope is reduced. Elephant-goldfish subagents make a cross-agent coordination layer unnecessary for now. Each item can return in a later phase.
+
+- A supervisor daemon.
+- Messages between agents, and wake of one agent by another.
+- Triggers (actions that start on an event).
+- Git modes (four modes in an earlier draft) and automatic worktree management. zygo does not create, delete, or switch worktrees.
+- Pools and slots of agents.
+- Toasts (desktop notifications).
+- Restart briefs (text that zygo writes for a fresh restart).
+- Separate `pause` and `resume` verbs. `down` and `up` do this work **(operator, OP1)**.
+- Workspaces on native Windows **(operator, OP5)**.
+- Restore of non-agent commands. zygo never runs a saved shell command again **(operator, OP8)**.
+- A change to the current work item. Today the explicit setting is shared in the git common dir (`crates/zygo-work/src/current.rs:66-67`), and detection reads the branch of the checkout that holds the cwd (`current.rs:102-107`), so detection can already differ per worktree. Phase 2 keeps both. A per-worktree setting is related work for a later phase.
+- Changes to the usage store schema (§14).
+
+## 4. Constraints
+
+- **W-C1** The base constraints C1-C10 (§4) apply. C6 applies to every new hook: a hook never breaks the agent.
+- **W-C2** No daemon (§7.1, A2, §18.3). tmux holds the processes; zygo runs only when a verb, a hook, or a pane starts it.
+- **W-C3** zygo sets tmux options and hooks only on its own sessions. zygo never sets a global tmux option or a global hook.
+- **W-C4** Every state write is atomic: write a temporary file, then rename it.
+- **W-C5** A cloned repository cannot start an agent or a command through a workspace. Loadouts come from user config only.
+- **W-C6** `zygo claude` and `zygo opencode` outside a workspace stay a clean v1 launch **(operator, OP9)**.
+- **W-C7** The workspace state holds no secret and no content: no session token, no provider key, no URL user info, no prompt text, no conversation content, no subagent description, and no inline value (JSON text or URL) of an agent flag (AU30). W§7.2 lists every field.
+- **W-C8** No user-controlled text reaches a tmux argument that tmux expands as a format, unescaped (AU55, AU54).
+- **W-C9** zygo never resumes a conversation whose launcher is still live (AU87).
+
+## 5. Glossary additions
+
+§5 "Session: one launch of one agent" does not change. A resumed agent is a new zygo session with the same agent conversation.
+
+| Term | Meaning |
+|---|---|
+| Workspace | One git repository, identified by its git common dir. The main checkout and all linked worktrees are one workspace **(operator, OP2)**. |
+| Workspace session | The tmux session of a workspace, named `zygo-<name>`. One per workspace **(operator, OP3)**. |
+| Workspace id | The first 16 hex characters of SHA-256 of the canonical common-dir path. Form: `^[0-9a-f]{16}$` (AU2, AU84). |
+| Pane key | A stable id that zygo gives each pane of a workspace session: `k` plus 8 random characters of lower-case base32. Form: `^k[a-z2-7]{8}$` (AU84). It stays the same after a restore. tmux pane ids (`%N`) change. |
+| Member | The agent slot of one pane key. A member runs one zygo agent session at a time; its record (`member` in W§7.2) persists across zygo sessions, so the next `up` can resume it. |
+| Agent session id | The agent's own conversation id (Claude Code `session_id`, OpenCode `sessionID`). zygo uses it to resume. Not the zygo session id (ULID). |
+| Live launcher | A launcher whose session directory passes `session_dir::live` (`crates/zygo-core/src/session_dir.rs:13-17`): it holds the lock on its `pid` file. |
+| Loadout | A named layout plus its panes, in user config **(operator, OP10)**. "Profile" stays the model profile (§11). |
+| Loadout pane | One `[[loadout.<name>.window.pane]]` entry (W§11): an agent pane or a shell pane. |
+| Snapshot | The saved state of a workspace: layout, panes, cwds, and member records. |
+| Drain | The wait in `zygo down` until each member's turn and its subagents end. |
+| Detached member | A member record whose pane key is not in the saved layout. `up` does not recreate it (W§7.5). |
+| Builder | The person or agent who implements this design. |
+| Brief | The task text that started this document. W§20 lists where the repository contradicts it. |
+
+## 6. Decided approach
+
+### 6.1 Parts
+
+```
+ operator, or an agent the operator tells to
+        │  zygo up | down | ls | attach | loadout | ws forget
+        ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │ zygo CLI (crates/zygo/src/cmd)                                   │
+ │   └─ crates/zygo-workspace: identity, state store, lock,         │
+ │      snapshot, loadout resolution, drain, Multiplexer trait      │
+ │      └─ Tmux impl ── tmux -S <absolute socket path> ──┐          │
+ └───────────────────────────────────────────────────────┼──────────┘
+                                                         ▼
+ ┌────────────────────── tmux server ───────────────────────────────┐
+ │ session zygo-<name>   env ZYGO_WORKSPACE=<id>   option @zygo-ws  │
+ │  hooks (this session only) ── run-shell ──▶ zygo ws snapshot     │
+ │  ┌─ pane @zygo-pane=k1 ───────────┐  ┌─ pane @zygo-pane=k2 ─────┐ │
+ │  │ zygo ws run (argv, no shell)   │  │ zygo ws run --shell      │ │
+ │  │  └─ launcher (§8.2) + proxy    │  │  └─ exec $SHELL in cwd   │ │
+ │  │      └─ claude --resume <id>   │  └──────────────────────────┘ │
+ │  │          hooks: SessionStart,  │                               │
+ │  │          UserPromptSubmit,     │──▶ zygo hook workspace        │
+ │  │          PreToolUse Agent,     │                               │
+ │  │          Stop, StopFailure,    │                               │
+ │  │          SubagentStart/Stop    │                               │
+ │  │  then exec $SHELL              │                               │
+ │  └────────────────────────────────┘                               │
+ └───────────────────────────────────────────────────────────────────┘
+                                                      │ atomic writes under lock
+                                                      ▼
+ ~/.local/state/zygo/workspaces/<id>/workspace.json   (snapshot, members)
+ ~/.cache/zygo/sessions/<ULID>/activity.json           (turn and subagent state)
+ ~/.cache/zygo/sessions/<ULID>/results ──symlink──▶ ~/.cache/zygo/workspaces/<id>/results/<pane key>/
+```
+
+### 6.2 Decisions
+
+A withdrawn call keeps its id so that earlier reviews stay traceable.
+
+| Id | Decision | Mark |
+|---|---|---|
+| OP1 | Scope: workspace, loadout, one tmux session per workspace, `zygo down`, `zygo up`, CLI verbs to manage sessions. No pause or resume verbs. | operator |
+| OP2 | A workspace is one repository, identified by the git common dir. The main checkout and every linked worktree are the same workspace. Source: `Checkout { top, common_dir, main_root }`, `crates/zygo-work/src/repo.rs:17-22`, found by `find_checkout`, `repo.rs:119-135`. | operator |
+| OP3 | One tmux session per workspace. | operator |
+| OP4 | `zygo up` resumes each agent's own conversation by its saved agent session id. This reverses the earlier draft's "fresh restart by default". | operator |
+| OP5 | Native Windows has no workspace features. Each workspace verb exits 2 with `workspaces need tmux; run zygo in WSL`. `zygo claude` works as in v1. The multiplexer is behind a trait; tmux is the only phase-2 implementation. | operator |
+| OP6 | `down` drains by default. zygo blocks new subagent dispatch during the drain. `[workspace] drain_block_dispatch = true` is the default. | operator |
+| OP7 | zygo snapshots the full state, layout included, on every change while the workspace runs, not only at `down`. | operator |
+| OP8 | A pane that ran a zygo agent session is resumed. Every other pane comes back as a plain shell in its saved cwd. zygo never runs a saved non-agent command again. | operator |
+| OP9 | `zygo claude` and `zygo opencode` outside a workspace stay a clean v1 launch. Only `zygo up` creates or restores a workspace. | operator |
+| OP10 | The name is "loadout". "Profile" stays the model profile (`crates/zygo-config/src/profile.rs`). A loadout pane can name a model profile. | operator |
+| OP11 | The workspace verbs `down`, `ls` and the new `workspace` (status of this workspace) are also `/zygo:` slash commands, per O14: `/zygo:down [--now]`, `/zygo:ls`, `/zygo:workspace`. `up` and `attach` stay CLI-only: they act on a terminal, and an `up` that an agent runs acts as with `--no-attach` (AU95). `/zygo:down` runs with `ZYGO_SESSION` set, so it takes the detached path (AU18) and replies within the hook bound. Replaces AU21. | operator |
+| OP12 | Session overrides (`overrides.json`) and the compaction override of a member are persisted. They are saved on each change, not at `down`: each code path that changes one also writes the new value into the member record when the session is a member (AU105). At resume the saved values are always applied, with no `clean_stop` gate. A crash or reboot does not lose them. Replaces AU101. | operator |
+| OP13 | AU91 is approved: the proxy session status gains `requests_in_flight` and `last_request_end`, on team servers too. | operator |
+| AU1 | No daemon. Each agent pane runs a normal launcher. tmux hooks on the workspace session run `zygo ws snapshot`. Launchers and agent hooks write member records. This keeps §7.1, A2 and §18.3. It amends A2 "session state dies with the session" only: a workspace state directory outlives sessions. | author |
+| AU2 | State directory `~/.local/state/zygo/workspaces/<id>/` (dir `0700`, files `0600`). `id` = the first 16 hex characters of SHA-256 of the canonical common-dir path (`Checkout.common_dir`; the `canon` closure at `repo.rs:126` makes it canonical at `:129`). Name = slug of the main worktree's directory name (AU77), fixed at creation. Slug rule: lower-case the name; change each character outside `[a-z0-9-]` to `-`; collapse each run of `-` to one; trim `-` at both ends; cut to 32 characters and trim a trailing `-` again; an empty result is `ws`. On collision zygo adds `-2`, `-3`, … (the slug part is cut so that the whole stays at 32 characters or less). tmux session `zygo-<name>`. | author |
+| AU3 | Agent session id: the `SessionStart` hook records `session_id` from the main loop each time it fires (it fires again after `/clear` with a new id; PW2), directly in `member.agent_session`. For Claude Code, zygo also pre-assigns `--session-id <uuid>` when the arguments hold no session argument (W§8.3). Resume: Claude Code `--resume <id>`, OpenCode `-s <id>`. | author |
+| AU4 | Drain detection from member hooks and the proxy (W§9.1, AU26). Dispatch block: `PreToolUse` deny on the subagent tool (W§9.2). Default timeout `[workspace] drain_timeout = "10m"`. On timeout `down` stops nothing, reports what still runs, and suggests `--now`. See W§9. | author |
+| AU5 | `zygo down --now` stops at once and records the subagents that were running (id and type only). At the next `up` that agent gets one note at session start (W§9.4). | author |
+| AU6 | `zygo down` detaches by the rule of AU18: it starts the drain in a detached process and returns at once. Otherwise `down` runs in the foreground with progress. `zygo ls` shows `draining`. | author |
+| AU7 | `zygo up` outside tmux creates the session (if needed) and attaches. Inside the user's own tmux on the workspace's server it creates the session detached and runs `switch-client`; on another server it prints the attach command (AU100). `--no-attach` skips both; `ZYGO_SESSION` set implies `--no-attach` (AU95). Minimum tmux version: 3.2; the builder confirms it (PW6). | author |
+| AU8 | An agent pane runs `zygo ws run` (AU15). When the agent exits by itself, the pane becomes a shell in its cwd, and the snapshot records it as a shell (OP8). | author |
+| AU9 | A `zygo claude` or `zygo opencode` that the operator starts by hand in a pane of a workspace session joins the workspace. It is snapshotted and resumed like a loadout agent, and gets the same `--session-id` pre-assign (W§8.3). Detection: W§8.4. A pane key that holds a resumable record refuses the hand start (AU94). | author |
+| AU10 | Loadouts live only in user config, `[loadout.<name>]`. `.zygo.toml` cannot set `[loadout]` or `[workspace]`: it keeps its four tables (`crates/zygo-config/src/repo_file.rs:38`, filter at `:218-228`). Built-in loadout `solo`. First `up` applies the loadout; a later `up` restores the last snapshot; `up --reset` applies the loadout again. Schema: W§11. | author |
+| AU11 | Per member zygo restores: agent kind, agent session id, saved launch flags and arguments (AU30), model profile, passthrough, server, config dir, session overrides and compaction override (OP12, AU32). The current work item stays as it is today. The resume note names the work units that the stop closed (AU31). | author |
+| AU12 | A failed resume (W§8.2 step 7) opens a shell and prints the resume command. Every later `up` tries the resume again (AU60). The missing-cwd case: AU61. | author |
+| AU13 | Serve mode: a resumed agent is a new zygo session with a new ULID and a new token. No usage-schema change. | author |
+| AU14 | New crate `crates/zygo-workspace`: identity, state store, lock, snapshot, loadout resolution, membership, drain, `Multiplexer` trait and tmux implementation. CLI verbs in `crates/zygo/src/cmd/` (enum `Cmd` at `crates/zygo/src/cmd/mod.rs:131-241`, dispatch at `:394-418`). | author |
+| AU15 | tmux starts every pane that `up` creates with an argument list, not a shell string: `<zygo> ws run --ws-id <id> --pane <key>` for an agent pane, `<zygo> ws run --ws-id <id> --pane <key> --shell` for a shell pane (AU46). `ws run` reads the member record, runs the launcher in process, and then replaces itself (`exec`) with `$SHELL` (else `/bin/sh`) in the pane's cwd. No shell quoting is needed. | author |
+| AU16 | Result ids stay readable after a resume, with no move. The result tools read only the current session's `results/` (`crates/zygo-mcp/src/tools/results.rs:9-10`). The launcher callback (AU34) creates `~/.cache/zygo/workspaces/<id>/results/<pane key>/` (mode `0700`) if it is missing and makes the new session's `results` a symlink to it. The result store creates or reuses the directory through the link (`Store::put`, `crates/zygo-results/src/store.rs:56-57`). At exit, `remove_except_results` keeps the `results` entry and its `remove_dir` of the session directory fails, because the link is still there (`crates/zygo-launch/src/session_dir.rs:100-114`). The base sweep keeps a session directory whose `results` is a symlink (`crates/zygo-results/src/sweep.rs:20`). So AU69 removes it: a session directory that is not live and whose `results` is a symlink into `workspace_cache_dir` is deleted (the link first; the target stays). | author |
+| AU17 | The member wrapper classifies the agent's exit. If the launcher **received** SIGTERM or SIGHUP at any time during the launch (the `received` flag of AU34), or a signal ended the agent (the separate signal of AU73), the member stays `resumable`. A resume that failed fast (W§8.2 step 7) stays `resumable` too. Any other exit after a spawn sets `ended`, and the pane is a shell from then on. An exit without a spawn keeps the member as it was (AU60). `signals::stopped()` (`crates/zygo-launch/src/signals.rs:63-68`) cannot give this: it reads `PENDING`, which `handle` and `wait` reset when they forward a signal (`signals.rs:80`, `:102`), and it is `pub(crate)`. The launcher receives SIGTERM from `down` and forwards it (`handle`, `signals.rs:94-117`); on a tmux hangup or a system shutdown the agent, in the same process group (§8.2 step 5), receives the signal directly too. | author |
+| AU18 | Detach rule: `down` detaches when `ZYGO_SESSION` is set (an agent's tool runs it, in any pane or outside tmux), or when `$TMUX_PANE` is a pane of a target workspace session. `--wait` forces the foreground. Reasons: in its own workspace, `down` would wait for its caller's turn and then kill its own pane; in any agent, the Bash tool has its own timeout, which a 10 min wait passes. | author |
+| AU19 | `zygo down --all` drains every workspace whose tmux session exists at the same time, under one timeout. Each workspace enters `stopping` and stops as soon as it drains, without a wait for the others (M12). A workspace with `phase = up`, no tmux session and no live launcher gets `phase = down` and `down_all = true`. A workspace whose `op.lock` is held, or whose state does not parse, is skipped and reported (AU80); the exit code is then 1. | author |
+| AU20 | `zygo up <name>` restores a workspace by name from any directory. Without a name, `up` uses the workspace of the cwd. | author |
+| AU21 | Withdrawn by the operator; OP11 replaces it. | author |
+| AU22 | Only the built-in layer and the user layer can set `[loadout]` and `[workspace]`. zygo drops them from the team layer (§6.1 layer 2) with one warning line. Reason: a loadout starts programs with arguments, and a team server must not start programs on a client. A model profile (§6.1 layer 5) needs no change: `apply_profile` merges only the profile's `features` table (`crates/zygo-config/src/layers.rs:638-652`). | author |
+| AU23 | Withdrawn; OP12 replaces it. | author |
+| AU24 | At `down`, zygo lists shell panes whose foreground program is not a shell (`#{pane_current_command}`). It warns about them and stops them with the session. It does not refuse. Reason: `down` can run with no person at the terminal (an agent runs it). | author |
+| AU25 | `zygo up` outside a git repository exits 2 with `zygo up needs a git repository`. | author |
+| AU26 | Idle rule (W§9.3 step 5). A member is idle when all three are true: (1) `busy` is `false`: a `Stop` or `StopFailure` came after the last `UserPromptSubmit`; (2) its running set (`SubagentStart`/`SubagentStop`) is empty; (3) its proxy reports no model request in flight and none that ended in the last 10 s (AU91). When the proxy does not report these fields (an older team server), rule 3 is skipped and `down` prints one line that says so. Known limit: a turn that starts with no `UserPromptSubmit` (for example, when a background task ends) and runs a tool for more than 10 s without a model request can look idle. | author |
+| AU27 | OpenCode drain: the plugin's idle event acts as `Stop` when PW4 verifies it. Without it, rules 2 and 3 of AU26 only. | author |
+| AU28 | Two new conformance capabilities (§8.1, C9), with ids that do not continue the base list A-1 to A-21: **WA-1 Resume** (pre-assign or capture the agent session id; resume by id) and **WA-2 Turn signals** (turn start and end, subagent start and end, dispatch block). | author |
+| AU29 | `workspace.json` has `version = 1`. A zygo that finds a higher version refuses to change the workspace and prints `workspace state is from a newer zygo; run zygo update`. | author |
+| AU30 | Saved launch arguments (W§7.2 `member.launch.args`). zygo removes: its own session arguments; the agent's session arguments (Claude Code `-c`/`--continue`, `-r`/`--resume`, `--session-id` and its value, `--fork-session`, `--from-pr`, `--cloud`; OpenCode `-c`/`--continue`, `-s`/`--session` and its value, `--fork`); a flag with an optional value (`-r`/`--resume [value]`, `--from-pr [value]`, `--cloud [value]`, and any other optional-value session flag in the pinned help) together with the next token when that token does not start with `-`; positional prompt text; `-p`/`--print`; prompt-text flags with their values (Claude Code `--system-prompt`, `--append-system-prompt`; OpenCode `--prompt`). It keeps `--system-prompt-file` and `--append-system-prompt-file` with the path only. Content flags (Claude Code `--agents`, `--mcp-config` (each value), `--json-schema`, `--plugin-url`; `fixtures/claude-code/help.txt:13`, `:126`, `:132`, `:166`) keep a value only when it names an existing file; zygo drops an inline value with its flag and adds the flag name to `member.dropped_flags`; `up` prints `zygo: pane <key>: <flag> had an inline value; not restored`. `--settings` needs no rule: a launch with it is never a member (AU59). File paths are stored absolute. The rest is stored as typed. The builder classifies flags from the pinned `--help` (`fixtures/claude-code/help.txt`, `fixtures/opencode/help.txt`). Known limit: a removed system-prompt text or inline value is not given again at resume. | author |
+| AU31 | Work units keep the base behavior: the launcher folds and ends them at exit (`session_dir::fold_units`, `launcher.rs:601`; §8.2 step 6). `down` records the units that were open just before the stop as `member.closed_units`: for each `<agent>.begin.json` in the member's `$ZYGO_SESSION_DIR/work/` (`SessionDir::work`, `crates/zygo-core/src/session_dir.rs:78`), `down` calls `zygo_work::log::open_unit` (`crates/zygo-work/src/log.rs:127`) and takes `Begin.unit` (`log.rs:61`) when `Begin.stopped_at` (`log.rs:73`) is none (AU76). The resume note says that they were closed. | author |
+| AU32 | Compaction at resume: `member.compact` has three states, written at each change (AU105): `set <w>` → `--compact <w>`; `cleared` → no `--compact`; absent (never changed in a member session) → `member.launch.compact`. Unlike the proxy's `Option<WindowArg>` (`crates/zygo-proxy/src/session.rs:88-91`), the change path knows whether a clear happened. `ws run` puts the value in `LaunchOpts.compact`, which the launcher sends to the proxy before the agent starts (`crates/zygo-launch/src/launcher.rs:360`). | author |
+| AU33 | Withdrawn; replaced by AU62. | author |
+| AU34 | `LaunchOpts` gets `member: Option<Member { ws_id, pane }>` (AU102) and an optional callback that the launcher calls after it creates the session directory (`launcher.rs:292-306`) and before the agent starts (`:529`). Signature: `FnOnce(&SessionDir, session_id: &str, program: &Path) -> anyhow::Result<()>`, where `program` is the agent program that the launcher resolved (`launcher.rs:188`). A member uses it to make the `results` symlink (AU16), apply the saved overrides (W§8.2 step 4) and write its member record (AU92). An error from the callback is logged and the launch goes on (C6). AU34 also adds a `received` flag in `signals.rs`: an `AtomicBool` that `handle` sets when SIGTERM or SIGHUP arrives, that `install` clears (`signals.rs:38-46`), and that nothing else resets. `Launcher` returns `LaunchOutcome { code, signal, spawned, received }` (AU60, AU73). The new crate uses only public items: `zygo_work::repo::checkout` (`repo.rs:137`), not `find_checkout` (`pub(crate)`, `:119`), and the new return value, not `signals::stopped` (`pub(crate)`). | author |
+| AU35 | Pane closed by hand: W§7.5. | author |
+| AU36 | `up` never holds `lock` while tmux creates panes (W§8.1). Phase `building` marks that time. Member writes are allowed in every phase. | author |
+| AU37 | `up --reset` or `up --loadout` on a running workspace exits 1 with `zygo: <name> is running; run zygo down <name> first`. On a stopped workspace, `--reset` lists each resumable conversation that it drops, with its agent session id, before it applies the loadout. | author |
+| AU38 | `zygo ws snapshot --force` runs in phases `building`, `draining` and `stopping` too. Only `up` (W§8.1 step 12) and `down` (W§9.3 step 4) pass `--force`. tmux hooks and member events never pass it. | author |
+| AU39 | The per-session zygo values are `ZYGO_SESSION`, `ZYGO_SESSION_DIR`, `ZYGO_AGENT`, `ZYGO_URL`, `ZYGO_REPO`, `ZYGO_WORK`, `ZYGO_MAIN_ROLE` (set by the launcher, `launcher.rs:511-519`), and `ZYGO_PANE`, `ZYGO_WORKSPACE`. AU64 says where they are removed. `ZYGO_CONFIG` (a user setting) is kept. | author |
+| AU40 | Withdrawn (critic read 2, I11). | author |
+| AU41 | Pane keys are assigned only under `lock` (W§7.4 step 4), so two concurrent writers cannot give one pane two keys. A hand-started member uses the same path (AU79). | author |
+| AU42 | Limit, stated plainly: only `down` saves the closed-unit list and the interrupted subagents (W§9.3 step 8). After a crash, a reboot or a hand kill they are lost; overrides and the compaction override are not (OP12). The resume note then says `zygo did not stop this session cleanly; the list of closed units was not saved.` `clean_stop` exists only for this text. | author |
+| AU43 | `busy` changes only on main-loop events (events without an `agent_id` key): `UserPromptSubmit` sets it; `Stop` and `StopFailure` clear it. Subagent events change only the running set. zygo does not read `Stop`'s `background_tasks` (AU85). | author |
+| AU44 | Option names: internal verbs take the workspace id as `--ws-id <id>`; user verbs take the workspace name as the positional `<name>` or as `--name <name>`. No verb has a `--workspace` option. | author |
+| AU45 | A fresh member takes its launch fields from the loadout pane (W§11): `kind`, `profile`, `args`, `yolo`, `passthrough`, `server`, `compact`, `config_dir`. A field that the pane does not set takes the default of `zygo claude` or `zygo opencode`. `ws run` lives in `crates/zygo/src/cmd/ws.rs`. It builds a `Launch` (`crates/zygo/src/cmd/mod.rs:87-108`) or `LaunchOpenCode` (`:112-123`) value and calls the existing `launch_opts` (`crates/zygo/src/cmd/claude.rs:29-50`, `crates/zygo/src/cmd/opencode.rs:29`, made `pub(crate)`). That function parses `compact` (a `String`, `mod.rs:99`, `:118`) with `parse_window` and sets `CLAUDE_CONFIG_DIR` from `config_dir`. | author |
+| AU46 | Every pane that `up` creates starts through `zygo ws run`. A shell pane runs `ws run --shell`: it cleans its environment (AU64), sets `ZYGO_WORKSPACE` again (AU93), changes to the pane's cwd, and runs `exec $SHELL`. A pane that the operator splits later starts with tmux's default command and gets the session environment of AU64. | author |
+| AU47 | Withdrawn (critic read 3, S2): no tombstones. A pane that is gone from the layout leaves a detached member (W§7.5). | author |
+| AU48 | `up` writes a full `panes[]` entry (`key`, `kind`, `cwd`, `window`, `index`) for every pane that it creates, before tmux creates it (W§8.1 step 8). `ws run` always reads its cwd from `panes[]`. | author |
+| AU49 | Withdrawn (critic read 3, S1). The note inputs are used once through `note_pending` (AU60, AU72). | author |
+| AU50 | Withdrawn (critic read 2, I11). | author |
+| AU51 | Withdrawn (critic read 2, I11). | author |
+| AU52 | `zygo up --all` restores the workspaces with `down_all = true` and also the workspaces left with `phase = up` and no tmux session (an unclean stop, for example a reboot). This matches W-G3. | author |
+| AU53 | `panes[].kind` comes from the member record, not from `#{pane_current_command}`: a pane key whose member record has state `running` or `resumable` has the member's agent kind; every other pane is `shell`. | author |
+| AU54 | tmux hook command: `up` writes each hook with the literal workspace id and the literal quoted zygo path; the hook reads no user option. Hook string: `run-shell -b "'<zygo path>' ws snapshot --ws-id <id> --event <hook>"`. Quote rule: the path is wrapped in `'`, and each `#` in it is doubled to `##` (`run-shell` expands formats). `up` checks the zygo path before it writes or creates anything (W§8.1 step 4) and the socket path right after the server exists (W§8.1 step 9). It exits 2 with `zygo: the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it` when a path holds `'`, `"`, `\`, `$` or a control character. With those characters excluded, a single-quoted string reads the same in sh, bash, zsh and fish. | author |
+| AU55 | tmux expands formats in `-c` (start directory) and `-n` (window name) (W-C8). `up` passes `-c <main worktree>` to `new-session` and `new-window`, with each `#` doubled to `##`, so later user splits open in the repository. `ws run` changes to the pane's own cwd itself (`std::env::set_current_dir`); a pane's saved cwd never reaches tmux. A saved window name is passed with each `#` doubled. A window whose `automatic-rename` is on has no saved name (`windows[].name` is none); at restore it keeps tmux's automatic name. | author |
+| AU56 | `activity.json` (schema in W§9.1) is changed under an fs4 lock on `activity.lock` in the same session directory, with a 1 s bound: read, change, `write_atomic`, release. A hook that cannot get the lock in 1 s writes one line to the session log and exits 0 (C6). | author |
+| AU57 | `StopFailure` (in the pinned settings schema, `fixtures/claude-code/settings-schema.json:2228`) is registered for members and acts as `Stop`. PW7 covers a turn ended by Esc and a turn ended by an API error. | author |
+| AU58 | Membership is decided once, by the launcher, and recorded in the session view (`member = { ws_id, pane }`). Hooks read that marker, never `ZYGO_WORKSPACE`. For every launch that is not a member, the launcher removes `ZYGO_WORKSPACE` and `ZYGO_PANE` from the child environment. | author |
+| AU59 | A launch with a user `--settings` cannot be a member: that flag replaces zygo's settings file (`crates/zygo-launch/src/claude_code.rs:20`, `SETTINGS_WARN`), so the member hooks do not run. zygo prints `zygo: --settings replaces zygo's hooks; this agent is not saved by the workspace`, and the launch stays a v1 launch. | author |
+| AU60 | Clear and keep. The first main-loop `SessionStart` of the new session commits the pending start (AU92) and clears `closed_units`, `interrupted`, `clean_stop` and `note_pending` in the member record, after it printed the note. Every exit with `LaunchOutcome.spawned = false` keeps the member as it was. Member states: `running`, `resumable`, `ended`. There is no `resume_failed` state and no `--retry-failed`: every `up` tries each resumable member again. | author |
+| AU61 | A member record saves the effective `CLAUDE_CONFIG_DIR` (absolute; from `--config-dir`, else the inherited value, else none) and the absolute path of the agent program that the launcher found (`launcher.rs:188`). Resume sets that `CLAUDE_CONFIG_DIR`. Resume finds the agent program through `PATH` first, as today; the saved path is used only when `PATH` has none. Missing cwd: zygo does not resume the conversation in another directory. The pane opens a shell in the main worktree and prints `zygo: <cwd> is gone; agent session <id> not resumed; to resume it: cd <dir> && zygo <kind> -- --resume <id>`. PW16 checks resume by id from another cwd and another config dir. | author |
+| AU62 | tmux server identity: `workspace.json` stores `tmux_socket`, the absolute socket path, always. Every tmux call for a workspace passes `-S <tmux_socket>`, so neither `$TMUX` nor `TMUX_TMPDIR` can redirect it. At creation, `up` uses the server of `$TMUX` when set, else tmux's default resolution, and reads the path after the server exists with `display-message -p -t =zygo-<name> '#{socket_path}'`. Before it uses `-S`, zygo checks that the socket and its parent directory are owned by the current uid and that the parent directory has mode `0700`; else it exits 1 naming the path. A missing parent directory is created with mode `0700`. | author |
+| AU63 | Before `attach`, `switch-client`, `kill-session` or any `down` step, zygo reads the session option `@zygo-ws` of `zygo-<name>`, validates it (AU84) and compares it with the workspace id. A mismatch stops the verb: `zygo: tmux session zygo-<name> does not belong to this workspace; rename it or run zygo ws forget <name>` (exit 1). | author |
+| AU64 | Environment of tmux and of `ws run`. Provider keys are **not** removed: the in-process proxy of each pane's launcher reads `env:` keys from its own environment (`SystemKeys`, `crates/zygo-proxy/src/provider.rs:19-25`), and the launcher's own filter already keeps them out of the agent child (`crates/zygo-launch/src/env.rs:21-23`). `up` (for the tmux command) and `ws run` (for itself) remove: the per-session `ZYGO_*` values (AU39); the Claude Code markers `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_BRIDGE_SESSION_ID` (`fixtures/claude-code/settings-schema.json:540`, `:645`, `:1180`, `:637`); and, when `ZYGO_SESSION` is set (the caller runs inside a zygo agent), the values that the launcher sets for its agent child: `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` (holds `X-Zygo-Token` in passthrough), `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_FABLE_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_GATEWAY_HINT_HEADERS`, `DISABLE_LOGIN_COMMAND`, `DISABLE_LOGOUT_COMMAND` (`crates/zygo-launch/src/claude_code.rs:129-150`), `OPENCODE_CONFIG_CONTENT` (holds the session token), `OPENCODE_CONFIG_DIR` (`crates/zygo-launch/src/opencode.rs:465`). The workspace session hides the same names with `set-environment -r` (`-u` would only remove the session entry and let a global value through). The launcher denylist gains the four Claude Code markers (base change, W§15). Known limit: an agent has no provider env keys and no `ZYGO_TEAM_TOKEN` (the launcher removed them, `env.rs:21-23`), so a tmux server that an agent's `up` starts has none either; panes then need keychain keys (and the team token from the keychain in serve mode), or the operator runs `up` from a shell. `up` prints one line when it starts a new server with `ZYGO_SESSION` set. | author |
+| AU65 | Detached `down` started by an agent must outlive the agent's Bash tool, also in a sandbox (PW15). Fallback when PW15 fails: an MCP tool `workspace_down` on the zygo MCP server (feature toggle `[features] workspace_tool`, default off), which starts the detached `down`. The zygo MCP server runs outside the agent's sandbox. The operator allowed "an internal tool if need be". | author |
+| AU66 | Withdrawn (critic read 2, I11). | author |
+| AU67 | Repair from `building` (W§8.1 step 5): when `op.lock` is free, `phase = building` and the tmux session exists, `up` creates each pane of `panes[]` whose key is not in the session, as in W§8.1 step 11, then sets `phase = up`. When the session does not exist, `phase = down`. | author |
+| AU68 | Session options set by `up` on the workspace session only: `destroy-unattached off` and `remain-on-exit off`. | author |
+| AU69 | Sweep additions (`crates/zygo-results/src/sweep.rs`). (a) A session directory that is not live and whose `results` is a symlink into `workspace_cache_dir` is deleted at once: the link first, then the directory; the target stays (AU16). (b) The workspace results cache: zygo skips a workspace whose `workspace.json` does not parse or has a newer version; it deletes `results/<pane key>/` when the pane key has no member record, or when the member has not run for 30 days (`member.last_run_at`, set at each start) and no live session links to it. | author |
+| AU70 | Permission flags are shown. The bypass forms are `--dangerously-skip-permissions` (`fixtures/claude-code/help.txt:70`), `--allow-dangerously-skip-permissions` (`:18`), `--permission-mode bypassPermissions` (`:149-151`), and a saved `yolo = true`. Every `up` prints, for each resumed member, the bypass and permission flags in its saved arguments. There is no gate and no `--yolo` for `up`. Accepted limit: an agent of the same user can edit `workspace.json` and change the saved arguments, as it can read the session token file (§8.4). | author |
+| AU71 | `zygo ws ...` (all `ws` subcommands) skips the results sweep that `crates/zygo/src/cmd/mod.rs:391-393` runs for every verb except `hook` and `mcp`. Reason: snapshots run on layout events, and a sweep on each one costs a directory scan. | author |
+| AU72 | The resume note inputs reach the session view through `LaunchOpts.resume_note`. The launcher copies them into the `SessionView` value that it builds at `launcher.rs:437-456`, before `view.save` (`:457`). A callback write to the view would be lost, because `view.save` writes the whole view. | author |
+| AU73 | `LaunchOutcome.signal` is the signal that ended the agent, or none. `exit_code` (`launcher.rs:647-660`) maps a death by signal n to 128 + n, so a real exit 130 and a death by SIGINT look the same; AU17 and W§8.2 step 7 use the separate signal. When a member becomes `ended` with a non-zero exit, `ws run` prints `zygo: <kind> exited <code>; agent session <id> is kept by the agent; to resume it: zygo <kind> -- --resume <id>`. | author |
+| AU74 | `down` reads, saves or signals a member only when its launcher is live (W§5). A dead launcher's `pid` file can name an unrelated process. | author |
+| AU75 | Repair after a `down` that died in `stopping` (W§8.1 step 5): if the session is gone, `phase = down`. If the session exists and no member launcher is live, `up` (or `down`) completes the stop: it kills the session (after AU63), then sets `phase = down`. If some launcher is still live, set `phase = up`, and for each member whose launcher is live, set `clean_stop = false` and clear `closed_units` and `interrupted`. | author |
+| AU76 | AU31 records a unit only when its `Begin.stopped_at` is none. A unit with `stopped_at` set was ended by its `SubagentStop`; `fold_units` uses that time as its end (`crates/zygo-launch/src/session_dir.rs:87`). | author |
+| AU77 | Bare repository with worktrees. `Checkout.main_root` is the first `worktree` entry of `git worktree list --porcelain` (`crates/zygo-work/src/repo.rs:133`); in a bare repository that entry is the bare directory, which has no working tree. The workspace crate reads the list itself and skips entries marked `bare`. The first non-bare entry is the **main worktree**: it gives the name (AU2) and the default cwd. With no non-bare entry, `up` exits 2 with `zygo up needs a worktree; this repository is bare`. `repo.rs` does not change. | author |
+| AU78 | Schema change across versions. Every struct of `workspace.json` keeps the fields it does not know in a flattened map (`#[serde(flatten)] extra`), and a write keeps them. Within `version = 1` a change may only add fields. Any other change raises `version` (AU29). | author |
+| AU79 | A hand-started member that creates a pane key (W§8.4) uses the locked path of W§7.4 step 4. | author |
+| AU80 | `down --all` and `up --all` skip a workspace whose `workspace.json` does not parse (or has a newer version), report it, continue with the others, and exit 1 at the end. | author |
+| AU81 | Withdrawn (critic read 2, I2). | author |
+| AU82 | Withdrawn (critic read 2, M3). | author |
+| AU83 | Blocks and `op.lock`. The dispatch block and the stopping block apply only while a `down` process holds `op.lock`. The hook first reads `phase` without a lock; only when it is `draining` or `stopping` does it try `op.lock` without waiting; if it gets it (no `down` runs), it releases it at once and blocks nothing. `up` and `down` retry `op.lock` for 200 ms before they report it held, so a hook's short hold does not make them fail. | author |
+| AU84 | zygo validates at each read: pane keys against `^k[a-z2-7]{8}$`; workspace ids against `^[0-9a-f]{16}$`; `name` against `^[a-z0-9-]{1,32}$`; `tmux_session` against `^zygo-[a-z0-9-]{1,32}$` and equal to `zygo-<name>`. Sources: tmux options `@zygo-pane` and `@zygo-ws`, `workspace.json`, `--ws-id`, `--pane`. A value that does not match is refused: a hook or snapshot writes one line to `errors.log` and changes nothing; a verb exits 1. | author |
+| AU85 | Withdrawn premise PW8: zygo does not read `Stop`'s `background_tasks`. A background subagent stays in the running set until its `SubagentStop`. | author |
+| AU86 | Stopping is final. From W§9.3 step 7 (`phase = stopping`): member hooks block `UserPromptSubmit` with `{"decision":"block","reason":"zygo: workspace is stopping"}` and deny `Agent` with the same reason (AU83 applies); `down` ignores SIGINT, SIGHUP and SIGTERM; `down` never goes back to draining. | author |
+| AU87 | "Session gone" needs two facts. (1) tmux gives an explicit answer, read under `LC_ALL=C`: `can't find session`, `no server running on`, or `error connecting to <path> (No such file or directory)` / `(Connection refused)` (the first and third observed on tmux 3.7c with a private server; PW6 confirms on the pinned version). (2) No member launcher is live: for each member, `session_dir::live` on `sessions/<zygo_session>` and on `sessions/<pending.zygo_session>` (AU92) is false. If (1) holds and (2) fails, the answer is "unreachable", not "gone": the verb exits 1 with `zygo: <name> has live agents (pane <key>) but its tmux session cannot be reached at <socket>`, and nothing changes. Any other tmux error (a timeout, a permission error, another message) makes the verb exit 1, or the snapshot write one line to `errors.log`, and changes nothing. W§8.1 step 7 never resumes a member whose launcher is live. | author |
+| AU88 | `ws run` and the wrapper of a hand-started member set SIGHUP and SIGTERM to `SIG_IGN` before they call `Launcher::run`. The launcher installs its own handling and restores the previous one when it ends (`signals.rs:38-46`, `Installed::drop`), so the ignore holds from the launcher's return without a gap: the member record write then completes when tmux closes the pane. `ws run` sets the default handlers again right before `exec`, so the shell does not inherit ignored signals. The agent child is not affected: the launcher's handlers are in place when it spawns. | author |
+| AU89 | Snapshot shrink rule. A snapshot that sees fewer panes than `panes[]` holds waits 2 s in its own process (it runs with `run-shell -b`) and reads the panes again. It writes only if the session still exists and shows the same panes as its first read. A teardown (`kill-session`, server death) ends with the session gone, so its shrinking snapshots never write (PW6). | author |
+| AU90 | No snapshot on focus changes: zygo sets no `after-select-pane` or `after-select-window` hook. The active window and pane come from the last snapshot, and `down` takes a final snapshot (W§9.3 step 4). | author |
+| AU91 | The proxy session status (`GET /v1/zygo/sessions/{id}/status`, §7.3; `SessionStatus`, `crates/zygo-proxy/src/session.rs:256-278`) gains two fields: `requests_in_flight` (model requests accepted on the forward path, `crates/zygo-proxy/src/forward.rs:339`, and not yet ended, a streamed body included) and `last_request_end` (RFC 3339 time, or none). The fields are added only, so older clients ignore them. The same route serves local and serve mode, so a serve-mode member uses its team server's status. The existing `expires_at` cannot give this: `accept` refreshes `last_seen_utc` for every session route, the status route included, and the heartbeat refreshes it too (`session.rs:501-528`, `crates/zygo-proxy/src/routes.rs:231-235`). Approved by the operator (OP13). | author |
+| AU92 | Member record at start. The launcher callback writes, in one write under `lock`: `member.pending = { zygo_session, agent_session (pre-assigned or none), started_at }`; `member.launch` (AU30-filtered), `member.config_dir`, `member.dropped_flags`; and `member.program` from the callback's `program` argument, refreshed at each start. `pending` is committed (moved into `zygo_session`, `agent_session`, `last_run_at`, with `state = running`) by the first main-loop `SessionStart` (which proves the spawn; for OpenCode, the plugin's `session` event, AU104), or by the wrapper when `LaunchOutcome.spawned = true`, whichever comes first. With `spawned = false` the wrapper deletes `pending`; the other fields of the write describe the launch as typed and may stay. Live checks (AU74, AU87, W§8.4) consider both `zygo_session` and `pending.zygo_session`. Exits before the callback (`launcher.rs:141`, `:153`, `:165`, `:169`, `:176`, `:190`, `:249-278`, `:299`, `:304`) write nothing. Exits after the callback and before the spawn (`:324`, `:358`, `:362`, `:366`, `:373`, `:459`, `:489`, `:495`, `:500`, `:527`) leave `pending`, which the wrapper deletes. | author |
+| AU93 | `ws run` sets `ZYGO_WORKSPACE=<id>` again right before `exec $SHELL` (it removed it with AU64), so a `zygo claude` that the operator starts in that shell passes W§8.4. It does not set `ZYGO_PANE`; the pane key comes from `@zygo-pane`. | author |
+| AU94 | A hand-started launch on a pane key whose member record is `resumable` with an `agent_session`, or whose launcher is live, is refused: `zygo: pane <key> holds resumable session <id>; resume it with zygo up or run zygo ws forget-pane <key>` (exit 1). A record in state `ended` is replaced. | author |
+| AU95 | When `ZYGO_SESSION` is set, `up` acts as with `--no-attach`. Reason: an agent's tool has no terminal to attach. | author |
+| AU96 | Window size. `windows[]` saves `width` and `height` (`#{window_width}`, `#{window_height}`). `up` creates the first window with `new-session -x <width> -y <height>` and sets the session option `default-size <width>x<height>` before each later `new-window` (PW6). A loadout window has no size: the attached client's size, else the terminal's size, else 200×50. When a `split-window` fails, zygo removes that pane's `panes[]` entry, so its member is detached and stays `resumable` (W§7.5); it prints `zygo: pane <key> not built (no space); agent session <id> is detached`, goes on, and ends with `phase = up`. | author |
+| AU97 | Output of a detached `down`: `down.log` in the workspace state directory for one workspace; `~/.local/state/zygo/down-all.log` for `--all`. Each is at most 64 KiB. zygo truncates the older half before it starts the detached process. | author |
+| AU98 | A `--server` URL (or loadout `server`) that holds user info (`user:pass@`) cannot be saved: the launch stays a v1 launch and prints `zygo: --server holds user info; this agent is not saved by the workspace`; `zygo config check` reports such a loadout pane. | author |
+| AU99 | `panes[]` is read with one `list-panes` whose format puts `#{pane_current_path}` last. zygo splits each line into the fixed number of fields from the left, the last field taking the rest, and refuses a line with fewer fields (one `errors.log` line, no write). | author |
+| AU100 | Inside tmux, when the socket of `$TMUX` is not `tmux_socket`, `up` and `attach` do not run `switch-client`. They print `zygo: <name> runs on another tmux server; attach with: tmux -S '<socket>' attach -t =zygo-<name>` and exit 0. | author |
+| AU101 | Withdrawn by the operator; OP12 replaces it. | author |
+| AU102 | Membership is decided in the cmd layer (`crates/zygo/src/cmd/`) and passed as `LaunchOpts.member = Some(Member { ws_id, pane })`. `ws run` passes it explicitly and skips the environment and tmux detection; only a hand start uses W§8.4. The `--settings` check (AU59) and the user-info check (AU98) run before any pane key or member record is written. A loadout pane whose arguments hold `--settings` launches as a v1 launch (`member = None`); `ws run` sets its member record to `ended`, and `up` prints `zygo: pane <key>: --settings replaces zygo's hooks; started as a plain launch, not saved`. With `member = None` the launcher behaves as v1 (AU58). | author |
+| AU103 | Crate graph. `zygo-workspace` holds identity, state, locks, snapshot, loadout, drain, argument filter and mux, and depends on `zygo-core`, `zygo-config`, `zygo-work` and `zygo-proxy` only (the proxy client for AU91). It does not depend on `zygo-launch` or `zygo-hooks`. `ws run`, the member wrapper and the membership decision live in `crates/zygo/src/cmd/` (AU45, AU102). `zygo-hooks` depends on `zygo-workspace` (member records, `activity.json`). No cycle: today `zygo-hooks` depends on config, core, proxy, results, usage and work; `zygo-launch` depends on `zygo-hooks`; neither is a dependency of the four crates that `zygo-workspace` uses (`crates/*/Cargo.toml`). | author |
+| AU104 | OpenCode member events. The generated plugin (`crates/zygo-launch/assets/opencode-plugin.js`) calls `zygo hook workspace --event session` on its first event that carries a `sessionID`; the hook records `member.agent_session` and commits `pending` (AU92). The resume note reaches the agent through the plugin's `experimental.chat.system.transform` hook (`opencode-plugin.js:53`). `busy` comes from the plugin's idle event (AU27); without it, drain rules 2 and 3 of AU26 apply. The OpenCode cells of WA-1 and WA-2 are recorded as partial until PW4 passes. | author |
+| AU105 | Override mirror (OP12). The code paths that change a member's saved values: (a) every session setting verb, CLI and `/zygo:` alike, in the one function of `crates/zygo/src/cmd/verbs.rs` that writes `overrides.json` (`Overrides::save` at `:200`, and the rollback `restore` at `:153-167` when the proxy refuses a `redaction content` change); (b) the `zygo compact` verb and `/zygo:compact` (`crates/zygo/src/cmd/compact.rs:91-92`), with `zygo compact --session <id>` writing the record of that session. After the verb's outcome is final (after the rollback check, so a rolled-back change is not mirrored), the verb reads the target session's membership marker (AU58) and, for a member, writes `member.overrides` (the whole `overrides.json` content) or `member.compact` (`set <w>` or `cleared`) under `lock` with a 1 s bound. If that write fails, the verb reply adds `; not saved for the workspace`. The `compact` MCP tool changes no override: it only asks for one compaction (`crates/zygo-mcp/src/tools/compact.rs:22`; trigger 2 of §10.2.3), so it needs no write. | author |
+
+## 7. State
+
+### 7.1 Location and files
+
+`paths.rs` derives every directory from `$HOME` on unix and does not read `XDG_*` variables (`crates/zygo-core/src/paths.rs:27-35`). The new directories follow that rule **(author)**:
+
+| Path | Content |
+|---|---|
+| `$HOME/.local/state/zygo/workspaces/<id>/workspace.json` | The snapshot and member records (W§7.2). `0600`. |
+| `…/<id>/lock` | Short write lock (fs4, as `session_dir::live`). |
+| `…/<id>/op.lock` | Held by an `up` or `down` process for its whole life. A free lock while `phase` is `building`, `draining` or `stopping` means that process died. |
+| `…/<id>/snapshot.pending` | Set by a snapshot that could not get the lock (W§7.3). |
+| `…/<id>/down.log` | Output of a detached `down` (AU97). |
+| `$HOME/.local/state/zygo/down-all.log` | Output of a detached `down --all` (AU97). |
+| `…/<id>/errors.log` | One line per failed hook or snapshot write. At most 64 KiB. |
+| `$HOME/.cache/zygo/workspaces/<id>/results/<pane key>/` | Results of a member, linked from each of its sessions (AU16). |
+| `$HOME/.cache/zygo/sessions/<ULID>/activity.json` | Turn and subagent state from the workspace hook (W§9.1). |
+| `$HOME/.cache/zygo/sessions/<ULID>/activity.lock` | fs4 lock for changes to `activity.json` (AU56). |
+
+New `Paths` fields: `state_dir`, `workspaces_dir`, `workspace_cache_dir`. On Windows these fields exist but no code uses them (OP5).
+
+### 7.2 `workspace.json` fields
+
+| Field | Meaning |
+|---|---|
+| `version` | `1` (AU29). Unknown fields are kept (AU78). |
+| `id`, `name` | AU2; validated at read (AU84). |
+| `common_dir`, `main_root` | Canonical paths at creation; `main_root` is the main worktree (AU77). |
+| `tmux_socket` | The absolute tmux socket path (AU62). |
+| `tmux_session` | `zygo-<name>`; validated at read (AU84). |
+| `loadout` | The loadout that created the workspace or that `--reset` applied last. |
+| `phase` | `building`, `up`, `draining`, `stopping` or `down`. |
+| `phase_since` | Unix time. |
+| `down_all` | `true` when a successful `down --all` stopped this workspace (AU19). |
+| `snapshot_at` | Unix time of the last snapshot. |
+| `windows[]` | `index`, `name` (none when `automatic-rename` is on, AU55), `layout` (`#{window_layout}`), `width`, `height` (AU96), `active`, `zoomed`. |
+| `panes[]` | One per pane, in window and pane-index order: `key`, `window`, `index`, `active`, `cwd` (`#{pane_current_path}`), `kind` (`claude-code`, `opencode` or `shell`, from the member record, AU53). `up` writes an entry for each pane before it creates it (AU48). |
+| `members{}` | By pane key. Fields below. |
+| `member.zygo_session` | ULID of the last committed zygo session of this member. |
+| `member.pending` | The start that is not committed yet (AU92), or none. |
+| `member.agent_session` | The agent session id, or none. |
+| `member.state` | `running`, `resumable` or `ended` (AU60). |
+| `member.launch` | `kind`, `profile`, `passthrough`, `server` (URL only, never the token, no user info, AU98), `compact` (the `--compact` text as launched), `yolo`, `config_dir`, `args` (filtered by AU30). Mirrors `Launch` at `crates/zygo/src/cmd/mod.rs:87-108`. |
+| `member.config_dir`, `member.program` | The effective `CLAUDE_CONFIG_DIR` (absolute, or none) and the absolute agent program path, refreshed at each start (AU61, AU92). |
+| `member.last_run_at` | Unix time of the member's last committed start (AU69). |
+| `member.overrides` | The content of `overrides.json` (`crates/zygo-core/src/overrides.rs:10-19`) after its last change in a member session, or absent (OP12, AU105). |
+| `member.compact` | `set <w>`, `cleared`, or absent (AU32, AU105). |
+| `member.interrupted[]` | Subagents that `down --now` stopped: `agent_id` and `agent_type` only. |
+| `member.closed_units[]` | Work unit ids that were open just before the stop (AU31). |
+| `member.dropped_flags[]` | Names of content flags whose inline value AU30 dropped. Names only. |
+| `member.clean_stop` | `true` when `down` saved this member (W§9.3 step 8); cleared at the first main-loop `SessionStart` (AU60). |
+| `member.note_pending` | Set by `up` for each member that it resumes; cleared at the first main-loop `SessionStart`. |
+
+Size: a few KiB. `member.overrides` holds settings only (booleans, a byte threshold, guard levels), no secret. W-C7 holds: no field holds a token, a key, URL user info, prompt text, a subagent description or an inline flag value.
+
+### 7.3 Writes and the lock
+
+- Every write reads `workspace.json`, changes it, and writes it with `write_atomic` (W-C4). `write_atomic` (`crates/zygo-core/src/session_dir.rs:107-123`, now `pub(crate)`; make it public) creates a `tempfile::NamedTempFile` in the same directory, sets mode `0600`, syncs it, and renames it over the target with `persist`. On an error the temporary file is deleted when it is dropped. Only a process that dies between create and rename leaves a `.tmp*` file; the next writer deletes `.tmp*` files in the state directory older than 1 min.
+- A writer holds `lock` only to read, merge and write the file. It runs no tmux call and waits for no process while it holds `lock`, with one exception: the key assignment of W§7.4 step 4 (one `show-options` and at most one `set-option` per new pane, each with the 2 s bound). `up` and `down` run every tmux check without `lock` (W§8.1, W§9.3).
+- Wait bounds: hooks and snapshots 1 s; launchers and the member wrapper 5 s; `up` and `down` 5 s, then exit 1 with `zygo: workspace <name> is busy; try again`.
+- A snapshot that cannot get the lock in 1 s creates `snapshot.pending` and exits 0. Each writer checks `snapshot.pending` after it releases `lock`. If the file exists, the writer deletes it and runs one snapshot.
+- `op.lock` serializes `up` and `down`. Each takes it at its start, with the 200 ms retry of AU83, and holds it for its whole life.
+- Two kinds of writers change different fields. `ws snapshot` changes `windows[]` and `panes[]`. Launchers, the member wrapper and agent hooks change `members{}`. Both use the same lock.
+
+### 7.4 Snapshot
+
+Signature (hidden): `zygo ws snapshot --ws-id <id> [--event <hook name>] [--force]`.
+
+- `--ws-id`: the workspace id (AU44, AU84). The socket is `tmux_socket` of `workspace.json` (AU62).
+- `--event`: the tmux hook that started the snapshot, for `errors.log`; none for other triggers.
+- `--force`: AU38.
+
+Steps:
+
+1. Read `phase` without the lock. If it is `down`, exit 0. Without `--force`, also exit 0 when it is `building` or `stopping`.
+2. Run one `list-panes -s -t =<session> -F <format>` with window index, name, `automatic-rename`, layout, width, height, active and zoom flags, pane index, active flag, `@zygo-pane`, and the current path last (AU99). Bound: 2 s. Session gone (AU87): exit 0. Other tmux error: one line to `errors.log`, exit 0.
+3. Shrink rule (AU89): if a stored key is missing from the read, wait 2 s, read again, and stop without writing unless the session exists and the second read shows the same panes.
+4. Take `lock` (AU41). For each pane that had no valid `@zygo-pane` (AU84), read `@zygo-pane` again. If it is still empty, make a new key, set the tmux option, and use the key.
+5. Under the same lock: replace `windows[]` and `panes[]` by the read; a window with `automatic-rename` on gets no name; each pane's `kind` comes from its member record (AU53). Do not delete member records. Write. Release.
+
+Triggers **(author)**:
+
+- tmux hooks on the workspace session only (W-C3): `after-new-window`, `after-split-window`, `after-kill-pane`, `pane-exited`, `window-unlinked` (a `kill-window` fires no `after-kill-pane`), `window-layout-changed`, `window-renamed`, `client-detached`. No focus hooks (AU90). Each runs the fixed string of AU54.
+- The member wrapper at agent start and at agent exit.
+- The `SessionStart` hook when the agent session id changes.
+- `down`, before it stops anything (final snapshot, with `--force`).
+- `up`, at the end of the build (with `--force`).
+
+Known limit: a `cd` in a shell pane changes no tmux state, so the saved cwd is the cwd at the last trigger. `down` always takes a final snapshot. After a crash, a shell pane can come back in an older cwd. Agent panes do not change cwd.
+
+### 7.5 Panes closed by hand (AU35)
+
+1. A pane closed while the session lives (`kill-pane`, `kill-window`, an exit of `ws run --shell`'s shell) leaves the layout at the next snapshot, after the 2 s check (AU89). If it held a member record, that member is **detached**: its record stays, and `up` does not recreate it.
+2. Any other loss of panes (a teardown, a server death, a reboot) writes nothing: a teardown's shrinking snapshots find the session gone after 2 s (AU89), and a crash fires no hook. The members stay `resumable` (AU17), and `up` restores the last written layout.
+3. For each detached member with an `agent_session` and state `resumable`, `up` prints `zygo: <kind> agent session <id> is detached (its pane was closed); resume it by hand or run zygo ws forget-pane <key>`. `zygo ws forget-pane <key>` or `up --reset` deletes the record.
+
+## 8. `zygo up`
+
+### 8.1 Sequence
+
+1. On Windows: exit 2, `workspaces need tmux; run zygo in WSL` (OP5).
+2. Find `tmux` on `PATH` and read `tmux -V`. No tmux: exit 2, `workspaces need tmux; install tmux 3.2 or later`. Older version: exit 2 with the found version.
+3. Find the workspace: by `<name>` from the state directory (AU20), else from the cwd with `zygo_work::repo::checkout` (`repo.rs:137`) and the main worktree (AU77). Not a repository: exit 2 (AU25). A state that does not parse, or fails AU84: exit 1 naming the file (`--reset` renames it to `workspace.json.bad`).
+4. Compute `id` (AU2). Check the zygo path by AU54 (exit 2 before anything changes). Take `op.lock` (AU83 retry); held: exit 1, `zygo: up or down is in progress for <name>`.
+5. Repair a dead `up` or `down` (no lock needed for the read; writes under `lock`): `phase = building` → AU67; `phase = draining` → `phase = up` if the session exists, else `down`; `phase = stopping` → AU75.
+6. Check the tmux session `zygo-<name>` on `tmux_socket` (AU62), without `lock`. If it exists and `@zygo-ws` is the id (AU63): with `--reset` or `--loadout`, exit 1 (AU37); else attach (step 13) and stop. If it exists with another `@zygo-ws`: exit 1 (AU63). If the answer is not "gone" by AU87 (an unreachable session with a live launcher, or another error): exit 1.
+7. Choose the plan:
+   - `--reset`, or no `workspace.json`: the loadout (`--loadout`, else `[workspace] default_loadout`, else `solo`). With `--reset`, first print one line per `resumable` member with its agent session id (AU37). Members start fresh.
+   - Else: the saved `windows[]` and `panes[]`. A member in state `running` or `resumable`, with an `agent_session`, with its pane key in `panes[]`, and whose launcher is not live (AU87), resumes. Every other pane is a shell (OP8).
+8. Take `lock`. Write the plan: a full `panes[]` entry for every pane (AU48), member records (for fresh loadout members: `launch` from the loadout pane, AU45), `phase = building`; for each resumed member, `note_pending = true`. Release `lock`.
+9. Create the session detached with the **first pane of the first window**: `new-session -d -s zygo-<name> -c <main worktree, # doubled> -x <width> -y <height> -- <ws run argument list>` (AU55, AU96), with the environment of AU64. The server: the server of `$TMUX` when set, else tmux's default resolution; a restore uses `tmux_socket` (AU62). Read the socket path with `display-message -p -t =zygo-<name> '#{socket_path}'` and check it by AU54 and AU62. On a failed check: `kill-session`, then `phase = down` under `lock`, then exit 2 (or 1 for AU62). Else write `tmux_socket` under `lock`.
+10. On this session only: `set-environment -r` for each name of AU64, `set-environment ZYGO_WORKSPACE <id>`, user option `@zygo-ws <id>`, `destroy-unattached off` and `remain-on-exit off` (AU68), the hooks of W§7.4 (AU54).
+11. For the other panes of the first window, `split-window`. For each later window, set `default-size` (AU96), then `new-window` (with `-c` as in step 9 and `-n` with `#` doubled when it has a saved name) with its first pane, then `split-window` for the rest. Each pane gets its key (`@zygo-pane`) and its start command: the `ws run` argument list of AU15, with `--shell` for a shell pane (AU46). A failed split: AU96. Then `select-layout <layout>` per window. A layout that tmux refuses (wrong pane count) falls back to `tiled` with one warning line. Agent panes that start now write their member records under `lock` (W§7.3); they do not wait for `up`.
+12. Select the saved active window and pane; restore zoom. Run one snapshot with `--force` (AU38); it merges the member records written in step 11. Take `lock`; set `phase = up`, `down_all = false`; write; release. Print the permission flags of each resumed member (AU70), one warning per dropped flag (AU30), and one line per detached member (W§7.5) and per pane not built (AU96). Release `op.lock`.
+13. Attach: with `--no-attach` or `ZYGO_SESSION` set (AU95), print `zygo: <name> is up` and exit 0. Inside tmux on another server: AU100. Outside tmux, `attach-session -t =zygo-<name>`; inside tmux on the same server, `switch-client -t =zygo-<name>`.
+
+`up --all` runs steps 3-12 for each workspace with `down_all = true`, and for each workspace left with `phase = up` and no tmux session (AU52, W-G3). It skips and reports a workspace whose `op.lock` is held, whose state does not parse (AU80), or whose session is unreachable (AU87). It prints one line per workspace, attaches to none, and exits 1 when it skipped one.
+
+### 8.2 `zygo ws run` (one pane)
+
+Signature (hidden): `zygo ws run --ws-id <id> --pane <key> [--shell]`.
+
+1. Validate the id and the key (AU84). Clean the own environment (AU64). Read the pane's entry in `panes[]` by pane key, and its member record (no lock needed for a read). Take the cwd from the `panes[]` entry (AU48) and change to it (AU55). If the cwd does not exist: change to `main_root`; for an agent pane, do not resume (AU61): print the AU61 line and go to step 8; for a shell pane, print `zygo: <cwd> is gone`. With `--shell`, go to step 8.
+2. Build `LaunchOpts` (`crates/zygo-launch/src/launcher.rs:44-67`) from `member.launch` through `launch_opts` (AU45), with the member fields (W§8.4), the saved `CLAUDE_CONFIG_DIR` and the program rule of AU61, and `LaunchOpts.member = Some(Member { ws_id, pane })` (AU102). If `member.launch.args` hold `--settings`, use `member = None` instead (AU102). Compaction: AU32.
+3. Add the session argument: resume: Claude Code `--resume <id>`, OpenCode `-s <id>`; fresh Claude Code: `--session-id <new UUID v4>` (W§8.3).
+4. Set `LaunchOpts.resume_note` from the member record when `note_pending = true` (AU72). Set the launcher callback (AU34). It makes the `results` symlink (AU16). When `member.overrides` is present, it writes it into the new `overrides.json`, and, when `redaction_content` is set, sends it with `PATCH /v1/zygo/sessions/{id}/settings` (the proxy session already exists when the callback runs, `launcher.rs:292`; hook-side settings are read from `overrides.json` on each hook call, §17.1). There is no `clean_stop` gate (OP12). Then it writes the member record (AU92).
+5. Set SIGHUP and SIGTERM to `SIG_IGN` (AU88).
+6. Run the launcher in process (`Launcher::run`, `launcher.rs:130`).
+7. With `spawned = false`, delete `member.pending`; the member stays as it was (AU60, AU92). Else commit the pending start if the `SessionStart` hook has not done it, and classify (AU17, AU73). A resume **failed fast** when the launcher received no signal, no signal ended the agent, the code is non-zero, and the agent ran less than 10 s; then the member stays `resumable` and `ws run` prints `zygo: resume of <kind> session <id> failed (exit <n>); try: zygo <kind> -- --resume <id>`. Write the member record under `lock`.
+8. Set `ZYGO_WORKSPACE=<id>` (AU93). Set the default handlers for SIGHUP and SIGTERM again; `exec $SHELL` (else `/bin/sh`) in the cwd.
+
+Steps 4, 5 and 7 are the **member wrapper**. A hand-started member (AU9) runs the same wrapper from `zygo claude` or `zygo opencode`, without step 8 (it sets the default handlers again before it exits).
+
+### 8.3 Session-id pre-assign
+
+For Claude Code, when the arguments (after AU30 filtering, or as typed for a hand-started member) hold none of `--session-id`, `-r`/`--resume`, `-c`/`--continue`, `--fork-session`, `--from-pr`, `--cloud`, the member wrapper adds `--session-id <new UUID v4>` and records it in `member.pending` (AU3, AU9, AU92). With a session argument of the user's own, the id comes only from the `SessionStart` hook. OpenCode has no pre-assign; its id comes from the plugin (PW4).
+
+### 8.4 Membership
+
+A launch is a member when all these are true:
+
+- `ZYGO_SESSION` is not set (not a launch inside an agent's tool).
+- The arguments hold no user `--settings` (AU59), and the server URL holds no user info (AU98).
+- `$TMUX_PANE` is set, and `display -p -t $TMUX_PANE '#{session_name} #{@zygo-ws}'` gives `zygo-<name>` and a valid id (AU84) equal to `ZYGO_WORKSPACE`.
+- For a hand start: the pane key holds no resumable record and no live launcher (AU94).
+
+These checks are for a hand start only; `ws run` passes `LaunchOpts.member` explicitly (AU102). The `--settings` and user-info checks run first, before any key or record is written. A hand-started launch (AU9) gets the key from `@zygo-pane`, or creates one by the locked path of W§7.4 step 4 (AU79). A member launcher:
+
+- sets `ZYGO_WORKSPACE` and `ZYGO_PANE` in the child environment (§8.4 "Set");
+- registers the member hooks (W§9.1);
+- writes the membership marker into the session view (AU58);
+- runs the member wrapper (W§8.2).
+
+For every launch that is not a member, the launcher removes `ZYGO_WORKSPACE` and `ZYGO_PANE` from the child environment (AU58). Such a launch is a v1 launch in every other way (OP9, W-C6).
+
+## 9. `zygo down` and the drain
+
+### 9.1 Hooks for members
+
+Claude Code, registered only for members, in `ClaudeCode::hooks` (`crates/zygo-launch/src/claude_code.rs:232-261`) **(author)**. "Main loop" means an input without an `agent_id` key (the test of §8.3).
+
+| Event | Matcher | Command | Effect |
+|---|---|---|---|
+| `SessionStart` | — | existing `session-start` | Main loop: commits `member.pending` (AU92); when the id changed, writes `member.agent_session`; prints the resume note once (W§9.4); clears the saved values (AU60). |
+| `UserPromptSubmit` | — | existing `prompt` | A `/zygo:` line runs as a verb first (§17.1) and does not set `busy`. Else, main loop: `busy = true`; during `stopping`: the block of AU86. |
+| `PreToolUse` | `Agent` | `workspace --event pre-tool` | The deny of W§9.2, else nothing. |
+| `Stop` | — | `workspace --event stop` | Main loop: `busy = false` (AU85). |
+| `StopFailure` | — | `workspace --event stop` | As `Stop` (AU57). |
+| `SubagentStart` | — | `workspace --event subagent-start` | Adds `agent_id`, `agent_type` to the running set. |
+| `SubagentStop` | — | `workspace --event subagent-stop` | Removes `agent_id`. |
+
+`activity.json` schema (version 1), changed only under `activity.lock` (AU56):
+
+| Field | Type | Written by |
+|---|---|---|
+| `version` | `1` | every write |
+| `busy` | bool | `UserPromptSubmit` (true); `Stop`, `StopFailure` (false); main loop only (AU43) |
+| `running` | map `agent_id` → `agent_type` | `SubagentStart` (add), `SubagentStop` (remove) |
+| `updated_at` | Unix time | every write |
+
+It holds no tool input and no text. A missing file means `busy = false` and an empty running set. The hooks find the workspace through the session view's membership marker (AU58). Every failure follows C6.
+
+Notes:
+
+- The pinned Claude Code (2.1.328) names the subagent tool `Agent` (`fixtures/claude-code/hooks/PreToolUse-Agent-main.json`).
+- Today zygo registers `SubagentStop` only with work units on (`claude_code.rs:248-254`), and no `Stop`, `StopFailure`, `SubagentStart`, `Notification` or `SessionEnd` hook. A member gets the new entries whether work units are on or off. Two `SubagentStop` entries (work and workspace) both run.
+- The `Agent` matcher adds one short `zygo` process per subagent dispatch, for members only.
+
+OpenCode: AU104. The generated plugin (§8.7) maps its first `sessionID` event to `zygo hook workspace --event session`, its idle event to `--event stop`, and its `task` tool to `Agent`. Exact event names: PW4.
+
+### 9.2 Dispatch and stopping blocks
+
+While a `down` holds `op.lock` (AU83):
+
+- `draining`, with `drain_block_dispatch = true`: the `pre-tool` event on tool `Agent` prints `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zygo: workspace is draining for down; finish your turn"}}`.
+- `stopping`: the `pre-tool` event on `Agent` denies with `zygo: workspace is stopping`, and `UserPromptSubmit` prints `{"decision":"block","reason":"zygo: workspace is stopping"}` (AU86).
+
+The hook reads `phase` from `workspace.json` without `lock` (the file is replaced by rename). In any other case it prints nothing and does not touch `op.lock`.
+
+### 9.3 Sequence
+
+1. Steps 1-3 of W§8.1 (platform, tmux, workspace). With `--all`: every workspace (AU19, AU80).
+2. Detach rule (AU18). When it applies: hold no lock; truncate the log (AU97); start `zygo down` again as a new session leader (`setsid`) with the same target (`<name>` or `--all`), the same `--now` and `--timeout`, plus `--wait`; stdin from `/dev/null`, stdout and stderr to the log of AU97. Print `zygo: down started; end your turn` and exit 0.
+3. Per workspace: take `op.lock` (AU83 retry); held: report `up or down is in progress` (with `--all`, skip; exit 1 at the end). Repair as W§8.1 step 5. Check the session without `lock`: gone by AU87 → under `lock`, `phase = down` (and `down_all = true` with `--all`), report `zygo: <name> is not running`, release `op.lock`; unreachable, another `@zygo-ws` or another tmux error → exit 1. Else, under `lock`, `phase = draining`.
+4. Final layout snapshot with `--force` (W§7.4, AU38).
+5. Drain (skip with `--now`). Poll every 500 ms. For each member whose launcher is live, read `activity.json` and the proxy status (session token from its session directory; AU91), and apply the idle rule (AU26). A member whose launcher is not live counts as idle. Foreground progress: one line per member when it becomes idle, and a line every 30 s with the members that still run. With `--all`, every workspace drains under one timeout, and each one goes on to step 7 as soon as all its members are idle in the same poll (AU19).
+6. Timeout (`--timeout`, else `drain_timeout`): for each workspace still draining, set `phase = up`, which ends the dispatch block, and release its `op.lock`. Print each busy member with its pane and its running subagents, and `run zygo down --now to stop at once`. Exit 1.
+7. Set `phase = stopping` (AU86). From here `down` ignores SIGINT, SIGHUP and SIGTERM and never goes back.
+8. For each member whose launcher is live (AU74): record `closed_units` (AU31, AU76); with `--now`, record the running set as `interrupted` (ids and types); set `clean_stop = true`. Write the state. These values are saved only here (AU42).
+9. Warn about busy shell panes (AU24).
+10. For each member whose launcher is live: send SIGTERM to its launcher (pid from its session directory `pid` file). The launcher forwards it to the agent (`signals.rs:94-117`) and runs `finish` (`launcher.rs:599-624`). Wait until each such member record has left `running`, at most 30 s; then report the ones still running and continue.
+11. Check `@zygo-ws` (AU63) and run `kill-session -t =zygo-<name>`. Then, under `lock`: `phase = down`, and `down_all = true` with `--all`. Release `op.lock`. Print `zygo: <name> is down (<n> agents saved)`. A `down` that dies between the kill and the write leaves `stopping` with no session; the repair of AU75 sets `phase = down`.
+
+`op.lock` is released on every exit path (an fs4 lock also ends with its process). Ctrl+C during a foreground drain (step 5) cancels it: `phase = up`, release `op.lock`, exit 130.
+
+### 9.4 Resume note
+
+When `note_pending = true`, `ws run` passes the note inputs in `LaunchOpts.resume_note`, and the launcher puts them in the session view that it builds (AU72). At the first main-loop `SessionStart`, the session-start hook builds the note from them, adds it after the session text (§8.6), removes them from the session view, and clears the saved values in the member record (AU60):
+
+- With `clean_stop = false` (crash, reboot or hand kill; AU42): `zygo did not stop this session cleanly; the list of closed units was not saved.`
+- With interrupted subagents: `zygo stopped this session while subagents <type> <id>, <type> <id> were running; their results were lost; dispatch them again if still needed.`
+- With closed units: `Units <unit>, <unit> were closed when zygo stopped this session; call work_begin to open them again if work continues.`
+
+No note when `clean_stop` is `true` and both lists are empty.
+
+## 10. Failure handling
+
+| Case | Behavior |
+|---|---|
+| A write fails partway | The rename did not happen, so the old `workspace.json` stays whole (W§7.3). A hook writes one line to `errors.log` and exits 0 (C6). |
+| `workspace.json` does not parse or fails AU84 | `up` and `down` exit 1 naming the file; `--all` skips it (AU80). `up --reset` renames it to `workspace.json.bad` and applies the loadout. Hooks and snapshots do nothing. |
+| Lock held | Bounded waits (W§7.3). An fs4 lock ends with its holder, so a lock is never stale. |
+| `up` or `down` process died | `op.lock` is free while `phase` is `building`, `draining` or `stopping`. `up` and `down` repair (W§8.1 step 5, AU67, AU75). The blocks of W§9.2 end at once (AU83). |
+| tmux server gone (crash, reboot, `kill-server`) | The launchers received SIGHUP or SIGTERM, so members stay `resumable` (AU17). `phase` stays `up`. `ls` shows `stopped (tmux gone)`. `up` restores the last written layout (W§7.5 rule 2). Closed units and interrupted subagents are not saved; the resume note says so (AU42). |
+| tmux unreachable while launchers live (another `TMUX_TMPDIR`, a sandbox) | Not "gone": the verb exits 1 and resumes nothing (AU87, W-C9). |
+| Workspace session killed by hand | As "tmux server gone" (AU89). |
+| One pane closed while the session lives | Detached member (W§7.5 rule 1). |
+| A split fails at `up` (no space) | The pane is not built; its member is detached and stays resumable (AU96). |
+| tmux answers with an unexpected error | No change; exit 1 or one `errors.log` line (AU87). |
+| No agent session id saved | The pane comes back as a shell. `up` prints `zygo: pane <key>: no agent session id saved; started a shell`. |
+| Resume fails | A shell and the resume command; the next `up` tries again (AU12, W§8.2 step 7). |
+| Missing cwd | AU61, W§8.2 step 1. |
+| Repository moved or deleted | The common-dir path changes, so the id changes and `up` creates a new workspace. `ls` shows the old one as `repo missing`. `zygo ws forget <name>` deletes it. |
+| Profile, server or binary missing at resume | The launcher's existing messages apply (`launcher.rs:204-206` for a profile; exit 13 for a missing agent); the member stays as it was (AU60, AU92). |
+| Newer state version | AU29. |
+| Two `up` at the same time | `op.lock`: the second exits 1 after the 200 ms retry. |
+
+## 11. Configuration
+
+User config only (AU10, AU22). Schema additions in `crates/zygo-config/src/schema.rs` (`Config` at `:13-36`): `workspace: WorkspaceConfig`, `loadout: BTreeMap<String, Loadout>`.
+
+```toml
+[workspace]
+default_loadout = "solo"        # built-in
+drain_block_dispatch = true     # OP6
+drain_timeout = "10m"           # AU4; <n>s | <n>m | <n>h
+
+[loadout.pair]
+[[loadout.pair.window]]
+name = "agents"
+layout = "main-vertical"        # even-horizontal | even-vertical | main-horizontal | main-vertical | tiled | a tmux layout string
+[[loadout.pair.window.pane]]
+kind = "claude-code"            # claude-code | opencode | shell
+profile = "cheap"               # model profile (§11); optional
+args = ["--model", "lead"]      # agent arguments after `--`; optional
+yolo = false                    # optional
+passthrough = false             # claude-code only; optional
+server = "https://zygo.example" # optional; as `--server`; no user info (AU98)
+compact = "600k"                # optional; as `--compact` (text, parsed by parse_window)
+config_dir = "~/.claude-work"   # claude-code only; optional; as `--config-dir`
+[[loadout.pair.window.pane]]
+kind = "shell"
+cwd = "branch:feature-x"        # optional; default the main worktree
+```
+
+- `cwd`: an absolute path, a path relative to the main worktree, or `branch:<name>`. `branch:` resolves to the worktree that has that branch checked out (`git worktree list --porcelain`). No such worktree: the main worktree and one warning line. zygo does not create worktrees.
+- Built-in `solo`: one window, one `claude-code` pane, no arguments, main worktree.
+- Agent pane fields map to `LaunchOpts` as AU45 says. A field that is not set takes the default of `zygo claude` or `zygo opencode`.
+- `zygo config check` (`crates/zygo-config/src/check.rs`) validates: a known `kind`; `passthrough` and `config_dir` only with `claude-code`; `compact` accepted by `parse_window`; at least one pane per window; `default_loadout` names a loadout; `server` without user info (AU98); `args` hold no argument that AU30 would remove and no `--settings` (warning). A missing `profile` is a warning (the launch continues without it, as today).
+- `[loadout]` and `[workspace]` in `.zygo.toml` are ignored by the existing filter, with its existing warning (`repo_file.rs:218-228`, `crates/zygo-config/src/layers.rs:461-469`). In the team layer zygo drops them with `zygo: [loadout] and [workspace] are read from user config only; ignored`.
+- The builder confirms how an older zygo treats the new tables in a shared user config.
+
+## 12. CLI
+
+Checked against the existing verbs (`crates/zygo/src/cmd/mod.rs:131-241`): no clash.
+
+| Command | Does |
+|---|---|
+| `zygo up [<name>] [--loadout <n>] [--reset] [--no-attach] [--all]` | W§8. |
+| `zygo down [<name>] [--now] [--timeout <dur>] [--wait] [--all]` | W§9. Also `/zygo:down [--now]`: the workspace of this session, detached (OP11, AU18). |
+| `zygo workspace` | Status of the workspace of this session (or of the cwd): name, phase, and one line per member with pane key, kind, state and agent session id. Also `/zygo:workspace` (OP11). |
+| `zygo ls` | One line per workspace: name, main worktree, state (`up`, `down`, `building`, `draining`, `stopping`, `stopped (tmux gone)`, `unreachable`, `repo missing`, `unreadable`), agents (running/saved/detached), attached clients. Also `/zygo:ls` (OP11). |
+| `zygo attach [<name>]` | Attach or switch to a running workspace, after AU63; AU100 for another server. Not running: exit 1, `zygo: <name> is down; run zygo up <name>`. |
+| `zygo loadout list` / `zygo loadout show <n>` | Loadouts with their source (built-in or user); one loadout in TOML. |
+| `zygo ws forget <name>` | Delete the state directory and the results cache. Refused while the workspace runs or a member launcher is live. |
+| `zygo ws forget-pane <key>` | Delete one member record (detached or not) and its results cache. Refused while its launcher is live. Run in the workspace's checkout or with `--name <name>`. |
+| `zygo ws snapshot --ws-id <id> [--event <hook name>] [--force]`, `zygo ws run --ws-id <id> --pane <key> [--shell]`, `zygo hook workspace` | Internal and hidden (AU44). No sweep for `ws` (AU71). |
+
+Exit codes follow §8.2: `0`, `1` failure or busy, `2` usage or platform. `zygo doctor` also reports the tmux version and whether it meets the minimum. Slash forms: `/zygo:down`, `/zygo:ls`, `/zygo:workspace` (OP11); `up`, `attach`, `loadout` and `ws` are CLI-only. The slash forms run under the 4.5 s hook bound of §17.1; `/zygo:down` returns after it starts the detached process.
+
+## 13. Multiplexer trait
+
+`crates/zygo-workspace` defines one trait. tmux is the only phase-2 implementation (OP5). The trait has the operations of W§7.4, W§8 and W§9: check version, socket path, session exists (with the AU87 answer kinds), create session with a first pane, a start directory, a size and a cleaned environment, set and hide (`-r`) session environment values, set session options and hooks, create window with a first pane, split pane with a start command (argument list), set and read pane options, apply layout, select window and pane, zoom, list panes with fields (AU99), attach, switch client, kill session. Every call has a 2 s bound. After creation, the tmux implementation passes `-S <tmux_socket>` to every call (AU62), escapes `#` in every `-c` and `-n` value (AU55), and runs under `LC_ALL=C` (AU87). Tests use it with a private server.
+
+## 14. Alternatives rejected
+
+| Alternative | Why rejected |
+|---|---|
+| A supervisor daemon | Reduced scope **(operator)**. tmux already holds the processes, and hooks plus launchers can write the state (AU1). A daemon adds install and lifecycle work (§18.3). It may return in a later phase. |
+| Messages, wake, triggers, git modes, pools, slots, toasts, restart briefs | Reduced scope **(operator)**. Elephant-goldfish subagents make cross-agent coordination unnecessary for now. They may return in a later phase. |
+| Fresh restart by default | **(operator, OP4)**. The operator wants each agent to continue its conversation. A fresh restart loses the lead's plan and context. |
+| A Windows Terminal backend | Windows Terminal has no scriptable layout query or session hooks to snapshot from. OP5 keeps the trait, so a later backend is possible. |
+| A one-agent Windows mode | It gives a second, smaller feature set to keep in step. WSL gives the full feature. |
+| Auto-tmux on `zygo claude` | Breaks OP9: a plain launch must stay a v1 launch. Only `zygo up` creates a workspace. |
+| Loadouts in `.zygo.toml` | A loadout starts programs with arguments. A cloned repository must not do that (W-C5, A5). |
+| Periodic-only snapshots | They lose changes made between ticks, and they need a timer process. Event hooks plus a final snapshot at `down` cover OP7 without a daemon. |
+| tmux-resurrect or tmux-continuum | They run on the whole server (against W-C3), they re-run saved commands (against OP8), and they do not know agent session ids. |
+| Claude Code background sessions (`--bg`, `respawn`, `fixtures/claude-code/help.txt`) | Claude Code only; the session runs outside the tmux layout, and the zygo launcher (with its proxy) is not its parent. |
+| A shell string as pane command (`$SHELL -c '…; exec $SHELL'`) | Quoting differs between sh, zsh and fish. An argument list plus `exec` (AU15) needs no quoting. |
+| Key members by tmux pane id (`%N`) | Pane ids change after a restore. A pane key in a user option stays the same. |
+| `down` waits in the foreground when an agent runs it | It waits for its own caller's turn and kills its own pane, and an agent's Bash tool times out (AU18). |
+| Refuse `down` while a shell pane runs a program | `down` can run with no person at the terminal; a refusal blocks W§1 reason 1 (AU24). |
+| `up` holds the lock while it creates panes | Agent panes start during that time and must write their member records; they would wait for `up` (AU36). |
+| Snapshot deletes the record of each pane that is gone | A `kill-session` closes panes one by one while the session still exists, so every member would be lost (W§7.5). |
+| A stable layout with candidates and promotion; tombstones for `kill-pane` | They needed hook-order rules and extra fields. The 2 s shrink check (AU89) plus detached members give the protection with no stored history. |
+| Save launch arguments unfiltered | They can hold prompt text and session arguments that clash with the added `--resume` (AU30, W-C7). |
+| Strip provider keys from tmux and `ws run` | The in-process proxy of each pane's launcher reads them (`crates/zygo-proxy/src/provider.rs:19-25`); the launcher already keeps them from the agent (AU64). |
+| One plugin sync per `up` (`skip_sync`) | The marketplace locks already serialize the per-launch syncs. |
+| `-L <label>` and `default` server forms | A label resolves through `TMUX_TMPDIR`, which can differ between shells and sandboxes, so one workspace could look gone from one shell. One absolute path with `-S` cannot (AU62). |
+| Move `results/` out at exit and back in at resume | Two moves and a signal window. A symlink to one per-member directory needs neither (AU16). |
+| Save overrides and the compaction override only at `down` | A crash or reboot loses them, and `down` needs a status read. A write at each change keeps them with no read (OP12, AU105). |
+| No slash commands for workspace verbs (earlier AU21) | Against O14 **(operator, OP11)**. |
+| A `resume_failed` state and `--retry-failed` | A state that only blocks the next try. Every `up` tries again and prints the command (AU60). |
+| Gate bypass flags on `up --all` | The flags are printed at every `up`; a gate adds a flag and a second path (AU70). |
+| Drain idle rule from tool events, notifications and a quiet time | Many hook processes (`*` matcher) and premises PW12/PW13. The proxy request state gives the same signal for model work (AU26, AU91). |
+
+## 15. Base-spec changes
+
+| § | Change |
+|---|---|
+| §2 | Add goal G11 Workspaces (W-G1 to W-G6). |
+| §3 | No change. Phase 2 non-goals are in W§3. |
+| §4 C1 | Add: workspaces need tmux; native Windows has none (OP5). |
+| §5 | Add the terms of W§5. "Session" stays. |
+| §6.1 layer 2 | Cannot set `[loadout]`, `[workspace]` (AU22). |
+| §6.1 layer 3 | Add `[workspace]`, `[loadout.<name>]` (W§11). |
+| §6.1 layer 4, 5 | No change; the repository file keeps its four tables, and a profile merges only `features` (AU22). |
+| §6.1 layer 7 | A member's session overrides survive `down`/`up` and crashes: saved at each change, applied at resume (OP12, AU105). |
+| §7.1, §18.2 A2 | No daemon stays. A2 "session state dies with the session" gains: "except the workspace state, which outlives sessions" (AU1). |
+| §7.3 | The session status reply gains `requests_in_flight` and `last_request_end` (AU91, OP13). |
+| §8.1 | Add capabilities WA-1 Resume and WA-2 Turn signals (AU28); add the cells to `docs/conformance.md`; OpenCode cells partial until PW4 passes (AU104). |
+| §8.2 step 1 | Membership check before the launch (W§8.4); `--session-id` pre-assign (W§8.3); resume argument (W§8.2). |
+| §8.2 step 2 | The launcher calls the member callback after it creates the session directory and before the agent starts (AU34, AU92). The view gets the resume note from `LaunchOpts` (AU72). |
+| §8.2 step 5 | For members, the exit is classified (AU17, AU73); an exit before the spawn keeps the member (AU60, AU92). |
+| §8.2 step 6 | No change to the unit fold: units end at exit (AU31). A member's `results` is a symlink, so its session directory stays until the sweep of AU69 (AU16). |
+| §8.4 Set | Add `ZYGO_WORKSPACE`, `ZYGO_PANE` for members; a non-member launch removes them (AU58). |
+| §8.4 denylist | Add `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_BRIDGE_SESSION_ID` (AU64). |
+| §8.5 hooks | Add the member hooks of W§9.1, `StopFailure` included (AU57). |
+| §8.6 | Add the resume note (W§9.4) after item 7, once. |
+| §8.7 | Plugin maps idle/session events and the `task` tool for members (W§9.1). |
+| §10.1 | Results of a member stay readable after a resume through the symlink (AU16). The sweep deletes ended session directories linked to a workspace (AU69) and skips `ws` verbs (AU71). |
+| §10.2.4 | A member's compaction override survives `down`/`up` and crashes (OP12, AU32, AU105). |
+| §13.3 | No change; W§9.4 tells the agent that its units were closed (AU31). |
+| §17 | Add the rows of W§12. |
+| §17.1 | Add rows `down [--now]` (the workspace of this session; detached), `ls`, `workspace` (OP11). Session setting verbs and `compact` also write the member record (AU105). |
+| §18 | Add OP1-OP13 and AU1-AU105 (withdrawn ids marked); add W§14 to §18.3. |
+| §19 | Add PW1-PW17 (PW8, PW12, PW13, PW14 and PW17 withdrawn; W§17). |
+| §20 | Add the checks of W§18. |
+
+## 16. Files expected to change
+
+| File | Change |
+|---|---|
+| `Cargo.toml` | Add the `zygo-workspace` member. |
+| `crates/zygo-workspace/Cargo.toml` (new) | Depends on `zygo-core`, `zygo-config`, `zygo-work`, `zygo-proxy` only (AU103). |
+| `crates/zygo-workspace/src/lib.rs` (new) | Public API: `up`, `down`, `list`, `forget`, `forget_pane`, `snapshot`, state and member-record access. No launcher code (AU103). |
+| `crates/zygo-workspace/src/identity.rs` (new) | id, name slug and collision suffix; main worktree (AU77); validation (AU84). |
+| `crates/zygo-workspace/src/state.rs` (new) | `workspace.json` types with flattened unknown fields (AU78), atomic write, `lock`, `op.lock` with retry (AU83), version check, pending start (AU92). |
+| `crates/zygo-workspace/src/snapshot.rs` (new) | W§7.4, W§7.5 (shrink rule, key assignment under the lock, field parse AU99). |
+| `crates/zygo-workspace/src/loadout.rs` (new) | Loadout to plan; `branch:` resolution; built-in `solo`. |
+| `crates/zygo-workspace/src/args.rs` (new) | AU30 argument filter; AU70 bypass detection for the printout; AU98 URL check. |
+| `crates/zygo-workspace/src/env.rs` (new) | AU64 environment cleaning; AU93. |
+| `crates/zygo-workspace/src/drain.rs` (new) | Idle rule (AU26), timeout, stop sequence, live checks (AU87). |
+| `crates/zygo-workspace/src/mux/mod.rs`, `mux/tmux.rs` (new) | `Multiplexer` trait and tmux implementation (W§13). |
+| `crates/zygo/src/cmd/mod.rs` | `Cmd` variants `Up`, `Down`, `Ls`, `Attach`, `Loadout`, `Ws`; dispatch; no sweep for `ws` (AU71). |
+| `crates/zygo/src/cmd/{up,down,ls,attach,loadout,workspace,ws}.rs` (new) | Verb handlers; Windows exit 2; `ws run`, the member wrapper and the membership decision (AU45, AU102); `ws run` signal handling (AU88). |
+| `crates/zygo/src/cmd/verbs.rs` | Register `down`, `ls`, `workspace` as slash verbs (OP11); mirror `overrides.json` into the member record once the setting verb's outcome is final (`:198-205`) (AU105). |
+| `crates/zygo/src/cmd/compact.rs` | Mirror the compaction override into the member record after `:91-92` (AU105). |
+| `crates/zygo/src/cmd/claude.rs`, `opencode.rs` | Membership check and member wrapper for hand-started members (AU9, AU88, AU94); make `launch_opts` `pub(crate)` (AU45). |
+| `crates/zygo/src/cmd/hook.rs` | Register hook `workspace`. |
+| `crates/zygo/src/cmd/doctor.rs` | tmux version line. |
+| `crates/zygo-hooks/Cargo.toml` | Add the `zygo-workspace` dependency (AU103). |
+| `crates/zygo-hooks/src/workspace.rs` (new) | `activity.json` events under `activity.lock`; dispatch and stopping blocks (AU83, AU86). |
+| `crates/zygo-hooks/src/session_start.rs` | Commit the pending start (AU92); record `session_id`; print the resume note once; clear the saved values (AU60). |
+| `crates/zygo-hooks/src/prompt.rs` | Set `busy` for members; the stopping block (AU86). |
+| `crates/zygo-core/src/paths.rs` | `state_dir`, `workspaces_dir`, `workspace_cache_dir`. |
+| `crates/zygo-core/src/session_dir.rs` | Make `write_atomic` public; `activity.json` and `activity.lock` accessors. |
+| `crates/zygo-core/src/session_view.rs` | Resume note and membership marker (AU58, AU72). |
+| `crates/zygo-launch/src/launcher.rs` | `LaunchOpts`: `member` (AU102), callback with the resolved program (AU34), `resume_note` copied into the `SessionView` at `:437` (AU72); non-member removal of `ZYGO_WORKSPACE`/`ZYGO_PANE` (AU58); `LaunchOutcome { code, signal, spawned, received }` (AU34, AU60, AU73). |
+| `crates/zygo-launch/src/signals.rs` | The `received` flag: set in `handle` (`:94-117`), cleared in `install` (`:38-46`) (AU34). |
+| `crates/zygo-launch/src/env.rs` | Add the four Claude Code markers to `EXACT` (`:22-23`) (AU64). |
+| `crates/zygo-launch/src/adapter.rs` | Trait methods: session arguments present, pre-assign arguments, resume arguments. |
+| `crates/zygo-launch/src/claude_code.rs` | Member hooks (W§9.1), `StopFailure` included, `PreToolUse` matcher `Agent`; refuse membership with a user `--settings` (AU59). |
+| `crates/zygo-launch/src/opencode.rs` | Member plugin events and `task` mapping. |
+| `crates/zygo-launch/assets/opencode-plugin.js` | `session` and idle events to `zygo hook workspace`; resume note through `experimental.chat.system.transform` (`:53`) (AU104). |
+| `crates/zygo-proxy/src/session.rs`, `forward.rs` | `requests_in_flight`, `last_request_end` in `SessionStatus` (AU91). |
+| `crates/zygo-mcp/src/tools/` | Fallback only (PW15 fails): tool `workspace_down` behind `[features] workspace_tool` (AU65). |
+| `crates/zygo-config/src/schema.rs` | `WorkspaceConfig`, `Loadout`. |
+| `crates/zygo-config/src/layers.rs` | Drop the tables from the team layer (AU22). |
+| `crates/zygo-config/src/check.rs` | Loadout validation (AU98 included). |
+| `crates/zygo-results/src/sweep.rs` | Session directories linked to a workspace; workspace results cache (AU69). |
+| `crates/zygo-launch/tests/stub_agent/stub.rs` | Stub behaviors for W§18. |
+| `crates/zygo-workspace/tests/*.rs` (new) | W§18 checks on a private tmux server. |
+| `docs/conformance.md`, `docs/premises.md` | WA-1, WA-2 cells; PW rows. |
+
+## 17. Premises the first build work verifies
+
+Each is checked on the pinned agent and tmux versions before the work that depends on it. A failed premise applies its fallback, recorded as a dated note in this document.
+
+| Id | Premise | Evidence so far | Fallback |
+|---|---|---|---|
+| PW1 | Claude Code `--session-id <uuid>`, then exit by SIGTERM, then `--resume <id>` continues the same conversation, and the id stays the same without `--fork-session`. | `fixtures/claude-code/help.txt:103-105`, `:208-210`, `:223-224`. | Record the id from `SessionStart` after resume and accept a new id. |
+| PW2 | `SessionStart` input has `session_id`; it fires again after `/clear` with a new id; inside a subagent it has an `agent_id` key. | `fixtures/claude-code/hooks/SessionStart-main.json`; `SessionStart-sub.json`. `/clear` not captured. | Take the id from `session_id` in the next `Stop` input (`Stop-main.json` has it); commit the pending start only in the wrapper (AU92). |
+| PW3 | Resume works after a Claude Code version upgrade. | None. | AU12 fallback: a shell with the id shown. |
+| PW4 | OpenCode: the plugin sees the `sessionID`; `-s <id>` resumes it; the plugin has an idle event and sees the `task` tool before it runs. | `fixtures/opencode/help.txt:48`; `sessionID` in `fixtures/opencode/plugin-hooks/tool.execute.before-bash.json`. | Id: `opencode session list` after start, newest in the cwd. Idle: AU26 rules 2 and 3 only (AU27). Dispatch block: none on OpenCode. Until PW4 passes, OpenCode's WA-1 and WA-2 cells are partial (AU104). |
+| PW5 | `PreToolUse` deny on `Agent` blocks the dispatch, and the lead reads the reason and ends its turn; a `UserPromptSubmit` block stops a typed prompt. | Deny works for other tools (§8.3, §13.4); prompt blocks work for `/zygo:` verbs (§17.1). | Without the block, the drain only waits; `drain_block_dispatch` is documented as having no effect. |
+| PW6 | tmux 3.2: session-scoped hooks (or window-scoped hooks set per window) fire for user splits, kills (`after-kill-pane`, `window-unlinked`), layout changes and renames; pane user options exist; `new-session -x -y` and the session option `default-size` size new windows for `select-layout`; the "gone" messages of AU87 under `LC_ALL=C`; `-c` and `-n` values are format-expanded and `##` gives one `#`; a `kill-session` leaves the session gone within 2 s of its first `pane-exited` hook (AU89). | `scripts/premises/live-selftest.sh:291` drives a private server. On tmux 3.7c: `has-session` on a missing server prints `error connecting to <path> (No such file or directory)`, on a missing session `can't find session: <name>`, both exit 1. | Raise the minimum version; or snapshot at agent start and exit, at `client-detached` and at `down` only. |
+| PW7 | `Stop` (or `StopFailure`) marks every turn end of the main loop, also a turn ended by Esc and a turn ended by an API error; `SubagentStart` and `SubagentStop` pair by `agent_id` for every subagent, internal and background ones included. | `fixtures/claude-code/hooks/Stop-main.json`, `SubagentStart-sub.json`, `SubagentStop-internal-sub.json`; `StopFailure` in `fixtures/claude-code/settings-schema.json:2228`. | A missing pair keeps the drain waiting until the timeout, and the report names the subagent. |
+| PW8 | Withdrawn (AU85). | — | — |
+| PW9 | SIGTERM to the launcher ends Claude Code and OpenCode with the conversation saved. | The launcher forwards SIGTERM (`signals.rs:94-117`). | Send `/exit` with `send-keys` to an idle member before SIGTERM. |
+| PW10 | A resumed Claude Code session fires `SessionStart` with `source: resume`, so the note and session text reach it. | Not checked. | Deliver the note through the first `UserPromptSubmit` as additional context. |
+| PW11 | A launcher started with an argument list by tmux (`split-window … -- <zygo> ws run …`) and then `exec $SHELL` leaves a working interactive shell in the pane. | Not checked. | Start the pane with `$SHELL -c` and a quoted string per shell family. |
+| PW12 | Withdrawn (critic read 3, S5). | — | — |
+| PW13 | Withdrawn (critic read 3, S5). | — | — |
+| PW14 | Withdrawn (critic read 2, I11). | — | — |
+| PW15 | A `down` that an agent's Bash tool starts with `setsid` and redirected output keeps running after the tool call ends, with and without the agent's sandbox. | Not checked. | The MCP tool `workspace_down` (AU65). |
+| PW16 | Claude Code `--resume <id>` finds the conversation when the launch runs in another cwd, or with another `CLAUDE_CONFIG_DIR`, than the first launch. | Not checked. | Expected to fail for another config dir; AU61 already saves and reuses both. |
+| PW17 | Withdrawn (critic read 3, S2); the 2 s teardown condition moved to PW6. | — | — |
+
+## 18. Acceptance
+
+Each item is a test or a command whose output decides it. "Private server": a tmux server on a socket in a test-owned `0700` directory, killed at test end. "Stub": the stub agent `crates/zygo-launch/tests/stub_agent/stub.rs` (binary `stub-agent`, `crates/zygo-launch/Cargo.toml:39-40`), extended to: record `--session-id`/`--resume`/`-s`; call the `SessionStart` hook with that id; emit `UserPromptSubmit`, `PreToolUse` (`Agent`), `Stop`, `StopFailure`, `SubagentStart` and `SubagentStop` hook calls when a control file asks; make a model request through its proxy (held open for a given time) when asked; stay alive until a signal; exit with a code from the control file.
+
+**Identity, state and validation**
+1. Two linked worktrees and the main checkout of one repository give the same id; another repository gives another id. Two repositories named `app` get names `app` and `app-2`.
+2. Slug: `My Repo!!` gives `my-repo`; `---` gives `ws`; a 50-character name gives 32 characters with no trailing `-`; the collision suffix keeps the name at 32 characters or less.
+3. A bare repository `repo.git` with one worktree `main`: `up` names the workspace after the worktree and opens panes in it; with no worktree, `up` exits 2 (AU77).
+4. `workspace.json` is mode `0600` in a `0700` directory and holds no value of the session token file, no provider key, no `zyg_` string, and none of these stub arguments: a positional prompt, `--append-system-prompt <text>`, `--resume <x>`. It keeps `--append-system-prompt-file <path>` with the path only, as an absolute path.
+5. A member launched with `--agents '{"r":{"description":"d","prompt":"p"}}'`, `--mcp-config <existing file>` and `--plugin-url https://h/p.zip`: `workspace.json` holds `--mcp-config <path>`, no JSON, no URL, and `dropped_flags = ["--agents", "--plugin-url"]`; the next `up` prints one warning per dropped flag.
+6. A member launched with `-- --resume abc "fix it"` and one with `-- -r --model lead`: the saved `args` are empty and `--model lead` (AU30).
+7. A write killed between the temporary file and the rename leaves the old `workspace.json` readable and unchanged; a `.tmp*` file older than 1 min is gone after the next write.
+8. Two writers at once: both changes are in the file; a snapshot that cannot get the lock in 1 s sets `snapshot.pending`, and the next writer runs the snapshot.
+9. Two snapshots started at once after one new split, and a hand-started member keying the same pane: the pane has exactly one `@zygo-pane` key, and `panes[]` holds it once (AU41, AU79).
+10. A pane whose `@zygo-pane` is `k$(x)` or `#{pane_id}`, a session whose `@zygo-ws` is `abc`, and a `workspace.json` with `name = "a b"` or `tmux_session = "other"`: the snapshot writes one `errors.log` line and changes nothing; `up` and `down` exit 1 (AU84).
+11. `version = 2` in `workspace.json`: `up` exits 1 with the newer-zygo text and does not change the file. A version 1 file with an extra field keeps it after a write (AU78).
+12. A pane cwd that holds the field separator and a `:` is read whole, and a `list-panes` line with a missing field is refused with one `errors.log` line (AU99).
+
+**up and restore (private server, stub)**
+13. First `up --no-attach` with loadout `pair` creates `zygo-<name>` with the loadout's windows, panes and layout; the session has `ZYGO_WORKSPACE`, `destroy-unattached off` and `remain-on-exit off` while the global values are `on`; no global option or global hook changed (`show-options -g`, `show-hooks -g` equal before and after); no `after-select-pane` or `after-select-window` hook is set; a `window-unlinked` hook is set.
+14. `workspace.json` holds a `panes[]` entry for every pane before the first `ws run` reads it; `tmux_socket` is an absolute path equal to `display-message -p '#{socket_path}'`; every pane's start command is `ws run`, with `--shell` for shell panes; a pane split by hand later opens in the main worktree.
+15. Each hook command holds the literal id and the quoted zygo path and no `#{@` reference. A zygo path that holds `'` or `$` makes `up` exit 2 before it writes `workspace.json` or starts tmux. A socket path that holds `$` (through `TMUX_TMPDIR`) makes `up` kill the new session, set `phase = down` and exit 2 (AU54).
+16. A worktree directory named `#(touch pwned)` as a pane cwd, a main worktree path with `#` in it, and a window named `#(touch pwned)` by hand: after `down` and `up`, no file `pwned` exists, the pane is in that directory, and the window name is the same text (AU55). A window with `automatic-rename` on has no saved name.
+17. `up` run with `ZYGO_SESSION`, `ZYGO_SESSION_DIR`, `ZYGO_AGENT`, `ZYGO_URL`, `ZYGO_REPO`, `ZYGO_WORK`, `ZYGO_MAIN_ROLE`, `CLAUDECODE=1`, `CLAUDE_CODE_SESSION_ID=x`, `ANTHROPIC_BASE_URL=http://127.0.0.1:1/anthropic`, `ANTHROPIC_CUSTOM_HEADERS=X-Zygo-Token: zyg_t_x` and `ZYGO_TEST_KEY=k` set: no pane has any of the first eleven; the panes have `ZYGO_TEST_KEY`; a catalog provider with `key = "env:ZYGO_TEST_KEY"` serves a request from a pane's agent (mock upstream receives `k`); the agent child of each launcher has no `ZYGO_TEST_KEY` (AU64). The same `up` does not attach (AU95).
+18. After an agent exits in a `ws run` pane, the pane's shell has `ZYGO_WORKSPACE=<id>` and no `ZYGO_PANE`; `zygo claude` started in that shell joins as a member (AU93).
+19. A loadout pane with `compact = "600k"`, `config_dir = "<dir>"` and `server = "https://127.0.0.1:<port>"` gives `LaunchOpts.compact` 600000, `CLAUDE_CONFIG_DIR = <dir>` in the child environment, and `LaunchOpts.server` that URL. After `down` and `up` with no change in the session, the resume gets the same `--compact 600k` (AU32). A loadout pane with `server = "https://u:p@h"` is reported by `zygo config check`, and a hand launch with it writes no member record (AU98).
+20. The stub in a Claude Code pane received `--session-id <uuid>`; `workspace.json` holds that id. After `down` then `up`, the stub receives `--resume <same id>` and no other session argument; each shell pane is a shell in its saved cwd; the window layout string and the window size equal the saved ones; the saved active pane is active.
+21. A shell pane that ran `sleep 1000` at `down` comes back as a shell, and no `sleep` process runs after `up`.
+22. `kill-server` on the private server, then `up`: every member resumes with its id; the layout equals the last written one; the first `SessionStart` output contains the "did not stop this session cleanly" note. `up --all` after `kill-server` restores a workspace that had `phase = up` (AU52).
+23. `kill-session` by hand: `workspace.json` is byte-for-byte unchanged 5 s later; then `up`: every member resumes and the layout equals the layout before the kill (AU89).
+24. `kill-pane` on one agent pane: after 2 s its key is gone from `panes[]` and its member record stays; `up` after `down` does not recreate it and prints the detached line; `zygo ws forget-pane <key>` deletes the record and its results cache. `kill-window` on a window with an agent pane gives the same result (W§7.5).
+25. The stub exits 0 by itself: the pane becomes a shell; after `down`, `up` it is a shell. The stub exits 130 by itself: `ended`, and the resume command is printed. A stub killed by SIGINT after a SIGTERM to the launcher: `resumable` (AU73).
+26. A resume where the stub exits 3 at once: the pane is a shell, the output names the id and the resume command, `member.state` stays `resumable`; the next `up` tries the resume again (AU60).
+27. A resume whose launch exits 13 (before the callback) and one that exits 12 (after the callback, before the spawn): `member.zygo_session`, `agent_session` and `state` are unchanged and `member.pending` is none after each; the next `up` resumes it. A member that reached its first `SessionStart` has `pending` committed and `clean_stop`, `closed_units` cleared (AU60, AU92).
+28. A member whose cwd worktree was deleted: the pane opens a shell in the main worktree, prints the AU61 resume command, and does not resume. A member launched with `--config-dir <dir>`: the resume runs with that `CLAUDE_CONFIG_DIR`; with the agent moved to another `PATH` directory, the resume uses the one on `PATH` (AU61).
+29. `up --reset` on a stopped workspace lists the dropped agent session ids and applies the loadout; `up --reset` on a running workspace exits 1; `up` in a directory that is not a repository exits 2.
+30. A result stored before `down` is readable with `result_view` by the same id after `up`; the new session's `results` is a symlink to the workspace results cache; after the launcher exits and one sweep runs, the old session directory is gone and the result file stays (AU16, AU69).
+31. `zygo claude` started by hand in a new split of a workspace session with no session argument: the stub receives `--session-id <uuid>`; it gets a pane key and a member record, and resumes after `down`/`up` (AU9).
+32. `zygo claude` started by hand on a pane key whose member is `resumable` with an id: exit 1 with the AU94 text and no change to the record; on a key whose member is `ended`: it joins.
+33. A resumed member with each bypass form (`--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`, `--permission-mode bypassPermissions`, `yolo = true`): `up` and `up --all` print it and resume it (AU70).
+34. With `TMUX_TMPDIR=<dir A>`, `up` creates the workspace; with `TMUX_TMPDIR=<dir B>` and `$TMUX` naming another server, `ls`, `down` and `up` reach it through `tmux_socket`. With the socket file removed while the stub launchers run, `up` exits 1 with the "has live agents" text and starts no agent; `down` exits 1 too (AU62, AU87). A saved socket whose parent directory has mode `0755`, or another owner, makes `up` exit 1 naming the path.
+35. A tmux session named `zygo-<name>` whose `@zygo-ws` is another id: `up`, `attach` and `down` exit 1 with the AU63 text and do not touch it.
+36. A stub `tmux` that fails `has-session` with `permission denied`: `up` and `down` exit 1 and change nothing; the snapshot writes one `errors.log` line (AU87).
+37. Kill `up` with SIGKILL after it created the first window of two: the next `up` creates the missing panes, and `phase` becomes `up` (AU67).
+38. A saved window of 80×24 with 8 panes in `even-vertical`, restored with `up --no-attach`: every pane is built or reported not built; each not-built pane is gone from `panes[]` and its member stays `resumable`; `phase = up` (AU96).
+39. `up` inside a tmux client of another server prints the AU100 attach command and does not run `switch-client`.
+
+**down and drain**
+40. A stub member that is idle: `down` ends within 5 s; `phase = down`; no tmux session.
+41. A stub member in a turn (after `UserPromptSubmit`, before `Stop`): `down` waits; after `Stop` and 10 s without a model request it stops. The same with `StopFailure` (AU57).
+42. A stub member with `busy = false` and a model request held open for 20 s: `down` waits until 10 s after the request ends (AU26, AU91). With a stub team server that has no `requests_in_flight` field, `down` prints the "rule skipped" line and stops after `Stop`.
+43. A stub member with `SubagentStart` and no `SubagentStop`, and a `Stop` with an empty `background_tasks`: `down` waits until `SubagentStop` (AU85). Events with an `agent_id` key leave `busy` unchanged (AU43).
+44. During the drain the `pre-tool` hook on an `Agent` input prints the deny JSON with the exact reason; with `drain_block_dispatch = false` it prints nothing. Kill `down` with SIGKILL during the drain: the hook prints nothing at once (AU83). In phase `up` the hook does not open `op.lock` (strace or a lock probe).
+45. During `stopping`, a `UserPromptSubmit` input gets the block JSON with `zygo: workspace is stopping`, and an `Agent` input is denied with the same reason; `down` survives SIGINT, SIGHUP and SIGTERM sent to it in that phase (AU86).
+46. A hook holds `op.lock` for 100 ms while `up` starts: `up` succeeds (AU83).
+47. `down --timeout 2s` with a busy member exits 1, lists the member and `--now`, sets `phase = up`, and frees `op.lock`.
+48. `down --now` with a running subagent: the member stops at once; after `up` the first `SessionStart` output contains the interrupted-subagent note with its id and type, and the second does not.
+49. A member with an open work unit and one with a unit ended by `SubagentStop`: after `up` the closed-units note names only the first; the usage store has both rows with end times (AU31, AU76).
+50. `down` with `ZYGO_SESSION` set returns within 1 s with `zygo: down started; end your turn`; the detached process completes the drain with the same `--timeout`; `ls` shows `draining` while it runs. `down --all` with `ZYGO_SESSION` set writes to `down-all.log`, and a log over 64 KiB is cut before the start (AU97).
+51. A detached `down` killed with SIGKILL in `draining`: `up` sets `phase = up`. Killed in `stopping` after all launchers ended: the next `up` or `down` kills the session and sets `phase = down`. Killed in `stopping` with a launcher still live: `phase = up`, and that member has `clean_stop = false` (AU75). A `down` killed after `kill-session` and before the `phase` write: the next `up` sets `phase = down` and restores.
+52. A member whose launcher died by SIGKILL, with its `pid` file naming a live unrelated process: `down` sends that process no signal and reads no status for it (AU74).
+53. `down --all` with two good workspaces, one whose `op.lock` is held, one with a corrupt `workspace.json`, and one with `phase = up` and no session: the good ones stop with `down_all = true`, the locked and corrupt ones are reported, the last gets `phase = down` and `down_all = true`, and the exit code is 1. With one idle and one busy workspace, the idle one reaches `phase = down` while the busy one still drains (AU19). `down --all` where one workspace times out: `down_all` is set only on the others.
+
+**Membership and isolation**
+54. `zygo claude` (stub) outside tmux, and inside a tmux session that is not a workspace, with `ZYGO_WORKSPACE` and `ZYGO_PANE` in its environment: the child environment has neither; no workspace hooks in the generated settings; no state written (OP9, AU58).
+55. A `zygo claude` started from inside a member's tool (`ZYGO_SESSION` set) does not join.
+56. `zygo claude -- --settings <file>` in a workspace pane: the AU59 warning is printed, no member record is written, and the pane is a shell after `down`/`up`.
+57. Two hook processes of one member write `activity.json` at the same time 100 times: every change is in the file (AU56).
+58. `ws run` that receives SIGHUP and SIGTERM right after the launcher returns still writes the member record; the shell after `exec` has default SIGHUP and SIGTERM handling (AU88).
+59. `zygo ws snapshot` does not sweep: an ended session directory older than 24 h is still there after 10 snapshots, and is gone after one `zygo status` (AU71).
+60. A resumed member's note inputs are in the session view after the launcher saved the view, and the first `SessionStart` prints them (AU72).
+61. The results sweep keeps all results of a workspace whose `workspace.json` does not parse, and deletes `results/<key>/` of a member whose `last_run_at` is 31 days old and that no live session links to (AU69).
+
+**Config and platform**
+62. `[loadout.x]` in `.zygo.toml` on the default branch is ignored with the existing warning; in the team layer it is dropped with the AU22 warning.
+63. `zygo config check` reports a pane with `kind = "vim"`, `passthrough = true` on an OpenCode pane, and `args = ["--settings", "x"]`.
+64. On Windows (CI job), `zygo up`, `down`, `ls`, `attach` exit 2 with `workspaces need tmux; run zygo in WSL`; `zygo claude` with the stub passes the v1 launch test.
+65. With a stub `tmux` that prints `tmux 3.1`, `up` exits 2 naming the version.
+
+**Slash commands, saved overrides, OpenCode, membership path**
+66. In a member, `/zygo:down` returns within the hook bound with `zygo: down started; end your turn`, the prompt does not reach the model and does not set `busy`, and the detached `down` stops the workspace. `/zygo:down --now` stops at once. `/zygo:ls` lists the workspaces; `/zygo:workspace` prints this workspace's members. `/zygo:up` and `/zygo:attach` reply with the usage error for an unknown verb (OP11).
+67. In a member, `zygo results off` (and `/zygo:guards <guard> <level>`): `member.overrides` equals the new `overrides.json` at once. Then `kill-server` and `up`: the new session's `overrides.json` has the same content before the first hook call, with `clean_stop = false` (OP12, AU105).
+68. In a member, `/zygo:redaction content off`: after `down` and `up`, the proxy session's settings (`PATCH` reply or status) show `redaction_content = false` before the agent's first request (W§8.2 step 4).
+69. In a member launched with `--compact 300k`: `zygo compact 600k` gives `member.compact = set 600000`, and the resume gets `--compact 600000`; `zygo compact off` gives `cleared`, and the resume gets no `--compact`; with no change, the resume gets `--compact 300k` (AU32). A call of the `compact` MCP tool leaves `member.compact` unchanged.
+70. With `workspace.json` locked by a test for 2 s, `zygo results off` in a member replies with `; not saved for the workspace` and exits as without it (AU105).
+71. A loadout pane with `args = ["--settings", "<file>"]`: the pane runs a v1 launch with no member hooks; its member record is `ended`; `up` prints the AU102 line; no pane key is written before the check (AU102).
+72. `ws run` with a stub `tmux` that fails every call still launches the member with the right `LaunchOpts.member` (it does no tmux detection) (AU102).
+73. The callback write: after one start, `member.launch`, `config_dir`, `dropped_flags` and `program` are written with `pending` in one write; moving the agent to another `PATH` directory and restarting refreshes `program` (AU92).
+74. OpenCode stub member: the plugin's first `sessionID` event records `agent_session` and commits `pending`; on resume the note text appears in the system transform output (AU104).
+75. `cargo tree -p zygo-workspace` shows no `zygo-launch` and no `zygo-hooks`; the workspace builds with no dependency cycle (AU103).
+
+**Live checks (manual, recorded)**
+76. PW1, PW2, PW3, PW5, PW7, PW9, PW10, PW15, PW16 on the pinned Claude Code; PW4 on the pinned OpenCode; PW6 and PW11 on tmux 3.2.
+
+## 19. Left to the builder
+
+Plan notes (author):
+
+- AU91 (proxy status fields) is its own node; drain rule 3 (AU26) depends on it.
+- Premise checks come first as gating nodes: PW6, PW11 and PW15, then the other live premises (PW1, PW2, PW3, PW4, PW5, PW7, PW9, PW10, PW16) before the nodes that depend on them.
+- A fallback node (the PW fallbacks of W§17, AU65 `workspace_down`) enters the plan only if its check fails.
+
+- Module layout inside `crates/zygo-workspace`.
+- The exact tmux format string and the field separator for `list-panes` (AU99).
+- The duration parser for `drain_timeout` and `--timeout` (reuse one if the repo has it).
+- Exact wording of progress lines and warnings beyond the quoted texts.
+- The SIGKILL fallback after the 30 s stop bound (report only, or kill the agent's process group).
+- Where the forward path decrements `requests_in_flight` for a streamed body (a guard dropped at body end) (AU91).
+- How a test points the tmux implementation at a private server (`-S` through the trait, under the existing `test-hooks` feature pattern of `launcher.rs:55-66`).
+
+## 20. Brief corrections
+
+The brief had these facts. The repository says otherwise; this document follows the repository.
+
+1. The brief said that no `Stop` or `SessionEnd` hook is registered today. Correct for `Stop`, `SessionEnd`, `SubagentStart`, `StopFailure` and `Notification`. But `SubagentStop` is registered, only when work units are on (`crates/zygo-launch/src/claude_code.rs:248-254`).
+2. The brief said to follow the XDG conventions of `paths.rs`. `paths.rs` has no XDG handling: it uses `$HOME/.config`, `$HOME/.cache` and `$HOME/.local/share` and reads no `XDG_*` variable (`crates/zygo-core/src/paths.rs:27-35`). The state directory uses `$HOME/.local/state` by the same rule.
+3. The brief put the compaction override in `overrides.json`. `overrides.json` holds `results`, `results_threshold`, `redaction_content`, `guards` and `work_units` only (`crates/zygo-core/src/overrides.rs:10-19`). The compaction override is proxy-side session state (§7.2, §10.2.4). Both are saved on change for members (OP12, AU105).
+4. The brief said "the subagent tool". On the pinned Claude Code the tool is `Agent` (`fixtures/claude-code/hooks/PreToolUse-Agent-main.json`), not `Task`.
+5. The brief put the allowed tables of the repository file at `repo_file.rs` about 38 and 197. The allowed list is at `:38`; the filter is at `:218-228`; `:197` is `read_default_branch`.
+6. Launcher line ranges: `Launcher::run` is `launcher.rs:130-351`, `Session::run` is `:355-553`, `finish` is `:599-624`.
+7. CLI: `Cmd` is at `crates/zygo/src/cmd/mod.rs:131-241`; dispatch is at `:394-418`. `Launch` has a `--config-dir` flag (`:103-105`) that the brief did not list; the member record keeps it.
+8. Not in the brief, found in the repo: the `Stop` input has `background_tasks` (`fixtures/claude-code/hooks/Stop-main.json`); zygo does not read it (AU85). `SessionStart` also fires inside subagents with an `agent_id` key (`SessionStart-sub.json`), so capture skips those (the existing hook already skips them, `crates/zygo-hooks/src/session_start.rs:19-21`).
+9. Not in the brief, found in the repo: result ids are read only from the current session's directory (`crates/zygo-mcp/src/tools/results.rs:9-10`) and swept after 24 h (`crates/zygo-results/src/sweep.rs:6`), so a resumed conversation would lose its result ids without AU16.
+10. Not in the brief, found in the repo: the launcher folds and ends open work units at exit (`launcher.rs:601`), so units are closed, not open, after `down` (AU31).
+11. Not in the brief, found in the repo: the status reply's `compact` is `Option<WindowArg>` (`crates/zygo-proxy/src/session.rs:88-91`, `:273`). AU32 therefore keeps its own three-state value, written on the change path (AU105).
+12. Critic review evidence: the launcher denylist is at `crates/zygo-launch/src/env.rs:21-23` (`PREFIXES` at `:21`, `EXACT` at `:22-23`). `claude_code.rs:20` (`SETTINGS_WARN`), `launcher.rs:366` (exit 12 before the spawn at `:529`) and `crates/zygo/src/cmd/mod.rs:391-393` (the sweep for every verb except `hook` and `mcp`) hold. `StopFailure` is in the pinned settings schema (`fixtures/claude-code/settings-schema.json:2228`).
+13. Critic read 2 evidence: the proxy reads `env:` keys from its own process environment (`SystemKeys`, `crates/zygo-proxy/src/provider.rs:19-25`), so AU64 keeps provider keys. The launcher sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` (with `X-Zygo-Token` in passthrough), the model aliases, `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_GATEWAY_HINT_HEADERS` and `DISABLE_LOGIN_COMMAND`/`DISABLE_LOGOUT_COMMAND` for Claude Code (`crates/zygo-launch/src/claude_code.rs:129-150`), and `OPENCODE_CONFIG_CONTENT`/`OPENCODE_CONFIG_DIR` for OpenCode (`opencode.rs:465`). The Claude Code session markers are `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_BRIDGE_SESSION_ID` (schema `:540`, `:645`, `:1180`, `:637`). The bypass forms are at `help.txt:18`, `:70` and `:149-151`.
+14. Critic read 3 evidence. (a) `sweep.rs:20` keeps a session directory whose `results` is a symlink, and `remove_except_results` (`crates/zygo-launch/src/session_dir.rs:100-114`) skips the `results` entry and then fails `remove_dir`, so without AU69 (a) such directories would stay for ever. (b) The proxy has no per-session request state: `last_seen_utc` is refreshed by every session route through `accept` (`crates/zygo-proxy/src/session.rs:501-513`; the status route calls it at `crates/zygo-proxy/src/routes.rs:233`) and by the heartbeat (`session.rs:516-528`); the only in-flight count is a global byte semaphore (`crates/zygo-proxy/src/server.rs:105-116`). So AU91 adds two status fields. (c) The launcher restores the previous signal handling when the last `Installed` drops (`crates/zygo-launch/src/signals.rs:48-56`), so `SIG_IGN` set before `Launcher::run` holds after it returns (AU88). (d) The early exits that AU92 lists are at the cited `launcher.rs` lines; `session_dir::open` is at `:292-306`.
+15. Final pass evidence. (a) `overrides.json` is written only in `crates/zygo/src/cmd/verbs.rs`: `Overrides::save` at `:200` (`crates/zygo-core/src/overrides.rs:32-34`) and the rollback `restore` (`verbs.rs:153`) after a proxy refusal of `redaction content`, which is also sent with `PATCH …/settings` (`verbs.rs:201-202`). (b) The compaction override changes only through `zygo compact` (`crates/zygo/src/cmd/compact.rs:91-92`), the proxy routes it calls (`crates/zygo-proxy/src/routes.rs:209-229`), and the launch-time `--compact` (`launcher.rs:360`). (c) The `compact` MCP tool only returns `compaction requested` (`crates/zygo-mcp/src/tools/compact.rs:22`); the proxy compacts once on that call (§10.2.3 trigger 2) and changes no override. So OP12 needs no proxy-side write. (d) The proxy session exists before `session_dir::open` (`launcher.rs:292`), so a saved `redaction_content` must be sent with `PATCH`. (e) Crate dependencies (`crates/*/Cargo.toml`): `zygo-hooks` → config, core, proxy, results, usage, work; `zygo-launch` → hooks and others; none of core, config, work, proxy depends on hooks or launch, so AU103 has no cycle. (f) The OpenCode plugin has `experimental.chat.system.transform` at `crates/zygo-launch/assets/opencode-plugin.js:53`. (g) `/zygo:<verb>` runs the same verb as the CLI (`crates/zygo/src/cmd/mod.rs:369-371`, §17.1).
+
+## 21. Not resolved
+
+None. The operator decided OP11 (slash commands), OP12 (saved overrides) and OP13 (proxy status fields); the lead resolved the AU64 scope as an author's call.
