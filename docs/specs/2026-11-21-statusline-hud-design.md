@@ -425,7 +425,7 @@ Today the dispatcher reads stdin with no bound (`crates/zygo/src/cmd/hook.rs:47-
 | `requests_priced` | `Option<u64>` | yes | Of those, the requests that were priced (AU15: route price or notional price locally; built-in catalog price on a team server). |
 | `passthrough` | `Option<bool>` | yes | `SessionState.passthrough` (`session.rs:211`). |
 | `team_session` | `Option<bool>` | yes | `SessionState.team_label.is_some()` (`session.rs:214`); the label itself is not sent (AU13). |
-| `requests_in_flight`, `last_request_end` | — | yes, by WS AU91 | Planned by the workspaces design (WS AU91, approved by WS OP13). The HUD does not use them; the builder makes one `SessionStatus` change for both documents. |
+| `requests_in_flight`, `last_request_end` | — | yes, by WS AU91 | Planned by the workspaces design (WS AU91, approved by WS OP13). The HUD does not use them; WS X1 adds them after the HUD's fields (H§17 note 1). |
 
 ### 7.3 Spend
 
@@ -697,11 +697,17 @@ Nothing. The former S4 (dirty count) is decided by OP14. The former Q1 (serve-mo
 
 ## 17. Plan notes
 
-Author's calls for the planner. WS node ids refer to `docs/work/workspaces/graph.md`.
+Author's calls for the planner. WS node ids and HUD node ids refer to `docs/work/phase2/graph.md`.
 
-1. **Branch and order.** The HUD builds on `feat/workspaces`. WS X1 (status fields `requests_in_flight`, `last_request_end`) and WS C1 (core paths and the session-view `workspace` field) stay in the workspaces graph. The HUD node that adds the status fields of H§7.2 depends on WS X1 and adds its fields after X1's, in the same `SessionStatus` literal sites that X1 owns. The node that adds `statusline_style` to `SessionView` depends on WS C1 and follows C1's literal-site pattern (a field with a serde default, so no literal outside the owner changes). The HUD writes its own dated §7.2 note in the base spec and does not wait for WS D1.
+1. **Branch and order.** The HUD and the workspaces build are one work graph on `feat/workspaces` (`docs/work/phase2/graph.md`), and the HUD nodes come first. The one HUD change to `SessionStatus` is made by HUD-5 and HUD-6 on today's code: HUD-5 adds `#[derive(Default)]` and ends each test literal it breaks in `..Default::default()`; WS X1 then adds its two fields (`requests_in_flight`, `last_request_end`) after the HUD's, changing only `status()` in `session.rs`. HUD-7 adds `statusline_style` with `impl Default` for `SessionView` and ends each view literal in `..Default::default()`; WS C1 then adds only its `workspace` field. The HUD writes its own dated §7.2 note in the base spec (DOC-1); WS D1 writes the W§15 rows after it.
 2. **Operator checks.** Plan as written. AU14 (team-server spend at built-in list prices) and S1 (grid comparison in acceptance 3 and 4) are listed for the operator to check at approval. Team-server spend is its own node.
 3. **Late nodes.** Two nodes come last: the workspace phase segment (H§7.6; depends on WS C1 and WS W2) and the `zygo up` check of the auto-update design (`docs/specs/2026-11-21-auto-update-design.md`; depends on WS W7). The phase segment reads `view.workspace.member.ws_id` and parses only `version` and `phase` (AU25).
 4. **Probe node first** (H§12): it checks PH1, PH2, PH4, PH5, PH9, PH11 and PH12 before the build; P-HUD-1 runs at the end; fallback nodes only for a premise that fails.
 5. **AU29 tests.** The agent window is computed at request time and kept in `Pending` (AU29). Checked: the existing assertions at `crates/zygo-proxy/tests/session_api.rs:566-572` (no request; main role), `crates/zygo-proxy/tests/window.rs:1043-1078` (main-loop requests served by the main role's model, no `[1m]`) and `crates/zygo/tests/compact_cmd.rs:173-176` (no request) keep their expected values, because before the first main-loop request, and when the main role's model serves with no `[1m]`, AU29 gives today's numbers. Those tests gain assertions for `model` and `context_window`; new tests cover `[1m]`, another role's model, a non-streamed request, and an OpenCode request (acceptance 8).
 6. **Config node.** One small config-schema node adds `[statusline]` (this design) and `[update]` (auto-update design) together: user config only; both tables are dropped from the team layer, as WS W5 does for `[workspace]`; the repository-file filter already drops them (`crates/zygo-config/src/repo_file.rs:219-229`, `KEPT`). Shared files that the plan must order: `crates/zygo/src/cmd/mod.rs` (CLI subcommands of this design, the auto-update design and the workspaces graph) and base spec §17 (command table and status line paragraph).
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-21 | H§17 intro and note 1, H§7.2 (row `requests_in_flight`) | author's call (lead decision: one merged graph, HUD first) | The HUD and workspaces graphs are merged with the HUD nodes first, so the HUD makes its `SessionStatus` and `SessionView` changes before WS X1 and C1. |

@@ -113,4 +113,10 @@ All cited line numbers were verified against the repo on 2026-11-21 (branch feat
 
 - update.rs:10 is `VERSION_RULE`, the version-string rule. The VERSION file URL and its parse are at :50-56.
 - update.rs:164-198 covers `temp_path`, `replace_binary` and the non-Windows `swap_in`.
-- mod.rs:395-396 dispatches `zygo claude` and `zygo opencode` only. `zygo up` does not exist in the code yet. It is planned in docs/work/workspaces/nodes/W7.md. The start check for `zygo up` attaches where W7 adds its dispatch.
+- mod.rs:395-396 dispatches `zygo claude` and `zygo opencode` only. `zygo up` does not exist in the code yet. It is planned in docs/work/phase2/nodes/W7.md (its `zygo up` check is node M5 of that graph). The start check for `zygo up` attaches where W7 adds its dispatch.
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-21 | Citation corrections (last bullet) | author's call (lead decision: one merged graph) | The workspaces graph moved to `docs/work/phase2/`; the pointer names the new path and node M5. |

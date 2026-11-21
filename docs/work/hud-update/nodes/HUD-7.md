@@ -1,9 +1,0 @@
-# HUD-7 — SessionView statusline_style with Default; overrides statusline; launcher writes the style
-
-**Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§8, AU1, H§11 rows `overrides.rs`, `session_view.rs`, `launcher.rs`, H§17 note 1. Runs before the workspaces graph: `SessionView` gains `impl Default` and each of its 16 literal sites ends in `..Default::default()`, so workspaces C1 later adds only its field; the two `Overrides` literals without `..` (`cmd/verbs.rs:256`, `config_layers.rs:709`) gain it too. Edge to HUD-3 for `Config.statusline` and `config_layers.rs`
-**Files:** `crates/zygo-core/src/session_view.rs`, `crates/zygo-core/src/overrides.rs`, `crates/zygo/src/cmd/verbs.rs`, `crates/zygo-config/tests/config_layers.rs`, `crates/zygo-core/tests/core_basics.rs`, `crates/zygo-mcp/tests/mcp_server.rs`, `crates/zygo-work/tests/collection.rs`, `crates/zygo-work/tests/guards.rs`, `crates/zygo-launch/src/launcher.rs`, `crates/zygo-launch/tests/launcher.rs`, `crates/zygo-launch/tests/opencode.rs`, `crates/zygo-launch/tests/serve_client.rs`, `crates/zygo-launch/tests/claude_code.rs`, `crates/zygo-hooks/tests/session_text.rs`, `crates/zygo-hooks/tests/hooks_basic.rs`, `crates/zygo/tests/guard_hook.rs`, `crates/zygo/tests/hook_session.rs`, `crates/zygo/tests/work_hook.rs`, `crates/zygo/tests/hook_trim.rs`, `crates/zygo/tests/mcp_stdio.rs`
-**Consumes:** `Config.statusline` (HUD-3)
-**Produces:** `SessionView::default() -> SessionView`, `SessionView.statusline_style: String`, `Overrides.statusline: Option<String>`
-**Acceptance:** `cargo test -p zygo-core && cargo test -p zygo-launch --test launcher && cargo test --workspace --locked --no-run` → all pass and the workspace builds: an old `view.json` without the field reads as `compact`; the launcher writes the user-config style into `view.json`; `overrides.json` round-trips `statusline`
-
-## Plan
