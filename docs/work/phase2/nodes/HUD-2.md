@@ -64,7 +64,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
 
 ### Steps
 
-- [ ] **1. Write the test file head.** Create `crates/zygo-work/tests/hud_git.rs` with:
+- [x] **1. Write the test file head.** Create `crates/zygo-work/tests/hud_git.rs` with:
   ```rust
   use std::ffi::OsStr;
   use std::path::{Path, PathBuf};
@@ -153,7 +153,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet (the file compiles at step 9).
 
-- [ ] **2. Write the all-platform real-repository tests** in `hud_git.rs`:
+- [x] **2. Write the all-platform real-repository tests** in `hud_git.rs`:
   ```rust
   #[test] // H§7.5 call 2: no upstream → no ahead/behind; main worktree: git dir = common dir
   fn hud_git_no_upstream_gives_no_marks() {
@@ -225,7 +225,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet.
 
-- [ ] **3. Write the `cfg(unix)` wrapper test and its child** in `hud_git.rs`.
+- [x] **3. Write the `cfg(unix)` wrapper test and its child** in `hud_git.rs`.
   - The parent runs the child with `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0` set on that child only.
   - The wrapper logs what reaches it, then runs the real git with isolated config. It must set `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` itself, because `git_command` removes every `GIT_CONFIG*` variable.
   ```rust
@@ -267,7 +267,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet.
 
-- [ ] **4. Write the budget tests** (spec 400 ms; two `cfg(unix)`, one `cfg(windows)`) in `hud_git.rs`. Each unix fake writes its own PID (`$$`, kept by `exec`), and `assert_gone` proves the kill:
+- [x] **4. Write the budget tests** (spec 400 ms; two `cfg(unix)`, one `cfg(windows)`) in `hud_git.rs`. Each unix fake writes its own PID (`$$`, kept by `exec`), and `assert_gone` proves the kill:
   ```rust
   #[cfg(unix)]
   #[test] // AU6: rev-parse has 150 ms of the 400 ms
@@ -315,7 +315,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   On Windows, `std::process::Command` runs a `.cmd` path through `cmd.exe`. The `rev-parse` arguments hold no character that Rust's batch-file argument check refuses (`%`, a quote, or a line break). If the check refuses them on the runner, `hud_git_with` gets `NotRun` and returns `None` at once, so the test would pass without a kill. To catch that, the elapsed time must also be at least 150 ms: add `assert!(took >= Duration::from_millis(150))`. If that assert fails for this reason, the executor records the reason in this node's log and removes the test. The Windows deadline path then stays covered by review only.
   Check: none yet.
 
-- [ ] **5. Write the `cfg(unix)` output tests** (budget `REAL`) in `hud_git.rs`. Without the cut rule, the two cut fakes would give `Some(branch = 1 MiB of b)` and marks `(1, 2)` (`trim_end` drops the spaces). So the asserted results prove that the reader stopped at 4 KiB and that the cut was detected:
+- [x] **5. Write the `cfg(unix)` output tests** (budget `REAL`) in `hud_git.rs`. Without the cut rule, the two cut fakes would give `Some(branch = 1 MiB of b)` and marks `(1, 2)` (`trim_end` drops the spaces). So the asserted results prove that the reader stopped at 4 KiB and that the cut was detected:
   ```rust
   #[cfg(unix)]
   #[test] // H§7.5 4 KiB cut; author's call 2: cut rev-parse output → none, within the budget
@@ -406,9 +406,9 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet.
 
-- [ ] **6. Run the tests and see them fail.** `cargo test -p zygo-work --test hud_git`. Pass condition for this step: compile errors `unresolved imports zygo_work::repo::hud_git`, `HudGit` (and `hud_git_with` on unix).
+- [x] **6. Run the tests and see them fail.** `cargo test -p zygo-work --test hud_git`. Pass condition for this step: compile errors `unresolved imports zygo_work::repo::hud_git`, `HudGit` (and `hud_git_with` on unix).
 
-- [ ] **7. Add the source helpers in `zygo-config` and reuse `kill_tree` in `zygo-plugins`.**
+- [x] **7. Add the source helpers in `zygo-config` and reuse `kill_tree` in `zygo-plugins`.**
   - In `crates/zygo-config/Cargo.toml` add:
     ```toml
     [target.'cfg(unix)'.dependencies]
@@ -442,7 +442,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   - `cargo build -p zygo-config` updates `Cargo.lock`. `git diff Cargo.lock` shows only `"libc",` added to the `zygo-config` package entry.
   - `cargo test -p zygo-config` and `cargo test -p zygo-plugins` pass.
 
-- [ ] **8. Add the capped run mode** in `repo.rs`. Move the body of `run_bounded_err` (`:52-94`) into a new function, and make `run_bounded_err` call it:
+- [x] **8. Add the capped run mode** in `repo.rs`. Move the body of `run_bounded_err` (`:52-94`) into a new function, and make `run_bounded_err` call it:
   ```rust
   /// The end of a bounded run that exited: exit success, stdout (at most the cut), whether stdout passed the cut,
   /// and up to 64 KiB of stderr (read only on a non-zero exit, else empty).
@@ -487,7 +487,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   - `repo::tests::find_checkout_tells_timeout_from_not_a_repository` (`repo.rs:205-212`): `git_run` → `run_bounded_err`.
   - The `sources` tests: `run_bounded` through `run_json`, `sources.rs:52`.
 
-- [ ] **9. Add the HUD type and functions** in `repo.rs`:
+- [x] **9. Add the HUD type and functions** in `repo.rs`:
   ```rust
   /// Total budget cap of [`hud_git_with`]: no `Instant` arithmetic can overflow (C6).
   const HUD_BUDGET_CAP: Duration = Duration::from_secs(24 * 60 * 60);
@@ -528,14 +528,14 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
 
   Check: `cargo build -p zygo-work --all-targets` passes with no warning.
 
-- [ ] **10. Run the tests and see them pass.**
+- [x] **10. Run the tests and see them pass.**
   - `cargo test -p zygo-work --test hud_git`: on unix 16 passed, 0 failed, 2 ignored (`hud_git_outside_child`, `hud_git_wrapper_child`); on Windows 7 passed, 1 ignored.
   - `cargo test -p zygo-work --test hud_git -- --ignored` → 2 passed on unix, 1 on Windows (the children return early with no environment).
   - `cargo test -p zygo-work`, `cargo test -p zygo-config` and `cargo test -p zygo-plugins` → all pass.
 
-- [ ] **11. Lint.** `cargo clippy -p zygo-work -p zygo-config -p zygo-plugins --all-targets --locked -- -D warnings` → no warning.
+- [x] **11. Lint.** `cargo clippy -p zygo-work -p zygo-config -p zygo-plugins --all-targets --locked -- -D warnings` → no warning.
 
-- [ ] **12. Commit** `crates/zygo-config/Cargo.toml`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`, `crates/zygo-work/src/repo.rs` and `crates/zygo-work/tests/hud_git.rs` with the message:
+- [x] **12. Commit** `crates/zygo-config/Cargo.toml`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`, `crates/zygo-work/src/repo.rs` and `crates/zygo-work/tests/hud_git.rs` with the message:
   ```
   zygo-work: bounded HUD git function (rev-parse, rev-list only)
 

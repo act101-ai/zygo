@@ -1,5 +1,6 @@
 //! Repository id (§8.2 step 1) and bounded, pinned `git` calls.
 
+use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -49,22 +50,56 @@ pub(crate) fn run_bounded(cmd: Command, deadline: Instant) -> Result<Vec<u8>, Ru
 /// Runs `cmd` with stdin null and returns its stdout; on a non-zero exit, `Failed` with up to 64 KiB of its stderr (the
 /// rest is drained); every other error has empty stderr. At the deadline the child is killed and reaped. The drain
 /// threads are abandoned then (a grandchild may still hold the pipes): a bounded leak per timeout, never joined.
-pub(crate) fn run_bounded_err(mut cmd: Command, deadline: Instant) -> Result<Vec<u8>, (RunError, Vec<u8>)> {
+pub(crate) fn run_bounded_err(cmd: Command, deadline: Instant) -> Result<Vec<u8>, (RunError, Vec<u8>)> {
+    match run_bounded_out(cmd, deadline, None) {
+        Ok(Ran { ok: true, out, .. }) => Ok(out),
+        Ok(Ran { err, .. }) => Err((RunError::Failed, err)),
+        Err(e) => Err((e, Vec::new())),
+    }
+}
+
+/// The end of a bounded run that exited: exit success, stdout (at most the cut), whether stdout passed the cut,
+/// and up to 64 KiB of stderr (read only on a non-zero exit, else empty).
+struct Ran {
+    ok: bool,
+    out: Vec<u8>,
+    cut: bool,
+    err: Vec<u8>,
+}
+
+/// Runs `cmd` with stdin null until it exits or `deadline`. `cut: None` is the plain mode of [`run_bounded_err`].
+/// `Some(n)`: stdout keeps `n` bytes (the rest is drained) and `Ran.cut` tells whether there were more. The child is
+/// also killed with its descendants: on unix it runs in its own process group, and the group is killed at the deadline
+/// and once the child has exited, before it is reaped. On Windows the process tree is killed at the deadline.
+fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Result<Ran, RunError> {
     if Instant::now() >= deadline {
-        return Err((RunError::TimedOut, Vec::new()));
+        return Err(RunError::TimedOut);
     }
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|_| (RunError::NotRun, Vec::new()))?;
+    #[cfg(unix)]
+    if cut.is_some() {
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    }
+    let mut child = cmd.spawn().map_err(|_| RunError::NotRun)?;
     let (Some(mut out), Some(mut err)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = child.kill();
         let _ = child.wait();
-        return Err((RunError::Failed, Vec::new()));
+        return Err(RunError::Failed);
     };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
+        let limit = cut.map_or(u64::MAX, |n| n.saturating_add(1));
         let mut buf = Vec::new();
-        let _ = out.read_to_end(&mut buf);
-        let _ = tx.send(buf);
+        let _ = (&mut out).take(limit).read_to_end(&mut buf);
+        let mut over = false;
+        if let Some(n) = cut
+            && buf.len() as u64 > n
+        {
+            over = true;
+            buf.truncate(n as usize);
+        }
+        let _ = std::io::copy(&mut out, &mut std::io::sink());
+        let _ = tx.send((buf, over));
     });
     let (etx, erx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -73,33 +108,67 @@ pub(crate) fn run_bounded_err(mut cmd: Command, deadline: Instant) -> Result<Vec
         let _ = std::io::copy(&mut err, &mut std::io::sink());
         let _ = etx.send(buf);
     });
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err((RunError::TimedOut, Vec::new()));
+    #[cfg_attr(not(unix), allow(unused_labels))] // the label is used by the unix block only
+    let status = 'wait: {
+        // Unix cut mode: kill the group before the leader is reaped (author's call 4). The first `waitid` error
+        // (e.g. ECHILD under an ignored SIGCHLD) falls through to the plain loop, with no group kill after it.
+        #[cfg(unix)]
+        if cut.is_some() {
+            loop {
+                match zygo_config::repo_file::exited_unreaped(&child) {
+                    Ok(true) => {
+                        zygo_config::repo_file::kill_group(&child);
+                        match child.wait() {
+                            Ok(s) => break 'wait s,
+                            Err(_) => return Err(RunError::Failed),
+                        }
+                    }
+                    Ok(false) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                    Ok(false) => {
+                        zygo_config::repo_file::kill_tree(&mut child);
+                        return Err(RunError::TimedOut);
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break s,
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                _ => {
+                    if cfg!(windows) && cut.is_some() {
+                        zygo_config::repo_file::kill_tree(&mut child);
+                    } else {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                    return Err(RunError::TimedOut);
+                }
             }
         }
     };
     let left = || deadline.saturating_duration_since(Instant::now());
-    let buf = rx.recv_timeout(left()).map_err(|_| (RunError::TimedOut, Vec::new()))?;
-    if status.success() {
-        Ok(buf)
-    } else {
-        Err((RunError::Failed, erx.recv_timeout(left()).unwrap_or_default()))
-    }
+    let (out, over) = rx.recv_timeout(left()).map_err(|_| RunError::TimedOut)?;
+    let ok = status.success();
+    let err = if ok { Vec::new() } else { erx.recv_timeout(left()).unwrap_or_default() };
+    Ok(Ran { ok, out, cut: over, err })
+}
+
+/// `<program> -c core.fsmonitor=false -C <cwd> <args>` on `git_command_for`, with `GIT_OPTIONAL_LOCKS=0` and
+/// `GIT_TERMINAL_PROMPT=0`.
+fn git_cmd(program: &OsStr, cwd: &Path, args: &[&str]) -> Command {
+    let mut c = zygo_config::repo_file::git_command_for(program);
+    c.args(["-c", "core.fsmonitor=false", "-C"]).arg(cwd).args(args);
+    c.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0");
+    c
 }
 
 /// `git -c core.fsmonitor=false -C <cwd> <args>` with `LC_ALL=C`: stdout text; `Absent` for a non-zero exit with a
 /// `GIT_ABSENT` message, `Failed` for other exits and for stdout that is not UTF-8. The caller's repository-selecting
 /// and config-injecting `GIT_*` variables are removed first.
 pub(crate) fn git_run(cwd: &Path, args: &[&str], deadline: Instant) -> Result<String, RunError> {
-    let mut c = zygo_config::repo_file::git_command();
-    c.args(["-c", "core.fsmonitor=false", "-C"]).arg(cwd).args(args);
-    c.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0");
+    let c = git_cmd(OsStr::new("git"), cwd, args);
     match run_bounded_err(c, deadline) {
         Ok(out) => String::from_utf8(out).map_err(|_| RunError::Failed),
         Err((RunError::Failed, err)) if zygo_config::repo_file::git_absent(&String::from_utf8_lossy(&err)) => {
@@ -142,6 +211,72 @@ pub fn branch(cwd: &Path, deadline: Instant) -> Option<String> {
     let b = git(cwd, &["symbolic-ref", "--short", "-q", "HEAD"], deadline)?;
     let b = b.trim();
     (!b.is_empty()).then(|| b.to_string())
+}
+
+/// Total budget cap of [`hud_git_with`]: no `Instant` arithmetic can overflow (C6).
+const HUD_BUDGET_CAP: Duration = Duration::from_secs(24 * 60 * 60);
+/// Stdout kept of each HUD git call (H§7.5).
+const HUD_CUT: u64 = 4 * 1024;
+
+/// The HUD's git facts (H§7.5): `top`, `git_dir` and `common_dir` are canonical; a linked worktree has
+/// `git_dir != common_dir`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HudGit {
+    pub top: PathBuf,
+    pub git_dir: PathBuf,
+    pub common_dir: PathBuf,
+    /// `None` when detached (`rev-parse` prints `HEAD`) or the line is empty.
+    pub branch: Option<String>,
+    /// Both `None` with no upstream, any `rev-list` error, or output past the cut.
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+}
+
+/// [`hud_git_with`] with the program `git`.
+pub fn hud_git(cwd: &Path, budget: Duration) -> Option<HudGit> {
+    hud_git_with(Path::new("git"), cwd, budget)
+}
+
+/// The two HUD git calls (H§7.5) in `cwd` within `budget` (`rev-parse` gets 3/8 of it), each with
+/// `GIT_NO_LAZY_FETCH=1` and at most 4 KiB of stdout. On unix each call runs in its own process group, which is
+/// killed at the deadline and when the call exits. On Windows the call's process tree is killed at the deadline.
+/// None when `rev-parse` fails, times out, passes the cut, or does not print four lines that start with three
+/// existing paths.
+pub fn hud_git_with(git: &Path, cwd: &Path, budget: Duration) -> Option<HudGit> {
+    let budget = budget.min(HUD_BUDGET_CAP);
+    let start = Instant::now();
+    let deadline = start + budget;
+    let rev_parse_deadline = start + budget / 8 * 3;
+    let run = |args: &[&str], deadline: Instant| {
+        let mut c = git_cmd(git.as_os_str(), cwd, args);
+        c.env("GIT_NO_LAZY_FETCH", "1");
+        run_bounded_out(c, deadline, Some(HUD_CUT))
+    };
+
+    let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"];
+    let Ran { ok: true, out, cut: false, .. } = run(&args, rev_parse_deadline).ok()? else { return None };
+    let text = out.strip_suffix(b"\n").unwrap_or(&out);
+    let lines: Vec<&[u8]> = text.split(|&b| b == b'\n').collect();
+    let [top, git_dir, common_dir, head] = lines[..] else { return None };
+    let path = |l: &[u8]| -> Option<PathBuf> {
+        #[cfg(unix)]
+        let p = PathBuf::from(<OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(l));
+        #[cfg(not(unix))]
+        let p = PathBuf::from(String::from_utf8_lossy(l).into_owned());
+        p.canonicalize().ok()
+    };
+    let (top, git_dir, common_dir) = (path(top)?, path(git_dir)?, path(common_dir)?);
+    let branch = (!head.is_empty() && head != b"HEAD").then(|| String::from_utf8_lossy(head).into_owned());
+
+    let marks = match run(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], deadline) {
+        Ok(Ran { ok: true, out, cut: false, .. }) => std::str::from_utf8(&out).ok().and_then(|s| {
+            let (a, b) = s.trim_end().split_once('\t')?;
+            Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))
+        }),
+        _ => None,
+    };
+    let (ahead, behind) = marks.map_or((None, None), |(a, b)| (Some(a), Some(b)));
+    Some(HudGit { top, git_dir, common_dir, branch, ahead, behind })
 }
 
 fn drop_port(host: &str) -> &str {

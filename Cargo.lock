@@ -3539,6 +3539,7 @@ dependencies = [
  "fs4",
  "hex",
  "keyring",
+ "libc",
  "regex",
  "regex-syntax",
  "semver",

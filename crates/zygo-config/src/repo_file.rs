@@ -1,5 +1,6 @@
 //! The repository file `.zygo.toml`, read from the default branch (§13.5).
 
+use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -79,7 +80,12 @@ pub const GIT_ENV_CLEARED: [&str; 7] = [
 /// `git` with [`GIT_ENV_CLEARED`] and every `GIT_CONFIG*` variable removed and `LC_ALL=C` (the [`GIT_ABSENT`] messages
 /// are matched in English); environment on the child only.
 pub fn git_command() -> Command {
-    let mut c = Command::new("git");
+    git_command_for(OsStr::new("git"))
+}
+
+/// [`git_command`] with `program` in place of `git` (a test's fake `git`).
+pub fn git_command_for(program: &OsStr) -> Command {
+    let mut c = Command::new(program);
     for k in GIT_ENV_CLEARED {
         c.env_remove(k);
     }
@@ -90,6 +96,48 @@ pub fn git_command() -> Command {
     }
     c.env("LC_ALL", "C");
     c
+}
+
+/// Kills `child`'s process group (unix: `libc::kill(-(child.id() as i32), libc::SIGKILL)`; the child must have been
+/// started with `process_group(0)` and not yet reaped) or its process tree (Windows: `taskkill /T /F /PID <id>`,
+/// stdout and stderr null; a descendant that left the tree survives). Does not reap.
+pub fn kill_group(child: &std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// [`kill_group`], then `child.kill()` and `child.wait()`, both results ignored.
+pub fn kill_tree(child: &mut std::process::Child) {
+    kill_group(child);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Whether `child` has exited, without reaping it: with `info` zeroed, `waitid(P_PID, child.id(), &mut info,
+/// WEXITED | WNOHANG | WNOWAIT)`. A return of 0 gives `Ok(info.si_pid() != 0)`. A return of -1 gives
+/// `Err(std::io::Error::last_os_error())`, e.g. `ECHILD` when SIGCHLD is ignored and the kernel reaps by itself.
+#[cfg(unix)]
+pub fn exited_unreaped(child: &std::process::Child) -> std::io::Result<bool> {
+    // SAFETY: `siginfo_t` is plain data, valid when zeroed; `waitid` writes only into `info`.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let r = unsafe {
+        libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+    };
+    if r == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `waitid` returned 0, so `info` is either zeroed (no state change) or filled for a child.
+    Ok(unsafe { info.si_pid() } != 0)
 }
 
 /// Why a `git` call gave no stdout: the thing is absent (git's one stderr line), or the read failed (a fixed reason word).

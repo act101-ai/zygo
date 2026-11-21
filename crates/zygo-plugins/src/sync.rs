@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context};
+use zygo_config::repo_file::kill_tree;
 use zygo_config::{Layer, Marketplace, Merged};
 use zygo_core::paths::Paths;
 
@@ -94,21 +95,6 @@ pub(crate) fn run_bounded(mut c: Command, deadline: Instant) -> anyhow::Result<V
         bail!("git failed: {}", zygo_config::display::scrub_userinfo(&first));
     }
     out.recv_timeout(left()).map_err(|_| anyhow!("git timed out"))
-}
-
-/// Kills the child's process group (unix) or process tree (Windows; a descendant that left the tree survives).
-fn kill_tree(child: &mut std::process::Child) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &child.id().to_string()])
-            .stdout(Stdio::null()).stderr(Stdio::null()).status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 /// D3: the git URL of a §15.1 source form; anything else is refused.
