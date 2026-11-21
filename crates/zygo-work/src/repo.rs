@@ -252,7 +252,8 @@ pub fn hud_git(cwd: &Path, budget: Duration) -> Option<HudGit> {
 /// reused; at the deadline only the child itself is killed, and ECHILD from `try_wait` counts as an exit with an
 /// unknown status, whose output is then checked as usual. On Windows the call's process tree is killed at the deadline.
 /// None when `rev-parse` fails, times out, passes the cut, or does not print four lines that start with three
-/// existing paths.
+/// existing paths. Exception: with SIGCHLD ignored the exit status is lost, so a failed `rev-parse` whose output still
+/// passes those checks counts. An unborn HEAD then shows the worktree with no branch (as a detached HEAD does).
 pub fn hud_git_with(git: &Path, cwd: &Path, budget: Duration) -> Option<HudGit> {
     let budget = budget.min(HUD_BUDGET_CAP);
     let start = Instant::now();

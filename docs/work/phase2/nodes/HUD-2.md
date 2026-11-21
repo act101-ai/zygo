@@ -38,7 +38,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
 - No upstream, or any `rev-list` error, gives no ahead/behind.
 
 **Author's calls (H§7.5 is silent on these):**
-1. **Unborn HEAD gives no git result.** Evidence (git 2.55.0, Linux only): in a repository with no commit, and in an orphan linked worktree, `rev-parse` exits 128 (`ambiguous argument 'HEAD'`). Its stdout still holds the three paths and `HEAD`. `rev-list` exits 128 too. `hud_git_with` requires a zero exit of `rev-parse`, so an unborn HEAD gives `None` on every platform. The rule depends only on the exit status (git fails on an unresolvable revision), not on whether git writes stdout before it fails. The HUD shows no worktree or branch until the first commit.
+1. **Unborn HEAD gives no git result.** Evidence (git 2.55.0, Linux only): in a repository with no commit, and in an orphan linked worktree, `rev-parse` exits 128 (`ambiguous argument 'HEAD'`). Its stdout still holds the three paths and `HEAD`. `rev-list` exits 128 too. `hud_git_with` requires a zero exit of `rev-parse`, so an unborn HEAD gives `None` on every platform. The rule depends only on the exit status (git fails on an unresolvable revision), not on whether git writes stdout before it fails. The HUD shows no worktree or branch until the first commit. Exception (Round 3, S1): with SIGCHLD ignored by the parent, the kernel reaps git and the exit status is lost, so the run counts as a success. An unborn HEAD then shows the worktree with no branch, which cannot be told apart from a detached HEAD.
 2. **Cut output is not trusted.** If `rev-parse` stdout reached the 4 KiB cut, the whole result is `None`. If `rev-list` stdout reached it, there are no marks. Real output is a few lines (H§7.5), so a cut means the output is not git's normal answer.
 3. **Own process group (unix), tied to PH12.** The cut mode starts git in its own process group, so a group kill aimed at the hook does not reach git. PH12 (how Claude Code ends slow status runs) is still an open live check in PRB-1.
    - While the hook lives, the deadline kill holds each git call within the budget.
@@ -250,6 +250,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
           ("GIT_CONFIG_VALUE_0", OsStr::new("12"))]);
       let pre = format!("-c core.fsmonitor=false -C {}", w.display());
       let env = "|1|0|0|C|unset|unset|unset";
+      // Superseded by Round 2 items 2 and 3: the lines now end `--symbolic-full-name HEAD` and `HEAD...@{upstream} --`.
       assert_eq!(std::fs::read_to_string(&log).unwrap(), format!(
           "{pre} rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir --abbrev-ref HEAD{env}\n\
            {pre} rev-list --left-right --count HEAD...@{{upstream}}{env}\n"));
@@ -520,11 +521,11 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   `hud_git_with` algorithm:
   1. Compute `budget = budget.min(HUD_BUDGET_CAP)`, `start = Instant::now()`, `deadline = start + budget`, and the rev-parse deadline `start + budget / 8 * 3` (150 ms of 400 ms, AU6).
-  2. Build `c = git_cmd(git.as_os_str(), cwd, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"])` and set `c.env("GIT_NO_LAZY_FETCH", "1")`. Run `run_bounded_out(c, rev_parse_deadline, Some(HUD_CUT)).ok()?`. Continue only on `ok && !cut`; else return `None`.
+  2. Build `c = git_cmd(git.as_os_str(), cwd, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"])` and set `c.env("GIT_NO_LAZY_FETCH", "1")`. Run `run_bounded_out(c, rev_parse_deadline, Some(HUD_CUT)).ok()?`. Continue only on `ok && !cut`; else return `None`. *Superseded by Round 2 item 3: `--symbolic-full-name` in place of `--abbrev-ref`.*
   3. Strip one trailing `b'\n'` if present and split on `b'\n'`. Anything other than exactly four parts gives `None`.
   4. Lines 1-3 → path. On unix use `OsStr::from_bytes`, which keeps invalid UTF-8 for the lossy name in HUD-9. Elsewhere use `String::from_utf8_lossy`. Then `canonicalize().ok()?`.
-  5. Line 4 → `branch`: `None` when it is empty or equals `b"HEAD"`, else `String::from_utf8_lossy(line).into_owned()`.
-  6. Only now run `rev-list --left-right --count HEAD...@{upstream}` the same way (with `GIT_NO_LAZY_FETCH=1`, `Some(HUD_CUT)` and `deadline`). Only `Ok(Ran { ok: true, cut: false, .. })` counts. Read its stdout as UTF-8, `trim_end`, `split_once('\t')`, and parse both sides with `parse::<u32>()`. Success gives `(Some(ahead), Some(behind))`; any failure gives `(None, None)`.
+  5. Line 4 → `branch`: `None` when it is empty or equals `b"HEAD"`, else `String::from_utf8_lossy(line).into_owned()`. *Superseded by Round 2 item 3: the line without `refs/heads/`; any line not under `refs/heads/` gives `None`.*
+  6. *Superseded by Round 2 item 2: the call ends with `--`.* Only now run `rev-list --left-right --count HEAD...@{upstream}` the same way (with `GIT_NO_LAZY_FETCH=1`, `Some(HUD_CUT)` and `deadline`). Only `Ok(Ran { ok: true, cut: false, .. })` counts. Read its stdout as UTF-8, `trim_end`, `split_once('\t')`, and parse both sides with `parse::<u32>()`. Success gives `(Some(ahead), Some(behind))`; any failure gives `(None, None)`.
 
   Check: `cargo build -p zygo-work --all-targets` passes with no warning.
 
@@ -586,3 +587,17 @@ Diff-review findings, confirmed by the coordinator; each fixed test first.
 - [x] **R6 (L5).** `hud_git_with` doc comment states the fallback (no group kill after a `waitid` error; ECHILD from `try_wait` counts as an exit).
 - [x] **R7 (L6).** zygo-config unit tests for `kill_group` and `exited_unreaped`; the `child.wait()` error → `Failed` path, or the reason it cannot be reached without fakes. Tests: `kill_group_kills_the_childs_group`, `exited_unreaped_tells_an_exit_without_reaping`. The `child.wait()` error path has no test: it needs a third party to reap the leader between `waitid(WNOWAIT)` seeing the exit and `child.wait()`. std has no hook in that gap. A `waitpid(-1)` thread or a `SIG_IGN` set at that moment is a race, not a fixed order. With `SIG_IGN` set before the call, `waitid` gives ECHILD first, which is the R1 path.
 - [x] **R8.** H§7.5 (and the AU11 detached-head note) rewritten as final text for R2 and R3; one `## Change log` line; spec added to the Files line.
+
+### Round 3
+
+Review of `cdb0e63`, confirmed by the coordinator; last allowed round.
+
+- [x] **S1 (M1).** SIGCHLD ignored + unborn HEAD gives `Some` with no branch (exit status lost; same as detached). Kept (author's call); stated in the `hud_git_with` doc comment and in author's call 1. Test: `hud_git_sigchld_ignored_unborn_head_has_no_branch`.
+- [x] **S2 (L2).** The marker check proves itself: `ps -A -ww -o args=` shows the marker while the fake runs, then not after the call.
+- [x] **S3 (L3).** Windows test: the fake's `ping.exe` is seen to start during a run before the count is checked to go back down. Unverified until windows-latest CI runs.
+- [x] **S4 (L4).** AU11 covers every no-branch case of H§7.5 call 1. Test: `hud_git_head_on_a_remote_ref_has_no_branch` (real git).
+- [ ] **S5 (L5).** H§7.5 keeps the dated evidence for the old calls and gains a dated line for the new calls (no-marker check run again). **Partly done, blocked:**
+  - Done: the old evidence stays, with a note naming the old calls. The new dated line records that, in a plain clone, call 1 printed the three paths and `refs/heads/main`, and call 2 printed `0	0`, both with exit 0.
+  - Not done: the no-marker part was not run again. This session's worktree guard refused the commands: `git config uploadpack.allowfilter` ("sets … in the configuration the shared checkout reads") and `git -c core.fsmonitor=…` ("injecting configuration whose effect on where git writes can't be verified"). The spec line says the check is open until H§14 #25 (HUD-9) or the operator runs it.
+- [x] **S6 (L6).** Round 1 plan text at steps 3 and 9 marked as superseded by Round 2 items 2 and 3.
+- [x] **S7.** One spec `## Change log` line for S1 and S4 (AU11 scope).
