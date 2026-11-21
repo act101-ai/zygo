@@ -44,7 +44,7 @@ fn q(s: &str) -> String { toml::Value::String(s.into()).to_string() }
 /// The checked plugin `name` of `r`; an error when it is missing or has a violation.
 fn checked<'a>(r: &'a CheckReport, name: &str) -> anyhow::Result<&'a PluginReport> {
     let p = r.plugins.iter().find(|p| p.name == name).ok_or_else(|| anyhow!("{name} is not in the marketplace"))?;
-    if let Some(v) = p.violations.first() { bail!("{name}: check failed: {} {}", v.rule.as_str(), v.path); }
+    if let Some(v) = p.violations.first() { bail!("{name}: {}", crate::sync::check_failed(v)); }
     Ok(p)
 }
 

@@ -1,4 +1,6 @@
-use std::{ffi::OsString, fs, path::{Path, PathBuf}, process::Command, sync::{Mutex, MutexGuard}, time::{Duration, Instant}};
+use std::{ffi::OsString, fs, path::{Path, PathBuf}, process::Command, sync::{Mutex, MutexGuard}, time::Duration};
+#[cfg(unix)]
+use std::time::Instant;
 use zygo_config::WorkConfig;
 use zygo_work::{current, repo, sources, WorkItem};
 
@@ -53,6 +55,9 @@ fn repo_with(env: &Env, name: &str, branch: &str, remotes: &[&str]) -> PathBuf {
   fs::create_dir(&d).unwrap();
   let d = d.canonicalize().unwrap();
   git(env, &d, &["init", "-q", "-b", branch]);
+  // Git for Windows: a 250-byte branch puts `.git/refs/heads/<name>` past MAX_PATH; without core.longpaths git
+  // cannot create the branch nor resolve HEAD. The repo config is what zygo's own git calls read too.
+  if cfg!(windows) { git(env, &d, &["config", "core.longpaths", "true"]); }
   for r in remotes { git(env, &d, &["config", "--add", "remote.origin.url", r]); }
   git(env, &d, &["commit", "-q", "--allow-empty", "-m", "i"]);
   d

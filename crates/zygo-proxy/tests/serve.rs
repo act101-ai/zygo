@@ -251,7 +251,9 @@ fn tls_files(t: &Tls) -> TlsFiles { TlsFiles { cert: t.files.cert.clone(), key: 
 /// Trusts only `t`'s certificate (`None`: plain http).
 fn client(t: Option<&Tls>) -> reqwest::Client {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let mut b = reqwest::Client::builder().no_proxy();
+    // On Windows a connect to a port just closed (a test after `shutdown`) can stay in SYN-SENT for minutes instead of
+    // being refused; the bound turns that into the error the test expects.
+    let mut b = reqwest::Client::builder().no_proxy().connect_timeout(Duration::from_secs(5));
     if let Some(t) = t {
         b = b.tls_certs_only([reqwest::Certificate::from_pem(t.pem.as_bytes()).unwrap()]);
     }
@@ -429,12 +431,13 @@ fn pid_second_instance_refused() {
     let a = setup(false, true, false);
     let pid_file = a.d.path().join("data/serve.pid");
     let mine = format!("{}\n", std::process::id());
-    assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), mine);
+    // Windows locks are mandatory: the running server's pid file cannot be read (os error 33).
+    if cfg!(unix) { assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), mine); }
     let o = opts(a.d.path(), "127.0.0.1:0", None, &Lines::default(), ManualClock::new(), true, false);
     let e = serve::start(o).err().unwrap();
     assert!(e.downcast_ref::<AlreadyRunning>().is_some(), "{e}");
     assert_eq!(e.to_string(), "zygo serve is already running");
-    assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), mine);
+    if cfg!(unix) { assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), mine); }
     a.h.shutdown();
     assert!(!pid_file.exists());
 }
@@ -452,7 +455,8 @@ fn pid_stale_file_no_signal() {
     assert!(e.downcast_ref::<NoServer>().is_some(), "{e}");
     assert_eq!(e.to_string(), "no running zygo serve");
     let h = serve::start(opts(d.path(), "127.0.0.1:0", None, &Lines::default(), ManualClock::new(), true, false)).unwrap();
-    assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), format!("{}\n", std::process::id()));
+    // Windows locks are mandatory: the running server's pid file cannot be read (os error 33).
+    if cfg!(unix) { assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), format!("{}\n", std::process::id())); }
     #[cfg(unix)]
     {
         std::fs::write(&pid_file, "1\n").unwrap();

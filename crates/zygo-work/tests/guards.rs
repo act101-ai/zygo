@@ -470,7 +470,7 @@ fn scope_needs_a_subagent_with_an_open_unit_listing_files() {
 }
 
 fn source(e: &Env, rel: &str, lines: usize) -> PathBuf {
-    let p = e.repo.join(rel);
+    let p = rel.split('/').fold(e.repo.clone(), |p, c| p.join(c)); // native separators, as the guard prints them
     std::fs::create_dir_all(p.parent().unwrap()).unwrap();
     std::fs::write(&p, "fn f() {}\n".repeat(lines)).unwrap();
     p

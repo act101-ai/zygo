@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use common::*;
 use serde_json::{json, Value};
-use zygo_config::{load_with_builtin, LoadContext};
+use zygo_config::LoadContext;
 #[cfg(unix)]
-use zygo_config::Merged;
+use zygo_config::{load_with_builtin, Merged};
 #[cfg(unix)]
 use zygo_core::paths::Paths;
 #[cfg(unix)]
@@ -88,7 +88,7 @@ fn render_approved_refuses_a_plugin_that_fails_the_check() {
     r.write("plugins/act-lite/skills/hello/big.txt", vec![b'a'; 1_048_577]);
     r.commit("first");
     let e = render_approved(&r.dir, "v1.0.0", &"a".repeat(40), &names(&["act-lite"])).unwrap_err();
-    assert_eq!(e.to_string(), "act-lite: check failed: file-too-large skills/hello/big.txt");
+    assert_eq!(e.to_string(), "act-lite: check failed: file-too-large skills/hello/big.txt (1048577 bytes, limit 1048576)");
 }
 
 #[cfg(unix)]
@@ -606,6 +606,7 @@ fn pinned() -> zygo_config::Marketplace { zygo_config::builtin::defaults().marke
 fn toml_of(p: &Path) -> toml::Table { std::fs::read_to_string(p).unwrap().parse().unwrap() }
 
 const COMMIT: &str = "409b9dad5da85a9857e8d584d1c6a9fe4136c3e3";
+#[cfg(unix)]
 const ACT_LITE_DIGEST: &str = "8f7ac593245afb9c4cf3ca294e83d2648d76310026ac1f7865acb8476eda496d";
 
 #[test]

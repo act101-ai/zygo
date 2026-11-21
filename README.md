@@ -12,7 +12,7 @@ macOS and Linux:
 curl -fsSL https://raw.githubusercontent.com/act101-ai/zygo/main/scripts/install.sh | sh
 ```
 
-Windows (PowerShell; not yet tested on Windows, see [docs/install.md](docs/install.md#windows)):
+Windows (PowerShell; see [docs/install.md](docs/install.md#windows)):
 
 ```powershell
 irm https://raw.githubusercontent.com/act101-ai/zygo/main/scripts/install.ps1 | iex

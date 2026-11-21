@@ -657,7 +657,7 @@ mod tests {
         write_cfg(&c.paths, &src, &[]);
         let e = say(&c, &["enable", "team:demo"], "").unwrap_err().to_string();
         assert!(e.starts_with("enabled team:demo\n"), "{e}");
-        assert!(e.ends_with("\n  team:demo: check failed: bad-name skills/Bad_Name/SKILL.md\nteam:demo is not in the store; run zygo plugins sync"), "{e}");
+        assert!(e.ends_with("\n  team:demo: check failed: bad-name skills/Bad_Name/SKILL.md (skill name \"Bad_Name\")\nteam:demo is not in the store; run zygo plugins sync"), "{e}");
     }
 
     /// M1: a git failure while the stored copy is kept; `approval` succeeds, so the failure lines go out through `out`.

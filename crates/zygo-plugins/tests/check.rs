@@ -803,6 +803,7 @@ fn windows_unsafe_com1_md() { unsafe_rel_is_refused("skills/hello/com1.md", "x\n
 #[test]
 fn windows_unsafe_lpt9() { unsafe_rel_is_refused("skills/hello/LPT9", "x\n"); }
 #[test]
+#[cfg_attr(windows, ignore = "NTFS writes x:s as stream s of file x: the name cannot exist on a Windows disk")]
 fn windows_unsafe_colon() { unsafe_rel_is_refused("skills/hello/x:s", "x\n"); }
 #[test]
 fn windows_unsafe_control_console_md() {

@@ -23,7 +23,7 @@ The script does not edit a shell profile. If the install directory is not on `PA
 
 ## Windows
 
-The Windows builds are not yet tested on Windows. Known defects: a local marketplace path (`C:\...`) is refused, and OpenCode MCP delivery can fail. Report what you find.
+Tested on Windows 11 x64 (2026-11-20): the shell, the agent shims and Claude Code. OpenCode on Windows is not live-tested yet. Report what you find.
 
 ```powershell
 irm https://raw.githubusercontent.com/act101-ai/zygo/main/scripts/install.ps1 | iex

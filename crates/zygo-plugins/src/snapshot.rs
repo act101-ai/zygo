@@ -165,7 +165,8 @@ fn fresh_dir(dir: &Path) -> anyhow::Result<()> {
 /// execute bit on unix); a bare name is looked up in the absolute entries of `search_path` (a relative entry such
 /// as `.` or an empty one would resolve inside the plugin); a relative path resolves against the plugin root.
 pub fn command_found(command: &str, plugin_root: &Path, search_path: Option<&OsStr>) -> bool {
-    let expanded = command.replace(ROOT_VAR, &plugin_root.to_string_lossy());
+    // A verbatim root (`\\?\C:\…`) does not read `/` as a separator: substitute the plain form.
+    let expanded = command.replace(ROOT_VAR, &zygo_core::paths::plain(plugin_root).to_string_lossy());
     if expanded.is_empty() || Path::new(&expanded).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return false;
     }

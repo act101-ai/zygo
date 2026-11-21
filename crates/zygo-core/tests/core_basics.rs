@@ -1,5 +1,6 @@
 use zygo_core::ids::ulid;
 use zygo_core::overrides::Overrides;
+#[cfg(unix)]
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 
@@ -151,4 +152,20 @@ fn session_view_compact_tool_defaults_true_and_round_trips() {
     v.compact_tool = false;
     v.save(&d).unwrap();
     assert!(!SessionView::load(&d).unwrap().compact_tool);
+}
+
+#[test]
+fn plain_strips_the_verbatim_prefix_only_when_the_plain_path_is_the_same() {
+    use std::path::{Path, PathBuf};
+    use zygo_core::paths::plain;
+    let p = |s: &str| plain(Path::new(s));
+    assert_eq!(p(r"\\?\C:\Users\a\repo"), PathBuf::from(r"C:\Users\a\repo"));
+    assert_eq!(p(r"\\?\UNC\host\share\x"), PathBuf::from(r"\\host\share\x"));
+    // A plain path would read these differently: the prefix stays.
+    assert_eq!(p(r"\\?\C:\a\b."), PathBuf::from(r"\\?\C:\a\b."));
+    assert_eq!(p(r"\\?\C:\a\..\b"), PathBuf::from(r"\\?\C:\a\..\b"));
+    assert_eq!(p(r"\\?\C:\a/b"), PathBuf::from(r"\\?\C:\a/b"));
+    assert_eq!(p(r"\\?\Volume{1}\x"), PathBuf::from(r"\\?\Volume{1}\x"));
+    assert_eq!(p("/home/a"), PathBuf::from("/home/a"));
+    assert_eq!(p(r"C:\a"), PathBuf::from(r"C:\a"));
 }

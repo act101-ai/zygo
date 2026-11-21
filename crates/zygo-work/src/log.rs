@@ -147,6 +147,7 @@ pub(crate) fn check_agent(agent: &str) -> anyhow::Result<()> {
 
 /// Read-write-create options, mode 0600 on unix.
 fn private() -> OpenOptions {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut o = OpenOptions::new();
     #[cfg(unix)]
     {

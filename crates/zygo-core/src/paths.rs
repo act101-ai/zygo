@@ -55,3 +55,24 @@ impl Paths {
         }
     }
 }
+
+/// `p` without the Windows verbatim prefix when the plain form names the same file: `\\?\C:\x` → `C:\x`,
+/// `\\?\UNC\host\share\x` → `\\host\share\x`. Other paths, and every path on other systems, are returned as is.
+/// `canonicalize` gives verbatim paths on Windows; git, `cmd.exe` and other programs refuse or misread them.
+pub fn plain(p: &std::path::Path) -> PathBuf {
+    let Some(s) = p.to_str() else { return p.to_path_buf() };
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        if !rest.split('\\').any(|c| c == "." || c == "..") { return PathBuf::from(format!(r"\\{rest}")); }
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        let disk = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
+        // A component that a plain path would read differently (`.`, `..`, a trailing dot or space) keeps the prefix.
+        let odd = rest[3.min(rest.len())..].split('\\').filter(|c| !c.is_empty())
+            .any(|c| c == "." || c == ".." || c.ends_with('.') || c.ends_with(' '));
+        if disk && !odd && !rest.contains('/') { return PathBuf::from(rest); }
+    }
+    p.to_path_buf()
+}
+
+/// `std::fs::canonicalize` followed by `plain`.
+pub fn canonical(p: &std::path::Path) -> std::io::Result<PathBuf> { std::fs::canonicalize(p).map(|c| plain(&c)) }

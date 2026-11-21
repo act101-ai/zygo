@@ -1107,7 +1107,7 @@ mod syncing {
         repo.tag("v1.0.1");
         let r = sync_with(&merged(&fx, &mp("team", &repo.src(), "v1.0.1", None, &["demo"]), None), &p, WIDE_TOTAL, &opts(&fx));
         assert_eq!(r.lines, partial());
-        assert_eq!(r.failures, [("team:demo".to_string(), "check failed: file-too-large skills/hello/big.txt".to_string())]);
+        assert_eq!(r.failures, [("team:demo".to_string(), "check failed: file-too-large skills/hello/big.txt (1048577 bytes, limit 1048576)".to_string())]);
         assert_eq!(entry(&manifest(&p), "demo"), Some(&before));
         assert!(!store(&p).join("team/demo/1.0.0/skills/hello/big.txt").exists());
     }
@@ -1122,7 +1122,7 @@ mod syncing {
         repo.tag_force("v1.0.0");
         let p = paths(&fx);
         let r = sync_with(&merged(&fx, &mp("team", &repo.src(), "v1.0.0", None, &["demo"]), None), &p, WIDE_TOTAL, &opts(&fx));
-        assert_eq!(r.failures, [("team:demo".to_string(), "check failed: symlink skills/hello/link.md".to_string())]);
+        assert_eq!(r.failures, [("team:demo".to_string(), "check failed: symlink skills/hello/link.md (symlinks are refused)".to_string())]);
         assert_eq!(r.lines, partial());
         assert!(!store(&p).join("team/demo").exists());
     }
@@ -1271,7 +1271,8 @@ mod syncing {
         let r = run(&second.src(), "v1.0.1", &["demo"]);
         assert!(r.failures.is_empty(), "{r:?}");
         assert_eq!(manifest(&p).marketplaces["team"].source, second.src());
-        assert!(std::fs::read_to_string(cache(&p).join(".git/config")).unwrap().contains(&second.src()));
+        // rewrite_config writes the url as a git config string: `\` doubled.
+        assert!(std::fs::read_to_string(cache(&p).join(".git/config")).unwrap().contains(&second.src().replace('\\', "\\\\")));
         assert!(skill(&p, "demo", "1.0.0").contains("Say second."));
     }
 
@@ -1426,7 +1427,8 @@ mod syncing {
         assert!(selection(&cfg, None).selected.contains(&id("act101:act-lite")));
         let r = sync_with(&load("[[marketplace]]\nname = \"act101\"\nref = \"v1\"\n"), &p, WIDE_TOTAL, &o);
         assert!(m.exists(), "{r:?}");
-        let r = sync_with(&load(&mp("u", "/nowhere", "", None, &[])), &p, WIDE_TOTAL, &opts(&fx));
+        let nowhere = if cfg!(windows) { r"C:\nowhere" } else { "/nowhere" };
+        let r = sync_with(&load(&mp("u", nowhere, "", None, &[])), &p, WIDE_TOTAL, &opts(&fx));
         assert_eq!(r.failures, [("u".to_string(), "ref is not a tag or a commit".to_string())]);
     }
 
