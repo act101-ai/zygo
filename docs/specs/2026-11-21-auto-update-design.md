@@ -38,7 +38,8 @@ The check runs in `zygo claude`, `zygo opencode` and `zygo up`, before the launc
 - stdin or stderr is not a TTY.
 - `-p` or `--print` is given.
 - The command is `zygo serve`.
-- The command runs inside a zygo session (`ZYGO_SESSION` is set). Thus workspace panes and `ws run` never ask.
+- The command runs inside a zygo session (`ZYGO_SESSION` is set).
+- The command runs in a workspace pane (`ZYGO_WORKSPACE` is set): the workspace's `zygo up` already asked. `ws run` never reaches the start check.
 - `zygo up` asks one time for the whole workspace.
 
 ### Check
@@ -120,3 +121,4 @@ All cited line numbers were verified against the repo on 2026-11-21 (branch feat
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-21 | Citation corrections (last bullet) | author's call (lead decision: one merged graph) | The workspaces graph moved to `docs/work/phase2/`; the pointer names the new path and node M5. |
+| 2026-11-21 | When the check is skipped | author's call | The intent "workspace panes never ask" was false for a member started by hand in a pane: `up` and `ws run` remove `ZYGO_SESSION` from the pane environment (W§18 #17), but the pane keeps `ZYGO_WORKSPACE` (AU93). |

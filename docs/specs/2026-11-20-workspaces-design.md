@@ -264,7 +264,7 @@ A withdrawn call keeps its id so that earlier reviews stay traceable.
 | `$HOME/.cache/zygo/sessions/<ULID>/activity.json` | Turn and subagent state from the workspace hook (W§9.1). |
 | `$HOME/.cache/zygo/sessions/<ULID>/activity.lock` | fs4 lock for changes to `activity.json` (AU56). |
 
-New `Paths` fields: `state_dir`, `workspaces_dir`, `workspace_cache_dir`. On Windows these fields exist but no code uses them (OP5).
+New `Paths` methods (not fields, so no `Paths` literal changes): `state_dir()`, `workspaces_dir()` = `state_dir()/workspaces`, and `workspace_cache_dir()` = `cache_dir/workspaces`. `state_dir()` is `$HOME/.local/state/zygo` when `data_dir` is `$HOME/.local/share/zygo` (as `Paths::from_env` sets it on unix), and `data_dir/state` otherwise, so a `Paths` built by a test keeps its state under its own directory. On Windows these methods exist but no code uses them (OP5).
 
 ### 7.2 `workspace.json` fields
 
@@ -594,7 +594,7 @@ Exit codes follow §8.2: `0`, `1` failure or busy, `2` usage or platform. `zygo 
 | §6.1 layer 4, 5 | No change; the repository file keeps its four tables, and a profile merges only `features` (AU22). |
 | §6.1 layer 7 | A member's session overrides survive `down`/`up` and crashes: saved at each change, applied at resume (OP12, AU105). |
 | §7.1, §18.2 A2 | No daemon stays. A2 "session state dies with the session" gains: "except the workspace state, which outlives sessions" (AU1). |
-| §7.3 | The session status reply gains `requests_in_flight` and `last_request_end` (AU91, OP13). |
+| §7.2 | The session status reply gains `requests_in_flight` and `last_request_end` (AU91, OP13). |
 | §8.1 | Add capabilities WA-1 Resume and WA-2 Turn signals (AU28); add the cells to `docs/conformance.md`; OpenCode cells partial until PW4 passes (AU104). |
 | §8.2 step 1 | Membership check before the launch (W§8.4); `--session-id` pre-assign (W§8.3); resume argument (W§8.2). |
 | §8.2 step 2 | The launcher calls the member callback after it creates the session directory and before the agent starts (AU34, AU92). The view gets the resume note from `LaunchOpts` (AU72). |
@@ -776,7 +776,7 @@ Each item is a test or a command whose output decides it. "Private server": a tm
 75. `cargo tree -p zygo-workspace` shows no `zygo-launch` and no `zygo-hooks`; the workspace builds with no dependency cycle (AU103).
 
 **Live checks (manual, recorded)**
-76. PW1, PW2, PW3, PW5, PW7, PW9, PW10, PW15, PW16 on the pinned Claude Code; PW4 on the pinned OpenCode; PW6 and PW11 on tmux 3.2.
+76. PW1, PW2, PW3, PW5, PW7, PW9, PW10, PW15, PW16 on the pinned Claude Code; PW4 on the pinned OpenCode; PW6 and PW11 on tmux 3.2 when a 3.2 build is available, else on the oldest tmux available, whose version is recorded and becomes the minimum of AU7 (W§17 PW6, first-listed fallback).
 
 ## 19. Left to the builder
 
@@ -817,3 +817,11 @@ The brief had these facts. The repository says otherwise; this document follows 
 ## 21. Not resolved
 
 None. The operator decided OP11 (slash commands), OP12 (saved overrides) and OP13 (proxy status fields); the lead resolved the AU64 scope as an author's call.
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-21 | W§7.1 (`Paths` paragraph) | author's call | Methods instead of fields: 55 `Paths` literals in 37 files have no `..`, so three new fields would change all of them; the derivation keeps a test-built `Paths` under its own directory. |
+| 2026-11-21 | W§15 (status reply row) | author's call | The session status reply is in base §7.2 (session API), not §7.3. |
+| 2026-11-21 | W§18 #76 | author's call | No tmux 3.2 build is available on the build machine (tmux 3.7c); PW6's first-listed fallback sets the minimum to the oldest version tested. |

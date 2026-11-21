@@ -4,6 +4,6 @@
 **Files:** `crates/zygo-config/src/schema.rs`, `crates/zygo-config/src/layers.rs`, `crates/zygo-config/src/check.rs`, `crates/zygo-config/tests/config_layers.rs`
 **Consumes:** —
 **Produces:** `schema::StatuslineConfig { style: String }`, `Config.statusline: StatuslineConfig`, `schema::UpdateConfig { check: bool }`, `Config.update: UpdateConfig`
-**Acceptance:** `cargo test -p zygo-config && cargo test --workspace --locked --no-run` → all pass and the workspace builds, including the repository-file filter test for `[statusline]`, both tables dropped from the team layer with one warning, `check = true` and `style = "compact"` by default, and `config check` rejecting a `style` other than `compact` or `verbose`
+**Acceptance:** `cargo test -p zygo-config && cargo test --workspace --locked --no-run && cargo check --workspace --locked --target x86_64-pc-windows-gnu` → all pass and the workspace builds, including the repository-file filter test for `[statusline]`, both tables dropped from the team layer with one warning, `check = true` and `style = "compact"` by default, and `config check` rejecting a `style` other than `compact` or `verbose`
 
 ## Plan

@@ -4,6 +4,6 @@
 **Files:** `crates/zygo/src/cmd/status.rs`, `crates/zygo/src/cmd/usage.rs`, `crates/zygo/src/cmd/doctor.rs`, `crates/zygo/tests/usage_doctor.rs`, `crates/zygo/tests/compact_cmd.rs`
 **Consumes:** `Store::bytes_trimmed` (HUD-1), `SessionStatus.spend_usd` (HUD-6), `tokens::BYTES_PER_TOKEN` (HUD-5), `statusline::render::spend_text` (HUD-8)
 **Produces:** —
-**Acceptance:** `cargo test -p zygo --test usage_doctor --test compact_cmd && cargo test -p zygo --lib cmd::status && cargo test --workspace --locked --no-run` → all pass, including H§14 #18 and #32
+**Acceptance:** `cargo test -p zygo --test usage_doctor --test compact_cmd && cargo test -p zygo --lib cmd::status && cargo test --workspace --locked --no-run && cargo test -p zygo-hooks --test statusline_render --test statusline_data && cargo check --workspace --locked --target x86_64-pc-windows-gnu` → all pass, including H§14 #18 and #32
 
 ## Plan

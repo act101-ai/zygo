@@ -1,6 +1,6 @@
 # DOC-1 — Base-spec notes for the HUD (H§9) and auto-update
 
-**Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§9 (every row except `docs/live-checks.md`; the status-reply change is recorded in §7.2), H§17 note 1; `docs/specs/2026-11-21-auto-update-design.md` "Base-spec changes". The W§15 rows, its §7.3 row included, stay with workspaces D1, which runs later
+**Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§9 (every row except `docs/live-checks.md`; the status-reply change is recorded in §7.2), H§17 note 1; `docs/specs/2026-11-21-auto-update-design.md` "Base-spec changes". The W§15 rows, its §7.2 row included, stay with workspaces D1, which runs later
 **Files:** `docs/specs/2026-11-18-zygo-design.md`
 **Consumes:** —
 **Produces:** —
