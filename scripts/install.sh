@@ -1,7 +1,10 @@
 #!/bin/sh
 # Installs zygo from a release: no sudo, no profile edit.
 # Usage: install.sh [--version <v>] [--dry-run]
-# Environment: ZYGO_INSTALL_DIR (default $HOME/.local/bin), ZYGO_BASE_URL (mirror), ZYGO_TARGET (target triple).
+# Environment: ZYGO_INSTALL_DIR (default $HOME/.local/bin), ZYGO_BASE_URL (mirror), ZYGO_TARGET (target triple),
+# ZYGO_ACT_LITE_INSTALLER (URL of act-lite's install.sh).
+# Code navigation: act101's `act` found -> plugin act101:act101; else `act-lite` found -> act101:act-lite;
+# else act-lite is installed by its own installer and act101:act-lite is used.
 REPO="act101-ai/zygo"
 set -eu
 
@@ -63,6 +66,15 @@ main() {
     fi
     dir=${ZYGO_INSTALL_DIR:-$HOME/.local/bin}
     dest="$dir/zygo"
+    act_lite_installer=${ZYGO_ACT_LITE_INSTALLER:-https://raw.githubusercontent.com/act101-ai/act-lite/main/install.sh}
+
+    # act101's act prints `act <version>`; nektos/act (GitHub Actions runner) prints `act version <version>`.
+    nav=none
+    if command -v act >/dev/null 2>&1 && act --version </dev/null 2>/dev/null | head -n 1 | grep -Eq '^act [0-9]'; then
+        nav=act
+    elif command -v act-lite >/dev/null 2>&1; then
+        nav=act-lite
+    fi
 
     if [ "$dry" -eq 1 ]; then
         echo "target: $target"
@@ -70,6 +82,14 @@ main() {
         echo "would download $url_dir/SHA256SUMS"
         echo "would verify checksum"
         echo "would install $dest"
+        case $nav in
+            act) echo "found act: would enable act101:act101 and disable act101:act-lite" ;;
+            act-lite) echo "found act-lite: would enable act101:act-lite and disable act101:act101" ;;
+            none)
+                echo "would install act-lite with $act_lite_installer"
+                echo "would enable act101:act-lite and disable act101:act101"
+                ;;
+        esac
         exit 0
     fi
 
@@ -94,7 +114,8 @@ main() {
     mkdir -p "$dir"
     tmp="$dir/.zygo-install.$$"
     sums="$tmp.sums"
-    trap 'rm -f "$tmp" "$sums"' EXIT
+    alsh="$tmp.act-lite.sh"
+    trap 'rm -f "$tmp" "$sums" "$alsh"' EXIT
     trap 'exit 1' INT TERM
 
     get "$url_dir/SHA256SUMS" "$sums" || { echo "install: cannot download $url_dir/SHA256SUMS" >&2; exit 1; }
@@ -116,6 +137,27 @@ main() {
         chmod 755 "$tmp"
         mv -f "$tmp" "$dest"
         echo "installed zygo $label to $dest"
+    fi
+
+    # The plugin selection is written with the zygo just installed (spec §15.2); stdin is closed so a
+    # `curl | sh` script is not read by a child.
+    plugin() {
+        "$dest" plugins "$@" </dev/null >/dev/null ||
+            { echo "install: zygo plugins $* failed; run it again when the cause is fixed" >&2; exit 1; }
+    }
+    if [ "$nav" = none ]; then
+        get "$act_lite_installer" "$alsh" || { echo "install: cannot download $act_lite_installer" >&2; exit 1; }
+        sh "$alsh" </dev/null || { echo "install: act-lite install failed; see https://github.com/act101-ai/act-lite#install" >&2; exit 1; }
+        nav=act-lite
+    fi
+    if [ "$nav" = act ]; then
+        plugin enable act101:act101 --yes
+        plugin disable act101:act-lite
+        echo "found act: using plugin act101:act101"
+    else
+        plugin enable act101:act-lite --yes
+        plugin disable act101:act101
+        echo "using plugin act101:act-lite"
     fi
 
     case ":$PATH:" in
