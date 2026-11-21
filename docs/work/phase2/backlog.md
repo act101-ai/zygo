@@ -6,6 +6,7 @@ Open rows that wait for a slot in `graph.md` (full-machinery: at most 25 open ro
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
+| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | TODO | judgment | — |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | TODO | judgment | — |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |

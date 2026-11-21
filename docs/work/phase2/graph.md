@@ -57,30 +57,30 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | — | TODO | implementation | — |
-| HUD-1 | Usage store: Store::bytes_trimmed | — | TODO | implementation | — |
-| HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | TODO | judgment | — |
+| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | TODO | implementation | — |
+| HUD-1 | Usage store: Store::bytes_trimmed | — | PLANNED | implementation | — |
+| HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | PLANNED | judgment | — |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | TODO | implementation | — |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | TODO | judgment | — |
 | HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | — | TODO | judgment | — |
 | HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | TODO | judgment | — |
 | HUD-7 | SessionView statusline_style with Default; overrides statusline; launcher writes the style | HUD-3 | TODO | implementation | — |
-| HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, PRB-1 | TODO | judgment | — |
+| HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, PRB-1, HUD-2 | TODO | judgment | — |
 | HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7, PRB-1 | TODO | judgment | — |
 | HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | TODO | judgment | — |
 | UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | TODO | judgment | — |
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | TODO | implementation | — |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | TODO | implementation | — |
-| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11 | TODO | implementation | — |
+| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | TODO | implementation | — |
 | LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
-| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | — | TODO | implementation | — |
+| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | TODO | implementation | — |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | TODO | judgment | — |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | TODO | judgment | — |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | TODO | implementation | — |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | TODO | judgment | — |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | TODO | judgment | — |
-| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
 
 ## Log
 
@@ -88,3 +88,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 |------|-------|
 | 2026-11-21 | Graph created by merging `docs/work/hud-update/` and `docs/work/workspaces/` (lead decision): HUD and update nodes first, workspaces nodes build on them by Depends edges. |
 | 2026-11-21 | Review of the merged graphs: 18 findings fixed; 25 rows here, the rest in backlog.md (full-machinery cap). |
+| 2026-11-21 | Operator: a pinned agent version (docs/premises.md) is a minimum, not an exact version. The exact-match check pinned_agents in scripts/premises/live.sh is a defect; PRB-1 fixes it. |
+| 2026-11-21 | HUD-1 and HUD-2 planned; plan verification passed (HUD-1 one round; HUD-2 three rounds, all confirmed findings fixed). New edge HUD-8 → HUD-2 (both change Cargo.lock). |
+| 2026-11-21 | PRB-1 plan draft committed with its review open (22 findings). Held until the operator approves the OpenCode HUD design (docs/specs/2026-11-21-opencode-hud-design.md), which changes PH13 and HUD-3, -8, -9, -11. |
+| 2026-11-21 | PRB-2 added from PRB-1 planning: docs/premises.md and docs/live-checks.md describe pins as exact; scripts/premises/lib.sh leaves N2_SCRATCH (with results.txt) after each live run. W3 moved to backlog.md (25-row cap). |
