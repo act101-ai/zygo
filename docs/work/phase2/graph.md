@@ -21,7 +21,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 - No user-controlled text reaches a tmux format argument unescaped — `docs/specs/2026-11-20-workspaces-design.md` W§4 W-C8, AU54, AU55
 - Never resume a conversation whose launcher is live — `docs/specs/2026-11-20-workspaces-design.md` W§4 W-C9, AU87
 - Native Windows: every workspace verb exits 2 with `workspaces need tmux; run zygo in WSL`; the code still builds there — `docs/specs/2026-11-20-workspaces-design.md` OP5; `.github/workflows/ci.yml` (windows-latest)
-- Minimum tmux 3.2, or the oldest version P1 verified when no 3.2 build is available — `docs/specs/2026-11-20-workspaces-design.md` AU7, W§17 PW6, W§18 #76
+- Minimum tmux 3.2 — `docs/specs/2026-11-20-workspaces-design.md` AU7
 - State dir `0700`, files `0600`; wait bounds hooks/snapshots 1 s, launchers/wrapper 5 s, `up`/`down` 5 s — `docs/specs/2026-11-20-workspaces-design.md` AU2, W§7.3
 - tmux-dependent tests run when tmux 3.2 or later is on `PATH` and skip with a printed reason otherwise; on Windows they are `cfg(unix)`-gated; no CI install step; gate helper in W3, used by later nodes — operator, 2026-11-21
 - Crate graph: `zygo-workspace` depends on `zygo-core`, `zygo-config`, `zygo-work`, `zygo-proxy` only; `zygo-hooks` depends on `zygo-workspace`; `ws run`, member wrapper and membership decision in `crates/zygo/src/cmd/` — `docs/specs/2026-11-20-workspaces-design.md` AU103, AU102, AU45
@@ -47,7 +47,8 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 8. A team-session reply leaking a configured price through `spend_usd ÷ tokens` — built-in list prices only — test in HUD-10 (H§14 #15) — `docs/specs/2026-11-21-statusline-hud-design.md` AU14
 9. A repository that configures programs (fsmonitor, hooks, filters, uploadpack) — no marker after a render — test in HUD-9 (H§14 #25) — `docs/specs/2026-11-21-statusline-hud-design.md` H§7.5
 10. The update prompt on Windows with live sessions — install deferred — test in UPD-1 (auto-update #7, windows-latest job) — `docs/specs/2026-11-21-auto-update-design.md` "Other sessions"
-11. Literal sites broken by new fields — `SessionStatus` (HUD-5) and `SessionView` (HUD-7) gain `Default`; later fields change no literal — HUD-5, HUD-7, X1, C1 — `docs/specs/2026-11-21-statusline-hud-design.md` H§17 note 1
+11. `SessionStatus` literals broken by new fields — `Default` and `..Default::default()` keep later fields (X1) off the literals — test in HUD-5 — `docs/specs/2026-11-21-statusline-hud-design.md` H§17 note 1
+12. `SessionView` literals broken by new fields — `Default` and `..Default::default()` keep later fields (C1) off the literals — test in HUD-7 — `docs/specs/2026-11-21-statusline-hud-design.md` H§17 note 1
 
 ## Nodes
 

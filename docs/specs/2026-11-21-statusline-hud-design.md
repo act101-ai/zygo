@@ -501,7 +501,7 @@ The verb:
 | §17.1, verb table | Add `statusline [compact\|verbose]` · "Status line style" · session, `--save`. |
 | §10.2.4, last bullet | "The status line shows `compact 600k` / `compact off`" becomes "The status line shows the soft or override threshold as `⇣600k`, and `⇣off` for an override of `off`; a safety-only window shows no `⇣` (H§6.1 AU28)." |
 | §10.2.2, N15 note, last sentence | `effective_window` is computed for the model of the last main-loop request, else the main role's model (AU29). |
-| §7.2 session API, status | The reply gains `model`, `context_window`, `threshold`, `tokens_in`, `tokens_out`, `spend_usd`, `spend_notional`, `requests_total`, `requests_priced`, `passthrough`, `team_session` (H§7.2), in the same change as the WS AU91 fields. A team server sends `spend_usd` at built-in list prices with `spend_notional = true` (AU14). The §7.2 rule "prices … never leave the server" does not change: no configured price leaves the server. |
+| §7.2 session API, status | The reply gains `model`, `context_window`, `threshold`, `tokens_in`, `tokens_out`, `spend_usd`, `spend_notional`, `requests_total`, `requests_priced`, `passthrough`, `team_session` (H§7.2), first (HUD-5, HUD-6); WS X1 adds the two WS AU91 fields later. A team server sends `spend_usd` at built-in list prices with `spend_notional = true` (AU14). The §7.2 rule "prices … never leave the server" does not change: no configured price leaves the server. |
 | §6.3 catalog | `price_usd_per_mtok` may hold `long_context = { above, input, output, cache_read, cache_write }` (H§7.3). |
 | §6.3 catalog, cache writes | `price_usd_per_mtok` may hold `cache_write_5m` (AU33). |
 | §14 `requests.estimated_usd` | List price × tokens with the long-context tier when the row has one; still 0 for passthrough. |
@@ -711,3 +711,4 @@ Author's calls for the planner. WS node ids and HUD node ids refer to `docs/work
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-21 | H§17 intro and note 1, H§7.2 (row `requests_in_flight`) | author's call (lead decision: one merged graph, HUD first) | The HUD and workspaces graphs are merged with the HUD nodes first, so the HUD makes its `SessionStatus` and `SessionView` changes before WS X1 and C1. |
+| 2026-11-21 | H§9 (row §7.2 session API, status) | author's call | The merged graph lands the HUD fields first and WS X1 adds its two fields later, so the row no longer says "in the same change". |

@@ -98,7 +98,7 @@ No change. The check ignores the system proxy, as `zygo update` does (N36, updat
 2. y installs, prints the relaunch line, exits 0, and does not start the agent.
 3. N launches.
 4. s writes the skip. The same version does not prompt again. A newer version prompts.
-5. These cases give no prompt and no request: non-TTY, `-p`, `ZYGO_SESSION`, `[update] check = false`, `ZYGO_NO_UPDATE_CHECK=1`, and a check less than 24 h old.
+5. These cases give no prompt and no request: non-TTY, `-p`, `ZYGO_SESSION`, `ZYGO_WORKSPACE`, `[update] check = false`, `ZYGO_NO_UPDATE_CHECK=1`, and a check less than 24 h old.
 6. An unreachable server: the launch starts with no delay of more than 2 s.
 7. Other live sessions: the extra line shows. On Windows the install is deferred.
 
@@ -122,3 +122,4 @@ All cited line numbers were verified against the repo on 2026-11-21 (branch feat
 |---|---|---|---|
 | 2026-11-21 | Citation corrections (last bullet) | author's call (lead decision: one merged graph) | The workspaces graph moved to `docs/work/phase2/`; the pointer names the new path and node M5. |
 | 2026-11-21 | When the check is skipped | author's call | The intent "workspace panes never ask" was false for a member started by hand in a pane: `up` and `ws run` remove `ZYGO_SESSION` from the pane environment (W§18 #17), but the pane keeps `ZYGO_WORKSPACE` (AU93). |
+| 2026-11-21 | Acceptance #5 | author's call | Matches the `ZYGO_WORKSPACE` skip added to "When the check is skipped". |

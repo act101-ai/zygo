@@ -4,6 +4,6 @@
 **Files:** `crates/zygo-proxy/src/session.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/tests/serve.rs`, `crates/zygo-hooks/tests/statusline_team.rs`, `crates/zygo-hooks/Cargo.toml`, `Cargo.lock`
 **Consumes:** `Prices::cost` (HUD-4), `SessionStatus.team_session` (HUD-6), `statusline::render::render` (HUD-8)
 **Produces:** —
-**Acceptance:** `cargo test -p zygo-proxy --test serve && cargo test -p zygo-hooks --test statusline_team && cargo test --workspace --locked --no-run && cargo check --workspace --locked --target x86_64-pc-windows-gnu` → all pass, including H§14 #15
+**Acceptance:** `cargo test -p zygo-proxy --test serve && cargo test -p zygo-hooks --test statusline_team && cargo test --workspace --locked --no-run` → all pass, including H§14 #15
 
 ## Plan
