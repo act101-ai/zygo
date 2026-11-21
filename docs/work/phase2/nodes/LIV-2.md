@@ -4,6 +4,6 @@
 **Files:** `scripts/premises/live-hud.sh`, `docs/live-checks.md`, `fixtures/claude-code/hud/`, `docs/specs/2026-11-21-statusline-hud-design.md`
 **Consumes:** —
 **Produces:** —
-**Acceptance:** `sh scripts/premises/live-hud.sh --windows && cargo test -p zygo --test forbidden_content` (the script in Git Bash on Windows) → exit 0 with `LIVE` lines for W-SHELL part 2 with the new text (H§14 #38), PH8 and PH10; scrubbed fixtures; dated rows in `docs/live-checks.md` and dated notes in H§12
+**Acceptance:** `sh scripts/premises/live-hud.sh --windows && cargo test -p zygo --test forbidden_content` (the script in Git Bash on Windows) → exit 0 with `LIVE` lines for W-SHELL part 2 with the new text (H§14 #38), PH8 and PH10; scrubbed fixtures; dated rows in `docs/live-checks.md` and dated notes in H§12. A failed W-SHELL part 2 line (H§14 #38) creates a new node after this one (execute-work §5.4): it changes the W-SHELL part 2 text in `docs/live-checks.md:77` that this node wrote (H§9 row `docs/live-checks.md:77`) when the text is wrong, or re-opens HUD-8 (rows, logo) or HUD-9 (hook entry) when the output is wrong
 
 ## Plan
