@@ -1379,3 +1379,101 @@ fn team_key_outside_floors_stays_replaceable() {
     assert!(!m.config.features.redaction.secrets);
     assert_eq!(m.source_of("features.redaction.secrets"), Layer::User);
 }
+
+// ---- HUD-3: [statusline] and [update], user config only (H§8, OP7, AU1; auto-update "Opt-out") ----
+
+#[test]
+fn statusline_and_update_defaults() {
+    let c = Config::default();
+    assert_eq!(c.statusline.style, "compact");
+    assert!(c.update.check);
+    assert_eq!(cfg(""), c);
+    assert_eq!(cfg("[statusline]\n").statusline, StatuslineConfig { style: "compact".into() });
+    assert_eq!(cfg("[update]\n").update, UpdateConfig { check: true });
+    let m = load(&ctx(None, None, None)).unwrap();
+    assert_eq!((m.config.statusline.style.as_str(), m.config.update.check), ("compact", true));
+    assert_eq!(m.source_of("statusline.style"), Layer::Builtin);
+    assert_eq!(m.source_of("update.check"), Layer::Builtin);
+}
+
+#[test]
+fn statusline_and_update_from_user_config() {
+    let m = load(&ctx(Some("[statusline]\nstyle = \"verbose\"\n[update]\ncheck = false\n"), None, None)).unwrap();
+    assert_eq!(m.config.statusline.style, "verbose");
+    assert!(!m.config.update.check);
+    assert_eq!(m.source_of("statusline.style"), Layer::User);
+    assert_eq!(m.source_of("update.check"), Layer::User);
+    assert_eq!(m.warnings, Vec::<String>::new());
+}
+
+#[test]
+fn team_layer_drops_statusline_and_update_with_one_warning() {
+    let team = "[statusline]\nstyle = \"verbose\"\n[update]\ncheck = false\n[guards]\nmin_level = \"notify\"\n";
+    let m = load(&team_ctx(team, "")).unwrap();
+    assert_eq!(m.config.statusline.style, "compact");
+    assert!(m.config.update.check);
+    assert_eq!(m.source_of("statusline.style"), Layer::Builtin);
+    assert_eq!(m.source_of("update.check"), Layer::Builtin);
+    assert_eq!(m.team_keys, BTreeSet::from(["guards.min_level".to_string()]));
+    assert_eq!(m.warnings, ["config: [statusline], [update] in team config ignored; only user config may set them"]);
+    let all = m.show(None, &|_| true);
+    assert!(all.contains("statusline.style = \"compact\"  # builtin\n"), "{all}");
+    assert!(all.contains("update.check = true  # builtin\n"), "{all}");
+}
+
+#[test]
+fn team_layer_drop_names_only_the_tables_present() {
+    let m = load(&team_ctx("[update]\ncheck = false\n", "")).unwrap();
+    assert!(m.config.update.check);
+    assert_eq!(m.warnings, ["config: [update] in team config ignored; only user config may set them"]);
+    let m = load(&team_ctx("[guards]\nmin_level = \"notify\"\n", "")).unwrap();
+    assert_eq!(m.warnings, Vec::<String>::new());
+}
+
+#[test]
+fn user_statusline_and_update_hold_in_a_team_session() {
+    let team = "[statusline]\nstyle = \"compact\"\n[update]\ncheck = true\n";
+    let m = load(&team_ctx(team, "[statusline]\nstyle = \"verbose\"\n[update]\ncheck = false\n")).unwrap();
+    assert_eq!(m.config.statusline.style, "verbose");
+    assert!(!m.config.update.check);
+    assert_eq!(m.source_of("statusline.style"), Layer::User);
+    assert_eq!(m.source_of("update.check"), Layer::User);
+    // A user-only key the team sent is not a team key: a session override of it is not refused as team-set.
+    assert_eq!(m.team_keys, BTreeSet::new());
+}
+
+#[test]
+fn dropped_team_tables_do_not_refuse_the_load() {
+    let m = load(&team_ctx("statusline = 3\n[update]\ncheck = \"no\"\n", "")).unwrap();
+    assert_eq!((m.config.statusline.style.as_str(), m.config.update.check), ("compact", true));
+    assert_eq!(m.warnings, ["config: [statusline], [update] in team config ignored; only user config may set them"]);
+}
+
+#[test]
+fn repo_file_drops_statusline_and_update() {
+    let d = repo_with("hud3", "version = 1\n[statusline]\nstyle = \"verbose\"\n[update]\ncheck = false\n");
+    match repo_file::read_default_branch(&d) {
+        RepoFile::Found { table, ignored, .. } => {
+            assert_eq!(ignored, ["statusline", "update"]);
+            assert!(!table.contains_key("statusline") && !table.contains_key("update"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let m = load(&ctx(None, Some(d.to_path_buf()), None)).unwrap();
+    assert_eq!(m.config.statusline.style, "compact");
+    assert!(m.config.update.check);
+    assert_eq!(m.source_of("statusline.style"), Layer::Builtin);
+    assert_eq!(
+        m.warnings,
+        [".zygo.toml: [statusline], [update] ignored; the repository file may set only [guards], [navigation], [limits], [work]"]
+    );
+}
+
+#[test]
+fn check_statusline_style() {
+    none(&(base() + "[statusline]\nstyle = \"compact\"\n"));
+    none(&(base() + "[statusline]\nstyle = \"verbose\"\n"));
+    for bad in ["wide", "", "Compact", "verbose "] {
+        err(&(base() + &format!("[statusline]\nstyle = \"{bad}\"\n")), "statusline.style: must be \"compact\" or \"verbose\"");
+    }
+}

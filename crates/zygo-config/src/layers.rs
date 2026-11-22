@@ -63,6 +63,18 @@ pub struct LoadContext {
 /// The warning for a user `[[model]]` in serve mode (§6.1: the server's catalog is authoritative).
 pub const MODEL_IGNORED: &str = "config: [[model]] in user config ignored; the server's catalog is authoritative";
 
+/// The tables only user config may set (statusline HUD design §8; auto-update design "Opt-out"). The team layer drops
+/// them with one warning; the repository-file filter drops them as it drops every table outside its kept list.
+pub const USER_ONLY: [&str; 2] = ["statusline", "update"];
+
+/// `team` without the [`USER_ONLY`] tables, and the one warning that names the tables it dropped.
+fn drop_user_only(mut team: Table) -> (Table, Option<String>) {
+    let dropped: Vec<String> = USER_ONLY.iter().filter(|k| team.remove(**k).is_some()).map(|k| format!("[{k}]")).collect();
+    let warning = (!dropped.is_empty())
+        .then(|| format!("config: {} in team config ignored; only user config may set them", dropped.join(", ")));
+    (team, warning)
+}
+
 /// The team layer of a serve session, in its session directory (0600 on unix; no token). Written by the launcher; read
 /// by the session's verbs and hooks (§14 note 2026-11-19).
 pub const TEAM_FILE: &str = "team.toml";
@@ -416,8 +428,13 @@ pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged
         })?,
         None => Table::new(),
     };
+    // The team layer never carries a user-only table: dropped before the layer is parsed, so its value is not read.
+    let (team, team_dropped) = match ctx.team.clone().map(drop_user_only) {
+        Some((t, w)) => (Some(t), w),
+        None => (None, None),
+    };
     parse_layer(&builtin, "builtin", "(built-in)", None)?;
-    if let Some(team) = &ctx.team {
+    if let Some(team) = &team {
         parse_layer(team, "team", "(team)", None)?;
     }
     parse_layer(&user, "user", &user_path, user_text.as_deref())?;
@@ -428,18 +445,18 @@ pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged
     };
     let layer_ids = [
         (Layer::Builtin, pattern_ids(&builtin)),
-        (Layer::Team, ctx.team.as_ref().map(pattern_ids).unwrap_or_default()),
+        (Layer::Team, team.as_ref().map(pattern_ids).unwrap_or_default()),
         (Layer::User, pattern_ids(&user)),
     ];
 
     let mut m = Merged {
         config: Config::default(),
         repo_file: RepoFile::Absent,
-        warnings: Vec::new(),
+        warnings: team_dropped.into_iter().collect(),
         team_keys: BTreeSet::new(),
-        team_loaded: ctx.team.is_some(),
+        team_loaded: serve,
         user_table: user.clone(),
-        team_table: ctx.team.clone().unwrap_or_default(),
+        team_table: team.clone().unwrap_or_default(),
         table: Table::new(),
         sources: BTreeMap::new(),
     };
@@ -451,8 +468,8 @@ pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged
         }
     }
     m.merge(builtin, Layer::Builtin);
-    if let Some(team) = &ctx.team {
-        m.merge(team.clone(), Layer::Team);
+    if let Some(team) = team {
+        m.merge(team, Layer::Team);
     }
     m.merge(user, Layer::User);
 
