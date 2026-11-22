@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, filter, removable, Filtered};
+use zygo_workspace::args::{bypass_flags, filter, has_user_info, removable, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -275,4 +275,36 @@ fn bypass_forms() {
         "--allow-dangerously-skip-permissions", "yolo = true"]));
     // a token after `--` is not a flag
     assert_eq!(bypass_flags(&s(&["--", "--dangerously-skip-permissions"]), false), s(&[]));
+}
+
+#[test] // AU98, W-C7; W§18 #19 value `https://u:p@h`
+fn user_info() {
+    for url in [
+        "https://u:p@h", "https://user:pass@zygo.example:8443/x", "https://user@zygo.example", "https://:pass@zygo.example",
+        "https://@zygo.example",          // empty user
+        "https://u:p@[::1]:8443/x",       // IPv6 host
+        "u:p@zygo.example:8443",          // no scheme
+        "//u:p@zygo.example",
+        "https:\\\\u:p@zygo.example",     // a URL parser reads `\` as `/` here
+        "https:u:p@zygo.example",
+        "ht\ttps://u:p@zygo.example",     // a URL parser removes tab, LF and CR
+        " https://u:p@zygo.example\n",
+        "https://zygo.example\\@evil.example",
+        // a URL parser skips each `/` and `\` after the scheme of a special URL
+        "https:/u:p@zygo.example", "https:///u:p@zygo.example", "https:/\\u:p@zygo.example", "https:\\/\\u:p@zygo.example",
+        "https:/\r\n/\t/u:p@zygo.example",
+        "///u:p@zygo.example", "\\\\u:p@zygo.example", "/\\u:p@zygo.example",
+    ] {
+        assert!(has_user_info(url), "{url:?}");
+    }
+    for url in [
+        "", "https://zygo.example", "https://127.0.0.1:8443", "https://zygo.example:8443/a@b", "https://zygo.example/?next=a@b",
+        "https://zygo.example?next=a@b", "https://zygo.example#a@b", "https://zygo.example/?u=https://a@b",
+        "https://[::1]:8443/", "https://[2001:db8::1]/p@q",
+        "zygo.example:8443", "zygo.example/a@b", "zygo.example/?u=https://a@b", "//zygo.example/a@b",
+        "https://u%40p.example",
+        "https:/zygo.example/a@b", "https:///zygo.example/a@b", "https:\\\\zygo.example/a@b", "///zygo.example?a@b", "/", ":", "://",
+    ] {
+        assert!(!has_user_info(url), "{url:?}");
+    }
 }

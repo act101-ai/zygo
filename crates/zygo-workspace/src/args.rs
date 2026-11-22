@@ -334,3 +334,26 @@ pub fn bypass_flags(args: &[String], yolo: bool) -> Vec<String> {
     }
     found.into_iter().map(str::to_string).collect()
 }
+
+fn is_scheme(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+}
+
+/// True when the authority of `url` holds an `@` (AU98), also with an empty user. No URL crate: the rule is wider
+/// than a URL parser, and a false `true` only keeps the launch a v1 launch. The function writes no log.
+pub fn has_user_info(url: &str) -> bool {
+    // a URL parser removes each tab, LF and CR, and the C0 controls and spaces at the two ends
+    let text: String = url.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    let text = text.trim_matches(|c: char| c <= ' ');
+    // a scheme counts only with a `/` or `\` after its `:`, so `host:port` and `user:pass@host` are not read as one
+    let rest = match text.split_once(':') {
+        Some((scheme, rest)) if is_scheme(scheme) && rest.starts_with(['/', '\\']) => rest,
+        _ => text,
+    };
+    // a URL parser skips each `/` and `\` before the authority of a special URL (`https:/u@h`, `https:\\u@h`)
+    let rest = rest.trim_start_matches(['/', '\\']);
+    // a `\` does not end the authority here: `https://h\@evil` is reported
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    authority.contains('@')
+}
