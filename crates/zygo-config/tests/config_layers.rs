@@ -1505,3 +1505,22 @@ fn h14_34_repo_file_statusline_is_ignored_with_one_note() { // H§14 #34 (config
     assert_eq!((m.config.statusline.style.as_str(), m.source_of("statusline.style")), ("verbose", Layer::User));
     assert_eq!(m.source_of("navigation.lines"), Layer::Repository);
 }
+
+// ---- W5: [workspace] and [loadout], user config only (W§11, AU10, AU22) ----
+
+#[test]
+fn parse_duration_forms() { // W§11 `drain_timeout`: <n>s | <n>m | <n>h
+    use std::time::Duration;
+    assert_eq!(parse_duration("90s"), Some(Duration::from_secs(90)));
+    assert_eq!(parse_duration("10m"), Some(Duration::from_secs(600)));
+    assert_eq!(parse_duration("2h"), Some(Duration::from_secs(7200)));
+    assert_eq!(parse_duration("0s"), Some(Duration::ZERO));
+    assert_eq!(parse_duration("007m"), Some(Duration::from_secs(420)));
+    assert_eq!(parse_duration("18446744073709551615s"), Some(Duration::from_secs(u64::MAX)));
+    for bad in [
+        "", "s", "10", "10d", "10ms", "10M", "-5m", "+5m", "1.5h", " 10m", "10m ", "10 m", "1h30m", "١٠m",
+        "18446744073709551616s", "18446744073709551615m", "5124095576030432h",
+    ] {
+        assert_eq!(parse_duration(bad), None, "{bad:?}");
+    }
+}

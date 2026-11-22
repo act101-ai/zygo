@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -649,6 +650,23 @@ impl Default for UpdateConfig {
     fn default() -> Self {
         UpdateConfig { check: true }
     }
+}
+
+/// A duration written as `<n>s`, `<n>m` or `<n>h` (workspaces design W§11 `drain_timeout`, W§19): ASCII digits and
+/// one unit letter. `None` for any other text and for a value that does not fit in `u64` seconds.
+pub fn parse_duration(s: &str) -> Option<Duration> {
+    let (unit, digits) = s.as_bytes().split_last()?;
+    let scale: u64 = match unit {
+        b's' => 1,
+        b'm' => 60,
+        b'h' => 3600,
+        _ => return None,
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let n: u64 = std::str::from_utf8(digits).ok()?.parse().ok()?;
+    n.checked_mul(scale).map(Duration::from_secs)
 }
 
 // ---- plugins (§15) ----
