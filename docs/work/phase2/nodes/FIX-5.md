@@ -116,8 +116,8 @@ fn measured(env: &dyn Fn(&str) -> Option<OsString>, tty: &dyn Fn() -> Option<u16
 
 ### Task 4: verification
 
-- [ ] **4.1** Run `cargo test -p zygo-hooks --locked && cargo test -p zygo --locked --test compact_cmd`. Expected: `0 failed`, with the three tests of the contract. Run `git status --short crates/zygo-hooks/tests/golden`. Expected: no output.
-- [ ] **4.2** Commit this file with all steps ticked: `docs(work): FIX-5 plan steps done`.
+- [x] **4.1** Run `cargo test -p zygo-hooks --locked && cargo test -p zygo --locked --test compact_cmd`. Expected: `0 failed`, with the three tests of the contract. Run `git status --short crates/zygo-hooks/tests/golden`. Expected: no output.
+- [x] **4.2** Commit this file with all steps ticked: `docs(work): FIX-5 plan steps done`.
 
 ### Spec texts for step 3.1
 
