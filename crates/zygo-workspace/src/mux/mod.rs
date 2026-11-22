@@ -287,6 +287,9 @@ pub fn window_target(session: &str, window: u32) -> String { format!("={session}
 /// - `Failed` with tmux's stderr for any other tmux error; `TimedOut` after [`BOUND`]; `Spawn` when tmux cannot run;
 ///   `Failed` when tmux exits but a process outside its group still holds its output at the bound.
 pub trait Multiplexer {
+    /// The socket that every call is bound to (`-S`, AU62), as `workspace.json` holds it in `tmux_socket`; `None`
+    /// when no socket is set and tmux chooses the server. No tmux call.
+    fn socket(&self) -> Option<&Path>;
     /// `tmux -V`, read with [`parse_version`]. Output without a version gives `Failed`.
     fn version(&self) -> Result<(u32, u32), MuxError>;
     /// `has-session -t =<s>:`, then `display-message -p -t =<s>: -- #{socket_path}`. A missing session gives `Gone`

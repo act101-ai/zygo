@@ -278,6 +278,8 @@ fn window_index(out: String) -> Result<u32, MuxError> {
 }
 
 impl Multiplexer for Tmux {
+    fn socket(&self) -> Option<&Path> { self.socket.as_deref() }
+
     fn version(&self) -> Result<(u32, u32), MuxError> {
         let out = self.call(&["-V"])?;
         parse_version(&out).ok_or_else(|| MuxError::Failed {
