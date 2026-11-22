@@ -14,7 +14,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
 
 ### H§9 rows
 
-- [ ] 1. H§9 row "§17, `zygo hook statusline` paragraph" → base §17, the paragraph that starts `` `zygo hook statusline` output: ``. Replace the whole paragraph with this text (the N28 note and the 2026-11-20 note end; the N38 note stays word for word):
+- [x] 1. H§9 row "§17, `zygo hook statusline` paragraph" → base §17, the paragraph that starts `` `zygo hook statusline` output: ``. Replace the whole paragraph with this text (the N28 note and the 2026-11-20 note end; the N38 note stays word for word):
 
   ```text
   `zygo hook statusline`: the status line is the HUD of `docs/specs/2026-11-21-statusline-hud-design.md`. It reads `GET /v1/zygo/sessions/{id}/status` (cached 30 s in the session directory) and the session's trimmed bytes from the local usage store, opened read-only; the whole run has a 3 s deadline. *(2026-11-22, HUD design)* *(Note 2026-11-19, N38, P-N28-1: on Claude Code 2.1.328 the status line is shown (`zygo ◇ … ◇ compact 777k`, `fixtures/claude-code/live/p-n28-1-pane.txt`) and its text is in no request sent upstream (C7 holds).)*
