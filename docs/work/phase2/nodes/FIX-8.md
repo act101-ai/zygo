@@ -29,9 +29,9 @@ Facts of the live code (read 2026-11-22, main at 0be75eb):
 
 ### Task 2: the root cause
 
-- [ ] **2.1** Read only (do not copy any file): the Claude Code transcripts of the LIV-1 runs under `<config dir>/projects/` whose folder name holds `hud-work` or `hud-repo` (LIV-1 D7). Search them for `429` and `rate_limit`. Note only the error type and message text and the time of each 429. Quote no prompt or answer text. If nothing is recorded, write `not recorded`.
-- [ ] **2.2** Write the section `## Root cause` in this file. It holds: the facts of Task 1 with file:line; the 429 text from 2.1 (or `not recorded`); the verdict. `zygo`: the error text names a missing header or client identity, or the request differs from main in a way the tests show. `upstream`: the error type is `rate_limit_error` with a usage or rate limit message, and zygo sends auxiliary and main the same way. `not determined`: no error text and no difference. For `zygo`, name the node that must change §12.4 and write the base-spec change-log line it needs.
-- [ ] **2.3** Run the acceptance check of the contract. Expected: 0 failed and `rg` exit 0. Commit this file with all steps ticked: `docs(work): FIX-8 root cause of the passthrough auxiliary 429`.
+- [x] **2.1** Read only (do not copy any file): the Claude Code transcripts of the LIV-1 runs under `<config dir>/projects/` whose folder name holds `hud-work` or `hud-repo` (LIV-1 D7). Search them for `429` and `rate_limit`. Note only the error type and message text and the time of each 429. Quote no prompt or answer text. If nothing is recorded, write `not recorded`.
+- [x] **2.2** Write the section `## Root cause` in this file. It holds: the facts of Task 1 with file:line; the 429 text from 2.1 (or `not recorded`); the verdict. `zygo`: the error text names a missing header or client identity, or the request differs from main in a way the tests show. `upstream`: the error type is `rate_limit_error` with a usage or rate limit message, and zygo sends auxiliary and main the same way. `not determined`: no error text and no difference. For `zygo`, name the node that must change §12.4 and write the base-spec change-log line it needs.
+- [x] **2.3** Run the acceptance check of the contract. Expected: 0 failed and `rg` exit 0. Commit this file with all steps ticked: `docs(work): FIX-8 root cause of the passthrough auxiliary 429`.
 
 ## Root cause
 
@@ -44,3 +44,31 @@ Run (step 1.4): `cargo test -p zygo-proxy --locked --test passthrough -- auxilia
 - `upstream_429_reaches_the_client_once_and_unchanged` (`passthrough.rs:436`): an upstream 429 with `retry-after: 7` and a `rate_limit_error` body reaches the client once, with the same status, the same `retry-after` and the same JSON body; the upstream gets 1 request (no retry; one candidate, `passthrough.rs:231`; a 429 is kept as `last`, `forward.rs:446`, and relayed, `forward.rs:465-469`, `:503-504`); the usage row has status 429 and class `auxiliary`.
 
 So zygo sends an `auxiliary` request exactly as it sends a `main` request, and it relays a 429 without change. zygo does not make the 429.
+
+### Step 2.1: the 429 text
+
+- Claude Code transcripts of LIV-1 (`<config dir>/projects/`, folders with `hud-work` or `hud-repo`): 3 transcripts, one per run (runs 2, 3, 4, session a). Search for `429`, `rate_limit`, `error`, `isApiErrorMessage`: no API error record; the only matches are `429` inside UUIDs and the word in hook text. Each transcript has one assistant answer with `stop_reason` `end_turn`. **429 text: not recorded.**
+- zygo's session folders of the LIV-1 sessions: not present (the script removes its scratch dir; `$HOME/.cache/zygo/sessions/` holds only the operator's sessions). zygo does not store an upstream error body (`crates/zygo-usage/src/schema.rs`: status only).
+- zygo usage rows (`$HOME/.local/share/zygo/usage.db`, read with `sqlite3 -readonly`), LIV-1 sessions, 2026-11-22 UTC, model `claude-opus-5-5`:
+
+  | session (start) | first row | then |
+  |---|---|---|
+  | 01M8167WRH (run 2 a) | 08:33:57 `auxiliary` 429, 274 ms, 0 tokens | 08:33:59 `auxiliary` 200 (1176 in / 15 out); `main` 503, 503; 08:34:02 `main` 200 |
+  | 01M8169SEY, 01M8169ZYG, 01M816BCZQ (run 2 b, c, d) | 08:34:57, 08:35:04, 08:35:50 `auxiliary` 429 | no other row |
+  | 01M816HH1B (run 3 a) | 08:39:13 `auxiliary` 429, 274 ms | 08:39:15 `auxiliary` 200; 08:39:17 `main` 200 |
+  | 01M816JYCK, 01M816K4AK, 01M816MHB9 (run 3 b, c, d) | 08:39:57, 08:40:03, 08:40:49 `auxiliary` 429 | no other row |
+  | 01M816SW4G (run 4 a) | 08:43:48 `auxiliary` 429, 294 ms | 08:43:50 `auxiliary` 200; 08:43:53 `main` 200 |
+  | 01M816VB76, 01M816VHM8, 01M816WZJM (run 4 b, c, d) | 08:44:32, 08:44:39, 08:45:26 `auxiliary` 429 | no other row |
+
+  In session a the 429 request starts about 2 s before the prompt record of the transcript (08:33:59.77 in run 2): it is a request that Claude Code sends at start, before the first prompt. Sessions b, c, d end before a prompt, so this start request is their only request.
+- The same pattern in all passthrough sessions of the store: 24 passthrough sessions have an `auxiliary` request (2026-11-21 06:14 to 2026-11-22 08:45 UTC); in **24 of 24** the first `auxiliary` request is a 429 (latency 135-403 ms, mean 256 ms, 0 tokens), and in each long session `auxiliary` requests after it are answered 200 (2135 `auxiliary` 200 rows in all). Only 26 `auxiliary` 429 rows exist in all; 24 of them are the first `auxiliary` request of a session.
+
+### Verdict: `not determined`
+
+- Not `zygo` by the definition of step 2.2: no error text names a missing header or a client identity (no error text is recorded), and the tests show no difference between `main` and `auxiliary` in what zygo sends. The headers that zygo drops are dropped from every request, also from the `auxiliary` and `main` requests of the same session that get 200 two seconds later; a header difference alone does not explain a refusal of only the first request.
+- Not `upstream` by the definition of step 2.2: no error text with `rate_limit_error` and a rate or usage limit message is recorded.
+- The 5-hour usage limit of the operator's account is not the cause: the same 429 comes first in every passthrough session for 26 hours (from 2026-11-21 06:14 UTC), and in each LIV-1 session a, `main` gets 200 3 to 5 s after the 429 (08:34:02, 08:39:17, 08:43:53); a usage limit refuses those requests too. Passthrough `main` and `subagent` 429 rows exist only at 2026-11-22 02:22-02:23 and 05:51-05:52 (6 rows), not in the LIV-1 window.
+- What the evidence shows: the refused request is the start request of Claude Code (first request of each session, sent before the first prompt), not the `auxiliary` class in general. Its body is not recorded; zygo sends the received bytes when no stage changed the body (`forward.rs:426`, `:827`, `:839-840`), so whether the vendor refuses it in a direct Claude Code session too, or only without the dropped client headers, is not shown by any record.
+
+What a next node needs to decide it (no change to zygo in this unit): record, for a non-2xx upstream answer on a passthrough request, the upstream `error.type` and `error.message` (no content of the request) in the session log or the usage row, then run one passthrough session start; or compare one start of Claude Code with and without zygo, through the mock-free live check of §20 #28. If the text then names a client identity or a missing header, the change is to §12.4 (the forwarded list `passthrough.rs:42`), with a base-spec change-log line such as "§12.4: passthrough also forwards `<header>` to the type's host; LIV-1 D8, FIX-8."
+
