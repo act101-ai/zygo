@@ -20,7 +20,9 @@ libc.workspace = true
 time.workspace = true
 
 [features]
-# Test hooks (`mux::testing`, node W3); only the self dev-dependency and the `test-hooks` feature of `crates/zygo` enable it.
+# Test hooks (`mux::testing`, node W3; `snapshot::testing`, node W6); only the self dev-dependency below enables it,
+# for this crate's own tests. The `test-hooks` feature of `crates/zygo` does not enable it yet: node M1 adds
+# `zygo-workspace/test-hooks` to it (W3 Spec).
 test-hooks = []
 
 [dev-dependencies]

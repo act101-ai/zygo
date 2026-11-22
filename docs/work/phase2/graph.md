@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W6, W7, W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1
+**Next:** W7, W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-14
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | DONE | implementation | 7657585; 9 LIVE lines: PW7 and PW16 failed, 7 verified; review round 2 fixed B1, B2, M1-M9; offline checks on merged tree |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
@@ -65,7 +64,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | DONE | judgment | f945872; mux 42 on 3.7c and 3.2a; review round 2 fixed B1 (3.2a window names) and M1-M7 |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
-| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | IN-PROGRESS | judgment | `.worktrees/phase2/W6` |
+| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | DONE | judgment | 8978541; acceptance snapshot 33, state 22, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M7, D1-D6 |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
@@ -94,6 +93,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | DONE | mechanical | 7ee20d6; acceptance ok |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
+| FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | TODO | mechanical | — |
 
 ## Log
 
@@ -207,3 +207,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-13 planned: 6 steps, test first. Acceptance adds --test stub_member, because the split-form cases are there; stub_member not changed. -s=<id> not read; empty = value is no session arg (author's call). |
 | 2026-11-22 | W6 planned: 22 steps, test first. C1-C16 applied: W2, W3 Produces; W7, W10, M1, M2, M4 Spec; H1 runs the pending snapshot in a detached child; spec W§7.1-7.4, W§10, AU38, AU84, AU89. Adds snapshot_seq to state.rs (author's call). |
 | 2026-11-22 | FIX-13 DONE (3be5519): stub reads --session-id=<id> and --resume=<id>. Merged tree: stub_launch 17, stub_member 19, zygo-launch all pass. R2: Files add stub_member.rs. Spec W§7.3 wait bounds: up/down snapshots 5 s (author's call). |
+| 2026-11-22 | W6 DONE (8978541): snapshot. Merged tree: snapshot 33, state 22, zygo-workspace all pass, check --tests clean. I1-I5, R1-R8, S1-S8 applied: spec W§7.3, W§7.4; W3 gains Multiplexer::socket. FIX-14 added: state.rs hold retries the lock. W7 ready. |
