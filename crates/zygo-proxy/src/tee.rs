@@ -1,8 +1,9 @@
 //! The response tee (§14): chunks pass to the client as they arrive; a copy is parsed for usage. Line mode (§10.2.6)
 //! and the usage-row writer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -14,7 +15,7 @@ use zygo_config::keys::Secret;
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store, UpstreamErrorRow};
 
-use crate::redact_stage::secret_pass;
+use crate::redact_stage::secret_pass_bounded;
 use crate::session::SessionState;
 use crate::translate::{error_message, error_object, scrub};
 
@@ -277,6 +278,42 @@ const ERROR_FIELD_IN_MAX: usize = 2 << 10;
 const ERROR_TEXT_MAX: usize = 300;
 /// The shortest run of the login that `scrub_partial` removes (FIX-10 M6).
 const PARTIAL_MIN: usize = 8;
+/// The most login characters `scrub_partial` uses (FIX-10 round 2 M6).
+const PARTIAL_CRED_MAX: usize = 512;
+/// The most captures with a body head or a login that wait for the usage writer; a capture over it goes without
+/// them, so its row gets empty fields and the request row is still written (FIX-10 round 2 M7).
+pub const ERROR_QUEUE_MAX: usize = 256;
+
+/// Unicode format characters (general category Cf, Unicode 16.0), as inclusive ranges.
+const FORMAT_CHARS: &[(u32, u32)] = &[
+    (0x00AD, 0x00AD),
+    (0x0600, 0x0605),
+    (0x061C, 0x061C),
+    (0x06DD, 0x06DD),
+    (0x070F, 0x070F),
+    (0x0890, 0x0891),
+    (0x08E2, 0x08E2),
+    (0x180E, 0x180E),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x2064),
+    (0x2066, 0x206F),
+    (0xFEFF, 0xFEFF),
+    (0xFFF9, 0xFFFB),
+    (0x110BD, 0x110BD),
+    (0x110CD, 0x110CD),
+    (0x13430, 0x1343F),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0001, 0xE0001),
+    (0xE0020, 0xE007F),
+];
+
+/// A control (Cc), format (Cf), line separator (Zl, U+2028) or paragraph separator (Zp, U+2029) character.
+fn unsafe_char(c: char) -> bool {
+    let u = u32::from(c);
+    c.is_control() || u == 0x2028 || u == 0x2029 || FORMAT_CHARS.iter().any(|&(a, b)| (a..=b).contains(&u))
+}
 
 /// What the usage writer needs for a passthrough request's `upstream_errors` row (§14, FIX-10). Built on the response
 /// path with no parse and no pass (B1).
@@ -297,62 +334,84 @@ fn head(t: &str, max: usize) -> &str {
     &t[..end]
 }
 
-/// Each control character as a space; at most ERROR_TEXT_MAX characters.
+/// Each control, format and separator character (`unsafe_char`) as a space; at most ERROR_TEXT_MAX characters.
 fn clean(t: &str) -> String {
-    t.chars().map(|c| if c.is_control() { ' ' } else { c }).take(ERROR_TEXT_MAX).collect()
+    t.chars().map(|c| if unsafe_char(c) { ' ' } else { c }).take(ERROR_TEXT_MAX).collect()
 }
 
-/// Each run of at least PARTIAL_MIN characters of `m` that is also a part of `cred` becomes the marker of
-/// `translate::scrub` (M6: an upstream that echoes a part of the login). Runs on at most ERROR_FIELD_IN_MAX bytes.
+/// The byte offset of each character of `t`, then `t.len()`.
+fn char_bounds(t: &str) -> Vec<usize> {
+    t.char_indices().map(|(i, _)| i).chain([t.len()]).collect()
+}
+
+/// Each run of `m` covered by PARTIAL_MIN-character windows that are also windows of the first PARTIAL_CRED_MAX
+/// characters of `cred` becomes the marker of `translate::scrub` (M6: an upstream that echoes a part of the login).
+/// Linear: the login's windows are a set built once (slices of `cred`, no copy of it), then `m` is scanned once.
 fn scrub_partial(m: &str, cred: &str) -> String {
     let mark = scrub(cred, Some(cred));
-    let c: Vec<char> = m.chars().collect();
+    let cb = char_bounds(cred);
+    let cred = &cred[..cb[cb.len().saturating_sub(1).min(PARTIAL_CRED_MAX)]];
+    let cb = char_bounds(cred);
+    let windows: HashSet<&str> = (0..cb.len().saturating_sub(PARTIAL_MIN)).map(|k| &cred[cb[k]..cb[k + PARTIAL_MIN]]).collect();
+    let mb = char_bounds(m);
+    let n = mb.len() - 1;
+    let shared = |k: usize| k + PARTIAL_MIN <= n && windows.contains(&m[mb[k]..mb[k + PARTIAL_MIN]]);
     let (mut out, mut i) = (String::with_capacity(m.len()), 0);
-    while i < c.len() {
-        let (mut run, mut n) = (String::new(), 0);
-        while i + n < c.len() {
-            run.push(c[i + n]);
-            if !cred.contains(run.as_str()) {
-                break;
+    while i < n {
+        if shared(i) {
+            // The run grows one character while the window that ends at that character is shared too.
+            let mut end = i + PARTIAL_MIN;
+            while end < n && shared(end + 1 - PARTIAL_MIN) {
+                end += 1;
             }
-            n += 1;
-        }
-        if n >= PARTIAL_MIN {
             out.push_str(&mark);
-            i += n;
+            i = end;
         } else {
-            out.push(c[i]);
+            out.push_str(&m[mb[i]..mb[i + 1]]);
             i += 1;
         }
     }
     out
 }
 
-/// One stored field (D2, D5): the 2 KiB cut, the login removed (whole, then each run), the secret pass under
-/// `policy` (empty on a block, a timeout or a panic), then `clean`.
+/// One stored field (D2, D5; round 2 B1 order): the 2 KiB cut; the secret pass under `policy` first, so a token is
+/// matched whole before any login scrub can cut it (empty on a block, a timeout, a held lock past the deadline or a
+/// panic); then the login removed (whole, then each run); then `clean`.
 fn error_field(raw: &str, cred: Option<&str>, s: &SessionState, policy: &DeadlinePolicy) -> String {
-    let mut t = scrub(head(raw, ERROR_FIELD_IN_MAX), cred);
+    let Some(mut t) = secret_pass_bounded(s, head(raw, ERROR_FIELD_IN_MAX), policy) else { return String::new() };
     if let Some(c) = cred.filter(|c| !c.is_empty()) {
+        t = scrub(&t, Some(c));
         t = scrub_partial(&t, c);
     }
-    secret_pass(s, &t, policy).map(|t| clean(&t)).unwrap_or_default()
+    clean(&t)
 }
 
 /// The `upstream_errors` row of `row` from its capture (D8): `error.type` and `error.message` of the head, each
-/// through `error_field`; empty when the head is not such JSON.
-fn error_row(row: &RequestRow, c: &ErrorCapture, policy: &DeadlinePolicy) -> UpstreamErrorRow {
+/// through `error_field`; empty when the head is not such JSON. `error` as a string: an empty type and the string as
+/// the message (round 2 M9). The login is dropped as soon as both fields are scrubbed (round 2 M1).
+fn error_row(row: &RequestRow, mut c: ErrorCapture, policy: &DeadlinePolicy) -> UpstreamErrorRow {
     let v = serde_json::from_slice::<Value>(&c.head).ok();
-    let cred = c.credential.as_ref().map(Secret::expose);
-    let field = |x: Option<&str>| x.map(|x| error_field(x, cred, &c.session, policy)).unwrap_or_default();
+    let (error_type, error_message) = {
+        let cred = c.credential.as_ref().map(Secret::expose);
+        let field = |x: Option<&str>| x.map(|x| error_field(x, cred, &c.session, policy)).unwrap_or_default();
+        let ty = v.as_ref().filter(|v| !v.get("error").is_some_and(Value::is_string)).and_then(|v| error_object(v).get("type")).and_then(Value::as_str);
+        (field(ty), field(v.as_ref().and_then(error_message)))
+    };
+    drop(c.credential.take());
     UpstreamErrorRow {
         ts: row.ts,
         session: row.session.clone(),
         request_class: row.request_class.clone(),
         model: row.model.clone(),
         status: row.status,
-        error_type: field(v.as_ref().and_then(|v| error_object(v).get("type")).and_then(Value::as_str)),
-        error_message: field(v.as_ref().and_then(error_message)),
+        error_type,
+        error_message,
     }
+}
+
+/// A capture that holds a body head or a login: it counts against ERROR_QUEUE_MAX.
+fn heavy(c: &ErrorCapture) -> bool {
+    !c.head.is_empty() || c.credential.is_some()
 }
 
 /// Rows begun but not yet inserted or dropped, per session.
@@ -420,6 +479,8 @@ pub(crate) struct UsageSink {
     /// Rows handled (inserted or dropped).
     handled: Arc<(Mutex<u64>, Condvar)>,
     queued: Queued,
+    /// Heavy captures (`heavy`) sent and not yet handled by the writer (FIX-10 round 2 M7).
+    captures: Arc<AtomicUsize>,
 }
 
 fn count(h: &(Mutex<u64>, Condvar)) {
@@ -433,11 +494,12 @@ impl UsageSink {
     pub(crate) fn open(db: Option<&Path>, #[allow(unused_variables)] hooks: WriterHooks, secret: DeadlinePolicy) -> (UsageSink, Option<String>) {
         let handled = Arc::new((Mutex::new(0), Condvar::new()));
         let queued: Queued = Arc::default();
+        let captures: Arc<AtomicUsize> = Arc::default();
         let store = match db.map(Store::open) {
             None => None,
             Some(Ok(s)) => Some(s),
             Some(Err(_)) => {
-                let sink = UsageSink { tx: Mutex::new(None), writer: Mutex::new(None), handled, queued };
+                let sink = UsageSink { tx: Mutex::new(None), writer: Mutex::new(None), handled, queued, captures };
                 return (sink, Some(USAGE_OFF_NOTE.to_string()));
             }
         };
@@ -446,6 +508,7 @@ impl UsageSink {
             Some(store) => {
                 let (tx, rx) = mpsc::channel::<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>();
                 let h = handled.clone();
+                let held = captures.clone();
                 let writer = std::thread::Builder::new().name("zygo-usage".into()).spawn(move || {
                     // The proxy has no log: a failed insert drops the row.
                     for (row, error, ticket) in rx {
@@ -457,7 +520,11 @@ impl UsageSink {
                             assert!(!hooks.panic, "usage writer: test panic");
                         }
                         // The error row is built here, on the writer thread, and written with its request row (D6).
-                        let e = error.map(|c| error_row(&row, &c, &secret));
+                        let was_heavy = error.as_ref().is_some_and(heavy);
+                        let e = error.map(|c| error_row(&row, c, &secret));
+                        if was_heavy {
+                            held.fetch_sub(1, Ordering::SeqCst);
+                        }
                         let _ = match &e {
                             Some(e) => store.insert_request_and_error(&row, e),
                             None => store.insert_request(&row),
@@ -469,13 +536,13 @@ impl UsageSink {
                 match writer {
                     Ok(w) => (Some(tx), Some(w)),
                     Err(_) => {
-                        let sink = UsageSink { tx: Mutex::new(None), writer: Mutex::new(None), handled, queued };
+                        let sink = UsageSink { tx: Mutex::new(None), writer: Mutex::new(None), handled, queued, captures };
                         return (sink, Some(USAGE_OFF_NOTE.to_string()));
                     }
                 }
             }
         };
-        (UsageSink { tx: Mutex::new(tx), writer: Mutex::new(writer), handled, queued }, None)
+        (UsageSink { tx: Mutex::new(tx), writer: Mutex::new(writer), handled, queued, captures }, None)
     }
 
     /// A row of `session` is on its way: `flush` waits for it until the ticket is dropped.
@@ -485,10 +552,25 @@ impl UsageSink {
     }
 
     /// No store or closed: the row and its capture are counted and dropped (with the ticket). `e`: the request's
-    /// `upstream_errors` capture (FIX-10).
+    /// `upstream_errors` capture (FIX-10); with ERROR_QUEUE_MAX heavy captures already waiting, it goes without its
+    /// head and login (empty fields), and the request row is sent as always (round 2 M7).
     pub(crate) fn send(&self, r: RequestRow, e: Option<ErrorCapture>, t: Option<Ticket>) {
+        let e = e.map(|c| {
+            if !heavy(&c) {
+                return c;
+            }
+            if self.captures.fetch_add(1, Ordering::SeqCst) < ERROR_QUEUE_MAX {
+                return c;
+            }
+            self.captures.fetch_sub(1, Ordering::SeqCst);
+            ErrorCapture { head: Vec::new(), credential: None, session: c.session }
+        });
+        let counted = e.as_ref().is_some_and(heavy);
         let sent = lock(&self.tx).as_ref().is_some_and(|tx| tx.send((r, e, t)).is_ok());
         if !sent {
+            if counted {
+                self.captures.fetch_sub(1, Ordering::SeqCst);
+            }
             count(&self.handled);
         }
     }
@@ -514,5 +596,71 @@ impl UsageSink {
         let (m, cv) = &*self.handled;
         let g = cv.wait_timeout_while(lock(m), limit, |c| *c < n).unwrap_or_else(|e| e.into_inner());
         *g.0 >= n
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test] // FIX-10 round 2 M8: the 2 KiB cut ends at a character boundary, never inside a multi-byte character
+    fn head_cuts_at_a_char_boundary_at_the_field_cap() {
+        let s = format!("{}\u{e9}b", "a".repeat(ERROR_FIELD_IN_MAX - 1)); // the 2-byte character spans the cap
+        assert_eq!(head(&s, ERROR_FIELD_IN_MAX), "a".repeat(ERROR_FIELD_IN_MAX - 1));
+        let t = "a".repeat(ERROR_FIELD_IN_MAX + 5);
+        assert_eq!(head(&t, ERROR_FIELD_IN_MAX).len(), ERROR_FIELD_IN_MAX);
+        assert_eq!(head("short", ERROR_FIELD_IN_MAX), "short");
+    }
+
+    #[test] // FIX-10 round 2 M8: a kept body over COPY_MAX (`copy_over`) is not returned; a streamed body neither
+    fn kept_body_over_copy_max_is_none() {
+        let mut t = Tee::new(false);
+        t.keep_body();
+        t.push(Bytes::from(vec![b'x'; COPY_MAX]), &mut |_| {});
+        assert_eq!(t.body().map(<[u8]>::len), Some(COPY_MAX));
+        t.push(Bytes::from_static(b"y"), &mut |_| {});
+        t.finish(&mut |_| {});
+        assert_eq!(t.body(), None);
+        let mut u = Tee::new(false);
+        u.keep_body();
+        u.push(Bytes::from_static(b"{}"), &mut |_| {});
+        u.finish(&mut |_| {});
+        assert_eq!(u.body(), Some(&b"{}"[..]));
+        let mut s = Tee::new(true);
+        s.keep_body();
+        s.push(Bytes::from_static(b"{}\n"), &mut |_| {});
+        s.finish(&mut |_| {});
+        assert_eq!(s.body(), None);
+    }
+
+    #[test] // FIX-10 round 2 M6: a run of 8 characters shared with the login is changed, a run of 7 is kept
+    fn scrub_partial_changes_a_run_of_eight_and_keeps_seven() {
+        let cred = "abcdefghijklmnop";
+        let mark = scrub(cred, Some(cred));
+        assert_eq!(scrub_partial("xabcdefgx", cred), "xabcdefgx");
+        assert_eq!(scrub_partial("xabcdefghx", cred), format!("x{mark}x"));
+        assert_eq!(scrub_partial("xbcdefghijklmx", cred), format!("x{mark}x"));
+        assert_eq!(scrub_partial("abcdefgh-ijklmnop", cred), format!("{mark}-{mark}"));
+        assert_eq!(scrub_partial("abcdefg", cred), "abcdefg");
+    }
+
+    #[test] // FIX-10 round 2 M6: only the first 512 characters of the login are used for the partial scrub
+    fn scrub_partial_uses_at_most_512_login_characters() {
+        let cred = format!("{}QRSTUVWXYZ", "a".repeat(512));
+        let mark = scrub(&cred, Some(&cred));
+        assert_eq!(scrub_partial("-QRSTUVWX-", &cred), "-QRSTUVWX-");
+        assert_eq!(scrub_partial("-aaaaaaaa-", &cred), format!("-{mark}-"));
+    }
+
+    #[test] // FIX-10 round 2 M7: the bound the passthrough test `upstream_error_captures_over_the_queue_bound_record_empty_fields` uses
+    fn error_queue_bound_is_256() {
+        assert_eq!(ERROR_QUEUE_MAX, 256);
+    }
+
+    #[test] // FIX-10 round 2 M5: control, format (Cf), line (Zl) and paragraph (Zp) separator characters become spaces
+    fn clean_turns_controls_format_and_separators_into_spaces() {
+        assert_eq!(clean("a\u{0}b\u{202E}c\u{200B}d\u{2028}e\u{2029}f\u{FEFF}g\u{AD}h\u{E0001}i\u{7F}j"), "a b c d e f g h i j");
+        assert_eq!(clean("\u{e9}\u{6f22} x"), "\u{e9}\u{6f22} x");
+        assert_eq!(clean(&"z".repeat(400)).chars().count(), ERROR_TEXT_MAX);
     }
 }

@@ -54,6 +54,8 @@ struct Upstream {
     ctype: Arc<Mutex<String>>,
     /// The reply body stays open after its bytes (`answer_hang`).
     hang: Arc<Mutex<bool>>,
+    /// The reply body fails (a read error) 100 ms after its bytes (`answer_reset`).
+    reset: Arc<Mutex<bool>>,
     _stop: tokio::sync::oneshot::Sender<()>,
 }
 impl Upstream {
@@ -66,7 +68,8 @@ impl Upstream {
         let headers: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let ctype = Arc::new(Mutex::new("application/json".to_string()));
         let hang = Arc::new(Mutex::new(false));
-        let (r2, s2, h2, c2, k2) = (reply.clone(), status.clone(), headers.clone(), ctype.clone(), hang.clone());
+        let reset = Arc::new(Mutex::new(false));
+        let (r2, s2, h2, c2, k2, e2) = (reply.clone(), status.clone(), headers.clone(), ctype.clone(), hang.clone(), reset.clone());
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
@@ -77,7 +80,7 @@ impl Upstream {
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
                 let app = axum::Router::new().fallback(move |req: Request| {
-                    let (g3, r3, s3, h3, c3, k3) = (g2.clone(), r2.clone(), s2.clone(), h2.clone(), c2.clone(), k2.clone());
+                    let (g3, r3, s3, h3, c3, k3, e3) = (g2.clone(), r2.clone(), s2.clone(), h2.clone(), c2.clone(), k2.clone(), e2.clone());
                     async move {
                         let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
                         let headers = req.headers().clone();
@@ -92,6 +95,13 @@ impl Upstream {
                         let body = if *k3.lock().unwrap() {
                             let first = futures_util::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(body)) });
                             axum::body::Body::from_stream(first.chain(futures_util::stream::pending()))
+                        } else if *e3.lock().unwrap() {
+                            let first = futures_util::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(body)) });
+                            let fail = futures_util::stream::once(async {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                Err::<Bytes, std::io::Error>(std::io::Error::other("upstream reset"))
+                            });
+                            axum::body::Body::from_stream(first.chain(fail))
                         } else {
                             axum::body::Body::from(body)
                         };
@@ -104,7 +114,7 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, reply, status, headers, ctype, hang, _stop: tx }
+        Upstream { addr, got, reply, status, headers, ctype, hang, reset, _stop: tx }
     }
     /// Every later request is answered with `body`.
     fn reply(&self, body: &Value) { *self.reply.lock().unwrap() = body.to_string(); }
@@ -126,6 +136,12 @@ impl Upstream {
     fn answer_hang(&self, status: u16, head: &str) {
         self.answer_raw(status, "application/json", head);
         *self.hang.lock().unwrap() = true;
+    }
+    /// Every later request is answered with `status` and the JSON content type; the body is `head`, then a read error
+    /// (the connection is reset, no body end).
+    fn answer_reset(&self, status: u16, head: &str) {
+        self.answer_raw(status, "application/json", head);
+        *self.reset.lock().unwrap() = true;
     }
     fn port(&self) -> u16 { self.addr.port() }
     fn got(&self) -> Vec<Got> { self.got.lock().unwrap().clone() }
@@ -181,7 +197,10 @@ fn setup(extra: &str) -> T { setup_with(extra, None) }
 fn setup_with(extra: &str, pipeline: Option<Pipeline>) -> T { setup_full(extra, pipeline, None) }
 
 /// `setup_with`, and `hold` as the usage writer's hold: no row is written until `release`.
-fn setup_full(extra: &str, pipeline: Option<Pipeline>, hold: Option<Arc<UsageHold>>) -> T {
+fn setup_full(extra: &str, pipeline: Option<Pipeline>, hold: Option<Arc<UsageHold>>) -> T { setup_limits(extra, pipeline, hold, generous()) }
+
+/// `setup_full`, with `limits` as the redaction deadlines in place of `generous()`.
+fn setup_limits(extra: &str, pipeline: Option<Pipeline>, hold: Option<Arc<UsageHold>>, limits: RedactLimits) -> T {
     let d = TempDir::new().unwrap();
     let (up, anth) = (Upstream::start(), Upstream::start());
     let p = d.path();
@@ -194,7 +213,7 @@ fn setup_full(extra: &str, pipeline: Option<Pipeline>, hold: Option<Arc<UsageHol
     let c = ManualClock::new();
     let keys = Arc::new(CountKeys::default());
     let o = StartOpts { clock: c.clone(), keys: keys.clone(), usage_db: Some(p.join("data/usage.db")),
-                        upstream_test: Some(vec![("api.anthropic.com".into(), anth.addr)]), redact_limits: Some(generous()), pipeline, usage_hold: hold, ..Default::default() };
+                        upstream_test: Some(vec![("api.anthropic.com".into(), anth.addr)]), redact_limits: Some(limits), pipeline, usage_hold: hold, ..Default::default() };
     let h = Proxy::start_local_with(Arc::new(cfg), o).unwrap();
     T { d, up, anth, c, keys, h }
 }
@@ -545,8 +564,8 @@ fn upstream_error_message_capped_and_without_control_characters() {
     assert_eq!((w[0].status, w[0].error_type.as_str()), (400, "invalid_request_error"));
 }
 
-#[test] // FIX-10 (D5), §14 "Never": no request byte or credential in the row or any file
-fn upstream_error_row_holds_no_request_content() {
+#[test] // FIX-10 (D5), §14 "Never": a request tracer that the upstream does not echo, the login and the zygo token are in no row field and no file
+fn upstream_error_row_and_files_hold_no_unechoed_request_tracer_login_or_zygo_token() {
     let t = setup("");
     let g = grant(&t, Agent::ClaudeCode, true);
     let tracer = format!("FIXTENTRACER{}", 424242);
@@ -701,6 +720,129 @@ fn upstream_echo_of_a_partial_login_is_scrubbed() {
     assert_eq!((w.len(), w[0].error_message.clone()), (1, format!("token {mark} or {mark} rejected")));
     assert!(!format!("{w:?}").contains(part));
     assert!(read_all(t.d.path()).iter().all(|f| !has(f, part.as_bytes())), "a file holds a part of the login");
+}
+
+// ---- FIX-10 round 2 ----
+
+#[test] // round 2 B1: the secret pass runs before the login scrubs, so a token that shares the login's prefix is not cut apart and stored
+fn upstream_error_tokens_that_share_the_login_prefix_are_not_stored() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let (l, b, c) = ("L".repeat(40), "B".repeat(40), "C".repeat(40));
+    let login = ["sk-ant-", "oat01-", &l].concat();
+    let other = ["sk-ant-", "oat01-", &b].concat();
+    let refresh = ["sk-ant-", "ort01-", &c].concat();
+    t.anth.answer(401, &[], &json!({"type":"error","error":{"type":"authentication_error","message": format!("bad {login} and {other} and {refresh}")}}));
+    let bearer = format!("Bearer {login}");
+    let mut hd = pt(&g);
+    hd.push(("authorization", bearer.as_str()));
+    hd.extend(cc_headers("main"));
+    assert_eq!(send(&t, "POST", M, &hd, Some(mb("claude-test-1"))).0, 401);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    assert!(t.d.path().join("data/usage.db-wal").exists(), "the WAL is read too");
+    let files = read_all(t.d.path());
+    for needle in [&b, &c, &l] {
+        assert!(files.iter().all(|f| !has(f, needle.as_bytes())), "a file holds {}", &needle[..1]);
+    }
+    let w = errs(&t, &g);
+    let placeholder = ["[REDACTED", ":anthropic_api_key]"].concat();
+    assert_eq!((w.len(), w[0].error_message.clone()), (1, format!("bad {placeholder} and {placeholder} and {placeholder}")));
+}
+
+#[test] // round 2 M2: the writer waits for the session's secret-cache lock at most the secret deadline, then stores empty fields
+fn upstream_error_fields_are_empty_when_the_secret_lock_is_held() {
+    let hold = UsageHold::new();
+    let base = Duration::from_millis(300);
+    let limits = RedactLimits { secret: DeadlinePolicy { base, per_mib: Duration::ZERO, expire_after_scans: None }, content_budget: Duration::from_secs(60), ..Default::default() };
+    let t = setup_limits("", None, Some(hold.clone()), limits);
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer(429, &[], &json!({"type":"error","error":{"type":"rate_limit_error","message":"limit"}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 429);
+    let s = t.h.session(&g.session).unwrap();
+    let guard = s.redaction.secret_cache.lock().unwrap();
+    let t0 = std::time::Instant::now();
+    hold.release();
+    let written = t.h.usage_written(1, Duration::from_secs(10));
+    let took = t0.elapsed();
+    drop(guard);
+    assert!(written, "usage row not written while the lock was held");
+    assert!(took >= base && took < Duration::from_secs(5), "{took:?}");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].status, w[0].error_type.as_str(), w[0].error_message.as_str()), (1, 429, "", ""));
+}
+
+#[test] // round 2 M3: a complete JSON head, then an upstream read error: the body did not finish, so no field is stored
+fn upstream_read_error_after_a_complete_json_head_records_empty_fields() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let e = r#"{"type":"error","error":{"type":"api_error","message":"boom"}}"#;
+    t.anth.answer_reset(500, e);
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let (got, failed) = rt.block_on(async {
+        let c = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut r = c.post(t.h.url().join(M).unwrap())
+            .header("x-zygo-token", g.token.as_str()).header("x-zygo-session", g.session.as_str())
+            .header("authorization", BEARER).header("content-type", "application/json")
+            .body(mb("claude-test-1")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 500);
+        let mut got = Vec::new();
+        loop {
+            match r.chunk().await {
+                Ok(Some(b)) => got.extend_from_slice(&b),
+                Ok(None) => break (got, false),
+                Err(_) => break (got, true),
+            }
+        }
+    });
+    drop(rt);
+    assert_eq!((got.as_slice(), failed), (e.as_bytes(), true));
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].status, w[0].error_type.as_str(), w[0].error_message.as_str()), (1, 500, "", ""));
+}
+
+#[test] // round 2 M5: format, line and paragraph separator characters and NUL become spaces
+fn upstream_error_message_format_and_separator_characters_become_spaces() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let m = "a\u{202E}b\u{200B}c\u{2028}d\u{2029}e\u{0}f\u{FEFF}g";
+    t.anth.answer(400, &[], &json!({"type":"error","error":{"type":"invalid_request_error","message": m}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].error_message.as_str()), (1, "a b c d e f g"));
+}
+
+#[test] // round 2 M7: at most 256 (tee::ERROR_QUEUE_MAX) captures wait for the writer; one over it keeps its request row
+        // and gets an error row with empty fields
+fn upstream_error_captures_over_the_queue_bound_record_empty_fields() {
+    let hold = UsageHold::new();
+    let t = setup_full("", None, Some(hold.clone()));
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer(400, &[], &json!({"type":"error","error":{"type":"invalid_request_error","message":"m"}}));
+    let (max, n) = (256usize, 257usize);
+    for _ in 0..n {
+        assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    }
+    hold.release();
+    assert!(t.h.usage_written(n as u64, Duration::from_secs(30)), "usage rows not written");
+    assert_eq!(rows(&t, &g).len(), n);
+    let w = errs(&t, &g);
+    let full = w.iter().filter(|r| (r.error_type.as_str(), r.error_message.as_str()) == ("invalid_request_error", "m")).count();
+    let empty = w.iter().filter(|r| r.error_type.is_empty() && r.error_message.is_empty()).count();
+    assert_eq!((w.len(), full, empty), (n, max, n - max));
+}
+
+#[test] // round 2 M9: `error` as a string: an empty type, and the string as the message
+fn upstream_error_as_a_string_is_the_message_with_an_empty_type() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer(400, &[], &json!({"type":"error","error":"text here"}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].error_type.as_str(), w[0].error_message.as_str()), (1, "", "text here"));
 }
 
 #[test] // §12.4 stage 2: no match → built-in provider

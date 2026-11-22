@@ -478,6 +478,8 @@ async fn run(
     };
 
     let mut status = resp.status();
+    // The upstream `content-length`: a body that reached it is finished although the server stops polling (FIX-10).
+    let body_len = resp.content_length();
     let mut streamed = resp
         .headers()
         .get(CONTENT_TYPE)
@@ -570,7 +572,7 @@ async fn run(
         usage: Usage::default(),
         compact_call: false,
     };
-    let flow = Flow { upstream, mapper, restore, tee, rctx, pipeline: app.pipeline.clone(), pending: p, done: false };
+    let flow = Flow { upstream, mapper, restore, tee, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
     let mut out = Response::new(Body::from_stream(futures_util::stream::unfold(flow, next_chunk)));
     *out.status_mut() = status;
     *out.headers_mut() = headers;
@@ -1045,6 +1047,17 @@ struct Flow {
     pipeline: Arc<Pipeline>,
     pending: Pending,
     done: bool,
+    /// The upstream body ended with a read error (FIX-10 round 2 M3).
+    failed: bool,
+    /// The upstream `content-length`, when it sent one.
+    body_len: Option<u64>,
+}
+
+impl Flow {
+    /// The upstream body is whole: no read error, and it ended or reached its `content-length` (FIX-10 round 2 M3).
+    fn finished(&self) -> bool {
+        !self.failed && (self.done || self.body_len.is_some_and(|n| self.tee.body().is_some_and(|b| b.len() as u64 == n)))
+    }
 }
 
 impl Drop for Flow {
@@ -1056,8 +1069,12 @@ impl Drop for Flow {
         self.pending.usage = self.tee.usage();
         self.pending.split = self.tee.cache_split();
         // Passthrough, not 2xx: raw bytes and the login for the usage writer; no parse and no pass here (§14, FIX-10 B1).
+        // A body that did not finish is not trusted: no head, so both fields are empty (round 2 M3).
         if self.pending.row.passthrough && !self.rctx.status.is_success() {
-            let head = self.tee.body().map(|b| b[..b.len().min(ERROR_BODY_MAX)].to_vec()).unwrap_or_default();
+            let head = match self.tee.body() {
+                Some(b) if self.finished() => b[..b.len().min(ERROR_BODY_MAX)].to_vec(),
+                _ => Vec::new(),
+            };
             let credential = self.rctx.headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
                 .map(|v| v.split_once(' ').map_or(v, |(_, t)| t).trim())
                 .filter(|t| !t.is_empty())
@@ -1098,6 +1115,7 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
             },
             Some(Err(_)) => {
                 f.done = true;
+                f.failed = true;
                 return Some((Err(std::io::Error::other("upstream response failed")), f));
             }
             None => {

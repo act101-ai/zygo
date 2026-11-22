@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 
 use http::StatusCode;
@@ -93,8 +93,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// `text` through the session's secret pass under `policy`; `None` on a `block` match, a timeout or a panic. Shared by
-/// the usage row's model name (`forward::row_name`) and the `upstream_errors` fields (§14, FIX-10).
+/// `text` through the session's secret pass under `policy`; `None` on a `block` match, a timeout or a panic. The usage
+/// row's model name (`forward::row_name`, request path); it waits for the cache lock as stage 6 does.
 pub(crate) fn secret_pass(s: &SessionState, text: &str, policy: &DeadlinePolicy) -> Option<String> {
     let mut v = Value::String(text.to_string());
     let r = catch_unwind(AssertUnwindSafe(|| {
@@ -103,6 +103,30 @@ pub(crate) fn secret_pass(s: &SessionState, text: &str, policy: &DeadlinePolicy)
     }));
     match (r, v) {
         (Ok(Ok(_)), Value::String(t)) => Some(t),
+        _ => None,
+    }
+}
+
+/// `secret_pass` for the usage writer (FIX-10 round 2 M2): the session's cache lock is tried, not waited on, for at
+/// most `policy.budget` of `text`; the wait comes off the pass's budget. `None` when the lock stays held past that
+/// bound, and on a `block` match, a timeout or a panic (fail closed).
+pub(crate) fn secret_pass_bounded(s: &SessionState, text: &str, policy: &DeadlinePolicy) -> Option<String> {
+    let t0 = Instant::now();
+    let bound = policy.budget(text.len() as u64);
+    let mut v = Value::String(text.to_string());
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        let mut cache = loop {
+            match s.redaction.secret_cache.try_lock() {
+                Ok(g) => break g,
+                Err(TryLockError::Poisoned(e)) => break e.into_inner(),
+                Err(TryLockError::WouldBlock) if t0.elapsed() < bound => std::thread::sleep(Duration::from_millis(1)),
+                Err(TryLockError::WouldBlock) => return None,
+            }
+        };
+        Some(redact_after_wait(&mut v, &s.redaction.compiled, &mut cache, policy, t0.elapsed()))
+    }));
+    match (r, v) {
+        (Ok(Some(Ok(_))), Value::String(t)) => Some(t),
         _ => None,
     }
 }
