@@ -972,6 +972,9 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 20. `zygo hook pre-compact` with one open unit prints the keep/drop text naming the unit.
 21. Live check (manual, recorded): a Claude Code session against the local proxy with `soft_context_window` set low compacts after the turn that crosses it (the next request carries `x-claude-code-compaction`).
 
+**Status line** *(2026-11-22, HUD design)*
+21a. The status line HUD passes the acceptance items #1 to #38 of `docs/specs/2026-11-21-statusline-hud-design.md` H§14: rendering (#1-#7); ctx and threshold (#8-#9); spend and tokens (#10-#17); trimmed tokens (#18-#19); width, with the fit width W = `COLUMNS` − 4 (#20-#21, H§6.7); input, deadline and failure (#22-#30); icons and style (#31-#35; except the OpenCode clause of #33: in an OpenCode session the `statusline` verb behaves as in a Claude Code session, operator decision); the workspace phase, with the workspaces build (#36); the live checks P-HUD-1 (#37) and W-SHELL part 2 (#38: not run, no Windows machine available).
+
 **Profiles**
 22. Each §11.3 violation yields its message and the launch continues without the profile.
 23. A custom role appears in `/v1/models`, the legend and `--agents` with its prompt, and serves its model.

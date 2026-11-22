@@ -92,7 +92,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   Agent binaries and versions, secret store, keys present per provider, server reachable, plugin store, missing plugin commands, plugins also installed in the agent's own config, repo policy, and one icon test line: the Nerd glyphs of the status line and the active icon set (HUD design AU2). *(2026-11-22, HUD design)*
   ```
 
-- [ ] 14. H§9 row "§20" → base §20. Insert this group after item 21 and before `**Profiles**`:
+- [x] 14. H§9 row "§20" → base §20. Insert this group after item 21 and before `**Profiles**`:
 
   ```text
   **Status line** *(2026-11-22, HUD design)*
