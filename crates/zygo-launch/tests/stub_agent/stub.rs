@@ -1,5 +1,11 @@
 //! The stub agent for the launch tests (N34). One executable, three roles by argv: `zygo` (`hook` or `mcp`),
 //! the version probe (`--version`), and the agent (anything else), which records what it received into `ZYGO_STUB_OUT`.
+//!
+//! Control mode (L3, the workspace tests): when `ZYGO_STUB_CONTROL` names a directory, the agent does not exit after the
+//! capture. It serves the lines of `<dir>/steps` in order (a test appends them with `stub_control`) and appends to
+//! `<dir>/done` the line `start <pid>`, then the text of each step when that step has finished. A step that cannot run
+//! ends the stub with code 2 and no `done` line. The stub installs no signal handler: a signal ends it by the default
+//! action. `ZYGO_STUB_EXIT` and the `shell.json` capture are not used in control mode.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -66,6 +72,65 @@ fn commands(settings: &Value) -> Vec<String> {
     out
 }
 
+/// The hook events a `hook` step can name (`SessionStart` is called once, by the stub itself).
+const EVENTS: [&str; 6] = ["UserPromptSubmit", "PreToolUse", "Stop", "StopFailure", "SubagentStart", "SubagentStop"];
+
+fn append(p: &Path, line: &str) {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p).unwrap();
+    f.write_all(format!("{line}\n").as_bytes()).unwrap();
+}
+
+/// Runs one step line. `Ok(Some(code))` is an `exit` step: the caller writes the `done` line, then exits.
+fn step(line: &str, _out: &Path, _settings: &Value, _argv: &[String]) -> Result<Option<i32>, String> {
+    let (verb, rest) = line.split_once(' ').unwrap_or((line, ""));
+    match verb {
+        "hook" => {
+            let (event, overlay) = match rest.split_once(' ') {
+                Some((e, j)) => (e, Some(j)),
+                None => (rest, None),
+            };
+            if !EVENTS.contains(&event) {
+                return Err(format!("unknown hook event `{event}`"));
+            }
+            if let Some(j) = overlay {
+                serde_json::from_str::<Map<String, Value>>(j).map_err(|e| format!("the hook input is not a JSON object: {e}"))?;
+            }
+            Ok(None)
+        }
+        "exit" => rest.parse::<i32>().map(Some).map_err(|e| format!("exit code: {e}")),
+        _ => Err("unknown step".into()),
+    }
+}
+
+/// Control mode: serves the lines of `ctl/steps` in order and writes each finished one to `ctl/done`.
+fn control(ctl: &Path, out: &Path, settings: &Value, argv: &[String]) -> ! {
+    let (steps, done) = (ctl.join("steps"), ctl.join("done"));
+    std::fs::create_dir_all(ctl).unwrap();
+    let mut cursor = text(&done).unwrap_or_default().lines().filter(|l| !l.starts_with("start ")).count();
+    append(&done, &format!("start {}", std::process::id()));
+    loop {
+        let all = text(&steps).unwrap_or_default();
+        let Some(line) = all.split_inclusive('\n').filter_map(|l| l.strip_suffix('\n')).nth(cursor) else {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            continue;
+        };
+        match step(line, out, settings, argv) {
+            Ok(code) => {
+                append(&done, line);
+                cursor += 1;
+                if let Some(c) = code {
+                    std::process::exit(c);
+                }
+            }
+            Err(reason) => {
+                eprintln!("stub-agent: bad step: {line}: {reason}");
+                std::process::exit(2);
+            }
+        }
+    }
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
     if argv == ["--version"] {
@@ -120,7 +185,8 @@ fn main() {
     if let Some(d) = var("OPENCODE_CONFIG_DIR") {
         put("ocdir.json", &tree(Path::new(&d)));
     }
-    if let Some(sh) = var("ZYGO_STUB_SHELL") {
+    let ctl = var("ZYGO_STUB_CONTROL").map(PathBuf::from);
+    if let Some(sh) = var("ZYGO_STUB_SHELL").filter(|_| ctl.is_none()) {
         let mut shell = Map::new();
         for c in commands(&settings) {
             let r = result(Command::new(&sh).arg("-c").arg(&c).output());
@@ -135,5 +201,8 @@ fn main() {
         run.insert(name.clone(), r["out"].clone());
     }
     put("mcp-run.json", &Value::Object(run));
+    if let Some(c) = &ctl {
+        control(c, &out, &settings, &argv)
+    }
     std::process::exit(var("ZYGO_STUB_EXIT").and_then(|v| v.parse().ok()).unwrap_or(0));
 }

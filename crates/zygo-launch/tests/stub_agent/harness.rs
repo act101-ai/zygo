@@ -160,6 +160,14 @@ pub fn launch(rig: &Rig, adapter: &dyn AgentAdapter, version: &str, tweak: impl 
     Run { code, stderr, cap }
 }
 
+/// Appends one step line to `dir/steps`, the control file of a stub agent started with `ZYGO_STUB_CONTROL=dir`
+/// (the protocol is in the head of `stub.rs`). It makes `dir` and checks nothing else.
+pub fn stub_control(dir: &Path, step: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(dir)?;
+    std::fs::OpenOptions::new().create(true).append(true).open(dir.join("steps"))?.write_all(format!("{step}\n").as_bytes())
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let out = std::process::Command::new("git")
