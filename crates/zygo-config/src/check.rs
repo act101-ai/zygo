@@ -22,7 +22,15 @@ impl fmt::Display for Violation {
     }
 }
 
-/// `zygo config check` (§6.3, §7.5, §7.6, §16).
+const BAD_RATE: &str = "must be a finite number >= 0";
+
+/// The keys of one price tier whose rate `config check` refuses: negative, NaN or infinite (AU32).
+fn bad_rates(input: f64, output: f64, cache_read: f64, cache_write: f64, cache_write_5m: Option<f64>) -> impl Iterator<Item = &'static str> {
+    let rates = [("input", Some(input)), ("output", Some(output)), ("cache_read", Some(cache_read)), ("cache_write", Some(cache_write)), ("cache_write_5m", cache_write_5m)];
+    rates.into_iter().filter(|(_, r)| r.is_some_and(|r| !r.is_finite() || r < 0.0)).map(|(k, _)| k)
+}
+
+/// `zygo config check` (§6.3, §7.5, §7.6, §16; prices: H§6.1 AU32).
 pub fn check(cfg: &Config) -> Vec<Violation> {
     let mut v = Vec::new();
     let mut e = |path: String, message: String| v.push((Severity::Error, path, message));
@@ -47,6 +55,21 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
             }
             if p.key.as_ref().is_some_and(KeyRef::name_is_empty) {
                 e(format!("{pp}.key"), "name must not be empty".into());
+            }
+            if let Some(pr) = &p.price_usd_per_mtok {
+                let rp = format!("{pp}.price_usd_per_mtok");
+                for k in bad_rates(pr.input, pr.output, pr.cache_read, pr.cache_write, pr.cache_write_5m) {
+                    e(format!("{rp}.{k}"), BAD_RATE.into());
+                }
+                if let Some(l) = &pr.long_context {
+                    let lp = format!("{rp}.long_context");
+                    if l.above == 0 {
+                        e(format!("{lp}.above"), "must be > 0".into());
+                    }
+                    for k in bad_rates(l.input, l.output, l.cache_read, l.cache_write, l.cache_write_5m) {
+                        e(format!("{lp}.{k}"), BAD_RATE.into());
+                    }
+                }
             }
         }
         if let Some(soft) = m.soft_context_window {
