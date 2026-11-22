@@ -1637,3 +1637,45 @@ fn w18_62_team_layer_drops_loadout_and_workspace_with_the_au22_warning() { // WÂ
     assert_eq!(m.warnings, [AU22]);
     assert_eq!(load(&team_ctx("[guards]\nmin_level = \"notify\"\n", "")).unwrap().warnings, Vec::<String>::new());
 }
+
+const LO: &str = "[loadout.pair]\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\n";
+const BAD_KIND: &str = "must be \"claude-code\", \"opencode\" or \"shell\"";
+
+#[test]
+fn check_loadout_structure() {
+    none(&(base() + LO + "kind = \"claude-code\"\npassthrough = true\nconfig_dir = \"~/.claude-work\"\n"));
+    none(&(base() + LO + "kind = \"opencode\"\npassthrough = false\n"));
+    none(&(base() + LO + "kind = \"shell\"\ncwd = \"branch:x\"\n"));
+    err(&(base() + LO + "kind = \"vim\"\n"), &format!("loadout.pair.window[0].pane[0].kind: {BAD_KIND}"));
+    err(&(base() + LO + "yolo = true\n"), &format!("loadout.pair.window[0].pane[0].kind: {BAD_KIND}"));
+    err(&(base() + LO + "kind = \"opencode\"\npassthrough = true\n"), "loadout.pair.window[0].pane[0].passthrough: only with kind = \"claude-code\"");
+    err(&(base() + LO + "kind = \"shell\"\nconfig_dir = \"x\"\n"), "loadout.pair.window[0].pane[0].config_dir: only with kind = \"claude-code\"");
+    err(&(base() + "[loadout.pair]\n[[loadout.pair.window]]\nname = \"w\"\n"), "loadout.pair.window[0]: must have at least one pane");
+    err(&(base() + "[loadout.pair]\n"), "loadout.pair: must have at least one window");
+    let two = "[loadout.\"my lo\"]\n[[loadout.\"my lo\".window]]\n[[loadout.\"my lo\".window.pane]]\nkind = \"shell\"\n[[loadout.\"my lo\".window]]\n[[loadout.\"my lo\".window.pane]]\nkind = \"shell\"\n[[loadout.\"my lo\".window.pane]]\nkind = \"vim\"\n";
+    err(&(base() + two), &format!("loadout.\"my lo\".window[1].pane[1].kind: {BAD_KIND}"));
+}
+
+#[test]
+fn check_default_loadout_names_a_loadout() {
+    none(&(base() + "[workspace]\ndefault_loadout = \"solo\"\n"));
+    none(&(base() + "[workspace]\ndefault_loadout = \"pair\"\n" + LO + "kind = \"shell\"\n"));
+    err(&(base() + "[workspace]\ndefault_loadout = \"nope\"\n"), "workspace.default_loadout: unknown loadout");
+}
+
+#[test]
+fn check_loadout_missing_profile_is_a_warning() {
+    let v = one(&(base() + LO + "kind = \"claude-code\"\nprofile = \"cheap\"\n"));
+    assert_eq!((v.severity, v.to_string()), (Severity::Warning, "loadout.pair.window[0].pane[0].profile: unknown profile".into()));
+    none(&(base() + "[profile.cheap]\n" + LO + "kind = \"claude-code\"\nprofile = \"cheap\"\n"));
+}
+
+#[test]
+fn w18_63_config_check_reports_kind_and_passthrough() { // WÂ§18 #63; the `--settings` warning of pane[2] is M1's (AU103)
+    let panes = "kind = \"vim\"\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\npassthrough = true\n[[loadout.pair.window.pane]]\nkind = \"claude-code\"\nargs = [\"--settings\", \"x\"]\n";
+    let found: Vec<String> = check(&loaded(&(base() + LO + panes)).config).iter().map(|v| format!("{:?} {v}", v.severity)).collect();
+    assert_eq!(found, [
+        format!("Error loadout.pair.window[0].pane[0].kind: {BAD_KIND}"),
+        "Error loadout.pair.window[0].pane[1].passthrough: only with kind = \"claude-code\"".to_string(),
+    ]);
+}
