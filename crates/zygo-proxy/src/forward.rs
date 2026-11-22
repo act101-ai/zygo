@@ -19,7 +19,7 @@ use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, Seq
 use serde_json::{json, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zygo_config::keys::Secret;
-use zygo_config::{Dialect, Facts, Family, Prices, Provider, SchemaRule};
+use zygo_config::{Dialect, Facts, Family, Prices, Provider, SchemaRule, TokenUsage};
 use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RedactionCount, RequestRow};
@@ -30,8 +30,8 @@ use crate::pipeline::{Adjustment, ModelRoute, Pipeline, RequestCtx, ResponseCtx}
 use crate::provider::{loopback, unavailable, Candidate};
 use crate::resolve::Resolved;
 use crate::server::App;
-use crate::session::{PromptUsage, SessionState};
-use crate::tee::{SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX};
+use crate::session::SessionState;
+use crate::tee::{CacheSplit, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
     facts, is_response, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
@@ -195,13 +195,18 @@ fn upstream_bad_response() -> ZygoError {
     ZygoError::new(StatusCode::BAD_GATEWAY, "zygo_upstream_bad_response", "upstream response could not be translated")
 }
 
-/// The usage row of one request (§14); written when dropped: the tokens and cost, `add_usage`, then the row.
+/// The usage row of one request (§14); written when dropped: the tokens and cost, `add_request`, then the row.
 struct Pending {
     row: RequestRow,
     session: Arc<SessionState>,
     sink: Arc<UsageSink>,
+    /// The served provider's price: the row's cost and the session spend.
     prices: Option<Prices>,
+    /// Passthrough (H§7.3 step 4), where `prices` is `None`: the session spend only.
+    notional_prices: Option<Prices>,
     usage: Usage,
+    /// The 5-minute and 1-hour parts of `usage.cache_write` (AU33).
+    split: Option<CacheSplit>,
     /// The rows reply waits for it (§14, Q2).
     ticket: Option<Ticket>,
     /// Messages only: the served row's windows from the serving config (AU29).
@@ -213,12 +218,24 @@ impl Drop for Pending {
         let u = self.usage;
         let r = &mut self.row;
         (r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens) = (u.input, u.output, u.cache_read, u.cache_write);
-        r.estimated_usd = self.prices.as_ref().map_or(0.0, |p| {
-            (u.input as f64 * p.input + u.output as f64 * p.output + u.cache_read as f64 * p.cache_read
-                + u.cache_write as f64 * p.cache_write)
-                / 1e6
-        });
-        self.session.add_usage(PromptUsage { input: u.input, cache_read: u.cache_read, cache_write: u.cache_write });
+        let tokens = TokenUsage {
+            input: u.input,
+            output: u.output,
+            cache_read: u.cache_read,
+            cache_write: u.cache_write,
+            cache_write_5m: self.split.map(|s| s.m5),
+            cache_write_1h: self.split.map(|s| s.h1),
+        };
+        // One price call (AU5, H§7.3 step 3): its result is the row's cost and the session's spend. A notional
+        // price is the session's alone: the passthrough row costs 0 (§14).
+        let (table, on_row) = match &self.prices {
+            Some(p) => (Some(p), true),
+            None => (self.notional_prices.as_ref(), false),
+        };
+        let cost = table.and_then(|p| p.cost(&tokens));
+        r.estimated_usd = cost.filter(|_| on_row).unwrap_or(0.0);
+        // A team session's cost is at the server's configured prices: it stays in the row (AU14).
+        self.session.add_request(&tokens, cost.filter(|_| self.session.team_label.is_none()));
         // Used context (§10.2, A-9): the upstream prompt of a main-loop (class `main` or absent) Messages 2xx.
         let prompt = window::prompt(u);
         if r.route == "/anthropic/v1/messages"
@@ -263,7 +280,7 @@ pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRout
         ..Default::default()
     };
     let ticket = Some(app.usage.begin(&s.id));
-    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, usage: Usage::default(), ticket, windows: None });
+    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, notional_prices: None, usage: Usage::default(), split: None, ticket, windows: None });
     match run(&app, &s, route, req, &mut slot, start).await {
         Ok(r) => r,
         Err(e) => {
@@ -515,6 +532,7 @@ async fn run(
     p.row.provider = c.provider.name.clone();
     p.row.adjustments = names(&adjustments);
     p.prices = c.provider.price_usd_per_mtok.clone();
+    p.notional_prices = resolved.notional_prices.clone();
     let rctx = ResponseCtx {
         session: s.clone(),
         cfg: ctx.cfg.clone(),
@@ -1019,6 +1037,7 @@ impl Drop for Flow {
             self.tee.finish(&mut |_| {});
         }
         self.pending.usage = self.tee.usage();
+        self.pending.split = self.tee.cache_split();
         // Codes a line stage added (§10.2.3) reach the row, not the headers.
         self.pending.row.adjustments = names(&self.rctx.adjustments);
     }

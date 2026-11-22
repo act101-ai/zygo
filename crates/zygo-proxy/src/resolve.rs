@@ -2,7 +2,7 @@
 
 use http::StatusCode;
 use serde_json::Value;
-use zygo_config::{Dialect, Merged, ModelRow, Provider};
+use zygo_config::{Dialect, Merged, ModelRow, Prices, Provider};
 
 use crate::errors::ZygoError;
 use crate::pipeline::{Adjustment, RequestCtx, Stage};
@@ -20,6 +20,9 @@ pub struct Resolved {
     /// Providers that serve `model` on the dialect, config order, the pinned one first.
     pub candidates: Vec<Provider>,
     pub adjustments: Vec<Adjustment>,
+    /// Passthrough only (H§7.3 step 4): the catalog price of the matched model, for the session spend. The usage
+    /// row does not use it (§14).
+    pub notional_prices: Option<Prices>,
 }
 
 /// `cfg` is the serving config at request time (a stale override is seen after a reload, §11.3).
@@ -69,7 +72,7 @@ pub fn resolve(name: &str, dialect: Dialect, s: &SessionState, cfg: &Merged) -> 
         let pr = candidates.remove(i);
         candidates.insert(0, pr);
     }
-    Ok(Resolved { requested: base.to_string(), one_m, role, model, candidates, adjustments })
+    Ok(Resolved { requested: base.to_string(), one_m, role, model, candidates, adjustments, notional_prices: None })
 }
 
 /// The dialect sent upstream: the client's when the provider speaks it, else a v1 translation pair (§7.6):

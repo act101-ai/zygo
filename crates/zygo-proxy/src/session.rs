@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use zygo_config::profile::{validate, Profile};
-use zygo_config::{CustomRole, Dialect, Features, GuardsConfig, Merged, Role};
+use zygo_config::{CustomRole, Dialect, Features, GuardsConfig, Merged, Role, TokenUsage};
 use zygo_core::ids::ulid;
 use zygo_core::Agent;
 use zygo_redact::act_lite_store::{StoredValue, MIN_VALUE_BYTES};
@@ -197,6 +197,16 @@ pub struct PromptUsage {
     pub cache_write: u64,
 }
 
+/// The session's running sums for the status reply (AU5, AU15, AU16).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Spend {
+    tokens_in: u64,
+    tokens_out: u64,
+    usd: f64,
+    requests_total: u64,
+    requests_priced: u64,
+}
+
 pub struct Redaction {
     pub compiled: Compiled,
     pub secret_cache: Mutex<SessionCache>,
@@ -210,6 +220,7 @@ struct Live {
     compact: Option<WindowArg>,
     settings: SessionSettings,
     usage: PromptUsage,
+    spend: Spend,
     used_context: Option<u64>,
     main_loop: Option<MainLoop>,
 }
@@ -256,10 +267,32 @@ impl SessionState {
     }
     /// Sums for the cache share (§10.7).
     pub fn add_usage(&self, u: PromptUsage) {
-        let mut l = lock(&self.live);
+        Self::add_prompt(&mut lock(&self.live), u);
+    }
+    fn add_prompt(l: &mut Live, u: PromptUsage) {
         l.usage.input = l.usage.input.saturating_add(u.input);
         l.usage.cache_read = l.usage.cache_read.saturating_add(u.cache_read);
         l.usage.cache_write = l.usage.cache_write.saturating_add(u.cache_write);
+    }
+    /// One request's tokens and its `Prices::cost` result (`None`: not priced), under one lock (H§7.3 step 3): the
+    /// `add_usage` sums, tokens in (input + cache read + cache write) and out (AU16), and, for a request with at
+    /// least one token, the counts and the spend (AU15). The split parts of `u` are not read: `cache_write` is the
+    /// total.
+    pub fn add_request(&self, u: &TokenUsage, cost: Option<f64>) {
+        let prompt = u.input.saturating_add(u.cache_read).saturating_add(u.cache_write);
+        let mut l = lock(&self.live);
+        Self::add_prompt(&mut l, PromptUsage { input: u.input, cache_read: u.cache_read, cache_write: u.cache_write });
+        let s = &mut l.spend;
+        s.tokens_in = s.tokens_in.saturating_add(prompt);
+        s.tokens_out = s.tokens_out.saturating_add(u.output);
+        if prompt == 0 && u.output == 0 {
+            return;
+        }
+        s.requests_total += 1;
+        if let Some(c) = cost {
+            s.requests_priced += 1;
+            s.usd += c;
+        }
     }
     pub fn set_used_context(&self, prompt: u64) {
         lock(&self.live).used_context = Some(prompt);
@@ -290,6 +323,9 @@ impl SessionState {
         });
         let u = l.usage;
         let total = u.input as f64 + u.cache_read as f64 + u.cache_write as f64;
+        // A team session's spend is not sent here: what the session sums is priced with the server's configured
+        // prices, and no configured price leaves a server (AU14, H§9 row §7.2).
+        let team = self.team_label.is_some();
         SessionStatus {
             session: self.id.clone(),
             profile: self.profile.as_ref().map(|p| p.name.clone()),
@@ -303,6 +339,14 @@ impl SessionState {
             model,
             context_window,
             threshold,
+            tokens_in: Some(l.spend.tokens_in),
+            tokens_out: Some(l.spend.tokens_out),
+            spend_usd: (!team).then_some(l.spend.usd),
+            spend_notional: Some(self.passthrough || team),
+            requests_total: Some(l.spend.requests_total),
+            requests_priced: (!team).then_some(l.spend.requests_priced),
+            passthrough: Some(self.passthrough),
+            team_session: Some(team),
         }
     }
 
@@ -483,6 +527,7 @@ impl Sessions {
                 compact: None,
                 settings: SessionSettings::default(),
                 usage: PromptUsage::default(),
+                spend: Spend::default(),
                 used_context: None,
                 main_loop: None,
             }),

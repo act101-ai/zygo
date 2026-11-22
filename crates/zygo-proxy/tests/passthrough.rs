@@ -38,11 +38,16 @@ const FINAL: (&str, &str) = ("x-claude-code-agent-id", "final");
 #[derive(Debug, Clone)]
 struct Got { path: String, headers: HeaderMap, body: Vec<u8> }
 
-struct Upstream { addr: SocketAddr, got: Arc<Mutex<Vec<Got>>>, _stop: tokio::sync::oneshot::Sender<()> }
+/// The reply body of a new `Upstream`.
+const REPLY: &str = r#"{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":11,"output_tokens":22}}"#;
+
+struct Upstream { addr: SocketAddr, got: Arc<Mutex<Vec<Got>>>, reply: Arc<Mutex<String>>, _stop: tokio::sync::oneshot::Sender<()> }
 impl Upstream {
-    /// 127.0.0.1:0, own runtime thread; every request is recorded and answered 200 JSON.
+    /// 127.0.0.1:0, own runtime thread; every request is recorded and answered 200 JSON (`REPLY` until `reply`).
     fn start() -> Upstream {
         let got: Arc<Mutex<Vec<Got>>> = Arc::default();
+        let reply = Arc::new(Mutex::new(REPLY.to_string()));
+        let r2 = reply.clone();
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
@@ -53,7 +58,7 @@ impl Upstream {
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
                 let app = axum::Router::new().fallback(move |req: Request| {
-                    let g3 = g2.clone();
+                    let (g3, r3) = (g2.clone(), r2.clone());
                     async move {
                         let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
                         let headers = req.headers().clone();
@@ -62,9 +67,7 @@ impl Upstream {
                         Response::builder()
                             .status(200)
                             .header("content-type", "application/json")
-                            .body(axum::body::Body::from(
-                                r#"{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":11,"output_tokens":22}}"#,
-                            ))
+                            .body(axum::body::Body::from(r3.lock().unwrap().clone()))
                             .unwrap()
                     }
                 });
@@ -74,8 +77,10 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, _stop: tx }
+        Upstream { addr, got, reply, _stop: tx }
     }
+    /// Every later request is answered with `body`.
+    fn reply(&self, body: &Value) { *self.reply.lock().unwrap() = body.to_string(); }
     fn port(&self) -> u16 { self.addr.port() }
     fn got(&self) -> Vec<Got> { self.got.lock().unwrap().clone() }
     /// The last recorded request whose path starts with `prefix`.
@@ -126,13 +131,13 @@ fn generous() -> RedactLimits {
 
 fn setup(extra: &str) -> T { setup_with(extra, None) }
 
-/// `setup`, with `pipeline` in place of the default stage list.
+/// `setup`, with `pipeline` in place of the default stage list. `{UP}` in `extra` is the URL of `up`.
 fn setup_with(extra: &str, pipeline: Option<Pipeline>) -> T {
     let d = TempDir::new().unwrap();
     let (up, anth) = (Upstream::start(), Upstream::start());
     let p = d.path();
     let (u, a) = (format!("http://127.0.0.1:{}", up.port()), "http://api.anthropic.com".to_string());
-    std::fs::write(p.join("config.toml"), config(&u, &a, extra)).unwrap();
+    std::fs::write(p.join("config.toml"), config(&u, &a, &extra.replace("{UP}", &u))).unwrap();
     let paths = Paths { config_file: p.join("config.toml"), cache_dir: p.join("cache"), data_dir: p.join("data"), sessions_dir: p.join("cache/sessions"),
                         marketplaces_dir: p.join("cache/marketplaces"), plugin_store: p.join("data/plugins"), approvals_file: p.join("data/approvals.toml"),
                         usage_db: p.join("data/usage.db") };
@@ -773,4 +778,76 @@ fn status_no_model_for_blocked_name() {
     assert_eq!(post_pt(&t, &g, M, mb(&blocked), &[]).0, 200); // the secret pass is off: the request is served
     assert_eq!(status(2), (None, None, None, None));
     assert!(rows(&t, &g).iter().any(|r| r.model.is_empty() && r.status == 200));
+}
+
+// ---- HUD-6: session spend and tokens ----
+
+/// The HUD-6 status fields of `g` once `n` usage rows are handled: (tokens_in, tokens_out, spend_usd, requests_total,
+/// requests_priced).
+fn spend(t: &T, g: &SessionGrant, n: u64) -> (Option<u64>, Option<u64>, Option<f64>, Option<u64>, Option<u64>) {
+    assert!(t.h.usage_written(n, Duration::from_secs(10)));
+    let s = t.h.session(&g.session).unwrap().status();
+    (s.tokens_in, s.tokens_out, s.spend_usd, s.requests_total, s.requests_priced)
+}
+
+#[test] // H§7.3 step 4, AU15, AU16, §14: passthrough rows cost 0; the session spend is notional
+fn e2e_passthrough_notional_spend() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let s = t.h.session(&g.session).unwrap().status();
+    assert_eq!((s.tokens_in, s.tokens_out, s.spend_usd, s.requests_total, s.requests_priced), (Some(0), Some(0), Some(0.0), Some(0), Some(0)));
+    assert_eq!((s.spend_notional, s.passthrough, s.team_session), (Some(true), Some(true), Some(false)));
+    // test-pt: p-other (first, no price), then p-anth (4 / 20 / 0.2 / 8): the first provider on the dialect with a price.
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
+    let one = (11.0 * 4.0 + 22.0 * 20.0) / 1e6;
+    assert_eq!(spend(&t, &g, 1), (Some(11), Some(22), Some(one), Some(1), Some(1)));
+    // `[1m]` is not part of the matched name.
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1[1m]"), &[]).0, 200);
+    assert_eq!(spend(&t, &g, 2), (Some(22), Some(44), Some(one + one), Some(2), Some(2)));
+    // No catalog match: counted, not priced.
+    assert_eq!(post_pt(&t, &g, M, mb("claude-unknown-9"), &[]).0, 200);
+    assert_eq!(spend(&t, &g, 3), (Some(33), Some(66), Some(one + one), Some(3), Some(2)));
+    // A match with no priced provider: counted, not priced.
+    assert_eq!(post_pt(&t, &g, M, mb("claude-else-1"), &[]).0, 200);
+    assert_eq!(spend(&t, &g, 4), (Some(44), Some(88), Some(one + one), Some(4), Some(2)));
+    // A request with no token (refused before any upstream) is in neither count (AU15).
+    assert_eq!(post_pt(&t, &g, M, br#"{"model":5}"#.to_vec(), &[]).0, 400);
+    assert_eq!(spend(&t, &g, 5), (Some(44), Some(88), Some(one + one), Some(4), Some(2)));
+    let rows = rows(&t, &g);
+    assert_eq!(rows.len(), 5);
+    assert!(rows.iter().all(|r| r.estimated_usd == 0.0 && r.passthrough), "§14: a passthrough row costs 0");
+    assert_eq!(t.h.session(&g.session).unwrap().status().spend_notional, Some(true));
+}
+
+#[test] // AU5, H§7.3 step 3, AU33: the row cost and the session spend are one `Prices::cost` result
+fn e2e_local_spend_is_the_row_cost() {
+    let priced = "key = \"keychain:k-same\"\n[model.provider.price_usd_per_mtok]\ninput = 4.0\noutput = 20.0\ncache_read = 0.2\ncache_write = 8.0\ncache_write_5m = 5.0\nlong_context = { above = 5000, input = 40.0, output = 200.0, cache_read = 2.0, cache_write = 80.0 }\n";
+    let t = setup(&model("test-priced", &[prov("p-priced", "{UP}/priced", "up-priced", priced)]));
+    let g = grant(&t, Agent::ClaudeCode, false);
+    let hd = [("x-api-key", g.token.as_str()), ("x-zygo-session", g.session.as_str())];
+    let s = t.h.session(&g.session).unwrap().status();
+    assert_eq!((s.spend_usd, s.spend_notional, s.passthrough, s.team_session), (Some(0.0), Some(false), Some(false), Some(false)));
+    // The split is read: 200 five-minute tokens at 5.0, 100 one-hour tokens at 8.0.
+    t.up.reply(&json!({"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":10,
+        "cache_read_input_tokens":1000,"cache_creation_input_tokens":300,"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":100}}}));
+    assert_eq!(send(&t, "POST", M, &hd, Some(mb("test-priced"))).0, 200);
+    let one = (100.0 * 4.0 + 10.0 * 20.0 + 1000.0 * 0.2 + 200.0 * 5.0 + 100.0 * 8.0) / 1e6;
+    assert_eq!(spend(&t, &g, 1), (Some(1400), Some(10), Some(one), Some(1), Some(1)));
+    let w = rows(&t, &g);
+    assert_eq!((w[0].estimated_usd, w[0].cache_write_tokens, w[0].provider.as_str()), (one, 300, "p-priced"));
+    // No split: every write at `cache_write`; a prompt above `long_context.above` takes the tier (H§7.3 step 1).
+    t.up.reply(&json!({"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":5000,"output_tokens":1,
+        "cache_read_input_tokens":0,"cache_creation_input_tokens":10}}));
+    assert_eq!(send(&t, "POST", M, &hd, Some(mb("test-priced"))).0, 200);
+    let two = (5000.0 * 40.0 + 200.0 + 10.0 * 80.0) / 1e6;
+    assert_eq!(spend(&t, &g, 2), (Some(1400 + 5010), Some(11), Some(one + two), Some(2), Some(2)));
+    let w = rows(&t, &g);
+    assert_eq!(w.iter().map(|r| r.estimated_usd).sum::<f64>(), one + two);
+    // A route with no price: counted, not priced, row cost 0.
+    assert_eq!(send(&t, "POST", M, &hd, Some(mb("code"))).0, 200);
+    assert_eq!(spend(&t, &g, 3), (Some(1400 + 5010 + 5010), Some(12), Some(one + two), Some(3), Some(2)));
+    // A reply with no token: in neither count (AU15).
+    t.up.reply(&json!({"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0}}));
+    assert_eq!(send(&t, "POST", M, &hd, Some(mb("test-priced"))).0, 200);
+    assert_eq!(spend(&t, &g, 4), (Some(1400 + 5010 + 5010), Some(12), Some(one + two), Some(3), Some(2)));
 }

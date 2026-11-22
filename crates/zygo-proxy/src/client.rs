@@ -55,6 +55,30 @@ pub struct SessionStatus {
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threshold: Option<u64>,
+    /// Input + cache read + cache write tokens of every request of the session (AU16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<u64>,
+    /// Output tokens of every request of the session (AU16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<u64>,
+    /// Session spend (H§7.3); 0.0 with no request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_usd: Option<f64>,
+    /// `spend_usd` is a comparison, not a charge: a passthrough or a team session (AU14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend_notional: Option<bool>,
+    /// Requests whose usage has at least one token (AU15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_total: Option<u64>,
+    /// Of `requests_total`, the requests that were priced (AU15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_priced: Option<u64>,
+    /// A passthrough session (§12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passthrough: Option<bool>,
+    /// A session created with a team token; the label is not sent (AU13).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_session: Option<bool>,
 }
 
 /// Synchronous (call it outside a tokio runtime); owns a current-thread runtime and a reqwest client built with
