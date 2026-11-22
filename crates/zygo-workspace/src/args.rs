@@ -1,6 +1,8 @@
 //! Argument filter, bypass detection and user-info check. Owner: node W4 (AU30, AU70, AU98).
-//! A relative path is resolved against the current directory of the process. The functions write no log and no output
-//! (W-C7).
+//! A relative path is resolved against the current directory of the process, or against the base of `filter_from`.
+//! The functions write no log and no output (W-C7).
+use std::path::{Path, PathBuf};
+
 use zygo_core::Agent;
 
 /// How many value tokens a flag takes, from the pinned `--help` of the agent.
@@ -167,18 +169,23 @@ struct Outcome {
     dropped: bool,
 }
 
-/// The absolute form of `value` as text, or `None` when there is none.
-fn absolute(value: &str) -> Option<String> {
-    std::path::absolute(value).ok()?.into_os_string().into_string().ok()
+/// The path that `value` names: relative to `base` when one is given (W7 D32), else as typed (the process cwd).
+fn resolved(value: &str, base: Option<&Path>) -> PathBuf {
+    base.map_or_else(|| PathBuf::from(value), |b| b.join(value))
+}
+
+/// The absolute form of `value` (taken relative to `base` when one is given) as text, or `None` when there is none.
+fn absolute(value: &str, base: Option<&Path>) -> Option<String> {
+    std::path::absolute(resolved(value, base)).ok()?.into_os_string().into_string().ok()
 }
 
 /// The text to save for one value of a flag of `class`, or `None` when the value is removed.
-fn saved_value(class: Class, value: &str) -> Option<String> {
+fn saved_value(class: Class, value: &str, base: Option<&Path>) -> Option<String> {
     match class {
         Class::Remove | Class::Session => None,
         Class::Keep => Some(value.to_string()),
-        Class::Path => Some(absolute(value).unwrap_or_else(|| value.to_string())),
-        Class::Content => match std::path::absolute(value) {
+        Class::Path => Some(absolute(value, base).unwrap_or_else(|| value.to_string())),
+        Class::Content => match std::path::absolute(resolved(value, base)) {
             Ok(path) if path.is_file() => Some(path.into_os_string().into_string().unwrap_or_else(|_| value.to_string())),
             _ => None,
         },
@@ -187,9 +194,9 @@ fn saved_value(class: Class, value: &str) -> Option<String> {
 
 /// Takes the values of `flag`: the attached value when there is one, else the next tokens by arity (`next` moves
 /// past them). Then applies the class of the flag.
-fn settle(flag: &Flag, attached: Option<&str>, args: &[String], next: &mut usize) -> Outcome {
+fn settle(flag: &Flag, attached: Option<&str>, args: &[String], next: &mut usize, base: Option<&Path>) -> Outcome {
     if let Some(value) = attached {
-        let saved = saved_value(flag.class, value);
+        let saved = saved_value(flag.class, value, base);
         return Outcome {
             flag_kept: saved.is_some(),
             dropped: flag.class == Class::Content && saved.is_none(),
@@ -215,7 +222,7 @@ fn settle(flag: &Flag, attached: Option<&str>, args: &[String], next: &mut usize
     }
     let (mut kept, mut removed) = (vec![], vec![]);
     for value in &args[start..*next] {
-        match saved_value(flag.class, value) {
+        match saved_value(flag.class, value, base) {
             Some(saved) => kept.push(saved),
             None => removed.push(value.clone()),
         }
@@ -243,7 +250,7 @@ fn table(agent: Agent) -> &'static [Flag] {
     }
 }
 
-fn walk(agent: Agent, args: &[String]) -> Walk {
+fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
     let table = table(agent);
     let mut out = Walk::default();
     let mut next = 0;
@@ -271,7 +278,7 @@ fn walk(agent: Agent, args: &[String]) -> Walk {
                 continue;
             };
             let start = next;
-            let outcome = settle(flag, attached, args, &mut next);
+            let outcome = settle(flag, attached, args, &mut next, base);
             out.occurrences.push(occurrence(flag, attached, &args[start..next], token_at..next));
             match (outcome.flag_kept, &outcome.attached) {
                 (true, Some(value)) => out.kept.push(format!("{name}={value}")),
@@ -292,7 +299,7 @@ fn walk(agent: Agent, args: &[String]) -> Walk {
                 let rest = &body[at + letter.len_utf8()..];
                 let attached = (flag.arity != Arity::None && !rest.is_empty()).then_some(rest);
                 let start = next;
-                let outcome = settle(flag, attached, args, &mut next);
+                let outcome = settle(flag, attached, args, &mut next, base);
                 out.occurrences.push(occurrence(flag, attached, &args[start..next], token_at..next));
                 if outcome.flag_kept {
                     kept_letters.push(letter);
@@ -330,20 +337,27 @@ fn walk(agent: Agent, args: &[String]) -> Walk {
 /// when it names an existing file; its name goes to `dropped_flags` when a value was dropped. File paths become
 /// absolute. All other tokens are kept as typed.
 pub fn filter(agent: Agent, args: &[String]) -> Filtered {
-    let walk = walk(agent, args);
+    let walk = walk(agent, args, None);
+    Filtered { kept: walk.kept, dropped_flags: walk.dropped_flags }
+}
+
+/// [`filter`], with each relative path value (a file path or a content file) taken relative to `base` before it is
+/// made absolute and before the file check (W7 D32, AU30: a loadout pane's `args` are relative to that pane's folder).
+pub fn filter_from(agent: Agent, args: &[String], base: &Path) -> Filtered {
+    let walk = walk(agent, args, Some(base));
     Filtered { kept: walk.kept, dropped_flags: walk.dropped_flags }
 }
 
 /// The tokens of `args` that [`filter`] does not keep, as typed, in input order. A short-flag cluster that loses a
 /// letter is given one time as typed.
 pub fn removable(agent: Agent, args: &[String]) -> Vec<String> {
-    walk(agent, args).removed
+    walk(agent, args, None).removed
 }
 
 /// Whether `args` hold a session argument of `agent` (W§8.3, AU30), by the same walk as [`filter`]: short clusters,
 /// flag values and `--` count as they do there.
 pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
-    walk(agent, args).session
+    walk(agent, args, None).session
 }
 
 /// Every name of the session flags of `agent`, in table order.
@@ -353,13 +367,13 @@ pub fn session_flags(agent: Agent) -> Vec<&'static str> {
 
 /// The long name of each table flag in `args` before `--`, in order; values and positionals are not flags.
 pub fn flags(agent: Agent, args: &[String]) -> Vec<&'static str> {
-    walk(agent, args).occurrences.into_iter().map(|o| o.name).collect()
+    walk(agent, args, None).occurrences.into_iter().map(|o| o.name).collect()
 }
 
 /// Each table flag in `args` before `--`, in order, with its values as typed and its tokens, by the same walk as
 /// [`filter`]: a flag value or a token after `--` is never a flag.
 pub fn occurrences(agent: Agent, args: &[String]) -> Vec<Occurrence> {
-    walk(agent, args).occurrences
+    walk(agent, args, None).occurrences
 }
 
 const SKIP_PERMISSIONS: &str = "--dangerously-skip-permissions";
