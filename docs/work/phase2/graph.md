@@ -56,7 +56,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1 | TODO | implementation | — |
+| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | TODO | implementation | — |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | DONE | implementation | 77323a8, merge 71181de; acceptance zygo-config 176/176 (merged tree) |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | DONE | judgment | 69b5822, merge 624dcd2; acceptance prices 27, builtin 13, workspace --no-run ok (merged tree) |
 | HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | DONE | judgment | commits 4379678 98d9a9d c0407fa; CI 44968316690 green (ubuntu, macos, windows); acceptance on merged tree: session_api 40, window 37, zygo-hooks lib 22, workspace --no-run ok, no div_ceil(4) |
@@ -69,8 +69,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
-| LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1 | TODO | implementation | — |
-| DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
+| LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1, FIX-5, FIX-7 | TODO | implementation | — |
+| DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | TODO | implementation | — |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
@@ -101,6 +101,9 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
+| FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | PLANNED | implementation | — |
+| FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | PLANNED | implementation | — |
+| FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | PLANNED | judgment | — |
 
 ## Log
 
@@ -170,3 +173,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | P1: PW15 failed with the Claude Code sandbox on (the setsid sleeper dies; the command runs in its own mount namespace); with the sandbox off it passes. PW11 verified on both tmux versions. 20 main-loop requests over 5 runs of live-detach.sh. |
 | 2026-11-22 | P1 found: live.sh live_end removes a caller-set N2_SCRATCH (lib.sh:2 says it is kept); live-selftest.sh:291 starts tmux -L without -f /dev/null. A tab in a tmux -F format prints as _ (AU99 must not use a tab separator). |
 | 2026-11-22 | Hold: W3, W6, W7, W10, M1, M4, E2 wait for the PW6 and PW15 fallback decisions (W§19). The PW6 hook fallback is an operator question per the P1 contract. DOC-1 waits for FIX-5 (PH4). |
+| 2026-11-22 | FIX-5, FIX-7, FIX-8 added from the LIV-1 and P1 findings. DOC-1 now depends on FIX-5 (LIV-1 contract). PRB-1 and LIV-2 run after FIX-5 and FIX-7, so the manual checks see the fixed HUD and framework. |
+| 2026-11-22 | Not a defect (no node): a status line run killed by Claude Code writes no cache, so the next fetch comes after the 5 s lease retake, not the 30 s back-off. H§7.7 designs the retake for a dead run; at the shipped 30 s refresh the effect is small. Lead's call. |
+| 2026-11-22 | FIX-7 reverses PRB-2's live_end choice for a caller-set N2_SCRATCH: live-<pid> is kept (docs/premises.md:17); lib_test C3 changes, C6 is new. |
