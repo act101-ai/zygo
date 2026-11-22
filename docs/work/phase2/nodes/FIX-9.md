@@ -7,3 +7,12 @@
 **Acceptance:** `sh -n scripts/premises/live-tmux.sh && PATH="$TMUX32BIN:$HOME/.opencode/bin:$PATH" sh scripts/premises/live-tmux.sh && PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-tmux.sh && grep -q '^6\.30 ok ' fixtures/tmux/pw6-3.2a.txt && grep -q '^6\.30 ok ' fixtures/tmux/pw6-3.7c.txt && sh scripts/check-premises.sh && cargo test -p zygo --test forbidden_content` → exit 0 (both runs use a private socket, `-S` in a private folder and `-f /dev/null`; the first with tmux 3.2a built from the release tarball into the scratch prefix `$TMUX32BIN` as in P1 step 6, the second with the system tmux 3.7c); 6.30 is `ok` on both versions; the diff of each `pw6` fixture changes no line other than 6.30; the `pw11` fixtures are unchanged
 
 ## Plan
+
+`scripts/premises/` has no offline test for `live-tmux.sh`, so the live runs on both tmux versions are the test. Every run uses the script's own private server: `-S` in a `mktemp -d` folder and `-f /dev/null`.
+
+- [ ] Red, before any edit, in the node checkout: `PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-tmux.sh` with the system tmux 3.7c writes `6.30 FAIL … show-hooks lines: 5; show-hooks -w lines: 3` in `fixtures/tmux/pw6-3.7c.txt`.
+- [ ] In `scripts/premises/live-tmux.sh` sub-check 6.30: on `ver_ge "${TV%[a-z]}" 3.3` the pass test wants 5 session lines with `--event` for the 4 session hooks and `window-unlinked`, and 3 window lines with `--event` for `pane-exited`, `window-layout-changed`, `window-renamed`; else 4 and 4 as today. All four exit codes stay 0 and the detail text keeps its form. `sh -n scripts/premises/live-tmux.sh` exits 0.
+- [ ] Green on 3.7c: the same run exits 0 and writes `6.30 ok … show-hooks lines: 5; show-hooks -w lines: 3`; `git diff fixtures/tmux/pw6-3.7c.txt` changes only the 6.30 line; `fixtures/tmux/pw11-3.7c.txt` has no diff.
+- [ ] Green on 3.2a: `PATH="$TMUX32BIN:$HOME/.opencode/bin:$PATH" sh scripts/premises/live-tmux.sh` exits 0 and writes `6.30 ok … show-hooks lines: 4; show-hooks -w lines: 4`; `fixtures/tmux/pw6-3.2a.txt` and `fixtures/tmux/pw11-3.2a.txt` have no diff.
+- [ ] `docs/premises.md` PW6 and W§17 PW6 give the 3.7c result as 35 of 39 sub-checks passed, failed 6.32 6.34 6.36 6.38; the W§17 sentence reads "corrected by node FIX-9"; the date 2026-11-22 and the word `failed` do not change.
+- [ ] The contract's Acceptance command alone exits 0, and `PATH="$HOME/.opencode/bin:$PATH" sh scripts/check-premises.sh` exits 0.

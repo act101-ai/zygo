@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W3 (in progress), W9, then FIX-9, FIX-11, W6, W7, W8, W10, L2, H1, M1-M5, E1, E2, D1
+**Next:** L2, W3, FIX-9, FIX-11, W6, W7, W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -94,7 +94,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
-| FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
+| FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | PLANNED | mechanical | — |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | TODO | mechanical | — |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
@@ -202,3 +202,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W9 planned: 22 steps; review B1-B3, M1-M12 fixed; AU26 rule 3 order and read-error busy, skipped rule 3 gives no interrupted-turn idle (author's call) |
 | 2026-11-22 | L2 planned: 18 steps; review B1-B3, 12 minor fixed; OpenCode turn start = first session.status busy (AU27); session flags from W4 args.rs; Files add launcher.rs, args.rs, Cargo.lock (author's call) |
 | 2026-11-22 | W9 DONE (e167624): activity.json under fs4 lock, drain idle rule. Merged tree: activity 33 + 1 ignored, drain 27, workspace 111, clippy clean. Round 2: Busy gets rule_skipped; W10 Spec prints the skip line for it. |
+| 2026-11-22 | FIX-9 planned: 6 steps, test first. No offline test for live-tmux.sh, so live runs on tmux 3.7c, red then green, and 3.2a are the test; 6.30 uses ver_ge 3.3 for session 5, window 3. |
