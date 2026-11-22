@@ -3770,3 +3770,21 @@ dependencies = [
  "zygo-core",
  "zygo-usage",
 ]
+
+[[package]]
+name = "zygo-workspace"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "hex",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "zygo-config",
+ "zygo-core",
+ "zygo-proxy",
+ "zygo-work",
+ "zygo-workspace",
+]
