@@ -121,7 +121,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
 
 ### Change log and verification
 
-- [ ] 18. Base `## Change log`: append this row:
+- [x] 18. Base `## Change log`: append this row:
 
   ```text
   | 2026-11-22 | §3, §6.1, §6.3, §7.2, §10.2.2 (N15 note), §10.2.4, §10.7, §14, §15.7, §17 (status line paragraph, `zygo statusline`, `zygo doctor`, `zygo update` rows), §17.1, §20 (21a) | operator (statusline HUD design H§9 and auto-update design "Base-spec changes", both approved 2026-11-21); texts by DOC-1 | The two approved designs change these sections. Each section is rewritten in place, and its new text is marked *(2026-11-22, HUD design)* or *(2026-11-22, auto-update design)*. The `zygo up` start check and the W§15 rows are workspaces D1's. |
