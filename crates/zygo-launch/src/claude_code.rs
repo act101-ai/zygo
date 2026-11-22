@@ -18,6 +18,8 @@ const PT_BARE: &str = "--passthrough does not work with --bare: bare mode reads 
 const PT_MANAGED: &str = "passthrough needs your claude.ai login; a managed setting replaces it";
 const BAD_AGENTS: &str = "--agents: not a JSON object (or, with --print, a file that holds one)";
 const SETTINGS_WARN: &str = "zygo: your --settings replaces zygo's settings file; the lead guard is off";
+/// The AU59 line: a member launch with `--settings` runs as a plain launch.
+pub const MEMBER_SETTINGS_WARN: &str = "zygo: --settings replaces zygo's hooks; this agent is not saved by the workspace";
 const NO_EDIT: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
 #[cfg(target_os = "macos")]
@@ -75,6 +77,11 @@ fn without_flag(args: &[String], name: &str) -> Vec<String> {
 
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|a| a == name || a.strip_prefix(name).is_some_and(|r| r.starts_with('=')))
+}
+
+/// Whether the user's arguments hold `--settings` before any `--`, by W4's walk (AU59, D5).
+pub(crate) fn has_user_settings(args: &[String]) -> bool {
+    zygo_workspace::args::flags(Agent::ClaudeCode, args).contains(&"--settings")
 }
 
 fn strip_1m(v: &str) -> &str {
@@ -265,12 +272,25 @@ impl ClaudeCode {
         pre.push(entry(Some("Edit|Write|NotebookEdit|Read|Bash"), "guard"));
         let mut post = vec![entry(Some("Bash|Read|Grep|Glob|WebFetch"), "trim")];
         let mut h = Map::new();
+        // A workspace member is the AU58 marker in the session view; its hooks are W§9.1.
+        let member = ctx.view.workspace.is_some();
+        let mut subagent_stop = vec![];
         if ctx.view.work_units {
             pre.push(entry(Some("mcp__zygo__work_begin"), "work --event begin"));
             pre.push(entry(Some("mcp__zygo__work_verdict"), "work --event verdict"));
             post.push(entry(Some("*"), "work"));
             h.insert("PostToolUseFailure".into(), json!([entry(Some("*"), "work")]));
-            h.insert("SubagentStop".into(), json!([entry(None, "work")]));
+            subagent_stop.push(entry(None, "work"));
+        }
+        if member {
+            pre.push(entry(Some("Agent"), "workspace --event pre-tool"));
+            h.insert("Stop".into(), json!([entry(None, "workspace --event stop")]));
+            h.insert("StopFailure".into(), json!([entry(None, "workspace --event stop")]));
+            h.insert("SubagentStart".into(), json!([entry(None, "workspace --event subagent-start")]));
+            subagent_stop.push(entry(None, "workspace --event subagent-stop"));
+        }
+        if !subagent_stop.is_empty() {
+            h.insert("SubagentStop".into(), json!(subagent_stop));
         }
         h.insert("PreToolUse".into(), json!(pre));
         h.insert("PostToolUse".into(), json!(post));
@@ -378,7 +398,7 @@ impl AgentAdapter for ClaudeCode {
         }
         args.extend(without_flag(&ctx.args, "--agents"));
         let (mut lines, mut log) = (vec![], vec![]);
-        if has_flag(&ctx.args, "--settings") {
+        if has_user_settings(&ctx.args) {
             lines.push(SETTINGS_WARN.to_string());
             log.push("degraded: --settings".to_string());
         }
@@ -427,5 +447,14 @@ impl AgentAdapter for ClaudeCode {
         let env = m.get("env").and_then(Value::as_object);
         let key = |k: &str| m.contains_key(k) || env.is_some_and(|e| e.keys().any(|n| if cfg!(windows) { n.eq_ignore_ascii_case(k) } else { n == k }));
         (m.contains_key("apiKeyHelper") || key("ANTHROPIC_API_KEY") || key("ANTHROPIC_AUTH_TOKEN")).then(|| PT_MANAGED.into())
+    }
+    fn has_session_arg(&self, args: &[String]) -> bool {
+        zygo_workspace::args::has_session_arg(Agent::ClaudeCode, args)
+    }
+    fn preassign_args(&self, id: &str) -> Vec<String> {
+        vec!["--session-id".into(), id.into()]
+    }
+    fn resume_args(&self, id: &str) -> Vec<String> {
+        vec!["--resume".into(), id.into()]
     }
 }
