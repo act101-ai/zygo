@@ -12,7 +12,8 @@
 # - They use the real HOME, and the caller's CLAUDE_CONFIG_DIR when it is set, so Claude Code reads the
 #   operator's settings, hooks, plugins and MCP servers. The script edits none of them and adds no hook.
 #   DISABLE_AUTOUPDATER=1 and ZYGO_NO_UPDATE_CHECK=1 are set.
-# - Claude Code asks whether it trusts the run's temporary worktree; the script answers yes (Enter).
+# - Claude Code asks whether it trusts the run's temporary worktree; the script answers yes (it moves
+#   the pointer to "Yes, I trust this folder", reads the pane to see it there, then sends Enter).
 #   Claude Code then keeps an entry for that path under "projects" in its .claude.json, and a transcript
 #   folder under <config dir>/projects/. The script does not delete them; the operator may.
 # - They spend the operator's claude.ai usage: one short answer (session a), and Claude Code's own
@@ -150,14 +151,22 @@ def cmd_fit(pane, expected, cols):
 
 
 def cmd_ph12(events, bound):
-    runs = sorted(json.load(open(events)), key=lambda x: x["start"])
+    d = json.load(open(events))
+    if isinstance(d, list):
+        d = {"runs": d, "dumps": []}
+    runs = sorted(d["runs"], key=lambda x: x["start"])
+    dumps = sorted(d.get("dumps", []))
     bound = float(bound)
+    # Each run writes the dump file once, so the dump count is the run count; ps seldom sees a run of a few ms.
+    n = len(dumps) if dumps else len(runs)
     long = [x for x in runs if x["end"] - x["start"] >= 1.0]
     if not long:
-        return {"class": "none", "runs": len(runs)}
+        return {"class": "none", "runs": n, "seen_by_ps": len(runs)}
     first = long[0]
     life = round(first["end"] - first["start"], 2)
-    later = [x["start"] for x in runs if x["start"] > first["start"]]
+    # The starts after the slow run: the runs that ps saw, and the dump writes (the slow run writes its own
+    # dump right after its stdin read, at most 0.5 s after its start).
+    later = [x["start"] for x in runs if x["start"] > first["start"]] + [t for t in dumps if t > first["start"] + 0.5]
     nxt = round(min(later) - first["start"], 2) if later else None
     if life < bound - 0.5:
         c = "kills"
@@ -165,7 +174,7 @@ def cmd_ph12(events, bound):
         c = "overlaps"
     else:
         c = "waits"
-    return {"class": c, "life": life, "next_start": nxt, "runs": len(runs)}
+    return {"class": c, "life": life, "next_start": nxt, "runs": n, "seen_by_ps": len(runs)}
 
 
 def cmd_expect(dump, zygo, cwd, columns, out):
@@ -191,12 +200,25 @@ if __name__ == "__main__":
     sys.stdout.write(r if isinstance(r, str) else json.dumps(r, ensure_ascii=False) + "\n")
 PY
   cat >"$1/hud_poll.py" <<'PY'
-import json, subprocess, sys, time
+import json, os, subprocess, sys, time
 
+# hud_poll.py <out> <zygo path> <seconds> [<dump file>]: samples every 0.05 s. "runs": each process whose
+# arguments start with "<zygo path> hook statusline" (first and last sample that saw it). "dumps": the time
+# of each new dump file (each run of the hook replaces it once), so a run of a few ms counts too.
 out, prefix, seconds = sys.argv[1], sys.argv[2] + " hook statusline", float(sys.argv[3])
-t0, seen = time.monotonic(), {}
+dump = sys.argv[4] if len(sys.argv) > 4 else None
+t0, seen, dumps, last = time.monotonic(), {}, [], None
 while time.monotonic() - t0 < seconds:
     now = round(time.monotonic() - t0, 2)
+    if dump:
+        try:
+            st = os.stat(dump)
+            key = (st.st_ino, st.st_mtime_ns)
+        except OSError:
+            key = None
+        if key is not None and key != last:
+            dumps.append(now)
+            last = key
     ps = subprocess.run(["ps", "-axo", "pid=,args="], capture_output=True, text=True).stdout
     for line in ps.splitlines():
         pid, _, args = line.strip().partition(" ")
@@ -204,11 +226,12 @@ while time.monotonic() - t0 < seconds:
             seen.setdefault(pid, [now, now])[1] = now
     time.sleep(0.05)
 runs = [{"n": i + 1, "start": a, "end": b} for i, (a, b) in enumerate(sorted(seen.values()))]
-json.dump(runs, open(out, "w"))
+json.dump({"runs": runs, "dumps": dumps}, open(out, "w"))
 PY
   cat >"$1/hud_pty.py" <<'PY'
-import fcntl, json, os, pty, select, shutil, signal, struct, sys, termios, time
+import fcntl, json, os, pty, re, select, shutil, signal, struct, sys, termios, time
 
+CSI = re.compile(rb"\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 dump, log_copy, cols, wait, cwd = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), sys.argv[5]
 argv = sys.argv[6:]
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
@@ -217,7 +240,7 @@ if pid == 0:
     os.chdir(cwd)
     os.execv(argv[0], argv)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, cols, 0, 0))
-buf, trusted, code = b"", False, 3
+buf, code = b"", 3
 
 
 def pump(seconds):
@@ -242,9 +265,11 @@ try:
         if os.path.exists(dump) and os.path.getsize(dump) > 0:
             code = 0
             break
-        if not trusted and b"trust" in buf.lower():
-            os.write(fd, b"\r")
-            trusted = True
+        # The folder trust question: not answered here (Enter alone means "No, exit" in Claude Code
+        # 2.1.330). A tmux session of the script answers it before this session starts.
+        if b"Itrustthisfolder" in re.sub(rb"\s+", b"", CSI.sub(b"", buf)):
+            code = 5
+            break
     if code == 0:
         pump(1)
         try:
@@ -342,6 +367,8 @@ ok("S6 overlaps", run("ph12", ev([(1.0, 3.95), (3.0, 3.1), (5.0, 5.1)]), "3")["c
 ok("S6 waits", run("ph12", ev([(1.0, 3.95), (4.0, 4.1), (6.0, 6.1)]), "3")["class"], "waits")
 ok("S6 kills", run("ph12", ev([(1.0, 3.0), (3.0, 3.1)]), "3")["class"], "kills")
 ok("S6 none", run("ph12", ev([(1.0, 1.1), (3.0, 3.1)]), "3")["class"], "none")
+r = run("ph12", w("ev2.json", json.dumps({"runs": [{"n": 1, "start": 1.0, "end": 3.1}, {"n": 2, "start": 7.0, "end": 9.0}], "dumps": [1.2, 3.05, 5.0, 7.1]})), "3")
+ok("S6 kills, starts from the dump writes", (r["class"], r["life"], r["next_start"], r["runs"], r["seen_by_ps"]), ("kills", 2.1, 2.05, 4, 2))
 out = subprocess.run([sys.executable, "-I", os.path.join(HERE, "hud_an.py"), "rows", w("r.txt", "a\n" + v1 + "\n" + v2 + "\n  footer\n\n"), "2", "plain"], capture_output=True, text=True, check=True).stdout
 ok("S7 rows", out, v1 + "\n" + v2 + "\n")
 print(f"live-hud selfcheck: ok ({n})")
@@ -394,6 +421,8 @@ FX="$REPO_DIR/fixtures/claude-code/hud"
 mkdir -p "$FX"
 LOGO=$(printf '\360\235\230\207\360\235\230\206\360\235\227\264\360\235\227\274')   # U+1D607 U+1D606 U+1D5F4 U+1D5FC
 REFL=$(printf 'z\312\216\306\203o')                                                 # z U+028E U+0183 o
+PTR=$(printf '\342\235\257')                                                        # U+276F, the pointer of a Claude Code menu
+TRUST_YES="Yes, I trust"                                                            # the accept option of the folder trust question
 
 live_run hud
 HUD=$RUN
@@ -435,18 +464,33 @@ wait_until() {
   _i=0
   until "$@"; do _i=$((_i + 1)); [ "$_i" -lt "$_n" ] || return 1; sleep 0.5; done
 }
-# hud_wait <session>: the HUD row is in the pane within 60 s. Answers the folder trust question once
-# (Enter). 1 when there is no HUD row; HUD_WHY then says why.
+# trust_line <session>: the pane line of the accept option of the folder trust question (empty: no question).
+trust_line() { pane "$1" | grep -F "$TRUST_YES" | tail -n 1; }
+# hud_trust <session>: one key step on the folder trust question. Claude Code 2.1.330 starts with the
+# pointer on "No, exit", so Enter alone ends the session. The pointer is not on the accept line: Down.
+# The pointer is on the accept line in two readings of the pane, 0.5 s apart: Enter. A key that Claude
+# Code did not take is sent again by the next step. Prints the number of 0.5 s polls that the step used.
+hud_trust() {
+  case "$(trust_line "$1")" in
+    "") echo 0 ;;
+    *"$PTR"*)
+      sleep 0.5
+      case "$(trust_line "$1")" in *"$PTR"*) tmux send-keys -t "=$1:" Enter || true; sleep 1; echo 3 ;; *) echo 1 ;; esac ;;
+    *) tmux send-keys -t "=$1:" Down || true; sleep 1; echo 2 ;;
+  esac
+}
+# hud_wait <session>: the HUD row is in the pane within 60 s. Answers the folder trust question with
+# yes (hud_trust). 1 when there is no HUD row; HUD_WHY then says why.
 hud_wait() {
-  _i=0 _asked=""
+  _i=0
   until pane "$1" | grep -qF "$LOGO"; do
     _p=$(pane "$1")
     case "$_p" in
       *hud-exit:*)
         HUD_WHY="zygo claude ended: $(printf '%s\n' "$_p" | grep -E '^zygo: |hud-exit:' | sed -n 1p | python3 -I "$PREMISES_DIR/scrub.py" "$HUD" /dev/stdin | cut -c1-160)"
         return 1 ;;
+      *"$TRUST_YES"*) _i=$((_i + $(hud_trust "$1"))) ;;
     esac
-    if [ -z "$_asked" ] && printf '%s' "$_p" | grep -qi trust; then tmux send-keys -t "=$1:" Enter; _asked=1; fi
     _i=$((_i + 1)); [ "$_i" -lt 120 ] || { HUD_WHY="timeout: no HUD row in the pane within 60 s"; return 1; }
     sleep 0.5
   done
@@ -465,8 +509,9 @@ hud_stop() {
 wsrc() { sed -n 's/.*width source \([^,]*\), width \([0-9]*\).*/\1 \2/p' "$@"; }
 has_data() { pane "$1" | grep -F "$LOGO" | tail -n 1 | grep -qE 'ctx [0-9]'; }
 log_has() { grep -q "$1" "$SD/session.log" 2>/dev/null; }
-other_width() { grep 'width source' "$SD/session.log" 2>/dev/null | grep -v -e 'tty, width 200' -e 'tty, width 70'; }
-log_19() { other_width | grep -q .; }
+# wcount: the number of width-source lines in the session log; log_more <n>: there are more than <n>.
+wcount() { wsrc "$SD/session.log" 2>/dev/null | grep -c . || true; }
+log_more() { [ "$(wcount)" -gt "$1" ]; }
 
 # ---- session a: compact, 200 columns, one short turn; then 70 columns; then 19 columns ----
 A_WHY="" SD="" SGR='{"ok":false,"why":"no capture"}' R70='{"class":"none"}' R19='{"class":"none"}' WA="" W19=""
@@ -482,9 +527,13 @@ if hud_wait a; then
   if [ -n "$SD" ] && [ -e "$SD/session.log" ]; then
     WA=$(wsrc "$SD/session.log" | sed -n 1p)
     tmux resize-window -t "=a:" -x 70 -y 50 || true
-    if wait_until 20 log_has 'width source tty, width 70'; then sleep 3; pane a >"$HUD/pane-a-70.txt"; fi
+    # The hook logs a width line when the source or the width changes. The source at 70 columns is
+    # the one that answers (Claude Code 2.1.330: COLUMNS; /dev/tty does not answer the hook).
+    if wait_until 20 log_has 'width source [^,]*, width 70$'; then sleep 3; pane a >"$HUD/pane-a-70.txt"; fi
+    N19=$(wcount)
     tmux resize-window -t "=a:" -x 19 -y 50 || true
-    if wait_until 20 log_19; then W19=$(other_width | sed -n 1p | wsrc); sleep 3; pane a >"$HUD/pane-a-19.txt"; fi
+    # 19 is below the 20-column limit of the hook, so a new line names the source that answers then.
+    if wait_until 20 log_more "$N19"; then W19=$(wsrc "$SD/session.log" | sed -n "$((N19 + 1))p"); sleep 3; pane a >"$HUD/pane-a-19.txt"; fi
     cp "$SD/session.log" "$HUD/session-a.log" 2>/dev/null || true
     # The expected rows: the hook run by hand with no terminal, on the session's own data.
     if [ -s "$HUD/pane-a-70.txt" ]; then
@@ -515,7 +564,7 @@ fi
 hud_stop b
 
 # ---- session c: refreshInterval 2 s and a status fetch that starts 5 s late; 45 s of process samples ----
-python3 -I "$PY/hud_poll.py" "$HUD/events.json" "$ZYGO_BIN" 45 &
+python3 -I "$PY/hud_poll.py" "$HUD/events.json" "$ZYGO_BIN" 45 "$HUD/dump-c.json" &
 LIVE_PIDS=$!
 hud_start c 200 "$HUD/zygo.toml" "$HUD/dump-c.json" ZYGO_TEST_REFRESH_INTERVAL=2 ZYGO_TEST_FETCH_DELAY_MS=5000
 hud_wait c || true
@@ -530,8 +579,16 @@ WP=""
 python3 -I "$PY/hud_pty.py" "$HUD/dump-d.json" "$HUD/session-d.log" 100 60 "$WT" \
   "$(command -v env)" -i $(hud_env "$HUD/zygo.toml" "$HUD/dump-d.json") "$ZYGO_BIN" claude --passthrough &
 LIVE_PIDS=$!
-wait "$LIVE_PIDS" || true
+D_RC=0
+wait "$LIVE_PIDS" || D_RC=$?
 LIVE_PIDS=""
+case "$D_RC" in
+  0) D_WHY="" ;;
+  3) D_WHY="pseudo-terminal session: no dump file from the hook within 60 s" ;;
+  4) D_WHY="pseudo-terminal session: no copy of session.log" ;;
+  5) D_WHY="pseudo-terminal session: Claude Code showed the folder trust question, which the script does not answer there" ;;
+  *) D_WHY="pseudo-terminal session: the driver ended with status $D_RC" ;;
+esac
 [ -s "$HUD/session-d.log" ] && WP=$(wsrc "$HUD/session-d.log" | sed -n 1p)
 
 # ---- the LIVE lines of the passthrough parts ----
@@ -568,7 +625,7 @@ T4="(a) width source in tmux at 200 columns: ${WA:-none}; on a pseudo-terminal o
 if [ "$WA" = "tty 200" ] && [ "$WP" = "tty 100" ] && [ "$CA" != unset ] && [ "$CP" != unset ] && [ "$GAP" = 0 ]; then
   line PH4 verified "$T4"
 else
-  line PH4 failed "${A_WHY:+$A_WHY; }$T4"
+  line PH4 failed "${A_WHY:+$A_WHY; }${D_WHY:+$D_WHY; }$T4"
 fi
 if [ ! -s "$HUD/dump-a.keep.json" ]; then
   line PH5 failed "${A_WHY:-no dump file from the hook}"
@@ -607,7 +664,7 @@ if [ -s "$HUD/pane-a-19.txt" ]; then hud_an rows "$HUD/pane-a-19.txt" 8 plain >"
 if [ -s "$HUD/dump-a.keep.json" ]; then jq "$mask" "$HUD/dump-a.keep.json" >"$HUD/fx-dump-tmux.json" || true; fi
 if [ -s "$HUD/dump-d.json" ]; then jq "$mask" "$HUD/dump-d.json" >"$HUD/fx-dump-pty.json" || true; fi
 {
-  [ -e "$HUD/session-a.log" ] && wsrc "$HUD/session-a.log" | sed 's/^/tmux session a (200, then 70, then 19 columns; then two hand runs): /'
+  [ -e "$HUD/session-a.log" ] && wsrc "$HUD/session-a.log" | sed 's/^/tmux session a (200, then 70, then 19 columns): /'
   [ -e "$HUD/session-d.log" ] && wsrc "$HUD/session-d.log" | sed 's/^/pseudo-terminal, 100 columns: /'
   true
 } >"$HUD/fx-width.txt"
