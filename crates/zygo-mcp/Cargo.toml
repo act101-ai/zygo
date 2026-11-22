@@ -10,6 +10,7 @@ zygo-config.workspace = true
 zygo-results.workspace = true
 zygo-work.workspace = true
 zygo-usage.workspace = true
+zygo-workspace.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

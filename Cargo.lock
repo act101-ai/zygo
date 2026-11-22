@@ -3637,6 +3637,7 @@ dependencies = [
  "zygo-results",
  "zygo-usage",
  "zygo-work",
+ "zygo-workspace",
 ]
 
 [[package]]
