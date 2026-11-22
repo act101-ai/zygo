@@ -24,15 +24,16 @@ fn file(name: &str) -> String {
 
 #[test]
 fn embedded_has_one_command_per_verb() {
-    assert_eq!(VERB_SPECS.len(), 13);
+    assert_eq!(VERB_SPECS.len(), 14);
     for v in VERB_SPECS {
         let t = file(&format!("commands/{}.md", v.name));
         assert!(t.contains("disable-model-invocation: true"), "{}", v.name);
         assert!(t.contains("description: \""), "{}", v.name);
         assert!(t.contains(&format!("zygo {} $ARGUMENTS", v.name)), "{}", v.name);
     }
-    assert_eq!(embedded::files().iter().filter(|(n, _)| n.starts_with("commands/")).count(), 13);
+    assert_eq!(embedded::files().iter().filter(|(n, _)| n.starts_with("commands/")).count(), 14);
     assert!(file("commands/compact.md").contains("argument-hint: \"<tokens|on|off>\""));
+    assert!(file("commands/statusline.md").contains("argument-hint: \"[compact|verbose]\""));
     assert!(!file("commands/status.md").contains("argument-hint"));
 }
 
@@ -52,7 +53,7 @@ fn embedded_plugin_passes_the_check_and_has_no_code() {
 fn embedded_skill_covers_the_cli() {
     let t = file("skills/zygo-cli/SKILL.md").to_lowercase();
     assert!(t.contains("never state or guess the context window"));
-    for c in ["zygo compact", "zygo status", "zygo work", "zygo usage", "zygo marketplace", "zygo plugins"] {
+    for c in ["zygo compact", "zygo status", "zygo work", "zygo usage", "zygo marketplace", "zygo plugins", "zygo statusline"] {
         assert!(t.contains(c), "{c}");
     }
     assert!(t.contains("name: zygo-cli"));
@@ -82,7 +83,7 @@ fn claude_snapshot_has_plugin_dirs_and_the_embedded_plugin() {
     let session = fx.path("session");
     let s = snap(&paths, &session, Agent::ClaudeCode, &selection(&cfg, None), None).unwrap();
     let mut want: std::collections::BTreeSet<String> = embedded::files().into_iter().map(|(n, _)| format!("plugins/zygo/{n}")).collect();
-    assert_eq!(want.len(), 15);
+    assert_eq!(want.len(), 16);
     want.extend(["plugins/demo/.claude-plugin/plugin.json", "plugins/demo/skills/hello/SKILL.md", "plugins/demo/commands/go.md", "plugins/demo/agents/rev.md"].map(String::from));
     assert_eq!(tree(&session), want);
     assert_eq!(s.plugins.len(), 2);

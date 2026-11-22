@@ -16,7 +16,7 @@ pub struct VerbSpec {
     pub scope: Scope,
 }
 
-static SPECS: [VerbSpec; 13] = [
+static SPECS: [VerbSpec; 14] = [
     VerbSpec { name: "help", args: "[<verb>]", summary: "Every verb with its arguments and current value; with a verb, its details", scope: Scope::None },
     VerbSpec { name: "status", args: "", summary: "As `zygo status`", scope: Scope::None },
     VerbSpec { name: "usage", args: "", summary: "The session's savings", scope: Scope::None },
@@ -30,6 +30,7 @@ static SPECS: [VerbSpec; 13] = [
     VerbSpec { name: "marketplace", args: "[list|add|update|remove …]", summary: "Plugin marketplaces", scope: Scope::UserConfig },
     VerbSpec { name: "profile", args: "[<name>|none]", summary: "Default profile", scope: Scope::NextLaunch },
     VerbSpec { name: "compact-tool", args: "on|off", summary: "The `compact` MCP tool", scope: Scope::NextLaunch },
+    VerbSpec { name: "statusline", args: "[compact|verbose]", summary: "Status line style", scope: Scope::SessionSave },
 ];
 
 pub static VERB_SPECS: &[VerbSpec] = &SPECS;
