@@ -2,8 +2,114 @@
 
 pub mod tmux;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// Where `set_hook` puts a hook (W3 D14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookScope {
+    /// `set-hook -t =<s>:`.
+    Session,
+    /// `set-hook -w -t =<s>:<w>`.
+    Window(u32),
+}
+
+/// The arguments of `new_session`. `start_dir` is raw: the implementation escapes `#` (W3 D6).
+#[derive(Debug, Clone, Copy)]
+pub struct NewSession<'a> {
+    pub name: &'a str,
+    pub start_dir: &'a Path,
+    pub width: u32,
+    pub height: u32,
+    /// The whole environment of the tmux client that creates the session (the cleaned caller environment).
+    pub env: &'a [(OsString, OsString)],
+    /// The first pane's command, 2 or more items.
+    pub argv: &'a [OsString],
+}
+
+/// The arguments of `new_window`. `name` and `start_dir` are raw: the implementation escapes `#` (W3 D6).
+#[derive(Debug, Clone, Copy)]
+pub struct NewWindow<'a> {
+    pub session: &'a str,
+    pub name: Option<&'a str>,
+    pub start_dir: &'a Path,
+    /// The new pane's command, 2 or more items.
+    pub argv: &'a [OsString],
+}
+
+/// The arguments of `split_window`. `target` is a pane id `%N` or a window target; `start_dir` is raw (W3 D6).
+#[derive(Debug, Clone, Copy)]
+pub struct Split<'a> {
+    pub target: &'a str,
+    pub start_dir: Option<&'a Path>,
+    /// The new pane's command, 2 or more items.
+    pub argv: &'a [OsString],
+}
+
+/// The exact target of a session: `=<session>:`.
+pub fn session_target(session: &str) -> String { format!("={session}:") }
+
+/// The exact target of a window: `=<session>:<window>`.
+pub fn window_target(session: &str, window: u32) -> String { format!("={session}:{window}") }
+
+/// The terminal multiplexer operations of W§7.4, W§8 and W§9 (W§13). Every call except `attach` has the bound
+/// [`BOUND`]. A session argument is a session name; the implementation makes the exact target.
+pub trait Multiplexer {
+    /// `tmux -V`, read with [`parse_version`].
+    fn version(&self) -> Result<(u32, u32), MuxError>;
+    /// `display-message -p -t =<s>: #{socket_path}`.
+    fn socket_path(&self, session: &str) -> Result<PathBuf, MuxError>;
+    /// `has-session -t =<s>:`, with the AU87 answer kinds.
+    fn session_exists(&self, session: &str) -> SessionAnswer;
+    /// `new-session -d -P -F #{window_index} -s <s> -c <dir> -x <w> -y <h> -- <argv>`, with exactly `spec.env`;
+    /// returns the first window index.
+    fn new_session(&self, spec: &NewSession<'_>) -> Result<u32, MuxError>;
+    /// `resize-window -t =<s>:<w> -x <width> -y <height>`.
+    fn resize_window(&self, session: &str, window: u32, width: u32, height: u32) -> Result<(), MuxError>;
+    /// `set-option -w -u -t =<s>:<w> <name>`.
+    fn unset_window_option(&self, session: &str, window: u32, name: &str) -> Result<(), MuxError>;
+    /// `set-option -w -t <window> <name> <value>`; `window` is a window target or a pane id.
+    fn set_window_option(&self, window: &str, name: &str, value: &str) -> Result<(), MuxError>;
+    /// `set-environment -t =<s>: <name> <value>`.
+    fn set_env(&self, session: &str, name: &str, value: &str) -> Result<(), MuxError>;
+    /// `set-environment -r -t =<s>: <name>`: the name is marked as removed for new panes.
+    fn hide_env(&self, session: &str, name: &str) -> Result<(), MuxError>;
+    /// `set-option -t =<s>: <name> <value>`.
+    fn set_session_option(&self, session: &str, name: &str, value: &str) -> Result<(), MuxError>;
+    /// `show-options -qv -t =<s>: <name>`. `None` means unset or no such session: a missing session gives no error.
+    fn show_session_option(&self, session: &str, name: &str) -> Result<Option<String>, MuxError>;
+    /// `set-hook -t =<s>: <event> <command>`, or `set-hook -w -t =<s>:<w> …` for [`HookScope::Window`].
+    fn set_hook(&self, session: &str, scope: HookScope, event: &str, command: &str) -> Result<(), MuxError>;
+    /// `new-window -d -P -F #{window_index} -t =<s>: [-n <name>] -c <dir> -- <argv>`; returns the new window index.
+    fn new_window(&self, spec: &NewWindow<'_>) -> Result<u32, MuxError>;
+    /// `split-window -d -P -F #{pane_id} -t <target> [-c <dir>] -- <argv>`; returns the new pane id.
+    fn split_window(&self, spec: &Split<'_>) -> Result<String, MuxError>;
+    /// `select-layout -t =<s>:<w> <layout>`.
+    fn select_layout(&self, session: &str, window: u32, layout: &str) -> Result<(), MuxError>;
+    /// `select-window -t =<s>:<w>`.
+    fn select_window(&self, session: &str, window: u32) -> Result<(), MuxError>;
+    /// `select-pane -t <pane>`.
+    fn select_pane(&self, pane: &str) -> Result<(), MuxError>;
+    /// `resize-pane -Z -t <pane>`: toggles the zoom of the pane's window.
+    fn zoom(&self, pane: &str) -> Result<(), MuxError>;
+    /// `list-panes -s -t =<s>: -F` [`PANE_FORMAT`]: the raw lines, parsed with [`parse_pane_line`].
+    fn list_panes(&self, session: &str) -> Result<Vec<String>, MuxError>;
+    /// `show-options -p -qv -t <pane> <name>`. `None` means unset or no such pane: a missing pane gives no error.
+    fn show_pane_option(&self, pane: &str, name: &str) -> Result<Option<String>, MuxError>;
+    /// `set-option -p -t <pane> <name> <value>`.
+    fn set_pane_option(&self, pane: &str, name: &str, value: &str) -> Result<(), MuxError>;
+    /// `display-message -p -t <target> <format>`. A missing target gives no error: a missing session or pane gives
+    /// empty fields, and a missing window gives the session's current window's value.
+    fn display(&self, target: &str, format: &str) -> Result<String, MuxError>;
+    /// `kill-session -t =<s>:`.
+    fn kill_session(&self, session: &str) -> Result<(), MuxError>;
+    /// `attach-session -t =<s>:`, with the terminal and the caller's environment and no bound; returns tmux's exit
+    /// code.
+    fn attach(&self, session: &str) -> Result<i32, MuxError>;
+    /// `switch-client -t =<s>:`.
+    fn switch_client(&self, session: &str) -> Result<(), MuxError>;
+}
 
 /// The oldest tmux that workspaces support (AU7).
 pub const MIN_VERSION: (u32, u32) = (3, 2);
