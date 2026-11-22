@@ -668,7 +668,7 @@ Units of one session are cut per agent by `began_at`: unit *k* owns that agent's
 ## 14. Usage store (metadata only)
 
 - SQLite (WAL) at `~/.local/share/zygo/usage.db` (Windows `%LOCALAPPDATA%\zygo\usage.db`); serve mode keeps its own on the server. Tables:
-  - `requests`: ts, session, token label (serve mode) or null, agent, agent_version, agent_id, agent_type, request_class, compaction header, route, role requested, role served, model, provider, profile, passthrough, status, latency_ms, input/output/cache_read/cache_write tokens, estimated_usd (list price × tokens; 0 for passthrough), adjustments (text list), redaction findings (`[{id, count}]`), repo, work item. *(Note 2026-11-19, N11 review: `status` 0 means no upstream response — the client left or the proxy stopped first.)*
+  - `requests`: ts, session, token label (serve mode) or null, agent, agent_version, agent_id, agent_type, request_class, compaction header, route, role requested, role served, model, provider, profile, passthrough, status, latency_ms, input/output/cache_read/cache_write tokens, estimated_usd (list price × tokens, with the long-context tier of §6.3 when the price row has one; 0 for passthrough) *(2026-11-22, HUD design)*, adjustments (text list), redaction findings (`[{id, count}]`), repo, work item. *(Note 2026-11-19, N11 review: `status` 0 means no upstream response — the client left or the proxy stopped first.)*
   - `trims`: ts, session, agent_id, tool, kind, stored_bytes, view_bytes.
   - `work_units`: §13.1 facts.
 - Never: bodies, prompts, tool inputs, file paths outside the repository-relative `files` of a unit (kept only in the local session directory), redacted spans or words, credentials.

@@ -62,7 +62,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   - `price_usd_per_mtok` may hold `cache_write_5m`, the rate of 5-minute cache writes; `cache_write` is the 1-hour rate and also prices cache writes whose usage has no 5-minute/1-hour split. Each Anthropic row of the built-in catalog sets `cache_write_5m` = 1.25 × its `input` rate (HUD design AU33). *(2026-11-22, HUD design)*
   ```
 
-- [ ] 9. H§9 row "§14 `requests.estimated_usd`" → base §14, the `requests` bullet. Replace `estimated_usd (list price × tokens; 0 for passthrough)` with:
+- [x] 9. H§9 row "§14 `requests.estimated_usd`" → base §14, the `requests` bullet. Replace `estimated_usd (list price × tokens; 0 for passthrough)` with:
 
   ```text
   estimated_usd (list price × tokens, with the long-context tier of §6.3 when the price row has one; 0 for passthrough) *(2026-11-22, HUD design)*
