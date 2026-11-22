@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
 | LIV-2 | Windows part without a Windows machine: PH8/PH10 fallback, W-SHELL part 2 text, not-run records | LIV-1, PRB-1, FIX-5, FIX-7, P2 | DONE | implementation | 37c78eb; statusline_render 25, usage_doctor 46; PH8, PH10, W-SHELL part 2 not run: no Windows machine, fallback applied; review round 2 fixed 8 record defects |
@@ -74,7 +73,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
-| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | IN-PROGRESS | judgment | .worktrees/phase2/W9 |
+| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
@@ -202,3 +201,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | LIV-2 DONE (37c78eb): plain icons on a Windows build unless ZYGO_NERD_FONT=1 (PH8, PH10 fallback). PH8, PH10, W-SHELL part 2 not run: no Windows machine. Merged tree: statusline_render 25, usage_doctor 46, zygo-hooks all ok, check-premises ok. |
 | 2026-11-22 | W9 planned: 22 steps; review B1-B3, M1-M12 fixed; AU26 rule 3 order and read-error busy, skipped rule 3 gives no interrupted-turn idle (author's call) |
 | 2026-11-22 | L2 planned: 18 steps; review B1-B3, 12 minor fixed; OpenCode turn start = first session.status busy (AU27); session flags from W4 args.rs; Files add launcher.rs, args.rs, Cargo.lock (author's call) |
+| 2026-11-22 | W9 DONE (e167624): activity.json under fs4 lock, drain idle rule. Merged tree: activity 33 + 1 ignored, drain 27, workspace 111, clippy clean. Round 2: Busy gets rule_skipped; W10 Spec prints the skip line for it. |
