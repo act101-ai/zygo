@@ -1060,18 +1060,17 @@ fn status_team_session_sends_no_configured_price() { // AU13, AU14, H§9 row §7
     let t = team_session(&raw, &u, &format!("Bearer {ta}"));
     let state = h.session(&t.session).unwrap();
     assert_eq!(state.team_label.as_deref(), Some("alpha"));
-    // A cost at the server's configured prices never reaches the reply, also when a caller hands one in.
-    state.add_request(&tu(1000, 10, 0, 0), Some(1234.5));
+    // HUD-10 (AU14): the request path gives a team session its cost at the built-in list prices, never at a
+    // configured price (`h14_15_team_session_spend_at_builtin_list_prices` in `serve.rs`). The reply carries the
+    // sum that the session holds, marked notional.
+    state.add_request(&tu(1000, 10, 0, 0), Some(0.25));
     let (s, v, bytes) = raw.call(&u, "GET", &sp(&t), &sess(&t), None);
     assert_eq!(s, 200, "{v}");
     assert_eq!((v["team_session"].clone(), v["spend_notional"].clone(), v["passthrough"].clone()), (json!(true), json!(true), json!(false)));
     assert_eq!((v["tokens_in"].clone(), v["tokens_out"].clone(), v["requests_total"].clone()), (json!(1000), json!(10), json!(1)));
-    for key in ["spend_usd", "requests_priced"] {
-        assert!(v.get(key).is_none(), "{key} in {v}");
-    }
+    assert_eq!((v["spend_usd"].as_f64(), v["requests_priced"].clone()), (Some(0.25), json!(1)));
     let text = String::from_utf8(bytes).unwrap();
     assert!(!text.contains("alpha"), "{text}"); // AU13: the flag, never the label
-    assert!(v.as_object().unwrap().values().all(|x| x.as_f64() != Some(1234.5)), "{text}");
 }
 
 fn sse(kind: &str, usage: Value) -> String {

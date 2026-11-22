@@ -12,7 +12,7 @@ use http::HeaderMap;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-use zygo_config::{check, load, Approval, Dialect, LoadContext, Marketplace, Merged, ServeToken, Severity};
+use zygo_config::{check, load, Approval, Dialect, LoadContext, Marketplace, Merged, Prices, ServeToken, Severity, TokenUsage};
 use zygo_core::ids::ulid;
 use zygo_core::paths::Paths;
 use zygo_proxy::client::SessionStatus;
@@ -20,8 +20,8 @@ use zygo_proxy::serve::{
     self, AlreadyRunning, ConfigInvalid, NoServer, ServeEvent, ServeHandle, ServeOpts, TlsFiles, TlsRequired, BODY_READ_IDLE, HEADER_READ,
     MAX_CONNECTIONS,
 };
-use zygo_proxy::server::{StartOpts, UPSTREAM_CONNECT, UPSTREAM_READ_IDLE};
-use zygo_proxy::session::{ManualClock, SessionGrant, TeamAuth, SUSPEND_AFTER};
+use zygo_proxy::server::{Proxy, StartOpts, UPSTREAM_CONNECT, UPSTREAM_READ_IDLE};
+use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest, TeamAuth, SUSPEND_AFTER};
 use zygo_proxy::team::{append_token, known_plugins, new_token, PluginsReply, TeamConfigReply, Tokens};
 use zygo_proxy::tee::{UsageHold, ROWS_WAIT};
 use zygo_usage::{RedactionCount, RequestRow, Store};
@@ -192,10 +192,13 @@ fn team_known_plugins_formula() {
 // ---- server fixtures ----
 
 type Got = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
+/// The fake upstream's reply when a test sets no other.
+const UP_REPLY: &str = r#"{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":1}}"#;
 
-struct Upstream { addr: SocketAddr, got: Got, _stop: tokio::sync::oneshot::Sender<()> }
+struct Upstream { addr: SocketAddr, got: Got, reply: Arc<Mutex<String>>, _stop: tokio::sync::oneshot::Sender<()> }
 impl Upstream {
-    /// 127.0.0.1:0, own runtime thread; every request is recorded (path with query, body) and answered 200 JSON.
+    /// 127.0.0.1:0, own runtime thread; every request is recorded (path with query, body) and answered 200 JSON:
+    /// `UP_REPLY` until `reply` holds another body.
     fn start() -> Upstream {
         let got: Got = Arc::default();
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -203,12 +206,15 @@ impl Upstream {
         let addr = l.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         let g2 = got.clone();
+        let reply = Arc::new(Mutex::new(UP_REPLY.to_string()));
+        let r2 = reply.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
                 let app = axum::Router::new().fallback(move |req: Request| {
                     let g3 = g2.clone();
+                    let r3 = r2.clone();
                     async move {
                         let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
                         let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap().to_vec();
@@ -219,9 +225,7 @@ impl Upstream {
                             .header("openai-organization", "org-test")
                             .header("openai-project", "proj-test")
                             .header("anthropic-organization-id", "org-id-test")
-                            .body(axum::body::Body::from(
-                                r#"{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":1}}"#,
-                            ))
+                            .body(axum::body::Body::from(r3.lock().unwrap().clone()))
                             .unwrap()
                     }
                 });
@@ -231,10 +235,14 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, _stop: tx }
+        Upstream { addr, got, reply, _stop: tx }
     }
     fn url(&self) -> String { format!("http://127.0.0.1:{}", self.addr.port()) }
     fn bodies(&self) -> Vec<Vec<u8>> { self.got.lock().unwrap().iter().map(|g| g.1.clone()).collect() }
+    /// The next replies are a Messages reply with this `usage` object.
+    fn set_usage(&self, usage: Value) {
+        *self.reply.lock().unwrap() = json!({"id":"m","type":"message","role":"assistant","content":[],"usage":usage}).to_string();
+    }
 }
 
 /// A self-signed certificate for 127.0.0.1, made at run time.
@@ -1299,3 +1307,121 @@ fn status_keeps_served_row_across_reload() { // AU29 (HUD-5 round 2, F2): values
     assert_eq!(status(&s, &g, 2), (Some("test-code".into()), Some(300000), Some(120000), Some(120000)));
     s.h.shutdown();
 }
+
+// ---- H§14 #15: a team session's spend at the built-in list prices (AU14) ----
+
+/// The test server's configured rates: none is a rate of the built-in catalog, and none is a whole number (a
+/// request count of the reply is never equal to one).
+fn team_prices() -> Prices { Prices { input: 7.25, output: 11.5, cache_read: 3.75, cache_write: 13.5, ..Default::default() } }
+/// `BASE` with the configured rates on `test-code` (a model the built-in catalog does not have) and on a
+/// `claude-haiku-5-5` row that replaces the built-in one.
+fn team_priced(t: String) -> String {
+    let price = "price_usd_per_mtok = { input = 7.25, output = 11.5, cache_read = 3.75, cache_write = 13.5 }\n";
+    let url = t.split("base_url = \"").nth(1).unwrap().split('"').next().unwrap().to_string();
+    let code = "upstream_model = \"up-code\"\n";
+    assert!(t.contains(code));
+    let t = t.replace(code, &format!("{code}{price}"));
+    format!("{t}\n[[model]]\nid = \"claude-haiku-5-5\"\n[model.facts]\ncontext_window = 1000000\nmax_output_tokens = 128000\n[[model.provider]]\nname = \"p-haiku\"\nbase_url = \"{url}\"\ndialects = [\"anthropic\"]\nupstream_model = \"up-haiku\"\n{price}")
+}
+/// The first price of the row `id` in the built-in catalog of this binary.
+fn list_prices(id: &str) -> Option<Prices> {
+    zygo_config::builtin::defaults().catalog.get(id)?.provider.iter().find_map(|p| p.price_usd_per_mtok.clone())
+}
+fn status_json(s: &Srv, g: &SessionGrant, rows: u64) -> Value {
+    assert!(s.h.usage_written(rows, Duration::from_secs(10)), "usage rows not written");
+    json_of(&send(s, "GET", &format!("v1/zygo/sessions/{}/status", g.session), &session_hd(g), None))
+}
+fn close(a: f64, b: f64) -> bool { (a - b).abs() <= 1e-9 * b.abs().max(1.0) }
+/// No number of the reply is one of `secret` (configured rates, and costs at them).
+fn holds_none_of(v: &Value, secret: &[f64]) {
+    fn walk(v: &Value, out: &mut Vec<f64>) {
+        match v {
+            Value::Number(n) => out.extend(n.as_f64()),
+            Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            Value::Object(o) => o.values().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut numbers = Vec::new();
+    walk(v, &mut numbers);
+    for n in numbers {
+        assert!(secret.iter().all(|s| !close(n, *s)), "{n} in {v}");
+    }
+}
+
+/// H§14 #15 and review focus 8: the team server sends `spend_usd` = Σ `Prices::cost` at the built-in list prices
+/// with `spend_notional = true`; its rows keep the cost at its configured prices; no configured price or cost is
+/// in the reply, also not as `spend_usd ÷ tokens`. A local proxy reply has `team_session = false`.
+#[test]
+fn h14_15_team_session_spend_at_builtin_list_prices() {
+    let s = setup_with(team_priced, |_| {});
+    let g = grant(&s, &s.alice);
+    let (list, own) = (list_prices("claude-haiku-5-5").expect("the built-in catalog prices claude-haiku-5-5"), team_prices());
+    assert_eq!(list_prices("test-code"), None);
+    let above = list.long_context.as_ref().expect("the built-in haiku row has a long-context tier").above;
+    assert_eq!(own.long_context, None);
+
+    // No request: 0.00, notional, a team session.
+    let v = status_json(&s, &g, 0);
+    assert_eq!((v["team_session"].clone(), v["spend_notional"].clone(), v["passthrough"].clone()), (json!(true), json!(true), json!(false)));
+    assert_eq!((v["spend_usd"].as_f64(), v["requests_total"].clone(), v["requests_priced"].clone()), (Some(0.0), json!(0), json!(0)));
+
+    // Request 1: a prompt below the tier, with a cache-write split. Request 2: a prompt above the tier.
+    let short = TokenUsage { input: 60_000, output: 20_000, cache_read: 30_000, cache_write: 5_000, cache_write_5m: Some(3_000), cache_write_1h: Some(2_000) };
+    let long = TokenUsage { input: above + 50_000, output: 10_000, cache_read: 50_000, ..Default::default() };
+    assert!(short.input + short.cache_read + short.cache_write <= above);
+    s.up.set_usage(json!({"input_tokens": short.input, "output_tokens": short.output, "cache_read_input_tokens": short.cache_read, "cache_creation_input_tokens": short.cache_write,
+        "cache_creation": {"ephemeral_5m_input_tokens": 3_000, "ephemeral_1h_input_tokens": 2_000}}));
+    assert_eq!(msg(&s, &g, "claude-haiku-5-5").0, 200);
+    s.up.set_usage(json!({"input_tokens": long.input, "output_tokens": long.output, "cache_read_input_tokens": long.cache_read}));
+    assert_eq!(msg(&s, &g, "claude-haiku-5-5").0, 200);
+
+    let (list_short, list_long) = (list.cost(&short).unwrap(), list.cost(&long).unwrap());
+    let (own_short, own_long) = (own.cost(&short).unwrap(), own.cost(&long).unwrap());
+    // The long request is priced at the long rates: the base rates give another cost.
+    let base_only = Prices { long_context: None, ..list.clone() }.cost(&long).unwrap();
+    assert!(!close(list_long, base_only), "{list_long} {base_only}");
+    let v = status_json(&s, &g, 2);
+    let spend = v["spend_usd"].as_f64().unwrap();
+    assert!(close(spend, list_short + list_long), "{spend} != {list_short} + {list_long}");
+    assert!(!close(spend, own_short + own_long));
+    assert_eq!((v["team_session"].clone(), v["spend_notional"].clone()), (json!(true), json!(true)));
+    assert_eq!((v["requests_total"].clone(), v["requests_priced"].clone()), (json!(2), json!(2)));
+    let tokens_in = short.input + short.cache_read + short.cache_write + long.input + long.cache_read;
+    assert_eq!((v["tokens_in"].clone(), v["tokens_out"].clone()), (json!(tokens_in), json!(short.output + long.output)));
+    let secret = [own.input, own.output, own.cache_read, own.cache_write, own_short, own_long, own_short + own_long];
+    holds_none_of(&v, &secret);
+
+    // The server's rows keep the cost at its configured prices.
+    let rows = Store::open(&s.d.path().join("data/usage.db")).unwrap().requests_for_session(&g.session).unwrap();
+    let mut costs: Vec<f64> = rows.iter().map(|r| r.estimated_usd).collect();
+    costs.sort_by(f64::total_cmp);
+    let mut want = [own_short, own_long];
+    want.sort_by(f64::total_cmp);
+    assert_eq!(costs.len(), 2);
+    assert!(close(costs[0], want[0]) && close(costs[1], want[1]), "{costs:?} != {want:?}");
+
+    // Request 3: a model the built-in catalog does not have. It is counted and not priced; its configured cost
+    // stays in the row.
+    let other = TokenUsage { input: 40_000, output: 8_000, ..Default::default() };
+    s.up.set_usage(json!({"input_tokens": other.input, "output_tokens": other.output}));
+    assert_eq!(msg(&s, &g, "code").0, 200);
+    let own_other = own.cost(&other).unwrap();
+    let v = status_json(&s, &g, 3);
+    let spend = v["spend_usd"].as_f64().unwrap();
+    assert!(close(spend, list_short + list_long), "{spend}");
+    assert_eq!((v["requests_total"].clone(), v["requests_priced"].clone()), (json!(3), json!(2)));
+    assert_eq!(v["tokens_in"], json!(tokens_in + other.input));
+    holds_none_of(&v, &[&secret[..], &[own_other, own_short + own_long + own_other]].concat());
+    let rows = Store::open(&s.d.path().join("data/usage.db")).unwrap().requests_for_session(&g.session).unwrap();
+    assert!(rows.iter().any(|r| r.model == "test-code" && close(r.estimated_usd, own_other)), "{:?}", rows.iter().map(|r| (&r.model, r.estimated_usd)).collect::<Vec<_>>());
+
+    // A local proxy on the same config: not a team session, and its spend is not notional.
+    let local = Proxy::start_local(Arc::new(load_in(s.d.path()))).unwrap();
+    let lg = local.create_session(SessionRequest { agent: zygo_core::Agent::ClaudeCode, agent_version: "2.1.328".into(), profile: None, passthrough: false, repo: None, work: None, stored_values: Vec::new(), known_plugins: Default::default() }).unwrap();
+    let r = request(&client(None), local.url().join(&format!("v1/zygo/sessions/{}/status", lg.session)).unwrap(), "GET", &session_hd(&lg), None).unwrap();
+    let v: Value = json_of(&r);
+    assert_eq!((v["team_session"].clone(), v["spend_notional"].clone(), v["spend_usd"].as_f64()), (json!(false), json!(false), Some(0.0)));
+    local.shutdown();
+    s.h.shutdown();
+} // mutations: the configured cost summed for a team session; the row priced at the list prices; the base rates for the long prompt
