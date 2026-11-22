@@ -94,7 +94,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | DONE | mechanical | 7ee20d6; acceptance ok |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
-| FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | TODO | mechanical | — |
+| FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | PLANNED | mechanical | — |
 
 ## Log
 
@@ -205,3 +205,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-11 planned: 6 steps, test first. Spec text only, so the Acceptance rg is the test: red on 2 lines, then H§3, H§8, H§14 #33 rewritten as final text and one change-log row. |
 | 2026-11-22 | FIX-11 DONE (7ee20d6): HUD spec H§3, H§8, H§14 #33 say the statusline verb works the same in an OpenCode session, as HUD-11 built it. Merged tree: acceptance ok; checkout: forbidden_content 6 ok, check-premises ok. |
 | 2026-11-22 | L2 DONE (c5a1569): member hooks, session args from W4, launcher member drop, conformance check test. Merged tree: args 12, claude_code 36, opencode 51, stub_launch 16, conformance ok. R2 spec changes applied. FIX-13 added: stub reads = session forms; M2 depends on it. |
+| 2026-11-22 | FIX-13 planned: 6 steps, test first. Acceptance adds --test stub_member, because the split-form cases are there; stub_member not changed. -s=<id> not read; empty = value is no session arg (author's call). |
