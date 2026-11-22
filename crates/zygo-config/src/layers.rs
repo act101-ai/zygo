@@ -67,12 +67,26 @@ pub const MODEL_IGNORED: &str = "config: [[model]] in user config ignored; the s
 /// them with one warning; the repository-file filter drops them as it drops every table outside its kept list.
 pub const USER_ONLY: [&str; 2] = ["statusline", "update"];
 
-/// `team` without the [`USER_ONLY`] tables, and the one warning that names the tables it dropped.
-fn drop_user_only(mut team: Table) -> (Table, Option<String>) {
+/// The workspace tables only user config may set (workspaces design W§11, AU22, W-C5): a loadout starts programs, so
+/// a team server must not set one. The team layer drops them with [`WORKSPACE_ONLY_IGNORED`]; the repository-file
+/// filter drops them as it drops every table outside its kept list.
+pub const WORKSPACE_ONLY: [&str; 2] = ["loadout", "workspace"];
+
+/// The AU22 warning for a team layer that has a [`WORKSPACE_ONLY`] table. The launcher prints it after `zygo: `.
+pub const WORKSPACE_ONLY_IGNORED: &str = "[loadout] and [workspace] are read from user config only; ignored";
+
+/// `team` without the [`USER_ONLY`] and [`WORKSPACE_ONLY`] tables, and the warnings for what it dropped: first the one
+/// that names the `USER_ONLY` tables, then [`WORKSPACE_ONLY_IGNORED`] one time.
+fn drop_user_only(mut team: Table) -> (Table, Vec<String>) {
     let dropped: Vec<String> = USER_ONLY.iter().filter(|k| team.remove(**k).is_some()).map(|k| format!("[{k}]")).collect();
-    let warning = (!dropped.is_empty())
-        .then(|| format!("config: {} in team config ignored; only user config may set them", dropped.join(", ")));
-    (team, warning)
+    let mut warnings = Vec::new();
+    if !dropped.is_empty() {
+        warnings.push(format!("config: {} in team config ignored; only user config may set them", dropped.join(", ")));
+    }
+    if WORKSPACE_ONLY.iter().filter(|k| team.remove(**k).is_some()).count() > 0 {
+        warnings.push(WORKSPACE_ONLY_IGNORED.into());
+    }
+    (team, warnings)
 }
 
 /// The team layer of a serve session, in its session directory (0600 on unix; no token). Written by the launcher; read
@@ -431,7 +445,7 @@ pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged
     // The team layer never carries a user-only table: dropped before the layer is parsed, so its value is not read.
     let (team, team_dropped) = match ctx.team.clone().map(drop_user_only) {
         Some((t, w)) => (Some(t), w),
-        None => (None, None),
+        None => (None, Vec::new()),
     };
     parse_layer(&builtin, "builtin", "(built-in)", None)?;
     if let Some(team) = &team {
@@ -452,7 +466,7 @@ pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged
     let mut m = Merged {
         config: Config::default(),
         repo_file: RepoFile::Absent,
-        warnings: team_dropped.into_iter().collect(),
+        warnings: team_dropped,
         team_keys: BTreeSet::new(),
         team_loaded: serve,
         user_table: user.clone(),

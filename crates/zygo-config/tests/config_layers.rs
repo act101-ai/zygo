@@ -1609,3 +1609,31 @@ fn w18_62_repo_file_loadout_is_ignored_with_the_existing_warning() { // W§18 #6
     assert!(m.config.loadout.is_empty());
     assert_eq!(m.warnings, [".zygo.toml: [loadout] ignored; the repository file may set only [guards], [navigation], [limits], [work]"]);
 }
+
+#[test]
+fn w18_62_team_layer_drops_loadout_and_workspace_with_the_au22_warning() { // W§18 #62, team part; the launcher adds `zygo: `
+    const AU22: &str = "[loadout] and [workspace] are read from user config only; ignored";
+    assert_eq!(layers::WORKSPACE_ONLY_IGNORED, AU22);
+    let lo = "[loadout.evil]\n[[loadout.evil.window]]\n[[loadout.evil.window.pane]]\nkind = \"shell\"\nargs = [\"-c\", \"id\"]\n";
+    let team = format!("[workspace]\ndefault_loadout = \"evil\"\n{lo}[guards]\nmin_level = \"notify\"\n");
+    let m = load(&team_ctx(&team, "")).unwrap();
+    assert_eq!(m.config.workspace, WorkspaceConfig::default());
+    assert!(m.config.loadout.is_empty());
+    assert_eq!(m.source_of("workspace.default_loadout"), Layer::Builtin);
+    assert_eq!(m.team_keys, BTreeSet::from(["guards.min_level".to_string()]));
+    assert_eq!(m.warnings, [AU22]);
+    // one table, or a value of the wrong type (dropped before the layer is parsed): the same one line
+    for one in ["[workspace]\ndrain_timeout = \"1s\"\n", "[loadout.x]\n", "loadout = 3\nworkspace = \"x\"\n"] {
+        assert_eq!(load(&team_ctx(one, "")).unwrap().warnings, [AU22], "{one}");
+    }
+    // with a HUD-3 table: the HUD-3 line first
+    let m = load(&team_ctx("[statusline]\nstyle = \"verbose\"\n[loadout.x]\n", "")).unwrap();
+    assert_eq!(m.warnings, ["config: [statusline] in team config ignored; only user config may set them", AU22]);
+    // the user's tables hold in a team session
+    let user = "[workspace]\ndrain_timeout = \"5m\"\n[loadout.mine]\n[[loadout.mine.window]]\n[[loadout.mine.window.pane]]\nkind = \"shell\"\n";
+    let m = load(&team_ctx("[workspace]\ndrain_timeout = \"1s\"\n", user)).unwrap();
+    assert_eq!((m.config.workspace.drain_timeout.as_str(), m.source_of("workspace.drain_timeout")), ("5m", Layer::User));
+    assert_eq!(m.config.loadout.keys().collect::<Vec<_>>(), ["mine"]);
+    assert_eq!(m.warnings, [AU22]);
+    assert_eq!(load(&team_ctx("[guards]\nmin_level = \"notify\"\n", "")).unwrap().warnings, Vec::<String>::new());
+}
