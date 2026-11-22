@@ -101,6 +101,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5 | TODO | implementation | — |
+| FIX-1 | request_path tests: a refused port that no other test can take | — | PLANNED | judgment | — |
+| FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | PLANNED | mechanical | — |
 
 ## Log
 
@@ -152,3 +154,5 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | Found, not fixed (needs a node): crates/zygo-launch/tests/stub_member.rs:297 has the clippy warning cloned_ref_to_slice_refs (from L3). No test fails; a clippy run with -D warnings would. |
 | 2026-11-21 | H2 DONE (two rounds). Round 2: the phase reader opens workspace.json without blocking and checks the opened handle, so a FIFO at the path cannot make the HUD wait (C6). With O_NONBLOCK present, no test separates the handle check from it. |
 | 2026-11-21 | Stop: every open node now waits for a live check. LIV-1 and P1 are ready and need the operator's machine and login; P2 needs opencode on PATH. PRB-1, LIV-2, DOC-1 follow LIV-1; W3 and the nodes behind it follow P1 and P2. |
+| 2026-11-21 | FIX-1 and FIX-3 added from the found defects (execute-work §5.4): the refused_port race in request_path.rs and the clippy warning in stub_member.rs:297. Change-log lines are in the base spec and the workspaces spec. |
+| 2026-11-21 | statusline::trimmed on Store::summary: not a defect (same value, store.rs:439-466; no spec text requires bytes_trimmed for zygo status; HUD-12 design call 8). No node. |

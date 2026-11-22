@@ -825,3 +825,4 @@ None. The operator decided OP11 (slash commands), OP12 (saved overrides) and OP1
 | 2026-11-21 | W§7.1 (`Paths` paragraph) | author's call | Methods instead of fields: 55 `Paths` literals in 37 files have no `..`, so three new fields would change all of them; the derivation keeps a test-built `Paths` under its own directory. |
 | 2026-11-21 | W§15 (status reply row) | author's call | The session status reply is in base §7.2 (session API), not §7.3. |
 | 2026-11-21 | AU91 | author's call | The session status route is in base §7.2 (session API), not §7.3. |
+| 2026-11-21 | W§18 preamble ("Stub"); no text change | author's call | Found defect from L3: crates/zygo-launch/tests/stub_member.rs:297 has the clippy warning cloned_ref_to_slice_refs; a clippy run with -D warnings fails. Node FIX-3 removes it. |
