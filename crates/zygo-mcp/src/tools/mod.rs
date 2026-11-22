@@ -1,6 +1,7 @@
 pub mod compact;
 pub mod results;
 pub mod work;
+pub mod workspace_down;
 
 use zygo_core::Agent;
 
@@ -26,6 +27,7 @@ pub fn build_with(
     if ctx.features.work_units {
         v.extend(work(ctx));
     }
+    v.extend(workspace_down::tools(ctx));
     let mut seen = std::collections::BTreeSet::new();
     for t in &v {
         let name = t.def().name;
