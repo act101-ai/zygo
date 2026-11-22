@@ -19,10 +19,11 @@ use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_core::session_dir::write_atomic;
+use zygo_workspace::snapshot;
 use zygo_workspace::snapshot::{
     after_write, assign_key, queue_pending, run, take_pending, SkipReason, SnapshotOutcome, HOOK_WAIT, OP_WAIT,
 };
-use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
+use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Window, Workspace};
 
 const ID: &str = "0123456789abcdef";
 const S5: Duration = Duration::from_secs(5);
@@ -94,7 +95,7 @@ type SetHook = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 /// A scripted `Multiplexer` (D18).
 struct Fake {
-    ws_opt: Option<String>,
+    ws_opt: Arc<Mutex<Option<String>>>,
     exists: SessionAnswer,
     reads: Mutex<VecDeque<Result<Vec<String>, MuxError>>>,
     pane_opts: Arc<Mutex<BTreeMap<String, String>>>,
@@ -107,7 +108,7 @@ struct Fake {
 impl Fake {
     fn new(ws_opt: Option<&str>, reads: Vec<Result<Vec<String>, MuxError>>) -> Fake {
         Fake {
-            ws_opt: ws_opt.map(str::to_string),
+            ws_opt: Arc::new(Mutex::new(ws_opt.map(str::to_string))),
             exists: SessionAnswer::Exists,
             reads: Mutex::new(reads.into()),
             pane_opts: Arc::new(Mutex::new(BTreeMap::new())),
@@ -151,7 +152,7 @@ impl Multiplexer for Fake {
     fn set_session_option(&self, _: &str, _: &str, _: &str) -> Result<(), MuxError> { self.other("set_session_option") }
     fn show_session_option(&self, session: &str, _: &str) -> Result<Option<String>, MuxError> {
         self.record("show_session_option", session)?;
-        Ok(self.ws_opt.clone().filter(|v| !v.is_empty()))
+        Ok(self.ws_opt.lock().unwrap().clone().filter(|v| !v.is_empty()))
     }
     fn set_hook(&self, _: &str, _: HookScope, _: &str, _: &str) -> Result<(), MuxError> { self.other("set_hook") }
     fn new_window(&self, _: &NewWindow<'_>) -> Result<u32, MuxError> { self.other("new_window") }
@@ -628,18 +629,25 @@ fn conflicts_under_the_lock() {
     assert_eq!(fake.calls("set_pane_option"), 0);
 }
 
-/// Waits at most 10 s until `path` exists.
-fn wait_for(path: &Path) {
-    let t0 = Instant::now();
-    while !path.exists() && t0.elapsed() < Duration::from_secs(10) {
-        std::thread::sleep(Duration::from_millis(1));
-    }
-}
-
 /// Sets the file time of `path` 120 s back: older than the 60 s of the `.tmp*` sweep.
 fn age(path: &Path) {
     let f = fs::File::options().write(true).open(path).unwrap();
     f.set_modified(SystemTime::now() - Duration::from_secs(120)).unwrap();
+}
+
+/// Runs `f` once for `store`, at the D14 point: after a snapshot set `snapshot.pending` on `Busy` and before its
+/// probe of `lock` (round 2 M5). The caller clears the hook with `after_queue(dir, None)`.
+fn on_queue(store: &Store, f: impl FnOnce() + Send + 'static) {
+    let slot = Mutex::new(Some(f));
+    snapshot::testing::after_queue(
+        store.dir(),
+        Some(Box::new(move || {
+            let f = slot.lock().unwrap().take();
+            if let Some(f) = f {
+                f();
+            }
+        })),
+    );
 }
 
 #[test] // W§7.3, D14, D15, review round 2 B1, B2, M2, M4, W§18 #8
@@ -683,19 +691,22 @@ fn pending_file() {
         assert_eq!(raw(&store), before);
         drop(held);
     }
-    // (c) review M4: the lock is free right after the queue; the probe runs the snapshot
+    // (c) review M4, W6 round 2 M5: the lock is free right after the queue; the probe runs the snapshot. The hook
+    // releases the lock at the D14 point (after the queue, before the probe), so no scheduler timing is involved.
     {
         let (_d, p, store) = up(&["kaaaaaaaa"]);
         let fake = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
         let held = hold(store.dir().join("lock"));
         let pf = store.dir().join("snapshot.pending");
-        let out = std::thread::scope(|s| {
-            s.spawn(|| {
-                wait_for(&pf);
-                drop(held);
-            });
-            snap(&p, &fake, false)
+        let queued = Arc::new(Mutex::new(None));
+        let q2 = queued.clone();
+        on_queue(&store, move || {
+            *q2.lock().unwrap() = Some(fs::read_to_string(&pf).unwrap());
+            drop(held);
         });
+        let out = snap(&p, &fake, false);
+        snapshot::testing::after_queue(store.dir(), None);
+        assert_eq!(*queued.lock().unwrap(), Some(String::new())); // the hook ran once the file existed
         assert_eq!(out, SnapshotOutcome::Written);
         assert_eq!(pending(&store), None);
         assert_eq!(fake.calls("list_panes"), 2);
@@ -705,15 +716,16 @@ fn pending_file() {
         let (_d, p, store) = up(&["kaaaaaaaa"]);
         let fake = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
         let held = hold(store.dir().join("lock"));
-        let pf = store.dir().join("snapshot.pending");
-        let out = std::thread::scope(|s| {
-            s.spawn(|| {
-                wait_for(&pf);
-                assert_eq!(take_pending(&p, ID), Some(false));
-                drop(held);
-            });
-            snap(&p, &fake, false)
+        let p2 = p.clone();
+        let took = Arc::new(Mutex::new(None));
+        let t2 = took.clone();
+        on_queue(&store, move || {
+            *t2.lock().unwrap() = Some(take_pending(&p2, ID));
+            drop(held);
         });
+        let out = snap(&p, &fake, false);
+        snapshot::testing::after_queue(store.dir(), None);
+        assert_eq!(*took.lock().unwrap(), Some(Some(false)));
         assert_eq!(out, SnapshotOutcome::Pending);
         assert_eq!(fake.calls("list_panes"), 1);
         assert_eq!(pending(&store), None);
@@ -726,15 +738,14 @@ fn pending_file() {
         fake.on_list = Some(Box::new(move |n| if n >= 2 { bump(&s2) }));
         let held = hold(store.dir().join("lock"));
         let pf = store.dir().join("snapshot.pending");
-        let out = std::thread::scope(|s| {
-            s.spawn(|| {
-                wait_for(&pf);
-                write_atomic(&pf, b"force").unwrap();
-                drop(held);
-            });
-            snap(&p, &fake, false)
+        on_queue(&store, move || {
+            write_atomic(&pf, b"force").unwrap();
+            drop(held);
         });
+        let out = snap(&p, &fake, false);
+        snapshot::testing::after_queue(store.dir(), None);
         assert_eq!(out, SnapshotOutcome::Pending);
+        assert_eq!(fake.calls("list_panes"), 2);
         assert_eq!(pending(&store), Some("force".into()));
     }
     // (g) round 2 B2: the sweep never deletes a pending or taken file
@@ -1087,4 +1098,221 @@ fn live_assign_key() {
     assert!(assign_key(&l.store, &l.tmux, &l.panes[0]).is_err());
     assert_eq!(l.tmux.show_pane_option(&l.panes[0], "@zygo-pane").unwrap().as_deref(), Some("k$(x)"));
     assert!(assign_key(&l.store, &l.tmux, "%9999").is_err());
+}
+
+// Round 2 (diff review).
+
+#[test] // Round 2 B1, AU78: unknown fields of the panes and windows that a snapshot keeps survive it
+fn unknown_fields_of_kept_panes_and_windows_survive() {
+    let (_d, p, store) = up(&["kaaaaaaaa"]);
+    store
+        .update(S5, &mut |ws| {
+            ws.panes[0].extra.insert("title".into(), "build".into());
+            let mut w = Window { index: 0, layout: "x".into(), width: 1, height: 1, ..Default::default() };
+            w.extra.insert("glow".into(), true.into());
+            ws.windows = vec![w];
+            Ok(())
+        })
+        .unwrap();
+    let fake = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
+    assert_eq!(run(&p, &fake, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!(ws.panes[0].extra.get("title"), Some(&serde_json::Value::from("build")));
+    assert_eq!(ws.windows[0].extra.get("glow"), Some(&serde_json::Value::from(true)));
+    assert_eq!((ws.windows[0].width, ws.windows[0].layout.as_str()), (200, "b25d,200x50,0,0,0")); // the read wins
+}
+
+#[test] // Round 2 M1: a taken file that a dead taker left (older than 60 s) is queued again with its flag
+fn old_taken_files_are_queued_again() {
+    let (_d, p, store) = up(&["kaaaaaaaa"]);
+    let old = store.dir().join("snapshot.pending.taken-0123456789abcdef0123456789abcdef");
+    fs::write(&old, "force").unwrap();
+    age(&old);
+    let young = store.dir().join("snapshot.pending.taken-fedcba9876543210fedcba9876543210");
+    fs::write(&young, "force").unwrap();
+    // no snapshot.pending: the old taken file becomes one, with force, and this take gets it
+    assert_eq!(take_pending(&p, ID), Some(true));
+    assert!(!old.exists());
+    assert!(young.exists()); // a live taker's file
+    assert_eq!(log_lines(&store).len(), 1);
+    fs::remove_file(&young).unwrap();
+    // an empty old taken file never removes the force of a pending file (force OR-ed in)
+    fs::write(&old, "").unwrap();
+    age(&old);
+    fs::write(store.dir().join("snapshot.pending"), "force").unwrap();
+    assert_eq!(take_pending(&p, ID), Some(true));
+    assert!(!old.exists());
+    assert_eq!(take_pending(&p, ID), None);
+    assert_eq!(taken_files(&store), 0);
+}
+
+#[cfg(unix)]
+#[test] // Round 2 M2: the rollback of assign_key keeps a key that a snapshot wrote to panes[]
+fn rollback_keeps_a_key_that_a_snapshot_wrote() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, _p, store) = up(&["kaaaaaaaa"]);
+    let mut f = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
+    f.opt("%6", "");
+    let s2 = store.clone();
+    // When assign_key sets the key: a snapshot has written it to panes[], and the write of assign_key then fails
+    // (the folder is read-only, so write_atomic cannot make its temporary file).
+    f.on_set = Some(Box::new(move |pane, value| {
+        if pane == "%6" && !value.is_empty() {
+            let path = s2.dir().join("workspace.json");
+            let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            v["panes"].as_array_mut().unwrap().push(
+                serde_json::json!({"key": value, "window": 0, "index": 1, "cwd": "/srv/app", "kind": "shell"}),
+            );
+            fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+            fs::set_permissions(s2.dir(), fs::Permissions::from_mode(0o500)).unwrap();
+        }
+    }));
+    let r = assign_key(&store, &f, "%6");
+    fs::set_permissions(store.dir(), fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(r.is_err());
+    let k = f.pane_opts.lock().unwrap()["%6"].clone();
+    assert!(valid_pane_key(&k), "{k:?}");
+    assert_eq!(f.calls("set_pane_option %6"), 1); // no rollback set
+    assert!(keys(&store.read().unwrap().unwrap()).contains(&k));
+}
+
+#[test] // Round 2 M3, W§7.4 step 3: each shrink read repeats the owner check of step 2
+fn shrink_rereads_check_the_owner() {
+    let a = line(0, "main", 0, "%0", 0, 1, "kaaaaaaaa", "/srv/app");
+    // another workspace owns the session at the second read: one log line, no write
+    let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);
+    let mut f = Fake::new(Some(ID), vec![Ok(vec![a.clone()])]);
+    let opt = f.ws_opt.clone();
+    f.on_list = Some(Box::new(move |n| {
+        if n == 1 {
+            *opt.lock().unwrap() = Some("ffffffffffffffff".into());
+        }
+    }));
+    let before = raw(&store);
+    assert_eq!(run(&p, &f, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Skipped(SkipReason::Logged));
+    assert_eq!(raw(&store), before);
+    assert_eq!(log_lines(&store).len(), 1);
+    assert_eq!(f.calls("list_panes"), 1);
+    assert_eq!(f.calls("show_session_option"), 2);
+    // @zygo-ws unset and has-session says gone at the second read: quiet exit
+    let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);
+    let mut f = Fake::new(Some(ID), vec![Ok(vec![a])]);
+    f.exists = SessionAnswer::Gone;
+    let opt = f.ws_opt.clone();
+    f.on_list = Some(Box::new(move |n| {
+        if n == 1 {
+            *opt.lock().unwrap() = None;
+        }
+    }));
+    let before = raw(&store);
+    assert_eq!(run(&p, &f, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Skipped(SkipReason::Gone));
+    assert_eq!(raw(&store), before);
+    assert!(log_lines(&store).is_empty());
+    assert_eq!(f.calls("list_panes"), 1);
+}
+
+fn set_socket(store: &Store, s: &str) {
+    store.update(S5, &mut |ws| { ws.tmux_socket = Some(s.into()); Ok(()) }).unwrap();
+}
+
+#[test] // Round 2 M4: a later read that finds another tmux_socket stops with Changed and no tmux call
+fn a_changed_socket_stops_later_attempts() {
+    // the retry after a snapshot_seq conflict
+    let (_d, p, store) = up(&["kaaaaaaaa"]);
+    let mut f = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
+    let s2 = store.clone();
+    f.on_list = Some(Box::new(move |n| {
+        if n == 1 {
+            s2.update(S5, &mut |ws| { ws.snapshot_seq += 1; ws.tmux_socket = Some("/tmp/t".into()); Ok(()) }).unwrap();
+        }
+    }));
+    assert_eq!(run(&p, &f, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Skipped(SkipReason::Changed));
+    assert_eq!((f.calls("show_session_option"), f.calls("list_panes"), f.calls("")), (1, 1, 2));
+    assert!(store.read().unwrap().unwrap().windows.is_empty());
+    // the attempt after the probe
+    let (_d, p, store) = up(&["kaaaaaaaa"]);
+    let f = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
+    let held = hold(store.dir().join("lock"));
+    let path = store.dir().join("workspace.json");
+    on_queue(&store, move || {
+        // the lock holder writes another socket, then releases the lock
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v["tmux_socket"] = "/tmp/t".into();
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        drop(held);
+    });
+    let out = run(&p, &f, ID, None, false, HOOK_WAIT).unwrap();
+    snapshot::testing::after_queue(store.dir(), None);
+    assert_eq!(out, SnapshotOutcome::Skipped(SkipReason::Changed));
+    assert_eq!((f.calls("show_session_option"), f.calls("list_panes")), (1, 1));
+    // the snapshot.pending check after the run's own write
+    let (_d, p, store) = up(&["kaaaaaaaa"]);
+    let mut f = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
+    let s2 = store.clone();
+    f.on_list = Some(Box::new(move |n| {
+        if n == 1 {
+            set_socket(&s2, "/tmp/t");
+            fs::write(s2.dir().join("snapshot.pending"), "").unwrap();
+        }
+    }));
+    assert_eq!(run(&p, &f, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
+    assert_eq!((f.calls("show_session_option"), f.calls("list_panes")), (1, 1));
+    assert_eq!(pending(&store), None);
+}
+
+#[test] // Round 2 M6: any pane call error under the lock takes the has-session path after the lock
+fn pane_call_errors_under_the_lock_check_the_session() {
+    for method in ["show_pane_option", "set_pane_option"] {
+        for (answer, out, lines) in [
+            (SessionAnswer::Gone, SnapshotOutcome::Skipped(SkipReason::Gone), 0),
+            (SessionAnswer::Exists, SnapshotOutcome::Skipped(SkipReason::Logged), 1),
+        ] {
+            let (_d, p, store) = up(&["kaaaaaaaa"]);
+            let mut f = Fake::new(Some(ID), vec![Ok(two("kaaaaaaaa"))]);
+            f.opt("%1", "");
+            f.exists = answer;
+            f.fail(method, MuxError::Failed { message: "denied".into() });
+            let before = raw(&store);
+            assert_eq!(run(&p, &f, ID, None, false, HOOK_WAIT).unwrap(), out, "{method}");
+            assert_eq!(raw(&store), before);
+            let log = log_lines(&store);
+            assert_eq!(log.len(), lines, "{method} {log:?}");
+            if lines == 1 {
+                assert!(log[0].contains("denied"), "{log:?}");
+            }
+            assert_eq!(f.calls("session_exists"), 1, "{method}");
+            let calls = f.calls.lock().unwrap().clone();
+            let failed = calls.iter().position(|c| c.starts_with(method)).unwrap();
+            let exists = calls.iter().position(|c| c.starts_with("session_exists")).unwrap();
+            assert!(failed < exists, "{calls:?}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test] // Round 2 M7: take refuses a snapshot.pending that is not a regular file
+fn take_refuses_a_file_that_is_not_regular() {
+    use std::os::unix::ffi::OsStrExt;
+    let (d, p, store) = up(&["kaaaaaaaa"]);
+    let pf = store.dir().join("snapshot.pending");
+    let left = |store: &Store| {
+        fs::read_dir(store.dir()).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("snapshot.pending")).count()
+    };
+    // a FIFO: never opened (an open would block with no writer)
+    let c = std::ffi::CString::new(pf.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p2 = p.clone();
+    std::thread::spawn(move || tx.send(take_pending(&p2, ID)).unwrap());
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).expect("take_pending blocked on a FIFO"), Some(false));
+    assert_eq!(log_lines(&store).len(), 1);
+    assert_eq!(left(&store), 0);
+    // a symlink to a file that holds force: the link is removed, the target is not read or changed
+    let target = d.path().join("target");
+    fs::write(&target, "force").unwrap();
+    std::os::unix::fs::symlink(&target, &pf).unwrap();
+    assert_eq!(take_pending(&p, ID), Some(false));
+    assert_eq!(log_lines(&store).len(), 2);
+    assert_eq!(left(&store), 0);
+    assert_eq!(fs::read_to_string(&target).unwrap(), "force");
 }

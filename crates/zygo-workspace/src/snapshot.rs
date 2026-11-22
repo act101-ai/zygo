@@ -1,7 +1,8 @@
 //! Snapshot: list-panes read, shrink rule, key assignment, pending rule. Owner: node W6 (W§7.4, W§7.5).
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read as _};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail};
@@ -58,10 +59,49 @@ const PROBE_WAIT: Duration = Duration::from_millis(100);
 const PENDING_FILE: &str = "snapshot.pending";
 /// The name of a taken `snapshot.pending`; the `.tmp*` sweep never matches it (W§7.3).
 const TAKEN_PREFIX: &str = "snapshot.pending.taken-";
+/// A taken file older than this belongs to no live taker (round 2 M1); the `.tmp*` sweep uses the same age (W§7.3).
+const TAKEN_MAX_AGE: Duration = Duration::from_secs(60);
+/// The most bytes read from a pending or taken file (round 2 M7); `force` has 5.
+const FLAG_MAX: u64 = 64;
 /// The W§7.1 name of the state lock.
 const LOCK_FILE: &str = "lock";
 const PANE_OPTION: &str = "@zygo-pane";
 const WS_OPTION: &str = "@zygo-ws";
+
+/// Test hooks (W6 round 2 M5). Only the `test-hooks` feature builds them.
+#[cfg(feature = "test-hooks")]
+pub mod testing {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+
+    type Hook = Arc<dyn Fn() + Send + Sync>;
+
+    static AFTER_QUEUE: Mutex<BTreeMap<PathBuf, Hook>> = Mutex::new(BTreeMap::new());
+
+    /// Sets (`Some`) or clears (`None`) the hook that a snapshot of the state folder `dir` runs at the D14 point:
+    /// after it set `snapshot.pending` on `Busy`, and before its probe of `lock`. A test uses it to order a lock
+    /// release or a take before the probe without any timing.
+    pub fn after_queue(dir: &Path, hook: Option<Box<dyn Fn() + Send + Sync>>) {
+        let mut hooks = AFTER_QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+        match hook {
+            Some(h) => {
+                hooks.insert(dir.to_path_buf(), Arc::from(h));
+            }
+            None => {
+                hooks.remove(dir);
+            }
+        }
+    }
+
+    /// Runs the hook of `dir`, if one is set, outside the lock of the hook table.
+    pub(super) fn run_after_queue(dir: &Path) {
+        let hook = AFTER_QUEUE.lock().unwrap_or_else(|e| e.into_inner()).get(dir).cloned();
+        if let Some(h) = hook {
+            h();
+        }
+    }
+}
 
 type Rows = Vec<(WindowRow, PaneRow)>;
 
@@ -84,8 +124,9 @@ enum Locked {
     Write,
     Skip(SkipReason),
     Conflict,
-    /// The pane with this id closed under the lock.
-    Closed(String),
+    /// A pane call under the lock failed (the pane closed, or another tmux error); the text is the log line that is
+    /// written when `has-session` after the lock does not say gone (round 2 M6).
+    Pane(String),
     Gone,
     Failed(String),
 }
@@ -228,13 +269,15 @@ fn key_text(e: KeyError, pane: &str) -> String {
 }
 
 /// W§7.4 step 5: replaces `windows[]` and `panes[]` by the read, sets `snapshot_at` and adds 1 to `snapshot_seq`.
-/// `keys` has one key per row. Member records stay.
+/// `keys` has one key per row. Member records stay. A window that has the index of a stored window keeps that
+/// window's unknown fields, and a pane that has the key of a stored pane keeps that pane's unknown fields (AU78).
 fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
     let mut windows: Vec<Window> = Vec::new();
     for (w, _) in rows {
         if windows.last().is_some_and(|x| x.index == w.index) {
             continue;
         }
+        let extra = ws.windows.iter().find(|x| x.index == w.index).map(|x| x.extra.clone()).unwrap_or_default();
         windows.push(Window {
             index: w.index,
             name: (!w.automatic_rename).then(|| w.name.clone()),
@@ -243,7 +286,7 @@ fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
             height: w.height,
             active: w.active,
             zoomed: w.zoomed,
-            ..Default::default()
+            extra,
         });
     }
     let panes: Vec<Pane> = rows
@@ -256,7 +299,7 @@ fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
             active: p.active,
             cwd: p.cwd.clone(),
             kind: kind_of(ws, key),
-            ..Default::default()
+            extra: ws.panes.iter().find(|x| x.key == *key).map(|x| x.extra.clone()).unwrap_or_default(),
         })
         .collect();
     ws.windows = windows;
@@ -290,8 +333,9 @@ fn under_lock(cur: &mut Workspace, mux: &dyn Multiplexer, rows: &Rows, session: 
             match key_pane(mux, &p.id, &mut taken) {
                 Ok((k, _)) => k,
                 Err(KeyError::Gone) => return Locked::Gone,
-                Err(KeyError::Closed) => return Locked::Closed(p.id.clone()),
-                Err(KeyError::Invalid(t) | KeyError::Tmux(t)) => return Locked::Failed(t),
+                Err(KeyError::Closed) => return Locked::Pane(format!("pane {} closed during the snapshot", p.id)),
+                Err(KeyError::Tmux(t)) => return Locked::Pane(t),
+                Err(KeyError::Invalid(t)) => return Locked::Failed(t),
             }
         } else {
             p.key.clone()
@@ -331,36 +375,121 @@ fn queue_logged(store: &Store, event: Option<&str>, force: bool) -> anyhow::Resu
     queue(store, force).inspect_err(|e| log(store, event, &format!("cannot set {PENDING_FILE}: {e:#}")))
 }
 
-/// Takes `snapshot.pending` (W§7.3, D14): one rename to a name that only this caller has, then read and delete.
-/// `Some(true)` when it held `force`; `None` when there was no file to take.
+/// A new taken name: [`TAKEN_PREFIX`] and 128 random bits in hex (round 2 M1).
+fn taken_path(store: &Store) -> PathBuf {
+    store.dir().join(format!("{TAKEN_PREFIX}{:032x}", rand::random::<u128>()))
+}
+
+/// The flag of a taken file (round 2 M7): `Ok(true)` when it holds exactly `force`. A file that is not a regular file
+/// (a folder, a FIFO, a symlink, ...) is never opened and gives `Err`. The open does not follow a symlink and does not
+/// block; it sets the file time to now, so the file is not taken for a dead taker's file while this taker reads it
+/// ([`recover_taken`]). The read stops after [`FLAG_MAX`] bytes.
+fn read_flag(path: &Path) -> Result<bool, String> {
+    let meta = fs::symlink_metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if !meta.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    let mut o = fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let f = o.open(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let _ = f.set_modified(SystemTime::now());
+    let mut bytes = Vec::with_capacity(FLAG_MAX as usize);
+    f.take(FLAG_MAX).read_to_end(&mut bytes).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    Ok(bytes == b"force")
+}
+
+/// Removes a taken entry of any type; `Err` holds the log text.
+fn remove_entry(path: &Path) -> Result<(), String> {
+    let removed = match fs::symlink_metadata(path) {
+        Ok(m) if m.is_dir() => fs::remove_dir_all(path),
+        _ => fs::remove_file(path),
+    };
+    removed.map_err(|e| format!("cannot remove {}: {e}", path.display()))
+}
+
+/// Queues again each taken file older than [`TAKEN_MAX_AGE`] (round 2 M1): a taker that died between its rename and
+/// its delete left it. Each one is claimed by a rename to a new taken name (so one recoverer gets it), its flag is
+/// read, `snapshot.pending` is set with that flag (OR-ed with a `force` already there, [`queue`]), the file is
+/// removed, and one log line is written.
+fn recover_taken(store: &Store) {
+    let Ok(entries) = fs::read_dir(store.dir()) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with(TAKEN_PREFIX) {
+            continue;
+        }
+        let age = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok());
+        if !age.is_some_and(|a| a > TAKEN_MAX_AGE) {
+            continue;
+        }
+        let mine = taken_path(store);
+        if fs::rename(entry.path(), &mine).is_err() {
+            continue; // another recoverer claimed it
+        }
+        let (force, read_err) = match read_flag(&mine) {
+            Ok(f) => (f, None),
+            Err(t) => (false, Some(t)),
+        };
+        let mut text = format!(
+            "{} was left by a dead taker; {PENDING_FILE} set again{}",
+            entry.file_name().to_string_lossy(),
+            if force { " with force" } else { "" }
+        );
+        if let Err(e) = queue(store, force) {
+            text = format!("{} was left by a dead taker; cannot set {PENDING_FILE}: {e:#}", entry.file_name().to_string_lossy());
+        }
+        for t in read_err.into_iter().chain(remove_entry(&mine).err()) {
+            text.push_str("; ");
+            text.push_str(&t);
+        }
+        log(store, None, &text);
+    }
+}
+
+/// Takes `snapshot.pending` (W§7.3, D14): first queues again the taken files of dead takers ([`recover_taken`]), then
+/// one rename to a name that only this caller has, then read ([`read_flag`]) and delete. `Some(true)` when it held
+/// `force`; `Some(false)` when it was empty, or was not a regular file or could not be read (one log line); `None`
+/// when there was no file to take.
 fn take(store: &Store) -> Option<bool> {
+    recover_taken(store);
     let from = store.dir().join(PENDING_FILE);
-    let to = store.dir().join(format!("{TAKEN_PREFIX}{:08x}", rand::random::<u32>()));
+    let to = taken_path(store);
     if let Err(e) = fs::rename(&from, &to) {
         if e.kind() != ErrorKind::NotFound {
             log(store, None, &format!("cannot take {PENDING_FILE}: {e}"));
         }
         return None;
     }
-    let read = fs::read(&to);
-    let removed = match fs::symlink_metadata(&to) {
-        Ok(m) if m.is_dir() => fs::remove_dir_all(&to),
-        _ => fs::remove_file(&to),
-    };
-    if let Err(e) = removed {
-        log(store, None, &format!("cannot remove {}: {e}", to.display()));
-    }
-    match read {
-        Ok(bytes) => Some(bytes == b"force"),
-        Err(e) => {
-            log(store, None, &format!("cannot read {PENDING_FILE}: {e}"));
-            Some(false)
+    let flag = read_flag(&to);
+    let removed = remove_entry(&to);
+    let mut problems: Vec<String> = Vec::new();
+    let force = match flag {
+        Ok(f) => f,
+        Err(t) => {
+            problems.push(format!("{PENDING_FILE}: {t}"));
+            false
         }
+    };
+    problems.extend(removed.err());
+    if !problems.is_empty() {
+        log(store, None, &problems.join("; "));
     }
+    Some(force)
 }
 
-/// One pass of W§7.4 steps 1-5 (D2-D11).
-fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration) -> Attempt {
+/// One pass of W§7.4 steps 1-5 (D2-D11). `socket` is the `tmux_socket` of the first state read of this snapshot run
+/// (the socket the caller built `mux` with): `None` before that read, which sets it. A later read that finds another
+/// value gives `Skipped(Changed)` before any tmux call (round 2 M4).
+fn attempt(
+    store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration, socket: &mut Option<PathBuf>,
+) -> Attempt {
     // Step 1.
     let ws = match store.read() {
         Ok(Some(ws)) => ws,
@@ -373,26 +502,29 @@ fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: boo
     if !gated(ws.phase, force) {
         return done(SkipReason::Phase);
     }
-    if ws.tmux_socket.is_none() {
-        return done(SkipReason::NoSocket);
+    match (socket.as_ref(), ws.tmux_socket.as_ref()) {
+        (Some(first), now) if now != Some(first) => return done(SkipReason::Changed),
+        (_, None) => return done(SkipReason::NoSocket),
+        (None, Some(now)) => *socket = Some(now.clone()),
+        (Some(_), Some(_)) => {}
     }
     let session = ws.tmux_session.clone();
     let seq = ws.snapshot_seq;
-    // Step 2.
-    match owner(mux, &session, &ws.id) {
-        Ok(true) => {}
-        Ok(false) => {
-            log(store, event, &format!("tmux session {session} does not belong to workspace {} ({WS_OPTION})", ws.id));
-            return done(SkipReason::Logged);
+    // Step 2, done again before each read of step 3 (round 2 M3): the owner check, then one checked read.
+    let read = || -> Result<Rows, Attempt> {
+        match owner(mux, &session, &ws.id) {
+            Ok(true) => {}
+            Ok(false) => {
+                log(store, event, &format!("tmux session {session} does not belong to workspace {} ({WS_OPTION})", ws.id));
+                return Err(done(SkipReason::Logged));
+            }
+            Err(None) => return Err(done(SkipReason::Gone)),
+            Err(Some(t)) => {
+                log(store, event, &t);
+                return Err(done(SkipReason::Logged));
+            }
         }
-        Err(None) => return done(SkipReason::Gone),
-        Err(Some(t)) => {
-            log(store, event, &t);
-            return done(SkipReason::Logged);
-        }
-    }
-    let read = |rows: Result<Read, String>| -> Result<Rows, Attempt> {
-        match rows {
+        match read_panes(mux, &session) {
             Ok(Read::Rows(r)) => Ok(r),
             Ok(Read::Gone) => Err(done(SkipReason::Gone)),
             Err(t) => {
@@ -401,7 +533,7 @@ fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: boo
             }
         }
     };
-    let mut rows = match read(read_panes(mux, &session)) {
+    let mut rows = match read() {
         Ok(r) => r,
         Err(a) => return a,
     };
@@ -411,7 +543,7 @@ fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: boo
         let mut stable = false;
         for _ in 1..SHRINK_READS {
             std::thread::sleep(SHRINK_WAIT);
-            let next = match read(read_panes(mux, &session)) {
+            let next = match read() {
                 Ok(r) => r,
                 Err(a) => return a,
             };
@@ -442,14 +574,14 @@ fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: boo
             Locked::Skip(reason) => done(reason),
             Locked::Conflict => Attempt::Conflict,
             Locked::Gone => done(SkipReason::Gone),
-            Locked::Closed(id) => match mux.session_exists(&session) {
+            Locked::Pane(text) => match mux.session_exists(&session) {
                 SessionAnswer::Gone => done(SkipReason::Gone),
                 SessionAnswer::Exists => {
-                    log(store, event, &format!("pane {id} closed during the snapshot"));
+                    log(store, event, &text);
                     done(SkipReason::Logged)
                 }
                 SessionAnswer::Error { message } => {
-                    log(store, event, &format!("pane {id} closed during the snapshot; has-session failed: {message}"));
+                    log(store, event, &format!("{text}; has-session failed: {message}"));
                     done(SkipReason::Logged)
                 }
             },
@@ -471,15 +603,19 @@ fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: boo
 
 /// After a write: the `snapshot.pending` check of W§7.3. Its outcome does not change the write's outcome; a queue
 /// that fails in it wrote its own log line.
-fn written(store: &Store, mux: &dyn Multiplexer, wait: Duration) -> SnapshotOutcome {
-    let _ = pending_check(store, mux, wait);
+fn written(store: &Store, mux: &dyn Multiplexer, wait: Duration, socket: &Option<PathBuf>) -> SnapshotOutcome {
+    let _ = pending_check(store, mux, wait, socket.clone());
     SnapshotOutcome::Written
 }
 
 /// After `Busy` (D14): queue with the own flag, try `lock` once more for [`PROBE_WAIT`] without reading the state,
 /// and on success take the file and run once more.
-fn busy(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration) -> anyhow::Result<SnapshotOutcome> {
+fn busy(
+    store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration, socket: &mut Option<PathBuf>,
+) -> anyhow::Result<SnapshotOutcome> {
     queue_logged(store, event, force)?;
+    #[cfg(feature = "test-hooks")]
+    testing::run_after_queue(store.dir());
     match lock_file(&store.dir().join(LOCK_FILE), PROBE_WAIT) {
         Ok(Some(f)) => drop(f),
         Ok(None) => return Ok(SnapshotOutcome::Pending),
@@ -492,8 +628,8 @@ fn busy(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, 
         return Ok(SnapshotOutcome::Pending);
     };
     let force = force || taken;
-    match attempt(store, mux, event, force, wait) {
-        Attempt::Done(SnapshotOutcome::Written) => Ok(written(store, mux, wait)),
+    match attempt(store, mux, event, force, wait, socket) {
+        Attempt::Done(SnapshotOutcome::Written) => Ok(written(store, mux, wait, socket)),
         Attempt::Done(o) => Ok(o),
         Attempt::Busy | Attempt::Conflict | Attempt::Unstable => {
             queue_logged(store, event, force)?;
@@ -503,29 +639,33 @@ fn busy(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, 
 }
 
 /// W§7.4 with the D8 retry: one more whole attempt after a `snapshot_seq` conflict; a second conflict or unstable
-/// shrink reads queue the snapshot; `Busy` goes to [`busy`].
-fn snapshot(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration) -> anyhow::Result<SnapshotOutcome> {
+/// shrink reads queue the snapshot; `Busy` goes to [`busy`]. `socket` is the `tmux_socket` that the caller built
+/// `mux` with, when it is known before the first read (round 2 M4).
+fn snapshot(
+    store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration, socket: Option<PathBuf>,
+) -> anyhow::Result<SnapshotOutcome> {
+    let mut socket = socket;
     let mut conflicts = 0;
     loop {
-        match attempt(store, mux, event, force, wait) {
-            Attempt::Done(SnapshotOutcome::Written) => return Ok(written(store, mux, wait)),
+        match attempt(store, mux, event, force, wait, &mut socket) {
+            Attempt::Done(SnapshotOutcome::Written) => return Ok(written(store, mux, wait, &socket)),
             Attempt::Done(o) => return Ok(o),
             Attempt::Conflict if conflicts == 0 => conflicts += 1,
             Attempt::Conflict | Attempt::Unstable => {
                 queue_logged(store, event, force)?;
                 return Ok(SnapshotOutcome::Pending);
             }
-            Attempt::Busy => return busy(store, mux, event, force, wait),
+            Attempt::Busy => return busy(store, mux, event, force, wait, &mut socket),
         }
     }
 }
 
 /// The `snapshot.pending` check of W§7.3 (D15): no file gives `Skipped(NoPending)`; else one snapshot with the flag
-/// that the file held.
-fn pending_check(store: &Store, mux: &dyn Multiplexer, wait: Duration) -> anyhow::Result<SnapshotOutcome> {
+/// that the file held, bound to `socket` when it is known (round 2 M4).
+fn pending_check(store: &Store, mux: &dyn Multiplexer, wait: Duration, socket: Option<PathBuf>) -> anyhow::Result<SnapshotOutcome> {
     match take(store) {
         None => Ok(SnapshotOutcome::Skipped(SkipReason::NoPending)),
-        Some(force) => snapshot(store, mux, None, force, wait),
+        Some(force) => snapshot(store, mux, None, force, wait, socket),
     }
 }
 
@@ -539,7 +679,7 @@ pub fn run(
     if !valid_ws_id(ws_id) {
         return Ok(SnapshotOutcome::Skipped(SkipReason::InvalidId));
     }
-    snapshot(&Store::open(paths, ws_id), mux, event, force, wait)
+    snapshot(&Store::open(paths, ws_id), mux, event, force, wait, None)
 }
 
 /// Takes `snapshot.pending` (W§7.3): `Some(true)` when it held `force`, `Some(false)` when it was empty or could not be
@@ -566,13 +706,14 @@ pub fn after_write(paths: &Paths, mux: &dyn Multiplexer, ws_id: &str, wait: Dura
     if !valid_ws_id(ws_id) {
         return Ok(SnapshotOutcome::Skipped(SkipReason::InvalidId));
     }
-    pending_check(&Store::open(paths, ws_id), mux, wait)
+    pending_check(&Store::open(paths, ws_id), mux, wait, None)
 }
 
 /// The pane key of a hand-started member (W§7.4 step 4, AU41, AU79, D12): the pane id must be `%N`, the state must
 /// exist in phase `up` or `draining`; then, under `lock` ([`OP_WAIT`]), a valid `@zygo-pane` is used, or a new key
-/// is set. When the key was set now and the state write then fails, `@zygo-pane` is set back to the empty value. After
-/// the lock it runs the W§7.3 `snapshot.pending` check with [`HOOK_WAIT`]; that outcome does not change the result.
+/// is set. When the key was set now and the state write then fails, the rollback takes `lock` again, reads the state,
+/// and sets `@zygo-pane` back to the empty value only when no `panes[]` entry holds the key (round 2 M2). After the
+/// lock it runs the W§7.3 `snapshot.pending` check with [`HOOK_WAIT`]; that outcome does not change the result.
 pub fn assign_key(store: &Store, mux: &dyn Multiplexer, pane: &str) -> anyhow::Result<String> {
     if !valid_pane_id(pane) {
         bail!("invalid pane id {pane:?}");
@@ -601,14 +742,28 @@ pub fn assign_key(store: &Store, mux: &dyn Multiplexer, pane: &str) -> anyhow::R
     match result {
         Ok(_) => {
             let key = got.map(|(k, _)| k).ok_or_else(|| anyhow!("no key for pane {pane}"))?;
-            let _ = pending_check(store, mux, HOOK_WAIT);
+            let _ = pending_check(store, mux, HOOK_WAIT, ws.tmux_socket.clone());
             Ok(key)
         }
         Err(e) => {
-            if let Some((_, true)) = got {
-                let _ = mux.set_pane_option(pane, PANE_OPTION, "");
+            if let Some((key, true)) = &got {
+                rollback(store, mux, pane, key);
             }
             Err(anyhow!("cannot assign a key to pane {pane}: {e}"))
         }
+    }
+}
+
+/// The rollback of [`assign_key`] (round 2 M2): under `lock` ([`OP_WAIT`]), reads the state again and clears
+/// `@zygo-pane` of `pane` only when no `panes[]` entry holds `key`, so a key that a snapshot already wrote stays. A
+/// state that cannot be read holds no key. When the lock cannot be taken the option stays: a set key that no entry
+/// holds is used by the next snapshot.
+fn rollback(store: &Store, mux: &dyn Multiplexer, pane: &str, key: &str) {
+    let Ok(Some(_lock)) = lock_file(&store.dir().join(LOCK_FILE), OP_WAIT) else {
+        return;
+    };
+    let written = matches!(store.read(), Ok(Some(ws)) if ws.panes.iter().any(|p| p.key == key));
+    if !written {
+        let _ = mux.set_pane_option(pane, PANE_OPTION, "");
     }
 }
