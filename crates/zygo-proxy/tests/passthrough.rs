@@ -42,13 +42,23 @@ struct Got { path: String, headers: HeaderMap, body: Vec<u8> }
 /// The reply body of a new `Upstream`.
 const REPLY: &str = r#"{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":11,"output_tokens":22}}"#;
 
-struct Upstream { addr: SocketAddr, got: Arc<Mutex<Vec<Got>>>, reply: Arc<Mutex<String>>, _stop: tokio::sync::oneshot::Sender<()> }
+struct Upstream {
+    addr: SocketAddr,
+    got: Arc<Mutex<Vec<Got>>>,
+    reply: Arc<Mutex<String>>,
+    status: Arc<Mutex<u16>>,
+    headers: Arc<Mutex<Vec<(String, String)>>>,
+    _stop: tokio::sync::oneshot::Sender<()>,
+}
 impl Upstream {
-    /// 127.0.0.1:0, own runtime thread; every request is recorded and answered 200 JSON (`REPLY` until `reply`).
+    /// 127.0.0.1:0, own runtime thread; every request is recorded and answered 200 JSON (`REPLY` until `reply`;
+    /// status, extra headers and body until `answer`).
     fn start() -> Upstream {
         let got: Arc<Mutex<Vec<Got>>> = Arc::default();
         let reply = Arc::new(Mutex::new(REPLY.to_string()));
-        let r2 = reply.clone();
+        let status = Arc::new(Mutex::new(200u16));
+        let headers: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let (r2, s2, h2) = (reply.clone(), status.clone(), headers.clone());
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
@@ -59,17 +69,17 @@ impl Upstream {
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
                 let app = axum::Router::new().fallback(move |req: Request| {
-                    let (g3, r3) = (g2.clone(), r2.clone());
+                    let (g3, r3, s3, h3) = (g2.clone(), r2.clone(), s2.clone(), h2.clone());
                     async move {
                         let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
                         let headers = req.headers().clone();
                         let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap().to_vec();
                         g3.lock().unwrap().push(Got { path, headers, body });
-                        Response::builder()
-                            .status(200)
-                            .header("content-type", "application/json")
-                            .body(axum::body::Body::from(r3.lock().unwrap().clone()))
-                            .unwrap()
+                        let mut b = Response::builder().status(*s3.lock().unwrap()).header("content-type", "application/json");
+                        for (k, v) in h3.lock().unwrap().iter() {
+                            b = b.header(k.as_str(), v.as_str());
+                        }
+                        b.body(axum::body::Body::from(r3.lock().unwrap().clone())).unwrap()
                     }
                 });
                 tokio::select! {
@@ -78,10 +88,16 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, reply, _stop: tx }
+        Upstream { addr, got, reply, status, headers, _stop: tx }
     }
     /// Every later request is answered with `body`.
     fn reply(&self, body: &Value) { *self.reply.lock().unwrap() = body.to_string(); }
+    /// Every later request is answered with `status`, `headers` (after `content-type`) and `body`.
+    fn answer(&self, status: u16, headers: &[(&str, &str)], body: &Value) {
+        *self.status.lock().unwrap() = status;
+        *self.headers.lock().unwrap() = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        self.reply(body);
+    }
     fn port(&self) -> u16 { self.addr.port() }
     fn got(&self) -> Vec<Got> { self.got.lock().unwrap().clone() }
     /// The last recorded request whose path starts with `prefix`.
@@ -380,6 +396,56 @@ fn e2e_login_reaches_upstream_unchanged() {
     assert_eq!((w.role_requested.as_deref(), w.role_served.as_deref(), w.model.as_str(), w.provider.as_str(), w.passthrough, w.status),
                (Some("claude-test-1"), Some("subscription"), "test-pt", "p-anth", true, 200));
     assert_eq!((w.input_tokens, w.output_tokens, w.estimated_usd), (11, 22, 0.0)); // p-anth has prices: 0 is the passthrough rule
+}
+
+/// The Claude Code header set of a messages request (2.1.330), with `class` as `x-claude-code-request-class`.
+fn cc_headers(class: &str) -> Vec<(&str, &str)> {
+    vec![("anthropic-beta", "oauth-2025-04-20"), ("anthropic-version", "2023-06-01"), ("accept", "application/json"),
+         ("user-agent", "claude-cli/2.1.330 (external, cli)"), ("x-app", "cli"), ("x-stainless-lang", "js"),
+         ("anthropic-dangerous-direct-browser-access", "true"), ("x-claude-code-session-id", "s1"), ("x-claude-code-request-class", class)]
+}
+
+#[test] // FIX-8 (LIV-1 D8): stage 2 and the outbound headers have no branch on the request class (§12.4)
+fn auxiliary_request_reaches_upstream_as_main_does() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let b = mb("claude-test-1");
+    for class in ["main", "auxiliary"] {
+        assert_eq!(post_pt(&t, &g, M, b.clone(), &cc_headers(class)).0, 200, "{class}");
+    }
+    let got = t.anth.got();
+    assert_eq!(got.len(), 2);
+    assert!(got.iter().all(|x| x.body == b));
+    assert_eq!(got[0].headers, got[1].headers);
+    for x in &got {
+        let h = &x.headers;
+        for n in ["user-agent", "x-app", "x-stainless-lang", "anthropic-dangerous-direct-browser-access"] {
+            assert!(h.get(n).is_none(), "{n} sent");
+        }
+        assert!(h.keys().all(|k| !k.as_str().starts_with("x-claude-code-")));
+        assert_eq!((hv(h, "authorization"), hv(h, "anthropic-beta")), (BEARER, "oauth-2025-04-20"));
+    }
+    eprintln!("upstream header names: {:?}", sorted_names(&got[0].headers));
+    assert!(t.h.usage_written(2, Duration::from_secs(10)), "usage rows not written");
+    let r = rows(&t, &g);
+    assert_eq!(r.iter().map(|w| w.request_class.as_deref()).collect::<Vec<_>>(), [Some("main"), Some("auxiliary")]);
+    assert_eq!(r[0].model, r[1].model);
+}
+
+#[test] // FIX-8 (LIV-1 D8): a 429 is kept as the last answer and relayed once, as received (§7.3, §12.4)
+fn upstream_429_reaches_the_client_once_and_unchanged() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let e = json!({"type":"error","error":{"type":"rate_limit_error","message":"limit"}});
+    t.anth.answer(429, &[("retry-after", "7")], &e);
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("auxiliary"));
+    assert_eq!((r.0, hv(&r.1, "retry-after")), (429, "7"));
+    assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), e);
+    assert_eq!(t.anth.got().len(), 1);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = rows(&t, &g);
+    assert_eq!(w.len(), 1);
+    assert_eq!((w[0].status, w[0].request_class.as_deref()), (429, Some("auxiliary")));
 }
 
 #[test] // §12.4 stage 2: no match → built-in provider

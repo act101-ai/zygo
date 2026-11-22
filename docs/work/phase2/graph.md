@@ -57,7 +57,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | PLANNED | implementation | — |
-| HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | DONE | judgment | commits 4379678 98d9a9d c0407fa; CI 44968316690 green (ubuntu, macos, windows); acceptance on merged tree: session_api 40, window 37, zygo-hooks lib 22, workspace --no-run ok, no div_ceil(4) |
 | HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | DONE | judgment | edb0f1c, merge 2899612; acceptance zygo-proxy 350/350, workspace --no-run ok (merged tree) |
 | HUD-7 | SessionView statusline_style with Default; overrides statusline; launcher writes the style | HUD-3 | DONE | implementation | 5c180cc, merge 1f1967b; acceptance all 17 commands 0 failed (merged tree) |
 | HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, HUD-2 | DONE | judgment | 320d2b2, merge 5d919a3; acceptance render 23, hooks lib 24, prices 28, session_api 45, passthrough 30, window 38, compact_cmd 11 (merged tree) |
@@ -102,7 +101,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
 | FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
-| FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/FIX-8 |
+| FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | TODO | implementation | — |
 
@@ -188,3 +187,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | LIV-2 (author's call): no Windows machine; PH8 and PH10 fallback applied by default (plain icons on Windows unless ZYGO_NERD_FONT=1, AU2), W-SHELL part 2 not run. LIV-2 builds the code; edge LIV-2 → M1 (usage_doctor.rs). |
 | 2026-11-22 | E2: the executor runs the PW15 re-check itself with passthrough (operator, 2026-11-21), as P1 did. |
 | 2026-11-22 | FIX-7 DONE (5e67820). Selftest socket removed with its own tmux config; live_end keeps a caller-set live-<pid>; live-hud comment path fixed. Merged tree: lib tests 28, selftest 2, live-hud selfcheck 17, check-premises ok. |
+| 2026-11-22 | FIX-8 DONE (e79d418). Verdict not determined; zygo is not the cause: the first auxiliary request of each Claude Code start was answered 429 in 24 of 24 passthrough sessions. Follow-up node FIX-10 (record upstream error type and message). |
