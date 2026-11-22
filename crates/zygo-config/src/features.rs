@@ -8,8 +8,9 @@ pub struct Features {
     pub results: bool,
     pub work_units: bool,
     pub compact_tool: bool,
-    /// The MCP tool `workspace_down` (workspaces design AU65). Default `false`. A profile cannot set it: it is not in
-    /// `profile::features_ok` or in the proxy's `profile_features`.
+    /// The MCP tool `workspace_down` (workspaces design AU65). Default `false`. `profile::validate` refuses
+    /// `workspace_tool` in a profile (`not a feature key`), and the MCP server applies no profile: it reads this value
+    /// from the merged config only. `Merged::apply_profile` itself does not refuse the key.
     pub workspace_tool: bool,
     pub redaction: RedactionFeatures,
 }
