@@ -466,7 +466,13 @@ fn child_closed_stderr() {
     assert_eq!(n, 2, "an error or is-error reply, then the ping reply");
 }
 
+/// Held by every test that writes a stub or forks a process, from its first stub write or fork until its last
+/// program has ended. Thus no other test forks while a stub is open for writing (ETXTBSY).
+static STUBS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn forks() -> std::sync::MutexGuard<'static, ()> { STUBS.lock().unwrap_or_else(|e| e.into_inner()) }
+
 fn run_child(case: &str) {
+    let _forks = forks();
     let o = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "child_closed_stderr", "--nocapture", "--test-threads=1"])
         .env("ZYGO_MCP_CASE", case)
