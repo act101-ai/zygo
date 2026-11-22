@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{filter, removable, Filtered};
+use zygo_workspace::args::{bypass_flags, filter, removable, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -256,4 +256,23 @@ fn opencode_filter_matches_pinned_help() {
             probe(Agent::OpenCode, n, *arity, OC_REMOVED.contains(&n.as_str()));
         }
     }
+}
+
+#[test] // AU70: the four bypass forms; W§18 #33 values
+fn bypass_forms() {
+    assert_eq!(bypass_flags(&s(&["--model", "lead"]), false), s(&[]));
+    assert_eq!(bypass_flags(&s(&["--dangerously-skip-permissions"]), false), s(&["--dangerously-skip-permissions"]));
+    assert_eq!(bypass_flags(&s(&["--allow-dangerously-skip-permissions"]), false), s(&["--allow-dangerously-skip-permissions"]));
+    assert_eq!(bypass_flags(&s(&["--permission-mode", "bypassPermissions"]), false), s(&["--permission-mode bypassPermissions"]));
+    assert_eq!(bypass_flags(&s(&["--permission-mode=bypassPermissions"]), false), s(&["--permission-mode bypassPermissions"]));
+    assert_eq!(bypass_flags(&s(&["--permission-mode", "plan"]), false), s(&[]));
+    assert_eq!(bypass_flags(&s(&["--permission-mode"]), false), s(&[]));
+    assert_eq!(bypass_flags(&s(&[]), true), s(&["yolo = true"]));
+    // argument order, each form one time, `yolo = true` last
+    let all = s(&["--permission-mode", "bypassPermissions", "--model", "lead", "--dangerously-skip-permissions",
+        "--allow-dangerously-skip-permissions", "--dangerously-skip-permissions", "--permission-mode=bypassPermissions"]);
+    assert_eq!(bypass_flags(&all, true), s(&["--permission-mode bypassPermissions", "--dangerously-skip-permissions",
+        "--allow-dangerously-skip-permissions", "yolo = true"]));
+    // a token after `--` is not a flag
+    assert_eq!(bypass_flags(&s(&["--", "--dangerously-skip-permissions"]), false), s(&[]));
 }

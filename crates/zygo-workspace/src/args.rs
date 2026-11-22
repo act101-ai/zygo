@@ -302,3 +302,35 @@ pub fn filter(agent: Agent, args: &[String]) -> Filtered {
 pub fn removable(agent: Agent, args: &[String]) -> Vec<String> {
     walk(agent, args).removed
 }
+
+const SKIP_PERMISSIONS: &str = "--dangerously-skip-permissions";
+const ALLOW_SKIP_PERMISSIONS: &str = "--allow-dangerously-skip-permissions";
+const PERMISSION_MODE: &str = "--permission-mode";
+const BYPASS_MODE: &str = "bypassPermissions";
+const PERMISSION_MODE_BYPASS: &str = "--permission-mode bypassPermissions";
+const PERMISSION_MODE_BYPASS_ATTACHED: &str = "--permission-mode=bypassPermissions";
+
+/// The AU70 bypass forms in `args` (the tokens before the first `--`), each one time, in the order of first use:
+/// `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions` and `--permission-mode bypassPermissions`
+/// (also typed with `=`). `yolo` adds `yolo = true` at the end. The comparison is exact. The result holds only
+/// these fixed texts, so `up` can print it.
+pub fn bypass_flags(args: &[String], yolo: bool) -> Vec<String> {
+    let flags = args.iter().position(|t| t == "--").map_or(args, |end| &args[..end]);
+    let mut found: Vec<&'static str> = vec![];
+    for (at, token) in flags.iter().enumerate() {
+        let form = match token.as_str() {
+            SKIP_PERMISSIONS => SKIP_PERMISSIONS,
+            ALLOW_SKIP_PERMISSIONS => ALLOW_SKIP_PERMISSIONS,
+            PERMISSION_MODE_BYPASS_ATTACHED => PERMISSION_MODE_BYPASS,
+            PERMISSION_MODE if flags.get(at + 1).is_some_and(|v| v == BYPASS_MODE) => PERMISSION_MODE_BYPASS,
+            _ => continue,
+        };
+        if !found.contains(&form) {
+            found.push(form);
+        }
+    }
+    if yolo {
+        found.push("yolo = true");
+    }
+    found.into_iter().map(str::to_string).collect()
+}
