@@ -101,7 +101,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
 
 ### Auto-update "Base-spec changes" rows
 
-- [ ] 15. Row "§3" → base §3, the last bullet. Replace `- Telemetry that leaves the machine. Nothing phones home.` with:
+- [x] 15. Row "§3" → base §3, the last bullet. Replace `- Telemetry that leaves the machine. Nothing phones home.` with:
 
   ```text
   - Telemetry that leaves the machine. Nothing phones home, with one exception: the update check reads the release's public VERSION file and sends nothing else; opt-out `[update] check = false` / `ZYGO_NO_UPDATE_CHECK=1` (§17 `zygo update`; auto-update design `docs/specs/2026-11-21-auto-update-design.md`). *(2026-11-22, auto-update design)*

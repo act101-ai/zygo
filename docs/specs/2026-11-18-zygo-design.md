@@ -44,7 +44,7 @@ The result is an open-source, single-user-first tool that a developer runs on th
 - Storing request or response content anywhere. `zygo` stores metadata only (§14).
 - Multi-replica serve mode. One server process holds the session state in memory.
 - Writing back to work-item sources (no status changes, no comments) in v1.
-- Telemetry that leaves the machine. Nothing phones home.
+- Telemetry that leaves the machine. Nothing phones home, with one exception: the update check reads the release's public VERSION file and sends nothing else; opt-out `[update] check = false` / `ZYGO_NO_UPDATE_CHECK=1` (§17 `zygo update`; auto-update design `docs/specs/2026-11-21-auto-update-design.md`). *(2026-11-22, auto-update design)*
 
 ## 4. Constraints
 
