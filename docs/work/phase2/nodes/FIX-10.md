@@ -702,28 +702,28 @@ Work in the node's checkout. Run each command from the repository root. Each com
 
 #### Task 4: the base spec (`docs/specs/2026-11-18-zygo-design.md`)
 
-- [ ] **4.1** In §14, after the bullet `  - \`work_units\`: §13.1 facts.`, add the bullet:
+- [x] **4.1** In §14, after the bullet `  - \`work_units\`: §13.1 facts.`, add the bullet:
 
   ```markdown
     - `upstream_errors`: ts, session, request_class, model, status, error_type, error_message. *(Note 2026-11-22, FIX-10: LIV-1 D8, FIX-8. One row for each passthrough request whose upstream answer reaches the client with a status that is not 2xx; a refusal by zygo itself, a non-passthrough session and an error event inside a 2xx stream write no row. The response path copies at most the first 16 KiB of the relayed body and does no parse; the usage writer reads `error.type` and `error.message` from it (`error` as an object, else the body). Both are empty when the copy is not such JSON (not JSON, an SSE body, a body over 16 KiB, or cut off by a client disconnect). Each field is cut to 2 KiB, the client's login is removed (whole, and each run of 8 or more of its characters), the secret pass of §16.1 runs on it at the stage-6 deadline (an empty field when the pass blocks or fails, also when `[features] redaction.secrets` is off), each control character becomes a space, and at most 300 characters are kept. The row and its `requests` row are written in one transaction. The table is created with `CREATE TABLE IF NOT EXISTS` on every open, without a schema version change; `retain_days` and `zygo usage --sync` (which replaces a session's rows) apply as for `requests`.)*
   ```
 
   Result: `rg -n 'upstream_errors' docs/specs/2026-11-18-zygo-design.md` prints the new line in §14 (between lines 670 and 683 of the current file).
-- [ ] **4.2** In §14, replace the line `- Never: bodies, prompts, tool inputs, file paths outside the repository-relative \`files\` of a unit (kept only in the local session directory), redacted spans or words, credentials.` with:
+- [x] **4.2** In §14, replace the line `- Never: bodies, prompts, tool inputs, file paths outside the repository-relative \`files\` of a unit (kept only in the local session directory), redacted spans or words, credentials.` with:
 
   ```markdown
   - Never: bodies, prompts, tool inputs, file paths outside the repository-relative `files` of a unit (kept only in the local session directory), redacted spans or words, credentials. One exception: the upstream error `type` and `message` of a non-2xx passthrough answer (`upstream_errors`), scrubbed and capped as that table's note says. *(2026-11-22, FIX-10)*
   ```
 
   Result: `rg -n '^- Never: .*One exception' docs/specs/2026-11-18-zygo-design.md` prints one line.
-- [ ] **4.3** At the end of the table under `## Change log`, add the row:
+- [x] **4.3** At the end of the table under `## Change log`, add the row:
 
   ```markdown
   | 2026-11-22 | §14 (`upstream_errors`, "Never" line) | author's call (FIX-10, from FIX-8) | §14: table `upstream_errors` records the upstream error type and message of a non-2xx passthrough answer; LIV-1 D8, FIX-8, FIX-10. |
   ```
 
   Result: `rg -n 'LIV-1 D8, FIX-8, FIX-10' docs/specs/2026-11-18-zygo-design.md` prints one line, the change-log row.
-- [ ] **4.4** Commit `docs/specs/2026-11-18-zygo-design.md` and this file: `docs(spec): §14 table upstream_errors (FIX-10)`.
+- [x] **4.4** Commit `docs/specs/2026-11-18-zygo-design.md` and this file: `docs(spec): §14 table upstream_errors (FIX-10)`.
 
 #### Task 5: verification
 
