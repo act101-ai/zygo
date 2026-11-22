@@ -112,7 +112,7 @@ fn measured(env: &dyn Fn(&str) -> Option<OsString>, tty: &dyn Fn() -> Option<u16
 
 ### Task 3: the spec
 
-- [ ] **3.1** In the HUD spec, replace the whole of H§6.7 with the text "H§6.7" under "Spec texts for step 3.1" below, the H§12 row PH4 with the text "H§12 row PH4", and H§14 item 20 with the text "H§14 item 20". Add the change-log row of that heading as the last row of the change log. Commit the spec and this file: `docs(spec): H§6.7 fit width is the terminal width less 4 (PH4 fallback)`.
+- [x] **3.1** In the HUD spec, replace the whole of H§6.7 with the text "H§6.7" under "Spec texts for step 3.1" below, the H§12 row PH4 with the text "H§12 row PH4", and H§14 item 20 with the text "H§14 item 20". Add the change-log row of that heading as the last row of the change log. Commit the spec and this file: `docs(spec): H§6.7 fit width is the terminal width less 4 (PH4 fallback)`.
 
 ### Task 4: verification
 
