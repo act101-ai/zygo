@@ -1368,3 +1368,29 @@ fn h14_16_unpriced_and_zero_token_requests_in_the_counts() { // H§14 #16 (proxy
     assert_eq!(spend_counts(&s), (Some(0.0), Some(0), Some(0)));
     assert_eq!((s.tokens_in, s.tokens_out), (Some(0), Some(0)));
 }
+
+// ---- X1: requests in flight (AU91) ----
+
+/// The reply keys X1 adds (AU91).
+const REQUEST_KEYS: [&str; 2] = ["requests_in_flight", "last_request_end"];
+
+#[test]
+fn au91_status_fields_default_and_parse() { // AU91: fields added only; an older peer ignores or lacks them
+    let s = SessionStatus::default();
+    assert_eq!((s.requests_in_flight, s.last_request_end.clone()), (None, None));
+    let none = serde_json::to_value(&s).unwrap();
+    for k in REQUEST_KEYS {
+        assert!(none.get(k).is_none(), "{k} in {none}");
+    }
+    let old = json!({"session":"S1","profile":null,"work":null,"used_context":null,
+        "effective_window":null,"compact":null,"cache_read_share":null,"expires_at":""});
+    let parsed: SessionStatus = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!((parsed.requests_in_flight, parsed.last_request_end), (None, None));
+    let mut new = old;
+    new["requests_in_flight"] = json!(2);
+    new["last_request_end"] = json!("2026-11-21T10:00:00Z");
+    let parsed: SessionStatus = serde_json::from_value(new.clone()).unwrap();
+    assert_eq!((parsed.requests_in_flight, parsed.last_request_end.as_deref()), (Some(2), Some("2026-11-21T10:00:00Z")));
+    let back = serde_json::to_value(&parsed).unwrap();
+    assert_eq!((back["requests_in_flight"].clone(), back["last_request_end"].clone()), (json!(2), json!("2026-11-21T10:00:00Z")));
+}

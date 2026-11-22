@@ -348,6 +348,8 @@ impl SessionState {
             requests_priced: Some(l.spend.requests_priced),
             passthrough: Some(self.passthrough),
             team_session: Some(team),
+            requests_in_flight: None,
+            last_request_end: None,
         }
     }
 

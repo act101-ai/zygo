@@ -79,6 +79,12 @@ pub struct SessionStatus {
     /// A session created with a team token; the label is not sent (AU13).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_session: Option<bool>,
+    /// Model requests accepted on the forward path and not yet ended, a streamed body included (AU91).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests_in_flight: Option<u64>,
+    /// The RFC 3339 UTC time at which the last such request ended; `None`: no request ended (AU91).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_request_end: Option<String>,
 }
 
 /// Synchronous (call it outside a tokio runtime); owns a current-thread runtime and a reqwest client built with
