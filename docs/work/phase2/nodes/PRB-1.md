@@ -140,12 +140,12 @@ A failed line (the contract's mapping). Write the row and the note with `failed`
 
 ### Task 3: the live script (no agent)
 
-- [ ] **3.1** Create `scripts/premises/live-hud-probe_test.sh` with exactly the text of Block D. Run `sh scripts/premises/live-hud-probe_test.sh; echo "rc=$?"`. Expected: `FAIL: L1 exit 0 and eleven LIVE lines …` and other `FAIL:` lines, `live-hud-probe tests: <n> failed`, `rc=1` (no `live-hud-probe.sh`; the L8 case waits 20 s).
-- [ ] **3.2** Create `scripts/premises/live-hud-probe.sh` with exactly the text of Block C. Run `sh -n scripts/premises/live-hud-probe.sh` (no output, exit 0), then `sh scripts/premises/live-hud-probe_test.sh` (about 3 minutes; stubs only, a private `TMUX_TMPDIR` under its temporary dir). Expected: 12 lines that start with `ok: L`, then `live-hud-probe tests: ok (12)`, exit 0.
-- [ ] **3.3** Run `sh scripts/premises/live-hud-probe.sh a; echo "rc=$?"`. Expected: `usage: sh scripts/premises/live-hud-probe.sh`, `rc=1`, and no `premises: scratch` line (the usage check comes before `lib.sh`).
-- [ ] **3.4** Check that the script writes no settings file of the user: `grep -nE '>>? *"?\$\{?(HOME|PRB_CC_DIR|CLAUDE_CONFIG_DIR)' scripts/premises/live-hud-probe.sh; echo "rc=$?"` → `rc=1`; `grep -n 'settings.json' scripts/premises/live-hud-probe.sh` → only lines with `$T/settings.json` or `$Q/settings.json`.
-- [ ] **3.5** Run `sh scripts/check-premises.sh` and `N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh`. Expected: both end with `check-premises: ok (<IDS>)`, exit 0 (the two new `live*.sh` are in its scan scope).
-- [ ] **3.6** Commit the two files and this file: `test(premises): live-hud-probe.sh, the PRB-1 live probe of the status line` (with the two trailers). Check: `git log -1 --format=%B` ends with the two trailer lines; `git status --short` prints nothing.
+- [x] **3.1** Create `scripts/premises/live-hud-probe_test.sh` with exactly the text of Block D. Run `sh scripts/premises/live-hud-probe_test.sh; echo "rc=$?"`. Expected: `FAIL: L1 exit 0 and eleven LIVE lines …` and other `FAIL:` lines, `live-hud-probe tests: <n> failed`, `rc=1` (no `live-hud-probe.sh`; the L8 case waits 20 s).
+- [x] **3.2** Create `scripts/premises/live-hud-probe.sh` with exactly the text of Block C. Run `sh -n scripts/premises/live-hud-probe.sh` (no output, exit 0), then `sh scripts/premises/live-hud-probe_test.sh` (about 3 minutes; stubs only, a private `TMUX_TMPDIR` under its temporary dir). Expected: 12 lines that start with `ok: L`, then `live-hud-probe tests: ok (12)`, exit 0.
+- [x] **3.3** Run `sh scripts/premises/live-hud-probe.sh a; echo "rc=$?"`. Expected: `usage: sh scripts/premises/live-hud-probe.sh`, `rc=1`, and no `premises: scratch` line (the usage check comes before `lib.sh`).
+- [x] **3.4** Check that the script writes no settings file of the user: `grep -nE '>>? *"?\$\{?(HOME|PRB_CC_DIR|CLAUDE_CONFIG_DIR)' scripts/premises/live-hud-probe.sh; echo "rc=$?"` → `rc=1`; `grep -n 'settings.json' scripts/premises/live-hud-probe.sh` → only lines with `$T/settings.json` or `$Q/settings.json`.
+- [x] **3.5** Run `sh scripts/check-premises.sh` and `N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh`. Expected: both end with `check-premises: ok (<IDS>)`, exit 0 (the two new `live*.sh` are in its scan scope).
+- [x] **3.6** Commit the two files and this file: `test(premises): live-hud-probe.sh, the PRB-1 live probe of the status line` (with the two trailers). Check: `git log -1 --format=%B` ends with the two trailer lines; `git status --short` prints nothing.
 
 ### Task 4: the gate before the live run (no agent)
 
