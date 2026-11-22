@@ -2,9 +2,10 @@
 # Live premises PW1, PW2, PW3, PW4, PW5, PW7, PW9, PW10, PW16 (node P2; workspaces spec W§17):
 # what the pinned Claude Code and OpenCode do with session ids, hooks, resume and SIGTERM.
 # Usage: sh scripts/premises/live-workspace.sh [c1 c2 c5 c5l c7 oc]
-#   No argument: every part, fixtures rewritten, one LIVE line for each of the nine ids, exit 0.
-#   With part names: only those parts, for work on the script; fixtures go to the scratch folder
-#   and the LIVE lines are not results.
+#   No argument: every part, one LIVE line for each of the nine ids, exit 0. The fixtures are written
+#   to the scratch folder and replace the committed ones only at the end of the full run.
+#   With part names: only those parts, for work on the script; fixtures stay in the scratch folder
+#   and the LIVE lines are not results (a sub-check of a part that did not run is a FAIL).
 #   N2_SCRATCH=<folder> (lib.sh): the run folders (hook logs, recorded requests, pane texts,
 #   temporary HOMEs with the dummy key only) stay in <folder>/live-<pid>, for work on the script.
 # Run by hand only, with claude and opencode on PATH (the caller adds the OpenCode folder).
@@ -15,16 +16,19 @@
 #   request leaves the machine, nothing under the real HOME is written. OpenCode fetches its
 #   provider package from the package registry into the temporary HOME.
 # - Part c5l (one sub-check of PW5) runs one print-mode turn of Claude Code on the stored login of
-#   the real HOME: --setting-sources project leaves the user's settings, hooks and plugins out,
-#   --strict-mcp-config leaves the MCP servers out, --no-session-persistence writes no transcript.
-#   It spends the operator's usage on about two model requests. Claude Code can still update its
-#   own state file under the real HOME.
+#   the real HOME, with the caller's CLAUDE_CONFIG_DIR (else the default config folder):
+#   --setting-sources project leaves the user's settings, hooks and plugins out, --strict-mcp-config
+#   leaves the MCP servers out, --no-session-persistence writes no transcript. It spends the
+#   operator's usage on about two model requests. Claude Code 2.1.330 still makes an empty
+#   projects/<scratch repository>/memory folder in that config folder and can update its own state
+#   file; note 5.6 records what it found (read only; this script changes and removes nothing there).
 # - Every tmux command uses a server of its own (-S <socket in a private folder>, -f /dev/null).
 #   The server, every agent and helper process and the private folder are removed on every exit.
 # - PW3 needs a second Claude Code program at or above the pinned version and below the one on
 #   PATH: PW3_OLD_CLAUDE=<path>, else the highest such version file beside the program on PATH.
 . "$(dirname "$0")/lib.sh"
 . "$PREMISES_DIR/live.sh"
+. "$PREMISES_DIR/workspace_lib.sh"   # clean, sub, note, rest, finish
 live_traps
 set +e   # a failed command is a result here; every wait and every test handles its own status
 ZP_PRIV="" SOCK="" TMUX_BIN="" BASE=""
@@ -58,16 +62,13 @@ echo "live: Claude Code $LIVE_CC_VER, OpenCode $LIVE_OC_VER, $("$TMUX_BIN" -V)"
 
 BASE="$N2_SCRATCH/live-$$"
 REC="$BASE/ws-rec"; mkdir -p "$REC"
-if [ $# -eq 0 ]; then
-  FXC="$REPO_DIR/fixtures/claude-code/workspace"; FXO="$REPO_DIR/fixtures/opencode/workspace"
-  rm -rf "$FXC" "$FXO"
-else
-  FXC="$BASE/fx-claude-code"; FXO="$BASE/fx-opencode"
-  echo "live: partial run ($*): fixtures go to the scratch folder; the LIVE lines are not results"
-fi
+# Fixtures are written to the scratch folder; only a full run copies them over the committed ones, at its end.
+FXC="$BASE/fx-claude-code"; FXO="$BASE/fx-opencode"
+OUTC="$REPO_DIR/fixtures/claude-code/workspace"; OUTO="$REPO_DIR/fixtures/opencode/workspace"
+[ $# -eq 0 ] || { OUTC=$FXC; OUTO=$FXO; echo "live: partial run ($*): fixtures stay in the scratch folder; the LIVE lines are not results"; }
 mkdir -p "$FXC" "$FXO"
 EXTRA_ENV="DISABLE_AUTOUPDATER=1"
-: "${PW_TICKS:=10}"   # polls per second of a wait bound (a smaller value shortens every wait; tests only)
+PW_TICKS=$(pw_ticks)   # polls per second of a wait bound (workspace_lib.sh: 10 unless PW_TEST=1)
 DENY="zygo: workspace is draining for down; finish your turn"
 BLOCK="zygo: workspace is stopping"
 FULL='{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":999000,"output_tokens":5}'
@@ -83,15 +84,7 @@ gone() { ! kill -0 "$1" 2>/dev/null; }
 unpid() { LIVE_PIDS=$(printf '%s\n' $LIVE_PIDS | grep -vx "$1" | tr '\n' ' '); }
 uuid() { python3 -I -c 'import uuid; print(uuid.uuid4())'; }
 yn() { if [ "$1" -eq 0 ]; then echo yes; else echo no; fi; }
-clean() { printf '%s' "$1" | tr '\n' ' ' | sed "s#$SOCK#SOCKET#g; s#$N2_SCRATCH#SCRATCH#g"; }
-# sub <PW id> <sub id> <0 = pass, other = fail> <detail>; note <PW id> <sub id> <detail> (not part of the verdict)
-sub() {
-  if [ "$3" -eq 0 ]; then printf '%s ok %s\n' "$2" "$(clean "$4")" >>"$REC/$1.txt"
-  else printf '%s FAIL %s\n' "$2" "$(clean "$4")" >>"$REC/$1.txt"; printf ' %s' "$2" >>"$REC/$1.bad"; fi
-}
-note() { printf '%s note %s\n' "$2" "$(clean "$3")" >>"$REC/$1.txt"; }
-# rest <reason> <PW id>:<sub id>...: the sub-checks that a failed step did not reach
-rest() { _r=$1; shift; for _x in "$@"; do sub "${_x%%:*}" "${_x#*:}" 1 "not reached: $_r"; done; }
+WA="$PREMISES_DIR/workspace_analyze.py"
 # steps <prefix> <steps json>: SSE files and mock rules of one scripted sequence (steps.py)
 steps() {
   mkdir -p "$RUN/sse"
@@ -116,10 +109,13 @@ typed_stops() { [ "$(jq -s '[.[] | select(.hook_event_name == "SubagentStop" and
 # cc_pane <session> <dir> <claude args>: Claude Code on the mock in a pane of the private server; CCPID = its process id
 cc_pane() {
   _s=$1 _d=$2; shift 2
+  CCPID=""   # never a pid of an earlier pane
   _q=""; for _x in "$@"; do _q="$_q '$(printf '%s' "$_x" | sed "s/'/'\\\\''/g")'"; done
   echo "cd '$_d' && exec $(agent_env) $EXTRA_ENV '$CLAUDE_BIN'$_q" >"$RUN/pane-$_s.sh"
   tm new-session -d -s "$_s" -x 200 -y 50 -c "$_d" -- /bin/sh "$RUN/pane-$_s.sh" || return 1
-  CCPID=$(tm display-message -p -t "=$_s:" '#{pane_pid}'); LIVE_PIDS="$LIVE_PIDS $CCPID"; CCS=$_s
+  CCPID=$(tm display-message -p -t "=$_s:" '#{pane_pid}')
+  case "$CCPID" in "" | *[!0-9]*) CCPID=""; tm kill-session -t "=$_s" 2>/dev/null; return 1 ;; esac
+  LIVE_PIDS="$LIVE_PIDS $CCPID"; CCS=$_s
 }
 PTR=$(printf '\342\235\257')   # U+276F, the pointer of a Claude Code menu
 TRUST_YES="Yes, I trust"       # the accept option of the folder trust question
@@ -146,6 +142,7 @@ cc_ready() {
 pane_end() {
   tm capture-pane -p -t "=$1:" >"$RUN/pane-$1.txt" 2>/dev/null
   tm kill-session -t "=$1" 2>/dev/null
+  [ -n "$2" ] || return 0
   kill "$2" 2>/dev/null; wait_for 5 gone "$2" || kill -KILL "$2" 2>/dev/null
   unpid "$2"
 }
@@ -164,6 +161,16 @@ said() { { sed -n 1p "$RUN/out-$1.txt"; sed -n 1p "$RUN/err-$1.txt"; } 2>/dev/nu
 req_has() { [ -n "$(body_has "$1" "$RUN"/rec/[0-9]*.json 2>/dev/null)" ]; }               # <regex>: a recorded request holds it
 # req_both <regex a> <regex b>: 0 when one recorded request holds both
 req_both() { _f=$(body_has "$1" "$RUN"/rec/[0-9]*.json 2>/dev/null); [ -n "$_f" ] && [ -n "$(body_has "$2" $_f)" ]; }
+# control <marker>: one request with no credential to the mock (recorded and answered 401; no agent involved)
+control() {
+  python3 -I -c 'import json, sys, urllib.request
+r = urllib.request.Request(sys.argv[1] + "/v1/messages", method="POST", headers={"content-type": "application/json"},
+    data=json.dumps({"model": "control", "max_tokens": 1, "messages": [{"role": "user", "content": sys.argv[2]}]}).encode())
+try:
+    urllib.request.urlopen(r, timeout=5)
+except urllib.error.HTTPError as e:
+    sys.exit(0 if e.code == 401 else 1)' "$MOCK_URL" "$1"
+}
 # pub <file> <fixture name> [<fixture dir>]: scrubbed copy; each agent id becomes agent-id-<n>
 pub() {
   [ -f "$1" ] || return 0
@@ -211,8 +218,9 @@ part_c1() {
     # Resume in a new pane; the SessionStart hook of this launch returns a note as additional context.
     cc_settings r '[]'
     echo '[{"event": "SessionStart", "output": {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "tracer-pw10-note"}}}]' >"$RS"
-    cc_pane zc1r "$R" --tools "" --settings "$ST" --resume "$SID"
-    if ! cc_ready 60; then
+    if ! cc_pane zc1r "$R" --tools "" --settings "$ST" --resume "$SID"; then
+      rest "tmux did not start the resume pane" PW1:1.2 PW1:1.3 PW1:1.4 PW9:9.3 PW10:10.1 PW10:10.2
+    elif ! cc_ready 60; then
       pane_end zc1r "$CCPID"; rest "timeout 60 s: no SessionStart hook after --resume" PW1:1.2 PW1:1.3 PW1:1.4 PW9:9.3 PW10:10.1 PW10:10.2
     else
       f="$HK/$(hookfile "$HK" SessionStart-main 1)"
@@ -332,26 +340,8 @@ part_c2() {
       pub "$fs" Stop-after-clear.json
     fi
     # SessionStart inputs between the subagent's SubagentStart and its SubagentStop belong to the subagent.
-    r=$(python3 -I - "$HK" <<'PY'
-import json, os, sys
-d = sys.argv[1]
-names = [f for f in sorted(os.listdir(d)) if f[0].isdigit() and f.endswith(".json")]
-ev = [json.load(open(os.path.join(d, f))) for f in names]
-lo = next((i for i, e in enumerate(ev) if e.get("hook_event_name") == "SubagentStart" and e.get("agent_type")), None)
-hi = None if lo is None else next((i for i, e in enumerate(ev) if i > lo and e.get("hook_event_name") == "SubagentStop" and e.get("agent_id") == ev[lo].get("agent_id")), None)
-if hi is None:
-    print("0 0 none none")
-else:
-    ins = [i for i in range(lo, hi) if ev[i].get("hook_event_name") == "SessionStart"]
-    bad = [i for i in ins if "agent_id" not in ev[i]]
-    src = ",".join(sorted({str(ev[i].get("source")) for i in ins})) or "none"
-    print(len(ins), len(bad), src, names[ins[0]] if ins else "none")
-PY
-)
-    set -- ${r:-0 0 none none}
-    t=1; [ "$1" -ge 1 ] && [ "$2" -eq 0 ] && t=0
-    sub PW2 2.3 $t "SessionStart inputs inside the subagent (between its SubagentStart and SubagentStop): $1, source $3; without an agent_id key: $2"
-    [ "$4" = none ] || pub "$HK/$4" SessionStart-sub.json
+    f1=$(rec_2_3 "$(python3 -I "$WA" pw2-sub "$HK")")
+    [ "$f1" = none ] || pub "$HK/$f1" SessionStart-sub.json
   fi
   pane_end zc2 "$CCPID"; stop_mock
 }
@@ -377,22 +367,31 @@ part_c5() {
   subreq=$(jq -r 'select(.headers["x-claude-code-agent-id"] != null) | .seq' "$RUN"/rec/[0-9]*.json 2>/dev/null | grep -c .)
   t=1; [ "$pre" -ge 1 ] && [ "$ss" -eq 0 ] && [ "$subreq" -eq 0 ] && t=0
   sub PW5 5.1 $t "PreToolUse deny on Agent: PreToolUse inputs $pre; SubagentStart inputs $ss; subagent requests $subreq; dispatch blocked: $(yn $t)"
-  t=1; req_both 'toolu_pw5_00_agent' 'workspace is draining for down; finish your turn' && t=0
-  sub PW5 5.2 $t "the next request of the lead holds the deny reason: $(yn $t)"
+  # The lead's next request: the first one that holds the tool result of the denied call and is not
+  # Claude Code's prompt-suggestion request (its last user message starts with "[SUGGESTION MODE:").
+  f=$(python3 -I "$WA" lead-next "$RUN/rec" toolu_pw5_00_agent)
+  t=1; [ -n "$f" ] && [ -n "$(body_has 'workspace is draining for down; finish your turn' "$f")" ] && t=0
+  sub PW5 5.2 $t "the next request of the lead (the first one with the tool result, not the prompt-suggestion request) holds the deny reason: $(yn $t)"
   sub PW5 5.3 $ended "the turn ended after the deny (Stop within 60 s; scripted lead on the mock): $(yn $ended)"
   pub "$HK/$(hookfile "$HK" PreToolUse-Agent-main 1)" PreToolUse-Agent-denied.json
-  f=$(body_has 'toolu_pw5_00_agent' "$RUN"/rec/[0-9]*.json 2>/dev/null | sed -n '$p')
-  if [ -n "$f" ]; then jq '.body.messages[-1]' "$f" >"$RUN/deny-next.json"; pub "$RUN/deny-next.json" deny-next-message.json; fi
-  # A typed prompt while UserPromptSubmit blocks.
+  # The fixture says what that tool result holds, without its text (no harness text in a fixture).
+  if [ -n "$f" ]; then python3 -I "$WA" tool-result "$f" toolu_pw5_00_agent "$DENY" >"$RUN/deny-next.json"; pub "$RUN/deny-next.json" deny-next-tool-result.json; fi
+  # A typed prompt while UserPromptSubmit blocks. A control request before and one after the bounded
+  # wait show that the mock was alive and recorded requests during it.
   jq -n --arg r "$BLOCK" '[{event: "UserPromptSubmit", output: {decision: "block", reason: $r}}]' >"$RS"
+  k1=1; control tracer-pw5-control-1 && wait_for 10 req_has 'tracer-pw5-control-1' && k1=0
   u0=$(nhook "$HK" UserPromptSubmit-main); e0=$(ends)
   say zc5 "tracer-pw5-block typed"
-  if ! wait_for 30 has_hooks "$HK" UserPromptSubmit-main $((u0 + 1)); then
+  if [ "$k1" -ne 0 ]; then
+    sub PW5 5.4 1 "not reached: the mock did not record the control request before the typed prompt"
+  elif ! wait_for 30 has_hooks "$HK" UserPromptSubmit-main $((u0 + 1)); then
     sub PW5 5.4 1 "timeout 30 s: no UserPromptSubmit hook for the typed prompt"
   else
-    nap 5
-    t=1; req_has 'tracer-pw5-block' || t=0
-    sub PW5 5.4 $t "UserPromptSubmit block: no request holds the typed prompt: $(yn $t); Stop or StopFailure inputs after it: $(($(ends) - e0))"
+    # Bounded wait: a request with the typed prompt within 10 s is a FAIL at once.
+    seen=1; wait_for 10 req_has 'tracer-pw5-block' && seen=0
+    k2=1; control tracer-pw5-control-2 && wait_for 10 req_has 'tracer-pw5-control-2' && k2=0
+    t=1; [ "$seen" -ne 0 ] && [ "$k2" -eq 0 ] && t=0
+    sub PW5 5.4 $t "UserPromptSubmit block: control request before the prompt recorded: yes; a request with the typed prompt within 10 s: $(yn $seen); control request after the wait recorded: $(yn $k2); Stop or StopFailure inputs after it: $(($(ends) - e0))"
     pub "$HK/$(hookfile "$HK" UserPromptSubmit-main $((u0 + 1)))" UserPromptSubmit-blocked.json
   fi
   pane_end zc5 "$CCPID"; stop_mock
@@ -405,7 +404,11 @@ part_c5l() {
   jq -n --arg r "$DENY" '[{event: "PreToolUse", tool: "^Agent$", output: {hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}}]' >"$RS"
   hook_settings "$HK" "$RS" | jq '.hooks.StopFailure = .hooks.Stop' >"$ST"
   U=$(id -un)
-  (cd "$R" && exec env -i PATH="$PATH" HOME="$HOME" TERM=xterm-256color USER="$U" LOGNAME="$U" SHELL=/bin/sh LANG=C.UTF-8 DISABLE_AUTOUPDATER=1 \
+  # The caller's own Claude Code config folder (its CLAUDE_CONFIG_DIR, else the default one), so that the
+  # turn uses the same login and state as the caller's session and no other config folder.
+  CCD=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+  pj=$(python3 -I -c 'import re, sys; print("-" + re.sub(r"[^A-Za-z0-9]", "-", sys.argv[1]).lstrip("-"))' "$R")
+  (cd "$R" && exec env -i PATH="$PATH" HOME="$HOME" CLAUDE_CONFIG_DIR="$CCD" TERM=xterm-256color USER="$U" LOGNAME="$U" SHELL=/bin/sh LANG=C.UTF-8 DISABLE_AUTOUPDATER=1 \
     "$CLAUDE_BIN" -p 'Use the Agent tool one time: start a subagent with the prompt "Reply with the word hi." Then answer in one line.' \
     --output-format json --tools Agent --permission-prompts none --setting-sources project --settings "$ST" \
     --strict-mcp-config --no-session-persistence </dev/null >"$RUN/out-l.json" 2>"$RUN/err-l.txt") &
@@ -414,11 +417,17 @@ part_c5l() {
   wait "$LP" 2>/dev/null; rc=$?; unpid "$LP"
   pre=$(nhook "$HK" PreToolUse-Agent-main); ss=$(nhook "$HK" 'SubagentStart-.*'); st=$(nhook "$HK" Stop-main)
   turns=$(jq -r '.num_turns // "?"' "$RUN/out-l.json" 2>/dev/null); err=$(jq -r 'if has("is_error") then .is_error else "?" end' "$RUN/out-l.json" 2>/dev/null)
-  t=1; [ "$to" -eq 0 ] && [ "$rc" -eq 0 ] && [ "$pre" -ge 1 ] && [ "$ss" -eq 0 ] && [ "$st" -ge 1 ] && t=0
+  # The final answer names the deny reason (the word stem "drain" of the reason, any case).
+  named=1; jq -e '(.result // "") | ascii_downcase | contains("drain")' "$RUN/out-l.json" >/dev/null 2>&1 && named=0
+  t=1; [ "$to" -eq 0 ] && [ "$rc" -eq 0 ] && [ "$err" = false ] && [ "$named" -eq 0 ] && [ "$pre" -ge 1 ] && [ "$ss" -eq 0 ] && [ "$st" -ge 1 ] && t=0
   why=""
   [ "$to" -eq 0 ] || why="; timeout 180 s: the turn did not end"
   [ "$pre" -ge 1 ] || why="$why; the lead made no dispatch (no PreToolUse input for Agent)"
-  sub PW5 5.5 $t "real lead on the stored login, one print-mode turn: exit $rc; is_error ${err:-?}; turns ${turns:-?}; denied dispatches $pre; SubagentStart inputs $ss; Stop inputs $st; the lead ended its turn after the deny: $(yn $t)$why"
+  sub PW5 5.5 $t "real lead on the stored login, one print-mode turn: exit $rc; is_error ${err:-?}; turns ${turns:-?}; denied dispatches $pre; SubagentStart inputs $ss; Stop inputs $st; the answer names the deny reason: $(yn $named); the lead read the reason and ended its turn: $(yn $t)$why"
+  # Side effect on the caller's config folder (read only; nothing is changed or removed).
+  e1=1; [ -d "$CCD/projects/$pj" ] && e1=0
+  e2=1; for _j in "$CCD/.claude.json" "$HOME/.claude.json"; do jq -e --arg r "$R" '(.projects // {}) | has($r)' "$_j" >/dev/null 2>&1 && e2=0; done
+  note PW5 5.6 "side effect of the turn on the caller's config folder: a projects folder for the scratch repository: $(yn $e1); a projects entry for it in the config file: $(yn $e2)"
 }
 
 # --- c7: PW7 -----------------------------------------------------------------------------------
@@ -472,45 +481,11 @@ part_c7() {
     turn zc7 "tracer-pw7-full go" 60 || note PW7 7.10 "timeout 60 s: no Stop after the full-window turn"
     turn zc7 "tracer-pw7-after turn" 90 || note PW7 7.11 "timeout 90 s: no Stop after the turn that follows the full window"
     nap 3
-    r=$(python3 -I - "$HK" <<'PY'
-import json, os, sys
-d = sys.argv[1]
-names = [f for f in sorted(os.listdir(d)) if f[0].isdigit() and f.endswith(".json")]
-ev = [json.load(open(os.path.join(d, f))) for f in names]
-main = [e.get("hook_event_name") for e in ev if "agent_id" not in e and e.get("hook_event_name") in ("UserPromptSubmit", "Stop", "StopFailure")]
-turns = opened = 0
-for i, n in enumerate(main):
-    if n == "UserPromptSubmit":
-        turns += 1
-        if (main[i + 1] if i + 1 < len(main) else None) not in ("Stop", "StopFailure"):
-            opened += 1
-start, stop, typ = {}, {}, {}
-for f, e in zip(names, ev):
-    n, a = e.get("hook_event_name"), e.get("agent_id")
-    if n in ("SubagentStart", "SubagentStop"):
-        (start if n == "SubagentStart" else stop).setdefault(a, f)
-        typ[a] = e.get("agent_type") or typ.get(a, "")
-ids = sorted(set(start) | set(stop), key=lambda a: start.get(a) or stop.get(a))
-disp = [a for a in ids if typ.get(a)]
-internal = [a for a in ids if not typ.get(a)]
-def bad(group):
-    return [a for a in group if a not in start or a not in stop]
-def kinds(group):
-    return ",".join(sorted({"start-only" if a in start else "stop-only" for a in bad(group)})) or "none"
-last = disp[-1] if disp else None
-print(turns, opened, len(disp), len(bad(disp)), kinds(disp), len(internal), len(bad(internal)), kinds(internal),
-      start.get(last) or "none", stop.get(last) or "none")
-PY
-)
-    set -- ${r:-0 0 0 0 none 0 0 none none none}
-    t=1; [ "$1" -ge 6 ] && [ "$2" -eq 0 ] && t=0
-    sub PW7 7.3 $t "main-loop turns (UserPromptSubmit inputs): $1; turns with no Stop or StopFailure before the next prompt: $2"
-    t=1; [ "$3" -ge 2 ] && [ "$4" -eq 0 ] && t=0
-    sub PW7 7.4 $t "dispatched subagents (one foreground, one background): ids seen $3; ids without both SubagentStart and SubagentStop: $4 ($5)"
-    t=1; [ "$6" -ge 1 ] && [ "$7" -eq 0 ] && t=0
-    sub PW7 7.5 $t "internal subagents (empty agent_type; compaction): ids seen $6; ids without both SubagentStart and SubagentStop: $7 ($8)"
-    [ "$9" = none ] || pub "$HK/$9" SubagentStart-last-dispatched.json
-    [ "${10}" = none ] || pub "$HK/${10}" SubagentStop-last-dispatched.json
+    r=$(python3 -I "$WA" pw7 "$HK")
+    rec_7_345 "$r"
+    ls1=$(jv "$r" .last_start none); ls2=$(jv "$r" .last_stop none)
+    [ "$ls1" = none ] || pub "$HK/$ls1" SubagentStart-last-dispatched.json
+    [ "$ls2" = none ] || pub "$HK/$ls2" SubagentStop-last-dispatched.json
     pane_end zc7 "$CCPID"
   fi
   stop_mock
@@ -552,8 +527,9 @@ PY
   else
     MOCK_URL="http://127.0.0.1:$(cat "$RUN/err-port")"
     cc_settings a '[]'
-    cc_pane zc7e "$R" --tools "" --settings "$ST"
-    if ! cc_ready 60; then
+    if ! cc_pane zc7e "$R" --tools "" --settings "$ST"; then
+      sub PW7 7.6 1 "not reached: tmux did not start the pane"
+    elif ! cc_ready 60; then
       sub PW7 7.6 1 "timeout 60 s: no SessionStart hook after the start"
     else
       nap 3
@@ -732,26 +708,22 @@ print(n)' "$RUN/rec")
 # --- run the parts, then one LIVE line per id ------------------------------------------------------
 for p in ${*:-$PARTS}; do "part_$p"; done
 
-# finish <PW id> <agent version text> <fixture file> <first line of the record>
-finish() {
-  _id=$1; LIVE_VER=$2
-  touch "$REC/$_id.txt"
-  { echo "$4"; cat "$REC/$_id.txt"; } >"$REC/$_id.out"
-  scrub "$REC/$_id.out" >"$3"
-  _n=$(grep -Ec '^[^ ]+ (ok|FAIL) ' "$REC/$_id.txt"); _b=$(cat "$REC/$_id.bad" 2>/dev/null); _nb=$(set -- $_b; echo $#)
-  _rel=${3#"$REPO_DIR"/}
-  if [ "$_n" -gt 0 ] && [ -z "$_b" ]; then result "$_id" verified "$_n of $_n sub-checks passed; $_rel"
-  else result "$_id" failed "$((_n - _nb)) of $_n sub-checks passed; failed:${_b:- none ran}; first: $(sed -n 's/^[^ ]* FAIL //p' "$REC/$_id.txt" | sed -n 1p); $_rel"; fi
-}
+# finish (workspace_lib.sh): every sub-check of the list needs an ok or FAIL line; the fixture is
+# written in the scratch folder; the LIVE line names the path that the fixture has after the run.
 CC="Claude Code $LIVE_CC_VER"; OC="OpenCode $LIVE_OC_VER"
-finish PW1 "$LIVE_CC_VER" "$FXC/pw1.txt" "$CC"
-finish PW2 "$LIVE_CC_VER" "$FXC/pw2.txt" "$CC"
-finish PW3 "$LIVE_CC_VER" "$FXC/pw3.txt" "$CC"
-finish PW4 "$LIVE_OC_VER" "$FXO/pw4.txt" "$OC"
-finish PW5 "$LIVE_CC_VER" "$FXC/pw5.txt" "$CC"
-finish PW7 "$LIVE_CC_VER" "$FXC/pw7.txt" "$CC"
-finish PW9 "$LIVE_CC_VER + $LIVE_OC_VER" "$FXC/pw9.txt" "$CC + $OC"
-finish PW10 "$LIVE_CC_VER" "$FXC/pw10.txt" "$CC"
-finish PW16 "$LIVE_CC_VER" "$FXC/pw16.txt" "$CC"
+finish PW1 "$LIVE_CC_VER" "$FXC/pw1.txt" "$CC" "1.1 1.2 1.3 1.4" "$OUTC/pw1.txt"
+finish PW2 "$LIVE_CC_VER" "$FXC/pw2.txt" "$CC" "2.1 2.2 2.3" "$OUTC/pw2.txt"
+finish PW3 "$LIVE_CC_VER" "$FXC/pw3.txt" "$CC" "3.1 3.2" "$OUTC/pw3.txt"
+finish PW4 "$LIVE_OC_VER" "$FXO/pw4.txt" "$OC" "4.1 4.2 4.3 4.4" "$OUTO/pw4.txt"
+finish PW5 "$LIVE_CC_VER" "$FXC/pw5.txt" "$CC" "5.1 5.2 5.3 5.4 5.5" "$OUTC/pw5.txt"
+finish PW7 "$LIVE_CC_VER" "$FXC/pw7.txt" "$CC" "7.1 7.2 7.3 7.4 7.5 7.6" "$OUTC/pw7.txt"
+finish PW9 "$LIVE_CC_VER + $LIVE_OC_VER" "$FXC/pw9.txt" "$CC + $OC" "9.1 9.2 9.3 9.5 9.6 9.7" "$OUTC/pw9.txt"
+finish PW10 "$LIVE_CC_VER" "$FXC/pw10.txt" "$CC" "10.1 10.2" "$OUTC/pw10.txt"
+finish PW16 "$LIVE_CC_VER" "$FXC/pw16.txt" "$CC" "16.1 16.2" "$OUTC/pw16.txt"
 tm kill-server 2>/dev/null
-live_done "${FXC%/claude-code/workspace}"
+# A full run that came this far replaces the committed fixtures with the new ones.
+if [ $# -eq 0 ]; then
+  rm -rf "$OUTC" "$OUTO" && mkdir -p "$OUTC" "$OUTO" && cp "$FXC"/* "$OUTC"/ && cp "$FXO"/* "$OUTO"/ ||
+    { echo "live: the fixtures could not be copied to the repository"; exit 1; }
+fi
+live_done "${OUTC%/claude-code/workspace}"

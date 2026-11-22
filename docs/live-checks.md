@@ -97,6 +97,10 @@ sh scripts/premises/live-hud.sh --zygo target/debug/zygo
 - Bounds: 60 s for each session start, 120 s for the answer, 20 s for each width change, 45 s of process samples, 90 s for the mock request, 10 s for each session end. A bound that passes gives `failed` with the reason for the ids of that part; the script goes on.
 - The traps end the private tmux server, the pseudo-terminal session, the mock and the background processes, and remove the scratch tree.
 
+## Workspace agent premises (node P2): side effect
+
+- `scripts/premises/live-workspace.sh` part `c5l` (sub-check 5.5) runs one print-mode turn of Claude Code on the stored login, with the real `HOME` and the caller's `CLAUDE_CONFIG_DIR` (else `~/.claude`), `--setting-sources project`, `--strict-mcp-config` and `--no-session-persistence`. Known side effect: Claude Code 2.1.330 still makes an empty folder `<config dir>/projects/<scratch repository path>/memory` for the run's temporary repository (`<scratch>/live-<pid>/c5l/repo`). The script does not change or delete anything in the config folder; note 5.6 of `fixtures/claude-code/workspace/pw5.txt` records whether the folder and a `projects` entry exist after the turn. The full entry for the script is written by node LIV-2.
+
 ## Results
 
 | Id | Check | Agent | Version | Date | Result | Evidence |
