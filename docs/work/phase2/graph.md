@@ -70,10 +70,10 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | DONE | judgment | d74bd3f, merge c3f3c55; acceptance update 26/26, workspace --no-run ok (merged tree); Windows branch of #7 runs in CI only |
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
-| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | TODO | implementation | — |
+| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | PLANNED | implementation | — |
 | LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
-| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | TODO | implementation | — |
+| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | PLANNED | implementation | — |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
@@ -164,3 +164,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | PR 7 merged (41ede20). Operator: the live checks run from the executor's session on this machine, with passthrough and the operator's Claude Code login ("you can test with passthrough"). |
 | 2026-11-21 | FIX-4 added: scripts/premises/lib.sh exits when opencode is not on PATH, so no live script runs on this machine (no opencode). A script now states the agents it needs. LIV-1 and P1 depend on it. A placeholder opencode on PATH was refused as a fake. |
 | 2026-11-21 | Correction: this machine has OpenCode 1.19.6 at ~/.opencode/bin/opencode, not on the default PATH. The Log row above that says "no opencode" is wrong. FIX-4 DROPPED, its edges removed. Live runs put ~/.opencode/bin on PATH; P2 can run here. |
+| 2026-11-21 | LIV-1 and P1 planned. Live runs are from the executor's session with the OpenCode directory on PATH. Expected from the planners' probes: PW6 failed on tmux 3.2a (first window is 80x23 after new-session -x -y) and PH4 failed. |
