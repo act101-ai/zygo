@@ -1,5 +1,6 @@
 //! The stub agent for the launch tests (N34). One executable, three roles by argv: `zygo` (`hook` or `mcp`),
 //! the version probe (`--version`), and the agent (anything else), which records what it received into `ZYGO_STUB_OUT`.
+//! `session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`) when the argv has one.
 //!
 //! Control mode (L3, the workspace tests): when `ZYGO_STUB_CONTROL` names a directory, the agent does not exit after the
 //! capture. It serves the lines of `<dir>/steps` in order (a test appends them with `stub_control`) and appends to
@@ -48,6 +49,11 @@ fn tree(dir: &Path) -> Value {
 
 fn flag(argv: &[String], name: &str) -> Option<String> {
     argv.iter().position(|a| a == name).and_then(|i| argv.get(i + 1)).cloned()
+}
+
+/// The session argument: the first of `--session-id`, `--resume` (Claude Code) and `-s` (OpenCode) in `argv` that has a value.
+fn session_arg(argv: &[String]) -> Option<(&'static str, String)> {
+    argv.windows(2).find_map(|w| ["--session-id", "--resume", "-s"].into_iter().find(|f| w[0] == *f).map(|f| (f, w[1].clone())))
 }
 
 fn result(o: std::io::Result<std::process::Output>) -> Value {
@@ -148,6 +154,9 @@ fn main() {
     let env: BTreeMap<String, String> = std::env::vars_os().map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned())).collect();
     put("env.json", &json!(env));
     std::fs::write(out.join("cwd.txt"), std::env::current_dir().unwrap().to_string_lossy().as_bytes()).unwrap();
+    if let Some((flag, id)) = session_arg(&argv) {
+        put("session-arg.json", &json!({"flag": flag, "id": id}));
+    }
     #[cfg(windows)]
     {
         let p = unsafe { GetCommandLineW() };

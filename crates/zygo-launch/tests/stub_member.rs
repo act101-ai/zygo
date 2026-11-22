@@ -114,3 +114,16 @@ fn a_step_that_cannot_run_exits_2() {
         assert_eq!(wait_done(&s.ctl, 1).len(), 1, "{step}"); // only the start line
     }
 }
+
+#[test]
+fn session_argument_is_recorded() {
+    for flag in ["--session-id", "--resume", "-s"] {
+        let mut s = spawn_in(tempfile::tempdir().unwrap(), &["--model", "x", flag, ID], false, "");
+        assert_eq!(wait_exit(&mut s.child).code(), Some(0));
+        let v: Value = serde_json::from_slice(&std::fs::read(s.out.join("session-arg.json")).unwrap()).unwrap();
+        assert_eq!(v, json!({"flag": flag, "id": ID}));
+    }
+    let mut s = spawn_in(tempfile::tempdir().unwrap(), &["--model", "x"], false, "");
+    assert_eq!(wait_exit(&mut s.child).code(), Some(0));
+    assert!(!s.out.join("session-arg.json").exists());
+}
