@@ -1114,3 +1114,62 @@ fn held_pipe_sigchld_child() {
     }
     fs::write(mark, "ok").unwrap();
 }
+
+// Node W7 (D6, D27): `rename_window` and the owner of `new_session`.
+
+#[cfg(unix)]
+#[test]
+fn rename_window_escapes_and_refuses() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), None);
+    let _ = t.rename_window("zygo-t", 2, "a#b");
+    for name in ["a\nb", "del\u{7f}"] {
+        assert_eq!(
+            t.rename_window("zygo-t", 2, name),
+            Err(MuxError::Failed { message: "window name holds a control character".into() })
+        );
+    }
+    assert!(matches!(t.rename_window("bad", 2, "x"), Err(MuxError::Failed { .. })));
+    assert_eq!(log_lines(dir.path()), ["LC_ALL=C -u rename-window -t =zygo-t:2 -- a##b"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_session_sets_the_owner_in_the_same_call() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), None);
+    let argv = os(&["sleep", "600"]);
+    let d = Path::new("/w");
+    let ns = |owner| NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner };
+    let _ = t.new_session(&ns(Some(("0123456789abcdef", "kaaaaaaaa"))));
+    let want = "LC_ALL=unset -u new-session -d -P -F #{window_index} -s zygo-t -c /w -x 80 -y 24 -- sleep 600 ; \
+                set-option -t =zygo-t: -- @zygo-ws 0123456789abcdef ; set-option -p -t =zygo-t: -- @zygo-pane kaaaaaaaa";
+    assert_eq!(log_lines(dir.path()), [want]);
+    assert!(matches!(t.new_session(&ns(Some(("x", "kaaaaaaaa")))), Err(MuxError::Failed { .. })));
+    assert!(matches!(t.new_session(&ns(Some(("0123456789abcdef", "k$")))), Err(MuxError::Failed { .. })));
+    assert_eq!(log_lines(dir.path()), [want]);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_session_sets_the_owner_live() {
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let ns = NewSession {
+        name: "zygo-t",
+        start_dir: dir.path(),
+        width: 80,
+        height: 24,
+        env: &env(),
+        argv: &argv(),
+        owner: Some(("0123456789abcdef", "kaaaaaaaa")),
+    };
+    assert_eq!(t.new_session(&ns), Ok(0));
+    assert_eq!(t.show_session_option("zygo-t", "@zygo-ws"), Ok(Some("0123456789abcdef".into())));
+    assert_eq!(t.display("=zygo-t:", "#{@zygo-pane}"), Ok("kaaaaaaaa".into()));
+}
