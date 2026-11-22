@@ -56,8 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | IN-PROGRESS | implementation | .worktrees/phase2/PRB-1 |
-| HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, HUD-2 | DONE | judgment | 320d2b2, merge 5d919a3; acceptance render 23, hooks lib 24, prices 28, session_api 45, passthrough 30, window 38, compact_cmd 11 (merged tree) |
 | HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7 | DONE | judgment | 2a5f5ff, merge e7d95d1; acceptance zygo-hooks, zygo, zygo-config, zygo-launch all targets 0 failed; session_api 47, passthrough 31 (merged tree, Linux) |
 | HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | DONE | judgment | 7e76153; acceptance in the full workspace run, 0 failed (merged tree) |
 | UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | DONE | judgment | d74bd3f, merge c3f3c55; acceptance update 26/26, workspace --no-run ok (merged tree); Windows branch of #7 runs in CI only |
@@ -103,7 +101,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | PLANNED | implementation | — |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | TODO | mechanical | — |
-| FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | TODO | mechanical | — |
+| FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 
 ## Log
 
@@ -196,3 +194,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W11 DONE (0799b7d). MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback); review round 2 fixed F1-F7. Acceptance on the merged tree: mcp_server 50 passed, config_layers 96 passed, workspace --no-run ok. |
 | 2026-11-22 | FIX-10 planned: 24 steps. Contract fixed: Files gain crates/zygo-proxy/src/tee.rs (usage writer, body copy); a 4xx other than 429 is relayed too. Any non-2xx passthrough answer gives a row; message secret-redacted, 300 chars; SSE error events not counted. |
 | 2026-11-22 | FIX-10 plan review fixes: 27 steps. Parse and secret pass move to the usage writer (16 KiB copy, 2 KiB field cap), error.type redacted too, one transaction, login scrub with partial runs, §14 Never line rewritten. Files gain redact_stage.rs, server.rs. |
+| 2026-11-22 | PRB-1 DONE (b318a6d) on Claude Code 2.1.330: PH4 failed (FIX-5 fallback), PH12 observed, 9 verified; merged-tree acceptance exit 0. Cost: 0 main-loop requests, about 8 auxiliary in all. Claude Code wrote 3 trust entries in the operator's config. |
+| 2026-11-22 | FIX-12 DROPPED: PRB-1 round 2 (c759e25) sets sys.dont_write_bytecode in hud_probe_test.py, so no scripts/premises/__pycache__ is left. |
+| 2026-11-22 | PRB-1 merge landed in c64acac by a concurrent commit; content verified, no history rewrite. |
