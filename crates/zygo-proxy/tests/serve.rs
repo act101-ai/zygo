@@ -15,6 +15,7 @@ use tempfile::TempDir;
 use zygo_config::{check, load, Approval, Dialect, LoadContext, Marketplace, Merged, ServeToken, Severity};
 use zygo_core::ids::ulid;
 use zygo_core::paths::Paths;
+use zygo_proxy::client::SessionStatus;
 use zygo_proxy::serve::{
     self, AlreadyRunning, ConfigInvalid, NoServer, ServeEvent, ServeHandle, ServeOpts, TlsFiles, TlsRequired, BODY_READ_IDLE, HEADER_READ,
     MAX_CONNECTIONS,
@@ -1241,3 +1242,60 @@ fn a_stalled_upload_ends_at_the_body_bound() { // §7 note (N60 plan review): 60
     assert_eq!(healthz(&s.h, None), Ok((200, b"ok".to_vec()))); // the stalled client's slot is free
     s.h.shutdown();
 } // mutation: no body bound (the read times out at 10 s)
+
+#[test]
+fn status_windows_after_reload() { // AU29: snapshot before the first main-loop request; then the served row
+    let s = setup_with(|t| format!("main_role = \"code\"\n{t}"), |_| {});
+    let g = grant(&s, &s.alice);
+    let status = |s: &Srv, g: &SessionGrant, rows: u64| {
+        assert!(s.h.usage_written(rows, Duration::from_secs(10)), "usage rows not written");
+        let r = send(s, "GET", &format!("v1/zygo/sessions/{}/status", g.session), &session_hd(g), None);
+        assert_eq!(r.0, 200, "{}", String::from_utf8_lossy(&r.2));
+        let v: SessionStatus = json_of(&r);
+        (v.model, v.context_window, v.effective_window, v.threshold)
+    };
+    // test-code: window 200k, soft 150k; agent window 1M (not a claude- id) → safety 180k.
+    let snapshot = (Some("test-code".into()), Some(200000), Some(150000), Some(150000));
+    assert_eq!(status(&s, &g, 0), snapshot);
+    rewrite(&s, |t| {
+        let old = "soft_context_window = 150000\n[model.facts]\ncontext_window = 200000\n";
+        assert!(t.contains(old));
+        t.replace(old, "soft_context_window = 120000\n[model.facts]\ncontext_window = 300000\n")
+    });
+    s.h.reload().unwrap();
+    // No main-loop request yet: the main-role rule reads the session's snapshot.
+    assert_eq!(status(&s, &g, 0), snapshot);
+    assert_eq!(msg(&s, &g, "code").0, 200);
+    // The served row of the new config: window 300k, soft 120k, safety 270k.
+    assert_eq!(status(&s, &g, 1), (Some("test-code".into()), Some(300000), Some(120000), Some(120000)));
+    s.h.shutdown();
+}
+
+#[test]
+fn status_keeps_served_row_across_reload() { // AU29 (HUD-5 round 2, F2): values stored at request time survive a reload
+    let s = setup_with(|t| format!("main_role = \"code\"\n{t}"), |_| {});
+    let g = grant(&s, &s.alice);
+    let status = |s: &Srv, g: &SessionGrant, rows: u64| {
+        assert!(s.h.usage_written(rows, Duration::from_secs(10)), "usage rows not written");
+        let r = send(s, "GET", &format!("v1/zygo/sessions/{}/status", g.session), &session_hd(g), None);
+        assert_eq!(r.0, 200, "{}", String::from_utf8_lossy(&r.2));
+        let v: SessionStatus = json_of(&r);
+        (v.model, v.context_window, v.effective_window, v.threshold)
+    };
+    // Config A, test-code: window 200k, soft 150k; agent window 1M (not a claude- id) → safety 180k.
+    assert_eq!(msg(&s, &g, "code").0, 200);
+    let a = (Some("test-code".into()), Some(200000), Some(150000), Some(150000));
+    assert_eq!(status(&s, &g, 1), a);
+    rewrite(&s, |t| {
+        let old = "soft_context_window = 150000\n[model.facts]\ncontext_window = 200000\n";
+        assert!(t.contains(old));
+        t.replace(old, "soft_context_window = 120000\n[model.facts]\ncontext_window = 300000\n")
+    });
+    s.h.reload().unwrap();
+    // Config B is served, but no request since: the status keeps the row values stored with config A.
+    assert_eq!(status(&s, &g, 1), a);
+    assert_eq!(msg(&s, &g, "code").0, 200);
+    // Config B, test-code: window 300k, soft 120k, safety 270k.
+    assert_eq!(status(&s, &g, 2), (Some("test-code".into()), Some(300000), Some(120000), Some(120000)));
+    s.h.shutdown();
+}

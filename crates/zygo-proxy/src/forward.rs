@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zygo_config::keys::Secret;
 use zygo_config::{Dialect, Facts, Family, Prices, Provider, SchemaRule};
+use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RedactionCount, RequestRow};
 
@@ -203,6 +204,8 @@ struct Pending {
     usage: Usage,
     /// The rows reply waits for it (§14, Q2).
     ticket: Option<Ticket>,
+    /// Messages only: the served row's windows from the serving config (AU29).
+    windows: Option<window::RequestWindows>,
 }
 
 impl Drop for Pending {
@@ -223,7 +226,7 @@ impl Drop for Pending {
             && r.request_class.as_deref().is_none_or(|c| c == "main")
             && prompt > 0
         {
-            self.session.set_used_context(prompt);
+            self.session.set_main_loop(prompt, &r.model, self.windows.take());
         }
         self.sink.send(std::mem::take(&mut self.row), self.ticket.take());
     }
@@ -260,7 +263,7 @@ pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRout
         ..Default::default()
     };
     let ticket = Some(app.usage.begin(&s.id));
-    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, usage: Usage::default(), ticket });
+    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, usage: Usage::default(), ticket, windows: None });
     match run(&app, &s, route, req, &mut slot, start).await {
         Ok(r) => r,
         Err(e) => {
@@ -338,6 +341,10 @@ async fn run(
     r?;
     app.sessions.accept(s)?;
     let resolved = ctx.resolved.clone().expect("stage 2 resolved the request");
+    if route == ModelRoute::Messages {
+        pending(slot).windows = ctx.cfg.config.catalog.get(&resolved.model)
+            .map(|row| window::RequestWindows::of(row, window::agent_window_for(resolved.one_m, &ctx.headers, row)));
+    }
 
     // count_tokens on a provider that does not speak `anthropic`: a local estimate (§7.3).
     if route == ModelRoute::CountTokens && ctx.candidates.first().is_some_and(|c| c.dialect != Dialect::Anthropic) {
@@ -347,7 +354,7 @@ async fn run(
         p.row.status = 200;
         p.row.latency_ms = ms(app, start);
         p.row.adjustments = names(&ctx.adjustments);
-        let mut resp = Json(json!({ "input_tokens": string_bytes(&ctx.body).div_ceil(4) })).into_response();
+        let mut resp = Json(json!({ "input_tokens": string_bytes(&ctx.body).div_ceil(BYTES_PER_TOKEN) })).into_response();
         zygo_headers(resp.headers_mut(), &resolved, &ctx.adjustments, ctx.redacted);
         return Ok(resp);
     }
@@ -443,7 +450,7 @@ async fn run(
     let sse_upstream = streamed;
     let translated = c.dialect != ctx.dialect;
     let key = c.key.as_ref().map(|k| k.expose());
-    let estimate = string_bytes(&ctx.body).div_ceil(4);
+    let estimate = string_bytes(&ctx.body).div_ceil(BYTES_PER_TOKEN);
     let mut headers = response_headers(resp.headers(), translated, s.team_label.is_some());
     let mut adjustments = ctx.adjustments;
     adjustments.extend(extra);

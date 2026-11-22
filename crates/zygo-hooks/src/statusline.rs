@@ -183,6 +183,7 @@ mod tests {
             cache_read_share: Some(0.6),
             expires_at: String::new(),
             usage_note: None,
+            ..Default::default()
         }
     }
 

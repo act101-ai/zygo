@@ -757,3 +757,20 @@ fn docs_readme_and_passthrough_md() {
         assert!(doc.contains(s), "docs/passthrough.md: {s}");
     }
 }
+
+#[test] // AU29, H§7.2 `model`: a name the secret pass blocks is "" in the row; the status then has no model
+fn status_no_model_for_blocked_name() {
+    let t = setup("\n[features.redaction]\nsecrets = false\n");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let status = |n: u64| {
+        assert!(t.h.usage_written(n, Duration::from_secs(10)));
+        let s = t.h.session(&g.session).unwrap().status();
+        (s.model, s.context_window, s.effective_window, s.threshold)
+    };
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
+    assert_eq!(status(1), (Some("test-pt".into()), None, None, None)); // the catalog match; test-pt has no facts
+    let blocked = format!("TRACERBLOCK_{}", 123456);
+    assert_eq!(post_pt(&t, &g, M, mb(&blocked), &[]).0, 200); // the secret pass is off: the request is served
+    assert_eq!(status(2), (None, None, None, None));
+    assert!(rows(&t, &g).iter().any(|r| r.model.is_empty() && r.status == 200));
+}
