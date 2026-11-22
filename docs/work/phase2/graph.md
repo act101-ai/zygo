@@ -159,3 +159,5 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | FIX-3 DONE. cargo clippy -p zygo-launch --all-targets --locked -- -D warnings is clean. |
 | 2026-11-21 | FIX-1 DONE. refused_port is the fixed port 1 (a port 0 bind never gives a port below 1024); the proof test failed on the old helper. Assumption: nothing listens on TCP port 1 on a developer or CI machine. |
 | 2026-11-21 | Observation (no node): the repository has no rustfmt.toml and cargo fmt --check reports differences across zygo-proxy; no format gate is in the verification floor. |
+| 2026-11-21 | PR 7 opened for the branch at 45c4d96 (C1, X1, W1, W2, W4, W5, L3, L1, H2, FIX-1, FIX-3). CI green on ubuntu, macos and windows (runs 44984706007, 44984755165). Local floor on 45c4d96: workspace tests 0 failed; test-install.sh passed. |
+| 2026-11-21 | Resume point: 25 DONE, 22 TODO. Ready: LIV-1 and P1 (live, operator's machine). Not run: PRB-1, LIV-1, LIV-2, P1, P2, E2. Open operator question: who runs the live checks; P2 needs opencode on PATH. |
