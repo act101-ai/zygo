@@ -500,7 +500,7 @@ Code navigation comes from act-lite (https://github.com/act101-ai/act-lite), del
 
 ### 10.7 Savings report
 
-`zygo usage [--session <id> | --since <date>]` prints, from the usage store (§14): requests, input/output/cache tokens by role and model, cache-read share, estimated cost at list price, `bytes_trimmed`, compaction signals sent and compactions observed (the next request's `x-claude-code-compaction`), guard events. The status line shows the session's cache-read share and trimmed bytes.
+`zygo usage [--session <id> | --since <date>]` prints, from the usage store (§14): requests, input/output/cache tokens by role and model, cache-read share, estimated cost at list price, `bytes_trimmed`, compaction signals sent and compactions observed (the next request's `x-claude-code-compaction`), guard events. `zygo usage` also prints `tokens trimmed (estimate): <n>` (bytes ÷ 4, rounded up) after the exact `bytes trimmed: <n>` line. `zygo status` in a session prints its savings in tokens (`savings: cache 92%, trimmed 23k tok`) and a `spend: $3.41` line with the session spend of §7.2 (`≈` when notional); outside a session it prints no spend line. The status line shows the session's cache-read share and trimmed tokens. *(2026-11-22, HUD design)*
 
 ## 11. Model profiles
 

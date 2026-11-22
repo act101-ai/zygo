@@ -74,7 +74,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   `[statusline] style = "compact" | "verbose"` (default `compact`) selects the status line style (§17; HUD design H§8). The table is read from user config only: the repository file ignores it (layer 4), the team config does not carry it, and `zygo statusline` changes it for a session (layer 7). *(2026-11-22, HUD design)*
   ```
 
-- [ ] 11. H§9 row "§10.7, `zygo status`" → base §10.7. Replace the last sentence `The status line shows the session's cache-read share and trimmed bytes.` with:
+- [x] 11. H§9 row "§10.7, `zygo status`" → base §10.7. Replace the last sentence `The status line shows the session's cache-read share and trimmed bytes.` with:
 
   ```text
   `zygo usage` also prints `tokens trimmed (estimate): <n>` (bytes ÷ 4, rounded up) after the exact `bytes trimmed: <n>` line. `zygo status` in a session prints its savings in tokens (`savings: cache 92%, trimmed 23k tok`) and a `spend: $3.41` line with the session spend of §7.2 (`≈` when notional); outside a session it prints no spend line. The status line shows the session's cache-read share and trimmed tokens. *(2026-11-22, HUD design)*
