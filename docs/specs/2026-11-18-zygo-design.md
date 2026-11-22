@@ -821,6 +821,7 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `redaction [content on\|off]` | Shows both passes; switches the content pass; the secret pass is status only | session, `--save` |
 | `guards [<guard> <level>]` | Levels with their sources; sets one guard's level, never below its floor (§13.5) | session, `--save` |
 | `units on\|off` | Work units (§13) | session, `--save` |
+| `statusline [compact\|verbose]` | Status line style (§17, HUD design H§8) *(2026-11-22, HUD design)* | session, `--save` |
 | `work [<id>\|clear]` | Current work item (§13.2) | repository; session text at next launch |
 | `plugins [list\|enable\|disable\|approve <m>:<p>]` | §15.2, §15.7 (act-lite navigation included) | next launch |
 | `marketplace [list\|add\|update\|remove …]` | §15.8 | user config |

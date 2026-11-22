@@ -26,7 +26,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   | `zygo statusline [compact\|verbose] [--save]` | Status line style (HUD design H§8): a session change; `--save` also writes `[statusline] style` to user config; with no argument, prints the style and its source. *(2026-11-22, HUD design)* |
   ```
 
-- [ ] 3. H§9 row "§17.1, verb table" → base §17.1 verb table. Insert this row after the `units on\|off` row:
+- [x] 3. H§9 row "§17.1, verb table" → base §17.1 verb table. Insert this row after the `units on\|off` row:
 
   ```text
   | `statusline [compact\|verbose]` | Status line style (§17, HUD design H§8) *(2026-11-22, HUD design)* | session, `--save` |
