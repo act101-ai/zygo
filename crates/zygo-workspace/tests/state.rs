@@ -337,3 +337,59 @@ fn update_refuses_an_invalid_result_and_a_closure_error() {
     bad.log_error("x");
     assert!(!p.workspaces_dir().join("../x").exists());
 }
+
+fn hold(path: PathBuf) -> fs::File {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let f = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path).unwrap();
+    fs4::FileExt::try_lock(&f).unwrap();
+    f
+}
+
+#[test] // W§7.3 wait bound: the caller's bound, then Busy; the closure never runs; readers need no lock
+fn update_waits_for_the_lock_up_to_the_bound() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    store.update(S5, &mut identity).unwrap();
+    let before = raw(&store);
+    let held = hold(store.dir().join("lock"));
+    let mut calls = 0;
+    let start = Instant::now();
+    let r = store.update(Duration::from_millis(100), &mut |_| { calls += 1; Ok(()) });
+    let waited = start.elapsed();
+    assert!(matches!(r, Err(StateError::Busy)));
+    assert!(waited >= Duration::from_millis(100) && waited < Duration::from_secs(2), "{waited:?}");
+    assert_eq!(calls, 0);
+    assert_eq!(raw(&store), before);
+    assert_eq!(store.phase_unlocked(), Some(Phase::Building)); // AU83: the phase read takes no lock
+    assert!(store.read().unwrap().is_some());
+    drop(held);
+    store.update(Duration::ZERO, &mut |_| Ok(())).unwrap(); // a free lock needs no wait
+}
+
+#[test] // W§7.3, graph review focus 5: two kinds of writers at once; both changes are kept
+fn concurrent_writers_keep_both_changes() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    Store::open(&p, ID).update(S5, &mut identity).unwrap();
+    let start = std::sync::Barrier::new(2);
+    std::thread::scope(|s| {
+        s.spawn(|| { // the snapshot kind: windows[]
+            let store = Store::open(&p, ID);
+            start.wait();
+            for i in 0..25u32 {
+                store.update(S5, &mut |ws| { ws.windows.push(Window { index: i, ..Default::default() }); Ok(()) }).unwrap();
+            }
+        });
+        s.spawn(|| { // the member kind: members{}
+            let store = Store::open(&p, ID);
+            start.wait();
+            for i in 0..25u8 {
+                let key = format!("kaaaaaaa{}", (b'a' + i) as char);
+                store.update(S5, &mut |ws| { ws.members.insert(key.clone(), MemberRecord::new(Agent::ClaudeCode)); Ok(()) }).unwrap();
+            }
+        });
+    });
+    let ws = Store::open(&p, ID).read().unwrap().unwrap();
+    assert_eq!(ws.windows.iter().map(|w| w.index).collect::<Vec<_>>(), (0..25).collect::<Vec<_>>());
+    assert_eq!(ws.members.len(), 25);
+}
