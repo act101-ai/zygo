@@ -393,3 +393,28 @@ fn concurrent_writers_keep_both_changes() {
     assert_eq!(ws.windows.iter().map(|w| w.index).collect::<Vec<_>>(), (0..25).collect::<Vec<_>>());
     assert_eq!(ws.members.len(), 25);
 }
+
+#[test] // W§18 #7
+fn a_killed_write_leaves_the_state_whole_and_the_next_write_removes_old_tmp_files() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let whole = store.update(S5, &mut identity).unwrap();
+    let before = raw(&store);
+    let aged = |name: &str, secs: u64| {
+        let path = store.dir().join(name);
+        fs::write(&path, b"{\"version\": 1, \"id\": \"01").unwrap(); // half of a write
+        fs::File::options().write(true).open(&path).unwrap().set_modified(SystemTime::now() - Duration::from_secs(secs)).unwrap();
+        path
+    };
+    let old = aged(".tmpAbC123", 61);
+    let young = aged(".tmpXyZ789", 30);
+    let other = aged("down.log", 3600);
+    assert_eq!(raw(&store), before); // the old workspace.json is unchanged
+    assert_eq!(store.read().unwrap().unwrap(), whole); // and readable
+    assert!(old.exists()); // a read deletes nothing
+    store.update(S5, &mut |ws| { ws.phase = Phase::Up; Ok(()) }).unwrap();
+    assert!(!old.exists()); // older than 1 min: gone after the next write
+    assert!(young.exists()); // it can be a live writer's file
+    assert!(other.exists()); // only `.tmp*`
+    assert_eq!(store.read().unwrap().unwrap().phase, Phase::Up);
+}

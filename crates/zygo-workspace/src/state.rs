@@ -336,6 +336,8 @@ const OP_LOCK_FILE: &str = "op.lock";
 const ERRORS_FILE: &str = "errors.log";
 /// The time between two tries for a lock that another holder has.
 const LOCK_POLL: Duration = Duration::from_millis(5);
+/// A temporary file older than this belongs to no live writer (W§7.3).
+const TMP_MAX_AGE: Duration = Duration::from_secs(60);
 /// The largest text of one `errors.log` line, in bytes.
 const ERROR_LINE_MAX: usize = 1024;
 
@@ -431,6 +433,7 @@ impl Store {
         if let Err(reason) = validate(&ws, &self.id) {
             return Err(StateError::Invalid { path, reason });
         }
+        sweep_tmp(&self.dir);
         let bytes = serde_json::to_vec_pretty(&ws).map_err(|e| StateError::Io(std::io::Error::other(e)))?;
         write_atomic(&path, &bytes).map_err(|e| StateError::Io(std::io::Error::other(e)))?;
         Ok(ws)
@@ -481,6 +484,25 @@ fn private() -> fs::OpenOptions {
         o.mode(0o600);
     }
     o
+}
+
+/// Removes the temporary files of `write_atomic` (`.tmp*`) in `dir` that are older than 1 min: a writer that was
+/// killed before its rename left them (W§7.3). A younger file can belong to a live writer. Every error is ignored;
+/// an entry with no readable time stays.
+fn sweep_tmp(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with(".tmp") {
+            continue;
+        }
+        let age = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok());
+        if age.is_some_and(|a| a > TMP_MAX_AGE) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Opens (and creates) the lock file `path` and takes its lock: tries each 5 ms until `bound` ends. `Ok(None)` when
