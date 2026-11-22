@@ -17,7 +17,7 @@ use zygo_work::repo::{checkout, Checkout};
 
 use crate::args::{bypass_flags, filter_from, has_user_info};
 use crate::env::{cleaned, REMOVE_ALWAYS, REMOVE_INSIDE_AGENT};
-use crate::identity::{main_worktree, new_pane_key, slug, unique_name, workspace_id, worktrees, Worktree};
+use crate::identity::{main_worktree, new_pane_key, slug, unique_name, valid_name, workspace_id, worktrees, Worktree};
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
 use crate::mux::tmux::Tmux;
 use crate::mux::{
@@ -26,7 +26,9 @@ use crate::mux::{
 };
 use crate::repair::repair;
 use crate::snapshot;
-use crate::state::{list_all, MemberRecord, MemberState, Pane, PaneKind, Phase, StateError, Store, Window, Workspace};
+use crate::state::{
+    list_all, BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Phase, StateError, Store, Window, Workspace,
+};
 
 /// The lock wait of every write of `up` (W§7.3).
 const LOCK_WAIT: Duration = snapshot::OP_WAIT;
@@ -111,8 +113,10 @@ pub mod testing {
     static HOOKS: Mutex<BTreeMap<(&'static str, PathBuf), Hook>> = Mutex::new(BTreeMap::new());
 
     /// Sets (`Some`) or clears (`None`) the hook of `point` for the state folder `dir`. Points: `before_op_lock`,
-    /// `after_new_session`, `split` (before each `split_window`), `before_final_snapshot`, `after_final_snapshot`. An
-    /// `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point.
+    /// `before_plan_write` (before the step 8 write), `after_new_session`, `split` (before each `split_window`),
+    /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`. An `Err(text)`
+    /// of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is the undo's write
+    /// error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {
         let mut hooks = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
         match f {
@@ -188,6 +192,42 @@ pub(crate) fn member_live(store: &Store, ws: &Workspace, key: &str) -> bool {
     let mut one = ws.clone();
     one.members.retain(|k, _| k == key);
     store.live_launcher(&one).is_some()
+}
+
+/// Whether the member has an agent session id: `agent_session` or `pending.agent_session` (Round 3 R3-4). No undo and
+/// no forget deletes such a record.
+pub(crate) fn has_session_id(m: &MemberRecord) -> bool {
+    m.agent_session.is_some() || m.pending.as_ref().is_some_and(|p| p.agent_session.is_some())
+}
+
+/// The line of AU67 for a `building` state that names no build plan (a file of an older zygo).
+pub(crate) fn no_build_plan_line(name: &str) -> String {
+    format!("zygo: {}: the state has no build plan (an older zygo wrote it); its layout and members stay", esc(name))
+}
+
+/// Takes back the plan of a build that did not finish (Round 3 R3-2), in the write that sets `phase = down`: a loadout
+/// plan clears `windows[]` and `panes[]`, deletes the `fresh_members` records that have no agent session id and adds 1
+/// to `snapshot_seq`; a restore plan keeps everything. Then `build_plan` and `fresh_members` are cleared. `false` when
+/// no plan is saved (a file of an older zygo): everything stays, and the caller prints [`no_build_plan_line`].
+pub(crate) fn take_back_plan(c: &mut Workspace) -> bool {
+    let known = match c.build_plan {
+        Some(BuildPlan::Loadout) => {
+            c.windows.clear();
+            c.panes.clear();
+            for k in &c.fresh_members {
+                if c.members.get(k).is_some_and(|m| !has_session_id(m)) {
+                    c.members.remove(k);
+                }
+            }
+            c.snapshot_seq += 1;
+            true
+        }
+        Some(BuildPlan::Restore) => true,
+        None => false,
+    };
+    c.build_plan = None;
+    c.fresh_members.clear();
+    known
 }
 
 /// The socket of `$TMUX`: the text before its first `,`; empty gives none (D18).
@@ -304,6 +344,16 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
         }
         // Round 2 M5: a state that cannot be read still names its workspace in its JSON `name`: a newer state exits 1
         // with the D1 text; an invalid one goes to the caller as `state = Err(<text naming the file>)` (W§10, D28).
+        // Round 3 R3-5: an invalid state claims the name only when that name is valid, `common_dir` and `main_root`
+        // are non-empty absolute paths and its folder is the W1 id of `common_dir`; two claimants exit 1.
+        let text_of = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let claims = |id: &str, v: &serde_json::Value| {
+            let (common_dir, main_root) = (text_of(v, "common_dir"), text_of(v, "main_root"));
+            valid_name(n)
+                && [&common_dir, &main_root].iter().all(|p| !p.is_empty() && Path::new(p.as_str()).is_absolute())
+                && workspace_id(Path::new(&common_dir)) == id
+        };
+        let mut claimants: Vec<(&String, &StateError, PathBuf, serde_json::Value)> = Vec::new();
         for (id, r) in &all {
             let Err(e) = r else { continue };
             let file = paths.workspaces_dir().join(id).join("workspace.json");
@@ -313,21 +363,29 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
             if v.get("name").and_then(|x| x.as_str()) != Some(n) {
                 continue;
             }
-            if matches!(e, StateError::Newer { .. }) {
-                return Err(fail(NEWER.into()));
+            if matches!(e, StateError::Newer { .. }) || claims(id, &v) {
+                claimants.push((id, e, file, v));
             }
-            let text_of = |k: &str| PathBuf::from(v.get(k).and_then(|x| x.as_str()).unwrap_or(""));
-            let (common_dir, main_root) = (text_of("common_dir"), text_of("main_root"));
-            return Ok(Target {
-                id: id.clone(),
-                name: n.to_string(),
-                worktrees: tree(&common_dir, &main_root),
-                common_dir,
-                main_root,
-                state: Err(e.to_string()),
-            });
         }
-        return Err(fail(format!("zygo: no workspace named {}", esc(n))));
+        match claimants.as_slice() {
+            [] => return Err(fail(format!("zygo: no workspace named {}", esc(n)))),
+            [(_, StateError::Newer { .. }, _, _)] => return Err(fail(NEWER.into())),
+            [(id, e, _, v)] => {
+                let (common_dir, main_root) = (PathBuf::from(text_of(v, "common_dir")), PathBuf::from(text_of(v, "main_root")));
+                return Ok(Target {
+                    id: (*id).clone(),
+                    name: n.to_string(),
+                    worktrees: tree(&common_dir, &main_root),
+                    common_dir,
+                    main_root,
+                    state: Err(e.to_string()),
+                });
+            }
+            many => {
+                let files: Vec<String> = many.iter().map(|(_, _, f, _)| f.display().to_string()).collect();
+                return Err(fail(format!("zygo: more than one workspace state has the name {}: {}", esc(n), files.join(", "))));
+            }
+        }
     }
     let (co, list, main_root) = find_checkout(cwd)?;
     let id = workspace_id(&co.common_dir);
@@ -518,7 +576,8 @@ struct Plan {
     /// Fresh loadout members by key (D30).
     fresh: BTreeMap<String, MemberRecord>,
     resumed: Vec<String>,
-    /// Members of panes restored as shells because no agent session id is saved: step 8 deletes them (Round 2 M4).
+    /// Bare members (no agent session id anywhere, no pending start) of panes restored as shells: step 8 deletes them
+    /// (Round 2 M4, Round 3 R3-4).
     forget: Vec<String>,
     loadout: String,
     from_loadout: bool,
@@ -619,9 +678,12 @@ fn restore_plan(store: &Store, cur: &Workspace, report: &mut Report) -> Plan {
             let m = cur.members.get(&p.key).filter(|m| matches!(m.state, MemberState::Running | MemberState::Resumable));
             let resume = match m {
                 Some(m) if m.agent_session.is_some() => !member_live(store, cur, &p.key),
-                Some(_) => {
+                Some(m) => {
                     report.no_id.push(format!("zygo: pane {}: no agent session id saved; started a shell", p.key));
-                    out.forget.push(p.key.clone());
+                    // Round 3 R3-4: only a bare record goes: no agent session id anywhere and no pending start.
+                    if !has_session_id(m) && m.pending.is_none() {
+                        out.forget.push(p.key.clone());
+                    }
                     false
                 }
                 None => false,
@@ -680,11 +742,14 @@ fn check_plan(plan: &Plan) -> Result<(), Exit> {
 }
 
 /// Round 2 M1: tmux reads an argument that ends with `;` as the end of a command, so no value that goes into a tmux
-/// command line may end with `;`: the main worktree (the `-c` of new-session and new-window), each window name, and
-/// each item of each pane's argument list (the zygo path is the first). Checked before the step 8 write.
-fn check_separators(zygo: &Path, id: &str, main_root: &Path, plan: &Plan) -> Result<(), Exit> {
+/// command line may end with `;`: the main worktree (the `-c` of new-session and new-window), each window name and
+/// layout (Round 3 R3-6: from the loadout or the saved state), and each item of each pane's argument list (the zygo
+/// path is the first). Checked before every write of this run except the step 5 repair; `repaired` says that the
+/// repair wrote, so the text names "this plan".
+fn check_separators(zygo: &Path, id: &str, main_root: &Path, plan: &Plan, repaired: bool) -> Result<(), Exit> {
+    let what_stays = if repaired { "nothing of this plan was written" } else { "nothing was written" };
     let refuse = |what: String, value: String| {
-        fail(format!("zygo: {what} {value:?} ends with `;`, which tmux reads as the end of a command; nothing was written"))
+        fail(format!("zygo: {what} {value:?} ends with `;`, which tmux reads as the end of a command; {what_stays}"))
     };
     let root = main_root.to_string_lossy();
     if root.ends_with(';') {
@@ -693,6 +758,9 @@ fn check_separators(zygo: &Path, id: &str, main_root: &Path, plan: &Plan) -> Res
     for (w, idx) in plan.windows.iter().zip(&plan.indexes) {
         if let Some(n) = w.name.as_deref().filter(|n| n.ends_with(';')) {
             return Err(refuse(format!("window {idx}: name"), n.to_string()));
+        }
+        if let Some(l) = w.layout.as_deref().filter(|l| l.ends_with(';')) {
+            return Err(refuse(format!("window {idx}: layout"), l.to_string()));
         }
         for p in &w.panes {
             for item in pane_argv(zygo, id, &p.key, p.shell) {
@@ -780,20 +848,22 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         Err(StateError::Newer { .. }) => Err(fail(NEWER.into())),
         Err(e) => Err(fail(format!("zygo: {e}"))),
     };
-    // The state again under `op.lock` (implementation decision I1); a state that cannot be read: D28.
+    // The state again under `op.lock` (implementation decision I1); a state that cannot be read: D28. With `--reset`
+    // the rename to `workspace.json.bad` waits until the plan passed its checks (Round 3 R3-6).
+    let mut bad: Option<PathBuf> = None;
     let mut ws = match store.read() {
         Ok(s) => s,
         Err(StateError::Newer { .. }) => return Err(fail(NEWER.into())),
         Err(e @ StateError::Invalid { .. }) if !opts.reset => return Err(fail(format!("zygo: {e}"))),
         Err(StateError::Invalid { path, .. }) => {
-            let bad = store.dir().join("workspace.json.bad");
-            fs::rename(&path, &bad).map_err(|e| fail(format!("zygo: cannot rename {}: {e}", path.display())))?;
+            bad = Some(path);
             None
         }
         Err(e) => return Err(fail(format!("zygo: {e}"))),
     };
     // Step 5.
     let was_building = ws.as_ref().is_some_and(|w| w.phase == Phase::Building);
+    let repaired = ws.as_ref().is_some_and(|w| !matches!(w.phase, Phase::Up | Phase::Down));
     if let Some(cur) = &ws {
         if let Some(sock) = &cur.tmux_socket {
             socket_is_private(sock, true).map_err(|t| fail(format!("zygo: {t}")))?;
@@ -854,7 +924,11 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         _ => loadout_plan(opts, &target, ws.as_ref(), &mut report, err)?,
     };
     check_plan(&plan)?;
-    check_separators(&opts.zygo, &id, &target.main_root, &plan)?;
+    check_separators(&opts.zygo, &id, &target.main_root, &plan, repaired)?;
+    if let Some(path) = &bad {
+        let to = store.dir().join("workspace.json.bad");
+        fs::rename(path, &to).map_err(|e| fail(format!("zygo: cannot rename {}: {e}", path.display())))?;
+    }
     if opts.reset
         && let Some(cur) = &ws
     {
@@ -873,10 +947,16 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         socket_is_private(&s, false).map_err(|t| fail(format!("zygo: {t}")))?;
     }
     let chosen = server(&opts.tmux, saved_before.as_deref(), opts.tmux_env.as_deref()).socket().map(Path::to_path_buf);
-    let stored_socket = saved_before.is_none() && chosen.is_some();
     let planned_keys: BTreeSet<String> = plan.windows.iter().flat_map(|w| w.panes.iter().map(|p| p.key.clone())).collect();
+    // Round 3 R3-8: whether this write set `tmux_socket`, decided in the closure on the state under `lock`.
+    let mut stored_socket = false;
+    // Round 3 R3-4: each record that this write deleted, whole, so the undo can put it back.
+    let mut forgotten: BTreeMap<String, MemberRecord> = BTreeMap::new();
+    fire(store.dir(), "before_plan_write").map_err(tmux_err)?;
     let written = store
         .update(LOCK_WAIT, &mut |cur| {
+            stored_socket = false;
+            forgotten.clear();
             cur.name = name.clone();
             cur.tmux_session = session.clone();
             cur.common_dir = target.common_dir.clone();
@@ -884,6 +964,9 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             cur.loadout = plan.loadout.clone();
             cur.phase = Phase::Building;
             cur.phase_since = now_secs();
+            // Round 3 R3-2: the plan kind and the records that this write creates, for the undo and AU67.
+            cur.build_plan = Some(if plan.from_loadout { BuildPlan::Loadout } else { BuildPlan::Restore });
+            cur.fresh_members = if plan.from_loadout { plan.fresh.keys().cloned().collect() } else { Vec::new() };
             if plan.from_loadout {
                 if opts.reset {
                     cur.members.clear();
@@ -935,11 +1018,17 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                     }
                 }
                 for k in &plan.forget {
-                    cur.members.remove(k);
+                    // The record as it is under `lock`: one that got an id or a pending start since the read stays.
+                    if cur.members.get(k).is_some_and(|m| !has_session_id(m) && m.pending.is_none())
+                        && let Some(m) = cur.members.remove(k)
+                    {
+                        forgotten.insert(k.clone(), m);
+                    }
                 }
             }
-            if cur.tmux_socket.is_none() {
+            if cur.tmux_socket.is_none() && chosen.is_some() {
                 cur.tmux_socket = chosen.clone();
+                stored_socket = true;
             }
             cur.snapshot_seq += 1;
             Ok(())
@@ -949,25 +1038,37 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     // Step 9.
     let first = &plan.windows[0];
     let first_pane = &first.panes[0];
-    // B1 (Round 2): a failure that ends with phase `down` and no session removes what this `up` wrote, in the same
-    // write: a loadout plan's `windows[]`, `panes[]` and fresh members (none launched), and the socket it stored.
-    let undo = |code: i32, message: String| {
-        let _ = store.update(LOCK_WAIT, &mut |c| {
-            c.phase = Phase::Down;
-            c.phase_since = now_secs();
-            if plan.from_loadout {
-                c.windows.clear();
-                c.panes.clear();
-                for k in plan.fresh.keys() {
-                    c.members.remove(k);
-                }
-                c.snapshot_seq += 1;
-            }
-            if stored_socket {
-                c.tmux_socket = None;
-            }
-            Ok(())
+    // B1 (Round 2): a failure that ends with phase `down` and no session of ours takes back what this `up` wrote, in
+    // the same write: the plan by `build_plan` (Round 3 R3-2), the records that step 8 deleted (R3-4) and the socket
+    // that step 8 stored (R3-8). Then the `snapshot.pending` check on the state it wrote (R3-7).
+    let forgotten = &forgotten;
+    let undo = |err: &mut dyn Write, code: i32, message: String| {
+        let mut older = false;
+        let wrote = fire(store.dir(), "before_undo").map_err(|e| e.to_string()).and_then(|()| {
+            store
+                .update(LOCK_WAIT, &mut |c| {
+                    c.phase = Phase::Down;
+                    c.phase_since = now_secs();
+                    older = !take_back_plan(c);
+                    for (k, m) in forgotten {
+                        c.members.entry(k.clone()).or_insert_with(|| m.clone());
+                    }
+                    if stored_socket {
+                        c.tmux_socket = None;
+                    }
+                    Ok(())
+                })
+                .map_err(|e| e.to_string())
         });
+        match wrote {
+            Ok(w) => {
+                if older {
+                    say(err, &no_build_plan_line(&name));
+                }
+                let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), w.tmux_socket.clone()), &id, snapshot::OP_WAIT);
+            }
+            Err(e) => say(err, &format!("zygo: state not cleaned: {e}")),
+        }
         Exit { code, message }
     };
     let mux9 = server(&opts.tmux, written.tmux_socket.as_deref(), opts.tmux_env.as_deref());
@@ -993,7 +1094,27 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         argv: &argv,
         owner: Some((&id, &first_pane.key)),
     };
-    let first_index = mux9.new_session(&spec).map_err(|e| undo(1, format!("zygo: tmux: {e}")))?;
+    // Round 3 R3-1: a failed `new-session` can still leave a session. Ours (`@zygo-ws` is the id): `phase` stays
+    // `building` and the next `up` repairs it (AU67). None: the undo. Another owner's or none: AU63 and the undo. An
+    // answer that tells neither keeps `building`; the next `up` asks again.
+    let first_index = match mux9.new_session(&spec) {
+        Ok(i) => i,
+        Err(e) => {
+            let message = format!("zygo: tmux: {e}");
+            return Err(match mux9.session_exists(&session) {
+                SessionAnswer::Gone => undo(err, 1, message),
+                SessionAnswer::Exists => match mux9.show_session_option(&session, WS_OPTION) {
+                    Ok(Some(v)) if v == id => fail(message),
+                    Ok(_) => {
+                        say(err, &message);
+                        undo(err, 1, format!("zygo: {}", not_owned(&session, &name)))
+                    }
+                    Err(_) => fail(message),
+                },
+                SessionAnswer::Error { .. } => fail(message),
+            });
+        }
+    };
     if new_server {
         say(err, NEW_SERVER);
     }
@@ -1003,15 +1124,15 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         mux9.rename_window(&session, first_index, n).map_err(tmux_err)?;
     }
     let socket = mux9.socket_path(&session).map_err(tmux_err)?;
-    let refuse = |code: i32, message: String| {
+    let refuse = |err: &mut dyn Write, code: i32, message: String| {
         let _ = mux9.kill_session(&session);
-        undo(code, message)
+        undo(err, code, message)
     };
     if check_path(&socket).is_err() {
-        return Err(refuse(2, UnsafePath.to_string()));
+        return Err(refuse(err, 2, UnsafePath.to_string()));
     }
     if let Err(t) = socket_is_private(&socket, false) {
-        return Err(refuse(1, format!("zygo: {t}")));
+        return Err(refuse(err, 1, format!("zygo: {t}")));
     }
     let mut last = store
         .update(LOCK_WAIT, &mut |c| {
@@ -1065,6 +1186,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                         c.members.remove(k);
                     }
                 }
+                c.fresh_members.retain(|k| !not_built.contains(k));
                 c.snapshot_seq += 1;
                 Ok(())
             })
@@ -1119,6 +1241,8 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             c.phase = Phase::Up;
             c.phase_since = now_secs();
             c.down_all = false;
+            c.build_plan = None;
+            c.fresh_members.clear();
             Ok(())
         })
         .map_err(write_err)?;

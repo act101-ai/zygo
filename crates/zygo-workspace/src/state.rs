@@ -42,6 +42,13 @@ pub struct Workspace {
     /// The count of snapshot writes (W§7.2); absent means 0.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub snapshot_seq: u64,
+    /// The plan of the build that is not finished (W§7.2): written by `up` step 8 with `phase = building`, cleared by
+    /// the write that sets `phase = up`. Absent in a file of an older zygo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_plan: Option<BuildPlan>,
+    /// The member keys that `up` step 8 created for the build that is not finished (W§7.2); cleared with `build_plan`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fresh_members: Vec<String>,
     #[serde(default)]
     pub windows: Vec<Window>,
     #[serde(default)]
@@ -171,6 +178,16 @@ pub enum Phase {
     Down,
 }
 
+/// The plan kind of `build_plan` (W§7.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildPlan {
+    /// A loadout plan: `windows[]`, `panes[]` and the `fresh_members` records are this build's.
+    Loadout,
+    /// A restore plan: `windows[]` and `panes[]` are the saved layout.
+    Restore,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MemberState {
@@ -236,6 +253,8 @@ impl Workspace {
             down_all: false,
             snapshot_at: None,
             snapshot_seq: 0,
+            build_plan: None,
+            fresh_members: Vec::new(),
             windows: Vec::new(),
             panes: Vec::new(),
             members: BTreeMap::new(),
@@ -330,7 +349,10 @@ fn validate(ws: &Workspace, id: &str) -> Result<(), String> {
         "invalid name"
     } else if !valid_tmux_session(&ws.tmux_session, &ws.name) {
         "invalid tmux_session"
-    } else if ws.panes.iter().any(|p| !valid_pane_key(&p.key)) || ws.members.keys().any(|k| !valid_pane_key(k)) {
+    } else if ws.panes.iter().any(|p| !valid_pane_key(&p.key))
+        || ws.members.keys().any(|k| !valid_pane_key(k))
+        || ws.fresh_members.iter().any(|k| !valid_pane_key(k))
+    {
         "invalid pane key"
     } else {
         return Ok(());

@@ -13,12 +13,20 @@ use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnsw
 use crate::snapshot::OP_WAIT;
 use crate::state::{Pane, PaneKind, Phase, StateError, Store, Workspace};
 use crate::up::{
-    member_live, not_built_line, not_owned, socket_is_private, unreachable, BuildPane, BuildWindow, Builder, LOADOUT_SIZE,
+    member_live, no_build_plan_line, not_built_line, not_owned, socket_is_private, take_back_plan, unreachable, BuildPane,
+    BuildWindow, Builder, LOADOUT_SIZE,
 };
 
 const WS_OPTION: &str = "@zygo-ws";
 
 fn tmux(e: MuxError) -> anyhow::Error { anyhow!("tmux: {e}") }
+
+/// `phase = up`; the write that sets it clears `build_plan` and `fresh_members` (Round 3 R3-2).
+fn set_up(c: &mut Workspace) {
+    c.phase = Phase::Up;
+    c.build_plan = None;
+    c.fresh_members.clear();
+}
 
 /// One write under `lock` with the wait of `up` and `down` (D20).
 fn write(store: &Store, name: &str, f: &mut dyn FnMut(&mut Workspace)) -> anyhow::Result<Workspace> {
@@ -73,7 +81,7 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
             building(store, mux, zygo, &ws, err)
         }
         Phase::Draining if exists => {
-            write(store, &ws.name, &mut |c| c.phase = Phase::Up)?;
+            write(store, &ws.name, &mut set_up)?;
             Ok(())
         }
         Phase::Stopping if exists => {
@@ -84,7 +92,7 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
                 write(store, &ws.name, &mut |c| c.phase = Phase::Down)?;
             } else {
                 write(store, &ws.name, &mut |c| {
-                    c.phase = Phase::Up;
+                    set_up(c);
                     for k in &live {
                         if let Some(m) = c.members.get_mut(k) {
                             m.clean_stop = false;
@@ -97,19 +105,17 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
             Ok(())
         }
         Phase::Building => {
-            // Round 2 B1: with `snapshot_at` unset no build ever finished, so the planned layout and the records that
-            // never got an agent session go; the next `up` plans from the loadout again.
+            // Round 3 R3-2: the saved `build_plan` says what the dead build wrote: a loadout plan is taken back, so the
+            // next `up` plans from the loadout again; a restore plan keeps the layout; no plan (an older zygo) keeps
+            // everything, with one line.
+            let mut older = false;
             write(store, &ws.name, &mut |c| {
                 c.phase = Phase::Down;
-                if c.snapshot_at.is_none() {
-                    if !c.windows.is_empty() || !c.panes.is_empty() {
-                        c.windows.clear();
-                        c.panes.clear();
-                        c.snapshot_seq += 1;
-                    }
-                    c.members.retain(|_, m| m.agent_session.is_some());
-                }
+                older = !take_back_plan(c);
             })?;
+            if older {
+                let _ = writeln!(err, "{}", no_build_plan_line(&ws.name));
+            }
             Ok(())
         }
         _ => {
@@ -180,7 +186,7 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
         }
     };
     write(store, &ws.name, &mut |c| {
-        c.phase = Phase::Up;
+        set_up(c);
         if let Some(s) = &socket {
             c.tmux_socket = Some(s.clone());
         }

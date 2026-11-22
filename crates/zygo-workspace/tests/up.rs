@@ -28,7 +28,9 @@ use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::mux::Multiplexer;
 use zygo_workspace::repair;
-use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Subagent, Window, Workspace};
+use zygo_workspace::state::{
+    BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Pending, Phase, Store, Subagent, Window, Workspace,
+};
 use zygo_workspace::up::{self, preflight, Exit, UpOpts};
 
 const S5: Duration = Duration::from_secs(5);
@@ -1535,7 +1537,9 @@ fn preflight_by_name_refuses_a_newer_or_invalid_state() {
     let plain = t.join("plain");
     fs::create_dir_all(&plain).unwrap();
     let r = repo(t, "app");
-    let store = Store::open(&p, OTHER_ID);
+    // Round 3 R3-5: the folder id is the hash of `common_dir`
+    let id = workspace_id(&canon(&r.join(".git")));
+    let store = Store::open(&p, &id);
     let mut v = doc(&store, &r);
     v["version"] = json!(2);
     put_raw(&store, &v);
@@ -1547,7 +1551,7 @@ fn preflight_by_name_refuses_a_newer_or_invalid_state() {
     v["tmux_session"] = json!("zygo-other");
     put_raw(&store, &v);
     let tg = preflight(&p, &ok, Some("app"), &plain).unwrap();
-    assert_eq!((tg.id.as_str(), tg.name.as_str(), tg.main_root.clone()), (OTHER_ID, "app", r.clone()));
+    assert_eq!((tg.id.as_str(), tg.name.as_str(), tg.main_root.clone()), (id.as_str(), "app", r.clone()));
     let Err(text) = &tg.state else { panic!("{:?}", tg.state) };
     assert!(text.contains("workspace.json") && text.contains("invalid tmux_session"), "{text}");
     // `up app` names the file and exits 1; with `--reset` the file becomes `workspace.json.bad`
@@ -1565,4 +1569,401 @@ fn preflight_by_name_refuses_a_newer_or_invalid_state() {
     assert_eq!(fs::read(store.dir().join("workspace.json.bad")).unwrap(), before);
     assert_eq!(code, 1);
     assert!(err.ends_with("zygo: tmux: no server running on /tmp/zygo-none/s\n"), "{err}");
+}
+
+// ---- Round 3 ----
+
+/// A tmux wrapper as `socket_only_tmux` whose `new-session` exits 1 with `injected`: `fail` makes no session, `make`
+/// runs the real call first (the session is ours), `foreign` first makes a session `zygo-app` with no `@zygo-ws`.
+fn failing_new_session(dir: &Path, real: &Path, mode: &str) -> PathBuf {
+    let r = real.display();
+    let body = format!(
+        "sock=; prev=; for a in \"$@\"; do [ \"$prev\" = -S ] && sock=$a; prev=$a; done\n\
+         case \"$*\" in *new-session*)\n\
+         case {mode} in make) '{r}' -f /dev/null \"$@\" ;; foreign) '{r}' -f /dev/null -S \"$sock\" new-session -d -s zygo-app sleep 600 ;; esac\n\
+         echo injected >&2; exit 1 ;;\n\
+         esac\n\
+         for a in \"$@\"; do case \"$a\" in -S|-V) exec '{r}' -f /dev/null \"$@\";; esac; done\n\
+         echo 'no server running on /tmp/zygo-none/s' >&2\nexit 1"
+    );
+    script(dir, &format!("ftmux-{mode}"), &body)
+}
+
+/// `$TMUX` of a client of the private server.
+fn inside(l: &Live) -> Option<OsString> { Some(OsString::from(format!("{},1,0", l.srv.socket().display()))) }
+
+const AU67_OLDER: &str = "zygo: app: the state has no build plan (an older zygo wrote it); its layout and members stay";
+
+#[test] // Round 3 R3-1: a failed `new-session` that left our session keeps `building`; the next `up` repairs it
+fn new_session_error_with_our_session_keeps_building() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    l.o.tmux = failing_new_session(l.t.path(), &real, "make");
+    l.o.tmux_env = inside(&l);
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("injected"), "{err}");
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.panes.len(), ws.tmux_socket.as_deref()), (Phase::Building, 3, Some(l.srv.socket())));
+    assert_eq!((ws.build_plan, ws.fresh_members.len()), (Some(BuildPlan::Loadout), 1));
+    assert_eq!(l.srv.run(&["show-options", "-qv", "-t", "=zygo-app:", "@zygo-ws"]).unwrap(), l.id);
+    l.o.tmux = socket_only_tmux(l.t.path(), &real);
+    l.o.tmux_env = None;
+    l.o.loadout = None;
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.build_plan, ws.fresh_members.len()), (Phase::Up, None, 0));
+    let keys = by_key(&l.srv);
+    assert_eq!(keys.len(), 3, "{keys:?}");
+    assert!(ws.panes.iter().all(|p| keys.contains_key(&p.key)), "{keys:?}");
+    agent_was_built(&l, &ws);
+}
+
+#[test] // Round 3 R3-1: a failed `new-session` with no session undoes the plan; a session of another owner is AU63
+fn new_session_error_without_our_session_undoes_the_plan() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    l.o.tmux_env = inside(&l);
+    for mode in ["fail", "foreign"] {
+        l.o.tmux = failing_new_session(l.t.path(), &real, mode);
+        let (code, _, err) = run(&l.o);
+        assert_eq!(code, 1, "{mode}: {err}");
+        assert!(err.contains("injected"), "{mode}: {err}");
+        let ws = read(&store);
+        assert_eq!((ws.phase, ws.tmux_socket.clone(), ws.build_plan), (Phase::Down, None, None), "{mode}");
+        assert!(ws.windows.is_empty() && ws.panes.is_empty() && ws.members.is_empty() && ws.fresh_members.is_empty(), "{ws:?}");
+        if mode == "foreign" {
+            assert!(err.contains("zygo: tmux session zygo-app does not belong to this workspace"), "{err}");
+            assert_eq!(l.srv.run(&["list-panes", "-s", "-t", "=zygo-app:", "-F", "#{pane_id}"]).unwrap().lines().count(), 1);
+            l.srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
+        }
+    }
+    l.o.tmux = socket_only_tmux(l.t.path(), &real);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    agent_was_built(&l, &read(&store));
+}
+
+#[test] // Round 3 R3-2: a crash in `building` after `--reset`, with `snapshot_at` set, rebuilds the loadout
+fn crash_after_reset_with_a_snapshot_rebuilds_the_loadout() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let _ = up_pair(&mut l);
+    let store = l.store();
+    assert!(read(&store).snapshot_at.is_some());
+    l.srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
+    set(&store, |w| w.phase = Phase::Down);
+    l.o.reset = true;
+    l.o.loadout = Some("pair".into());
+    up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+    let first = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!(first.0, 1, "{}", first.2);
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.build_plan, ws.fresh_members.len()), (Phase::Building, Some(BuildPlan::Loadout), 1));
+    assert!(ws.snapshot_at.is_some());
+    l.srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
+    l.o.reset = false;
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("no agent session id saved") && !err.contains("--loadout applies only"), "{err}");
+    agent_was_built(&l, &read(&store));
+}
+
+#[test] // Round 3 R3-2: a restore that crashed in `building` keeps its layout, also when no snapshot was saved
+fn restore_crash_keeps_the_layout() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let _ = up_pair(&mut l);
+    let store = l.store();
+    let agent = read(&store).panes[0].key.clone();
+    set(&store, move |w| w.members.get_mut(&agent).unwrap().agent_session = Some("s-1".into()));
+    // the second pass: the build finished with "final snapshot not saved", so `snapshot_at` is unset
+    for snapshot_saved in [true, false] {
+        let _ = l.srv.run(&["kill-session", "-t", "=zygo-app:"]);
+        set(&store, |w| {
+            w.phase = Phase::Down;
+            if !snapshot_saved {
+                w.snapshot_at = None;
+            }
+        });
+        let before = read(&store);
+        up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+        let first = run(&l.o);
+        up::testing::hook(store.dir(), "after_new_session", None);
+        assert_eq!(first.0, 1, "{}", first.2);
+        let mid = read(&store);
+        assert_eq!((mid.phase, mid.build_plan, mid.fresh_members.len()), (Phase::Building, Some(BuildPlan::Restore), 0));
+        l.srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
+        let mux = up::server(&l.o.tmux, mid.tmux_socket.as_deref(), None);
+        let (r, _, err) = repair_run(&store, &mux, &l.o.zygo);
+        r.unwrap();
+        let after = read(&store);
+        assert_eq!((after.phase, after.build_plan), (Phase::Down, None), "{err}");
+        assert_eq!((&after.windows, &after.panes), (&before.windows, &before.panes), "snapshot saved: {snapshot_saved}");
+        let ids = |w: &Workspace| w.members.iter().map(|(k, m)| (k.clone(), m.agent_session.clone())).collect::<Vec<_>>();
+        assert_eq!(ids(&after), ids(&before));
+    }
+}
+
+#[test] // Round 3 R3-3, R3-4: the repair deletes only `fresh_members` with no agent session id; an older state keeps all
+fn repair_deletes_only_fresh_members_without_an_id() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    let g = gone_tmux(t);
+    let o = opts(t, &r, &g, &t.join("zygo"));
+    let store = state_of(&o, &r);
+    let mut with_pending = member(Agent::ClaudeCode, MemberState::Running, None);
+    with_pending.pending =
+        Some(Pending { zygo_session: "01DEAD".into(), agent_session: Some("p-1".into()), started_at: 1, ..Pending::default() });
+    let older = member(Agent::ClaudeCode, MemberState::Resumable, None);
+    let panes = vec![
+        pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, &r),
+        pane("kbbbbbbbb", 0, 1, PaneKind::ClaudeCode, &r),
+        pane("kcccccccc", 0, 2, PaneKind::Shell, &r),
+    ];
+    saved(
+        &store,
+        &r,
+        vec![win(0, None, "tiled", 200, 50)],
+        panes.clone(),
+        vec![
+            ("kaaaaaaaa", member(Agent::ClaudeCode, MemberState::Running, None)),
+            ("kbbbbbbbb", with_pending.clone()),
+            ("kdddddddd", older.clone()),
+        ],
+    );
+    set(&store, |w| {
+        w.phase = Phase::Building;
+        w.build_plan = Some(BuildPlan::Loadout);
+        w.fresh_members = vec!["kaaaaaaaa".into(), "kbbbbbbbb".into()];
+    });
+    let seq = read(&store).snapshot_seq;
+    let quiet = Tmux::new(g.clone(), None);
+    let (res, _, err) = repair_run(&store, &quiet, &o.zygo);
+    res.unwrap();
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.build_plan, ws.snapshot_seq), (Phase::Down, None, seq + 1), "{err}");
+    assert!(ws.windows.is_empty() && ws.panes.is_empty() && ws.fresh_members.is_empty(), "{ws:?}");
+    assert_eq!(ws.members.keys().map(String::as_str).collect::<Vec<_>>(), ["kbbbbbbbb", "kdddddddd"]);
+    assert_eq!((&ws.members["kbbbbbbbb"], &ws.members["kdddddddd"]), (&with_pending, &older));
+    // a state of an older zygo (no build plan): everything stays, and one line says so
+    set(&store, |w| {
+        w.phase = Phase::Building;
+        w.panes = panes.clone();
+    });
+    let before = read(&store);
+    let (res, _, err) = repair_run(&store, &quiet, &o.zygo);
+    res.unwrap();
+    assert_eq!(err, format!("{AU67_OLDER}\n"));
+    let ws = read(&store);
+    assert_eq!((ws.phase, &ws.panes, &ws.members, ws.snapshot_seq), (Phase::Down, &before.panes, &before.members, before.snapshot_seq));
+}
+
+#[test] // Round 3 R3-4: a restore deletes only a bare member record; a failed restore puts back what it deleted
+fn restore_forgets_only_bare_members_and_undo_puts_them_back() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    let mut pend = member(Agent::ClaudeCode, MemberState::Running, None);
+    pend.pending =
+        Some(Pending { zygo_session: "01DEAD".into(), agent_session: Some("p-1".into()), started_at: 1, ..Pending::default() });
+    let mut start = member(Agent::ClaudeCode, MemberState::Running, None);
+    start.pending = Some(Pending { zygo_session: "01DEAD2".into(), agent_session: None, started_at: 2, ..Pending::default() });
+    let mut bare = member(Agent::ClaudeCode, MemberState::Running, None);
+    bare.launch.profile = Some("fast".into());
+    bare.dropped_flags = vec!["--agents".into()];
+    bare.last_run_at = Some(9);
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![
+            pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, &l.repo),
+            pane("kbbbbbbbb", 0, 1, PaneKind::ClaudeCode, &l.repo),
+            pane("kcccccccc", 0, 2, PaneKind::ClaudeCode, &l.repo),
+        ],
+        vec![("kaaaaaaaa", bare.clone()), ("kbbbbbbbb", pend.clone()), ("kcccccccc", start.clone())],
+    );
+    let sock = l.srv.socket().to_path_buf();
+    set(&store, move |w| w.tmux_socket = Some(sock.clone()));
+    // a restore whose new-session fails: the undo puts back the bare record with all its fields
+    let mut o = l.o.clone();
+    o.tmux = failing_new_session(l.t.path(), &real, "fail");
+    let (code, _, err) = run(&o);
+    assert_eq!(code, 1, "{err}");
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.build_plan, ws.panes.len()), (Phase::Down, None, 3));
+    assert_eq!((&ws.members["kaaaaaaaa"], &ws.members["kbbbbbbbb"], &ws.members["kcccccccc"]), (&bare, &pend, &start));
+    // the restore: only the bare record goes
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&store);
+    assert!(!ws.members.contains_key("kaaaaaaaa"), "{err}");
+    assert_eq!((&ws.members["kbbbbbbbb"], &ws.members["kcccccccc"]), (&pend, &start));
+}
+
+#[test] // Round 3 R3-5: an invalid state matches a name only with a valid name, absolute paths and its own hash
+fn preflight_by_name_matches_an_invalid_state_only_by_its_rules() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let p = paths(t);
+    let ok = version_tmux(t, "tmux34", "tmux 3.4");
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    let (r, r2) = (repo(t, "app"), repo(t, "app2"));
+    let store = Store::open(&p, &workspace_id(&canon(&r.join(".git"))));
+    let s2 = Store::open(&p, &workspace_id(&canon(&r2.join(".git"))));
+    let invalid = |store: &Store, repo: &Path| {
+        let mut v = doc(store, repo);
+        v["tmux_session"] = json!("zygo-other");
+        v
+    };
+    let none = |name: &str| {
+        let e = preflight(&p, &ok, Some(name), &plain).unwrap_err();
+        assert_eq!(e.code, 1);
+        assert!(e.message.starts_with("zygo: no workspace named "), "{name}: {}", e.message);
+    };
+    // missing, empty or relative paths
+    for (k, value) in [("common_dir", None), ("main_root", None), ("common_dir", Some("")), ("main_root", Some("rel/app"))] {
+        let mut v = invalid(&store, &r);
+        match value {
+            None => drop(v.as_object_mut().unwrap().remove(k)),
+            Some(s) => v[k] = json!(s),
+        }
+        put_raw(&store, &v);
+        none("app");
+    }
+    // a name that is not valid
+    let mut v = invalid(&store, &r);
+    v["name"] = json!("App!");
+    put_raw(&store, &v);
+    none("App!");
+    // a folder that is not the hash of `common_dir`
+    fs::remove_dir_all(store.dir()).unwrap();
+    let other = Store::open(&p, OTHER_ID);
+    put_raw(&other, &invalid(&other, &r));
+    none("app");
+    fs::remove_dir_all(other.dir()).unwrap();
+    // two claimants of one name
+    put_raw(&store, &invalid(&store, &r));
+    put_raw(&s2, &invalid(&s2, &r2));
+    let e = preflight(&p, &ok, Some("app"), &plain).unwrap_err();
+    assert_eq!(e.code, 1);
+    for s in [&store, &s2] {
+        assert!(e.message.contains(&state_file(s).display().to_string()), "{}", e.message);
+    }
+}
+
+#[test] // Round 3 R3-6: layouts are checked too, before every write of this run, also before the `.bad` rename
+fn trailing_semicolon_in_a_layout_and_before_the_bad_rename() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let g = gone_tmux(t);
+    let r = repo(t, "app");
+    let mut o = opts(t, &r, &g, &t.join("zygo"));
+    o.config = with_loadout("w", vec![lw(None, Some("tiled;"), vec![lp("shell")])]);
+    o.loadout = Some("w".into());
+    let store = state_of(&o, &r);
+    let refused = |o: &UpOpts, value: &str, tail: &str| {
+        let (code, out, err) = run(o);
+        assert_eq!((code, out.as_str()), (1, ""), "{err}");
+        assert!(err.contains(&format!("{value:?}")) && err.ends_with(&format!("ends with `;`, which tmux reads as the end of a command; {tail}\n")), "{err}");
+    };
+    // a loadout layout
+    refused(&o, "tiled;", "nothing was written");
+    assert!(!state_file(&store).exists());
+    // a saved layout
+    saved(&store, &r, vec![win(0, None, "even;", 200, 50)], vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &r)], vec![]);
+    o.loadout = None;
+    let before = raw(&store);
+    refused(&o, "even;", "nothing was written");
+    assert_eq!(raw(&store), before);
+    // `--reset` on a state that fails AU84: no `.bad` file, the state as it was
+    let mut v = doc(&store, &r);
+    v["tmux_session"] = json!("zygo-other");
+    put_raw(&store, &v);
+    let before = raw(&store);
+    o.reset = true;
+    o.loadout = Some("w".into());
+    refused(&o, "tiled;", "nothing was written");
+    assert!(!store.dir().join("workspace.json.bad").exists());
+    assert_eq!(raw(&store), before);
+    // after the step 5 repair wrote: "nothing of this plan was written"
+    fs::remove_file(state_file(&store)).unwrap();
+    o.reset = false;
+    saved(&store, &r, vec![], vec![], vec![]);
+    set(&store, |w| w.phase = Phase::Draining);
+    refused(&o, "tiled;", "nothing of this plan was written");
+    assert_eq!(read(&store).phase, Phase::Down);
+}
+
+#[test] // Round 3 R3-7: an undo whose write fails says so
+fn failed_undo_write_is_reported() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    l.o.tmux = failing_new_session(l.t.path(), &real, "fail");
+    l.o.tmux_env = inside(&l);
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    fs::create_dir_all(store.dir()).unwrap();
+    let file = state_file(&store);
+    up::testing::hook(store.dir(), "before_undo", Some(Box::new(move || fs::write(&file, b"{").map_err(|e| e.to_string()))));
+    let (code, _, err) = run(&l.o);
+    up::testing::hook(store.dir(), "before_undo", None);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("\nzygo: state not cleaned: ") || err.starts_with("zygo: state not cleaned: "), "{err}");
+    assert_eq!(raw(&store), b"{");
+}
+
+#[test] // Round 3 R3-8: a socket that another writer set before step 8 stays after the undo
+fn undo_keeps_a_socket_that_another_writer_set() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    saved(&store, &l.repo, vec![], vec![], vec![]);
+    let folder = tempfile::Builder::new().prefix("zygo-w7r3").tempdir_in("/tmp").unwrap();
+    fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let x = folder.path().join("s");
+    l.o.tmux = failing_new_session(l.t.path(), &real, "fail");
+    l.o.tmux_env = inside(&l);
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (s2, x2) = (store.clone(), x.clone());
+    up::testing::hook(
+        store.dir(),
+        "before_plan_write",
+        Some(Box::new(move || {
+            s2.update(S5, &mut |w| {
+                w.tmux_socket = Some(x2.clone());
+                Ok(())
+            })
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        })),
+    );
+    let (code, _, err) = run(&l.o);
+    up::testing::hook(store.dir(), "before_plan_write", None);
+    assert_eq!(code, 1, "{err}");
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.tmux_socket.as_deref()), (Phase::Down, Some(x.as_path())), "{err}");
 }
