@@ -1058,8 +1058,15 @@ fn windows(t: &T, g: &SessionGrant) -> (Option<String>, Option<u64>, Option<u64>
     (s.model, s.context_window, s.effective_window, s.threshold)
 }
 
-/// Posts `role` with `extra` headers and closes the connection once the body holds `needle`.
-fn read_then_drop(t: &T, g: &SessionGrant, role: &str, extra: &[(&str, &str)], needle: &str) {
+/// Posts `role` with `extra` headers and closes the connection once the body holds `line` and its "\n".
+///
+/// The tee reads usage only from whole lines, and it reads each upstream chunk before it forwards that chunk. So
+/// when the client has the "\n" of `line`, the proxy has read `line`. A shorter needle (a part of a line, or the
+/// `event:` line before the `data:` line) lets the client close before the proxy receives the rest of the line: the
+/// fake upstream sends its body in three chunks, and the outcome then depends on the timing of the OS.
+fn read_then_drop(t: &T, g: &SessionGrant, role: &str, extra: &[(&str, &str)], line: &str) {
+    assert!(line.starts_with("data: ") && !line.contains('\n'), "a whole data line: {line:?}");
+    let needle = format!("{line}\n");
     let mut hd = auth(g);
     hd.extend_from_slice(extra);
     t.n.set(t.n.get() + 1);
@@ -1072,10 +1079,15 @@ fn read_then_drop(t: &T, g: &SessionGrant, role: &str, extra: &[(&str, &str)], n
         let mut r = rb.body(req_body(role).to_string()).send().await.unwrap();
         assert_eq!(r.status().as_u16(), 200);
         let mut seen = Vec::new();
-        while !String::from_utf8_lossy(&seen).contains(needle) {
+        while !String::from_utf8_lossy(&seen).contains(&needle) {
             seen.extend_from_slice(&r.chunk().await.unwrap().expect("the body ended before the needle"));
         }
     }); // the response, its client and the runtime drop here: the connection closes
+}
+
+/// The first `data:` line of an SSE body, without its "\n".
+fn data_line(body: &str) -> &str {
+    body.lines().find(|l| l.starts_with("data: ")).expect("a data line")
 }
 
 #[test]
@@ -1229,10 +1241,12 @@ fn status_follows_dropped_stream() { // AU29: stored under the used_context cond
     let t = setup("claude-t-1");
     let g = grant(&t, Agent::ClaudeCode);
     let start = json!({"message":{"id":"msg_1","type":"message","role":"assistant","content":[],"usage":u4(1, 0, 5000, 1)}});
-    let mut r = sse_reply(&sse(&[("message_start", start)]));
+    let body = sse(&[("message_start", start)]);
+    let mut r = sse_reply(&body);
     r.pings = true;
     t.up.script("/ns", vec![r]);
-    read_then_drop(&t, &g, "plan", &[MAIN], "message_start");
+    // The client closes once it has the whole `message_start` data line: the proxy has read its usage.
+    read_then_drop(&t, &g, "plan", &[MAIN], data_line(&body));
     assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), None, None));
     assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(5001));
     assert_eq!(last(&t, &g).status, 200);
@@ -1289,10 +1303,11 @@ fn status_ignores_zero_prompt_reply() { // AU29 (HUD-5 round 2, F3): a 2xx main-
     assert_eq!(last(&t, &g).status, 200);
     assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(151000));
     // A stream dropped before any usage: only `ping` events reach the client.
-    let mut r = sse_reply(&sse(&[("ping", json!({}))]));
+    let body = sse(&[("ping", json!({}))]);
+    let mut r = sse_reply(&body);
     r.pings = true;
     t.up.script("/ns", vec![r]);
-    read_then_drop(&t, &g, "plan", &[MAIN], "ping");
+    read_then_drop(&t, &g, "plan", &[MAIN], data_line(&body));
     assert_eq!(windows(&t, &g), before);
     let row = last(&t, &g);
     assert_eq!((row.status, tokens(&row).0), (200, 0));

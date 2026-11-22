@@ -483,6 +483,13 @@ Diff review of 4379678 (coordinator-confirmed findings F2-F5; F1, OpenCode reque
 - [x] **R4 (F5). Spec citations by name.** In `docs/specs/2026-11-21-statusline-hud-design.md`, every line citation of `crates/zygo-proxy/src/{session,forward,window,client}.rs` and of the AU29 test files that HUD-5 moved now names the function, type or test (H§1, H§5, AU13, AU20, AU28, H§6.6, H§7.2, H§7.3, H§15 items 1, 6, 12, H§17 note 5); one change-log row. Check: no `session.rs:N`, `forward.rs:N`, `window.rs:N`, `client.rs:N` citation of those files remains.
 - [x] **R5. Checks.** The Acceptance alone; `cargo test -p zygo-proxy`; `cargo test -p zygo --test compact_cmd`; `cargo clippy -p zygo-core -p zygo-proxy -p zygo-hooks --all-targets -- -D warnings`.
 
+### Round 3
+
+CI run 44967116916: `status_follows_dropped_stream` failed on macos-latest only (the initial status, nothing stored).
+
+- [x] **S1. `read_then_drop` closes only after a whole data line.** Cause: the fake upstream sends its body in three chunks at byte thirds (`upstream_handler`, `chunk: 0`), the unarmed tee forwards each chunk as it arrives and reads usage only from whole lines (`Tee::push`, `Tee::scan`), and the needle `"message_start"` is in the `event:` line. When the first chunk reached the client alone, the client closed before the proxy received the rest of the `data:` line, so `Pending::drop` saw prompt 0. Reproduced on Linux with a 100 ms delay between the fake's chunks (the same `left`/`right` as CI). Fix (test only, the product is correct): `read_then_drop` takes a whole `data:` line and closes once it has that line and its `"\n"`; the tee reads each chunk before it forwards it, so the proxy has then read the line. Both callers (`status_follows_dropped_stream`, `status_ignores_zero_prompt_reply`) pass `data_line(&body)`. Passes with the delay; assertions unchanged.
+- [x] **S2. Checks.** `cargo test -p zygo-proxy --test window` 20 times (20 passed); `cargo test -p zygo-proxy --test session_api`; `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`.
+
 ### Interfaces
 
 **Consumes** (existing, unchanged):
