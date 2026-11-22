@@ -258,6 +258,49 @@ fn opencode_filter_matches_pinned_help() {
     }
 }
 
+/// The short option letters of a parsed help, sorted.
+fn short_letters(opts: &[(Vec<String>, Arity)]) -> Vec<char> {
+    let names = opts.iter().flat_map(|o| o.0.iter());
+    let mut letters: Vec<char> = names.filter(|n| n.chars().count() == 2 && !n.starts_with("--")).map(|n| n.chars().nth(1).unwrap()).collect();
+    letters.sort_unstable();
+    letters
+}
+
+/// The ASCII letters that the table of `agent` knows as a short flag, sorted. An unknown `-x` is kept and takes no
+/// value (`zz` is then a removed positional). A flag of the table is removed, or is kept with the value `zz`.
+fn table_letters(agent: Agent) -> Vec<char> {
+    let known = |c: &char| filter(agent, &s(&[&format!("-{c}"), "zz"])).kept != s(&[&format!("-{c}")]);
+    ('0'..='9').chain('A'..='Z').chain('a'..='z').filter(known).collect()
+}
+
+#[test] // AU30, W-C7, review focus 4: a short flag that a later pin adds must be classified before the test passes
+fn every_short_flag_in_the_pinned_help_is_classified() {
+    // An unknown letter at the start of a cluster keeps the rest of the cluster as typed, so each short flag of the
+    // help must be in the table of its agent. The exempt letters are `h` and `v` only.
+    let claude = short_letters(&claude_options());
+    assert_eq!(claude, ['c', 'd', 'h', 'n', 'p', 'r', 'v', 'w']);
+    assert_eq!(table_letters(Agent::ClaudeCode), ['c', 'd', 'n', 'p', 'r', 'w']);
+    let opencode = short_letters(&opencode_options());
+    assert_eq!(opencode, ['c', 'h', 'm', 's', 'v']);
+    assert_eq!(table_letters(Agent::OpenCode), ['c', 'm', 's']);
+    // the help set is the table set plus the exempt letters, and nothing else
+    for (help, agent) in [(claude, Agent::ClaudeCode), (opencode, Agent::OpenCode)] {
+        let mut want = table_letters(agent);
+        want.extend(['h', 'v']);
+        want.sort_unstable();
+        assert_eq!(help, want, "{agent:?}");
+    }
+    // The exempt letters: a cluster that starts with `-h` or `-v` is kept whole, with a session or print letter
+    // in it. This is safe: `-h` (help) and `-v` (version) make the agent exit before a session exists, so the saved
+    // letter after them has no effect at restore.
+    assert_eq!(cc(&["-vp"]), Filtered { kept: s(&["-vp"]), dropped_flags: vec![] });
+    assert_eq!(cc(&["-hc"]), Filtered { kept: s(&["-hc"]), dropped_flags: vec![] });
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["-vp", "-hc"])), s(&[]));
+    assert_eq!(oc(&["-vc"]), Filtered { kept: s(&["-vc"]), dropped_flags: vec![] });
+    assert_eq!(oc(&["-hc"]), Filtered { kept: s(&["-hc"]), dropped_flags: vec![] });
+    assert_eq!(removable(Agent::OpenCode, &s(&["-vc", "-hc"])), s(&[]));
+}
+
 #[test] // AU70: the four bypass forms; W§18 #33 values
 fn bypass_forms() {
     assert_eq!(bypass_flags(&s(&["--model", "lead"]), false), s(&[]));
