@@ -22,10 +22,12 @@ use zygo_core::Agent;
 use zygo_proxy::provider::KeyResolver;
 use zygo_proxy::redact_stage::RedactLimits;
 use zygo_proxy::server::StartOpts;
-use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
+use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest, WindowArg};
 use zygo_proxy::tee::{Usage, HOLD_MAX};
 use zygo_proxy::translate::SseEvent;
-use zygo_proxy::window::{agent_window, compact_tool, context_window, one_m, prompt, rewrite_usage, safety, window, ONE_M_WINDOW};
+use zygo_proxy::window::{
+    agent_window, compact_tool, context_window, one_m, prompt, rewrite_usage, safety, soft_threshold, window, ONE_M_WINDOW,
+};
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
@@ -62,14 +64,16 @@ struct Reply {
     chunk: usize,
     /// One `Body::from(bytes)`: the upstream sends `content-length`.
     cl: bool,
+    /// After the body, a `ping` event every 50 ms, never ending.
+    pings: bool,
 }
 
 fn sse_reply(s: &str) -> Reply {
-    Reply { status: 200, ctype: "text/event-stream", body: s.into(), chunk: 0, cl: false }
+    Reply { status: 200, ctype: "text/event-stream", body: s.into(), chunk: 0, cl: false, pings: false }
 }
 
 fn json_reply(v: Value) -> Reply {
-    Reply { status: 200, ctype: "application/json", body: v.to_string(), chunk: 0, cl: false }
+    Reply { status: 200, ctype: "application/json", body: v.to_string(), chunk: 0, cl: false, pings: false }
 }
 
 #[derive(Clone)]
@@ -124,7 +128,15 @@ async fn upstream_handler(st: Arc<UpState>, req: Request) -> Response {
         } else {
             b.chunks(r.chunk).map(|s| Ok(Bytes::copy_from_slice(s))).collect()
         };
-        Body::from_stream(futures_util::stream::iter(parts))
+        let parts = futures_util::stream::iter(parts);
+        if r.pings {
+            Body::from_stream(futures_util::StreamExt::chain(parts, futures_util::stream::unfold((), |()| async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Some((Ok::<_, std::io::Error>(Bytes::from_static(b"event: ping\ndata: {\"type\":\"ping\"}\n\n")), ()))
+            })))
+        } else {
+            Body::from_stream(parts)
+        }
     };
     Response::builder().status(r.status).header("content-type", r.ctype).body(body).unwrap()
 }
@@ -1039,6 +1051,33 @@ fn c7_window_never_told() {
 
 // ---- D. Status: used and effective context ----
 
+/// Once every row is written: (model, context_window, effective_window, threshold) of the status (AU29).
+fn windows(t: &T, g: &SessionGrant) -> (Option<String>, Option<u64>, Option<u64>, Option<u64>) {
+    rows(t, g, t.n.get());
+    let s = t.h.session(&g.session).unwrap().status();
+    (s.model, s.context_window, s.effective_window, s.threshold)
+}
+
+/// Posts `role` with `extra` headers and closes the connection once the body holds `needle`.
+fn read_then_drop(t: &T, g: &SessionGrant, role: &str, extra: &[(&str, &str)], needle: &str) {
+    let mut hd = auth(g);
+    hd.extend_from_slice(extra);
+    t.n.set(t.n.get() + 1);
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let mut rb = http_client().post(t.h.url().join(M).unwrap()).header("content-type", "application/json");
+        for (k, v) in &hd {
+            rb = rb.header(*k, *v);
+        }
+        let mut r = rb.body(req_body(role).to_string()).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+        let mut seen = Vec::new();
+        while !String::from_utf8_lossy(&seen).contains(needle) {
+            seen.extend_from_slice(&r.chunk().await.unwrap().expect("the body ended before the needle"));
+        }
+    }); // the response, its client and the runtime drop here: the connection closes
+}
+
 #[test]
 fn status_used_and_effective() {
     let st = |t: &T, g: &SessionGrant| {
@@ -1050,6 +1089,7 @@ fn status_used_and_effective() {
     let t = setup("claude-t-1");
     let g = grant(&t, Agent::ClaudeCode);
     assert_eq!(st(&t, &g), (None, Some(150000)));
+    assert_eq!(windows(&t, &g), (Some("claude-t-1".into()), Some(200000), Some(150000), Some(150000)));
     run(&t, &g, "/c", &reply(S0(), &TEXT(), "end_turn", U15()), "lead", &[MAIN]);
     assert_eq!(st(&t, &g).0, Some(151000));
     let small = reply(S0(), &TEXT(), "end_turn", u4(1, 0, 5000, 1));
@@ -1069,10 +1109,169 @@ fn status_used_and_effective() {
     let t = setup("gpt-t-1");
     let g = grant(&t, Agent::ClaudeCode);
     assert_eq!(st(&t, &g).1, Some(360000));
+    assert_eq!(windows(&t, &g), (Some("gpt-t-1".into()), Some(400000), Some(360000), None));
     compact(&t, &g, json!(2000000));
     assert_eq!(st(&t, &g).1, Some(360000));
     compact(&t, &g, json!(300000));
     assert_eq!(st(&t, &g).1, Some(300000));
     compact(&t, &g, json!("off"));
     assert_eq!(st(&t, &g).1, Some(360000));
+}
+
+#[test]
+fn unit_soft_threshold_public() { // H§7.2 `threshold`
+    let (t1, ns) = (row("claude-t-1"), row("claude-ns"));
+    assert_eq!(soft_threshold(None, &t1, None), Some(150_000));
+    assert_eq!(soft_threshold(None, &ns, None), None);
+    assert_eq!(soft_threshold(Some(WindowArg::Tokens(190_000)), &ns, Some(180_000)), Some(180_000));
+    assert_eq!(soft_threshold(Some(WindowArg::Off), &t1, Some(180_000)), None);
+}
+
+#[test]
+fn status_follows_one_m_request() { // AU29 `[1m]` name; AU28 example: 190k clamped by safety 180k → 180k
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    let small = reply(S0(), &TEXT(), "end_turn", u4(1, 0, 5000, 1));
+    run(&t, &g, "/ns", &small, "plan[1m]", &[MAIN]);
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(180000), None));
+    compact(&t, &g, json!(190000));
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(180000), Some(180000)));
+    run(&t, &g, "/ns", &small, "plan", &[MAIN]);
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(190000), Some(190000)));
+}
+
+#[test]
+fn status_follows_one_m_beta() { // AU29: the `context-1m-` beta form of `[1m]` (Q7 capture)
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    let fable = q7_beta("fable");
+    run(&t, &g, "/ns", &reply(S0(), &TEXT(), "end_turn", u4(1, 0, 5000, 1)), "plan", &[MAIN, ("anthropic-beta", fable.as_str())]);
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(180000), None));
+}
+
+#[test]
+fn status_follows_other_role() { // AU29: `/model` picks another role; a subagent request stores nothing
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    run(&t, &g, "/b", &reply(S0(), &TEXT(), "end_turn", U15()), "triage", &[MAIN]);
+    assert_eq!(windows(&t, &g), (Some("claude-big".into()), Some(2000000), Some(900000), Some(900000)));
+    run(&t, &g, "/ns", &reply(S0(), &TEXT(), "end_turn", u4(1, 0, 5000, 1)), "plan", &[SUB]);
+    assert_eq!(windows(&t, &g), (Some("claude-big".into()), Some(2000000), Some(900000), Some(900000)));
+}
+
+#[test]
+fn status_ignores_compaction_request() { // AU29: class `compaction` stores nothing
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    run(&t, &g, "/b", &reply(S0(), &TEXT(), "end_turn", U15()), "triage", &[MAIN]);
+    let before = windows(&t, &g);
+    let compaction = [("x-claude-code-request-class", "compaction"), ("x-claude-code-compaction", "auto")];
+    run(&t, &g, "/ns", &reply(S0(), &TEXT(), "end_turn", u4(1, 0, 5000, 1)), "plan", &compaction);
+    assert_eq!(windows(&t, &g), before);
+    assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(151000));
+}
+
+#[test]
+fn status_ignores_non_2xx_reply() { // AU29: only a 2xx main-loop reply stores
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    run(&t, &g, "/b", &reply(S0(), &TEXT(), "end_turn", U15()), "triage", &[MAIN]);
+    let before = windows(&t, &g);
+    // The 400 body carries usage, so the prompt is > 0 and only the 2xx test keeps it out.
+    let mut r = json_reply(json!({"type":"error","error":{"type":"invalid_request_error","message":"bad"},"usage":{"input_tokens":5000}}));
+    r.status = 400;
+    t.up.script("/ns", vec![r]);
+    let (s, _, b) = post(&t, &g, "plan", &[MAIN]);
+    assert_eq!(s, 400, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(windows(&t, &g), before);
+    let row = last(&t, &g);
+    assert_eq!((row.status, tokens(&row).0), (400, 5000));
+    assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(151000));
+}
+
+#[test]
+fn status_ignores_count_tokens() { // AU29: requests on other routes store nothing
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    run(&t, &g, "/b", &reply(S0(), &TEXT(), "end_turn", U15()), "triage", &[MAIN]);
+    let before = windows(&t, &g);
+    // The reply carries usage, so the prompt is > 0 and only the route keeps it out.
+    t.up.script("/ns", vec![json_reply(json!({"input_tokens":5000,"usage":{"input_tokens":5000}}))]);
+    let mut hd = auth(&g);
+    hd.push(MAIN);
+    t.n.set(t.n.get() + 1);
+    let body = json!({"model":"plan","messages":[{"role":"user","content":"hi"}]}).to_string().into_bytes();
+    let (s, _, b) = send(&t.h, "POST", "anthropic/v1/messages/count_tokens", &hd, Some(body));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(windows(&t, &g), before);
+    let r = last(&t, &g);
+    assert_eq!((r.route.as_str(), tokens(&r).0), ("/anthropic/v1/messages/count_tokens", 5000));
+    assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(151000));
+}
+
+#[test]
+fn status_follows_non_streamed_request() { // AU29: the condition does not test streaming
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    let m = json!({"id":"msg_1","type":"message","role":"assistant","model":"gpt-t-1",
+        "content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,
+        "usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":5}});
+    t.up.script("/g", vec![json_reply(m)]);
+    let body = json!({"model":"code","max_tokens":64,"stream":false,"messages":[{"role":"user","content":"hi"}]});
+    let (s, _, b) = post_body(&t, &g, &body, &[MAIN]);
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(windows(&t, &g), (Some("gpt-t-1".into()), Some(400000), Some(360000), None));
+    assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(5001));
+}
+
+#[test]
+fn status_follows_dropped_stream() { // AU29: stored under the used_context condition, with no message_delta
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    let start = json!({"message":{"id":"msg_1","type":"message","role":"assistant","content":[],"usage":u4(1, 0, 5000, 1)}});
+    let mut r = sse_reply(&sse(&[("message_start", start)]));
+    r.pings = true;
+    t.up.script("/ns", vec![r]);
+    read_then_drop(&t, &g, "plan", &[MAIN], "message_start");
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), None, None));
+    assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(5001));
+    assert_eq!(last(&t, &g).status, 200);
+}
+
+#[test]
+fn status_follows_opencode_request() { // AU29: OpenCode stores its model with agent_window(row)
+    let t = setup("claude-t-1");
+    let o = grant(&t, Agent::OpenCode);
+    assert_eq!(windows(&t, &o), (Some("claude-t-1".into()), Some(200000), Some(150000), Some(150000)));
+    run(&t, &o, "/g", &reply(S0(), &TEXT(), "end_turn", U15()), "code", &[]);
+    assert_eq!(windows(&t, &o), (Some("gpt-t-1".into()), Some(400000), Some(360000), None));
+}
+
+/// A passthrough Messages request for `name`, answered by the Anthropic fake upstream.
+fn passthrough_request(t: &T, g: &SessionGrant, name: &str) {
+    t.anth.script("", vec![sse_reply(&reply(S0(), &TEXT(), "end_turn", u4(1, 0, 5000, 1)))]);
+    let mut hd = pt(g);
+    hd.extend([("authorization", OAT_BEARER), MAIN]);
+    t.n.set(t.n.get() + 1);
+    let (s, _, b) = send(&t.h, "POST", M, &hd, Some(req_body(name).to_string().into_bytes()));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+}
+
+#[test]
+fn status_passthrough_no_model_until_served() { // AU29, H§7.2 `model`
+    let t = setup("claude-t-1");
+    let g = grant_with(&t, Agent::ClaudeCode, true);
+    assert_eq!(windows(&t, &g), (None, None, None, None));
+    passthrough_request(&t, &g, "claude-t-1");
+    assert_eq!(windows(&t, &g), (Some("claude-t-1".into()), Some(200000), Some(150000), Some(150000)));
+}
+
+#[test]
+fn status_model_name_capped() { // author's call (HUD-5 review): at most 128 bytes, cut on a char boundary
+    let t = setup("claude-t-1");
+    let g = grant_with(&t, Agent::ClaudeCode, true);
+    passthrough_request(&t, &g, &format!("x{}", "é".repeat(100))); // 201 bytes, no catalog row
+    let w = windows(&t, &g);
+    assert_eq!(w, (Some(format!("x{}", "é".repeat(63))), None, None, None)); // byte 128 is inside an `é`: 127 bytes
+    assert_eq!(w.0.unwrap().len(), 127);
 }

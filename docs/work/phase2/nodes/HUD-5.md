@@ -12,7 +12,7 @@ Premises checked 2026-11-21 against the live code (HUD-1 merged, nothing else of
 
 Design decisions (author's calls, HUD-5 review; step 17 writes them into the spec): at request time the proxy takes from the serving config (`ctx.cfg`) only what `status()` needs from the served row, `soft_context_window` and `facts.context_window`, plus the request's agent window (`window::RequestWindows`), so the values stay those of the served row after a serve-mode reload. `soft_threshold` and `effective_for` keep their `&ModelRow` signatures; `RequestWindows::view` builds a `ModelRow` that holds only those two values (`..Default::default()` for the rest), which is all either function reads. The model name comes from `Pending.row.model`. It is cut to at most 128 bytes on a character boundary (`MODEL_NAME_MAX`), so that a passthrough client cannot put a long string into every status reply; an empty name (the secret pass blocked or failed) stores no model. Before the first main-loop request, also after a serve-mode reload, the status keeps today's rule: the main role's model and row from the session snapshot (AU29).
 
-- [ ] **1. Write the failing session API tests.** In `crates/zygo-proxy/tests/session_api.rs`, change the import at line 17 to `use zygo_proxy::client::{ClientError, SessionClient, SessionStatus};`. In `client_compact_and_status`, keep every line and add one assertion after each of lines 566, 570 and 572:
+- [x] **1. Write the failing session API tests.** In `crates/zygo-proxy/tests/session_api.rs`, change the import at line 17 to `use zygo_proxy::client::{ClientError, SessionClient, SessionStatus};`. In `client_compact_and_status`, keep every line and add one assertion after each of lines 566, 570 and 572:
 
   ```rust
       assert_eq!(s.effective_window, Some(600_000));
@@ -60,7 +60,7 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
   }
   ```
 
-- [ ] **2. Extend the window.rs harness.** In `crates/zygo-proxy/tests/window.rs`: add `soft_threshold` to the `zygo_proxy::window::{…}` import (line 28) and `WindowArg` to the `zygo_proxy::session::{…}` import (line 25). `Reply` (line 57) gains `/// After the body, a `ping` event every 50 ms, never ending.` `pings: bool`; `sse_reply` and `json_reply` set `pings: false`. In `upstream_handler`, replace the `else` branch's `Body::from_stream(futures_util::stream::iter(parts))` with:
+- [x] **2. Extend the window.rs harness.** In `crates/zygo-proxy/tests/window.rs`: add `soft_threshold` to the `zygo_proxy::window::{…}` import (line 28) and `WindowArg` to the `zygo_proxy::session::{…}` import (line 25). `Reply` (line 57) gains `/// After the body, a `ping` event every 50 ms, never ending.` `pings: bool`; `sse_reply` and `json_reply` set `pings: false`. In `upstream_handler`, replace the `else` branch's `Body::from_stream(futures_util::stream::iter(parts))` with:
 
   ```rust
         let parts = futures_util::stream::iter(parts);
@@ -107,9 +107,9 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
 
   Check: `cargo test -p zygo-proxy --test window --no-run` → exactly these diagnostics: `error[E0603]: function `soft_threshold` is private` at the import (window.rs:28); three `error[E0609]: no field `model` / `context_window` / `threshold` on type `SessionStatus`` at window.rs:1056 (in `windows`); `warning: unused import: `WindowArg`` (window.rs:25). None points into `Reply`, `upstream_handler` or `read_then_drop`.
 
-- [ ] **3. Add the model and window assertions to the existing window test.** In `status_used_and_effective`, keep every line; after the first `assert_eq!(st(&t, &g), (None, Some(150000)));` add `assert_eq!(windows(&t, &g), (Some("claude-t-1".into()), Some(200000), Some(150000), Some(150000)));`, and after the first `assert_eq!(st(&t, &g).1, Some(360000));` (the `gpt-t-1` part) add `assert_eq!(windows(&t, &g), (Some("gpt-t-1".into()), Some(400000), Some(360000), None));`.
+- [x] **3. Add the model and window assertions to the existing window test.** In `status_used_and_effective`, keep every line; after the first `assert_eq!(st(&t, &g), (None, Some(150000)));` add `assert_eq!(windows(&t, &g), (Some("claude-t-1".into()), Some(200000), Some(150000), Some(150000)));`, and after the first `assert_eq!(st(&t, &g).1, Some(360000));` (the `gpt-t-1` part) add `assert_eq!(windows(&t, &g), (Some("gpt-t-1".into()), Some(400000), Some(360000), None));`.
 
-- [ ] **4. Write the failing window tests.** Append to `crates/zygo-proxy/tests/window.rs`:
+- [x] **4. Write the failing window tests.** Append to `crates/zygo-proxy/tests/window.rs`:
 
   ```rust
   #[test]
@@ -271,7 +271,7 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
   }
   ```
 
-- [ ] **5. Write the failing reload test.** In `crates/zygo-proxy/tests/serve.rs`, add `use zygo_proxy::client::SessionStatus;` and append:
+- [x] **5. Write the failing reload test.** In `crates/zygo-proxy/tests/serve.rs`, add `use zygo_proxy::client::SessionStatus;` and append:
 
   ```rust
   #[test]
@@ -303,7 +303,7 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
   }
   ```
 
-- [ ] **6. Write the failing blocked-name test.** Append to `crates/zygo-proxy/tests/passthrough.rs`:
+- [x] **6. Write the failing blocked-name test.** Append to `crates/zygo-proxy/tests/passthrough.rs`:
 
   ```rust
   #[test] // AU29, H§7.2 `model`: a name the secret pass blocks is "" in the row; the status then has no model
@@ -324,13 +324,13 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
   }
   ```
 
-- [ ] **7. Add the compact_cmd assertions (H§17 note 5).** In `crates/zygo/tests/compact_cmd.rs` `slash_off_disables_and_on_clears`, keep every line; after line 173 add `assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), None));` and after line 176 add `assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), Some(800_000)));`.
+- [x] **7. Add the compact_cmd assertions (H§17 note 5).** In `crates/zygo/tests/compact_cmd.rs` `slash_off_disables_and_on_clears`, keep every line; after line 173 add `assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), None));` and after line 176 add `assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), Some(800_000)));`.
 
-- [ ] **8. Run them and see them fail.** `cargo test -p zygo-proxy --test session_api --test window --test serve --test passthrough` and `cargo test -p zygo --test compact_cmd` → compile errors only: no field `model`, `context_window` or `threshold` on `SessionStatus` (E0609, E0560), no `Default` for `SessionStatus` (E0277), `soft_threshold` private (E0603). No temporary body is written to get a runtime red (stubs are forbidden). Once it builds, the assertions discriminate: today's rule gives `effective_window` 150000, not 180000, after `plan[1m]`; `Some(150000)`, not `None`, in passthrough before a request; the snapshot's 200000/150000 after the reload and a request.
+- [x] **8. Run them and see them fail.** `cargo test -p zygo-proxy --test session_api --test window --test serve --test passthrough` and `cargo test -p zygo --test compact_cmd` → compile errors only: no field `model`, `context_window` or `threshold` on `SessionStatus` (E0609, E0560), no `Default` for `SessionStatus` (E0277), `soft_threshold` private (E0603). No temporary body is written to get a runtime red (stubs are forbidden). Once it builds, the assertions discriminate: today's rule gives `effective_window` 150000, not 180000, after `plan[1m]`; `Some(150000)`, not `None`, in passthrough before a request; the snapshot's 200000/150000 after the reload and a request.
 
-- [ ] **9. Add the fields and `Default`.** In `crates/zygo-proxy/src/client.rs`, `SessionStatus` derives `Debug, Clone, Default, PartialEq, Serialize, Deserialize` and gains, after `usage_note`, each with `#[serde(default, skip_serializing_if = "Option::is_none")]`: `pub model: Option<String>`, `pub context_window: Option<u64>`, `pub threshold: Option<u64>`. In `crates/zygo-hooks/src/statusline.rs` `fn s()`, add `..Default::default()` after `usage_note: None,`. Check: `cargo build -p zygo-proxy` → the only error is the `SessionStatus { … }` literal in `status()` (E0063, missing fields); step 11 fixes it.
+- [x] **9. Add the fields and `Default`.** In `crates/zygo-proxy/src/client.rs`, `SessionStatus` derives `Debug, Clone, Default, PartialEq, Serialize, Deserialize` and gains, after `usage_note`, each with `#[serde(default, skip_serializing_if = "Option::is_none")]`: `pub model: Option<String>`, `pub context_window: Option<u64>`, `pub threshold: Option<u64>`. In `crates/zygo-hooks/src/statusline.rs` `fn s()`, add `..Default::default()` after `usage_note: None,`. Check: `cargo build -p zygo-proxy` → the only error is the `SessionStatus { … }` literal in `status()` (E0063, missing fields); step 11 fixes it.
 
-- [ ] **10. Window helpers.** In `crates/zygo-proxy/src/window.rs`, change the import to `use zygo_config::{Facts, ModelRow};` and make `soft_threshold` `pub` (signature unchanged: `pub fn soft_threshold(compact: Option<WindowArg>, row: &ModelRow, safety: Option<u64>) -> Option<u64>`). Insert right after the closing brace of `one_m`, before the `/// 90 % of `cw`` comment of `safety`:
+- [x] **10. Window helpers.** In `crates/zygo-proxy/src/window.rs`, change the import to `use zygo_config::{Facts, ModelRow};` and make `soft_threshold` `pub` (signature unchanged: `pub fn soft_threshold(compact: Option<WindowArg>, row: &ModelRow, safety: Option<u64>) -> Option<u64>`). Insert right after the closing brace of `one_m`, before the `/// 90 % of `cw`` comment of `safety`:
 
   ```rust
   /// The agent's assumed window for one request (§10.2.2, AU29): 1M for a `[1m]` request, else `agent_window(row)`.
@@ -360,7 +360,7 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
 
   In `WindowStage::on_response_line`, replace `let aw = if one_m(ctx.resolved.one_m, &ctx.headers) { ONE_M_WINDOW } else { agent_window(row) };` with `let aw = agent_window_for(ctx.resolved.one_m, &ctx.headers, row);`.
 
-- [ ] **11. Session store and status.** In `crates/zygo-proxy/src/session.rs`, change `use crate::window;` to `use crate::window::{self, RequestWindows};`, and right after `pub const REDACTION_NOTE: …;` add:
+- [x] **11. Session store and status.** In `crates/zygo-proxy/src/session.rs`, change `use crate::window;` to `use crate::window::{self, RequestWindows};`, and right after `pub const REDACTION_NOTE: …;` add:
 
   ```rust
   /// The longest stored model name in bytes (author's call, HUD-5 review): a passthrough name is client text.
@@ -406,7 +406,7 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
   });
   ```
 
-- [ ] **12. Store at request time.** In `crates/zygo-proxy/src/forward.rs`, `Pending` gains `/// Messages only: the served row's windows from the serving config (AU29).` `windows: Option<window::RequestWindows>`; the `Pending { … }` literal in `handle` gains `windows: None`. In `run`, right after `let resolved = ctx.resolved.clone().expect("stage 2 resolved the request");`, add:
+- [x] **12. Store at request time.** In `crates/zygo-proxy/src/forward.rs`, `Pending` gains `/// Messages only: the served row's windows from the serving config (AU29).` `windows: Option<window::RequestWindows>`; the `Pending { … }` literal in `handle` gains `windows: None`. In `run`, right after `let resolved = ctx.resolved.clone().expect("stage 2 resolved the request");`, add:
 
   ```rust
   if route == ModelRoute::Messages {
@@ -417,11 +417,11 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
 
   In `Pending::drop`, keep the `used_context` condition and replace `self.session.set_used_context(prompt);` with `self.session.set_main_loop(prompt, &r.model, self.windows.take());`. The model name is `Pending.row.model`, which `run` sets from `Resolved.model`; an unmatched passthrough name has no row and stores the name with no windows.
 
-- [ ] **13. Run them and see them pass.** `cargo test -p zygo-proxy --test session_api --test window` → `0 failed` in both targets, including `status_default_keeps_literals_short`, `status_reply_omits_absent_new_fields`, `client_compact_and_status`, `status_used_and_effective`, `unit_soft_threshold_public`, `status_follows_one_m_request`, `status_follows_one_m_beta`, `status_follows_other_role`, `status_ignores_compaction_request`, `status_ignores_non_2xx_reply`, `status_ignores_count_tokens`, `status_follows_non_streamed_request`, `status_follows_dropped_stream`, `status_follows_opencode_request`, `status_passthrough_no_model_until_served` and `status_model_name_capped`. `cargo test -p zygo-proxy --test serve status_windows_after_reload` → `1 passed`. `cargo test -p zygo-proxy --test passthrough status_no_model_for_blocked_name` → `1 passed`. `cargo test -p zygo --test compact_cmd slash_off_disables_and_on_clears` → `1 passed`. `cargo test -p zygo-hooks --lib` → `0 failed` (the old `render` output does not change).
+- [x] **13. Run them and see them pass.** `cargo test -p zygo-proxy --test session_api --test window` → `0 failed` in both targets, including `status_default_keeps_literals_short`, `status_reply_omits_absent_new_fields`, `client_compact_and_status`, `status_used_and_effective`, `unit_soft_threshold_public`, `status_follows_one_m_request`, `status_follows_one_m_beta`, `status_follows_other_role`, `status_ignores_compaction_request`, `status_ignores_non_2xx_reply`, `status_ignores_count_tokens`, `status_follows_non_streamed_request`, `status_follows_dropped_stream`, `status_follows_opencode_request`, `status_passthrough_no_model_until_served` and `status_model_name_capped`. `cargo test -p zygo-proxy --test serve status_windows_after_reload` → `1 passed`. `cargo test -p zygo-proxy --test passthrough status_no_model_for_blocked_name` → `1 passed`. `cargo test -p zygo --test compact_cmd slash_off_disables_and_on_clears` → `1 passed`. `cargo test -p zygo-hooks --lib` → `0 failed` (the old `render` output does not change).
 
-- [ ] **14. See H§14 #19 fail.** `rg 'div_ceil\(4\)' crates/zygo-proxy/src` → two lines, both in `forward.rs` `run`: the local count_tokens estimate (`"input_tokens": string_bytes(&ctx.body).div_ceil(4)`) and `let estimate = string_bytes(&ctx.body).div_ceil(4);`.
+- [x] **14. See H§14 #19 fail.** `rg 'div_ceil\(4\)' crates/zygo-proxy/src` → two lines, both in `forward.rs` `run`: the local count_tokens estimate (`"input_tokens": string_bytes(&ctx.body).div_ceil(4)`) and `let estimate = string_bytes(&ctx.body).div_ceil(4);`.
 
-- [ ] **15. Add `BYTES_PER_TOKEN` (OP1).** New file `crates/zygo-core/src/tokens.rs`:
+- [x] **15. Add `BYTES_PER_TOKEN` (OP1).** New file `crates/zygo-core/src/tokens.rs`:
 
   ```rust
   //! Token estimates from byte counts (H§6.1 OP1).
@@ -432,9 +432,9 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
 
   Add `pub mod tokens;` after `pub mod text;` in `crates/zygo-core/src/lib.rs`. In `forward.rs`, add `use zygo_core::tokens::BYTES_PER_TOKEN;` and change both sites to `string_bytes(&ctx.body).div_ceil(BYTES_PER_TOKEN)`.
 
-- [ ] **16. See H§14 #19 pass.** `rg 'div_ceil\(4\)' crates/zygo-proxy/src` → no output, exit 1; `rg -c BYTES_PER_TOKEN crates/zygo-proxy/src/forward.rs` → `3`. `cargo test -p zygo-proxy --test request_path count_tokens_estimated_locally` → `1 passed` (the estimate stays 6 for 22 bytes).
+- [x] **16. See H§14 #19 pass.** `rg 'div_ceil\(4\)' crates/zygo-proxy/src` → no output, exit 1; `rg -c BYTES_PER_TOKEN crates/zygo-proxy/src/forward.rs` → `3`. `cargo test -p zygo-proxy --test request_path count_tokens_estimated_locally` → `1 passed` (the estimate stays 6 for 22 bytes).
 
-- [ ] **17. Align the spec with the stored values (AU29, H§7.2).** In `docs/specs/2026-11-21-statusline-hud-design.md` (DOC-1 copies this text into the base spec), replace these table cells with the text given:
+- [x] **17. Align the spec with the stored values (AU29, H§7.2).** In `docs/specs/2026-11-21-statusline-hud-design.md` (DOC-1 copies this text into the base spec), replace these table cells with the text given:
 
   - AU29 (the `| AU29 |` row of H§6.1, its decision cell): `The proxy's status `effective_window`, `threshold` and `context_window` follow the last main-loop request. At request time, after resolution, the proxy looks up the catalog row of `resolved.model` in that request's serving config (`ctx.cfg`) and keeps in `Pending` what the status needs of it: `soft_context_window`, `facts.context_window` and the request's agent window, computed with the rule of the window stage, `if one_m(resolved.one_m, &headers) { ONE_M_WINDOW } else { agent_window(row) }` (`crates/zygo-proxy/src/window.rs`, `agent_window_for`). `Pending::drop` stores these values with the served model in the session under the existing `used_context` condition (route `/anthropic/v1/messages`, 2xx, class `main` or absent, prompt > 0), also when the stream ends before `message_delta`. `status()` computes `context_window`, `threshold` and `effective_window` from the stored values and the current override each time; it does not read the session's config snapshot for them, so after a serve-mode reload they stay those of the row that served the request. So a non-streamed main-loop request stores them too (the condition does not test streaming), and an OpenCode request on the Anthropic route stores its model with `agent_window(row)` (OpenCode sends no `[1m]` name and no `context-1m-` beta); requests on other routes, non-2xx replies, subagent and compaction requests store nothing, and the status keeps the previous values. A served model with no row in the serving config (an unmatched passthrough name) gives `model` and no windows. Before the first main-loop request, also after a serve-mode reload, it uses the main role's model and row from the session's config snapshot and `agent_window(row)` (today's rule, which ignores `[1m]`). In passthrough it sends no `model` (and no windows) until a request is served, because the main role does not apply. After `/model` picks another role, the HUD shows that role's window.`
   - H§7.2 `model` row, last cell: `Catalog id of the model of the last main-loop 2xx Messages request with a prompt above 0, stored with the row values of AU29 when the request's usage row is written (`Pending::drop`), under the same condition as `used_context`, also when the stream ends before `message_delta`. Before the first one, the main role's model from the session's config snapshot; in passthrough, absent from the reply until a request is served (AU29). An unmatched passthrough name is the requested name after the secret pass, with `[1m]` removed (`requested_name`, `passthrough_names` in `crates/zygo-proxy/src/forward.rs`), cut to at most 128 bytes on a character boundary; when that name is empty (the secret pass blocked or failed), `model` is absent.`
@@ -451,11 +451,11 @@ Design decisions (author's calls, HUD-5 review; step 17 writes them into the spe
 
   Check: `grep -c 'HUD-5 review' docs/specs/2026-11-21-statusline-hud-design.md` → `3`; `grep -c 'stored with its agent window at that request' docs/specs/2026-11-21-statusline-hud-design.md` → `0`; `grep -c 'session.s config snapshot' docs/specs/2026-11-21-statusline-hud-design.md` → at least `4`.
 
-- [ ] **18. Run the wider proxy and CLI tests.** `cargo test -p zygo-proxy` (every target: lib unit tests including `forward.rs`, `request_path`, `passthrough`, `serve`, `session_api`, `window` and the rest) → `0 failed` in each target. `cargo test -p zygo --test compact_cmd` → `0 failed`.
+- [x] **18. Run the wider proxy and CLI tests.** `cargo test -p zygo-proxy` (every target: lib unit tests including `forward.rs`, `request_path`, `passthrough`, `serve`, `session_api`, `window` and the rest) → `0 failed` in each target. `cargo test -p zygo --test compact_cmd` → `0 failed`.
 
-- [ ] **19. Run the node's Acceptance exactly as written.** `cargo test -p zygo-proxy --test session_api --test window && cargo test -p zygo-hooks --lib && cargo test --workspace --locked --no-run && ! grep -rqE 'div_ceil\(4\)' crates/zygo-proxy/src` → exit 0; every listed test passes; every workspace test target builds (this covers `crates/zygo/src/cmd/status.rs` and `crates/zygo-launch/tests/serve_client.rs`, which use `SessionStatus` with no literal); `Cargo.lock` does not change.
+- [x] **19. Run the node's Acceptance exactly as written.** `cargo test -p zygo-proxy --test session_api --test window && cargo test -p zygo-hooks --lib && cargo test --workspace --locked --no-run && ! grep -rqE 'div_ceil\(4\)' crates/zygo-proxy/src` → exit 0; every listed test passes; every workspace test target builds (this covers `crates/zygo/src/cmd/status.rs` and `crates/zygo-launch/tests/serve_client.rs`, which use `SessionStatus` with no literal); `Cargo.lock` does not change.
 
-- [ ] **20. Commit** `crates/zygo-core/src/tokens.rs`, `crates/zygo-core/src/lib.rs`, `crates/zygo-proxy/src/client.rs`, `crates/zygo-proxy/src/session.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/window.rs`, `crates/zygo-proxy/tests/session_api.rs`, `crates/zygo-proxy/tests/window.rs`, `crates/zygo-proxy/tests/serve.rs`, `crates/zygo-proxy/tests/passthrough.rs`, `crates/zygo/tests/compact_cmd.rs`, `crates/zygo-hooks/src/statusline.rs` and `docs/specs/2026-11-21-statusline-hud-design.md` with this message:
+- [x] **20. Commit** `crates/zygo-core/src/tokens.rs`, `crates/zygo-core/src/lib.rs`, `crates/zygo-proxy/src/client.rs`, `crates/zygo-proxy/src/session.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/window.rs`, `crates/zygo-proxy/tests/session_api.rs`, `crates/zygo-proxy/tests/window.rs`, `crates/zygo-proxy/tests/serve.rs`, `crates/zygo-proxy/tests/passthrough.rs`, `crates/zygo/tests/compact_cmd.rs`, `crates/zygo-hooks/src/statusline.rs` and `docs/specs/2026-11-21-statusline-hud-design.md` with this message:
 
   ```
   feat(proxy): status model, context_window and threshold of the last main-loop request

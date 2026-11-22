@@ -20,13 +20,23 @@ use zygo_redact::{compile, compile_with_store, CachePool, Compiled, SessionCache
 
 use crate::client::SessionStatus;
 use crate::errors::ZygoError;
-use crate::window;
+use crate::window::{self, RequestWindows};
 
 pub const IDLE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // §7.2
 pub const SUSPEND_AFTER: Duration = Duration::from_secs(5 * 60); // §7.2
 pub const WINDOW_MIN: u64 = 100_000; // §10.2.4
 pub const WINDOW_MAX: u64 = 10_000_000; // §10.2.4
 pub const REDACTION_NOTE: &str = "act-lite store values not used for redaction: their pattern does not build";
+
+/// The longest stored model name in bytes (author's call, HUD-5 review): a passthrough name is client text.
+pub(crate) const MODEL_NAME_MAX: usize = 128;
+
+/// The last main-loop request (AU29): its model (`None` for an empty name) and, when the serving config had the
+/// served row, that row's windows.
+struct MainLoop {
+    model: Option<String>,
+    windows: Option<RequestWindows>,
+}
 
 /// Team-token check for serve mode (§7.2); N16 supplies the real one.
 pub trait TeamAuth: Send + Sync {
@@ -201,6 +211,7 @@ struct Live {
     settings: SessionSettings,
     usage: PromptUsage,
     used_context: Option<u64>,
+    main_loop: Option<MainLoop>,
 }
 
 pub struct SessionState {
@@ -253,15 +264,30 @@ impl SessionState {
     pub fn set_used_context(&self, prompt: u64) {
         lock(&self.live).used_context = Some(prompt);
     }
+    /// The last main-loop request (AU29), under one lock; the name is cut to `MODEL_NAME_MAX` bytes.
+    pub(crate) fn set_main_loop(&self, prompt: u64, model: &str, windows: Option<RequestWindows>) {
+        let model = (!model.is_empty()).then(|| model[..model.floor_char_boundary(MODEL_NAME_MAX)].to_string());
+        let mut l = lock(&self.live);
+        l.used_context = Some(prompt);
+        l.main_loop = Some(MainLoop { model, windows });
+    }
     pub fn status(&self) -> SessionStatus {
         let l = lock(&self.live);
-        // §10.2.1 `effective` for the main role's model (profile applied); `compact()` would take this lock again.
-        let effective_window = self
-            .config
-            .roles
-            .get(&self.config.main_role)
-            .and_then(|r| self.cfg.config.catalog.get(&r.model))
-            .and_then(|row| window::effective_for(l.compact, row, window::agent_window(row)));
+        let (model, w) = match &l.main_loop {
+            Some(m) => (m.model.clone(), m.windows),
+            None if self.passthrough => (None, None),
+            None => {
+                let r = self.config.roles.get(&self.config.main_role);
+                let row = r.and_then(|r| self.cfg.config.catalog.get(&r.model));
+                (r.map(|r| r.model.clone()), row.map(|row| RequestWindows::of(row, window::agent_window(row))))
+            }
+        };
+        let context_window = w.and_then(|w| w.context_window);
+        let (threshold, effective_window) = w.map_or((None, None), |w| {
+            let row = w.view();
+            let s = context_window.and_then(|cw| window::safety(cw, w.agent_window));
+            (window::soft_threshold(l.compact, &row, s), window::effective_for(l.compact, &row, w.agent_window))
+        });
         let u = l.usage;
         let total = u.input as f64 + u.cache_read as f64 + u.cache_write as f64;
         SessionStatus {
@@ -274,6 +300,9 @@ impl SessionState {
             cache_read_share: (total > 0.0).then(|| u.cache_read as f64 / total),
             expires_at: rfc3339(l.last_seen_utc + IDLE_TTL),
             usage_note: self.usage_note.clone(),
+            model,
+            context_window,
+            threshold,
         }
     }
 
@@ -455,6 +484,7 @@ impl Sessions {
                 settings: SessionSettings::default(),
                 usage: PromptUsage::default(),
                 used_context: None,
+                main_loop: None,
             }),
         });
         {

@@ -171,9 +171,11 @@ fn slash_off_disables_and_on_clears() {
     assert_eq!(parsed(&hook_prompt(d.path(), &env, "/zygo:compact off")), block("compact off for this session"));
     let s = h.session(&id).unwrap().status();
     assert_eq!((s.compact, s.effective_window), (Some(WindowArg::Off), None));
+    assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), None));
     assert_eq!(parsed(&hook_prompt(d.path(), &env, "/zygo:compact on")), block("compact on for this session"));
     let s = h.session(&id).unwrap().status();
     assert_eq!((s.compact, s.effective_window), (None, Some(800_000)));
+    assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), Some(800_000)));
 }
 
 #[test]

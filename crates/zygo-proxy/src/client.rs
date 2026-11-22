@@ -36,7 +36,7 @@ fn reply_text(status: u16, code: &str, message: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionStatus {
     pub session: String,
     pub profile: Option<String>,
@@ -49,6 +49,12 @@ pub struct SessionStatus {
     /// `USAGE_OFF_NOTE` when the usage database did not open.
     #[serde(default)]
     pub usage_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<u64>,
 }
 
 /// Synchronous (call it outside a tokio runtime); owns a current-thread runtime and a reqwest client built with

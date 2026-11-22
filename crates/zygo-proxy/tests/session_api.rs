@@ -14,7 +14,7 @@ use zygo_core::ids::ulid;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
-use zygo_proxy::client::{ClientError, SessionClient};
+use zygo_proxy::client::{ClientError, SessionClient, SessionStatus};
 use zygo_proxy::errors::ZygoError;
 use zygo_proxy::server::StartOpts;
 use zygo_proxy::session::{
@@ -564,12 +564,15 @@ fn client_compact_and_status() {
     let s = k.status().unwrap();
     assert_eq!(s.compact, Some(WindowArg::Tokens(600_000)));
     assert_eq!(s.effective_window, Some(600_000));
+    assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), Some(600_000)));
     assert_eq!(k.clear_compact().unwrap(), None);
     let s = k.status().unwrap();
     assert_eq!(s.compact, None);
     assert_eq!(s.effective_window, Some(800_000));
+    assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), Some(800_000)));
     assert_eq!(k.set_compact(WindowArg::Off).unwrap(), Some(WindowArg::Off));
     assert_eq!(k.status().unwrap().effective_window, None);
+    assert_eq!(k.status().unwrap().threshold, None); // AU28: override `off`
 }
 
 #[test]
@@ -959,4 +962,35 @@ fn http_create_uses_server_known_plugins() {
     q.profile = Some(Profile { plugins: BTreeMap::from([("m:q".to_string(), true)]), ..p1() });
     q.known_plugins = ["m:q".to_string()].into_iter().collect();
     assert_eq!(h.create_session(q).unwrap().profile_warning, None);
+}
+
+#[test]
+fn status_default_keeps_literals_short() { // Review focus 11, H§17 note 1; H§7.2 `#[serde(default)]`
+    let s = SessionStatus { model: Some("claude-opus-5-5".into()), ..Default::default() };
+    assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!((s.session.as_str(), s.context_window, s.threshold, s.effective_window), ("", None, None, None));
+    // A reply without the new keys parses; each new field is None.
+    let old: SessionStatus = serde_json::from_value(json!({"session":"S1","profile":null,"work":null,"used_context":null,
+        "effective_window":null,"compact":null,"cache_read_share":null,"expires_at":""})).unwrap();
+    assert_eq!(old, SessionStatus { session: "S1".into(), ..Default::default() });
+}
+
+#[test]
+fn status_reply_omits_absent_new_fields() { // H§7.2 `model`: in passthrough, absent until a request is served
+    let d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&d));
+    let raw = Raw::new();
+    let mut r = req();
+    r.passthrough = true;
+    let a = h.create_session(r).unwrap();
+    let (s, v, _) = raw.call(&h.url(), "GET", &sp(&a), &sess(&a), None);
+    assert_eq!(s, 200);
+    for k in ["model", "context_window", "threshold"] {
+        assert!(v.get(k).is_none(), "{k} in {v}");
+    }
+    assert!(v.get("effective_window").is_some(), "an old field keeps its key: {v}");
+    assert_eq!(client(&h, &a, &d).status().unwrap().model, None); // parsed with `#[serde(default)]`
+    let b = h.create_session(req()).unwrap();
+    let (_, v, _) = raw.call(&h.url(), "GET", &sp(&b), &sess(&b), None);
+    assert_eq!((v["model"].clone(), v["context_window"].clone()), (json!("claude-opus-5-5"), json!(1000000)));
 }
