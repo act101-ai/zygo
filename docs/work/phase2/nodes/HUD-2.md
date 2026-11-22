@@ -1,7 +1,7 @@
 # HUD-2 — zygo-work: bounded HUD git function (rev-parse, rev-list only)
 
 **Spec:** `docs/specs/2026-11-21-statusline-hud-design.md` H§7.5, AU6, OP14, H§13 (one or two functions). Every test that uses a fake `git` shell script is `cfg(unix)`: the wrapper test, the 400 ms budget test (a stalled fake git) and the 4 KiB cut test (a fake git that writes more than 4 KiB), because a real git neither stalls nor writes 4 KiB (H§7.5). The no-upstream test uses a real `git init` repository and no fake git, so it also runs on Windows. `hud_git` calls `hud_git_with` with the program `git`; the wrapper, budget and cut tests pass their fake `git` script path to `hud_git_with`, so no test changes the process environment
-**Files:** `crates/zygo-work/src/repo.rs`, `crates/zygo-work/tests/hud_git.rs`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-config/Cargo.toml`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`
+**Files:** `crates/zygo-work/src/repo.rs`, `crates/zygo-work/tests/hud_git.rs`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-config/Cargo.toml`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`, `crates/zygo-work/Cargo.toml`, `docs/specs/2026-11-21-statusline-hud-design.md`
 **Consumes:** —
 **Produces:** `repo::HudGit { top: PathBuf, git_dir: PathBuf, common_dir: PathBuf, branch: Option<String>, ahead: Option<u32>, behind: Option<u32> }`, `repo::hud_git(cwd: &Path, budget: Duration) -> Option<HudGit>`, `repo::hud_git_with(git: &Path, cwd: &Path, budget: Duration) -> Option<HudGit>`, `zygo_config::repo_file::git_command_for(program: &OsStr) -> Command`, `zygo_config::repo_file::{kill_group, kill_tree, exited_unreaped}`
 **Acceptance:** `cargo test -p zygo-work --test hud_git && cargo test --workspace --locked --no-run` → all pass: a `git` wrapper passed to `hud_git_with` sees only the two H§7.5 commands with `GIT_NO_LAZY_FETCH=1` and the `git_run` settings; the 400 ms budget kills a stalled fake git; fake-git output above 4 KiB is cut (these three are `cfg(unix)`); a real repository with no upstream gives no ahead/behind (all platforms)
@@ -38,7 +38,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
 - No upstream, or any `rev-list` error, gives no ahead/behind.
 
 **Author's calls (H§7.5 is silent on these):**
-1. **Unborn HEAD gives no git result.** Evidence (git 2.55.0, Linux only): in a repository with no commit, and in an orphan linked worktree, `rev-parse` exits 128 (`ambiguous argument 'HEAD'`). Its stdout still holds the three paths and `HEAD`. `rev-list` exits 128 too. `hud_git_with` requires a zero exit of `rev-parse`, so an unborn HEAD gives `None` on every platform. The rule depends only on the exit status (git fails on an unresolvable revision), not on whether git writes stdout before it fails. The HUD shows no worktree or branch until the first commit.
+1. **Unborn HEAD gives no git result.** Evidence (git 2.55.0, Linux only): in a repository with no commit, and in an orphan linked worktree, `rev-parse` exits 128 (`ambiguous argument 'HEAD'`). Its stdout still holds the three paths and `HEAD`. `rev-list` exits 128 too. `hud_git_with` requires a zero exit of `rev-parse`, so an unborn HEAD gives `None` on every platform. The rule depends only on the exit status (git fails on an unresolvable revision), not on whether git writes stdout before it fails. The HUD shows no worktree or branch until the first commit. Exception (Round 3, S1): with SIGCHLD ignored by the parent, the kernel reaps git and the exit status is lost, so the run counts as a success. An unborn HEAD then shows the worktree with no branch, which cannot be told apart from a detached HEAD.
 2. **Cut output is not trusted.** If `rev-parse` stdout reached the 4 KiB cut, the whole result is `None`. If `rev-list` stdout reached it, there are no marks. Real output is a few lines (H§7.5), so a cut means the output is not git's normal answer.
 3. **Own process group (unix), tied to PH12.** The cut mode starts git in its own process group, so a group kill aimed at the hook does not reach git. PH12 (how Claude Code ends slow status runs) is still an open live check in PRB-1.
    - While the hook lives, the deadline kill holds each git call within the budget.
@@ -64,7 +64,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
 
 ### Steps
 
-- [ ] **1. Write the test file head.** Create `crates/zygo-work/tests/hud_git.rs` with:
+- [x] **1. Write the test file head.** Create `crates/zygo-work/tests/hud_git.rs` with:
   ```rust
   use std::ffi::OsStr;
   use std::path::{Path, PathBuf};
@@ -153,7 +153,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet (the file compiles at step 9).
 
-- [ ] **2. Write the all-platform real-repository tests** in `hud_git.rs`:
+- [x] **2. Write the all-platform real-repository tests** in `hud_git.rs`:
   ```rust
   #[test] // H§7.5 call 2: no upstream → no ahead/behind; main worktree: git dir = common dir
   fn hud_git_no_upstream_gives_no_marks() {
@@ -225,7 +225,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet.
 
-- [ ] **3. Write the `cfg(unix)` wrapper test and its child** in `hud_git.rs`.
+- [x] **3. Write the `cfg(unix)` wrapper test and its child** in `hud_git.rs`.
   - The parent runs the child with `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0` set on that child only.
   - The wrapper logs what reaches it, then runs the real git with isolated config. It must set `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` itself, because `git_command` removes every `GIT_CONFIG*` variable.
   ```rust
@@ -250,6 +250,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
           ("GIT_CONFIG_VALUE_0", OsStr::new("12"))]);
       let pre = format!("-c core.fsmonitor=false -C {}", w.display());
       let env = "|1|0|0|C|unset|unset|unset";
+      // Superseded by Round 2 items 2 and 3: the lines now end `--symbolic-full-name HEAD` and `HEAD...@{upstream} --`.
       assert_eq!(std::fs::read_to_string(&log).unwrap(), format!(
           "{pre} rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir --abbrev-ref HEAD{env}\n\
            {pre} rev-list --left-right --count HEAD...@{{upstream}}{env}\n"));
@@ -267,7 +268,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet.
 
-- [ ] **4. Write the budget tests** (spec 400 ms; two `cfg(unix)`, one `cfg(windows)`) in `hud_git.rs`. Each unix fake writes its own PID (`$$`, kept by `exec`), and `assert_gone` proves the kill:
+- [x] **4. Write the budget tests** (spec 400 ms; two `cfg(unix)`, one `cfg(windows)`) in `hud_git.rs`. Each unix fake writes its own PID (`$$`, kept by `exec`), and `assert_gone` proves the kill:
   ```rust
   #[cfg(unix)]
   #[test] // AU6: rev-parse has 150 ms of the 400 ms
@@ -315,7 +316,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   On Windows, `std::process::Command` runs a `.cmd` path through `cmd.exe`. The `rev-parse` arguments hold no character that Rust's batch-file argument check refuses (`%`, a quote, or a line break). If the check refuses them on the runner, `hud_git_with` gets `NotRun` and returns `None` at once, so the test would pass without a kill. To catch that, the elapsed time must also be at least 150 ms: add `assert!(took >= Duration::from_millis(150))`. If that assert fails for this reason, the executor records the reason in this node's log and removes the test. The Windows deadline path then stays covered by review only.
   Check: none yet.
 
-- [ ] **5. Write the `cfg(unix)` output tests** (budget `REAL`) in `hud_git.rs`. Without the cut rule, the two cut fakes would give `Some(branch = 1 MiB of b)` and marks `(1, 2)` (`trim_end` drops the spaces). So the asserted results prove that the reader stopped at 4 KiB and that the cut was detected:
+- [x] **5. Write the `cfg(unix)` output tests** (budget `REAL`) in `hud_git.rs`. Without the cut rule, the two cut fakes would give `Some(branch = 1 MiB of b)` and marks `(1, 2)` (`trim_end` drops the spaces). So the asserted results prove that the reader stopped at 4 KiB and that the cut was detected:
   ```rust
   #[cfg(unix)]
   #[test] // H§7.5 4 KiB cut; author's call 2: cut rev-parse output → none, within the budget
@@ -406,9 +407,9 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: none yet.
 
-- [ ] **6. Run the tests and see them fail.** `cargo test -p zygo-work --test hud_git`. Pass condition for this step: compile errors `unresolved imports zygo_work::repo::hud_git`, `HudGit` (and `hud_git_with` on unix).
+- [x] **6. Run the tests and see them fail.** `cargo test -p zygo-work --test hud_git`. Pass condition for this step: compile errors `unresolved imports zygo_work::repo::hud_git`, `HudGit` (and `hud_git_with` on unix).
 
-- [ ] **7. Add the source helpers in `zygo-config` and reuse `kill_tree` in `zygo-plugins`.**
+- [x] **7. Add the source helpers in `zygo-config` and reuse `kill_tree` in `zygo-plugins`.**
   - In `crates/zygo-config/Cargo.toml` add:
     ```toml
     [target.'cfg(unix)'.dependencies]
@@ -442,7 +443,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   - `cargo build -p zygo-config` updates `Cargo.lock`. `git diff Cargo.lock` shows only `"libc",` added to the `zygo-config` package entry.
   - `cargo test -p zygo-config` and `cargo test -p zygo-plugins` pass.
 
-- [ ] **8. Add the capped run mode** in `repo.rs`. Move the body of `run_bounded_err` (`:52-94`) into a new function, and make `run_bounded_err` call it:
+- [x] **8. Add the capped run mode** in `repo.rs`. Move the body of `run_bounded_err` (`:52-94`) into a new function, and make `run_bounded_err` call it:
   ```rust
   /// The end of a bounded run that exited: exit success, stdout (at most the cut), whether stdout passed the cut,
   /// and up to 64 KiB of stderr (read only on a non-zero exit, else empty).
@@ -487,7 +488,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   - `repo::tests::find_checkout_tells_timeout_from_not_a_repository` (`repo.rs:205-212`): `git_run` → `run_bounded_err`.
   - The `sources` tests: `run_bounded` through `run_json`, `sources.rs:52`.
 
-- [ ] **9. Add the HUD type and functions** in `repo.rs`:
+- [x] **9. Add the HUD type and functions** in `repo.rs`:
   ```rust
   /// Total budget cap of [`hud_git_with`]: no `Instant` arithmetic can overflow (C6).
   const HUD_BUDGET_CAP: Duration = Duration::from_secs(24 * 60 * 60);
@@ -520,22 +521,22 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   `hud_git_with` algorithm:
   1. Compute `budget = budget.min(HUD_BUDGET_CAP)`, `start = Instant::now()`, `deadline = start + budget`, and the rev-parse deadline `start + budget / 8 * 3` (150 ms of 400 ms, AU6).
-  2. Build `c = git_cmd(git.as_os_str(), cwd, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"])` and set `c.env("GIT_NO_LAZY_FETCH", "1")`. Run `run_bounded_out(c, rev_parse_deadline, Some(HUD_CUT)).ok()?`. Continue only on `ok && !cut`; else return `None`.
+  2. Build `c = git_cmd(git.as_os_str(), cwd, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir", "--abbrev-ref", "HEAD"])` and set `c.env("GIT_NO_LAZY_FETCH", "1")`. Run `run_bounded_out(c, rev_parse_deadline, Some(HUD_CUT)).ok()?`. Continue only on `ok && !cut`; else return `None`. *Superseded by Round 2 item 3: `--symbolic-full-name` in place of `--abbrev-ref`.*
   3. Strip one trailing `b'\n'` if present and split on `b'\n'`. Anything other than exactly four parts gives `None`.
   4. Lines 1-3 → path. On unix use `OsStr::from_bytes`, which keeps invalid UTF-8 for the lossy name in HUD-9. Elsewhere use `String::from_utf8_lossy`. Then `canonicalize().ok()?`.
-  5. Line 4 → `branch`: `None` when it is empty or equals `b"HEAD"`, else `String::from_utf8_lossy(line).into_owned()`.
-  6. Only now run `rev-list --left-right --count HEAD...@{upstream}` the same way (with `GIT_NO_LAZY_FETCH=1`, `Some(HUD_CUT)` and `deadline`). Only `Ok(Ran { ok: true, cut: false, .. })` counts. Read its stdout as UTF-8, `trim_end`, `split_once('\t')`, and parse both sides with `parse::<u32>()`. Success gives `(Some(ahead), Some(behind))`; any failure gives `(None, None)`.
+  5. Line 4 → `branch`: `None` when it is empty or equals `b"HEAD"`, else `String::from_utf8_lossy(line).into_owned()`. *Superseded by Round 2 item 3: the line without `refs/heads/`; any line not under `refs/heads/` gives `None`.*
+  6. *Superseded by Round 2 item 2: the call ends with `--`.* Only now run `rev-list --left-right --count HEAD...@{upstream}` the same way (with `GIT_NO_LAZY_FETCH=1`, `Some(HUD_CUT)` and `deadline`). Only `Ok(Ran { ok: true, cut: false, .. })` counts. Read its stdout as UTF-8, `trim_end`, `split_once('\t')`, and parse both sides with `parse::<u32>()`. Success gives `(Some(ahead), Some(behind))`; any failure gives `(None, None)`.
 
   Check: `cargo build -p zygo-work --all-targets` passes with no warning.
 
-- [ ] **10. Run the tests and see them pass.**
+- [x] **10. Run the tests and see them pass.**
   - `cargo test -p zygo-work --test hud_git`: on unix 16 passed, 0 failed, 2 ignored (`hud_git_outside_child`, `hud_git_wrapper_child`); on Windows 7 passed, 1 ignored.
   - `cargo test -p zygo-work --test hud_git -- --ignored` → 2 passed on unix, 1 on Windows (the children return early with no environment).
   - `cargo test -p zygo-work`, `cargo test -p zygo-config` and `cargo test -p zygo-plugins` → all pass.
 
-- [ ] **11. Lint.** `cargo clippy -p zygo-work -p zygo-config -p zygo-plugins --all-targets --locked -- -D warnings` → no warning.
+- [x] **11. Lint.** `cargo clippy -p zygo-work -p zygo-config -p zygo-plugins --all-targets --locked -- -D warnings` → no warning.
 
-- [ ] **12. Commit** `crates/zygo-config/Cargo.toml`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`, `crates/zygo-work/src/repo.rs` and `crates/zygo-work/tests/hud_git.rs` with the message:
+- [x] **12. Commit** `crates/zygo-config/Cargo.toml`, `crates/zygo-config/src/repo_file.rs`, `crates/zygo-plugins/src/sync.rs`, `Cargo.lock`, `crates/zygo-work/src/repo.rs` and `crates/zygo-work/tests/hud_git.rs` with the message:
   ```
   zygo-work: bounded HUD git function (rev-parse, rev-list only)
 
@@ -549,7 +550,7 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   ```
   Check: `git status --short` shows none of the six files.
 
-- [ ] **13. Acceptance.** `cargo test -p zygo-work --test hud_git && cargo test --workspace --locked --no-run` → all pass: a `git` wrapper passed to `hud_git_with` sees only the two H§7.5 commands with `GIT_NO_LAZY_FETCH=1` and the `git_run` settings; the 400 ms budget kills a stalled fake git; fake-git output above 4 KiB is cut (these three are `cfg(unix)`); a real repository with no upstream gives no ahead/behind (all platforms).
+- [x] **13. Acceptance.** `cargo test -p zygo-work --test hud_git && cargo test --workspace --locked --no-run` → all pass: a `git` wrapper passed to `hud_git_with` sees only the two H§7.5 commands with `GIT_NO_LAZY_FETCH=1` and the `git_run` settings; the 400 ms budget kills a stalled fake git; fake-git output above 4 KiB is cut (these three are `cfg(unix)`); a real repository with no upstream gives no ahead/behind (all platforms).
 
 ### Interfaces
 
@@ -573,3 +574,30 @@ All of them keep today's behavior. They run with `cut: None` (no process group, 
   - `fn run_bounded_out(cmd: Command, deadline: Instant, cut: Option<u64>) -> Result<Ran, RunError>`
   - `fn git_cmd(program: &OsStr, cwd: &Path, args: &[&str]) -> Command`
   - `run_bounded`, `run_bounded_err` and `git_run` keep their signatures and behavior.
+
+### Round 2
+
+Diff-review findings, confirmed by the coordinator; each fixed test first.
+
+- [x] **R1 (M2).** SIGCHLD set to `SIG_IGN` by the parent: in the cut mode, ECHILD from `try_wait` after the `waitid` fallback means the child has exited (the kernel reaped it); stdout is read as usual, with no group kill. Plain mode unchanged. Test: `hud_git_sigchld_ignored_still_gives_the_branch` (cfg(unix), child process sets `SIG_IGN` through libc).
+- [x] **R2 (L1).** `rev-list ... HEAD...@{upstream} --`; the wrapper test's expected line gains `--`. Test: `hud_git_file_named_like_the_range_keeps_the_marks`.
+- [x] **R3 (L2).** Branch read with `--symbolic-full-name HEAD` (git 2.55.0: `refs/heads/main` on a branch and with a tag `main`, `HEAD` when detached, exit 128 when unborn); `refs/heads/` stripped, anything else → no branch. Test: `hud_git_tag_named_like_the_branch_keeps_the_branch`.
+- [x] **R4 (L3).** `hud_git_rev_parse_has_150_ms`: a missing or empty PID file does not panic; no process with the fake's unique marker remains (`ps -A -ww -o args=`). `hud_git_budget_kills_stalled_rev_list`: bound budget + 1 s, with the reason in a comment.
+- [x] **R5 (L4).** Windows test: the `ping.exe` that the fake starts is gone after the call (`tasklist` count before and after; reason in a comment). Unverified until windows-latest CI runs.
+- [x] **R6 (L5).** `hud_git_with` doc comment states the fallback (no group kill after a `waitid` error; ECHILD from `try_wait` counts as an exit).
+- [x] **R7 (L6).** zygo-config unit tests for `kill_group` and `exited_unreaped`; the `child.wait()` error → `Failed` path, or the reason it cannot be reached without fakes. Tests: `kill_group_kills_the_childs_group`, `exited_unreaped_tells_an_exit_without_reaping`. The `child.wait()` error path has no test: it needs a third party to reap the leader between `waitid(WNOWAIT)` seeing the exit and `child.wait()`. std has no hook in that gap. A `waitpid(-1)` thread or a `SIG_IGN` set at that moment is a race, not a fixed order. With `SIG_IGN` set before the call, `waitid` gives ECHILD first, which is the R1 path.
+- [x] **R8.** H§7.5 (and the AU11 detached-head note) rewritten as final text for R2 and R3; one `## Change log` line; spec added to the Files line.
+
+### Round 3
+
+Review of `cdb0e63`, confirmed by the coordinator; last allowed round.
+
+- [x] **S1 (M1).** SIGCHLD ignored + unborn HEAD gives `Some` with no branch (exit status lost; same as detached). Kept (author's call); stated in the `hud_git_with` doc comment and in author's call 1. Test: `hud_git_sigchld_ignored_unborn_head_has_no_branch`.
+- [x] **S2 (L2).** The marker check proves itself: `ps -A -ww -o args=` shows the marker while the fake runs, then not after the call.
+- [x] **S3 (L3).** Windows test: the fake's `ping.exe` is seen to start during a run before the count is checked to go back down. Unverified until windows-latest CI runs.
+- [x] **S4 (L4).** AU11 covers every no-branch case of H§7.5 call 1. Test: `hud_git_head_on_a_remote_ref_has_no_branch` (real git).
+- [ ] **S5 (L5).** H§7.5 keeps the dated evidence for the old calls and gains a dated line for the new calls (no-marker check run again). **Partly done, blocked:**
+  - Done: the old evidence stays, with a note naming the old calls. The new dated line records that, in a plain clone, call 1 printed the three paths and `refs/heads/main`, and call 2 printed `0	0`, both with exit 0.
+  - Not done: the no-marker part was not run again. This session's worktree guard refused the commands: `git config uploadpack.allowfilter` ("sets … in the configuration the shared checkout reads") and `git -c core.fsmonitor=…` ("injecting configuration whose effect on where git writes can't be verified"). The spec line says the check is open until H§14 #25 (HUD-9) or the operator runs it.
+- [x] **S6 (L6).** Round 1 plan text at steps 3 and 9 marked as superseded by Round 2 items 2 and 3.
+- [x] **S7.** One spec `## Change log` line for S1 and S4 (AU11 scope).

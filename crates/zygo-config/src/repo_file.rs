@@ -1,5 +1,6 @@
 //! The repository file `.zygo.toml`, read from the default branch (§13.5).
 
+use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -79,7 +80,12 @@ pub const GIT_ENV_CLEARED: [&str; 7] = [
 /// `git` with [`GIT_ENV_CLEARED`] and every `GIT_CONFIG*` variable removed and `LC_ALL=C` (the [`GIT_ABSENT`] messages
 /// are matched in English); environment on the child only.
 pub fn git_command() -> Command {
-    let mut c = Command::new("git");
+    git_command_for(OsStr::new("git"))
+}
+
+/// [`git_command`] with `program` in place of `git` (a test's fake `git`).
+pub fn git_command_for(program: &OsStr) -> Command {
+    let mut c = Command::new(program);
     for k in GIT_ENV_CLEARED {
         c.env_remove(k);
     }
@@ -90,6 +96,48 @@ pub fn git_command() -> Command {
     }
     c.env("LC_ALL", "C");
     c
+}
+
+/// Kills `child`'s process group (unix: `libc::kill(-(child.id() as i32), libc::SIGKILL)`; the child must have been
+/// started with `process_group(0)` and not yet reaped) or its process tree (Windows: `taskkill /T /F /PID <id>`,
+/// stdout and stderr null; a descendant that left the tree survives). Does not reap.
+pub fn kill_group(child: &std::process::Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// [`kill_group`], then `child.kill()` and `child.wait()`, both results ignored.
+pub fn kill_tree(child: &mut std::process::Child) {
+    kill_group(child);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Whether `child` has exited, without reaping it: with `info` zeroed, `waitid(P_PID, child.id(), &mut info,
+/// WEXITED | WNOHANG | WNOWAIT)`. A return of 0 gives `Ok(info.si_pid() != 0)`. A return of -1 gives
+/// `Err(std::io::Error::last_os_error())`, e.g. `ECHILD` when SIGCHLD is ignored and the kernel reaps by itself.
+#[cfg(unix)]
+pub fn exited_unreaped(child: &std::process::Child) -> std::io::Result<bool> {
+    // SAFETY: `siginfo_t` is plain data, valid when zeroed; `waitid` writes only into `info`.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let r = unsafe {
+        libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+    };
+    if r == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `waitid` returned 0, so `info` is either zeroed (no state change) or filled for a child.
+    Ok(unsafe { info.si_pid() } != 0)
 }
 
 /// Why a `git` call gave no stdout: the thing is absent (git's one stderr line), or the read failed (a fixed reason word).
@@ -238,4 +286,55 @@ pub fn read_default_branch(repo: &Path) -> RepoFile {
         return invalid(e.describe(Some(&text)));
     }
     RepoFile::Found { branch, table, ignored }
+}
+
+#[cfg(all(test, unix))]
+mod process_tests {
+    use super::*;
+    use std::io::BufRead;
+    use std::os::unix::process::CommandExt;
+
+    /// No process `pid`, or a zombie not yet reaped by init.
+    fn gone(pid: &str) -> bool {
+        let o = Command::new("ps").args(["-o", "stat=", "-p", pid]).output().unwrap();
+        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        s.is_empty() || s.starts_with('Z')
+    }
+
+    #[test] // kill_group ends the child's whole group and does not reap the child
+    fn kill_group_kills_the_childs_group() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "sleep 30 & echo $!; wait"]).stdin(Stdio::null()).stdout(Stdio::piped());
+        c.process_group(0);
+        let mut child = c.spawn().unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let grandchild = line.trim().to_string();
+        assert!(!grandchild.is_empty() && !gone(&grandchild), "grandchild {grandchild:?} did not start");
+        kill_group(&child);
+        let status = child.wait().expect("kill_group must not reap the child");
+        assert_eq!(std::os::unix::process::ExitStatusExt::signal(&status), Some(libc::SIGKILL));
+        let until = Instant::now() + Duration::from_secs(2);
+        while !gone(&grandchild) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(gone(&grandchild), "grandchild {grandchild} still runs");
+    }
+
+    #[test] // exited_unreaped: false while the child runs, true after it exits, and the status stays for wait
+    fn exited_unreaped_tells_an_exit_without_reaping() {
+        let mut running = Command::new("sleep").arg("30").spawn().unwrap();
+        assert!(!exited_unreaped(&running).unwrap());
+        let _ = running.kill();
+        let _ = running.wait();
+
+        let mut child = Command::new("sh").args(["-c", "exit 3"]).spawn().unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while !exited_unreaped(&child).unwrap() {
+            assert!(Instant::now() < until, "child did not exit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(exited_unreaped(&child).unwrap(), "a second look must still see the exit: not reaped");
+        assert_eq!(child.try_wait().unwrap().and_then(|s| s.code()), Some(3));
+    }
 }
