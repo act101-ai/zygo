@@ -43,7 +43,7 @@ Work in the node's checkout and run each command from the repository root. Stage
 
 ### Task 1: the tests first
 
-- [ ] **1.1** In `crates/zygo-hooks/tests/statusline_render.rs`, `h14_31_icon_set_selection`: replace the two lines `:714-715` (`WT_SESSION` and `TERM_PROGRAM` with `true` → `IconSet::Nerd`) with the block below. Then replace the `icon_set` loop `:723-726` with the second block. Check: the file has no `icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Nerd` text left.
+- [x] **1.1** In `crates/zygo-hooks/tests/statusline_render.rs`, `h14_31_icon_set_selection`: replace the two lines `:714-715` (`WT_SESSION` and `TERM_PROGRAM` with `true` → `IconSet::Nerd`) with the block below. Then replace the `icon_set` loop `:723-726` with the second block. Check: the file has no `icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Nerd` text left.
 
 ```rust
     // Windows: `WT_SESSION` and `TERM_PROGRAM` select no set (the PH8 and PH10 fallback, AU2 2026-11-22).
@@ -70,8 +70,8 @@ Work in the node's checkout and run each command from the repository root. Stage
     assert_eq!(icon_set(&terminal), if cfg!(windows) { IconSet::Plain } else { IconSet::Nerd });
 ```
 
-- [ ] **1.2** Run `cargo test -p zygo-hooks --locked --test statusline_render h14_31_icon_set_selection`. Check: 1 failed. The panic is at the first new line (`icon_set_on(&vars(&[("WT_SESSION", "x")]), true)`), with `left: Nerd` and `right: Plain`.
-- [ ] **1.3** In `crates/zygo/tests/usage_doctor.rs`, `h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`: replace the comment and the `cases` array (`:712-721`) with the block below. Keep the loop and the rest of the test.
+- [x] **1.2** Run `cargo test -p zygo-hooks --locked --test statusline_render h14_31_icon_set_selection`. Check: 1 failed. The panic is at the first new line (`icon_set_on(&vars(&[("WT_SESSION", "x")]), true)`), with `left: Nerd` and `right: Plain`.
+- [x] **1.3** In `crates/zygo/tests/usage_doctor.rs`, `h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`: replace the comment and the `cases` array (`:712-721`) with the block below. Keep the loop and the rest of the test.
 
 ```rust
     // The set is the one the status line uses (AU2). `xterm` selects no set by itself on any platform. On a Windows
@@ -90,11 +90,11 @@ Work in the node's checkout and run each command from the repository root. Stage
     ];
 ```
 
-- [ ] **1.4** Run `cargo test -p zygo --locked --test usage_doctor h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`. Check: 1 passed, 0 failed. This is expected on Linux (finding 3). The Windows branch runs in CI at delivery.
+- [x] **1.4** Run `cargo test -p zygo --locked --test usage_doctor h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`. Check: 1 passed, 0 failed. This is expected on Linux (finding 3). The Windows branch runs in CI at delivery.
 
 ### Task 2: the rule
 
-- [ ] **2.1** In `crates/zygo-hooks/src/statusline/render.rs`, replace the doc comment and the body of `icon_set_on` (`:126-138`) with the block below. The signature does not change. Check: `cargo check -p zygo-hooks --locked` finishes with no error and no warning.
+- [x] **2.1** In `crates/zygo-hooks/src/statusline/render.rs`, replace the doc comment and the body of `icon_set_on` (`:126-138`) with the block below. The signature does not change. Check: `cargo check -p zygo-hooks --locked` finishes with no error and no warning.
 
 ```rust
 /// AU2. `ZYGO_NERD_FONT=1` forces the Nerd set and `0` the plain set. Any other value, or none: plain when `TERM`
@@ -112,7 +112,7 @@ pub fn icon_set_on(env: &dyn Fn(&str) -> Option<OsString>, windows: bool) -> Ico
 }
 ```
 
-- [ ] **2.2** In `crates/zygo-hooks/src/statusline/data.rs`, replace the one doc line above `const HUD_ENV` (`:461`, `/// The environment variables that the HUD reads (H§7).`) with the three lines below. The list does not change. Check: `cargo check -p zygo-hooks --locked --features test-hooks` finishes with no error and no warning, and `rg -n -F 'evidence for a later Windows run of PH10' crates/zygo-hooks/src/statusline/data.rs` prints one line.
+- [x] **2.2** In `crates/zygo-hooks/src/statusline/data.rs`, replace the one doc line above `const HUD_ENV` (`:461`, `/// The environment variables that the HUD reads (H§7).`) with the three lines below. The list does not change. Check: `cargo check -p zygo-hooks --locked --features test-hooks` finishes with no error and no warning, and `rg -n -F 'evidence for a later Windows run of PH10' crates/zygo-hooks/src/statusline/data.rs` prints one line.
 
 ```rust
 /// The environment variables of H§7 that `dump` records (P-HUD-1). `TERM_PROGRAM` is read by no HUD rule since AU2
@@ -120,22 +120,22 @@ pub fn icon_set_on(env: &dyn Fn(&str) -> Option<OsString>, windows: bool) -> Ico
 /// as evidence for a later Windows run of PH10.
 ```
 
-- [ ] **2.3** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Check: 0 failed; `h14_31_icon_set_selection` passes.
-- [ ] **2.4** Run `cargo test -p zygo --locked --test usage_doctor`. Check: 0 failed.
-- [ ] **2.5** Commit `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/src/statusline/data.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo/tests/usage_doctor.rs` and this file with steps 1.1-2.5 ticked. Message: `fix(statusline): plain icons on Windows unless ZYGO_NERD_FONT=1 (PH8, PH10 fallback)`.
+- [x] **2.3** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Check: 0 failed; `h14_31_icon_set_selection` passes.
+- [x] **2.4** Run `cargo test -p zygo --locked --test usage_doctor`. Check: 0 failed.
+- [x] **2.5** Commit `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/src/statusline/data.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo/tests/usage_doctor.rs` and this file with steps 1.1-2.5 ticked. Message: `fix(statusline): plain icons on Windows unless ZYGO_NERD_FONT=1 (PH8, PH10 fallback)`.
 
 ### Task 3: `docs/live-checks.md`
 
-- [ ] **3.1** Line 77 (W-SHELL part 2). Replace the whole line with the line below. Check: `rg -o -n 'shows the stripe, the logo' docs/live-checks.md` prints exactly two lines, both `77:shows the stripe, the logo`, and `rg -n -F 'shows `zygo ◇`' docs/live-checks.md` prints nothing.
+- [x] **3.1** Line 77 (W-SHELL part 2). Replace the whole line with the line below. Check: `rg -o -n 'shows the stripe, the logo' docs/live-checks.md` prints exactly two lines, both `77:shows the stripe, the logo`, and `rg -n -F 'shows `zygo ◇`' docs/live-checks.md` prints nothing.
 
 ```text
 6. **W-SHELL, part 2**: `zygo claude` (interactive) shows the stripe, the logo (`𝘇𝘆𝗴𝗼` or `zygo`) and `ctx` in its status line. On Windows the plain icon set is the default (AU2), so the logo is `zygo` unless `ZYGO_NERD_FONT=1`. Pass (parts 1 and 2): in each setup of part 1 the shell is bash or cmd (zygo's double-quoted path runs there), and the status line of part 2 shows the stripe, the logo (`𝘇𝘆𝗴𝗼` or `zygo`) and `ctx`. Fail: PowerShell (a quoted path needs `&` there; conformance A-1, A-9).
 ```
 
-- [ ] **3.2** W-SHELL row of the Results table (line 141). Replace `| 2026-11-20 | pass | Windows 11 x64 (build 26200)` with `| 2026-11-20 | part 1 pass; part 2 with the new text: not run: no Windows machine (2026-11-22) | Windows 11 x64 (build 26200)`. Replace the end of the same row, `` `zygo ◇ - ◇ - ◇ ctx -/- ◇ cache - ◇ trimmed 0`; §8.1 A-1/A-9 | ``, with `` `zygo ◇ - ◇ - ◇ ctx -/- ◇ cache - ◇ trimmed 0` (the status line of 2026-11-20, before the HUD; the part 2 text changed with the HUD, HUD design H§9 and H§14 #38, and part 2 with the new text has not run); §8.1 A-1/A-9 | ``. Check: `rg -n -F 'part 2 with the new text: not run: no Windows machine (2026-11-22)' docs/live-checks.md` prints one line, and that line starts `141:| W-SHELL |`.
-- [ ] **3.3** Line 3. Replace `H§12 (P-HUD-1, and the PRB-1 probe).` with ``H§12 (P-HUD-1, and the PRB-1 probe); `docs/specs/2026-11-20-workspaces-design.md` W§17 (node P2).``. Check: the file still has the W-SHELL part 2 text on line 77 (the step adds no line).
-- [ ] **3.4** Method bullets, lines 12-13 (the `c5l` part uses the stored login, the real `HOME` and the caller's Claude Code config folder; the other P2 parts point the agents at the mock directly, with no zygo between: `lib.sh:97-103` `agent_env`, `live-workspace.sh:155` `cc_print`, `:604-605` the OpenCode provider, `:528` the HTTP 400 upstream of PW7). In line 12, replace `every run except #28, the passthrough parts of P-HUD-1 and the Claude Code sessions of PRB-1 gets` with ``every run except #28, the passthrough parts of P-HUD-1, the Claude Code sessions of PRB-1 and part `c5l` of P2 (the real `HOME` and the caller's Claude Code config folder) gets``. In line 13, replace `with authored replies (not model output);` with ``with authored replies (not model output); the P2 parts other than `c5l` point the agents at the mock directly, with no zygo between (PW7's API error: an upstream of the script that answers HTTP 400);``, and replace `#28, P-HUD-1 (all parts but C7, which uses the mock) and PRB-1 use the claude.ai login` with ``#28, P-HUD-1 (all parts but C7, which uses the mock), PRB-1 and part `c5l` of P2 use the claude.ai login``. Check: `rg -o -n 'part `c5l` of P2' docs/live-checks.md` prints exactly two lines, `12:part `c5l` of P2` and `13:part `c5l` of P2`, and line 77 still holds the W-SHELL part 2 text (no line added).
-- [ ] **3.5** Replace the section `## Workspace agent premises (node P2): side effect` (its heading line, the empty line and its one bullet, which ends with `The full entry for the script is written by node LIV-2.`) with the text below. Check: `rg -n -F 'written by node LIV-2' docs/live-checks.md` prints nothing, and `rg -n '^## Workspace agent premises \(node P2\)$' docs/live-checks.md` prints one match.
+- [x] **3.2** W-SHELL row of the Results table (line 141). Replace `| 2026-11-20 | pass | Windows 11 x64 (build 26200)` with `| 2026-11-20 | part 1 pass; part 2 with the new text: not run: no Windows machine (2026-11-22) | Windows 11 x64 (build 26200)`. Replace the end of the same row, `` `zygo ◇ - ◇ - ◇ ctx -/- ◇ cache - ◇ trimmed 0`; §8.1 A-1/A-9 | ``, with `` `zygo ◇ - ◇ - ◇ ctx -/- ◇ cache - ◇ trimmed 0` (the status line of 2026-11-20, before the HUD; the part 2 text changed with the HUD, HUD design H§9 and H§14 #38, and part 2 with the new text has not run); §8.1 A-1/A-9 | ``. Check: `rg -n -F 'part 2 with the new text: not run: no Windows machine (2026-11-22)' docs/live-checks.md` prints one line, and that line starts `141:| W-SHELL |`.
+- [x] **3.3** Line 3. Replace `H§12 (P-HUD-1, and the PRB-1 probe).` with ``H§12 (P-HUD-1, and the PRB-1 probe); `docs/specs/2026-11-20-workspaces-design.md` W§17 (node P2).``. Check: the file still has the W-SHELL part 2 text on line 77 (the step adds no line).
+- [x] **3.4** Method bullets, lines 12-13 (the `c5l` part uses the stored login, the real `HOME` and the caller's Claude Code config folder; the other P2 parts point the agents at the mock directly, with no zygo between: `lib.sh:97-103` `agent_env`, `live-workspace.sh:155` `cc_print`, `:604-605` the OpenCode provider, `:528` the HTTP 400 upstream of PW7). In line 12, replace `every run except #28, the passthrough parts of P-HUD-1 and the Claude Code sessions of PRB-1 gets` with ``every run except #28, the passthrough parts of P-HUD-1, the Claude Code sessions of PRB-1 and part `c5l` of P2 (the real `HOME` and the caller's Claude Code config folder) gets``. In line 13, replace `with authored replies (not model output);` with ``with authored replies (not model output); the P2 parts other than `c5l` point the agents at the mock directly, with no zygo between (PW7's API error: an upstream of the script that answers HTTP 400);``, and replace `#28, P-HUD-1 (all parts but C7, which uses the mock) and PRB-1 use the claude.ai login` with ``#28, P-HUD-1 (all parts but C7, which uses the mock), PRB-1 and part `c5l` of P2 use the claude.ai login``. Check: `rg -o -n 'part `c5l` of P2' docs/live-checks.md` prints exactly two lines, `12:part `c5l` of P2` and `13:part `c5l` of P2`, and line 77 still holds the W-SHELL part 2 text (no line added).
+- [x] **3.5** Replace the section `## Workspace agent premises (node P2): side effect` (its heading line, the empty line and its one bullet, which ends with `The full entry for the script is written by node LIV-2.`) with the text below. Check: `rg -n -F 'written by node LIV-2' docs/live-checks.md` prints nothing, and `rg -n '^## Workspace agent premises \(node P2\)$' docs/live-checks.md` prints one match.
 
 ````text
 ## Workspace agent premises (node P2)
@@ -158,23 +158,38 @@ PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-workspace.sh
 
 Source of the Bounds bullet (`scripts/premises/live-workspace.sh` at cfb5ec1). Session start `:199`, `:223`, `:310`, `:360`, `:455`, `:532` (`cc_ready`, `:135-140`). Plain turns `:207`, `:234`, `:318`, `:364`, `:459`, `:536`. PW2 subagent turn `:332`. `/clear` `:322`. `UserPromptSubmit` `:387`. Control requests `:382`, `:392`, and the 10 s window `:391`. Esc `:464`, `:468`. SIGTERM `:212`. Error upstream `:525`. Pane end `:146`. Print mode `:255`, `:260`, `:283`, `:288` (`cc_print`, `:153-159`). `c5l` `:416`. OpenCode `run` `:610`, `:619`, `:630`, `:660`, `:701`; `session list` `:612`, `:694`; plugin load `:678`; TUI request `:683`; TUI end `:691`. Note lines (`note()`, `workspace_lib.sh:17`): `:335`, `:477-482`, `:248-249`, `:686-688`. `TERM` then `KILL`: `live.sh:131`. The 5 s HTTP timeout of one control request (`:170`) is inside the 10 s bound and is not listed.
 
-- [ ] **3.6** Add this row after the last row of the Results table (the row `| PRB-1/PH13 |`, the last line of the file). Check: `rg -n -F '| P2/PW |' docs/live-checks.md` prints one line, and its line number is the line count that `rg -c '' docs/live-checks.md` prints.
+- [x] **3.6** Add this row after the last row of the Results table (the row `| PRB-1/PH13 |`, the last line of the file). Check: `rg -n -F '| P2/PW |' docs/live-checks.md` prints one line, and its line number is the line count that `rg -c '' docs/live-checks.md` prints.
 
 ```text
 | P2/PW | Workspace agent premises: session ids, hooks, resume and SIGTERM on Claude Code and OpenCode (workspaces design W§17 PW1-PW5, PW7, PW9, PW10, PW16) | Claude Code + OpenCode | 2.1.330 + 1.19.6 | 2026-11-22 | 7 verified, 2 failed | Linux (macOS not run); `scripts/premises/live-workspace.sh`, mock upstream, and one turn on the stored login (sub-check 5.5; 2 model requests in each full run, 12 in all over the 6 full runs of P2). PW1, PW2, PW3, PW4, PW5, PW9, PW10 verified; PW7 failed (7.2, 7.3, 7.5); PW16 failed (16.2). Side effect: 6 empty `projects/<scratch repository>/memory` folders left in the operator's Claude config folder. `fixtures/claude-code/workspace/pw*.txt`, `fixtures/opencode/workspace/pw4.txt`; one row per id in `docs/premises.md`; W§17 |
 ```
 
-- [ ] **3.7** In `docs/specs/2026-11-21-statusline-hud-design.md`, cite `docs/live-checks.md` rows by name, not by line (finding 6). In AU30 (`:125`) and in the PH8 row (`:585`), replace each `` (`docs/live-checks.md:104`) `` with `` (`docs/live-checks.md`, Results row W-SHELL) ``. In H-C4 (`:55`), replace `` (`docs/live-checks.md:93`) `` with `` (`docs/live-checks.md`, Results row P-N28-1) ``. After the last change-log row (`:733`), add the row below. Check: `rg -n -o 'live-checks.md:(93|104)' docs/specs/2026-11-21-statusline-hud-design.md` prints nothing; `rg -o -n 'Results row W-SHELL' docs/specs/2026-11-21-statusline-hud-design.md` prints exactly two lines, `125:` and `585:`; the last line of the file is the new row.
+- [x] **3.7** In `docs/specs/2026-11-21-statusline-hud-design.md`, cite `docs/live-checks.md` rows by name, not by line (finding 6). In AU30 (`:125`) and in the PH8 row (`:585`), replace each `` (`docs/live-checks.md:104`) `` with `` (`docs/live-checks.md`, Results row W-SHELL) ``. In H-C4 (`:55`), replace `` (`docs/live-checks.md:93`) `` with `` (`docs/live-checks.md`, Results row P-N28-1) ``. After the last change-log row (`:733`), add the row below. Check: `rg -n -o 'live-checks.md:(93|104)' docs/specs/2026-11-21-statusline-hud-design.md` prints nothing; `rg -o -n 'Results row W-SHELL' docs/specs/2026-11-21-statusline-hud-design.md` prints exactly two lines, `125:` and `585:`; the last line of the file is the new row.
 
 ```text
 | 2026-11-22 | H-C4, AU30, H§12 row PH8 | LIV-2 (citation fix) | The citations of `docs/live-checks.md` named lines 93 and 104, which moved when rows were added; they now name the Results rows P-N28-1 and W-SHELL. |
 ```
 
-- [ ] **3.8** Run `sh scripts/check-premises.sh` and `cargo test -p zygo --test forbidden_content`. Check: both exit 0. If `check-premises.sh` names a line of `docs/live-checks.md`, change that line of steps 3.1-3.6 until it passes, and keep its meaning.
-- [ ] **3.9** Commit `docs/live-checks.md`, `docs/specs/2026-11-21-statusline-hud-design.md` and this file with steps 3.1-3.9 ticked. Message: `docs(live-checks): W-SHELL part 2 text and not-run record; live-workspace.sh entry (P2); HUD spec row citations`.
+- [x] **3.8** Run `sh scripts/check-premises.sh` and `cargo test -p zygo --test forbidden_content`. Check: both exit 0. If `check-premises.sh` names a line of `docs/live-checks.md`, change that line of steps 3.1-3.6 until it passes, and keep its meaning.
+- [x] **3.9** Commit `docs/live-checks.md`, `docs/specs/2026-11-21-statusline-hud-design.md` and this file with steps 3.1-3.9 ticked. Message: `docs(live-checks): W-SHELL part 2 text and not-run record; live-workspace.sh entry (P2); HUD spec row citations`.
 
 ### Task 4: acceptance and report
 
-- [ ] **4.1** Regression run of the packages that render or print the icon set: `cargo test -p zygo-hooks --locked` and `cargo test -p zygo --locked --test compact_cmd --test statusline_git --test statusline_cmd --test usage_doctor`. Check: both exit 0, 0 failed.
-- [ ] **4.2** Run the Acceptance: `cargo test -p zygo-hooks --locked --test statusline_render && cargo test -p zygo --locked --test usage_doctor && cargo test -p zygo --test forbidden_content && cargo test --workspace --locked --no-run`. Check: exit 0, 0 failed in each test run. Then `rg -o -n 'shows the stripe, the logo' docs/live-checks.md` prints exactly two lines, both starting `77:`, and `rg -n -F 'part 2 with the new text: not run: no Windows machine (2026-11-22)' docs/live-checks.md` prints one line, the W-SHELL row. Tick 4.1 and 4.2 and commit this file alone (message `docs(work): LIV-2 plan steps done`).
-- [ ] **4.3** The node's stop report (and later the PR text) holds these three lines, word for word: `PH8: not run: no Windows machine (fallback applied: plain icons on Windows unless ZYGO_NERD_FONT=1)`, `PH10: not run: no Windows machine (fallback applied, the same rule)`, `W-SHELL part 2: not run: no Windows machine; part 1 keeps its 2026-11-20 pass`. The report also says that the Windows branch of `h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set` and of `icon_set` runs first in the `windows-latest` CI job at delivery. Check: the report text contains the three lines.
+- [x] **4.1** Regression run of the packages that render or print the icon set: `cargo test -p zygo-hooks --locked` and `cargo test -p zygo --locked --test compact_cmd --test statusline_git --test statusline_cmd --test usage_doctor`. Check: both exit 0, 0 failed.
+- [x] **4.2** Run the Acceptance: `cargo test -p zygo-hooks --locked --test statusline_render && cargo test -p zygo --locked --test usage_doctor && cargo test -p zygo --test forbidden_content && cargo test --workspace --locked --no-run`. Check: exit 0, 0 failed in each test run. Then `rg -o -n 'shows the stripe, the logo' docs/live-checks.md` prints exactly two lines, both starting `77:`, and `rg -n -F 'part 2 with the new text: not run: no Windows machine (2026-11-22)' docs/live-checks.md` prints one line, the W-SHELL row. Tick 4.1 and 4.2 and commit this file alone (message `docs(work): LIV-2 plan steps done`).
+- [x] **4.3** The node's stop report (and later the PR text) holds these three lines, word for word: `PH8: not run: no Windows machine (fallback applied: plain icons on Windows unless ZYGO_NERD_FONT=1)`, `PH10: not run: no Windows machine (fallback applied, the same rule)`, `W-SHELL part 2: not run: no Windows machine; part 1 keeps its 2026-11-20 pass`. The report also says that the Windows branch of `h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set` and of `icon_set` runs first in the `windows-latest` CI job at delivery. Check: the report text contains the three lines.
+
+### Round 2
+
+A diff review found no code defect and eight record defects; all are fixed in `docs/live-checks.md` and the HUD spec, with no code change.
+
+1. P2 side effect, `docs/live-checks.md` P2 section and row `P2/PW`: the 6 empty `*-c5l-repo/memory` folders are in two config folders, 5 in `~/.claude/projects/` from the round 1 runs of P2, which passed no `CLAUDE_CONFIG_DIR`, and 1 in the caller's `CLAUDE_CONFIG_DIR` from the round 2 run (`nodes/P2.md:1029`). A read-only `ls` of both `projects/` folders on 2026-11-22 showed exactly these 6 folders, each holding one empty `memory` folder. The text says that they stay in place.
+2. "6 full runs" is gone: the text says 6 runs of part `c5l`, full runs and part runs, 12 requests.
+3. Spend: about 2 model requests per `c5l` run; each extra denied dispatch adds one (`live-workspace.sh:22`, `P2.md:113`).
+4. Billing: billed to whatever login is stored in the config folder; a Console API-key login is billed.
+5. Method, Isolation bullet: the P2 tmux panes get no `ZYGO_CONFIG`; the Claude Code panes get no `XDG_STATE_HOME` and pass `ANTHROPIC_BASE_URL`, the dummy key, `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` and `DISABLE_AUTOUPDATER=1` (`lib.sh:97-103`, `live-workspace.sh:114`); the OpenCode TUI pane (`pane-zo9.sh`, `live-workspace.sh:673`) gets the four `XDG_*` folders and reaches the mock through its config file; print-mode runs and OpenCode commands use `live_exec` (`live.sh:106-118`).
+6. Exit status of `live-workspace.sh`: 0 finished; 3 a foreign credential at the mock (`lib.sh:80-92`); 1 a missing or too old tool or agent, an unusable path, a mock that did not start, or a failed fixture copy (`live-workspace.sh:52-56`, `:725-727`, `live.sh:82-90`, `lib.sh:76`); 2 an unknown part name (`:50`); 129, 130, 141, 143 on HUP, INT, PIPE, TERM (`:46`).
+7. HUD spec PH10 fallback cell: on Windows the plain set unless `ZYGO_NERD_FONT=1`, whatever `WT_SESSION` and `TERM_PROGRAM` hold; one new change-log row.
+8. HUD spec LIV-1 notes of rows PH1, PH2, PH3, PH4, PH5, PH9 and the LIV-1 note below the P-HUD-1 paragraph hold no parenthesis inside the note body. Check: `rg --count-matches '\*\(Note [^)]*\)\*'` and `rg --count-matches -F '*(Note '` both give 22, and no note body holds `(`.
+
+Checks: `cargo test -p zygo --locked --test forbidden_content` 6 passed; `PATH="$HOME/.opencode/bin:$PATH" sh scripts/check-premises.sh` exit 0; the Acceptance exit 0. Step 4.3 is ticked: the round 1 stop report held the three lines.

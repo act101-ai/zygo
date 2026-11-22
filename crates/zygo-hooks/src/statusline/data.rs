@@ -458,7 +458,9 @@ impl Seams {
     }
 }
 
-/// The environment variables that the HUD reads (H§7).
+/// The environment variables of H§7 that `dump` records (P-HUD-1). `TERM_PROGRAM` is read by no HUD rule since AU2
+/// of 2026-11-22 (the PH8 and PH10 fallback: on Windows the plain set unless `ZYGO_NERD_FONT=1`); the dump records it
+/// as evidence for a later Windows run of PH10.
 const HUD_ENV: &[&str] = &[
     "ZYGO_SESSION_DIR",
     "ZYGO_WORK",

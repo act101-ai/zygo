@@ -709,15 +709,19 @@ fn h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set() {
     let test = NERD_GLYPHS.join(" ");
     let nerd = format!("icons: nerd set (ZYGO_NERD_FONT=0 selects the plain set); test: {test}");
     let plain = format!("icons: plain set (ZYGO_NERD_FONT=1 selects the nerd set); test: {test}");
-    // The set is the one the status line uses (AU2). `xterm` selects no set by itself on any platform.
-    let cases: [(&[(&str, &str)], &String); 7] = [
+    // The set is the one the status line uses (AU2). `xterm` selects no set by itself on any platform. On a Windows
+    // build `WT_SESSION` and `TERM_PROGRAM` select no set either (the PH8 and PH10 fallback), so there the
+    // automatic set is plain; elsewhere it is nerd.
+    let auto = if cfg!(windows) { &plain } else { &nerd };
+    let cases: [(&[(&str, &str)], &String); 8] = [
         (&[("ZYGO_NERD_FONT", "1")], &nerd),
         (&[("ZYGO_NERD_FONT", "1"), ("TERM", "dumb")], &nerd),
         (&[("ZYGO_NERD_FONT", "0")], &plain),
         (&[("ZYGO_NERD_FONT", "0"), ("TERM", "xterm"), ("WT_SESSION", "1")], &plain),
         (&[("TERM", "linux")], &plain),
         (&[("TERM", "dumb"), ("ZYGO_NERD_FONT", "yes")], &plain),
-        (&[("TERM", "xterm"), ("TERM_PROGRAM", "x"), ("NO_COLOR", "1")], &nerd),
+        (&[("TERM", "xterm"), ("TERM_PROGRAM", "x"), ("NO_COLOR", "1")], auto),
+        (&[("TERM", "xterm"), ("WT_SESSION", "1")], auto),
     ];
     for (vars, want) in cases {
         assert_eq!(icon_lines(&p, vars), std::slice::from_ref(want), "{vars:?}");
