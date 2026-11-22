@@ -1,6 +1,6 @@
 //! The stub agent for the launch tests (N34). One executable, three roles by argv: `zygo` (`hook` or `mcp`),
 //! the version probe (`--version`), and the agent (anything else), which records what it received into `ZYGO_STUB_OUT`.
-//! `session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`) when the argv has one.
+//! `session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`, split or, for the first two, as `<flag>=<id>`) when the argv has one.
 //!
 //! Control mode (L3, the workspace tests): when `ZYGO_STUB_CONTROL` names a directory, the agent does not exit after the
 //! capture. It serves the lines of `<dir>/steps` in order (a test appends them with `stub_control`) and appends to
@@ -59,9 +59,18 @@ fn flag(argv: &[String], name: &str) -> Option<String> {
     argv.iter().position(|a| a == name).and_then(|i| argv.get(i + 1)).cloned()
 }
 
-/// The session argument: the first of `--session-id`, `--resume` (Claude Code) and `-s` (OpenCode) in `argv` that has a value.
+/// The session argument: the first token of `argv` that is `--session-id <id>`, `--resume <id>` (Claude Code) or
+/// `-s <id>` (OpenCode) with a next token, or `--session-id=<id>` or `--resume=<id>` (one token, AU3) with an id that
+/// is not empty. The id of a one-token form is the text after the first `=`.
 fn session_arg(argv: &[String]) -> Option<(&'static str, String)> {
-    argv.windows(2).find_map(|w| ["--session-id", "--resume", "-s"].into_iter().find(|f| w[0] == *f).map(|f| (f, w[1].clone())))
+    argv.iter().enumerate().find_map(|(i, a)| {
+        ["--session-id", "--resume", "-s"].into_iter().find_map(|f| {
+            if a == f {
+                return argv.get(i + 1).map(|v| (f, v.clone()));
+            }
+            a.strip_prefix(f).and_then(|r| r.strip_prefix('=')).filter(|v| f != "-s" && !v.is_empty()).map(|v| (f, v.to_string()))
+        })
+    })
 }
 
 fn result(o: std::io::Result<std::process::Output>) -> Value {

@@ -27,7 +27,7 @@ Decisions (author's call):
 
 Steps:
 
-- [ ] Write the failing test. Append to `crates/zygo-launch/tests/stub_launch.rs`, after `agent_session_args_go_before_the_users_args_and_after_opencode_run`:
+- [x] Write the failing test. Append to `crates/zygo-launch/tests/stub_launch.rs`, after `agent_session_args_go_before_the_users_args_and_after_opencode_run`:
 
   ```rust
   #[test]
@@ -52,8 +52,8 @@ Steps:
   }
   ```
 
-- [ ] Run it and see it fail: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch`. Expected: 1 failed, at the `session_arg` assertion with `left: None`, `right: Some(("--session-id", "U1"))` (the argv assertion before it passes, so the launcher is right and the stub is wrong).
-- [ ] Implement D1 and D2 in `session_arg`, `crates/zygo-launch/tests/stub_agent/stub.rs:62-65`; replace the doc line and the body:
+- [x] Run it and see it fail: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch`. Expected: 1 failed, at the `session_arg` assertion with `left: None`, `right: Some(("--session-id", "U1"))` (the argv assertion before it passes, so the launcher is right and the stub is wrong).
+- [x] Implement D1 and D2 in `session_arg`, `crates/zygo-launch/tests/stub_agent/stub.rs:62-65`; replace the doc line and the body:
 
   ```rust
   /// The session argument: the first token of `argv` that is `--session-id <id>`, `--resume <id>` (Claude Code) or
@@ -72,9 +72,9 @@ Steps:
   ```
 
   In the head comment of `stub.rs` (line 3), change "`session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`) when the argv has one." to "`session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`, split or, for the first two, as `<flag>=<id>`) when the argv has one."
-- [ ] Run it and see it pass: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch` → 1 passed.
-- [ ] Run the Acceptance as amended (see below): `cargo test -p zygo-launch --locked --test stub_launch --test stub_member` → all pass: stub_launch 17 (16 before, plus the new test), and stub_member with its three split-form cases. Then `cargo clippy -p zygo-launch --locked --tests -- -D warnings` → exit 0.
-- [ ] Commit, in the FIX-13 checkout: `git add crates/zygo-launch/tests/stub_agent/stub.rs crates/zygo-launch/tests/stub_launch.rs`, then commit with `GIT_AUTHOR_NAME=kagemartin GIT_AUTHOR_EMAIL=1011970+kagemartin@users.noreply.github.com GIT_COMMITTER_NAME=kagemartin GIT_COMMITTER_EMAIL=1011970+kagemartin@users.noreply.github.com` and this message (subject, one blank line, trailers):
+- [x] Run it and see it pass: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch` → 1 passed.
+- [x] Run the Acceptance as amended (see below): `cargo test -p zygo-launch --locked --test stub_launch --test stub_member` → all pass: stub_launch 17 (16 before, plus the new test), and stub_member with its three split-form cases. Then `cargo clippy -p zygo-launch --locked --tests -- -D warnings` → exit 0.
+- [x] Commit, in the FIX-13 checkout: `git add crates/zygo-launch/tests/stub_agent/stub.rs crates/zygo-launch/tests/stub_launch.rs`, then commit with `GIT_AUTHOR_NAME=kagemartin GIT_AUTHOR_EMAIL=1011970+kagemartin@users.noreply.github.com GIT_COMMITTER_NAME=kagemartin GIT_COMMITTER_EMAIL=1011970+kagemartin@users.noreply.github.com` and this message (subject, one blank line, trailers):
 
   ```text
   fix(stub): read --session-id=<id> and --resume=<id> as one token
