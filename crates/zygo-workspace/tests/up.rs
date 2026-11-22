@@ -933,10 +933,8 @@ fn splits_that_do_not_fit() {
             let reported = err.contains(&format!("zygo: pane {k} not built (no space)"));
             assert!(built != reported, "{case} {k}: {err}");
             reported_any |= reported;
-            if reported {
-                if let Some(m) = ws.members.get(k) {
-                    assert_eq!(m.state, MemberState::Resumable);
-                }
+            if reported && let Some(m) = ws.members.get(k) {
+                assert_eq!(m.state, MemberState::Resumable);
             }
         }
         assert_eq!(ws.phase, Phase::Up);
