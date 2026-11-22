@@ -212,7 +212,8 @@ pub struct NewSession<'a> {
     pub argv: &'a [OsString],
 }
 
-/// The arguments of `new_window`. `name` and `start_dir` are raw: the implementation escapes `#` (W3 D6).
+/// The arguments of `new_window`. `name` and `start_dir` are raw: the implementation escapes `#` (W3 D6). A name with
+/// a control character is refused ([`CONTROL_NAME_MESSAGE`]).
 #[derive(Debug, Clone, Copy)]
 pub struct NewWindow<'a> {
     pub session: &'a str,
@@ -231,6 +232,40 @@ pub struct Split<'a> {
     pub argv: &'a [OsString],
 }
 
+/// The refusal of a window name that holds a control character (W3 round 2 B1): tmux 3.7c refuses such a name, and
+/// tmux 3.2a prints it raw, so a newline would split a `list-panes` line.
+pub const CONTROL_NAME_MESSAGE: &str = "window name holds a control character";
+
+/// `Err(Failed)` with [`CONTROL_NAME_MESSAGE`] when `name` holds a character for which `char::is_control` is true:
+/// C0 (newline, tab and the rest), DEL and C1.
+pub(crate) fn check_window_name(name: &str) -> Result<(), MuxError> {
+    if name.chars().any(char::is_control) {
+        return Err(MuxError::Failed { message: CONTROL_NAME_MESSAGE.into() });
+    }
+    Ok(())
+}
+
+/// `Err(Failed)` unless `name` is a tmux option, hook or environment name that tmux cannot read as a flag: not empty,
+/// not starting with `-`, and only `[A-Za-z0-9_@-]` (W3 round 2 M2).
+pub(crate) fn check_name(name: &str) -> Result<(), MuxError> {
+    let ok = !name.is_empty()
+        && !name.starts_with('-')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'@' | b'-'));
+    if !ok {
+        return Err(MuxError::Failed { message: format!("invalid tmux option or environment name: {name:?}") });
+    }
+    Ok(())
+}
+
+/// `Err(Failed)` unless `session` is `zygo-<name>` with `<name>` valid for `identity::valid_name` (AU2, AU84; W3
+/// round 2 M3), so a target holds no `#`, `:`, `.` or flag.
+pub(crate) fn check_session(session: &str) -> Result<(), MuxError> {
+    if !session.strip_prefix("zygo-").is_some_and(crate::identity::valid_name) {
+        return Err(MuxError::Failed { message: format!("invalid tmux session name: {session:?}") });
+    }
+    Ok(())
+}
+
 /// The exact target of a session: `=<session>:`.
 pub fn session_target(session: &str) -> String { format!("={session}:") }
 
@@ -239,52 +274,74 @@ pub fn window_target(session: &str, window: u32) -> String { format!("={session}
 
 /// The terminal multiplexer operations of W§7.4, W§8 and W§9 (W§13). Every call except `attach` has the bound
 /// [`BOUND`]. A session argument is a session name; the implementation makes the exact target.
+///
+/// Errors, for every operation unless its line says more:
+/// - `Failed` before any tmux call for a refused argument: a session name that is not `zygo-<name>` (AU84), an
+///   option, hook or environment name outside `[A-Za-z0-9_@-]` or starting with `-`, a window name with a control
+///   character, a start directory that is not UTF-8, or an argument list of fewer than 2 items.
+/// - `Gone`: tmux said that the session or its server is gone ([`is_gone_message`]).
+/// - `NoTarget`: the window or pane does not exist and the session still does, or is not known. An operation whose
+///   target names the session (`=<s>:<w>`) checks `has-session` after a `NoTarget` and gives `Gone` when the session
+///   is gone. A pane id `%N` names no session, so a pane operation keeps `NoTarget`; the caller checks
+///   [`Multiplexer::session_exists`].
+/// - `Failed` with tmux's stderr for any other tmux error; `TimedOut` after [`BOUND`]; `Spawn` when tmux cannot run;
+///   `Failed` when tmux exits but a process outside its group still holds its output at the bound.
 pub trait Multiplexer {
-    /// `tmux -V`, read with [`parse_version`].
+    /// `tmux -V`, read with [`parse_version`]. Output without a version gives `Failed`.
     fn version(&self) -> Result<(u32, u32), MuxError>;
-    /// `display-message -p -t =<s>: #{socket_path}`.
+    /// `has-session -t =<s>:`, then `display-message -p -t =<s>: -- #{socket_path}`. A missing session gives `Gone`
+    /// (the display alone prints the server's path for any session name).
     fn socket_path(&self, session: &str) -> Result<PathBuf, MuxError>;
-    /// `has-session -t =<s>:`, with the AU87 answer kinds.
+    /// `has-session -t =<s>:`, with the AU87 answer kinds; a refused name gives `Error`.
     fn session_exists(&self, session: &str) -> SessionAnswer;
     /// `new-session -d -P -F #{window_index} -s <s> -c <dir> -x <w> -y <h> -- <argv>`, with exactly `spec.env`;
     /// returns the first window index.
     fn new_session(&self, spec: &NewSession<'_>) -> Result<u32, MuxError>;
-    /// `resize-window -t =<s>:<w> -x <width> -y <height>`.
+    /// `resize-window -t =<s>:<w> -x <width> -y <height>`. A missing window: `NoTarget`, or `Gone` with the session.
     fn resize_window(&self, session: &str, window: u32, width: u32, height: u32) -> Result<(), MuxError>;
-    /// `set-option -w -u -t =<s>:<w> <name>`.
+    /// `set-option -w -u -t =<s>:<w> -- <name>`. A missing window: `NoTarget`, or `Gone` with the session.
     fn unset_window_option(&self, session: &str, window: u32, name: &str) -> Result<(), MuxError>;
-    /// `set-option -w -t <window> <name> <value>`; `window` is a window target or a pane id.
+    /// `set-option -w -t <window> -- <name> <value>`; `window` is a window target `=<s>:<w>` (a missing window gives
+    /// `NoTarget`, or `Gone` with the session) or a pane id (`NoTarget`).
     fn set_window_option(&self, window: &str, name: &str, value: &str) -> Result<(), MuxError>;
-    /// `set-environment -t =<s>: <name> <value>`.
+    /// `set-environment -t =<s>: -- <name> <value>`.
     fn set_env(&self, session: &str, name: &str, value: &str) -> Result<(), MuxError>;
-    /// `set-environment -r -t =<s>: <name>`: the name is marked as removed for new panes.
+    /// `set-environment -r -t =<s>: -- <name>`: the name is marked as removed for new panes.
     fn hide_env(&self, session: &str, name: &str) -> Result<(), MuxError>;
-    /// `set-option -t =<s>: <name> <value>`.
+    /// `set-option -t =<s>: -- <name> <value>`.
     fn set_session_option(&self, session: &str, name: &str, value: &str) -> Result<(), MuxError>;
-    /// `show-options -qv -t =<s>: <name>`. `None` means unset or no such session: a missing session gives no error.
+    /// `show-options -qv -t =<s>: -- <name>`. `None` means unset or no such session: a missing session gives no
+    /// error.
     fn show_session_option(&self, session: &str, name: &str) -> Result<Option<String>, MuxError>;
-    /// `set-hook -t =<s>: <event> <command>`, or `set-hook -w -t =<s>:<w> …` for [`HookScope::Window`].
+    /// `set-hook -t =<s>: -- <event> <command>`, or `set-hook -w -t =<s>:<w> -- …` for [`HookScope::Window`] (a
+    /// missing window: `NoTarget`, or `Gone` with the session).
     fn set_hook(&self, session: &str, scope: HookScope, event: &str, command: &str) -> Result<(), MuxError>;
-    /// `new-window -d -P -F #{window_index} -t =<s>: [-n <name>] -c <dir> -- <argv>`; returns the new window index.
+    /// `new-window -d -P -F #{window_index} -t =<s>: -c <dir> -- <argv>`, then, with a name,
+    /// `rename-window -t =<s>:<index> -- <name>`; returns the new window index. tmux stores a renamed window's name
+    /// vis-encoded on 3.2a and 3.7c, so [`parse_pane_line`] reads it back exactly. A failed rename returns its error
+    /// and leaves the window with tmux's own name.
     fn new_window(&self, spec: &NewWindow<'_>) -> Result<u32, MuxError>;
-    /// `split-window -d -P -F #{pane_id} -t <target> [-c <dir>] -- <argv>`; returns the new pane id.
+    /// `split-window -d -P -F #{pane_id} -t <target> [-c <dir>] -- <argv>`; returns the new pane id. A missing window
+    /// target: `NoTarget`, or `Gone` with the session; a missing pane id: `NoTarget`.
     fn split_window(&self, spec: &Split<'_>) -> Result<String, MuxError>;
-    /// `select-layout -t =<s>:<w> <layout>`.
+    /// `select-layout -t =<s>:<w> -- <layout>`. A missing window: `NoTarget`, or `Gone` with the session.
     fn select_layout(&self, session: &str, window: u32, layout: &str) -> Result<(), MuxError>;
-    /// `select-window -t =<s>:<w>`.
+    /// `select-window -t =<s>:<w>`. A missing window: `NoTarget`, or `Gone` with the session.
     fn select_window(&self, session: &str, window: u32) -> Result<(), MuxError>;
-    /// `select-pane -t <pane>`.
+    /// `select-pane -t <pane>`. A missing pane: `NoTarget`.
     fn select_pane(&self, pane: &str) -> Result<(), MuxError>;
-    /// `resize-pane -Z -t <pane>`: toggles the zoom of the pane's window.
+    /// `resize-pane -Z -t <pane>`: toggles the zoom of the pane's window. A missing pane: `NoTarget`.
     fn zoom(&self, pane: &str) -> Result<(), MuxError>;
-    /// `list-panes -s -t =<s>: -F` [`PANE_FORMAT`]: the raw lines, parsed with [`parse_pane_line`].
+    /// `list-panes -s -t =<s>: -F` [`PANE_FORMAT`]: one line per pane (stdout split on `\n` only), parsed with
+    /// [`parse_pane_line`].
     fn list_panes(&self, session: &str) -> Result<Vec<String>, MuxError>;
-    /// `show-options -p -qv -t <pane> <name>`. `None` means unset or no such pane: a missing pane gives no error.
+    /// `show-options -p -qv -t <pane> -- <name>`. `None` means unset or no such pane: a missing pane gives no error.
     fn show_pane_option(&self, pane: &str, name: &str) -> Result<Option<String>, MuxError>;
-    /// `set-option -p -t <pane> <name> <value>`.
+    /// `set-option -p -t <pane> -- <name> <value>`. A missing pane: `NoTarget`.
     fn set_pane_option(&self, pane: &str, name: &str, value: &str) -> Result<(), MuxError>;
-    /// `display-message -p -t <target> <format>`. A missing target gives no error: a missing session or pane gives
-    /// empty fields, and a missing window gives the session's current window's value.
+    /// `display-message -p -t <target> -- <format>`; the output without its last `\n`. A missing target gives no
+    /// error: a missing session or pane gives empty fields, and a missing window gives the session's current window's
+    /// value.
     fn display(&self, target: &str, format: &str) -> Result<String, MuxError>;
     /// `kill-session -t =<s>:`.
     fn kill_session(&self, session: &str) -> Result<(), MuxError>;
@@ -390,8 +447,10 @@ pub fn parse_version(out: &str) -> Option<(u32, u32)> {
 }
 
 /// The `list-panes -F` format (W§19, AU99): 13 fields split by `|`. The window name and the pane key are read through
-/// `q:`, so a `|` in them arrives as `\|`. The pane path is last and raw: it takes the rest of the line.
-pub const PANE_FORMAT: &str = "#{window_index}|#{q:window_name}|#{automatic-rename}|#{window_layout}|#{window_width}|#{window_height}|#{window_active}|#{window_zoomed_flag}|#{pane_id}|#{pane_index}|#{pane_active}|#{q:@zygo-pane}|#{pane_current_path}";
+/// `q:`, so a `|` in them arrives as `\|`. The pane path is last and takes the rest of the line. Three `s///`
+/// substitutions double each `\` of the path and turn LF and CR into `\n` and `\r`, so each pane is one line on tmux
+/// 3.2a and later (`q:` escapes neither LF nor CR on 3.2a or 3.7c; W3 round 2 M1 probe).
+pub const PANE_FORMAT: &str = "#{window_index}|#{q:window_name}|#{automatic-rename}|#{window_layout}|#{window_width}|#{window_height}|#{window_active}|#{window_zoomed_flag}|#{pane_id}|#{pane_index}|#{pane_active}|#{q:@zygo-pane}|#{s/\\\\/\\\\\\\\/;s/\n/\\\\n/;s/\r/\\\\r/:pane_current_path}";
 
 /// The number of fields of [`PANE_FORMAT`].
 pub const PANE_FIELDS: usize = 13;
@@ -504,6 +563,30 @@ fn q_unescape(s: &str) -> String {
     out
 }
 
+/// Reverses the path encoding of [`PANE_FORMAT`]: `\\` gives `\`, `\n` gives LF and `\r` gives CR. Every other
+/// character stays unchanged.
+fn path_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            let decoded = match chars.peek() {
+                Some('\\') => Some('\\'),
+                Some('n') => Some('\n'),
+                Some('r') => Some('\r'),
+                _ => None,
+            };
+            if let Some(d) = decoded {
+                out.push(d);
+                chars.next();
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Splits a line into at most [`PANE_FIELDS`] fields. Each of the first 12 ends at the first `|` that no `\` escapes;
 /// the last field is the rest of the line, raw.
 fn split_fields(line: &str) -> Vec<&str> {
@@ -546,8 +629,8 @@ fn flag(s: &str, field: &'static str) -> Result<bool, ParseError> {
 }
 
 /// Parses one line of `list-panes -F` [`PANE_FORMAT`] (AU99). Fields 1-12 are read from the left, and field 13, the
-/// pane path, is the rest of the line. A line with fewer than 13 fields, or a typed field that does not parse, is
-/// refused.
+/// pane path, is the rest of the line, with the path encoding of [`PANE_FORMAT`] reversed. A line with fewer than 13
+/// fields, or a typed field that does not parse, is refused.
 pub fn parse_pane_line(line: &str) -> Result<(WindowRow, PaneRow), ParseError> {
     let f = split_fields(line);
     if f.len() < PANE_FIELDS {
@@ -571,7 +654,7 @@ pub fn parse_pane_line(line: &str) -> Result<(WindowRow, PaneRow), ParseError> {
         index: number(f[9], "pane_index")?,
         active: flag(f[10], "pane_active")?,
         key: q_unescape(f[11]),
-        cwd: PathBuf::from(f[12]),
+        cwd: PathBuf::from(path_decode(f[12])),
     };
     Ok((window, pane))
 }
@@ -603,13 +686,16 @@ pub fn check_path(path: &Path) -> Result<&str, UnsafePath> {
 pub fn format_escape(s: &str) -> String { s.replace('#', "##") }
 
 /// The tmux hook command of AU54: `run-shell -b "'<zygo>' ws snapshot --ws-id <id> --event <event>"`, with each `#`
-/// of the path doubled. `ws_id` must pass `identity::valid_ws_id`, and `event` is a tmux hook name.
+/// of the path doubled. `Err(UnsafePath)` also when `ws_id` fails `identity::valid_ws_id` or `event` is not a tmux
+/// hook name (`[a-z-]+`), because either one would be unquoted inside the command (W3 round 2 M7; checked in every
+/// build).
 pub fn hook_command(zygo: &Path, ws_id: &str, event: &str) -> Result<String, UnsafePath> {
-    debug_assert!(
-        crate::identity::valid_ws_id(ws_id)
-            && !event.is_empty()
-            && event.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
-    );
+    if !crate::identity::valid_ws_id(ws_id)
+        || event.is_empty()
+        || !event.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+    {
+        return Err(UnsafePath);
+    }
     let path = check_path(zygo)?;
     Ok(format!("run-shell -b \"'{}' ws snapshot --ws-id {ws_id} --event {event}\"", format_escape(path)))
 }

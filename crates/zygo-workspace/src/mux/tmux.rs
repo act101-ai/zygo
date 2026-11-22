@@ -8,19 +8,26 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-use zygo_config::repo_file::{exited_unreaped, kill_group};
-use zygo_config::repo_file::kill_tree;
+use zygo_config::repo_file::exited_unreaped;
+use zygo_config::repo_file::kill_group;
 
 use super::{
-    format_escape, is_gone_message, is_no_target_message, parse_version, session_target, window_target, HookScope,
-    Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split, BOUND, PANE_FORMAT,
+    check_name, check_session, check_window_name, format_escape, is_gone_message, is_no_target_message, parse_version,
+    session_target, window_target, HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split, BOUND,
+    PANE_FORMAT,
 };
 
 /// How often the runner checks for the exit.
 const POLL: Duration = Duration::from_millis(5);
 
+/// How long the runner waits for EOF after it killed the group of a call whose pipe was still held.
+const HELD_GRACE: Duration = Duration::from_millis(200);
+
 /// The refusal of an argument list that tmux would run through `sh -c` (W3 D7).
 const SHORT_ARGV: &str = "tmux needs an argument list of 2 or more items";
+
+/// The error of a call whose output a process outside its group still held after the group was killed.
+const HELD_PIPE: &str = "tmux exited, but a process outside its process group holds its output";
 
 /// The result of [`run_bounded`]. `status` is `None` when the kernel reaped the child (SIGCHLD ignored).
 #[derive(Debug)]
@@ -32,20 +39,22 @@ pub(crate) struct Ran {
 
 /// How the child ended, as [`wait_exit`] saw it.
 enum Exit {
-    /// The child has exited and is not reaped yet, so its group can still be killed safely.
+    /// The child has exited and is not reaped yet.
     #[cfg(unix)]
     Unreaped,
-    /// The child is reaped (status known), or the kernel reaped it (`None`). No kill may be sent after this.
+    /// The child is reaped (status known), or the kernel reaped it (`None`).
     Reaped(Option<ExitStatus>),
 }
 
 /// Runs `cmd` in its own process group (unix), with stdin from `/dev/null` and stdout and stderr piped (W3 D9). It
 /// waits at most `limit` for the exit and then for EOF on both pipes.
 ///
-/// No exit within the limit: the group is killed with `kill_tree` and the call gives [`MuxError::TimedOut`]. An exit,
-/// but a pipe still held at the limit: the group is killed while the child is unreaped, then the child is reaped; if
-/// the kernel already reaped it, no kill is sent. A reader thread that a process outside the group keeps blocked is
-/// abandoned, never joined. The output is what was read, made into text with `from_utf8_lossy`.
+/// No exit within the limit: the group is killed and the call gives [`MuxError::TimedOut`]. An exit, but a pipe still
+/// held at the limit: the group is killed, also when the kernel already reaped the child (W3 round 2 M5: the process
+/// that holds the pipe keeps the group id in use, so `killpg` cannot reach another group), and the runner waits
+/// [`HELD_GRACE`] more for EOF. A pipe still held after that is held by a process outside the group: its reader thread
+/// is abandoned, never joined, and the call fails with [`HELD_PIPE`]. No signal is ever sent to the single pid of a
+/// child that may be reaped. The output is what was read, made into text with `from_utf8_lossy`.
 pub(crate) fn run_bounded(mut cmd: Command, limit: Duration) -> Result<Ran, MuxError> {
     let deadline = Instant::now() + limit;
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -53,7 +62,7 @@ pub(crate) fn run_bounded(mut cmd: Command, limit: Duration) -> Result<Ran, MuxE
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn().map_err(|e| MuxError::Spawn { message: e.to_string() })?;
     let (Some(out), Some(err)) = (child.stdout.take(), child.stderr.take()) else {
-        kill_tree(&mut child);
+        stop(&mut child);
         return Err(MuxError::Spawn { message: "no pipes".into() });
     };
     let (tx, rx) = mpsc::channel::<()>();
@@ -64,24 +73,34 @@ pub(crate) fn run_bounded(mut cmd: Command, limit: Duration) -> Result<Ran, MuxE
     while eof < 2 && rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).is_ok() {
         eof += 1;
     }
+    if eof < 2 {
+        kill_group(&child);
+        while eof < 2 && rx.recv_timeout(HELD_GRACE).is_ok() {
+            eof += 1;
+        }
+    }
     let status = match exit {
         #[cfg(unix)]
-        Exit::Unreaped => {
-            if eof < 2 {
-                kill_group(&child);
-            }
-            child.wait().ok()
-        }
+        Exit::Unreaped => child.wait().ok(),
         Exit::Reaped(s) => s,
     };
+    if eof < 2 {
+        return Err(MuxError::Failed { message: HELD_PIPE.into() });
+    }
     let text = |b: &Mutex<Vec<u8>>| String::from_utf8_lossy(&b.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
     Ok(Ran { status, stdout: text(&out_buf), stderr: text(&err_buf) })
 }
 
+/// Kills the group of a child that has not exited, then waits for it (the wait reaps it, or ends with ECHILD when the
+/// kernel reaps it).
+fn stop(child: &mut Child) {
+    kill_group(child);
+    let _ = child.wait();
+}
+
 /// Waits until `deadline` for the exit of `child`. On unix it first polls `exited_unreaped` (WNOWAIT), so the child
-/// stays unreaped and its group can still be killed. The first `waitid` error (ECHILD when the kernel reaps by itself)
-/// falls through to the `try_wait` loop, with no group kill after it. At the deadline the group is killed with
-/// `kill_tree` and the call gives [`MuxError::TimedOut`].
+/// stays unreaped. The first `waitid` error (ECHILD when the kernel reaps by itself) falls through to the `try_wait`
+/// loop. At the deadline the group of the running child is killed and the call gives [`MuxError::TimedOut`].
 fn wait_exit(child: &mut Child, deadline: Instant) -> Result<Exit, MuxError> {
     #[cfg(unix)]
     loop {
@@ -89,7 +108,7 @@ fn wait_exit(child: &mut Child, deadline: Instant) -> Result<Exit, MuxError> {
             Ok(true) => return Ok(Exit::Unreaped),
             Ok(false) if Instant::now() < deadline => std::thread::sleep(POLL),
             Ok(false) => {
-                kill_tree(child);
+                stop(child);
                 return Err(MuxError::TimedOut);
             }
             Err(_) => break,
@@ -100,16 +119,14 @@ fn wait_exit(child: &mut Child, deadline: Instant) -> Result<Exit, MuxError> {
             Ok(Some(s)) => return Ok(Exit::Reaped(Some(s))),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(POLL),
             Ok(None) => {
-                kill_tree(child);
+                stop(child);
                 return Err(MuxError::TimedOut);
             }
-            // The kernel reaped the child: it has exited with an unknown status. No kill, because its pid may already
-            // be reused.
+            // The kernel reaped the child: it has exited with an unknown status.
             #[cfg(unix)]
             Err(e) if e.raw_os_error() == Some(libc::ECHILD) => return Ok(Exit::Reaped(None)),
             Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop(child);
                 return Err(MuxError::Failed { message: format!("tmux: {e}") });
             }
         }
@@ -160,10 +177,17 @@ pub(crate) fn finish(ran: Ran) -> Result<String, MuxError> {
     if ok { Ok(ran.stdout) } else { Err(classify(&ran)) }
 }
 
-/// One line of output without its line end.
+/// The output without its last `\n`; a `\r` before it stays (W3 round 2 M1).
 fn line(out: String) -> String {
-    let s = out.strip_suffix('\n').unwrap_or(&out);
-    s.strip_suffix('\r').unwrap_or(s).to_string()
+    match out.strip_suffix('\n') {
+        Some(s) => s.to_string(),
+        None => out,
+    }
+}
+
+/// The session of a window target `=<s>:<w>`, or `None` for a pane id.
+fn target_session(target: &str) -> Option<&str> {
+    target.strip_prefix('=')?.rsplit_once(':').map(|(s, _)| s)
 }
 
 /// The tmux implementation of [`Multiplexer`]. Every call passes `-S <socket>` when a socket is set (AU62).
@@ -200,6 +224,26 @@ impl Tmux {
         let mut c = self.command(true, true);
         c.args(args);
         finish(run_bounded(c, BOUND)?)
+    }
+
+    /// [`Tmux::call`] on a target of `session`: a `NoTarget` answer is `Gone` when `has-session` says the session is
+    /// gone (W3 round 2 M4).
+    fn call_in<S: AsRef<OsStr>>(&self, session: Option<&str>, args: &[S]) -> Result<String, MuxError> {
+        match self.call(args) {
+            Err(MuxError::NoTarget { message }) => match session {
+                Some(s) => match self.call(&["has-session", "-t", &session_target(s)]) {
+                    Err(gone @ MuxError::Gone { .. }) => Err(gone),
+                    _ => Err(MuxError::NoTarget { message }),
+                },
+                None => Err(MuxError::NoTarget { message }),
+            },
+            r => r,
+        }
+    }
+
+    /// [`Tmux::call_in`] for a command whose output is not used.
+    fn run_in(&self, session: Option<&str>, args: &[&str]) -> Result<(), MuxError> {
+        self.call_in(session, args).map(|_| ())
     }
 
     /// [`Tmux::call`] for a command whose output is not used.
@@ -242,7 +286,10 @@ impl Multiplexer for Tmux {
     }
 
     fn socket_path(&self, session: &str) -> Result<PathBuf, MuxError> {
-        let v = line(self.call(&["display-message", "-p", "-t", &session_target(session), "#{socket_path}"])?);
+        check_session(session)?;
+        let target = session_target(session);
+        self.run(&["has-session", "-t", &target])?;
+        let v = line(self.call(&["display-message", "-p", "-t", &target, "--", "#{socket_path}"])?);
         if v.is_empty() {
             return Err(MuxError::Failed { message: format!("tmux printed no socket path for {session}") });
         }
@@ -250,6 +297,9 @@ impl Multiplexer for Tmux {
     }
 
     fn session_exists(&self, session: &str) -> SessionAnswer {
+        if let Err(e) = check_session(session) {
+            return SessionAnswer::Error { message: e.to_string() };
+        }
         match self.run(&["has-session", "-t", &session_target(session)]) {
             Ok(()) => SessionAnswer::Exists,
             Err(MuxError::Gone { .. }) => SessionAnswer::Gone,
@@ -258,6 +308,7 @@ impl Multiplexer for Tmux {
     }
 
     fn new_session(&self, spec: &NewSession<'_>) -> Result<u32, MuxError> {
+        check_session(spec.name)?;
         check_argv(spec.argv)?;
         let dir = start_dir_arg(spec.start_dir)?;
         let mut c = self.command(false, true);
@@ -269,54 +320,75 @@ impl Multiplexer for Tmux {
     }
 
     fn resize_window(&self, session: &str, window: u32, width: u32, height: u32) -> Result<(), MuxError> {
+        check_session(session)?;
         let (w, h) = (width.to_string(), height.to_string());
-        self.run(&["resize-window", "-t", &window_target(session, window), "-x", &w, "-y", &h])
+        self.run_in(Some(session), &["resize-window", "-t", &window_target(session, window), "-x", &w, "-y", &h])
     }
 
     fn unset_window_option(&self, session: &str, window: u32, name: &str) -> Result<(), MuxError> {
-        self.run(&["set-option", "-w", "-u", "-t", &window_target(session, window), name])
+        check_session(session)?;
+        check_name(name)?;
+        self.run_in(Some(session), &["set-option", "-w", "-u", "-t", &window_target(session, window), "--", name])
     }
 
     fn set_window_option(&self, window: &str, name: &str, value: &str) -> Result<(), MuxError> {
-        self.run(&["set-option", "-w", "-t", window, name, value])
+        check_name(name)?;
+        self.run_in(target_session(window), &["set-option", "-w", "-t", window, "--", name, value])
     }
 
     fn set_env(&self, session: &str, name: &str, value: &str) -> Result<(), MuxError> {
-        self.run(&["set-environment", "-t", &session_target(session), name, value])
+        check_session(session)?;
+        check_name(name)?;
+        self.run(&["set-environment", "-t", &session_target(session), "--", name, value])
     }
 
     fn hide_env(&self, session: &str, name: &str) -> Result<(), MuxError> {
-        self.run(&["set-environment", "-r", "-t", &session_target(session), name])
+        check_session(session)?;
+        check_name(name)?;
+        self.run(&["set-environment", "-r", "-t", &session_target(session), "--", name])
     }
 
     fn set_session_option(&self, session: &str, name: &str, value: &str) -> Result<(), MuxError> {
-        self.run(&["set-option", "-t", &session_target(session), name, value])
+        check_session(session)?;
+        check_name(name)?;
+        self.run(&["set-option", "-t", &session_target(session), "--", name, value])
     }
 
     fn show_session_option(&self, session: &str, name: &str) -> Result<Option<String>, MuxError> {
-        self.show(&["show-options", "-qv", "-t", &session_target(session), name])
+        check_session(session)?;
+        check_name(name)?;
+        self.show(&["show-options", "-qv", "-t", &session_target(session), "--", name])
     }
 
     fn set_hook(&self, session: &str, scope: HookScope, event: &str, command: &str) -> Result<(), MuxError> {
+        check_session(session)?;
+        check_name(event)?;
         match scope {
-            HookScope::Session => self.run(&["set-hook", "-t", &session_target(session), event, command]),
-            HookScope::Window(w) => self.run(&["set-hook", "-w", "-t", &window_target(session, w), event, command]),
+            HookScope::Session => self.run(&["set-hook", "-t", &session_target(session), "--", event, command]),
+            HookScope::Window(w) => {
+                self.run_in(Some(session), &["set-hook", "-w", "-t", &window_target(session, w), "--", event, command])
+            }
         }
     }
 
     fn new_window(&self, spec: &NewWindow<'_>) -> Result<u32, MuxError> {
+        check_session(spec.session)?;
         check_argv(spec.argv)?;
+        if let Some(n) = spec.name {
+            check_window_name(n)?;
+        }
         let dir = start_dir_arg(spec.start_dir)?;
         let mut args: Vec<OsString> =
             ["new-window", "-d", "-P", "-F", "#{window_index}", "-t"].iter().map(OsString::from).collect();
         args.push(session_target(spec.session).into());
-        if let Some(n) = spec.name {
-            args.push("-n".into());
-            args.push(format_escape(n).into());
-        }
         args.extend(["-c".into(), dir.into(), "--".into()]);
         args.extend(spec.argv.iter().cloned());
-        window_index(self.call(&args)?)
+        let index = window_index(self.call(&args)?)?;
+        if let Some(n) = spec.name {
+            let target = window_target(spec.session, index);
+            self.run_in(Some(spec.session), &["rename-window", "-t", &target, "--", &format_escape(n)])?;
+        }
+        Ok(index)
     }
 
     fn split_window(&self, spec: &Split<'_>) -> Result<String, MuxError> {
@@ -329,7 +401,7 @@ impl Multiplexer for Tmux {
         }
         args.push("--".into());
         args.extend(spec.argv.iter().cloned());
-        let v = line(self.call(&args)?);
+        let v = line(self.call_in(target_session(spec.target), &args)?);
         if !v.starts_with('%') {
             return Err(MuxError::Failed { message: format!("tmux printed no pane id: {v}") });
         }
@@ -337,39 +409,50 @@ impl Multiplexer for Tmux {
     }
 
     fn select_layout(&self, session: &str, window: u32, layout: &str) -> Result<(), MuxError> {
-        self.run(&["select-layout", "-t", &window_target(session, window), layout])
+        check_session(session)?;
+        self.run_in(Some(session), &["select-layout", "-t", &window_target(session, window), "--", layout])
     }
 
     fn select_window(&self, session: &str, window: u32) -> Result<(), MuxError> {
-        self.run(&["select-window", "-t", &window_target(session, window)])
+        check_session(session)?;
+        self.run_in(Some(session), &["select-window", "-t", &window_target(session, window)])
     }
 
-    fn select_pane(&self, pane: &str) -> Result<(), MuxError> { self.run(&["select-pane", "-t", pane]) }
+    fn select_pane(&self, pane: &str) -> Result<(), MuxError> { self.run_in(target_session(pane), &["select-pane", "-t", pane]) }
 
-    fn zoom(&self, pane: &str) -> Result<(), MuxError> { self.run(&["resize-pane", "-Z", "-t", pane]) }
+    fn zoom(&self, pane: &str) -> Result<(), MuxError> { self.run_in(target_session(pane), &["resize-pane", "-Z", "-t", pane]) }
 
     fn list_panes(&self, session: &str) -> Result<Vec<String>, MuxError> {
+        check_session(session)?;
         let out = self.call(&["list-panes", "-s", "-t", &session_target(session), "-F", PANE_FORMAT])?;
-        Ok(out.lines().map(str::to_string).collect())
+        let body = out.strip_suffix('\n').unwrap_or(&out);
+        if body.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(body.split('\n').map(str::to_string).collect())
     }
 
     fn show_pane_option(&self, pane: &str, name: &str) -> Result<Option<String>, MuxError> {
-        self.show(&["show-options", "-p", "-qv", "-t", pane, name])
+        check_name(name)?;
+        self.show(&["show-options", "-p", "-qv", "-t", pane, "--", name])
     }
 
     fn set_pane_option(&self, pane: &str, name: &str, value: &str) -> Result<(), MuxError> {
-        self.run(&["set-option", "-p", "-t", pane, name, value])
+        check_name(name)?;
+        self.run_in(target_session(pane), &["set-option", "-p", "-t", pane, "--", name, value])
     }
 
     fn display(&self, target: &str, format: &str) -> Result<String, MuxError> {
-        Ok(line(self.call(&["display-message", "-p", "-t", target, format])?))
+        Ok(line(self.call(&["display-message", "-p", "-t", target, "--", format])?))
     }
 
     fn kill_session(&self, session: &str) -> Result<(), MuxError> {
+        check_session(session)?;
         self.run(&["kill-session", "-t", &session_target(session)])
     }
 
     fn attach(&self, session: &str) -> Result<i32, MuxError> {
+        check_session(session)?;
         let mut c = self.command(false, false);
         c.args(["attach-session", "-t", &session_target(session)]);
         let status = c.status().map_err(|e| MuxError::Spawn { message: e.to_string() })?;
@@ -377,6 +460,7 @@ impl Multiplexer for Tmux {
     }
 
     fn switch_client(&self, session: &str) -> Result<(), MuxError> {
+        check_session(session)?;
         self.run(&["switch-client", "-t", &session_target(session)])
     }
 }
