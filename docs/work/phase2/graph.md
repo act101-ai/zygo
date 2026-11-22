@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** PRB-1, P2, W11, FIX-10 after FIX-8, then FIX-9 and LIV-2
+**Next:** PRB-1 round 2, P2, FIX-10, then FIX-12, FIX-9, LIV-2, FIX-11 and the workspace chain
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -101,7 +101,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
-| FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | TODO | implementation | — |
+| FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | PLANNED | implementation | — |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | TODO | mechanical | — |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | TODO | mechanical | — |
 
@@ -194,3 +194,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | DOC-1 DONE (fdcea4a). Base-spec notes for the HUD (H§9) and auto-update written; review round 2 fixed 12 findings. Acceptance on the merged tree printed nothing. |
 | 2026-11-22 | FIX-11 and FIX-12 added from DOC-1 and PRB-1 findings: HUD spec H§3, H§8, H§14 #33 still say the OpenCode statusline session form exits 2 (HUD-11 built it as Claude Code); hud_probe_test.py leaves scripts/premises/__pycache__. |
 | 2026-11-22 | W11 DONE (0799b7d). MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback); review round 2 fixed F1-F7. Acceptance on the merged tree: mcp_server 50 passed, config_layers 96 passed, workspace --no-run ok. |
+| 2026-11-22 | FIX-10 planned: 24 steps. Contract fixed: Files gain crates/zygo-proxy/src/tee.rs (usage writer, body copy); a 4xx other than 429 is relayed too. Any non-2xx passthrough answer gives a row; message secret-redacted, 300 chars; SSE error events not counted. |
