@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W6, FIX-13, W7, W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1
+**Next:** W6, W7, W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -22,7 +22,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 - Never resume a conversation whose launcher is live — `docs/specs/2026-11-20-workspaces-design.md` W§4 W-C9, AU87
 - Native Windows: every workspace verb exits 2 with `workspaces need tmux; run zygo in WSL`; the code still builds there — `docs/specs/2026-11-20-workspaces-design.md` OP5; `.github/workflows/ci.yml` (windows-latest)
 - Minimum tmux 3.2 — `docs/specs/2026-11-20-workspaces-design.md` AU7
-- State dir `0700`, files `0600`; wait bounds hooks/snapshots 1 s, launchers/wrapper 5 s, `up`/`down` 5 s — `docs/specs/2026-11-20-workspaces-design.md` AU2, W§7.3
+- State dir `0700`, files `0600`; wait bounds hooks, member events and their snapshots 1 s, snapshots run by `up`/`down` 5 s, launchers/wrapper 5 s, `up`/`down` 5 s — `docs/specs/2026-11-20-workspaces-design.md` AU2, W§7.3
 - tmux-dependent tests run when tmux 3.2 or later is on `PATH` and skip with a printed reason otherwise; on Windows they are `cfg(unix)`-gated; no CI install step; gate helper in W3, used by later nodes — operator, 2026-11-21
 - Crate graph: `zygo-workspace` depends on `zygo-core`, `zygo-config`, `zygo-work`, `zygo-proxy` only; `zygo-hooks` depends on `zygo-workspace`; `ws run`, member wrapper and membership decision in `crates/zygo/src/cmd/` — `docs/specs/2026-11-20-workspaces-design.md` AU103, AU102, AU45
 - No configured price leaves a server; a team session's spend uses built-in list prices — `docs/specs/2026-11-21-statusline-hud-design.md` AU14, H§9 row §7.2
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | DONE | implementation | 7657585; 9 LIVE lines: PW7 and PW16 failed, 7 verified; review round 2 fixed B1, B2, M1-M9; offline checks on merged tree |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
@@ -94,7 +93,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | DONE | mechanical | 7ee20d6; acceptance ok |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
-| FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | IN-PROGRESS | mechanical | `.worktrees/phase2/FIX-13` |
+| FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
 
 ## Log
 
@@ -207,3 +206,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | L2 DONE (c5a1569): member hooks, session args from W4, launcher member drop, conformance check test. Merged tree: args 12, claude_code 36, opencode 51, stub_launch 16, conformance ok. R2 spec changes applied. FIX-13 added: stub reads = session forms; M2 depends on it. |
 | 2026-11-22 | FIX-13 planned: 6 steps, test first. Acceptance adds --test stub_member, because the split-form cases are there; stub_member not changed. -s=<id> not read; empty = value is no session arg (author's call). |
 | 2026-11-22 | W6 planned: 22 steps, test first. C1-C16 applied: W2, W3 Produces; W7, W10, M1, M2, M4 Spec; H1 runs the pending snapshot in a detached child; spec W§7.1-7.4, W§10, AU38, AU84, AU89. Adds snapshot_seq to state.rs (author's call). |
+| 2026-11-22 | FIX-13 DONE (3be5519): stub reads --session-id=<id> and --resume=<id>. Merged tree: stub_launch 17, stub_member 19, zygo-launch all pass. R2: Files add stub_member.rs. Spec W§7.3 wait bounds: up/down snapshots 5 s (author's call). |

@@ -242,6 +242,27 @@ fn agent_session_args_go_before_the_users_args_and_after_opencode_run() { // W§
 }
 
 #[test]
+fn stub_reads_the_one_token_session_args_of_a_claude_code_launch() { // AU3, FIX-13
+    use zygo_launch::launcher::AgentSession;
+    let rig = rig();
+    for (session, flag, source) in [(AgentSession::Preassign("U1".into()), "--session-id", "startup"), (AgentSession::Resume("U1".into()), "--resume", "resume")] {
+        let ctl = rig.root.join(format!("ctl{flag}"));
+        stub_control(&ctl, "exit 0").unwrap();
+        let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+            o.agent_session = Some(session.clone());
+            o.env.0.push(("ZYGO_STUB_CONTROL".into(), ctl.clone().into_os_string()));
+            o.env.0.push(("ZYGO_STUB_SHELL".into(), shell().into_os_string()));
+        });
+        assert_eq!(r.code, 0, "{}", r.stderr);
+        assert!(r.cap.argv.contains(&format!("{flag}=U1")), "{:?}", r.cap.argv);
+        assert_eq!(r.cap.session_arg, Some((flag.to_string(), "U1".to_string())), "{:?}", r.cap.argv);
+        let h: Vec<Value> = std::fs::read_to_string(rig.root.join("out/hooks.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(h.len(), 1, "{h:?}");
+        assert_eq!((&h[0]["event"], &h[0]["input"]["session_id"], &h[0]["input"]["source"]), (&json!("SessionStart"), &json!("U1"), &json!(source)));
+    }
+}
+
+#[test]
 fn session_callback_runs_after_the_session_dir_exists_and_before_the_agent_starts() { // AU34
     use std::sync::{Arc, Mutex};
     let rig = rig();

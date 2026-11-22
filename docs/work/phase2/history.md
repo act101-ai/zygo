@@ -24,6 +24,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
 | LIV-2 | Windows part without a Windows machine: PH8/PH10 fallback, W-SHELL part 2 text, not-run records | LIV-1, PRB-1, FIX-5, FIX-7, P2 | DONE | implementation | 37c78eb; statusline_render 25, usage_doctor 46; PH8, PH10, W-SHELL part 2 not run: no Windows machine, fallback applied; review round 2 fixed 8 record defects |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | DONE | implementation | fdcea4a; acceptance empty; review round 2 fixed 12 findings |
+| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
 
 ## Log
 

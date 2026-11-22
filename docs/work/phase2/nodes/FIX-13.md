@@ -1,7 +1,7 @@
 # FIX-13 — Stub agent reads the one-token `=` session arguments
 
 **Spec:** `docs/specs/2026-11-20-workspaces-design.md` AU3 as amended 2026-11-22 (L2 round 2: Claude Code `--session-id=<id>` and `--resume=<id>`, OpenCode `-s <id>`); found by L2 round 2. Defect: the stub agent's `session_arg` (`crates/zygo-launch/tests/stub_agent/stub.rs:63`) finds only the split forms `--session-id <id>`, `--resume <id>` and `-s <id>`, so a stub launch of a Claude Code member with `LaunchOpts.agent_session` sees no session argument: `session-arg.json` is not written and the `SessionStart` input has `source` `startup` for a resume. Fix: `session_arg` also reads `--session-id=<id>` and `--resume=<id>` as one token, with the flag name `--session-id` or `--resume` and the value after the first `=`; the split forms and `-s <id>` keep working; the first session argument in `argv` that has a value wins, as today. M2's stub tests need it
-**Files:** `crates/zygo-launch/tests/stub_agent/stub.rs`, `crates/zygo-launch/tests/stub_launch.rs`
+**Files:** `crates/zygo-launch/tests/stub_agent/stub.rs`, `crates/zygo-launch/tests/stub_launch.rs`, `crates/zygo-launch/tests/stub_member.rs`
 **Consumes:** `AgentAdapter::preassign_args` (L2), `AgentAdapter::resume_args` (L2), `LaunchOpts.agent_session` (L2)
 **Produces:** stub agent reads = session forms
 **Acceptance:** `cargo test -p zygo-launch --locked --test stub_launch --test stub_member` → all pass, including a stub launch with `--session-id=U1` that writes `session-arg.json` naming `--session-id` with the id `U1`, and one with `--resume=U1` whose `SessionStart` input has `source` `resume` (both in `stub_launch`), and the existing split-form cases `session_argument_is_recorded`, `session_start_hook_gets_the_session_id` and `launched_member_calls_the_generated_session_start_hook_and_returns_the_exit_step` (in `stub_member`)
@@ -27,7 +27,7 @@ Decisions (author's call):
 
 Steps:
 
-- [ ] Write the failing test. Append to `crates/zygo-launch/tests/stub_launch.rs`, after `agent_session_args_go_before_the_users_args_and_after_opencode_run`:
+- [x] Write the failing test. Append to `crates/zygo-launch/tests/stub_launch.rs`, after `agent_session_args_go_before_the_users_args_and_after_opencode_run`:
 
   ```rust
   #[test]
@@ -52,8 +52,8 @@ Steps:
   }
   ```
 
-- [ ] Run it and see it fail: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch`. Expected: 1 failed, at the `session_arg` assertion with `left: None`, `right: Some(("--session-id", "U1"))` (the argv assertion before it passes, so the launcher is right and the stub is wrong).
-- [ ] Implement D1 and D2 in `session_arg`, `crates/zygo-launch/tests/stub_agent/stub.rs:62-65`; replace the doc line and the body:
+- [x] Run it and see it fail: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch`. Expected: 1 failed, at the `session_arg` assertion with `left: None`, `right: Some(("--session-id", "U1"))` (the argv assertion before it passes, so the launcher is right and the stub is wrong).
+- [x] Implement D1 and D2 in `session_arg`, `crates/zygo-launch/tests/stub_agent/stub.rs:62-65`; replace the doc line and the body:
 
   ```rust
   /// The session argument: the first token of `argv` that is `--session-id <id>`, `--resume <id>` (Claude Code) or
@@ -72,9 +72,9 @@ Steps:
   ```
 
   In the head comment of `stub.rs` (line 3), change "`session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`) when the argv has one." to "`session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`, split or, for the first two, as `<flag>=<id>`) when the argv has one."
-- [ ] Run it and see it pass: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch` → 1 passed.
-- [ ] Run the Acceptance as amended (see below): `cargo test -p zygo-launch --locked --test stub_launch --test stub_member` → all pass: stub_launch 17 (16 before, plus the new test), and stub_member with its three split-form cases. Then `cargo clippy -p zygo-launch --locked --tests -- -D warnings` → exit 0.
-- [ ] Commit, in the FIX-13 checkout: `git add crates/zygo-launch/tests/stub_agent/stub.rs crates/zygo-launch/tests/stub_launch.rs`, then commit with `GIT_AUTHOR_NAME=kagemartin GIT_AUTHOR_EMAIL=1011970+kagemartin@users.noreply.github.com GIT_COMMITTER_NAME=kagemartin GIT_COMMITTER_EMAIL=1011970+kagemartin@users.noreply.github.com` and this message (subject, one blank line, trailers):
+- [x] Run it and see it pass: `cargo test -p zygo-launch --locked --test stub_launch stub_reads_the_one_token_session_args_of_a_claude_code_launch` → 1 passed.
+- [x] Run the Acceptance as amended (see below): `cargo test -p zygo-launch --locked --test stub_launch --test stub_member` → all pass: stub_launch 17 (16 before, plus the new test), and stub_member with its three split-form cases. Then `cargo clippy -p zygo-launch --locked --tests -- -D warnings` → exit 0.
+- [x] Commit, in the FIX-13 checkout: `git add crates/zygo-launch/tests/stub_agent/stub.rs crates/zygo-launch/tests/stub_launch.rs`, then commit with `GIT_AUTHOR_NAME=kagemartin GIT_AUTHOR_EMAIL=1011970+kagemartin@users.noreply.github.com GIT_COMMITTER_NAME=kagemartin GIT_COMMITTER_EMAIL=1011970+kagemartin@users.noreply.github.com` and this message (subject, one blank line, trailers):
 
   ```text
   fix(stub): read --session-id=<id> and --resume=<id> as one token
@@ -92,3 +92,23 @@ The Files line is right: the fix and the new test change only `stub.rs` and `stu
 ```text
 **Acceptance:** `cargo test -p zygo-launch --locked --test stub_launch --test stub_member` → all pass, including a stub launch with `--session-id=U1` that writes `session-arg.json` naming `--session-id` with the id `U1`, and one with `--resume=U1` whose `SessionStart` input has `source` `resume` (both in `stub_launch`), and the existing split-form cases `session_argument_is_recorded`, `session_start_hook_gets_the_session_id` and `launched_member_calls_the_generated_session_start_hook_and_returns_the_exit_step` (in `stub_member`)
 ```
+
+## Round 2
+
+Diff review round 2 (the coordinator's decisions, the author's call). Each fix is test first, in `crates/zygo-launch/tests/stub_member.rs` (direct stub tests, through the helper `recorded`):
+
+- R1. `session_arg` reads only the tokens before the first `--`; tokens after it are prompt words, as in the launcher's `has_session_arg` (`zygo_workspace::args`). Test `session_argument_after_double_dash_is_a_prompt_word`: `-- --resume=x` gives no session argument and the `SessionStart` input has `source` `startup`. Red before the fix: `left: Some(("--resume", "x"))`, `right: None`.
+- R2. In the split form, a next token that starts with `-` is not an id, and the walk goes on. Test `split_session_flag_followed_by_a_flag_has_no_id`: `--resume --model x` gives none. Red before the fix: `left: Some(("--resume", "--model"))`, `right: None`.
+- R3. Test `one_token_session_argument_filters` for the D1 and D2 filters: `--session-id= --session-id=U2` gives `U2`; `-s=x` gives none; `--resume=a=b` gives `a=b`; a trailing `--resume` gives none. It passed with the filters in place; with each filter deleted in turn it failed at its line (empty value: `left: Some(("--session-id", ""))`; `-s`: `left: Some(("-s", "x"))`; id after the last `=`: `left: Some(("--resume", "b"))`; no next-token bound: the stub panics, exit 101).
+
+The check of the plan's commit step ("`git show --stat HEAD` names only the two files") was wrong: the commit also holds this node file with its ticked boxes, which are the resume state. D4's "`stub_member.rs` is not changed" is replaced by R1-R3.
+
+## Round 2 spec changes for the controller
+
+The Files line gains `crates/zygo-launch/tests/stub_member.rs` (the R1-R3 tests). Replace it with:
+
+```text
+**Files:** `crates/zygo-launch/tests/stub_agent/stub.rs`, `crates/zygo-launch/tests/stub_launch.rs`, `crates/zygo-launch/tests/stub_member.rs`
+```
+
+The Acceptance does not change: its command already runs `--test stub_member`, so "all pass" covers the R1-R3 tests.
