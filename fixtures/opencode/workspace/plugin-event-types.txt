@@ -1,0 +1,12 @@
+catalog.updated
+integration.updated
+message.part.delta
+message.part.updated
+message.updated
+plugin.added
+reference.updated
+session.created
+session.diff
+session.idle
+session.status
+session.updated

@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7 | DONE | judgment | 2a5f5ff, merge e7d95d1; acceptance zygo-hooks, zygo, zygo-config, zygo-launch all targets 0 failed; session_api 47, passthrough 31 (merged tree, Linux) |
 | HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | DONE | judgment | 7e76153; acceptance in the full workspace run, 0 failed (merged tree) |
 | UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | DONE | judgment | d74bd3f, merge c3f3c55; acceptance update 26/26, workspace --no-run ok (merged tree); Windows branch of #7 runs in CI only |
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
@@ -65,7 +64,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | LIV-2 | Windows part without a Windows machine: PH8/PH10 fallback, W-SHELL part 2 text, not-run records | LIV-1, PRB-1, FIX-5, FIX-7, P2 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | DONE | implementation | fdcea4a; acceptance empty; review round 2 fixed 12 findings |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
-| P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | IN-PROGRESS | implementation | .worktrees/phase2/P2 |
+| P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | DONE | implementation | 7657585; 9 LIVE lines: PW7 and PW16 failed, 7 verified; review round 2 fixed B1, B2, M1-M9; offline checks on merged tree |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
@@ -197,3 +196,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | PRB-1 DONE (b318a6d) on Claude Code 2.1.330: PH4 failed (FIX-5 fallback), PH12 observed, 9 verified; merged-tree acceptance exit 0. Cost: 0 main-loop requests, about 8 auxiliary in all. Claude Code wrote 3 trust entries in the operator's config. |
 | 2026-11-22 | FIX-12 DROPPED: PRB-1 round 2 (c759e25) sets sys.dont_write_bytecode in hud_probe_test.py, so no scripts/premises/__pycache__ is left. |
 | 2026-11-22 | PRB-1 merge landed in c64acac by a concurrent commit; content verified, no history rewrite. |
+| 2026-11-22 | P2 DONE (7657585): PW7, PW16 failed, 7 verified. Cost: 12 real requests. Side effect: 6 empty projects/<scratch>/memory folders in the operator's Claude folder, left in place. live-checks.md side-effect note added by round 2 M2, author's call. |

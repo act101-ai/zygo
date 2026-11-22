@@ -1,0 +1,5 @@
+Claude Code 2.1.330
+2.1 ok SessionStart input has session_id: yes (source startup)
+2.2 ok SessionStart fires again after /clear: yes; source clear; new session_id: yes
+2.4 note the next Stop input after /clear has the new session_id: yes
+2.3 ok SessionStart inputs inside the subagent (between its SubagentStart and SubagentStop): 1, source compact; without an agent_id key: 0

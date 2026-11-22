@@ -1,0 +1,8 @@
+Claude Code 2.1.330 + OpenCode 1.19.6
+9.1 ok Claude Code, idle, SIGTERM: process ended within 15 s: yes
+9.2 ok Claude Code: transcript file named by the session id holds the first prompt: yes
+9.3 ok Claude Code: the conversation saved at SIGTERM was resumed and continued: yes
+9.4 note Claude Code, idle, /exit by send-keys: process ended within 15 s: yes
+9.5 ok OpenCode TUI, idle, SIGTERM: process ended within 15 s: yes
+9.6 ok OpenCode: opencode session list shows the session after SIGTERM: yes
+9.7 ok OpenCode: opencode run -s <id>, exit 0: the conversation saved at SIGTERM was resumed and continued: yes

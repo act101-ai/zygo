@@ -1,0 +1,7 @@
+Claude Code 2.1.330
+5.1 ok PreToolUse deny on Agent: PreToolUse inputs 1; SubagentStart inputs 0; subagent requests 0; dispatch blocked: yes
+5.2 ok the next request of the lead (the first one with the tool result, not the prompt-suggestion request) holds the deny reason: yes
+5.3 ok the turn ended after the deny (Stop within 60 s; scripted lead on the mock): yes
+5.4 ok UserPromptSubmit block: control request before the prompt recorded: yes; a request with the typed prompt within 10 s: no; control request after the wait recorded: yes; Stop or StopFailure inputs after it: 0
+5.5 ok real lead on the stored login, one print-mode turn: exit 0; is_error false; turns 2; denied dispatches 1; SubagentStart inputs 0; Stop inputs 1; the answer names the deny reason: yes; the lead read the reason and ended its turn: yes
+5.6 note side effect of the turn on the caller's config folder: a projects folder for the scratch repository: yes; a projects entry for it in the config file: no
