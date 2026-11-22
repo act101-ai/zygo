@@ -34,7 +34,7 @@ fn view(work_units: bool) -> SessionView {
     SessionView { session: "S1".into(), agent: Agent::ClaudeCode, main_role: "lead".into(), effective_role: None, role_prompt: None,
         user_prompt: None, profile: None, profile_prompt: None, work_item: None, legend: vec![], disabled_roles: vec![],
         work_units, results: true, compact_tool: true, navigation: false,
-        trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20 }
+        trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20, ..Default::default() }
 }
 struct Env { t: tempfile::TempDir, sd: SessionDir, db: PathBuf, repo: PathBuf, warns: Rc<RefCell<Vec<String>>>, sink: Box<dyn Fn(&str)> }
 /// A session directory with a view (work units on), a usage-store path and a repository whose path has a space.

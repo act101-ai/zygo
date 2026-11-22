@@ -17,6 +17,9 @@ pub struct Overrides {
     pub guards: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub work_units: Option<bool>,
+    /// The session's status line style. A value other than `compact` or `verbose` is ignored by its reader.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub statusline: Option<String>,
 }
 
 impl Overrides {

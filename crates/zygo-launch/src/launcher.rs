@@ -434,6 +434,9 @@ impl Session<'_> {
             }))
             .collect();
         let c = &self.cfg.config;
+        // The base stays although every field is named today: a later field then needs no change here
+        // until the launcher sets it (statusline HUD design H§17 note 1).
+        #[allow(clippy::needless_update)]
         let view = SessionView {
             session: self.grant.session.clone(),
             agent: adapter.agent(),
@@ -453,6 +456,8 @@ impl Session<'_> {
             trim_threshold_bytes: c.results.trim_threshold_bytes,
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
+            statusline_style: c.statusline.style.clone(),
+            ..Default::default()
         };
         if let Err(e) = view.save(sd) {
             out.line(&format!("zygo: cannot write the session view: {e}"));

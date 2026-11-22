@@ -104,6 +104,7 @@ fn ctx(fx: &Fx, cfg_text: &str) -> LaunchCtx {
         trim_threshold_bytes: 0,
         head_lines: 0,
         tail_lines: 0,
+        ..Default::default()
     };
     let zygo = SnapshotPlugin {
         marketplace: "embedded".into(),

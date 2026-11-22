@@ -9,7 +9,7 @@ fn session(d: &Path) -> SessionDir {
     SessionView { session: "s".into(), agent: Agent::ClaudeCode, main_role: "lead".into(), effective_role: None,
         role_prompt: None, user_prompt: None, profile: None, profile_prompt: None, work_item: None, legend: vec![],
         disabled_roles: vec![], work_units: true, results: true, compact_tool: true, navigation: false,
-        trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20 }.save(&sd).unwrap();
+        trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20, ..Default::default() }.save(&sd).unwrap();
     sd
 }
 fn zygo(d: &Path, sd: &SessionDir, args: &[&str], input: &[u8]) -> Output {

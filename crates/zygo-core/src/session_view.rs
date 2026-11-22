@@ -27,6 +27,37 @@ pub struct SessionView {
     pub head_lines: u32,
     #[serde(default = "default_tail_lines")]
     pub tail_lines: u32,
+    /// The status line style the launcher took from the user config (`statusline.style`):
+    /// `compact` or `verbose`. A `view.json` without the field reads as `compact`.
+    #[serde(default = "default_statusline_style")]
+    pub statusline_style: String,
+}
+
+/// Each field that has a serde default holds that default; `agent` is Claude Code; every other field is empty or `false`.
+impl Default for SessionView {
+    fn default() -> Self {
+        SessionView {
+            session: String::new(),
+            agent: Agent::ClaudeCode,
+            main_role: String::new(),
+            effective_role: None,
+            role_prompt: None,
+            user_prompt: None,
+            profile: None,
+            profile_prompt: None,
+            work_item: None,
+            legend: Vec::new(),
+            disabled_roles: Vec::new(),
+            work_units: false,
+            results: false,
+            compact_tool: default_true(),
+            navigation: false,
+            trim_threshold_bytes: default_trim_threshold(),
+            head_lines: default_head_lines(),
+            tail_lines: default_tail_lines(),
+            statusline_style: default_statusline_style(),
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -43,6 +74,10 @@ fn default_head_lines() -> u32 {
 
 fn default_tail_lines() -> u32 {
     20
+}
+
+fn default_statusline_style() -> String {
+    "compact".into()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
