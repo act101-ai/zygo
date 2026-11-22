@@ -43,6 +43,10 @@ fn value(ctx: &VerbCtx, name: &str, m: Option<&Merged>, hide: bool) -> Option<St
             (Some(WindowArg::Tokens(n)), false) => Some(short(n)),
         };
     }
+    if name == "statusline" {
+        // In a session the style comes from the session files, so it shows when the config does not load.
+        return super::statusline::current(ctx, m).map(|(style, _)| super::statusline::name(style).to_string());
+    }
     let c = &m?.config;
     Some(match name {
         "results" => format!("{}, threshold {}", on_off(c.features.results), c.results.trim_threshold_bytes),

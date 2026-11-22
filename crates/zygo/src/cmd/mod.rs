@@ -26,6 +26,7 @@ pub mod redaction;
 pub mod results;
 pub mod serve;
 pub mod status;
+pub mod statusline;
 pub mod units;
 pub mod update;
 pub mod usage;
@@ -224,6 +225,8 @@ enum Cmd {
     Units(VerbArgs),
     /// The compact MCP tool: on|off
     CompactTool(VerbArgs),
+    /// Status line style: [compact|verbose]
+    Statusline(VerbArgs),
     /// Internal: MCP server started by the agents
     Mcp {
         #[arg(long)]
@@ -436,6 +439,7 @@ pub fn run() -> i32 {
         Cmd::Guards(_) => "guards",
         Cmd::Units(_) => "units",
         Cmd::CompactTool(_) => "compact-tool",
+        Cmd::Statusline(_) => "statusline",
     };
     let raw: Vec<String> = std::env::args().skip(2).collect();
     match run_verb(verb, raw, false) {

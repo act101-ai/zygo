@@ -8,6 +8,7 @@ use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::verbs::{VerbSpec, VERB_SPECS};
+use zygo_hooks::statusline::render::Style;
 use zygo_plugins::check::esc;
 use zygo_plugins::select::set_user_key;
 use zygo_proxy::client::{ClientError, SessionClient};
@@ -46,6 +47,7 @@ pub static VERBS: &[Verb] = &[
     Verb { spec: &VERB_SPECS[10], handler: super::marketplace::verb },
     Verb { spec: &VERB_SPECS[11], handler: super::profile::verb },
     Verb { spec: &VERB_SPECS[12], handler: super::compact_tool::verb },
+    Verb { spec: &VERB_SPECS[13], handler: super::statusline::verb },
 ];
 
 /// One session setting (§17.1, §6.1 layer 7).
@@ -56,6 +58,8 @@ pub enum Setting {
     Units(bool),
     RedactionContent(bool),
     Guard { guard: String, level: String },
+    /// The status line style, `compact` or `verbose` (statusline HUD design H§8, AU1).
+    Statusline(Style),
 }
 
 /// The reply reads `<verb> <words> …`.
@@ -76,6 +80,7 @@ impl Setting {
             Setting::Guard { guard, level } => {
                 o.guards.insert(guard.clone(), level.clone());
             }
+            Setting::Statusline(s) => o.statusline = Some(super::statusline::name(*s).to_string()),
         }
     }
 
@@ -88,6 +93,7 @@ impl Setting {
             Setting::Units(b) => set_user_key(config_file, &["features", "work_units"], *b),
             Setting::RedactionContent(b) => set_user_key(config_file, &["features", "redaction", "content"], *b),
             Setting::Guard { guard, level } => set_user_key(config_file, &["guards", guard], level.as_str()),
+            Setting::Statusline(s) => set_user_key(config_file, &["statusline", "style"], super::statusline::name(*s)),
         }
     }
 }
