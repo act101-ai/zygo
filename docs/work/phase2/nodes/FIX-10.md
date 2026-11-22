@@ -235,7 +235,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
 
 #### Task 2: the proxy tests (`crates/zygo-proxy/tests/passthrough.rs`)
 
-- [ ] **2.1** Harness changes in `passthrough.rs`:
+- [x] **2.1** Harness changes in `passthrough.rs`:
   - Imports: `use zygo_usage::{RedactionCount, RequestRow, Store, UpstreamErrorRow};` in place of the `zygo_usage` line; add `use futures_util::StreamExt;` and `use zygo_proxy::tee::UsageHold;`.
   - `struct Upstream`: add the fields `ctype: Arc<Mutex<String>>` (`"application/json"` at start) and `hang: Arc<Mutex<bool>>` (false at start). In `start`, create them, clone them into the reply closure next to `r2, s2, h2`, and build the reply as:
 
@@ -284,7 +284,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
     ```
 
   Result: the harness answers any content type, can leave a body open, can hold the usage writer, and reads `upstream_errors` rows; every existing test still compiles unchanged.
-- [ ] **2.2** Add, after `upstream_429_reaches_the_client_once_and_unchanged`, these seven tests (the contract cases):
+- [x] **2.2** Add, after `upstream_429_reaches_the_client_once_and_unchanged`, these seven tests (the contract cases):
 
   ```rust
   #[test] // FIX-10 (§14): a 429 answer writes its error type and message; the client gets the answer unchanged
@@ -400,7 +400,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the seven tests are in the file.
-- [ ] **2.3** Add after them these seven tests (plan review round 1):
+- [x] **2.3** Add after them these seven tests (plan review round 1):
 
   ```rust
   #[test] // FIX-10 B1: a 4 MiB error body reaches the client whole while the usage writer is held; the row follows
@@ -514,8 +514,8 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the seven tests are in the file.
-- [ ] **2.4** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: the build passes; `upstream_200_records_no_error`, `normal_session_error_records_no_row` and every test that existed before pass; the other twelve new tests fail on their first row-count assertion (left 0). `upstream_large_error_body_does_not_wait_for_the_writer` fails only after `hold.release()`.
-- [ ] **2.5** Commit `crates/zygo-proxy/tests/passthrough.rs` and this file: `test(proxy): upstream error rows of a non-2xx passthrough answer`.
+- [x] **2.4** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: the build passes; `upstream_200_records_no_error`, `normal_session_error_records_no_row` and every test that existed before pass; the other twelve new tests fail on their first row-count assertion (left 0). `upstream_large_error_body_does_not_wait_for_the_writer` fails only after `hold.release()`.
+- [x] **2.5** Commit `crates/zygo-proxy/tests/passthrough.rs` and this file: `test(proxy): upstream error rows of a non-2xx passthrough answer`.
 
 #### Task 3: the proxy code (`crates/zygo-proxy/src`)
 
