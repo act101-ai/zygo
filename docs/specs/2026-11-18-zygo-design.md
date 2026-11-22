@@ -149,6 +149,7 @@ soft_context_window = 400000         # optional (§10.2); ≤ facts.context_wind
 - Providers are tried in the listed order (§7.4), after the session's pinned provider.
 - The built-in catalog ships rows for current Anthropic and OpenAI models with verified facts **(author)**. The model ids, prices and facts are data; the builder verifies each row against the provider's documentation and records `source` and `verified_on`.
 - `price_usd_per_mtok` may hold `long_context = { above, input, output, cache_read, cache_write, cache_write_5m }` (`cache_write_5m` optional): when a request's `prompt` (§10.2.1) is above `above` tokens, all its rates come from `long_context`, else the base rates (HUD design H§7.3). `zygo config check` refuses `above = 0` and a rate that is negative or not finite. *(2026-11-22, HUD design)*
+- `price_usd_per_mtok` may hold `cache_write_5m`, the rate of 5-minute cache writes; `cache_write` is the 1-hour rate and also prices cache writes whose usage has no 5-minute/1-hour split. Each Anthropic row of the built-in catalog sets `cache_write_5m` = 1.25 × its `input` rate (HUD design AU33). *(2026-11-22, HUD design)*
 - `zygo config check` validates: unique ids; each model has ≥ 1 provider; `soft_context_window` > 0 and ≤ `context_window`, and only with facts; `effort_levels` empty only with `reasoning = "none"`; every role's model exists; every `[[schema_rule]]` (§7.6) is well formed. A failing user config refuses to launch with the first violation; a failing team config refuses to start the server.
 
 ### 6.4 Roles
