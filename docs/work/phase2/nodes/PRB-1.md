@@ -1718,3 +1718,27 @@ done
 if [ -z "$lhits" ]; then ok "L1 no LIVE_VER site falls back to PIN_CC or PIN_OC"
 else no "L1 no LIVE_VER site falls back to PIN_CC or PIN_OC" "in:$lhits"; fi
 ````
+
+## Round 2
+
+Diff review of round 1 (coordinator, 2026-11-22). Each code finding got a failing test first; the fixes are in `c759e25`, the records in the commit after it. Blocks A to E above are the round 1 text; the files differ from them as listed here.
+
+| Finding | Failing test (before the fix) | Fix |
+|---|---|---|
+| B1 PH11: stdout-error and no-end runs not lost | `hud_probe_test.py` H17: 6 runs, runs 2, 4, 6 write `stdout-error` and never show; also the same runs with no end event. Before: `lost 0`, so verified | `an_ph11`: a run with `stdout-error` or no `end` is lost; a run that ended 2.5 s or more before the last capture and never showed is lost; `ok` = 3 or more such judged runs, each shown, none lost, no error text, `PROBE DONE` later. H10 asserts `ok` too. Early captures 8 s → 12 s, so about 6 runs and 3 or more judged |
+| B2 PH13: help exit and output not checked | H16: a stub whose `--help` exits 1 with no output, and one that exits 0 with no output. Before: no `help` record, no gate | `cmd_ph13` records `{rc, bytes}` of both help calls; `help_measured` needs exit 0 and output (a timeout is 124) and a version; `pass` is the whole gate; the script prints `failed` `not measured: …` when help is not measured |
+| B3 notes hold brackets | `live-hud-probe_test.sh` L10: no `(` or `)` in a LIVE text (10 texts had them) | All LIVE texts rewritten with no bracket; `line()` turns a bracket of a pane or JSON text into `[ ]`; the records script asserts each note body is bracket-free; `rg -o '\*\(Note 2026-11-22, PRB-1: [^)]*\)\*'` matches each of the 12 notes whole |
+| 1 PH5: unparsed stdin; session words | H18: one unparsed run fails PH5; with no pty run, sessions = `["tmux"]` | `an_stdin` keeps unparsed runs; `ph5.ok` needs every non-early run parsed and each effort a string or `{level: string}`; the text names the sessions from `ph5.sessions` |
+| 2 PH7, PH9 texts | L10 and the live texts | Texts start `cell widths only:` and end `… presentation in a terminal font: not checked` / `glyph shapes in a terminal font: not checked`; the notes say the same |
+| 3 PH11 EPIPE reach | (no offline way: Claude Code's write fits the pipe buffer, which the probe does not control) | Each run log has `stdin_bytes`; `ph11.stdin_max_bytes` in the analysis; the PH11 text and note say EPIPE was likely not exercised (largest payload 1181 bytes, pipe buffer 64 KiB) |
+| 4 PH13 method | records script | The PH13 note names the help calls, the 3 top-level key spellings, the command object value, the temporary HOME and the nested keys not tested |
+| 5 PH4 note | records script | The PH4 note says FIX-5, which is done, built the fallback; no new node |
+| 6 N14-S version | `ver_test.sh` L2: the line before `result N14-S` sets `LIVE_VER` to the variable passed as `LIVE_PIN_CC` | `live-strict.sh`: `STANDIN_CC=$PIN_CC` (what `live/claude-curl.sh` prints), passed as `LIVE_PIN_CC` and used for the N14-S line |
+| 7 `live.sh` pin default | `ver_test.sh` L1 also scans `live.sh`; L3: a `result` before `pinned_agents` prints `agent ?`; `lib_test.sh` L11 expects `agent ?` | `live.sh:12` `LIVE_VER=${LIVE_VER:-}` |
+| 8 cleanup | `hud_probe_test.py` H20: a second TERM while the pty driver ends a child that ignores SIGHUP (before: the child lived); `live-hud-probe_test.sh` L11 INT during session p (before: driver and stub Claude Code left), L12 an error exit after both sessions, and `fx_kept` after L8, L11, L12 (before: the committed fixtures were gone) | `cmd_pty` ignores TERM, INT and HUP in its `finally`; `prb_end` kills and waits for each `LIVE_PIDS` process before `live_end`; the script writes scrubbed fixtures to the scratch dir and replaces `prb-1-*` only after the 11-line check |
+| 9 test hygiene | H19: `analyze` on empty run dirs and on dead runs (start events only) gives no pass; before, no `pass` and dead slow runs gave class `kills` | `sys.dont_write_bytecode = True` in `hud_probe_test.py`; `cells()` and its import removed; `an_ph12` gives no class for a run with no end and no signal; all gates of PH1 to PH12 are `.pass.<id>` of `analyze` |
+| Also record: SGR rewrite | records script asserts it on `prb-1-verbose.txt` | The PH1 note: Claude Code rewrites `\e[1;97m` as `\e[1m\e[97m` and puts `\e[38;5;246m` after each reset (fixture lines 1 and 2) |
+
+Offline counts after round 2: `hud_probe tests: ok (19)`, `live-hud-probe tests: ok (20)`, `ver tests: ok (53)`, `lib tests: ok (28)`, `live selftest: ok (54)`, `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15)` with and without `N2_FORBIDDEN_NAMES`.
+
+Live: the committed fixtures hold no raw run logs, so the new gates could not be rerun on them; one more live Acceptance ran on the committed tree `c759e25` (two Claude Code starts, no prompt): exit 0, the same eleven words as round 1 (PH4 failed, PH12 observed, the rest verified), new texts. Main-loop requests 0 (each probe session record: cost 0, 0 tokens); auxiliary start requests not counted, about 2. One more trust entry in the caller's Claude Code config file, no project folder.
