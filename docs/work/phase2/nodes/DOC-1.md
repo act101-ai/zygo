@@ -80,7 +80,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   `zygo usage` also prints `tokens trimmed (estimate): <n>` (bytes ÷ 4, rounded up) after the exact `bytes trimmed: <n>` line. `zygo status` in a session prints its savings in tokens (`savings: cache 92%, trimmed 23k tok`) and a `spend: $3.41` line with the session spend of §7.2 (`≈` when notional); outside a session it prints no spend line. The status line shows the session's cache-read share and trimmed tokens. *(2026-11-22, HUD design)*
   ```
 
-- [ ] 12. H§9 row "§14 usage recording" → base §14, the tee bullet. After its sentence `Usage is written after the stream ends or the client disconnects.` insert:
+- [x] 12. H§9 row "§14 usage recording" → base §14, the tee bullet. After its sentence `Usage is written after the stream ends or the client disconnects.` insert:
 
   ```text
   The tee also reads `cache_creation.ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens` when present, for the cost: 5-minute writes at `cache_write_5m` (else `cache_write`), 1-hour writes and writes with no split at `cache_write` (§6.3); the row keeps one cache-write total (HUD design AU33). *(2026-11-22, HUD design)*
