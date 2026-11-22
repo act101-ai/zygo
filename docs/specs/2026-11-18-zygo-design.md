@@ -136,7 +136,7 @@ soft_context_window = 400000         # optional (§10.2); ≤ facts.context_wind
   upstream_model = "claude-opus-5-5"
   key = "env:ANTHROPIC_API_KEY"
   enabled = true                       # false = skipped (the kill switch)
-  [model.provider.price_usd_per_mtok]  # for the local cost estimate only (§14)
+  [model.provider.price_usd_per_mtok]  # for the local cost estimate (§14) and the session spend (§7.2)
   input = 4.0
   output = 20.0
   cache_read = 0.20
@@ -148,6 +148,7 @@ soft_context_window = 400000         # optional (§10.2); ≤ facts.context_wind
 - The effort ladder is `none < minimal < low < medium < high < xhigh < max`.
 - Providers are tried in the listed order (§7.4), after the session's pinned provider.
 - The built-in catalog ships rows for current Anthropic and OpenAI models with verified facts **(author)**. The model ids, prices and facts are data; the builder verifies each row against the provider's documentation and records `source` and `verified_on`.
+- `price_usd_per_mtok` may hold `long_context = { above, input, output, cache_read, cache_write, cache_write_5m }` (`cache_write_5m` optional): when a request's `prompt` (§10.2.1) is above `above` tokens, all its rates come from `long_context`, else the base rates (HUD design H§7.3). `zygo config check` refuses `above = 0` and a rate that is negative or not finite. *(2026-11-22, HUD design)*
 - `zygo config check` validates: unique ids; each model has ≥ 1 provider; `soft_context_window` > 0 and ≤ `context_window`, and only with facts; `effort_levels` empty only with `reasoning = "none"`; every role's model exists; every `[[schema_rule]]` (§7.6) is well formed. A failing user config refuses to launch with the first violation; a failing team config refuses to start the server.
 
 ### 6.4 Roles
