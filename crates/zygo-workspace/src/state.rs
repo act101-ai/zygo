@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use zygo_core::paths::Paths;
-use zygo_core::session_dir::{SessionDir, write_atomic};
+use zygo_core::session_dir::{self, SessionDir, write_atomic};
 
 use crate::identity::{valid_name, valid_pane_key, valid_tmux_session, valid_ws_id};
 
@@ -458,6 +458,24 @@ impl Store {
             Ok(f) => !matches!(fs4::FileExt::try_lock(&f), Err(fs4::TryLockError::WouldBlock)),
             Err(_) => true,
         }
+    }
+
+    /// The pane key of the first member, in key order, whose launcher is live: its `zygo_session` or its
+    /// `pending.zygo_session` (a start that is not committed yet) names a live session directory (AU87 (2)). An id
+    /// that is empty or has a byte outside `[A-Za-z0-9]` is not looked up, so no id names a path outside the
+    /// sessions directory. It takes no lock of this store and writes nothing.
+    pub fn live_launcher(&self, ws: &Workspace) -> Option<String> {
+        if !valid_ws_id(&self.id) {
+            return None;
+        }
+        let live = |id: &str| {
+            !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()) && session_dir::live(&self.sessions_dir.join(id))
+        };
+        ws.members.iter().find_map(|(key, m)| {
+            let committed = m.zygo_session.as_deref();
+            let pending = m.pending.as_ref().map(|p| p.zygo_session.as_str());
+            committed.into_iter().chain(pending).any(live).then(|| key.clone())
+        })
     }
 
     /// Adds the line `<unix seconds> <text>` to `errors.log`. The caller has no place to report a failure of the

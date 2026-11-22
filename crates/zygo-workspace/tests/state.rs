@@ -493,3 +493,50 @@ fn errors_log_has_one_line_per_call_and_at_most_64_kib() {
         assert!(secs.parse::<u64>().is_ok() && rest.starts_with("line ") && rest.ends_with(&"x".repeat(90)), "{l:?}");
     }
 }
+
+#[cfg(unix)]
+#[test] // AU87 (2): `zygo_session` and `pending.zygo_session`
+fn live_launcher_reads_committed_and_pending_sessions() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    let session = |name: &str, token: bool, locked: bool| -> Option<fs::File> {
+        let dir = p.sessions_dir.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        if token { fs::write(dir.join("token"), "t").unwrap(); }
+        let pid = hold(dir.join("pid"));
+        if locked { Some(pid) } else { None } // dropping the file ends the lock
+    };
+    let _live = session("01LIVE", true, true);
+    session("01DEAD", true, false);
+    let _no_token = session("01NOTOKEN", false, true);
+    fs::write(t.path().join("cache/token"), "t").unwrap(); // what `sessions/..` would name
+    let _outside = hold(t.path().join("cache/pid"));
+    let member = |committed: Option<&str>, pending: Option<&str>| {
+        let mut m = MemberRecord::new(Agent::ClaudeCode);
+        m.zygo_session = committed.map(String::from);
+        m.pending = pending.map(|s| Pending { zygo_session: s.into(), ..Default::default() });
+        m
+    };
+    let ws = |members: Vec<(&str, MemberRecord)>| {
+        let mut ws = Workspace::new(ID);
+        ws.members = members.into_iter().map(|(k, m)| (k.to_string(), m)).collect();
+        ws
+    };
+    assert_eq!(store.live_launcher(&ws(vec![])), None);
+    assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(None, None))])), None);
+    assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(Some("01DEAD"), None))])), None);
+    assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(Some("01NOTOKEN"), None))])), None);
+    assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(Some("01MISSING"), Some("01MISSING2")))])), None);
+    assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(Some("01LIVE"), None))])), Some("kaaaaaaaa".into()));
+    // only the start that is not committed yet is live
+    assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(Some("01DEAD"), Some("01LIVE")))])), Some("kaaaaaaaa".into()));
+    assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(None, Some("01LIVE")))])), Some("kaaaaaaaa".into()));
+    // the first live member in key order
+    assert_eq!(store.live_launcher(&ws(vec![("kccccccca", member(Some("01LIVE"), None)), ("kaaaaaaaa", member(Some("01DEAD"), None)),
+        ("kbbbbbbbb", member(None, Some("01LIVE")))])), Some("kbbbbbbbb".into()));
+    // hostile ids name no path
+    for bad in ["..", "../sessions/01LIVE", "", "01LIVE/", "/"] {
+        assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(Some(bad), Some(bad)))])), None, "{bad:?}");
+    }
+}
