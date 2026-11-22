@@ -177,6 +177,8 @@ for m in re.finditer(r"\"agent_id\": \"([^\"]+)\"|\b(a[0-9a-f]{16})\b", t):
         ids.append(a)
 for i, a in enumerate(ids):
     t = t.replace(a, "agent-id-%d" % (i + 1))
+# no time in a fixture: the seconds since the last answer of a resumed session become 0
+t = re.sub(r"(\"seconds_since_last_response\": )[0-9.]+", r"\g<1>0", t)
 sys.stdout.write(t)' >"${3:-$FXC}/$2"
 }
 
