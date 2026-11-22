@@ -92,6 +92,8 @@ pub struct Cap {
     pub cmdline: Option<String>,
     pub settings_mode: Option<u32>,
     pub argv: Vec<String>,
+    /// `(flag, id)` of the session argument (`--session-id`, `--resume` or `-s`); `None` when the argv has none.
+    pub session_arg: Option<(String, String)>,
     pub env: BTreeMap<String, String>,
     pub settings: Value,
     pub mcp: Value,
@@ -144,7 +146,9 @@ pub fn launch(rig: &Rig, adapter: &dyn AgentAdapter, version: &str, tweak: impl 
     tweak(&mut o);
     let code = Launcher::run(adapter, o);
     let stderr = String::from_utf8_lossy(&buf.lock().unwrap()).into_owned();
+    let arg = json_file(&out, "session-arg.json");
     let cap = Cap {
+        session_arg: arg["flag"].as_str().zip(arg["id"].as_str()).map(|(f, i)| (f.to_string(), i.to_string())),
         cmdline: std::fs::read_to_string(out.join("cmdline.txt")).ok(),
         settings_mode: std::fs::read_to_string(out.join("settings-mode.txt")).ok().and_then(|t| u32::from_str_radix(t.trim(), 8).ok()),
         argv: serde_json::from_value(json_file(&out, "argv.json")).unwrap_or_default(),
@@ -158,6 +162,14 @@ pub fn launch(rig: &Rig, adapter: &dyn AgentAdapter, version: &str, tweak: impl 
         mcp_run: strs(&out, "mcp-run.json"),
     };
     Run { code, stderr, cap }
+}
+
+/// Appends one step line to `dir/steps`, the control file of a stub agent started with `ZYGO_STUB_CONTROL=dir`
+/// (the protocol is in the head of `stub.rs`). It makes `dir` and checks nothing else.
+pub fn stub_control(dir: &Path, step: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(dir)?;
+    std::fs::OpenOptions::new().create(true).append(true).open(dir.join("steps"))?.write_all(format!("{step}\n").as_bytes())
 }
 
 fn git(dir: &Path, args: &[&str]) {
