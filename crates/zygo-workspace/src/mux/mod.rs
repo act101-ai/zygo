@@ -2,6 +2,82 @@
 
 pub mod tmux;
 
+/// The tmux test gate and the private test server (W§19). Only the `test-hooks` feature builds it.
+#[cfg(feature = "test-hooks")]
+pub mod testing {
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    #[cfg(unix)]
+    use super::Multiplexer;
+    #[cfg(unix)]
+    use super::{tmux::Tmux, MuxError, MIN_VERSION};
+
+    /// The start of the line that a skipped tmux test writes to stderr.
+    pub const SKIP_PREFIX: &str = "tmux tests skipped: ";
+
+    /// `Ok(program)` when `program` is tmux 3.2 or later; else the reason to skip (W3 D12).
+    #[cfg(unix)]
+    pub fn tmux_gate(program: &Path) -> Result<PathBuf, String> {
+        let p = program.display();
+        match Tmux::new(program.to_path_buf(), None).version() {
+            Ok(v) if v >= MIN_VERSION => Ok(program.to_path_buf()),
+            Ok((major, minor)) => {
+                Err(format!("{p} is tmux {major}.{minor}; the minimum is {}.{}", MIN_VERSION.0, MIN_VERSION.1))
+            }
+            Err(MuxError::Spawn { message }) => Err(format!("{p}: cannot run: {message}")),
+            Err(MuxError::Failed { message }) if message.starts_with("unknown tmux version: ") => {
+                Err(format!("{p}: {message}"))
+            }
+            Err(e) => Err(format!("{p}: tmux -V failed: {e}")),
+        }
+    }
+
+    /// The tmux tests run on unix only (W3 D15).
+    #[cfg(not(unix))]
+    pub fn tmux_gate(_program: &Path) -> Result<PathBuf, String> { Err("tmux tests run on unix only".into()) }
+
+    /// Writes the skip line. `write_all` on stderr, not `eprintln!`, because the test harness captures only the print
+    /// macros.
+    fn skip(reason: &str) {
+        let _ = std::io::stderr().write_all(format!("{SKIP_PREFIX}{reason}\n").as_bytes());
+    }
+
+    /// [`tmux_gate`], with the skip line on stderr when it refuses.
+    pub fn require_tmux_at(program: &Path) -> Option<PathBuf> {
+        match tmux_gate(program) {
+            Ok(p) => Some(p),
+            Err(reason) => {
+                skip(&reason);
+                None
+            }
+        }
+    }
+
+    /// The first `tmux` on `PATH` (a file, with an execute bit on unix), through [`require_tmux_at`]. When there is
+    /// none it writes `tmux tests skipped: tmux not found on PATH` and gives `None`.
+    pub fn require_tmux() -> Option<PathBuf> {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let found = std::env::split_paths(&path).map(|d| d.join("tmux")).find(|p| runnable(p));
+        match found {
+            Some(p) => require_tmux_at(&p),
+            None => {
+                skip("tmux not found on PATH");
+                None
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn runnable(p: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+
+    #[cfg(not(unix))]
+    fn runnable(p: &Path) -> bool { p.is_file() }
+}
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;

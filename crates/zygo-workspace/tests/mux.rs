@@ -10,6 +10,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
+use zygo_workspace::mux::testing::{require_tmux_at, tmux_gate, SKIP_PREFIX};
+#[cfg(unix)]
 use zygo_workspace::mux::tmux::Tmux;
 #[cfg(unix)]
 use zygo_workspace::mux::{HookScope, Multiplexer, NewSession, NewWindow, SessionAnswer, Split};
@@ -371,4 +373,47 @@ fn created_indexes_and_ids_are_read() {
     let t = at("empty", "exit 0");
     assert_eq!(t.show_pane_option("%1", "@zygo-pane"), Ok(None));
     assert_eq!(t.show_session_option("zygo-t", "@zygo-ws"), Ok(None));
+}
+
+#[cfg(unix)]
+#[test]
+fn gate_refuses_a_missing_program() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("no-tmux");
+    assert!(tmux_gate(&p).unwrap_err().starts_with(&format!("{}: cannot run: ", p.display())));
+    assert_eq!(require_tmux_at(&p), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn gate_refuses_tmux_3_1() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    stub(dir.path(), "tmux", "echo 'tmux 3.1'");
+    let p = dir.path().join("tmux");
+    assert_eq!(tmux_gate(&p), Err(format!("{} is tmux 3.1; the minimum is 3.2", p.display())));
+    assert_eq!(require_tmux_at(&p), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn gate_refuses_an_unknown_version() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    stub(dir.path(), "tmux", "echo 'tmux master'");
+    let p = dir.path().join("tmux");
+    assert_eq!(tmux_gate(&p), Err(format!("{}: unknown tmux version: tmux master", p.display())));
+}
+
+#[cfg(unix)]
+#[test]
+fn gate_accepts_tmux_3_2a() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    stub(dir.path(), "tmux", "echo 'tmux 3.2a'");
+    let p = dir.path().join("tmux");
+    assert_eq!(tmux_gate(&p), Ok(p.clone()));
+    assert_eq!(require_tmux_at(&p), Some(p));
+    assert_eq!(SKIP_PREFIX, "tmux tests skipped: ");
 }
