@@ -26,6 +26,26 @@ done
 HDR='| Agent | A-1 | A-2 | A-3 | A-4 | A-5 | A-6 | A-7 | A-8 | A-9 | A-10 | A-11 | A-12 | A-13 | A-14 | A-15 | A-16 | A-17 | A-18 | A-19 | A-20 | A-21 |'
 WHDR='| Agent | WA-1 | WA-2 |'
 
+# Every table row of the file belongs to a known table: a run of `|` lines starts with a known header row, seen
+# once, then a separator row. An unknown table, a duplicate header or a row outside a known table fails.
+awk -v h1="$HDR" -v h2="$WHDR" '
+  /^\|/ {
+    if (!on) {
+      if ($0 != h1 && $0 != h2) {
+        if ($0 ~ /^\| Agent \|/) printf "check-conformance: unknown table header: %s\n", $0
+        else printf "check-conformance: table row outside a known table: %s\n", $0
+        bad = 1; exit
+      }
+      if (seen[$0]++) { printf "check-conformance: duplicate table header: %s\n", $0; bad = 1; exit }
+      on = 1; hdr = $0; row = 0; next
+    }
+    row++
+    if (row == 1 && $0 !~ /^\|[-| ]*\|$/) { printf "check-conformance: no separator row under %s\n", hdr; bad = 1; exit }
+    next
+  }
+  { on = 0 }
+  END { exit bad }' "$C" || exit 1
+
 # The data rows of the table whose header row is $1: the table rows right after it, without the separator row.
 table_rows() {
   awk -v h="$1" '$0 == h { on = 1; next } on && /^\|/ { print; next } on { exit }' "$C" | grep -v '^|[-| ]*|$'
