@@ -211,8 +211,8 @@ pub struct NewSession<'a> {
     /// The first pane's command, 2 or more items.
     pub argv: &'a [OsString],
     /// The workspace id and the first pane key (W7 D27). With `Some`, the same tmux invocation as `new-session` sets
-    /// the session option `@zygo-ws` and the first pane's `@zygo-pane`, so no session of a workspace exists without
-    /// its owner. An id that fails `identity::valid_ws_id` or a key that fails `identity::valid_pane_key` gives
+    /// the session option `@zygo-ws`, the first pane's `@zygo-pane` and the session's `destroy-unattached off` (W7 I2),
+    /// so no session of a workspace exists without its owner, and a global `destroy-unattached on` does not end it. An id that fails `identity::valid_ws_id` or a key that fails `identity::valid_pane_key` gives
     /// `Failed` before any spawn.
     pub owner: Option<(&'a str, &'a str)>,
 }
@@ -304,7 +304,9 @@ pub trait Multiplexer {
     fn session_exists(&self, session: &str) -> SessionAnswer;
     /// `new-session -d -P -F #{window_index} -s <s> -c <dir> -x <w> -y <h> -- <argv>`, with exactly `spec.env`;
     /// returns the first window index. With `spec.owner`, the same invocation goes on with
-    /// `; set-option -t =<s>: -- @zygo-ws <id> ; set-option -p -t =<s>: -- @zygo-pane <key>` (W7 D27).
+    /// `; set-option -t =<s>: -- @zygo-ws <id> ; set-option -p -t =<s>: -- @zygo-pane <key>` (W7 D27) and
+    /// `; set-option -t =<s>: -- destroy-unattached off` (AU68, W7 I2: a global `on` would destroy the detached
+    /// session when the command list ends).
     fn new_session(&self, spec: &NewSession<'_>) -> Result<u32, MuxError>;
     /// `resize-window -t =<s>:<w> -x <width> -y <height>`. A missing window: `NoTarget`, or `Gone` with the session.
     fn resize_window(&self, session: &str, window: u32, width: u32, height: u32) -> Result<(), MuxError>;
@@ -417,13 +419,16 @@ impl std::fmt::Display for MuxError {
 
 impl std::error::Error for MuxError {}
 
-/// Whether the first line of tmux's stderr says that the session or its server is gone (AU87 (1), W3 D2).
+/// Whether the first line of tmux's stderr says that the session or its server is gone (AU87 (1), W3 D2). `no current
+/// target` is the answer of a server that runs with no session at all (`exit-empty off`; probe, tmux 3.2a and 3.7c,
+/// 2026-11-22; W7 I5).
 pub fn is_gone_message(stderr: &str) -> bool {
     let l = stderr.lines().next().unwrap_or("").trim_end();
     l.starts_with("can't find session")
         || l.starts_with("no such session:")
         || l.starts_with("no server running on ")
         || l == "server exited unexpectedly"
+        || l == "no current target"
         || (l.starts_with("error connecting to ")
             && (l.ends_with(" (No such file or directory)") || l.ends_with(" (Connection refused)")))
 }

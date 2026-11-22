@@ -329,6 +329,9 @@ impl Multiplexer for Tmux {
             let target = session_target(spec.name);
             c.args([";", "set-option", "-t", &target, "--", "@zygo-ws", id]);
             c.args([";", "set-option", "-p", "-t", &target, "--", "@zygo-pane", key]);
+            // A global `destroy-unattached on` destroys a detached session when the command list ends (probe, tmux
+            // 3.2a and 3.7c, 2026-11-22), so the session's own `off` (AU68) is set in the same invocation (W7 I2).
+            c.args([";", "set-option", "-t", &target, "--", "destroy-unattached", "off"]);
         }
         window_index(finish(run_bounded(c, BOUND)?)?)
     }

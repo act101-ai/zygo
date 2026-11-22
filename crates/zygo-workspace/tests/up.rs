@@ -556,6 +556,9 @@ fn first_up_builds_the_loadout() {
     let Some(_) = require_tmux() else { return };
     let mut l = live("0");
     l.srv.run(&["new-session", "-d", "-s", "base", "sleep", "600"]).unwrap();
+    // A global `destroy-unattached on` ends every unattached session at once, `base` too; `exit-empty off` keeps the
+    // server (probe, tmux 3.2a and 3.7c; W7 I2).
+    l.srv.run(&["set-option", "-g", "exit-empty", "off"]).unwrap();
     l.srv.run(&["set-option", "-g", "destroy-unattached", "on"]).unwrap();
     l.srv.run(&["set-option", "-gw", "remain-on-exit", "on"]).unwrap();
     let g0 = globals(&l.srv);
@@ -629,9 +632,10 @@ fn panes_are_written_before_ws_run_reads_them() {
         assert!(c.contains(&format!("ws run --ws-id {} --pane {}", l.id, p.key)), "{c}");
         assert_eq!(c.ends_with("--shell"), p.kind == PaneKind::Shell, "{c}");
     }
-    let w0 = format!("=zygo-app:{}", ws.windows[0].index);
-    let id = l.srv.run(&["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", &w0, "sleep", "600"]).unwrap();
-    assert!(wait_for(S5, || l.srv.run(&["display-message", "-p", "-t", &id, "#{pane_current_path}"]).unwrap() == l.repo.display().to_string()));
+    // AU55: a split that the user makes in an attached client opens in `#{session_path}`, the `-c` of new-session. A
+    // split from a command-line client opens in that client's own folder (probe, tmux 3.7c; W7 I4), so the test reads
+    // the session path.
+    assert_eq!(l.srv.run(&["display-message", "-p", "-t", "=zygo-app:", "#{session_path}"]).unwrap(), l.repo.display().to_string());
 }
 
 #[test] // W§18 #15, AU54
@@ -1191,8 +1195,13 @@ fn repair_after_a_failure_after_new_session() {
     let now = by_key(&l.srv);
     assert!(ws.panes.iter().all(|p| now.contains_key(&p.key)), "{now:?}");
     assert_eq!(read(&store).phase, Phase::Up);
+    // W7 I3: the dead `up` wrote no `tmux_socket`; repair records it, so later snapshots run
+    assert_eq!(ws.tmux_socket, None);
+    assert_eq!(read(&store).tmux_socket.as_deref(), Some(l.srv.socket()));
     assert_eq!(l.srv.run(&["show-environment", "-t", "=zygo-app:", "ZYGO_WORKSPACE"]).unwrap(), format!("ZYGO_WORKSPACE={}", l.id));
-    assert_eq!(l.srv.run(&["show-hooks", "-t", "=zygo-app:"]).unwrap().matches("after-new-window").count(), 1);
+    let hooks = l.srv.run(&["show-hooks", "-t", "=zygo-app:"]).unwrap();
+    // Each line names its hook twice (`after-new-window[0] … --event after-new-window`): count the entries.
+    assert_eq!(hooks.lines().filter(|l| l.starts_with("after-new-window[")).count(), 1, "{hooks}");
 }
 
 #[test] // M1, M7, AU96

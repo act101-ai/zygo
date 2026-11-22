@@ -680,6 +680,23 @@ fn session_answers_follow_au87() {
 
 #[cfg(unix)]
 #[test]
+fn a_server_with_no_session_gives_gone() {
+    // W7 I5: with `exit-empty off` the server runs on with no session; tmux 3.2a and 3.7c then answer `has-session`
+    // with `no current target`
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    srv.run(&["new-session", "-d", "-s", "zygo-keep", "--", "sleep", "600"]).unwrap();
+    srv.run(&["set-option", "-g", "exit-empty", "off"]).unwrap();
+    srv.run(&["kill-session", "-t", "=zygo-keep:"]).unwrap();
+    srv.run(&["list-sessions"]).unwrap();
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Gone);
+    assert!(is_gone_message("no current target"));
+}
+
+#[cfg(unix)]
+#[test]
 fn killing_the_last_session_gives_gone() {
     // B2
     let _g = forks();
@@ -1146,7 +1163,8 @@ fn new_session_sets_the_owner_in_the_same_call() {
     let ns = |owner| NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner };
     let _ = t.new_session(&ns(Some(("0123456789abcdef", "kaaaaaaaa"))));
     let want = "LC_ALL=unset -u new-session -d -P -F #{window_index} -s zygo-t -c /w -x 80 -y 24 -- sleep 600 ; \
-                set-option -t =zygo-t: -- @zygo-ws 0123456789abcdef ; set-option -p -t =zygo-t: -- @zygo-pane kaaaaaaaa";
+                set-option -t =zygo-t: -- @zygo-ws 0123456789abcdef ; set-option -p -t =zygo-t: -- @zygo-pane kaaaaaaaa ; \
+                set-option -t =zygo-t: -- destroy-unattached off";
     assert_eq!(log_lines(dir.path()), [want]);
     assert!(matches!(t.new_session(&ns(Some(("x", "kaaaaaaaa")))), Err(MuxError::Failed { .. })));
     assert!(matches!(t.new_session(&ns(Some(("0123456789abcdef", "k$")))), Err(MuxError::Failed { .. })));
@@ -1170,7 +1188,13 @@ fn new_session_sets_the_owner_live() {
         argv: &argv(),
         owner: Some(("0123456789abcdef", "kaaaaaaaa")),
     };
+    // W7 I2: a global `destroy-unattached on` does not end the new session
+    srv.run(&["new-session", "-d", "-s", "base", "sleep", "600"]).unwrap();
+    srv.run(&["set-option", "-g", "exit-empty", "off"]).unwrap();
+    srv.run(&["set-option", "-g", "destroy-unattached", "on"]).unwrap();
     assert_eq!(t.new_session(&ns), Ok(0));
     assert_eq!(t.show_session_option("zygo-t", "@zygo-ws"), Ok(Some("0123456789abcdef".into())));
     assert_eq!(t.display("=zygo-t:", "#{@zygo-pane}"), Ok("kaaaaaaaa".into()));
+    assert_eq!(t.show_session_option("zygo-t", "destroy-unattached"), Ok(Some("off".into())));
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Exists);
 }
