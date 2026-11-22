@@ -86,7 +86,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   The tee also reads `cache_creation.ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens` when present, for the cost: 5-minute writes at `cache_write_5m` (else `cache_write`), 1-hour writes and writes with no split at `cache_write` (§6.3); the row keeps one cache-write total (HUD design AU33). *(2026-11-22, HUD design)*
   ```
 
-- [ ] 13. H§9 row "§17, `zygo doctor`" → base §17 command table, the `zygo doctor` row. Replace its "Does" cell with:
+- [x] 13. H§9 row "§17, `zygo doctor`" → base §17 command table, the `zygo doctor` row. Replace its "Does" cell with:
 
   ```text
   Agent binaries and versions, secret store, keys present per provider, server reachable, plugin store, missing plugin commands, plugins also installed in the agent's own config, repo policy, and one icon test line: the Nerd glyphs of the status line and the active icon set (HUD design AU2). *(2026-11-22, HUD design)*

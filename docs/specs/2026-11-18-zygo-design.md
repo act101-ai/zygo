@@ -794,7 +794,7 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `zygo opencode [--profile <n>] [--server <url>] [--compact <n\|off>] [--yolo] [-- <args>]` | Launch OpenCode (`--yolo` → `--auto`). *(Note 2026-11-19, N65 planning: `--auto` goes where OpenCode 1.18.16 accepts it: right after `run`, or first for the TUI; a subcommand without `--auto` gets none, and the session log says so.)* |
 | `zygo serve [--listen] [--tls-cert --tls-key]`, `zygo serve token new <label>`, `zygo serve reload` | Serve mode. |
 | `zygo status` | Mode, server, profile, work item, repo policy, session status (inside a session: context use, override, savings). |
-| `zygo doctor` | Agent binaries and versions, secret store, keys present per provider, server reachable, plugin store, missing plugin commands, plugins also installed in the agent's own config, repo policy. |
+| `zygo doctor` | Agent binaries and versions, secret store, keys present per provider, server reachable, plugin store, missing plugin commands, plugins also installed in the agent's own config, repo policy, and one icon test line: the Nerd glyphs of the status line and the active icon set (HUD design AU2). *(2026-11-22, HUD design)* |
 | `zygo compact <tokens\|on\|off>` | §10.2.4. |
 | `zygo profile list\|show\|use` | §11. |
 | `zygo work [<id>\|clear]`, `zygo work report` | §13. |
