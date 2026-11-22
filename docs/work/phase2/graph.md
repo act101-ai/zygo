@@ -77,7 +77,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | TODO | implementation | — |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
-| X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | IN-PROGRESS | judgment | wt .worktrees/phase2/X1 |
+| X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | IN-PROGRESS | implementation | wt .worktrees/phase2/L3 |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | IN-PROGRESS | judgment | wt .worktrees/phase2/W1 |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | TODO | judgment | — |
@@ -96,6 +96,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
+| M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
 
 ## Log
 
@@ -130,3 +131,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | zygo_hooks::statusline::trimmed (used by zygo status) still reads Store::summary, not Store::bytes_trimmed. |
 | 2026-11-21 | Resume: graph check failed (PRB-1 shares files with LIV-1 and LIV-2 without an edge; 3 long Log entries). Controller decision: order LIV-1 → PRB-1 → LIV-2; long entries split verbatim. |
 | 2026-11-21 | C1 DONE (one round). Plan label fix: a bold Consumes/Produces label in a Plan section is read as a contract field by the validator; plans use other labels. |
+| 2026-11-21 | X1 DONE (one round). In-flight count is a drop guard held by Pending; the serve-mode case is tested as a team session on the shared router, not on a TLS listener (tests/serve.rs is not in X1 Files). |
