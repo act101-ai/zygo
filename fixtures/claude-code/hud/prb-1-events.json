@@ -12,515 +12,528 @@
     "event": "end"
   },
   {
-    "t": 2.17,
+    "t": 2.1,
     "run": 2,
     "phase": "verbose",
     "event": "start"
   },
   {
-    "t": 2.17,
+    "t": 2.1,
     "run": 2,
     "phase": "verbose",
     "event": "end"
   },
   {
-    "t": 4.15,
+    "t": 4.11,
     "run": 3,
     "phase": "verbose",
     "event": "start"
   },
   {
-    "t": 4.15,
+    "t": 4.11,
     "run": 3,
     "phase": "verbose",
     "event": "end"
   },
   {
-    "t": 6.15,
+    "t": 6.1,
     "run": 4,
     "phase": "compact",
     "event": "start"
   },
   {
-    "t": 6.15,
+    "t": 6.1,
     "run": 4,
     "phase": "compact",
     "event": "end"
   },
   {
-    "t": 8.15,
+    "t": 8.1,
     "run": 5,
     "phase": "wideA",
     "event": "start"
   },
   {
-    "t": 8.15,
+    "t": 8.1,
     "run": 5,
     "phase": "wideA",
     "event": "end"
   },
   {
-    "t": 10.15,
+    "t": 10.1,
     "run": 6,
     "phase": "wideB",
     "event": "start"
   },
   {
-    "t": 10.15,
+    "t": 10.1,
     "run": 6,
     "phase": "wideB",
     "event": "end"
   },
   {
-    "t": 12.15,
+    "t": 12.1,
     "run": 7,
-    "phase": "wideB",
+    "phase": "wideC",
     "event": "start"
   },
   {
-    "t": 12.15,
+    "t": 12.1,
     "run": 7,
-    "phase": "wideB",
+    "phase": "wideC",
     "event": "end"
   },
   {
-    "t": 14.19,
+    "t": 14.11,
     "run": 8,
     "phase": "wideC",
     "event": "start"
   },
   {
-    "t": 14.19,
+    "t": 14.11,
     "run": 8,
     "phase": "wideC",
     "event": "end"
   },
   {
-    "t": 16.22,
+    "t": 16.1,
     "run": 9,
-    "phase": "wideC",
-    "event": "start"
-  },
-  {
-    "t": 16.23,
-    "run": 9,
-    "phase": "wideC",
-    "event": "end"
-  },
-  {
-    "t": 18.19,
-    "run": 10,
     "phase": "wideD",
     "event": "start"
   },
   {
-    "t": 18.2,
-    "run": 10,
+    "t": 16.1,
+    "run": 9,
     "phase": "wideD",
     "event": "end"
   },
   {
-    "t": 20.21,
+    "t": 18.1,
+    "run": 10,
+    "phase": "early",
+    "event": "start"
+  },
+  {
+    "t": 18.1,
+    "run": 10,
+    "phase": "early",
+    "event": "end"
+  },
+  {
+    "t": 20.1,
     "run": 11,
     "phase": "early",
     "event": "start"
   },
   {
-    "t": 20.21,
+    "t": 20.1,
     "run": 11,
     "phase": "early",
     "event": "end"
   },
   {
-    "t": 22.26,
+    "t": 22.1,
     "run": 12,
     "phase": "early",
     "event": "start"
   },
   {
-    "t": 22.26,
+    "t": 22.1,
     "run": 12,
     "phase": "early",
     "event": "end"
   },
   {
-    "t": 24.17,
+    "t": 24.1,
     "run": 13,
     "phase": "early",
     "event": "start"
   },
   {
-    "t": 24.17,
+    "t": 24.1,
     "run": 13,
     "phase": "early",
     "event": "end"
   },
   {
-    "t": 26.15,
+    "t": 26.1,
     "run": 14,
-    "phase": "early",
+    "phase": "slow",
     "event": "start"
   },
   {
-    "t": 26.15,
+    "t": 26.1,
     "run": 14,
-    "phase": "early",
-    "event": "end"
+    "phase": "slow",
+    "event": "beat"
   },
   {
-    "t": 28.16,
+    "t": 26.6,
+    "run": 14,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 27.1,
+    "run": 14,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 27.6,
+    "run": 14,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 28.09,
+    "run": 14,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 28.11,
     "run": 15,
-    "phase": "early",
+    "phase": "slow",
     "event": "start"
   },
   {
-    "t": 28.16,
+    "t": 28.12,
     "run": 15,
-    "phase": "early",
-    "event": "end"
+    "phase": "slow",
+    "event": "beat"
   },
   {
-    "t": 30.19,
+    "t": 28.62,
+    "run": 15,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 29.12,
+    "run": 15,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 29.62,
+    "run": 15,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 30.08,
+    "run": 15,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 30.1,
     "run": 16,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 30.19,
+    "t": 30.11,
     "run": 16,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 30.69,
+    "t": 30.61,
     "run": 16,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 31.19,
+    "t": 31.11,
     "run": 16,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 31.69,
+    "t": 31.61,
     "run": 16,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 32.14,
+    "t": 32.08,
     "run": 16,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 32.18,
+    "t": 32.1,
     "run": 17,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 32.18,
+    "t": 32.11,
     "run": 17,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 32.68,
+    "t": 32.61,
     "run": 17,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 33.18,
+    "t": 33.11,
     "run": 17,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 33.68,
+    "t": 33.61,
     "run": 17,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 34.15,
+    "t": 34.08,
     "run": 17,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 34.19,
+    "t": 34.1,
     "run": 18,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 34.19,
+    "t": 34.1,
     "run": 18,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 34.69,
+    "t": 34.6,
     "run": 18,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 35.2,
+    "t": 35.1,
     "run": 18,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 35.7,
+    "t": 35.6,
     "run": 18,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 36.14,
+    "t": 36.08,
     "run": 18,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 36.17,
+    "t": 36.1,
     "run": 19,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 36.17,
+    "t": 36.1,
     "run": 19,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 36.67,
+    "t": 36.6,
     "run": 19,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 37.17,
+    "t": 37.1,
     "run": 19,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 37.67,
+    "t": 37.6,
     "run": 19,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 38.14,
+    "t": 38.09,
     "run": 19,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 38.18,
+    "t": 38.12,
     "run": 20,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 38.18,
+    "t": 38.12,
     "run": 20,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 38.68,
+    "t": 38.62,
     "run": 20,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 39.18,
+    "t": 39.12,
     "run": 20,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 39.68,
+    "t": 39.62,
     "run": 20,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 40.14,
+    "t": 40.08,
     "run": 20,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 40.2,
+    "t": 40.11,
     "run": 21,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 40.2,
+    "t": 40.11,
     "run": 21,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 40.7,
+    "t": 40.61,
     "run": 21,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 41.2,
+    "t": 41.11,
     "run": 21,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 41.7,
+    "t": 41.61,
     "run": 21,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 42.16,
+    "t": 42.08,
     "run": 21,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 42.22,
+    "t": 42.1,
     "run": 22,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 42.22,
+    "t": 42.11,
     "run": 22,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 42.72,
+    "t": 42.61,
     "run": 22,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 43.22,
+    "t": 43.11,
     "run": 22,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 43.72,
+    "t": 43.61,
     "run": 22,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 44.15,
+    "t": 44.09,
     "run": 22,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 44.2,
+    "t": 44.11,
     "run": 23,
     "phase": "slow",
     "event": "start"
   },
   {
-    "t": 44.2,
+    "t": 44.11,
     "run": 23,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 44.7,
+    "t": 44.61,
     "run": 23,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 45.2,
+    "t": 45.11,
     "run": 23,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 45.7,
+    "t": 45.61,
     "run": 23,
     "phase": "slow",
     "event": "beat"
   },
   {
-    "t": 46.16,
+    "t": 46.08,
     "run": 23,
     "phase": "slow",
     "event": "signal",
     "sig": "TERM"
   },
   {
-    "t": 46.22,
+    "t": 46.11,
     "run": 24,
-    "phase": "slow",
-    "event": "start"
-  },
-  {
-    "t": 46.22,
-    "run": 24,
-    "phase": "slow",
-    "event": "beat"
-  },
-  {
-    "t": 46.72,
-    "run": 24,
-    "phase": "slow",
-    "event": "beat"
-  },
-  {
-    "t": 47.22,
-    "run": 24,
-    "phase": "slow",
-    "event": "beat"
-  },
-  {
-    "t": 47.72,
-    "run": 24,
-    "phase": "slow",
-    "event": "beat"
-  },
-  {
-    "t": 48.15,
-    "run": 24,
-    "phase": "slow",
-    "event": "signal",
-    "sig": "TERM"
-  },
-  {
-    "t": 48.22,
-    "run": 25,
     "phase": "done",
     "event": "start"
   },
   {
-    "t": 48.22,
-    "run": 25,
+    "t": 46.11,
+    "run": 24,
     "phase": "done",
     "event": "end"
   }
