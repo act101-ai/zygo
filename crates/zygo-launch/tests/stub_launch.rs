@@ -130,6 +130,47 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
 }
 
 #[test]
+fn member_with_user_settings_launches_as_a_plain_launch() { // AU58, AU59
+    use zygo_core::session_view::Member;
+    const WARN: &str = "zygo: your --settings replaces zygo's settings file; the lead guard is off";
+    const AU59: &str = "zygo: --settings replaces zygo's hooks; this agent is not saved by the workspace";
+    let rig = rig();
+    let user = rig.cwd.join("user-settings.json");
+    std::fs::write(&user, "{}").unwrap();
+    for args in [vec!["--settings".to_string(), user.display().to_string()], vec![format!("--settings={}", user.display())]] {
+        let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+            o.env.0.extend([("ZYGO_WORKSPACE".into(), "old-ws".into()), ("ZYGO_PANE".into(), "old-pane".into())]);
+            o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into() });
+            o.args = args.clone();
+        });
+        assert_eq!(r.code, 0, "{}", r.stderr);
+        let lines: Vec<&str> = r.stderr.lines().collect();
+        let at = lines.iter().position(|l| *l == WARN).unwrap_or_else(|| panic!("{}", r.stderr));
+        assert_eq!(lines.get(at + 1), Some(&AU59), "{}", r.stderr);
+        assert_eq!(zygo_launch::claude_code::MEMBER_SETTINGS_WARN, AU59);
+        assert!(!r.cap.env.contains_key("ZYGO_WORKSPACE") && !r.cap.env.contains_key("ZYGO_PANE"), "{:?}", r.cap.env.keys());
+        let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
+        assert!(view["workspace"].is_null(), "{view}");
+        assert!(r.cap.session.values().all(|t| !t.contains("hook workspace")));
+    }
+}
+
+#[test]
+fn member_with_settings_after_double_dash_stays_a_member() { // AU58, review minor 1
+    use zygo_core::session_view::Member;
+    let rig = rig();
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+        o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into() });
+        o.args = vec!["--".into(), "--settings".into(), "x.json".into()];
+    });
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(!r.stderr.contains("--settings replaces"), "{}", r.stderr);
+    assert_eq!(r.cap.env["ZYGO_WORKSPACE"], "ws-1");
+    let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
+    assert_eq!(view["workspace"]["member"]["pane"], "p-1");
+}
+
+#[test]
 fn session_callback_runs_after_the_session_dir_exists_and_before_the_agent_starts() { // AU34
     use std::sync::{Arc, Mutex};
     let rig = rig();

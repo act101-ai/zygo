@@ -32,6 +32,7 @@ use zygo_work::repo::{checkout, repository_id};
 use zygo_work::WorkItem;
 
 use crate::adapter::{AgentAdapter, LaunchCtx, Plugins};
+use crate::claude_code;
 use crate::env::{child_env, Env};
 use crate::serve_client::{self, end_rows, write_team, Bounds, Heartbeat, Refused, ServeClient, HEARTBEAT_EVERY};
 use crate::{session_dir, signals};
@@ -497,6 +498,9 @@ impl Session<'_> {
         let c = &self.cfg.config;
         // The base stays although every field is named today: a later field then needs no change here
         // until the launcher sets it (statusline HUD design H§17 note 1).
+        // AU58, AU59: a member whose Claude Code arguments hold `--settings` before any `--` runs as a plain launch.
+        let cleared = opts.member.is_some() && adapter.agent() == Agent::ClaudeCode && claude_code::has_user_settings(&opts.args);
+        let member = if cleared { None } else { opts.member.clone() };
         #[allow(clippy::needless_update)]
         let view = SessionView {
             session: self.grant.session.clone(),
@@ -518,7 +522,7 @@ impl Session<'_> {
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
             statusline_style: c.statusline.style.clone(),
-            workspace: opts.member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone() }),
+            workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone() }),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {
@@ -571,6 +575,9 @@ impl Session<'_> {
         for l in &spec.lines {
             out.line(l);
         }
+        if cleared {
+            out.line(claude_code::MEMBER_SETTINGS_WARN);
+        }
         for l in &spec.log {
             session_dir::log(sd, l);
         }
@@ -586,7 +593,7 @@ impl Session<'_> {
         ];
         set.extend(spec.env);
         // §8.4 "Set" for a member (AU58); for every other launch the filter removes both names.
-        if let Some(m) = &opts.member {
+        if let Some(m) = &member {
             set.push(("ZYGO_WORKSPACE".into(), m.ws_id.clone()));
             set.push(("ZYGO_PANE".into(), m.pane.clone()));
         }
