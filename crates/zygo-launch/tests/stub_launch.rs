@@ -175,7 +175,9 @@ fn session_callback_of_a_member_with_settings_gets_no_member() { // AU34, AU59, 
     use std::sync::{Arc, Mutex};
     use zygo_core::session_view::Member;
     let member = Member { ws_id: "ws-1".into(), pane: "p-1".into() };
-    let cases: [(Option<Member>, Vec<String>, Option<Member>, bool); 4] = [
+    /// The member given, the arguments, the member the callback gets, `member_dropped`.
+    type Case = (Option<Member>, Vec<String>, Option<Member>, bool);
+    let cases: [Case; 4] = [
         (Some(member.clone()), vec!["--settings".into(), "x.json".into()], None, true),
         (Some(member.clone()), vec!["--".into(), "--settings".into(), "x.json".into()], Some(member.clone()), false),
         (Some(member.clone()), vec![], Some(member.clone()), false),
