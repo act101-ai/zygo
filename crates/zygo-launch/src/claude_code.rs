@@ -228,6 +228,26 @@ fn agents(ctx: &LaunchCtx, user: Map<String, Value>) -> Value {
     Value::Object(out)
 }
 
+/// The status line `refreshInterval` in seconds.
+const REFRESH_INTERVAL: u64 = 30;
+
+/// [`REFRESH_INTERVAL`]. Test seam (P-HUD-1): `ZYGO_TEST_REFRESH_INTERVAL` in the launch environment, a positive
+/// integer of seconds, replaces it; any other value keeps the default. The code that reads the variable exists only
+/// under the `test-hooks` feature.
+#[cfg(feature = "test-hooks")]
+fn refresh_interval(ctx: &LaunchCtx) -> u64 {
+    ctx.env
+        .get("ZYGO_TEST_REFRESH_INTERVAL")
+        .and_then(|v| v.to_str()?.parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(REFRESH_INTERVAL)
+}
+
+#[cfg(not(feature = "test-hooks"))]
+fn refresh_interval(_ctx: &LaunchCtx) -> u64 {
+    REFRESH_INTERVAL
+}
+
 impl ClaudeCode {
     fn hooks(&self, ctx: &LaunchCtx) -> Value {
         let z = shell_quote(&self.zygo);
@@ -265,7 +285,7 @@ impl ClaudeCode {
         let env: Map<String, Value> = env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
         let mut s = json!({
             "disableAllHooks": false,
-            "statusLine": { "type": "command", "command": format!("{z} hook statusline"), "refreshInterval": 30 },
+            "statusLine": { "type": "command", "command": format!("{z} hook statusline"), "refreshInterval": refresh_interval(ctx) },
             "hooks": self.hooks(ctx),
             "env": env,
         });

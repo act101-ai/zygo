@@ -1478,3 +1478,30 @@ fn check_statusline_style() {
         err(&(base() + &format!("[statusline]\nstyle = \"{bad}\"\n")), "statusline.style: must be \"compact\" or \"verbose\"");
     }
 }
+
+// ---- HUD-9: H§14 #34, config part ----
+
+#[test]
+fn h14_34_repo_file_statusline_is_ignored_with_one_note() { // H§14 #34 (config part): H§8, the `KEPT` filter
+    let d = repo_with("hud9", "[statusline]\nstyle = \"verbose\"\n");
+    match repo_file::read_default_branch(&d) {
+        RepoFile::Found { table, ignored, .. } => {
+            assert_eq!(ignored, ["statusline"]);
+            assert!(table.is_empty(), "{table:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // The one note: the launcher prints each warning as one stderr line.
+    let note = ".zygo.toml: [statusline] ignored; the repository file may set only [guards], [navigation], [limits], [work]";
+    let m = load(&ctx(None, Some(d.to_path_buf()), None)).unwrap();
+    assert_eq!(m.warnings, [note]);
+    assert!(!note.contains('\n'));
+    assert_eq!(m.config.statusline.style, "compact");
+    assert_eq!(m.source_of("statusline.style"), Layer::Builtin);
+    // A kept table of the same file still applies; the user's own style holds over the repository file.
+    let d = repo_with("hud9b", "[statusline]\nstyle = \"compact\"\n[navigation]\nlines = 50\n");
+    let m = load(&ctx(Some("[statusline]\nstyle = \"verbose\"\n"), Some(d.to_path_buf()), None)).unwrap();
+    assert_eq!(m.warnings, [note]);
+    assert_eq!((m.config.statusline.style.as_str(), m.source_of("statusline.style")), ("verbose", Layer::User));
+    assert_eq!(m.source_of("navigation.lines"), Layer::Repository);
+}
