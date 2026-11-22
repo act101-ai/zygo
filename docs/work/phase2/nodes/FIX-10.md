@@ -63,14 +63,14 @@ Work in the node's checkout. Run each command from the repository root. Each com
 
 #### Task 1: the usage table (`crates/zygo-usage`)
 
-- [ ] **1.1** In `crates/zygo-usage/tests/store.rs`, change the expected list of `schema_creates_three_tables_in_wal_mode` to `["requests", "sync_pending", "trims", "upstream_errors", "work_units"]`, and add to `never_list_columns_are_exact`:
+- [x] **1.1** In `crates/zygo-usage/tests/store.rs`, change the expected list of `schema_creates_three_tables_in_wal_mode` to `["requests", "sync_pending", "trims", "upstream_errors", "work_units"]`, and add to `never_list_columns_are_exact`:
 
   ```rust
   assert_eq!(cols(&t.db(), "upstream_errors"), ["ts","session","request_class","model","status","error_type","error_message"]);
   ```
 
   Result: the two tests name the new table and its exact columns.
-- [ ] **1.2** In the same file, add the helpers and five tests:
+- [x] **1.2** In the same file, add the helpers and five tests:
 
   ```rust
   fn uerr(session: &str, ts: i64) -> UpstreamErrorRow {
@@ -151,8 +151,8 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the file holds the five tests; `req`, `count`, `survivors`, `now`, `DAY` and `Tmp` are the existing helpers of the file.
-- [ ] **1.3** Run `cargo test -p zygo-usage --locked --test store`. Expected: the build fails with errors that name `UpstreamErrorRow`, `insert_upstream_error`, `insert_request_and_error` and `upstream_errors` (not found). No other error.
-- [ ] **1.4** In `crates/zygo-usage/src/schema.rs`, append to `SCHEMA`, after the `sync_pending` line (`schema.rs:66`):
+- [x] **1.3** Run `cargo test -p zygo-usage --locked --test store`. Expected: the build fails with errors that name `UpstreamErrorRow`, `insert_upstream_error`, `insert_request_and_error` and `upstream_errors` (not found). No other error.
+- [x] **1.4** In `crates/zygo-usage/src/schema.rs`, append to `SCHEMA`, after the `sync_pending` line (`schema.rs:66`):
 
   ```sql
   CREATE TABLE IF NOT EXISTS upstream_errors (
@@ -187,7 +187,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: `SCHEMA` creates the table and its two indexes; `SCHEMA_VERSION` (`store.rs:54`) stays 1.
-- [ ] **1.5** In `crates/zygo-usage/src/store.rs`, add after `bind_request` (`store.rs:17-51`):
+- [x] **1.5** In `crates/zygo-usage/src/store.rs`, add after `bind_request` (`store.rs:17-51`):
 
   ```rust
   /// One `upstream_errors` row on `conn` (a connection or an open transaction).
@@ -230,8 +230,8 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   in `prune` (`store.rs:237-248`), after the `DELETE FROM requests` line: `tx.execute("DELETE FROM upstream_errors WHERE ts < ?1", [cutoff])?;`; in `replace_requests` (`store.rs:186`), after the `DELETE FROM requests` line: `tx.execute("DELETE FROM upstream_errors WHERE session = ?1", [session])?;`. Result: the store methods of `Plan produces` exist with the exact signatures; a stored status out of `u16` range is a read error (rusqlite `FromSql for u16`); a dropped transaction rolls back (rusqlite `Transaction` drop).
-- [ ] **1.6** Run `cargo test -p zygo-usage --locked --test store`. Expected: 0 failed; the output lists `... ok` for `upstream_error_round_trip_by_session`, `upstream_errors_table_is_created_on_an_existing_database`, `prune_deletes_upstream_errors_older_than_retain_days`, `insert_request_and_error_is_one_transaction`, `replace_requests_deletes_the_sessions_upstream_errors`, `schema_creates_three_tables_in_wal_mode`, `never_list_columns_are_exact`, `replace_requests_swaps_a_session_in_one_transaction`.
-- [ ] **1.7** Commit `crates/zygo-usage/src/schema.rs`, `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs` and this file: `feat(usage): table upstream_errors for the upstream error of a passthrough answer`.
+- [x] **1.6** Run `cargo test -p zygo-usage --locked --test store`. Expected: 0 failed; the output lists `... ok` for `upstream_error_round_trip_by_session`, `upstream_errors_table_is_created_on_an_existing_database`, `prune_deletes_upstream_errors_older_than_retain_days`, `insert_request_and_error_is_one_transaction`, `replace_requests_deletes_the_sessions_upstream_errors`, `schema_creates_three_tables_in_wal_mode`, `never_list_columns_are_exact`, `replace_requests_swaps_a_session_in_one_transaction`.
+- [x] **1.7** Commit `crates/zygo-usage/src/schema.rs`, `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs` and this file: `feat(usage): table upstream_errors for the upstream error of a passthrough answer`.
 
 #### Task 2: the proxy tests (`crates/zygo-proxy/tests/passthrough.rs`)
 
