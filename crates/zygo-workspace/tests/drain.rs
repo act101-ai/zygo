@@ -42,7 +42,11 @@ fn idle(a: &Activity, s: &SessionStatus) -> Idle {
 }
 
 fn busy(reason: &str) -> Idle {
-    Idle::Busy { reason: reason.to_string() }
+    Idle::Busy { reason: reason.to_string(), rule_skipped: false }
+}
+
+fn busy_skipped(reason: &str) -> Idle {
+    Idle::Busy { reason: reason.to_string(), rule_skipped: true }
 }
 
 #[test]
@@ -58,7 +62,7 @@ fn rule_1_alone_is_a_turn_open() {
 
 #[test]
 fn rule_2_alone_is_busy_with_the_running_ids() {
-    assert_eq!(idle(&act(false, &[("b2", "pw-sub"), ("a1", "")]), &quiet()), busy("subagents running: a1, b2"));
+    assert_eq!(idle(&act(false, &[("b2", "pw-sub"), ("a1", "")]), &quiet()), busy(r#"subagents running: "a1", "b2""#));
 }
 
 #[test]
@@ -73,7 +77,7 @@ fn rule_3_alone_recent_end_is_busy() {
 
 #[test]
 fn rule_2_is_reported_before_rule_3() {
-    assert_eq!(idle(&act(false, &[("a1", "t")]), &st(Some(2), None)), busy("subagents running: a1"));
+    assert_eq!(idle(&act(false, &[("a1", "t")]), &st(Some(2), None)), busy(r#"subagents running: "a1""#));
 }
 
 #[test]
@@ -121,7 +125,7 @@ fn rule_3_skipped_when_the_end_time_is_not_rfc3339_and_nothing_is_in_flight() {
 
 #[test]
 fn skipped_rule_3_does_not_hide_rule_2() {
-    assert_eq!(idle(&act(false, &[("a1", "t")]), &SessionStatus::default()), busy("subagents running: a1"));
+    assert_eq!(idle(&act(false, &[("a1", "t")]), &SessionStatus::default()), busy_skipped(r#"subagents running: "a1""#));
 }
 
 #[test]
@@ -144,7 +148,7 @@ fn an_activity_read_error_is_busy_and_comes_first() {
 
 #[test]
 fn rule_2_is_reported_before_a_status_read_error() {
-    assert_eq!(drain::idle(Ok(&act(false, &[("a1", "t")])), Err("refused"), now()), busy("subagents running: a1"));
+    assert_eq!(drain::idle(Ok(&act(false, &[("a1", "t")])), Err("refused"), now()), busy(r#"subagents running: "a1""#));
 }
 
 #[test]
@@ -160,7 +164,7 @@ fn busy_true_with_a_request_in_flight_is_busy() {
 
 #[test]
 fn busy_true_with_a_running_entry_is_busy() {
-    assert_eq!(idle(&act(true, &[("agent-id-1", "pw-sub")]), &quiet()), busy("subagents running: agent-id-1"));
+    assert_eq!(idle(&act(true, &[("agent-id-1", "pw-sub")]), &quiet()), busy(r#"subagents running: "agent-id-1""#));
 }
 
 #[test]
@@ -190,9 +194,27 @@ fn unreadable_activity_file_reads_as_busy() {
     std::fs::create_dir(d.activity_json()).unwrap();
     let e = format!("{:#}", activity::read(&d).unwrap_err());
     match drain::idle(Err(&e), Ok(&quiet()), now()) {
-        Idle::Busy { reason } => {
+        Idle::Busy { reason, rule_skipped: false } => {
             assert!(reason.starts_with("activity file unreadable: ") && reason.contains("activity.json"), "{reason}")
         }
         other => panic!("{other:?}"),
     }
+}
+
+// Round 2, M1: a skipped rule 3 is reported whatever decides `Busy`.
+#[test]
+fn busy_from_rule_2_reports_a_skipped_rule_3() {
+    assert_eq!(idle(&act(true, &[("a1", "t")]), &SessionStatus::default()), busy_skipped(r#"subagents running: "a1""#));
+    assert_eq!(idle(&act(false, &[("a1", "t")]), &st(Some(0), Some("yesterday".into()))), busy_skipped(r#"subagents running: "a1""#));
+}
+
+#[test]
+fn busy_from_an_activity_error_reports_a_skipped_rule_3() {
+    assert_eq!(drain::idle(Err("x: bad"), Ok(&SessionStatus::default()), now()), busy_skipped("activity file unreadable: x: bad"));
+}
+
+// Round 2, M2: ids in the reason are quoted, so an id with ", " stays one id.
+#[test]
+fn running_ids_are_quoted_in_the_reason() {
+    assert_eq!(idle(&act(false, &[("b, c", "t"), ("a1", "t")]), &quiet()), busy(r#"subagents running: "a1", "b, c""#));
 }

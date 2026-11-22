@@ -17,10 +17,14 @@ pub enum Idle {
     /// flight and none that ended in the last `REQUEST_QUIET`.
     Idle,
     /// The member is busy. `reason` names the cause, in this order: an `activity.json` that cannot be read or parsed
-    /// (`activity file unreadable: <error>`), running subagents (`subagents running: <id>, <id>`), then rule 3
+    /// (`activity file unreadable: <error>`), running subagents (`subagents running: "<id>", "<id>"`, each id with
+    /// Debug quoting, so an id that holds `, ` stays one id), then rule 3
     /// (`proxy status not read: <error>`, `model requests in flight: <n>`, `last model request ended <s> s ago`,
     /// `last model request ended after the poll time`). `down` prints it in its timeout report (W§9.3 step 6).
-    Busy { reason: String },
+    /// `rule_skipped` is `true` when the status meets a skip case of rule 3, whatever decided `Busy` (an
+    /// `activity.json` error or running subagents), so `down` prints the AU26 rule-skipped line also for a busy
+    /// member (round 2, M1). A rule 3 failure, a status read error among them, gives `false`.
+    Busy { reason: String, rule_skipped: bool },
     /// Rules 1 and 2 hold and rule 3 is skipped: the proxy status has no `requests_in_flight`, or no request is in
     /// flight and `last_request_end` is not RFC 3339 or is more than `REQUEST_QUIET` after the poll time. `down`
     /// counts the member as idle and prints the AU26 rule-skipped line.
@@ -75,19 +79,19 @@ fn rule3(status: Result<&SessionStatus, &str>, now: SystemTime) -> Rule3 {
 /// through the member hooks, and without it `busy` stays as the hooks wrote it, so `down` passes the activity as it
 /// is.
 pub fn idle(activity: Result<&Activity, &str>, status: Result<&SessionStatus, &str>, now: SystemTime) -> Idle {
+    let rule3 = rule3(status, now);
+    let rule_skipped = matches!(rule3, Rule3::Skipped);
     let activity = match activity {
         Ok(a) => a,
-        Err(e) => return Idle::Busy { reason: format!("activity file unreadable: {e}") },
+        Err(e) => return Idle::Busy { reason: format!("activity file unreadable: {e}"), rule_skipped },
     };
     if !activity.running.is_empty() {
-        let ids: Vec<&str> = activity.running.keys().map(String::as_str).collect();
-        return Idle::Busy { reason: format!("subagents running: {}", ids.join(", ")) };
+        let ids: Vec<String> = activity.running.keys().map(|id| format!("{id:?}")).collect();
+        return Idle::Busy { reason: format!("subagents running: {}", ids.join(", ")), rule_skipped };
     }
-    let rule_skipped = match rule3(status, now) {
-        Rule3::Failed(reason) => return Idle::Busy { reason },
-        Rule3::Held => false,
-        Rule3::Skipped => true,
-    };
+    if let Rule3::Failed(reason) = rule3 {
+        return Idle::Busy { reason, rule_skipped: false };
+    }
     match (activity.busy, rule_skipped) {
         (true, _) => Idle::TurnOpen { rule_skipped },
         (false, false) => Idle::Idle,

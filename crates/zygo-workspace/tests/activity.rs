@@ -247,12 +247,129 @@ fn running_methods_leave_busy_unchanged() {
     assert!(a.busy);
 }
 
-/// Child half of #57; the parent runs it with `--ignored` and sets both variables on the child only.
+// Round 2, B1: a newer file whose known fields have new types, and a version that is not an integer.
+const P1: &[u8] = br#"{"version":2,"busy":false,"running":{"a1":{"type":"pw-sub","started":5}},"updated_at":5}"#;
+const P2: &[u8] = br#"{"version":"2.0","busy":false,"running":{"a1":{"type":"pw-sub","started":5}},"updated_at":5}"#;
+
+fn a1_pw_sub() -> BTreeMap<String, String> {
+    BTreeMap::from([("a1".into(), "pw-sub".into())])
+}
+
+#[test]
+fn update_refuses_a_newer_file_with_new_field_types_and_writes_nothing() {
+    let (_t, d) = dir();
+    fs::write(d.activity_json(), P1).unwrap();
+    let e = activity::update(&d, S10, &mut |a| a.busy = true).unwrap_err();
+    assert_eq!(e.to_string(), format!("{}: written by a newer zygo (version 2)", d.activity_json().display()));
+    assert_eq!(fs::read(d.activity_json()).unwrap(), P1.to_vec());
+}
+
+#[test]
+fn update_refuses_a_version_that_is_not_an_integer_and_writes_nothing() {
+    let (_t, d) = dir();
+    fs::write(d.activity_json(), P2).unwrap();
+    let e = activity::update(&d, S10, &mut |a| a.busy = true).unwrap_err();
+    assert_eq!(e.to_string(), format!("{}: written by a newer zygo (version \"2.0\")", d.activity_json().display()));
+    assert_eq!(fs::read(d.activity_json()).unwrap(), P2.to_vec());
+}
+
+#[test]
+fn read_of_a_newer_file_with_new_field_types_takes_its_known_fields() {
+    let (_t, d) = dir();
+    fs::write(d.activity_json(), P1).unwrap();
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: false, running: a1_pw_sub(), updated_at: 5 });
+}
+
+#[test]
+fn read_of_a_version_that_is_not_an_integer_takes_the_known_fields_as_newest() {
+    let (_t, d) = dir();
+    fs::write(d.activity_json(), P2).unwrap();
+    assert_eq!(
+        activity::read(&d).unwrap(),
+        Activity { version: u32::MAX, busy: false, running: a1_pw_sub(), updated_at: 5 }
+    );
+}
+
+#[test]
+fn read_of_a_newer_file_takes_fields_of_other_types_leniently() {
+    let (_t, d) = dir();
+    fs::write(
+        d.activity_json(),
+        br#"{"version":3,"busy":"yes","running":{"a":"t","b":{"type":7},"c":[1]},"updated_at":"x"}"#,
+    )
+    .unwrap();
+    let running = BTreeMap::from([("a".into(), "t".into()), ("b".into(), String::new()), ("c".into(), String::new())]);
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 3, busy: true, running, updated_at: 0 });
+}
+
+#[test]
+fn update_rewrites_a_version_0_file_as_version_1() {
+    let (_t, d) = dir();
+    fs::write(d.activity_json(), br#"{"version":0,"busy":true,"running":{"a1":"t1"},"updated_at":1}"#).unwrap();
+    activity::update(&d, S10, &mut |a| a.subagent_start("a2", "t2")).unwrap();
+    let v = file(&d);
+    assert_eq!(v["version"], json!(1), "{v}");
+    assert_eq!(v["busy"], json!(true), "{v}");
+    assert_eq!(v["running"], json!({"a1": "t1", "a2": "t2"}), "{v}");
+}
+
+#[test]
+fn read_of_a_file_that_is_not_an_object_is_an_error() {
+    let (_t, d) = dir();
+    for text in [&b"[]"[..], b"2", b"null", b"\"x\""] {
+        fs::write(d.activity_json(), text).unwrap();
+        let e = activity::read(&d).unwrap_err();
+        assert!(format!("{e:#}").starts_with(&format!("{}: ", d.activity_json().display())), "{e:#}");
+    }
+}
+
+// Round 2, M2: an empty agent id is never in the running set.
+#[test]
+fn empty_agent_id_is_ignored() {
+    let mut a = Activity::default();
+    a.subagent_start("", "pw-sub");
+    assert_eq!(a, Activity::default());
+    assert!(!a.subagent_stop(""));
+    let mut b = Activity { running: BTreeMap::from([(String::new(), "t".into())]), ..Activity::default() };
+    let before = b.clone();
+    assert!(!b.subagent_stop(""));
+    assert_eq!(b, before);
+}
+
+// Round 2, M3: the read stops after 1 MiB + 1 byte.
+fn two_mib_file(d: &SessionDir) {
+    let mut text = br#"{"version":1,"busy":false,"running":{"x":"t"},"updated_at":1}"#.to_vec();
+    text.resize(2 << 20, b' ');
+    fs::write(d.activity_json(), text).unwrap();
+}
+
+#[test]
+fn read_of_a_file_over_1_mib_is_an_error() {
+    let (_t, d) = dir();
+    two_mib_file(&d);
+    let e = format!("{:#}", activity::read(&d).unwrap_err());
+    assert_eq!(e, format!("{}: activity.json larger than 1 MiB", d.activity_json().display()));
+}
+
+#[test]
+fn update_replaces_a_file_over_1_mib() {
+    let (_t, d) = dir();
+    two_mib_file(&d);
+    activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap();
+    let a = activity::read(&d).unwrap();
+    assert_eq!((a.version, a.busy, a.running), (1, false, BTreeMap::from([("a1".into(), "t1".into())])));
+}
+
+/// Child half of #57; the parent runs it with `--ignored` and sets both variables on the child only. With no
+/// variables (`--include-ignored` in the parent) it returns at once.
 #[test]
 #[ignore]
 fn writer_helper() {
-    let root = PathBuf::from(std::env::var_os("ZYGO_W9_WRITER_DIR").expect("set by the parent"));
-    let prefix = std::env::var("ZYGO_W9_WRITER_PREFIX").expect("set by the parent");
+    let (Some(root), Ok(prefix)) = (std::env::var_os("ZYGO_W9_WRITER_DIR"), std::env::var("ZYGO_W9_WRITER_PREFIX"))
+    else {
+        return;
+    };
+    let root = PathBuf::from(root);
     let until = Instant::now() + S10;
     while !root.join("start").exists() {
         assert!(Instant::now() < until, "no start file");

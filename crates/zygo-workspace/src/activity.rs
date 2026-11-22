@@ -40,59 +40,121 @@ impl Activity {
     /// Records a `SubagentStart` (AU26 rule 2, AU43): adds `agent_id` with its `agent_type`, or replaces the type of
     /// an id already in the set. An empty `agent_type` is kept as it is. `busy` does not change. The member hooks
     /// (H1) change `running` only through this method and `subagent_stop`.
+    /// An empty `agent_id` names no subagent: the call does nothing.
     pub fn subagent_start(&mut self, agent_id: &str, agent_type: &str) {
+        if agent_id.is_empty() {
+            return;
+        }
         self.running.insert(agent_id.to_string(), agent_type.to_string());
     }
 
     /// Records a `SubagentStop` (AU26 rule 2, AU43, PW7 7.5): removes `agent_id` and returns `true` when
     /// `subagent_start` added it; otherwise returns `false` and changes nothing. Internal agents of Claude Code send a
     /// `SubagentStop` with no `SubagentStart`, so such a stop must not touch the running set. `busy` does not change.
-    /// The member hooks (H1) change `running` only through this method and `subagent_start`.
+    /// The member hooks (H1) change `running` only through this method and `subagent_start`. An empty `agent_id`
+    /// returns `false` and changes nothing.
     pub fn subagent_stop(&mut self, agent_id: &str) -> bool {
-        self.running.remove(agent_id).is_some()
+        !agent_id.is_empty() && self.running.remove(agent_id).is_some()
     }
 }
+
+/// The most bytes of `activity.json` that are read; a larger file is not parsed.
+const MAX_FILE: u64 = 1 << 20;
 
 /// The result of one read of `activity.json`.
 enum Load {
     Missing,
     ReadFailed(std::io::Error),
-    Unparsable(serde_json::Error),
+    TooLarge,
+    Unparsable(String),
+    /// A JSON object whose `version` is present and is not the integer 0 or 1: the file of a newer zygo. It holds
+    /// the known fields, taken leniently, and the JSON text of `version`.
+    Newer(Activity, String),
     Parsed(Activity),
 }
 
 fn load(path: &Path) -> Load {
-    match std::fs::read(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Load::Missing,
-        Err(e) => Load::ReadFailed(e),
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
+    use std::io::Read;
+    let file = match std::fs::File::open(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Load::Missing,
+        Err(e) => return Load::ReadFailed(e),
+        Ok(f) => f,
+    };
+    let mut bytes = Vec::new();
+    if let Err(e) = file.take(MAX_FILE + 1).read_to_end(&mut bytes) {
+        return Load::ReadFailed(e);
+    }
+    if bytes.len() as u64 > MAX_FILE {
+        return Load::TooLarge;
+    }
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => return Load::Unparsable(e.to_string()),
+    };
+    let serde_json::Value::Object(fields) = value else {
+        return Load::Unparsable("not a JSON object".to_string());
+    };
+    match fields.get("version") {
+        Some(v) if !matches!(v.as_u64(), Some(0 | 1)) => Load::Newer(lenient(&fields), v.to_string()),
+        _ => match serde_json::from_value(serde_json::Value::Object(fields)) {
             Ok(a) => Load::Parsed(a),
-            Err(e) => Load::Unparsable(e),
+            Err(e) => Load::Unparsable(e.to_string()),
         },
     }
 }
 
+/// The known fields of a newer file, whatever their types (round 2, B1): `version` when it is a u32, else
+/// `u32::MAX` (newer than any zygo); `busy` when it is a bool, else `true`, so the drain does not count the member
+/// as idle on a field it cannot read; each key of `running` with its type: the value when it is a string, the
+/// string `type` member when the value is an object, else empty; `updated_at` when it is a number, else 0.
+fn lenient(fields: &serde_json::Map<String, serde_json::Value>) -> Activity {
+    use serde_json::Value;
+    let agent_type = |v: &Value| match v {
+        Value::String(s) => s.clone(),
+        Value::Object(o) => o.get("type").and_then(Value::as_str).unwrap_or_default().to_string(),
+        _ => String::new(),
+    };
+    Activity {
+        version: fields.get("version").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).unwrap_or(u32::MAX),
+        busy: fields.get("busy").and_then(Value::as_bool).unwrap_or(true),
+        running: fields
+            .get("running")
+            .and_then(Value::as_object)
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), agent_type(v))).collect())
+            .unwrap_or_default(),
+        updated_at: fields
+            .get("updated_at")
+            .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
+            .unwrap_or(0),
+    }
+}
+
 /// Reads `activity.json` with no lock: every write is one rename, so the file is always whole (W§7.3). A missing
-/// file is the default (W§9.1). A file that cannot be read or parsed is an error with the text
-/// `<activity.json path>: <error>`; the drain counts such a member as busy (AU26). A file of any `version` gives its
-/// known fields.
+/// file is the default (W§9.1). These are errors, and the drain counts the member as busy (AU26): a file that
+/// cannot be read or parsed or is not a JSON object (`<activity.json path>: <error>`), and a file larger than 1 MiB
+/// (`<activity.json path>: activity.json larger than 1 MiB`). A file of a newer zygo gives its known fields, taken
+/// leniently (see `lenient`).
 pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
     let path = dir.activity_json();
     match load(&path) {
         Load::Missing => Ok(Activity::default()),
         Load::ReadFailed(e) => Err(anyhow::anyhow!("{}: {e}", path.display())),
+        Load::TooLarge => Err(anyhow::anyhow!("{}: activity.json larger than 1 MiB", path.display())),
         Load::Unparsable(e) => Err(anyhow::anyhow!("{}: {e}", path.display())),
-        Load::Parsed(a) => Ok(a),
+        Load::Newer(a, _) | Load::Parsed(a) => Ok(a),
     }
 }
 
 /// Read-modify-write of `activity.json` under the fs4 lock on `activity.lock` (AU56): waits for the lock at most
 /// `bound` (hooks pass `LOCK_BOUND`), removes stale temp files, applies `f`, sets `version` and `updated_at`, and
-/// replaces the file in one rename. A missing or unparsable file starts from the default, so a hook recovers from a
-/// broken file. These cases return an error and write nothing: the lock file cannot be opened
+/// replaces the file in one rename. A missing file, an unparsable one and one larger than 1 MiB start from the
+/// default, so a hook recovers from a broken file. A file larger than 1 MiB is replaced even when it starts with a
+/// newer `version`: telling that would need a parse of a cut JSON text, and no zygo writes a file near that size
+/// (round 2, M3). These cases return an error and write nothing: the lock file cannot be opened
 /// (`<activity.lock path>: open lock file`), the lock is not taken within `bound`
 /// (`<activity.lock path>: lock not taken within <ms> ms`), the file cannot be read (`<activity.json path>: <error>`),
-/// or a newer zygo wrote it (`<activity.json path>: written by a newer zygo (version <n>)`).
+/// or the file is a JSON object whose `version` is present and is not the integer 0 or 1
+/// (`<activity.json path>: written by a newer zygo (version <JSON text of version>)`).
 pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity)) -> anyhow::Result<()> {
     let lock = dir.activity_lock();
     let Some(_lock) = crate::state::lock_file(&lock, bound).with_context(|| format!("{}: open lock file", lock.display()))?
@@ -102,11 +164,9 @@ pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity
     crate::state::sweep_tmp(&dir.root);
     let path = dir.activity_json();
     let mut a = match load(&path) {
-        Load::Missing | Load::Unparsable(_) => Activity::default(),
+        Load::Missing | Load::Unparsable(_) | Load::TooLarge => Activity::default(),
         Load::ReadFailed(e) => anyhow::bail!("{}: {e}", path.display()),
-        Load::Parsed(a) if a.version > VERSION => {
-            anyhow::bail!("{}: written by a newer zygo (version {})", path.display(), a.version)
-        }
+        Load::Newer(_, version) => anyhow::bail!("{}: written by a newer zygo (version {version})", path.display()),
         Load::Parsed(a) => a,
     };
     f(&mut a);
