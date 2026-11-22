@@ -6,6 +6,7 @@
 # operator's user name.
 set -uf
 cd "$(dirname "$0")/.." || exit 1
+. scripts/premises/ver.sh   # ver_ge (node PRB-2)
 
 P=docs/premises.md
 SPEC=docs/specs/2026-11-18-zygo-design.md
@@ -70,7 +71,11 @@ for id in $IDS; do
     v=$(echo "$ver" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
     want=$(version_of "$a")
     [ -n "$want" ] || fail "$id: unknown agent '$a'"
-    [ "$v" = "$want" ] || fail "$id: version '$v' differs from the header's '$want' for $a"
+    # A pinned agent version is a minimum (operator, 2026-11-21); act-lite stays exact.
+    case "$a" in
+      'Claude Code' | 'OpenCode') ver_ge "$v" "$want" || fail "$id: version '$v' is below the header's '$want' for $a, or not a dotted number" ;;
+      *) [ "$v" = "$want" ] || fail "$id: version '$v' differs from the header's '$want' for $a" ;;
+    esac
     i=$((i + 1))
   done
 

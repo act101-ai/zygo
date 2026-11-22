@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** PRB-1, PRB-2, HUD-5
+**Next:** PRB-1, HUD-5
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -57,7 +57,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2 | TODO | implementation | — |
-| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | IN-PROGRESS | implementation | wt .worktrees/phase2/PRB-2 |
+| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | DONE | implementation | 9d1f6c6; acceptance ver 50, lib 27, check-premises ok, live selftest 54 (merged tree) |
 | HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
 | HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | DONE | judgment | 1454eab; acceptance hud_git 21/21 (+3 ignored), workspace --no-run ok (merged tree); CI green 3 OS (run 44964062674) |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | TODO | implementation | — |
@@ -98,3 +98,5 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | HUD-2 round 2 (review fixes cdb0e63); CI green on ubuntu, macos and windows (run 44962380990). OpenCode HUD design: comprehension read passed after 3 runs; critic read running. |
 | 2026-11-21 | HUD-2 DONE after 3 rounds (97e70a0, cdb0e63, 1454eab); CI green on ubuntu/macos/windows. Open: H§7.5 no-marker re-check with the new calls (sandbox refused git config); covered by HUD-9 H§14 #25. |
 | 2026-11-21 | HUD-5 planned; plan verification passed after two review rounds (served row values stored at request time; status reply omits absent fields). |
+| 2026-11-21 | PRB-2 DONE after 2 rounds (fcab8dc, 9d1f6c6). Acceptance test counts rose from ver 45/lib 21 to ver 50/lib 27 with review cases (SIGPIPE, live_end rm, long fields, C1 controls); the check itself is unchanged. |
+| 2026-11-21 | PRB-1 re-plan note: its draft steps 1, 2, 8, 14 predate PRB-2 (ver.sh, agent_ok, results.txt appends). Re-plan PRB-1 against PRB-2's Produces and the OpenCode HUD design before it starts. |

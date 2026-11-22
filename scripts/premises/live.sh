@@ -1,7 +1,8 @@
 # Live-check helpers (node N38). Source it after lib.sh from scripts/premises/live-*.sh.
 # Run by hand only; never from CI or a Rust test. Provider keys come only from the operator's
 # environment (LIVE_KEYS names them); they are never written as NAME=value words, so they are in
-# no argv and no file. Every live script calls live_traps (EXIT, INT, TERM, HUP) after sourcing.
+# no argv and no file. Every live script calls live_traps (EXIT, INT, TERM, HUP, PIPE) after sourcing.
+. "$PREMISES_DIR/ver.sh"   # ver_ge (node PRB-2)
 : "${ZYGO_BIN:=$REPO_DIR/target/release/zygo}"   # cargo build -p zygo --release (a debug build misses
 # the 200 ms secret-redaction deadline on an interactive Claude Code body and answers 503)
 PIN_CC=$(sed -n 's/^Claude Code: *//p' "$REPO_DIR/docs/premises.md" | head -n 1)
@@ -14,13 +15,13 @@ LIVE_PIDS=""   # background processes a script starts itself (besides MOCK_PID a
 
 # live_end <status>: kill the mock and web servers and the processes and tmux sessions this
 # script started (by saved PID and exact session name), and each running timeout wrapper's
-# process group (TERM to the group first, then the wrapper), delete its scratch tree, exit.
+# process group (TERM to the group first, then the wrapper), delete its scratch tree, then n2_scratch_end (lib.sh: a scratch dir lib.sh made is removed after status 0, else kept).
 # A recorded group is killed only when its leader still leads it (ps: pgid of the leader PID = the
 # group id) and, while the recorded wrapper is alive, is that wrapper's child (ppid = wrapper PID).
 # (A Ctrl-C reaches the wrapper too, which may exit first and orphan the leader.) A reused PID is
 # left alone.
 live_end() {
-  trap - EXIT INT TERM HUP
+  trap - EXIT INT TERM HUP PIPE
   for f in "$N2_SCRATCH/live-$$"/pg-*; do
     [ -f "$f" ] || continue
     wp="" pg=""
@@ -33,28 +34,58 @@ live_end() {
   done
   for p in ${MOCK_PID:-} ${WEB_PID:-} $LIVE_PIDS; do kill "$p" 2>/dev/null || true; done
   for s in $LIVE_TMUX; do tmux kill-session -t "=$s" 2>/dev/null || true; done
-  rm -rf "$N2_SCRATCH/live-$$"
-  exit "$1"
+  # A failed removal must not stop the trap under set -e: name it, keep the status, go on.
+  if [ -e "$N2_SCRATCH/live-$$" ]; then
+    chmod -R u+rwx "$N2_SCRATCH/live-$$" 2>/dev/null || true
+    rm -rf "$N2_SCRATCH/live-$$" 2>/dev/null || echo "premises: could not remove $N2_SCRATCH/live-$$" >&2
+  fi
+  n2_scratch_end "$1"
 }
-# live_traps: live_end on EXIT, INT, TERM and HUP (a signal exits 128 + its number). Stale pg-*
-# files of an earlier process with the same PID are removed first.
+# live_traps: live_end on EXIT, INT, TERM, HUP and PIPE (a signal exits 128 + its number; bash runs
+# an EXIT trap with status 0 after an untrapped PIPE, so PIPE is trapped too). Stale pg-* files of
+# an earlier process with the same PID are removed first.
 live_traps() {
   rm -f "$N2_SCRATCH/live-$$"/pg-* 2>/dev/null || true
   trap 'live_end $?' EXIT
   trap 'live_end 129' HUP
   trap 'live_end 130' INT
+  trap 'live_end 141' PIPE
   trap 'live_end 143' TERM
 }
 
-# pinned_agents: the claude and opencode on PATH are the pinned versions.
+# agent_ver <--version output>: CR removed; nothing when more than one line is left; else the first
+# word (leading blanks skipped) with a build suffix (from the first +) cut; a -prerelease stays.
+agent_ver() {
+  _av_t=$(printf '%s\n' "$1" | tr -d '\r')
+  [ "$(printf '%s\n' "$_av_t" | wc -l | tr -d ' ')" = 1 ] || return 0
+  printf '%s\n' "$_av_t" | sed 's/^[[:blank:]]*//; s/[[:blank:]].*$//; s/+.*$//'
+}
+# agent_ok <version word> <min> (author's call, 2026-11-21, SemVer order): a release passes at or
+# above min; a prerelease <core>-<pre> passes only when <core> is above min; an empty <pre> fails.
+agent_ok() {
+  case "$1" in
+    *-) return 1 ;;
+    *-*) ver_ge "${1%%-*}" "$2" && ! ver_ge "$2" "${1%%-*}" ;;
+    *) ver_ge "$1" "$2" ;;
+  esac
+}
+# agent_show <--version output>: its first line, printable ASCII only (C0 and C1 controls, DEL and
+# every other byte removed).
+agent_show() { printf '%s\n' "$1" | head -n 1 | LC_ALL=C tr -cd ' -~'; }
+# pinned_agents: the claude and opencode on PATH are at or above the pinned versions (operator,
+# 2026-11-21: a pin is a minimum). Sets and exports LIVE_CC_VER and LIVE_OC_VER (agent_ver of each
+# --version output) and sets LIVE_VER = LIVE_CC_VER.
 pinned_agents() {
   v=$("$CLAUDE_BIN" --version 2>/dev/null || true)
-  case "$v" in "$PIN_CC "*) ;; *)
-    echo "live: claude is $v; the pinned version is $PIN_CC (docs/premises.md); put it first on PATH"; exit 1 ;;
-  esac
+  LIVE_CC_VER=$(agent_ver "$v")
+  agent_ok "$LIVE_CC_VER" "$PIN_CC" || {
+    echo "live: claude is $(agent_show "$v"); the minimum is $PIN_CC (docs/premises.md); put a version at or above it first on PATH"; exit 1; }
   v=$("$OPENCODE_BIN" --version 2>/dev/null || true)
-  [ "$v" = "$PIN_OC" ] || {
-    echo "live: opencode is $v; the pinned version is $PIN_OC (docs/premises.md); put it first on PATH"; exit 1; }
+  LIVE_OC_VER=$(agent_ver "$v")
+  agent_ok "$LIVE_OC_VER" "$PIN_OC" || {
+    echo "live: opencode is $(agent_show "$v"); the minimum is $PIN_OC (docs/premises.md); put a version at or above it first on PATH"; exit 1; }
+  LIVE_VER=$LIVE_CC_VER
+  export LIVE_CC_VER LIVE_OC_VER
 }
 
 # need_env <NAME>: stop before any network call when NAME is empty. Never prints a value.

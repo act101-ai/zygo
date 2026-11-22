@@ -13,7 +13,7 @@
 - `agent_ver`, `agent_ok`, `agent_show`, and `pinned_agents` that sets and exports `LIVE_CC_VER` and `LIVE_OC_VER` (`scripts/premises/live.sh`).
 - `n2_scratch_end <status>` and `N2_SCRATCH_OWN` (never exported) (`scripts/premises/lib.sh`).
 
-**Acceptance:** `sh scripts/premises/ver_test.sh && sh scripts/premises/lib_test.sh && sh scripts/check-premises.sh && sh scripts/premises/live-selftest.sh` → exit 0 with `ver tests: ok (45)`, `lib tests: ok (21)`, `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7)` and `live selftest: ok (54)` (both last strings read on 2026-11-21 before any change).
+**Acceptance:** `sh scripts/premises/ver_test.sh && sh scripts/premises/lib_test.sh && sh scripts/check-premises.sh && sh scripts/premises/live-selftest.sh` → exit 0 with `ver tests: ok (50)`, `lib tests: ok (27)`, `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7)` and `live selftest: ok (54)` (both last strings read on 2026-11-21 before any change).
 - `ver_test.sh` shows the following. `ver_ge` compares dotted numbers of any length, drops leading zeros, and changes no variable of the caller. `pinned_agents` accepts any version at or above the pin. It removes CR, leading and trailing blanks, and a build suffix, the same way for both agents. A prerelease passes only when its version is above the pin. It rejects multi-line or non-numeric output, and its error message shows only the first line of the output, without control characters. It exports the versions it found. `check-premises.sh` accepts an agent row version at or above its header, rejects a lower or non-numeric one, and keeps the exact match for act-lite rows.
 - `lib_test.sh` shows the following. A dir that `lib.sh` made is removed after exit 0, also under `live_traps` and under `run-all.sh`. After an error, TERM or HUP, that dir is kept, and a `premises: kept <dir> (exit <n>)` line is printed. A failed removal is named on stderr and the exit status is kept. A second source of `lib.sh` keeps the first ownership. A caller-set `N2_SCRATCH` is kept, also for a child of `run-all.sh`, and also when the environment holds a matching `N2_SCRATCH_OWN`. `N2_SCRATCH_OWN` is never exported. `results.txt` is not truncated.
 - `docs/premises.md` and `docs/live-checks.md` state each agent version as a minimum ("2.1.328 or later", "1.18.16 or later").
@@ -52,7 +52,7 @@ All paths are relative to the node's checkout (`.worktrees/phase2/PRB-2`). The t
 
 Steps:
 
-- [ ] 1. Write `scripts/premises/ver_test.sh` (usage `sh scripts/premises/ver_test.sh`; last line `ver tests: ok (45)`).
+- [x] 1. Write `scripts/premises/ver_test.sh` (usage `sh scripts/premises/ver_test.sh`; last line `ver tests: ok (45)`).
   - Setup: `PREMISES_DIR=$HERE`, `REPO_DIR=$REPO`, `N2_SCRATCH=$T/s`, `CLAUDE_BIN=$T/claude` (`#!/bin/sh` + `cat '<T>/cc.txt'`), `OPENCODE_BIN=$T/opencode` (`cat '<T>/oc.txt'`).
   - A V case or X case FAILs with `ver.sh missing` when `$HERE/ver.sh` does not exist. Otherwise it runs `( . "$HERE/ver.sh"; ver_ge <a> <b> )` and checks the exit status exactly: 0 or 1, never another value.
   - V1-V11: `ver_ge` returns 0 for (2.1.330, 2.1.328), (2.1.328, 2.1.328), (2.2, 2.1.328), (2.1.0, 2.1), (2.1, 2.1.0), (2.1.1000, 2.1.328), (10.0.0, 9.9.9), (1.18.16, 1.18.16), (2.01, 2.1), (2.1, 2.01), (9007199254740993, 9007199254740992).
@@ -80,7 +80,7 @@ Steps:
   - K4: P4, OpenCode, `1.18.20` → exit 0, output has `check-premises: ok`.
   - K5: P6b, act-lite, `1.2.4` → exit 1, output has `P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite`.
   Check: `sh -n scripts/premises/ver_test.sh` → exit 0.
-- [ ] 2. Write `scripts/premises/lib_test.sh` (usage `sh scripts/premises/lib_test.sh`; last line `lib tests: ok (21)`).
+- [x] 2. Write `scripts/premises/lib_test.sh` (usage `sh scripts/premises/lib_test.sh`; last line `lib tests: ok (21)`).
   - Setup: `$T/bin` holds stub `claude` and `opencode` (`#!/bin/sh` + `echo 0`), symlinks to `command -v` of `mktemp rm mkdir chmod dirname sleep cat cp sed head`, and `sh` → `$SH`. `$T/nocc` is the same without `claude`.
   - "Own" case: `TMPDIR=$T/tmp-<case>` (created first), with `N2_SCRATCH` unset. `<dir>` is the path in `<case>.dir`, and it must be under `$T/tmp-<case>/`. The first line of `<case>.err` must be `premises: scratch <dir> (removed on exit 0, kept otherwise; set N2_SCRATCH to keep it)`.
     - "Removed" means: `<dir>` does not exist, `ls -A "$T/tmp-<case>"` is empty, and `.err` has only that one line.
@@ -114,10 +114,10 @@ Steps:
     - R4: own. `run-smoke.sh` is a real child: `. "$(dirname "$0")/lib.sh"; echo "$N2_SCRATCH" >>'<T>/R4.seen'; : >"$N2_SCRATCH/child-mark"`. `run-P1.sh` also does `[ -f "$N2_SCRATCH/child-mark" ] && echo kept >'<T>/R4.kept'`. Expected: exit 0; `R4.kept` is `kept`; `.seen` has 12 lines, all `<dir>`; removed.
     - R5: own. `run-smoke.sh` = `: >'<T>/R5.ready'; sleep 30`. Start `perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH=… TMPDIR=… "$SH" "$T/R5-pd/run-all.sh" &`, wait for `.ready` (bounded), send `kill -s TERM -- -<pid>`, then `wait` → exit 143; `<dir>` = the only entry in `$T/tmp-R5`; kept with 143.
   Check: `sh -n scripts/premises/lib_test.sh` → exit 0.
-- [ ] 3. Run `sh scripts/premises/ver_test.sh; echo "rc=$?"` and `sh scripts/premises/lib_test.sh; echo "rc=$?"`. Check:
+- [x] 3. Run `sh scripts/premises/ver_test.sh; echo "rc=$?"` and `sh scripts/premises/lib_test.sh; echo "rc=$?"`. Check:
   - `ver_test.sh`: every case prints `FAIL:`. V and X fail because `ver.sh` is missing; P fail because of the old exact rule and the old messages; K fail because `scripts/premises/ver.sh` is missing from the tree. Last lines `ver tests: 45 failed` and `rc=1`.
   - `lib_test.sh`: `ok:` only for L6, L7, L11, C3 and R3. E1 fails because the inherited `N2_SCRATCH_OWN` reaches the child, and E2 fails because the dir is left. Last lines `lib tests: 16 failed` and `rc=1`.
-- [ ] 4. Write `scripts/premises/ver.sh`:
+- [x] 4. Write `scripts/premises/ver.sh`:
   ```sh
   # ver_ge <have> <min> (node PRB-2): 0 when both are dotted numbers (digits and single dots) and
   # have >= min, else 1. Fields compare as integers of any length (leading zeros dropped, a missing
@@ -145,7 +145,7 @@ Steps:
   }
   ```
   Check: `sh -n scripts/premises/ver.sh` → exit 0.
-- [ ] 5. In `scripts/premises/lib.sh`, replace the comment line `# N2_SCRATCH: scratch directory for isolated HOMEs and raw captures (default: mktemp -d).` with these three lines:
+- [x] 5. In `scripts/premises/lib.sh`, replace the comment line `# N2_SCRATCH: scratch directory for isolated HOMEs and raw captures (default: mktemp -d).` with these three lines:
   `# N2_SCRATCH: scratch directory for isolated HOMEs and raw captures. Set by the caller: kept. Unset`
   `# or empty: lib.sh makes one (mktemp -d) and prints its path; on exit it removes it after status 0`
   `# and keeps it (named on stderr) otherwise. live.sh's live_end does the same.`
@@ -183,7 +183,7 @@ Steps:
   fi
   ```
   No other line changes. Check: `sh -n scripts/premises/lib.sh` → exit 0.
-- [ ] 6. In `scripts/premises/live.sh`:
+- [x] 6. In `scripts/premises/live.sh`:
   - (a) Directly before the line `: "${ZYGO_BIN:=$REPO_DIR/target/release/zygo}"`, add `. "$PREMISES_DIR/ver.sh"   # ver_ge (node PRB-2)`.
   - (b) In the `live_end` comment, change `delete its scratch tree, exit.` to `delete its scratch tree, then n2_scratch_end (lib.sh: a scratch dir lib.sh made is removed after status 0, else kept).`
   - (c) In `live_end`, change the line `  exit "$1"` to `  n2_scratch_end "$1"`.
@@ -223,7 +223,7 @@ Steps:
   }
   ```
   Check: `sh -n scripts/premises/live.sh` → exit 0.
-- [ ] 7. In `scripts/check-premises.sh`:
+- [x] 7. In `scripts/check-premises.sh`:
   - Directly after the line `cd "$(dirname "$0")/.." || exit 1`, add `. scripts/premises/ver.sh   # ver_ge (node PRB-2)`.
   - Replace the line `    [ "$v" = "$want" ] || fail "$id: version '$v' differs from the header's '$want' for $a"` with:
   ```sh
@@ -234,7 +234,7 @@ Steps:
       esac
   ```
   Check: `sh -n scripts/check-premises.sh` → exit 0.
-- [ ] 8. In `scripts/premises/run-all.sh`:
+- [x] 8. In `scripts/premises/run-all.sh`:
   - Replace `# PATH (the pinned versions in docs/premises.md), python3, jq, tmux, curl, openssl.` with `# PATH (at or above the pinned versions in docs/premises.md), python3, jq, tmux, curl, openssl.`
   - Replace `# N2_SCRATCH: scratch directory for isolated HOMEs and raw captures (default: mktemp -d).` with these four lines:
     `# N2_SCRATCH: scratch directory for isolated HOMEs and raw captures. Set it to keep the captures;`
@@ -244,14 +244,14 @@ Steps:
   - Replace `: "${N2_SCRATCH:=$(mktemp -d)}"` with `. "$D/lib.sh"`.
   - The `set -eu`, `D=`, `export N2_SCRATCH` and `for` lines stay.
   Check: `sh -n scripts/premises/run-all.sh` → exit 0.
-- [ ] 9. Run `sh scripts/premises/ver_test.sh` and `sh scripts/premises/lib_test.sh`. Check: `ver tests: ok (45)`, exit 0; `lib tests: ok (21)`, exit 0.
-- [ ] 10. Run `sh scripts/premises/live-selftest.sh`. It sources `lib.sh`, `live.sh` and now `ver.sh`, with a caller-set `N2_SCRATCH`. Its T1 and U5 cases run `live_end`, and T4, T5 and T8 run `check-premises.sh` in a copied tree that includes `scripts/premises/ver.sh`. Check: last line `live selftest: ok (54)`, exit 0.
-- [ ] 11. Edit `docs/premises.md`:
+- [x] 9. Run `sh scripts/premises/ver_test.sh` and `sh scripts/premises/lib_test.sh`. Check: `ver tests: ok (45)`, exit 0; `lib tests: ok (21)`, exit 0.
+- [x] 10. Run `sh scripts/premises/live-selftest.sh`. It sources `lib.sh`, `live.sh` and now `ver.sh`, with a caller-set `N2_SCRATCH`. Its T1 and U5 cases run `live_end`, and T4, T5 and T8 run `check-premises.sh` in a copied tree that includes `scripts/premises/ver.sh`. Check: last line `live selftest: ok (54)`, exit 0.
+- [x] 11. Edit `docs/premises.md`:
   - Line 3: replace `Pinned versions, one dated result per premise.` with `Pinned versions, one dated result per premise. A pinned agent version is a minimum (operator, 2026-11-21): Claude Code 2.1.328 or later, OpenCode 1.18.16 or later. The header lines below give each minimum as a bare version (scripts and tests read them). An agent row's version is the minimum or a later version that the check ran on; an act-lite row's version is the release checked.`
   - In `## Method`, after the bullet that starts `- \`scripts/check-premises.sh\` checks this file`, add the bullet `- Scratch: when \`N2_SCRATCH\` is not set, \`lib.sh\` (and \`run-all.sh\` through it) makes a scratch folder and prints its path; it removes the folder after exit 0 and keeps it after an error or a signal, with a \`premises: kept <folder> (exit <n>)\` line. Set \`N2_SCRATCH\` to keep the captures (isolated HOMEs, raw requests) in every case.`
   - The header lines `Claude Code: 2.1.328`, `OpenCode: 1.18.16` and `act-lite: 1.2.3` stay.
   Check: `grep -cF -- '<text>' docs/premises.md` → `1` for each of `Claude Code 2.1.328 or later, OpenCode 1.18.16 or later.`, `an act-lite row's version is the release checked.` and `- Scratch: when`. Also, `grep -nxE 'Claude Code: 2\.1\.328|OpenCode: 1\.18\.16|act-lite: 1\.2\.3' docs/premises.md` → exactly those three lines.
-- [ ] 12. Edit `docs/live-checks.md`:
+- [x] 12. Edit `docs/live-checks.md`:
   - E1: after `Checks on the real pinned agents, one dated result per check.`, add ` A pinned agent version is a minimum (operator, 2026-11-21).`
   - E2: `Claude Code: 2.1.328` → `Claude Code: 2.1.328 or later`.
   - E3: `OpenCode: 1.18.16` → `OpenCode: 1.18.16 or later`.
@@ -264,11 +264,25 @@ Steps:
   - `grep -nxF 'Claude Code: 2.1.328 or later' docs/live-checks.md` → one line, and the same for `OpenCode: 1.18.16 or later`.
   - `grep -cF -- '<new text>' docs/live-checks.md` → `1` for each of: `A pinned agent version is a minimum (operator, 2026-11-21).`, `then Claude Code 2.1.328 or later first on`, `are at or above the minimum versions above.`, `and Claude Code 2.1.328 or later (the pinned version:`, `# claude prints 2.1.328 (Claude Code) or a later version`.
   - `grep -cF -- '<old text>' docs/live-checks.md` → `0` for `then the pinned Claude Code first on` and for `are the pinned versions above.`
-- [ ] 13. Run the checks for the other readers of `docs/premises.md`. Check: `sh scripts/check-conformance.sh` → `check-conformance: ok`; `cargo test -p zygo-config --test builtin minimum_agent_versions_match_premises` → `test result: ok. 1 passed`.
-- [ ] 14. Run the Acceptance: `sh scripts/premises/ver_test.sh && sh scripts/premises/lib_test.sh && sh scripts/check-premises.sh && sh scripts/premises/live-selftest.sh; echo "rc=$?"`. Check: the output has `ver tests: ok (45)`, `lib tests: ok (21)`, `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7)` and `live selftest: ok (54)`, and ends with `rc=0`. The checks of steps 11 and 12 also still pass.
-- [ ] 15. Commit.
+- [x] 13. Run the checks for the other readers of `docs/premises.md`. Check: `sh scripts/check-conformance.sh` → `check-conformance: ok`; `cargo test -p zygo-config --test builtin minimum_agent_versions_match_premises` → `test result: ok. 1 passed`.
+- [x] 14. Run the Acceptance: `sh scripts/premises/ver_test.sh && sh scripts/premises/lib_test.sh && sh scripts/check-premises.sh && sh scripts/premises/live-selftest.sh; echo "rc=$?"`. Check: the output has `ver tests: ok (45)`, `lib tests: ok (21)`, `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7)` and `live selftest: ok (54)`, and ends with `rc=0`. The checks of steps 11 and 12 also still pass.
+- [x] 15. Commit.
   - If `$ZYGO_SESSION` is empty, stop and ask the operator for the session id.
   - Tick steps 1-15 in `docs/work/phase2/nodes/PRB-2.md`.
   - Run `git add docs/premises.md docs/live-checks.md scripts/premises/ver.sh scripts/premises/ver_test.sh scripts/premises/lib.sh scripts/premises/lib_test.sh scripts/premises/live.sh scripts/premises/run-all.sh scripts/check-premises.sh docs/work/phase2/nodes/PRB-2.md`.
   - Run `git commit -m "premises: agent pins are minimums in docs and checks; lib.sh removes its own scratch dir after exit 0" --trailer "Zygo-Session: $ZYGO_SESSION" --trailer "Zygo-Work: PRB-2"`.
   Check: `git show --stat HEAD` lists exactly those ten files; `git log -1 --format=%B` ends with `Zygo-Session: <value of $ZYGO_SESSION>` and `Zygo-Work: PRB-2`; `git status --short` is empty.
+
+### Round 2
+
+Diff review of `fcab8dc` (coordinator, 2026-11-21). Each code fix has a case that failed first: before the fixes, `ver_test.sh` printed `ver tests: 4 failed` (V27, V28, P14, P15) and `lib_test.sh` printed `lib tests: 5 failed` (L3, L13, C4, C5, C6). The new counts are `ver tests: ok (50)` and `lib tests: ok (27)`; the Acceptance counts are updated to match.
+
+- [x] R2-1 (M1) SIGPIPE: bash runs the EXIT trap with status 0 after an untrapped PIPE, so the own dir was removed. `lib.sh` and `live_traps` trap PIPE with status 141; `n2_scratch_end` and `live_end` clear PIPE too. Cases L13 (lib.sh alone) and C4 (through `live_traps`): a script writes to a pipe whose reader has exited → exit 141, kept, `premises: kept <dir> (exit 141)`.
+- [x] R2-2 (M2) `live_end`: `chmod -R u+rwx` on `live-$$`, then `rm -rf … || echo "premises: could not remove …" >&2`, so set -e does not stop the trap and `n2_scratch_end` always runs with the status. Cases C5 (a read-only subdir under `live-$$`, exit 0 → exit 0, all removed) and C6 (caller dir made read-only → exit 0, `premises: could not remove <dir>/live-<pid>`; skipped as root).
+- [x] R2-3 (L1) `ver_ge` returns 1 for any field longer than 32 digits, before the loops. Cases V26 (a 32-digit field compares, 0), V27 (33 digits → 1), V28 (a 20000-digit field → 1 within 2 s).
+- [x] R2-4 (L2) `agent_show` keeps only printable ASCII (`LC_ALL=C tr -cd ' -~'`), so C1 controls and DEL go. Case P14 (U+009B and DEL in `claude --version` → message `2.1.0XY`, no byte 0x7F-0xFF in the output).
+- [x] R2-5 (L3) `agent_ok` rejects an empty prerelease (`<core>-`). Case P15 (`1.19.0-` → exit 1).
+- [x] R2-6 (L4) `lib.sh` runs the claude and opencode PATH checks before `mktemp`. L3 now expects no dir under `$T/tmp-L3` and an empty stderr. The `lib.sh` and `run-all.sh` header comments and the `docs/premises.md` Scratch bullet say so.
+- [x] R2-7 (L5) Tests: E1 and E2 check `env | grep '^N2_SCRATCH_OWN='` in the child (E1 fails when the `unset` is removed: checked on a mutated copy). E3: an inherited `N2_SCRATCH_OWN` names another dir while `lib.sh` makes its own → only the own dir is removed. L11 writes `results.txt` twice through `result` and checks the old line and both new lines. L12: INT on `lib.sh` alone → exit 130, kept (signal cases start through `perl`, which resets INT to its default; a background command of a non-interactive shell starts with INT ignored). Under bash, L12 also passes without the INT trap, because bash runs the EXIT trap with status 130 after SIGINT.
+- [x] R2-8 (L6) `docs/live-checks.md` Cleanup bullet: the traps list PIPE; the older cleanup paths were tested under `dash`; the PRB-2 changes ran under bash only. `docs/premises.md` states that a prerelease of a minimum (1.18.16-beta) and an empty prerelease are rejected.
+- [x] R2-9 Run the Acceptance alone, `sh scripts/check-conformance.sh` and `cargo test -p zygo-config --test builtin minimum_agent_versions_match_premises`; commit with the same trailers.
