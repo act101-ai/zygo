@@ -57,7 +57,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | TODO | implementation | — |
-| HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | DONE | implementation | 77323a8, merge 71181de; acceptance zygo-config 176/176 (merged tree) |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | DONE | judgment | 69b5822, merge 624dcd2; acceptance prices 27, builtin 13, workspace --no-run ok (merged tree) |
 | HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | DONE | judgment | commits 4379678 98d9a9d c0407fa; CI 44968316690 green (ubuntu, macos, windows); acceptance on merged tree: session_api 40, window 37, zygo-hooks lib 22, workspace --no-run ok, no div_ceil(4) |
 | HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | DONE | judgment | edb0f1c, merge 2899612; acceptance zygo-proxy 350/350, workspace --no-run ok (merged tree) |
@@ -102,7 +101,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
-| FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | IN-PROGRESS | implementation | wt .worktrees/phase2/FIX-5 |
+| FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | IN-PROGRESS | implementation | wt .worktrees/phase2/FIX-7 |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/FIX-8 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
@@ -182,3 +181,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | PW6 hooks (6.32-6.38): still an operator question (W§17 note); W7 waits for the answer; W3, W6 and W10 do not. |
 | 2026-11-22 | PW15: W11 added (AU65); edges W11 → H1 (Cargo.lock) and W11 → E2; W10 and M1 contracts gain the pipe case and the AU18 sandbox guard (mnt_ns); M4 unchanged (the slash path is a hook; E2 checks it with the sandbox on). |
 | 2026-11-22 | FIX-9 added: the live-tmux.sh 6.30 pass test is wrong for tmux 3.3 and later (window-unlinked is a session hook there; 3.7c options-table.c:1710). Edges P2 → FIX-9 and FIX-9 → E2: shared docs/premises.md and W§17. The graph has 25 open rows. |
+| 2026-11-22 | FIX-5 DONE (7c26d5d). HUD fit width is the terminal width less 4 (PH4 fallback). Acceptance on the merged tree: zygo-hooks 173 passed, compact_cmd 16 passed, golden files unchanged. |
