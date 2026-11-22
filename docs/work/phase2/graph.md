@@ -74,7 +74,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
-| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | TODO | judgment | — |
+| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | PLANNED | judgment | — |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
@@ -200,3 +200,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W3 planned: 19 steps; review B1-B4 and M1-M11 fixed; B5 found by probe: tmux -u needed under LC_ALL=C; spec AU87, W§13 updated (author's call) |
 | 2026-11-22 | FIX-10 DONE (f273eed): a non-2xx passthrough answer records its upstream error type and message. Merged tree: passthrough 53, store 34, proxy 391 ok, forbidden_content ok. Review round 2 fixed B1 (secret pass before login scrub) and 9 minor. |
 | 2026-11-22 | LIV-2 DONE (37c78eb): plain icons on a Windows build unless ZYGO_NERD_FONT=1 (PH8, PH10 fallback). PH8, PH10, W-SHELL part 2 not run: no Windows machine. Merged tree: statusline_render 25, usage_doctor 46, zygo-hooks all ok, check-premises ok. |
+| 2026-11-22 | W9 planned: 22 steps; review B1-B3, M1-M12 fixed; AU26 rule 3 order and read-error busy, skipped rule 3 gives no interrupted-turn idle (author's call) |
