@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
 | LIV-2 | Windows part without a Windows machine: PH8/PH10 fallback, W-SHELL part 2 text, not-run records | LIV-1, PRB-1, FIX-5, FIX-7, P2 | DONE | implementation | 37c78eb; statusline_render 25, usage_doctor 46; PH8, PH10, W-SHELL part 2 not run: no Windows machine, fallback applied; review round 2 fixed 8 record defects |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | DONE | implementation | fdcea4a; acceptance empty; review round 2 fixed 12 findings |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
@@ -93,7 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
-| FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-9 |
+| FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | DONE | mechanical | 907b06d; 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39 |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | TODO | mechanical | — |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
@@ -203,3 +202,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W9 DONE (e167624): activity.json under fs4 lock, drain idle rule. Merged tree: activity 33 + 1 ignored, drain 27, workspace 111, clippy clean. Round 2: Busy gets rule_skipped; W10 Spec prints the skip line for it. |
 | 2026-11-22 | FIX-9 planned: 6 steps, test first. No offline test for live-tmux.sh, so live runs on tmux 3.7c, red then green, and 3.2a are the test; 6.30 uses ver_ge 3.3 for session 5, window 3. |
 | 2026-11-22 | W3 DONE (f945872): tmux Multiplexer layer. Merged tree: mux 42 + 1 ignored on 3.7c and 3.2a, workspace 153, clippy clean. Round 2: windows named by rename-window; 3.2 -n name with escapes is a known limit (AU99); W6, W7 Spec notes. |
+| 2026-11-22 | FIX-9 DONE (907b06d): 6.30 takes window-unlinked as a session hook on tmux 3.3+. Merged tree: 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39, 3.2a 34 of 39; pw11 unchanged; check-premises ok, forbidden_content 6 ok. |

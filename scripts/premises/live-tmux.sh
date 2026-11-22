@@ -343,10 +343,17 @@ r2=0; winhooks =zp6:0 2>>"$RUN/t.err" || r2=1
 t show-hooks -t =zp6:; r3=$RC; hs=$O
 t show-hooks -w -t =zp6:0; r4=$RC; hw=$O
 n1=$(hooklines "$hs"); n2=$(hooklines "$hw")
+# From tmux 3.3 window-unlinked is a session hook (3.3 options-table.c:1278, 3.7c :1710; a window hook
+# in 3.2a :1152): set-hook -w stores it on the session, so the session list has 5 lines and the window list 3.
+if ver_ge "${TV%[a-z]}" 3.3; then
+  e1=5 e2=3 l1="$SESSION_HOOKS window-unlinked" l2="pane-exited window-layout-changed window-renamed"
+else
+  e1=4 e2=4 l1=$SESSION_HOOKS l2=$WINDOW_HOOKS
+fi
 p=1
 # shellcheck disable=SC2086
-if [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] && [ "$r3" -eq 0 ] && [ "$r4" -eq 0 ] && [ "$n1" -eq 4 ] && [ "$n2" -eq 4 ] &&
-  hooksok "$hs" $SESSION_HOOKS && hooksok "$hw" $WINDOW_HOOKS; then p=0; fi
+if [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] && [ "$r3" -eq 0 ] && [ "$r4" -eq 0 ] && [ "$n1" -eq "$e1" ] && [ "$n2" -eq "$e2" ] &&
+  hooksok "$hs" $l1 && hooksok "$hw" $l2; then p=0; fi
 sub 6.30 $p "set-hook -t =zp6: (4 hooks), set-hook -w -t =zp6:0 (4 hooks): exit $r1 $r2 $r3 $r4; show-hooks lines: $n1; show-hooks -w lines: $n2"
 
 quiet
