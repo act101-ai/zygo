@@ -294,7 +294,7 @@ fn model_request_goes_to_the_proxy_and_stays_open() {
     // Bounded wait for the held state. All that the stub wrote before it sent the request is on disk now.
     let req = req_rx.recv_timeout(BOUND).unwrap();
     let open = |s: &mut Stub| {
-        assert_eq!(wait_done(&s.ctl, 1), [start.clone()], "the request step is finished while its reply is held");
+        assert_eq!(wait_done(&s.ctl, 1), std::slice::from_ref(&start),"the request step is finished while its reply is held");
         assert!(jsonl(&s.out.join("requests.jsonl")).is_empty());
         assert!(s.child.try_wait().unwrap().is_none(), "the stub ended while its reply is held");
     };

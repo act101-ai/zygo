@@ -18,12 +18,12 @@ Facts of the live code (read before you start):
 
 Steps:
 
-- [ ] **1** Run `cargo clippy -p zygo-launch --all-targets --locked -- -D warnings`. Expected: FAIL with one error, `clippy::cloned_ref_to_slice_refs` at `crates/zygo-launch/tests/stub_member.rs:297`. If clippy reports any other warning, stop and report it: it is not in this node.
-- [ ] **2** `stub_member.rs:297` becomes:
+- [x] **1** Run `cargo clippy -p zygo-launch --all-targets --locked -- -D warnings`. Expected: FAIL with one error, `clippy::cloned_ref_to_slice_refs` at `crates/zygo-launch/tests/stub_member.rs:297`. If clippy reports any other warning, stop and report it: it is not in this node.
+- [x] **2** `stub_member.rs:297` becomes:
 
 ```rust
         assert_eq!(wait_done(&s.ctl, 1), std::slice::from_ref(&start), "the request step is finished while its reply is held");
 ```
 
-- [ ] **3** Acceptance. Run `cargo clippy -p zygo-launch --all-targets --locked -- -D warnings && cargo test -p zygo-launch --locked --test stub_member`. Expected: no warning and no error from clippy; the `stub_member` tests all pass.
-- [ ] **4** Commit `stub_member.rs` and this file with its steps ticked: `test(launch): compare the done lines with a slice of the start line (clippy)`.
+- [x] **3** Acceptance. Run `cargo clippy -p zygo-launch --all-targets --locked -- -D warnings && cargo test -p zygo-launch --locked --test stub_member`. Expected: no warning and no error from clippy; the `stub_member` tests all pass.
+- [x] **4** Commit `stub_member.rs` and this file with its steps ticked: `test(launch): compare the done lines with a slice of the start line (clippy)`.
