@@ -23,3 +23,13 @@ Steps:
 - [ ] Run it and see it pass: the same command → 1 passed.
 - [ ] Run the Acceptance: `cargo test -p zygo-workspace --locked --test state` → all pass (23: 22 before, plus the new test). Then `cargo clippy -p zygo-workspace --locked --tests -- -D warnings` → exit 0.
 - [ ] Commit `crates/zygo-workspace/tests/state.rs` and this file, ticked, in the FIX-14 checkout: "fix(workspace): FIX-14 state hold retries the lock".
+
+## Dropped
+
+2026-11-22, after the diff review (author's call). The premise is false:
+
+- `crates/zygo-workspace/tests/state.rs` starts no process: no `Command`, no tmux, no fork. No child can hold a copy of the lock's file description.
+- Each test binary is its own process, so the forking tests in `tests/snapshot.rs` cannot share a file description with `tests/state.rs`.
+- Each state test uses its own `TempDir`, so no two state tests lock the same file.
+
+The one observed `WouldBlock` was in `tests/snapshot.rs`, and W6 fixed it there (R3-D5). The branch `worktree-zygo-phase-2--FIX-14` and its checkout were discarded unmerged.

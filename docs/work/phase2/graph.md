@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W7, W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-14
+**Next:** W7, W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
@@ -93,7 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | DONE | mechanical | 7ee20d6; acceptance ok |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
-| FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | IN-PROGRESS | mechanical | `.worktrees/phase2/FIX-14` |
+| FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
 
 ## Log
 
@@ -209,3 +208,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-13 DONE (3be5519): stub reads --session-id=<id> and --resume=<id>. Merged tree: stub_launch 17, stub_member 19, zygo-launch all pass. R2: Files add stub_member.rs. Spec W§7.3 wait bounds: up/down snapshots 5 s (author's call). |
 | 2026-11-22 | W6 DONE (8978541): snapshot. Merged tree: snapshot 33, state 22, zygo-workspace all pass, check --tests clean. I1-I5, R1-R8, S1-S8 applied: spec W§7.3, W§7.4; W3 gains Multiplexer::socket. FIX-14 added: state.rs hold retries the lock. W7 ready. |
 | 2026-11-22 | FIX-14 planned: 6 steps, test first. The race is not forked in the test: a second handle holds the lock and a thread drops it after 50 ms, then hold must return (author's call). |
+| 2026-11-22 | FIX-14 DROPPED after its diff review: premise false. tests/state.rs starts no process, each test binary is its own process, each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5. Branch discarded unmerged (author's call). |
