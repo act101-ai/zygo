@@ -14,8 +14,10 @@
 #   DISABLE_AUTOUPDATER=1 and ZYGO_NO_UPDATE_CHECK=1 are set.
 # - Claude Code asks whether it trusts the run's temporary worktree; the script answers yes (it moves
 #   the pointer to "Yes, I trust this folder", reads the pane to see it there, then sends Enter).
-#   Claude Code then keeps an entry for that path under "projects" in its .claude.json, and a transcript
-#   folder under <config dir>/projects/. The script does not delete them; the operator may.
+#   Claude Code 2.1.330 then keeps the answer as an entry for the main repository of that worktree
+#   (<scratch>/live-<pid>/hud/repo) under "projects" in its .claude.json, a transcript folder for the
+#   worktree path and a memory folder for the repository path under <config dir>/projects/. The script
+#   does not delete them; the operator may.
 # - They spend the operator's claude.ai usage: one short answer (session a), and Claude Code's own
 #   start requests in four sessions.
 # - zygo writes its state under ~/.local/share/zygo (usage rows stay; the plugin snapshot is refreshed)

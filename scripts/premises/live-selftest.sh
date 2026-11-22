@@ -12,7 +12,8 @@
 # - U4: every agent program started during the test is a stub (each writes a marker naming its
 #   own path); a tmux_claude launch reaches the stub; no wrapped sleep is left at the end.
 # - T1, U5: SIGINT, SIGTERM or SIGHUP to the script's process group during a LIVE_TIMEOUT-wrapped
-#   command leaves no process of the wrapped command's own group, and the scratch tree goes;
+#   command leaves no process of the wrapped command's own group, and the caller-set scratch dir
+#   keeps live-<pid> without its pg-* files (FIX-7);
 #   live_traps removes a stale pg-* file; live_end leaves a group whose leader is not the
 #   recorded wrapper's child.
 # - T3, U2, U3: live-passthrough.sh --scan-only in a copied tree, on a made-up HOME: passes on a
@@ -27,7 +28,7 @@
 #   names from hostname and scutil, also with spaces; a forbidden name after an escape) and skips
 #   a host name shorter than 4 characters with a note; U5: "-" and "_" are part of a host name.
 # - T6: tmux targets are exact and sessions this script did not start are left alone (a private
-#   tmux server, through a tmux shim on PATH; only that server is killed).
+#   tmux server with no config file, through a tmux shim on PATH; only that server is killed, and its socket file is removed).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -42,6 +43,7 @@ cleanup() {
   [ -z "$XPID" ] || kill -s KILL -- "-$XPID" 2>/dev/null
   pkill -KILL -f "sleep 4711$$" 2>/dev/null
   [ -z "$TMUX_REAL" ] || "$TMUX_REAL" -L "$SOCK" kill-server 2>/dev/null
+  rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$SOCK" 2>/dev/null
   chmod -R u+rwx "$T" 2>/dev/null
   rm -rf "$T"
 }
@@ -114,9 +116,10 @@ EOF
   sleep 0.5
   if kill -s 0 -- "-$pg" 2>/dev/null; then
     no "T1 $1: a process of the wrapped group is alive"; kill -s KILL -- "-$pg" 2>/dev/null; pkill -KILL -f "sleep 4711$$" 2>/dev/null
-  elif [ -e "$d/live-$c" ]; then no "T1 $1: scratch tree left"
+  elif [ ! -d "$d/live-$c/t1" ]; then no "T1 $1: the caller dir lost live-<pid>/t1"
+  elif [ -n "$(ls "$d/live-$c"/pg-* 2>/dev/null)" ]; then no "T1 $1: a pg-* file is left"
   elif [ "$rc" -ne "$2" ]; then no "T1 $1: exit $rc, wanted $2"
-  else ok "T1 $1 during a wrapped command: group killed, scratch removed, exit $rc"; fi
+  else ok "T1 $1 during a wrapped command: group killed, live-<pid> kept without pg-* files, exit $rc"; fi
 }
 t1 INT 130
 t1 TERM 143
@@ -288,7 +291,7 @@ if [ -z "$TMUX_REAL" ]; then
   no "T6: tmux not found"
 else
   mkdir -p "$T/tbin"
-  printf '#!/bin/sh\nexec "%s" -L "%s" "$@"\n' "$TMUX_REAL" "$SOCK" >"$T/tbin/tmux"; chmod +x "$T/tbin/tmux"
+  printf '#!/bin/sh\nexec "%s" -L "%s" -f /dev/null "$@"\n' "$TMUX_REAL" "$SOCK" >"$T/tbin/tmux"; chmod +x "$T/tbin/tmux"
   TM="$T/tbin/tmux"
   "$TM" new-session -d -s n38own "sleep 120"
   "$TM" new-session -d -s n24x "sh -c 'echo marker-n24x; sleep 120'"

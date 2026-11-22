@@ -1,8 +1,8 @@
 # Shared helpers for the N2 premise experiments. Source it from run-<id>.sh.
-# N2_SCRATCH: scratch directory for isolated HOMEs and raw captures. Set by the caller: kept. Unset
-# or empty: after the claude and opencode PATH checks pass, lib.sh makes one (mktemp -d) and prints
-# its path; on exit it removes it after status 0 and keeps it (named on stderr) otherwise. live.sh's
-# live_end does the same.
+# N2_SCRATCH: scratch directory for isolated HOMEs and raw captures. Set by the caller: kept, with
+# everything in it. Unset or empty: after the claude and opencode PATH checks pass, lib.sh makes one
+# (mktemp -d) and prints its path; on exit it removes it after status 0 and keeps it (named on
+# stderr) otherwise. live.sh's live_end does the same; it removes live-<pid> only from a dir lib.sh made.
 # Nothing here reads the operator's own agent config, login or memory files.
 set -eu
 : "${PREMISES_DIR:=$(cd "$(dirname "$0")" && pwd)}"
@@ -143,7 +143,7 @@ tmux_claude() {
   # The command runs from a file under /bin/sh (the tmux default shell may be zsh, which
   # treats a word like design[1m] as a failed glob).
   echo "cd '$R' && $(agent_env) $EXTRA_ENV $CLAUDE_BIN $*; sleep 2" >"$RUN/tmux-$s.sh"
-  tmux new-session -d -s "$s" -x 200 -y 50 -c "$R" "/bin/sh $RUN/tmux-$s.sh"
+  tmux -f /dev/null new-session -d -s "$s" -x 200 -y 50 -c "$R" "/bin/sh $RUN/tmux-$s.sh"
 }
 tmux_send() { tmux send-keys -t "=$1:" -l "$2"; sleep 0.5; tmux send-keys -t "=$1:" Enter; }
 # tmux_wait_req <n> [seconds]: wait until the mock has recorded at least n requests.
