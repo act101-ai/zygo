@@ -57,7 +57,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | IN-PROGRESS | implementation | .worktrees/phase2/PRB-1 |
-| HUD-7 | SessionView statusline_style with Default; overrides statusline; launcher writes the style | HUD-3 | DONE | implementation | 5c180cc, merge 1f1967b; acceptance all 17 commands 0 failed (merged tree) |
 | HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, HUD-2 | DONE | judgment | 320d2b2, merge 5d919a3; acceptance render 23, hooks lib 24, prices 28, session_api 45, passthrough 30, window 38, compact_cmd 11 (merged tree) |
 | HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7 | DONE | judgment | 2a5f5ff, merge e7d95d1; acceptance zygo-hooks, zygo, zygo-config, zygo-launch all targets 0 failed; session_api 47, passthrough 31 (merged tree, Linux) |
 | HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | DONE | judgment | 7e76153; acceptance in the full workspace run, 0 failed (merged tree) |
@@ -82,7 +81,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | TODO | judgment | — |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
-| W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | IN-PROGRESS | judgment | .worktrees/phase2/W11 |
+| W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11 | TODO | judgment | — |
@@ -194,3 +193,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | DOC-1 planned: 19 steps (14 H§9 rows, 3 auto-update rows, change log, check); in-place rewrites marked 2026-11-22. Log findings applied: long_context.cache_write_5m, OpenCode statusline verb as Claude Code, sessions line as <n>. |
 | 2026-11-22 | DOC-1 DONE (fdcea4a). Base-spec notes for the HUD (H§9) and auto-update written; review round 2 fixed 12 findings. Acceptance on the merged tree printed nothing. |
 | 2026-11-22 | FIX-11 and FIX-12 added from DOC-1 and PRB-1 findings: HUD spec H§3, H§8, H§14 #33 still say the OpenCode statusline session form exits 2 (HUD-11 built it as Claude Code); hud_probe_test.py leaves scripts/premises/__pycache__. |
+| 2026-11-22 | W11 DONE (0799b7d). MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback); review round 2 fixed F1-F7. Acceptance on the merged tree: mcp_server 50 passed, config_layers 96 passed, workspace --no-run ok. |

@@ -466,7 +466,13 @@ fn child_closed_stderr() {
     assert_eq!(n, 2, "an error or is-error reply, then the ping reply");
 }
 
+/// Held by every test that writes a stub or forks a process, from its first stub write or fork until its last
+/// program has ended. Thus no other test forks while a stub is open for writing (ETXTBSY).
+static STUBS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn forks() -> std::sync::MutexGuard<'static, ()> { STUBS.lock().unwrap_or_else(|e| e.into_inner()) }
+
 fn run_child(case: &str) {
+    let _forks = forks();
     let o = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "child_closed_stderr", "--nocapture", "--test-threads=1"])
         .env("ZYGO_MCP_CASE", case)
@@ -479,3 +485,381 @@ fn run_child(case: &str) {
 #[test] fn closed_stderr_line_over_4_mib_keeps_serving() { run_child("long"); }
 #[test] fn closed_stderr_not_json_keeps_serving() { run_child("notjson"); }
 #[test] fn closed_stderr_tool_panic_keeps_serving() { run_child("panic"); }
+
+// ---- workspace_down (W11; AU65, W§18 #78) ----
+
+use std::path::PathBuf;
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
+use zygo_core::session_view::{Member, ViewWorkspace};
+use zygo_mcp::tools::workspace_down::{self, WorkspaceDown};
+use zygo_workspace::state::Store;
+
+const WS_ID: &str = "0123456789abcdef";
+
+fn member_view() -> SessionView {
+    SessionView { workspace: Some(ViewWorkspace { member: Member { ws_id: WS_ID.into(), pane: "kabcdefgh".into() }, resume_note: None }),
+        ..view(true, true, true) }
+}
+/// A valid `workspace.json` for `WS_ID` with the name `app`.
+fn workspace_state(p: &Paths) {
+    Store::open(p, WS_ID)
+        .update(Duration::from_secs(1), &mut |ws| { ws.name = "app".into(); ws.tmux_session = "zygo-app".into(); Ok(()) })
+        .unwrap();
+}
+fn in_session(mut c: McpCtx, sd: &SessionDir) -> McpCtx { c.session_dir = Some(sd.clone()); c }
+/// An executable `/bin/sh` script `zygo-stub` in `dir`; the caller holds `forks()`.
+#[cfg(unix)]
+fn stub(dir: &Path, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join("zygo-stub");
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+/// Whether `pid` is gone within 2 s. A killed process whose parent has ended stays a zombie until init reaps it,
+/// and `kill -0` succeeds on a zombie. Thus this polls. The caller holds `forks()`.
+#[cfg(unix)]
+fn gone(pid: &str) -> bool {
+    let end = Instant::now() + Duration::from_secs(2);
+    loop {
+        let alive = std::process::Command::new("kill").args(["-0", pid])
+            .stderr(std::process::Stdio::null()).status().unwrap().success();
+        if !alive {
+            return true;
+        }
+        if Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn workspace_down_listed_only_with_the_toggle_and_a_member_marker() {
+    let d = tempfile::tempdir().unwrap();
+    let sd = session(d.path());
+    member_view().save(&sd).unwrap();
+    let has = |t: &[Box<dyn Tool>]| names(t).iter().any(|n| n == "workspace_down");
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let c = in_session(ctx(agent, |f| f.workspace_tool = true), &sd);
+        assert_eq!(names(&workspace_down::tools(&c)), ["workspace_down"]);
+        assert!(has(&tools::build_with(&c, |_| vec![], |_| vec![]).unwrap()));
+    }
+    let off = in_session(ctx(Agent::ClaudeCode, |_| {}), &sd);       // the default: off
+    assert!(!off.features.workspace_tool);
+    assert!(workspace_down::tools(&off).is_empty());
+    assert!(!has(&tools::build_with(&off, |_| vec![], |_| vec![]).unwrap()));
+    assert!(workspace_down::tools(&ctx(Agent::ClaudeCode, |f| f.workspace_tool = true)).is_empty());   // no session
+    view(true, true, true).save(&sd).unwrap();                       // not a member
+    let plain = in_session(ctx(Agent::ClaudeCode, |f| f.workspace_tool = true), &sd);
+    assert!(workspace_down::tools(&plain).is_empty());
+    assert!(!has(&tools::build_with(&plain, |_| vec![], |_| vec![]).unwrap()));
+}
+
+#[test]
+fn workspace_tool_comes_from_the_config_not_the_view() {
+    let d = tempfile::tempdir().unwrap();
+    let sd = session(d.path());
+    member_view().save(&sd).unwrap();
+    let c = resolve(&paths(d.path(), "[features]\nworkspace_tool = true\n"), Some(sd.clone())).0.unwrap();
+    assert!(c.features.workspace_tool);
+    assert_eq!(names(&workspace_down::tools(&c)), ["workspace_down"]);
+    let c = resolve(&paths(d.path(), ""), Some(sd)).0.unwrap();
+    assert!(!c.features.workspace_tool);
+    assert!(workspace_down::tools(&c).is_empty());
+}
+
+#[test]
+fn workspace_down_definition() {
+    let d = tempfile::tempdir().unwrap();
+    let t = WorkspaceDown::new(PathBuf::from("/nonexistent/zygo"), paths(d.path(), ""), WS_ID.into(), "s".into());
+    let def = t.def();
+    assert_eq!(def.name, "workspace_down");
+    assert_eq!(def.description, workspace_down::DESCRIPTION);
+    assert_eq!(def.input_schema, json!({"type":"object","properties":{"now":{"type":"boolean"}},"additionalProperties":false}));
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_down_runs_down_with_the_name_and_zygo_session() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let prog = stub(d.path(), r#"dir=$(dirname "$0")
+printf '%s\n' "$@" > "$dir/argv"
+printf '%s' "$ZYGO_SESSION" > "$dir/session"
+cat > "$dir/stdin"
+echo 'zygo: down started; end your turn'"#);
+    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
+    let read = |f: &str| std::fs::read_to_string(d.path().join(f)).unwrap();
+    assert_eq!(t.call(json!({})), Ok(json!("zygo: down started; end your turn")));
+    assert_eq!(read("argv"), "down\napp\n");
+    assert_eq!(read("session"), "s");
+    assert_eq!(read("stdin"), "");                                   // stdin is /dev/null
+    assert_eq!(t.call(json!({"now": true})), Ok(json!("zygo: down started; end your turn")));
+    assert_eq!(read("argv"), "down\napp\n--now\n");
+    assert_eq!(t.call(json!({"now": false})), Ok(json!("zygo: down started; end your turn")));
+    assert_eq!(read("argv"), "down\napp\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_down_non_zero_exit_is_a_tool_error_with_the_text() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let prog = stub(d.path(), "echo 'zygo: workspace app is not up' >&2\nexit 1");
+    let t = WorkspaceDown::new(prog.clone(), p.clone(), WS_ID.into(), "s".into());
+    assert_eq!(t.call(json!({})), Err(ToolError::Failed("zygo: workspace app is not up".into())));
+    // stdout without a final newline, then stderr: the two parts are joined with a newline (M5).
+    let prog = stub(d.path(), "printf 'out' \necho 'err' >&2\nexit 1");
+    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
+    assert_eq!(t.call(json!({})), Err(ToolError::Failed("out\nerr".into())));
+}
+
+/// The stub does not `exec`: its `sleep` is a child of the shell. If only the shell were killed, the `sleep` would
+/// still run, so the test checks both pids.
+#[cfg(unix)]
+#[test]
+fn workspace_down_that_does_not_return_in_5_s_is_killed() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let prog = stub(d.path(), r#"dir=$(dirname "$0")
+echo $$ > "$dir/shell"
+sleep 10 &
+echo $! > "$dir/child"
+wait"#);
+    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
+    let start = Instant::now();
+    assert_eq!(t.call(json!({})), Err(ToolError::Failed("zygo: down did not return within 5 s".into())));
+    let took = start.elapsed();
+    assert!(took >= Duration::from_secs(5) && took < Duration::from_secs(6), "{took:?}");
+    for f in ["shell", "child"] {
+        let pid = std::fs::read_to_string(d.path().join(f)).unwrap().trim().to_string();
+        assert!(gone(&pid), "{f} {pid} still runs");
+    }
+}
+
+/// The EOF path: the stub exits 0 at once, but its background child keeps stdout open. The call waits for EOF
+/// at most 5 s, then kills the group. `down` exited 0, so the call succeeds with the output read so far and one
+/// line about the stopped process (round 2, F4).
+#[cfg(unix)]
+#[test]
+fn workspace_down_whose_child_keeps_stdout_open_is_killed() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let prog = stub(d.path(), r#"dir=$(dirname "$0")
+sleep 10 &
+echo $! > "$dir/child"
+echo 'zygo: down started; end your turn'
+exit 0"#);
+    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
+    let start = Instant::now();
+    assert_eq!(t.call(json!({})), Ok(json!(format!("zygo: down started; end your turn\n{HELD_STOPPED}"))));
+    let took = start.elapsed();
+    assert!(took >= Duration::from_secs(5) && took < Duration::from_secs(6), "{took:?}");
+    let pid = std::fs::read_to_string(d.path().join("child")).unwrap().trim().to_string();
+    assert!(gone(&pid), "child {pid} still runs");
+}
+
+#[test]
+fn workspace_down_unknown_key_is_invalid_params() {
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let t = WorkspaceDown::new(PathBuf::from("/nonexistent/zygo"), p, WS_ID.into(), "s".into());
+    assert_eq!(t.call(json!({"wait": true})), Err(ToolError::InvalidParams("unknown key `wait`; the only key is `now`".into())));
+    assert_eq!(t.call(json!({"now": "yes"})), Err(ToolError::InvalidParams("now must be true or false".into())));
+    for bad in [json!({"now": true, "all": true}), json!({"now": 1}), json!({"now": null})] {
+        assert!(matches!(t.call(bad.clone()), Err(ToolError::InvalidParams(_))), "{bad}");
+    }
+    let listed: Vec<Box<dyn Tool>> = vec![Box::new(t)];
+    let mut out = Vec::new();
+    let req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"workspace_down\",\"arguments\":{\"all\":true}}}\n";
+    serve(Agent::ClaudeCode, &listed, req.as_bytes(), &mut out).unwrap();
+    let r: Value = serde_json::from_slice(out.split(|b| *b == b'\n').next().unwrap()).unwrap();
+    assert_eq!(r["error"]["code"], -32602);
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_down_without_workspace_json_names_the_id() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let prog = stub(d.path(), "touch \"$(dirname \"$0\")/ran\"");
+    let t = WorkspaceDown::new(prog.clone(), paths(d.path(), ""), WS_ID.into(), "s".into());
+    assert_eq!(t.call(json!({})), Err(ToolError::Failed(format!("zygo: workspace {WS_ID} has no state"))));
+    assert!(!d.path().join("ran").exists());                         // nothing ran
+    let bad = WorkspaceDown::new(prog, paths(d.path(), ""), "bad".into(), "s".into());
+    match bad.call(json!({})) {
+        Err(ToolError::Failed(m)) => assert!(m.starts_with("zygo: workspace bad: "), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+// ---- workspace_down round 2 (W11 diff review) ----
+
+/// The note line when a process of `down`'s group still held stdout or stderr at the limit and the group was killed.
+#[cfg(unix)]
+const HELD_STOPPED: &str = "zygo: a process of down still held its output after 5 s and was stopped";
+
+/// A valid `workspace.json` for `WS_ID` with the name `name`.
+#[cfg(unix)]
+fn workspace_named(p: &Paths, name: &str) {
+    Store::open(p, WS_ID)
+        .update(Duration::from_secs(1), &mut |ws| { ws.name = name.into(); ws.tmux_session = format!("zygo-{name}"); Ok(()) })
+        .unwrap();
+}
+
+/// F4, non-zero exit: `down` exits 3 and its child holds stdout. The call fails with the output read so far and the
+/// note line, not with the timeout text, because the exit status is known.
+#[cfg(unix)]
+#[test]
+fn workspace_down_non_zero_exit_with_a_held_pipe_reports_the_output() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let prog = stub(d.path(), r#"dir=$(dirname "$0")
+sleep 10 &
+echo $! > "$dir/child"
+echo 'zygo: workspace app is not up'
+exit 3"#);
+    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
+    let start = Instant::now();
+    assert_eq!(t.call(json!({})), Err(ToolError::Failed(format!("zygo: workspace app is not up\n{HELD_STOPPED}"))));
+    let took = start.elapsed();
+    assert!(took >= Duration::from_secs(5) && took < Duration::from_secs(6), "{took:?}");
+    let pid = std::fs::read_to_string(d.path().join("child")).unwrap().trim().to_string();
+    assert!(gone(&pid), "child {pid} still runs");
+}
+
+/// Child half of F3: runs only when the parent sets `ZYGO_MCP_SIGCHLD_DIR`. SIGCHLD is ignored here, so the kernel
+/// reaps the stub itself and `waitid`/`try_wait` give ECHILD.
+#[cfg(unix)]
+#[test]
+fn child_sigchld_ignored() {
+    let Ok(dir) = std::env::var("ZYGO_MCP_SIGCHLD_DIR") else { return };
+    // SAFETY: `signal` with `SIG_IGN` has no memory effect; this process runs this one test only.
+    unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
+    let dir = PathBuf::from(dir);
+    let t = WorkspaceDown::new(dir.join("zygo-stub"), paths(&dir, ""), WS_ID.into(), "s".into());
+    assert_eq!(t.call(json!({})), Ok(json!("zygo: down started; end your turn")));
+}
+
+/// F3: with SIGCHLD ignored, the exit is seen as ECHILD. The call returns the output (an unknown status counts as
+/// success) and sends no kill to the freed pid.
+#[cfg(unix)]
+#[test]
+fn workspace_down_with_sigchld_ignored_returns_the_output() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    stub(d.path(), "echo 'zygo: down started; end your turn'");
+    let o = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "child_sigchld_ignored", "--nocapture", "--test-threads=1"])
+        .env("ZYGO_MCP_SIGCHLD_DIR", d.path())
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+}
+
+/// F5: `zygo down` has no `--` handling (crates/zygo/src/cmd has no `down` subcommand yet), so a name that starts
+/// with `-` is refused before anything runs.
+#[cfg(unix)]
+#[test]
+fn workspace_down_refuses_a_name_that_starts_with_a_dash() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_named(&p, "--all");
+    let prog = stub(d.path(), "touch \"$(dirname \"$0\")/ran\"\necho ran");
+    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
+    assert_eq!(t.call(json!({})),
+        Err(ToolError::Failed("zygo: workspace name `--all` starts with `-`; zygo down would read it as a flag".into())));
+    assert!(!d.path().join("ran").exists());                         // nothing ran
+}
+
+/// F7: stdout and stderr are each cut at 64 KiB; the rest is drained, so the stub is not blocked.
+#[cfg(unix)]
+#[test]
+fn workspace_down_caps_stdout_and_stderr_at_64_kib() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let prog = stub(d.path(), r"head -c 100000 /dev/zero | tr '\0' a
+head -c 100000 /dev/zero | tr '\0' b >&2");
+    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
+    let start = Instant::now();
+    assert_eq!(t.call(json!({})), Ok(json!(format!("{}\n{}", "a".repeat(64 * 1024), "b".repeat(64 * 1024)))));
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn workspace_down_with_a_corrupt_workspace_json_names_the_id() {
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    let dir = p.workspaces_dir().join(WS_ID);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("workspace.json"), b"{broken").unwrap();
+    let t = WorkspaceDown::new(PathBuf::from("/nonexistent/zygo"), p, WS_ID.into(), "s".into());
+    match t.call(json!({})) {
+        Err(ToolError::Failed(m)) => {
+            assert!(m.starts_with(&format!("zygo: workspace {WS_ID}: ")), "{m}");
+            assert!(m.contains("workspace.json: "), "{m}");
+            assert!(!m.contains("broken"), "{m}");                   // no file content in the message
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn workspace_down_with_a_workspace_json_of_another_id_is_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    let other = "fedcba9876543210";
+    Store::open(&p, other)
+        .update(Duration::from_secs(1), &mut |ws| { ws.name = "app".into(); ws.tmux_session = "zygo-app".into(); Ok(()) })
+        .unwrap();
+    let dir = p.workspaces_dir().join(WS_ID);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(p.workspaces_dir().join(other).join("workspace.json"), dir.join("workspace.json")).unwrap();
+    let t = WorkspaceDown::new(PathBuf::from("/nonexistent/zygo"), p, WS_ID.into(), "s".into());
+    match t.call(json!({})) {
+        Err(ToolError::Failed(m)) => {
+            assert!(m.starts_with(&format!("zygo: workspace {WS_ID}: ")), "{m}");
+            assert!(m.ends_with(": invalid id"), "{m}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn workspace_down_tools_call_success_is_not_an_error() {
+    let _forks = forks();
+    let d = tempfile::tempdir().unwrap();
+    let p = paths(d.path(), "");
+    workspace_state(&p);
+    let prog = stub(d.path(), r#"printf '%s ' "$@" > "$(dirname "$0")/argv"
+echo 'zygo: down started; end your turn'"#);
+    let listed: Vec<Box<dyn Tool>> = vec![Box::new(WorkspaceDown::new(prog, p, WS_ID.into(), "s".into()))];
+    let mut out = Vec::new();
+    let req = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"workspace_down\",\"arguments\":{\"now\":true}}}\n";
+    serve(Agent::ClaudeCode, &listed, req.as_bytes(), &mut out).unwrap();
+    let r: Value = serde_json::from_slice(out.split(|b| *b == b'\n').next().unwrap()).unwrap();
+    assert_eq!(r["id"], 1);
+    assert_eq!(r["result"]["isError"], false);
+    assert_eq!(r["result"]["content"], json!([{"type":"text","text":"zygo: down started; end your turn"}]));
+    assert_eq!(std::fs::read_to_string(d.path().join("argv")).unwrap(), "down app --now ");
+}
