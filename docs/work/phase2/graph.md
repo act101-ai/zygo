@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | DONE | judgment | 7e76153; acceptance in the full workspace run, 0 failed (merged tree) |
 | UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | DONE | judgment | d74bd3f, merge c3f3c55; acceptance update 26/26, workspace --no-run ok (merged tree); Windows branch of #7 runs in CI only |
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
@@ -98,7 +97,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
-| FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-10 |
+| FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | TODO | mechanical | — |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 
@@ -200,3 +199,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | Author's call from P2 and the W3 probe: AU61 resume drops CLAUDE_CONFIG_DIR when the saved config dir is none (PW16); AU87 adds `no such session:`. W7, W10: read @zygo-ws only after session_exists; W7: window hooks with -w. H1 consumes the W9 subagent methods. |
 | 2026-11-22 | LIV-2 planned: 21 steps; plan review B1-B3 and M1-M10 fixed; data.rs and the HUD spec added to Files (author's call) |
 | 2026-11-22 | W3 planned: 19 steps; review B1-B4 and M1-M11 fixed; B5 found by probe: tmux -u needed under LC_ALL=C; spec AU87, W§13 updated (author's call) |
+| 2026-11-22 | FIX-10 DONE (f273eed): a non-2xx passthrough answer records its upstream error type and message. Merged tree: passthrough 53, store 34, proxy 391 ok, forbidden_content ok. Review round 2 fixed B1 (secret pass before login scrub) and 9 minor. |

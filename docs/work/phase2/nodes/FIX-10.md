@@ -63,14 +63,14 @@ Work in the node's checkout. Run each command from the repository root. Each com
 
 #### Task 1: the usage table (`crates/zygo-usage`)
 
-- [ ] **1.1** In `crates/zygo-usage/tests/store.rs`, change the expected list of `schema_creates_three_tables_in_wal_mode` to `["requests", "sync_pending", "trims", "upstream_errors", "work_units"]`, and add to `never_list_columns_are_exact`:
+- [x] **1.1** In `crates/zygo-usage/tests/store.rs`, change the expected list of `schema_creates_three_tables_in_wal_mode` to `["requests", "sync_pending", "trims", "upstream_errors", "work_units"]`, and add to `never_list_columns_are_exact`:
 
   ```rust
   assert_eq!(cols(&t.db(), "upstream_errors"), ["ts","session","request_class","model","status","error_type","error_message"]);
   ```
 
   Result: the two tests name the new table and its exact columns.
-- [ ] **1.2** In the same file, add the helpers and five tests:
+- [x] **1.2** In the same file, add the helpers and five tests:
 
   ```rust
   fn uerr(session: &str, ts: i64) -> UpstreamErrorRow {
@@ -151,8 +151,8 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the file holds the five tests; `req`, `count`, `survivors`, `now`, `DAY` and `Tmp` are the existing helpers of the file.
-- [ ] **1.3** Run `cargo test -p zygo-usage --locked --test store`. Expected: the build fails with errors that name `UpstreamErrorRow`, `insert_upstream_error`, `insert_request_and_error` and `upstream_errors` (not found). No other error.
-- [ ] **1.4** In `crates/zygo-usage/src/schema.rs`, append to `SCHEMA`, after the `sync_pending` line (`schema.rs:66`):
+- [x] **1.3** Run `cargo test -p zygo-usage --locked --test store`. Expected: the build fails with errors that name `UpstreamErrorRow`, `insert_upstream_error`, `insert_request_and_error` and `upstream_errors` (not found). No other error.
+- [x] **1.4** In `crates/zygo-usage/src/schema.rs`, append to `SCHEMA`, after the `sync_pending` line (`schema.rs:66`):
 
   ```sql
   CREATE TABLE IF NOT EXISTS upstream_errors (
@@ -187,7 +187,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: `SCHEMA` creates the table and its two indexes; `SCHEMA_VERSION` (`store.rs:54`) stays 1.
-- [ ] **1.5** In `crates/zygo-usage/src/store.rs`, add after `bind_request` (`store.rs:17-51`):
+- [x] **1.5** In `crates/zygo-usage/src/store.rs`, add after `bind_request` (`store.rs:17-51`):
 
   ```rust
   /// One `upstream_errors` row on `conn` (a connection or an open transaction).
@@ -230,12 +230,12 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   in `prune` (`store.rs:237-248`), after the `DELETE FROM requests` line: `tx.execute("DELETE FROM upstream_errors WHERE ts < ?1", [cutoff])?;`; in `replace_requests` (`store.rs:186`), after the `DELETE FROM requests` line: `tx.execute("DELETE FROM upstream_errors WHERE session = ?1", [session])?;`. Result: the store methods of `Plan produces` exist with the exact signatures; a stored status out of `u16` range is a read error (rusqlite `FromSql for u16`); a dropped transaction rolls back (rusqlite `Transaction` drop).
-- [ ] **1.6** Run `cargo test -p zygo-usage --locked --test store`. Expected: 0 failed; the output lists `... ok` for `upstream_error_round_trip_by_session`, `upstream_errors_table_is_created_on_an_existing_database`, `prune_deletes_upstream_errors_older_than_retain_days`, `insert_request_and_error_is_one_transaction`, `replace_requests_deletes_the_sessions_upstream_errors`, `schema_creates_three_tables_in_wal_mode`, `never_list_columns_are_exact`, `replace_requests_swaps_a_session_in_one_transaction`.
-- [ ] **1.7** Commit `crates/zygo-usage/src/schema.rs`, `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs` and this file: `feat(usage): table upstream_errors for the upstream error of a passthrough answer`.
+- [x] **1.6** Run `cargo test -p zygo-usage --locked --test store`. Expected: 0 failed; the output lists `... ok` for `upstream_error_round_trip_by_session`, `upstream_errors_table_is_created_on_an_existing_database`, `prune_deletes_upstream_errors_older_than_retain_days`, `insert_request_and_error_is_one_transaction`, `replace_requests_deletes_the_sessions_upstream_errors`, `schema_creates_three_tables_in_wal_mode`, `never_list_columns_are_exact`, `replace_requests_swaps_a_session_in_one_transaction`.
+- [x] **1.7** Commit `crates/zygo-usage/src/schema.rs`, `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs` and this file: `feat(usage): table upstream_errors for the upstream error of a passthrough answer`.
 
 #### Task 2: the proxy tests (`crates/zygo-proxy/tests/passthrough.rs`)
 
-- [ ] **2.1** Harness changes in `passthrough.rs`:
+- [x] **2.1** Harness changes in `passthrough.rs`:
   - Imports: `use zygo_usage::{RedactionCount, RequestRow, Store, UpstreamErrorRow};` in place of the `zygo_usage` line; add `use futures_util::StreamExt;` and `use zygo_proxy::tee::UsageHold;`.
   - `struct Upstream`: add the fields `ctype: Arc<Mutex<String>>` (`"application/json"` at start) and `hang: Arc<Mutex<bool>>` (false at start). In `start`, create them, clone them into the reply closure next to `r2, s2, h2`, and build the reply as:
 
@@ -284,7 +284,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
     ```
 
   Result: the harness answers any content type, can leave a body open, can hold the usage writer, and reads `upstream_errors` rows; every existing test still compiles unchanged.
-- [ ] **2.2** Add, after `upstream_429_reaches_the_client_once_and_unchanged`, these seven tests (the contract cases):
+- [x] **2.2** Add, after `upstream_429_reaches_the_client_once_and_unchanged`, these seven tests (the contract cases):
 
   ```rust
   #[test] // FIX-10 (§14): a 429 answer writes its error type and message; the client gets the answer unchanged
@@ -400,7 +400,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the seven tests are in the file.
-- [ ] **2.3** Add after them these seven tests (plan review round 1):
+- [x] **2.3** Add after them these seven tests (plan review round 1):
 
   ```rust
   #[test] // FIX-10 B1: a 4 MiB error body reaches the client whole while the usage writer is held; the row follows
@@ -514,12 +514,12 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the seven tests are in the file.
-- [ ] **2.4** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: the build passes; `upstream_200_records_no_error`, `normal_session_error_records_no_row` and every test that existed before pass; the other twelve new tests fail on their first row-count assertion (left 0). `upstream_large_error_body_does_not_wait_for_the_writer` fails only after `hold.release()`.
-- [ ] **2.5** Commit `crates/zygo-proxy/tests/passthrough.rs` and this file: `test(proxy): upstream error rows of a non-2xx passthrough answer`.
+- [x] **2.4** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: the build passes; `upstream_200_records_no_error`, `normal_session_error_records_no_row` and every test that existed before pass; the other twelve new tests fail on their first row-count assertion (left 0). `upstream_large_error_body_does_not_wait_for_the_writer` fails only after `hold.release()`.
+- [x] **2.5** Commit `crates/zygo-proxy/tests/passthrough.rs` and this file: `test(proxy): upstream error rows of a non-2xx passthrough answer`.
 
 #### Task 3: the proxy code (`crates/zygo-proxy/src`)
 
-- [ ] **3.1** In `crates/zygo-proxy/src/redact_stage.rs`: change the import to `use zygo_redact::secret::{redact, redact_after_wait, RedactError};`, add `use serde_json::Value;` and `use crate::session::SessionState;`, and add:
+- [x] **3.1** In `crates/zygo-proxy/src/redact_stage.rs`: change the import to `use zygo_redact::secret::{redact, redact_after_wait, RedactError};`, add `use serde_json::Value;` and `use crate::session::SessionState;`, and add:
 
   ```rust
   /// `text` through the session's secret pass under `policy`; `None` on a `block` match, a timeout or a panic. Shared by
@@ -538,7 +538,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   In `crates/zygo-proxy/src/forward.rs`, replace the body of `row_name` (`forward.rs:737-747`) with `crate::redact_stage::secret_pass(s, name, &DeadlinePolicy::default()).map(|n| strip_1m(&n))`. Result: `row_name` keeps its behavior (the same `Ok(Ok(_))` rule, the same deadline); the pass code exists once.
-- [ ] **3.2** In `crates/zygo-proxy/src/tee.rs`, `Tee`: add the field `/// Keep the non-streamed copy after `finish`, for `body` (FIX-10). keep: bool,` after `copy_over`; set `keep: false` in `Tee::new` (`tee.rs:137`); in `Tee::finish` change `self.copy = Vec::new();` (`tee.rs:182`) to `if !self.keep { self.copy = Vec::new(); }`; add:
+- [x] **3.2** In `crates/zygo-proxy/src/tee.rs`, `Tee`: add the field `/// Keep the non-streamed copy after `finish`, for `body` (FIX-10). keep: bool,` after `copy_over`; set `keep: false` in `Tee::new` (`tee.rs:137`); in `Tee::finish` change `self.copy = Vec::new();` (`tee.rs:182`) to `if !self.keep { self.copy = Vec::new(); }`; add:
 
   ```rust
   /// `body` returns the non-streamed copy after `finish` (FIX-10). No effect on a streamed response.
@@ -554,7 +554,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: without `keep_body`, `Tee` behaves as before (the `Tee` tests in `request_path.rs:620-690` and `session_api.rs:1084-1170` do not call it).
-- [ ] **3.3** In `tee.rs`, add the imports `use zygo_config::keys::Secret;`, `use zygo_redact::DeadlinePolicy;`, `use crate::redact_stage::secret_pass;`, `use crate::session::SessionState;`, `use crate::translate::{error_message, error_object, scrub};`, change `use zygo_usage::{RequestRow, Store};` to `use zygo_usage::{RequestRow, Store, UpstreamErrorRow};`, and add before `struct Ticket`:
+- [x] **3.3** In `tee.rs`, add the imports `use zygo_config::keys::Secret;`, `use zygo_redact::DeadlinePolicy;`, `use crate::redact_stage::secret_pass;`, `use crate::session::SessionState;`, `use crate::translate::{error_message, error_object, scrub};`, change `use zygo_usage::{RequestRow, Store};` to `use zygo_usage::{RequestRow, Store, UpstreamErrorRow};`, and add before `struct Ticket`:
 
   ```rust
   /// The most bytes of the relayed body that `Flow::drop` copies for the usage writer (§14, FIX-10 B1).
@@ -645,7 +645,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the parse, the scrubs, the pass and the cuts live in `tee.rs` and run only where `error_row` is called (the writer, step 3.4).
-- [ ] **3.4** In `tee.rs`, `UsageSink`: `type RowSender = mpsc::Sender<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>;` (`tee.rs:307`); `UsageSink::open` gets the parameter `secret: DeadlinePolicy` (signature `pub(crate) fn open(db: Option<&Path>, #[allow(unused_variables)] hooks: WriterHooks, secret: DeadlinePolicy) -> (UsageSink, Option<String>)`); the channel becomes `mpsc::channel::<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>()` (`tee.rs:339`); the writer loop becomes `for (row, error, ticket) in rx {` with the test hooks as they are, then:
+- [x] **3.4** In `tee.rs`, `UsageSink`: `type RowSender = mpsc::Sender<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>;` (`tee.rs:307`); `UsageSink::open` gets the parameter `secret: DeadlinePolicy` (signature `pub(crate) fn open(db: Option<&Path>, #[allow(unused_variables)] hooks: WriterHooks, secret: DeadlinePolicy) -> (UsageSink, Option<String>)`); the channel becomes `mpsc::channel::<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>()` (`tee.rs:339`); the writer loop becomes `for (row, error, ticket) in rx {` with the test hooks as they are, then:
 
   ```rust
   let e = error.map(|c| error_row(&row, &c, &secret));
@@ -669,7 +669,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the error row is built and written on the writer thread, in one transaction with its request row (D6).
-- [ ] **3.5** In `crates/zygo-proxy/src/server.rs`, `app` (`server.rs:80-88`), before `UsageSink::open`:
+- [x] **3.5** In `crates/zygo-proxy/src/server.rs`, `app` (`server.rs:80-88`), before `UsageSink::open`:
 
   ```rust
   // The secret deadline of stage 6 for the upstream_errors fields (§14, FIX-10).
@@ -680,7 +680,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   and call `UsageSink::open(opts.usage_db.as_deref(), hooks, secret)`. Result: the writer uses the configured `RedactLimits.secret` (the spec default outside tests).
-- [ ] **3.6** In `crates/zygo-proxy/src/forward.rs`: keep the existing `use zygo_config::keys::Secret;` (`forward.rs:21`), add `AUTHORIZATION` to the `http::header` import (`forward.rs:16`), and change the `crate::tee` import (`forward.rs:34`) to add `ErrorCapture, ERROR_BODY_MAX`. In `struct Pending` (`forward.rs:208-225`) add `/// Passthrough, an upstream status that is not 2xx: the capture for the `upstream_errors` row (§14, FIX-10). upstream_error: Option<ErrorCapture>,`; in the `Pending` literal of `handle` (`forward.rs:301`) add `upstream_error: None`; in `Pending::drop` change the last line (`forward.rs:266`) to `self.sink.send(std::mem::take(&mut self.row), self.upstream_error.take(), self.ticket.take());`. In `run` (`forward.rs:318`), after `let mut tee = Tee::new(streamed);` (`forward.rs:539`), add `if s.passthrough && !status.is_success() { tee.keep_body(); }`. In `Flow::drop` (`forward.rs:1052-1063`), after `self.pending.split = self.tee.cache_split();`, add:
+- [x] **3.6** In `crates/zygo-proxy/src/forward.rs`: keep the existing `use zygo_config::keys::Secret;` (`forward.rs:21`), add `AUTHORIZATION` to the `http::header` import (`forward.rs:16`), and change the `crate::tee` import (`forward.rs:34`) to add `ErrorCapture, ERROR_BODY_MAX`. In `struct Pending` (`forward.rs:208-225`) add `/// Passthrough, an upstream status that is not 2xx: the capture for the `upstream_errors` row (§14, FIX-10). upstream_error: Option<ErrorCapture>,`; in the `Pending` literal of `handle` (`forward.rs:301`) add `upstream_error: None`; in `Pending::drop` change the last line (`forward.rs:266`) to `self.sink.send(std::mem::take(&mut self.row), self.upstream_error.take(), self.ticket.take());`. In `run` (`forward.rs:318`), after `let mut tee = Tee::new(streamed);` (`forward.rs:539`), add `if s.passthrough && !status.is_success() { tee.keep_body(); }`. In `Flow::drop` (`forward.rs:1052-1063`), after `self.pending.split = self.tee.cache_split();`, add:
 
   ```rust
   // Passthrough, not 2xx: raw bytes and the login for the usage writer; no parse and no pass here (§14, FIX-10 B1).
@@ -695,36 +695,51 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: `RequestRow` and its literals are unchanged; a refusal (no `Flow`) sends `None`; the relayed status, headers and bytes are not touched (the tee returns each chunk unchanged, `tee.rs:161`); the response path copies at most 16 KiB and does no parse, lock or pass.
-- [ ] **3.7** Run `cargo check -p zygo-proxy --locked --all-targets`. Expected: exit 0, no warning in `forward.rs`, `tee.rs`, `redact_stage.rs` or `server.rs`.
-- [ ] **3.8** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: 0 failed; the output lists `... ok` for the fourteen tests of steps 2.2 and 2.3, for `upstream_429_reaches_the_client_once_and_unchanged`, `cover_model_secret_not_in_row` and `cover_model_secret_redacted_upstream` (the `row_name` refactor).
-- [ ] **3.9** Run `cargo test -p zygo-proxy --locked --test request_path --test session_api --test redaction_e2e --lib`. Expected: 0 failed (the `Tee` and usage-writer tests, `usage_written_on_client_disconnect` among them, and the redaction tests are unchanged by `keep_body`, the new channel item and `secret_pass`).
-- [ ] **3.10** Commit `crates/zygo-proxy/src/tee.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`, `crates/zygo-proxy/src/server.rs` and this file: `fix(proxy): record the upstream error type and message of a non-2xx passthrough answer`.
+- [x] **3.7** Run `cargo check -p zygo-proxy --locked --all-targets`. Expected: exit 0, no warning in `forward.rs`, `tee.rs`, `redact_stage.rs` or `server.rs`.
+- [x] **3.8** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: 0 failed; the output lists `... ok` for the fourteen tests of steps 2.2 and 2.3, for `upstream_429_reaches_the_client_once_and_unchanged`, `cover_model_secret_not_in_row` and `cover_model_secret_redacted_upstream` (the `row_name` refactor).
+- [x] **3.9** Run `cargo test -p zygo-proxy --locked --test request_path --test session_api --test redaction_e2e --lib`. Expected: 0 failed (the `Tee` and usage-writer tests, `usage_written_on_client_disconnect` among them, and the redaction tests are unchanged by `keep_body`, the new channel item and `secret_pass`).
+- [x] **3.10** Commit `crates/zygo-proxy/src/tee.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`, `crates/zygo-proxy/src/server.rs` and this file: `fix(proxy): record the upstream error type and message of a non-2xx passthrough answer`.
 
 #### Task 4: the base spec (`docs/specs/2026-11-18-zygo-design.md`)
 
-- [ ] **4.1** In §14, after the bullet `  - \`work_units\`: §13.1 facts.`, add the bullet:
+- [x] **4.1** In §14, after the bullet `  - \`work_units\`: §13.1 facts.`, add the bullet:
 
   ```markdown
     - `upstream_errors`: ts, session, request_class, model, status, error_type, error_message. *(Note 2026-11-22, FIX-10: LIV-1 D8, FIX-8. One row for each passthrough request whose upstream answer reaches the client with a status that is not 2xx; a refusal by zygo itself, a non-passthrough session and an error event inside a 2xx stream write no row. The response path copies at most the first 16 KiB of the relayed body and does no parse; the usage writer reads `error.type` and `error.message` from it (`error` as an object, else the body). Both are empty when the copy is not such JSON (not JSON, an SSE body, a body over 16 KiB, or cut off by a client disconnect). Each field is cut to 2 KiB, the client's login is removed (whole, and each run of 8 or more of its characters), the secret pass of §16.1 runs on it at the stage-6 deadline (an empty field when the pass blocks or fails, also when `[features] redaction.secrets` is off), each control character becomes a space, and at most 300 characters are kept. The row and its `requests` row are written in one transaction. The table is created with `CREATE TABLE IF NOT EXISTS` on every open, without a schema version change; `retain_days` and `zygo usage --sync` (which replaces a session's rows) apply as for `requests`.)*
   ```
 
   Result: `rg -n 'upstream_errors' docs/specs/2026-11-18-zygo-design.md` prints the new line in §14 (between lines 670 and 683 of the current file).
-- [ ] **4.2** In §14, replace the line `- Never: bodies, prompts, tool inputs, file paths outside the repository-relative \`files\` of a unit (kept only in the local session directory), redacted spans or words, credentials.` with:
+- [x] **4.2** In §14, replace the line `- Never: bodies, prompts, tool inputs, file paths outside the repository-relative \`files\` of a unit (kept only in the local session directory), redacted spans or words, credentials.` with:
 
   ```markdown
   - Never: bodies, prompts, tool inputs, file paths outside the repository-relative `files` of a unit (kept only in the local session directory), redacted spans or words, credentials. One exception: the upstream error `type` and `message` of a non-2xx passthrough answer (`upstream_errors`), scrubbed and capped as that table's note says. *(2026-11-22, FIX-10)*
   ```
 
   Result: `rg -n '^- Never: .*One exception' docs/specs/2026-11-18-zygo-design.md` prints one line.
-- [ ] **4.3** At the end of the table under `## Change log`, add the row:
+- [x] **4.3** At the end of the table under `## Change log`, add the row:
 
   ```markdown
   | 2026-11-22 | §14 (`upstream_errors`, "Never" line) | author's call (FIX-10, from FIX-8) | §14: table `upstream_errors` records the upstream error type and message of a non-2xx passthrough answer; LIV-1 D8, FIX-8, FIX-10. |
   ```
 
   Result: `rg -n 'LIV-1 D8, FIX-8, FIX-10' docs/specs/2026-11-18-zygo-design.md` prints one line, the change-log row.
-- [ ] **4.4** Commit `docs/specs/2026-11-18-zygo-design.md` and this file: `docs(spec): §14 table upstream_errors (FIX-10)`.
+- [x] **4.4** Commit `docs/specs/2026-11-18-zygo-design.md` and this file: `docs(spec): §14 table upstream_errors (FIX-10)`.
 
 #### Task 5: verification
 
-- [ ] **5.1** Run the Acceptance of the contract: `cargo test -p zygo-proxy --locked --test passthrough && cargo test -p zygo-usage --locked --test store && cargo test --workspace --locked --no-run`. Expected: exit 0; 0 failed in both test binaries; the output lists `upstream_429_error_type_and_message_recorded ... ok`, `upstream_200_records_no_error ... ok`, `upstream_500_not_json_records_empty_fields ... ok`, `upstream_error_message_capped_and_without_control_characters ... ok`, `upstream_error_row_holds_no_request_content ... ok`, `upstream_errors_table_is_created_on_an_existing_database ... ok`; the workspace build of every test target ends without an error. Then commit this file with every step ticked: `docs(work): FIX-10 acceptance`.
+- [x] **5.1** Run the Acceptance of the contract: `cargo test -p zygo-proxy --locked --test passthrough && cargo test -p zygo-usage --locked --test store && cargo test --workspace --locked --no-run`. Expected: exit 0; 0 failed in both test binaries; the output lists `upstream_429_error_type_and_message_recorded ... ok`, `upstream_200_records_no_error ... ok`, `upstream_500_not_json_records_empty_fields ... ok`, `upstream_error_message_capped_and_without_control_characters ... ok`, `upstream_error_row_holds_no_request_content ... ok`, `upstream_errors_table_is_created_on_an_existing_database ... ok`; the workspace build of every test target ends without an error. Then commit this file with every step ticked: `docs(work): FIX-10 acceptance`.
+
+## Round 2 (diff review, 2026-11-22)
+
+Each finding: the test written first and its failure before the fix, then the fix. Tests in `crates/zygo-proxy/tests/passthrough.rs` unless named `tee::tests::…` (`crates/zygo-proxy/src/tee.rs`).
+
+- [x] **B1 (secret leak).** Test `upstream_error_tokens_that_share_the_login_prefix_are_not_stored`: a real-form login (`sk-ant-oat01-` + 40 characters, built at run time) and a 401 message that holds it, a second `oat01` token (`B`×40) and a refresh token `sk-ant-ort01-` (`C`×40). Before: `a file holds B` (the whole-login scrub, then `scrub_partial`, cut `sk-ant-oat01-` and `sk-ant-o` off the other tokens, so `anthropic_api_key` no longer matched). Fix: `error_field` runs the secret pass first, then the whole-login scrub, then `scrub_partial`, then `clean`. The test also checks the WAL file is among the files read, and the stored message is three placeholders.
+- [x] **M2 (unbounded lock wait).** Test `upstream_error_fields_are_empty_when_the_secret_lock_is_held` (secret base 300 ms, the session's `secret_cache` locked by the test before the writer runs). Before: `usage row not written while the lock was held` (10 s). Fix: `redact_stage::secret_pass_bounded`: `try_lock` in a loop, at most `policy.budget(text)`, the wait taken off the pass budget (`redact_after_wait`), `None` past the bound; `error_field` uses it. `row_name` keeps `secret_pass` (blocking wait, as before).
+- [x] **M3 (read error after a complete JSON head).** Mock `Upstream::answer_reset` (the body, then a read error 100 ms later). Test `upstream_read_error_after_a_complete_json_head_records_empty_fields`. Before: `(1, 500, "api_error", "boom")`. Author's call: a body that did not finish is not trusted. Fix: `Flow::failed` (set on an upstream read error) and `Flow::body_len` (upstream `content-length`); `Flow::finished` = no read error and (the body ended, or the copy reached `content-length`, because the server stops polling at that length); `Flow::drop` sends an empty head when not finished. This also covers a client disconnect before the end.
+- [x] **M4.** `upstream_error_row_holds_no_request_content` renamed `upstream_error_row_and_files_hold_no_unechoed_request_tracer_login_or_zygo_token`. §14 note: an upstream message that quotes request text keeps it (only the secret pass and the login removal run).
+- [x] **M5 (format and separator characters).** Tests `upstream_error_message_format_and_separator_characters_become_spaces` (U+202E, U+200B, U+2028, U+2029, NUL, U+FEFF) and `tee::tests::clean_turns_controls_format_and_separators_into_spaces`. Before: the characters were kept. Fix: `unsafe_char` (Cc, the Cf ranges of Unicode 16.0 in `FORMAT_CHARS`, U+2028, U+2029); `clean` uses it. No new dependency.
+- [x] **M6 (quadratic partial scrub).** Tests `tee::tests::scrub_partial_changes_a_run_of_eight_and_keeps_seven` (passed before: the rule did not change) and `tee::tests::scrub_partial_uses_at_most_512_login_characters` (before: a run from past character 512 was changed). Fix: `scrub_partial` builds a set of the login's 8-character windows once (slices of the login, no copy), limited to its first `PARTIAL_CRED_MAX` = 512 characters, and scans the text once; a run is the span covered by consecutive shared windows.
+- [x] **M7 (unbounded capture queue).** Test `upstream_error_captures_over_the_queue_bound_record_empty_fields` (writer held, 257 requests answered 400). Before: `(257, 257, 0)`. Fix: `ERROR_QUEUE_MAX` = 256 and `UsageSink::captures` (an atomic count of captures with a head or a login that the writer has not handled); over the bound `send` replaces the capture by one with no head and no login (empty fields); the request row is always sent. `tee::tests::error_queue_bound_is_256` ties the test's literal to the constant.
+- [x] **M8.** Tests `tee::tests::head_cuts_at_a_char_boundary_at_the_field_cap` and `tee::tests::kept_body_over_copy_max_is_none` (`copy_over`, and a streamed body). Both passed at once: they cover behavior that was already right.
+- [x] **M9 (`error` as a string).** Test `upstream_error_as_a_string_is_the_message_with_an_empty_type`. Before: `(1, "error", "text here")`. Fix: `error_row` takes no type when `error` is a string. §14 note: the string form, and that an older binary does not prune `upstream_errors` after a downgrade.
+- [x] **M1 (login copies).** `Secret` is not changed. `error_row` takes the capture by value and drops the login (`credential.take()`) as soon as both fields are scrubbed; `scrub_partial` keeps slices of the login, not a copy. No test: the drop point is not observable from outside.

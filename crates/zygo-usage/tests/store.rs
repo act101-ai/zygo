@@ -41,7 +41,7 @@ fn schema_creates_three_tables_in_wal_mode() {
     let mut names: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").unwrap()
         .query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
     names.sort();
-    assert_eq!(names, ["requests", "sync_pending", "trims", "work_units"]); // N37 S4: sync_pending
+    assert_eq!(names, ["requests", "sync_pending", "trims", "upstream_errors", "work_units"]); // N37 S4: sync_pending; FIX-10: upstream_errors
     let mode: String = c.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
     assert_eq!(mode, "wal");
 }
@@ -53,6 +53,7 @@ fn never_list_columns_are_exact() {
     assert_eq!(cols(&t.db(), "requests"), ["ts","session","token_label","agent","agent_version","agent_id","agent_type","request_class","compaction","route","role_requested","role_served","model","provider","profile","passthrough","status","latency_ms","input_tokens","output_tokens","cache_read_tokens","cache_write_tokens","estimated_usd","adjustments","redactions","repo","work_item"]);
     assert_eq!(cols(&t.db(), "trims"), ["ts","session","agent_id","tool","kind","stored_bytes","view_bytes"]);
     assert_eq!(cols(&t.db(), "work_units"), ["unit","round","session","agent_id","agent_type","began_at","ended_at","tool_calls","failed_calls","check_ran","check_passed","guard_events","levels","verdict"]);
+    assert_eq!(cols(&t.db(), "upstream_errors"), ["ts","session","request_class","model","status","error_type","error_message"]);
 }
 
 #[test]
@@ -484,4 +485,82 @@ fn bytes_trimmed_query_uses_the_session_index() { // H§7.4: one indexed SUM
     let plan: Vec<String> = q.query_map(["A"], |r| r.get::<_, String>(3)).unwrap().map(|r| r.unwrap()).collect();
     assert!(plan.iter().any(|d| d.starts_with("SEARCH trims USING INDEX trims_session")), "{plan:?}");
     assert!(!plan.iter().any(|d| d.starts_with("SCAN trims")), "{plan:?}");
+}
+
+// ---- FIX-10: upstream_errors ----
+
+fn uerr(session: &str, ts: i64) -> UpstreamErrorRow {
+    UpstreamErrorRow { ts, session: session.into(), request_class: Some("auxiliary".into()), model: "m1".into(), status: 429,
+        error_type: "rate_limit_error".into(), error_message: "limit".into() }
+}
+fn tables(db: &Path) -> Vec<String> {
+    let c = Connection::open(db).unwrap();
+    let mut q = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").unwrap();
+    q.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+}
+
+#[test] // FIX-10: insert and read by session, in ts order
+fn upstream_error_round_trip_by_session() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    let a = uerr("S1", 10);
+    let b = UpstreamErrorRow { request_class: None, status: 500, error_type: String::new(), error_message: String::new(), ..uerr("S1", 11) };
+    s.insert_upstream_error(&b).unwrap();
+    s.insert_upstream_error(&a).unwrap();
+    s.insert_upstream_error(&uerr("S2", 5)).unwrap();
+    assert_eq!(s.upstream_errors("S1").unwrap(), vec![a, b]);
+    assert_eq!(s.upstream_errors("S2").unwrap(), vec![uerr("S2", 5)]);
+    assert!(s.upstream_errors("S9").unwrap().is_empty());
+    assert_eq!(count(&t.db(), "requests"), 0);
+}
+
+#[test] // FIX-10: an existing usage.db with only the old tables gets the table on open; no schema version change
+fn upstream_errors_table_is_created_on_an_existing_database() {
+    let t = Tmp::new();
+    Store::open(&t.db()).unwrap().insert_request(&req("S1", 1)).unwrap();
+    Connection::open(t.db()).unwrap().execute_batch("DROP TABLE upstream_errors").unwrap();
+    assert_eq!(tables(&t.db()), ["requests", "sync_pending", "trims", "work_units"]);
+    let s = Store::open(&t.db()).unwrap();
+    s.insert_upstream_error(&uerr("S1", 2)).unwrap();
+    assert_eq!(s.upstream_errors("S1").unwrap(), vec![uerr("S1", 2)]);
+    assert_eq!(s.requests_for_session("S1").unwrap(), vec![req("S1", 1)]);
+    let c = Connection::open(t.db()).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+} // mutation: the table not in `SCHEMA`
+
+#[test] // FIX-10: retention as `requests` (§14 `[usage] retain_days`)
+fn prune_deletes_upstream_errors_older_than_retain_days() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    s.insert_upstream_error(&uerr("old", now() - 91 * DAY)).unwrap();
+    s.insert_upstream_error(&uerr("young", now() - 89 * DAY)).unwrap();
+    s.prune(90).unwrap();
+    assert_eq!(survivors(&t.db(), "upstream_errors"), ["young"]);
+    s.prune(0).unwrap();
+    assert_eq!(survivors(&t.db(), "upstream_errors"), ["young"]);
+}
+
+#[test] // FIX-10 M3: the request row and its error row, both or neither
+fn insert_request_and_error_is_one_transaction() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    s.insert_request_and_error(&req("S1", 1), &uerr("S1", 1)).unwrap();
+    assert_eq!((s.requests_for_session("S1").unwrap().len(), s.upstream_errors("S1").unwrap().len()), (1, 1));
+    let bad = RequestRow { estimated_usd: f64::NAN, ..req("S2", 1) };
+    assert!(s.insert_request_and_error(&bad, &uerr("S2", 1)).is_err());
+    assert!(s.upstream_errors("S2").unwrap().is_empty());
+    Connection::open(t.db()).unwrap().execute_batch("DROP TABLE upstream_errors").unwrap();
+    assert!(s.insert_request_and_error(&req("S3", 1), &uerr("S3", 1)).is_err());
+    assert!(s.requests_for_session("S3").unwrap().is_empty());
+} // mutations: two separate inserts; commit before the error insert
+
+#[test] // FIX-10 M9: `zygo usage --sync` replaces the session's rows, its upstream_errors rows included
+fn replace_requests_deletes_the_sessions_upstream_errors() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    s.insert_upstream_error(&uerr("S1", 1)).unwrap();
+    s.insert_upstream_error(&uerr("S2", 1)).unwrap();
+    assert_eq!(s.replace_requests("S1", &[req("S1", 2)]).unwrap(), 1);
+    assert!(s.upstream_errors("S1").unwrap().is_empty());
+    assert_eq!(s.upstream_errors("S2").unwrap(), vec![uerr("S2", 1)]);
 }
