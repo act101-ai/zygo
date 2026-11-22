@@ -1394,3 +1394,206 @@ fn au91_status_fields_default_and_parse() { // AU91: fields added only; an older
     let back = serde_json::to_value(&parsed).unwrap();
     assert_eq!((back["requests_in_flight"].clone(), back["last_request_end"].clone()), (json!(2), json!("2026-11-21T10:00:00Z")));
 }
+
+/// One chunk of the held response body; an `Err` aborts the body.
+type HeldChunk = Result<String, std::io::Error>;
+
+/// A fake upstream on 127.0.0.1 with its own runtime thread, for one request: the reply is 200 `text/event-stream`
+/// and its body is the chunks that the test sends. The body stays open while `tx` lives and ends when `tx` drops.
+/// The server stops when this value drops.
+struct HeldUpstream {
+    addr: std::net::SocketAddr,
+    tx: Option<tokio::sync::mpsc::UnboundedSender<HeldChunk>>,
+    _stop: tokio::sync::oneshot::Sender<()>,
+}
+
+fn held_upstream() -> HeldUpstream {
+    let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    l.set_nonblocking(true).unwrap();
+    let addr = l.local_addr().unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<HeldChunk>();
+    let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        rt.block_on(async move {
+            let l = tokio::net::TcpListener::from_std(l).unwrap();
+            let app = axum::Router::new().fallback(move |req: axum::extract::Request| {
+                let rx = rx.clone();
+                async move {
+                    let _ = axum::body::to_bytes(req.into_body(), usize::MAX).await;
+                    let rx = rx.lock().unwrap().take().expect("one request for each HeldUpstream");
+                    let body = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
+                    axum::response::Response::builder()
+                        .status(200)
+                        .header("content-type", "text/event-stream")
+                        .body(axum::body::Body::from_stream(body))
+                        .unwrap()
+                }
+            });
+            tokio::select! {
+                _ = async { axum::serve(l, app).await } => {}
+                _ = stopped => {}
+            }
+        });
+    });
+    HeldUpstream { addr, tx: Some(tx), _stop: stop }
+}
+
+impl HeldUpstream {
+    fn send(&self, chunk: HeldChunk) {
+        self.tx.as_ref().unwrap().send(chunk).unwrap();
+    }
+
+    /// The body ends.
+    fn end(&mut self) {
+        self.tx = None;
+    }
+}
+
+/// A local proxy with a test team-auth (the returned token, team "alpha"), a manual clock and one catalog model,
+/// `test-held` (provider `p-held`, no key), on a `HeldUpstream`.
+fn start_held(d: &TempDir) -> (HeldUpstream, ProxyHandle, Arc<ManualClock>, String) {
+    let up = held_upstream();
+    let text = format!(
+        "[[model]]\nid = \"test-held\"\n[[model.provider]]\nname = \"p-held\"\nbase_url = \"http://{}/held\"\ndialects = [\"anthropic\"]\nupstream_model = \"up-held\"\n",
+        up.addr
+    );
+    std::fs::write(d.path().join("config.toml"), text).unwrap();
+    let cfg = load(&ctx(d, None)).unwrap();
+    let c = ManualClock::new();
+    let token = format!("team-{}", ulid());
+    let opts = StartOpts { team: Some(Arc::new(TestTeam(vec![(token.clone(), "alpha".into())]))), clock: c.clone(), ..Default::default() };
+    let h = Proxy::start_local_with(Arc::new(cfg), opts).unwrap();
+    (up, h, c, token)
+}
+
+/// A streamed response whose body is not read to its end. Dropping it closes the client connection: the response
+/// drops first, then the runtime that owns the connection.
+struct OpenBody {
+    resp: reqwest::Response,
+    rt: tokio::runtime::Runtime,
+}
+
+/// One streamed messages request of session `g` for `test-held`. When it returns, the proxy has accepted the request
+/// and sent body bytes, so the request is in flight.
+fn open_stream(h: &ProxyHandle, g: &SessionGrant) -> OpenBody {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let body = json!({"model":"test-held","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]});
+    let mut rb = http_client().post(h.url().join("anthropic/v1/messages").unwrap()).header("content-type", "application/json").body(body.to_string());
+    for (k, v) in sess(g) {
+        rb = rb.header(k, v);
+    }
+    let resp = rt.block_on(async {
+        let mut resp = rb.send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        assert!(resp.chunk().await.unwrap().is_some(), "no body chunk");
+        resp
+    });
+    OpenBody { resp, rt }
+}
+
+impl OpenBody {
+    /// Reads the body to its end; the error when the body fails.
+    fn rest(mut self) -> Result<(), reqwest::Error> {
+        let OpenBody { resp, rt } = &mut self;
+        rt.block_on(async {
+            while resp.chunk().await?.is_some() {}
+            Ok(())
+        })
+    }
+}
+
+fn first_chunk() -> String {
+    sse("message_start", json!({"input_tokens":5,"output_tokens":1}))
+}
+
+fn last_chunk() -> String {
+    sse("message_delta", json!({"output_tokens":6}))
+}
+
+fn end_time(s: &SessionStatus) -> OffsetDateTime {
+    OffsetDateTime::parse(s.last_request_end.as_deref().expect("a request ended"), &Rfc3339).unwrap()
+}
+
+#[test]
+fn au91_count_is_1_while_streamed_and_0_after_end() { // AU91, W§19: normal end of a streamed body
+    let d = TempDir::new().unwrap();
+    let (mut up, h, c, _) = start_held(&d);
+    let raw = Raw::new();
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    let s = k.status().unwrap();
+    assert_eq!((s.requests_in_flight, s.last_request_end), (Some(0), None));
+    let (_, v, _) = raw.call(&h.url(), "GET", &sp(&g), &sess(&g), None);
+    assert_eq!(v["requests_in_flight"], json!(0));
+    assert!(v.get("last_request_end").is_none(), "{v}");
+    // Refused before `accept`: not a request of AU91.
+    assert_eq!(post_model(&raw, &h, &g, json!(5)), 400);
+    let s = status_after(&h, &k, 1);
+    assert_eq!((s.requests_in_flight, s.last_request_end), (Some(0), None));
+    up.send(Ok(first_chunk()));
+    let open = open_stream(&h, &g);
+    let s = k.status().unwrap();
+    assert_eq!((s.requests_in_flight, s.last_request_end), (Some(1), None));
+    c.advance(Duration::from_secs(90));
+    up.send(Ok(last_chunk()));
+    up.end();
+    assert!(open.rest().is_ok());
+    let s = status_after(&h, &k, 2);
+    assert_eq!(s.requests_in_flight, Some(0));
+    assert_eq!(end_time(&s), c.utc()); // RFC 3339; the clock stood still after the end
+}
+
+#[test]
+fn au91_client_drop_returns_count_to_0() { // Review focus 3; AU91, W§19
+    let d = TempDir::new().unwrap();
+    let (up, h, c, _) = start_held(&d);
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    up.send(Ok(first_chunk()));
+    let open = open_stream(&h, &g);
+    assert_eq!(k.status().unwrap().requests_in_flight, Some(1));
+    drop(open); // the client closes; the upstream body stays open (`up` lives to the end of the test)
+    let s = status_after(&h, &k, 1);
+    assert_eq!(s.requests_in_flight, Some(0));
+    assert_eq!(end_time(&s), c.utc());
+    drop(up);
+}
+
+#[test]
+fn au91_upstream_error_returns_count_to_0() { // AU91, W§19: the upstream body fails
+    let d = TempDir::new().unwrap();
+    let (up, h, c, _) = start_held(&d);
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    up.send(Ok(first_chunk()));
+    let open = open_stream(&h, &g);
+    assert_eq!(k.status().unwrap().requests_in_flight, Some(1));
+    up.send(Err(std::io::Error::other("cut")));
+    let _ = open.rest(); // the body ends or fails; the proof is the wait below
+    let s = status_after(&h, &k, 1);
+    assert_eq!(s.requests_in_flight, Some(0));
+    assert_eq!(end_time(&s), c.utc());
+}
+
+#[test]
+fn au91_team_session_reports_the_fields() { // AU91, OP13: the serve-mode route is the same route
+    let d = TempDir::new().unwrap();
+    let (mut up, h, c, token) = start_held(&d);
+    let raw = Raw::new();
+    let t = team_session(&raw, &h.url(), &format!("Bearer {token}"));
+    let get = || raw.call(&h.url(), "GET", &sp(&t), &sess(&t), None).1;
+    let v = get();
+    assert_eq!((v["team_session"].clone(), v["requests_in_flight"].clone()), (json!(true), json!(0)));
+    assert!(v.get("last_request_end").is_none(), "{v}");
+    up.send(Ok(first_chunk()));
+    let open = open_stream(&h, &t);
+    assert_eq!(get()["requests_in_flight"], json!(1));
+    up.end();
+    assert!(open.rest().is_ok());
+    assert!(h.usage_written(1, Duration::from_secs(10)), "the request did not end");
+    let v = get();
+    assert_eq!(v["requests_in_flight"], json!(0));
+    assert_eq!(OffsetDateTime::parse(v["last_request_end"].as_str().unwrap(), &Rfc3339).unwrap(), c.utc());
+}

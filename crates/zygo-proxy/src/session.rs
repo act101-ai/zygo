@@ -223,6 +223,8 @@ struct Live {
     spend: Spend,
     used_context: Option<u64>,
     main_loop: Option<MainLoop>,
+    requests_in_flight: u64,
+    last_request_end: Option<OffsetDateTime>,
 }
 
 pub struct SessionState {
@@ -348,8 +350,8 @@ impl SessionState {
             requests_priced: Some(l.spend.requests_priced),
             passthrough: Some(self.passthrough),
             team_session: Some(team),
-            requests_in_flight: None,
-            last_request_end: None,
+            requests_in_flight: Some(l.requests_in_flight),
+            last_request_end: l.last_request_end.map(rfc3339),
         }
     }
 
@@ -366,6 +368,28 @@ impl SessionState {
             l.settings.redaction_content = Some(c);
         }
         l.settings.clone()
+    }
+}
+
+/// One accepted model request (AU91): `requests_in_flight` counts it from `begin` until this value drops; the
+/// drop sets `last_request_end` to the clock's UTC time.
+pub(crate) struct InFlight {
+    session: Arc<SessionState>,
+    clock: Arc<dyn Clock>,
+}
+
+impl InFlight {
+    pub(crate) fn begin(session: &Arc<SessionState>, clock: &Arc<dyn Clock>) -> InFlight {
+        lock(&session.live).requests_in_flight += 1;
+        InFlight { session: session.clone(), clock: clock.clone() }
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut l = lock(&self.session.live);
+        l.requests_in_flight -= 1;
+        l.last_request_end = Some(self.clock.utc());
     }
 }
 
@@ -533,6 +557,8 @@ impl Sessions {
                 spend: Spend::default(),
                 used_context: None,
                 main_loop: None,
+                requests_in_flight: 0,
+                last_request_end: None,
             }),
         });
         {
