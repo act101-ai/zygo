@@ -103,6 +103,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | TODO | implementation | — |
+| FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | TODO | mechanical | — |
+| FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | TODO | mechanical | — |
 
 ## Log
 
@@ -191,3 +193,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W11 planned: 9 steps; plan review B1 (fork lock) and B2 (group kill via repo_file::kill_tree) fixed. |
 | 2026-11-22 | DOC-1 planned: 19 steps (14 H§9 rows, 3 auto-update rows, change log, check); in-place rewrites marked 2026-11-22. Log findings applied: long_context.cache_write_5m, OpenCode statusline verb as Claude Code, sessions line as <n>. |
 | 2026-11-22 | DOC-1 DONE (fdcea4a). Base-spec notes for the HUD (H§9) and auto-update written; review round 2 fixed 12 findings. Acceptance on the merged tree printed nothing. |
+| 2026-11-22 | FIX-11 and FIX-12 added from DOC-1 and PRB-1 findings: HUD spec H§3, H§8, H§14 #33 still say the OpenCode statusline session form exits 2 (HUD-11 built it as Claude Code); hud_probe_test.py leaves scripts/premises/__pycache__. |
