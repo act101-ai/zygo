@@ -28,6 +28,8 @@ pub struct Config {
     pub limits: LimitsConfig,
     pub work: WorkConfig,
     pub usage: UsageConfig,
+    pub statusline: StatuslineConfig,
+    pub update: UpdateConfig,
     #[serde(rename = "marketplace")]
     pub marketplaces: Vec<Marketplace>,
     pub plugins: PluginsConfig,
@@ -54,6 +56,8 @@ impl Default for Config {
             limits: LimitsConfig::default(),
             work: WorkConfig::default(),
             usage: UsageConfig::default(),
+            statusline: StatuslineConfig::default(),
+            update: UpdateConfig::default(),
             marketplaces: Vec::new(),
             plugins: PluginsConfig::default(),
             redaction: RedactionConfig::default(),
@@ -546,6 +550,37 @@ pub struct UsageConfig {
 impl Default for UsageConfig {
     fn default() -> Self {
         UsageConfig { retain_days: 90 }
+    }
+}
+
+/// `[statusline]` (statusline HUD design §8, OP7, AU1). User config only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StatuslineConfig {
+    /// One of [`STATUSLINE_STYLES`]; `config check` refuses any other value.
+    pub style: String,
+}
+
+/// The values of `statusline.style`; the first is the default.
+pub const STATUSLINE_STYLES: [&str; 2] = ["compact", "verbose"];
+
+impl Default for StatuslineConfig {
+    fn default() -> Self {
+        StatuslineConfig { style: STATUSLINE_STYLES[0].into() }
+    }
+}
+
+/// `[update]` (auto-update design, "Opt-out"). User config only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// `false` turns the update check off.
+    pub check: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        UpdateConfig { check: true }
     }
 }
 

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::layers::{join, seg};
-use crate::schema::{Config, KeyRef, Reasoning};
+use crate::schema::{Config, KeyRef, Reasoning, STATUSLINE_STYLES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -77,6 +77,10 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
         if cfg.catalog.get(&r.model).is_none() {
             e(format!("{}.model", join(&["role", name.as_str()])), "unknown model".into());
         }
+    }
+    if !STATUSLINE_STYLES.contains(&cfg.statusline.style.as_str()) {
+        let [compact, verbose] = STATUSLINE_STYLES;
+        e("statusline.style".into(), format!("must be \"{compact}\" or \"{verbose}\""));
     }
     let code_ok = regex::Regex::new("^[a-z0-9_]{1,64}$").expect("static pattern");
     for (i, r) in cfg.schema_rule.iter().enumerate() {
