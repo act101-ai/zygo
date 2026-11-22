@@ -1524,3 +1524,88 @@ fn parse_duration_forms() { // W§11 `drain_timeout`: <n>s | <n>m | <n>h
         assert_eq!(parse_duration(bad), None, "{bad:?}");
     }
 }
+
+const W11: &str = r#"
+[workspace]
+default_loadout = "solo"        # built-in
+drain_block_dispatch = true     # OP6
+drain_timeout = "10m"           # AU4; <n>s | <n>m | <n>h
+
+[loadout.pair]
+[[loadout.pair.window]]
+name = "agents"
+layout = "main-vertical"
+[[loadout.pair.window.pane]]
+kind = "claude-code"
+profile = "cheap"
+args = ["--model", "lead"]
+yolo = false
+passthrough = false
+server = "https://zygo.example"
+compact = "600k"
+config_dir = "~/.claude-work"
+[[loadout.pair.window.pane]]
+kind = "shell"
+cwd = "branch:feature-x"
+"#;
+
+#[test]
+fn workspace_and_loadout_defaults() {
+    let c = Config::default();
+    assert_eq!(c.workspace, WorkspaceConfig { default_loadout: "solo".into(), drain_block_dispatch: true, drain_timeout: "10m".into() });
+    assert_eq!(parse_duration(&c.workspace.drain_timeout), Some(std::time::Duration::from_secs(600)));
+    assert!(c.loadout.is_empty());
+    assert_eq!((BUILTIN_LOADOUT, LOADOUT_KINDS), ("solo", ["claude-code", "opencode", "shell"]));
+    assert_eq!(cfg(""), c);
+    assert_eq!(cfg("[workspace]\n").workspace, c.workspace);
+    assert_eq!(cfg("[workspace]\ndrain_timeout = \"30s\"\n").workspace, WorkspaceConfig { drain_timeout: "30s".into(), ..c.workspace.clone() });
+    assert_eq!(
+        LoadoutPane::default(),
+        LoadoutPane { kind: String::new(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, cwd: None }
+    );
+    assert_eq!(LoadoutWindow::default(), LoadoutWindow { name: None, layout: None, pane: vec![] });
+    let m = load(&ctx(None, None, None)).unwrap();
+    assert_eq!(m.config.workspace, c.workspace);
+    assert!(m.config.loadout.is_empty());
+    assert_eq!(m.source_of("workspace.default_loadout"), Layer::Builtin);
+    assert!(m.show(None, &|_| true).contains("workspace.drain_timeout = \"10m\"  # builtin\n"));
+}
+
+#[test]
+fn loadout_parses_as_w11_writes_it() {
+    let m = load(&ctx(Some(W11), None, None)).unwrap();
+    assert_eq!(m.warnings, Vec::<String>::new());
+    assert_eq!(m.config.workspace, WorkspaceConfig::default());
+    assert_eq!(m.config.loadout.keys().collect::<Vec<_>>(), ["pair"]);
+    let agent = LoadoutPane {
+        kind: "claude-code".into(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
+        passthrough: false, server: Some("https://zygo.example".into()), compact: Some("600k".into()),
+        config_dir: Some("~/.claude-work".into()), cwd: None,
+    };
+    let shell = LoadoutPane { kind: "shell".into(), cwd: Some("branch:feature-x".into()), ..LoadoutPane::default() };
+    let window = LoadoutWindow { name: Some("agents".into()), layout: Some("main-vertical".into()), pane: vec![agent, shell] };
+    assert_eq!(m.config.loadout["pair"], Loadout { window: vec![window] });
+    assert_eq!(m.source_of("workspace.drain_timeout"), Layer::User);
+    assert_eq!(m.source_of("loadout.pair.window"), Layer::User);
+    let all = m.show(None, &|_| true);
+    assert!(all.contains("workspace.default_loadout = \"solo\"  # user\n"), "{all}");
+    assert!(all.lines().any(|l| l.starts_with("loadout.pair.window = [") && l.ends_with("  # user")), "{all}");
+    for bad in ["[loadout.x]\nwindow = 3\n", "[workspace]\ndrain_block_dispatch = \"yes\"\n", "[[loadout.x.window]]\npane = [3]\n"] {
+        assert!(matches!(load(&ctx(Some(bad), None, None)), Err(ConfigError::Parse { .. })), "{bad}");
+    }
+}
+
+#[test]
+fn w18_62_repo_file_loadout_is_ignored_with_the_existing_warning() { // W§18 #62, repository part
+    let d = repo_with("w5", "version = 1\n[loadout.x]\n[[loadout.x.window]]\n[[loadout.x.window.pane]]\nkind = \"shell\"\n");
+    match repo_file::read_default_branch(&d) {
+        RepoFile::Found { table, ignored, .. } => {
+            assert_eq!(ignored, ["loadout"]);
+            assert!(!table.contains_key("loadout"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let m = load(&ctx(None, Some(d.to_path_buf()), None)).unwrap();
+    assert!(m.config.loadout.is_empty());
+    assert_eq!(m.warnings, [".zygo.toml: [loadout] ignored; the repository file may set only [guards], [navigation], [limits], [work]"]);
+}
