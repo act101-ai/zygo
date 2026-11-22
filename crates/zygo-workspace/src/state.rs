@@ -39,6 +39,9 @@ pub struct Workspace {
     pub down_all: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_at: Option<u64>,
+    /// The count of snapshot writes (W§7.2); absent means 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub snapshot_seq: u64,
     #[serde(default)]
     pub windows: Vec<Window>,
     #[serde(default)]
@@ -47,6 +50,10 @@ pub struct Workspace {
     pub members: BTreeMap<String, MemberRecord>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -228,6 +235,7 @@ impl Workspace {
             phase_since: 0,
             down_all: false,
             snapshot_at: None,
+            snapshot_seq: 0,
             windows: Vec::new(),
             panes: Vec::new(),
             members: BTreeMap::new(),
