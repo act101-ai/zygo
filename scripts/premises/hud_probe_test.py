@@ -11,7 +11,8 @@ import sys
 import tempfile
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True   # round 2, finding 9: loading hud_probe.py writes no __pycache__
+HERE =os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 PROBE = os.path.join(HERE, "hud_probe.py")
 spec = importlib.util.spec_from_file_location("hud_probe", PROBE)
@@ -90,7 +91,8 @@ try:
     check("H2 verbose: bytes, stdin, env allowlist, no terminal",
           p.returncode == 0 and p.stdout.decode() == hp.VERBOSE and r["stdin"] == {"effort": "high", "session_id": "s1"}
           and r["env"].get("COLUMNS") == "88" and "PROBE_SECRET" not in r["env"] and "PROBE_SECRET" in r["env_names"]
-          and r["env"].get("TMUX") == "set" and "error" in r["tty"] and tok not in blob and r["stdin_end"] == "eof",
+          and r["env"].get("TMUX") == "set" and "error" in r["tty"] and tok not in blob and r["stdin_end"] == "eof"
+          and r.get("stdin_bytes") == len(json.dumps({"effort": "high", "session_id": "s1"})),
           f"rc {p.returncode} rec {r}")
 
     # H3: early phase: stdin closed unread (the writer's pipe stays open), at once.
@@ -184,7 +186,7 @@ try:
     cap(lost_d, "early", ["  PH11 early 100\n"] * 20, t0=1000.3)
     r2 = hp.an_ph11(lost_d)
     check("H10 PH11 shown, lost, after", r["shown"] == 5 and r["lost"] == 0 and r["after"] and not r["error"]
-          and r2["lost"] >= 3 and not r2["after"], f"{r} {r2}")
+          and r.get("ok") is True and r2["lost"] >= 3 and not r2["after"] and r2.get("ok") is False, f"{r} {r2}")
 
     # H11: PH12 classes: kills (signal at 2.1 s), waits (end, then start), overlaps (start before end).
     def ph12(rows):
@@ -202,12 +204,13 @@ try:
           and w["class"] == "waits" and o["class"] == "overlaps" and o["max_concurrent"] == 2, f"{k} {w} {o}")
 
     # H12: PH13 with stub opencode programs: a strict stub (verified case) and a stub that keeps statusLine.
-    def stub(path, keep):
+    def stub(path, keep, helpmode="ok"):
+        helpline = {"ok": 'print("Commands:\\n  opencode run   run opencode")', "fail": "sys.exit(1)", "empty": "pass"}[helpmode]
         open(path, "w").write(f"""#!{sys.executable}
 import json, os, sys
 a = sys.argv[1:]
 if a == ["--version"]: print("1.19.6")
-elif a and a[-1] == "--help": print("Commands:\\n  opencode run   run opencode")
+elif a and a[-1] == "--help": {helpline}
 elif a[:2] == ["debug", "config"]:
     c = json.loads(os.environ.get("OPENCODE_CONFIG_CONTENT", "{{}}"))
     known = {keep!r}
@@ -224,7 +227,100 @@ elif a[:2] == ["debug", "config"]:
     p1, p2 = json.load(open(os.path.join(T, "p1.json"))), json.load(open(os.path.join(T, "p2.json")))
     check("H12 PH13 dropped keys, control, and a kept key",
           p1["version"] == "1.19.6" and p1["help_hits"] == [] and p1["control"] == {"username": "kept", "zygoProbeUnknownKey": "dropped"}
-          and set(p1["keys"].values()) == {"dropped"} and p2["keys"]["statusLine"] == "kept", f"{p1} {p2}")
+          and set(p1["keys"].values()) == {"dropped"} and p2["keys"]["statusLine"] == "kept"
+          and p1.get("pass") is True and p2.get("pass") is False, f"{p1} {p2}")
+
+    # H16 (round 2, B2): --help that exits 1 with no output, or exits 0 with no output, is not measured: no pass.
+    stub(os.path.join(T, "oc3"), ["username", "model"], "fail")
+    stub(os.path.join(T, "oc4"), ["username", "model"], "empty")
+    probe("ph13", os.path.join(T, "oc3"), os.path.join(T, "w3"), os.path.join(T, "p3.json"), timeout=60)
+    probe("ph13", os.path.join(T, "oc4"), os.path.join(T, "w4"), os.path.join(T, "p4.json"), timeout=60)
+    p3, p4 = json.load(open(os.path.join(T, "p3.json"))), json.load(open(os.path.join(T, "p4.json")))
+    check("H16 PH13 help exit 1 or empty help: not measured, no pass",
+          p3.get("pass") is False and p3.get("help", {}).get("--help") == {"rc": 1, "bytes": 0} and p4.get("pass") is False
+          and p4.get("help", {}).get("debug --help") == {"rc": 0, "bytes": 0} and p1.get("help", {}).get("--help", {}).get("rc") == 0, f"{p3} {p4}")
+
+    # H17 (round 2, B1): 6 early runs; runs 2, 4 and 6 end with stdout-error and never show: lost 3, no pass.
+    d = rundir()
+    rows = []
+    for i in range(6):
+        rows += [{"t": 1000 + 2 * i, "pid": 200 + i, "phase": "early", "event": "start"},
+                 {"t": 1000.1 + 2 * i, "pid": 200 + i, "phase": "early", "event": "stdout-error" if i % 2 else "end"}]
+    ev(d, rows)
+    cap(d, "early", [f"  PH11 early {200 + 2 * (i // 8)}\n" for i in range(24)], t0=1000.3)
+    cap(d, "done", ["  PROBE DONE\n"], t0=1040)
+    r = hp.an_ph11(d)
+    nd = rundir()   # the same runs with no end event at all: lost as well
+    ev(nd, [e for e in rows if e["event"] == "start"])
+    cap(nd, "early", [f"  PH11 early {200 + 2 * (i // 8)}\n" for i in range(24)], t0=1000.3)
+    cap(nd, "done", ["  PROBE DONE\n"], t0=1040)
+    r2 = hp.an_ph11(nd)
+    check("H17 PH11 stdout-error and no-end runs are lost", r["lost"] == 3 and r.get("stdout_errors") == 3 and r.get("ok") is False
+          and r2["lost"] == 6 and r2.get("no_end") == 6 and r2.get("ok") is False, f"{r} {r2}")
+
+    def analyze(td, pd, widths=None):
+        wj = os.path.join(T, "tw-x.json")
+        json.dump(widths or {}, open(wj, "w"))
+        o = probe("analyze", td, pd, "200", "100", wj, os.path.join(T, "stdin-x.json"), timeout=30)
+        return json.loads(o.stdout)
+
+    def log(d, ph, stdin, n=1):
+        open(os.path.join(d, "log", f"run-{n}-{n}-{ph}.json"), "w").write(json.dumps(
+            {"t": n, "pid": n, "phase": ph, "tty": {"error": "ENXIO"}, "env": {"COLUMNS": "200"}, "env_names": [],
+             "stdin": stdin, "stdin_end": "eof", "stdin_bytes": 40}))
+
+    # H18 (round 2, finding 1): one run with stdin that cannot be parsed fails PH5; no pty run: tmux only.
+    td, pd = rundir(), rundir()
+    log(td, "verbose", {"effort": {"level": "medium"}}, 1)
+    a1 = analyze(td, pd)
+    log(td, "compact", {"unparsed": "{\"effo"}, 2)
+    a2 = analyze(td, pd)
+    check("H18 PH5 unparsed stdin fails; sessions from the data",
+          a1.get("pass", {}).get("PH5") is True and a1["ph5"].get("sessions") == ["tmux"] and a2.get("pass", {}).get("PH5") is False
+          and a2["ph5"].get("unparsed") == 1, f"{a1['ph5']} {a2['ph5']}")
+
+    # H19 (round 2, finding 9): analyze on empty run dirs and on dead runs (start events only, no log, no
+    # capture): no id passes.
+    e = analyze(rundir(), rundir())
+    dd = rundir()
+    ev(dd, [{"t": 1000 + i, "pid": 300 + i, "phase": ph, "event": "start"}
+            for i, ph in enumerate(["verbose", "compact", "wideA", "wideB", "wideC", "wideD", "early", "early",
+                                    "early", "slow", "slow", "slow", "done"])])
+    dead = analyze(dd, rundir(), {"B": 1, "C": 1, "D": 1, "ellipsis": 1})
+    ids = ["PH1", "PH2", "PH3", "PH4", "PH5", "PH6", "PH7", "PH9", "PH11", "PH12"]
+    check("H19 empty and dead runs: no id passes",
+          sorted(e.get("pass", {})) == sorted(ids) and not any(e.get("pass", {}).values())
+          and sorted(dead.get("pass", {})) == sorted(ids) and not any(dead.get("pass", {}).values()),
+          f"{e.get('pass')} {dead.get('pass')}")
+
+    # H20 (round 2, finding 8): a second TERM while the pty driver ends its session does not stop the end:
+    # a child that ignores SIGHUP still gets SIGKILL.
+    mark = os.path.join(T, "child.pid")
+    child = f"import os, signal, time; signal.signal(signal.SIGHUP, signal.SIG_IGN); open({mark!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+    os.makedirs(os.path.join(T, "ptylog"), exist_ok=True)
+    drv = subprocess.Popen([sys.executable, "-I", PROBE, "pty", os.path.join(T, "ptylog"), "100", "60", T,
+                            sys.executable, "-c", child], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(100):
+        if os.path.exists(mark) and open(mark).read():
+            break
+        time.sleep(0.1)
+    cpid = int(open(mark).read())
+    drv.send_signal(signal.SIGTERM)
+    time.sleep(0.7)
+    drv.send_signal(signal.SIGTERM)
+    drv.wait(timeout=20)
+    time.sleep(0.5)
+
+    def dead_pid(p):
+        try:
+            return open(f"/proc/{p}/stat").read().split(") ")[1][0] == "Z"
+        except OSError:
+            return True
+
+    alive = not dead_pid(cpid)
+    if alive:
+        os.kill(cpid, signal.SIGKILL)
+    check("H20 pty driver: second TERM does not stop the session end", not alive, f"child {cpid} alive")
 
     # H13: analyze and fixtures end to end on a synthetic run: no pid, no stdin value but effort and keys.
     td, pd = rundir(), rundir()

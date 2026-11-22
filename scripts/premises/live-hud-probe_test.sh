@@ -100,8 +100,11 @@ try:
                 open(mark, "w").close()
                 break
     typed, rows, prev, nxt = "", [], None, 0.0
+    # Test hook (round 2, L11): with $HOME/.stub-hang-pty, a 100-column session runs no status line command,
+    # so the pseudo-terminal driver keeps waiting.
+    hang = os.path.exists(os.path.join(os.environ["HOME"], ".stub-hang-pty")) and width() == 100
     while True:
-        if time.monotonic() >= nxt:
+        if time.monotonic() >= nxt and not hang:
             nxt = time.monotonic() + every
             if prev is not None and prev.poll() is None:
                 os.killpg(prev.pid, signal.SIGTERM)
@@ -174,7 +177,7 @@ else no "L1 exit 0 and eleven LIVE lines" "exit $rc: $(tail -n 5 "$T/l1.out" | t
 want="PH1 verified|PH2 verified|PH3 verified|PH4 failed|PH5 verified|PH6 verified|PH7 verified|PH9 verified|PH11 verified|PH12 observed|PH13 verified"
 got=$(sed -n 's/^LIVE \(PH[0-9]*\) \([a-z]*\) .*/\1 \2/p' "$T/l1.out" | tr '\n' '|' | sed 's/|$//')
 if [ "$got" = "$want" ]; then ok "L2 results with the stub Claude Code"; else no "L2 results with the stub Claude Code" "$got"; fi
-if grep -q 'LIVE PH4 failed .*tmux 200 columns: ENXIO.*COLUMNS: tmux 200, pseudo-terminal 100.*pane width - 4 at 200 columns (indent 2, right gap 2)' "$T/l1.out"; then ok "L3 PH4 text"
+if grep -q 'LIVE PH4 failed .*tmux 200 columns: ENXIO.*COLUMNS: tmux 200, pseudo-terminal 100.*pane width - 4 at 200 columns, indent 2, right gap 2' "$T/l1.out"; then ok "L3 PH4 text"
 else no "L3 PH4 text" "$(grep 'LIVE PH4' "$T/l1.out")"; fi
 if grep -q 'LIVE PH12 observed .*ends a running command when the next refresh comes; signals seen: TERM' "$T/l1.out"; then ok "L4 PH12 text"
 else no "L4 PH12 text" "$(grep 'LIVE PH12' "$T/l1.out")"; fi
@@ -185,7 +188,18 @@ if [ "$have" = "$want_fx" ] || [ "$have" = "$(printf '%s\n' $fx | tr '\n' ' ' | 
 else no "L5 fixture files" "$have"; fi
 if grep -rqF -e "$T" -e "\"pid\"" "$C/fixtures/claude-code/hud"; then no "L6 no run path and no pid in a fixture" "found"
 else ok "L6 no run path and no pid in a fixture"; fi
+# L10 (round 2, B3): a LIVE text goes into a dated note *(…)* of the spec, so it holds no parenthesis.
+par=$(sed -n 's/^LIVE PH[0-9]* [a-z]* (agent [^)]*): //p' "$T/l1.out" | grep -c '[()]')
+if [ "$par" = 0 ]; then ok "L10 no parenthesis in a LIVE text"
+else no "L10 no parenthesis in a LIVE text" "$par line(s): $(sed -n 's/^LIVE \(PH[0-9]*\) [a-z]* (agent [^)]*): .*[()].*/\1/p' "$T/l1.out" | tr '\n' ' ')"; fi
 clean_after L1 "$rc"
+# fx_kept <case>: the prb-1-* fixtures of L1 are still there, unchanged (round 2, finding 8: a run that does
+# not finish keeps the committed fixtures).
+FXSUM=$(cat "$C"/fixtures/claude-code/hud/prb-1-* | cksum)
+fx_kept() {
+  if [ "$(cat "$C"/fixtures/claude-code/hud/prb-1-* 2>/dev/null | cksum)" = "$FXSUM" ]; then ok "$1 keeps the fixtures"
+  else no "$1 keeps the fixtures" "$(ls "$C/fixtures/claude-code/hud" | tr '\n' ' ')"; fi
+}
 
 # L7: Claude Code below the minimum: exit 1 before any tmux server starts.
 run "$T/l7.out" STUB_CC_VER=2.1.327
@@ -206,6 +220,40 @@ rc=$?
 if [ "$rc" -eq 143 ]; then ok "L8 TERM exits 143"; else no "L8 TERM exits 143" "exit $rc"; fi
 sleep 1
 clean_after L8 "$rc"
+fx_kept L8
+
+# L11 (round 2, finding 8): INT while the pseudo-terminal driver runs session p: exit 130; prb_end waits for
+# the driver, which ends the stub Claude Code; nothing is left. The script starts with SIGINT at its default
+# (a shell ignores INT for a background job, and an ignored signal cannot be trapped).
+touch "$T/home/.stub-hang-pty"
+env HOME="$T/home" PATH="$T/bin:$PATH" TMPDIR="$T/tmp" python3 -I -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' \
+  sh "$C/scripts/premises/live-hud-probe.sh" >"$T/l11.out" 2>&1 &
+pid=$!
+i=0
+until pgrep -f "$C/scripts/premises/hud_probe.py pty" >/dev/null || [ "$i" -ge 240 ]; do i=$((i + 1)); sleep 0.5; done
+sleep 2
+kill -INT "$pid"
+wait "$pid"
+rc=$?
+rm -f "$T/home/.stub-hang-pty"
+_q=$(pgrep -f "$C/scripts/premises/hud_probe.py pty" | grep -c . || true)
+if [ "$rc" -eq 130 ] && [ "$_q" = 0 ] && [ "$i" -lt 240 ]; then ok "L11 INT during the pseudo-terminal session exits 130, driver ended"
+else no "L11 INT during the pseudo-terminal session exits 130, driver ended" "exit $rc, drivers left $_q, polls $i"; fi
+sleep 1
+clean_after L11 "$rc"
+fx_kept L11
+
+# L12 (round 2, finding 8): an error exit after both sessions (a jq that fails, so set -e ends the script):
+# the error status, nothing left, the fixtures kept.
+mkdir -p "$T/jqbin"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = .ph4.loss ] && exit 5; done\nexec %s "$@"\n' "$(command -v jq)" >"$T/jqbin/jq"
+chmod +x "$T/jqbin/jq"
+env HOME="$T/home" PATH="$T/jqbin:$T/bin:$PATH" TMPDIR="$T/tmp" sh "$C/scripts/premises/live-hud-probe.sh" >"$T/l12.out" 2>&1
+rc=$?
+if [ "$rc" -eq 5 ] && ! grep -q '^LIVE PH5' "$T/l12.out"; then ok "L12 error exit keeps its status"
+else no "L12 error exit keeps its status" "exit $rc: $(tail -n 2 "$T/l12.out" | tr '\n' '|')"; fi
+clean_after L12 "$rc"
+fx_kept L12
 
 # L9: a blank in the scratch path: exit 1 with the path line.
 mkdir -p "$T/a b"

@@ -211,11 +211,22 @@ kcase K5 P6b act-lite '1\.2\.3' 1.2.4 1 "P6b: version '1.2.4' differs from the h
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by
 # pinned_agents), not PIN_CC or PIN_OC (a minimum, operator 2026-11-21).
 lhits=""
-for f in "$HERE"/live-*.sh; do
+for f in "$HERE"/live.sh "$HERE"/live-*.sh; do   # round 2: live.sh's own default too
   if grep -qE ':-\$PIN_(CC|OC)\}|LIVE_VER=\$PIN_(CC|OC)([^A-Za-z0-9_]|$)' "$f"; then lhits="$lhits ${f##*/}"; fi
 done
 if [ -z "$lhits" ]; then ok "L1 no LIVE_VER site falls back to PIN_CC or PIN_OC"
 else no "L1 no LIVE_VER site falls back to PIN_CC or PIN_OC" "in:$lhits"; fi
+# L2 (round 2): N14-S runs the claude-curl.sh stand-in, which reports LIVE_PIN_CC as its version; the
+# N14-S line names that version (the variable passed as LIVE_PIN_CC), not the installed claude's.
+sv=$(sed -n 's/.*LIVE_VARS="LIVE_PIN_CC=\$\([A-Za-z_]*\) .*/\1/p' "$HERE/live-strict.sh")
+pre=$(awk '/^result N14-S /{print prev; exit} {prev=$0}' "$HERE/live-strict.sh")
+if [ -n "$sv" ] && [ "$pre" = "LIVE_VER=\$$sv" ]; then ok "L2 the N14-S line names the stand-in's version"
+else no "L2 the N14-S line names the stand-in's version" "stand-in gets \$$sv; line before result N14-S: $pre"; fi
+# L3 (round 2): a result before pinned_agents names no version, never the pin.
+out=$( (unset LIVE_VER; . "$HERE/live.sh"; result X1 pass one) 2>&1)
+pin=$(sed -n 's/^Claude Code: *//p' "$REPO/docs/premises.md" | head -n 1)
+if [ "$out" = "LIVE X1 pass (agent ?): one" ]; then ok "L3 a result before pinned_agents names no version"
+else no "L3 a result before pinned_agents names no version" "$out (pin $pin)"; fi
 if [ "$bad" -eq 0 ]; then echo "ver tests: ok ($n)"; exit 0; fi
 echo "ver tests: $bad failed"
 exit 1

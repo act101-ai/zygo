@@ -25,7 +25,6 @@ import subprocess
 import sys
 import termios
 import time
-import unicodedata
 
 E = "\x1b"
 LOGO = "\U0001d607\U0001d606\U0001d5f4\U0001d5fc"
@@ -126,6 +125,7 @@ def cmd_statusline(d):
 
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGPIPE):
         signal.signal(s, on_signal)
+    raw = None
     if phase == "early":
         stdin, how = "not read", "closed"
     else:
@@ -139,7 +139,8 @@ def cmd_statusline(d):
         if k in os.environ:
             env[k] = "set"
     rec = {"t": round(time.time(), 3), "pid": pid, "phase": phase, "tty": tty_size(), "env": env,
-           "env_names": sorted(os.environ), "stdin": stdin, "stdin_end": how}
+           "env_names": sorted(os.environ), "stdin": stdin, "stdin_end": how,
+           "stdin_bytes": None if raw is None else len(raw)}
     os.makedirs(os.path.join(d, "log"), exist_ok=True)
     name = os.path.join(d, "log", f"run-{time.time_ns()}-{pid}-{phase}.json")
     with open(name + ".tmp", "w", encoding="utf-8") as f:
@@ -244,6 +245,9 @@ def cmd_pty(logdir, cols, wait, cwd, *argv):
             while time.monotonic() < end and os.waitpid(pid, os.WNOHANG)[0] == 0:
                 pump(0.2)
     finally:
+        # A second TERM (or an INT, a HUP) must not stop the end of the session (round 2, finding 8).
+        for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(s, signal.SIG_IGN)
         for sig in (signal.SIGHUP, signal.SIGKILL):
             try:
                 if os.waitpid(pid, os.WNOHANG)[0] != 0:
@@ -278,11 +282,14 @@ def cmd_ph13(oc, work, out):
             return 124, "", "timeout after 30 s"
 
     r = {"version": run(["--version"])[1].strip()}
-    hits = []
+    hits, helps = [], {}
     for args in (["--help"], ["debug", "--help"]):
         rc, o, e = run(args)
         hits += [" ".join(args) + ": " + m.group(0) for m in rx.finditer(o + e)]
+        # Round 2, B2: a help text counts only when the call exits 0 with output (a timeout is 124).
+        helps[" ".join(args)] = {"rc": rc, "bytes": len((o + e).encode())}
     r["help_hits"] = hits
+    r["help"] = helps
 
     def key(k, value):
         rc, o, e = run(["debug", "config", "--pure"], {"OPENCODE_CONFIG_CONTENT": json.dumps({k: value})})
@@ -297,6 +304,9 @@ def cmd_ph13(oc, work, out):
     cmd = {"type": "command", "command": "true"}
     r["control"] = {"username": key("username", "zygo-probe"), "zygoProbeUnknownKey": key("zygoProbeUnknownKey", cmd)}
     r["keys"] = {k: key(k, cmd) for k in ("statusLine", "statusline", "status_line")}
+    r["help_measured"] = bool(r["version"]) and all(h["rc"] == 0 and h["bytes"] > 0 for h in helps.values())
+    r["pass"] = (r["help_measured"] and not hits and r["control"] == {"username": "kept", "zygoProbeUnknownKey": "dropped"}
+                 and all(v == "dropped" for v in r["keys"].values()))
     json.dump(r, open(out, "w"), indent=1)
     return 0
 
@@ -305,10 +315,6 @@ def cmd_ph13(oc, work, out):
 
 def plain(s):
     return CSI.sub("", s)
-
-
-def cells(s):
-    return sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
 
 
 def captures(d, phase):
@@ -474,17 +480,27 @@ def by_run(evs, phase):
 
 
 def an_ph11(d):
-    evs = by_run(events(d), "early")
+    """Early runs (round 2, B1): a run that wrote stdout-error or has no end event is lost; a run that
+    ended 2.5 s or more before the last capture (its line had time to show) and never showed is lost.
+    ok: 3 or more such judged runs, each shown, none lost, no error text, PROBE DONE shown later."""
+    allev = events(d)
+    rs = by_run(allev, "early")
+    pids = {r["pid"] for r in rs}
+    errs = {e["pid"] for e in allev if e.get("phase") == "early" and e.get("event") == "stdout-error"} & pids
     caps = captures(d, "early")
     texts = [plain(t) for _, t in caps]
     seen = {int(m.group(1)) for t in texts for m in re.finditer(r"PH11 early (\d+)", t)}
     last = caps[-1][0] if caps else 0
-    ended = [r for r in evs if r["end"] is not None]
-    lost = [r["pid"] for r in ended if r["end"] <= last - 2.5 and r["pid"] not in seen]
+    judged = [r for r in rs if r["end"] is not None and r["end"] <= last - 2.5]
+    lost = [r["pid"] for r in rs
+            if r["pid"] in errs or r["end"] is None or (r["end"] <= last - 2.5 and r["pid"] not in seen)]
     err = any(re.search(r"(?i)EPIPE|status ?line[^\n]*(error|fail)", t) for t in texts)
     after = any("PROBE DONE" in plain(t) for _, t in captures(d, "done"))
-    return {"runs": len(evs), "ended": len(ended), "shown": len(seen), "lost": len(lost), "error": err,
-            "after": after, "captures": len(caps)}
+    ok = len(judged) >= 3 and all(r["pid"] in seen for r in judged) and not lost and not err and after
+    return {"runs": len(rs), "ended": sum(1 for r in rs if r["end"] is not None),
+            "shown": sum(1 for r in rs if r["pid"] in seen), "lost": len(lost), "stdout_errors": len(errs),
+            "no_end": sum(1 for r in rs if r["end"] is None), "judged": len(judged), "error": err,
+            "after": after, "captures": len(caps), "ok": ok}
 
 
 def an_ph12(d):
@@ -506,8 +522,9 @@ def an_ph12(d):
         nxt = rs[i + 1]["start"]
         if how == "end":
             cls = "overlaps" if nxt < t_stop - 0.2 else "waits"
-        else:
+        elif how == "signal":
             cls = "kills" if t_stop - rs[i]["start"] < 4.5 else "waits"
+        # how == "lost" (no end, no signal: a dead run, round 2): not observed, class stays "none"
         break
     pts = sorted([(r["start"], 1) for r in rs] + [(s[0], -1) for s in stop], key=lambda p: (p[0], p[1]))
     cur = maxc = 0
@@ -524,10 +541,17 @@ def an_stdin(t_runs, p_runs):
     out = []
     for sess, rs in (("tmux", t_runs), ("pty", p_runs)):
         for r in rs:
-            if isinstance(r.get("stdin"), dict) and "unparsed" not in r["stdin"]:
-                out.append({"session": sess, "phase": r["phase"], "keys": list(r["stdin"]),
-                            "effort": r["stdin"].get("effort")})
+            s = r.get("stdin")
+            if s == "not read":   # early runs close stdin unread
+                continue
+            ok = isinstance(s, dict) and "unparsed" not in s
+            out.append({"session": sess, "phase": r["phase"], "parsed": ok, "keys": list(s) if ok else [],
+                        "effort": s.get("effort") if ok else None})
     return out
+
+
+def effort_ok(e):
+    return isinstance(e, str) or (isinstance(e, dict) and isinstance(e.get("level"), str))
 
 
 def cmd_analyze(td, pd, cols, pcols, widths, stdin_out):
@@ -565,12 +589,34 @@ def cmd_analyze(td, pd, cols, pcols, widths, stdin_out):
     r["ph4"] = {"tty_t": show(tt), "tty_p": show(pt), "col_t": te.get("COLUMNS", "unset"),
                 "col_p": pe.get("COLUMNS", "unset"), "indent": wide["A"].get("indent"),
                 "gap": wide["A"].get("gap"), "loss": wide["A"].get("loss")}
-    eff = [s["effort"] for s in st]
-    r["ph5"] = {"runs": len(st), "first_keys": st[0]["keys"] if st else [],
-                "efforts": sorted({json.dumps(e, sort_keys=True) for e in eff})}
+    parsed = [s for s in st if s["parsed"]]
+    r["ph5"] = {"runs": len(parsed), "unparsed": len(st) - len(parsed),
+                "sessions": [x for x in ("tmux", "pty") if any(s["session"] == x for s in parsed)],
+                "first_keys": parsed[0]["keys"] if parsed else [], "first_effort": parsed[0]["effort"] if parsed else None,
+                "efforts": sorted({json.dumps(s["effort"], sort_keys=True) for s in parsed})}
+    # Round 2, finding 1: one run whose stdin cannot be parsed fails PH5.
+    r["ph5"]["ok"] = bool(parsed) and len(parsed) == len(st) and all(effort_ok(s["effort"]) for s in parsed)
     r["ph11"] = an_ph11(td)
+    sizes = [x["stdin_bytes"] for x in t_runs + p_runs if isinstance(x.get("stdin_bytes"), int)]
+    r["ph11"]["stdin_max_bytes"] = max(sizes) if sizes else None
     r["ph12"] = an_ph12(td)
     r["runs"] = {"tmux": len(t_runs), "pty": len(p_runs)}
+    # Round 2: every gate of the LIVE word, here so that the offline tests reach it (PH13: cmd_ph13).
+    two, tw, ph4, cmp = r["two"], r["tw"], r["ph4"], r["compact"]
+    r["pass"] = {
+        "PH1": r["sgr"].get("ok") is True,
+        "PH2": two["rows"] == 2,
+        "PH3": wide["A"].get("class") == "cut",
+        "PH4": ph4["tty_t"] == str(int(cols)) and ph4["tty_p"] == str(int(pcols)) and str(ph4["col_t"]).isdigit()
+               and str(ph4["col_p"]).isdigit() and ph4["loss"] == 0,
+        "PH5": r["ph5"]["ok"],
+        "PH6": wide["B"].get("diff") == 10,
+        "PH7": wide["C"].get("diff") == 10 and tw.get("C") == 1 and cmp["scissors"] is True and cmp["vs16"] is False,
+        "PH9": wide["D"].get("diff") == 20 and tw.get("D") == 1 and two["rows"] == 2 and two["logo_col"] >= 0
+               and two["logo_col"] == two["refl_col"],
+        "PH11": r["ph11"]["ok"],
+        "PH12": r["ph12"]["class"] in ("kills", "waits", "overlaps") and r["ph12"]["starts"] >= 2,
+    }
     json.dump(r, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0

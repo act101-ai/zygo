@@ -17,7 +17,8 @@
 #   Claude Code sends only its own start requests.
 # - Claude Code asks whether it trusts the run's temporary repository; the script answers yes (it moves the
 #   pointer to "Yes, I trust this folder", reads the pane to see it there, then sends Enter). Claude Code
-#   keeps that answer and a project folder for the path in its config folder; the script does not delete them.
+#   keeps that answer for the path in its config file (2.1.330 with no prompt: a trust entry, no project
+#   folder); the script does not delete it.
 # - PH13 runs `opencode --help`, `opencode debug --help` and `opencode debug config --pure` with a temporary
 #   HOME; OpenCode sends no model request there.
 # - The traps end the private tmux server (and so Claude Code in it), the pseudo-terminal session and the
@@ -35,11 +36,18 @@ live_traps
 PRB_SOCK="zygo-prb-$$"
 tmux() { command tmux -u -L "$PRB_SOCK" -f /dev/null "$@"; }
 # prb_end <status>: end the private tmux server (and every agent session in it), remove its socket file,
-# then live_end (which kills LIVE_PIDS, removes the scratch tree and exits with <status>).
+# end each process of LIVE_PIDS and wait for it (the pseudo-terminal driver ends session p's process group
+# in its own time; it ignores a second signal there, round 2), then live_end (removes the scratch tree and
+# exits with <status>).
 prb_end() {
   trap - EXIT INT TERM HUP PIPE
   command tmux -L "$PRB_SOCK" -f /dev/null kill-server 2>/dev/null || true
   rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$PRB_SOCK" 2>/dev/null || true
+  for _p in $LIVE_PIDS; do
+    kill "$_p" 2>/dev/null || true
+    wait "$_p" 2>/dev/null || true
+  done
+  LIVE_PIDS=""
   live_end "$1"
 }
 trap 'prb_end $?' EXIT
@@ -75,10 +83,10 @@ hp settings "$PYTHON" "$PY" "$Q" 2 "$Q/settings.json"
 printf 'verbose\n' >"$T/phase"
 printf 'verbose\n' >"$Q/phase"
 : >"$P/lines.txt"
-rm -f "$FX"/prb-1-*
 
-# line <id> <word> <text>: the LIVE line (live.sh result), also kept for the results fixture.
-line() { result "$@" | tee -a "$P/lines.txt"; }
+# line <id> <word> <text>: the LIVE line (live.sh result), also kept for the results fixture; a parenthesis
+# of the text becomes a bracket (round 2, B3).
+line() { _id=$1 _w=$2; shift 2; result "$_id" "$_w" "$(printf '%s' "$*" | tr '()' '[]')" | tee -a "$P/lines.txt"; }
 # cc_env: the environment words of each Claude Code launch (the login, settings and plugins of the caller).
 cc_env() { echo "HOME=$HOME ${PRB_CC_DIR:+CLAUDE_CONFIG_DIR=$PRB_CC_DIR} PATH=$TOOL_PATH TERM=xterm-256color LANG=C.UTF-8 DISABLE_AUTOUPDATER=1"; }
 pane() { tmux capture-pane -p -t "=$1:" 2>/dev/null || true; }
@@ -164,7 +172,7 @@ if prb_wait t "$LOGO"; then
   # early after the wide phases: a Claude Code that does not tolerate it ends there, after PH3 to PH9.
   phase early
   wait_until 10 shows t "PH11 early" || note "no early row within 10 s"
-  cap early 8 0
+  cap early 12 0   # about 6 early runs at refreshInterval 2 s, so 3 or more are judged (round 2)
   phase slow
   cap slow 20 0
   phase done
@@ -196,29 +204,32 @@ hp ph13 "$OPENCODE_BIN" "$P/oc" "$P/ph13.json" || true
 hp analyze "$T" "$Q" 200 100 "$P/tw.json" "$P/stdin.json" >"$P/an.json" || echo '{}' >"$P/an.json"
 j() { jq -r "$1" "$P/an.json"; }
 o() { jq -r "$1" "$P/ph13.json" 2>/dev/null || echo error; }
-dig() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; }
+# pass <id>: the gate of the id's word, from hud_probe.py analyze (round 2: one place, tested offline).
+pass() { [ "$(j ".pass.$1 // false")" = true ]; }
+# Each LIVE text goes into a dated note *(…)* of the HUD spec, so the texts hold no parenthesis (round 2,
+# B3); line() turns one that comes from a pane or JSON into a bracket.
 
 if [ -n "$T_WHY" ]; then
   line PH1 failed "$T_WHY"
-elif [ "$(j .sgr.ok)" = true ]; then
-  line PH1 verified "capture-pane -e (tmux $TMUX_VER), the H§6.3 verbose printf bytes: stripe fg 1,3,6, logo bold fg 15, worktree name fg 172 (38;5;n)"
+elif pass PH1; then
+  line PH1 verified "capture-pane -e on tmux $TMUX_VER of the H§6.3 verbose printf bytes: stripe fg 1,3,6, logo bold fg 15, worktree name fg 172 as 38;5;n"
 else
   line PH1 failed "16-color part $(j '.sgr.ok16 // false'), 256-color part $(j '.sgr.ok256 // false'): $(jq -c .sgr "$P/an.json")"
 fi
 
 if [ -n "$T_WHY" ]; then
   line PH2 failed "$T_WHY"
-elif [ "$(j .two.rows)" = 2 ]; then
-  line PH2 verified "the two rows of the H§6.3 verbose printf show as two rows (tmux $TMUX_VER, 200 columns)"
+elif pass PH2; then
+  line PH2 verified "the two rows of the H§6.3 verbose printf show as two rows on tmux $TMUX_VER at 200 columns"
 else
-  line PH2 failed "the H§6.3 verbose printf shows as $(j .two.rows) row(s): $(jq -c .two "$P/an.json")"
+  line PH2 failed "the H§6.3 verbose printf shows rows: $(j .two.rows); $(jq -c .two "$P/an.json")"
 fi
 
 C3=$(j .wide.A.class)
-T3="a row of 302 cells in a 200-column pane shows $(j '.wide.A.shown // "-"') cells (ruler $(j '.wide.A.ruler // "-"'), ends in …: $(j '.wide.A.ellipsis // "-"'))"
+T3="a row of 302 cells in a 200-column pane shows $(j '.wide.A.shown // "-"') cells, ruler $(j '.wide.A.ruler // "-"'), ends in …: $(j '.wide.A.ellipsis // "-"')"
 if [ -n "$T_WHY" ]; then
   line PH3 failed "$T_WHY"
-elif [ "$C3" = cut ]; then
+elif pass PH3; then
   line PH3 verified "cut: $T3; the next line does not go on with the row"
 elif [ "$C3" = wrapped ]; then
   line PH3 failed "wrapped: $T3; the next line goes on with the row"
@@ -227,53 +238,71 @@ else
 fi
 
 TT=$(j .ph4.tty_t) TP=$(j .ph4.tty_p) CT=$(j .ph4.col_t) CP=$(j .ph4.col_p) LOSS=$(j .ph4.loss)
-T4="(a) /dev/tty in the command: tmux 200 columns: $TT, pseudo-terminal 100 columns: $TP; (b) COLUMNS: tmux $CT, pseudo-terminal $CP; (c) status area = pane width - $LOSS at 200 columns (indent $(j .ph4.indent), right gap $(j .ph4.gap))"
-if [ "$TT" = 200 ] && [ "$TP" = 100 ] && dig "$CT" && dig "$CP" && [ "$LOSS" = 0 ]; then
+T4="a: /dev/tty in the command: tmux 200 columns: $TT, pseudo-terminal 100 columns: $TP; b: COLUMNS: tmux $CT, pseudo-terminal $CP; c: status area = pane width - $LOSS at 200 columns, indent $(j .ph4.indent), right gap $(j .ph4.gap)"
+if pass PH4; then
   line PH4 verified "$T4"
 else
   line PH4 failed "${T_WHY:+$T_WHY; }${P_WHY:+$P_WHY; }$T4"
 fi
 
-if jq -e 'length > 0 and all(.[]; (.effort | type) as $t | $t == "string" or ($t == "object" and (.effort.level | type) == "string"))' "$P/stdin.json" >/dev/null 2>&1; then
-  line PH5 verified "stdin effort is $(jq -c '.[0].effort' "$P/stdin.json") ($(jq -r '.[0].effort | type' "$P/stdin.json")) in every logged run (tmux and pseudo-terminal); stdin keys of the first run: $(jq -r '.[0].keys | join(" ")' "$P/stdin.json")"
+# PH5 names the sessions that logged a parsed stdin (round 2, finding 1).
+case "$(j '.ph5.sessions | join(" ")')" in
+  "tmux pty") S5="the tmux and pseudo-terminal sessions" ;;
+  tmux) S5="the tmux session; the pseudo-terminal session logged no run" ;;
+  pty) S5="the pseudo-terminal session; the tmux session logged no run" ;;
+  *) S5="no session" ;;
+esac
+if pass PH5; then
+  line PH5 verified "stdin effort is of type $(j '.ph5.first_effort | type'), $(jq -c .ph5.first_effort "$P/an.json"), in every logged run of $S5; stdin keys of the first run: $(j '.ph5.first_keys | join(" ")')"
 else
-  line PH5 failed "${T_WHY:+$T_WHY; }stdin effort shapes: $(j '.ph5.efforts | join(" ")') in $(j .ph5.runs) logged run(s)"
+  line PH5 failed "${T_WHY:+$T_WHY; }stdin effort shapes: $(j '.ph5.efforts | join(" ")'); parsed runs: $(j .ph5.runs), unparsed runs: $(j .ph5.unparsed); sessions: $S5"
 fi
 
 # wide_text <X> <glyph text> <glyph count>: the measured cells of one wide row.
-wide_text() { echo "Claude Code counts $2 as $(j ".wide.$1.c // \"-\"") cell(s): the row with $3 shows $(j ".wide.$1.diff // \"-\"") fewer ruler cells than the ASCII row ($(j '.wide.A.ruler // "-"') and $(j ".wide.$1.ruler // \"-\""))"; }
+wide_text() { echo "Claude Code counts $2 at cell width $(j ".wide.$1.c // \"-\""): the row with $3 shows $(j ".wide.$1.diff // \"-\"") fewer ruler cells than the ASCII row, $(j '.wide.A.ruler // "-"') against $(j ".wide.$1.ruler // \"-\"")"; }
 if [ -n "$T_WHY" ]; then
   line PH6 failed "$T_WHY"
-elif [ "$(j .wide.B.diff)" = 10 ]; then
+elif pass PH6; then
   line PH6 verified "$(wide_text B U+F0645 '10 glyphs')"
 else
   line PH6 failed "$(wide_text B U+F0645 '10 glyphs')$(j '.wide.B.why // "" | if . == "" then "" else "; " + . end')"
 fi
 
-T7="$(wide_text C U+2702 '10 glyphs'); tmux $TMUX_VER width $(j '.tw.C // "-"'); U+FE0F after it in the compact row: $(j .compact.vs16); the terminal font's presentation is not checked"
+# PH7 and PH9 measure cell widths only (round 2, finding 2).
+T7="cell widths only: $(wide_text C U+2702 '10 glyphs'); tmux $TMUX_VER cell width $(j '.tw.C // "-"'); U+FE0F after it in the compact row: $(j .compact.vs16); text or emoji presentation in a terminal font: not checked"
 if [ -n "$T_WHY" ]; then
   line PH7 failed "$T_WHY"
-elif [ "$(j .wide.C.diff)" = 10 ] && [ "$(j .tw.C)" = 1 ] && [ "$(j .compact.scissors)" = true ] && [ "$(j .compact.vs16)" = false ]; then
+elif pass PH7; then
   line PH7 verified "$T7"
 else
   line PH7 failed "$T7"
 fi
 
-T9="$(wide_text D 'each logo letter' '20 letters'); tmux $TMUX_VER width $(j '.tw.D // "-"'); logo and reflection start at column $(j .two.logo_col) and $(j .two.refl_col); the font's glyphs are not checked"
+T9="cell widths only: $(wide_text D 'each logo letter' '20 letters'); tmux $TMUX_VER cell width $(j '.tw.D // "-"'); logo and reflection start at column $(j .two.logo_col) and $(j .two.refl_col); glyph shapes in a terminal font: not checked"
 if [ -n "$T_WHY" ]; then
   line PH9 failed "$T_WHY"
-elif [ "$(j .wide.D.diff)" = 20 ] && [ "$(j .tw.D)" = 1 ] && [ "$(j .two.rows)" = 2 ] && [ "$(j .two.logo_col)" -ge 0 ] && [ "$(j .two.logo_col)" = "$(j .two.refl_col)" ]; then
+elif pass PH9; then
   line PH9 verified "$T9"
 else
   line PH9 failed "$T9"
 fi
 
+# EPIPE reach (round 2, finding 3): Claude Code writes the whole stdin before the command can close it
+# when the payload fits in the pipe buffer (64 KiB, the Linux default); the size comes from the other phases.
+case "$(j '.ph11.stdin_max_bytes // "none"')" in
+  none) E11="; EPIPE reach unknown: no stdin size was logged" ;;
+  *) if [ "$(j '.ph11.stdin_max_bytes')" -lt 65536 ]; then
+       E11="; EPIPE likely not exercised: each logged stdin payload is smaller than a 64 KiB pipe buffer, so Claude Code's write likely ended before the command closed stdin"
+     else
+       E11="; a logged stdin payload is larger than a 64 KiB pipe buffer"
+     fi ;;
+esac
 if [ -n "$T_WHY" ]; then
   line PH11 failed "$T_WHY"
-elif [ "$(j .ph11.shown)" -ge 3 ] && [ "$(j .ph11.lost)" = 0 ] && [ "$(j .ph11.error)" = false ] && [ "$(j .ph11.after)" = true ]; then
-  line PH11 verified "a command that closes stdin unread and exits at once: each early run's line showed (3 or more runs), none lost, no error text, and the status line went on after the phase"
+elif pass PH11; then
+  line PH11 verified "a command that closes stdin unread and exits at once: each of 3 or more early runs that ended 2.5 s before the last capture showed its line, no run was lost to a stdout error or a missing end, no error text, and the status line went on after the phase$E11"
 else
-  line PH11 failed "a command that closes stdin unread and exits at once: lines shown $(j .ph11.shown) of $(j .ph11.runs) runs, lost $(j .ph11.lost), error text $(j .ph11.error), went on after the phase $(j .ph11.after)"
+  line PH11 failed "a command that closes stdin unread and exits at once: lines shown $(j .ph11.shown) of $(j .ph11.runs) runs, judged $(j .ph11.judged), lost $(j .ph11.lost) with $(j .ph11.stdout_errors) stdout errors and $(j .ph11.no_end) runs with no end, error text $(j .ph11.error), went on after the phase $(j .ph11.after)$E11"
 fi
 
 case "$(j .ph12.class)" in
@@ -285,17 +314,20 @@ esac
 SIGS=$(j '.ph12.signals | if length == 0 then "none" else join(",") end')
 if [ -n "$T_WHY" ]; then
   line PH12 failed "$T_WHY"
-elif [ -n "$T12" ] && [ "$(j .ph12.starts)" -ge 2 ]; then
-  line PH12 observed "refreshInterval 2 s, a command that sleeps 5 s: $T12; signals seen: $SIGS; at most $(j .ph12.max_concurrent) command(s) at a time; slow line shown: $(j .ph12.shown)"
+elif pass PH12; then
+  line PH12 observed "refreshInterval 2 s, a command that sleeps 5 s: $T12; signals seen: $SIGS; concurrent commands at most: $(j .ph12.max_concurrent); slow line shown: $(j .ph12.shown)"
 else
-  line PH12 failed "not observed: $(j .ph12.starts) slow run(s) started in 20 s"
+  line PH12 failed "not observed: $(j .ph12.starts) slow runs started in 20 s, class $(j .ph12.class)"
 fi
 
+# PH13: the gate is cmd_ph13's .pass; a help call that fails or prints nothing is "not measured" (round 2, B2).
 LIVE_VER=$LIVE_OC_VER
+H13="--help exit $(o '.help["--help"].rc') with $(o '.help["--help"].bytes') bytes, debug --help exit $(o '.help["debug --help"].rc') with $(o '.help["debug --help"].bytes') bytes"
 K13="statusLine $(o .keys.statusLine), statusline $(o .keys.statusline), status_line $(o .keys.status_line); control: username $(o .control.username), zygoProbeUnknownKey $(o .control.zygoProbeUnknownKey)"
-if [ "$(o '.help_hits | length')" = 0 ] && [ "$(o .control.username)" = kept ] && [ "$(o .control.zygoProbeUnknownKey)" = dropped ] &&
-  [ "$(o '[.keys[] | select(. != "dropped")] | length')" = 0 ]; then
-  line PH13 verified "OpenCode $LIVE_OC_VER: no status line in --help or debug --help; debug config --pure drops the inline keys: $K13"
+if [ "$(o .pass)" = true ]; then
+  line PH13 verified "OpenCode $LIVE_OC_VER: --help and debug --help exit 0 and name no status line; debug config --pure with each of 3 top-level keys drops it: $K13; nested keys not tested"
+elif [ "$(o .help_measured)" != true ]; then
+  line PH13 failed "not measured: OpenCode $LIVE_OC_VER: $H13; inline keys: $K13"
 else
   line PH13 failed "OpenCode $LIVE_OC_VER: help matches: $(o '.help_hits | join("; ")'); inline keys: $K13"
 fi
@@ -307,7 +339,11 @@ hp fixtures "$T" "$Q" "$P/an.json" "$P/ph13.json" "$P/fx" || true
 python3 -I -c 'import json, sys; json.dump(dict(zip(["date", "claude_code", "opencode", "tmux", "os"], sys.argv[1:]), pane="200x50", pty="100x50", refresh_interval=2), open(sys.argv[6], "w"), indent=1)' \
   "$(date +%Y-%m-%d)" "$LIVE_CC_VER" "$LIVE_OC_VER" "$TMUX_VER" "$(uname -s)" "$P/fx/run.json"
 cp "$P/lines.txt" "$P/fx/results.txt"
+mkdir -p "$P/out"
 for f in "$P"/fx/*; do
-  if [ -s "$f" ]; then scrub "$f" >"$FX/prb-1-${f##*/}"; fi
+  if [ -s "$f" ]; then scrub "$f" >"$P/out/prb-1-${f##*/}"; fi
 done
+# Only a run that got this far replaces the committed fixtures (round 2, finding 8).
+rm -f "$FX"/prb-1-*
+cp "$P"/out/prb-1-* "$FX"/
 live_done "$FX"
