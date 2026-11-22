@@ -101,7 +101,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5 | TODO | implementation | — |
-| FIX-1 | request_path tests: a refused port that no other test can take | — | IN-PROGRESS | judgment | wt .worktrees/phase2/FIX-1 |
+| FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 
 ## Log
@@ -157,3 +157,5 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | FIX-1 and FIX-3 added from the found defects (execute-work §5.4): the refused_port race in request_path.rs and the clippy warning in stub_member.rs:297. Change-log lines are in the base spec and the workspaces spec. |
 | 2026-11-21 | statusline::trimmed on Store::summary: not a defect (same value, store.rs:439-466; no spec text requires bytes_trimmed for zygo status; HUD-12 design call 8). No node. |
 | 2026-11-21 | FIX-3 DONE. cargo clippy -p zygo-launch --all-targets --locked -- -D warnings is clean. |
+| 2026-11-21 | FIX-1 DONE. refused_port is the fixed port 1 (a port 0 bind never gives a port below 1024); the proof test failed on the old helper. Assumption: nothing listens on TCP port 1 on a developer or CI machine. |
+| 2026-11-21 | Observation (no node): the repository has no rustfmt.toml and cargo fmt --check reports differences across zygo-proxy; no format gate is in the verification floor. |

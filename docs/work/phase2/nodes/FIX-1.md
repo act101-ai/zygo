@@ -21,7 +21,7 @@ Facts of the live code (read before you start):
 
 ### Task 1: the proof test, seen to fail
 
-- [ ] **1.1** Add this test directly above `fn fallback_500_moves_pin` (`:1048`):
+- [x] **1.1** Add this test directly above `fn fallback_500_moves_pin` (`:1048`):
 
 ```rust
 /// The refused port is outside the range that a port 0 bind gives, so no listener of this binary can take it, and a
@@ -41,11 +41,11 @@ fn refused_port_cannot_go_to_another_listener() {
 }
 ```
 
-- [ ] **1.2** Run `cargo test -p zygo-proxy --locked --test request_path refused_port_cannot`. Expected: FAIL at the first assertion, `port <n> is in the range that a port 0 bind gives`, with `<n>` at or above 1024.
+- [x] **1.2** Run `cargo test -p zygo-proxy --locked --test request_path refused_port_cannot`. Expected: FAIL at the first assertion, `port <n> is in the range that a port 0 bind gives`, with `<n>` at or above 1024.
 
 ### Task 2: the fixed port
 
-- [ ] **2.1** Replace `:181-185` with:
+- [x] **2.1** Replace `:181-185` with:
 
 ```rust
 /// A port that no test can take: every listener of this binary binds port 0, and no OS gives a port below 1024 for
@@ -57,12 +57,12 @@ fn refused_port() -> u16 {
 }
 ```
 
-- [ ] **2.2** In `fallback_all_failed_removes_pin`, give the two providers different paths on the one port: `prov("d1", &format!("http://127.0.0.1:{d1}/d1"), "x", None, "")` and `prov("d2", &format!("http://127.0.0.1:{d2}/d2"), "x", None, "")`. Change no assertion. `fallback_429_and_connect_refused` needs no change.
-- [ ] **2.3** Run `cargo test -p zygo-proxy --locked --test request_path refused_port_cannot`. Expected: `1 passed; 0 failed`.
-- [ ] **2.4** Run `cargo test -p zygo-proxy --locked --test request_path fallback_`. Expected: `0 failed`. If the config load refuses the provider URLs of step 2.2, stop and report the error text.
-- [ ] **2.5** Commit `request_path.rs` and this file: `test(proxy): the refused port of request_path is a fixed port that no listener can take`.
+- [x] **2.2** In `fallback_all_failed_removes_pin`, give the two providers different paths on the one port: `prov("d1", &format!("http://127.0.0.1:{d1}/d1"), "x", None, "")` and `prov("d2", &format!("http://127.0.0.1:{d2}/d2"), "x", None, "")`. Change no assertion. `fallback_429_and_connect_refused` needs no change.
+- [x] **2.3** Run `cargo test -p zygo-proxy --locked --test request_path refused_port_cannot`. Expected: `1 passed; 0 failed`.
+- [x] **2.4** Run `cargo test -p zygo-proxy --locked --test request_path fallback_`. Expected: `0 failed`. If the config load refuses the provider URLs of step 2.2, stop and report the error text.
+- [x] **2.5** Commit `request_path.rs` and this file: `test(proxy): the refused port of request_path is a fixed port that no listener can take`.
 
 ### Task 3: verification
 
-- [ ] **3.1** Acceptance. Run `for i in $(seq 20); do cargo test -p zygo-proxy --locked --test request_path || exit 1; done`. Expected: 20 runs, each `0 failed`, each with the three tests that the contract names.
-- [ ] **3.2** Commit this file with all steps ticked: `docs(work): FIX-1 plan steps done`.
+- [x] **3.1** Acceptance. Run `for i in $(seq 20); do cargo test -p zygo-proxy --locked --test request_path || exit 1; done`. Expected: 20 runs, each `0 failed`, each with the three tests that the contract names.
+- [x] **3.2** Commit this file with all steps ticked: `docs(work): FIX-1 plan steps done`.
