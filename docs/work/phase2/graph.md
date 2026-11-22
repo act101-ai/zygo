@@ -94,7 +94,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | DONE | mechanical | 907b06d; 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39 |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
-| FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | PLANNED | mechanical | — |
+| FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-11 |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 
 ## Log
