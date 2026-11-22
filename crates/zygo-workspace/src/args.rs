@@ -23,6 +23,8 @@ enum Class {
     Keep,
     /// Removed with its values.
     Remove,
+    /// Removed with its values; a session argument (W§8.3, AU30).
+    Session,
     /// Kept; each value is a path and is stored absolute.
     Path,
     /// A value is kept (absolute) only when it names an existing file.
@@ -43,13 +45,13 @@ const fn flag(names: &'static [&'static str], arity: Arity, class: Class) -> Fla
 /// `fixtures/claude-code/help.txt`. A flag that is not here takes no value and is kept as typed.
 const CLAUDE_CODE: &[Flag] = &[
     // removed: session, print and prompt-text arguments
-    flag(&["-c", "--continue"], Arity::None, Class::Remove),
-    flag(&["-r", "--resume"], Arity::Optional, Class::Remove),
-    flag(&["--session-id"], Arity::Required, Class::Remove),
-    flag(&["--fork-session"], Arity::None, Class::Remove),
-    flag(&["--from-pr"], Arity::Optional, Class::Remove),
-    flag(&["--cloud"], Arity::Optional, Class::Remove),
-    flag(&["--teleport"], Arity::Optional, Class::Remove),
+    flag(&["-c", "--continue"], Arity::None, Class::Session),
+    flag(&["-r", "--resume"], Arity::Optional, Class::Session),
+    flag(&["--session-id"], Arity::Required, Class::Session),
+    flag(&["--fork-session"], Arity::None, Class::Session),
+    flag(&["--from-pr"], Arity::Optional, Class::Session),
+    flag(&["--cloud"], Arity::Optional, Class::Session),
+    flag(&["--teleport"], Arity::Optional, Class::Session),
     flag(&["-p", "--print"], Arity::None, Class::Remove),
     flag(&["--system-prompt"], Arity::Required, Class::Remove),
     flag(&["--append-system-prompt"], Arity::Required, Class::Remove),
@@ -97,9 +99,9 @@ const CLAUDE_CODE: &[Flag] = &[
 /// `fixtures/opencode/help.txt`. A flag that is not here takes no value and is kept as typed.
 const OPENCODE: &[Flag] = &[
     // removed: session and prompt-text arguments
-    flag(&["-c", "--continue"], Arity::None, Class::Remove),
-    flag(&["-s", "--session"], Arity::Required, Class::Remove),
-    flag(&["--fork"], Arity::None, Class::Remove),
+    flag(&["-c", "--continue"], Arity::None, Class::Session),
+    flag(&["-s", "--session"], Arity::Required, Class::Session),
+    flag(&["--fork"], Arity::None, Class::Session),
     flag(&["--prompt"], Arity::Required, Class::Remove),
     // kept, required value
     flag(&["--log-level"], Arity::Required, Class::Keep),
@@ -132,6 +134,10 @@ struct Walk {
     kept: Vec<String>,
     dropped_flags: Vec<String>,
     removed: Vec<String>,
+    /// A session flag was met before `--`.
+    session: bool,
+    /// The long name of each table flag met before `--`, in order.
+    flags: Vec<&'static str>,
 }
 
 /// What became of one flag of the table and its values.
@@ -156,7 +162,7 @@ fn absolute(value: &str) -> Option<String> {
 /// The text to save for one value of a flag of `class`, or `None` when the value is removed.
 fn saved_value(class: Class, value: &str) -> Option<String> {
     match class {
-        Class::Remove => None,
+        Class::Remove | Class::Session => None,
         Class::Keep => Some(value.to_string()),
         Class::Path => Some(absolute(value).unwrap_or_else(|| value.to_string())),
         Class::Content => match std::path::absolute(value) {
@@ -202,18 +208,22 @@ fn settle(flag: &Flag, attached: Option<&str>, args: &[String], next: &mut usize
         }
     }
     let flag_kept = match flag.class {
-        Class::Remove => false,
+        Class::Remove | Class::Session => false,
         Class::Keep | Class::Path => true,
         Class::Content => !kept.is_empty(),
     };
     Outcome { flag_kept, attached: None, dropped: flag.class == Class::Content && !removed.is_empty(), kept, removed }
 }
 
-fn walk(agent: Agent, args: &[String]) -> Walk {
-    let table = match agent {
+fn table(agent: Agent) -> &'static [Flag] {
+    match agent {
         Agent::ClaudeCode => CLAUDE_CODE,
         Agent::OpenCode => OPENCODE,
-    };
+    }
+}
+
+fn walk(agent: Agent, args: &[String]) -> Walk {
+    let table = table(agent);
     let mut out = Walk::default();
     let mut next = 0;
     while next < args.len() {
@@ -280,6 +290,8 @@ fn walk(agent: Agent, args: &[String]) -> Walk {
             out.kept.extend(outcome.kept);
             out.removed.extend(outcome.removed);
             let name = flag.names[flag.names.len() - 1];
+            out.flags.push(name);
+            out.session |= flag.class == Class::Session;
             if outcome.dropped && !out.dropped_flags.iter().any(|d| d == name) {
                 out.dropped_flags.push(name.to_string());
             }
@@ -301,6 +313,22 @@ pub fn filter(agent: Agent, args: &[String]) -> Filtered {
 /// letter is given one time as typed.
 pub fn removable(agent: Agent, args: &[String]) -> Vec<String> {
     walk(agent, args).removed
+}
+
+/// Whether `args` hold a session argument of `agent` (W§8.3, AU30), by the same walk as [`filter`]: short clusters,
+/// flag values and `--` count as they do there.
+pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
+    walk(agent, args).session
+}
+
+/// Every name of the session flags of `agent`, in table order.
+pub fn session_flags(agent: Agent) -> Vec<&'static str> {
+    table(agent).iter().filter(|f| f.class == Class::Session).flat_map(|f| f.names.iter().copied()).collect()
+}
+
+/// The long name of each table flag in `args` before `--`, in order; values and positionals are not flags.
+pub fn flags(agent: Agent, args: &[String]) -> Vec<&'static str> {
+    walk(agent, args).flags
 }
 
 const SKIP_PERMISSIONS: &str = "--dangerously-skip-permissions";

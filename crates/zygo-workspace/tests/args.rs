@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, filter, has_user_info, removable, Filtered};
+use zygo_workspace::args::{bypass_flags, filter, flags, has_session_arg, has_user_info, removable, session_flags, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -350,4 +350,22 @@ fn user_info() {
     ] {
         assert!(!has_user_info(url), "{url:?}");
     }
+}
+
+#[test] // W§8.3, AU30: one source for the session flags; `--` and flag values are not flags
+fn session_flags_come_from_the_table() {
+    assert_eq!(session_flags(Agent::ClaudeCode), ["-c", "--continue", "-r", "--resume", "--session-id", "--fork-session", "--from-pr", "--cloud", "--teleport"]);
+    assert_eq!(session_flags(Agent::OpenCode), ["-c", "--continue", "-s", "--session", "--fork"]);
+    for a in [&["--teleport"][..], &["--resume=abc"][..], &["-pc"][..], &["--model", "opus", "-r", "x"][..], &["--session-id", "U1"][..]] {
+        assert!(has_session_arg(Agent::ClaudeCode, &s(a)), "{a:?}");
+    }
+    for a in [&[][..], &["--", "--resume"][..], &["--append-system-prompt", "--resume"][..], &["-p"][..], &["--continued"][..], &["--model", "opus"][..]] {
+        assert!(!has_session_arg(Agent::ClaudeCode, &s(a)), "{a:?}");
+    }
+    assert!(has_session_arg(Agent::OpenCode, &s(&["-sses_1"])));
+    assert!(has_session_arg(Agent::OpenCode, &s(&["--fork"])));
+    assert!(!has_session_arg(Agent::OpenCode, &s(&["--prompt", "-s"])));
+    assert_eq!(flags(Agent::ClaudeCode, &s(&["--model", "opus", "--settings=f", "--", "--settings", "g"])), ["--model", "--settings"]);
+    assert_eq!(flags(Agent::ClaudeCode, &s(&["--append-system-prompt", "--settings"])), ["--append-system-prompt"]);
+    assert_eq!(filter(Agent::ClaudeCode, &s(&["--teleport", "--model", "opus"])).kept, s(&["--model", "opus"]));
 }
