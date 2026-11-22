@@ -1,0 +1,53 @@
+tmux 3.2a
+6.01 ok tmux 3.2a
+6.02 ok no server: exit 1; error connecting to SOCKET (No such file or directory)
+6.03 ok new-session with an argument list: exit 0; arguments unchanged: ok; file pwned: no
+6.04 ok has-session: exit 0; with TMUX and TMUX_TMPDIR set to other values: exit 0
+6.05 ok socket_path: exit 0; SOCKET
+6.06 ok missing session: exit 1; can't find session: nosuch
+6.07 ok list-panes -s -t =nosuch: exit 1; can't find session: nosuch
+6.08 note list-panes -s -t =nosuch (no colon): can't find window: nosuch; show-options -v -t =nosuch: @zygo-ws: no such session: =nosuch:
+6.09 ok server killed, socket file left: yes; exit 1; no server running on SOCKET
+6.11 FAIL first window after new-session -d -x 173 -y 47: 80 23
+6.12 ok default-size 91x33, then new-window: exit 0 0; 91 33
+6.13 note resize-window -t =zp6:0 -x 173 -y 47: exit 0; 173 47
+6.14 ok select-layout <saved layout of 3 panes>: exit 0; saved panes: 86x23,0,0 | 86x23,0,24 | 86x47,87,0; built panes: 86x23,0,0 | 86x23,0,24 | 86x47,87,0
+6.15 ok select-layout tiled on 1 pane: exit 0
+6.15n note select-layout <layout of 3 panes> on a window of 1 pane: exit 0
+6.16 ok split-window in a window of 20x6 until one fails: exit 1; no space for new pane
+6.17 ok @zygo-ws with -t =zp6: exit 0 0; read: 0123456789abcdef; read on another session: empty
+6.18 note set-option -t =zp6 (no colon): exit 1; no such session: =zp6
+6.19 ok @zygo-pane with set-option -p: exit 0 0; read: kabcdefgh; read on a new pane: empty
+6.20 ok display-message -p -t <pane> '#{session_name} #{@zygo-ws}': exit 0; zp6 0123456789abcdef
+6.21 ok destroy-unattached off: exit 0 0; read: off
+6.22 ok remain-on-exit off with set-option -w: exit 0 0; read: off
+6.22n note set-option -t =zp6: remain-on-exit off (no -w): exit 0; window 0: remain-on-exit off; a later window: empty
+6.26 ok new-window -n 'a##b', 'w##(touch pwned)', '#{session_name}': names a#b, w#(touch pwned), zp6; file pwned: no
+6.27 ok -c <dir>/d##x gives the directory d#x: new-window yes; split-window yes; new-session yes (a no is a timeout 5 s)
+6.23t note a tab in a format: display-message -p 'a<tab>b' prints: a_b
+6.23 ok list-panes -s -t =zp6: -F <13 formats joined by |>: exit 0; lines without 13 fields: 0; lines with @zygo-pane kabcdefgh: 1; automatic-rename 0 on a#b: 1 (other: 0); automatic-rename 1 on window 0: 2 (other: 0); lines with a command that is not sleep: 0; lines of the d#x window with its path: 2
+6.23n note list-panes -s -t =zp6 (no colon): exit 0
+6.24 ok resize-pane -Z: exit 0; window_zoomed_flag: 1
+6.25 ok select-window, select-pane: exit 0 0; window_active: 1; pane_active: 1
+6.28 ok set-environment -r, set-environment, show-environment, new-window: exit 0 0 0 0; pane wrote its environment: yes; show-environment has -ZP6_HIDE: yes; in the pane: ZP6_HIDE no; ZP6_KEEP=1 yes; ZYGO_WORKSPACE yes; TMUX starts with the socket path yes; TMUX_PANE yes
+6.30 ok set-hook -t =zp6: (4 hooks), set-hook -w -t =zp6:0 (4 hooks): exit 0 0 0 0; show-hooks lines: 4; show-hooks -w lines: 4
+6.31 ok split-window in window 0: after-split-window yes; window-layout-changed yes
+6.32 FAIL kill-pane in window 0: after-kill-pane no
+6.33 ok new-window (window 1): after-new-window yes; set-hook -w on the new window: exit 0
+6.34 FAIL in window 1: after-split-window yes; window-layout-changed yes; after-kill-pane no
+6.35 ok rename-window: window-renamed in window 0 yes; in window 1 yes
+6.36 FAIL a pane whose program ends: pane-exited no
+6.37 ok select-layout even-horizontal: window-layout-changed yes
+6.38 FAIL kill-window: window-unlinked no
+6.38n note kill-window: an after-kill-pane line within 1 s: no
+6.43 ok split-window and rename-window in another session: hook lines: 0
+6.44 note hooks of zp6 that fired for a pane that ended and a window that was killed in another session: none
+6.39 ok attach-session -t =zp6 on a pty: attached yes; detach-client: client-detached yes
+6.40 note two clients (attached yes, yes), the second on another session; detach-client -s =zp6: a client-detached line within 1.5 s: no
+6.41 ok switch-client -c <client> -t =zp6b: attached yes; exit 0; client session: zp6b
+6.46 note one client, on zp6 (attached yes): events in zp6: after-kill-pane yes; pane-exited yes; window-unlinked yes; a pane that ends in another session runs the pane-exited hook of zp6: yes
+6.47 note the client is on another session (client session: zp6b): events in zp6: after-kill-pane no; pane-exited no; window-unlinked no
+6.42 note set-hook -t =zp6d: window-renamed (no -w): exit 0; show-hooks -w lines of window 0: 1; of window 1: 0
+6.45 ok global hooks, global session options, global window options and server options are the same after the group: yes
+6.50 ok kill-session with all hooks set, another session left: exit 0; gone within 5 s: yes; pane-exited lines: 0; within 2 s of the first: none; then has-session: can't find session: zp6
+6.51 ok kill-session with all hooks set, the last session: exit 0; gone within 5 s: yes; pane-exited lines: 0; within 2 s of the first: none; then has-session: no server running on SOCKET
