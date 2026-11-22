@@ -253,6 +253,33 @@ fn cli_in_the_agent_shell_hides_the_window() {
     assert!(help.contains("(now: 600k)"), "{help}");
 }
 
+/// H§14 #18, AU26: `zygo status` and `/zygo:status` of a live session print the trimmed bytes as estimated tokens
+/// (92,160 bytes → `23k tok`) and the session spend; outside a session there is no `spend:` line.
+#[test]
+fn h14_18_status_prints_trimmed_tokens_and_spend() {
+    let d = home();
+    let (_h, id, dir) = proxy(d.path());
+    let env = Env { session: Some(&id), dir: Some(&dir), agent: None, ..Default::default() };
+    let both = |want: &str| {
+        let (code, cli, err) = zygo(d.path(), &["status"], &env, b"");
+        assert_eq!(code, 0, "{err}");
+        let slash = reason(&hook_prompt(d.path(), &env, "/zygo:status"));
+        for out in [&cli, &slash] {
+            assert!(out.trim_end().ends_with(want), "{out}");
+            assert!(!out.contains("bytes"), "{out}");
+        }
+    };
+    // No usage store yet: the count is not known. No request yet: `$0.00` (AU15).
+    both("\nsavings: cache -, trimmed - tok\nspend: $0.00");
+    let store = zygo_usage::Store::open(&paths(d.path()).usage_db).unwrap();
+    store.insert_trim(&zygo_usage::TrimRow { session: id.clone(), stored_bytes: 100_000, view_bytes: 7_840, ..Default::default() }).unwrap();
+    store.insert_trim(&zygo_usage::TrimRow { session: "other".into(), stored_bytes: 4_000, ..Default::default() }).unwrap();
+    both("\nsavings: cache -, trimmed 23k tok\nspend: $0.00");
+    let (code, out, _) = zygo(d.path(), &["status"], &Env::default(), b"");
+    assert_eq!(code, 0);
+    assert!(!out.contains("spend:") && !out.contains("savings:"), "{out}");
+}
+
 #[test]
 fn cli_with_only_the_session_dir_hides_the_window() {
     let d = home();

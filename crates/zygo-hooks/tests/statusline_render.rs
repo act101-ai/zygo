@@ -931,6 +931,32 @@ fn tokens_spend_cache_trimmed() {
     assert!(!compact_text(&half).contains("↑1.2m") && !verbose_text(&half).contains(" in "));
 }
 
+/// H§14 #18 (render part), OP1: 92,160 trimmed bytes show as compact `✂ 23k`, plain `trim 23k` and, in verbose with
+/// each icon set, `trimmed 23k tok`. The number is `ceil(bytes ÷ BYTES_PER_TOKEN)` in the `short` form, in SGR `2`.
+#[test]
+fn h14_18_trimmed_bytes_show_as_estimated_tokens() {
+    let trimmed = |bytes: u64| HudData { trimmed_bytes: Some(bytes), ..op13() };
+    let plain = |d: &HudData, style: Style| render(d, &renv(style, IconSet::Plain, ColorMode::Off, 200));
+    let d = trimmed(92_160);
+    assert!(compact_text(&d).ends_with("  ✂ 23k"), "{}", compact_text(&d));
+    assert!(plain(&d, C).ends_with("  trim 23k"), "{}", plain(&d, C));
+    assert!(verbose_text(&d).ends_with("   trimmed 23k tok"), "{}", verbose_text(&d));
+    assert!(plain(&d, V).ends_with("   trimmed 23k tok"), "{}", plain(&d, V));
+    assert!(render(&d, &nerd(C)).ends_with("  ✂ 23k\x1b[0m") && render(&d, &nerd(V)).ends_with("   trimmed 23k tok\x1b[0m"));
+    assert_eq!(zygo_core::tokens::BYTES_PER_TOKEN, 4);
+    let cases = [(0, "0"), (1, "1"), (4, "1"), (5, "2"), (3_996, "999"), (3_997, "1k"), (92_157, "23k"), (4_000_000, "1m"), (4_800_001, "1.2m")];
+    for (bytes, want) in cases {
+        let d = trimmed(bytes);
+        assert!(compact_text(&d).ends_with(&format!("  ✂ {want}")), "{bytes}: {}", compact_text(&d));
+        assert!(plain(&d, C).ends_with(&format!("  trim {want}")), "{bytes}: {}", plain(&d, C));
+        assert!(verbose_text(&d).ends_with(&format!("   trimmed {want} tok")), "{bytes}: {}", verbose_text(&d));
+    }
+    for style in [C, V] {
+        let none = HudData { trimmed_bytes: None, ..op13() };
+        assert!(!plain(&none, style).contains("trim"), "{}", plain(&none, style));
+    }
+}
+
 #[test]
 fn failure_markers_and_stale_dimming() {
     // Stale: every proxy-derived run is dim; local segments keep their styles.
