@@ -10,9 +10,9 @@
 
 The node changes only spec text, so the Acceptance `rg` is the test. All edits are in `docs/specs/2026-11-21-statusline-hud-design.md`, in the FIX-11 checkout.
 
-- [ ] Red, before any edit: `rg -n 'OpenCode has no zygo status line' docs/specs/2026-11-21-statusline-hud-design.md` finds 2 lines, H§8 and H§14 #33, so the Acceptance exits 1.
-- [ ] H§3 OpenCode bullet: keep that zygo sets no OpenCode status surface, A-9 through the CLI and PH13; replace the exit 2 sentence with final text: in an OpenCode session the verb works as in a Claude Code session, the session form stores the style in `overrides.json` and gives the same reply, `--save` also writes user config, the form with no argument prints the current style and its source, and the verb does not read `ZYGO_AGENT`; no zygo surface shows a HUD there.
-- [ ] H§8: replace the OpenCode bullet with the same rule, citing `crates/zygo/src/cmd/statusline.rs:5`; the no-argument bullet keeps "OpenCode included" and names the source.
-- [ ] H§14 #33: replace the last sentence: with `ZYGO_AGENT=opencode`, `zygo statusline verbose` gives the same reply, the same `overrides.json` change and exit 0, and `--save` writes user config and exits 0.
-- [ ] Change log: one row dated 2026-11-22, Section `H§3 (OpenCode bullet), H§8, H§14 #33`, Decided by `operator, 2026-11-21 ("same as Claude Code"); built by HUD-11`.
-- [ ] Green: the Acceptance command alone exits 0; `cargo test -p zygo --locked --test forbidden_content` and `PATH="$HOME/.opencode/bin:$PATH" sh scripts/check-premises.sh` exit 0.
+- [x] Red, before any edit: `rg -n 'OpenCode has no zygo status line' docs/specs/2026-11-21-statusline-hud-design.md` finds 2 lines, H§8 and H§14 #33, so the Acceptance exits 1.
+- [x] H§3 OpenCode bullet: keep that zygo sets no OpenCode status surface, A-9 through the CLI and PH13; replace the exit 2 sentence with final text: in an OpenCode session the verb works as in a Claude Code session, the session form stores the style in `overrides.json` and gives the same reply, `--save` also writes user config, the form with no argument prints the current style and its source, and the verb does not read `ZYGO_AGENT`; no zygo surface shows a HUD there.
+- [x] H§8: replace the OpenCode bullet with the same rule, citing `crates/zygo/src/cmd/statusline.rs:5`; the no-argument bullet keeps "OpenCode included" and names the source.
+- [x] H§14 #33: replace the last sentence: with `ZYGO_AGENT=opencode`, `zygo statusline verbose` gives the same reply, the same `overrides.json` change and exit 0, and `--save` writes user config and exits 0.
+- [x] Change log: one row dated 2026-11-22, Section `H§3 (OpenCode bullet), H§8, H§14 #33`, Decided by `operator, 2026-11-21 ("same as Claude Code"); built by HUD-11`.
+- [x] Green: the Acceptance command alone exits 0; `cargo test -p zygo --locked --test forbidden_content` and `PATH="$HOME/.opencode/bin:$PATH" sh scripts/check-premises.sh` exit 0.
