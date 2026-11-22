@@ -66,7 +66,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | DONE | judgment | f945872; mux 42 on 3.7c and 3.2a; review round 2 fixed B1 (3.2a window names) and M1-M7 |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
-| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | PLANNED | judgment | — |
+| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | IN-PROGRESS | judgment | `.worktrees/phase2/W6` |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
