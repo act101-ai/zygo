@@ -2,13 +2,17 @@
 //! closure and its own `Paths` under a temp directory: no test changes the process environment.
 
 use std::ffi::OsString;
+use std::io::Cursor;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
+use zygo_hooks::statusline::data::collect;
 use zygo_hooks::statusline::phase::{read, valid_ws_id};
+use zygo_hooks::statusline::render::{render, ColorMode, HudData, IconSet, RenderEnv, Style};
 
 const ID: &str = "0123456789abcdef";
 const DRAINING: &[u8] = br#"{"version":1,"phase":"draining"}"#;
@@ -223,4 +227,127 @@ fn file_over_64_kib_gives_none() {
     assert_eq!(fx.read(), None);
     fx.state(ID, &padded(10 * 1024 * 1024));
     assert_eq!(fx.read(), None);
+}
+
+// ---- H§14 #36: `collect`, then `render` ----
+
+const STRIPE: &str = "\x1b[31m▌\x1b[33m▌\x1b[36m▌\x1b[0m ";
+const LOGO: &str = "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}";
+const BRANCH: &str = "\u{e0a0}";
+
+/// One `collect`: stdin `cwd` = `<tmp>/plain` (outside every repository), `ZYGO_WORK=branch:main`, no proxy.
+fn hud(fx: &Fx) -> HudData {
+    let plain = fx.t.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let stdin = serde_json::json!({ "cwd": plain }).to_string().into_bytes();
+    let dir = fx.dir.clone();
+    let env = move |key: &str| match key {
+        "ZYGO_SESSION_DIR" => Some(dir.clone().into_os_string()),
+        "ZYGO_WORK" => Some(OsString::from("branch:main")),
+        _ => None,
+    };
+    collect(Box::new(Cursor::new(stdin)), &fx.dir, &fx.paths(), &env, Instant::now() + Duration::from_secs(10))
+}
+
+/// Nerd icons, with color.
+fn ansi(d: &HudData, style: Style, width: u16) -> String {
+    render(d, &RenderEnv { style, icons: IconSet::Nerd, color: ColorMode::Ansi256, width, force_panic: false })
+}
+
+/// `s` without its SGR sequences.
+fn strip(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('\x1b') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        rest = &rest[rest.find('m').map_or(rest.len(), |m| m + 1)..];
+    }
+    out + rest
+}
+
+#[test] // H§14 #36, first sentence
+fn h14_36_member_session_shows_the_phase_after_the_logo() {
+    let fx = Fx::new();
+    fx.view(Some(ID));
+    fx.state(ID, DRAINING);
+    let d = hud(&fx);
+    assert_eq!(d.phase.as_deref(), Some("draining"));
+
+    let compact = ansi(&d, Style::Compact, 200);
+    assert_eq!(strip(&compact).find(&format!("▌▌▌ {LOGO} ws draining {BRANCH} main")), Some(0), "{compact:?}");
+    assert!(
+        compact.starts_with(&format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m \x1b[31mws draining\x1b[0m \x1b[1;34m{BRANCH} main")),
+        "{compact:?}"
+    );
+    let verbose = ansi(&d, Style::Verbose, 200);
+    assert_eq!(strip(&verbose).find(&format!("▌▌▌ {LOGO}  ws draining   {BRANCH} main")), Some(0), "{verbose:?}");
+    assert!(
+        verbose.starts_with(&format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m  \x1b[31mws draining\x1b[0m   \x1b[1;34m{BRANCH} main")),
+        "{verbose:?}"
+    );
+
+    // In both styles, at every `COLUMNS`.
+    for width in [200, 115, 100, 80, 60, 40, 30, 20] {
+        let compact = ansi(&d, Style::Compact, width);
+        assert!(strip(&compact).starts_with(&format!("▌▌▌ {LOGO} ws draining")), "{width}: {compact:?}");
+        assert!(compact.contains(&format!("{LOGO}\x1b[0m \x1b[31mws draining")), "{width}: {compact:?}");
+        let verbose = ansi(&d, Style::Verbose, width);
+        assert!(strip(&verbose).starts_with(&format!("▌▌▌ {LOGO}  ws draining")), "{width}: {verbose:?}");
+        assert!(verbose.contains(&format!("{LOGO}\x1b[0m  \x1b[31mws draining")), "{width}: {verbose:?}");
+    }
+}
+
+#[test] // H§14 #36, from the second sentence
+fn h14_36_phase_colors_and_hidden_cases() {
+    let fx = Fx::new();
+    fx.view(Some(ID));
+    let state = |phase: &str| fx.state(ID, format!(r#"{{"version":1,"phase":"{phase}"}}"#).as_bytes());
+
+    // `building`, `stopping`, `down` → SGR `33`, `1;31`, `2`.
+    for (phase, sgr) in [("building", "33"), ("stopping", "1;31"), ("down", "2")] {
+        state(phase);
+        let d = hud(&fx);
+        assert_eq!(d.phase.as_deref(), Some(phase));
+        let compact = ansi(&d, Style::Compact, 200);
+        assert!(compact.contains(&format!("{LOGO}\x1b[0m \x1b[{sgr}mws {phase}")), "{compact:?}");
+        let verbose = ansi(&d, Style::Verbose, 200);
+        assert!(verbose.contains(&format!("{LOGO}\x1b[0m  \x1b[{sgr}mws {phase}")), "{verbose:?}");
+    }
+
+    // The render of a non-member session: the reference for each hidden case.
+    fx.view(None);
+    state("draining");
+    let none = hud(&fx);
+    assert_eq!(none.phase, None);
+    let reference = (ansi(&none, Style::Compact, 200), ansi(&none, Style::Verbose, 200));
+    assert!(strip(&reference.0).starts_with(&format!("▌▌▌ {LOGO} {BRANCH} main")), "{:?}", reference.0);
+    assert!(!reference.0.contains("ws ") && !reference.1.contains("ws "));
+    let hidden = |label: &str| {
+        let d = hud(&fx);
+        assert_eq!((ansi(&d, Style::Compact, 200), ansi(&d, Style::Verbose, 200)), reference, "{label}");
+        d.phase
+    };
+
+    // `up` and `other`: the value is read, and no segment shows.
+    fx.view(Some(ID));
+    for phase in ["up", "other"] {
+        state(phase);
+        assert_eq!(hidden(phase).as_deref(), Some(phase));
+    }
+    // `version = 2`.
+    fx.state(ID, br#"{"version":2,"phase":"draining"}"#);
+    assert_eq!(hidden("version 2"), None);
+    // Bad JSON.
+    fx.state(ID, b"not json");
+    assert_eq!(hidden("bad JSON"), None);
+    // A missing file.
+    std::fs::remove_file(fx.paths().workspaces_dir().join(ID).join("workspace.json")).unwrap();
+    assert_eq!(hidden("missing file"), None);
+    // A marker `ws_id` of `../x` or `ABC`: the file that a join with no check reads is there, and is not read.
+    for id in ["../x", "ABC"] {
+        fx.state(id, DRAINING);
+        fx.view(Some(id));
+        assert_eq!(hidden(id), None);
+    }
 }
