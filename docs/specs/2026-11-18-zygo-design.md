@@ -459,7 +459,7 @@ Common conditions for both triggers: Claude Code session (A-16 row); the served 
 - `POST /v1/zygo/sessions/{id}/compact` `{ "window": <n> | "off" }`, n from 100,000 to 10,000,000 (a value above the model's window is accepted and has no effect); `DELETE` clears it (back to the model's `soft`). Reply `{ "window": <n> | "off" | null }`.
 - `zygo compact <tokens|on|off>`: `600000`, `600k`, `1m` forms; `on` = `DELETE`. Session from `--session` else `ZYGO_SESSION`. Exit 2 on a bad value, 12 when unreachable within 10 s. *(Note 2026-11-19, N28 planning: the slash form's session-API timeout is 4 s; with no `--session` and no `ZYGO_SESSION`, `zygo compact` exits 2; `zygo compact` has no `--save`.)*
 - `/zygo:compact <arg>` typed in Claude Code: `zygo hook prompt` (`UserPromptSubmit`) matches `^/zygo:([a-z][a-z0-9-]*)(?:\s+(.*))?$`, calls the same request, and prints `{"decision":"block","reason":"zygo: compact <arg> for this session","hookSpecificOutput":{"hookEventName":"UserPromptSubmit","suppressOriginalPrompt":true}}` so the line never reaches the model. Unknown verb → block with the `/zygo:help` text *(A2)*; every other verb is in §17.1. Failure → block with `zygo: compact failed: <reason>`. The hook finishes within 5 s. The embedded `zygo` plugin provides `commands/compact.md` (`disable-model-invocation: true`) so the command is listed.
-- The status line shows `compact 600k` / `compact off` while an override is set.
+- The status line shows the soft or override threshold as `⇣600k`, and `⇣off` for an override of `off`; a safety-only window shows no `⇣` (HUD design H§6.1 AU28). *(2026-11-22, HUD design)*
 
 #### 10.2.5 OpenCode
 

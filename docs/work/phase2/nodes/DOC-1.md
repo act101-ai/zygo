@@ -32,7 +32,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   | `statusline [compact\|verbose]` | Status line style (§17, HUD design H§8) *(2026-11-22, HUD design)* | session, `--save` |
   ```
 
-- [ ] 4. H§9 row "§10.2.4, last bullet" → base §10.2.4. Replace the bullet `- The status line shows `compact 600k` / `compact off` while an override is set.` with:
+- [x] 4. H§9 row "§10.2.4, last bullet" → base §10.2.4. Replace the bullet `- The status line shows `compact 600k` / `compact off` while an override is set.` with:
 
   ```text
   - The status line shows the soft or override threshold as `⇣600k`, and `⇣off` for an override of `off`; a safety-only window shows no `⇣` (HUD design H§6.1 AU28). *(2026-11-22, HUD design)*
