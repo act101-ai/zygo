@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -30,6 +31,8 @@ pub struct Config {
     pub usage: UsageConfig,
     pub statusline: StatuslineConfig,
     pub update: UpdateConfig,
+    pub workspace: WorkspaceConfig,
+    pub loadout: BTreeMap<String, Loadout>,
     #[serde(rename = "marketplace")]
     pub marketplaces: Vec<Marketplace>,
     pub plugins: PluginsConfig,
@@ -58,6 +61,8 @@ impl Default for Config {
             usage: UsageConfig::default(),
             statusline: StatuslineConfig::default(),
             update: UpdateConfig::default(),
+            workspace: WorkspaceConfig::default(),
+            loadout: BTreeMap::new(),
             marketplaces: Vec::new(),
             plugins: PluginsConfig::default(),
             redaction: RedactionConfig::default(),
@@ -649,6 +654,90 @@ impl Default for UpdateConfig {
     fn default() -> Self {
         UpdateConfig { check: true }
     }
+}
+
+/// A duration written as `<n>s`, `<n>m` or `<n>h` (workspaces design W§11 `drain_timeout`, W§19): ASCII digits and
+/// one unit letter. `None` for any other text and for a value that does not fit in `u64` seconds.
+pub fn parse_duration(s: &str) -> Option<Duration> {
+    let (unit, digits) = s.as_bytes().split_last()?;
+    let scale: u64 = match unit {
+        b's' => 1,
+        b'm' => 60,
+        b'h' => 3600,
+        _ => return None,
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let n: u64 = std::str::from_utf8(digits).ok()?.parse().ok()?;
+    n.checked_mul(scale).map(Duration::from_secs)
+}
+
+/// The loadout that needs no config (workspaces design W§11, AU45): one `claude-code` pane in the main worktree.
+pub const BUILTIN_LOADOUT: &str = "solo";
+
+/// The values of `loadout.<name>.window.pane.kind` (W§11); `config check` refuses any other value.
+pub const LOADOUT_KINDS: [&str; 3] = ["claude-code", "opencode", "shell"];
+
+/// `[workspace]` (workspaces design W§11, AU10). User config only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceConfig {
+    /// The loadout of `zygo up` with no name: [`BUILTIN_LOADOUT`] or a key of `[loadout]`.
+    pub default_loadout: String,
+    /// A draining workspace refuses new dispatches (OP6).
+    pub drain_block_dispatch: bool,
+    /// How long a drain waits (AU4), in the form [`parse_duration`] reads.
+    pub drain_timeout: String,
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        WorkspaceConfig { default_loadout: BUILTIN_LOADOUT.into(), drain_block_dispatch: true, drain_timeout: "10m".into() }
+    }
+}
+
+/// `[loadout.<name>]` (workspaces design W§11, AU10): the windows that `zygo up` starts. User config only.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Loadout {
+    pub window: Vec<LoadoutWindow>,
+}
+
+/// `[[loadout.<name>.window]]` (W§11). User config only.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoadoutWindow {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+    pub pane: Vec<LoadoutPane>,
+}
+
+/// `[[loadout.<name>.window.pane]]` (W§11). User config only. An unset field takes the default of `zygo claude` or
+/// `zygo opencode` (AU45).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoadoutPane {
+    /// One of [`LOADOUT_KINDS`]; `config check` refuses any other value.
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    pub args: Vec<String>,
+    pub yolo: bool,
+    /// Only with `kind = "claude-code"`.
+    pub passthrough: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact: Option<String>,
+    /// Only with `kind = "claude-code"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_dir: Option<String>,
+    /// Absolute, relative to the main worktree, or `branch:<name>` for the worktree that has that branch checked out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 // ---- plugins (§15) ----

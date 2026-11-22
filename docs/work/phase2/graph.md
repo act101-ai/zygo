@@ -83,7 +83,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | IN-PROGRESS | judgment | wt .worktrees/phase2/W2 |
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | IN-PROGRESS | judgment | wt .worktrees/phase2/W4 |
-| W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | IN-PROGRESS | judgment | wt .worktrees/phase2/W5 |
+| W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
@@ -99,6 +99,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
 | M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | TODO | implementation | — |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
+| E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
 
 ## Log
 
@@ -141,3 +142,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | W4 plan, author's calls where AU30 is silent: every positional is removed for both agents (an OpenCode project path is not restored); --teleport is removed as an optional-value session flag. For L2: has_session_arg must count --teleport. |
 | 2026-11-21 | W4 plan notes: args::filter resolves file paths against the process cwd (matters to W7 and to config check in M1). For W7: W§8.1 step 10 says each name of AU64, but the W7 contract consumes only env::REMOVE_ALWAYS. |
 | 2026-11-21 | W2 plan, author's calls: validation also needs id equal to the directory name and version 1; errors.log is cut to its newest lines within 32 KiB when a line would pass 64 KiB; the .tmp sweep of W§7.3 is in Store::update. |
+| 2026-11-21 | W5 DONE (one round). W§18 #63 is covered in part: the --settings warning and the checks that need parse_window, AU30 or AU98 are M1's. An older zygo (0.1.1) accepts a config with [workspace] and [loadout.x]: config check ok. |
