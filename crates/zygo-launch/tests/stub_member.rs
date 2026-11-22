@@ -259,3 +259,48 @@ fn subagent_stop_hook_on_request() {
     assert_cat(&h[0], "SubagentStop", &input(&s, "SubagentStop", ID, merged(sub(), stop())));
     assert_cat(&h[1], "SubagentStop", &input(&s, "SubagentStop", ID, merged(merged(sub(), stop()), json!({"agent_id": "a2"}))));
 }
+
+#[test]
+fn model_request_goes_to_the_proxy_and_stays_open() {
+    use std::io::{Read, Write};
+    use std::sync::mpsc::channel;
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", l.local_addr().unwrap()); // `ZYGO_URL` ends with `/`, as `Url::to_string` gives it
+    let (req_tx, req_rx) = channel::<String>();
+    let (go_tx, go_rx) = channel::<()>();
+    let server = std::thread::spawn(move || {
+        let (mut c, _) = l.accept().unwrap();
+        let (mut buf, mut b) = (Vec::new(), [0u8; 4096]);
+        let text = loop { // headers, then `content-length` body bytes
+            let n = c.read(&mut b).unwrap();
+            assert!(n > 0, "the stub closed the request early");
+            buf.extend_from_slice(&b[..n]);
+            let t = String::from_utf8_lossy(&buf).into_owned();
+            if let Some((head, body)) = t.split_once("\r\n\r\n") {
+                let len: usize = head.lines().find_map(|h| h.strip_prefix("content-length: ")).unwrap().parse().unwrap();
+                if body.len() >= len { break t; }
+            }
+        };
+        req_tx.send(text).unwrap();
+        go_rx.recv().unwrap(); // hold the reply open
+        c.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\ndata: {}\n\n").unwrap();
+    });
+    let s = spawn_in(tempfile::tempdir().unwrap(), &[], true, &url);
+    harness::stub_control(&s.ctl, "request 20000").unwrap();
+    let req = req_rx.recv_timeout(BOUND).unwrap();
+    let (head, body) = req.split_once("\r\n\r\n").unwrap();
+    let lines: Vec<&str> = head.split("\r\n").collect();
+    assert_eq!(lines[0], "POST /anthropic/v1/messages HTTP/1.1");
+    for h in ["content-type: application/json", "anthropic-version: 2023-06-01", "x-zygo-session: s-1", "x-api-key: tok-1", "connection: close"] {
+        assert!(lines.contains(&h), "{h} not in {lines:?}");
+    }
+    assert_eq!(serde_json::from_str::<Value>(body).unwrap(),
+        json!({"model": "lead", "max_tokens": 1, "stream": true, "messages": [{"role": "user", "content": "stub hold 20000"}]}));
+    // the request is open: the server has not replied, so the step is not finished
+    assert_eq!(wait_done(&s.ctl, 1).len(), 1);
+    assert!(jsonl(&s.out.join("requests.jsonl")).is_empty());
+    go_tx.send(()).unwrap();
+    assert_eq!(wait_done(&s.ctl, 2)[1], "request 20000");
+    assert_eq!(jsonl(&s.out.join("requests.jsonl")), [json!({"hold_ms": 20000, "status": 200})]);
+    server.join().unwrap();
+}

@@ -4,9 +4,17 @@
 //!
 //! Control mode (L3, the workspace tests): when `ZYGO_STUB_CONTROL` names a directory, the agent does not exit after the
 //! capture. It serves the lines of `<dir>/steps` in order (a test appends them with `stub_control`) and appends to
-//! `<dir>/done` the line `start <pid>` (after it called the `SessionStart` hooks of the `--settings` file), then the text of each step when that step has finished. A step that cannot run
-//! ends the stub with code 2 and no `done` line. The stub installs no signal handler: a signal ends it by the default
-//! action. `ZYGO_STUB_EXIT` and the `shell.json` capture are not used in control mode.
+//! `<dir>/done` the line `start <pid>` (after it called the `SessionStart` hooks of the `--settings` file), then the text
+//! of each step when that step has finished. A step that cannot run ends the stub with code 2 and no `done` line. The
+//! stub installs no signal handler: a signal ends it by the default action. `ZYGO_STUB_EXIT` and the `shell.json`
+//! capture are not used in control mode. One control directory serves one stub process at a time. The steps:
+//!
+//! - `hook <Event>` or `hook <Event> <JSON object>`: calls the hooks of `UserPromptSubmit`, `PreToolUse`, `Stop`,
+//!   `StopFailure`, `SubagentStart` or `SubagentStop`; the object replaces top-level keys of the input. Each call is
+//!   one line of `hooks.jsonl` in `ZYGO_STUB_OUT`.
+//! - `request <ms>`: one model request to the proxy at `ZYGO_URL`, open until the server ends the reply; its status is
+//!   one line of `requests.jsonl`.
+//! - `exit <code>`: ends the stub with that code.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -144,6 +152,42 @@ fn call_hooks(settings: &Value, event: &str, input: &Value, out: &Path) {
     }
 }
 
+/// One model request to the session's proxy (`ZYGO_URL`), as the agent makes it: a streaming Anthropic `messages` call with
+/// the session headers. It returns when the server has ended the reply, so the server decides how long the request is open
+/// (`stub hold <ms>` in the message text tells a test provider the time). Any HTTP status is a finished request.
+fn request(ms: u64, out: &Path) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let need = |name: &str| var(name).ok_or(format!("{name} is not set"));
+    let url = need("ZYGO_URL")?;
+    let rest = url.strip_prefix("http://").ok_or(format!("ZYGO_URL `{url}` is not an http:// URL"))?;
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let prefix = if path.trim_end_matches('/').is_empty() { String::new() } else { format!("/{}", path.trim_end_matches('/')) };
+    let session = need("ZYGO_SESSION")?;
+    let token_file = Path::new(&need("ZYGO_SESSION_DIR")?).join("token");
+    let token = std::fs::read_to_string(&token_file).map_err(|e| format!("{}: {e}", token_file.display()))?;
+    let body = json!({
+        "model": var("ANTHROPIC_MODEL").unwrap_or_else(|| "lead".into()),
+        "max_tokens": 1,
+        "stream": true,
+        "messages": [{"role": "user", "content": format!("stub hold {ms}")}],
+    })
+    .to_string();
+    let head = format!(
+        "POST {prefix}/anthropic/v1/messages HTTP/1.1\r\nhost: {authority}\r\ncontent-type: application/json\r\nanthropic-version: 2023-06-01\r\nx-zygo-session: {session}\r\nx-api-key: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+        token.trim(),
+        body.len()
+    );
+    let mut c = std::net::TcpStream::connect(authority).map_err(|e| format!("connect {authority}: {e}"))?;
+    c.write_all(format!("{head}{body}").as_bytes()).map_err(|e| format!("send: {e}"))?;
+    let mut reply = Vec::new();
+    // A reset after the status line still ends the reply; the status decides.
+    let _ = c.read_to_end(&mut reply);
+    let reply = String::from_utf8_lossy(&reply);
+    let status: u16 = reply.lines().next().and_then(|l| l.split(' ').nth(1)).and_then(|s| s.parse().ok()).ok_or(format!("no HTTP status in the reply `{}`", reply.lines().next().unwrap_or_default()))?;
+    append(&out.join("requests.jsonl"), &json!({"hold_ms": ms, "status": status}).to_string());
+    Ok(())
+}
+
 /// Runs one step line. `Ok(Some(code))` is an `exit` step: the caller writes the `done` line, then exits.
 fn step(line: &str, out: &Path, settings: &Value, argv: &[String]) -> Result<Option<i32>, String> {
     let (verb, rest) = line.split_once(' ').unwrap_or((line, ""));
@@ -163,6 +207,7 @@ fn step(line: &str, out: &Path, settings: &Value, argv: &[String]) -> Result<Opt
             call_hooks(settings, event, &hook_input(event, argv, out, overlay.as_ref()), out);
             Ok(None)
         }
+        "request" => request(rest.parse::<u64>().map_err(|e| format!("hold time: {e}"))?, out).map(|()| None),
         "exit" => rest.parse::<i32>().map(Some).map_err(|e| format!("exit code: {e}")),
         _ => Err("unknown step".into()),
     }
