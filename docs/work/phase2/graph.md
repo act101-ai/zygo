@@ -66,7 +66,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | DONE | judgment | f945872; mux 42 on 3.7c and 3.2a; review round 2 fixed B1 (3.2a window names) and M1-M7 |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
-| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
+| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | PLANNED | judgment | — |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
@@ -206,3 +206,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-11 DONE (7ee20d6): HUD spec H§3, H§8, H§14 #33 say the statusline verb works the same in an OpenCode session, as HUD-11 built it. Merged tree: acceptance ok; checkout: forbidden_content 6 ok, check-premises ok. |
 | 2026-11-22 | L2 DONE (c5a1569): member hooks, session args from W4, launcher member drop, conformance check test. Merged tree: args 12, claude_code 36, opencode 51, stub_launch 16, conformance ok. R2 spec changes applied. FIX-13 added: stub reads = session forms; M2 depends on it. |
 | 2026-11-22 | FIX-13 planned: 6 steps, test first. Acceptance adds --test stub_member, because the split-form cases are there; stub_member not changed. -s=<id> not read; empty = value is no session arg (author's call). |
+| 2026-11-22 | W6 planned: 22 steps, test first. C1-C16 applied: W2, W3 Produces; W7, W10, M1, M2, M4 Spec; H1 runs the pending snapshot in a detached child; spec W§7.1-7.4, W§10, AU38, AU84, AU89. Adds snapshot_seq to state.rs (author's call). |
