@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::cell::Cell;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -19,7 +19,7 @@ use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, Seq
 use serde_json::{json, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use zygo_config::keys::Secret;
-use zygo_config::{Dialect, Facts, Family, Prices, Provider, SchemaRule, TokenUsage};
+use zygo_config::{Catalog, Dialect, Facts, Family, Prices, Provider, SchemaRule, TokenUsage};
 use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RedactionCount, RequestRow};
@@ -195,6 +195,15 @@ fn upstream_bad_response() -> ZygoError {
     ZygoError::new(StatusCode::BAD_GATEWAY, "zygo_upstream_bad_response", "upstream response could not be translated")
 }
 
+/// The public list price of the catalog model `id` (AU14, H§7.3 step 5): the first price in that row of the built-in
+/// catalog compiled into this binary. The serving config is not read, so a team's configured price is never the
+/// result. `None`: the built-in catalog has no such row, or the row has no price.
+fn list_prices(id: &str) -> Option<&'static Prices> {
+    static BUILTIN: OnceLock<Catalog> = OnceLock::new();
+    let catalog = BUILTIN.get_or_init(|| zygo_config::builtin::defaults().catalog);
+    catalog.get(id)?.provider.iter().find_map(|p| p.price_usd_per_mtok.as_ref())
+}
+
 /// The usage row of one request (§14); written when dropped: the tokens and cost, `add_request`, then the row.
 struct Pending {
     row: RequestRow,
@@ -234,8 +243,13 @@ impl Drop for Pending {
         };
         let cost = table.and_then(|p| p.cost(&tokens));
         r.estimated_usd = cost.filter(|_| on_row).unwrap_or(0.0);
-        // A team session's cost is at the server's configured prices: it stays in the row (AU14).
-        self.session.add_request(&tokens, cost.filter(|_| self.session.team_label.is_none()));
+        // A team session (AU14, H§7.3 step 5): the cost above is at the server's configured prices and stays in
+        // the row. The session spend is a second price call, at the built-in list prices of the served model.
+        let spend = match self.session.team_label {
+            Some(_) => list_prices(&r.model).and_then(|p| p.cost(&tokens)),
+            None => cost,
+        };
+        self.session.add_request(&tokens, spend);
         // Used context (§10.2, A-9): the upstream prompt of a main-loop (class `main` or absent) Messages 2xx.
         let prompt = window::prompt(u);
         if r.route == "/anthropic/v1/messages"

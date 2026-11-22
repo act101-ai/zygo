@@ -277,7 +277,8 @@ impl SessionState {
     /// One request's tokens and its `Prices::cost` result (`None`: not priced), under one lock (H§7.3 step 3): the
     /// `add_usage` sums, tokens in (input + cache read + cache write) and out (AU16), and, for a request with at
     /// least one token, the counts and the spend (AU15). The split parts of `u` are not read: `cache_write` is the
-    /// total.
+    /// total. For a team session the caller gives the cost at the built-in list prices, never at a configured
+    /// price: `status` sends the sum (AU14).
     pub fn add_request(&self, u: &TokenUsage, cost: Option<f64>) {
         let prompt = u.input.saturating_add(u.cache_read).saturating_add(u.cache_write);
         let mut l = lock(&self.live);
@@ -323,8 +324,8 @@ impl SessionState {
         });
         let u = l.usage;
         let total = u.input as f64 + u.cache_read as f64 + u.cache_write as f64;
-        // A team session's spend is not sent here: what the session sums is priced with the server's configured
-        // prices, and no configured price leaves a server (AU14, H§9 row §7.2).
+        // A team session's sum is at the built-in list prices (`Pending::drop`), so it is sent, marked notional:
+        // no configured price leaves a server (AU14, H§9 row §7.2).
         let team = self.team_label.is_some();
         SessionStatus {
             session: self.id.clone(),
@@ -341,10 +342,10 @@ impl SessionState {
             threshold,
             tokens_in: Some(l.spend.tokens_in),
             tokens_out: Some(l.spend.tokens_out),
-            spend_usd: (!team).then_some(l.spend.usd),
+            spend_usd: Some(l.spend.usd),
             spend_notional: Some(self.passthrough || team),
             requests_total: Some(l.spend.requests_total),
-            requests_priced: (!team).then_some(l.spend.requests_priced),
+            requests_priced: Some(l.spend.requests_priced),
             passthrough: Some(self.passthrough),
             team_session: Some(team),
         }
