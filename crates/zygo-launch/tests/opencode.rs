@@ -1163,7 +1163,7 @@ fn launch(l: &Launch, extra: &[(&str, &str)]) -> (i32, String) {
     let buf: Arc<Mutex<Vec<u8>>> = Arc::default();
     o.stderr = Some(buf.clone());
     o.args = ["--exact", "stub_child", "--ignored", "--nocapture", "--test-threads=1"].map(String::from).to_vec();
-    let code = Launcher::run(&OpenCode::default(), o);
+    let code = Launcher::run(&OpenCode::default(), o).code;
     let err = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
     (code, err)
 }

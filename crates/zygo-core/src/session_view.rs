@@ -31,6 +31,10 @@ pub struct SessionView {
     /// `compact` or `verbose`. A `view.json` without the field reads as `compact`.
     #[serde(default = "default_statusline_style")]
     pub statusline_style: String,
+    /// Set by the launcher for a workspace member (AU58, AU72); `None` for every other launch
+    /// and for a `view.json` without the field.
+    #[serde(default)]
+    pub workspace: Option<ViewWorkspace>,
 }
 
 /// Each field that has a serde default holds that default; `agent` is Claude Code; every other field is empty or `false`.
@@ -56,6 +60,7 @@ impl Default for SessionView {
             head_lines: default_head_lines(),
             tail_lines: default_tail_lines(),
             statusline_style: default_statusline_style(),
+            workspace: None,
         }
     }
 }
@@ -91,6 +96,33 @@ pub struct LegendEntry {
     pub role: String,
     pub description: String,
     pub custom: bool,
+}
+
+/// The membership marker that the launcher records (workspaces design AU58).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Member {
+    pub ws_id: String,
+    pub pane: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubagentRef {
+    pub agent_id: String,
+    pub agent_type: String,
+}
+
+/// The inputs of the resume note (W§9.4, AU72).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResumeNote {
+    pub clean_stop: bool,
+    pub interrupted: Vec<SubagentRef>,
+    pub closed_units: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewWorkspace {
+    pub member: Member,
+    pub resume_note: Option<ResumeNote>,
 }
 
 impl SessionView {

@@ -30,7 +30,7 @@ use crate::pipeline::{Adjustment, ModelRoute, Pipeline, RequestCtx, ResponseCtx}
 use crate::provider::{loopback, unavailable, Candidate};
 use crate::resolve::Resolved;
 use crate::server::App;
-use crate::session::SessionState;
+use crate::session::{InFlight, SessionState};
 use crate::tee::{CacheSplit, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
@@ -220,6 +220,8 @@ struct Pending {
     ticket: Option<Ticket>,
     /// Messages only: the served row's windows from the serving config (AU29).
     windows: Option<window::RequestWindows>,
+    /// Set when the request is accepted (AU91).
+    in_flight: Option<InFlight>,
 }
 
 impl Drop for Pending {
@@ -259,6 +261,8 @@ impl Drop for Pending {
         {
             self.session.set_main_loop(prompt, &r.model, self.windows.take());
         }
+        // The request ended (AU91): before the row, so the count is final when the row is written.
+        drop(self.in_flight.take());
         self.sink.send(std::mem::take(&mut self.row), self.ticket.take());
     }
 }
@@ -294,7 +298,7 @@ pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRout
         ..Default::default()
     };
     let ticket = Some(app.usage.begin(&s.id));
-    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, notional_prices: None, usage: Usage::default(), split: None, ticket, windows: None });
+    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, notional_prices: None, usage: Usage::default(), split: None, ticket, windows: None, in_flight: None });
     match run(&app, &s, route, req, &mut slot, start).await {
         Ok(r) => r,
         Err(e) => {
@@ -371,6 +375,7 @@ async fn run(
     }
     r?;
     app.sessions.accept(s)?;
+    pending(slot).in_flight = Some(InFlight::begin(s, &app.clock));
     let resolved = ctx.resolved.clone().expect("stage 2 resolved the request");
     if route == ModelRoute::Messages {
         pending(slot).windows = ctx.cfg.config.catalog.get(&resolved.model)

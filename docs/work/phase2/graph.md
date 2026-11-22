@@ -56,7 +56,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2 | TODO | implementation | — |
+| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1 | TODO | implementation | — |
 | PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | DONE | implementation | 9d1f6c6; acceptance ver 50, lib 27, check-premises ok, live selftest 54 (merged tree) |
 | HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
 | HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | DONE | judgment | 1454eab; acceptance hud_git 21/21 (+3 ignored), workspace --no-run ok (merged tree); CI green 3 OS (run 44964062674) |
@@ -72,15 +72,37 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | TODO | implementation | — |
-| LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1 | TODO | implementation | — |
+| LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | TODO | implementation | — |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
-| C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | TODO | judgment | — |
-| X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | TODO | judgment | — |
-| L3 | Stub agent behaviors for W§18 and stub helpers | — | TODO | implementation | — |
-| W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | TODO | judgment | — |
-| W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | TODO | judgment | — |
+| C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
+| X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
+| L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
+| W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
+| W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
+| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
+| W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
+| W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
+| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
+| W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
+| W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
+| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | TODO | judgment | — |
+| W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
+| L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
+| L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
+| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10 | TODO | judgment | — |
+| H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
+| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12 | TODO | judgment | — |
+| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2 | TODO | judgment | — |
+| M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
+| M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
+| M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | TODO | implementation | — |
+| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
+| E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
+| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5 | TODO | implementation | — |
+| FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
+| FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 
 ## Log
 
@@ -102,11 +124,40 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | PRB-1 re-plan note: its draft steps 1, 2, 8, 14 predate PRB-2 (ver.sh, agent_ok, results.txt appends). Re-plan PRB-1 against PRB-2's Produces and the OpenCode HUD design before it starts. |
 | 2026-11-21 | HUD-5 DONE: 3 rounds; round 3 fixed a test race (read_then_drop closed before the usage data line). |
 | 2026-11-21 | Operator: the OpenCode HUD design is "same as Claude Code". docs/specs/2026-11-21-opencode-hud-design.md is not authority; no node waits for it. |
-| 2026-11-21 | Lead decision: PRB-1 no longer gates HUD-8 and HUD-9 (edges removed). Its plan needs operator answers in a terminal; every H§12 premise has a fallback; the premises are checked with the real HUD in LIV-1. Nodes run without per-node review rounds (operator: no review loops); the lead runs each acceptance check on the merged tree. |
+| 2026-11-21 | Lead decision: PRB-1 no longer gates HUD-8 and HUD-9 (edges removed). Its plan needs operator answers in a terminal; every H§12 premise has a fallback; the premises are checked with the real HUD in LIV-1. |
+| 2026-11-21 | Nodes run without per-node review rounds (operator: no review loops); the lead runs each acceptance check on the merged tree. |
 | 2026-11-21 | HUD-3 DONE (77323a8, merge 71181de). |
 | 2026-11-21 | HUD-4, HUD-7, UPD-1 and HUD-6 DONE. HUD-6: a team session's status reply has no spend_usd and no requests_priced until HUD-10 adds the built-in list price cost (AU14). |
 | 2026-11-21 | Reported by nodes, for DOC-1: H§7.3 step 2 and the H§9 row do not list long_context.cache_write_5m (contract and H§11 do); stale line references in H§7.3 (schema.rs:216-223, catalog.toml:111); the fixed sessions line of the auto-update design reads "1 zygo sessions are running". |
 | 2026-11-21 | HUD-8, HUD-9, HUD-10, HUD-11, HUD-12 DONE. Full floor on the merged tree (Linux): cargo test --workspace --locked --no-fail-fast 0 failed; sh scripts/test-install.sh all passed. Windows and macOS run in CI on the PR. |
 | 2026-11-21 | Open, not run: PRB-1, LIV-1, LIV-2 (manual live checks on the operator's machine); DOC-1 waits for LIV-1. |
-| 2026-11-21 | For DOC-1: H§3, H§8 and H§14 #33 still say the statusline session form exits 2 in an OpenCode session; the operator decision is "same as Claude Code" and HUD-11 built that. The verb stores the style in an OpenCode session, but no zygo surface shows a HUD there yet. H§9 base-spec notes for §10.7 and §17 doctor are not written. The contract text of HUD-9 names $ZYGO_SESSION_DIR/log; the real file is session.log. |
-| 2026-11-21 | Found, not fixed (needs a node): crates/zygo-proxy/tests/request_path.rs fallback_all_failed_removes_pin failed once in three full runs (refused_port binds and releases a port that another test can take). zygo_hooks::statusline::trimmed (used by zygo status) still reads Store::summary, not Store::bytes_trimmed. |
+| 2026-11-21 | For DOC-1: H§3, H§8 and H§14 #33 still say the statusline session form exits 2 in an OpenCode session; the operator decision is "same as Claude Code" and HUD-11 built that. The verb stores the style in an OpenCode session, but no zygo surface shows a HUD there yet. |
+| 2026-11-21 | H§9 base-spec notes for §10.7 and §17 doctor are not written. The contract text of HUD-9 names $ZYGO_SESSION_DIR/log; the real file is session.log. |
+| 2026-11-21 | Found, not fixed (needs a node): crates/zygo-proxy/tests/request_path.rs fallback_all_failed_removes_pin failed once in three full runs (refused_port binds and releases a port that another test can take). |
+| 2026-11-21 | zygo_hooks::statusline::trimmed (used by zygo status) still reads Store::summary, not Store::bytes_trimmed. |
+| 2026-11-21 | Resume: graph check failed (PRB-1 shares files with LIV-1 and LIV-2 without an edge; 3 long Log entries). Controller decision: order LIV-1 → PRB-1 → LIV-2; long entries split verbatim. |
+| 2026-11-21 | C1 DONE (one round). Plan label fix: a bold Consumes/Produces label in a Plan section is read as a contract field by the validator; plans use other labels. |
+| 2026-11-21 | X1 DONE (one round). In-flight count is a drop guard held by Pending; the serve-mode case is tested as a team session on the shared router, not on a TLS listener (tests/serve.rs is not in X1 Files). |
+| 2026-11-21 | W1 DONE (one round). identity::worktrees runs git itself, bounded by the checkout deadline (AU77: repo.rs unchanged; zygo-work has no public bounded git): a third copy of the bounded-run loop. No test covers a git that hangs past the deadline. |
+| 2026-11-21 | L3 plan notes for later nodes: a held request is held by the server side (E2 #42 needs a provider that holds its reply); one control directory serves one live stub (M2 gives each member its own ZYGO_STUB_CONTROL and ZYGO_STUB_OUT); the stub runs no OpenCode plugin (E2 #74). |
+| 2026-11-21 | L3 DONE (two rounds). Round 2: the held-request test waits for the held reply before it asserts the open state. cargo test -p zygo alone does not build stub-agent; common::stub_agent() names the build command. |
+| 2026-11-21 | W5 plan design calls (author's call, spec fixes none): a loadout with no window is an error; LoadoutPane.kind is a string checked by config check; built-in solo lives in zygo-workspace; drain_timeout has no check (W10 or M1 handles a refused value). |
+| 2026-11-21 | W4 plan, author's calls where AU30 is silent: every positional is removed for both agents (an OpenCode project path is not restored); --teleport is removed as an optional-value session flag. For L2: has_session_arg must count --teleport. |
+| 2026-11-21 | W4 plan notes: args::filter resolves file paths against the process cwd (matters to W7 and to config check in M1). For W7: W§8.1 step 10 says each name of AU64, but the W7 contract consumes only env::REMOVE_ALWAYS. |
+| 2026-11-21 | W2 plan, author's calls: validation also needs id equal to the directory name and version 1; errors.log is cut to its newest lines within 32 KiB when a line would pass 64 KiB; the .tmp sweep of W§7.3 is in Store::update. |
+| 2026-11-21 | W5 DONE (one round). W§18 #63 is covered in part: the --settings warning and the checks that need parse_window, AU30 or AU98 are M1's. An older zygo (0.1.1) accepts a config with [workspace] and [loadout.x]: config check ok. |
+| 2026-11-21 | L1 plan, author's calls: an AU34 callback error is one session-log line "session callback: <escaped text>" (the spec gives no text); LaunchOutcome and SessionCallback are reached as zygo_launch::launcher::… (lib.rs is not in L1 Files; M2 imports by that path). |
+| 2026-11-21 | W4 DONE (two rounds). has_user_info also reads https:/u:p@host as user info (the plan's rule missed it). Round 2: a fixture test pins the short-flag set of both helps, so a new short flag in a later pin fails until it is classified. |
+| 2026-11-21 | W2 DONE (one round). Store::update is a read-modify-write under lock (proved: without the lock the concurrent-writer test loses changes). log_error is not serialized between processes: two rewrites of a full errors.log at once can lose lines. |
+| 2026-11-21 | H2 plan, author's calls: workspace.json is read up to 64 KiB (the STDIN_CAP value; the specs give no bound) and only when it is a regular file; the reader returns the phase string unfiltered and writes no stderr line; version must equal 1. |
+| 2026-11-21 | L1 DONE (one round). Launcher::run returns LaunchOutcome; zygo claude and zygo opencode exit with .code, the same integer as before. received and signal are unix-only facts; on Windows they are false and none. |
+| 2026-11-21 | Found, not fixed (needs a node): crates/zygo-launch/tests/stub_member.rs:297 has the clippy warning cloned_ref_to_slice_refs (from L3). No test fails; a clippy run with -D warnings would. |
+| 2026-11-21 | H2 DONE (two rounds). Round 2: the phase reader opens workspace.json without blocking and checks the opened handle, so a FIFO at the path cannot make the HUD wait (C6). With O_NONBLOCK present, no test separates the handle check from it. |
+| 2026-11-21 | Stop: every open node now waits for a live check. LIV-1 and P1 are ready and need the operator's machine and login; P2 needs opencode on PATH. PRB-1, LIV-2, DOC-1 follow LIV-1; W3 and the nodes behind it follow P1 and P2. |
+| 2026-11-21 | FIX-1 and FIX-3 added from the found defects (execute-work §5.4): the refused_port race in request_path.rs and the clippy warning in stub_member.rs:297. Change-log lines are in the base spec and the workspaces spec. |
+| 2026-11-21 | statusline::trimmed on Store::summary: not a defect (same value, store.rs:439-466; no spec text requires bytes_trimmed for zygo status; HUD-12 design call 8). No node. |
+| 2026-11-21 | FIX-3 DONE. cargo clippy -p zygo-launch --all-targets --locked -- -D warnings is clean. |
+| 2026-11-21 | FIX-1 DONE. refused_port is the fixed port 1 (a port 0 bind never gives a port below 1024); the proof test failed on the old helper. Assumption: nothing listens on TCP port 1 on a developer or CI machine. |
+| 2026-11-21 | Observation (no node): the repository has no rustfmt.toml and cargo fmt --check reports differences across zygo-proxy; no format gate is in the verification floor. |
+| 2026-11-21 | PR 7 opened for the branch at 45c4d96 (C1, X1, W1, W2, W4, W5, L3, L1, H2, FIX-1, FIX-3). CI green on ubuntu, macos and windows (runs 44984706007, 44984755165). Local floor on 45c4d96: workspace tests 0 failed; test-install.sh passed. |
+| 2026-11-21 | Resume point: 25 DONE, 22 TODO. Ready: LIV-1 and P1 (live, operator's machine). Not run: PRB-1, LIV-1, LIV-2, P1, P2, E2. Open operator question: who runs the live checks; P2 needs opencode on PATH. |

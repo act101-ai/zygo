@@ -1505,3 +1505,177 @@ fn h14_34_repo_file_statusline_is_ignored_with_one_note() { // H§14 #34 (config
     assert_eq!((m.config.statusline.style.as_str(), m.source_of("statusline.style")), ("verbose", Layer::User));
     assert_eq!(m.source_of("navigation.lines"), Layer::Repository);
 }
+
+// ---- W5: [workspace] and [loadout], user config only (W§11, AU10, AU22) ----
+
+#[test]
+fn parse_duration_forms() { // W§11 `drain_timeout`: <n>s | <n>m | <n>h
+    use std::time::Duration;
+    assert_eq!(parse_duration("90s"), Some(Duration::from_secs(90)));
+    assert_eq!(parse_duration("10m"), Some(Duration::from_secs(600)));
+    assert_eq!(parse_duration("2h"), Some(Duration::from_secs(7200)));
+    assert_eq!(parse_duration("0s"), Some(Duration::ZERO));
+    assert_eq!(parse_duration("007m"), Some(Duration::from_secs(420)));
+    assert_eq!(parse_duration("18446744073709551615s"), Some(Duration::from_secs(u64::MAX)));
+    for bad in [
+        "", "s", "10", "10d", "10ms", "10M", "-5m", "+5m", "1.5h", " 10m", "10m ", "10 m", "1h30m", "١٠m",
+        "18446744073709551616s", "18446744073709551615m", "5124095576030432h",
+    ] {
+        assert_eq!(parse_duration(bad), None, "{bad:?}");
+    }
+}
+
+const W11: &str = r#"
+[workspace]
+default_loadout = "solo"        # built-in
+drain_block_dispatch = true     # OP6
+drain_timeout = "10m"           # AU4; <n>s | <n>m | <n>h
+
+[loadout.pair]
+[[loadout.pair.window]]
+name = "agents"
+layout = "main-vertical"
+[[loadout.pair.window.pane]]
+kind = "claude-code"
+profile = "cheap"
+args = ["--model", "lead"]
+yolo = false
+passthrough = false
+server = "https://zygo.example"
+compact = "600k"
+config_dir = "~/.claude-work"
+[[loadout.pair.window.pane]]
+kind = "shell"
+cwd = "branch:feature-x"
+"#;
+
+#[test]
+fn workspace_and_loadout_defaults() {
+    let c = Config::default();
+    assert_eq!(c.workspace, WorkspaceConfig { default_loadout: "solo".into(), drain_block_dispatch: true, drain_timeout: "10m".into() });
+    assert_eq!(parse_duration(&c.workspace.drain_timeout), Some(std::time::Duration::from_secs(600)));
+    assert!(c.loadout.is_empty());
+    assert_eq!((BUILTIN_LOADOUT, LOADOUT_KINDS), ("solo", ["claude-code", "opencode", "shell"]));
+    assert_eq!(cfg(""), c);
+    assert_eq!(cfg("[workspace]\n").workspace, c.workspace);
+    assert_eq!(cfg("[workspace]\ndrain_timeout = \"30s\"\n").workspace, WorkspaceConfig { drain_timeout: "30s".into(), ..c.workspace.clone() });
+    assert_eq!(
+        LoadoutPane::default(),
+        LoadoutPane { kind: String::new(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, cwd: None }
+    );
+    assert_eq!(LoadoutWindow::default(), LoadoutWindow { name: None, layout: None, pane: vec![] });
+    let m = load(&ctx(None, None, None)).unwrap();
+    assert_eq!(m.config.workspace, c.workspace);
+    assert!(m.config.loadout.is_empty());
+    assert_eq!(m.source_of("workspace.default_loadout"), Layer::Builtin);
+    assert!(m.show(None, &|_| true).contains("workspace.drain_timeout = \"10m\"  # builtin\n"));
+}
+
+#[test]
+fn loadout_parses_as_w11_writes_it() {
+    let m = load(&ctx(Some(W11), None, None)).unwrap();
+    assert_eq!(m.warnings, Vec::<String>::new());
+    assert_eq!(m.config.workspace, WorkspaceConfig::default());
+    assert_eq!(m.config.loadout.keys().collect::<Vec<_>>(), ["pair"]);
+    let agent = LoadoutPane {
+        kind: "claude-code".into(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
+        passthrough: false, server: Some("https://zygo.example".into()), compact: Some("600k".into()),
+        config_dir: Some("~/.claude-work".into()), cwd: None,
+    };
+    let shell = LoadoutPane { kind: "shell".into(), cwd: Some("branch:feature-x".into()), ..LoadoutPane::default() };
+    let window = LoadoutWindow { name: Some("agents".into()), layout: Some("main-vertical".into()), pane: vec![agent, shell] };
+    assert_eq!(m.config.loadout["pair"], Loadout { window: vec![window] });
+    assert_eq!(m.source_of("workspace.drain_timeout"), Layer::User);
+    assert_eq!(m.source_of("loadout.pair.window"), Layer::User);
+    let all = m.show(None, &|_| true);
+    assert!(all.contains("workspace.default_loadout = \"solo\"  # user\n"), "{all}");
+    assert!(all.lines().any(|l| l.starts_with("loadout.pair.window = [") && l.ends_with("  # user")), "{all}");
+    for bad in ["[loadout.x]\nwindow = 3\n", "[workspace]\ndrain_block_dispatch = \"yes\"\n", "[[loadout.x.window]]\npane = [3]\n"] {
+        assert!(matches!(load(&ctx(Some(bad), None, None)), Err(ConfigError::Parse { .. })), "{bad}");
+    }
+}
+
+#[test]
+fn w18_62_repo_file_loadout_is_ignored_with_the_existing_warning() { // W§18 #62, repository part
+    let d = repo_with("w5", "version = 1\n[loadout.x]\n[[loadout.x.window]]\n[[loadout.x.window.pane]]\nkind = \"shell\"\n");
+    match repo_file::read_default_branch(&d) {
+        RepoFile::Found { table, ignored, .. } => {
+            assert_eq!(ignored, ["loadout"]);
+            assert!(!table.contains_key("loadout"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let m = load(&ctx(None, Some(d.to_path_buf()), None)).unwrap();
+    assert!(m.config.loadout.is_empty());
+    assert_eq!(m.warnings, [".zygo.toml: [loadout] ignored; the repository file may set only [guards], [navigation], [limits], [work]"]);
+}
+
+#[test]
+fn w18_62_team_layer_drops_loadout_and_workspace_with_the_au22_warning() { // W§18 #62, team part; the launcher adds `zygo: `
+    const AU22: &str = "[loadout] and [workspace] are read from user config only; ignored";
+    assert_eq!(layers::WORKSPACE_ONLY_IGNORED, AU22);
+    let lo = "[loadout.evil]\n[[loadout.evil.window]]\n[[loadout.evil.window.pane]]\nkind = \"shell\"\nargs = [\"-c\", \"id\"]\n";
+    let team = format!("[workspace]\ndefault_loadout = \"evil\"\n{lo}[guards]\nmin_level = \"notify\"\n");
+    let m = load(&team_ctx(&team, "")).unwrap();
+    assert_eq!(m.config.workspace, WorkspaceConfig::default());
+    assert!(m.config.loadout.is_empty());
+    assert_eq!(m.source_of("workspace.default_loadout"), Layer::Builtin);
+    assert_eq!(m.team_keys, BTreeSet::from(["guards.min_level".to_string()]));
+    assert_eq!(m.warnings, [AU22]);
+    // one table, or a value of the wrong type (dropped before the layer is parsed): the same one line
+    for one in ["[workspace]\ndrain_timeout = \"1s\"\n", "[loadout.x]\n", "loadout = 3\nworkspace = \"x\"\n"] {
+        assert_eq!(load(&team_ctx(one, "")).unwrap().warnings, [AU22], "{one}");
+    }
+    // with a HUD-3 table: the HUD-3 line first
+    let m = load(&team_ctx("[statusline]\nstyle = \"verbose\"\n[loadout.x]\n", "")).unwrap();
+    assert_eq!(m.warnings, ["config: [statusline] in team config ignored; only user config may set them", AU22]);
+    // the user's tables hold in a team session
+    let user = "[workspace]\ndrain_timeout = \"5m\"\n[loadout.mine]\n[[loadout.mine.window]]\n[[loadout.mine.window.pane]]\nkind = \"shell\"\n";
+    let m = load(&team_ctx("[workspace]\ndrain_timeout = \"1s\"\n", user)).unwrap();
+    assert_eq!((m.config.workspace.drain_timeout.as_str(), m.source_of("workspace.drain_timeout")), ("5m", Layer::User));
+    assert_eq!(m.config.loadout.keys().collect::<Vec<_>>(), ["mine"]);
+    assert_eq!(m.warnings, [AU22]);
+    assert_eq!(load(&team_ctx("[guards]\nmin_level = \"notify\"\n", "")).unwrap().warnings, Vec::<String>::new());
+}
+
+const LO: &str = "[loadout.pair]\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\n";
+const BAD_KIND: &str = "must be \"claude-code\", \"opencode\" or \"shell\"";
+
+#[test]
+fn check_loadout_structure() {
+    none(&(base() + LO + "kind = \"claude-code\"\npassthrough = true\nconfig_dir = \"~/.claude-work\"\n"));
+    none(&(base() + LO + "kind = \"opencode\"\npassthrough = false\n"));
+    none(&(base() + LO + "kind = \"shell\"\ncwd = \"branch:x\"\n"));
+    err(&(base() + LO + "kind = \"vim\"\n"), &format!("loadout.pair.window[0].pane[0].kind: {BAD_KIND}"));
+    err(&(base() + LO + "yolo = true\n"), &format!("loadout.pair.window[0].pane[0].kind: {BAD_KIND}"));
+    err(&(base() + LO + "kind = \"opencode\"\npassthrough = true\n"), "loadout.pair.window[0].pane[0].passthrough: only with kind = \"claude-code\"");
+    err(&(base() + LO + "kind = \"shell\"\nconfig_dir = \"x\"\n"), "loadout.pair.window[0].pane[0].config_dir: only with kind = \"claude-code\"");
+    err(&(base() + "[loadout.pair]\n[[loadout.pair.window]]\nname = \"w\"\n"), "loadout.pair.window[0]: must have at least one pane");
+    err(&(base() + "[loadout.pair]\n"), "loadout.pair: must have at least one window");
+    let two = "[loadout.\"my lo\"]\n[[loadout.\"my lo\".window]]\n[[loadout.\"my lo\".window.pane]]\nkind = \"shell\"\n[[loadout.\"my lo\".window]]\n[[loadout.\"my lo\".window.pane]]\nkind = \"shell\"\n[[loadout.\"my lo\".window.pane]]\nkind = \"vim\"\n";
+    err(&(base() + two), &format!("loadout.\"my lo\".window[1].pane[1].kind: {BAD_KIND}"));
+}
+
+#[test]
+fn check_default_loadout_names_a_loadout() {
+    none(&(base() + "[workspace]\ndefault_loadout = \"solo\"\n"));
+    none(&(base() + "[workspace]\ndefault_loadout = \"pair\"\n" + LO + "kind = \"shell\"\n"));
+    err(&(base() + "[workspace]\ndefault_loadout = \"nope\"\n"), "workspace.default_loadout: unknown loadout");
+}
+
+#[test]
+fn check_loadout_missing_profile_is_a_warning() {
+    let v = one(&(base() + LO + "kind = \"claude-code\"\nprofile = \"cheap\"\n"));
+    assert_eq!((v.severity, v.to_string()), (Severity::Warning, "loadout.pair.window[0].pane[0].profile: unknown profile".into()));
+    none(&(base() + "[profile.cheap]\n" + LO + "kind = \"claude-code\"\nprofile = \"cheap\"\n"));
+}
+
+#[test]
+fn w18_63_config_check_reports_kind_and_passthrough() { // W§18 #63; the `--settings` warning of pane[2] is M1's (AU103)
+    let panes = "kind = \"vim\"\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\npassthrough = true\n[[loadout.pair.window.pane]]\nkind = \"claude-code\"\nargs = [\"--settings\", \"x\"]\n";
+    let found: Vec<String> = check(&loaded(&(base() + LO + panes)).config).iter().map(|v| format!("{:?} {v}", v.severity)).collect();
+    assert_eq!(found, [
+        format!("Error loadout.pair.window[0].pane[0].kind: {BAD_KIND}"),
+        "Error loadout.pair.window[0].pane[1].passthrough: only with kind = \"claude-code\"".to_string(),
+    ]);
+}

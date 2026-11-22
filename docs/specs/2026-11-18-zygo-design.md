@@ -1006,3 +1006,9 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 42. `grep -ri` over the repository for every word in the forbidden-content test list returns nothing (no profane words; no credentials).
 
 ---
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-21 | §20 #11 (tests of §7.3 fallback and §10.4 pin removal); no text change | author's call | Found defect: the test helper refused_port released its port, another test's listener could take it, and fallback_all_failed_removes_pin failed once in three full runs. Node FIX-1 uses a fixed port below 1024. |

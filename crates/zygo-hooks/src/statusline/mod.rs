@@ -1,10 +1,12 @@
 //! `zygo hook statusline` (§17, H§6, H§7): the status line HUD for the user, never sent to the model.
 //!
 //! `data` collects what one render shows (bounded stdin, cache v2, lease, workers, deadline); `render` is the pure
-//! render (H§6); `width` holds the width sources. The hook entry is in the `zygo` crate (`cmd/hook.rs`): it reads
-//! the real environment, resolves the style with `style`, and calls `data::collect`, then `render::render`.
+//! render (H§6); `width` holds the width sources. `phase` reads the workspace phase of a member session (H§7.6). The
+//! hook entry is in the `zygo` crate (`cmd/hook.rs`): it reads the real environment, resolves the style with `style`,
+//! and calls `data::collect`, then `render::render`.
 
 pub mod data;
+pub mod phase;
 pub mod render;
 pub mod width;
 

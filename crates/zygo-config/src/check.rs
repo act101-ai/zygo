@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::layers::{join, seg};
-use crate::schema::{Config, KeyRef, Reasoning, STATUSLINE_STYLES};
+use crate::schema::{BUILTIN_LOADOUT, Config, KeyRef, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -115,6 +115,7 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
             e(format!("{rp}.limit"), "must be > 0".into());
         }
     }
+    v.extend(loadout_violations(cfg));
     for (mi, m) in cfg.catalog.0.iter().enumerate() {
         for (pi, p) in m.provider.iter().enumerate() {
             for k in p.flags.other.keys() {
@@ -144,6 +145,47 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
         v.push((Severity::Error, format!("redaction.content.allow[{i}]"), "is also in redaction.content.deny".into()));
     }
     v.into_iter().map(|(severity, path, message)| Violation { severity, path, message }).collect()
+}
+
+/// The structural rules of `[workspace]` and `[loadout.<name>]` (workspaces design W§11). The rules that need the
+/// launch-argument filter or the compact-window parser are not here: this crate depends on neither (AU103).
+fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
+    const CLAUDE_ONLY: &str = "only with kind = \"claude-code\"";
+    let mut v = Vec::new();
+    let default = cfg.workspace.default_loadout.as_str();
+    if default != BUILTIN_LOADOUT && !cfg.loadout.contains_key(default) {
+        v.push((Severity::Error, "workspace.default_loadout".into(), "unknown loadout".into()));
+    }
+    for (name, l) in &cfg.loadout {
+        let lp = join(&["loadout", name.as_str()]);
+        if l.window.is_empty() {
+            v.push((Severity::Error, lp.clone(), "must have at least one window".into()));
+        }
+        for (wi, w) in l.window.iter().enumerate() {
+            let wp = format!("{lp}.window[{wi}]");
+            if w.pane.is_empty() {
+                v.push((Severity::Error, wp.clone(), "must have at least one pane".into()));
+            }
+            for (pi, p) in w.pane.iter().enumerate() {
+                let pp = format!("{wp}.pane[{pi}]");
+                let claude = p.kind == "claude-code";
+                if !LOADOUT_KINDS.contains(&p.kind.as_str()) {
+                    let [claude_code, opencode, shell] = LOADOUT_KINDS;
+                    v.push((Severity::Error, format!("{pp}.kind"), format!("must be \"{claude_code}\", \"{opencode}\" or \"{shell}\"")));
+                }
+                if p.passthrough && !claude {
+                    v.push((Severity::Error, format!("{pp}.passthrough"), CLAUDE_ONLY.into()));
+                }
+                if p.config_dir.is_some() && !claude {
+                    v.push((Severity::Error, format!("{pp}.config_dir"), CLAUDE_ONLY.into()));
+                }
+                if p.profile.as_ref().is_some_and(|name| !cfg.profile.contains_key(name)) {
+                    v.push((Severity::Warning, format!("{pp}.profile"), "unknown profile".into()));
+                }
+            }
+        }
+    }
+    v
 }
 
 /// Why `pattern` does not compile, from the parser's error kind and position; `regex::Error`'s text quotes the

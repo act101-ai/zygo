@@ -178,10 +178,12 @@ impl Upstream {
     }
 }
 
-/// A port bound on 127.0.0.1 and released: a connect is refused at once. (A bound socket that does not listen is
-/// refused on Linux, but on macOS its SYN is dropped and the connect times out after about 8 s.)
+/// A port that no test can take: every listener of this binary binds port 0, and no OS gives a port below 1024 for
+/// port 0. Nothing listens on TCP port 1, so a connect is refused at once. Not a released port (another test's
+/// listener can get it). Not a bound socket that does not listen (refused on Linux, but macOS drops its SYN and the
+/// connect times out). Not a listener that accepts and closes (a send error: no fallback, §7.3 note).
 fn refused_port() -> u16 {
-    std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port()
+    1
 }
 
 /// Accepts, reads the head and `content-length` bytes, counts, closes without a reply.
@@ -1045,6 +1047,22 @@ fn route_accept_refreshes_ttl_and_sweeps() {
 
 // ---- fallback and pinning (§20 #11, §7.3, §10.4) ----
 
+/// The refused port is outside the range that a port 0 bind gives, so no listener of this binary can take it, and a
+/// connect to it is refused while other listeners are held.
+#[test]
+fn refused_port_cannot_go_to_another_listener() {
+    let p = refused_port();
+    assert!(p < 1024, "port {p} is in the range that a port 0 bind gives");
+    let held: Vec<std::net::TcpListener> = (0..64).map(|_| std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap()).collect();
+    for l in &held {
+        let q = l.local_addr().unwrap().port();
+        assert!(q >= 1024 && q != p, "a port 0 bind gave {q}");
+    }
+    let e = std::net::TcpStream::connect(("127.0.0.1", p)).expect_err("a service listens on the refused port");
+    assert_eq!(e.kind(), std::io::ErrorKind::ConnectionRefused, "{e}");
+    drop(held);
+}
+
 #[test]
 fn fallback_500_moves_pin() {
     let t = setup(none);
@@ -1136,7 +1154,10 @@ fn fallback_all_failed_removes_pin() {
     let t = setup(|_, _| {
         model(
             "test-dead",
-            &[prov("d1", &format!("http://127.0.0.1:{d1}"), "x", None, ""), prov("d2", &format!("http://127.0.0.1:{d2}"), "x", None, "")],
+            &[
+                prov("d1", &format!("http://127.0.0.1:{d1}/d1"), "x", None, ""),
+                prov("d2", &format!("http://127.0.0.1:{d2}/d2"), "x", None, ""),
+            ],
         )
     });
     let g = session(&t.h, Agent::ClaudeCode, None);
