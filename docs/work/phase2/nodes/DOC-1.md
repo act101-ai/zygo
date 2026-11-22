@@ -68,7 +68,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   estimated_usd (list price × tokens, with the long-context tier of §6.3 when the price row has one; 0 for passthrough) *(2026-11-22, HUD design)*
   ```
 
-- [ ] 10. H§9 row "§6.1 / config" → base §6.1. Insert this paragraph after the paragraph that starts `In serve mode the server's catalog and provider set are authoritative`:
+- [x] 10. H§9 row "§6.1 / config" → base §6.1. Insert this paragraph after the paragraph that starts `In serve mode the server's catalog and provider set are authoritative`:
 
   ```text
   `[statusline] style = "compact" | "verbose"` (default `compact`) selects the status line style (§17; HUD design H§8). The table is read from user config only: the repository file ignores it (layer 4), the team config does not carry it, and `zygo statusline` changes it for a session (layer 7). *(2026-11-22, HUD design)*

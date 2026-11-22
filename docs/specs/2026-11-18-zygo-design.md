@@ -101,6 +101,8 @@ Lowest to highest; a higher layer replaces a key of a lower one, table by table,
 
 In serve mode the server's catalog and provider set are authoritative: a client's user config may add profiles, plugins and work sources, but it cannot add a model or provider the server does not have.
 
+`[statusline] style = "compact" | "verbose"` (default `compact`) selects the status line style (§17; HUD design H§8). The table is read from user config only: the repository file ignores it (layer 4), the team config does not carry it, and `zygo statusline` changes it for a session (layer 7). *(2026-11-22, HUD design)*
+
 `zygo config show [--layer <name>]` prints the merged config with each key's source layer; secrets are shown as `<set>`/`<unset>`.
 
 ### 6.2 Provider keys
