@@ -64,5 +64,5 @@ fn refused_port() -> u16 {
 
 ### Task 3: verification
 
-- [ ] **3.1** Acceptance. Run `for i in $(seq 20); do cargo test -p zygo-proxy --locked --test request_path || exit 1; done`. Expected: 20 runs, each `0 failed`, each with the three tests that the contract names.
-- [ ] **3.2** Commit this file with all steps ticked: `docs(work): FIX-1 plan steps done`.
+- [x] **3.1** Acceptance. Run `for i in $(seq 20); do cargo test -p zygo-proxy --locked --test request_path || exit 1; done`. Expected: 20 runs, each `0 failed`, each with the three tests that the contract names.
+- [x] **3.2** Commit this file with all steps ticked: `docs(work): FIX-1 plan steps done`.
