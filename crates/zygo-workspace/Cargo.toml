@@ -1,0 +1,25 @@
+[package]
+name = "zygo-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zygo-core.workspace = true
+zygo-config.workspace = true
+zygo-work.workspace = true
+zygo-proxy.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+
+[features]
+# Test hooks (`mux::testing`, node W3); only the self dev-dependency and the `test-hooks` feature of `crates/zygo` enable it.
+test-hooks = []
+
+[dev-dependencies]
+zygo-workspace = { path = ".", features = ["test-hooks"] }
+tempfile.workspace = true
