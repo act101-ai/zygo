@@ -35,3 +35,36 @@ fn unique_name_adds_a_suffix_within_32() {
     let dash = format!("{}-bb", "a".repeat(29));
     assert_eq!(unique_name(&dash, &|n| n == dash), format!("{}-2", "a".repeat(29)));
 }
+
+#[test] // AU84, with the hostile values of the spec
+fn validators_follow_au84() {
+    assert!(valid_pane_key("kabcd2345"));
+    for bad in ["", "k$(x)", "#{pane_id}", "kabcd234", "kabcd23456", "xabcd2345", "kABCD2345", "kabcd0189", "kabcd2345\n", " kabcd2345"] {
+        assert!(!valid_pane_key(bad), "{bad:?}");
+    }
+    assert!(valid_ws_id("0123456789abcdef"));
+    for bad in ["", "abc", "0123456789abcde", "0123456789abcdef0", "0123456789ABCDEF", "0123456789abcdeg", "0123456789abcdef\n"] {
+        assert!(!valid_ws_id(bad), "{bad:?}");
+    }
+    let (a32, a33) = ("a".repeat(32), "a".repeat(33));
+    for good in ["a", "my-repo", "app-2", "-", a32.as_str()] {
+        assert!(valid_name(good), "{good:?}");
+    }
+    for bad in ["", "a b", "A", "a_b", "a.b", "a/b", "a\n", "\u{e9}", a33.as_str()] {
+        assert!(!valid_name(bad), "{bad:?}");
+    }
+    assert!(valid_tmux_session("zygo-my-repo", "my-repo"));
+    assert!(valid_tmux_session(&format!("zygo-{a32}"), &a32));
+    let s33 = format!("zygo-{a33}");
+    for (s, name) in [("other", "my-repo"), ("zygo-other", "my-repo"), ("my-repo", "my-repo"), ("zygo-", ""), ("zygo-a b", "a b"),
+        ("zygo-my-repo\n", "my-repo"), ("ZYGO-my-repo", "my-repo"), (s33.as_str(), a33.as_str())] {
+        assert!(!valid_tmux_session(s, name), "{s:?} {name:?}");
+    }
+}
+
+#[test] // W§5: `k` plus 8 random characters of lower-case base32
+fn new_pane_key_is_valid_and_random() {
+    let keys: std::collections::BTreeSet<String> = (0..64).map(|_| new_pane_key()).collect();
+    assert!(keys.iter().all(|k| valid_pane_key(k)));
+    assert_eq!(keys.len(), 64);
+}

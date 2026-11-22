@@ -48,3 +48,36 @@ pub fn unique_name(slug: &str, taken: &dyn Fn(&str) -> bool) -> String {
         n += 1;
     }
 }
+
+/// `^k[a-z2-7]{8}$` on the whole string (AU84).
+pub fn valid_pane_key(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 9 && b[0] == b'k' && b[1..].iter().all(|c| matches!(c, b'a'..=b'z' | b'2'..=b'7'))
+}
+
+/// `^[0-9a-f]{16}$` on the whole string (AU84).
+pub fn valid_ws_id(s: &str) -> bool {
+    s.len() == 16 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// `^[a-z0-9-]{1,32}$` on the whole string (AU84).
+pub fn valid_name(s: &str) -> bool {
+    (1..=NAME_MAX).contains(&s.len()) && s.bytes().all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+}
+
+/// `^zygo-[a-z0-9-]{1,32}$` on the whole string, and equal to `zygo-<name>` (AU84).
+pub fn valid_tmux_session(s: &str, name: &str) -> bool {
+    s.strip_prefix("zygo-").is_some_and(|rest| rest == name && valid_name(rest))
+}
+
+const BASE32: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+
+/// A new pane key (W§5): `k` and 8 random characters of lower-case base32.
+pub fn new_pane_key() -> String {
+    let mut k = String::with_capacity(9);
+    k.push('k');
+    for _ in 0..8 {
+        k.push(BASE32[rand::random_range(0..BASE32.len())] as char);
+    }
+    k
+}
