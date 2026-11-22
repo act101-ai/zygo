@@ -103,7 +103,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5 | TODO | implementation | — |
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
-| FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | PLANNED | implementation | — |
+| FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | IN-PROGRESS | implementation | wt .worktrees/phase2/FIX-4 |
 
 ## Log
 
