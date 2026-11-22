@@ -101,8 +101,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5 | TODO | implementation | — |
-| FIX-1 | request_path tests: a refused port that no other test can take | — | PLANNED | judgment | — |
-| FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | PLANNED | mechanical | — |
+| FIX-1 | request_path tests: a refused port that no other test can take | — | IN-PROGRESS | judgment | wt .worktrees/phase2/FIX-1 |
+| FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | IN-PROGRESS | mechanical | wt .worktrees/phase2/FIX-3 |
 
 ## Log
 
