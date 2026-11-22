@@ -533,7 +533,7 @@ fn private() -> fs::OpenOptions {
 /// Removes the temporary files of `write_atomic` (`.tmp*`) in `dir` that are older than 1 min: a writer that was
 /// killed before its rename left them (W§7.3). A younger file can belong to a live writer. Every error is ignored;
 /// an entry with no readable time stays.
-fn sweep_tmp(dir: &Path) {
+pub(crate) fn sweep_tmp(dir: &Path) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -551,7 +551,7 @@ fn sweep_tmp(dir: &Path) {
 
 /// Opens (and creates) the lock file `path` and takes its lock: tries each 5 ms until `bound` ends. `Ok(None)` when
 /// another holder kept the lock for the whole bound. The lock ends when the file is dropped.
-fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<File>> {
+pub(crate) fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<File>> {
     let f = private().read(true).write(true).create(true).truncate(false).open(path)?;
     // `None`: the bound is past the end of the clock, so no deadline exists.
     let deadline = Instant::now().checked_add(bound);
