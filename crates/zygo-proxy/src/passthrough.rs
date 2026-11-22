@@ -181,7 +181,8 @@ impl Stage for PassthroughStage {
     /// The catalog match is the first model, in config order, with a provider on the row dialect whose
     /// `upstream_model` is the name without `[1m]` (a disabled provider counts). The candidate is the match's
     /// provider on the type's host, else the built-in provider; its clone sends `model` as received, with no key and
-    /// no price (cost 0, §14).
+    /// no price (cost 0, §14). The notional price (H§7.3 step 4) is that of the match's first provider on the row
+    /// dialect that has a price; with no match or no priced provider, the request is not priced.
     fn on_request(&self, ctx: &mut RequestCtx) -> Result<(), ZygoError> {
         if !ctx.session.passthrough {
             return ResolveStage.on_request(ctx);
@@ -209,6 +210,8 @@ impl Stage for PassthroughStage {
                 p.dialects.contains(&t.dialect) && Url::parse(&p.base_url).is_ok_and(|u| self.on_host(t, &u))
             })
         });
+        let notional_prices = matched
+            .and_then(|row| row.provider.iter().filter(|p| p.dialects.contains(&t.dialect)).find_map(|p| p.price_usd_per_mtok.clone()));
         let mut provider = match on_host {
             Some(p) => p.clone(),
             None => {
@@ -233,6 +236,7 @@ impl Stage for PassthroughStage {
             model,
             candidates: vec![provider],
             adjustments: Vec::new(),
+            notional_prices,
         });
         Ok(())
     }

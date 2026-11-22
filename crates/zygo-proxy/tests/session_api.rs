@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use zygo_config::profile::Profile;
-use zygo_config::{load, Action, CustomRole, Dialect, LoadContext, Merged, RedactionPattern};
+use zygo_config::{load, Action, CustomRole, Dialect, LoadContext, Merged, RedactionPattern, TokenUsage};
 use zygo_core::ids::ulid;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -21,6 +21,7 @@ use zygo_proxy::session::{
     Clock, ManualClock, PromptUsage, SessionGrant, SessionRequest, SessionSettings, TeamAuth, WindowArg, IDLE_TTL,
     REDACTION_NOTE, SUSPEND_AFTER, WINDOW_MAX, WINDOW_MIN,
 };
+use zygo_proxy::tee::{CacheSplit, Tee, Usage};
 use zygo_proxy::{Proxy, ProxyHandle, Url};
 use zygo_redact::act_lite_store::{StoredValue, MIN_VALUE_BYTES};
 
@@ -993,4 +994,135 @@ fn status_reply_omits_absent_new_fields() { // H§7.2 `model`: in passthrough, a
     let b = h.create_session(req()).unwrap();
     let (_, v, _) = raw.call(&h.url(), "GET", &sp(&b), &sess(&b), None);
     assert_eq!((v["model"].clone(), v["context_window"].clone()), (json!("claude-opus-5-5"), json!(1000000)));
+}
+
+// ---- HUD-6: session spend and tokens ----
+
+/// The reply keys HUD-6 adds (H§7.2).
+const SPEND_KEYS: [&str; 8] =
+    ["tokens_in", "tokens_out", "spend_usd", "spend_notional", "requests_total", "requests_priced", "passthrough", "team_session"];
+
+fn tu(input: u64, output: u64, cache_read: u64, cache_write: u64) -> TokenUsage {
+    TokenUsage { input, output, cache_read, cache_write, ..Default::default() }
+}
+
+#[test]
+fn status_spend_tokens_and_counts() { // AU15, AU16, H§7.2, H§7.3 step 3
+    let d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&d));
+    let raw = Raw::new();
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    let s = k.status().unwrap();
+    assert_eq!((s.tokens_in, s.tokens_out, s.spend_usd, s.requests_total, s.requests_priced), (Some(0), Some(0), Some(0.0), Some(0), Some(0)));
+    assert_eq!((s.spend_notional, s.passthrough, s.team_session), (Some(false), Some(false), Some(false)));
+    let state = h.session(&g.session).unwrap();
+    state.add_request(&tu(100, 7, 300, 100), Some(0.25)); // priced
+    state.add_request(&tu(1, 2, 0, 0), None); // tokens, no price
+    state.add_request(&tu(0, 0, 0, 0), Some(0.0)); // no token: in neither count
+    state.add_request(&tu(0, 0, 0, 0), None);
+    state.add_request(&tu(0, 5, 0, 0), Some(0.5)); // output only is a token
+    let s = k.status().unwrap();
+    assert_eq!((s.tokens_in, s.tokens_out), (Some(501), Some(14))); // AU16: in = input + cache read + cache write
+    assert_eq!((s.spend_usd, s.requests_total, s.requests_priced), (Some(0.75), Some(3), Some(2)));
+    assert_eq!(s.cache_read_share, Some(300.0 / 501.0)); // the §10.7 sums come from the same call
+    let (_, v, _) = raw.call(&h.url(), "GET", &sp(&g), &sess(&g), None);
+    for key in SPEND_KEYS {
+        assert!(v.get(key).is_some(), "{key} in {v}");
+    }
+    assert_eq!((v["tokens_in"].clone(), v["tokens_out"].clone(), v["spend_usd"].clone()), (json!(501), json!(14), json!(0.75)));
+    assert_eq!((v["requests_total"].clone(), v["requests_priced"].clone()), (json!(3), json!(2)));
+    assert_eq!((v["spend_notional"].clone(), v["passthrough"].clone(), v["team_session"].clone()), (json!(false), json!(false), json!(false)));
+    // A passthrough session: the spend is notional.
+    let mut r = req();
+    r.passthrough = true;
+    let p = h.create_session(r).unwrap();
+    let s = client(&h, &p, &d).status().unwrap();
+    assert_eq!((s.spend_usd, s.spend_notional, s.passthrough, s.team_session), (Some(0.0), Some(true), Some(true), Some(false)));
+    // A reply of an old server: every new field is None.
+    let old: SessionStatus = serde_json::from_value(json!({"session":"S1","profile":null,"work":null,"used_context":null,
+        "effective_window":null,"compact":null,"cache_read_share":null,"expires_at":""})).unwrap();
+    assert_eq!((old.tokens_in, old.tokens_out, old.spend_usd, old.spend_notional), (None, None, None, None));
+    assert_eq!((old.requests_total, old.requests_priced, old.passthrough, old.team_session), (None, None, None, None));
+    let none = serde_json::to_value(SessionStatus::default()).unwrap();
+    for key in SPEND_KEYS {
+        assert!(none.get(key).is_none(), "{key} in {none}");
+    }
+}
+
+#[test]
+fn status_team_session_sends_no_configured_price() { // AU13, AU14, H§9 row §7.2
+    let d = TempDir::new().unwrap();
+    let (h, _c, ta, _) = start(cfg(&d));
+    let raw = Raw::new();
+    let u = h.url();
+    let t = team_session(&raw, &u, &format!("Bearer {ta}"));
+    let state = h.session(&t.session).unwrap();
+    assert_eq!(state.team_label.as_deref(), Some("alpha"));
+    // A cost at the server's configured prices never reaches the reply, also when a caller hands one in.
+    state.add_request(&tu(1000, 10, 0, 0), Some(1234.5));
+    let (s, v, bytes) = raw.call(&u, "GET", &sp(&t), &sess(&t), None);
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((v["team_session"].clone(), v["spend_notional"].clone(), v["passthrough"].clone()), (json!(true), json!(true), json!(false)));
+    assert_eq!((v["tokens_in"].clone(), v["tokens_out"].clone(), v["requests_total"].clone()), (json!(1000), json!(10), json!(1)));
+    for key in ["spend_usd", "requests_priced"] {
+        assert!(v.get(key).is_none(), "{key} in {v}");
+    }
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(!text.contains("alpha"), "{text}"); // AU13: the flag, never the label
+    assert!(v.as_object().unwrap().values().all(|x| x.as_f64() != Some(1234.5)), "{text}");
+}
+
+fn sse(kind: &str, usage: Value) -> String {
+    let v = if kind == "message_start" { json!({"type": kind, "message": {"usage": usage}}) } else { json!({"type": kind, "usage": usage}) };
+    format!("event: {kind}\ndata: {v}\n\n")
+}
+
+#[test]
+fn tee_reads_the_cache_write_split() { // AU33, H§9 row §14 usage recording
+    let whole = |body: Value| {
+        let mut t = Tee::new(false);
+        t.push(body.to_string().into(), &mut |_| {});
+        t.finish(&mut |_| {});
+        (t.usage(), t.cache_split())
+    };
+    let u = Usage { input: 5, output: 6, cache_read: 7, cache_write: 300 };
+    // Not streamed: the split is read; `Usage` keeps its four fields and the total.
+    let with = json!({"usage":{"input_tokens":5,"output_tokens":6,"cache_read_input_tokens":7,"cache_creation_input_tokens":300,
+        "cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":100}}});
+    assert_eq!(whole(with), (u, Some(CacheSplit { m5: 200, h1: 100 })));
+    // No split: None, not zeros.
+    let without = json!({"usage":{"input_tokens":5,"output_tokens":6,"cache_read_input_tokens":7,"cache_creation_input_tokens":300}});
+    assert_eq!(whole(without), (u, None));
+    let empty = json!({"usage":{"input_tokens":5,"output_tokens":6,"cache_read_input_tokens":7,"cache_creation_input_tokens":300,"cache_creation":{}}});
+    assert_eq!(whole(empty), (u, None));
+    let half = json!({"usage":{"cache_creation_input_tokens":9,"cache_creation":{"ephemeral_1h_input_tokens":9}}});
+    assert_eq!(whole(half).1, Some(CacheSplit { m5: 0, h1: 9 }));
+    assert_eq!(Tee::new(true).cache_split(), None);
+    // Streamed: `message_start` sets it; `message_delta` raises each part (cumulative usage), and never lowers it.
+    let streamed = |events: &[String], armed: bool| {
+        let mut t = Tee::new(true);
+        if armed {
+            t.arm_line_mode();
+        }
+        for e in events {
+            // Two chunks per event: a line is read whole.
+            let (a, b) = e.split_at(e.len() / 2);
+            t.push(a.to_string().into(), &mut |_| {});
+            t.push(b.to_string().into(), &mut |_| {});
+        }
+        t.finish(&mut |_| {});
+        (t.usage(), t.cache_split())
+    };
+    let start = sse("message_start", json!({"input_tokens":5,"output_tokens":1,"cache_read_input_tokens":7,"cache_creation_input_tokens":300,
+        "cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":100}}));
+    let delta = sse("message_delta", json!({"output_tokens":6,"cache_creation_input_tokens":300,
+        "cache_creation":{"ephemeral_5m_input_tokens":150,"ephemeral_1h_input_tokens":120}}));
+    let plain = sse("message_delta", json!({"output_tokens":6}));
+    for armed in [false, true] {
+        assert_eq!(streamed(&[start.clone(), plain.clone()], armed), (u, Some(CacheSplit { m5: 200, h1: 100 })), "armed {armed}");
+        assert_eq!(streamed(&[start.clone(), delta.clone()], armed), (u, Some(CacheSplit { m5: 200, h1: 120 })), "armed {armed}");
+        assert_eq!(streamed(&[plain.clone()], armed).1, None, "armed {armed}");
+        assert_eq!(streamed(&[delta.clone()], armed).1, Some(CacheSplit { m5: 150, h1: 120 }), "armed {armed}");
+    }
 }

@@ -29,6 +29,16 @@ pub struct Usage {
     pub cache_write: u64,
 }
 
+/// The cache-write tokens of one response by TTL (AU33): Anthropic `usage.cache_creation`. Parts of
+/// `Usage::cache_write`, which stays the total.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CacheSplit {
+    /// `ephemeral_5m_input_tokens`.
+    pub m5: u64,
+    /// `ephemeral_1h_input_tokens`.
+    pub h1: u64,
+}
+
 /// Line mode's output and line callback.
 type Armed<'a> = (&'a mut Vec<u8>, &'a mut dyn FnMut(&mut SseLine));
 
@@ -43,6 +53,39 @@ pub struct Tee {
     copy: Vec<u8>,
     copy_over: bool,
     usage: Usage,
+    /// `None` until a usage object carries a part of the split.
+    split: Option<CacheSplit>,
+}
+
+/// The usage object of one SSE line, and whether it starts the numbers (`message_start` `message.usage`) or
+/// continues them (`message_delta` `usage`) (§14).
+fn line_usage(line: &[u8]) -> Option<(bool, Value)> {
+    let d = line.strip_prefix(b"data:")?;
+    if !d.windows(5).any(|w| w == b"usage") {
+        return None;
+    }
+    let mut v = serde_json::from_slice::<Value>(d.trim_ascii()).ok()?;
+    let (start, u) = match v.get("type").and_then(Value::as_str) {
+        Some("message_start") => (true, v.get_mut("message").and_then(|m| m.get_mut("usage"))),
+        Some("message_delta") => (false, v.get_mut("usage")),
+        _ => return None,
+    };
+    u.map(|u| (start, u.take()))
+}
+
+impl CacheSplit {
+    /// The parts `u.cache_creation` carries: as they are, or (`max`) when larger (`message_delta` usage is
+    /// cumulative). A part it does not carry keeps its value; with no part, `cur` is unchanged.
+    fn read(cur: &mut Option<CacheSplit>, u: &Value, max: bool) {
+        let Some(c) = u.get("cache_creation") else { return };
+        let (m5, h1) = (Usage::field(c, "ephemeral_5m_input_tokens"), Usage::field(c, "ephemeral_1h_input_tokens"));
+        if m5.is_none() && h1.is_none() {
+            return;
+        }
+        let old = cur.unwrap_or_default();
+        let f = |new: Option<u64>, old: u64| new.map_or(old, |n| if max { n.max(old) } else { n });
+        *cur = Some(CacheSplit { m5: f(m5, old.m5), h1: f(h1, old.h1) });
+    }
 }
 
 impl Usage {
@@ -74,22 +117,24 @@ impl Usage {
 
     /// One SSE line: Anthropic `message_start` `message.usage`, then per-field maxima of `message_delta` `usage` (§14).
     pub(crate) fn observe(&mut self, line: &[u8]) {
-        let Some(d) = line.strip_prefix(b"data:") else { return };
-        if !d.windows(5).any(|w| w == b"usage") {
-            return;
+        if let Some((start, u)) = line_usage(line) {
+            self.apply(start, &u);
         }
-        let Ok(v) = serde_json::from_slice::<Value>(d.trim_ascii()) else { return };
-        match v.get("type").and_then(Value::as_str) {
-            Some("message_start") => self.set(&v["message"]["usage"]),
-            Some("message_delta") => self.max(&v["usage"]),
-            _ => {}
+    }
+
+    /// `set` for a `message_start` usage object, `max` for a `message_delta` one.
+    fn apply(&mut self, start: bool, u: &Value) {
+        if start {
+            self.set(u);
+        } else {
+            self.max(u);
         }
     }
 }
 
 impl Tee {
     pub fn new(streamed: bool) -> Tee {
-        Tee { streamed, line_mode: false, held: Vec::new(), over: false, copy: Vec::new(), copy_over: false, usage: Usage::default() }
+        Tee { streamed, line_mode: false, held: Vec::new(), over: false, copy: Vec::new(), copy_over: false, usage: Usage::default(), split: None }
     }
 
     /// No effect when the response is not streamed.
@@ -132,6 +177,7 @@ impl Tee {
                 && let Some(u) = v.get("usage")
             {
                 self.usage.set(u);
+                CacheSplit::read(&mut self.split, u, false);
             }
             self.copy = Vec::new();
             return Bytes::new();
@@ -142,6 +188,11 @@ impl Tee {
 
     pub fn usage(&self) -> Usage {
         self.usage
+    }
+
+    /// The 5-minute and 1-hour parts of the cache writes, when the upstream reports them (AU33).
+    pub fn cache_split(&self) -> Option<CacheSplit> {
+        self.split
     }
 
     /// Splits `data` into lines. Each whole line is read for usage, then (armed) passed through `on_line` and written
@@ -186,7 +237,10 @@ impl Tee {
     }
 
     fn read(&mut self, line: &[u8]) {
-        self.usage.observe(line);
+        if let Some((start, u)) = line_usage(line) {
+            self.usage.apply(start, &u);
+            CacheSplit::read(&mut self.split, &u, !start);
+        }
     }
 }
 
