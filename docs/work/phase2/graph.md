@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** P2, W11, then FIX-9; W7 waits for the PW6 hook answer (W§17 note)
+**Next:** PRB-1, P2, W11, FIX-10 after FIX-8, then FIX-9 and LIV-2
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | TODO | implementation | — |
+| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | PLANNED | implementation | — |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | DONE | judgment | 69b5822, merge 624dcd2; acceptance prices 27, builtin 13, workspace --no-run ok (merged tree) |
 | HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | DONE | judgment | commits 4379678 98d9a9d c0407fa; CI 44968316690 green (ubuntu, macos, windows); acceptance on merged tree: session_api 40, window 37, zygo-hooks lib 22, workspace --no-run ok, no div_ceil(4) |
 | HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | DONE | judgment | edb0f1c, merge 2899612; acceptance zygo-proxy 350/350, workspace --no-run ok (merged tree) |
@@ -68,7 +68,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
-| LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1, FIX-5, FIX-7 | TODO | implementation | — |
+| LIV-2 | Windows part without a Windows machine: PH8/PH10 fallback, W-SHELL part 2 text, not-run records | LIV-1, PRB-1, FIX-5, FIX-7 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | TODO | implementation | — |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
@@ -90,14 +90,14 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11 | TODO | judgment | — |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
-| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12 | TODO | judgment | — |
+| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
 | M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | TODO | implementation | — |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9 | TODO | implementation | — |
-| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5 | TODO | implementation | — |
+| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10 | TODO | implementation | — |
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
@@ -105,6 +105,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | IN-PROGRESS | implementation | wt .worktrees/phase2/FIX-7 |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/FIX-8 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | TODO | mechanical | — |
+| FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | TODO | implementation | — |
 
 ## Log
 
@@ -182,3 +183,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | PW15: W11 added (AU65); edges W11 → H1 (Cargo.lock) and W11 → E2; W10 and M1 contracts gain the pipe case and the AU18 sandbox guard (mnt_ns); M4 unchanged (the slash path is a hook; E2 checks it with the sandbox on). |
 | 2026-11-22 | FIX-9 added: the live-tmux.sh 6.30 pass test is wrong for tmux 3.3 and later (window-unlinked is a session hook there; 3.7c options-table.c:1710). Edges P2 → FIX-9 and FIX-9 → E2: shared docs/premises.md and W§17. The graph has 25 open rows. |
 | 2026-11-22 | FIX-5 DONE (7c26d5d). HUD fit width is the terminal width less 4 (PH4 fallback). Acceptance on the merged tree: zygo-hooks 173 passed, compact_cmd 16 passed, golden files unchanged. |
+| 2026-11-22 | PW6 hooks: option A applied, author's call; W7, M2, E1 no longer wait. W§7.4: window-layout-changed and the member wrapper exit snapshot record pane loss; a shell-only window closed elsewhere waits for the next trigger (W§18 #24, #77). |
+| 2026-11-22 | FIX-10 added from FIX-8 (verdict not determined): a non-2xx passthrough answer writes its upstream error.type and error.message to a new usage table (base §14). Edges FIX-8, DOC-1 → FIX-10 and FIX-10 → D1: shared base spec. |
+| 2026-11-22 | PRB-1 contract drift fixed: the executor runs the live check with passthrough (operator, 2026-11-21); Files gain docs/live-checks.md and lose live.sh; a failed line re-plans LIV-2 and gives one fix node for the DONE nodes. PRB-1 PLANNED. |
+| 2026-11-22 | LIV-2 (author's call): no Windows machine; PH8 and PH10 fallback applied by default (plain icons on Windows unless ZYGO_NERD_FONT=1, AU2), W-SHELL part 2 not run. LIV-2 builds the code; edge LIV-2 → M1 (usage_doctor.rs). |
+| 2026-11-22 | E2: the executor runs the PW15 re-check itself with passthrough (operator, 2026-11-21), as P1 did. |
