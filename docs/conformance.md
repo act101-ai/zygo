@@ -1,6 +1,6 @@
 # Agent conformance (node N39)
 
-One row per v1 agent, one cell per capability A-1 to A-21 (spec `docs/specs/2026-11-18-zygo-design.md` §8.1). Cell form: `full`, `partial (what is missing)` or `none (why)`, then the documentation URL of the feature. Checked by `scripts/check-conformance.sh`.
+One row per v1 agent, one cell per capability A-1 to A-21 (spec `docs/specs/2026-11-18-zygo-design.md` §8.1). Cell form: `full`, `partial (what is missing)` or `none (why)`, then the documentation URL of the feature. Checked by `scripts/check-conformance.sh`. The workspace capabilities WA-1 and WA-2 (`docs/specs/2026-11-20-workspaces-design.md` AU28) have their own table in the same cell form.
 
 Claude Code: 2.1.328
 OpenCode: 1.18.16
@@ -9,6 +9,18 @@ OpenCode: 1.18.16
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Claude Code | partial (PowerShell needs & before a quoted path) https://code.claude.com/docs/en/llm-gateway | full https://code.claude.com/docs/en/env-vars | full https://code.claude.com/docs/en/model-config | full https://code.claude.com/docs/en/sub-agents | full https://code.claude.com/docs/en/cli-reference | full https://code.claude.com/docs/en/mcp | full https://code.claude.com/docs/en/hooks | full https://code.claude.com/docs/en/hooks | partial (PowerShell needs & before a quoted path) https://code.claude.com/docs/en/statusline | full https://code.claude.com/docs/en/env-vars | full https://code.claude.com/docs/en/plugins | full https://code.claude.com/docs/en/settings | full https://code.claude.com/docs/en/cli-reference | full https://code.claude.com/docs/en/sub-agents | full https://code.claude.com/docs/en/hooks | full https://code.claude.com/docs/en/context-window | full https://code.claude.com/docs/en/mcp | full https://code.claude.com/docs/en/hooks | full https://code.claude.com/docs/en/hooks | full https://code.claude.com/docs/en/sub-agents | full https://code.claude.com/docs/en/cli-reference |
 | OpenCode | full https://opencode.ai/docs/providers/ | full https://opencode.ai/docs/config/ | full https://opencode.ai/docs/models/ | full https://opencode.ai/docs/agents/ | full https://opencode.ai/docs/config/ | full https://opencode.ai/docs/mcp-servers/ | full https://opencode.ai/docs/plugins/ | full https://opencode.ai/docs/plugins/ | full https://opencode.ai/docs/cli/ | full https://opencode.ai/docs/cli/ | full https://opencode.ai/docs/skills/ | full https://opencode.ai/docs/models/ | full https://opencode.ai/docs/cli/ | full https://opencode.ai/docs/agents/ | full https://opencode.ai/docs/permissions/ | partial (no proxy signal and the window is a launch-time setting) https://opencode.ai/docs/config/ | none (the SSE rewrite is not armed for OpenCode in v1) https://opencode.ai/docs/mcp-servers/ | full https://opencode.ai/docs/plugins/ | partial (no subagent-stop event and no agent id verified; claims and scope guards cannot run) https://opencode.ai/docs/plugins/ | full https://opencode.ai/docs/permissions/ | full https://opencode.ai/docs/cli/ |
+
+## Workspace capabilities
+
+WA-1 Resume: pre-assign or capture the agent session id; resume by id. WA-2 Turn signals: turn start and end, subagent start and end, dispatch block (workspaces spec AU28, W§9.1). Evidence ids PW1-PW16 are in `docs/premises.md`; captures are under `fixtures/claude-code/workspace/` and `fixtures/opencode/workspace/`.
+
+| Agent | WA-1 | WA-2 |
+|---|---|---|
+| Claude Code | partial (a resume with another CLAUDE_CONFIG_DIR finds no conversation, PW16 16.2; the AU61 fallback reuses the saved one) https://code.claude.com/docs/en/cli-reference | partial (a turn ended by Esc sends no Stop or StopFailure, and internal subagents send SubagentStop without SubagentStart; AU26 fallback) https://code.claude.com/docs/en/hooks |
+| OpenCode | partial (resume with -s verified with opencode run only; the TUI resume is not verified live; evidence on OpenCode 1.19.6, PW4; the pin 1.18.16 is a minimum; E2 re-checks) https://opencode.ai/docs/cli/ | partial (no subagent start or stop event; the busy status that starts a turn is not in a fixture; evidence on OpenCode 1.19.6, PW4; the pin 1.18.16 is a minimum; E2 re-checks) https://opencode.ai/docs/plugins/ |
+
+- Claude Code WA-1: `--session-id <uuid>` pre-assign and `--resume <id>` keep one id (PW1, `fixtures/claude-code/workspace/pw1.txt`; zygo passes the one-token forms `--session-id=<uuid>` and `--resume=<id>`, the `=` form that the pinned help shows for options of the same parser); `SessionStart` gives `session_id` and fires again after `/clear` (PW2); resume after an upgrade (PW3); another `CLAUDE_CONFIG_DIR` does not find the conversation (PW16 16.2), so AU61 saves and reuses the config folder. WA-2: `UserPromptSubmit`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, and the `PreToolUse` deny on `Agent` (PW5, `fixtures/claude-code/workspace/PreToolUse-Agent-denied.json`); partial by PW7 7.2, 7.3 and 7.5 (`fixtures/claude-code/workspace/pw7.txt`).
+- OpenCode, both cells: the evidence is from OpenCode 1.19.6 (PW4); the pin 1.18.16 above is a minimum, not the version of this evidence; E2 re-checks on the pinned version. WA-1: the plugin sees the `sessionID` on its first `session.created` event, and `opencode run -s <id>` resumes it (PW4 4.1, 4.2, `fixtures/opencode/workspace/pw4.txt`). WA-2: the first `session.status` busy of the main session after an idle starts a turn, and a busy of another top session makes it the main session (status types `idle`, `retry`, `busy` in the OpenCode 1.19.6 binary; not in a fixture); the first `session.idle` or `session.status` idle after a turn ends it (PW4 4.3, `fixtures/opencode/workspace/plugin-event-types.txt`); `tool.execute.before` sees `task` before the subagent runs, and a throw there stops it (PW4 4.4, 4.5 note, `fixtures/opencode/workspace/tool.execute.before-task.json`); no subagent event (A-19).
 
 ## Evidence
 
@@ -53,3 +65,5 @@ Documentation caveat (OpenCode): the live OpenCode docs describe a newer plugin 
 - A-19: Work units and guards
 - A-20: Role tool restriction
 - A-21: Tests
+- WA-1: Resume
+- WA-2: Turn signals

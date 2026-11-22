@@ -1430,13 +1430,13 @@ fn sigterm_and_sighup_are_forwarded() {
 fn exits_before_the_spawn_have_spawned_false() { // AU60
     use zygo_launch::launcher::LaunchOutcome;
     let fx = fx();
-    let no_spawn = |code| LaunchOutcome { code, signal: None, spawned: false, received: false };
+    let no_spawn = |code| LaunchOutcome { code, signal: None, spawned: false, received: false, member_dropped: false };
     let missing = Stub { program: "zygo-test-no-such-agent".into(), ..stub() };
     assert_eq!(Launcher::run(&missing, opts(&fx, "dump", &[])), no_spawn(13)); // before the session
     let refused = Stub { preflight: Some(Preflight { file: fx.root.join("settings.json"), key: "env.ANTHROPIC_API_KEY".into() }), ..stub() };
     assert_eq!(Launcher::run(&refused, opts(&fx, "dump", &[])), no_spawn(2)); // after the session directory
     let ran = Launcher::run(&stub(), opts(&fx, "dump", &[("ZYGO_TEST_EXIT", "7")]));
-    assert_eq!(ran, LaunchOutcome { code: 7, signal: None, spawned: true, received: false });
+    assert_eq!(ran, LaunchOutcome { code: 7, signal: None, spawned: true, received: false, member_dropped: false });
 }
 
 #[cfg(unix)]

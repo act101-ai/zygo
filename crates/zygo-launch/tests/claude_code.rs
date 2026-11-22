@@ -11,7 +11,7 @@ use zygo_config::schema::{CustomRole, Role};
 use zygo_config::{load_with_builtin, LoadContext};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
-use zygo_core::session_view::SessionView;
+use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
 use zygo_core::Agent;
 use zygo_hooks::session_text::mechanics;
 use zygo_launch::claude_code::{shell_quote, ClaudeCode};
@@ -816,4 +816,188 @@ fn missing_claude_exits_13_with_the_hint() {
     assert_eq!(Launcher::run(&cc(&fx), o).code, 13);
     let hint = "zygo: claude not found on PATH; install Claude Code: https://code.claude.com/docs/en/setup";
     assert!(text_of(&err).lines().any(|l| l == hint), "{}", text_of(&err));
+}
+
+fn member_ctx(fx: &Fx, work_units: bool) -> LaunchCtx {
+    let mut c = ctx(fx, "");
+    c.view.work_units = work_units;
+    c.view.workspace = Some(ViewWorkspace { member: Member { ws_id: "0123456789abcdef".into(), pane: "p1".into() }, resume_note: None });
+    c
+}
+
+/// Option names of the pinned Claude Code help: rows between `Options:` and `Commands:` that start with `  -`;
+/// each word before the first run of two spaces that starts with `-`, a trailing `,` cut (W4's test parser).
+fn help_names() -> BTreeSet<String> {
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/help.txt")).unwrap();
+    text.lines()
+        .skip_while(|l| *l != "Options:")
+        .take_while(|l| *l != "Commands:")
+        .filter(|l| l.starts_with("  -"))
+        .flat_map(|l| {
+            l[2..].split("  ").next().unwrap().split_whitespace().filter(|w| w.starts_with('-')).map(|w| w.trim_end_matches(',').to_string()).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn no_workspace_hook(s: &Value) {
+    for event in s["hooks"].as_object().unwrap().keys() {
+        assert!(!hook_commands(s, event).iter().any(|(_, cmd)| cmd.contains("hook workspace")), "{event}");
+    }
+    for e in ["Stop", "StopFailure", "SubagentStart"] {
+        assert!(s["hooks"].get(e).is_none(), "{e}");
+    }
+}
+
+#[test] // W§9.1, AU57, W§15 §8.5: every member hook, with work units on and off
+fn member_settings_hold_every_workspace_hook() {
+    let schema = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/settings-schema.json")).unwrap();
+    for e in ["Stop", "StopFailure", "SubagentStart", "SubagentStop"] {
+        assert!(schema.contains(&format!("\"{e}\"")), "{e} not in the pinned settings schema");
+    }
+    let agent: Value = serde_json::from_slice(&std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/hooks/PreToolUse-Agent-main.json")).unwrap()).unwrap();
+    assert_eq!(agent["tool_name"], "Agent");
+    for work_units in [true, false] {
+        let fx = fx();
+        let cc = cc(&fx);
+        let spec = cc.build(&member_ctx(&fx, work_units)).unwrap();
+        assert!(spec.lines.is_empty(), "{work_units}");
+        let s = settings(&fx);
+        let z = shell_quote(&cc.zygo);
+        let ws = |e: &str| format!("{z} hook workspace --event {e}");
+        assert!(hook_commands(&s, "PreToolUse").contains(&(Some("Agent".to_string()), ws("pre-tool"))), "{work_units}");
+        assert_eq!(hook_commands(&s, "Stop"), [(None, ws("stop"))], "{work_units}");
+        assert_eq!(hook_commands(&s, "StopFailure"), [(None, ws("stop"))], "{work_units}");
+        assert_eq!(hook_commands(&s, "SubagentStart"), [(None, ws("subagent-start"))], "{work_units}");
+        let sub: BTreeSet<(Option<String>, String)> = hook_commands(&s, "SubagentStop").into_iter().collect();
+        let mut want = BTreeSet::from([(None, ws("subagent-stop"))]);
+        if work_units {
+            want.insert((None, format!("{z} hook work")));
+        }
+        assert_eq!(sub, want, "{work_units}");
+        assert_eq!(hook_commands(&s, "SessionStart"), [(None, format!("{z} hook session-start"))]);
+        assert_eq!(hook_commands(&s, "UserPromptSubmit"), [(None, format!("{z} hook prompt"))]);
+    }
+}
+
+#[test] // W§9.1: registered only for members
+fn non_member_settings_hold_no_workspace_hook() {
+    for work_units in [true, false] {
+        let fx = fx();
+        let mut c = ctx(&fx, "");
+        c.view.work_units = work_units;
+        assert!(c.view.workspace.is_none());
+        cc(&fx).build(&c).unwrap();
+        no_workspace_hook(&settings(&fx));
+    }
+}
+
+#[test] // D5: arguments after `--` are not flags
+fn settings_after_double_dash_is_not_a_flag() {
+    let fx = fx();
+    let mut c = ctx(&fx, "");
+    c.args = strings(&["--", "--settings", "x.json"]);
+    let spec = cc(&fx).build(&c).unwrap();
+    assert!(spec.lines.is_empty(), "{:?}", spec.lines);
+    assert!(!spec.log.iter().any(|l| l == "degraded: --settings"), "{:?}", spec.log);
+    c.args = strings(&["--append-system-prompt", "--settings"]);
+    assert!(cc(&fx).build(&c).unwrap().lines.is_empty());
+}
+
+#[test] // W§8.3, AU3, AU30
+fn session_args_follow_w4_and_the_pinned_help() {
+    let help = help_names();
+    let cc = ClaudeCode::default();
+    let names = zygo_workspace::args::session_flags(Agent::ClaudeCode);
+    assert_eq!(names, ["-c", "--continue", "-r", "--resume", "--session-id", "--fork-session", "--from-pr", "--cloud", "--teleport"]);
+    for f in names {
+        assert!(help.contains(f), "{f} is not in the pinned --help");
+        assert!(cc.has_session_arg(&strings(&["--model", "opus", f, "x"])), "{f}");
+    }
+    assert!(cc.has_session_arg(&strings(&["-pc"])));
+    assert!(!cc.has_session_arg(&[]));
+    assert!(!cc.has_session_arg(&strings(&["--", "--resume"])));
+    assert!(!cc.has_session_arg(&strings(&["--append-system-prompt", "--teleport"])));
+    // L2 round 2 item 8: the `=` form. The pinned help uses it for a required value (`--output-format=stream-json`)
+    // and for an optional value (`--debug=hooks,mcp`, `--tmux=classic`) of the same parser.
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/help.txt")).unwrap();
+    for t in ["--output-format=stream-json", "--debug=hooks,mcp", "--tmux=classic", "--session-id <uuid>", "-r, --resume [value]"] {
+        assert!(text.contains(t), "{t}");
+    }
+    assert_eq!(cc.preassign_args("U1"), strings(&["--session-id=U1"]));
+    assert_eq!(cc.resume_args("U1"), strings(&["--resume=U1"]));
+    for (a, name) in [(cc.preassign_args("U1"), "--session-id"), (cc.resume_args("U1"), "--resume")] {
+        assert!(help.contains(a[0].split('=').next().unwrap()), "{}", a[0]);
+        // the parse check: W4's walk reads one session flag with the value `U1`
+        assert!(cc.has_session_arg(&a), "{a:?}");
+        let o = zygo_workspace::args::occurrences(Agent::ClaudeCode, &a);
+        assert_eq!(o.iter().map(|o| (o.name, o.values.clone())).collect::<Vec<_>>(), [(name, strings(&["U1"]))]);
+    }
+}
+
+#[test] // D5, L2 round 2 item 9: after `--`, `--agents`, `--bare` and `--model` are prompt words
+fn flags_after_double_dash_are_prompt_words() {
+    let fx = fx();
+    let cc = cc(&fx);
+    let mut c = ctx(&fx, "");
+    c.effective_role = None;
+    let tail = strings(&["--", "--agents", "x", "--bare", "--model", "opus", "--print"]);
+    c.args = tail.clone();
+    assert_eq!(cc.refusal(&c), None);
+    let spec = cc.build(&c).unwrap();
+    assert!(spec.args.ends_with(&tail), "{:?}", spec.args);
+    assert_eq!(spec.args.iter().filter(|a| *a == "--agents").count(), 2, "{:?}", spec.args);
+    assert!(spec.log.is_empty(), "{:?}", spec.log);
+    assert_eq!(cc.picked_model(&c.args), None);
+    // a flag value is not a flag
+    c.args = strings(&["--append-system-prompt", "--bare", "--system-prompt", "--model", "--append-system-prompt", "--agents"]);
+    assert_eq!(cc.refusal(&c), None);
+    let spec = cc.build(&c).unwrap();
+    assert!(spec.log.is_empty(), "{:?}", spec.log);
+    assert!(spec.args.ends_with(&c.args), "{:?}", spec.args);
+    assert_eq!(cc.picked_model(&c.args), None);
+    // the user's `--agents` before `--` is still merged and stripped
+    c.args = strings(&["--agents", r#"{"mine":{"description":"d","prompt":"p"}}"#, "--", "--agents"]);
+    let spec = cc.build(&c).unwrap();
+    assert_eq!(spec.args.iter().filter(|a| *a == "--agents").count(), 2, "{:?}", spec.args);
+    assert!(agents_of(&spec.args[..spec.args.len() - 2]).get("mine").is_some());
+    assert!(spec.args.ends_with(&strings(&["--", "--agents"])), "{:?}", spec.args);
+}
+
+#[test] // AU59, AU102: the cmd layer uses the launcher's rule
+fn user_settings_rule_is_public_and_stops_at_double_dash() {
+    use zygo_launch::claude_code::has_user_settings;
+    assert!(has_user_settings(&strings(&["--settings", "f"])));
+    assert!(has_user_settings(&strings(&["--model", "opus", "--settings=f"])));
+    assert!(!has_user_settings(&strings(&["--", "--settings", "f"])));
+    assert!(!has_user_settings(&strings(&["--append-system-prompt", "--settings"])));
+    assert!(!has_user_settings(&[]));
+}
+
+struct Bare;
+impl AgentAdapter for Bare {
+    fn agent(&self) -> Agent {
+        Agent::ClaudeCode
+    }
+    fn program(&self) -> &str {
+        "bare"
+    }
+    fn install_hint(&self) -> &str {
+        ""
+    }
+    fn picked_model(&self, _args: &[String]) -> Option<String> {
+        None
+    }
+    fn build(&self, _ctx: &LaunchCtx) -> anyhow::Result<zygo_launch::ChildSpec> {
+        anyhow::bail!("unused")
+    }
+    fn preflight(&self, _ctx: &LaunchCtx) -> Result<(), Preflight> {
+        Ok(())
+    }
+}
+
+#[test] // the default bodies: no session argument, empty pre-assign, empty resume
+fn session_methods_default_to_none() {
+    assert!(!Bare.has_session_arg(&strings(&["--resume", "x", "--session-id", "y"])));
+    assert!(Bare.preassign_args("U1").is_empty());
+    assert!(Bare.resume_args("U1").is_empty());
 }

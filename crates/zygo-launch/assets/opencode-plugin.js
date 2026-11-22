@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 
 const ZYGO = __ZYGO_PATH__;
 
-// Runs `zygo hook <name> --agent opencode` with `payload` on stdin; resolves "" on any failure.
+// Runs `zygo hook <name> --agent opencode [extra...]` with `payload` on stdin; resolves "" on any failure.
 export const ZygoPlugin = async ({ directory }) => {
-  const run = (name, payload) =>
+  const run = (name, payload, extra = []) =>
     new Promise((resolve) => {
       let out = "";
       let done = false;
@@ -20,7 +20,7 @@ export const ZygoPlugin = async ({ directory }) => {
         resolve(v);
       };
       try {
-        child = spawn(ZYGO, ["hook", name, "--agent", "opencode"], { stdio: ["pipe", "pipe", "ignore"] });
+        child = spawn(ZYGO, ["hook", name, "--agent", "opencode", ...extra], { stdio: ["pipe", "pipe", "ignore"] });
         child.stdin.on("error", () => {});
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (d) => (out += d));
@@ -38,8 +38,61 @@ export const ZygoPlugin = async ({ directory }) => {
       return undefined;
     }
   };
+  // Workspace member events (W§9.1, AU27, AU104). The gate is cheap in the agent process; hooks read the view marker (AU58).
+  const member = typeof process.env.ZYGO_WORKSPACE === "string" && process.env.ZYGO_WORKSPACE !== "";
+  let main = null;
+  let idleNow = true;
+  const children = new Set();
+  let chain = Promise.resolve("");
+  // One call after another, in decision order; `run` never rejects, so the chain cannot break.
+  const ws = (event, payload) => (chain = chain.then(() => run("workspace", payload, ["--event", event])));
+  const sessionOf = (e) => {
+    const p = e.properties || {};
+    const i = p.info || {};
+    return p.sessionID || i.sessionID || (String(e.type).startsWith("session.") ? i.id : undefined) || (p.part || {}).sessionID || null;
+  };
+  const statusOf = (e) => {
+    const s = (e.properties || {}).status;
+    return s && typeof s === "object" ? s.type : s;
+  };
+  // Decides and queues before any wait (D11). The main session is the active top session: a session with a known
+  // `parentID` (a `task` subagent) never is; a new top session, or a `busy` status of another top session (a TUI
+  // switch to an existing session), makes it the main session. One `prompt` per turn start, one `stop` per turn end.
+  const step = (e) => {
+    const id = sessionOf(e);
+    if (typeof id !== "string" || id === "") return;
+    const info = (e.properties || {}).info || {};
+    if (String(e.type).startsWith("session.") && info.parentID) {
+      children.add(id);
+      return;
+    }
+    if (children.has(id)) return;
+    const busy = e.type === "session.status" && statusOf(e) === "busy";
+    const idle = e.type === "session.idle" || (e.type === "session.status" && statusOf(e) === "idle");
+    if (main === null || (id !== main && (e.type === "session.created" || busy))) {
+      main = id;
+      idleNow = true;
+      ws("session", { sessionID: id });
+    }
+    if (id !== main) return;
+    if (busy && idleNow) {
+      idleNow = false;
+      ws("prompt", { sessionID: id });
+    } else if (idle && !idleNow) {
+      idleNow = true;
+      ws("stop", { sessionID: id });
+    }
+  };
   return {
+    // Does not wait for the queued calls.
+    event: async ({ event }) => {
+      if (member && event) step(event);
+    },
     "tool.execute.before": async (input, output) => {
+      if (member && input && input.tool === "task") {
+        const w = hookOutput(await ws("pre-tool", { sessionID: input.sessionID, tool_name: "Agent" }));
+        if (w && w.permissionDecision === "deny") throw new Error(w.permissionDecisionReason);
+      }
       const h = hookOutput(await run("guard", { input, output }));
       if (h && h.permissionDecision === "deny") throw new Error(h.permissionDecisionReason);
     },

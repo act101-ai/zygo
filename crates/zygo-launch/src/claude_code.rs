@@ -9,6 +9,7 @@ use zygo_core::Agent;
 use zygo_hooks::session_text::mechanics;
 use zygo_proxy::session::SessionConfig;
 use zygo_work::policy::Policy;
+use zygo_workspace::args::occurrences;
 
 use crate::adapter::{AgentAdapter, ChildSpec, LaunchCtx, Plugins, Preflight};
 
@@ -18,6 +19,8 @@ const PT_BARE: &str = "--passthrough does not work with --bare: bare mode reads 
 const PT_MANAGED: &str = "passthrough needs your claude.ai login; a managed setting replaces it";
 const BAD_AGENTS: &str = "--agents: not a JSON object (or, with --print, a file that holds one)";
 const SETTINGS_WARN: &str = "zygo: your --settings replaces zygo's settings file; the lead guard is off";
+/// The AU59 line: a member launch with `--settings` runs as a plain launch.
+pub const MEMBER_SETTINGS_WARN: &str = "zygo: --settings replaces zygo's hooks; this agent is not saved by the workspace";
 const NO_EDIT: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
 #[cfg(target_os = "macos")]
@@ -45,36 +48,28 @@ pub fn shell_quote(p: &Path) -> String {
     if cfg!(windows) { format!("\"{s}\"") } else { format!("'{}'", s.replace('\'', r"'\''")) }
 }
 
-/// The values of `name <v>` and `name=<v>`, in order.
+// Every flag check below reads the arguments by W4's walk (D5): a flag value or a token after `--` is never a flag.
+
+/// The values of the flag `name` (its long name), in order.
 fn flag_values(args: &[String], name: &str) -> Vec<String> {
-    let mut out = vec![];
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == name {
-            out.extend(it.next().cloned());
-        } else if let Some(v) = a.strip_prefix(name).and_then(|r| r.strip_prefix('=')) {
-            out.push(v.into());
-        }
-    }
-    out
+    occurrences(Agent::ClaudeCode, args).into_iter().filter(|o| o.name == name).flat_map(|o| o.values).collect()
 }
 
-/// `args` without `name <v>` and `name=<v>`.
+/// `args` without the tokens of the flag `name` (its long name) and its values.
 fn without_flag(args: &[String], name: &str) -> Vec<String> {
-    let mut out = vec![];
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == name {
-            it.next();
-        } else if !a.strip_prefix(name).is_some_and(|r| r.starts_with('=')) {
-            out.push(a.clone());
-        }
-    }
-    out
+    let gone: Vec<std::ops::Range<usize>> = occurrences(Agent::ClaudeCode, args).into_iter().filter(|o| o.name == name).map(|o| o.tokens).collect();
+    args.iter().enumerate().filter(|(i, _)| !gone.iter().any(|r| r.contains(i))).map(|(_, a)| a.clone()).collect()
 }
 
+/// Whether `args` hold the flag `name` (its long name).
 fn has_flag(args: &[String], name: &str) -> bool {
-    args.iter().any(|a| a == name || a.strip_prefix(name).is_some_and(|r| r.starts_with('=')))
+    zygo_workspace::args::flags(Agent::ClaudeCode, args).contains(&name)
+}
+
+/// Whether the user's arguments hold `--settings` before any `--`, by W4's walk (AU59, D5). The launcher and the cmd
+/// layer (AU102) use this one rule.
+pub fn has_user_settings(args: &[String]) -> bool {
+    has_flag(args, "--settings")
 }
 
 fn strip_1m(v: &str) -> &str {
@@ -84,7 +79,7 @@ fn strip_1m(v: &str) -> &str {
 /// The user's `--agents` values merged in order; `None` when one is not a JSON object (with `-p`/`--print`, a value
 /// that is not JSON is read as a file that holds one).
 fn user_agents(ctx: &LaunchCtx) -> Option<Map<String, Value>> {
-    let print = ctx.args.iter().any(|a| a == "-p" || a == "--print");
+    let print = has_flag(&ctx.args, "--print");
     let mut out = Map::new();
     for v in flag_values(&ctx.args, "--agents") {
         let parsed = match serde_json::from_str::<Value>(&v) {
@@ -265,12 +260,25 @@ impl ClaudeCode {
         pre.push(entry(Some("Edit|Write|NotebookEdit|Read|Bash"), "guard"));
         let mut post = vec![entry(Some("Bash|Read|Grep|Glob|WebFetch"), "trim")];
         let mut h = Map::new();
+        // A workspace member is the AU58 marker in the session view; its hooks are W§9.1.
+        let member = ctx.view.workspace.is_some();
+        let mut subagent_stop = vec![];
         if ctx.view.work_units {
             pre.push(entry(Some("mcp__zygo__work_begin"), "work --event begin"));
             pre.push(entry(Some("mcp__zygo__work_verdict"), "work --event verdict"));
             post.push(entry(Some("*"), "work"));
             h.insert("PostToolUseFailure".into(), json!([entry(Some("*"), "work")]));
-            h.insert("SubagentStop".into(), json!([entry(None, "work")]));
+            subagent_stop.push(entry(None, "work"));
+        }
+        if member {
+            pre.push(entry(Some("Agent"), "workspace --event pre-tool"));
+            h.insert("Stop".into(), json!([entry(None, "workspace --event stop")]));
+            h.insert("StopFailure".into(), json!([entry(None, "workspace --event stop")]));
+            h.insert("SubagentStart".into(), json!([entry(None, "workspace --event subagent-start")]));
+            subagent_stop.push(entry(None, "workspace --event subagent-stop"));
+        }
+        if !subagent_stop.is_empty() {
+            h.insert("SubagentStop".into(), json!(subagent_stop));
         }
         h.insert("PreToolUse".into(), json!(pre));
         h.insert("PostToolUse".into(), json!(post));
@@ -378,7 +386,7 @@ impl AgentAdapter for ClaudeCode {
         }
         args.extend(without_flag(&ctx.args, "--agents"));
         let (mut lines, mut log) = (vec![], vec![]);
-        if has_flag(&ctx.args, "--settings") {
+        if has_user_settings(&ctx.args) {
             lines.push(SETTINGS_WARN.to_string());
             log.push("degraded: --settings".to_string());
         }
@@ -427,5 +435,18 @@ impl AgentAdapter for ClaudeCode {
         let env = m.get("env").and_then(Value::as_object);
         let key = |k: &str| m.contains_key(k) || env.is_some_and(|e| e.keys().any(|n| if cfg!(windows) { n.eq_ignore_ascii_case(k) } else { n == k }));
         (m.contains_key("apiKeyHelper") || key("ANTHROPIC_API_KEY") || key("ANTHROPIC_AUTH_TOKEN")).then(|| PT_MANAGED.into())
+    }
+    fn has_session_arg(&self, args: &[String]) -> bool {
+        zygo_workspace::args::has_session_arg(Agent::ClaudeCode, args)
+    }
+    /// `--session-id=<id>`: one token, so the id is never read as another flag or a prompt word. The pinned help uses
+    /// the `=` form for options of the same parser (`--output-format=stream-json`).
+    fn preassign_args(&self, id: &str) -> Vec<String> {
+        vec![format!("--session-id={id}")]
+    }
+    /// `--resume=<id>`: `--resume` takes an optional value, so the `=` form keeps the id bound to it; the pinned help
+    /// uses the `=` form for optional values of the same parser (`--debug=hooks,mcp`, `--tmux=classic`).
+    fn resume_args(&self, id: &str) -> Vec<String> {
+        vec![format!("--resume={id}")]
     }
 }
