@@ -1,6 +1,5 @@
 use zygo_core::ids::ulid;
 use zygo_core::overrides::Overrides;
-#[cfg(unix)]
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 
@@ -13,6 +12,9 @@ fn paths_unix() {
     assert_eq!(p.config_file, std::path::PathBuf::from("/h/.config/zygo/config.toml"));
     assert_eq!(p.usage_db, std::path::PathBuf::from("/h/.local/share/zygo/usage.db"));
     assert_eq!(p.sessions_dir, std::path::PathBuf::from("/h/.cache/zygo/sessions"));
+    assert_eq!(p.state_dir(), std::path::PathBuf::from("/h/.local/state/zygo"));
+    assert_eq!(p.workspaces_dir(), std::path::PathBuf::from("/h/.local/state/zygo/workspaces"));
+    assert_eq!(p.workspace_cache_dir(), std::path::PathBuf::from("/h/.cache/zygo/workspaces"));
     unsafe { std::env::set_var("ZYGO_CONFIG", "/x.toml") };
     assert_eq!(Paths::from_env().config_file, std::path::PathBuf::from("/x.toml"));
     unsafe { std::env::remove_var("ZYGO_CONFIG") };
@@ -28,6 +30,7 @@ fn paths_unix() {
         assert_eq!(p.config_file, home.join(".config/zygo/config.toml"));
         assert_eq!(p.cache_dir, home.join(".cache/zygo"));
         assert_eq!(p.data_dir, home.join(".local/share/zygo"));
+        assert_eq!(p.state_dir(), home.join(".local/state/zygo"));
     }
     unsafe { std::env::set_var("HOME", "/h") };
 }
@@ -222,4 +225,119 @@ fn overrides_statusline_round_trips_and_is_absent_when_unset() {
     assert_eq!(Overrides::load(&d).statusline, None);
     Overrides::default().save(&d).unwrap();
     assert!(!std::fs::read_to_string(d.overrides_json()).unwrap().contains("statusline"));
+}
+
+// ---- C1: workspace paths, session-dir accessors, view workspace field (workspaces design W§7.1, W§7.3, AU58, AU72) ----
+
+fn paths_under(root: &std::path::Path) -> Paths {
+    let (cache_dir, data_dir) = (root.join("cache"), root.join("data"));
+    Paths {
+        config_file: root.join("config.toml"),
+        sessions_dir: cache_dir.join("sessions"),
+        marketplaces_dir: cache_dir.join("marketplaces"),
+        plugin_store: data_dir.join("plugins"),
+        approvals_file: data_dir.join("approvals.toml"),
+        usage_db: data_dir.join("usage.db"),
+        cache_dir,
+        data_dir,
+    }
+}
+
+#[test]
+fn state_dir_in_follows_the_data_dir_rule() {
+    use std::path::Path;
+    let home = Path::new("/h");
+    // Branch 1: data_dir is $HOME/.local/share/zygo, as Paths::from_env sets it on unix.
+    let mut p = paths_under(Path::new("/t"));
+    p.data_dir = home.join(".local/share/zygo");
+    assert_eq!(p.state_dir_in(Some(home)), home.join(".local/state/zygo"));
+    // Branch 2: another home, no home, or another data_dir.
+    assert_eq!(p.state_dir_in(Some(Path::new("/other"))), home.join(".local/share/zygo").join("state"));
+    assert_eq!(p.state_dir_in(None), home.join(".local/share/zygo").join("state"));
+    let q = paths_under(Path::new("/t"));
+    assert_eq!(q.state_dir_in(Some(home)), Path::new("/t").join("data").join("state"));
+}
+
+#[test]
+fn workspace_dirs_of_a_test_built_paths_stay_under_its_directory() {
+    let t = tempfile::tempdir().unwrap();
+    let p = paths_under(t.path());
+    assert_eq!(p.state_dir(), t.path().join("data").join("state"));
+    assert_eq!(p.workspaces_dir(), t.path().join("data").join("state").join("workspaces"));
+    assert_eq!(p.workspace_cache_dir(), t.path().join("cache").join("workspaces"));
+}
+
+#[test]
+fn write_atomic_is_public_sets_0600_and_leaves_no_temp_file() {
+    use zygo_core::session_dir::write_atomic;
+    let t = tempfile::tempdir().unwrap();
+    let f = t.path().join("workspace.json");
+    write_atomic(&f, b"one").unwrap();
+    write_atomic(&f, b"two").unwrap();
+    assert_eq!(std::fs::read(&f).unwrap(), b"two");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    // A failed rename (the target is a directory) is an error; the temporary file is deleted.
+    let taken = t.path().join("taken");
+    std::fs::create_dir(&taken).unwrap();
+    assert!(write_atomic(&taken, b"x").is_err());
+    let mut names: Vec<String> = std::fs::read_dir(t.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["taken", "workspace.json"]);
+}
+
+#[test]
+fn session_dir_activity_accessors() {
+    let d = SessionDir::new(std::path::PathBuf::from("/c/sessions/01ABC"));
+    assert_eq!(d.activity_json(), d.root.join("activity.json"));
+    assert_eq!(d.activity_lock(), d.root.join("activity.lock"));
+}
+
+#[test]
+fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
+    use zygo_core::session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace};
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    assert_eq!(SessionView::default().workspace, None);
+    // a view.json written before the field existed
+    std::fs::write(d.view_json(), br#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":true,"results":true,"compact_tool":true,"navigation":false,"trim_threshold_bytes":16384,"head_lines":60,"tail_lines":20,"statusline_style":"verbose"}"#).unwrap();
+    let old = SessionView::load(&d).unwrap();
+    assert_eq!(old.workspace, None);
+    // Without `workspace`: a save and a load give the same view.
+    old.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), old);
+    // A member with a resume note (AU58, AU72).
+    let member = Member { ws_id: "w1".into(), pane: "p1".into() };
+    let note = ResumeNote {
+        clean_stop: true,
+        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into() }],
+        closed_units: vec!["C1".into()],
+    };
+    let v = SessionView {
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note) }),
+        ..old.clone()
+    };
+    v.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), v);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(
+        json["workspace"],
+        serde_json::json!({
+            "member": { "ws_id": "w1", "pane": "p1" },
+            "resume_note": {
+                "clean_stop": true,
+                "interrupted": [{ "agent_id": "a1", "agent_type": "zygo-code" }],
+                "closed_units": ["C1"]
+            }
+        })
+    );
+    // A member with no note: `resume_note` is not in the file.
+    let m: ViewWorkspace = serde_json::from_str(r#"{"member":{"ws_id":"w1","pane":"p1"}}"#).unwrap();
+    assert_eq!(m, ViewWorkspace { member, resume_note: None });
 }

@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
@@ -53,6 +53,30 @@ impl Paths {
             cache_dir,
             data_dir,
         }
+    }
+
+    /// The state directory (workspaces design W§7.1): `home/.local/state/zygo` when `data_dir` is
+    /// `home/.local/share/zygo`; in every other case `data_dir/state`.
+    pub fn state_dir_in(&self, home: Option<&Path>) -> PathBuf {
+        match home {
+            Some(h) if self.data_dir == h.join(".local/share/zygo") => h.join(".local/state/zygo"),
+            _ => self.data_dir.join("state"),
+        }
+    }
+
+    /// `state_dir_in` with the home directory that `from_env` uses.
+    pub fn state_dir(&self) -> PathBuf {
+        self.state_dir_in(Some(&var("HOME").unwrap_or_else(os_home)))
+    }
+
+    /// The durable state of every workspace (W§7.1).
+    pub fn workspaces_dir(&self) -> PathBuf {
+        self.state_dir().join("workspaces")
+    }
+
+    /// The cache files of every workspace (W§7.1).
+    pub fn workspace_cache_dir(&self) -> PathBuf {
+        self.cache_dir.join("workspaces")
     }
 }
 
