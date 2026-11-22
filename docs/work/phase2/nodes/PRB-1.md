@@ -134,9 +134,9 @@ A failed line (the contract's mapping). Write the row and the note with `failed`
 
 ### Task 2: the probe helper (no agent)
 
-- [ ] **2.1** Create `scripts/premises/hud_probe_test.py` with exactly the text of Block B. Run `python3 -I scripts/premises/hud_probe_test.py; echo "rc=$?"`. Expected: a `FileNotFoundError` traceback for `hud_probe.py`, `rc=1`.
-- [ ] **2.2** Create `scripts/premises/hud_probe.py` with exactly the text of Block A. Run `python3 -I scripts/premises/hud_probe_test.py`. Expected: 14 lines that start with `ok: H`, then `hud_probe tests: ok (14)`, exit 0.
-- [ ] **2.3** Commit the two files and this file: `test(premises): hud_probe.py, the PRB-1 probe status line command and analyzer` (with the two trailers). Check: `git log -1 --format=%B` ends with the two trailer lines.
+- [x] **2.1** Create `scripts/premises/hud_probe_test.py` with exactly the text of Block B. Run `python3 -I scripts/premises/hud_probe_test.py; echo "rc=$?"`. Expected: a `FileNotFoundError` traceback for `hud_probe.py`, `rc=1`.
+- [x] **2.2** Create `scripts/premises/hud_probe.py` with exactly the text of Block A. Run `python3 -I scripts/premises/hud_probe_test.py`. Expected: 14 lines that start with `ok: H`, then `hud_probe tests: ok (14)`, exit 0.
+- [x] **2.3** Commit the two files and this file: `test(premises): hud_probe.py, the PRB-1 probe status line command and analyzer` (with the two trailers). Check: `git log -1 --format=%B` ends with the two trailer lines.
 
 ### Task 3: the live script (no agent)
 
