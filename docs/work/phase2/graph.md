@@ -64,7 +64,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | DONE | judgment | 8978541; acceptance snapshot 33, state 22, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M7, D1-D6 |
-| W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
+| W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | PLANNED | judgment | — |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
@@ -209,3 +209,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W6 DONE (8978541): snapshot. Merged tree: snapshot 33, state 22, zygo-workspace all pass, check --tests clean. I1-I5, R1-R8, S1-S8 applied: spec W§7.3, W§7.4; W3 gains Multiplexer::socket. FIX-14 added: state.rs hold retries the lock. W7 ready. |
 | 2026-11-22 | FIX-14 planned: 6 steps, test first. The race is not forked in the test: a second handle holds the lock and a thread drops it after 50 ms, then hold must return (author's call). |
 | 2026-11-22 | FIX-14 DROPPED after its diff review: premise false. tests/state.rs starts no process, each test binary is its own process, each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5. Branch discarded unmerged (author's call). |
+| 2026-11-22 | W7 planned: 39 steps, test first. C1-C15 applied: W3, W5 Produces; W8, W10 Consumes and Spec; spec AU30, AU96, AU98, W§7.4, W§8.1 steps 3, 5, 7, 9, 12, W§10, W§13. Adds Multiplexer::rename_window, NewSession.owner, args::filter_from (author's call). |
