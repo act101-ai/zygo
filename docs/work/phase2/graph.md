@@ -82,7 +82,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | IN-PROGRESS | judgment | wt .worktrees/phase2/W2 |
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
-| W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | PLANNED | judgment | — |
+| W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | IN-PROGRESS | judgment | wt .worktrees/phase2/W4 |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | IN-PROGRESS | judgment | wt .worktrees/phase2/W5 |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
@@ -138,3 +138,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | L3 plan notes for later nodes: a held request is held by the server side (E2 #42 needs a provider that holds its reply); one control directory serves one live stub (M2 gives each member its own ZYGO_STUB_CONTROL and ZYGO_STUB_OUT); the stub runs no OpenCode plugin (E2 #74). |
 | 2026-11-21 | L3 DONE (two rounds). Round 2: the held-request test waits for the held reply before it asserts the open state. cargo test -p zygo alone does not build stub-agent; common::stub_agent() names the build command. |
 | 2026-11-21 | W5 plan design calls (author's call, spec fixes none): a loadout with no window is an error; LoadoutPane.kind is a string checked by config check; built-in solo lives in zygo-workspace; drain_timeout has no check (W10 or M1 handles a refused value). |
+| 2026-11-21 | W4 plan, author's calls where AU30 is silent: every positional is removed for both agents (an OpenCode project path is not restored); --teleport is removed as an optional-value session flag. For L2: has_session_arg must count --teleport. |
+| 2026-11-21 | W4 plan notes: args::filter resolves file paths against the process cwd (matters to W7 and to config check in M1). For W7: W§8.1 step 10 says each name of AU64, but the W7 contract consumes only env::REMOVE_ALWAYS. |
+| 2026-11-21 | W2 plan, author's calls: validation also needs id equal to the directory name and version 1; errors.log is cut to its newest lines within 32 KiB when a line would pass 64 KiB; the .tmp sweep of W§7.3 is in Store::update. |
