@@ -312,7 +312,8 @@ fn update_refuses_an_invalid_result_and_a_closure_error() {
     assert!(!store.dir().join("workspace.json").exists());
     store.update(S5, &mut identity).unwrap();
     let before = raw(&store);
-    let hostile: [(&str, fn(&mut Workspace)); 6] = [
+    type Change = fn(&mut Workspace);
+    let hostile: [(&str, Change); 6] = [
         ("invalid version", |ws| ws.version = 2),
         ("invalid id", |ws| ws.id = "fedcba9876543210".into()),
         ("invalid name", |ws| ws.name = "a b".into()),
