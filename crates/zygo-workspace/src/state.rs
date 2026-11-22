@@ -1,10 +1,13 @@
 //! `workspace.json` types, atomic write, locks, live check. Owner: node W2 (W§7.1-W§7.3).
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use zygo_core::paths::Paths;
+
+use crate::identity::{valid_name, valid_pane_key, valid_tmux_session, valid_ws_id};
 
 /// The `version` this zygo reads and writes (AU29).
 pub const VERSION: u32 = 1;
@@ -271,6 +274,62 @@ impl MemberRecord {
     }
 }
 
+#[derive(Debug)]
+pub enum StateError {
+    /// `workspace.json` has a `version` this zygo does not know (AU29).
+    Newer { path: PathBuf },
+    /// `workspace.json` does not parse, or a field fails its check (AU84).
+    Invalid { path: PathBuf, reason: String },
+    /// Another writer held `lock` for the whole bound.
+    Busy,
+    /// Another process held `op.lock` for the whole retry time (AU83).
+    OpHeld,
+    Io(std::io::Error),
+    /// The closure given to `update` returned an error; nothing was written.
+    Refused(anyhow::Error),
+}
+
+impl std::fmt::Display for StateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StateError::Newer { .. } => f.write_str("workspace state is from a newer zygo; run zygo update"),
+            StateError::Invalid { path, reason } => write!(f, "{}: {reason}", path.display()),
+            StateError::Busy => f.write_str("workspace state is locked"),
+            StateError::OpHeld => f.write_str("up or down is in progress"),
+            StateError::Io(e) => write!(f, "{e}"),
+            StateError::Refused(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+impl std::error::Error for StateError {}
+
+impl From<std::io::Error> for StateError {
+    fn from(e: std::io::Error) -> StateError {
+        StateError::Io(e)
+    }
+}
+
+/// The checks of AU84 on a state that belongs to the directory `id`; the text is the first check that fails.
+fn validate(ws: &Workspace, id: &str) -> Result<(), String> {
+    let reason = if ws.version != VERSION {
+        "invalid version"
+    } else if !valid_ws_id(&ws.id) || ws.id != id {
+        "invalid id"
+    } else if !valid_name(&ws.name) {
+        "invalid name"
+    } else if !valid_tmux_session(&ws.tmux_session, &ws.name) {
+        "invalid tmux_session"
+    } else if ws.panes.iter().any(|p| !valid_pane_key(&p.key)) || ws.members.keys().any(|k| !valid_pane_key(k)) {
+        "invalid pane key"
+    } else {
+        return Ok(());
+    };
+    Err(reason.to_string())
+}
+
+const STATE_FILE: &str = "workspace.json";
+
 /// The state of one workspace: the files in `<workspaces_dir>/<id>`.
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -281,7 +340,7 @@ pub struct Store {
 
 impl Store {
     /// Names the state directory of `ws_id`; it creates nothing and reads nothing. Each operation checks the id
-    /// before it builds a path from it (AU84).
+    /// before it reads or writes a path made from it (AU84).
     pub fn open(paths: &Paths, ws_id: &str) -> Store {
         Store { id: ws_id.to_string(), dir: paths.workspaces_dir().join(ws_id), sessions_dir: paths.sessions_dir.clone() }
     }
@@ -289,5 +348,48 @@ impl Store {
     /// The state directory: `workspace.json`, `lock`, `op.lock`, `errors.log` and the files of other modules.
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    fn state_file(&self) -> PathBuf {
+        self.dir.join(STATE_FILE)
+    }
+
+    fn invalid_id(&self) -> StateError {
+        StateError::Invalid { path: self.state_file(), reason: "invalid id".to_string() }
+    }
+
+    /// Reads `workspace.json` with no lock: a write replaces the file in one rename, so a reader gets a whole
+    /// file (W§7.3). `Ok(None)` when no state exists.
+    pub fn read(&self) -> Result<Option<Workspace>, StateError> {
+        if !valid_ws_id(&self.id) {
+            return Err(self.invalid_id());
+        }
+        let path = self.state_file();
+        let bytes = match fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(StateError::Io(e)),
+        };
+        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(e) => return Err(StateError::Invalid { path, reason: e.to_string() }),
+        };
+        // Before the typed parse: a newer form is never reported as invalid (AU29).
+        if value.get("version").and_then(serde_json::Value::as_u64).is_some_and(|v| v > u64::from(VERSION)) {
+            return Err(StateError::Newer { path });
+        }
+        let ws: Workspace = match serde_json::from_value(value) {
+            Ok(ws) => ws,
+            Err(e) => return Err(StateError::Invalid { path, reason: e.to_string() }),
+        };
+        match validate(&ws, &self.id) {
+            Ok(()) => Ok(Some(ws)),
+            Err(reason) => Err(StateError::Invalid { path, reason }),
+        }
+    }
+
+    /// The phase as the file has it now, with no lock; `None` when the state is missing or cannot be read.
+    pub fn phase_unlocked(&self) -> Option<Phase> {
+        self.read().ok().flatten().map(|ws| ws.phase)
     }
 }

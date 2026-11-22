@@ -133,3 +133,98 @@ fn every_struct_keeps_unknown_fields() {
     assert_eq!(ws.extra["future"], json!({"n": [1, "x"]}));
     assert_eq!(serde_json::to_value(&ws).unwrap(), v);
 }
+
+#[test]
+fn read_of_a_missing_state_is_none_and_creates_nothing() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    assert_eq!(store.dir(), p.workspaces_dir().join(ID));
+    assert!(matches!(store.read(), Ok(None)));
+    assert_eq!(store.phase_unlocked(), None);
+    assert!(!p.workspaces_dir().exists());
+}
+
+#[test]
+fn read_gives_the_state_and_its_phase() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    put(&store, &doc());
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!((ws.version, ws.id.as_str(), ws.name.as_str(), ws.phase), (1, ID, "app", Phase::Up));
+    assert_eq!(store.phase_unlocked(), Some(Phase::Up));
+}
+
+#[test] // AU29: also when the newer form does not fit the version 1 types
+fn read_refuses_a_newer_version() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut v = doc();
+    v["version"] = json!(2);
+    v["panes"] = json!("another form");
+    put(&store, &v);
+    let e = store.read().unwrap_err();
+    assert!(matches!(&e, StateError::Newer { path } if path == &store.dir().join("workspace.json")));
+    assert_eq!(e.to_string(), "workspace state is from a newer zygo; run zygo update");
+    assert_eq!(store.phase_unlocked(), None);
+}
+
+#[test] // AU84 with hostile input, W§10 "does not parse"
+fn read_validates_each_field() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let long = "a".repeat(33);
+    let cases: Vec<(&str, Value, &str)> = vec![
+        ("/id", json!("abc"), "invalid id"),
+        ("/id", json!("0123456789ABCDEF"), "invalid id"),
+        ("/id", json!("../../../../etc"), "invalid id"),
+        ("/id", json!("fedcba9876543210"), "invalid id"), // valid form, not this directory
+        ("/name", json!("a b"), "invalid name"),
+        ("/name", json!(""), "invalid name"),
+        ("/name", json!("App"), "invalid name"),
+        ("/name", json!("a;rm -rf"), "invalid name"),
+        ("/name", json!(long), "invalid name"),
+        ("/tmux_session", json!("other"), "invalid tmux_session"),
+        ("/tmux_session", json!("zygo-other"), "invalid tmux_session"),
+        ("/tmux_session", json!("zygo-app\n"), "invalid tmux_session"),
+        ("/tmux_session", json!("app"), "invalid tmux_session"),
+        ("/version", json!(0), "invalid version"),
+    ];
+    for (at, value, reason) in cases {
+        let mut v = doc();
+        *v.pointer_mut(at).unwrap() = value.clone();
+        put(&store, &v);
+        let e = store.read().unwrap_err();
+        assert!(matches!(&e, StateError::Invalid { reason: r, .. } if r == reason), "{at} = {value}: {e}");
+        assert_eq!(store.phase_unlocked(), None);
+    }
+    for key in ["k$(x)", "#{pane_id}", "kabcdefg", "kabcdefghi", "kABCDEFGH", "kabcdef01", "xabcdefgh", ""] {
+        let mut v = doc();
+        v["panes"] = json!([{"key": key, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "shell"}]);
+        put(&store, &v);
+        assert!(matches!(store.read(), Err(StateError::Invalid { reason, .. }) if reason == "invalid pane key"), "panes {key:?}");
+        let mut v = doc();
+        v["members"] = json!({key: {"state": "ended", "launch": {"kind": "opencode"}}});
+        put(&store, &v);
+        assert!(matches!(store.read(), Err(StateError::Invalid { reason, .. }) if reason == "invalid pane key"), "members {key:?}");
+    }
+    for text in ["", "{", "[]", "{\"version\": 1}", "\u{0}"] {
+        fs::write(store.dir().join("workspace.json"), text).unwrap();
+        let e = store.read().unwrap_err();
+        assert!(matches!(&e, StateError::Invalid { path, .. } if path == &store.dir().join("workspace.json")), "{text:?}");
+        assert!(e.to_string().starts_with(&store.dir().join("workspace.json").display().to_string()));
+    }
+}
+
+#[test] // AU84 on the id given to `open`: no path outside the state directory is read
+fn an_invalid_store_id_reads_nothing() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    fs::create_dir_all(p.workspaces_dir().join("x")).unwrap();
+    fs::write(p.workspaces_dir().join("x/workspace.json"), serde_json::to_vec(&doc()).unwrap()).unwrap();
+    for id in ["x", "../workspaces/x", "", "0123456789abcdeg"] {
+        let store = Store::open(&p, id);
+        assert!(matches!(store.read(), Err(StateError::Invalid { reason, .. }) if reason == "invalid id"), "{id:?}");
+        assert_eq!(store.phase_unlocked(), None);
+    }
+}
