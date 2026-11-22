@@ -917,10 +917,20 @@ fn session_args_follow_w4_and_the_pinned_help() {
     assert!(!cc.has_session_arg(&[]));
     assert!(!cc.has_session_arg(&strings(&["--", "--resume"])));
     assert!(!cc.has_session_arg(&strings(&["--append-system-prompt", "--teleport"])));
-    assert_eq!(cc.preassign_args("U1"), strings(&["--session-id", "U1"]));
-    assert_eq!(cc.resume_args("U1"), strings(&["--resume", "U1"]));
-    for a in [cc.preassign_args("U1"), cc.resume_args("U1")] {
-        assert!(help.contains(&a[0]), "{}", a[0]);
+    // L2 round 2 item 8: the `=` form. The pinned help uses it for a required value (`--output-format=stream-json`)
+    // and for an optional value (`--debug=hooks,mcp`, `--tmux=classic`) of the same parser.
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/help.txt")).unwrap();
+    for t in ["--output-format=stream-json", "--debug=hooks,mcp", "--tmux=classic", "--session-id <uuid>", "-r, --resume [value]"] {
+        assert!(text.contains(t), "{t}");
+    }
+    assert_eq!(cc.preassign_args("U1"), strings(&["--session-id=U1"]));
+    assert_eq!(cc.resume_args("U1"), strings(&["--resume=U1"]));
+    for (a, name) in [(cc.preassign_args("U1"), "--session-id"), (cc.resume_args("U1"), "--resume")] {
+        assert!(help.contains(a[0].split('=').next().unwrap()), "{}", a[0]);
+        // the parse check: W4's walk reads one session flag with the value `U1`
+        assert!(cc.has_session_arg(&a), "{a:?}");
+        let o = zygo_workspace::args::occurrences(Agent::ClaudeCode, &a);
+        assert_eq!(o.iter().map(|o| (o.name, o.values.clone())).collect::<Vec<_>>(), [(name, strings(&["U1"]))]);
     }
 }
 

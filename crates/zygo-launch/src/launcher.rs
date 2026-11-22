@@ -54,6 +54,9 @@ pub struct LaunchOutcome {
     pub spawned: bool,
     /// The launcher received SIGTERM or SIGHUP between the start of its signal handling and the end of its cleanup.
     pub received: bool,
+    /// `LaunchOpts.member` was set and the launcher used no member, because the Claude Code arguments hold
+    /// `--settings` before any `--` (AU58, AU59). Set before the session callback runs.
+    pub member_dropped: bool,
 }
 
 /// What a launch records for its outcome besides the code.
@@ -62,6 +65,7 @@ struct Marks {
     signal: Cell<Option<i32>>,
     spawned: Cell<bool>,
     received: Cell<bool>,
+    member_dropped: Cell<bool>,
 }
 
 /// The signal handling of one launch. Its drop copies `signals::received()` into the marks; the handling ends after that.
@@ -77,8 +81,20 @@ impl Drop for Handling<'_> {
 }
 
 /// Called once, after the session directory exists and before the agent starts, with the session directory, the
-/// session id and the resolved agent program (workspaces design AU34).
-pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path) -> anyhow::Result<()> + Send>;
+/// session id, the resolved agent program and the member of this launch (workspaces design AU34). The member is
+/// `None` for a launch with no member and for a member that the launcher dropped (`LaunchOutcome.member_dropped`).
+pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path, Option<&Member>) -> anyhow::Result<()> + Send>;
+
+/// The agent session that the launcher starts or resumes (W§8.3, AU3). The launcher puts the adapter's
+/// `preassign_args` or `resume_args` before the user's arguments, so before any `--`; for OpenCode, right after a
+/// `run` subcommand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentSession {
+    /// A fresh session with this id (`AgentAdapter::preassign_args`).
+    Preassign(String),
+    /// Resume the session with this id (`AgentAdapter::resume_args`).
+    Resume(String),
+}
 
 pub struct LaunchOpts {
     /// The user's arguments after `--`.
@@ -95,6 +111,8 @@ pub struct LaunchOpts {
     pub member: Option<Member>,
     /// The inputs of the resume note; written to the session view only with `member` (AU72).
     pub resume_note: Option<ResumeNote>,
+    /// `Some`: the launcher adds the session arguments of the adapter for it (W§8.3, AU3).
+    pub agent_session: Option<AgentSession>,
     /// An error is logged to the session log and the launch goes on.
     pub on_session: Option<SessionCallback>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
@@ -125,6 +143,7 @@ impl LaunchOpts {
             paths,
             member: None,
             resume_note: None,
+            agent_session: None,
             on_session: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
@@ -178,12 +197,31 @@ impl Launcher {
     pub fn run(adapter: &dyn AgentAdapter, opts: LaunchOpts) -> LaunchOutcome {
         let marks = Marks::default();
         let code = Self::launch(adapter, opts, &marks);
-        LaunchOutcome { code, signal: marks.signal.get(), spawned: marks.spawned.get(), received: marks.received.get() }
+        LaunchOutcome {
+            code,
+            signal: marks.signal.get(),
+            spawned: marks.spawned.get(),
+            received: marks.received.get(),
+            member_dropped: marks.member_dropped.get(),
+        }
     }
 
     /// The launch; returns the process exit code and records the rest of the outcome in `marks`.
     fn launch(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, marks: &Marks) -> i32 {
         let on_session = opts.on_session.take();
+        if let Some(s) = &opts.agent_session {
+            let extra = match s {
+                AgentSession::Preassign(id) => adapter.preassign_args(id),
+                AgentSession::Resume(id) => adapter.resume_args(id),
+            };
+            insert_session_args(adapter.agent(), &mut opts.args, extra);
+        }
+        // AU58, AU59: a member whose Claude Code arguments hold `--settings` before any `--` runs as a plain launch.
+        // Decided before the session callback and the session view.
+        if opts.member.is_some() && adapter.agent() == Agent::ClaudeCode && claude_code::has_user_settings(&opts.args) {
+            opts.member = None;
+            marks.member_dropped.set(true);
+        }
         let out = Out {
             #[cfg(feature = "test-hooks")]
             buf: opts.stderr.clone(),
@@ -375,7 +413,7 @@ impl Launcher {
         let guard = Finish { sd: sd.clone(), end: Some(end), paths: &opts.paths, _pid: pid };
         // AU34: the session directory exists and the agent is not started; an error never stops the launch (C6).
         if let Some(call) = on_session
-            && let Err(e) = call(&sd, &grant.session, &program)
+            && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref())
         {
             session_dir::log(&sd, &format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
         }
@@ -496,11 +534,10 @@ impl Session<'_> {
             }))
             .collect();
         let c = &self.cfg.config;
+        // `None` when the launcher dropped the member (AU59; `Launcher::launch`).
+        let member = opts.member.clone();
         // The base stays although every field is named today: a later field then needs no change here
         // until the launcher sets it (statusline HUD design H§17 note 1).
-        // AU58, AU59: a member whose Claude Code arguments hold `--settings` before any `--` runs as a plain launch.
-        let cleared = opts.member.is_some() && adapter.agent() == Agent::ClaudeCode && claude_code::has_user_settings(&opts.args);
-        let member = if cleared { None } else { opts.member.clone() };
         #[allow(clippy::needless_update)]
         let view = SessionView {
             session: self.grant.session.clone(),
@@ -575,7 +612,7 @@ impl Session<'_> {
         for l in &spec.lines {
             out.line(l);
         }
-        if cleared {
+        if marks.member_dropped.get() {
             out.line(claude_code::MEMBER_SETTINGS_WARN);
         }
         for l in &spec.log {
@@ -634,6 +671,24 @@ impl Session<'_> {
             }
         }
     }
+}
+
+/// Puts the agent session arguments `extra` before the user's arguments, so before any `--` (W§8.3, AU3). For
+/// OpenCode, when the first positional token before `--` (by W4's walk, so not a flag value) is the subcommand `run`,
+/// they go right after it.
+fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) {
+    let at = match agent {
+        Agent::ClaudeCode => 0,
+        Agent::OpenCode => {
+            let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+            let taken: Vec<std::ops::Range<usize>> = zygo_workspace::args::occurrences(agent, args).into_iter().map(|o| o.tokens).collect();
+            (0..end)
+                .find(|i| !taken.iter().any(|r| r.contains(i)) && !args[*i].starts_with('-'))
+                .filter(|i| args[*i] == "run")
+                .map_or(0, |i| i + 1)
+        }
+    };
+    args.splice(at..at, extra);
 }
 
 #[cfg(feature = "test-hooks")]

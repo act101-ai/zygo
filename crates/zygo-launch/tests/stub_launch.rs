@@ -171,6 +171,75 @@ fn member_with_settings_after_double_dash_stays_a_member() { // AU58, review min
 }
 
 #[test]
+fn session_callback_of_a_member_with_settings_gets_no_member() { // AU34, AU59, L2 round 2 item 1
+    use std::sync::{Arc, Mutex};
+    use zygo_core::session_view::Member;
+    let member = Member { ws_id: "ws-1".into(), pane: "p-1".into() };
+    let cases: [(Option<Member>, Vec<String>, Option<Member>, bool); 4] = [
+        (Some(member.clone()), vec!["--settings".into(), "x.json".into()], None, true),
+        (Some(member.clone()), vec!["--".into(), "--settings".into(), "x.json".into()], Some(member.clone()), false),
+        (Some(member.clone()), vec![], Some(member.clone()), false),
+        (None, vec!["--settings".into(), "x.json".into()], None, false),
+    ];
+    for (given, args, want, dropped) in cases {
+        let rig = rig();
+        let seen: Arc<Mutex<Option<Option<Member>>>> = Arc::default();
+        let s2 = seen.clone();
+        let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+            o.member = given.clone();
+            o.args = args.clone();
+            o.on_session = Some(Box::new(move |_, _, _, m| {
+                *s2.lock().unwrap() = Some(m.cloned());
+                Ok(())
+            }));
+        });
+        assert_eq!(r.code, 0, "{args:?}: {}", r.stderr);
+        assert_eq!(seen.lock().unwrap().take(), Some(want), "{args:?}");
+        assert_eq!(r.outcome.member_dropped, dropped, "{args:?}");
+    }
+}
+
+#[test]
+fn agent_session_args_go_before_the_users_args_and_after_opencode_run() { // W§8.3, AU3, L2 round 2 item 8
+    use zygo_launch::launcher::AgentSession;
+    let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let rig = rig();
+    let user = s(&["--model", "opus", "--", "--resume", "x"]);
+    for (session, first) in [(AgentSession::Preassign("U1".into()), "--session-id=U1"), (AgentSession::Resume("U1".into()), "--resume=U1")] {
+        let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+            o.agent_session = Some(session.clone());
+            o.args = user.clone();
+        });
+        assert_eq!(r.code, 0, "{}", r.stderr);
+        let mut want = vec![first.to_string()];
+        want.extend(user.clone());
+        assert!(r.cap.argv.ends_with(&want), "{:?}", r.cap.argv);
+        assert_eq!(r.cap.argv.iter().filter(|a| a.starts_with("--session-id") || a.starts_with("--resume")).count(), 2, "{:?}", r.cap.argv);
+    }
+    let resume = AgentSession::Resume("ses_1".into());
+    for (args, want) in [
+        (s(&["run", "hello"]), s(&["run", "-s", "ses_1", "hello"])),
+        (s(&["--model", "zygo/lead", "run", "hi"]), s(&["--model", "zygo/lead", "run", "-s", "ses_1", "hi"])),
+        (s(&["--model", "zygo/lead"]), s(&["-s", "ses_1", "--model", "zygo/lead"])),
+        (s(&["--", "run"]), s(&["-s", "ses_1", "--", "run"])),
+        (s(&[]), s(&["-s", "ses_1"])),
+    ] {
+        let r = launch(&rig, &opencode(&rig), OPENCODE_VERSION, |o| {
+            o.agent_session = Some(resume.clone());
+            o.args = args.clone();
+        });
+        assert_eq!(r.code, 0, "{}", r.stderr);
+        assert_eq!(r.cap.argv, want, "{args:?}");
+    }
+    // OpenCode has no pre-assign: the arguments stay as typed
+    let r = launch(&rig, &opencode(&rig), OPENCODE_VERSION, |o| {
+        o.agent_session = Some(AgentSession::Preassign("U1".into()));
+        o.args = s(&["run", "hello"]);
+    });
+    assert_eq!(r.cap.argv, s(&["run", "hello"]));
+}
+
+#[test]
 fn session_callback_runs_after_the_session_dir_exists_and_before_the_agent_starts() { // AU34
     use std::sync::{Arc, Mutex};
     let rig = rig();
@@ -179,7 +248,7 @@ fn session_callback_runs_after_the_session_dir_exists_and_before_the_agent_start
     let seen: Arc<Mutex<Option<Seen>>> = Arc::default();
     let (s2, out) = (seen.clone(), rig.root.join("out"));
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
-        o.on_session = Some(Box::new(move |sd, session, program| {
+        o.on_session = Some(Box::new(move |sd, session, program, _member| {
             *s2.lock().unwrap() = Some((sd.root.clone(), session.to_string(), program.to_path_buf(), sd.url().is_file(), out.join("argv.json").exists()));
             std::fs::write(sd.root.join("from-callback"), "1")?;
             Ok(())
@@ -200,9 +269,9 @@ fn a_session_callback_error_is_logged_and_the_launch_goes_on() { // AU34, C6
     let rig = rig();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
         o.env.0.push(("ZYGO_STUB_EXIT".into(), "7".into()));
-        o.on_session = Some(Box::new(|_, _, _| Err(anyhow::anyhow!("no results link\nline two"))));
+        o.on_session = Some(Box::new(|_, _, _, _| Err(anyhow::anyhow!("no results link\nline two"))));
     });
-    assert_eq!(r.outcome, LaunchOutcome { code: 7, signal: None, spawned: true, received: false }, "{}", r.stderr);
+    assert_eq!(r.outcome, LaunchOutcome { code: 7, signal: None, spawned: true, received: false, member_dropped: false }, "{}", r.stderr);
     let log = &r.cap.session["session.log"];
     assert!(log.lines().any(|l| l == "session callback: no results link\\nline two"), "{log}");
     assert!(!r.stderr.contains("session callback"), "{}", r.stderr);
@@ -220,7 +289,7 @@ fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
     let ctl = rig.root.join("ctl-exit");
     stub_control(&ctl, "exit 137").unwrap();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, control(&ctl));
-    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: None, spawned: true, received: false }, "{}", r.stderr);
+    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: None, spawned: true, received: false, member_dropped: false }, "{}", r.stderr);
     // SIGKILL to the agent: the same code, and the signal.
     let ctl = rig.root.join("ctl-kill");
     let r = std::thread::scope(|s| {
@@ -233,7 +302,7 @@ fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
         assert!(pid.is_some(), "the stub did not start: {}", r.stderr);
         r
     });
-    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: Some(libc::SIGKILL), spawned: true, received: false }, "{}", r.stderr);
+    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: Some(libc::SIGKILL), spawned: true, received: false, member_dropped: false }, "{}", r.stderr);
 }
 
 #[test]

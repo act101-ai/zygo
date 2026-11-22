@@ -439,10 +439,14 @@ impl AgentAdapter for ClaudeCode {
     fn has_session_arg(&self, args: &[String]) -> bool {
         zygo_workspace::args::has_session_arg(Agent::ClaudeCode, args)
     }
+    /// `--session-id=<id>`: one token, so the id is never read as another flag or a prompt word. The pinned help uses
+    /// the `=` form for options of the same parser (`--output-format=stream-json`).
     fn preassign_args(&self, id: &str) -> Vec<String> {
-        vec!["--session-id".into(), id.into()]
+        vec![format!("--session-id={id}")]
     }
+    /// `--resume=<id>`: `--resume` takes an optional value, so the `=` form keeps the id bound to it; the pinned help
+    /// uses the `=` form for optional values of the same parser (`--debug=hooks,mcp`, `--tmux=classic`).
     fn resume_args(&self, id: &str) -> Vec<String> {
-        vec!["--resume".into(), id.into()]
+        vec![format!("--resume={id}")]
     }
 }
