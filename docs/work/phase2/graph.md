@@ -78,7 +78,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | IN-PROGRESS | judgment | wt .worktrees/phase2/X1 |
-| L3 | Stub agent behaviors for W§18 and stub helpers | — | TODO | implementation | — |
+| L3 | Stub agent behaviors for W§18 and stub helpers | — | PLANNED | implementation | — |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | IN-PROGRESS | judgment | wt .worktrees/phase2/W1 |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | TODO | judgment | — |
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
