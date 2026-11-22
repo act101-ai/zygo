@@ -1,0 +1,13 @@
+{
+  "version": "1.19.6",
+  "help_hits": [],
+  "control": {
+    "username": "kept",
+    "zygoProbeUnknownKey": "dropped"
+  },
+  "keys": {
+    "statusLine": "dropped",
+    "statusline": "dropped",
+    "status_line": "dropped"
+  }
+}

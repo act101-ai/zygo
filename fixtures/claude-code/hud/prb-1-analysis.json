@@ -1,0 +1,138 @@
+{
+  "sgr": {
+    "stripe": [
+      1,
+      3,
+      6
+    ],
+    "logo_fg": 15,
+    "logo_bold": true,
+    "worktree_fg": 172,
+    "ok16": true,
+    "ok256": true,
+    "ok": true
+  },
+  "two": {
+    "rows": 2,
+    "logo_col": 6,
+    "refl_col": 6
+  },
+  "compact": {
+    "scissors": true,
+    "vs16": false
+  },
+  "tw": {
+    "B": 1,
+    "C": 1,
+    "D": 1,
+    "ellipsis": 1
+  },
+  "wide": {
+    "A": {
+      "ruler": 193,
+      "ellipsis": true,
+      "indent": 2,
+      "shown": 196,
+      "cols": 200,
+      "class": "cut",
+      "gap": 2,
+      "loss": 4
+    },
+    "B": {
+      "ruler": 183,
+      "ellipsis": true,
+      "indent": 2,
+      "shown": 196,
+      "cols": 200,
+      "class": "cut",
+      "diff": 10,
+      "c": 1
+    },
+    "C": {
+      "ruler": 183,
+      "ellipsis": true,
+      "indent": 2,
+      "shown": 196,
+      "cols": 200,
+      "class": "cut",
+      "diff": 10,
+      "c": 1
+    },
+    "D": {
+      "ruler": 173,
+      "ellipsis": true,
+      "indent": 2,
+      "shown": 196,
+      "cols": 200,
+      "class": "cut",
+      "diff": 20,
+      "c": 1
+    }
+  },
+  "ph4": {
+    "tty_t": "ENXIO",
+    "tty_p": "ENXIO",
+    "col_t": "200",
+    "col_p": "100",
+    "indent": 2,
+    "gap": 2,
+    "loss": 4
+  },
+  "ph5": {
+    "runs": 22,
+    "first_keys": [
+      "session_id",
+      "transcript_path",
+      "cwd",
+      "scratchpad_dir",
+      "effort",
+      "model",
+      "workspace",
+      "version",
+      "output_style",
+      "cost",
+      "context_window",
+      "exceeds_200k_tokens",
+      "fast_mode",
+      "thinking"
+    ],
+    "efforts": [
+      "{\"level\": \"medium\"}"
+    ]
+  },
+  "ph11": {
+    "runs": 5,
+    "ended": 5,
+    "shown": 5,
+    "lost": 0,
+    "error": false,
+    "after": true,
+    "captures": 16
+  },
+  "ph12": {
+    "starts": 9,
+    "ends": 0,
+    "signals": [
+      "TERM"
+    ],
+    "no_end": 0,
+    "max_concurrent": 1,
+    "class": "kills",
+    "shown": false,
+    "lives": [
+      1.96,
+      1.97,
+      1.95,
+      1.97,
+      1.96,
+      1.96,
+      1.93,
+      1.96,
+      1.94
+    ]
+  },
+  "runs": {
+    "tmux": 25,
+    "pty": 2
+  }
+}

@@ -149,22 +149,22 @@ A failed line (the contract's mapping). Write the row and the note with `failed`
 
 ### Task 4: the gate before the live run (no agent)
 
-- [ ] **4.1** Run `"$HOME/.opencode/bin/opencode" --version`, `claude --version`, `tmux -V` and `command -v jq python3`. Expected: OpenCode 1.18.16 or later (1.19.6 on 2026-11-22); Claude Code 2.1.328 or later (2.1.330); tmux 3.2 or later (3.7c); two paths. A pin is a minimum. When a program is absent or below its minimum: stop and report the output; do not add a stub and do not edit `lib.sh`.
-- [ ] **4.2** Run `ls "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"`. Expected: no name that starts with `zygo-prb-` (a name left by an earlier run would be reused only by a process with the same id; report it if present, do not delete the operator's other sockets).
+- [x] **4.1** Run `"$HOME/.opencode/bin/opencode" --version`, `claude --version`, `tmux -V` and `command -v jq python3`. Expected: OpenCode 1.18.16 or later (1.19.6 on 2026-11-22); Claude Code 2.1.328 or later (2.1.330); tmux 3.2 or later (3.7c); two paths. A pin is a minimum. When a program is absent or below its minimum: stop and report the output; do not add a stub and do not edit `lib.sh`.
+- [x] **4.2** Run `ls "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"`. Expected: no name that starts with `zygo-prb-` (a name left by an earlier run would be reused only by a process with the same id; report it if present, do not delete the operator's other sockets).
 
 ### Task 5: the live run (two Claude Code starts, no prompt)
 
-- [ ] **5.1** Run `PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-hud-probe.sh; echo "rc=$?"` (do not set `N2_SCRATCH`). It takes 2 to 5 minutes and needs no input. Expected: `premises: scratch <dir> …` on stderr; eleven lines `LIVE PH1 …`, `LIVE PH2 …`, `LIVE PH3 …`, `LIVE PH4 …`, `LIVE PH5 …`, `LIVE PH6 …`, `LIVE PH7 …`, `LIVE PH9 …`, `LIVE PH11 …`, `LIVE PH12 …`, `LIVE PH13 …`, each with `verified`, `failed` or `observed`; `live: fixtures in fixtures/claude-code/hud; scratch removed on exit`; `rc=0`. When the script exits 1 with a `live: …` or `premises: …` line, a precondition failed: report the line and stop. When six or more lines say `timeout:` or `claude ended:`, report the lines and stop before Task 6 (session `t` did not start; the rows would hold no observation).
-- [ ] **5.2** Run `pgrep -fl "tmux .*-L zygo-prb-"` and `ls "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"`. Expected: `pgrep` prints nothing (a line that names only the shell of this command line counts as nothing); no `zygo-prb-` name in the listing.
-- [ ] **5.3** Run `ls fixtures/claude-code/hud`. Expected: the fifteen `p-hud-1-*` files of LIV-1, unchanged (`git status --short fixtures/claude-code/hud` names no `p-hud-1-` file), and `prb-1-analysis.json prb-1-compact.txt prb-1-early.txt prb-1-env-pty.json prb-1-env-tmux.json prb-1-events.json prb-1-ph13.json prb-1-results.txt prb-1-run.json prb-1-stdin-pty.json prb-1-stdin-tmux.json prb-1-verbose.txt prb-1-wide.txt`, and `prb-1-slow.txt` only when a slow line showed. A missing file is allowed only for a session that did not start; name it in the report.
-- [ ] **5.4** Search the new fixtures: `grep -rn -i -F -e "$HOME" -e "$(id -un)" -e "$(hostname)" -e "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" fixtures/claude-code/hud/prb-1-*` → no output, exit 1. Then `grep -rn -E -e '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' -e 'sk-' -e 'eyJ[A-Za-z0-9_-]{5,}' -e '@' -e 'Bearer' -e 'sessions/' fixtures/claude-code/hud/prb-1-*` → no output, exit 1, or only lines with the placeholder `00000000-0000-4000-8000-…`. When a line matches: do not edit the fixture by hand; report the file and the line number (not the matched text) and stop.
-- [ ] **5.5** Read every `prb-1-*` fixture once. Expected: status rows, the probe rows, numbers, the stdin key names and `effort`, the kept environment values of the allowlist and the other environment names (names only), the OpenCode key classes; no prompt text, no account name, no organization name, no e-mail address. When a file holds one: report the file and stop.
+- [x] **5.1** Run `PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-hud-probe.sh; echo "rc=$?"` (do not set `N2_SCRATCH`). It takes 2 to 5 minutes and needs no input. Expected: `premises: scratch <dir> …` on stderr; eleven lines `LIVE PH1 …`, `LIVE PH2 …`, `LIVE PH3 …`, `LIVE PH4 …`, `LIVE PH5 …`, `LIVE PH6 …`, `LIVE PH7 …`, `LIVE PH9 …`, `LIVE PH11 …`, `LIVE PH12 …`, `LIVE PH13 …`, each with `verified`, `failed` or `observed`; `live: fixtures in fixtures/claude-code/hud; scratch removed on exit`; `rc=0`. When the script exits 1 with a `live: …` or `premises: …` line, a precondition failed: report the line and stop. When six or more lines say `timeout:` or `claude ended:`, report the lines and stop before Task 6 (session `t` did not start; the rows would hold no observation).
+- [x] **5.2** Run `pgrep -fl "tmux .*-L zygo-prb-"` and `ls "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"`. Expected: `pgrep` prints nothing (a line that names only the shell of this command line counts as nothing); no `zygo-prb-` name in the listing.
+- [x] **5.3** Run `ls fixtures/claude-code/hud`. Expected: the fifteen `p-hud-1-*` files of LIV-1, unchanged (`git status --short fixtures/claude-code/hud` names no `p-hud-1-` file), and `prb-1-analysis.json prb-1-compact.txt prb-1-early.txt prb-1-env-pty.json prb-1-env-tmux.json prb-1-events.json prb-1-ph13.json prb-1-results.txt prb-1-run.json prb-1-stdin-pty.json prb-1-stdin-tmux.json prb-1-verbose.txt prb-1-wide.txt`, and `prb-1-slow.txt` only when a slow line showed. A missing file is allowed only for a session that did not start; name it in the report.
+- [x] **5.4** Search the new fixtures: `grep -rn -i -F -e "$HOME" -e "$(id -un)" -e "$(hostname)" -e "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" fixtures/claude-code/hud/prb-1-*` → no output, exit 1. Then `grep -rn -E -e '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' -e 'sk-' -e 'eyJ[A-Za-z0-9_-]{5,}' -e '@' -e 'Bearer' -e 'sessions/' fixtures/claude-code/hud/prb-1-*` → no output, exit 1, or only lines with the placeholder `00000000-0000-4000-8000-…`. When a line matches: do not edit the fixture by hand; report the file and the line number (not the matched text) and stop.
+- [x] **5.5** Read every `prb-1-*` fixture once. Expected: status rows, the probe rows, numbers, the stdin key names and `effort`, the kept environment values of the allowlist and the other environment names (names only), the OpenCode key classes; no prompt text, no account name, no organization name, no e-mail address. When a file holds one: report the file and stop.
 
 ### Task 6: the records
 
 The values: `<DATE>`, `<CC>`, `<OC>` and `<TMUX>` are `.date`, `.claude_code`, `.opencode` and `.tmux` of `fixtures/claude-code/hud/prb-1-run.json`. For each id, `<RESULT-id>` is the word after the id in its line of `fixtures/claude-code/hud/prb-1-results.txt`, and `<TEXT-id>` is the text after `): ` in that line. In a table cell write `\|` for each `|` of a text.
 
-- [ ] **6.1** In `docs/live-checks.md` (F1): line 3, replace `H§12 (P-HUD-1).` with `H§12 (P-HUD-1, and the PRB-1 probe).`; bullet "Isolation", replace `every run except #28 and the passthrough parts of P-HUD-1 gets a temporary` with `every run except #28, the passthrough parts of P-HUD-1 and the Claude Code sessions of PRB-1 gets a temporary`; bullet "Upstream per row", replace `#28 and P-HUD-1 (all parts but C7, which uses the mock) use the claude.ai login` with `#28, P-HUD-1 (all parts but C7, which uses the mock) and PRB-1 use the claude.ai login`. Then add this section directly above the line `## Results` (the text between the two lines of four backticks):
+- [x] **6.1** In `docs/live-checks.md` (F1): line 3, replace `H§12 (P-HUD-1).` with `H§12 (P-HUD-1, and the PRB-1 probe).`; bullet "Isolation", replace `every run except #28 and the passthrough parts of P-HUD-1 gets a temporary` with `every run except #28, the passthrough parts of P-HUD-1 and the Claude Code sessions of PRB-1 gets a temporary`; bullet "Upstream per row", replace `#28 and P-HUD-1 (all parts but C7, which uses the mock) use the claude.ai login` with `#28, P-HUD-1 (all parts but C7, which uses the mock) and PRB-1 use the claude.ai login`. Then add this section directly above the line `## Results` (the text between the two lines of four backticks):
 
 ````markdown
 ## PRB-1 (status line probe)
@@ -185,7 +185,7 @@ sh scripts/premises/live-hud-probe.sh
 ````
 
   Check: `grep -c '^## PRB-1 (status line probe)$' docs/live-checks.md` → `1`.
-- [ ] **6.2** In `docs/live-checks.md` (F1), add these eleven rows at the end of the table of `## Results`, in this order, with the values in place. In each row leave out a fixture path that step 5.3 did not list.
+- [x] **6.2** In `docs/live-checks.md` (F1), add these eleven rows at the end of the table of `## Results`, in this order, with the values in place. In each row leave out a fixture path that step 5.3 did not list.
 
 ```markdown
 | PRB-1/PH1 | The status line shows SGR colors, 16-color and `38;5;n` (HUD design H§12 PH1) | Claude Code | <CC> | <DATE> | <RESULT-PH1> | tmux <TMUX>, Linux; `scripts/premises/live-hud-probe.sh`, probe status line command, `claude --settings` on the stored login. <TEXT-PH1>. `fixtures/claude-code/hud/prb-1-verbose.txt`, `fixtures/claude-code/hud/prb-1-analysis.json`; H§12 |
@@ -202,29 +202,29 @@ sh scripts/premises/live-hud-probe.sh
 ```
 
   Check: `grep -c '^| PRB-1/PH' docs/live-checks.md` → `11`.
-- [ ] **6.3** In `docs/specs/2026-11-21-statusline-hud-design.md`, H§12 table: for each of the rows PH1, PH2, PH3, PH4, PH5, PH6, PH7, PH9, PH11, PH12, PH13, append this at the end of the third cell ("Evidence so far"), one space before it, directly before the ` | ` that opens the Fallback cell (the cell may hold a LIV-1 note; keep it; FIX-5 may have changed the Fallback cell of PH4; do not change it):
+- [x] **6.3** In `docs/specs/2026-11-21-statusline-hud-design.md`, H§12 table: for each of the rows PH1, PH2, PH3, PH4, PH5, PH6, PH7, PH9, PH11, PH12, PH13, append this at the end of the third cell ("Evidence so far"), one space before it, directly before the ` | ` that opens the Fallback cell (the cell may hold a LIV-1 note; keep it; FIX-5 may have changed the Fallback cell of PH4; do not change it):
 
 ```markdown
 *(Note <DATE>, PRB-1: <RESULT-id> on Claude Code <CC>, tmux <TMUX>, Linux, with the probe status line command of `scripts/premises/live-hud-probe.sh` (not the zygo HUD). <TEXT-id>. `docs/live-checks.md` row PRB-1/<id>.)*
 ```
 
   For PH13 write `on OpenCode <OC>, Linux,` in place of `on Claude Code <CC>, tmux <TMUX>, Linux,`. For an id whose result is `failed`, put this sentence before the closing `)*`: ` The fallback of this row is not built by PRB-1; the PRB-1 contract names: <the nodes of that id in the table "A failed line">.` Check: `grep -c 'PRB-1: \(verified\|failed\|observed\) on ' docs/specs/2026-11-21-statusline-hud-design.md` → `11`; `grep -c '^| PH[0-9]* |' docs/specs/2026-11-21-statusline-hud-design.md` → `13` (no row was split).
-- [ ] **6.4** In the same file, add this paragraph directly below the paragraph that starts `*(Note 2026-11-22, LIV-1: P-HUD-1 ran with` (one empty line between them):
+- [x] **6.4** In the same file, add this paragraph directly below the paragraph that starts `*(Note 2026-11-22, LIV-1: P-HUD-1 ran with` (one empty line between them):
 
 ```markdown
 *(Note <DATE>, PRB-1: the probe of "Probe first" ran after the build, with `scripts/premises/live-hud-probe.sh` on Claude Code <CC>, tmux <TMUX>, Linux, and OpenCode <OC>. It ran Claude Code directly with a `--settings` file that holds only the probe `statusLine` command (refreshInterval 2), with no prompt, in tmux at 200 columns and on a pseudo-terminal of 100 columns; the command printed the two OP13 `printf` outputs, then ruler rows that measure Claude Code's cell count of U+F0645, U+2702 and the logo letters, then an early exit and a slow run. Beside the ids of this paragraph it also checked PH3, PH6, PH7 and PH13 (PRB-1 contract). PH7 and PH9 compare cells in Claude Code's cut and in tmux; the glyphs and the presentation of a terminal font are not checked. Results: a dated PRB-1 note in each row; `docs/live-checks.md` rows PRB-1/PH1 to PRB-1/PH13.)*
 ```
 
   Check: `grep -c '^\*(Note .*, PRB-1: the probe of "Probe first"' docs/specs/2026-11-21-statusline-hud-design.md` → `1`.
-- [ ] **6.5** In the same file, add this row at the end of the table of `## Change log`:
+- [x] **6.5** In the same file, add this row at the end of the table of `## Change log`:
 
 ```markdown
 | <DATE> | H§12 (rows PH1, PH2, PH3, PH4, PH5, PH6, PH7, PH9, PH11, PH12, PH13; note below the LIV-1 note) | PRB-1 (live probe) | The probe ran on Claude Code <CC>, tmux <TMUX>, and OpenCode <OC>; each result is a dated note. |
 ```
 
   Check: `grep -c '| PRB-1 (live probe) |' docs/specs/2026-11-21-statusline-hud-design.md` → `1`; `git diff --stat -- docs/specs/2026-11-21-statusline-hud-design.md` shows one file; `git diff -- docs/specs/2026-11-21-statusline-hud-design.md` changes only lines of H§12 and the change log.
-- [ ] **6.6** Run `cargo test -p zygo --test forbidden_content`. Expected: `test result: ok.` with `0 failed`. When it names a line of a new or changed file: report the file and the line number and stop; do not edit the test.
-- [ ] **6.7** Commit `fixtures/claude-code/hud/prb-1-*`, `docs/live-checks.md`, `docs/specs/2026-11-21-statusline-hud-design.md` and this file: `docs(live): PRB-1 probe results on Claude Code <CC>, tmux <TMUX>, OpenCode <OC>; fixtures and H§12 notes` (with the two trailers). Check: `git status --short` prints nothing.
+- [x] **6.6** Run `cargo test -p zygo --test forbidden_content`. Expected: `test result: ok.` with `0 failed`. When it names a line of a new or changed file: report the file and the line number and stop; do not edit the test.
+- [x] **6.7** Commit `fixtures/claude-code/hud/prb-1-*`, `docs/live-checks.md`, `docs/specs/2026-11-21-statusline-hud-design.md` and this file: `docs(live): PRB-1 probe results on Claude Code <CC>, tmux <TMUX>, OpenCode <OC>; fixtures and H§12 notes` (with the two trailers). Check: `git status --short` prints nothing.
 
 ### Task 7: verification
 
