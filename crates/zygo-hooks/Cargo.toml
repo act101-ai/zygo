@@ -19,6 +19,11 @@ serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 time.workspace = true
+unicode-width.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
+zygo-hooks = { path = ".", features = ["test-hooks"] }
 tempfile.workspace = true

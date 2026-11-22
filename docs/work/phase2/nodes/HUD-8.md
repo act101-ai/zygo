@@ -7,3 +7,55 @@
 **Acceptance:** `cargo test -p zygo-hooks --test statusline_render && cargo test -p zygo-config --test prices && cargo test -p zygo-proxy --test session_api --test passthrough && cargo test -p zygo-hooks --lib && cargo test -p zygo --test compact_cmd && cargo test --workspace --locked --no-run && cargo test -p zygo-proxy --test window` → all pass, one test per H§14 item #1, #2, #3, #4, #8, #9, #10, #12, #20, #21, #29, #31
 
 ## Plan
+
+Steps (test first; each test failed before its code existed, except where a note says otherwise):
+
+- [x] Read the contract, H§5-H§6.8, H§7.2, H§12-H§14, H§17, the graph constraints and the current hook.
+- [x] Golden files: built `crates/zygo-hooks/tests/golden/*.ansi` from the spec text with a script (the two OP13 `printf` commands of H§6.3 and examples 1 and 3 of H§6.4; `\e` → ESC, `%%` → `%`, final `\n` removed per H§6.4 step 7). The `NO_COLOR` files are those bytes without SGR sequences and without the stripe and its space (step 8); the plain files replace each glyph per H§6.5 and AU8. The script checked the results against the plain-text mockups of H§6.3 (compact, verbose, threshold, `NO_COLOR`, verbose plain, compact plain). The render output was not copied into a file.
+- [x] Fixtures `tests/golden/fixture.json` (OP13 data) and `tests/golden/width-all.json` (H§14 #20): status reply, status age, stdin, git result, trimmed count, environment, view profile.
+- [x] `crates/zygo-hooks/tests/statusline_render.rs` written; first run failed (`statusline::render` and `statusline::width` did not exist).
+- [x] `Cargo.toml`: workspace `unicode-width = "0.2.3"`. `crates/zygo-hooks/Cargo.toml`: `unicode-width`, `libc` under `[target.'cfg(unix)'.dependencies]`, self dev-dependency with `test-hooks`. `Cargo.lock` updated by the build.
+- [x] `statusline.rs` moved to `statusline/mod.rs` (no change to `run`, `render`, `short`, `pct`, `trimmed`, `stripe`, `line_in`); `pub mod render; pub mod width;` added.
+- [x] `statusline/width.rs`: `terminal_width`, `tty_columns` (`cfg(unix)`: `TIOCGWINSZ` on `/dev/tty`; else `None`), `cells`, `truncate`.
+- [x] `statusline/render.rs`: `HudData`, `RenderEnv`, `from_env`, `icon_set`, `color_mode`, `glyphs`, `spend_text`, segments, emission (H§6.4), fit (H§6.7), `render`; the `ZYGO_TEST_RENDER_PANIC` seam.
+- [x] Two test expectations corrected against the spec after the first green run of the others (my test errors, not render errors): with no filled cell the dim window number, the dim cells and the dim tokens are one run (gap absorption, step 3); `↑1` also matched `↑1.2m`.
+- [x] Cross-layer tests for H§14 #8 and #12: `window.rs` and `session_api.rs` (proxy parts), `prices.rs` (price part). These passed at once: HUD-4, HUD-5 and HUD-6 already merged the product code. One expectation of mine was wrong and corrected (a request served by `claude-big` at its own agent window has no safety window).
+- [x] Acceptance commands and `cargo clippy -p zygo-hooks --all-targets --locked -- -D warnings`.
+
+H§14 items and their tests (`crates/zygo-hooks/tests/statusline_render.rs` unless a file is named):
+
+| Item | Test |
+|---|---|
+| #1 | `h14_01_golden_files_hold_each_render_byte_for_byte` |
+| #2 | `h14_02_rows_start_with_the_stripe_then_the_logo_or_its_reflection` |
+| #3 | `h14_03_op13_data_draws_the_screen_of_the_two_printf_commands` |
+| #4 | `h14_04_emission_examples_1_and_3_are_golden`; emitter unit tests `statusline::render::tests::emitter_transitions` and `emitter_gap_absorption_and_merge` (`--lib`) |
+| #8 | render: `h14_08_ctx_numbers_bar_and_threshold_mark`; proxy: `h14_08_status_windows_follow_the_served_request` (`zygo-proxy/tests/window.rs`), `h14_08_status_threshold_follows_the_override_without_a_request` (`zygo-proxy/tests/session_api.rs`) |
+| #9 | `h14_09_bar_colors_and_fill` |
+| #10 | `h14_10_spend_format` |
+| #12 | render: `h14_12_spend_above_99999_has_a_fixed_form`; price: `h14_12_price_sanity_and_the_cache_write_split` (`zygo-config/tests/prices.rs`); proxy: `h14_12_tee_split_reaches_the_price_at_two_rates` (`zygo-proxy/tests/session_api.rs`) |
+| #20 | `h14_20_compact_drops_segments_in_order_and_width_sources` |
+| #21 | `h14_21_verbose_rows_fit_separately` |
+| #29 | `h14_29_mode_segment` |
+| #31 | `h14_31_icon_set_selection` |
+
+Tests with no item number cover render behavior that other nodes' items use (work markers, worktree, git marks, failure markers, phase, trimmed, notional spend, escaping, truncation, the glyph table, the panic seam).
+
+Design calls:
+
+1. **Public names beyond the Produces line.** The contract names `Style`, `IconSet`, `ColorMode` and `Outcome` only as field types. They are: `Style { Compact, Verbose }` with `Style::parse(&str) -> Option<Style>`; `IconSet { Nerd, Plain }`; `ColorMode { Off, Ansi16, Ansi256 }` (AU23 needs two color modes, not one); `Outcome { Ok, Offline, Suspended, Ended }` with serde names `ok`, `offline`, `suspended`, `ended` (AU20, for the cache of HUD-9). Added functions: `render::color_mode(env) -> ColorMode`, `render::icon_set_on(env, windows: bool) -> IconSet` (the AU2 rule with the OS as an argument, so that the Windows cases of H§14 #31 run on every OS; `icon_set(env)` is `icon_set_on(env, cfg!(windows))`), `width::cells(&str) -> usize`, `width::truncate(&str, max) -> String`, `width::DEFAULT_WIDTH`.
+2. **`render` is a function and a module in `statusline`.** The old `statusline::render(&SessionStatus, Option<u64>)` stays until HUD-9 replaces the hook body; the new module is `statusline::render`. Rust keeps the two in different namespaces.
+3. **Marker rule (AU20, H§6.8).** `ended` when `outcome` is `Ended`; `suspended` when it is `Suspended`; else `offline` when there is no status data; else `stale` when `stale` is set; else none. So a failed fetch with status data 90 s old or less (`outcome = Offline`, `stale = false`) shows no marker, as H§6.8 row 2 says.
+4. **`Ended` ignores the status data in the render**, also for the work item and profile fallbacks, so the caller can pass the cache as it is.
+5. **Stale dimming.** Only with status data. A profile from `view.json` is local; a profile from the status is proxy-derived and dim. The work item from the status fallback keeps its style (AU20 lists the work item as local). The whole model span, with the effort, is dim.
+6. **Truncation (AU19)** applies to the escaped text after the icon or marker: `◆ ` + 32 cells, worktree icon + 24 cells. This matches H§14 #6 (a 40-character name → 23 characters and `…`).
+7. **Work item edge cases.** `branch:`, `work-graph:` and `beads:` with an empty id print the whole value (the "any other" row of H§6.2). The live branch replaces only a `branch` source.
+8. **Missing parts.** Tokens need `tokens_in` and `tokens_out`. No `cache_read_share` → no cache segment (the old line printed `-`). `serve` with no host prints `serve`. No `model`, or a model that is only `claude-`, → no model segment and no effort.
+9. **Spend (AU15, AU32).** A sum that is NaN or negative prints `$?`. `>$99999` also takes the `+` and `≈` marks. Whole dollars come from the rounded cents (half up).
+10. **Bar and percent.** Integer arithmetic (no float boundary error at 60 % and 85 %). The percent is not capped: used above D prints for example `117%`. `used = 0` → no filled cell; the empty cells are dim with the default foreground (step 5). An `effective_window` or model window of 0 counts as unknown.
+11. **Environment values.** A variable that is set and empty counts as not set (`NO_COLOR` per its definition; the same rule for `ZYGO_NERD_FONT`, `TERM`, `COLORTERM`, `WT_SESSION`, `TERM_PROGRAM`).
+12. **Fixture.** The OP13 status has `effective_window: null`: a safety window of 900k would give 22 %, not the 20 % of the mockup. The fixture environment sets `ZYGO_NERD_FONT=1`, so the fixture renders the same on a Windows build.
+13. **`glyphs` names**, in H§6.5 order: `stripe`, `logo`, `reflection`, `branch`, `github`, `work-graph`, `bead`, `worktree`, `ahead`, `behind`, `model`, `profile`, `bar-filled`, `bar-empty`, `threshold`, `notional`, `cache`, `trimmed`, `truncation`. A use with no plain glyph has an empty string there.
+14. **Width.** Each private-use character counts 2 cells; all other characters use `unicode-width`. `COLUMNS` is trimmed and parsed as a number; 20 and 1000 are accepted. When every droppable segment is gone and the row is still too wide, the row is printed as it is.
+15. **Plain set, verbose row 2.** The four spaces are a gap run; with `NO_COLOR` the row starts with them.
+16. **PRB-1 has not run.** The main case of PH1-PH13 is built. The runtime fallbacks that the spec already has are in: `NO_COLOR`, the 16-color fallback (AU23), the plain set, width 120.

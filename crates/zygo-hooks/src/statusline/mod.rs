@@ -1,4 +1,10 @@
 //! `zygo hook statusline` (§17, §10.2.4, §10.7): one line for the user, never sent to the model.
+//!
+//! `render` (the module) and `width` are the pure render of the HUD (H§6) and its width sources. The hook entry
+//! `run` still prints the line of §17.
+
+pub mod render;
+pub mod width;
 
 use std::path::Path;
 use std::sync::mpsc;

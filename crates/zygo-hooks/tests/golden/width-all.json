@@ -1,0 +1,29 @@
+{
+  "status": {
+    "session": "S1",
+    "profile": "fast",
+    "work": "branch:main",
+    "used_context": 196000,
+    "effective_window": 600000,
+    "compact": null,
+    "cache_read_share": 0.92,
+    "expires_at": "",
+    "model": "claude-opus-4.7",
+    "context_window": 1000000,
+    "threshold": 600000,
+    "tokens_in": 1200000,
+    "tokens_out": 48000,
+    "spend_usd": 3.41,
+    "spend_notional": false,
+    "requests_total": 12,
+    "requests_priced": 12,
+    "passthrough": false,
+    "team_session": false
+  },
+  "status_age_s": 100,
+  "stdin": { "cwd": "/tmp/a/b/hud-work", "effort": "high" },
+  "git": { "worktree": "hud-work", "branch": "main", "ahead": 1, "behind": 0 },
+  "trimmed_bytes": 92160,
+  "env": { "ZYGO_WORK": "branch:main", "ZYGO_NERD_FONT": "1","COLORTERM": "truecolor", "TERM": "xterm-256color", "COLUMNS": "200" },
+  "view": { "profile": "fast" }
+}

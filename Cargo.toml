@@ -64,5 +64,6 @@ tokio = { version = "1.54.1", features = ["full"] }
 toml = "1.2.1"
 toml_edit = "0.25.19"
 ulid = "3.0.0"
+unicode-width = "0.2.3"
 walkdir = "2.5.0"
 which = "8.0.6"
