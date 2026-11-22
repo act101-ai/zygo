@@ -1,8 +1,11 @@
 //! Node W3: the multiplexer trait, the tmux implementation and the tmux test gate (W§13, W§19).
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use zygo_workspace::mux::{check_path, format_escape, hook_command, UnsafePath, UNSAFE_PATH_MESSAGE};
+use zygo_workspace::mux::{
+    check_path, format_escape, hook_command, parse_pane_line, vis_decode, PaneRow, ParseError, UnsafePath, WindowRow,
+    PANE_FIELDS, PANE_FORMAT, UNSAFE_PATH_MESSAGE,
+};
 
 /// Held by every test that forks a process, from its first stub write or fork until its last program has ended, so no
 /// other test forks while a stub is open for writing (ETXTBSY).
@@ -60,4 +63,58 @@ fn format_escape_doubles_each_hash() {
     assert_eq!(format_escape("#{session_name}"), "##{session_name}");
     assert_eq!(format_escape("w#(touch pwned)"), "w##(touch pwned)");
     assert_eq!(format_escape("plain/dir"), "plain/dir");
+}
+
+const LINE: &str = r"1|a\|b\\\\c\#d\ e|0|b25d,80x24,0,0,2|80|24|1|0|%3|0|1|k\\x|/home/u/x|y \| z";
+
+#[test]
+fn pane_format_has_thirteen_fields_path_last() {
+    assert_eq!(PANE_FIELDS, 13);
+    assert_eq!(PANE_FORMAT.split('|').count(), 13);
+    assert!(PANE_FORMAT.starts_with("#{window_index}|#{q:window_name}|#{automatic-rename}|"));
+    assert!(PANE_FORMAT.contains("|#{pane_id}|") && PANE_FORMAT.contains("|#{q:@zygo-pane}|"));
+    assert!(PANE_FORMAT.ends_with("|#{pane_current_path}"));
+}
+
+#[test]
+fn parse_pane_line_last_field_takes_the_rest() {
+    let (w, p) = parse_pane_line(LINE).unwrap();
+    // name: q-unescape gives a|b\\c#d e (tmux's vis form), vis_decode gives a|b\c#d e; key: q-unescape only
+    assert_eq!(
+        w,
+        WindowRow {
+            index: 1,
+            name: r"a|b\c#d e".into(),
+            automatic_rename: false,
+            layout: "b25d,80x24,0,0,2".into(),
+            width: 80,
+            height: 24,
+            active: true,
+            zoomed: false
+        }
+    );
+    assert_eq!(
+        p,
+        PaneRow { id: "%3".into(), index: 0, active: true, key: r"k\x".into(), cwd: PathBuf::from(r"/home/u/x|y \| z") }
+    );
+    assert_eq!(parse_pane_line("0|zsh|1|c0de,80x24,0,0,0|80|24|1|0|%0|0|1||/tmp").unwrap().1.key, "");
+}
+
+#[test]
+fn parse_pane_line_refuses_short_and_bad_lines() {
+    assert_eq!(parse_pane_line("0|zsh|1|c0de,80x24,0,0,0|80|24|1|0|%0|0|1|k"), Err(ParseError::TooFewFields { found: 12 }));
+    assert_eq!(parse_pane_line(""), Err(ParseError::TooFewFields { found: 1 }));
+    assert_eq!(parse_pane_line("x|zsh|1|l|80|24|1|0|%0|0|1||/tmp"), Err(ParseError::BadField { field: "window_index" }));
+    assert_eq!(parse_pane_line("0|zsh|2|l|80|24|1|0|%0|0|1||/tmp"), Err(ParseError::BadField { field: "automatic-rename" }));
+    assert_eq!(parse_pane_line("0|zsh|1|l|80|24|1|0|0|0|1||/tmp"), Err(ParseError::BadField { field: "pane_id" }));
+}
+
+#[test]
+fn vis_decode_gives_the_typed_name() {
+    assert_eq!(vis_decode(r"x\\y"), r"x\y");
+    assert_eq!(vis_decode(r"c\001d"), "c\u{1}d");
+    assert_eq!(vis_decode(r"a\tb\nc"), "a\tb\nc");
+    assert_eq!(vis_decode("u€v"), "u€v");
+    assert_eq!(vis_decode(r"\303\251"), "é");
+    assert_eq!(vis_decode(r"a\qb"), r"a\qb");
 }
