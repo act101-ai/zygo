@@ -493,11 +493,11 @@ fn q_unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(n) = chars.next() {
-                out.push(n);
-                continue;
-            }
+        if c == '\\'
+            && let Some(n) = chars.next()
+        {
+            out.push(n);
+            continue;
         }
         out.push(c);
     }
