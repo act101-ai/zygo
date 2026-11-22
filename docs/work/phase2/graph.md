@@ -57,7 +57,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1 | TODO | implementation | — |
-| HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | DONE | judgment | 1454eab; acceptance hud_git 21/21 (+3 ignored), workspace --no-run ok (merged tree); CI green 3 OS (run 44964062674) |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | DONE | implementation | 77323a8, merge 71181de; acceptance zygo-config 176/176 (merged tree) |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | DONE | judgment | 69b5822, merge 624dcd2; acceptance prices 27, builtin 13, workspace --no-run ok (merged tree) |
 | HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | DONE | judgment | commits 4379678 98d9a9d c0407fa; CI 44968316690 green (ubuntu, macos, windows); acceptance on merged tree: session_api 40, window 37, zygo-hooks lib 22, workspace --no-run ok, no div_ceil(4) |
@@ -72,7 +71,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
 | LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
-| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | IN-PROGRESS | implementation | wt .worktrees/phase2/P1 |
+| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
@@ -167,3 +166,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | LIV-1 DONE: P-HUD-1 on the real Claude Code 2.1.330. PH4 failed: /dev/tty does not answer the hook; COLUMNS reaches it; the status area is 4 cells narrower than the pane (indent 2, right gap 2). Per the contract a new node changes HUD-8 before DOC-1. |
 | 2026-11-22 | LIV-1 found: killed status line runs write no cache, so the 30 s back-off never starts (HUD-9, data.rs:654-657); live-selftest.sh leaves its tmux socket file; live-hud.sh:17 comment names the wrong path; every passthrough session gets one auxiliary 429. New nodes follow. |
 | 2026-11-22 | LIV-1 cost: 4 live runs, 3 main-loop model requests with an answer. Claude Code wrote 3 trust entries in .claude.json and 6 folders under projects/ of the operator's Claude folder, for scratch paths. |
+| 2026-11-22 | P1 DONE. PW6 failed: on 3.2a the first window after new-session -x -y is 80x23 (3.7c: 173x47); after-kill-pane, pane-exited and window-unlinked do not fire when their target is gone and another session is current, on 3.2a and 3.7c. |
+| 2026-11-22 | P1: PW15 failed with the Claude Code sandbox on (the setsid sleeper dies; the command runs in its own mount namespace); with the sandbox off it passes. PW11 verified on both tmux versions. 20 main-loop requests over 5 runs of live-detach.sh. |
+| 2026-11-22 | P1 found: live.sh live_end removes a caller-set N2_SCRATCH (lib.sh:2 says it is kept); live-selftest.sh:291 starts tmux -L without -f /dev/null. A tab in a tmux -F format prints as _ (AU99 must not use a tab separator). |
+| 2026-11-22 | Hold: W3, W6, W7, W10, M1, M4, E2 wait for the PW6 and PW15 fallback decisions (W§19). The PW6 hook fallback is an operator question per the P1 contract. DOC-1 waits for FIX-5 (PH4). |
