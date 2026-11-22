@@ -80,7 +80,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
-| W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | IN-PROGRESS | judgment | wt .worktrees/phase2/W2 |
+| W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
@@ -146,3 +146,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | W5 DONE (one round). W§18 #63 is covered in part: the --settings warning and the checks that need parse_window, AU30 or AU98 are M1's. An older zygo (0.1.1) accepts a config with [workspace] and [loadout.x]: config check ok. |
 | 2026-11-21 | L1 plan, author's calls: an AU34 callback error is one session-log line "session callback: <escaped text>" (the spec gives no text); LaunchOutcome and SessionCallback are reached as zygo_launch::launcher::… (lib.rs is not in L1 Files; M2 imports by that path). |
 | 2026-11-21 | W4 DONE (two rounds). has_user_info also reads https:/u:p@host as user info (the plan's rule missed it). Round 2: a fixture test pins the short-flag set of both helps, so a new short flag in a later pin fails until it is classified. |
+| 2026-11-21 | W2 DONE (one round). Store::update is a read-modify-write under lock (proved: without the lock the concurrent-writer test loses changes). log_error is not serialized between processes: two rewrites of a full errors.log at once can lose lines. |
