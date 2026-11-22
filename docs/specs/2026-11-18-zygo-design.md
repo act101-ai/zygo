@@ -1012,4 +1012,3 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-21 | §20 #11 (tests of §7.3 fallback and §10.4 pin removal); no text change | author's call | Found defect: the test helper refused_port released its port, another test's listener could take it, and fallback_all_failed_removes_pin failed once in three full runs. Node FIX-1 uses a fixed port below 1024. |
-| 2026-11-21 | §19, §19a (premise harness, `docs/premises.md` Method) and §20 #16b, #21, #28, #40 (live checks, `docs/live-checks.md` Method); no text change | author's call | Found defect: scripts/premises/lib.sh exits when opencode is not on PATH, so a live script that uses only Claude Code cannot run on a machine without OpenCode. Node FIX-4: a script states the agents it needs (N2_AGENTS, default both); lib.sh and pinned_agents check only those, and the LIVE line of a one-agent run names that agent. |
