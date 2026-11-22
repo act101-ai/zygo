@@ -44,7 +44,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   The status `effective_window` is §10.2.1 `effective`, safety window included, computed for the model of the last main-loop request, else the main role's model (HUD design AU29, 2026-11-22).
   ```
 
-- [ ] 6. H§9 row "§7.2 session API, status" (and H§17 note 1: the HUD's own dated §7.2 text) → base §7.2. Insert this bullet before the bullet `- **Credentials per route.**`:
+- [x] 6. H§9 row "§7.2 session API, status" (and H§17 note 1: the HUD's own dated §7.2 text) → base §7.2. Insert this bullet before the bullet `- **Credentials per route.**`:
 
   ```text
   - **Status.** `GET /v1/zygo/sessions/{id}/status` (session token) replies with the session's `session`, `profile`, `work`, `used_context`, `effective_window` (§10.2.2), `compact`, `cache_read_share`, `expires_at` and `usage_note`, and with the HUD fields of `docs/specs/2026-11-21-statusline-hud-design.md` H§7.2: `model`, `context_window`, `threshold`, `tokens_in`, `tokens_out`, `spend_usd`, `spend_notional`, `requests_total`, `requests_priced`, `passthrough`, `team_session`. Each HUD field is optional, so a reply from an older server parses. A local proxy prices `spend_usd` with the catalog prices of the route that served each request (notional prices in passthrough, with `spend_notional = true`); a team server prices it with the built-in list prices compiled into its binary and sends `spend_notional = true` (HUD design AU14). The "Team config" rule above holds: no configured price leaves the server. *(2026-11-22, HUD design)*
