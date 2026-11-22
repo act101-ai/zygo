@@ -1,6 +1,5 @@
 use zygo_core::ids::ulid;
 use zygo_core::overrides::Overrides;
-#[cfg(unix)]
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 
@@ -13,6 +12,9 @@ fn paths_unix() {
     assert_eq!(p.config_file, std::path::PathBuf::from("/h/.config/zygo/config.toml"));
     assert_eq!(p.usage_db, std::path::PathBuf::from("/h/.local/share/zygo/usage.db"));
     assert_eq!(p.sessions_dir, std::path::PathBuf::from("/h/.cache/zygo/sessions"));
+    assert_eq!(p.state_dir(), std::path::PathBuf::from("/h/.local/state/zygo"));
+    assert_eq!(p.workspaces_dir(), std::path::PathBuf::from("/h/.local/state/zygo/workspaces"));
+    assert_eq!(p.workspace_cache_dir(), std::path::PathBuf::from("/h/.cache/zygo/workspaces"));
     unsafe { std::env::set_var("ZYGO_CONFIG", "/x.toml") };
     assert_eq!(Paths::from_env().config_file, std::path::PathBuf::from("/x.toml"));
     unsafe { std::env::remove_var("ZYGO_CONFIG") };
@@ -28,6 +30,7 @@ fn paths_unix() {
         assert_eq!(p.config_file, home.join(".config/zygo/config.toml"));
         assert_eq!(p.cache_dir, home.join(".cache/zygo"));
         assert_eq!(p.data_dir, home.join(".local/share/zygo"));
+        assert_eq!(p.state_dir(), home.join(".local/state/zygo"));
     }
     unsafe { std::env::set_var("HOME", "/h") };
 }
@@ -222,4 +225,44 @@ fn overrides_statusline_round_trips_and_is_absent_when_unset() {
     assert_eq!(Overrides::load(&d).statusline, None);
     Overrides::default().save(&d).unwrap();
     assert!(!std::fs::read_to_string(d.overrides_json()).unwrap().contains("statusline"));
+}
+
+// ---- C1: workspace paths, session-dir accessors, view workspace field (workspaces design W§7.1, W§7.3, AU58, AU72) ----
+
+fn paths_under(root: &std::path::Path) -> Paths {
+    let (cache_dir, data_dir) = (root.join("cache"), root.join("data"));
+    Paths {
+        config_file: root.join("config.toml"),
+        sessions_dir: cache_dir.join("sessions"),
+        marketplaces_dir: cache_dir.join("marketplaces"),
+        plugin_store: data_dir.join("plugins"),
+        approvals_file: data_dir.join("approvals.toml"),
+        usage_db: data_dir.join("usage.db"),
+        cache_dir,
+        data_dir,
+    }
+}
+
+#[test]
+fn state_dir_in_follows_the_data_dir_rule() {
+    use std::path::Path;
+    let home = Path::new("/h");
+    // Branch 1: data_dir is $HOME/.local/share/zygo, as Paths::from_env sets it on unix.
+    let mut p = paths_under(Path::new("/t"));
+    p.data_dir = home.join(".local/share/zygo");
+    assert_eq!(p.state_dir_in(Some(home)), home.join(".local/state/zygo"));
+    // Branch 2: another home, no home, or another data_dir.
+    assert_eq!(p.state_dir_in(Some(Path::new("/other"))), home.join(".local/share/zygo").join("state"));
+    assert_eq!(p.state_dir_in(None), home.join(".local/share/zygo").join("state"));
+    let q = paths_under(Path::new("/t"));
+    assert_eq!(q.state_dir_in(Some(home)), Path::new("/t").join("data").join("state"));
+}
+
+#[test]
+fn workspace_dirs_of_a_test_built_paths_stay_under_its_directory() {
+    let t = tempfile::tempdir().unwrap();
+    let p = paths_under(t.path());
+    assert_eq!(p.state_dir(), t.path().join("data").join("state"));
+    assert_eq!(p.workspaces_dir(), t.path().join("data").join("state").join("workspaces"));
+    assert_eq!(p.workspace_cache_dir(), t.path().join("cache").join("workspaces"));
 }
