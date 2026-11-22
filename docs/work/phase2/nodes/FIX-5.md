@@ -23,8 +23,8 @@ Design calls: (a) the source order does not change (H§12 PH4: a failed source i
 
 ### Task 1: the failing tests
 
-- [ ] **1.1** In `crates/zygo-hooks/tests/statusline_render.rs`, change the import at `:12` to `use zygo_hooks::statusline::width::{cells, status_width, terminal_width, truncate, STATUS_INDENT, STATUS_RIGHT_GAP};`, and change `renv_from` (`:122`) to `width: status_width(env, &no_tty)`.
-- [ ] **1.2** In `h14_20_compact_drops_segments_in_order_and_width_sources`, replace the closure `at` (`:521-525`) with:
+- [x] **1.1** In `crates/zygo-hooks/tests/statusline_render.rs`, change the import at `:12` to `use zygo_hooks::statusline::width::{cells, status_width, terminal_width, truncate, STATUS_INDENT, STATUS_RIGHT_GAP};`, and change `renv_from` (`:122`) to `width: status_width(env, &no_tty)`.
+- [x] **1.2** In `h14_20_compact_drops_segments_in_order_and_width_sources`, replace the closure `at` (`:521-525`) with:
 
 ```rust
     // The row for `COLUMNS` = n (H§6.7: W = n - 4).
@@ -47,7 +47,7 @@ Replace `assert_eq!(at(200), steps[0].1);` with:
 ```
 
 Replace `assert_eq!(at(20), format!("▌▌▌ {LOGO} {BRANCH} main"));` and `assert_eq!(cells(&at(20)), 16);` with `assert_eq!(cols(20), format!("▌▌▌ {LOGO} {BRANCH} main"));` and `assert_eq!(cells(&cols(20)), 16);`. In the draining loop, change `assert!(at(columns).starts_with(&head), "{columns}");` to `assert!(cols(columns).starts_with(&head), "{columns}");`. Do not change the `terminal_width` assertions at `:555-570`.
-- [ ] **1.3** Add this test after `h14_20_…`:
+- [x] **1.3** Add this test after `h14_20_…`:
 
 ```rust
 /// H§6.7, PH4 (P-HUD-1 on Claude Code 2.1.330): the status area starts 2 cells in and ends 2 cells before the right
@@ -67,12 +67,12 @@ fn ph4_status_width_is_the_terminal_less_the_margins() {
 }
 ```
 
-- [ ] **1.4** In `from_env_reads_everything_through_its_closure`, change `assert!((20..=1000).contains(&e.width));` to `assert!((16..=996).contains(&e.width));`, and the comment above it to `// The width is the terminal's (when the test run has one), else COLUMNS, less 4 (H§6.7).`
-- [ ] **1.5** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Expected: FAIL to compile, `unresolved imports` for `status_width`, `STATUS_INDENT` and `STATUS_RIGHT_GAP`.
+- [x] **1.4** In `from_env_reads_everything_through_its_closure`, change `assert!((20..=1000).contains(&e.width));` to `assert!((16..=996).contains(&e.width));`, and the comment above it to `// The width is the terminal's (when the test run has one), else COLUMNS, less 4 (H§6.7).`
+- [x] **1.5** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Expected: FAIL to compile, `unresolved imports` for `status_width`, `STATUS_INDENT` and `STATUS_RIGHT_GAP`.
 
 ### Task 2: the fit width
 
-- [ ] **2.1** In `crates/zygo-hooks/src/statusline/width.rs`, after `RANGE` (`:10`), add:
+- [x] **2.1** In `crates/zygo-hooks/src/statusline/width.rs`, after `RANGE` (`:10`), add:
 
 ```rust
 /// Claude Code draws the status line this many cells from the left edge of the terminal (P-HUD-1 PH4, Claude Code
@@ -106,9 +106,9 @@ fn measured(env: &dyn Fn(&str) -> Option<OsString>, tty: &dyn Fn() -> Option<u16
 }
 ```
 
-- [ ] **2.2** In `render.rs`, change the import at `:11` to `use super::width::{cells, status_width, truncate, tty_columns};`, change `:109` to `width: status_width(env, &tty_columns),`, and change the doc comment at `:101` to say "the width (`status_width` with the terminal probe `tty_columns`)".
-- [ ] **2.3** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Expected: `0 failed`.
-- [ ] **2.4** Commit `width.rs`, `render.rs`, `statusline_render.rs` and this file: `fix(hooks): the HUD fits its rows to Claude Code's status area, 4 cells narrower than the terminal (PH4)`.
+- [x] **2.2** In `render.rs`, change the import at `:11` to `use super::width::{cells, status_width, truncate, tty_columns};`, change `:109` to `width: status_width(env, &tty_columns),`, and change the doc comment at `:101` to say "the width (`status_width` with the terminal probe `tty_columns`)".
+- [x] **2.3** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Expected: `0 failed`.
+- [x] **2.4** Commit `width.rs`, `render.rs`, `statusline_render.rs` and this file: `fix(hooks): the HUD fits its rows to Claude Code's status area, 4 cells narrower than the terminal (PH4)`.
 
 ### Task 3: the spec
 

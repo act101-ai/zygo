@@ -8,7 +8,7 @@ use zygo_core::esc;
 use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_proxy::client::{SessionStatus, WindowArg};
 
-use super::width::{cells, terminal_width, truncate, tty_columns};
+use super::width::{cells, status_width, truncate, tty_columns};
 use super::{pct, short};
 
 // ---- inputs ----
@@ -98,7 +98,7 @@ pub struct RenderEnv {
 }
 
 impl RenderEnv {
-    /// The icon set (`icon_set`), the color mode (`color_mode`) and the width (`terminal_width` with the terminal
+    /// The icon set (`icon_set`), the color mode (`color_mode`) and the width (`status_width` with the terminal
     /// probe `tty_columns`), each read through `env`. Under `test-hooks`, `ZYGO_TEST_RENDER_PANIC=1` sets the
     /// forced-panic seam.
     pub fn from_env(env: &dyn Fn(&str) -> Option<OsString>, style: Style) -> RenderEnv {
@@ -106,7 +106,7 @@ impl RenderEnv {
             style,
             icons: icon_set(env),
             color: color_mode(env),
-            width: terminal_width(env, &tty_columns),
+            width: status_width(env, &tty_columns),
             #[cfg(feature = "test-hooks")]
             force_panic: var(env, "ZYGO_TEST_RENDER_PANIC").as_deref() == Some("1"),
         }
