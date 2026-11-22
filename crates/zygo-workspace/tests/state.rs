@@ -540,3 +540,29 @@ fn live_launcher_reads_committed_and_pending_sessions() {
         assert_eq!(store.live_launcher(&ws(vec![("kaaaaaaaa", member(Some(bad), Some(bad)))])), None, "{bad:?}");
     }
 }
+
+#[test] // each workspace directory with its read result; a bad state does not hide the others
+fn list_all_gives_each_workspace_with_its_read_result() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    assert!(list_all(&p).is_empty()); // no state directory
+    let id = |c: char| c.to_string().repeat(16);
+    let mk = |i: &str, change: &dyn Fn(&mut Value)| {
+        let mut v = doc();
+        v["id"] = json!(i);
+        change(&mut v);
+        put(&Store::open(&p, i), &v);
+    };
+    mk(&id('c'), &|_| {});
+    mk(&id('a'), &|v| v["version"] = json!(2));
+    mk(&id('b'), &|v| v["name"] = json!("a b"));
+    Store::open(&p, &id('d')).op_lock().unwrap(); // a directory with no workspace.json
+    fs::create_dir_all(p.workspaces_dir().join("notes")).unwrap(); // not a workspace id
+    fs::write(p.workspaces_dir().join("notes/workspace.json"), "{}").unwrap();
+    fs::write(p.workspaces_dir().join(id('e')), "a file").unwrap(); // not a directory
+    let all = list_all(&p);
+    assert_eq!(all.iter().map(|(i, _)| i.clone()).collect::<Vec<_>>(), vec![id('a'), id('b'), id('c')]);
+    assert!(matches!(all[0].1, Err(StateError::Newer { .. })));
+    assert!(matches!(all[1].1, Err(StateError::Invalid { .. })));
+    assert_eq!(all[2].1.as_ref().unwrap().name, "app");
+}

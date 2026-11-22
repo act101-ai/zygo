@@ -517,8 +517,8 @@ pub struct OpLock {
     _file: File,
 }
 
-/// Open options for a file that only its owner can read: mode 0600 on unix. On Windows the file gets the access
-/// list of the user's data directory.
+/// Open options for a file that only its owner can read: mode 0600 on unix. Windows has no file mode: the file
+/// inherits the access list of its directory.
 fn private() -> fs::OpenOptions {
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut o = fs::OpenOptions::new();
@@ -553,17 +553,35 @@ fn sweep_tmp(dir: &Path) {
 /// another holder kept the lock for the whole bound. The lock ends when the file is dropped.
 fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<File>> {
     let f = private().read(true).write(true).create(true).truncate(false).open(path)?;
-    let deadline = Instant::now() + bound;
+    // `None`: the bound is past the end of the clock, so no deadline exists.
+    let deadline = Instant::now().checked_add(bound);
     loop {
         match fs4::FileExt::try_lock(&f) {
             Ok(()) => return Ok(Some(f)),
             Err(fs4::TryLockError::Error(e)) => return Err(e),
             Err(fs4::TryLockError::WouldBlock) => {
-                if Instant::now() >= deadline {
+                if deadline.is_some_and(|d| Instant::now() >= d) {
                     return Ok(None);
                 }
                 std::thread::sleep(LOCK_POLL);
             }
         }
     }
+}
+
+/// Each workspace of the state directory with the result of its read, in id order: a state that cannot be read
+/// does not hide the others. A directory whose name is not a workspace id, and one with no `workspace.json`, is
+/// not a workspace.
+pub fn list_all(paths: &Paths) -> Vec<(String, Result<Workspace, StateError>)> {
+    let Ok(entries) = fs::read_dir(paths.workspaces_dir()) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| valid_ws_id(name))
+        .collect();
+    ids.sort();
+    ids.into_iter().filter_map(|id| Store::open(paths, &id).read().transpose().map(|r| (id, r))).collect()
 }
