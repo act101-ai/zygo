@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use zygo_config::repo_file::exited_unreaped;
 use zygo_config::repo_file::kill_group;
 
+use crate::identity::{valid_pane_key, valid_ws_id};
+
 use super::{
     check_name, check_session, check_window_name, format_escape, is_gone_message, is_no_target_message, parse_version,
     session_target, window_target, HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split, BOUND,
@@ -313,11 +315,21 @@ impl Multiplexer for Tmux {
         check_session(spec.name)?;
         check_argv(spec.argv)?;
         let dir = start_dir_arg(spec.start_dir)?;
+        if let Some((id, key)) = spec.owner
+            && (!valid_ws_id(id) || !valid_pane_key(key))
+        {
+            return Err(MuxError::Failed { message: format!("invalid owner of tmux session {}: {id:?} {key:?}", spec.name) });
+        }
         let mut c = self.command(false, true);
         c.env_clear().envs(spec.env.iter().map(|(k, v)| (k, v)));
         c.args(["new-session", "-d", "-P", "-F", "#{window_index}", "-s", spec.name, "-c", &dir]);
         c.args(["-x", &spec.width.to_string(), "-y", &spec.height.to_string(), "--"]);
         c.args(spec.argv);
+        if let Some((id, key)) = spec.owner {
+            let target = session_target(spec.name);
+            c.args([";", "set-option", "-t", &target, "--", "@zygo-ws", id]);
+            c.args([";", "set-option", "-p", "-t", &target, "--", "@zygo-pane", key]);
+        }
         window_index(finish(run_bounded(c, BOUND)?)?)
     }
 
@@ -387,10 +399,15 @@ impl Multiplexer for Tmux {
         args.extend(spec.argv.iter().cloned());
         let index = window_index(self.call(&args)?)?;
         if let Some(n) = spec.name {
-            let target = window_target(spec.session, index);
-            self.run_in(Some(spec.session), &["rename-window", "-t", &target, "--", &format_escape(n)])?;
+            self.rename_window(spec.session, index, n)?;
         }
         Ok(index)
+    }
+
+    fn rename_window(&self, session: &str, window: u32, name: &str) -> Result<(), MuxError> {
+        check_session(session)?;
+        check_window_name(name)?;
+        self.run_in(Some(session), &["rename-window", "-t", &window_target(session, window), "--", &format_escape(name)])
     }
 
     fn split_window(&self, spec: &Split<'_>) -> Result<String, MuxError> {

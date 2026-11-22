@@ -169,6 +169,7 @@ impl Multiplexer for Fake {
     }
     fn set_hook(&self, _: &str, _: HookScope, _: &str, _: &str) -> Result<(), MuxError> { self.other("set_hook") }
     fn new_window(&self, _: &NewWindow<'_>) -> Result<u32, MuxError> { self.other("new_window") }
+    fn rename_window(&self, _: &str, _: u32, _: &str) -> Result<(), MuxError> { self.other("rename_window") }
     fn split_window(&self, _: &Split<'_>) -> Result<String, MuxError> { self.other("split_window") }
     fn select_layout(&self, _: &str, _: u32, _: &str) -> Result<(), MuxError> { self.other("select_layout") }
     fn select_window(&self, _: &str, _: u32) -> Result<(), MuxError> { self.other("select_window") }
@@ -247,7 +248,7 @@ fn live(extra: usize, start: Option<&Path>) -> Live {
         ["PATH", "HOME"].iter().filter_map(|k| std::env::var_os(k).map(|v| (OsString::from(k), v))).collect();
     let argv = os(&["sleep", "600"]);
     let start_dir = start.unwrap_or(dir.path()).to_path_buf();
-    tmux.new_session(&NewSession { name: "zygo-app", start_dir: &start_dir, width: 200, height: 50, env: &env, argv: &argv })
+    tmux.new_session(&NewSession { name: "zygo-app", start_dir: &start_dir, width: 200, height: 50, env: &env, argv: &argv, owner: None })
         .unwrap();
     tmux.set_session_option("zygo-app", "@zygo-ws", ID).unwrap();
     let mut panes = vec![srv.run(&["display-message", "-p", "-t", "=zygo-app:", "#{pane_id}"]).unwrap()];

@@ -251,7 +251,7 @@ fn every_call_passes_the_socket_the_c_locale_and_u() {
     let _ = t.version();
     let _ = t.socket_path("zygo-t");
     let _ = t.session_exists("zygo-t");
-    let _ = t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 173, height: 47, env: &env, argv: &argv });
+    let _ = t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 173, height: 47, env: &env, argv: &argv, owner: None });
     let _ = t.resize_window("zygo-t", 0, 173, 47);
     let _ = t.unset_window_option("zygo-t", 0, "window-size");
     let _ = t.set_window_option("=zygo-t:1", "remain-on-exit", "off");
@@ -470,7 +470,7 @@ fn bad_option_environment_and_session_names_are_refused_before_any_spawn() {
         let bad = format!("invalid tmux session name: {s:?}");
         assert_eq!(t.session_exists(s), SessionAnswer::Error { message: bad.clone() });
         assert_eq!(
-            t.new_session(&NewSession { name: s, start_dir: Path::new("/w"), width: 80, height: 24, env: &[], argv: &argv }),
+            t.new_session(&NewSession { name: s, start_dir: Path::new("/w"), width: 80, height: 24, env: &[], argv: &argv, owner: None }),
             Err(MuxError::Failed { message: bad.clone() })
         );
         assert_eq!(t.set_env(s, "A", "1"), Err(MuxError::Failed { message: bad.clone() }));
@@ -490,7 +490,7 @@ fn short_argument_lists_are_refused_before_any_spawn() {
     let refused = Err(MuxError::Failed { message: "tmux needs an argument list of 2 or more items".into() });
     let d = Path::new("/w");
     for argv in [os(&["zygo"]), Vec::new()] {
-        assert_eq!(t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv }), refused);
+        assert_eq!(t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner: None }), refused);
         assert_eq!(t.new_window(&NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv }), refused);
         assert_eq!(
             t.split_window(&Split { target: "%1", start_dir: None, argv: &argv }),
@@ -529,8 +529,8 @@ fn created_indexes_and_ids_are_read() {
     };
     let argv = os(&["sleep", "600"]);
     let d = Path::new("/w");
-    let ns = NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv };
-    let nw = NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv };
+    let ns = NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner: None };
+    let nw =NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv };
     let sp = Split { target: "%1", start_dir: None, argv: &argv };
 
     let t = at("four", "printf '4\\n'");
@@ -608,7 +608,8 @@ fn sorted<S: Into<String>>(v: Vec<S>) -> Vec<String> {
 
 #[cfg(unix)]
 fn session(t: &Tmux, dir: &Path, w: u32, h: u32) -> u32 {
-    t.new_session(&NewSession { name: "zygo-t", start_dir: dir, width: w, height: h, env: &env(), argv: &argv() }).unwrap()
+    t.new_session(&NewSession { name: "zygo-t", start_dir: dir, width: w, height: h, env: &env(), argv: &argv(), owner: None })
+        .unwrap()
 }
 
 /// Window index and name, one entry per window of `zygo-t`.

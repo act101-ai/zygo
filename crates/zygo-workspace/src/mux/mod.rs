@@ -210,6 +210,11 @@ pub struct NewSession<'a> {
     pub env: &'a [(OsString, OsString)],
     /// The first pane's command, 2 or more items.
     pub argv: &'a [OsString],
+    /// The workspace id and the first pane key (W7 D27). With `Some`, the same tmux invocation as `new-session` sets
+    /// the session option `@zygo-ws` and the first pane's `@zygo-pane`, so no session of a workspace exists without
+    /// its owner. An id that fails `identity::valid_ws_id` or a key that fails `identity::valid_pane_key` gives
+    /// `Failed` before any spawn.
+    pub owner: Option<(&'a str, &'a str)>,
 }
 
 /// The arguments of `new_window`. `name` and `start_dir` are raw: the implementation escapes `#` (W3 D6). A name with
@@ -298,7 +303,8 @@ pub trait Multiplexer {
     /// `has-session -t =<s>:`, with the AU87 answer kinds; a refused name gives `Error`.
     fn session_exists(&self, session: &str) -> SessionAnswer;
     /// `new-session -d -P -F #{window_index} -s <s> -c <dir> -x <w> -y <h> -- <argv>`, with exactly `spec.env`;
-    /// returns the first window index.
+    /// returns the first window index. With `spec.owner`, the same invocation goes on with
+    /// `; set-option -t =<s>: -- @zygo-ws <id> ; set-option -p -t =<s>: -- @zygo-pane <key>` (W7 D27).
     fn new_session(&self, spec: &NewSession<'_>) -> Result<u32, MuxError>;
     /// `resize-window -t =<s>:<w> -x <width> -y <height>`. A missing window: `NoTarget`, or `Gone` with the session.
     fn resize_window(&self, session: &str, window: u32, width: u32, height: u32) -> Result<(), MuxError>;
@@ -324,6 +330,10 @@ pub trait Multiplexer {
     /// vis-encoded on 3.2a and 3.7c, so [`parse_pane_line`] reads it back exactly. A failed rename returns its error
     /// and leaves the window with tmux's own name.
     fn new_window(&self, spec: &NewWindow<'_>) -> Result<u32, MuxError>;
+    /// `rename-window -t =<s>:<w> -- <name>`, with each `#` of the name doubled (AU55, W7 D6). A name with a control
+    /// character or a refused session name gives `Failed` before any spawn; a missing window gives `NoTarget`, or
+    /// `Gone` with the session.
+    fn rename_window(&self, session: &str, window: u32, name: &str) -> Result<(), MuxError>;
     /// `split-window -d -P -F #{pane_id} -t <target> [-c <dir>] -- <argv>`; returns the new pane id. A missing window
     /// target: `NoTarget`, or `Gone` with the session; a missing pane id: `NoTarget`.
     fn split_window(&self, spec: &Split<'_>) -> Result<String, MuxError>;
