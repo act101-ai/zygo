@@ -69,7 +69,9 @@ fn every_row_has_source_and_date() {
     for (i, row) in d.catalog.0.iter().enumerate() {
         let f = row.facts.as_ref().unwrap_or_else(|| panic!("{} has no facts", row.id));
         assert!(f.source.as_deref().unwrap().starts_with("https://"), "{}", row.id);
-        assert_eq!(f.verified_on.as_deref(), Some("2026-11-18"), "{}", row.id);
+        // The Anthropic rows were checked again when HUD-4 added `cache_write_5m` and `long_context`.
+        let verified_on = if i < 4 { "2026-11-21" } else { "2026-11-18" };
+        assert_eq!(f.verified_on.as_deref(), Some(verified_on), "{}", row.id);
         assert_eq!(row.provider.len(), 1, "{}", row.id);
         let p = &row.provider[0];
         let pr = p.price_usd_per_mtok.as_ref().unwrap();
