@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, filter, flags, has_session_arg, has_user_info, removable, session_flags, Filtered};
+use zygo_workspace::args::{bypass_flags, filter, flags, has_session_arg, has_user_info, occurrences, removable, session_flags, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -368,4 +368,26 @@ fn session_flags_come_from_the_table() {
     assert_eq!(flags(Agent::ClaudeCode, &s(&["--model", "opus", "--settings=f", "--", "--settings", "g"])), ["--model", "--settings"]);
     assert_eq!(flags(Agent::ClaudeCode, &s(&["--append-system-prompt", "--settings"])), ["--append-system-prompt"]);
     assert_eq!(filter(Agent::ClaudeCode, &s(&["--teleport", "--model", "opus"])).kept, s(&["--model", "opus"]));
+}
+
+#[test] // L2 round 2 item 9: flag values and token spans by the same walk; `--` ends the flags
+fn occurrences_give_flag_values_before_double_dash() {
+    let args = s(&["--model", "opus", "--agents={}", "--bare", "-pc", "--append-system-prompt", "--model", "--", "--agents", "x"]);
+    let got: Vec<(&str, Vec<String>, std::ops::Range<usize>)> =
+        occurrences(Agent::ClaudeCode, &args).into_iter().map(|o| (o.name, o.values, o.tokens)).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("--model", s(&["opus"]), 0..2),
+            ("--agents", s(&["{}"]), 2..3),
+            ("--bare", vec![], 3..4),
+            ("--print", vec![], 4..5),
+            ("--continue", vec![], 4..5),
+            ("--append-system-prompt", s(&["--model"]), 5..7),
+        ]
+    );
+    // `--bare` is in the table now; the filter keeps it as typed, as before
+    assert_eq!(cc(&["--bare", "--bare=x", "--model", "m"]).kept, s(&["--bare", "--bare=x", "--model", "m"]));
+    let got: Vec<(&str, Vec<String>)> = occurrences(Agent::OpenCode, &s(&["-m", "zygo/lead", "-sses_1", "--", "-s"])).into_iter().map(|o| (o.name, o.values)).collect();
+    assert_eq!(got, vec![("--model", s(&["zygo/lead"])), ("--session", s(&["ses_1"]))]);
 }

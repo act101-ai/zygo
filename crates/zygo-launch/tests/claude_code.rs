@@ -924,6 +924,45 @@ fn session_args_follow_w4_and_the_pinned_help() {
     }
 }
 
+#[test] // D5, L2 round 2 item 9: after `--`, `--agents`, `--bare` and `--model` are prompt words
+fn flags_after_double_dash_are_prompt_words() {
+    let fx = fx();
+    let cc = cc(&fx);
+    let mut c = ctx(&fx, "");
+    c.effective_role = None;
+    let tail = strings(&["--", "--agents", "x", "--bare", "--model", "opus", "--print"]);
+    c.args = tail.clone();
+    assert_eq!(cc.refusal(&c), None);
+    let spec = cc.build(&c).unwrap();
+    assert!(spec.args.ends_with(&tail), "{:?}", spec.args);
+    assert_eq!(spec.args.iter().filter(|a| *a == "--agents").count(), 2, "{:?}", spec.args);
+    assert!(spec.log.is_empty(), "{:?}", spec.log);
+    assert_eq!(cc.picked_model(&c.args), None);
+    // a flag value is not a flag
+    c.args = strings(&["--append-system-prompt", "--bare", "--system-prompt", "--model", "--append-system-prompt", "--agents"]);
+    assert_eq!(cc.refusal(&c), None);
+    let spec = cc.build(&c).unwrap();
+    assert!(spec.log.is_empty(), "{:?}", spec.log);
+    assert!(spec.args.ends_with(&c.args), "{:?}", spec.args);
+    assert_eq!(cc.picked_model(&c.args), None);
+    // the user's `--agents` before `--` is still merged and stripped
+    c.args = strings(&["--agents", r#"{"mine":{"description":"d","prompt":"p"}}"#, "--", "--agents"]);
+    let spec = cc.build(&c).unwrap();
+    assert_eq!(spec.args.iter().filter(|a| *a == "--agents").count(), 2, "{:?}", spec.args);
+    assert!(agents_of(&spec.args[..spec.args.len() - 2]).get("mine").is_some());
+    assert!(spec.args.ends_with(&strings(&["--", "--agents"])), "{:?}", spec.args);
+}
+
+#[test] // AU59, AU102: the cmd layer uses the launcher's rule
+fn user_settings_rule_is_public_and_stops_at_double_dash() {
+    use zygo_launch::claude_code::has_user_settings;
+    assert!(has_user_settings(&strings(&["--settings", "f"])));
+    assert!(has_user_settings(&strings(&["--model", "opus", "--settings=f"])));
+    assert!(!has_user_settings(&strings(&["--", "--settings", "f"])));
+    assert!(!has_user_settings(&strings(&["--append-system-prompt", "--settings"])));
+    assert!(!has_user_settings(&[]));
+}
+
 struct Bare;
 impl AgentAdapter for Bare {
     fn agent(&self) -> Agent {

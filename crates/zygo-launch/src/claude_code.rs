@@ -9,6 +9,7 @@ use zygo_core::Agent;
 use zygo_hooks::session_text::mechanics;
 use zygo_proxy::session::SessionConfig;
 use zygo_work::policy::Policy;
+use zygo_workspace::args::occurrences;
 
 use crate::adapter::{AgentAdapter, ChildSpec, LaunchCtx, Plugins, Preflight};
 
@@ -47,41 +48,28 @@ pub fn shell_quote(p: &Path) -> String {
     if cfg!(windows) { format!("\"{s}\"") } else { format!("'{}'", s.replace('\'', r"'\''")) }
 }
 
-/// The values of `name <v>` and `name=<v>`, in order.
+// Every flag check below reads the arguments by W4's walk (D5): a flag value or a token after `--` is never a flag.
+
+/// The values of the flag `name` (its long name), in order.
 fn flag_values(args: &[String], name: &str) -> Vec<String> {
-    let mut out = vec![];
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == name {
-            out.extend(it.next().cloned());
-        } else if let Some(v) = a.strip_prefix(name).and_then(|r| r.strip_prefix('=')) {
-            out.push(v.into());
-        }
-    }
-    out
+    occurrences(Agent::ClaudeCode, args).into_iter().filter(|o| o.name == name).flat_map(|o| o.values).collect()
 }
 
-/// `args` without `name <v>` and `name=<v>`.
+/// `args` without the tokens of the flag `name` (its long name) and its values.
 fn without_flag(args: &[String], name: &str) -> Vec<String> {
-    let mut out = vec![];
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == name {
-            it.next();
-        } else if !a.strip_prefix(name).is_some_and(|r| r.starts_with('=')) {
-            out.push(a.clone());
-        }
-    }
-    out
+    let gone: Vec<std::ops::Range<usize>> = occurrences(Agent::ClaudeCode, args).into_iter().filter(|o| o.name == name).map(|o| o.tokens).collect();
+    args.iter().enumerate().filter(|(i, _)| !gone.iter().any(|r| r.contains(i))).map(|(_, a)| a.clone()).collect()
 }
 
+/// Whether `args` hold the flag `name` (its long name).
 fn has_flag(args: &[String], name: &str) -> bool {
-    args.iter().any(|a| a == name || a.strip_prefix(name).is_some_and(|r| r.starts_with('=')))
+    zygo_workspace::args::flags(Agent::ClaudeCode, args).contains(&name)
 }
 
-/// Whether the user's arguments hold `--settings` before any `--`, by W4's walk (AU59, D5).
-pub(crate) fn has_user_settings(args: &[String]) -> bool {
-    zygo_workspace::args::flags(Agent::ClaudeCode, args).contains(&"--settings")
+/// Whether the user's arguments hold `--settings` before any `--`, by W4's walk (AU59, D5). The launcher and the cmd
+/// layer (AU102) use this one rule.
+pub fn has_user_settings(args: &[String]) -> bool {
+    has_flag(args, "--settings")
 }
 
 fn strip_1m(v: &str) -> &str {
@@ -91,7 +79,7 @@ fn strip_1m(v: &str) -> &str {
 /// The user's `--agents` values merged in order; `None` when one is not a JSON object (with `-p`/`--print`, a value
 /// that is not JSON is read as a file that holds one).
 fn user_agents(ctx: &LaunchCtx) -> Option<Map<String, Value>> {
-    let print = ctx.args.iter().any(|a| a == "-p" || a == "--print");
+    let print = has_flag(&ctx.args, "--print");
     let mut out = Map::new();
     for v in flag_values(&ctx.args, "--agents") {
         let parsed = match serde_json::from_str::<Value>(&v) {
