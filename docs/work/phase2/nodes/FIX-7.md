@@ -127,5 +127,5 @@ Change the comment at `:16-18` so its third line says: `# process group (TERM to
 
 ### Task 4: verification
 
-- [ ] **4.1** Run the acceptance check of the contract. Expected: exit 0 with the three lines of the contract.
-- [ ] **4.2** Commit this file with all steps ticked: `docs(work): FIX-7 plan steps done`.
+- [x] **4.1** Run the acceptance check of the contract. Expected: exit 0 with the three lines of the contract. Result (OpenCode directory on PATH): exit 0, `lib tests: ok (28)`, `selftest tests: ok (2)`, `live-hud selfcheck: ok (17)`, `check-premises: ok (P1 … PW15)`. Also `ver_test.sh`: `ver tests: ok (50)`, and `live-selftest.sh`: `live selftest: ok (54)`.
+- [x] **4.2** Commit this file with all steps ticked: `docs(work): FIX-7 plan steps done`.
