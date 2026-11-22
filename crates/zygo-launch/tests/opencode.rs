@@ -713,7 +713,7 @@ console.log(JSON.stringify(res));
     )
     .unwrap();
     let mut cmd = std::process::Command::new("node");
-    cmd.arg("driver.mjs").current_dir(&dir).env("ZYGO_MAIN_ROLE", role).env("STUB_MODE", mode);
+    cmd.arg("driver.mjs").current_dir(&dir).env("ZYGO_MAIN_ROLE", role).env("STUB_MODE", mode).env_remove("ZYGO_WORKSPACE");
     if big {
         cmd.env("BIG", "1");
     }
@@ -1208,4 +1208,271 @@ fn a_project_config_that_defines_provider_zygo_stops_the_launch() {
     assert_eq!(code, 2, "{err}");
     assert!(err.contains(&file.display().to_string()) && err.contains("provider.zygo"), "{err}");
     assert!(!l.out.join("env.json").exists());
+}
+
+// ---- L2: session arguments and member events ----
+
+fn fixture_text(rel: &str) -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/opencode").join(rel)).unwrap()
+}
+
+/// Option names of the pinned OpenCode help: after `Options:`, each line whose first non-space character is `-`;
+/// the text before the first run of two spaces, split at `, ` (W4's test parser).
+fn help_names() -> BTreeSet<String> {
+    fixture_text("help.txt")
+        .lines()
+        .skip_while(|l| *l != "Options:")
+        .skip(1)
+        .map(str::trim_start)
+        .filter(|t| t.starts_with('-'))
+        .flat_map(|t| t.split("  ").next().unwrap().split(", ").map(str::to_string).collect::<Vec<_>>())
+        .collect()
+}
+
+#[test] // W§8.3, AU3, AU30
+fn session_args_follow_w4_and_the_pinned_help() {
+    let help = help_names();
+    let oc = OpenCode::default();
+    let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let names = zygo_workspace::args::session_flags(Agent::OpenCode);
+    assert_eq!(names, ["-c", "--continue", "-s", "--session", "--fork"]);
+    for f in names {
+        assert!(help.contains(f), "{f} is not in the pinned --help");
+        assert!(oc.has_session_arg(&s(&["--model", "zygo/lead", f, "ses_1"])), "{f}");
+    }
+    assert!(oc.has_session_arg(&s(&["--session=ses_1"])));
+    assert!(!oc.has_session_arg(&s(&["run", "--model", "zygo/lead", "--print-logs"])));
+    assert!(!oc.has_session_arg(&s(&["--", "-s"])));
+    assert!(oc.preassign_args("ses_1").is_empty());
+    assert_eq!(oc.resume_args("ses_1"), s(&["-s", "ses_1"]));
+    assert!(help.contains(&oc.resume_args("ses_1")[0]));
+}
+
+#[test] // W§9.1, AU104, W§15 §8.7: PW4 event names
+fn plugin_workspace_events_match_pw4_fixtures() {
+    let types: BTreeSet<String> = fixture_text("workspace/plugin-event-types.txt").lines().map(str::to_string).collect();
+    for t in ["session.created", "session.idle", "session.status"] {
+        assert!(types.contains(t), "{t} not seen by PW4");
+        assert!(TEMPLATE.contains(&format!("\"{t}\"")), "{t}");
+    }
+    assert_eq!(fixture("workspace/tool.execute.before-task.json")["tool"], "task");
+    for t in [
+        "event: async", "ZYGO_WORKSPACE", "parentID", "\"workspace\"", "\"--event\"", "\"session\"", "\"prompt\"", "\"busy\"", "\"stop\"", "\"pre-tool\"",
+        "input.tool === \"task\"", "tool_name: \"Agent\"",
+    ] {
+        assert!(TEMPLATE.contains(t), "{t}");
+    }
+}
+
+/// Runs the generated plugin under node: the `event` hook gets each `[type, properties]` of `events` (in order, or
+/// all at once without waiting when `parallel`), then `tool.execute.before` runs for the PW4 `task` fixture in
+/// session `main`. A `slow` stub sleeps 0.3 s in `session`.
+#[cfg(unix)]
+fn ws_node_run(fx: &Fx, name: &str, member: Option<&str>, mode: &str, main: &str, events: Value, parallel: bool) -> NodeRun {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = fx.root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let stub = dir.join("zygo-stub");
+    let script = r#"#!/bin/sh
+d=$(dirname "$0")
+echo "$*" >> "$d/calls.txt"
+cat > "$d/stdin-$2-$6.json"
+case "$2:$6:$STUB_MODE" in
+  workspace:session:slow) sleep 0.3 ;;
+  workspace:pre-tool:deny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R2"}}' ;;
+esac
+"#;
+    std::fs::write(&stub, script).unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(dir.join("plugin.mjs"), plugin_js(&ctx(fx, |_| {}), &stub)).unwrap();
+    std::fs::write(
+        dir.join("driver.mjs"),
+        r#"import { readFileSync } from "node:fs";
+import { ZygoPlugin } from "./plugin.mjs";
+const h = await ZygoPlugin({ directory: "/r" });
+const task = JSON.parse(readFileSync(process.env.TASK_FX, "utf8"));
+const events = JSON.parse(process.env.EVENTS).map(([type, properties]) => ({ event: { type, properties } }));
+if (process.env.PARALLEL === "1") {
+  await Promise.all(events.map((e) => h.event(e)));
+} else {
+  for (const e of events) await h.event(e);
+}
+const res = {};
+try {
+  await h["tool.execute.before"]({ tool: task.tool, sessionID: process.env.MAIN, callID: "c" }, { args: { description: "d", prompt: "p", subagent_type: "s" } });
+  res.threw = null;
+} catch (e) { res.threw = e.message; }
+console.log(JSON.stringify(res));
+"#,
+    )
+    .unwrap();
+    let mut cmd = std::process::Command::new("node");
+    cmd.arg("driver.mjs")
+        .current_dir(&dir)
+        .env("STUB_MODE", mode)
+        .env("MAIN", main)
+        .env("EVENTS", events.to_string())
+        .env("PARALLEL", if parallel { "1" } else { "0" })
+        .env("TASK_FX", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/opencode/workspace/tool.execute.before-task.json"))
+        .env_remove("ZYGO_WORKSPACE");
+    if let Some(m) = member {
+        cmd.env("ZYGO_WORKSPACE", m);
+    }
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    NodeRun { result: serde_json::from_slice(&out.stdout).ok(), calls: std::fs::read_to_string(dir.join("calls.txt")).unwrap_or_default(), dir }
+}
+
+#[cfg(unix)]
+fn no_node(test: &str) -> bool {
+    let missing = !std::process::Command::new("node").arg("--version").output().is_ok_and(|o| o.status.success());
+    if missing {
+        eprintln!("skipped {test}: node is not on PATH");
+    }
+    missing
+}
+
+#[cfg(unix)]
+fn ws(e: &str) -> String {
+    format!("hook workspace --agent opencode --event {e}")
+}
+
+#[cfg(unix)]
+fn ws_calls(r: &NodeRun) -> Vec<String> {
+    r.calls.lines().filter(|l| l.starts_with("hook workspace")).map(str::to_string).collect()
+}
+
+#[cfg(unix)]
+fn stdin_of(r: &NodeRun, f: &str) -> Value {
+    serde_json::from_slice(&std::fs::read(r.dir.join(f)).unwrap()).unwrap()
+}
+
+#[cfg(unix)]
+fn busy(s: &str) -> Value {
+    json!(["session.status", {"sessionID": s, "status": {"type": "busy"}}])
+}
+
+#[cfg(unix)]
+const M: &str = "0123456789abcdef";
+
+#[cfg(unix)]
+#[test] // W§9.1, AU104: the Spec payloads, the member gate, the pre-tool deny
+fn plugin_sends_member_events_under_node() {
+    if no_node("plugin_sends_member_events_under_node") {
+        return;
+    }
+    let fx = fx();
+    let sid = fixture("workspace/tool.execute.before-task.json")["sessionID"].as_str().unwrap().to_string();
+    let ev = json!([
+        ["session.created", {"info": {"id": sid}}],
+        ["session.updated", {"info": {"id": sid}}],
+        ["session.created", {"info": {"id": "ses_child", "parentID": sid}}],
+        ["session.idle", {"sessionID": "ses_child"}],
+        ["session.idle", {"sessionID": sid}],
+        ["session.status", {"sessionID": sid, "status": {"type": "idle"}}]
+    ]);
+    let r = ws_node_run(&fx, "ws-ok", Some(M), "ok", &sid, ev.clone(), false);
+    assert_eq!(r.result.clone().unwrap()["threw"], Value::Null);
+    assert_eq!(r.calls.lines().collect::<Vec<_>>(), [ws("session"), ws("stop"), ws("stop"), ws("pre-tool"), "hook guard --agent opencode".to_string()]);
+    assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": sid, "cwd": "/r"}));
+    assert_eq!(stdin_of(&r, "stdin-workspace-stop.json"), json!({"sessionID": sid, "cwd": "/r"}));
+    let pre = std::fs::read(r.dir.join("stdin-workspace-pre-tool.json")).unwrap();
+    assert_eq!(serde_json::from_slice::<Value>(&pre).unwrap(), json!({"sessionID": sid, "tool_name": "Agent", "cwd": "/r"}));
+    let i = HookInput::parse(Agent::OpenCode, &pre).unwrap();
+    assert_eq!(i.tool_name.as_deref(), Some("Agent"));
+    assert!(!i.has_agent_id);
+
+    let r = ws_node_run(&fx, "ws-deny", Some(M), "deny", &sid, ev.clone(), false);
+    assert_eq!(r.result.clone().unwrap()["threw"], "R2");
+    assert_eq!(r.calls.lines().last(), Some(ws("pre-tool").as_str()));
+    assert!(!r.calls.contains("hook guard"));
+
+    let resume = json!([["message.part.updated", {"part": {"sessionID": "ses_resume"}}], ["session.idle", {"sessionID": "ses_resume"}]]);
+    let r = ws_node_run(&fx, "ws-resume", Some(M), "ok", "ses_resume", resume, false);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("stop"), ws("pre-tool")]);
+    assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": "ses_resume", "cwd": "/r"}));
+
+    let mut all = ev.as_array().unwrap().clone();
+    all.push(busy(&sid));
+    for (name, member) in [("ws-none", None), ("ws-empty", Some(""))] {
+        let r = ws_node_run(&fx, name, member, "deny", &sid, Value::Array(all.clone()), false);
+        assert_eq!(r.result.clone().unwrap()["threw"], Value::Null, "{name}");
+        assert_eq!(r.calls.lines().collect::<Vec<_>>(), ["hook guard --agent opencode"], "{name}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn plugin_sends_prompt_for_a_turn_of_the_main_session_only() { // AU27 as amended
+    if no_node("plugin_sends_prompt_for_a_turn_of_the_main_session_only") {
+        return;
+    }
+    let fx = fx();
+    let main = "ses_main";
+    let events = json!([
+        ["session.created", {"info": {"id": main}}],
+        busy(main),
+        busy(main),
+        ["session.status", {"sessionID": main, "status": {"type": "retry", "attempt": 1, "message": "m", "next": 0}}],
+        ["session.created", {"info": {"id": "ses_child", "parentID": main}}],
+        busy("ses_child"),
+        ["session.idle", {"sessionID": "ses_child"}],
+        busy("ses_child"),
+        ["session.idle", {"sessionID": main}],
+        busy(main),
+        ["session.status", {"sessionID": main, "status": {"type": "idle"}}]
+    ]);
+    let r = ws_node_run(&fx, "ws-prompt", Some(M), "ok", main, events, false);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("stop"), ws("prompt"), ws("stop"), ws("pre-tool")]);
+    assert_eq!(stdin_of(&r, "stdin-workspace-prompt.json"), json!({"sessionID": main, "cwd": "/r"}));
+
+    let r = ws_node_run(&fx, "ws-prompt-sub", Some(M), "ok", main, json!([["session.created", {"info": {"id": main}}], ["session.idle", {"sessionID": main}], busy("ses_child")]), false);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("stop"), ws("pre-tool")]);
+
+    let r = ws_node_run(&fx, "ws-prompt-none", None, "ok", main, json!([["session.created", {"info": {"id": main}}], busy(main)]), false);
+    assert!(ws_calls(&r).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn plugin_main_session_follows_new_top_sessions_and_never_a_child() { // review minor 4, 5
+    if no_node("plugin_main_session_follows_new_top_sessions_and_never_a_child") {
+        return;
+    }
+    let fx = fx();
+    let events = json!([
+        ["session.created", {"info": {"id": "ses_a"}}],
+        busy("ses_a"),
+        ["session.created", {"info": {"id": "ses_kid", "parentID": "ses_a"}}],
+        ["session.updated", {"info": {"id": "ses_kid", "parentID": "ses_a"}}],
+        busy("ses_kid"),
+        ["session.created", {"info": {"id": "ses_b"}}],
+        busy("ses_a"),
+        ["session.idle", {"sessionID": "ses_a"}],
+        busy("ses_b"),
+        ["session.idle", {"sessionID": "ses_b"}]
+    ]);
+    let r = ws_node_run(&fx, "ws-switch", Some(M), "ok", "ses_b", events, false);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")]);
+    assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": "ses_b", "cwd": "/r"}));
+    assert_eq!(stdin_of(&r, "stdin-workspace-stop.json"), json!({"sessionID": "ses_b", "cwd": "/r"}));
+
+    // A child's events before any top session: the child never becomes the main session.
+    let kid_first = json!([["session.created", {"info": {"id": "ses_kid", "parentID": "ses_x"}}], busy("ses_kid"), ["session.idle", {"sessionID": "ses_kid"}]]);
+    let r = ws_node_run(&fx, "ws-kid-first", Some(M), "ok", "ses_kid", kid_first, false);
+    assert_eq!(ws_calls(&r), [ws("pre-tool")]);
+}
+
+#[cfg(unix)]
+#[test]
+fn plugin_decides_before_it_waits() { // review B2
+    if no_node("plugin_decides_before_it_waits") {
+        return;
+    }
+    let fx = fx();
+    let events = json!([busy("ses_resume"), ["session.idle", {"sessionID": "ses_resume"}]]);
+    let r = ws_node_run(&fx, "ws-parallel", Some(M), "slow", "ses_resume", events, true);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")]);
+    let calls = ws_calls(&r);
+    assert_eq!(calls.iter().rposition(|c| *c == ws("stop")), Some(2), "the last turn call is stop: not busy");
 }

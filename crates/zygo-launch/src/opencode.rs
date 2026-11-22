@@ -478,6 +478,12 @@ impl AgentAdapter for OpenCode {
         }
         Ok(())
     }
+    fn has_session_arg(&self, args: &[String]) -> bool {
+        zygo_workspace::args::has_session_arg(Agent::OpenCode, args)
+    }
+    fn resume_args(&self, id: &str) -> Vec<String> {
+        vec!["-s".into(), id.into()]
+    }
 }
 
 /// OpenCode 1.18.16 subcommands other than `run` and their aliases (`opencode --help`); none accepts `--auto`.
