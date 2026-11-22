@@ -133,7 +133,9 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
 fn session_callback_runs_after_the_session_dir_exists_and_before_the_agent_starts() { // AU34
     use std::sync::{Arc, Mutex};
     let rig = rig();
-    let seen: Arc<Mutex<Option<(PathBuf, String, PathBuf, bool, bool)>>> = Arc::default();
+    /// Session directory, session id, program, "the directory is complete", "the agent ran".
+    type Seen = (PathBuf, String, PathBuf, bool, bool);
+    let seen: Arc<Mutex<Option<Seen>>> = Arc::default();
     let (s2, out) = (seen.clone(), rig.root.join("out"));
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
         o.on_session = Some(Box::new(move |sd, session, program| {
