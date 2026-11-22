@@ -304,3 +304,28 @@ fn model_request_goes_to_the_proxy_and_stays_open() {
     assert_eq!(jsonl(&s.out.join("requests.jsonl")), [json!({"hold_ms": 20000, "status": 200})]);
     server.join().unwrap();
 }
+
+#[test]
+fn common_stub_agent_is_the_built_binary() {
+    let built = Path::new(env!("CARGO_BIN_EXE_stub-agent")).canonicalize().unwrap();
+    assert_eq!(common::stub_agent().canonicalize().unwrap(), built);
+    assert_eq!(common::stub_agent_in(built.parent().unwrap()).unwrap().canonicalize().unwrap(), built);
+}
+#[test]
+fn common_stub_agent_names_the_build_command_when_missing() {
+    let t = tempfile::tempdir().unwrap();
+    let e = common::stub_agent_in(t.path()).unwrap_err();
+    assert!(e.contains("cargo build -p zygo-launch --bin stub-agent"), "{e}");
+    assert!(e.contains(&t.path().join(format!("stub-agent{}", std::env::consts::EXE_SUFFIX)).display().to_string()), "{e}");
+}
+#[test]
+fn both_stub_control_helpers_write_the_same_steps_file() {
+    let t = tempfile::tempdir().unwrap();
+    let (a, b) = (t.path().join("a/ctl"), t.path().join("b/ctl")); // the helper makes the directory
+    for step in ["hook Stop", "exit 3"] {
+        harness::stub_control(&a, step).unwrap();
+        common::stub_control(&b, step).unwrap();
+    }
+    assert_eq!(std::fs::read_to_string(a.join("steps")).unwrap(), "hook Stop\nexit 3\n");
+    assert_eq!(std::fs::read(a.join("steps")).unwrap(), std::fs::read(b.join("steps")).unwrap());
+}
