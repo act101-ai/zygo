@@ -82,7 +82,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | IN-PROGRESS | judgment | wt .worktrees/phase2/W2 |
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
-| W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | TODO | judgment | — |
+| W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | PLANNED | judgment | — |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | IN-PROGRESS | judgment | wt .worktrees/phase2/W5 |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
