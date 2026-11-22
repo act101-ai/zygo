@@ -13,6 +13,7 @@ zygo-work.workspace = true
 zygo-usage.workspace = true
 zygo-redact.workspace = true
 zygo-hooks.workspace = true
+zygo-workspace.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
