@@ -91,6 +91,21 @@ fn claude_code_child_environment_has_the_spec_rows_and_no_denylisted_name() {
 }
 
 #[test]
+fn non_member_child_has_neither_workspace_name_nor_a_marker() { // AU58, AU64, W-C6
+    const GONE: [&str; 6] = ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_BRIDGE_SESSION_ID", "ZYGO_WORKSPACE", "ZYGO_PANE"];
+    let rig = rig();
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| o.env.0.extend(GONE.map(|n| (n.into(), "parent-1".into()))));
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    for n in GONE {
+        assert!(!r.cap.env.contains_key(n), "{n} reached the agent");
+    }
+    let log = &r.cap.session["session.log"];
+    assert!(log.lines().any(|l| l == "env: removed CLAUDECODE, CLAUDE_CODE_BRIDGE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_ID, ZYGO_PANE, ZYGO_WORKSPACE"), "{log}");
+    let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
+    assert!(view["workspace"].is_null(), "{view}");
+}
+
+#[test]
 fn claude_code_flags_settings_agents_and_mcp_match_the_spec() {
     let rig = rig();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {

@@ -139,6 +139,23 @@ fn set_rows_replace_parent_values_and_are_not_reported() {
 }
 
 #[test]
+fn denylist_removes_the_claude_code_markers_and_the_member_names() { // AU64, AU58
+    let fx = fx();
+    let gone = ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_BRIDGE_SESSION_ID", "ZYGO_WORKSPACE", "ZYGO_PANE"];
+    let kept = ["ZYGO_CONFIG", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "PATH"];
+    let rows: Vec<(&str, &str)> = gone.iter().chain(&kept).map(|n| (*n, "v")).collect();
+    let (child, removed) = child_env_with(&env_of(&rows), &fx.merged(), &[], false);
+    assert_eq!(names(&child), ["CLAUDE_CODE_MAX_OUTPUT_TOKENS", "PATH", "ZYGO_CONFIG"]);
+    assert_eq!(removed, ["CLAUDECODE", "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "ZYGO_PANE", "ZYGO_WORKSPACE"]);
+    // A member launch sets both names: the set rows win and nothing is reported.
+    let set = [("ZYGO_WORKSPACE".to_string(), "ws-1".to_string()), ("ZYGO_PANE".to_string(), "p-1".to_string())];
+    let (child, removed) = child_env_with(&env_of(&[("ZYGO_WORKSPACE", "old"), ("zygo_pane", "old")]), &fx.merged(), &set, true);
+    let rows: Vec<(String, String)> = child.0.iter().map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned())).collect();
+    assert_eq!(rows, [("ZYGO_WORKSPACE".to_string(), "ws-1".to_string()), ("ZYGO_PANE".to_string(), "p-1".to_string())]);
+    assert!(removed.is_empty());
+}
+
+#[test]
 fn session_dir_log_is_next_to_the_token() {
     let p = PathBuf::from("s1");
     assert_eq!(zygo_core::session_dir::SessionDir::new(p.clone()).log(), p.join("session.log"));
