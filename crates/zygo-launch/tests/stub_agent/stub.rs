@@ -145,7 +145,7 @@ fn call_hooks(settings: &Value, event: &str, input: &Value, out: &Path) {
 }
 
 /// Runs one step line. `Ok(Some(code))` is an `exit` step: the caller writes the `done` line, then exits.
-fn step(line: &str, _out: &Path, _settings: &Value, _argv: &[String]) -> Result<Option<i32>, String> {
+fn step(line: &str, out: &Path, settings: &Value, argv: &[String]) -> Result<Option<i32>, String> {
     let (verb, rest) = line.split_once(' ').unwrap_or((line, ""));
     match verb {
         "hook" => {
@@ -156,9 +156,11 @@ fn step(line: &str, _out: &Path, _settings: &Value, _argv: &[String]) -> Result<
             if !EVENTS.contains(&event) {
                 return Err(format!("unknown hook event `{event}`"));
             }
-            if let Some(j) = overlay {
-                serde_json::from_str::<Map<String, Value>>(j).map_err(|e| format!("the hook input is not a JSON object: {e}"))?;
-            }
+            let overlay = match overlay {
+                Some(j) => Some(serde_json::from_str::<Map<String, Value>>(j).map_err(|e| format!("the hook input is not a JSON object: {e}"))?),
+                None => None,
+            };
+            call_hooks(settings, event, &hook_input(event, argv, out, overlay.as_ref()), out);
             Ok(None)
         }
         "exit" => rest.parse::<i32>().map(Some).map_err(|e| format!("exit code: {e}")),

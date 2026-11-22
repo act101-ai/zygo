@@ -195,3 +195,67 @@ fn launched_member_calls_the_generated_session_start_hook_and_returns_the_exit_s
     assert_eq!(h[0]["command"], format!("{} hook session-start", spec_quote(&rig.zygo)));
     assert_eq!((&h[0]["input"]["session_id"], &h[0]["input"]["source"]), (&json!(ID), &json!("startup")));
 }
+
+/// Sends `hook <event>` and then `step2`; returns the stub and the hook records after the SessionStart one.
+fn emit(event: &str, step2: &str) -> (Stub, Vec<Value>) {
+    let t = tempfile::tempdir().unwrap();
+    let set = settings(t.path());
+    let s = spawn_in(t, &["--session-id", ID, "--settings", set.as_str()], true, "");
+    harness::stub_control(&s.ctl, &format!("hook {event}")).unwrap();
+    harness::stub_control(&s.ctl, step2).unwrap();
+    let done = wait_done(&s.ctl, 3); // each line is written after its hooks returned
+    assert_eq!(done[1..], [format!("hook {event}"), step2.to_string()]);
+    let h = jsonl(&s.out.join("hooks.jsonl"))[1..].to_vec();
+    (s, h)
+}
+fn sub() -> Value { json!({"agent_id": "stub-sub-1", "agent_type": "claude"}) }
+fn stop() -> Value { json!({"stop_hook_active": false, "background_tasks": []}) }
+fn merged(a: Value, b: Value) -> Value { let mut a = a; a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone()); a }
+
+#[test]
+fn user_prompt_submit_hook_on_request() {
+    let (s, h) = emit("UserPromptSubmit", r#"hook UserPromptSubmit {"prompt":"/zygo:status"}"#);
+    assert_eq!(h.len(), 2);
+    assert_cat(&h[0], "UserPromptSubmit", &input(&s, "UserPromptSubmit", ID, json!({"prompt": "stub prompt"})));
+    assert_cat(&h[1], "UserPromptSubmit", &input(&s, "UserPromptSubmit", ID, json!({"prompt": "/zygo:status"})));
+}
+#[test]
+fn pre_tool_use_agent_hook_on_request() {
+    let agent = json!({"tool_name": "Agent", "tool_use_id": "toolu_stub",
+        "tool_input": {"description": "stub", "prompt": "stub", "subagent_type": "claude", "run_in_background": false}});
+    let (s, h) = emit("PreToolUse", r#"hook PreToolUse {"tool_name":"Write"}"#);
+    // `Agent`: the `Agent` entry and the `*` entry, in settings order; `Write`: the `Edit|Write` entry and the `*` entry
+    assert_eq!(h.len(), 4);
+    assert_cat(&h[0], "PreToolUse", &input(&s, "PreToolUse", ID, agent));
+    assert_eq!((&h[1]["command"], &h[1]["out"]), (&json!("echo star"), &json!("star")));
+    assert_eq!((&h[2]["command"], &h[2]["out"]), (&json!("echo no"), &json!("no")));
+    assert_eq!((&h[3]["command"], &h[3]["input"]["tool_name"]), (&json!("echo star"), &json!("Write")));
+}
+#[test]
+fn stop_hook_on_request() {
+    let (s, h) = emit("Stop", r#"hook Stop {"agent_id":"a1","background_tasks":[{"id":"t1"}]}"#);
+    assert_eq!(h.len(), 2);
+    assert_cat(&h[0], "Stop", &input(&s, "Stop", ID, stop()));
+    assert_cat(&h[1], "Stop", &input(&s, "Stop", ID, json!({"stop_hook_active": false, "agent_id": "a1", "background_tasks": [{"id": "t1"}]})));
+}
+#[test]
+fn stop_failure_hook_on_request() {
+    let (s, h) = emit("StopFailure", "hook StopFailure {}");
+    assert_eq!(h.len(), 2);
+    assert_cat(&h[0], "StopFailure", &input(&s, "StopFailure", ID, json!({})));
+    assert_cat(&h[1], "StopFailure", &input(&s, "StopFailure", ID, json!({})));
+}
+#[test]
+fn subagent_start_hook_on_request() {
+    let (s, h) = emit("SubagentStart", r#"hook SubagentStart {"agent_id":"a2","agent_type":"zygo-code"}"#);
+    assert_eq!(h.len(), 2);
+    assert_cat(&h[0], "SubagentStart", &input(&s, "SubagentStart", ID, sub()));
+    assert_cat(&h[1], "SubagentStart", &input(&s, "SubagentStart", ID, json!({"agent_id": "a2", "agent_type": "zygo-code"})));
+}
+#[test]
+fn subagent_stop_hook_on_request() {
+    let (s, h) = emit("SubagentStop", r#"hook SubagentStop {"agent_id":"a2"}"#);
+    assert_eq!(h.len(), 2);
+    assert_cat(&h[0], "SubagentStop", &input(&s, "SubagentStop", ID, merged(sub(), stop())));
+    assert_cat(&h[1], "SubagentStop", &input(&s, "SubagentStop", ID, merged(merged(sub(), stop()), json!({"agent_id": "a2"}))));
+}
