@@ -1,0 +1,8 @@
+LIVE PH1 verified (agent 2.1.330): capture-pane -e (tmux 3.7c): stripe fg 1,3,6, logo bold fg 15, worktree name fg 172 (38;5;n)
+LIVE PH2 verified (agent 2.1.330): verbose shows two rows: the logo row, then the reflection row (tmux 3.7c, 200 columns)
+LIVE PH3 verified (agent 2.1.330): cut: at 70 columns the row is whole (65 of 65 cells shown); at 19 columns (width source default 120) a row of 87 cells is cut
+LIVE PH4 failed (agent 2.1.330): (a) width source in tmux at 200 columns: COLUMNS 200; on a pseudo-terminal of 100 columns: COLUMNS 100; (b) COLUMNS in the hook: tmux 200, pseudo-terminal 100; (c) status area = pane width - 4 at 19 columns (indent 2, right gap 2), row at 70 columns: whole
+LIVE PH5 verified (agent 2.1.330): stdin effort is {"level":"medium"} (object); stdin keys: session_id transcript_path cwd scratchpad_dir prompt_id effort session_name model workspace version output_style cost context_window exceeds_200k_tokens prompt_cache fast_mode thinking rate_limits
+LIVE PH9 verified (agent 2.1.330): logo and reflection start at column 6 of the pane (tmux 3.7c); the glyphs of the font are not checked
+LIVE PH12 verified (agent 2.1.330): observation, refreshInterval 2 s: the first slow run lived 2.16 s of its 3 s bound; the next run started 2.23 s after its start: Claude Code ends the run early; 22 runs in 45 s
+LIVE C7 verified (agent 2.1.330): HUD shown (verbose, --compact 777k); the logo, the reflection, 777k and 777000 are in none of 2 recorded requests (2 hold the tracer prompt); mock upstream

@@ -57,7 +57,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1 | TODO | implementation | — |
-| HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
 | HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | DONE | judgment | 1454eab; acceptance hud_git 21/21 (+3 ignored), workspace --no-run ok (merged tree); CI green 3 OS (run 44964062674) |
 | HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | DONE | implementation | 77323a8, merge 71181de; acceptance zygo-config 176/176 (merged tree) |
 | HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | DONE | judgment | 69b5822, merge 624dcd2; acceptance prices 27, builtin 13, workspace --no-run ok (merged tree) |
@@ -70,7 +69,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | DONE | judgment | d74bd3f, merge c3f3c55; acceptance update 26/26, workspace --no-run ok (merged tree); Windows branch of #7 runs in CI only |
 | HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
-| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | IN-PROGRESS | implementation | wt .worktrees/phase2/LIV-1 |
+| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
 | LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | IN-PROGRESS | implementation | wt .worktrees/phase2/P1 |
@@ -165,3 +164,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | FIX-4 added: scripts/premises/lib.sh exits when opencode is not on PATH, so no live script runs on this machine (no opencode). A script now states the agents it needs. LIV-1 and P1 depend on it. A placeholder opencode on PATH was refused as a fake. |
 | 2026-11-21 | Correction: this machine has OpenCode 1.19.6 at ~/.opencode/bin/opencode, not on the default PATH. The Log row above that says "no opencode" is wrong. FIX-4 DROPPED, its edges removed. Live runs put ~/.opencode/bin on PATH; P2 can run here. |
 | 2026-11-21 | LIV-1 and P1 planned. Live runs are from the executor's session with the OpenCode directory on PATH. Expected from the planners' probes: PW6 failed on tmux 3.2a (first window is 80x23 after new-session -x -y) and PH4 failed. |
+| 2026-11-22 | LIV-1 DONE: P-HUD-1 on the real Claude Code 2.1.330. PH4 failed: /dev/tty does not answer the hook; COLUMNS reaches it; the status area is 4 cells narrower than the pane (indent 2, right gap 2). Per the contract a new node changes HUD-8 before DOC-1. |
+| 2026-11-22 | LIV-1 found: killed status line runs write no cache, so the 30 s back-off never starts (HUD-9, data.rs:654-657); live-selftest.sh leaves its tmux socket file; live-hud.sh:17 comment names the wrong path; every passthrough session gets one auxiliary 429. New nodes follow. |
+| 2026-11-22 | LIV-1 cost: 4 live runs, 3 main-loop model requests with an answer. Claude Code wrote 3 trust entries in .claude.json and 6 folders under projects/ of the operator's Claude folder, for scratch paths. |

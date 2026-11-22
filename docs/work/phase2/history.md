@@ -7,6 +7,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | DONE | implementation | 9d1f6c6; acceptance ver 50, lib 27, check-premises ok, live selftest 54 (merged tree) |
+| HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
 
 ## Log
 
