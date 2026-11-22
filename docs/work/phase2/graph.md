@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** HUD-8
+**Next:** LIV-1 (manual, operator's machine), then DOC-1
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -65,12 +65,12 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | DONE | judgment | commits 4379678 98d9a9d c0407fa; CI 44968316690 green (ubuntu, macos, windows); acceptance on merged tree: session_api 40, window 37, zygo-hooks lib 22, workspace --no-run ok, no div_ceil(4) |
 | HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | DONE | judgment | edb0f1c, merge 2899612; acceptance zygo-proxy 350/350, workspace --no-run ok (merged tree) |
 | HUD-7 | SessionView statusline_style with Default; overrides statusline; launcher writes the style | HUD-3 | DONE | implementation | 5c180cc, merge 1f1967b; acceptance all 17 commands 0 failed (merged tree) |
-| HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, HUD-2 | IN-PROGRESS | judgment | .worktrees/phase2/HUD-8 |
-| HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7 | TODO | judgment | — |
-| HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | TODO | judgment | — |
+| HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, HUD-2 | DONE | judgment | 320d2b2, merge 5d919a3; acceptance render 23, hooks lib 24, prices 28, session_api 45, passthrough 30, window 38, compact_cmd 11 (merged tree) |
+| HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7 | DONE | judgment | 2a5f5ff, merge e7d95d1; acceptance zygo-hooks, zygo, zygo-config, zygo-launch all targets 0 failed; session_api 47, passthrough 31 (merged tree, Linux) |
+| HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | DONE | judgment | 7e76153; acceptance in the full workspace run, 0 failed (merged tree) |
 | UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | DONE | judgment | d74bd3f, merge c3f3c55; acceptance update 26/26, workspace --no-run ok (merged tree); Windows branch of #7 runs in CI only |
-| HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | TODO | implementation | — |
-| HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | TODO | implementation | — |
+| HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
+| HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | TODO | implementation | — |
 | LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1 | TODO | implementation | — |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
@@ -106,3 +106,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | HUD-3 DONE (77323a8, merge 71181de). |
 | 2026-11-21 | HUD-4, HUD-7, UPD-1 and HUD-6 DONE. HUD-6: a team session's status reply has no spend_usd and no requests_priced until HUD-10 adds the built-in list price cost (AU14). |
 | 2026-11-21 | Reported by nodes, for DOC-1: H§7.3 step 2 and the H§9 row do not list long_context.cache_write_5m (contract and H§11 do); stale line references in H§7.3 (schema.rs:216-223, catalog.toml:111); the fixed sessions line of the auto-update design reads "1 zygo sessions are running". |
+| 2026-11-21 | HUD-8, HUD-9, HUD-10, HUD-11, HUD-12 DONE. Full floor on the merged tree (Linux): cargo test --workspace --locked --no-fail-fast 0 failed; sh scripts/test-install.sh all passed. Windows and macOS run in CI on the PR. |
+| 2026-11-21 | Open, not run: PRB-1, LIV-1, LIV-2 (manual live checks on the operator's machine); DOC-1 waits for LIV-1. |
+| 2026-11-21 | For DOC-1: H§3, H§8 and H§14 #33 still say the statusline session form exits 2 in an OpenCode session; the operator decision is "same as Claude Code" and HUD-11 built that. The verb stores the style in an OpenCode session, but no zygo surface shows a HUD there yet. H§9 base-spec notes for §10.7 and §17 doctor are not written. The contract text of HUD-9 names $ZYGO_SESSION_DIR/log; the real file is session.log. |
+| 2026-11-21 | Found, not fixed (needs a node): crates/zygo-proxy/tests/request_path.rs fallback_all_failed_removes_pin failed once in three full runs (refused_port binds and releases a port that another test can take). zygo_hooks::statusline::trimmed (used by zygo status) still reads Store::summary, not Store::bytes_trimmed. |
