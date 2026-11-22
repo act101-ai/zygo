@@ -77,6 +77,14 @@ impl SessionDir {
     pub fn work(&self) -> PathBuf {
         self.root.join("work")
     }
+    /// Turn and subagent state of a workspace member (workspaces design W§9.1).
+    pub fn activity_json(&self) -> PathBuf {
+        self.root.join("activity.json")
+    }
+    /// The fs4 lock for changes to `activity.json` (AU56).
+    pub fn activity_lock(&self) -> PathBuf {
+        self.root.join("activity.lock")
+    }
 
     pub fn read_token(&self) -> anyhow::Result<String> {
         let t = fs::read_to_string(self.token()).context("read session token")?;
@@ -105,7 +113,7 @@ impl SessionDir {
 }
 
 /// Writes `bytes` to a unique temp file next to `target` (mode 0600 on unix), syncs it, then renames it over `target`.
-pub(crate) fn write_atomic(target: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub fn write_atomic(target: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let dir = match target.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),

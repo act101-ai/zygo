@@ -266,3 +266,35 @@ fn workspace_dirs_of_a_test_built_paths_stay_under_its_directory() {
     assert_eq!(p.workspaces_dir(), t.path().join("data").join("state").join("workspaces"));
     assert_eq!(p.workspace_cache_dir(), t.path().join("cache").join("workspaces"));
 }
+
+#[test]
+fn write_atomic_is_public_sets_0600_and_leaves_no_temp_file() {
+    use zygo_core::session_dir::write_atomic;
+    let t = tempfile::tempdir().unwrap();
+    let f = t.path().join("workspace.json");
+    write_atomic(&f, b"one").unwrap();
+    write_atomic(&f, b"two").unwrap();
+    assert_eq!(std::fs::read(&f).unwrap(), b"two");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    // A failed rename (the target is a directory) is an error; the temporary file is deleted.
+    let taken = t.path().join("taken");
+    std::fs::create_dir(&taken).unwrap();
+    assert!(write_atomic(&taken, b"x").is_err());
+    let mut names: Vec<String> = std::fs::read_dir(t.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["taken", "workspace.json"]);
+}
+
+#[test]
+fn session_dir_activity_accessors() {
+    let d = SessionDir::new(std::path::PathBuf::from("/c/sessions/01ABC"));
+    assert_eq!(d.activity_json(), d.root.join("activity.json"));
+    assert_eq!(d.activity_lock(), d.root.join("activity.lock"));
+}
