@@ -711,8 +711,19 @@ fn h14_31_icon_set_selection() {
     }
     assert_eq!(icon_set_on(&vars(&[]), true), IconSet::Plain);
     assert_eq!(icon_set_on(&vars(&[("TERM", "xterm-256color")]), true), IconSet::Plain);
-    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Nerd);
-    assert_eq!(icon_set_on(&vars(&[("TERM_PROGRAM", "vscode")]), true), IconSet::Nerd);
+    // Windows: `WT_SESSION` and `TERM_PROGRAM` select no set (the PH8 and PH10 fallback, AU2 2026-11-22).
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("TERM_PROGRAM", "vscode")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x"), ("TERM_PROGRAM", "vscode")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x"), ("TERM", "xterm-256color")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "1"), ("WT_SESSION", "x")]), true), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes"), ("TERM_PROGRAM", "vscode")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "0"), ("WT_SESSION", "x")]), true), IconSet::Plain);
+    // Not Windows: the same variables give the old results.
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x")]), false), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("TERM_PROGRAM", "vscode")]), false), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x"), ("TERM_PROGRAM", "vscode")]), false), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes"), ("TERM_PROGRAM", "vscode")]), false), IconSet::Nerd);
     assert_eq!(icon_set_on(&vars(&[]), false), IconSet::Nerd);
     assert_eq!(icon_set_on(&vars(&[("TERM", "xterm-256color")]), false), IconSet::Nerd);
     // Any other value: the automatic rules.
@@ -720,10 +731,12 @@ fn h14_31_icon_set_selection() {
     assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes"), ("TERM", "xterm")]), false), IconSet::Nerd);
     assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes")]), true), IconSet::Plain);
     assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "")]), false), IconSet::Nerd);
-    // `icon_set` is the rule for this build.
-    for env in [vars(&[]), vars(&[("TERM", "linux")]), vars(&[("WT_SESSION", "x")])] {
+    // `icon_set` is the rule for this build: on Windows the terminal variables give the plain set.
+    for env in [vars(&[]), vars(&[("TERM", "linux")]), vars(&[("WT_SESSION", "x")]), vars(&[("TERM_PROGRAM", "vscode")])] {
         assert_eq!(icon_set(&env), icon_set_on(&env, cfg!(windows)));
     }
+    let terminal = vars(&[("WT_SESSION", "x"), ("TERM_PROGRAM", "vscode")]);
+    assert_eq!(icon_set(&terminal), if cfg!(windows) { IconSet::Plain } else { IconSet::Nerd });
     // `NO_COLOR=1` alone removes color only: Nerd icons, no escapes.
     let quiet = vars(&[("NO_COLOR", "1")]);
     assert_eq!((icon_set_on(&quiet, false), color_mode(&quiet)), (IconSet::Nerd, ColorMode::Off));

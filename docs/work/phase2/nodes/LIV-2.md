@@ -43,7 +43,7 @@ Work in the node's checkout and run each command from the repository root. Stage
 
 ### Task 1: the tests first
 
-- [ ] **1.1** In `crates/zygo-hooks/tests/statusline_render.rs`, `h14_31_icon_set_selection`: replace the two lines `:714-715` (`WT_SESSION` and `TERM_PROGRAM` with `true` → `IconSet::Nerd`) with the block below. Then replace the `icon_set` loop `:723-726` with the second block. Check: the file has no `icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Nerd` text left.
+- [x] **1.1** In `crates/zygo-hooks/tests/statusline_render.rs`, `h14_31_icon_set_selection`: replace the two lines `:714-715` (`WT_SESSION` and `TERM_PROGRAM` with `true` → `IconSet::Nerd`) with the block below. Then replace the `icon_set` loop `:723-726` with the second block. Check: the file has no `icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Nerd` text left.
 
 ```rust
     // Windows: `WT_SESSION` and `TERM_PROGRAM` select no set (the PH8 and PH10 fallback, AU2 2026-11-22).
@@ -70,8 +70,8 @@ Work in the node's checkout and run each command from the repository root. Stage
     assert_eq!(icon_set(&terminal), if cfg!(windows) { IconSet::Plain } else { IconSet::Nerd });
 ```
 
-- [ ] **1.2** Run `cargo test -p zygo-hooks --locked --test statusline_render h14_31_icon_set_selection`. Check: 1 failed. The panic is at the first new line (`icon_set_on(&vars(&[("WT_SESSION", "x")]), true)`), with `left: Nerd` and `right: Plain`.
-- [ ] **1.3** In `crates/zygo/tests/usage_doctor.rs`, `h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`: replace the comment and the `cases` array (`:712-721`) with the block below. Keep the loop and the rest of the test.
+- [x] **1.2** Run `cargo test -p zygo-hooks --locked --test statusline_render h14_31_icon_set_selection`. Check: 1 failed. The panic is at the first new line (`icon_set_on(&vars(&[("WT_SESSION", "x")]), true)`), with `left: Nerd` and `right: Plain`.
+- [x] **1.3** In `crates/zygo/tests/usage_doctor.rs`, `h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`: replace the comment and the `cases` array (`:712-721`) with the block below. Keep the loop and the rest of the test.
 
 ```rust
     // The set is the one the status line uses (AU2). `xterm` selects no set by itself on any platform. On a Windows
@@ -90,11 +90,11 @@ Work in the node's checkout and run each command from the repository root. Stage
     ];
 ```
 
-- [ ] **1.4** Run `cargo test -p zygo --locked --test usage_doctor h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`. Check: 1 passed, 0 failed. This is expected on Linux (finding 3). The Windows branch runs in CI at delivery.
+- [x] **1.4** Run `cargo test -p zygo --locked --test usage_doctor h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set`. Check: 1 passed, 0 failed. This is expected on Linux (finding 3). The Windows branch runs in CI at delivery.
 
 ### Task 2: the rule
 
-- [ ] **2.1** In `crates/zygo-hooks/src/statusline/render.rs`, replace the doc comment and the body of `icon_set_on` (`:126-138`) with the block below. The signature does not change. Check: `cargo check -p zygo-hooks --locked` finishes with no error and no warning.
+- [x] **2.1** In `crates/zygo-hooks/src/statusline/render.rs`, replace the doc comment and the body of `icon_set_on` (`:126-138`) with the block below. The signature does not change. Check: `cargo check -p zygo-hooks --locked` finishes with no error and no warning.
 
 ```rust
 /// AU2. `ZYGO_NERD_FONT=1` forces the Nerd set and `0` the plain set. Any other value, or none: plain when `TERM`
@@ -112,7 +112,7 @@ pub fn icon_set_on(env: &dyn Fn(&str) -> Option<OsString>, windows: bool) -> Ico
 }
 ```
 
-- [ ] **2.2** In `crates/zygo-hooks/src/statusline/data.rs`, replace the one doc line above `const HUD_ENV` (`:461`, `/// The environment variables that the HUD reads (H§7).`) with the three lines below. The list does not change. Check: `cargo check -p zygo-hooks --locked --features test-hooks` finishes with no error and no warning, and `rg -n -F 'evidence for a later Windows run of PH10' crates/zygo-hooks/src/statusline/data.rs` prints one line.
+- [x] **2.2** In `crates/zygo-hooks/src/statusline/data.rs`, replace the one doc line above `const HUD_ENV` (`:461`, `/// The environment variables that the HUD reads (H§7).`) with the three lines below. The list does not change. Check: `cargo check -p zygo-hooks --locked --features test-hooks` finishes with no error and no warning, and `rg -n -F 'evidence for a later Windows run of PH10' crates/zygo-hooks/src/statusline/data.rs` prints one line.
 
 ```rust
 /// The environment variables of H§7 that `dump` records (P-HUD-1). `TERM_PROGRAM` is read by no HUD rule since AU2
@@ -120,9 +120,9 @@ pub fn icon_set_on(env: &dyn Fn(&str) -> Option<OsString>, windows: bool) -> Ico
 /// as evidence for a later Windows run of PH10.
 ```
 
-- [ ] **2.3** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Check: 0 failed; `h14_31_icon_set_selection` passes.
-- [ ] **2.4** Run `cargo test -p zygo --locked --test usage_doctor`. Check: 0 failed.
-- [ ] **2.5** Commit `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/src/statusline/data.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo/tests/usage_doctor.rs` and this file with steps 1.1-2.5 ticked. Message: `fix(statusline): plain icons on Windows unless ZYGO_NERD_FONT=1 (PH8, PH10 fallback)`.
+- [x] **2.3** Run `cargo test -p zygo-hooks --locked --test statusline_render`. Check: 0 failed; `h14_31_icon_set_selection` passes.
+- [x] **2.4** Run `cargo test -p zygo --locked --test usage_doctor`. Check: 0 failed.
+- [x] **2.5** Commit `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/src/statusline/data.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo/tests/usage_doctor.rs` and this file with steps 1.1-2.5 ticked. Message: `fix(statusline): plain icons on Windows unless ZYGO_NERD_FONT=1 (PH8, PH10 fallback)`.
 
 ### Task 3: `docs/live-checks.md`
 

@@ -124,8 +124,9 @@ pub fn icon_set(env: &dyn Fn(&str) -> Option<OsString>) -> IconSet {
 }
 
 /// AU2. `ZYGO_NERD_FONT=1` forces the Nerd set and `0` the plain set. Any other value, or none: plain when `TERM`
-/// is `linux` or `dumb`, or on Windows (`windows`) when neither `WT_SESSION` nor `TERM_PROGRAM` is set; else Nerd.
-/// `NO_COLOR` has no part in it.
+/// is `linux` or `dumb`, or on Windows (`windows`) whatever `WT_SESSION` and `TERM_PROGRAM` hold (the PH8 and PH10
+/// fallback, 2026-11-22: no Windows run showed that they reach the hook through Git Bash); else Nerd. `NO_COLOR`
+/// has no part in it.
 pub fn icon_set_on(env: &dyn Fn(&str) -> Option<OsString>, windows: bool) -> IconSet {
     match var(env, "ZYGO_NERD_FONT").as_deref() {
         Some("1") => return IconSet::Nerd,
@@ -133,8 +134,7 @@ pub fn icon_set_on(env: &dyn Fn(&str) -> Option<OsString>, windows: bool) -> Ico
         _ => {}
     }
     let console = matches!(var(env, "TERM").as_deref(), Some("linux" | "dumb"));
-    let legacy = windows && var(env, "WT_SESSION").is_none() && var(env, "TERM_PROGRAM").is_none();
-    if console || legacy { IconSet::Plain } else { IconSet::Nerd }
+    if console || windows { IconSet::Plain } else { IconSet::Nerd }
 }
 
 /// `Off` when `NO_COLOR` is set and not empty (https://no-color.org). Else AU23: 256 colors when `COLORTERM` is
