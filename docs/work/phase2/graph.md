@@ -83,7 +83,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | TODO | judgment | — |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
-| W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | TODO | judgment | — |
+| W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | PLANNED | judgment | — |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11 | TODO | judgment | — |
@@ -189,3 +189,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-7 DONE (5e67820). Selftest socket removed with its own tmux config; live_end keeps a caller-set live-<pid>; live-hud comment path fixed. Merged tree: lib tests 28, selftest 2, live-hud selfcheck 17, check-premises ok. |
 | 2026-11-22 | FIX-8 DONE (e79d418). Verdict not determined; zygo is not the cause: the first auxiliary request of each Claude Code start was answered 429 in 24 of 24 passthrough sessions. Follow-up node FIX-10 (record upstream error type and message). |
 | 2026-11-22 | P2 planned: 25 steps; 8 ids on the mock upstream, 5.5 on the stored login; its docs/live-checks.md entry moves to LIV-2, edge P2 → LIV-2 (author's call). |
+| 2026-11-22 | W11 planned: 9 steps; plan review B1 (fork lock) and B2 (group kill via repo_file::kill_tree) fixed. |
