@@ -92,7 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10 | TODO | judgment | — |
-| H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | IN-PROGRESS | implementation | wt .worktrees/phase2/H2 |
+| H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
 | M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
@@ -150,3 +150,5 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | H2 plan, author's calls: workspace.json is read up to 64 KiB (the STDIN_CAP value; the specs give no bound) and only when it is a regular file; the reader returns the phase string unfiltered and writes no stderr line; version must equal 1. |
 | 2026-11-21 | L1 DONE (one round). Launcher::run returns LaunchOutcome; zygo claude and zygo opencode exit with .code, the same integer as before. received and signal are unix-only facts; on Windows they are false and none. |
 | 2026-11-21 | Found, not fixed (needs a node): crates/zygo-launch/tests/stub_member.rs:297 has the clippy warning cloned_ref_to_slice_refs (from L3). No test fails; a clippy run with -D warnings would. |
+| 2026-11-21 | H2 DONE (two rounds). Round 2: the phase reader opens workspace.json without blocking and checks the opened handle, so a FIFO at the path cannot make the HUD wait (C6). With O_NONBLOCK present, no test separates the handle check from it. |
+| 2026-11-21 | Stop: every open node now waits for a live check. LIV-1 and P1 are ready and need the operator's machine and login; P2 needs opencode on PATH. PRB-1, LIV-2, DOC-1 follow LIV-1; W3 and the nodes behind it follow P1 and P2. |
