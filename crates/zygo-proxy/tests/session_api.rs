@@ -1126,3 +1126,73 @@ fn tee_reads_the_cache_write_split() { // AU33, H§9 row §14 usage recording
         assert_eq!(streamed(&[delta.clone()], armed).1, Some(CacheSplit { m5: 150, h1: 120 }), "armed {armed}");
     }
 }
+
+// ---- HUD-8: H§14 #8 and #12, proxy parts ----
+
+#[test]
+fn h14_08_status_threshold_follows_the_override_without_a_request() { // H§14 #8 (proxy part): AU28, S3
+    let d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&d));
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    let windows = |s: SessionStatus| (s.model, s.context_window, s.effective_window, s.threshold);
+    let opus = || Some("claude-opus-5-5".to_string());
+    // The row's soft window (800,000) below the model window (1,000,000).
+    assert_eq!(windows(k.status().unwrap()), (opus(), Some(1_000_000), Some(800_000), Some(800_000)));
+    // S3: `zygo compact 150k` with no new request: the next status has `threshold` 150,000.
+    k.set_compact(WindowArg::Tokens(150_000)).unwrap();
+    assert_eq!(windows(k.status().unwrap()), (opus(), Some(1_000_000), Some(150_000), Some(150_000)));
+    // The override `off`: no `threshold`, and `compact` says `off` (the HUD shows `off` from it).
+    k.set_compact(WindowArg::Off).unwrap();
+    let s = k.status().unwrap();
+    assert_eq!((s.compact, s.threshold, s.context_window), (Some(WindowArg::Off), None, Some(1_000_000)));
+    // Passthrough before the first request: no `model` and no window in the reply.
+    let mut r = req();
+    r.passthrough = true;
+    let p = h.create_session(r).unwrap();
+    assert_eq!(windows(client(&h, &p, &d).status().unwrap()), (None, None, None, None));
+}
+
+#[test]
+fn h14_12_tee_split_reaches_the_price_at_two_rates() { // H§14 #12 (proxy part): AU33
+    let d = TempDir::new().unwrap();
+    let prices = cfg(&d).config.catalog.get("claude-opus-5-5").unwrap().provider[0].price_usd_per_mtok.clone().unwrap();
+    let usage_of = |body: Value| {
+        let mut t = Tee::new(false);
+        t.push(body.to_string().into(), &mut |_| {});
+        t.finish(&mut |_| {});
+        let (u, split) = (t.usage(), t.cache_split());
+        // As `Pending::drop` builds the usage that it prices (`forward.rs`).
+        TokenUsage {
+            input: u.input,
+            output: u.output,
+            cache_read: u.cache_read,
+            cache_write: u.cache_write,
+            cache_write_5m: split.map(|s| s.m5),
+            cache_write_1h: split.map(|s| s.h1),
+        }
+    };
+    // 1,000 5-minute and 1,000 1-hour cache-write tokens: (1,000 × cache_write_5m + 1,000 × cache_write) ÷ 10⁶.
+    let split = usage_of(json!({"usage":{"cache_creation_input_tokens":2000,
+        "cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":1000}}}));
+    assert_eq!((split.cache_write, split.cache_write_5m, split.cache_write_1h), (2000, Some(1000), Some(1000)));
+    let m5 = prices.cache_write_5m.expect("the built-in Anthropic rows have the 5-minute rate");
+    let want = (1000.0 * m5 + 1000.0 * prices.cache_write) / 1e6;
+    assert!(m5 < prices.cache_write, "{m5} {}", prices.cache_write);
+    assert!((prices.cost(&split).unwrap() - want).abs() < 1e-9);
+    // Without the split all 2,000 use `cache_write`.
+    let whole = usage_of(json!({"usage":{"cache_creation_input_tokens":2000}}));
+    assert_eq!((whole.cache_write_5m, whole.cache_write_1h), (None, None));
+    assert!((prices.cost(&whole).unwrap() - 2000.0 * prices.cache_write / 1e6).abs() < 1e-9);
+    // A cost that is not finite is not priced, so the session does not count the request as priced.
+    let g_d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&g_d));
+    let g = h.create_session(req()).unwrap();
+    let state = h.session(&g.session).unwrap();
+    let broken = zygo_config::Prices { input: f64::MAX, output: f64::MAX, ..Default::default() };
+    let usage = tu(10, 10, 0, 0);
+    assert_eq!(broken.cost(&usage), None);
+    state.add_request(&usage, broken.cost(&usage));
+    let s = client(&h, &g, &g_d).status().unwrap();
+    assert_eq!((s.spend_usd, s.requests_total, s.requests_priced), (Some(0.0), Some(1), Some(0)));
+}

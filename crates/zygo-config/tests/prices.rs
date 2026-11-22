@@ -335,3 +335,23 @@ fn builtin_long_context_tier_is_the_haiku_row_only() {
         assert_eq!(p.long_context, tier, "{}", row.id);
     }
 }
+
+// ---- HUD-8: H§14 #12, price part ----
+
+#[test]
+fn h14_12_price_sanity_and_the_cache_write_split() { // H§14 #12 (price part): AU32, AU33
+    // `config check` rejects each bad price.
+    rejected("input = -1", "input", BAD_RATE);
+    rejected("output = nan", "output", BAD_RATE);
+    rejected("cache_read = inf", "cache_read", BAD_RATE);
+    rejected("long_context = { above = 0, input = 1.0, output = 1.0, cache_read = 1.0, cache_write = 1.0 }", "long_context.above", "must be > 0");
+    // A cost that overflows to infinity counts as not priced.
+    let huge = flat(f64::MAX, f64::MAX, 0.0, 0.0);
+    assert_eq!(huge.cost(&TokenUsage { input: 10, output: 10, ..Default::default() }), None);
+    // AU33: 1,000 5-minute and 1,000 1-hour cache-write tokens on a table with `cache_write_5m` use the two rates.
+    let p = Prices { cache_write_5m: Some(5.0), ..flat(4.0, 20.0, 0.4, 8.0) };
+    let split = TokenUsage { cache_write: 2_000, cache_write_5m: Some(1_000), cache_write_1h: Some(1_000), ..Default::default() };
+    close(p.cost(&split), (1_000.0 * 5.0 + 1_000.0 * 8.0) / 1e6);
+    // Without the split all 2,000 use `cache_write`.
+    close(p.cost(&TokenUsage { cache_write: 2_000, ..Default::default() }), 2_000.0 * 8.0 / 1e6);
+}

@@ -1313,3 +1313,77 @@ fn status_ignores_zero_prompt_reply() { // AU29 (HUD-5 round 2, F3): a 2xx main-
     assert_eq!((row.status, tokens(&row).0), (200, 0));
     assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(151000));
 }
+
+// ---- HUD-8: H§14 #8, proxy part ----
+
+#[test]
+fn h14_08_status_windows_follow_the_served_request() { // H§14 #8 (proxy part): AU28, AU29, S3
+    let t = setup("claude-t-1");
+    let used = |g: &SessionGrant| t.h.session(&g.session).unwrap().status().used_context;
+    // A prompt of 150,000 tokens.
+    let u150 = reply(S0(), &TEXT(), "end_turn", u4(1000, 9000, 140000, 5));
+
+    // Passthrough before the first request: no `model` in the status.
+    let p = grant_with(&t, Agent::ClaudeCode, true);
+    assert_eq!(windows(&t, &p), (None, None, None, None));
+
+    // `[1m]`: role `plan` on a 200k Claude model with no soft window, called as `plan[1m]`, used 150,000. The
+    // status has `context_window` 200,000 and `effective_window` 180,000 (the safety window for agent window
+    // 1,000,000), not none, and no `threshold`: the bar fraction is 150/180.
+    let g = grant(&t, Agent::ClaudeCode);
+    run(&t, &g, "/ns", &u150, "plan[1m]", &[MAIN]);
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(180000), None));
+    assert_eq!(used(&g), Some(150000));
+    // The same with an `anthropic-beta` token `context-1m-…`.
+    let b = grant(&t, Agent::ClaudeCode);
+    let beta = q7_beta("fable");
+    run(&t, &b, "/ns", &u150, "plan", &[MAIN, ("anthropic-beta", beta.as_str())]);
+    assert_eq!(windows(&t, &b), (Some("claude-ns".into()), Some(200000), Some(180000), None));
+    assert_eq!(used(&b), Some(150000));
+
+    // Soft 190,000 with safety 180,000 (model window 200,000): `threshold` 180,000.
+    compact(&t, &g, json!(190000));
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(180000), Some(180000)));
+    // S3: after `zygo compact 150k` with no new request, the next status has `threshold` 150,000.
+    let before = t.n.get();
+    compact(&t, &g, json!(150000));
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(150000), Some(150000)));
+    assert_eq!(t.n.get(), before);
+    // The override `off`: no `threshold`; the safety window alone is the effective window.
+    compact(&t, &g, json!("off"));
+    assert_eq!(windows(&t, &g), (Some("claude-ns".into()), Some(200000), Some(180000), None));
+
+    // AU29: after a main-loop request served by another role's model (window 400,000), the status `model` and
+    // `context_window` are that model's.
+    run(&t, &g, "/g", &u150, "code", &[MAIN]);
+    assert_eq!(windows(&t, &g), (Some("gpt-t-1".into()), Some(400000), Some(360000), None));
+
+    // A non-streamed main-loop request stores model and agent window like a streamed one.
+    let m = json!({"id":"msg_1","type":"message","role":"assistant","model":"claude-big",
+        "content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,
+        "usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":5000,"output_tokens":5}});
+    t.up.script("/b", vec![json_reply(m)]);
+    let body = json!({"model":"triage","max_tokens":64,"stream":false,"messages":[{"role":"user","content":"hi"}]});
+    let (s, _, bytes) = post_body(&t, &g, &body, &[MAIN]);
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&bytes));
+    // The override is still `off`, and the agent window of this request is the model window: no safety window.
+    let big = (Some("claude-big".to_string()), Some(2000000), None, None);
+    assert_eq!(windows(&t, &g), big);
+    assert_eq!(used(&g), Some(5001));
+
+    // A request on another route leaves the stored values unchanged.
+    t.up.script("/g", vec![json_reply(json!({"input_tokens":5000,"usage":{"input_tokens":5000}}))]);
+    let mut hd = auth(&g);
+    hd.push(MAIN);
+    t.n.set(t.n.get() + 1);
+    let count = json!({"model":"code","messages":[{"role":"user","content":"hi"}]}).to_string().into_bytes();
+    let (s, _, bytes) = send(&t.h, "POST", "anthropic/v1/messages/count_tokens", &hd, Some(count));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&bytes));
+    assert_eq!(windows(&t, &g), big);
+    assert_eq!(last(&t, &g).route, "/anthropic/v1/messages/count_tokens");
+
+    // An OpenCode request on `/anthropic/v1/messages` stores its model with `agent_window(row)`.
+    let o = grant(&t, Agent::OpenCode);
+    run(&t, &o, "/g", &u150, "code", &[]);
+    assert_eq!(windows(&t, &o), (Some("gpt-t-1".into()), Some(400000), Some(360000), None));
+}
