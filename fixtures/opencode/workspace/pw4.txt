@@ -1,0 +1,7 @@
+OpenCode 1.19.6
+4.1 ok opencode run, exit 0: the plugin saw a sessionID that opencode session list shows: yes; first hook that carries it: event session.created
+4.2 ok opencode run -s <id>, exit 0: the request of the second prompt holds the first prompt and the plugin saw only the first id: yes
+4.3 ok idle event after the turn of run a: yes; event types: session.idle,session.status
+4.4 ok task tool, exit 0: tool.execute.before saw task: yes; the subagent ran: yes; the hook came before the subagent's first request: yes
+4.5 note a throw in tool.execute.before for task, exit 0: subagent requests 0; the next request of the lead holds the thrown text: yes
+4.6 note in the TUI the plugin saw a sessionID: yes; idle event within 30 s of the request: yes

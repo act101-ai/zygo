@@ -1,0 +1,3 @@
+Claude Code 2.1.330
+16.1 ok another cwd, same config folder: exit 0; conversation found: yes; output: ok 
+16.2 FAIL same cwd, another CLAUDE_CONFIG_DIR: exit 1; conversation found: no; output: No conversation found with session ID: 00000000-0000-4000-8000-000000000001 

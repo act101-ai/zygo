@@ -1,0 +1,3 @@
+Claude Code 2.1.330
+10.1 ok SessionStart of the resumed session: source resume
+10.2 ok additional context returned by the resume SessionStart hook is in the next request: yes

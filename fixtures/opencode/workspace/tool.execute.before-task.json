@@ -1,0 +1,10 @@
+{
+  "hook": "tool.execute.before",
+  "tool": "task",
+  "sessionID": "ses_placeholder0001",
+  "argKeys": [
+    "description",
+    "prompt",
+    "subagent_type"
+  ]
+}
