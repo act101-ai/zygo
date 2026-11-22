@@ -1,8 +1,13 @@
 //! Workspace id, name slug and collision suffix (AU2), main worktree (AU77), validation (AU84). Owner: node W1 (W§5).
 
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
+use zygo_work::repo::Checkout;
 
 /// Longest workspace name (AU2).
 const NAME_MAX: usize = 32;
@@ -80,4 +85,86 @@ pub fn new_pane_key() -> String {
         k.push(BASE32[rand::random_range(0..BASE32.len())] as char);
     }
     k
+}
+
+/// One entry of `git worktree list --porcelain`: `path` is canonical when the directory exists, `branch` has no
+/// `refs/heads/` (none when detached or bare), `bare` marks the bare repository's own entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub bare: bool,
+}
+
+/// The main worktree (AU77): the first entry that is not bare; none when the list has only a bare entry or is empty.
+pub fn main_worktree(worktrees: &[Worktree]) -> Option<&Worktree> {
+    worktrees.iter().find(|w| !w.bare)
+}
+
+const TIMED_OUT: &str = "git worktree list timed out";
+const FAILED: &str = "git worktree list failed";
+
+/// The worktrees of `checkout`, in git's order (the main worktree or the bare entry first). Runs
+/// `git -c core.fsmonitor=false -C <checkout.top> worktree list --porcelain` on `zygo_config::repo_file::git_command`
+/// with `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`, stdin and stderr null. The call ends at
+/// `checkout.deadline`: git is then killed and reaped, and the result is an error. A git that is not found, a
+/// non-zero exit, a read error and output that is not UTF-8 are errors too.
+pub fn worktrees(checkout: &Checkout) -> anyhow::Result<Vec<Worktree>> {
+    let left = checkout.deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        anyhow::bail!(TIMED_OUT);
+    }
+    let mut cmd = zygo_config::repo_file::git_command();
+    cmd.args(["-c", "core.fsmonitor=false", "-C"]).arg(&checkout.top).args(["worktree", "list", "--porcelain"]);
+    cmd.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0");
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = cmd.spawn().map_err(|_| anyhow::anyhow!("git not found"))?;
+    let stop = |child: &mut Child, why: &'static str| {
+        let _ = child.kill();
+        let _ = child.wait();
+        anyhow::anyhow!(why)
+    };
+    let Some(mut out) = child.stdout.take() else {
+        return Err(stop(&mut child, FAILED));
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let read = out.read_to_end(&mut buf).map(|_| buf);
+        let _ = tx.send(read);
+    });
+    let read = match rx.recv_timeout(left) {
+        Ok(read) => read,
+        Err(mpsc::RecvTimeoutError::Timeout) => return Err(stop(&mut child, TIMED_OUT)),
+        Err(mpsc::RecvTimeoutError::Disconnected) => return Err(stop(&mut child, FAILED)),
+    };
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < checkout.deadline => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) => return Err(stop(&mut child, TIMED_OUT)),
+            Err(_) => return Err(stop(&mut child, FAILED)),
+        }
+    };
+    let text = read.ok().filter(|_| status.success()).and_then(|bytes| String::from_utf8(bytes).ok());
+    text.map(|text| parse(&text)).ok_or_else(|| anyhow::anyhow!(FAILED))
+}
+
+/// The entries of `git worktree list --porcelain` output. Lines other than `worktree`, `bare` and a `branch` under
+/// `refs/heads/` change nothing; a path that cannot be made canonical (the directory is gone) is kept as git wrote it.
+fn parse(text: &str) -> Vec<Worktree> {
+    let mut list: Vec<Worktree> = Vec::new();
+    for line in text.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            let path = Path::new(p).canonicalize().unwrap_or_else(|_| PathBuf::from(p));
+            list.push(Worktree { path, branch: None, bare: false });
+        } else if let Some(current) = list.last_mut() {
+            if line == "bare" {
+                current.bare = true;
+            } else if let Some(name) = line.strip_prefix("branch refs/heads/") {
+                current.branch = Some(name.to_string());
+            }
+        }
+    }
+    list
 }
