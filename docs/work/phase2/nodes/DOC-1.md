@@ -128,3 +128,20 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   ```
 
 - [x] 19. Verification: run the Acceptance command alone from the node checkout root; it prints nothing. Then run `grep -n "2026-11-22" docs/specs/2026-11-18-zygo-design.md` and confirm one dated edit per step 1-17 in the section the step names: 13 marks `(2026-11-22, HUD design)` for steps 1-4 and 6-14, the `AU29, 2026-11-22` sentence for step 5, 3 marks `(2026-11-22, auto-update design)` for steps 15-17, and the change-log row of step 18.
+
+### Round 2
+
+A review of the step 1-19 diff found defects. Each was checked against the cited code and fixed in the base spec in place; the texts in steps 1-18 above are the round 1 texts, and the base spec holds the final ones.
+
+- [x] M1 §6.3 `cache_write_5m` bullet: `cache_write` is the longer-retention rate, 1-hour for the built-in Anthropic rows and 30-minute retention for the OpenAI rows (`catalog.toml:150`, `:178`).
+- [x] M2, M3 §20 21a: #1-#37 pass; #38 is not run (no Windows machine available to the executor). W = terminal width less 4; terminal width from `/dev/tty`, else `COLUMNS`; W = 120 when neither answers (`width.rs:18-35`).
+- [x] M4 §3: the opt-out is any non-empty `ZYGO_NO_UPDATE_CHECK` (`update.rs:302`, `:307`), as in §17.
+- [x] M5 §10.2.4: a numeric `⇣` shows only below a known model window (`render.rs:654-664`).
+- [x] M6 §17 `zygo statusline` row and §17.1: no pointer to H§8; the verb works the same in an OpenCode session (operator decision, HUD-11; `statusline.rs:5`).
+- [x] M7 §6.3 TOML comment: a team session's spend uses the built-in list prices (`forward.rs:198-205`, `session.rs:329-331`).
+- [x] M8 §6.3 `zygo config check` list: rates finite and ≥ 0, `cache_write_5m` included, and `long_context.above` > 0 (`check.rs:25-30`, `:61-69`); the duplicate sentence in the `long_context` bullet is removed.
+- [x] M9 §10.2.2 N15 note: a passthrough session before its first main-loop request has no `effective_window` (`session.rs:312-314`).
+- [x] Gap §6.1: `[statusline]` and `[update]` are user config only; the team layer drops them with `config: [statusline] in team config ignored; only user config may set them` (`layers.rs:66-85`).
+- [x] Gap §17 `zygo status` row: names the `spend:` line; no line for a reply with no `spend_usd` (`status.rs:70-73`, test `:178-179`).
+- [x] Gap §17 `zygo update` row: `yes` and `skip` are accepted, case-insensitive (`update.rs:350-361`).
+- [x] The change-log row also names the §17 `zygo status` row. `requests_in_flight` and `last_request_end` stay out of §7.2 (D1).

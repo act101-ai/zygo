@@ -44,7 +44,7 @@ The result is an open-source, single-user-first tool that a developer runs on th
 - Storing request or response content anywhere. `zygo` stores metadata only (§14).
 - Multi-replica serve mode. One server process holds the session state in memory.
 - Writing back to work-item sources (no status changes, no comments) in v1.
-- Telemetry that leaves the machine. Nothing phones home, with one exception: the update check reads the release's public VERSION file and sends nothing else; opt-out `[update] check = false` / `ZYGO_NO_UPDATE_CHECK=1` (§17 `zygo update`; auto-update design `docs/specs/2026-11-21-auto-update-design.md`). *(2026-11-22, auto-update design)*
+- Telemetry that leaves the machine. Nothing phones home, with one exception: the update check reads the release's public VERSION file and sends nothing else; opt-out `[update] check = false` in user config, or `ZYGO_NO_UPDATE_CHECK` set to any non-empty value (for example `ZYGO_NO_UPDATE_CHECK=1`) (§17 `zygo update`; auto-update design `docs/specs/2026-11-21-auto-update-design.md`). *(2026-11-22, auto-update design)*
 
 ## 4. Constraints
 
@@ -101,7 +101,7 @@ Lowest to highest; a higher layer replaces a key of a lower one, table by table,
 
 In serve mode the server's catalog and provider set are authoritative: a client's user config may add profiles, plugins and work sources, but it cannot add a model or provider the server does not have.
 
-`[statusline] style = "compact" | "verbose"` (default `compact`) selects the status line style (§17; HUD design H§8). The table is read from user config only: the repository file ignores it (layer 4), the team config does not carry it, and `zygo statusline` changes it for a session (layer 7). *(2026-11-22, HUD design)*
+`[statusline] style = "compact" | "verbose"` (default `compact`) selects the status line style (§17; HUD design H§8). `[update] check = true | false` (default `true`) turns the start check of `zygo update` on or off (§3, §17; auto-update design). Only user config may set these two tables: the repository file ignores them (layer 4, one stderr line), and the team layer drops them with one warning, `config: [statusline] in team config ignored; only user config may set them` (the warning names each dropped table, `[statusline], [update]` when both are present). `zygo statusline` changes the style for a session (layer 7). *(2026-11-22, HUD design, auto-update design)*
 
 `zygo config show [--layer <name>]` prints the merged config with each key's source layer; secrets are shown as `<set>`/`<unset>`.
 
@@ -138,7 +138,7 @@ soft_context_window = 400000         # optional (§10.2); ≤ facts.context_wind
   upstream_model = "claude-opus-5-5"
   key = "env:ANTHROPIC_API_KEY"
   enabled = true                       # false = skipped (the kill switch)
-  [model.provider.price_usd_per_mtok]  # for the local cost estimate (§14) and the session spend (§7.2)
+  [model.provider.price_usd_per_mtok]  # the row cost (§14) and the local session spend (§7.2); a team session's spend uses the built-in list prices
   input = 4.0
   output = 20.0
   cache_read = 0.20
@@ -150,9 +150,9 @@ soft_context_window = 400000         # optional (§10.2); ≤ facts.context_wind
 - The effort ladder is `none < minimal < low < medium < high < xhigh < max`.
 - Providers are tried in the listed order (§7.4), after the session's pinned provider.
 - The built-in catalog ships rows for current Anthropic and OpenAI models with verified facts **(author)**. The model ids, prices and facts are data; the builder verifies each row against the provider's documentation and records `source` and `verified_on`.
-- `price_usd_per_mtok` may hold `long_context = { above, input, output, cache_read, cache_write, cache_write_5m }` (`cache_write_5m` optional): when a request's `prompt` (§10.2.1) is above `above` tokens, all its rates come from `long_context`, else the base rates (HUD design H§7.3). `zygo config check` refuses `above = 0` and a rate that is negative or not finite. *(2026-11-22, HUD design)*
-- `price_usd_per_mtok` may hold `cache_write_5m`, the rate of 5-minute cache writes; `cache_write` is the 1-hour rate and also prices cache writes whose usage has no 5-minute/1-hour split. Each Anthropic row of the built-in catalog sets `cache_write_5m` = 1.25 × its `input` rate (HUD design AU33). *(2026-11-22, HUD design)*
-- `zygo config check` validates: unique ids; each model has ≥ 1 provider; `soft_context_window` > 0 and ≤ `context_window`, and only with facts; `effort_levels` empty only with `reasoning = "none"`; every role's model exists; every `[[schema_rule]]` (§7.6) is well formed. A failing user config refuses to launch with the first violation; a failing team config refuses to start the server.
+- `price_usd_per_mtok` may hold `long_context = { above, input, output, cache_read, cache_write, cache_write_5m }` (`cache_write_5m` optional): when a request's `prompt` (§10.2.1) is above `above` tokens, all its rates come from `long_context`, else the base rates (HUD design H§7.3). *(2026-11-22, HUD design)*
+- `price_usd_per_mtok` may hold `cache_write_5m`, the rate of 5-minute cache writes (absent: `cache_write`). `cache_write` prices every other cache write: 1-hour writes, and writes whose usage has no 5-minute/1-hour split. It is the provider's longer-retention write rate: the 1-hour rate in the built-in Anthropic rows, the 30-minute-retention rate in the built-in OpenAI rows. Each Anthropic row of the built-in catalog sets `cache_write_5m` = 1.25 × its `input` rate (HUD design AU33). *(2026-11-22, HUD design)*
+- `zygo config check` validates: unique ids; each model has ≥ 1 provider; `soft_context_window` > 0 and ≤ `context_window`, and only with facts; `effort_levels` empty only with `reasoning = "none"`; every role's model exists; every `[[schema_rule]]` (§7.6) is well formed; every rate of `price_usd_per_mtok` and of its `long_context` (`input`, `output`, `cache_read`, `cache_write`, `cache_write_5m`) is a finite number ≥ 0, and `long_context.above` > 0 *(2026-11-22, HUD design)*. A failing user config refuses to launch with the first violation; a failing team config refuses to start the server.
 
 ### 6.4 Roles
 
@@ -449,7 +449,7 @@ Claude Code sizes a role name by the picker's `behavesAs` (§8.5) or, without on
 
 Common conditions for both triggers: Claude Code session (A-16 row); the served model has `context_window`; a streamed 2xx response on `/anthropic/v1/messages`; not a compaction request.
 
-*(Note 2026-11-19, N15 planning: the rewrite replaces only the three numbers in the received line; a field the object lacks is inserted after its `{`; a line whose edited object repeats a key is not rewritten. Codes are recorded only for a rewritten line, at most once per trigger per response, in the order `context_safety`, `context_signal`, `context_compact`. Only an SSE upstream response is armed: a translated non-SSE body sent to the client as SSE is not rewritten. The status `effective_window` is §10.2.1 `effective`, safety window included, computed for the model of the last main-loop request, else the main role's model (HUD design AU29, 2026-11-22).)*
+*(Note 2026-11-19, N15 planning: the rewrite replaces only the three numbers in the received line; a field the object lacks is inserted after its `{`; a line whose edited object repeats a key is not rewritten. Codes are recorded only for a rewritten line, at most once per trigger per response, in the order `context_safety`, `context_signal`, `context_compact`. Only an SSE upstream response is armed: a translated non-SSE body sent to the client as SSE is not rewritten. The status `effective_window` is §10.2.1 `effective`, safety window included, computed for the model of the last main-loop request, else the main role's model; a passthrough session before its first main-loop request has no `effective_window` (HUD design AU29, 2026-11-22).)*
 
 #### 10.2.3 Triggers
 
@@ -464,7 +464,7 @@ Common conditions for both triggers: Claude Code session (A-16 row); the served 
 - `POST /v1/zygo/sessions/{id}/compact` `{ "window": <n> | "off" }`, n from 100,000 to 10,000,000 (a value above the model's window is accepted and has no effect); `DELETE` clears it (back to the model's `soft`). Reply `{ "window": <n> | "off" | null }`.
 - `zygo compact <tokens|on|off>`: `600000`, `600k`, `1m` forms; `on` = `DELETE`. Session from `--session` else `ZYGO_SESSION`. Exit 2 on a bad value, 12 when unreachable within 10 s. *(Note 2026-11-19, N28 planning: the slash form's session-API timeout is 4 s; with no `--session` and no `ZYGO_SESSION`, `zygo compact` exits 2; `zygo compact` has no `--save`.)*
 - `/zygo:compact <arg>` typed in Claude Code: `zygo hook prompt` (`UserPromptSubmit`) matches `^/zygo:([a-z][a-z0-9-]*)(?:\s+(.*))?$`, calls the same request, and prints `{"decision":"block","reason":"zygo: compact <arg> for this session","hookSpecificOutput":{"hookEventName":"UserPromptSubmit","suppressOriginalPrompt":true}}` so the line never reaches the model. Unknown verb → block with the `/zygo:help` text *(A2)*; every other verb is in §17.1. Failure → block with `zygo: compact failed: <reason>`. The hook finishes within 5 s. The embedded `zygo` plugin provides `commands/compact.md` (`disable-model-invocation: true`) so the command is listed.
-- The status line shows the soft or override threshold as `⇣600k`, and `⇣off` for an override of `off`; a safety-only window shows no `⇣` (HUD design H§6.1 AU28). *(2026-11-22, HUD design)*
+- The status line shows the soft or override threshold as `⇣600k` only when it is below a known model window, and `⇣off` for an override of `off`; a safety-only window, a threshold at or above the model window, and an unknown model window show no numeric `⇣` (HUD design H§6.1 AU28). *(2026-11-22, HUD design)*
 
 #### 10.2.5 OpenCode
 
@@ -793,18 +793,18 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `zygo claude [--profile <n>] [--passthrough] [--server <url>] [--compact <n\|off>] [--yolo] [-- <args>]` | Launch Claude Code. |
 | `zygo opencode [--profile <n>] [--server <url>] [--compact <n\|off>] [--yolo] [-- <args>]` | Launch OpenCode (`--yolo` → `--auto`). *(Note 2026-11-19, N65 planning: `--auto` goes where OpenCode 1.18.16 accepts it: right after `run`, or first for the TUI; a subcommand without `--auto` gets none, and the session log says so.)* |
 | `zygo serve [--listen] [--tls-cert --tls-key]`, `zygo serve token new <label>`, `zygo serve reload` | Serve mode. |
-| `zygo status` | Mode, server, profile, work item, repo policy, session status (inside a session: context use, override, savings). |
+| `zygo status` | Mode, server, profile, work item, repo policy, session status (inside a session: context use, override, savings in tokens, and the `spend:` line of §10.7; a status reply with no `spend_usd`, from an older server, gives no `spend:` line). *(2026-11-22, HUD design)* |
 | `zygo doctor` | Agent binaries and versions, secret store, keys present per provider, server reachable, plugin store, missing plugin commands, plugins also installed in the agent's own config, repo policy, and one icon test line: the Nerd glyphs of the status line and the active icon set (HUD design AU2). *(2026-11-22, HUD design)* |
 | `zygo compact <tokens\|on\|off>` | §10.2.4. |
 | `zygo profile list\|show\|use` | §11. |
 | `zygo work [<id>\|clear]`, `zygo work report` | §13. |
 | `zygo usage` | §10.7. |
-| `zygo statusline [compact\|verbose] [--save]` | Status line style (HUD design H§8): a session change; `--save` also writes `[statusline] style` to user config; with no argument, prints the style and its source. *(2026-11-22, HUD design)* |
+| `zygo statusline [compact\|verbose] [--save]` | Status line style: a session change; `--save` also writes `[statusline] style` to user config; with no argument, prints the style and its source. The verb works the same in an OpenCode session (operator decision, built by HUD-11). *(2026-11-22, HUD design)* |
 | `zygo marketplace add\|list\|update\|remove` | §15.8. |
 | `zygo plugins list\|sync\|enable\|disable\|approve`, `zygo plugin check <dir>` | §15.2, §15.3, §15.6, §15.7. |
 | `zygo keys set\|rm\|list <provider>` | §6.2. |
 | `zygo config show\|check` | §6. |
-| `zygo update [--version <v>] [--check]` | Replace the binary from the latest release, checksum verified, atomic rename. *(Note 2026-11-19, N36: on Windows a running .exe cannot be replaced by a rename, so the binary is renamed to zygo.exe.old, the new file is renamed in, and .old is deleted best effort; on macOS and Linux the replace is one atomic rename.)* The start check: `zygo claude` and `zygo opencode` run the update check before the launch, at most once in 24 h: one GET for the release's public VERSION file, 2 s limit, the system proxy not used, the time and result kept in `~/.cache/zygo/update.json` (Windows: `update.json` in the zygo cache directory); a failure is silent and the launch continues. A newer release that was not skipped is asked about: `zygo <new> is available (you have <old>). Update now? [y/N/s]`. `y` installs it by the path above, prints `updated to <new>; relaunch zygo` and exits 0 without starting the agent (a failed install prints `zygo update: <reason>` and exits with its code); `N`, the default, and any other answer launch and ask again after 24 h; `s` records the skip and asks again only for a newer release. When other zygo sessions are live, the prompt comes after the line `<n> zygo sessions are running; they keep the old version until you restart them (zygo down / zygo up)`; on Windows the update is then deferred and the launch continues. No check and no prompt when stdin or stderr is not a terminal, with `-p` or `--print`, inside a zygo session (`ZYGO_SESSION` set), in a workspace pane (`ZYGO_WORKSPACE` set), or with the opt-out of §3 (`ZYGO_NO_UPDATE_CHECK` with any non-empty value). `zygo serve` does not check. *(2026-11-22, auto-update design)* |
+| `zygo update [--version <v>] [--check]` | Replace the binary from the latest release, checksum verified, atomic rename. *(Note 2026-11-19, N36: on Windows a running .exe cannot be replaced by a rename, so the binary is renamed to zygo.exe.old, the new file is renamed in, and .old is deleted best effort; on macOS and Linux the replace is one atomic rename.)* The start check: `zygo claude` and `zygo opencode` run the update check before the launch, at most once in 24 h: one GET for the release's public VERSION file, 2 s limit, the system proxy not used, the time and result kept in `~/.cache/zygo/update.json` (Windows: `update.json` in the zygo cache directory); a failure is silent and the launch continues. A newer release that was not skipped is asked about: `zygo <new> is available (you have <old>). Update now? [y/N/s]`. The answer is read without case. `y` or `yes` installs it by the path above, prints `updated to <new>; relaunch zygo` and exits 0 without starting the agent (a failed install prints `zygo update: <reason>` and exits with its code); `s` or `skip` records the skip and asks again only for a newer release; `N`, the default, and any other answer launch and ask again after 24 h. When other zygo sessions are live, the prompt comes after the line `<n> zygo sessions are running; they keep the old version until you restart them (zygo down / zygo up)`; on Windows the update is then deferred and the launch continues. No check and no prompt when stdin or stderr is not a terminal, with `-p` or `--print`, inside a zygo session (`ZYGO_SESSION` set), in a workspace pane (`ZYGO_WORKSPACE` set), or with the opt-out of §3 (`ZYGO_NO_UPDATE_CHECK` with any non-empty value). `zygo serve` does not check. *(2026-11-22, auto-update design)* |
 | `zygo help [<verb>]`, `zygo results`, `zygo redaction`, `zygo guards`, `zygo units`, `zygo compact-tool` | §17.1 *(A2)*. |
 | `zygo mcp`, `zygo hook <name>` | Internal; started by the agents. |
 
@@ -826,7 +826,7 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `redaction [content on\|off]` | Shows both passes; switches the content pass; the secret pass is status only | session, `--save` |
 | `guards [<guard> <level>]` | Levels with their sources; sets one guard's level, never below its floor (§13.5) | session, `--save` |
 | `units on\|off` | Work units (§13) | session, `--save` |
-| `statusline [compact\|verbose]` | Status line style (§17, HUD design H§8) *(2026-11-22, HUD design)* | session, `--save` |
+| `statusline [compact\|verbose]` | Status line style (§17); the same in an OpenCode session (operator decision, HUD-11) *(2026-11-22, HUD design)* | session, `--save` |
 | `work [<id>\|clear]` | Current work item (§13.2) | repository; session text at next launch |
 | `plugins [list\|enable\|disable\|approve <m>:<p>]` | §15.2, §15.7 (act-lite navigation included) | next launch |
 | `marketplace [list\|add\|update\|remove …]` | §15.8 | user config |
@@ -973,7 +973,7 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 21. Live check (manual, recorded): a Claude Code session against the local proxy with `soft_context_window` set low compacts after the turn that crosses it (the next request carries `x-claude-code-compaction`).
 
 **Status line** *(2026-11-22, HUD design)*
-21a. The status line HUD passes the acceptance items #1 to #38 of `docs/specs/2026-11-21-statusline-hud-design.md` H§14: rendering (#1-#7); ctx and threshold (#8-#9); spend and tokens (#10-#17); trimmed tokens (#18-#19); width, with the fit width W = `COLUMNS` − 4 (#20-#21, H§6.7); input, deadline and failure (#22-#30); icons and style (#31-#35; except the OpenCode clause of #33: in an OpenCode session the `statusline` verb behaves as in a Claude Code session, operator decision); the workspace phase, with the workspaces build (#36); the live checks P-HUD-1 (#37) and W-SHELL part 2 (#38: not run, no Windows machine available).
+21a. The status line HUD passes the acceptance items #1 to #37 of `docs/specs/2026-11-21-statusline-hud-design.md` H§14: rendering (#1-#7); ctx and threshold (#8-#9); spend and tokens (#10-#17); trimmed tokens (#18-#19); width (#20-#21, H§6.7), where the fit width W is the terminal width less 4 and the terminal width comes from `/dev/tty`, else `COLUMNS`, and W is 120 when neither answers; input, deadline and failure (#22-#30); icons and style (#31-#35; except the OpenCode clause of #33: in an OpenCode session the `statusline` verb works as in a Claude Code session, operator decision); the workspace phase, with the workspaces build (#36); the live check P-HUD-1 (#37). Item #38 (W-SHELL part 2, Windows) is not run: no Windows machine is available to the executor.
 
 **Profiles**
 22. Each §11.3 violation yields its message and the launch continues without the profile.
@@ -1022,4 +1022,4 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-21 | §20 #11 (tests of §7.3 fallback and §10.4 pin removal); no text change | author's call | Found defect: the test helper refused_port released its port, another test's listener could take it, and fallback_all_failed_removes_pin failed once in three full runs. Node FIX-1 uses a fixed port below 1024. |
-| 2026-11-22 | §3, §6.1, §6.3, §7.2, §10.2.2 (N15 note), §10.2.4, §10.7, §14, §15.7, §17 (status line paragraph, `zygo statusline`, `zygo doctor`, `zygo update` rows), §17.1, §20 (21a) | operator (statusline HUD design H§9 and auto-update design "Base-spec changes", both approved 2026-11-21); texts by DOC-1 | The two approved designs change these sections. Each section is rewritten in place, and its new text is marked *(2026-11-22, HUD design)* or *(2026-11-22, auto-update design)*. The `zygo up` start check and the W§15 rows are workspaces D1's. |
+| 2026-11-22 | §3, §6.1, §6.3, §7.2, §10.2.2 (N15 note), §10.2.4, §10.7, §14, §15.7, §17 (status line paragraph, `zygo status`, `zygo statusline`, `zygo doctor`, `zygo update` rows), §17.1, §20 (21a) | operator (statusline HUD design H§9 and auto-update design "Base-spec changes", both approved 2026-11-21); texts by DOC-1, corrected against the code in its review round 2 | The two approved designs change these sections. Each section is rewritten in place, and its new text is marked *(2026-11-22, HUD design)* or *(2026-11-22, auto-update design)*. The `zygo up` start check and the W§15 rows are workspaces D1's. |
