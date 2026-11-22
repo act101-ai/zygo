@@ -197,3 +197,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-12 DROPPED: PRB-1 round 2 (c759e25) sets sys.dont_write_bytecode in hud_probe_test.py, so no scripts/premises/__pycache__ is left. |
 | 2026-11-22 | PRB-1 merge landed in c64acac by a concurrent commit; content verified, no history rewrite. |
 | 2026-11-22 | P2 DONE (7657585): PW7, PW16 failed, 7 verified. Cost: 12 real requests. Side effect: 6 empty projects/<scratch>/memory folders in the operator's Claude folder, left in place. live-checks.md side-effect note added by round 2 M2, author's call. |
+| 2026-11-22 | Author's call from P2 and the W3 probe: AU61 resume drops CLAUDE_CONFIG_DIR when the saved config dir is none (PW16); AU87 adds `no such session:`. W7, W10: read @zygo-ws only after session_exists; W7: window hooks with -w. H1 consumes the W9 subagent methods. |
