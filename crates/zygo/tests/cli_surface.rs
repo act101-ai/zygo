@@ -209,7 +209,8 @@ fn hook_table_names() {
         ["token", "statusline", "trim", "session-start", "role-guard", "prompt", "pre-compact", "work", "guard"]
     );
     for h in zygo::cmd::hook::TABLE {
-        assert_eq!(h.reads_stdin, h.name != "token", "reads_stdin of {}", h.name);
+        // `token` gets no stdin; `statusline` reads its own stdin with a bound (AU24, H§11).
+        assert_eq!(h.reads_stdin, !matches!(h.name, "token" | "statusline"), "reads_stdin of {}", h.name);
     }
 }
 

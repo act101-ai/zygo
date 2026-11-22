@@ -13,6 +13,7 @@ use zygo_config::{load_with_builtin, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_core::session_view::{SessionView, WorkItemView};
 use zygo_core::Agent;
+use zygo_launch::claude_code::ClaudeCode;
 use zygo_launch::env::{child_env_with, Env};
 use zygo_launch::{AgentAdapter, ChildSpec, LaunchCtx, LaunchOpts, Launcher, Plugins, Preflight};
 use zygo_proxy::client::{SessionClient, WindowArg};
@@ -651,6 +652,80 @@ fn statusline_style_of_the_user_config_reaches_the_view() {
         assert_eq!(view(&fx).statusline_style, "verbose", "{agent:?}");
         let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(fx.out.join("view.json")).unwrap()).unwrap();
         assert_eq!(raw["statusline_style"], "verbose", "{agent:?}");
+    }
+}
+
+// ---- HUD-9: H§14 #35 (launcher part) and the P-HUD-1 `refreshInterval` seam ----
+
+#[test]
+fn h14_35_user_verbose_style_is_written_to_view_json() { // H§14 #35 (launcher part): H§8 row Launch
+    let fx = fx();
+    fx.config("[statusline]\nstyle = \"verbose\"\n");
+    let (code, err) = run(&stub(), opts(&fx, "dump", &[]));
+    assert_eq!(code, 0, "{err}");
+    // The file as the launcher wrote it into the session directory (the stub child copies it out).
+    let raw = json(&fx.out.join("view.json"));
+    assert_eq!(raw["statusline_style"], "verbose", "{raw}");
+    assert_eq!(view(&fx).statusline_style, "verbose");
+}
+
+/// The stub agent with the settings file of the real Claude Code adapter: `build` runs `ClaudeCode::build` on the
+/// launch context first and keeps the `statusLine` object of the settings file it wrote into the session directory.
+struct WithSettings {
+    stub: Stub,
+    status_line: Arc<Mutex<Option<serde_json::Value>>>,
+}
+
+impl AgentAdapter for WithSettings {
+    fn agent(&self) -> Agent {
+        self.stub.agent()
+    }
+    fn program(&self) -> &str {
+        self.stub.program()
+    }
+    fn install_hint(&self) -> &str {
+        self.stub.install_hint()
+    }
+    fn picked_model(&self, args: &[String]) -> Option<String> {
+        self.stub.picked_model(args)
+    }
+    fn build(&self, ctx: &LaunchCtx) -> anyhow::Result<ChildSpec> {
+        ClaudeCode::default().build(ctx)?;
+        *self.status_line.lock().unwrap() = Some(json(&ctx.session_dir.settings_json())["statusLine"].clone());
+        self.stub.build(ctx)
+    }
+    fn preflight(&self, ctx: &LaunchCtx) -> Result<(), Preflight> {
+        self.stub.preflight(ctx)
+    }
+}
+
+/// The `statusLine` object of the Claude Code settings of one launch with `extra` in the launch environment.
+fn status_line_of_a_launch(extra: &[(&str, &str)]) -> serde_json::Value {
+    let fx = fx();
+    let adapter = WithSettings { stub: stub(), status_line: Arc::default() };
+    let o = opts(&fx, "dump", extra);
+    let _ = std::fs::remove_dir_all(&fx.out);
+    std::fs::create_dir_all(&fx.out).unwrap();
+    let buf = o.stderr.clone().unwrap();
+    let code = Launcher::run(&adapter, o);
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&buf.lock().unwrap()));
+    adapter.status_line.lock().unwrap().clone().expect("build was called")
+}
+
+#[test]
+fn refresh_interval_seam_overrides_the_status_line_interval() { // HUD-9: P-HUD-1 seam `ZYGO_TEST_REFRESH_INTERVAL`
+    // No variable: the default of 30 s.
+    let s = status_line_of_a_launch(&[]);
+    assert_eq!(s["refreshInterval"], 30, "{s}");
+    assert!(s["command"].as_str().is_some_and(|c| c.ends_with(" hook statusline")), "{s}");
+    // The variable reaches the launch through its environment parameter; the test process environment is not changed.
+    let s = status_line_of_a_launch(&[("ZYGO_TEST_REFRESH_INTERVAL", "2")]);
+    assert_eq!(s["refreshInterval"], 2, "{s}");
+    assert!(s["refreshInterval"].is_u64(), "a JSON integer, as the default: {s}");
+    // A value that is not a positive integer keeps the default.
+    for bad in ["0", "-1", "2s", "1.5", ""] {
+        let s = status_line_of_a_launch(&[("ZYGO_TEST_REFRESH_INTERVAL", bad)]);
+        assert_eq!(s["refreshInterval"], 30, "{bad:?}: {s}");
     }
 }
 

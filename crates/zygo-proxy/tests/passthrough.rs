@@ -16,6 +16,7 @@ use tempfile::TempDir;
 use zygo_config::keys::Secret;
 use zygo_config::{load, Dialect, KeyRef, LoadContext, Provider};
 use zygo_core::{ids::ulid, paths::Paths, Agent};
+use zygo_proxy::client::SessionStatus;
 use zygo_proxy::errors::ZygoError;
 use zygo_proxy::passthrough::{no_login, token_invalid, CredentialType, PassthroughStage, CLAUDE_AI, TYPES};
 use zygo_proxy::pipeline::{ModelRoute, Pipeline, RequestCtx, Stage};
@@ -782,9 +783,11 @@ fn status_no_model_for_blocked_name() {
 
 // ---- HUD-6: session spend and tokens ----
 
-/// The HUD-6 status fields of `g` once `n` usage rows are handled: (tokens_in, tokens_out, spend_usd, requests_total,
-/// requests_priced).
-fn spend(t: &T, g: &SessionGrant, n: u64) -> (Option<u64>, Option<u64>, Option<f64>, Option<u64>, Option<u64>) {
+/// (tokens_in, tokens_out, spend_usd, requests_total, requests_priced).
+type Spend = (Option<u64>, Option<u64>, Option<f64>, Option<u64>, Option<u64>);
+
+/// The HUD-6 status fields of `g` once `n` usage rows are handled.
+fn spend(t: &T, g: &SessionGrant, n: u64) -> Spend {
     assert!(t.h.usage_written(n, Duration::from_secs(10)));
     let s = t.h.session(&g.session).unwrap().status();
     (s.tokens_in, s.tokens_out, s.spend_usd, s.requests_total, s.requests_priced)
@@ -850,4 +853,44 @@ fn e2e_local_spend_is_the_row_cost() {
     t.up.reply(&json!({"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0}}));
     assert_eq!(send(&t, "POST", M, &hd, Some(mb("test-priced"))).0, 200);
     assert_eq!(spend(&t, &g, 4), (Some(1400 + 5010 + 5010), Some(12), Some(one + two), Some(3), Some(2)));
+}
+
+// ---- HUD-9: H§14 #14, proxy part ----
+
+#[test] // H§14 #14 (proxy part): H§7.3 step 4, AU15; the status reply over HTTP
+fn h14_14_passthrough_rows_cost_zero_and_the_status_spend_is_notional() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    // The reply of a status request of the session, parsed as the session client parses it.
+    let reply = |n: u64| -> SessionStatus {
+        assert!(t.h.usage_written(n, Duration::from_secs(10)), "usage rows not written");
+        let hd = [("x-api-key", g.token.as_str()), ("x-zygo-session", g.session.as_str())];
+        let r = send(&t, "GET", &format!("v1/zygo/sessions/{}/status", g.session), &hd, None);
+        assert_eq!(r.0, 200, "{}", String::from_utf8_lossy(&r.2));
+        serde_json::from_slice(&r.2).unwrap()
+    };
+    // Every token kind in the upstream usage, so the notional cost uses each of the four rates.
+    t.anth.reply(&json!({"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":100,"output_tokens":10,
+        "cache_read_input_tokens":1000,"cache_creation_input_tokens":300}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
+    let s = reply(2);
+    // The rows: the matched catalog row `test-pt` on `p-anth`, which has a price; the row cost is 0 (§14).
+    let w = rows(&t, &g);
+    assert_eq!(w.len(), 2);
+    for r in &w {
+        assert_eq!((r.model.as_str(), r.provider.as_str(), r.passthrough, r.status), ("test-pt", "p-anth", true, 200));
+        assert_eq!((r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens), (100, 10, 1000, 300));
+        assert_eq!(r.estimated_usd, 0.0);
+    }
+    // The notional cost: the tokens × the price of `p-anth` (4 / 20 / 0.2 / 8 USD per million tokens), per request.
+    let one = (100.0 * 4.0 + 10.0 * 20.0 + 1000.0 * 0.2 + 300.0 * 8.0) / 1e6;
+    assert_eq!(t.h.session(&g.session).unwrap().status().spend_usd, Some(one + one));
+    assert!((s.spend_usd.unwrap() - 2.0 * one).abs() < 1e-12, "{:?} != {}", s.spend_usd, 2.0 * one); // a JSON number
+    assert_eq!((s.spend_notional, s.passthrough, s.team_session), (Some(true), Some(true), Some(false)));
+    assert_eq!((s.requests_total, s.requests_priced), (Some(2), Some(2)));
+    assert_eq!((s.tokens_in, s.tokens_out), (Some(2 * 1400), Some(20)));
+    // A session that is not passthrough, same proxy: `spend_notional` is false.
+    let n = grant(&t, Agent::ClaudeCode, false);
+    assert_eq!(t.h.session(&n.session).unwrap().status().spend_notional, Some(false));
 }
