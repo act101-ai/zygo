@@ -851,7 +851,7 @@ fn run_with(adapter: &dyn AgentAdapter, o: LaunchOpts) -> (i32, String) {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
     let buf = o.stderr.clone().unwrap();
-    let code = Launcher::run(adapter, o);
+    let code = Launcher::run(adapter, o).code;
     let err = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
     (code, err)
 }
@@ -866,7 +866,7 @@ fn spawn_launch(o: LaunchOpts) -> (std::thread::JoinHandle<i32>, Arc<Mutex<Vec<u
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
     let buf = o.stderr.clone().unwrap();
-    (std::thread::spawn(move || Launcher::run(&stub(), o)), buf)
+    (std::thread::spawn(move || Launcher::run(&stub(), o).code), buf)
 }
 
 fn json<T: serde::de::DeserializeOwned>(p: PathBuf) -> T {
@@ -992,6 +992,15 @@ fn unreachable_server_exits_12() { // §8.2, §7 note
     assert!(!fx.out.join("env.json").exists());
     assert!(!fx.paths.sessions_dir.exists());
 } // mutation: unreachable → 1
+
+#[test]
+fn an_unreachable_server_has_spawned_false() { // AU60
+    let fx = fx();
+    serve_config(&fx, &Url::parse(&closed_url()).unwrap(), true);
+    let t = new_token().0;
+    let o = Launcher::run(&stub(), opts(&fx, "dump", None, &[("ZYGO_TEAM_TOKEN", &t)]));
+    assert_eq!(o, zygo_launch::launcher::LaunchOutcome { code: 12, signal: None, spawned: false, received: false });
+}
 
 #[test]
 fn a_server_that_never_answers_exits_12_at_the_call_bound() { // §7 note: "a timeout is server unreachable (exit 12 at launch)"

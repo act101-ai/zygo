@@ -20,8 +20,19 @@ impl Env {
 }
 
 const PREFIXES: [&str; 3] = ["ANTHROPIC_", "OPENAI_", "OPENROUTER_"];
-const EXACT: [&str; 5] =
-    ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "ZYGO_TEAM_TOKEN"];
+const EXACT: [&str; 9] = [
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+    "ZYGO_TEAM_TOKEN",
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+];
+/// Set by a member launch (§8.4 "Set"); removed from every other child (workspaces design AU58).
+const MEMBER: [&str; 2] = ["ZYGO_WORKSPACE", "ZYGO_PANE"];
 
 fn same(name: &OsStr, other: &str, fold: bool) -> bool {
     match name.to_str() {
@@ -62,7 +73,7 @@ fn filter(parent: &Env, cfg: &Merged, set: &[(String, String)], fold: bool) -> (
         let Some(n) = k.to_str() else { return false };
         let up = if fold { n.to_ascii_uppercase() } else { n.to_string() };
         PREFIXES.iter().any(|p| up.starts_with(p))
-            || EXACT.iter().chain(&providers).any(|e| same(k, e, fold))
+            || EXACT.iter().chain(&MEMBER).chain(&providers).any(|e| same(k, e, fold))
     };
     let mut out = Vec::with_capacity(parent.0.len() + set.len());
     let mut removed = Vec::new();

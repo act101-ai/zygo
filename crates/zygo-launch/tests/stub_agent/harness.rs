@@ -7,12 +7,14 @@ use std::env::consts::EXE_SUFFIX;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
 use zygo_launch::claude_code::ClaudeCode;
 use zygo_launch::env::Env;
+use zygo_launch::launcher::LaunchOutcome;
 use zygo_launch::opencode::OpenCode;
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 
@@ -106,6 +108,7 @@ pub struct Cap {
 
 pub struct Run {
     pub code: i32,
+    pub outcome: LaunchOutcome,
     pub stderr: String,
     pub cap: Cap,
 }
@@ -144,7 +147,7 @@ pub fn launch(rig: &Rig, adapter: &dyn AgentAdapter, version: &str, tweak: impl 
     let buf = Arc::new(Mutex::new(Vec::new()));
     o.stderr = Some(buf.clone());
     tweak(&mut o);
-    let code = Launcher::run(adapter, o);
+    let outcome = Launcher::run(adapter, o);
     let stderr = String::from_utf8_lossy(&buf.lock().unwrap()).into_owned();
     let arg = json_file(&out, "session-arg.json");
     let cap = Cap {
@@ -161,7 +164,7 @@ pub fn launch(rig: &Rig, adapter: &dyn AgentAdapter, version: &str, tweak: impl 
         shell: map(&out, "shell.json"),
         mcp_run: strs(&out, "mcp-run.json"),
     };
-    Run { code, stderr, cap }
+    Run { code: outcome.code, outcome, stderr, cap }
 }
 
 /// Appends one step line to `dir/steps`, the control file of a stub agent started with `ZYGO_STUB_CONTROL=dir`
@@ -170,6 +173,24 @@ pub fn stub_control(dir: &Path, step: &str) -> std::io::Result<()> {
     use std::io::Write;
     std::fs::create_dir_all(dir)?;
     std::fs::OpenOptions::new().create(true).append(true).open(dir.join("steps"))?.write_all(format!("{step}\n").as_bytes())
+}
+
+/// The pid of the stub that serves `ctl`: polls `ctl/done` every 10 ms for a complete first line `start <pid>`.
+/// After `bound` it appends the step `exit 3` (a stub that started late then ends, and its launch returns) and gives `None`.
+pub fn stub_started(ctl: &Path, bound: Duration) -> Option<i32> {
+    let end = Instant::now() + bound;
+    loop {
+        let done = std::fs::read_to_string(ctl.join("done")).unwrap_or_default();
+        let pid = done.split_once('\n').and_then(|(first, _)| first.strip_prefix("start ")).and_then(|p| p.parse().ok());
+        if pid.is_some() {
+            return pid;
+        }
+        if Instant::now() >= end {
+            let _ = stub_control(ctl, "exit 3");
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn git(dir: &Path, args: &[&str]) {

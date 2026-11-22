@@ -11,10 +11,11 @@
 //! first is recorded as SIGINT and a second takes the default action; close, logoff and shutdown keep the default.
 //! The first [`install`] sets the handling and the last [`Installed`] dropped puts back what it replaced; concurrent
 //! launches in one process share the slots. Accepted limit: a signal sent on between the reap and the slot clear can
-//! reach a reused pid.
+//! reach a reused pid. Unix: the handler also sets a flag on each SIGTERM or SIGHUP, with or without a child; only the
+//! first [`install`] clears it, and [`received`] reads it (workspaces design AU34).
 
 use std::process::{Child, ExitStatus};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Mutex;
 
 struct State {
@@ -39,6 +40,7 @@ pub(crate) fn install() -> Installed {
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if s.count == 0 {
         PENDING.store(0, Ordering::SeqCst);
+        RECEIVED.store(false, Ordering::SeqCst);
         set(&mut s);
     }
     s.count += 1;
@@ -58,6 +60,15 @@ impl Drop for Installed {
 static CHILD: AtomicI32 = AtomicI32::new(0);
 /// The first signal recorded with no child stored; 0 = none.
 static PENDING: AtomicI32 = AtomicI32::new(0);
+
+/// SIGTERM or SIGHUP arrived since the first `install`.
+static RECEIVED: AtomicBool = AtomicBool::new(false);
+
+/// SIGTERM or SIGHUP arrived since the first `install` (workspaces design AU34, AU17). Only `install` clears it.
+/// Windows: always `false`.
+pub(crate) fn received() -> bool {
+    RECEIVED.load(Ordering::SeqCst)
+}
 
 /// The signal recorded with no child (§8.2 step 2 note 2026-11-19), if any.
 pub(crate) fn stopped() -> Option<i32> {
@@ -95,6 +106,9 @@ extern "C" fn handle(sig: libc::c_int) {
     // SAFETY: atomics, `kill`, `signal` and `raise` are async-signal-safe; `errno` is put back.
     unsafe {
         let e = *errno();
+        if sig == libc::SIGTERM || sig == libc::SIGHUP {
+            RECEIVED.store(true, Ordering::SeqCst);
+        }
         let first = PENDING.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst).is_ok();
         let p = CHILD.load(Ordering::SeqCst);
         if p > 0 {

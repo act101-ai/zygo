@@ -1,6 +1,7 @@
 //! The launch sequence (§8.2): config (with the team layer in serve mode), profile, repository and work item, proxy
 //! or team server and session, plugins, the agent's config, the child, and the cleanup at exit.
 
+use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -15,7 +16,7 @@ use zygo_config::keys::default_store;
 use zygo_config::{load, Dialect, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
-use zygo_core::session_view::{LegendEntry, SessionView, WorkItemView};
+use zygo_core::session_view::{LegendEntry, Member, ResumeNote, SessionView, ViewWorkspace, WorkItemView};
 use zygo_core::Agent;
 use zygo_plugins::select::{known_plugins, selection};
 use zygo_plugins::snapshot::{delivered_in, missing_commands, snapshot_in, Snapshot};
@@ -41,6 +42,43 @@ const BOUND: Duration = Duration::from_secs(2);
 
 pub struct Launcher;
 
+/// How a launch ended (workspaces design AU34, AU60, AU73).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaunchOutcome {
+    /// The process exit code: the agent's own code when it ran; `128 + n` when signal n ended it or stopped the launch.
+    pub code: i32,
+    /// The signal that ended the agent; `None` for an exit with a code and on every non-unix target.
+    pub signal: Option<i32>,
+    /// The agent process was started.
+    pub spawned: bool,
+    /// The launcher received SIGTERM or SIGHUP between the start of its signal handling and the end of its cleanup.
+    pub received: bool,
+}
+
+/// What a launch records for its outcome besides the code.
+#[derive(Default)]
+struct Marks {
+    signal: Cell<Option<i32>>,
+    spawned: Cell<bool>,
+    received: Cell<bool>,
+}
+
+/// The signal handling of one launch. Its drop copies `signals::received()` into the marks; the handling ends after that.
+struct Handling<'a> {
+    marks: &'a Marks,
+    _installed: signals::Installed,
+}
+
+impl Drop for Handling<'_> {
+    fn drop(&mut self) {
+        self.marks.received.set(signals::received());
+    }
+}
+
+/// Called once, after the session directory exists and before the agent starts, with the session directory, the
+/// session id and the resolved agent program (workspaces design AU34).
+pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path) -> anyhow::Result<()> + Send>;
+
 pub struct LaunchOpts {
     /// The user's arguments after `--`.
     pub args: Vec<String>,
@@ -52,6 +90,12 @@ pub struct LaunchOpts {
     pub env: Env,
     pub cwd: PathBuf,
     pub paths: Paths,
+    /// `Some`: this launch is a workspace member (workspaces design AU58, AU102).
+    pub member: Option<Member>,
+    /// The inputs of the resume note; written to the session view only with `member` (AU72).
+    pub resume_note: Option<ResumeNote>,
+    /// An error is logged to the session log and the launch goes on.
+    pub on_session: Option<SessionCallback>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
     #[cfg(feature = "test-hooks")]
     pub builtin: Option<toml::Table>,
@@ -78,6 +122,9 @@ impl LaunchOpts {
             env,
             cwd,
             paths,
+            member: None,
+            resume_note: None,
+            on_session: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
             #[cfg(feature = "test-hooks")]
@@ -126,8 +173,16 @@ struct Session<'a> {
 }
 
 impl Launcher {
-    /// §8.2 in local or serve mode; returns the process exit code (the agent's own code when it ran).
-    pub fn run(adapter: &dyn AgentAdapter, opts: LaunchOpts) -> i32 {
+    /// §8.2 in local or serve mode. `code` of the result is the process exit code (the agent's own code when it ran).
+    pub fn run(adapter: &dyn AgentAdapter, opts: LaunchOpts) -> LaunchOutcome {
+        let marks = Marks::default();
+        let code = Self::launch(adapter, opts, &marks);
+        LaunchOutcome { code, signal: marks.signal.get(), spawned: marks.spawned.get(), received: marks.received.get() }
+    }
+
+    /// The launch; returns the process exit code and records the rest of the outcome in `marks`.
+    fn launch(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, marks: &Marks) -> i32 {
+        let on_session = opts.on_session.take();
         let out = Out {
             #[cfg(feature = "test-hooks")]
             buf: opts.stderr.clone(),
@@ -232,7 +287,7 @@ impl Launcher {
             known_plugins: known,
         };
         // §8.2 step 2 note 2026-11-19: held until `finish` has run (declared before the `Finish` guard).
-        let _signals = signals::install();
+        let _signals = Handling { marks, _installed: signals::install() };
         let (grant, mut end, url, store_err) = match client {
             None => {
                 let store_env = opts.env.clone();
@@ -317,6 +372,12 @@ impl Launcher {
                 .map(|hc| Heartbeat::start(hc, session.clone(), heartbeat_every(&opts), Box::new(move |m| beat_out.line(m))));
         }
         let guard = Finish { sd: sd.clone(), end: Some(end), paths: &opts.paths, _pid: pid };
+        // AU34: the session directory exists and the agent is not started; an error never stops the launch (C6).
+        if let Some(call) = on_session
+            && let Err(e) = call(&sd, &grant.session, &program)
+        {
+            session_dir::log(&sd, &format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+        }
         if let Some(t) = &team
             && let Err(e) = write_team(&sd.root, t)
         {
@@ -344,7 +405,7 @@ impl Launcher {
             sd,
             top,
         };
-        let code = s.run(adapter);
+        let code = s.run(adapter, marks);
         drop(guard);
         code
     }
@@ -352,7 +413,7 @@ impl Launcher {
 
 impl Session<'_> {
     /// §8.2 steps 2a-5.
-    fn run(self, adapter: &dyn AgentAdapter) -> i32 {
+    fn run(self, adapter: &dyn AgentAdapter, marks: &Marks) -> i32 {
         let (opts, out, sd, paths) = (self.opts, self.out, &self.sd, &self.opts.paths);
         if let Some(s) = signals::stopped() {
             return 128 + s;
@@ -457,6 +518,7 @@ impl Session<'_> {
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
             statusline_style: c.statusline.style.clone(),
+            workspace: opts.member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone() }),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {
@@ -523,6 +585,11 @@ impl Session<'_> {
             ("ZYGO_MAIN_ROLE".into(), effective_role.unwrap_or_default()),
         ];
         set.extend(spec.env);
+        // §8.4 "Set" for a member (AU58); for every other launch the filter removes both names.
+        if let Some(m) = &opts.member {
+            set.push(("ZYGO_WORKSPACE".into(), m.ws_id.clone()));
+            set.push(("ZYGO_PANE".into(), m.pane.clone()));
+        }
         let (env, removed) = child_env(&opts.env, &self.cfg, &set);
         if !removed.is_empty() {
             session_dir::log(sd, &format!("env: removed {}", removed.join(", ")));
@@ -548,8 +615,12 @@ impl Session<'_> {
                 return signals::or_stopped(1);
             }
         };
+        marks.spawned.set(true);
         match signals::wait(&mut child) {
-            Ok(st) => exit_code(st),
+            Ok(st) => {
+                marks.signal.set(signal_of(st));
+                exit_code(st)
+            }
             Err(e) => {
                 out.line(&format!("zygo: {e}"));
                 1
@@ -662,6 +733,19 @@ fn exit_code(st: ExitStatus) -> i32 {
         }
     }
     1
+}
+
+/// The signal that ended the child; `None` for an exit with a code and on every non-unix target.
+fn signal_of(st: ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        std::os::unix::process::ExitStatusExt::signal(&st)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = st;
+        None
+    }
 }
 
 /// The first token of the first line that is a semver version (after a leading `v`).

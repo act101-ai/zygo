@@ -18,7 +18,7 @@ pub(crate) fn run(a: &LaunchOpenCode) -> i32 {
         }
     };
     match launch_opts(a, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => Launcher::run(&OpenCode::default(), opts),
+        Ok(opts) => Launcher::run(&OpenCode::default(), opts).code,
         Err(m) => {
             print_err(&format!("{m}\n"));
             2
