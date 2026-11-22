@@ -712,6 +712,7 @@ fn overrides_apply() {
         redaction_content: Some(false),
         work_units: Some(false),
         guards: BTreeMap::from([("scope".to_string(), "enforce".to_string())]),
+        ..Default::default()
     };
     let s = m.with_overrides(&o).unwrap();
     assert!(!s.config.features.results);

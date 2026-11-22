@@ -638,6 +638,23 @@ fn valid_profile_and_settings_reach_the_view() {
 }
 
 #[test]
+fn statusline_style_of_the_user_config_reaches_the_view() {
+    // Statusline HUD design H§8 row Launch, acceptance 35. Both agents get the same handling.
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let fx = fx();
+        let (code, err) = run(&Stub { agent, ..stub() }, opts(&fx, "dump", &[]));
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(view(&fx).statusline_style, "compact", "{agent:?}: the default");
+        fx.config("[statusline]\nstyle = \"verbose\"\n");
+        let (code, err) = run(&Stub { agent, ..stub() }, opts(&fx, "dump", &[]));
+        assert_eq!(code, 0, "{err}");
+        assert_eq!(view(&fx).statusline_style, "verbose", "{agent:?}");
+        let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(fx.out.join("view.json")).unwrap()).unwrap();
+        assert_eq!(raw["statusline_style"], "verbose", "{agent:?}");
+    }
+}
+
+#[test]
 fn concurrent_launches_get_separate_proxies() {
     let fx = fx();
     let (o1, o2) = (fx.root.join("out1"), fx.root.join("out2"));

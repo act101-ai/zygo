@@ -17,7 +17,7 @@ fn env_with(results: bool, threshold: u64, head: u32, tail: u32) -> Env {
     SessionView { session: "sess-1".into(), agent: Agent::ClaudeCode, main_role: "lead".into(), effective_role: Some("lead".into()),
         role_prompt: None, user_prompt: None, profile: None, profile_prompt: None, work_item: None, legend: vec![],
         disabled_roles: vec![], work_units: true, results, compact_tool: true, navigation: false,
-        trim_threshold_bytes: threshold, head_lines: head, tail_lines: tail }.save(&dir).unwrap();
+        trim_threshold_bytes: threshold, head_lines: head, tail_lines: tail, ..Default::default() }.save(&dir).unwrap();
     Env { _t: t, dir }
 }
 fn env(results: bool) -> Env { env_with(results, 16384, 60, 20) }

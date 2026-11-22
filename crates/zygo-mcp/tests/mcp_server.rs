@@ -357,7 +357,7 @@ fn view(results: bool, compact_tool: bool, work_units: bool) -> SessionView {
     SessionView { session: "s".into(), agent: Agent::ClaudeCode, main_role: "lead".into(), effective_role: None,
         role_prompt: None, user_prompt: None, profile: None, profile_prompt: None, work_item: None,
         legend: vec![], disabled_roles: vec![], work_units, results, compact_tool, navigation: false,
-        trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20 }
+        trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20, ..Default::default() }
 }
 fn resolve(p: &Paths, sd: Option<SessionDir>) -> (anyhow::Result<McpCtx>, String) {
     let mut warn = Vec::new();

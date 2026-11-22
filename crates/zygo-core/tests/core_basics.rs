@@ -101,6 +101,7 @@ fn saves_are_atomic_and_private() {
         compact_tool: true,
         navigation: false,
         trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20,
+        ..Default::default()
     };
     v.save(&d).unwrap();
     assert_eq!(SessionView::load(&d).unwrap(), v);
@@ -168,4 +169,57 @@ fn plain_strips_the_verbatim_prefix_only_when_the_plain_path_is_the_same() {
     assert_eq!(p(r"\\?\Volume{1}\x"), PathBuf::from(r"\\?\Volume{1}\x"));
     assert_eq!(p("/home/a"), PathBuf::from("/home/a"));
     assert_eq!(p(r"C:\a"), PathBuf::from(r"C:\a"));
+}
+
+// ---- HUD-7: statusline style in the view and in the overrides (statusline HUD design H§8, AU1) ----
+
+#[test]
+fn session_view_without_statusline_style_reads_as_compact() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    // a view.json written before the field existed
+    std::fs::write(d.view_json(), br#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":true,"results":true,"compact_tool":true,"navigation":false,"trim_threshold_bytes":16384,"head_lines":60,"tail_lines":20}"#).unwrap();
+    let mut v = SessionView::load(&d).unwrap();
+    assert_eq!(v.statusline_style, "compact");
+    v.statusline_style = "verbose".into();
+    v.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap().statusline_style, "verbose");
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(json["statusline_style"], "verbose");
+}
+
+#[test]
+fn session_view_default_equals_the_serde_defaults() {
+    use zygo_core::session_view::SessionView;
+    let v = SessionView { statusline_style: "verbose".into(), ..Default::default() };
+    assert_eq!(v.statusline_style, "verbose");
+    let d = SessionView::default();
+    assert_eq!(d.statusline_style, "compact");
+    assert_eq!((d.session.as_str(), d.agent, d.main_role.as_str()), ("", zygo_core::Agent::ClaudeCode, ""));
+    assert!(d.compact_tool && !d.work_units && !d.results && !d.navigation);
+    assert_eq!((d.trim_threshold_bytes, d.head_lines, d.tail_lines), (16384, 60, 20));
+    assert!(d.legend.is_empty() && d.disabled_roles.is_empty() && d.work_item.is_none());
+    // A file that holds only the fields without a serde default reads as the default of every other field.
+    let min: SessionView = serde_json::from_str(
+        r#"{"session":"","agent":"claude-code","main_role":"","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":false,"results":false,"navigation":false}"#,
+    )
+    .unwrap();
+    assert_eq!(min, d);
+}
+
+#[test]
+fn overrides_statusline_round_trips_and_is_absent_when_unset() {
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let o = Overrides { statusline: Some("verbose".into()), ..Overrides::default() };
+    o.save(&d).unwrap();
+    assert_eq!(Overrides::load(&d), o);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.overrides_json()).unwrap()).unwrap();
+    assert_eq!(json["statusline"], "verbose");
+    // An overrides.json written before the field existed reads as no choice.
+    std::fs::write(d.overrides_json(), br#"{"results":true,"guards":{}}"#).unwrap();
+    assert_eq!(Overrides::load(&d).statusline, None);
+    Overrides::default().save(&d).unwrap();
+    assert!(!std::fs::read_to_string(d.overrides_json()).unwrap().contains("statusline"));
 }
