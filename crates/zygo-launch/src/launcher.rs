@@ -75,6 +75,10 @@ impl Drop for Handling<'_> {
     }
 }
 
+/// Called once, after the session directory exists and before the agent starts, with the session directory, the
+/// session id and the resolved agent program (workspaces design AU34).
+pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path) -> anyhow::Result<()> + Send>;
+
 pub struct LaunchOpts {
     /// The user's arguments after `--`.
     pub args: Vec<String>,
@@ -90,6 +94,8 @@ pub struct LaunchOpts {
     pub member: Option<Member>,
     /// The inputs of the resume note; written to the session view only with `member` (AU72).
     pub resume_note: Option<ResumeNote>,
+    /// An error is logged to the session log and the launch goes on.
+    pub on_session: Option<SessionCallback>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
     #[cfg(feature = "test-hooks")]
     pub builtin: Option<toml::Table>,
@@ -118,6 +124,7 @@ impl LaunchOpts {
             paths,
             member: None,
             resume_note: None,
+            on_session: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
             #[cfg(feature = "test-hooks")]
@@ -174,7 +181,8 @@ impl Launcher {
     }
 
     /// The launch; returns the process exit code and records the rest of the outcome in `marks`.
-    fn launch(adapter: &dyn AgentAdapter, opts: LaunchOpts, marks: &Marks) -> i32 {
+    fn launch(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, marks: &Marks) -> i32 {
+        let on_session = opts.on_session.take();
         let out = Out {
             #[cfg(feature = "test-hooks")]
             buf: opts.stderr.clone(),
@@ -364,6 +372,12 @@ impl Launcher {
                 .map(|hc| Heartbeat::start(hc, session.clone(), heartbeat_every(&opts), Box::new(move |m| beat_out.line(m))));
         }
         let guard = Finish { sd: sd.clone(), end: Some(end), paths: &opts.paths, _pid: pid };
+        // AU34: the session directory exists and the agent is not started; an error never stops the launch (C6).
+        if let Some(call) = on_session
+            && let Err(e) = call(&sd, &grant.session, &program)
+        {
+            session_dir::log(&sd, &format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+        }
         if let Some(t) = &team
             && let Err(e) = write_team(&sd.root, t)
         {

@@ -129,6 +129,42 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
     assert!(!r.cap.session.get("session.log").is_some_and(|l| l.contains("ZYGO_WORKSPACE") || l.contains("ZYGO_PANE")));
 }
 
+#[test]
+fn session_callback_runs_after_the_session_dir_exists_and_before_the_agent_starts() { // AU34
+    use std::sync::{Arc, Mutex};
+    let rig = rig();
+    let seen: Arc<Mutex<Option<(PathBuf, String, PathBuf, bool, bool)>>> = Arc::default();
+    let (s2, out) = (seen.clone(), rig.root.join("out"));
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+        o.on_session = Some(Box::new(move |sd, session, program| {
+            *s2.lock().unwrap() = Some((sd.root.clone(), session.to_string(), program.to_path_buf(), sd.url().is_file(), out.join("argv.json").exists()));
+            std::fs::write(sd.root.join("from-callback"), "1")?;
+            Ok(())
+        }));
+    });
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let (root, session, program, dir_ready, agent_ran) = seen.lock().unwrap().take().expect("the callback ran");
+    assert_eq!(session, r.cap.env["ZYGO_SESSION"]);
+    assert_eq!(root, rig.paths.sessions_dir.join(&session));
+    assert_eq!((program.parent(), program.file_stem()), (Some(rig.bin.as_path()), Some(std::ffi::OsStr::new("claude"))));
+    assert!(dir_ready, "the session directory was not complete at the callback");
+    assert!(!agent_ran, "the agent ran before the callback");
+    assert_eq!(r.cap.session["from-callback"], "1"); // the agent saw the callback's file
+}
+
+#[test]
+fn a_session_callback_error_is_logged_and_the_launch_goes_on() { // AU34, C6
+    let rig = rig();
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+        o.env.0.push(("ZYGO_STUB_EXIT".into(), "7".into()));
+        o.on_session = Some(Box::new(|_, _, _| Err(anyhow::anyhow!("no results link\nline two"))));
+    });
+    assert_eq!(r.outcome, LaunchOutcome { code: 7, signal: None, spawned: true, received: false }, "{}", r.stderr);
+    let log = &r.cap.session["session.log"];
+    assert!(log.lines().any(|l| l == "session callback: no results link\\nline two"), "{log}");
+    assert!(!r.stderr.contains("session callback"), "{}", r.stderr);
+}
+
 #[cfg(unix)]
 #[test]
 fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
