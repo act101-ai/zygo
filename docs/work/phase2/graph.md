@@ -70,7 +70,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
-| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
+| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | PLANNED | judgment | — |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
@@ -199,3 +199,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | P2 DONE (7657585): PW7, PW16 failed, 7 verified. Cost: 12 real requests. Side effect: 6 empty projects/<scratch>/memory folders in the operator's Claude folder, left in place. live-checks.md side-effect note added by round 2 M2, author's call. |
 | 2026-11-22 | Author's call from P2 and the W3 probe: AU61 resume drops CLAUDE_CONFIG_DIR when the saved config dir is none (PW16); AU87 adds `no such session:`. W7, W10: read @zygo-ws only after session_exists; W7: window hooks with -w. H1 consumes the W9 subagent methods. |
 | 2026-11-22 | LIV-2 planned: 21 steps; plan review B1-B3 and M1-M10 fixed; data.rs and the HUD spec added to Files (author's call) |
+| 2026-11-22 | W3 planned: 19 steps; review B1-B4 and M1-M11 fixed; B5 found by probe: tmux -u needed under LC_ALL=C; spec AU87, W§13 updated (author's call) |
