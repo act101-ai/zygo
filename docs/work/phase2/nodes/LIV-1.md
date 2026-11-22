@@ -221,9 +221,9 @@ The real Claude Code differs from the plan in these points. The script (and Bloc
 
 The values: `<DATE>`, `<CC>` and `<TMUX>` are `.date`, `.claude_code` and `.tmux` of `fixtures/claude-code/hud/p-hud-1-run.json`. For each id, `<RESULT-id>` is the word after the id in its line of `fixtures/claude-code/hud/p-hud-1-results.txt`, and `<TEXT-id>` is the text after `): ` in that line. In a table cell write `\|` for each `|` of a text.
 
-- [ ] **4.1** In `docs/live-checks.md`, line 3: replace `the N24, N25, N14, N15, N28, N33, N34, N35 notes.` with `the N24, N25, N14, N15, N28, N33, N34, N35 notes; `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (P-HUD-1).` (the inserted path is in backticks).
-- [ ] **4.2** In `docs/live-checks.md`, bullet "Isolation": replace `every run except #28 gets a temporary` with `every run except #28 and the passthrough parts of P-HUD-1 gets a temporary`. Bullet "Upstream per row": replace `#28 uses the claude.ai login Claude Code already stores` with `#28 and P-HUD-1 (all parts but C7, which uses the mock) use the claude.ai login Claude Code already stores`.
-- [ ] **4.3** In `docs/live-checks.md`, add this section directly above the line `## Results` (the text between the two lines of four backticks; the section holds one `sh` code block):
+- [x] **4.1** In `docs/live-checks.md`, line 3: replace `the N24, N25, N14, N15, N28, N33, N34, N35 notes.` with `the N24, N25, N14, N15, N28, N33, N34, N35 notes; `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (P-HUD-1).` (the inserted path is in backticks).
+- [x] **4.2** In `docs/live-checks.md`, bullet "Isolation": replace `every run except #28 gets a temporary` with `every run except #28 and the passthrough parts of P-HUD-1 gets a temporary`. Bullet "Upstream per row": replace `#28 uses the claude.ai login Claude Code already stores` with `#28 and P-HUD-1 (all parts but C7, which uses the mock) use the claude.ai login Claude Code already stores`.
+- [x] **4.3** In `docs/live-checks.md`, add this section directly above the line `## Results` (the text between the two lines of four backticks; the section holds one `sh` code block):
 
 ````markdown
 ## P-HUD-1 (status line HUD)
@@ -244,7 +244,7 @@ sh scripts/premises/live-hud.sh --zygo target/debug/zygo
 - The traps end the private tmux server, the pseudo-terminal session, the mock and the background processes, and remove the scratch tree.
 ````
 
-- [ ] **4.4** In `docs/live-checks.md`, add these eight rows at the end of the table of `## Results`, in this order, with the values in place:
+- [x] **4.4** In `docs/live-checks.md`, add these eight rows at the end of the table of `## Results`, in this order, with the values in place:
 
 ```markdown
 | P-HUD-1/PH1 | The status line shows SGR colors, 16-color and `38;5;n` (HUD design H§12 PH1) | Claude Code | <CC> | <DATE> | <RESULT-PH1> | tmux <TMUX>, Linux; `scripts/premises/live-hud.sh`, `zygo claude --passthrough` on the stored login. <TEXT-PH1>. `fixtures/claude-code/hud/p-hud-1-compact-200.txt`, `fixtures/claude-code/hud/p-hud-1-fit.json`; H§12 |
@@ -258,26 +258,26 @@ sh scripts/premises/live-hud.sh --zygo target/debug/zygo
 ```
 
   Leave a fixture path out of a row when step 3.4 did not list that file.
-- [ ] **4.5** In `docs/specs/2026-11-21-statusline-hud-design.md`, H§12 table: for each of the rows PH1, PH2, PH3, PH4, PH5, PH9, PH12, append this to the end of the cell "Evidence so far" (one space before it), with the values of that id:
+- [x] **4.5** In `docs/specs/2026-11-21-statusline-hud-design.md`, H§12 table: for each of the rows PH1, PH2, PH3, PH4, PH5, PH9, PH12, append this to the end of the cell "Evidence so far" (one space before it), with the values of that id:
 
 ```markdown
 *(Note <DATE>, LIV-1, P-HUD-1: <RESULT-id> on Claude Code <CC>, tmux <TMUX>, Linux. <TEXT-id>. `docs/live-checks.md` row P-HUD-1/<id>.)*
 ```
 
   For an id whose result is `failed`, put this sentence before the closing `)*`: ` The fallback of this row is not built by LIV-1; the LIV-1 contract names the nodes: <the nodes of that id in the table "A failed line">.`
-- [ ] **4.6** In the same file, add this paragraph directly below the paragraph that starts `Live check **P-HUD-1**` (one empty line between them):
+- [x] **4.6** In the same file, add this paragraph directly below the paragraph that starts `Live check **P-HUD-1**` (one empty line between them):
 
 ```markdown
 *(Note <DATE>, LIV-1: P-HUD-1 ran with `scripts/premises/live-hud.sh` on Claude Code <CC>, tmux <TMUX>, Linux. Parts PH1 to PH5, PH9 and PH12 ran through `zygo claude --passthrough` on the stored login. The C7 part ran on the mock upstream, as P-N28-1, because a passthrough request cannot be recorded: <RESULT-C7>. <TEXT-C7>. In a 70-column pane the HUD fits its row to the pane (H§6.7 step 1), so no row is wider than the pane there; the script also makes the pane 19 columns wide, below the 20-column limit of H§6.7, so the hook uses another width source and prints a row that is wider than the area (PH3, and the status area width of PH4). The "outside tmux" part of PH4 ran on a pseudo-terminal of 100 columns. PH9 compares columns in the tmux grid; the glyphs of a font are not checked. Rows: `docs/live-checks.md` P-HUD-1/PH1 to P-HUD-1/C7.)*
 ```
 
-- [ ] **4.7** In the same file, add this row at the end of the table of `## Change log`:
+- [x] **4.7** In the same file, add this row at the end of the table of `## Change log`:
 
 ```markdown
 | <DATE> | H§12 (rows PH1, PH2, PH3, PH4, PH5, PH9, PH12; note below the P-HUD-1 paragraph) | LIV-1 (live check) | P-HUD-1 ran on Claude Code <CC>, tmux <TMUX>, Linux; each result is a dated note. |
 ```
 
-- [ ] **4.8** Commit `fixtures/claude-code/hud/`, `docs/live-checks.md`, `docs/specs/2026-11-21-statusline-hud-design.md` and this file: `docs(live): P-HUD-1 results on Claude Code <CC>, tmux <TMUX>; fixtures and H§12 notes`.
+- [x] **4.8** Commit `fixtures/claude-code/hud/`, `docs/live-checks.md`, `docs/specs/2026-11-21-statusline-hud-design.md` and this file: `docs(live): P-HUD-1 results on Claude Code <CC>, tmux <TMUX>; fixtures and H§12 notes`.
 
 ### Task 5: verification
 

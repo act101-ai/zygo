@@ -1,0 +1,4 @@
+tmux session a (200, then 70, then 19 columns): COLUMNS 200
+tmux session a (200, then 70, then 19 columns): COLUMNS 70
+tmux session a (200, then 70, then 19 columns): default 120
+pseudo-terminal, 100 columns: COLUMNS 100

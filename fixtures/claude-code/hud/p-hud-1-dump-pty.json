@@ -1,0 +1,33 @@
+{
+  "stdin_keys": [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "scratchpad_dir",
+    "effort",
+    "model",
+    "workspace",
+    "version",
+    "output_style",
+    "cost",
+    "context_window",
+    "exceeds_200k_tokens",
+    "fast_mode",
+    "thinking"
+  ],
+  "effort": {
+    "level": "medium"
+  },
+  "env": {
+    "ZYGO_SESSION_DIR": "[set]",
+    "ZYGO_WORK": "branch:hud-b",
+    "ZYGO_URL": "[set]",
+    "NO_COLOR": null,
+    "ZYGO_NERD_FONT": "1",
+    "TERM": "xterm-256color",
+    "COLORTERM": null,
+    "WT_SESSION": null,
+    "TERM_PROGRAM": null,
+    "COLUMNS": "100"
+  }
+}
