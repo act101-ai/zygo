@@ -96,6 +96,22 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
             }
             Ok(())
         }
+        Phase::Building => {
+            // Round 2 B1: with `snapshot_at` unset no build ever finished, so the planned layout and the records that
+            // never got an agent session go; the next `up` plans from the loadout again.
+            write(store, &ws.name, &mut |c| {
+                c.phase = Phase::Down;
+                if c.snapshot_at.is_none() {
+                    if !c.windows.is_empty() || !c.panes.is_empty() {
+                        c.windows.clear();
+                        c.panes.clear();
+                        c.snapshot_seq += 1;
+                    }
+                    c.members.retain(|_, m| m.agent_session.is_some());
+                }
+            })?;
+            Ok(())
+        }
         _ => {
             write(store, &ws.name, &mut |c| c.phase = Phase::Down)?;
             Ok(())

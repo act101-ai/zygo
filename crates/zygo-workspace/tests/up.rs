@@ -843,7 +843,8 @@ fn restore_first_window_name_resumes_and_reports() {
         assert!(err.contains(line), "{err}");
     }
     let ws = read(&store);
-    assert!(ws.members["kaaaaaaaa"].note_pending && !ws.members["kbbbbbbbb"].note_pending);
+    // Round 2 M4: the member of a pane restored as a shell (no agent session id) is deleted
+    assert!(ws.members["kaaaaaaaa"].note_pending && !ws.members.contains_key("kbbbbbbbb"));
     assert_eq!(ws.windows.iter().map(|w| w.name.clone()).collect::<Vec<_>>(), [Some("#(touch pwned) a".to_string()), None]);
     assert!(!l.repo.join("pwned").exists() && !l.o.paths.data_dir.join("pwned").exists());
     let starts = start_commands(&l.srv);
@@ -1275,7 +1276,8 @@ fn repair_from_stopping() {
     let (a2, z2) = (agent.clone(), z.clone());
     set(&store, move |w| {
         w.phase = Phase::Stopping;
-        let m = w.members.get_mut(&a2).unwrap();
+        // the restore made this pane a shell and deleted its record (Round 2 M4); the live member is written here
+        let m = w.members.entry(a2.clone()).or_insert_with(|| MemberRecord::new(Agent::ClaudeCode));
         m.zygo_session = Some("01LIVE".into());
         m.clean_stop = true;
         m.closed_units = vec!["u1".into()];
@@ -1336,4 +1338,231 @@ fn repair_refusals() {
         assert_eq!(raw(&store), before);
     }
     assert!(!l.t.path().join("stub.log").exists());
+}
+
+// ---- Round 2 ----
+
+/// A tmux wrapper that runs the real tmux only for a call with `-S` (or `-V`); every other call gets "no server", so
+/// no call can reach the default tmux server.
+fn socket_only_tmux(dir: &Path, real: &Path) -> PathBuf {
+    let body = format!(
+        "for a in \"$@\"; do case \"$a\" in -S|-V) exec '{}' -f /dev/null \"$@\";; esac; done\n\
+         echo 'no server running on /tmp/zygo-none/s' >&2\nexit 1",
+        real.display()
+    );
+    script(dir, "stmux", &body)
+}
+
+fn agent_was_built(l: &Live, ws: &Workspace) {
+    assert_eq!(ws.panes.iter().map(|p| p.kind).collect::<Vec<_>>(), [PaneKind::ClaudeCode, PaneKind::Shell, PaneKind::Shell]);
+    assert_eq!(ws.members[&ws.panes[0].key].state, MemberState::Running);
+    let starts = start_commands(&l.srv);
+    assert!(!starts[&ws.panes[0].key].ends_with("--shell"), "{starts:?}");
+}
+
+#[test] // Round 2 B1: a failed first `up` leaves no plan behind
+fn failed_first_up_leaves_no_plan_and_the_next_up_builds_the_loadout() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let mut l = live("0");
+    let folder = tempfile::Builder::new().prefix("zygo-w7$").tempdir_in("/tmp").unwrap();
+    fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let wrapper = l.o.tmux.clone();
+    l.o.tmux = script(l.t.path(), "tmuxf", &format!("exec '{}' -f /dev/null \"$@\"", real.display()));
+    l.o.tmux_env = Some(OsString::from(format!("{}/s,1,0", folder.path().display())));
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (code, _, err) = run(&l.o);
+    let _ = Command::new(&real).arg("-S").arg(folder.path().join("s")).arg("kill-server").output();
+    assert_eq!(code, 2, "{err}");
+    let ws = read(&l.store());
+    assert_eq!((ws.phase, ws.tmux_socket.clone()), (Phase::Down, None));
+    assert!(ws.windows.is_empty() && ws.panes.is_empty() && ws.members.is_empty(), "{ws:?}");
+    l.o.tmux = wrapper;
+    l.o.tmux_env = None;
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("no agent session id saved") && !err.contains("--loadout applies only"), "{err}");
+    agent_was_built(&l, &read(&l.store()));
+}
+
+#[test] // Round 2 B1: repair from `building` to `down` when no build ever finished
+fn crash_in_building_without_a_snapshot_rebuilds_the_loadout() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    fs::create_dir_all(store.dir()).unwrap();
+    up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+    let first = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!(first.0, 1, "{}", first.2);
+    l.srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.snapshot_at, ws.panes.len()), (Phase::Building, None, 3));
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("no agent session id saved") && !err.contains("--loadout applies only"), "{err}");
+    agent_was_built(&l, &read(&store));
+}
+
+#[test] // Round 2 M1: a value that ends with `;` would end a tmux command
+fn trailing_semicolon_is_refused_before_the_write() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let g = gone_tmux(t);
+    let refused = |o: &UpOpts, repo: &Path, value: &str| {
+        let _ = fs::remove_file(t.join("tmux.log"));
+        let (code, out, err) = run(o);
+        assert_eq!((code, out.as_str()), (1, ""), "{err}");
+        assert!(err.contains(&format!("{value:?}")) && err.contains("ends with `;`"), "{value}: {err}");
+        assert!(!state_file(&state_of(o, repo)).exists());
+        assert!(tmux_log(t).iter().all(|l| !l.contains("new-session")));
+    };
+    // a path: the main worktree, the `-c` of new-session and new-window
+    let r = repo(t, "app;");
+    refused(&opts(t, &r, &g, &t.join("zygo")), &r, &r.display().to_string());
+    // an argument: the zygo path is the first item of each pane's argument list
+    let r = repo(t, "app2");
+    let z = t.join("zygo;");
+    let mut o = opts(t, &r, &g, &z);
+    refused(&o, &r, &z.display().to_string());
+    // window names
+    o.zygo = t.join("zygo");
+    for name in ["a;", ";"] {
+        o.config = with_loadout("w", vec![lw(Some(name), None, vec![lp("shell")])]);
+        o.loadout = Some("w".into());
+        refused(&o, &r, name);
+    }
+}
+
+#[test] // Round 2 M2: the attach path after a repair from `building` takes the final snapshot
+fn building_repair_then_attach_path_takes_a_snapshot() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let _ = up_pair(&mut l);
+    let store = l.store();
+    let ws = read(&store);
+    let logs = format!("=zygo-app:{}", ws.windows[1].index);
+    l.srv.run(&["kill-window", "-t", &logs]).unwrap();
+    l.srv.run(&["new-window", "-d", "-t", &logs, "sleep", "600"]).unwrap(); // the old index is taken
+    set(&store, |w| w.phase = Phase::Building);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&store);
+    assert_eq!(ws.phase, Phase::Up);
+    let tmux_windows: std::collections::BTreeSet<u32> = l
+        .srv
+        .run(&["list-windows", "-t", "=zygo-app:", "-F", "#{window_index}"])
+        .unwrap()
+        .lines()
+        .map(|s| s.parse().unwrap())
+        .collect();
+    assert_eq!(ws.windows.iter().map(|w| w.index).collect::<std::collections::BTreeSet<_>>(), tmux_windows);
+    let keys = by_key(&l.srv);
+    for p in &ws.panes {
+        assert_eq!(keys[&p.key].0, p.window, "{}", p.key);
+    }
+}
+
+#[test] // Round 2 M3: the server of `$TMUX` is in `tmux_socket` before `new_session`
+fn the_server_of_tmux_env_is_written_before_new_session() {
+    let _g = serial();
+    let Some(real) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    l.o.tmux = socket_only_tmux(l.t.path(), &real);
+    l.o.tmux_env = Some(OsString::from(format!("{},1,0", l.srv.socket().display())));
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    fs::create_dir_all(store.dir()).unwrap();
+    up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+    let first = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!((first.0, first.2.as_str()), (1, "zygo: tmux: injected\n"));
+    assert_eq!(read(&store).tmux_socket.as_deref(), Some(l.srv.socket()));
+    // the next `up`, outside tmux, repairs on the same server
+    l.o.tmux_env = None;
+    l.o.loadout = None;
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.tmux_socket.as_deref()), (Phase::Up, Some(l.srv.socket())));
+    let keys = by_key(&l.srv);
+    assert!(ws.panes.iter().all(|p| keys.contains_key(&p.key)), "{keys:?}");
+}
+
+#[test] // Round 2 M4: a pane restored as a shell has no member, so its kind stays shell
+fn a_pane_restored_as_a_shell_loses_its_member_and_stays_a_shell() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, &l.repo)],
+        vec![("kaaaaaaaa", member(Agent::ClaudeCode, MemberState::Running, None))],
+    );
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains("zygo: pane kaaaaaaaa: no agent session id saved; started a shell\n"), "{err}");
+    let ws = read(&store);
+    assert!(!ws.members.contains_key("kaaaaaaaa"));
+    assert_eq!(ws.panes[0].kind, PaneKind::Shell);
+    let mux = Tmux::new(l.o.tmux.clone(), ws.tmux_socket.clone());
+    let r = zygo_workspace::snapshot::run(&l.o.paths, &mux, &l.id, None, true, zygo_workspace::snapshot::OP_WAIT).unwrap();
+    assert_eq!(r, zygo_workspace::snapshot::SnapshotOutcome::Written);
+    assert_eq!(read(&store).panes[0].kind, PaneKind::Shell);
+    l.srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("no agent session id saved"), "{err}");
+}
+
+#[test] // Round 2 M5: `up <name>` with a newer or an invalid state
+fn preflight_by_name_refuses_a_newer_or_invalid_state() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let p = paths(t);
+    let ok = version_tmux(t, "tmux34", "tmux 3.4");
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    let r = repo(t, "app");
+    let store = Store::open(&p, OTHER_ID);
+    let mut v = doc(&store, &r);
+    v["version"] = json!(2);
+    put_raw(&store, &v);
+    assert_eq!(
+        preflight(&p, &ok, Some("app"), &plain),
+        Err(Exit { code: 1, message: "zygo: workspace state is from a newer zygo; run zygo update".into() })
+    );
+    let mut v = doc(&store, &r);
+    v["tmux_session"] = json!("zygo-other");
+    put_raw(&store, &v);
+    let tg = preflight(&p, &ok, Some("app"), &plain).unwrap();
+    assert_eq!((tg.id.as_str(), tg.name.as_str(), tg.main_root.clone()), (OTHER_ID, "app", r.clone()));
+    let Err(text) = &tg.state else { panic!("{:?}", tg.state) };
+    assert!(text.contains("workspace.json") && text.contains("invalid tmux_session"), "{text}");
+    // `up app` names the file and exits 1; with `--reset` the file becomes `workspace.json.bad`
+    let g = gone_tmux(t);
+    let mut o = opts(t, &plain, &g, &t.join("zygo"));
+    o.name = Some("app".into());
+    let before = raw(&store);
+    let (code, out, err) = run(&o);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(err.starts_with("zygo: ") && err.contains("workspace.json"), "{err}");
+    assert_eq!(raw(&store), before);
+    assert!(!store.dir().join("workspace.json.bad").exists());
+    o.reset = true;
+    let (code, _, err) = run(&o);
+    assert_eq!(fs::read(store.dir().join("workspace.json.bad")).unwrap(), before);
+    assert_eq!(code, 1);
+    assert!(err.ends_with("zygo: tmux: no server running on /tmp/zygo-none/s\n"), "{err}");
 }
