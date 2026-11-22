@@ -1,15 +1,19 @@
 # Shared helpers for the N2 premise experiments. Source it from run-<id>.sh.
 # N2_SCRATCH: scratch directory for isolated HOMEs and raw captures. Set by the caller: kept. Unset
-# or empty: lib.sh makes one (mktemp -d) and prints its path; on exit it removes it after status 0
-# and keeps it (named on stderr) otherwise. live.sh's live_end does the same.
+# or empty: after the claude and opencode PATH checks pass, lib.sh makes one (mktemp -d) and prints
+# its path; on exit it removes it after status 0 and keeps it (named on stderr) otherwise. live.sh's
+# live_end does the same.
 # Nothing here reads the operator's own agent config, login or memory files.
 set -eu
 : "${PREMISES_DIR:=$(cd "$(dirname "$0")" && pwd)}"
 REPO_DIR=$(cd "$PREMISES_DIR/../.." && pwd)
+# The PATH checks come before the scratch dir, so a failed check makes no dir.
+CLAUDE_BIN=$(command -v claude) || { echo "premises: claude is not on PATH"; exit 1; }
+OPENCODE_BIN=$(command -v opencode) || { echo "premises: opencode is not on PATH"; exit 1; }
 # n2_scratch_end <status>: for the scratch dir lib.sh made itself (never a caller-set one): after
 # status 0 remove it (a failure is named on stderr), else keep it and name it; then exit <status>.
 n2_scratch_end() {
-  trap - EXIT INT TERM HUP
+  trap - EXIT INT TERM HUP PIPE
   if [ -n "${N2_SCRATCH_OWN:-}" ]; then
     if [ "$1" -eq 0 ]; then
       chmod -R u+rwx "$N2_SCRATCH_OWN" 2>/dev/null || true
@@ -27,9 +31,11 @@ if [ "${_n2_lib_pid:-}" != "$$" ]; then
   N2_SCRATCH_OWN="" _n2_lib_pid=$$
 fi
 if [ -z "${N2_SCRATCH:-}" ]; then
+  # PIPE too: bash runs an EXIT trap with status 0 after an untrapped PIPE, which would remove the dir.
   trap 'n2_scratch_end $?' EXIT
   trap 'n2_scratch_end 129' HUP
   trap 'n2_scratch_end 130' INT
+  trap 'n2_scratch_end 141' PIPE
   trap 'n2_scratch_end 143' TERM
   # Ownership is assigned in the statement that makes the dir (a signal inside mktemp: accepted).
   N2_SCRATCH_OWN=$(mktemp -d) || exit 1
@@ -37,8 +43,6 @@ if [ -z "${N2_SCRATCH:-}" ]; then
   echo "premises: scratch $N2_SCRATCH (removed on exit 0, kept otherwise; set N2_SCRATCH to keep it)" >&2
 fi
 DUMMY_KEY="dummy-""key"
-CLAUDE_BIN=$(command -v claude) || { echo "premises: claude is not on PATH"; exit 1; }
-OPENCODE_BIN=$(command -v opencode) || { echo "premises: opencode is not on PATH"; exit 1; }
 TOOL_PATH="$(dirname "$CLAUDE_BIN"):$(dirname "$OPENCODE_BIN"):$(dirname "$(command -v node 2>/dev/null || echo /usr/bin/true)"):/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
 # new_run <name>: fresh run dir with home/, repo/ (a git repository) and rec/.

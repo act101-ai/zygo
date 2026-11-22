@@ -1,9 +1,13 @@
 # ver_ge <have> <min> (node PRB-2): 0 when both are dotted numbers (digits and single dots) and
 # have >= min, else 1. Fields compare as integers of any length (leading zeros dropped, a missing
-# field is 0). Sourcing this file has no side effect; ver_ge sets only _vg_* variables.
+# field is 0). A field longer than 32 digits fails closed (1) before any compare, so the digit loops
+# stay short. Sourcing this file has no side effect; ver_ge sets only _vg_* variables.
 ver_ge() {
   for _vg_x in "$1" "$2"; do
     case "$_vg_x" in '' | .* | *. | *..* | *[!0-9.]*) return 1 ;; esac
+    case "$_vg_x" in
+      *[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*) return 1 ;;
+    esac
   done
   _vg_a=$1. _vg_b=$2.
   while [ -n "$_vg_a$_vg_b" ]; do

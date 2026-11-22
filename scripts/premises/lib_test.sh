@@ -21,7 +21,7 @@ no() { n=$((n + 1)); bad=$((bad + 1)); printf 'FAIL: %s (%s)\n' "$1" "$2"; }
 # mkbin <dir> <with claude: 0|1>
 mkbin() {
   mkdir -p "$1"
-  for t in mktemp rm mkdir chmod dirname sleep cat cp sed head; do ln -s "$(command -v "$t")" "$1/$t"; done
+  for t in mktemp rm mkdir chmod dirname sleep cat cp sed head env grep tee; do ln -s "$(command -v "$t")" "$1/$t"; done
   ln -s "$SH" "$1/sh"
   printf '#!/bin/sh\necho 0\n' >"$1/opencode"
   chmod +x "$1/opencode"
@@ -69,9 +69,12 @@ waitready() {
   done
 }
 # sigrun <case> <signal>: run $T/<case>.sh in the background, signal it when ready; sets rc and NR.
+# perl resets INT to its default first: a background command of a non-interactive shell starts with
+# INT ignored, and a shell cannot trap a signal that was ignored when it started.
 sigrun() {
   # shellcheck disable=SC2086
-  env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" >"$T/$1.out" 2>"$T/$1.err" &
+  perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die' \
+    env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" >"$T/$1.out" 2>"$T/$1.err" &
   bp=$!
   if waitready "$T/$1.ready"; then
     kill -s "$2" "$(cat "$T/$1.pid")"
@@ -85,6 +88,14 @@ sigrun() {
   fi
   [ ! -f "$T/$1.sleep" ] || kill "$(cat "$T/$1.sleep")" 2>/dev/null
 }
+# piperun <case>: run $T/<case>.sh with stdout to a pipe whose reader has exited; sets rc.
+piperun() {
+  # shellcheck disable=SC2086
+  { env PATH="$CP" TMPDIR="$T/tmp-$1" $XENV "$SH" "$T/$1.sh" 2>"$T/$1.err"; echo $? >"$T/$1.rc"; } | true
+  rc=$(cat "$T/$1.rc")
+}
+# PIPE_ACT: write to stdout until the closed pipe stops the script.
+PIPE_ACT='while :; do echo x; done'
 # res <name> <want rc> <check command...>: one ok or FAIL line.
 res() {
   name=$1 want=$2
@@ -131,12 +142,13 @@ c=L2; prep $c own; ERR=$T/$c.err; child $c 0 'false'; run $c
 res "L2 own dir kept after an error" 1 kept_n $c 1
 
 c=L3; prep $c own; ERR=$T/$c.err; CP=$T/nocc; child $c 0 'exit 0'; run $c
+# Round 2: the PATH checks run before mktemp, so a failed check makes no dir and prints no scratch line.
 l3() {
   grep -qxF 'premises: claude is not on PATH' "$T/L3.out" || { why="stdout: $(tr '\n' '|' <"$T/L3.out")"; return 1; }
-  [ "$(ls -A "$T/tmp-L3" | wc -l | tr -d ' ')" = 1 ] || { why="$T/tmp-L3 does not hold exactly one entry"; return 1; }
-  kept_n L3 1 "$T/tmp-L3/$(ls -A "$T/tmp-L3")"
+  [ -z "$(ls -A "$T/tmp-L3")" ] || { why="$T/tmp-L3 holds: $(ls -A "$T/tmp-L3")"; return 1; }
+  [ ! -s "$ERR" ] || { why="stderr: $(tr '\n' '|' <"$ERR")"; return 1; }
 }
-res "L3 own dir kept when claude is not on PATH" 1 l3
+res "L3 no dir made when claude is not on PATH" 1 l3
 
 c=L4; prep $c own; ERR=$T/$c.err; child $c 0 "$(sigact $c)"; sigrun $c TERM
 res "L4 own dir kept after TERM" 143 kept_n $c 143
@@ -178,30 +190,48 @@ l10() {
 }
 res "L10 a second source keeps the first ownership" 0 l10
 
+# Round 2: live.sh's result writes results.txt twice; the earlier line and both new lines stay.
 c=L11; prep $c caller; ERR=$T/$c.err; echo 'LIVE OLD' >"$T/keep-$c/results.txt"
-child $c 0 "echo 'LIVE NEW' >>\"\$N2_SCRATCH/results.txt\""; run $c
+child $c 1 'result X1 pass one; result X2 pass two; exit 0'; run $c
 l11() {
   [ "$(cat "$T/keep-L11/results.txt")" = "LIVE OLD
-LIVE NEW" ] || { why="results.txt: $(tr '\n' '|' <"$T/keep-L11/results.txt")"; return 1; }
+LIVE X1 pass (agent 2.1.328): one
+LIVE X2 pass (agent 2.1.328): two" ] || { why="results.txt: $(tr '\n' '|' <"$T/keep-L11/results.txt")"; return 1; }
+  kept L11
 }
-res "L11 results.txt is not truncated" 0 l11
+res "L11 results.txt is not truncated by two result calls" 0 l11
+
+c=L12; prep $c own; ERR=$T/$c.err; child $c 0 "$(sigact $c)"; sigrun $c INT
+res "L12 own dir kept after INT" 130 kept_n $c 130
+
+c=L13; prep $c own; ERR=$T/$c.err; child $c 0 "$PIPE_ACT"; piperun $c
+res "L13 own dir kept after SIGPIPE" 141 kept_n $c 141
 
 # --- E: ownership is never inherited and never exported ------------------------------------------
-c=E1; prep $c caller; ERR=$T/$c.err; XENV="$XENV N2_SCRATCH_OWN=$T/keep-$c"
-child $c 0 "sh -c 'echo \"\${N2_SCRATCH_OWN:-none}\"'; exit 0"; run $c
-e1() {
-  [ "$(cat "$T/E1.out")" = none ] || { why="stdout: $(tr '\n' '|' <"$T/E1.out")"; return 1; }
-  kept E1
+# Round 2: env shows an exported N2_SCRATCH_OWN even when it is empty (${…:-none} did not).
+envact() { printf '%s' "env | grep '^N2_SCRATCH_OWN=' >'$T/$1.env' || :; exit 0"; }
+noenv() {
+  [ -f "$T/$1.env" ] || { why="the child did not run env"; return 1; }
+  [ ! -s "$T/$1.env" ] || { why="a child sees: $(tr '\n' '|' <"$T/$1.env")"; return 1; }
 }
+c=E1; prep $c caller; ERR=$T/$c.err; XENV="$XENV N2_SCRATCH_OWN=$T/keep-$c"
+child $c 0 "$(envact $c)"; run $c
+e1() { noenv E1 && kept E1; }
 res "E1 an inherited N2_SCRATCH_OWN is dropped, caller dir kept" 0 e1
 
 c=E2; prep $c own; ERR=$T/$c.err
-child $c 0 "sh -c 'echo \"\${N2_SCRATCH_OWN:-none}\"'; exit 0"; run $c
-e2() {
-  [ "$(cat "$T/E2.out")" = none ] || { why="stdout: $(tr '\n' '|' <"$T/E2.out")"; return 1; }
-  removed E2
-}
+child $c 0 "$(envact $c)"; run $c
+e2() { noenv E2 && removed E2; }
 res "E2 N2_SCRATCH_OWN is not exported, own dir removed" 0 e2
+
+c=E3; prep $c own; ERR=$T/$c.err; mkdir -p "$T/other-$c"; : >"$T/other-$c/mine"
+XENV="N2_SCRATCH_OWN=$T/other-$c"
+child $c 0 'exit 0'; run $c
+e3() {
+  [ -f "$T/other-E3/mine" ] || { why="the inherited N2_SCRATCH_OWN dir was removed"; return 1; }
+  removed E3
+}
+res "E3 an inherited N2_SCRATCH_OWN dir is kept, only the own dir removed" 0 e3
 
 # --- C: with live.sh (live_traps, live_end) -----------------------------------------------------
 c=C1; prep $c own; ERR=$T/$c.err; child $c 1 'mkdir -p "$N2_SCRATCH/live-$$"; exit 0'; run $c
@@ -221,6 +251,29 @@ c3() {
   [ ! -e "$T/keep-C3/live-$(cat "$T/C3.pid")" ] || { why="live-<pid> is left"; return 1; }
 }
 res "C3 live_end removes live-<pid>, caller dir kept" 0 c3
+
+c=C4; prep $c own; ERR=$T/$c.err; child $c 1 "$PIPE_ACT"; piperun $c
+res "C4 live_end then own dir kept after SIGPIPE" 141 kept_n $c 141
+
+c=C5; prep $c own; ERR=$T/$c.err
+child $c 1 'mkdir -p "$N2_SCRATCH/live-$$/ro"; : >"$N2_SCRATCH/live-$$/ro/f"; chmod 500 "$N2_SCRATCH/live-$$/ro"; exit 0'
+run $c
+res "C5 live_end removes a live-<pid> with a read-only subdir, then the own dir" 0 removed $c
+
+if [ "$(id -u)" = 0 ]; then
+  ok "C6 skipped (root)"
+else
+  c=C6; prep $c caller; ERR=$T/$c.err
+  child $c 1 "mkdir -p \"\$N2_SCRATCH/live-\$\$\"; echo \$\$ >'$T/C6.pid'; chmod 500 \"\$N2_SCRATCH\"; exit 0"
+  run $c
+  chmod 700 "$T/keep-C6"
+  c6() {
+    [ -f "$T/keep-C6/mine" ] || { why="$T/keep-C6/mine is gone"; return 1; }
+    l=$(cat "$ERR")
+    [ "$l" = "premises: could not remove $T/keep-C6/live-$(cat "$T/C6.pid")" ] || { why="stderr: $(tr '\n' '|' <"$ERR")"; return 1; }
+  }
+  res "C6 live_end names a live-<pid> it could not remove, status kept" 0 c6
+fi
 
 # --- R: run-all.sh ------------------------------------------------------------------------------
 # rall <case>: a copy of run-all.sh and lib.sh with a stub run-<id>.sh for each id it runs.

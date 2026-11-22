@@ -53,6 +53,25 @@ vcase V22 1 9007199254740992 9007199254740993
 vcase V23 1 .1 1
 vcase V24 1 1. 1
 vcase V25 1 1..2 1
+# V26-V28 (round 2): a 32-digit field compares; a longer field fails closed, and at once.
+D32=12345678901234567890123456789012
+vcase V26 0 "$D32" "$D32"
+vcase V27 1 "1${D32}" 1
+BIG=$(printf '%20000s' '' | tr ' ' 1)
+name="V28 ver_ge <20000-digit field> <same> -> 1 within 2 s"
+if [ ! -f "$HERE/ver.sh" ]; then no "$name" "ver.sh missing"
+else
+  rm -f "$T/v26.rc"
+  ( ( . "$HERE/ver.sh"; ver_ge "$BIG" "$BIG" ); echo $? >"$T/v26.rc" ) &
+  bp=$!
+  i=0
+  while [ ! -s "$T/v26.rc" ] && [ "$i" -lt 20 ]; do i=$((i + 1)); sleep 0.1; done
+  if [ ! -s "$T/v26.rc" ]; then
+    pkill -KILL -P "$bp" 2>/dev/null; kill -s KILL "$bp" 2>/dev/null; wait "$bp" 2>/dev/null
+    no "$name" "not done in 2 s"
+  elif [ "$(cat "$T/v26.rc")" = 1 ]; then ok "$name"
+  else no "$name" "exit $(cat "$T/v26.rc")"; fi
+fi
 
 # --- X: ver_ge changes no variable of the caller; sourcing ver.sh needs nothing on PATH ----------
 if [ ! -f "$HERE/ver.sh" ]; then
@@ -142,6 +161,17 @@ if pcheck "P13 control characters removed from the message" 1 "live: claude is 2
   if [ "$(tr -d '\033\r' <"$T/p.out" | wc -c)" = "$(wc -c <"$T/p.out")" ]; then ok "P13 control characters removed from the message"
   else no "P13 control characters removed from the message" "output holds ESC or CR"; fi
 fi
+
+# P14 (round 2): a C1 control (U+009B, CSI, UTF-8 C2 9B) and DEL are removed from the message.
+pdefaults; printf '2.1.0\302\233X\177Y\n' >"$T/cc.txt"; prun
+if pcheck "P14 C1 controls and DEL removed from the message" 1 "live: claude is 2.1.0XY; the minimum is 2.1.328"; then
+  if [ "$(LC_ALL=C tr -d '\177-\377' <"$T/p.out" | wc -c)" = "$(wc -c <"$T/p.out")" ]; then ok "P14 C1 controls and DEL removed from the message"
+  else no "P14 C1 controls and DEL removed from the message" "output holds a byte 0x7F-0xFF"; fi
+fi
+
+# P15 (round 2): an empty prerelease is not SemVer and fails.
+pdefaults; printf '%s\n' '1.19.0-' >"$T/oc.txt"; prun
+pcheck "P15 empty prerelease" 1 "live: opencode is 1.19.0-; the minimum is 1.18.16" && ok "P15 empty prerelease"
 
 # --- K: check-premises.sh agent rows at or above the header; act-lite exact ---------------------
 K=$T/k
