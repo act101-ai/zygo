@@ -15,6 +15,9 @@ serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
 rand.workspace = true
+fs4.workspace = true
+libc.workspace = true
+time.workspace = true
 
 [features]
 # Test hooks (`mux::testing`, node W3); only the self dev-dependency and the `test-hooks` feature of `crates/zygo` enable it.
