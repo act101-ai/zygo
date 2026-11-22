@@ -101,9 +101,9 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
-| FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | PLANNED | implementation | — |
-| FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | PLANNED | implementation | — |
-| FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | PLANNED | judgment | — |
+| FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | IN-PROGRESS | implementation | wt .worktrees/phase2/FIX-5 |
+| FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | IN-PROGRESS | implementation | wt .worktrees/phase2/FIX-7 |
+| FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | IN-PROGRESS | judgment | wt .worktrees/phase2/FIX-8 |
 
 ## Log
 
