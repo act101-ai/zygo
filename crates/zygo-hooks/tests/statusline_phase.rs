@@ -207,6 +207,31 @@ fn fifo_gives_none_and_does_not_wait() {
     assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(None));
 }
 
+#[cfg(unix)]
+#[test] // C6: the check is on the opened handle, so a FIFO that has a writer and a valid state file is not read
+fn fifo_with_a_writer_and_valid_content_gives_none() {
+    use std::io::Write;
+
+    let fx = Fx::new();
+    fx.view(Some(ID));
+    let path = fx.state(ID, DRAINING);
+    assert_eq!(fx.read().as_deref(), Some("draining"));
+    std::fs::remove_file(&path).unwrap();
+    let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    // SAFETY: `c_path` is a valid NUL-terminated string that lives for the whole call.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    // An open for read and write does not wait. The handle stays open, so the FIFO has a writer and its data.
+    let mut writer = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+    writer.write_all(DRAINING).unwrap();
+    let (paths, env) = (fx.paths(), fx.env());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tx.send(read(&paths, &env)));
+    // The open does not wait here (the FIFO has a writer). A reader with no check of the handle reads the FIFO:
+    // without `O_NONBLOCK` it gets the bytes, then waits for more.
+    assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(None));
+    drop(writer);
+}
+
 #[test] // AU25: a `version` other than 1 is not read (WS AU29)
 fn other_version_gives_none() {
     let fx = Fx::new();

@@ -8,7 +8,7 @@
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use zygo_core::paths::Paths;
@@ -33,11 +33,26 @@ pub fn valid_ws_id(s: &str) -> bool {
     s.len() == 16 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// Opens `path` read-only. The open never waits: with `O_NONBLOCK`, the open of a FIFO that has no writer returns
+/// at once. The flag does not change the read of a regular file.
+#[cfg(unix)]
+fn open(path: &Path) -> Option<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open(path).ok()
+}
+
+/// Opens `path` read-only. The FIFO case is unix-only, so this open has no flag; the caller checks the handle.
+#[cfg(not(unix))]
+fn open(path: &Path) -> Option<File> {
+    File::open(path).ok()
+}
+
 /// The `phase` of the workspace of this session (H§7.6, AU25); `None` in every other case.
 ///
 /// The session is the one of `ZYGO_SESSION_DIR` (through `env`); its `view.json` gives `workspace.member.ws_id`. The
-/// file is `paths.workspaces_dir()/<ws_id>/workspace.json`, read fresh on each call, only when it is a regular file
-/// of at most 64 KiB. An id that fails `valid_ws_id` builds no path. The result is the string of the file with no
+/// file is `paths.workspaces_dir()/<ws_id>/workspace.json`, read fresh on each call, only when the opened handle is
+/// a regular file of at most 64 KiB. An id that fails `valid_ws_id` builds no path. The result is the string of the file with no
 /// filter: the renderer has the rule for the phases that show.
 pub fn read(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>) -> Option<String> {
     let session_dir = env("ZYGO_SESSION_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)?;
@@ -46,14 +61,15 @@ pub fn read(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>) -> Option<Str
         return None;
     }
     let path = paths.workspaces_dir().join(&ws_id).join(STATE_FILE);
-    // A file that is not regular (a FIFO, a directory) is not opened, so the open cannot wait.
-    let meta = std::fs::metadata(&path).ok()?;
+    let file = open(&path)?;
+    // The check is on the opened handle, not on the path: no other file can take its place after the check.
+    let meta = file.metadata().ok()?;
     if !meta.is_file() || meta.len() > MAX_BYTES {
         return None;
     }
     let mut bytes = Vec::new();
-    // The file can grow between the two steps, so the read has its own bound.
-    let n = File::open(&path).ok()?.take(MAX_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    // The file can grow after the check, so the read has its own bound.
+    let n = file.take(MAX_BYTES + 1).read_to_end(&mut bytes).ok()?;
     if n as u64 > MAX_BYTES {
         return None;
     }
