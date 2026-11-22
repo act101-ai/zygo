@@ -106,6 +106,29 @@ fn non_member_child_has_neither_workspace_name_nor_a_marker() { // AU58, AU64, W
     assert!(view["workspace"].is_null(), "{view}");
 }
 
+#[test]
+fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, AU72
+    use zygo_core::session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace};
+    let rig = rig();
+    let member = Member { ws_id: "ws-1".into(), pane: "p-1".into() };
+    let note = ResumeNote {
+        clean_stop: true,
+        interrupted: vec![SubagentRef { agent_id: "a-1".into(), agent_type: "zygo-code".into() }],
+        closed_units: vec!["gh:1".into()],
+    };
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+        o.env.0.extend([("ZYGO_WORKSPACE".into(), "old-ws".into()), ("ZYGO_PANE".into(), "old-pane".into())]);
+        o.member = Some(member.clone());
+        o.resume_note = Some(note.clone());
+    });
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!((r.cap.env["ZYGO_WORKSPACE"].as_str(), r.cap.env["ZYGO_PANE"].as_str()), ("ws-1", "p-1"));
+    let view: SessionView = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
+    assert_eq!(view.workspace, Some(ViewWorkspace { member, resume_note: Some(note) }));
+    // Set, not removed: the session log does not name them.
+    assert!(!r.cap.session.get("session.log").is_some_and(|l| l.contains("ZYGO_WORKSPACE") || l.contains("ZYGO_PANE")));
+}
+
 #[cfg(unix)]
 #[test]
 fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73

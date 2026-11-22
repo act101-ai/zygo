@@ -16,7 +16,7 @@ use zygo_config::keys::default_store;
 use zygo_config::{load, Dialect, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
-use zygo_core::session_view::{LegendEntry, SessionView, WorkItemView};
+use zygo_core::session_view::{LegendEntry, Member, ResumeNote, SessionView, ViewWorkspace, WorkItemView};
 use zygo_core::Agent;
 use zygo_plugins::select::{known_plugins, selection};
 use zygo_plugins::snapshot::{delivered_in, missing_commands, snapshot_in, Snapshot};
@@ -86,6 +86,10 @@ pub struct LaunchOpts {
     pub env: Env,
     pub cwd: PathBuf,
     pub paths: Paths,
+    /// `Some`: this launch is a workspace member (workspaces design AU58, AU102).
+    pub member: Option<Member>,
+    /// The inputs of the resume note; written to the session view only with `member` (AU72).
+    pub resume_note: Option<ResumeNote>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
     #[cfg(feature = "test-hooks")]
     pub builtin: Option<toml::Table>,
@@ -112,6 +116,8 @@ impl LaunchOpts {
             env,
             cwd,
             paths,
+            member: None,
+            resume_note: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
             #[cfg(feature = "test-hooks")]
@@ -498,6 +504,7 @@ impl Session<'_> {
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
             statusline_style: c.statusline.style.clone(),
+            workspace: opts.member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone() }),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {
@@ -564,6 +571,11 @@ impl Session<'_> {
             ("ZYGO_MAIN_ROLE".into(), effective_role.unwrap_or_default()),
         ];
         set.extend(spec.env);
+        // §8.4 "Set" for a member (AU58); for every other launch the filter removes both names.
+        if let Some(m) = &opts.member {
+            set.push(("ZYGO_WORKSPACE".into(), m.ws_id.clone()));
+            set.push(("ZYGO_PANE".into(), m.pane.clone()));
+        }
         let (env, removed) = child_env(&opts.env, &self.cfg, &set);
         if !removed.is_empty() {
             session_dir::log(sd, &format!("env: removed {}", removed.join(", ")));
