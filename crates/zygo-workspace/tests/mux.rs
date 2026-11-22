@@ -2,7 +2,9 @@
 #[cfg(unix)]
 use std::ffi::OsString;
 #[cfg(unix)]
-use std::fs::read_to_string;
+use std::fs::{self, read_to_string};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::sync::Mutex;
@@ -10,11 +12,13 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-use zygo_workspace::mux::testing::{require_tmux_at, tmux_gate, SKIP_PREFIX};
+use zygo_workspace::mux::testing::PrivateServer;
+#[cfg(unix)]
+use zygo_workspace::mux::testing::{require_tmux, require_tmux_at, tmux_gate, SKIP_PREFIX};
 #[cfg(unix)]
 use zygo_workspace::mux::tmux::Tmux;
 #[cfg(unix)]
-use zygo_workspace::mux::{HookScope, Multiplexer, NewSession, NewWindow, SessionAnswer, Split};
+use zygo_workspace::mux::{window_target, HookScope, Multiplexer, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::mux::{
     check_path, format_escape, hook_command, is_gone_message, is_no_target_message, parse_pane_line, parse_version,
     vis_decode, MuxError, PaneRow, ParseError, UnsafePath, WindowRow, MIN_VERSION, PANE_FIELDS, PANE_FORMAT,
@@ -416,4 +420,344 @@ fn gate_accepts_tmux_3_2a() {
     assert_eq!(tmux_gate(&p), Ok(p.clone()));
     assert_eq!(require_tmux_at(&p), Some(p));
     assert_eq!(SKIP_PREFIX, "tmux tests skipped: ");
+}
+
+// Live tests: each one holds `forks()`, runs only when tmux 3.2 or later is on PATH, and uses its own private server.
+
+/// The environment of the test sessions: the process `PATH` and `HOME` only.
+#[cfg(unix)]
+fn env() -> Vec<(OsString, OsString)> {
+    ["PATH", "HOME"].iter().filter_map(|k| std::env::var_os(k).map(|v| (OsString::from(k), v))).collect()
+}
+
+#[cfg(unix)]
+fn argv() -> Vec<OsString> { os(&["sleep", "600"]) }
+
+#[cfg(unix)]
+fn sorted<S: Into<String>>(v: Vec<S>) -> Vec<String> {
+    let mut v: Vec<String> = v.into_iter().map(Into::into).collect();
+    v.sort();
+    v
+}
+
+#[cfg(unix)]
+fn session(t: &Tmux, dir: &Path, w: u32, h: u32) -> u32 {
+    t.new_session(&NewSession { name: "zygo-t", start_dir: dir, width: w, height: h, env: &env(), argv: &argv() }).unwrap()
+}
+
+/// Window index and name, one entry per window of `zygo-t`.
+#[cfg(unix)]
+fn names(t: &Tmux) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = Vec::new();
+    for l in t.list_panes("zygo-t").unwrap() {
+        let (w, _) = parse_pane_line(&l).unwrap();
+        if !out.iter().any(|(i, _)| *i == w.index) {
+            out.push((w.index, w.name));
+        }
+    }
+    out
+}
+
+#[cfg(unix)]
+#[test]
+fn private_server_uses_its_own_socket() {
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    assert!(srv.socket().as_os_str().len() <= 100);
+    assert_eq!(fs::metadata(srv.socket().parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Gone); // no socket file
+    assert_eq!(session(&t, dir.path(), 100, 30), 0);
+    let real = fs::canonicalize(srv.socket()).unwrap();
+    assert_eq!(fs::canonicalize(t.socket_path("zygo-t").unwrap()).unwrap(), real);
+    assert_eq!(fs::canonicalize(Tmux::new(srv.wrapper().into(), None).socket_path("zygo-t").unwrap()).unwrap(), real); // M6
+    assert_eq!(srv.run(&["show-options", "-g", "-v", "default-size"]).unwrap(), "80x24"); // -f /dev/null
+}
+
+#[cfg(unix)]
+#[test]
+fn session_answers_follow_au87() {
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    srv.run(&["new-session", "-d", "-s", "keep", "--", "sleep", "600"]).unwrap();
+    assert_eq!(t.session_exists("keep"), SessionAnswer::Exists);
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Gone); // can't find session
+    assert_eq!(t.set_session_option("zygo-t", "@x", "1"), Err(MuxError::Gone { message: "no such session: =zygo-t:".into() }));
+    let pid: i32 = srv.run(&["display-message", "-p", "-t", "=keep:", "#{pid}"]).unwrap().parse().unwrap();
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    let t0 = Instant::now();
+    while unsafe { libc::kill(pid, 0) } == 0 && t0.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "server {pid} still runs");
+    assert!(srv.socket().exists());
+    assert_eq!(t.session_exists("keep"), SessionAnswer::Gone); // no server running on (6.09)
+    if unsafe { libc::geteuid() } != 0 {
+        // root ignores folder modes
+        let locked = dir.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let a = Tmux::new(srv.program().into(), Some(locked.join("s"))).session_exists("keep");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            matches!(&a, SessionAnswer::Error { message } if message.starts_with("error connecting to ") && message.ends_with("(Permission denied)")),
+            "{a:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn killing_the_last_session_gives_gone() {
+    // B2
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    for _ in 0..10 {
+        session(&t, dir.path(), 80, 24);
+        t.kill_session("zygo-t").unwrap();
+        assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Gone);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn first_window_resize_and_window_size_unset() {
+    // AU96, PW6 6.11
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let w = session(&t, dir.path(), 173, 47);
+    let wt = window_target("zygo-t", w);
+    let global = srv.run(&["show-options", "-g", "-w", "-v", "window-size"]).unwrap();
+    t.resize_window("zygo-t", w, 173, 47).unwrap();
+    assert_eq!(t.display(&wt, "#{window_width} #{window_height}").unwrap(), "173 47");
+    assert_eq!(srv.run(&["show-options", "-w", "-qv", "-t", &wt, "window-size"]).unwrap(), "manual");
+    t.unset_window_option("zygo-t", w, "window-size").unwrap();
+    assert_eq!(t.display(&wt, "#{window_width} #{window_height}").unwrap(), "173 47");
+    assert_eq!(srv.run(&["show-options", "-w", "-qv", "-t", &wt, "window-size"]).unwrap(), "");
+    assert_eq!(srv.run(&["show-options", "-g", "-w", "-v", "window-size"]).unwrap(), global);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_session_returns_the_base_index() {
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    srv.run(&["new-session", "-d", "-s", "keep", "--", "sleep", "600"]).unwrap();
+    srv.run(&["set-option", "-g", "base-index", "1"]).unwrap();
+    assert_eq!(session(&t, dir.path(), 100, 30), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn hash_in_names_and_start_dirs_stays_literal() {
+    // AU55, W-C8, 6.26, 6.27
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let d = dir.path().join("d#x");
+    fs::create_dir(&d).unwrap();
+    let d = fs::canonicalize(&d).unwrap();
+    let w0 = session(&t, &d, 120, 40);
+    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w#(touch pwned)"), start_dir: &d, argv: &argv() }).unwrap();
+    let p = t.split_window(&Split { target: &window_target("zygo-t", w1), start_dir: Some(&d), argv: &argv() }).unwrap();
+    assert_eq!(t.display(&window_target("zygo-t", w1), "#{window_name}").unwrap(), "w#(touch pwned)");
+    for target in [window_target("zygo-t", w0), window_target("zygo-t", w1), p.clone()] {
+        assert_eq!(PathBuf::from(t.display(&target, "#{pane_current_path}").unwrap()), d);
+    }
+    for place in [d.as_path(), dir.path(), srv.socket().parent().unwrap()] {
+        assert!(!place.join("pwned").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn window_names_and_paths_round_trip() {
+    // B3, B5
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let d = dir.path().join("dé");
+    fs::create_dir(&d).unwrap();
+    let d = fs::canonicalize(&d).unwrap();
+    session(&t, &d, 120, 40);
+    for name in [r"x\y", "a|b c#d", "u€v"] {
+        let w = t.new_window(&NewWindow { session: "zygo-t", name: Some(name), start_dir: &d, argv: &argv() }).unwrap();
+        let read = names(&t).into_iter().find(|(i, _)| *i == w).unwrap().1;
+        assert_eq!(read, name);
+        let w2 = t.new_window(&NewWindow { session: "zygo-t", name: Some(&read), start_dir: &d, argv: &argv() }).unwrap();
+        assert_eq!(names(&t).into_iter().find(|(i, _)| *i == w2).unwrap().1, read);
+    }
+    match t.new_window(&NewWindow { session: "zygo-t", name: Some("c\u{1}d"), start_dir: &d, argv: &argv() }) {
+        Err(MuxError::Failed { message }) => assert!(message.starts_with("invalid window name"), "{message}"), // 3.7c
+        Ok(w) => assert_eq!(names(&t).into_iter().find(|(i, _)| *i == w).unwrap().1, "c\u{1}d"), // a version that stores it
+        Err(e) => panic!("{e}"),
+    }
+    let rows: Vec<_> = t.list_panes("zygo-t").unwrap().iter().map(|l| parse_pane_line(l).unwrap()).collect();
+    assert!(rows.iter().all(|(_, p)| p.cwd == d), "{rows:?}"); // dé, not d_
+}
+
+#[cfg(unix)]
+#[test]
+fn hooks_go_to_the_session_and_window_unlinked_follows_the_version() {
+    // W§7.4, PW6 6.30
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let w = session(&t, dir.path(), 100, 30);
+    let cmd = |e: &str| hook_command(Path::new("/usr/bin/true"), "0123456789abcdef", e).unwrap();
+    for e in ["after-new-window", "after-split-window", "after-kill-pane", "client-detached"] {
+        t.set_hook("zygo-t", HookScope::Session, e, &cmd(e)).unwrap();
+    }
+    t.set_hook("zygo-t", HookScope::Window(w), "window-unlinked", &cmd("window-unlinked")).unwrap();
+    let s = srv.run(&["show-hooks", "-t", "=zygo-t:"]).unwrap();
+    let wl = srv.run(&["show-hooks", "-w", "-t", &window_target("zygo-t", w)]).unwrap();
+    let ev = |l: &str| -> Vec<String> { l.lines().map(|x| x.split('[').next().unwrap().to_string()).collect() };
+    let new_scope = t.version().unwrap() >= (3, 3);
+    let mut want = vec!["after-new-window", "after-split-window", "after-kill-pane", "client-detached"];
+    if new_scope {
+        want.push("window-unlinked")
+    }
+    assert_eq!(sorted(ev(&s)), sorted(want), "{s}");
+    assert_eq!(ev(&wl), if new_scope { Vec::<String>::new() } else { vec!["window-unlinked".to_string()] }, "{wl}");
+    for l in s.lines().chain(wl.lines()) {
+        let e = l.split('[').next().unwrap();
+        assert!(
+            l.starts_with(&format!("{e}[0] run-shell -b ")) && l.contains("/usr/bin/true") && l.contains(&format!("--event {e}")),
+            "{l}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn global_options_and_hooks_stay_unchanged() {
+    // W-C3
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    srv.run(&["new-session", "-d", "-s", "keep", "--", "sleep", "600"]).unwrap();
+    let g = || {
+        ["show-hooks -g", "show-options -g", "show-options -g -w", "show-options -s"]
+            .map(|a| srv.run(&a.split(' ').collect::<Vec<_>>()).unwrap())
+            .join("\n")
+    };
+    let g0 = g();
+    let w = session(&t, dir.path(), 120, 40);
+    let wt = window_target("zygo-t", w);
+    t.resize_window("zygo-t", w, 120, 40).unwrap();
+    t.set_session_option("zygo-t", "destroy-unattached", "off").unwrap();
+    t.set_session_option("zygo-t", "@zygo-ws", "0123456789abcdef").unwrap();
+    t.set_window_option(&wt, "remain-on-exit", "off").unwrap();
+    t.set_env("zygo-t", "ZYGO_WORKSPACE", "0123456789abcdef").unwrap();
+    t.hide_env("zygo-t", "ZP_HIDE").unwrap();
+    let cmd = |e: &str| hook_command(Path::new("/usr/bin/true"), "0123456789abcdef", e).unwrap();
+    for e in ["after-new-window", "after-split-window", "after-kill-pane", "client-detached"] {
+        t.set_hook("zygo-t", HookScope::Session, e, &cmd(e)).unwrap();
+    }
+    t.set_hook("zygo-t", HookScope::Window(w), "window-unlinked", &cmd("window-unlinked")).unwrap();
+    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w1"), start_dir: dir.path(), argv: &argv() }).unwrap();
+    let p = t.split_window(&Split { target: &wt, start_dir: Some(dir.path()), argv: &argv() }).unwrap();
+    t.select_layout("zygo-t", w, "tiled").unwrap();
+    t.set_pane_option(&p, "@zygo-pane", "kabcdefgh").unwrap();
+    t.select_window("zygo-t", w1).unwrap();
+    t.select_pane(&p).unwrap();
+    t.zoom(&p).unwrap();
+    t.unset_window_option("zygo-t", w, "window-size").unwrap();
+    assert_eq!(g(), g0);
+}
+
+#[cfg(unix)]
+#[test]
+fn options_environment_and_panes() {
+    // AU64 hide, AU68, B1, B4, 6.17-6.25, 6.28
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let w0 = session(&t, dir.path(), 120, 40);
+    let p = t.split_window(&Split { target: &window_target("zygo-t", w0), start_dir: Some(dir.path()), argv: &argv() }).unwrap();
+    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w1"), start_dir: dir.path(), argv: &argv() }).unwrap();
+    assert_eq!(t.show_session_option("zygo-t", "@zygo-ws").unwrap(), None); // B1: unset is not an error
+    t.set_session_option("zygo-t", "@zygo-ws", "0123456789abcdef").unwrap();
+    assert_eq!(t.show_session_option("zygo-t", "@zygo-ws").unwrap(), Some("0123456789abcdef".into()));
+    t.set_session_option("zygo-t", "destroy-unattached", "off").unwrap();
+    assert_eq!(srv.run(&["show-options", "-qv", "-t", "=zygo-t:", "destroy-unattached"]).unwrap(), "off");
+    t.set_window_option(&window_target("zygo-t", w1), "remain-on-exit", "off").unwrap(); // B4
+    assert_eq!(srv.run(&["show-options", "-w", "-qv", "-t", &window_target("zygo-t", w1), "remain-on-exit"]).unwrap(), "off");
+    assert_eq!(srv.run(&["show-options", "-w", "-qv", "-t", &window_target("zygo-t", w0), "remain-on-exit"]).unwrap(), "");
+    t.set_env("zygo-t", "ZYGO_WORKSPACE", "0123456789abcdef").unwrap();
+    t.hide_env("zygo-t", "ZP_HIDE").unwrap();
+    let e = srv.run(&["show-environment", "-t", "=zygo-t:"]).unwrap();
+    assert!(e.lines().any(|l| l == "ZYGO_WORKSPACE=0123456789abcdef") && e.lines().any(|l| l == "-ZP_HIDE"), "{e}");
+    assert_eq!(t.show_pane_option(&p, "@zygo-pane").unwrap(), None); // B1
+    t.set_pane_option(&p, "@zygo-pane", "kabcdefgh").unwrap();
+    assert_eq!(t.show_pane_option(&p, "@zygo-pane").unwrap(), Some("kabcdefgh".into()));
+    assert_eq!(t.show_pane_option(&window_target("zygo-t", w1), "@zygo-pane").unwrap(), None);
+    let rows: Vec<_> = t.list_panes("zygo-t").unwrap().iter().map(|l| parse_pane_line(l).unwrap()).collect();
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().any(|(_, r)| r.id == p && r.key == "kabcdefgh"));
+    let real = fs::canonicalize(dir.path()).unwrap();
+    assert!(rows.iter().all(|(_, r)| r.id.starts_with('%') && r.cwd == real), "{rows:?}");
+    t.select_window("zygo-t", w0).unwrap();
+    t.select_pane(&p).unwrap();
+    t.zoom(&p).unwrap();
+    assert_eq!(t.display(&p, "#{window_active} #{pane_active} #{window_zoomed_flag}").unwrap(), "1 1 1");
+    let layout = t.display(&window_target("zygo-t", w0), "#{window_layout}").unwrap();
+    t.zoom(&p).unwrap();
+    t.select_layout("zygo-t", w0, "even-horizontal").unwrap();
+    t.select_layout("zygo-t", w0, &layout).unwrap();
+    assert_eq!(t.display(&window_target("zygo-t", w0), "#{window_layout}").unwrap(), layout);
+    t.resize_window("zygo-t", w1, 20, 6).unwrap();
+    let err = (0..20)
+        .find_map(|_| t.split_window(&Split { target: &window_target("zygo-t", w1), start_dir: None, argv: &argv() }).err())
+        .unwrap();
+    assert!(err.is_no_space(), "{err}");
+    t.kill_session("zygo-t").unwrap();
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Gone);
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_targets() {
+    // M3, M4
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let w0 = session(&t, dir.path(), 100, 30);
+    assert_eq!(t.resize_window("zygo-t", 9, 10, 10), Err(MuxError::NoTarget { message: "can't find window: 9".into() }));
+    assert_eq!(
+        t.set_window_option("=zygo-t:9", "remain-on-exit", "off"),
+        Err(MuxError::NoTarget { message: "no such window: =zygo-t:9".into() })
+    );
+    assert_eq!(t.select_pane("%99"), Err(MuxError::NoTarget { message: "can't find pane: %99".into() }));
+    assert_eq!(t.set_pane_option("%99", "@zygo-pane", "k"), Err(MuxError::NoTarget { message: "no such pane: %99".into() }));
+    assert!(t.list_panes("zygo-nosuch").unwrap_err().is_gone());
+    assert_eq!(t.display("=zygo-t:9", "#{window_index}").unwrap(), w0.to_string()); // current window's value, rc 0
+    assert_eq!(t.display("%99", "#{pane_id}").unwrap(), ""); // empty, rc 0
+    assert_eq!(t.show_pane_option("%99", "@zygo-pane").unwrap(), None);
 }

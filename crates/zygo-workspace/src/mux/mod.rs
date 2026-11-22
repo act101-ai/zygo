@@ -76,6 +76,114 @@ pub mod testing {
 
     #[cfg(not(unix))]
     fn runnable(p: &Path) -> bool { p.is_file() }
+
+    /// A private tmux server for one test (W§19, W3 D11): its own mode-0700 folder in `/tmp`, the socket `<dir>/s`,
+    /// and a wrapper `<dir>/tmux` that passes `-S <socket> -f /dev/null`. No call reaches the default server.
+    #[cfg(unix)]
+    #[derive(Debug)]
+    pub struct PrivateServer {
+        dir: PathBuf,
+        socket: PathBuf,
+        program: PathBuf,
+        wrapper: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl PrivateServer {
+        /// Makes the folder and the wrapper; starts no server (the first call that needs one starts it through the
+        /// wrapper). Panics when [`require_tmux`] gives none: a test calls it first.
+        pub fn start() -> PrivateServer {
+            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::time::{Duration, Instant};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+
+            let Some(program) = require_tmux() else {
+                panic!("PrivateServer::start: no tmux 3.2 or later on PATH; call require_tmux first");
+            };
+            assert!(
+                !program.as_os_str().as_encoded_bytes().contains(&b'\''),
+                "PrivateServer::start: the tmux path {} holds a quote",
+                program.display()
+            );
+            let n = NEXT.fetch_add(1, Ordering::Relaxed);
+            let dir = PathBuf::from(format!("/tmp/zygo-mux-{}-{n}-{:08x}", std::process::id(), rand::random::<u32>()));
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).expect("PrivateServer::start: create the folder");
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("PrivateServer::start: chmod");
+            let socket = dir.join("s");
+            assert!(socket.as_os_str().len() <= 100, "PrivateServer::start: socket path {} is too long", socket.display());
+            let wrapper = dir.join("tmux");
+            let body = format!(
+                "#!/bin/sh\nexec '{}' -S '{}' -f /dev/null \"$@\"\n",
+                program.display(),
+                socket.display()
+            );
+            std::fs::write(&wrapper, body).expect("PrivateServer::start: write the wrapper");
+            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+                .expect("PrivateServer::start: chmod the wrapper");
+            let server = PrivateServer { dir, socket, program, wrapper };
+
+            // The wrapper was just written: another thread's fork can still hold it open for writing (ETXTBSY).
+            let busy = std::io::Error::from_raw_os_error(libc::ETXTBSY).to_string();
+            let t0 = Instant::now();
+            loop {
+                let mut c = std::process::Command::new(&server.wrapper);
+                c.arg("-V");
+                match super::tmux::run_bounded(c, super::BOUND).and_then(super::tmux::finish) {
+                    Ok(_) => break,
+                    Err(MuxError::Spawn { message }) if message == busy && t0.elapsed() < Duration::from_secs(2) => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(e) => panic!("PrivateServer::start: {} -V failed: {e}", server.wrapper.display()),
+                }
+            }
+            server
+        }
+
+        /// The socket path, `<dir>/s`.
+        pub fn socket(&self) -> &Path { &self.socket }
+
+        /// The real tmux program.
+        pub fn program(&self) -> &Path { &self.program }
+
+        /// The wrapper `<dir>/tmux`, which passes `-S <socket> -f /dev/null`.
+        pub fn wrapper(&self) -> &Path { &self.wrapper }
+
+        /// `Tmux::new(wrapper, Some(socket))`.
+        pub fn tmux(&self) -> Tmux { Tmux::new(self.wrapper.clone(), Some(self.socket.clone())) }
+
+        /// Runs the real program with `-S <socket> -f /dev/null -u` and `LC_ALL=C`, bounded. Exit 0 gives stdout
+        /// with trailing white space removed; other results are classified as the trait's calls are.
+        pub fn run(&self, args: &[&str]) -> Result<String, MuxError> {
+            let ran = super::tmux::run_bounded(self.command(args), super::BOUND)?;
+            super::tmux::finish(ran).map(|s| s.trim_end().to_string())
+        }
+
+        /// `kill-server`, then waits at most 5 s until `list-sessions` fails.
+        pub fn kill_server(&self) {
+            use std::time::{Duration, Instant};
+            let _ = self.run(&["kill-server"]);
+            let t0 = Instant::now();
+            while self.run(&["list-sessions"]).is_ok() && t0.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        fn command(&self, args: &[&str]) -> std::process::Command {
+            let mut c = std::process::Command::new(&self.program);
+            c.arg("-S").arg(&self.socket).args(["-f", "/dev/null", "-u"]).args(args).env("LC_ALL", "C");
+            c
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for PrivateServer {
+        /// `kill-server` (result ignored), then removes the folder.
+        fn drop(&mut self) {
+            let _ = super::tmux::run_bounded(self.command(&["kill-server"]), super::BOUND);
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
 }
 
 use std::ffi::OsString;
