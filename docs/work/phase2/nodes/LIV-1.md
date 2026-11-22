@@ -161,11 +161,11 @@ A `failed` text that starts with `timeout:`, `not observed:` or `zygo claude end
 
 ### Task 1: the script (no agent)
 
-- [ ] **1.1** Create `scripts/premises/live-hud.sh` with exactly the text of Block A. Check: `sh -n scripts/premises/live-hud.sh` prints nothing and exits 0.
-- [ ] **1.2** Run `sh scripts/premises/live-hud.sh --selfcheck`. Expected: 16 lines that start with `ok:`, then `live-hud selfcheck: ok (16)`, exit 0.
-- [ ] **1.3** Run `sh scripts/premises/live-hud.sh`. Expected: `usage: sh scripts/premises/live-hud.sh --zygo <path> | --selfcheck`, exit 1.
-- [ ] **1.4** Run `sh scripts/check-premises.sh`. Expected: the last line is `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7)` (the new script is in its scan scope).
-- [ ] **1.5** Commit `scripts/premises/live-hud.sh` and this file: `test(premises): live-hud.sh, the P-HUD-1 live check of the status line HUD`.
+- [x] **1.1** Create `scripts/premises/live-hud.sh` with exactly the text of Block A. Check: `sh -n scripts/premises/live-hud.sh` prints nothing and exits 0.
+- [x] **1.2** Run `sh scripts/premises/live-hud.sh --selfcheck`. Expected: 16 lines that start with `ok:`, then `live-hud selfcheck: ok (16)`, exit 0.
+- [x] **1.3** Run `sh scripts/premises/live-hud.sh`. Expected: `usage: sh scripts/premises/live-hud.sh --zygo <path> | --selfcheck`, exit 1.
+- [x] **1.4** Run `sh scripts/check-premises.sh`. Expected: the last line is `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7)` (the new script is in its scan scope).
+- [x] **1.5** Commit `scripts/premises/live-hud.sh` and this file: `test(premises): live-hud.sh, the P-HUD-1 live check of the status line HUD`.
 
 ### Task 2: the gate before the live run
 
