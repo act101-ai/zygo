@@ -57,7 +57,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1, FIX-5, FIX-7 | IN-PROGRESS | implementation | .worktrees/phase2/PRB-1 |
-| HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | DONE | judgment | edb0f1c, merge 2899612; acceptance zygo-proxy 350/350, workspace --no-run ok (merged tree) |
 | HUD-7 | SessionView statusline_style with Default; overrides statusline; launcher writes the style | HUD-3 | DONE | implementation | 5c180cc, merge 1f1967b; acceptance all 17 commands 0 failed (merged tree) |
 | HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, HUD-2 | DONE | judgment | 320d2b2, merge 5d919a3; acceptance render 23, hooks lib 24, prices 28, session_api 45, passthrough 30, window 38, compact_cmd 11 (merged tree) |
 | HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7 | DONE | judgment | 2a5f5ff, merge e7d95d1; acceptance zygo-hooks, zygo, zygo-config, zygo-launch all targets 0 failed; session_api 47, passthrough 31 (merged tree, Linux) |
@@ -67,7 +66,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
 | LIV-2 | Windows part without a Windows machine: PH8/PH10 fallback, W-SHELL part 2 text, not-run records | LIV-1, PRB-1, FIX-5, FIX-7, P2 | TODO | implementation | — |
-| DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | IN-PROGRESS | implementation | .worktrees/phase2/DOC-1 |
+| DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | DONE | implementation | fdcea4a; acceptance empty; review round 2 fixed 12 findings |
 | P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | DONE | implementation | 93f71af; live on tmux 3.2a: PW6 failed (6.11, 6.32, 6.34, 6.36, 6.38), PW11 verified, PW15 failed (sandbox on); acceptance exit 0 in the node checkout; non-live checks ok (merged tree) |
 | P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | IN-PROGRESS | implementation | .worktrees/phase2/P2 |
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
@@ -191,3 +190,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | P2 planned: 25 steps; 8 ids on the mock upstream, 5.5 on the stored login; its docs/live-checks.md entry moves to LIV-2, edge P2 → LIV-2 (author's call). |
 | 2026-11-22 | W11 planned: 9 steps; plan review B1 (fork lock) and B2 (group kill via repo_file::kill_tree) fixed. |
 | 2026-11-22 | DOC-1 planned: 19 steps (14 H§9 rows, 3 auto-update rows, change log, check); in-place rewrites marked 2026-11-22. Log findings applied: long_context.cache_write_5m, OpenCode statusline verb as Claude Code, sessions line as <n>. |
+| 2026-11-22 | DOC-1 DONE (fdcea4a). Base-spec notes for the HUD (H§9) and auto-update written; review round 2 fixed 12 findings. Acceptance on the merged tree printed nothing. |
