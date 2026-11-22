@@ -1,6 +1,7 @@
 //! The launch sequence (§8.2): config (with the team layer in serve mode), profile, repository and work item, proxy
 //! or team server and session, plugins, the agent's config, the child, and the cleanup at exit.
 
+use std::cell::Cell;
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -40,6 +41,39 @@ use crate::{session_dir, signals};
 const BOUND: Duration = Duration::from_secs(2);
 
 pub struct Launcher;
+
+/// How a launch ended (workspaces design AU34, AU60, AU73).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaunchOutcome {
+    /// The process exit code: the agent's own code when it ran; `128 + n` when signal n ended it or stopped the launch.
+    pub code: i32,
+    /// The signal that ended the agent; `None` for an exit with a code and on every non-unix target.
+    pub signal: Option<i32>,
+    /// The agent process was started.
+    pub spawned: bool,
+    /// The launcher received SIGTERM or SIGHUP between the start of its signal handling and the end of its cleanup.
+    pub received: bool,
+}
+
+/// What a launch records for its outcome besides the code.
+#[derive(Default)]
+struct Marks {
+    signal: Cell<Option<i32>>,
+    spawned: Cell<bool>,
+    received: Cell<bool>,
+}
+
+/// The signal handling of one launch. Its drop copies `signals::received()` into the marks; the handling ends after that.
+struct Handling<'a> {
+    marks: &'a Marks,
+    _installed: signals::Installed,
+}
+
+impl Drop for Handling<'_> {
+    fn drop(&mut self) {
+        self.marks.received.set(signals::received());
+    }
+}
 
 pub struct LaunchOpts {
     /// The user's arguments after `--`.
@@ -126,8 +160,15 @@ struct Session<'a> {
 }
 
 impl Launcher {
-    /// §8.2 in local or serve mode; returns the process exit code (the agent's own code when it ran).
-    pub fn run(adapter: &dyn AgentAdapter, opts: LaunchOpts) -> i32 {
+    /// §8.2 in local or serve mode. `code` of the result is the process exit code (the agent's own code when it ran).
+    pub fn run(adapter: &dyn AgentAdapter, opts: LaunchOpts) -> LaunchOutcome {
+        let marks = Marks::default();
+        let code = Self::launch(adapter, opts, &marks);
+        LaunchOutcome { code, signal: marks.signal.get(), spawned: marks.spawned.get(), received: marks.received.get() }
+    }
+
+    /// The launch; returns the process exit code and records the rest of the outcome in `marks`.
+    fn launch(adapter: &dyn AgentAdapter, opts: LaunchOpts, marks: &Marks) -> i32 {
         let out = Out {
             #[cfg(feature = "test-hooks")]
             buf: opts.stderr.clone(),
@@ -232,7 +273,7 @@ impl Launcher {
             known_plugins: known,
         };
         // §8.2 step 2 note 2026-11-19: held until `finish` has run (declared before the `Finish` guard).
-        let _signals = signals::install();
+        let _signals = Handling { marks, _installed: signals::install() };
         let (grant, mut end, url, store_err) = match client {
             None => {
                 let store_env = opts.env.clone();
@@ -344,7 +385,7 @@ impl Launcher {
             sd,
             top,
         };
-        let code = s.run(adapter);
+        let code = s.run(adapter, marks);
         drop(guard);
         code
     }
@@ -352,7 +393,7 @@ impl Launcher {
 
 impl Session<'_> {
     /// §8.2 steps 2a-5.
-    fn run(self, adapter: &dyn AgentAdapter) -> i32 {
+    fn run(self, adapter: &dyn AgentAdapter, marks: &Marks) -> i32 {
         let (opts, out, sd, paths) = (self.opts, self.out, &self.sd, &self.opts.paths);
         if let Some(s) = signals::stopped() {
             return 128 + s;
@@ -548,8 +589,12 @@ impl Session<'_> {
                 return signals::or_stopped(1);
             }
         };
+        marks.spawned.set(true);
         match signals::wait(&mut child) {
-            Ok(st) => exit_code(st),
+            Ok(st) => {
+                marks.signal.set(signal_of(st));
+                exit_code(st)
+            }
             Err(e) => {
                 out.line(&format!("zygo: {e}"));
                 1
@@ -662,6 +707,19 @@ fn exit_code(st: ExitStatus) -> i32 {
         }
     }
     1
+}
+
+/// The signal that ended the child; `None` for an exit with a code and on every non-unix target.
+fn signal_of(st: ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        std::os::unix::process::ExitStatusExt::signal(&st)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = st;
+        None
+    }
 }
 
 /// The first token of the first line that is a semver version (after a leading `v`).

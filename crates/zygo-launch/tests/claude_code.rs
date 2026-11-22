@@ -721,7 +721,7 @@ fn passthrough_role_model_exits_2_through_the_launcher() {
     let o = launch_opts(&fx, &["--model", "lead"], true);
     let err = stderr_of(&o);
     let adapter = ClaudeCode { program: "claude".into(), managed_settings: fx.managed.clone(), zygo: fx.bin.join("zygo") };
-    assert_eq!(Launcher::run(&adapter, o), 2);
+    assert_eq!(Launcher::run(&adapter, o).code, 2);
     assert!(text_of(&err).lines().any(|l| l == format!("zygo: {PT_MODEL}")), "{}", text_of(&err));
     assert_eq!(std::fs::read_dir(&fx.paths.sessions_dir).map_or(0, |d| d.count()), 0);
 }
@@ -741,7 +741,7 @@ fn passthrough_alias_turns_the_role_off() {
         );
         let o = launch_opts(&fx, &["--model", "opus"], passthrough);
         let err = stderr_of(&o);
-        assert_eq!(Launcher::run(&cc(&fx), o), 0, "{}", text_of(&err));
+        assert_eq!(Launcher::run(&cc(&fx), o).code, 0, "{}", text_of(&err));
         assert_eq!(std::fs::read_to_string(fx.root.join("role")).unwrap(), want_role);
         let s: Value = serde_json::from_slice(&std::fs::read(fx.root.join("settings.json")).unwrap()).unwrap();
         let rg = hook_commands(&s, "PreToolUse").iter().any(|(_, c)| c.ends_with("hook role-guard"));
@@ -766,7 +766,7 @@ fn alias_of_a_disabled_role_picks_the_redirect_role() {
         let mut o = launch_opts(&fx, &["--model", model], false);
         o.profile = Some("off".into());
         let err = stderr_of(&o);
-        assert_eq!(Launcher::run(&cc(&fx), o), 0, "{}", text_of(&err));
+        assert_eq!(Launcher::run(&cc(&fx), o).code, 0, "{}", text_of(&err));
         assert_eq!(std::fs::read_to_string(fx.root.join("role")).unwrap(), "lead", "{model}");
         let s: Value = serde_json::from_slice(&std::fs::read(fx.root.join("settings.json")).unwrap()).unwrap();
         assert!(hook_commands(&s, "PreToolUse").iter().any(|(_, c)| c.ends_with("hook role-guard")), "{model}");
@@ -803,7 +803,7 @@ fn repo_root_settings_stop_the_launch() {
     let mut o = launch_opts(&fx, &[], false);
     o.cwd = sub;
     let err = stderr_of(&o);
-    assert_eq!(Launcher::run(&cc(&fx), o), 2, "{}", text_of(&err));
+    assert_eq!(Launcher::run(&cc(&fx), o).code, 2, "{}", text_of(&err));
     let want = format!("zygo: {}: sets env.CLAUDE_CODE_USE_VERTEX; zygo cannot launch with it", file.display());
     assert!(text_of(&err).lines().any(|l| l == want), "{}", text_of(&err));
 }
@@ -813,7 +813,7 @@ fn missing_claude_exits_13_with_the_hint() {
     let fx = fx();
     let o = launch_opts(&fx, &[], false);
     let err = stderr_of(&o);
-    assert_eq!(Launcher::run(&cc(&fx), o), 13);
+    assert_eq!(Launcher::run(&cc(&fx), o).code, 13);
     let hint = "zygo: claude not found on PATH; install Claude Code: https://code.claude.com/docs/en/setup";
     assert!(text_of(&err).lines().any(|l| l == hint), "{}", text_of(&err));
 }

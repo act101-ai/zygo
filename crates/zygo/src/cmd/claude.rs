@@ -18,7 +18,7 @@ pub(super) fn run(l: &Launch) -> i32 {
         }
     };
     match launch_opts(l, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => Launcher::run(&ClaudeCode::default(), opts),
+        Ok(opts) => Launcher::run(&ClaudeCode::default(), opts).code,
         Err(m) => {
             print_err(&format!("{m}\n"));
             2

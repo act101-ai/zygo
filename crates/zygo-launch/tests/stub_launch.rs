@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use harness::*;
 use serde_json::{json, Value};
+use zygo_launch::launcher::LaunchOutcome;
 use zygo_launch::AgentAdapter;
 
 const SET: [&str; 11] = [
@@ -103,6 +104,34 @@ fn non_member_child_has_neither_workspace_name_nor_a_marker() { // AU58, AU64, W
     assert!(log.lines().any(|l| l == "env: removed CLAUDECODE, CLAUDE_CODE_BRIDGE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_SESSION_ID, ZYGO_PANE, ZYGO_WORKSPACE"), "{log}");
     let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
     assert!(view["workspace"].is_null(), "{view}");
+}
+
+#[cfg(unix)]
+#[test]
+fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
+    let rig = rig();
+    let control = |ctl: &std::path::Path| {
+        let ctl = ctl.to_path_buf();
+        move |o: &mut zygo_launch::LaunchOpts| o.env.0.push(("ZYGO_STUB_CONTROL".into(), ctl.into_os_string()))
+    };
+    // A real exit 137: a code, no signal.
+    let ctl = rig.root.join("ctl-exit");
+    stub_control(&ctl, "exit 137").unwrap();
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, control(&ctl));
+    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: None, spawned: true, received: false }, "{}", r.stderr);
+    // SIGKILL to the agent: the same code, and the signal.
+    let ctl = rig.root.join("ctl-kill");
+    let r = std::thread::scope(|s| {
+        let t = s.spawn(|| launch(&rig, &claude(&rig), CLAUDE_VERSION, control(&ctl)));
+        let pid = stub_started(&ctl, std::time::Duration::from_secs(60));
+        if let Some(pid) = pid {
+            assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+        }
+        let r = t.join().unwrap();
+        assert!(pid.is_some(), "the stub did not start: {}", r.stderr);
+        r
+    });
+    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: Some(libc::SIGKILL), spawned: true, received: false }, "{}", r.stderr);
 }
 
 #[test]

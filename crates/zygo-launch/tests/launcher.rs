@@ -282,7 +282,7 @@ fn run(stub: &Stub, o: LaunchOpts) -> (i32, String) {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
     let buf = o.stderr.clone().unwrap();
-    let code = Launcher::run(stub, o);
+    let code = Launcher::run(stub, o).code;
     let err = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
     (code, err)
 }
@@ -724,7 +724,7 @@ fn status_line_of_a_launch(extra: &[(&str, &str)]) -> serde_json::Value {
     let _ = std::fs::remove_dir_all(&fx.out);
     std::fs::create_dir_all(&fx.out).unwrap();
     let buf = o.stderr.clone().unwrap();
-    let code = Launcher::run(&adapter, o);
+    let code = Launcher::run(&adapter, o).code;
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&buf.lock().unwrap()));
     adapter.status_line.lock().unwrap().clone().expect("build was called")
 }
@@ -1226,13 +1226,21 @@ fn harness_launch() {
     let mode = std::env::var("ZYGO_TEST_HARNESS_MODE").unwrap();
     let fx = fx();
     let group = std::process::id().to_string();
-    let o = opts_at(&fx, &root, &mode, &[("ZYGO_TEST_GROUP", &group)]);
+    // `control`: the agent is the stub agent in control mode (it has no signal handler); every other mode: this binary.
+    let (stub_out, ctl) = (root.join("stub-out"), root.join("ctl"));
+    let (adapter, o) = if mode == "control" {
+        let extra = [("ZYGO_TEST_GROUP", group.as_str()), ("ZYGO_STUB_OUT", stub_out.to_str().unwrap()), ("ZYGO_STUB_CONTROL", ctl.to_str().unwrap())];
+        (Stub { program: env!("CARGO_BIN_EXE_stub-agent").to_string(), ..stub() }, opts_at(&fx, &root, &mode, &extra))
+    } else {
+        (stub(), opts_at(&fx, &root, &mode, &[("ZYGO_TEST_GROUP", &group)]))
+    };
     let buf = o.stderr.clone().unwrap();
-    let code = Launcher::run(&stub(), o);
+    let out = Launcher::run(&adapter, o);
     std::fs::write(root.join("launcher-stderr"), &*buf.lock().unwrap()).unwrap();
     #[cfg(unix)]
     std::fs::write(root.join("after"), SIGS.map(disposition).join(" ")).unwrap();
-    std::fs::write(root.join("launcher-exit"), code.to_string()).unwrap();
+    std::fs::write(root.join("launcher-outcome"), format!("{} {:?} {} {}", out.code, out.signal, out.spawned, out.received)).unwrap();
+    std::fs::write(root.join("launcher-exit"), out.code.to_string()).unwrap();
 }
 
 #[cfg(unix)]
@@ -1376,6 +1384,7 @@ fn ctrl_c_reaches_only_the_child() {
     let st = h.finish();
     assert!(st.success(), "harness: {st}; {}", h.log());
     assert_eq!(r("launcher-exit"), "0", "{}", h.log());
+    assert_eq!(r("launcher-outcome"), "0 None true false", "{}", h.log());
     assert_eq!(r("inherited"), "default default");
     assert_eq!(r("direct"), "0 0");
     assert_eq!(r("counts"), "1 1");
@@ -1409,10 +1418,41 @@ fn sigterm_and_sighup_are_forwarded() {
     let st = h.finish();
     assert!(st.success(), "harness: {st}; {}", h.log());
     assert_eq!(r("launcher-exit"), "3", "{}", h.log());
+    assert_eq!(r("launcher-outcome"), "3 None true true", "{}", h.log());
     let f: Vec<u32> = r("forward").split(' ').map(|x| x.parse().unwrap()).collect();
     assert!((1..=sends[0]).contains(&f[0]), "term {} of {} sends", f[0], sends[0]);
     assert!((1..=sends[1]).contains(&f[1]), "hup {} of {} sends", f[1], sends[1]);
     assert_eq!(r("before"), "default default default default");
+    assert_eq!(r("after"), r("before"));
+}
+
+#[test]
+fn exits_before_the_spawn_have_spawned_false() { // AU60
+    use zygo_launch::launcher::LaunchOutcome;
+    let fx = fx();
+    let no_spawn = |code| LaunchOutcome { code, signal: None, spawned: false, received: false };
+    let missing = Stub { program: "zygo-test-no-such-agent".into(), ..stub() };
+    assert_eq!(Launcher::run(&missing, opts(&fx, "dump", &[])), no_spawn(13)); // before the session
+    let refused = Stub { preflight: Some(Preflight { file: fx.root.join("settings.json"), key: "env.ANTHROPIC_API_KEY".into() }), ..stub() };
+    assert_eq!(Launcher::run(&refused, opts(&fx, "dump", &[])), no_spawn(2)); // after the session directory
+    let ran = Launcher::run(&stub(), opts(&fx, "dump", &[("ZYGO_TEST_EXIT", "7")]));
+    assert_eq!(ran, LaunchOutcome { code: 7, signal: None, spawned: true, received: false });
+}
+
+#[cfg(unix)]
+#[test]
+fn sigterm_to_the_launcher_sets_received() { // AU34, AU17
+    let (_t, root) = sig_root();
+    let r = |n: &str| read_text(&root.join(n));
+    let mut h = harness(&root, "control", &[]);
+    let pid = i32::try_from(h.pid).unwrap();
+    // The stub writes `start <pid>` after the launcher spawned it, so the handling is installed.
+    assert!(until(SIG_BOUND, || r("ctl/done").starts_with("start ") && r("ctl/done").ends_with('\n')), "{}", h.log());
+    send(pid, libc::SIGTERM);
+    let st = h.finish();
+    assert!(st.success(), "harness: {st}; {}", h.log());
+    // The launcher sent SIGTERM on; the stub has no handler and died by it.
+    assert_eq!(r("launcher-outcome"), "143 Some(15) true true", "{}", h.log());
     assert_eq!(r("after"), r("before"));
 }
 
