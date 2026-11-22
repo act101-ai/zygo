@@ -6,7 +6,7 @@
 . "$PREMISES_DIR/live.sh"
 live_traps
 pinned_agents
-LIVE_VER=$PIN_OC
+LIVE_VER=$LIVE_OC_VER
 FX="$REPO_DIR/fixtures/opencode/live"
 mkdir -p "$FX"
 TX='"extra": {"body": "\"tools\": \\[\\{"}'

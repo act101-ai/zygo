@@ -75,7 +75,7 @@ for i in range(1, 27):
 PY
 rc=0
 run_zygo claude -- -p --max-turns 3 --debug-file "$RUN/claude-debug.txt" "Use the zygo-code subagent. It runs cat big/f01.txt through cat big/f26.txt, one Bash call each, in order, then reports the last line of big/f26.txt. Reply with that line." </dev/null >"$RUN/out.txt" 2>"$RUN/err.txt" || rc=$?
-LIVE_VER=$(usage_version); LIVE_VER=${LIVE_VER:-$PIN_CC}
+LIVE_VER=$(usage_version); LIVE_VER=${LIVE_VER:-$LIVE_CC_VER}
 n=$(grep -c 'prompt is too long' "$RUN/claude-debug.txt" 2>/dev/null || true)
 usage_rows "$FX/16b-usage.json"
 v=$(python3 -I - "$RUN/usage.json" <<'PY'

@@ -207,6 +207,15 @@ kcase K3 P1 'Claude Code' '2\.1\.328' 2.1.33a 1 "P1: version '2.1.33a' is below 
 kcase K4 P4 OpenCode '1\.18\.16' 1.18.20 0 "check-premises: ok"
 kcase K5 P6b act-lite '1\.2\.3' 1.2.4 1 "P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite"
 
+# --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
+# The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by
+# pinned_agents), not PIN_CC or PIN_OC (a minimum, operator 2026-11-21).
+lhits=""
+for f in "$HERE"/live-*.sh; do
+  if grep -qE ':-\$PIN_(CC|OC)\}|LIVE_VER=\$PIN_(CC|OC)([^A-Za-z0-9_]|$)' "$f"; then lhits="$lhits ${f##*/}"; fi
+done
+if [ -z "$lhits" ]; then ok "L1 no LIVE_VER site falls back to PIN_CC or PIN_OC"
+else no "L1 no LIVE_VER site falls back to PIN_CC or PIN_OC" "in:$lhits"; fi
 if [ "$bad" -eq 0 ]; then echo "ver tests: ok ($n)"; exit 0; fi
 echo "ver tests: $bad failed"
 exit 1

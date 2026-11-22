@@ -114,9 +114,9 @@ A failed line (the contract's mapping). Write the row and the note with `failed`
 
 ### Task 1: the `LIVE_VER` sites (no agent)
 
-- [ ] **1.1** Record the baselines. Run `sh scripts/premises/ver_test.sh`, `sh scripts/premises/lib_test.sh`, `PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-selftest.sh` and `sh scripts/check-premises.sh`. Expected: last lines `ver tests: ok (50)`, `lib tests: ok (<L>)`, `live selftest: ok (<S>)`, `check-premises: ok (<IDS>)`, each exit 0. Write `<L>`, `<S>` and `<IDS>` into the commit message of step 1.4 (later steps compare with them). When one fails: stop and report its output (the tree is not at a known state).
-- [ ] **1.2** Add the case of Block E to `scripts/premises/ver_test.sh`, directly above the line `if [ "$bad" -eq 0 ]; then echo "ver tests: ok ($n)"; exit 0; fi`. Run `sh scripts/premises/ver_test.sh; echo "rc=$?"`. Expected: `FAIL: L1 no LIVE_VER site falls back to PIN_CC or PIN_OC (in: live-16b.sh live-claude.sh live-deadline.sh live-opencode.sh live-passthrough.sh live-rt.sh live-strict.sh live-window.sh)`, `ver tests: 1 failed`, `rc=1`.
-- [ ] **1.3** Make each LIVE line name the version that `pinned_agents` found. Replace exactly one line in each file:
+- [x] **1.1** Record the baselines. Run `sh scripts/premises/ver_test.sh`, `sh scripts/premises/lib_test.sh`, `PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-selftest.sh` and `sh scripts/check-premises.sh`. Expected: last lines `ver tests: ok (50)`, `lib tests: ok (<L>)`, `live selftest: ok (<S>)`, `check-premises: ok (<IDS>)`, each exit 0. Write `<L>`, `<S>` and `<IDS>` into the commit message of step 1.4 (later steps compare with them). When one fails: stop and report its output (the tree is not at a known state).
+- [x] **1.2** Add the case of Block E to `scripts/premises/ver_test.sh`, directly above the line `if [ "$bad" -eq 0 ]; then echo "ver tests: ok ($n)"; exit 0; fi`. Run `sh scripts/premises/ver_test.sh; echo "rc=$?"`. Expected: `FAIL: L1 no LIVE_VER site falls back to PIN_CC or PIN_OC (in: live-16b.sh live-claude.sh live-deadline.sh live-opencode.sh live-passthrough.sh live-rt.sh live-strict.sh live-window.sh)`, `ver tests: 1 failed`, `rc=1`.
+- [x] **1.3** Make each LIVE line name the version that `pinned_agents` found. Replace exactly one line in each file:
 
   | File | Old line | New line |
   |---|---|---|
@@ -130,7 +130,7 @@ A failed line (the contract's mapping). Write the row and the note with `failed`
   | `scripts/premises/live-strict.sh` | `LIVE_VER=$PIN_CC` | `LIVE_VER=$LIVE_CC_VER` |
 
   Check: `for f in scripts/premises/live*.sh; do sh -n "$f" || echo "syntax: $f"; done` prints nothing; `sh scripts/premises/ver_test.sh` → last line `ver tests: ok (51)`, exit 0; `PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-selftest.sh` → `live selftest: ok (<S>)`, exit 0 (it copies the changed scripts into its test tree). `lib.sh`, `live.sh` and `ver.sh` do not change, so `lib_test.sh` is not run here.
-- [ ] **1.4** Commit `scripts/premises/ver_test.sh`, the eight scripts of step 1.3 and this file: `git commit -m "fix(premises): LIVE lines name the agent version found, not the pin" -m "Baselines: lib <L>, selftest <S>, check-premises <IDS>." --trailer "Zygo-Session: 01M80K6VKVFKHN736B0QCWTTKZ" --trailer "Zygo-Work: PRB-1"`. Check: `git log -1 --format=%B` ends with those two lines.
+- [x] **1.4** Commit `scripts/premises/ver_test.sh`, the eight scripts of step 1.3 and this file: `git commit -m "fix(premises): LIVE lines name the agent version found, not the pin" -m "Baselines: lib <L>, selftest <S>, check-premises <IDS>." --trailer "Zygo-Session: 01M80K6VKVFKHN736B0QCWTTKZ" --trailer "Zygo-Work: PRB-1"`. Check: `git log -1 --format=%B` ends with those two lines.
 
 ### Task 2: the probe helper (no agent)
 

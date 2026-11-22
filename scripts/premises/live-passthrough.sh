@@ -177,7 +177,7 @@ wait "$PID" || rc=$?
 LIVE_PIDS=$(printf '%s\n' $LIVE_PIDS | grep -vx "$PID" | tr '\n' ' ' || true)
 ID=$(sqlite3 "$DB" "select session from requests where rowid > $before and passthrough = 1 order by rowid limit 1" 2>/dev/null || true)
 LIVE_VER=$(sqlite3 "$DB" "select agent_version from requests where session = '$ID' order by ts desc limit 1" 2>/dev/null || true)
-LIVE_VER=${LIVE_VER:-$PIN_CC}
+LIVE_VER=${LIVE_VER:-$LIVE_CC_VER}
 
 if [ "$rc" -eq 2 ] && grep -q 'zygo cannot launch with it' "$RUN/err.txt"; then
   line=$(grep 'zygo cannot launch with it' "$RUN/err.txt" | head -n 1 | sed 's/^zygo: //; s/; zygo cannot launch with it//')

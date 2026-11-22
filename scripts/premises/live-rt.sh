@@ -44,7 +44,7 @@ rt openai gpt-6.2-sol
 LIVE_VER=$(usage_version)
 rt anthropic claude-haiku-5-5
 jq -n --slurpfile o "$WORK/rt-openai.json" --slurpfile a "$WORK/rt-anthropic.json" '{openai: $o[0], anthropic: $a[0]}' >"$FX/rt-usage.json"
-LIVE_VER=${LIVE_VER:-$PIN_CC}
+LIVE_VER=${LIVE_VER:-$LIVE_CC_VER}
 if [ "$r_openai" = pass ] && [ "$r_anthropic" = pass ]; then r=pass; else r=fail; fi
 result R-RT "$r" "openai (gpt-6.2-sol): $r_openai, $t_openai; anthropic (claude-haiku-5-5): $r_anthropic, $t_anthropic"
 live_done "$FX"

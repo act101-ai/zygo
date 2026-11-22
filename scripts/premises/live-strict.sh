@@ -147,7 +147,7 @@ for f in "$STRICT"/*.json; do
 done
 printf ']\n' >>"$WORK/strict.json"
 jq . "$WORK/strict.json" >"$FX/n14-strict.json"
-LIVE_VER=$PIN_CC
+LIVE_VER=$LIVE_CC_VER
 result N14-S "$n14s" "rewritten schema not 200: $(jq -c '[.[] | select(.rewritten_status != "200") | "\(.family)-\(.code)/\(.api)=\(.rewritten_status)"]' "$FX/n14-strict.json")"
 
 # N14-E
