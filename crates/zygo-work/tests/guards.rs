@@ -36,7 +36,7 @@ fn fixture(name: &str) -> Value {
 fn view(results: bool, navigation: bool) -> SessionView {
     SessionView { session: "S1".into(), agent: Agent::ClaudeCode, main_role: "lead".into(), effective_role: None, role_prompt: None,
         user_prompt: None, profile: None, profile_prompt: None, work_item: None, legend: vec![], disabled_roles: vec![],
-        work_units: true, results, compact_tool: true, navigation, trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20 }
+        work_units: true, results, compact_tool: true, navigation, trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20, ..Default::default() }
 }
 struct Env { t: tempfile::TempDir, sd: SessionDir, repo: PathBuf, scratch: PathBuf }
 /// Under CARGO_TARGET_TMPDIR: a session (units and results on), a repository whose path has a space, and `scratch`, the one

@@ -10,7 +10,7 @@ id = "claude-fable-5-2"
   vision = true
   structured_output = "native"
   forced_tool_choice = false
-  verified_on = 2026-11-18
+  verified_on = 2026-11-21
   source = "https://platform.claude.com/docs/en/models/fable-5-2/overview"
 
   [[model.provider]]
@@ -21,10 +21,12 @@ id = "claude-fable-5-2"
   key = "env:ANTHROPIC_API_KEY"
   enabled = true
   [model.provider.price_usd_per_mtok]
+  # cache_write_5m is the 5-minute cache-write rate (H§6.1 AU33); price list: https://platform.claude.com/docs/en/about-claude/pricing
   input = 8.0
   output = 40.0
   cache_read = 0.20
   cache_write = 16.0   # 1-hour rate (spec §6.3 example)
+  cache_write_5m = 10.0
 
 [[model]]
 id = "claude-opus-5-5"
@@ -38,7 +40,7 @@ id = "claude-opus-5-5"
   vision = true
   structured_output = "native"
   forced_tool_choice = false
-  verified_on = 2026-11-18
+  verified_on = 2026-11-21
   source = "https://platform.claude.com/docs/en/models/opus-5-5/overview"
 
   [[model.provider]]
@@ -53,6 +55,7 @@ id = "claude-opus-5-5"
   output = 20.0
   cache_read = 0.20
   cache_write = 8.0   # 1-hour rate (spec §6.3 example)
+  cache_write_5m = 5.0
 
 [[model]]
 id = "claude-sonnet-5-5"
@@ -68,7 +71,7 @@ id = "claude-sonnet-5-5"
   vision = true
   structured_output = "native"
   forced_tool_choice = false
-  verified_on = 2026-11-18
+  verified_on = 2026-11-21
   source = "https://platform.claude.com/docs/en/models/sonnet-5-5/overview"
 
   [[model.provider]]
@@ -83,6 +86,7 @@ id = "claude-sonnet-5-5"
   output = 10.0
   cache_read = 0.10
   cache_write = 4.0   # 1-hour rate (spec §6.3 example)
+  cache_write_5m = 2.5
 
 [[model]]
 id = "claude-haiku-5-5"
@@ -97,7 +101,7 @@ id = "claude-haiku-5-5"
   vision = true
   structured_output = "native"
   forced_tool_choice = true
-  verified_on = 2026-11-18
+  verified_on = 2026-11-21
   source = "https://platform.claude.com/docs/en/models/haiku-5-5/overview"
 
   [[model.provider]]
@@ -108,11 +112,14 @@ id = "claude-haiku-5-5"
   key = "env:ANTHROPIC_API_KEY"
   enabled = true
   [model.provider.price_usd_per_mtok]
-  # prices are for prompts up to 100,000 tokens; above that: 0.50 / 2.50 / 0.05 / 1.00
+  # these rates are for prompts up to 100,000 tokens; `long_context` holds the rates of a longer prompt.
+  # The prompt length counts all input tokens, cache reads and cache writes included.
   input = 0.10
   output = 0.50
   cache_read = 0.01
   cache_write = 0.20   # 1-hour rate (spec §6.3 example)
+  cache_write_5m = 0.125
+  long_context = { above = 100000, input = 0.50, output = 2.50, cache_read = 0.05, cache_write = 1.00, cache_write_5m = 0.625 }
 
 [[model]]
 id = "gpt-6.2-astra"

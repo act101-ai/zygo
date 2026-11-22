@@ -9,20 +9,22 @@ use tempfile::TempDir;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use zygo_config::profile::Profile;
-use zygo_config::{load, Action, CustomRole, Dialect, LoadContext, Merged, RedactionPattern};
+use zygo_config::{load, Action, CustomRole, Dialect, LoadContext, Merged, RedactionPattern, TokenUsage};
 use zygo_core::ids::ulid;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
-use zygo_proxy::client::{ClientError, SessionClient};
+use zygo_proxy::client::{ClientError, SessionClient, SessionStatus};
 use zygo_proxy::errors::ZygoError;
 use zygo_proxy::server::StartOpts;
 use zygo_proxy::session::{
     Clock, ManualClock, PromptUsage, SessionGrant, SessionRequest, SessionSettings, TeamAuth, WindowArg, IDLE_TTL,
     REDACTION_NOTE, SUSPEND_AFTER, WINDOW_MAX, WINDOW_MIN,
 };
+use zygo_proxy::tee::{CacheSplit, Tee, Usage};
 use zygo_proxy::{Proxy, ProxyHandle, Url};
 use zygo_redact::act_lite_store::{StoredValue, MIN_VALUE_BYTES};
+use zygo_usage::{RequestRow, Store};
 
 // ---- helpers ----
 
@@ -564,12 +566,15 @@ fn client_compact_and_status() {
     let s = k.status().unwrap();
     assert_eq!(s.compact, Some(WindowArg::Tokens(600_000)));
     assert_eq!(s.effective_window, Some(600_000));
+    assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), Some(600_000)));
     assert_eq!(k.clear_compact().unwrap(), None);
     let s = k.status().unwrap();
     assert_eq!(s.compact, None);
     assert_eq!(s.effective_window, Some(800_000));
+    assert_eq!((s.model.as_deref(), s.context_window, s.threshold), (Some("claude-opus-5-5"), Some(1_000_000), Some(800_000)));
     assert_eq!(k.set_compact(WindowArg::Off).unwrap(), Some(WindowArg::Off));
     assert_eq!(k.status().unwrap().effective_window, None);
+    assert_eq!(k.status().unwrap().threshold, None); // AU28: override `off`
 }
 
 #[test]
@@ -959,4 +964,407 @@ fn http_create_uses_server_known_plugins() {
     q.profile = Some(Profile { plugins: BTreeMap::from([("m:q".to_string(), true)]), ..p1() });
     q.known_plugins = ["m:q".to_string()].into_iter().collect();
     assert_eq!(h.create_session(q).unwrap().profile_warning, None);
+}
+
+#[test]
+fn status_default_keeps_literals_short() { // Review focus 11, H§17 note 1; H§7.2 `#[serde(default)]`
+    let s = SessionStatus { model: Some("claude-opus-5-5".into()), ..Default::default() };
+    assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!((s.session.as_str(), s.context_window, s.threshold, s.effective_window), ("", None, None, None));
+    // A reply without the new keys parses; each new field is None.
+    let old: SessionStatus = serde_json::from_value(json!({"session":"S1","profile":null,"work":null,"used_context":null,
+        "effective_window":null,"compact":null,"cache_read_share":null,"expires_at":""})).unwrap();
+    assert_eq!(old, SessionStatus { session: "S1".into(), ..Default::default() });
+}
+
+#[test]
+fn status_reply_omits_absent_new_fields() { // H§7.2 `model`: in passthrough, absent until a request is served
+    let d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&d));
+    let raw = Raw::new();
+    let mut r = req();
+    r.passthrough = true;
+    let a = h.create_session(r).unwrap();
+    let (s, v, _) = raw.call(&h.url(), "GET", &sp(&a), &sess(&a), None);
+    assert_eq!(s, 200);
+    for k in ["model", "context_window", "threshold"] {
+        assert!(v.get(k).is_none(), "{k} in {v}");
+    }
+    assert!(v.get("effective_window").is_some(), "an old field keeps its key: {v}");
+    assert_eq!(client(&h, &a, &d).status().unwrap().model, None); // parsed with `#[serde(default)]`
+    let b = h.create_session(req()).unwrap();
+    let (_, v, _) = raw.call(&h.url(), "GET", &sp(&b), &sess(&b), None);
+    assert_eq!((v["model"].clone(), v["context_window"].clone()), (json!("claude-opus-5-5"), json!(1000000)));
+}
+
+// ---- HUD-6: session spend and tokens ----
+
+/// The reply keys HUD-6 adds (H§7.2).
+const SPEND_KEYS: [&str; 8] =
+    ["tokens_in", "tokens_out", "spend_usd", "spend_notional", "requests_total", "requests_priced", "passthrough", "team_session"];
+
+fn tu(input: u64, output: u64, cache_read: u64, cache_write: u64) -> TokenUsage {
+    TokenUsage { input, output, cache_read, cache_write, ..Default::default() }
+}
+
+#[test]
+fn status_spend_tokens_and_counts() { // AU15, AU16, H§7.2, H§7.3 step 3
+    let d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&d));
+    let raw = Raw::new();
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    let s = k.status().unwrap();
+    assert_eq!((s.tokens_in, s.tokens_out, s.spend_usd, s.requests_total, s.requests_priced), (Some(0), Some(0), Some(0.0), Some(0), Some(0)));
+    assert_eq!((s.spend_notional, s.passthrough, s.team_session), (Some(false), Some(false), Some(false)));
+    let state = h.session(&g.session).unwrap();
+    state.add_request(&tu(100, 7, 300, 100), Some(0.25)); // priced
+    state.add_request(&tu(1, 2, 0, 0), None); // tokens, no price
+    state.add_request(&tu(0, 0, 0, 0), Some(0.0)); // no token: in neither count
+    state.add_request(&tu(0, 0, 0, 0), None);
+    state.add_request(&tu(0, 5, 0, 0), Some(0.5)); // output only is a token
+    let s = k.status().unwrap();
+    assert_eq!((s.tokens_in, s.tokens_out), (Some(501), Some(14))); // AU16: in = input + cache read + cache write
+    assert_eq!((s.spend_usd, s.requests_total, s.requests_priced), (Some(0.75), Some(3), Some(2)));
+    assert_eq!(s.cache_read_share, Some(300.0 / 501.0)); // the §10.7 sums come from the same call
+    let (_, v, _) = raw.call(&h.url(), "GET", &sp(&g), &sess(&g), None);
+    for key in SPEND_KEYS {
+        assert!(v.get(key).is_some(), "{key} in {v}");
+    }
+    assert_eq!((v["tokens_in"].clone(), v["tokens_out"].clone(), v["spend_usd"].clone()), (json!(501), json!(14), json!(0.75)));
+    assert_eq!((v["requests_total"].clone(), v["requests_priced"].clone()), (json!(3), json!(2)));
+    assert_eq!((v["spend_notional"].clone(), v["passthrough"].clone(), v["team_session"].clone()), (json!(false), json!(false), json!(false)));
+    // A passthrough session: the spend is notional.
+    let mut r = req();
+    r.passthrough = true;
+    let p = h.create_session(r).unwrap();
+    let s = client(&h, &p, &d).status().unwrap();
+    assert_eq!((s.spend_usd, s.spend_notional, s.passthrough, s.team_session), (Some(0.0), Some(true), Some(true), Some(false)));
+    // A reply of an old server: every new field is None.
+    let old: SessionStatus = serde_json::from_value(json!({"session":"S1","profile":null,"work":null,"used_context":null,
+        "effective_window":null,"compact":null,"cache_read_share":null,"expires_at":""})).unwrap();
+    assert_eq!((old.tokens_in, old.tokens_out, old.spend_usd, old.spend_notional), (None, None, None, None));
+    assert_eq!((old.requests_total, old.requests_priced, old.passthrough, old.team_session), (None, None, None, None));
+    let none = serde_json::to_value(SessionStatus::default()).unwrap();
+    for key in SPEND_KEYS {
+        assert!(none.get(key).is_none(), "{key} in {none}");
+    }
+}
+
+#[test]
+fn status_team_session_sends_no_configured_price() { // AU13, AU14, H§9 row §7.2
+    let d = TempDir::new().unwrap();
+    let (h, _c, ta, _) = start(cfg(&d));
+    let raw = Raw::new();
+    let u = h.url();
+    let t = team_session(&raw, &u, &format!("Bearer {ta}"));
+    let state = h.session(&t.session).unwrap();
+    assert_eq!(state.team_label.as_deref(), Some("alpha"));
+    // HUD-10 (AU14): the request path gives a team session its cost at the built-in list prices, never at a
+    // configured price (`h14_15_team_session_spend_at_builtin_list_prices` in `serve.rs`). The reply carries the
+    // sum that the session holds, marked notional.
+    state.add_request(&tu(1000, 10, 0, 0), Some(0.25));
+    let (s, v, bytes) = raw.call(&u, "GET", &sp(&t), &sess(&t), None);
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((v["team_session"].clone(), v["spend_notional"].clone(), v["passthrough"].clone()), (json!(true), json!(true), json!(false)));
+    assert_eq!((v["tokens_in"].clone(), v["tokens_out"].clone(), v["requests_total"].clone()), (json!(1000), json!(10), json!(1)));
+    assert_eq!((v["spend_usd"].as_f64(), v["requests_priced"].clone()), (Some(0.25), json!(1)));
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(!text.contains("alpha"), "{text}"); // AU13: the flag, never the label
+}
+
+fn sse(kind: &str, usage: Value) -> String {
+    let v = if kind == "message_start" { json!({"type": kind, "message": {"usage": usage}}) } else { json!({"type": kind, "usage": usage}) };
+    format!("event: {kind}\ndata: {v}\n\n")
+}
+
+#[test]
+fn tee_reads_the_cache_write_split() { // AU33, H§9 row §14 usage recording
+    let whole = |body: Value| {
+        let mut t = Tee::new(false);
+        t.push(body.to_string().into(), &mut |_| {});
+        t.finish(&mut |_| {});
+        (t.usage(), t.cache_split())
+    };
+    let u = Usage { input: 5, output: 6, cache_read: 7, cache_write: 300 };
+    // Not streamed: the split is read; `Usage` keeps its four fields and the total.
+    let with = json!({"usage":{"input_tokens":5,"output_tokens":6,"cache_read_input_tokens":7,"cache_creation_input_tokens":300,
+        "cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":100}}});
+    assert_eq!(whole(with), (u, Some(CacheSplit { m5: 200, h1: 100 })));
+    // No split: None, not zeros.
+    let without = json!({"usage":{"input_tokens":5,"output_tokens":6,"cache_read_input_tokens":7,"cache_creation_input_tokens":300}});
+    assert_eq!(whole(without), (u, None));
+    let empty = json!({"usage":{"input_tokens":5,"output_tokens":6,"cache_read_input_tokens":7,"cache_creation_input_tokens":300,"cache_creation":{}}});
+    assert_eq!(whole(empty), (u, None));
+    let half = json!({"usage":{"cache_creation_input_tokens":9,"cache_creation":{"ephemeral_1h_input_tokens":9}}});
+    assert_eq!(whole(half).1, Some(CacheSplit { m5: 0, h1: 9 }));
+    assert_eq!(Tee::new(true).cache_split(), None);
+    // Streamed: `message_start` sets it; `message_delta` raises each part (cumulative usage), and never lowers it.
+    let streamed = |events: &[String], armed: bool| {
+        let mut t = Tee::new(true);
+        if armed {
+            t.arm_line_mode();
+        }
+        for e in events {
+            // Two chunks per event: a line is read whole.
+            let (a, b) = e.split_at(e.len() / 2);
+            t.push(a.to_string().into(), &mut |_| {});
+            t.push(b.to_string().into(), &mut |_| {});
+        }
+        t.finish(&mut |_| {});
+        (t.usage(), t.cache_split())
+    };
+    let start = sse("message_start", json!({"input_tokens":5,"output_tokens":1,"cache_read_input_tokens":7,"cache_creation_input_tokens":300,
+        "cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":100}}));
+    let delta = sse("message_delta", json!({"output_tokens":6,"cache_creation_input_tokens":300,
+        "cache_creation":{"ephemeral_5m_input_tokens":150,"ephemeral_1h_input_tokens":120}}));
+    let plain = sse("message_delta", json!({"output_tokens":6}));
+    for armed in [false, true] {
+        assert_eq!(streamed(&[start.clone(), plain.clone()], armed), (u, Some(CacheSplit { m5: 200, h1: 100 })), "armed {armed}");
+        assert_eq!(streamed(&[start.clone(), delta.clone()], armed), (u, Some(CacheSplit { m5: 200, h1: 120 })), "armed {armed}");
+        assert_eq!(streamed(std::slice::from_ref(&plain), armed).1, None, "armed {armed}");
+        assert_eq!(streamed(std::slice::from_ref(&delta), armed).1, Some(CacheSplit { m5: 150, h1: 120 }), "armed {armed}");
+    }
+}
+
+// ---- HUD-8: H§14 #8 and #12, proxy parts ----
+
+#[test]
+fn h14_08_status_threshold_follows_the_override_without_a_request() { // H§14 #8 (proxy part): AU28, S3
+    let d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&d));
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    let windows = |s: SessionStatus| (s.model, s.context_window, s.effective_window, s.threshold);
+    let opus = || Some("claude-opus-5-5".to_string());
+    // The row's soft window (800,000) below the model window (1,000,000).
+    assert_eq!(windows(k.status().unwrap()), (opus(), Some(1_000_000), Some(800_000), Some(800_000)));
+    // S3: `zygo compact 150k` with no new request: the next status has `threshold` 150,000.
+    k.set_compact(WindowArg::Tokens(150_000)).unwrap();
+    assert_eq!(windows(k.status().unwrap()), (opus(), Some(1_000_000), Some(150_000), Some(150_000)));
+    // The override `off`: no `threshold`, and `compact` says `off` (the HUD shows `off` from it).
+    k.set_compact(WindowArg::Off).unwrap();
+    let s = k.status().unwrap();
+    assert_eq!((s.compact, s.threshold, s.context_window), (Some(WindowArg::Off), None, Some(1_000_000)));
+    // Passthrough before the first request: no `model` and no window in the reply.
+    let mut r = req();
+    r.passthrough = true;
+    let p = h.create_session(r).unwrap();
+    assert_eq!(windows(client(&h, &p, &d).status().unwrap()), (None, None, None, None));
+}
+
+#[test]
+fn h14_12_tee_split_reaches_the_price_at_two_rates() { // H§14 #12 (proxy part): AU33
+    let d = TempDir::new().unwrap();
+    let prices = cfg(&d).config.catalog.get("claude-opus-5-5").unwrap().provider[0].price_usd_per_mtok.clone().unwrap();
+    let usage_of = |body: Value| {
+        let mut t = Tee::new(false);
+        t.push(body.to_string().into(), &mut |_| {});
+        t.finish(&mut |_| {});
+        let (u, split) = (t.usage(), t.cache_split());
+        // As `Pending::drop` builds the usage that it prices (`forward.rs`).
+        TokenUsage {
+            input: u.input,
+            output: u.output,
+            cache_read: u.cache_read,
+            cache_write: u.cache_write,
+            cache_write_5m: split.map(|s| s.m5),
+            cache_write_1h: split.map(|s| s.h1),
+        }
+    };
+    // 1,000 5-minute and 1,000 1-hour cache-write tokens: (1,000 × cache_write_5m + 1,000 × cache_write) ÷ 10⁶.
+    let split = usage_of(json!({"usage":{"cache_creation_input_tokens":2000,
+        "cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":1000}}}));
+    assert_eq!((split.cache_write, split.cache_write_5m, split.cache_write_1h), (2000, Some(1000), Some(1000)));
+    let m5 = prices.cache_write_5m.expect("the built-in Anthropic rows have the 5-minute rate");
+    let want = (1000.0 * m5 + 1000.0 * prices.cache_write) / 1e6;
+    assert!(m5 < prices.cache_write, "{m5} {}", prices.cache_write);
+    assert!((prices.cost(&split).unwrap() - want).abs() < 1e-9);
+    // Without the split all 2,000 use `cache_write`.
+    let whole = usage_of(json!({"usage":{"cache_creation_input_tokens":2000}}));
+    assert_eq!((whole.cache_write_5m, whole.cache_write_1h), (None, None));
+    assert!((prices.cost(&whole).unwrap() - 2000.0 * prices.cache_write / 1e6).abs() < 1e-9);
+    // A cost that is not finite is not priced, so the session does not count the request as priced.
+    let g_d = TempDir::new().unwrap();
+    let (h, _c, _, _) = start(cfg(&g_d));
+    let g = h.create_session(req()).unwrap();
+    let state = h.session(&g.session).unwrap();
+    let broken = zygo_config::Prices { input: f64::MAX, output: f64::MAX, ..Default::default() };
+    let usage = tu(10, 10, 0, 0);
+    assert_eq!(broken.cost(&usage), None);
+    state.add_request(&usage, broken.cost(&usage));
+    let s = client(&h, &g, &g_d).status().unwrap();
+    assert_eq!((s.spend_usd, s.requests_total, s.requests_priced), (Some(0.0), Some(1), Some(0)));
+}
+
+// ---- HUD-9: H§14 #13 and #16, proxy parts ----
+
+/// The usage of the reply of each fake provider, by the first path segment of its base URL:
+/// (input, output, cache read, cache write).
+const ROUTE_USAGE: [(&str, [u64; 4]); 4] =
+    [("/pa/", [100, 10, 1000, 300]), ("/pb/", [7, 3, 40, 0]), ("/free/", [50, 5, 20, 0]), ("/zero/", [0, 0, 0, 0])];
+
+/// The price rows of `p-pa` and `p-pb` (USD per million tokens): (input, output, cache read, cache write).
+const ROUTE_PRICES: [(&str, [f64; 4]); 2] = [("pa", [4.0, 20.0, 0.2, 8.0]), ("pb", [1.0, 5.0, 0.1, 2.0])];
+
+/// `usage` at `prices`, as H§7.3 step 1 with no tier and no cache-write split.
+fn route_cost(usage: [u64; 4], prices: [f64; 4]) -> f64 {
+    usage.iter().zip(prices).map(|(t, p)| *t as f64 * p).sum::<f64>() / 1e6
+}
+
+/// A fake upstream on 127.0.0.1 with its own runtime thread: each request gets 200 and a JSON message with the
+/// `ROUTE_USAGE` of its path. It stops when this value drops.
+struct RoutedUpstream {
+    addr: std::net::SocketAddr,
+    _stop: tokio::sync::oneshot::Sender<()>,
+}
+
+fn routed_upstream() -> RoutedUpstream {
+    let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    l.set_nonblocking(true).unwrap();
+    let addr = l.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        rt.block_on(async move {
+            let l = tokio::net::TcpListener::from_std(l).unwrap();
+            let app = axum::Router::new().fallback(|req: axum::extract::Request| async move {
+                let path = req.uri().path().to_string();
+                let _ = axum::body::to_bytes(req.into_body(), usize::MAX).await;
+                let [input, output, cache_read, cache_write] =
+                    ROUTE_USAGE.iter().find(|(p, _)| path.starts_with(p)).map(|(_, u)| *u).expect("a path of ROUTE_USAGE");
+                let body = json!({"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":input,
+                    "output_tokens":output,"cache_read_input_tokens":cache_read,"cache_creation_input_tokens":cache_write}});
+                axum::response::Response::builder()
+                    .status(200)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap()
+            });
+            tokio::select! {
+                _ = async { axum::serve(l, app).await } => {}
+                _ = rx => {}
+            }
+        });
+    });
+    RoutedUpstream { addr, _stop: tx }
+}
+
+/// A local proxy with a usage database in `d` and four catalog models on the fake upstream: `test-pa` (provider `p-pa`)
+/// and `test-pb` (`p-pb`) with the `ROUTE_PRICES`, `test-free` (`p-free`) with no price, and `test-zero` (`p-zero`, the
+/// `pa` prices) whose reply has no token. No provider has a key, so none is sent.
+fn start_routed(d: &TempDir) -> (RoutedUpstream, ProxyHandle) {
+    let up = routed_upstream();
+    let model = |name: &str, prices: Option<[f64; 4]>| {
+        let prices = prices.map_or(String::new(), |[i, o, r, w]| {
+            format!("[model.provider.price_usd_per_mtok]\ninput = {i:?}\noutput = {o:?}\ncache_read = {r:?}\ncache_write = {w:?}\n")
+        });
+        format!(
+            "[[model]]\nid = \"test-{name}\"\n[[model.provider]]\nname = \"p-{name}\"\nbase_url = \"http://{}/{name}\"\ndialects = [\"anthropic\"]\nupstream_model = \"up-{name}\"\n{prices}\n",
+            up.addr
+        )
+    };
+    let [(_, pa), (_, pb)] = ROUTE_PRICES;
+    let text = [model("pa", Some(pa)), model("pb", Some(pb)), model("free", None), model("zero", Some(pa))].concat();
+    std::fs::write(d.path().join("config.toml"), text).unwrap();
+    let cfg = load(&ctx(d, None)).unwrap();
+    let opts = StartOpts { clock: ManualClock::new(), usage_db: Some(d.path().join("data/usage.db")), ..Default::default() };
+    (up, Proxy::start_local_with(Arc::new(cfg), opts).unwrap())
+}
+
+/// One messages request of session `g` for catalog model `model`; the HTTP status.
+fn post_model(raw: &Raw, h: &ProxyHandle, g: &SessionGrant, model: Value) -> u16 {
+    let body = json!({"model": model, "max_tokens": 8, "messages": [{"role": "user", "content": "hi"}]});
+    raw.call(&h.url(), "POST", "anthropic/v1/messages", &sess(g), j(body)).0
+}
+
+/// The status reply of `k` once the proxy handled `n` usage rows (all sessions).
+fn status_after(h: &ProxyHandle, k: &SessionClient, n: u64) -> SessionStatus {
+    assert!(h.usage_written(n, Duration::from_secs(10)), "usage rows not written");
+    k.status().unwrap()
+}
+
+fn usage_rows(d: &TempDir, g: &SessionGrant) -> Vec<RequestRow> {
+    Store::open(&d.path().join("data/usage.db")).unwrap().requests_for_session(&g.session).unwrap()
+}
+
+/// (spend_usd, requests_total, requests_priced) of a status reply.
+fn spend_counts(s: &SessionStatus) -> (Option<f64>, Option<u64>, Option<u64>) {
+    (s.spend_usd, s.requests_total, s.requests_priced)
+}
+
+#[test]
+fn h14_13_spend_is_the_sum_of_two_priced_rows() { // H§14 #13 (proxy part): AU15, AU16, H§7.3 step 3
+    let d = TempDir::new().unwrap();
+    let (_up, h) = start_routed(&d);
+    let raw = Raw::new();
+    let g = h.create_session(req()).unwrap();
+    let k = client(&h, &g, &d);
+    assert_eq!(post_model(&raw, &h, &g, json!("test-pa")), 200);
+    assert_eq!(post_model(&raw, &h, &g, json!("test-pb")), 200);
+    let s = status_after(&h, &k, 2);
+    // The two rows: one per provider, each with the cost of its own price row.
+    let rows = usage_rows(&d, &g);
+    assert_eq!(rows.iter().map(|r| (r.provider.as_str(), r.status)).collect::<Vec<_>>(), [("p-pa", 200), ("p-pb", 200)]);
+    let [(_, ua), (_, ub), ..] = ROUTE_USAGE;
+    let [(_, pa), (_, pb)] = ROUTE_PRICES;
+    for (row, want) in rows.iter().zip([route_cost(ua, pa), route_cost(ub, pb)]) {
+        assert!(want > 0.0 && (row.estimated_usd - want).abs() < 1e-12, "{}: {} != {want}", row.provider, row.estimated_usd);
+    }
+    let sum: f64 = rows.iter().map(|r| r.estimated_usd).sum();
+    // The session holds exactly the sum of the two row costs; the reply carries it (a JSON number: 1e-12 is its bound).
+    assert_eq!(h.session(&g.session).unwrap().status().spend_usd, Some(sum));
+    assert!((s.spend_usd.unwrap() - sum).abs() < 1e-12, "{:?} != {sum}", s.spend_usd);
+    assert_eq!((s.requests_total, s.requests_priced, s.spend_notional), (Some(2), Some(2), Some(false)));
+    // tokens_in = Σ(input + cache read + cache write) and tokens_out = Σ output, from the rows and from the fixture.
+    let tokens_in: u64 = rows.iter().map(|r| r.input_tokens + r.cache_read_tokens + r.cache_write_tokens).sum();
+    let tokens_out: u64 = rows.iter().map(|r| r.output_tokens).sum();
+    assert_eq!((tokens_in, tokens_out), ((100 + 1000 + 300) + (7 + 40), 10 + 3));
+    assert_eq!((s.tokens_in, s.tokens_out), (Some(tokens_in), Some(tokens_out)));
+}
+
+#[test]
+fn h14_16_unpriced_and_zero_token_requests_in_the_counts() { // H§14 #16 (proxy part): AU15, H§7.2
+    let d = TempDir::new().unwrap();
+    let (_up, h) = start_routed(&d);
+    let raw = Raw::new();
+    let [(_, ua), ..] = ROUTE_USAGE;
+    let [(_, pa), _] = ROUTE_PRICES;
+    // No request: `requests_total = 0` and `spend_usd = 0.0`.
+    let none = h.create_session(req()).unwrap();
+    let k_none = client(&h, &none, &d);
+    assert_eq!(spend_counts(&k_none.status().unwrap()), (Some(0.0), Some(0), Some(0)));
+    // Two requests, one on the provider with no price: 2 and 1; the spend is the priced row alone.
+    let two = h.create_session(req()).unwrap();
+    let k_two = client(&h, &two, &d);
+    assert_eq!(post_model(&raw, &h, &two, json!("test-pa")), 200);
+    assert_eq!(post_model(&raw, &h, &two, json!("test-free")), 200);
+    let s = status_after(&h, &k_two, 2);
+    let rows = usage_rows(&d, &two);
+    assert_eq!(rows.iter().map(|r| r.provider.as_str()).collect::<Vec<_>>(), ["p-pa", "p-free"]);
+    assert!((rows[0].estimated_usd - route_cost(ua, pa)).abs() < 1e-12, "{}", rows[0].estimated_usd);
+    assert_eq!(rows[1].estimated_usd, 0.0); // no price: the row costs 0
+    assert_eq!((s.requests_total, s.requests_priced), (Some(2), Some(1)));
+    assert!((s.spend_usd.unwrap() - rows[0].estimated_usd).abs() < 1e-12, "{:?}", s.spend_usd);
+    assert_eq!((s.tokens_in, s.tokens_out), (Some(1400 + 70), Some(10 + 5))); // the unpriced request's tokens count
+    // A request with zero tokens counts in neither number: a refusal (400, no upstream call), then a reply with no
+    // token on a priced provider. Each writes a usage row.
+    assert_eq!(post_model(&raw, &h, &two, json!(5)), 400);
+    assert_eq!(post_model(&raw, &h, &two, json!("test-zero")), 200);
+    let after = status_after(&h, &k_two, 4);
+    assert_eq!(usage_rows(&d, &two).iter().map(|r| (r.status, r.input_tokens + r.output_tokens)).collect::<Vec<_>>(),
+               [(200, 110), (200, 55), (400, 0), (200, 0)]);
+    assert_eq!((after.requests_total, after.requests_priced), (Some(2), Some(1)));
+    assert_eq!((after.spend_usd, after.tokens_in, after.tokens_out), (s.spend_usd, s.tokens_in, s.tokens_out));
+    // One request, on the provider with no price: 1 and 0, spend 0.0.
+    let one = h.create_session(req()).unwrap();
+    let k_one = client(&h, &one, &d);
+    assert_eq!(post_model(&raw, &h, &one, json!("test-free")), 200);
+    assert_eq!(spend_counts(&status_after(&h, &k_one, 5)), (Some(0.0), Some(1), Some(0)));
+    // Only zero-token requests: as no request.
+    assert_eq!(post_model(&raw, &h, &none, json!(5)), 400);
+    assert_eq!(post_model(&raw, &h, &none, json!("test-zero")), 200);
+    let s = status_after(&h, &k_none, 7);
+    assert_eq!(spend_counts(&s), (Some(0.0), Some(0), Some(0)));
+    assert_eq!((s.tokens_in, s.tokens_out), (Some(0), Some(0)));
 }

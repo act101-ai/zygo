@@ -65,8 +65,8 @@ fn stub(dir: &Path, name: &str, body: &str) {
     std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-const ALL: &str = "scope: all sessions\nrequests: 3\ntokens: 350 in, 70 out, 450 cache read, 50 cache write\ncache read share: 53%\nestimated cost: $0.0350\nbytes trimmed: 5500\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2, scope enforce 1\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150\n  lead m-b: 1 requests, 200 in, 40 out, 0 cache read, 0 cache write, $0.0200";
-const S1: &str = "scope: session S1\nrequests: 2\ntokens: 150 in, 30 out, 450 cache read, 50 cache write\ncache read share: 69%\nestimated cost: $0.0150\nbytes trimmed: 4000\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150";
+const ALL: &str = "scope: all sessions\nrequests: 3\ntokens: 350 in, 70 out, 450 cache read, 50 cache write\ncache read share: 53%\nestimated cost: $0.0350\nbytes trimmed: 5500\ntokens trimmed (estimate): 1375\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2, scope enforce 1\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150\n  lead m-b: 1 requests, 200 in, 40 out, 0 cache read, 0 cache write, $0.0200";
+const S1: &str = "scope: session S1\nrequests: 2\ntokens: 150 in, 30 out, 450 cache read, 50 cache write\ncache read share: 69%\nestimated cost: $0.0150\nbytes trimmed: 4000\ntokens trimmed (estimate): 1000\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150";
 
 #[test]
 fn usage_report_all_sessions() {
@@ -93,7 +93,7 @@ fn usage_report_since_boundary() {
     let s = Store::open(&p.usage_db).unwrap();
     s.insert_request(&req("S3", b - 1, "code", "m-a", [7, 0, 0, 0], 0.0, &[], false)).unwrap();
     s.insert_request(&req("S3", b, "code", "m-a", [11, 0, 0, 0], 0.0, &[], false)).unwrap();
-    let want = "scope: since 2026-11-18\nrequests: 1\ntokens: 11 in, 0 out, 0 cache read, 0 cache write\ncache read share: 0%\nestimated cost: $0.0000\nbytes trimmed: 0\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model:\n  code m-a: 1 requests, 11 in, 0 out, 0 cache read, 0 cache write, $0.0000";
+    let want = "scope: since 2026-11-18\nrequests: 1\ntokens: 11 in, 0 out, 0 cache read, 0 cache write\ncache read share: 0%\nestimated cost: $0.0000\nbytes trimmed: 0\ntokens trimmed (estimate): 0\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model:\n  code m-a: 1 requests, 11 in, 0 out, 0 cache read, 0 cache write, $0.0000";
     assert_eq!(run(&p, &["--since", "2026-11-18"], None).unwrap(), want);
     assert_eq!(run(&p, &["--since=2026-11-18"], None).unwrap(), want);
 }
@@ -113,9 +113,29 @@ fn usage_report_env_session_default() {
 fn usage_report_empty_store_creates_nothing() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
-    let want = "scope: all sessions\nrequests: 0\ntokens: 0 in, 0 out, 0 cache read, 0 cache write\ncache read share: -\nestimated cost: $0.0000\nbytes trimmed: 0\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model: none";
+    let want = "scope: all sessions\nrequests: 0\ntokens: 0 in, 0 out, 0 cache read, 0 cache write\ncache read share: -\nestimated cost: $0.0000\nbytes trimmed: 0\ntokens trimmed (estimate): 0\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model: none";
     assert_eq!(run(&p, &[], None).unwrap(), want);
     assert!(!p.usage_db.exists() && !p.data_dir.exists());
+}
+
+/// H§14 #18, AU26: the exact `bytes trimmed` line stays, and the estimate `ceil(bytes ÷ 4)` follows it as a whole number.
+#[test]
+fn h14_18_usage_keeps_bytes_and_adds_estimated_tokens() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let s = Store::open(&p.usage_db).unwrap();
+    s.insert_trim(&trim("S1", 1, 100_000, 7_840)).unwrap();
+    s.insert_trim(&trim("S2", 2, 5, 0)).unwrap();
+    let lines = |a: &[&str]| -> Vec<String> { run(&p, a, None).unwrap().lines().map(str::to_string).collect() };
+    let one = lines(&["--session", "S1"]);
+    let at = one.iter().position(|l| l == "bytes trimmed: 92160").unwrap_or_else(|| panic!("{one:?}"));
+    assert_eq!(one[at + 1], "tokens trimmed (estimate): 23040");
+    assert_eq!(one[at + 2], "compaction signals: 0");
+    // 5 bytes are 2 estimated tokens: the estimate rounds up.
+    let two = lines(&["--session", "S2"]);
+    assert!(has(&two, "bytes trimmed: 5") && has(&two, "tokens trimmed (estimate): 2"), "{two:?}");
+    let all = lines(&[]);
+    assert!(has(&all, "bytes trimmed: 92165") && has(&all, "tokens trimmed (estimate): 23042"), "{all:?}");
 }
 
 #[test]
@@ -155,7 +175,7 @@ fn usage_report_escapes_role_and_model() {
     let out = run(&p, &[], None).unwrap();
     assert!(!out.lines().any(|l| l.starts_with("forged:")), "{out}");
     assert!(out.contains("code\\nforged: x\\u{1b}") && out.contains("m\\nforged: y"), "{out}");
-    assert_eq!(out.lines().count(), 11, "{out}");
+    assert_eq!(out.lines().count(), 12, "{out}");
 }
 
 #[test]
@@ -571,7 +591,7 @@ fn doctor_plugins_echoed_fields_are_escaped() {
     let p = paths(&d.path().join("a"));
     fill(&p, &market_with(&d.path().join("src"),
         r#"{"mcpServers":{"na\nv\u001b":{"command":"zygo-n35-absent\nforged: line\u001b[2J"}}}"#), d.path());
-    let known = ["agent ", "act-lite:", "secret store:", "provider ", "server:", "plugin store:", "plugin ", "claude config:", "repo policy:"];
+    let known = ["agent ", "act-lite:", "secret store:", "provider ", "server:", "plugin store:", "plugin ", "claude config:", "icons:", "repo policy:"];
     let sane = |l: &[String]| {
         assert!(!l.iter().any(|x| x.starts_with("forged:") || x.contains('\u{1b}')), "{l:?}");
         assert!(l.iter().all(|x| known.iter().any(|k| x.starts_with(k))), "{l:?}");
@@ -667,6 +687,62 @@ fn doctor_report_policy_line_is_escaped() {
     assert!(last.starts_with("repo policy: ") && last.contains(r"re\npo\u{202e}x@main ("), "{last}");
 }
 
+fn icon_lines(p: &Paths, vars: &[(&str, &str)]) -> Vec<String> {
+    let m = load(&LoadContext { paths: p.clone(), repo: None, team: None }).unwrap();
+    let env = |n: &str| vars.iter().find(|(k, _)| *k == n).map(|(_, v)| OsString::from(v));
+    let l = doctor_report(&Env { paths: p, repo: None, search_path: None, claude_config_dir: None, secrets: &MemStore::new(), env: &env,
+        probe: &never, server: None }, &m);
+    l.into_iter().filter(|x| x.starts_with("icons: ")).collect()
+}
+
+/// The Nerd glyphs of H§6.5, in its order: stripe, logo, reflection, branch, GitHub issue, work graph, bead, worktree,
+/// ahead, behind, model, profile, bar filled, bar empty, threshold, notional, cache, trimmed, truncation.
+const NERD_GLYPHS: [&str; 19] = ["\u{258c}", "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}", "z\u{28e}\u{183}o", "\u{e0a0}", "\u{f408}", "\u{25c6}",
+    "\u{f41b}", "\u{f0645}", "\u{2191}", "\u{2193}", "\u{f4bc}", "\u{f0626}", "\u{25b0}", "\u{25b1}", "\u{21e3}", "\u{2248}", "\u{f01bc}",
+    "\u{2702}", "\u{2026}"];
+
+/// H§14 #32, AU2: one line holds the Nerd glyphs of H§6.5 and names the active set.
+#[test]
+fn h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let test = NERD_GLYPHS.join(" ");
+    let nerd = format!("icons: nerd set (ZYGO_NERD_FONT=0 selects the plain set); test: {test}");
+    let plain = format!("icons: plain set (ZYGO_NERD_FONT=1 selects the nerd set); test: {test}");
+    // The set is the one the status line uses (AU2). `xterm` selects no set by itself on any platform.
+    let cases: [(&[(&str, &str)], &String); 7] = [
+        (&[("ZYGO_NERD_FONT", "1")], &nerd),
+        (&[("ZYGO_NERD_FONT", "1"), ("TERM", "dumb")], &nerd),
+        (&[("ZYGO_NERD_FONT", "0")], &plain),
+        (&[("ZYGO_NERD_FONT", "0"), ("TERM", "xterm"), ("WT_SESSION", "1")], &plain),
+        (&[("TERM", "linux")], &plain),
+        (&[("TERM", "dumb"), ("ZYGO_NERD_FONT", "yes")], &plain),
+        (&[("TERM", "xterm"), ("TERM_PROGRAM", "x"), ("NO_COLOR", "1")], &nerd),
+    ];
+    for (vars, want) in cases {
+        assert_eq!(icon_lines(&p, vars), std::slice::from_ref(want), "{vars:?}");
+    }
+    for g in NERD_GLYPHS {
+        assert!(nerd.contains(g) && plain.contains(g), "{g:?}");
+    }
+    // One line, with no escape byte.
+    assert!(!nerd.contains('\n') && !nerd.contains('\x1b'));
+}
+
+#[test]
+fn h14_32_doctor_cli_prints_the_icon_line() {
+    let d = TempDir::new().unwrap();
+    let _g = forks();
+    for (value, set) in [("1", "icons: nerd set "), ("0", "icons: plain set ")] {
+        let o = doctor_cmd(d.path(), &cfg(&[])).env("ZYGO_NERD_FONT", value).output().unwrap();
+        let out = String::from_utf8(o.stdout).unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
+        let icons: Vec<&str> = out.lines().filter(|l| l.starts_with("icons: ")).collect();
+        assert_eq!(icons.len(), 1, "{out}");
+        assert!(icons[0].starts_with(set) && icons[0].ends_with(&format!("test: {}", NERD_GLYPHS.join(" "))), "{out}");
+    }
+}
+
 #[test]
 fn doctor_report_section_order() {
     let d = TempDir::new().unwrap();
@@ -674,7 +750,7 @@ fn doctor_report_section_order() {
     std::fs::write(&p.config_file, cfg(&[("acme", "key = \"keychain:acme\"")])).unwrap();
     let l = with_server(&p, Some("https://zygo.example.invalid"));
     let at = |pre: &str| l.iter().position(|x| x.starts_with(pre)).unwrap_or_else(|| panic!("{pre}: {l:?}"));
-    let pos: Vec<usize> = ["agent claude-code", "agent opencode", "act-lite", "secret store", "provider ", "server", "plugin store", "repo policy"].iter().map(|x| at(x)).collect();
+    let pos: Vec<usize> = ["agent claude-code", "agent opencode", "act-lite", "secret store", "provider ", "server", "plugin store", "icons: ", "repo policy"].iter().map(|x| at(x)).collect();
     assert!(pos.windows(2).all(|w| w[0] < w[1]), "{pos:?}");
     assert_eq!(*pos.last().unwrap(), l.len() - 1);
 }
@@ -699,12 +775,19 @@ fn doctor_cli_invalid_config_closed_stderr() {
 /// `zygo doctor` in a temporary home whose `config.toml` holds `config`, with an empty `PATH` directory (no probe finds
 /// a program).
 fn doctor_cli(d: &Path, config: &str) -> std::process::Output {
+    doctor_cmd(d, config).output().unwrap()
+}
+
+/// The command of `doctor_cli`, not yet run.
+fn doctor_cmd(d: &Path, config: &str) -> Command {
     std::fs::write(d.join("config.toml"), config).unwrap();
     let bin = d.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    Command::new(env!("CARGO_BIN_EXE_zygo")).arg("doctor").env("HOME", d).env("LOCALAPPDATA", d).env("APPDATA", d)
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+    cmd.arg("doctor").env("HOME", d).env("LOCALAPPDATA", d).env("APPDATA", d)
         .env("ZYGO_CONFIG", d.join("config.toml")).env("PATH", &bin).env("CLAUDE_CONFIG_DIR", d.join("claude"))
-        .env_remove("ZYGO_SESSION_DIR").env_remove("ZYGO_AGENT").current_dir(d).stdin(Stdio::null()).output().unwrap()
+        .env_remove("ZYGO_SESSION_DIR").env_remove("ZYGO_AGENT").current_dir(d).stdin(Stdio::null());
+    cmd
 }
 
 #[test]

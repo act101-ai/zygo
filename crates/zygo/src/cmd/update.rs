@@ -1,7 +1,10 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
+use zygo_config::Config;
+use zygo_core::paths::Paths;
 
 /// The release repository.
 const RELEASE_REPO: &str = "act101-ai/zygo";
@@ -20,41 +23,83 @@ pub fn run(version: Option<&str>, check: bool) -> i32 {
     }
 }
 
-type Failure = (i32, String);
+/// An exit code and the error line (printed after `zygo update: `).
+pub type Failure = (i32, String);
 
 fn fail<T>(msg: String) -> Result<T, Failure> {
     Err((1, msg))
 }
 
+/// This binary's version.
+const CUR: &str = env!("CARGO_PKG_VERSION");
+
+/// A runtime and a client for the release downloads. The runtime ends in the background: a name lookup that hangs
+/// in its blocking thread does not hold the caller past the request's time limit.
+struct Http {
+    rt: Option<tokio::runtime::Runtime>,
+    client: reqwest::Client,
+}
+
+impl Http {
+    /// `total` bounds a whole request (connect, send and body); `None` leaves only `connect` and `read`.
+    fn new(connect: Duration, read: Duration, total: Option<Duration>) -> Result<Http, Failure> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| (1, format!("cannot start runtime: {e}")))?;
+        let client = match total {
+            None => build_client(connect, read),
+            Some(t) => build(client_builder(connect, read).timeout(t)),
+        }
+        .map_err(|e| (1, e))?;
+        Ok(Http { rt: Some(rt), client })
+    }
+
+    fn get(&self, url: &str) -> Result<Vec<u8>, Failure> {
+        let rt = self.rt.as_ref().ok_or_else(|| (1, "the runtime has ended".to_string()))?;
+        fetch(&self.client, rt, url).map_err(|e| (1, e))
+    }
+}
+
+impl Drop for Http {
+    fn drop(&mut self) {
+        if let Some(rt) = self.rt.take() {
+            rt.shutdown_background();
+        }
+    }
+}
+
+/// `v` without a leading `v`, and parsed; `None` when it breaks the version rule.
+fn parsed(v: &str) -> Option<(String, semver::Version)> {
+    parse_version(v).and_then(|s| semver::Version::parse(&s).ok().map(|p| (s, p)))
+}
+
+/// The version in the release's public VERSION file: the one request of a check.
+fn latest(http: &Http, base: &str) -> Result<(String, semver::Version), Failure> {
+    let url = format!("{base}/latest/download/VERSION");
+    let body = http.get(&url)?;
+    let text = String::from_utf8_lossy(&body);
+    match parsed(text.trim()) {
+        Some(x) => Ok(x),
+        None => fail(format!("bad VERSION from {url}")),
+    }
+}
+
 fn run_inner(version: Option<&str>, check: bool) -> Result<(), Failure> {
-    let cur_str = env!("CARGO_PKG_VERSION");
+    let cur_str = CUR;
     let cur = semver::Version::parse(cur_str).map_err(|e| (1, format!("bad own version {cur_str}: {e}")))?;
     let explicit = match version {
-        Some(v) => match parse_version(v).and_then(|s| semver::Version::parse(&s).ok().map(|p| (s, p))) {
+        Some(v) => match parsed(v) {
             Some(x) => Some(x),
             None => return Err((2, format!("bad --version {v}"))),
         },
         None => None,
     };
 
-    let base = release_base();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| (1, format!("cannot start runtime: {e}")))?;
-    let client = build_client(CONNECT_TIMEOUT, READ_TIMEOUT).map_err(|e| (1, e))?;
-
+    let base = release_base(&|k| std::env::var_os(k));
     let (target_str, target) = match explicit {
         Some(x) => x,
-        None => {
-            let url = format!("{base}/latest/download/VERSION");
-            let body = fetch(&client, &rt, &url).map_err(|e| (1, e))?;
-            let text = String::from_utf8_lossy(&body);
-            match parse_version(text.trim()).and_then(|s| semver::Version::parse(&s).ok().map(|p| (s, p))) {
-                Some(x) => x,
-                None => return fail(format!("bad VERSION from {url}")),
-            }
-        }
+        None => latest(&Http::new(CONNECT_TIMEOUT, READ_TIMEOUT, None)?, &base)?,
     };
     // Build metadata does not count (semver precedence): `0.1.0+x` against `0.1.0` is up to date.
     let order = target.cmp_precedence(&cur);
@@ -73,25 +118,253 @@ fn run_inner(version: Option<&str>, check: bool) -> Result<(), Failure> {
         return Ok(());
     }
 
+    let exe = std::env::current_exe().and_then(std::fs::canonicalize).map_err(|e| (1, format!("cannot locate the running binary: {e}")))?;
+    let installed = install(&exe, &base, Some(&target_str))?;
+    super::print_out(&format!("updated zygo {cur_str} -> {installed}\n"));
+    Ok(())
+}
+
+/// Downloads the release `version` (`None`: the latest release) of this platform from `release_base`, verifies its
+/// SHA-256 checksum and replaces `target` with it atomically. Returns the installed version, without a leading `v`.
+/// `target` is unchanged on every error. The system proxy is not used (N36).
+pub fn install(target: &Path, release_base: &str, version: Option<&str>) -> Result<String, Failure> {
+    let http = Http::new(CONNECT_TIMEOUT, READ_TIMEOUT, None)?;
+    let version = match version {
+        Some(v) => match parsed(v) {
+            Some((s, _)) => s,
+            None => return Err((2, format!("bad version {v}"))),
+        },
+        None => latest(&http, release_base)?.0,
+    };
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
     let Some(name) = asset_name(os, arch) else {
         return fail(format!("unsupported platform {os}/{arch}"));
     };
-    let dir = format!("{base}/download/v{target_str}");
-    let sums = fetch(&client, &rt, &format!("{dir}/SHA256SUMS")).map_err(|e| (1, e))?;
+    let dir = format!("{release_base}/download/v{version}");
+    let sums = http.get(&format!("{dir}/SHA256SUMS"))?;
     let sums = String::from_utf8_lossy(&sums).to_string();
     let Some(expected) = find_sum(&sums, &name) else {
         return fail(format!("no checksum for {name}"));
     };
-    let bytes = fetch(&client, &rt, &format!("{dir}/{name}")).map_err(|e| (1, e))?;
+    let bytes = http.get(&format!("{dir}/{name}"))?;
     let actual = hex::encode(Sha256::digest(&bytes));
     if !sum_matches(expected, &actual) {
         return fail(format!("checksum mismatch for {name}"));
     }
-    let exe = std::env::current_exe().and_then(std::fs::canonicalize).map_err(|e| (1, format!("cannot locate the running binary: {e}")))?;
-    replace_binary(&bytes, &exe).map_err(|e| (1, format!("cannot replace {}: {e}", exe.display())))?;
-    super::print_out(&format!("updated zygo {cur_str} -> {target_str}\n"));
-    Ok(())
+    replace_binary(&bytes, target).map_err(|e| (1, format!("cannot replace {}: {e}", target.display())))?;
+    Ok(version)
+}
+
+// ---- the update check at agent start (auto-update design) ----
+
+/// The terminal of the start check: tests give one that is not a terminal.
+pub trait PromptIo {
+    /// stdin and stderr are both a terminal.
+    fn is_tty(&self) -> bool;
+    /// Shows `prompt` and returns the line the user typed.
+    fn ask(&mut self, prompt: &str) -> std::io::Result<String>;
+    /// Shows one line.
+    fn say(&mut self, line: &str);
+}
+
+/// The process's terminal: prompts and lines go to stderr, the answer comes from stdin.
+pub struct Terminal {
+    assume_tty: bool,
+}
+
+impl Terminal {
+    /// `assume_tty` counts stdin and stderr as a terminal whatever they are (`ZYGO_TEST_ASSUME_TTY=1`, read by the
+    /// entry point under `test-hooks`).
+    pub fn new(assume_tty: bool) -> Terminal {
+        Terminal { assume_tty }
+    }
+}
+
+impl PromptIo for Terminal {
+    fn is_tty(&self) -> bool {
+        use std::io::IsTerminal;
+        self.assume_tty || (std::io::stdin().is_terminal() && std::io::stderr().is_terminal())
+    }
+
+    fn ask(&mut self, prompt: &str) -> std::io::Result<String> {
+        super::print_err(&format!("{prompt} "));
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        Ok(line)
+    }
+
+    fn say(&mut self, line: &str) {
+        super::print_err(&format!("{line}\n"));
+    }
+}
+
+/// What the caller of [`start_check`] does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartOutcome {
+    /// Start the agent.
+    Continue,
+    /// Do not start the agent; exit with `code`.
+    Exit { code: i32 },
+}
+
+/// The least time between two checks, in seconds.
+const CHECK_EVERY: u64 = 24 * 60 * 60;
+
+/// The total time limit of the check.
+const CHECK_LIMIT: Duration = Duration::from_secs(2);
+
+/// The latest release at `base`, or `None` on any failure or when [`CHECK_LIMIT`] ends first. The request runs on its
+/// own thread, so the limit also covers the client set-up and the name lookup; the request has the same limit, so
+/// the thread ends by itself.
+fn check_latest(base: String) -> Option<(String, semver::Version)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("update-check".into())
+        .spawn(move || {
+            let found = Http::new(CHECK_LIMIT, CHECK_LIMIT, Some(CHECK_LIMIT)).and_then(|h| latest(&h, &base));
+            let _ = tx.send(found.ok());
+        })
+        .ok()?;
+    rx.recv_timeout(CHECK_LIMIT).ok().flatten()
+}
+
+/// `update.json` in the cache directory: `checked_at` (Unix seconds of the last check, failed or not), `latest` (the
+/// version that check found, if it found one) and `skip` (the version the user answered `s` to).
+#[derive(Default)]
+struct Cache {
+    checked_at: Option<u64>,
+    latest: Option<String>,
+    skip: Option<String>,
+}
+
+impl Cache {
+    /// A missing or unreadable file is an empty cache.
+    fn read(file: &Path) -> Cache {
+        let Some(v) = std::fs::read(file).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else {
+            return Cache::default();
+        };
+        let text = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
+        Cache { checked_at: v.get("checked_at").and_then(|x| x.as_u64()), latest: text("latest"), skip: text("skip") }
+    }
+
+    /// Atomic: a temporary file next to `file`, then a rename. Every error is ignored (the check stays silent).
+    fn write(&self, file: &Path) {
+        use std::io::Write;
+        let Some(dir) = file.parent() else { return };
+        let mut b = std::fs::DirBuilder::new();
+        b.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+        if b.create(dir).is_err() {
+            return;
+        }
+        let body = serde_json::json!({ "checked_at": self.checked_at, "latest": self.latest, "skip": self.skip });
+        let tmp = dir.join(format!(".update.json.{}", std::process::id()));
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        let written = o.open(&tmp).and_then(|mut f| {
+            f.write_all(body.to_string().as_bytes())?;
+            f.sync_all()
+        });
+        if written.and_then(|()| std::fs::rename(&tmp, file)).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
+/// The number of live sessions under `sessions_dir` ([`zygo_core::session_dir::live`]).
+fn live_sessions(sessions_dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(sessions_dir) else { return 0 };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && zygo_core::session_dir::live(&e.path()))
+        .count()
+}
+
+/// The update check before an agent launch (auto-update design). `args` are the arguments passed to the agent, `env`
+/// reads the environment, `exe` is the binary an install replaces.
+///
+/// No request and no prompt when: `io` is not a terminal; `-p` or `--print` is in `args`; `ZYGO_SESSION`,
+/// `ZYGO_WORKSPACE` or `ZYGO_NO_UPDATE_CHECK` is set (not empty); `[update] check = false`; or the last check is less
+/// than 24 h old. Else one GET for the release's public VERSION file, bounded by 2 s, the system proxy not used; a
+/// failure is silent. A newer version that was not skipped is asked about: `y` installs it and returns `Exit`, `s`
+/// records the skip, any other answer continues.
+pub fn start_check(
+    paths: &Paths,
+    cfg: &Config,
+    args: &[OsString],
+    env: &dyn Fn(&str) -> Option<OsString>,
+    exe: &Path,
+    io: &mut dyn PromptIo,
+) -> StartOutcome {
+    let set = |k: &str| env(k).is_some_and(|v| !v.is_empty());
+    if !io.is_tty()
+        || args.iter().any(|a| a.as_os_str() == "-p" || a.as_os_str() == "--print")
+        || set("ZYGO_SESSION")
+        || set("ZYGO_WORKSPACE")
+        || set("ZYGO_NO_UPDATE_CHECK")
+        || !cfg.update.check
+    {
+        return StartOutcome::Continue;
+    }
+    let file = paths.cache_dir.join("update.json");
+    let mut cache = Cache::read(&file);
+    let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()) else {
+        return StartOutcome::Continue;
+    };
+    // A time in the future (the clock went back) does not count as a check.
+    if cache.checked_at.is_some_and(|t| t <= now && now - t < CHECK_EVERY) {
+        return StartOutcome::Continue;
+    }
+
+    let base = release_base(env);
+    let found = check_latest(base.clone());
+    cache.checked_at = Some(now);
+    if let Some((v, _)) = &found {
+        cache.latest = Some(v.clone());
+    }
+    cache.write(&file);
+    let Some((new, new_v)) = found else { return StartOutcome::Continue };
+    let Ok(cur) = semver::Version::parse(CUR) else { return StartOutcome::Continue };
+    if !new_v.cmp_precedence(&cur).is_gt() {
+        return StartOutcome::Continue;
+    }
+    let skipped = cache.skip.as_deref().and_then(|s| semver::Version::parse(s).ok());
+    if skipped.is_some_and(|s| !new_v.cmp_precedence(&s).is_gt()) {
+        return StartOutcome::Continue;
+    }
+
+    let others = live_sessions(&paths.sessions_dir);
+    if others > 0 {
+        io.say(&format!(
+            "{others} zygo sessions are running; they keep the old version until you restart them (zygo down / zygo up)"
+        ));
+        // The locked `.exe.old` of a running session makes a second update fail: the update is deferred.
+        if cfg!(windows) {
+            return StartOutcome::Continue;
+        }
+    }
+    let answer = io.ask(&format!("zygo {new} is available (you have {CUR}). Update now? [y/N/s]")).unwrap_or_default();
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => match install(exe, &base, Some(&new)) {
+            Ok(v) => {
+                io.say(&format!("updated to {v}; relaunch zygo"));
+                StartOutcome::Exit { code: 0 }
+            }
+            Err((code, msg)) => {
+                io.say(&format!("zygo update: {msg}"));
+                StartOutcome::Exit { code }
+            }
+        },
+        "s" | "skip" => {
+            cache.skip = Some(new);
+            cache.write(&file);
+            StartOutcome::Continue
+        }
+        _ => StartOutcome::Continue,
+    }
 }
 
 fn asset_name(os: &str, arch: &str) -> Option<String> {
@@ -127,11 +400,14 @@ fn parse_version(s: &str) -> Option<String> {
     re.is_match(s).then(|| s.strip_prefix('v').unwrap_or(s).to_string())
 }
 
-fn release_base() -> String {
+/// The release base URL. Under `test-hooks`, `ZYGO_RELEASE_BASE` (read through `env`) replaces it.
+pub fn release_base(env: &dyn Fn(&str) -> Option<OsString>) -> String {
     #[cfg(feature = "test-hooks")]
-    if let Ok(b) = std::env::var("ZYGO_RELEASE_BASE") {
+    if let Some(b) = env("ZYGO_RELEASE_BASE").and_then(|b| b.into_string().ok()) {
         return b;
     }
+    #[cfg(not(feature = "test-hooks"))]
+    let _ = env;
     format!("https://github.com/{RELEASE_REPO}/releases")
 }
 
@@ -146,8 +422,12 @@ fn client_builder(connect: Duration, read: Duration) -> reqwest::ClientBuilder {
 
 /// Installs the rustls `ring` provider (once; an earlier install is not an error), so every caller is safe.
 fn build_client(connect: Duration, read: Duration) -> Result<reqwest::Client, String> {
+    build(client_builder(connect, read))
+}
+
+fn build(b: reqwest::ClientBuilder) -> Result<reqwest::Client, String> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    client_builder(connect, read).build().map_err(|e| format!("http client: {e}"))
+    b.build().map_err(|e| format!("http client: {e}"))
 }
 
 fn fetch(client: &reqwest::Client, rt: &tokio::runtime::Runtime, url: &str) -> Result<Vec<u8>, String> {

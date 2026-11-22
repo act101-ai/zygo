@@ -298,6 +298,13 @@ const SAME: &[(&str, &str, bool, i32, &str, bool)] = &[
     ("profile", "work", false, 0, "default profile: work (applies at next launch)\nzygo profile: work is not defined in your config (it may be a team preset)", true),
     ("compact-tool", "off", false, 0, "compact-tool off (applies at next launch)", true),
     ("compact-tool", "on", false, 0, "compact-tool on (applies at next launch)", true),
+    ("statusline", "", false, 0, "statusline compact (default)", false),
+    ("statusline", "", true, 0, "statusline compact (default)", false),
+    ("statusline", "verbose", true, 0, "statusline verbose for this session", true),
+    ("statusline", "verbose --save", true, 0, "statusline verbose for this session; saved to user config", true),
+    ("statusline", "verbose", false, 2, "zygo statusline: not in a zygo session; add --save to change user config", false),
+    ("statusline", "verbose --save", false, 0, "statusline verbose saved to user config", true),
+    ("statusline", "wide", true, 2, "zygo statusline: usage: statusline [compact|verbose]", false),
 ];
 
 /// The work value of a reply: the `work:` line of `status`, else the whole reply (a `work` row).

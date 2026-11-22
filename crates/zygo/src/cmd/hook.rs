@@ -1,19 +1,27 @@
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Instant;
 
-use zygo_core::hook::{guarded, HookFn, HookInput};
+use zygo_core::hook::{guarded, HookFn, HookInput, HookOutput};
+use zygo_core::overrides::Overrides;
+use zygo_core::paths::Paths;
+use zygo_core::session_dir::SessionDir;
+use zygo_core::session_view::SessionView;
 use zygo_core::Agent;
+use zygo_hooks::statusline;
 
 pub struct Hook {
     pub name: &'static str,
     pub run: HookFn,
-    /// False only for `token` (apiKeyHelper gives no stdin).
+    /// False for `token` (apiKeyHelper gives no stdin) and for `statusline`, which reads its own stdin with a
+    /// bound (AU24).
     pub reads_stdin: bool,
 }
 
 pub static TABLE: &[Hook] = &[
     Hook { name: "token", run: zygo_hooks::token::run, reads_stdin: false },
-    Hook { name: "statusline", run: zygo_hooks::statusline::run, reads_stdin: true },
+    Hook { name: STATUSLINE, run: statusline_hud, reads_stdin: false },
     Hook { name: "trim", run: zygo_hooks::trim::run, reads_stdin: true },
     Hook { name: "session-start", run: zygo_hooks::session_start::run, reads_stdin: true },
     Hook { name: "role-guard", run: zygo_hooks::role_guard::run, reads_stdin: true },
@@ -24,6 +32,33 @@ pub static TABLE: &[Hook] = &[
 ];
 
 pub use zygo_core::hook::error_line;
+
+/// The name of the status line hook in `TABLE`.
+const STATUSLINE: &str = "statusline";
+
+/// `zygo hook statusline` (H§7): the HUD on stdout, one row or two, with no final newline. Without
+/// `ZYGO_SESSION_DIR` it prints nothing (H§6.8). This is the one place that reads the real environment, the real
+/// stdin and the terminal for the HUD. The style comes from `overrides.json`, then `view.json` (AU1).
+fn statusline_hud(_input: &HookInput) -> anyhow::Result<HookOutput> {
+    let start = Instant::now();
+    let env = |key: &str| std::env::var_os(key);
+    let Some(root) = env("ZYGO_SESSION_DIR").filter(|v| !v.is_empty()).map(PathBuf::from) else {
+        return Ok(HookOutput::None);
+    };
+    let dir = SessionDir::new(root);
+    let style = statusline::style(&Overrides::load(&dir), SessionView::load(&dir).ok().as_ref());
+    let render_env = statusline::render::RenderEnv::from_env(&env, style);
+    let (source, width) = statusline::data::width_source(&env, &statusline::width::tty_columns);
+    statusline::data::log_width(&dir, source, width);
+    let data = statusline::data::collect(
+        Box::new(std::io::stdin()),
+        &dir.root,
+        &Paths::from_env(),
+        &env,
+        start + statusline::BOUND,
+    );
+    Ok(HookOutput::Text(statusline::render::render(&data, &render_env)))
+}
 
 /// `zygo hook <name>`: always exit 0 (C6).
 pub fn run(name: &str, agent: Option<&str>, event: Option<String>) -> i32 {
@@ -44,6 +79,11 @@ pub fn run(name: &str, agent: Option<&str>, event: Option<String>) -> i32 {
         error_line(&format!("unknown hook `{name}`"));
         return 0;
     };
+    if hook.name == STATUSLINE {
+        // The workers of the status line can still run after `guarded` restores the panic hook, so the silent
+        // hook is set for the whole process first; a worker panic then writes only its own line (H§7.7, C6).
+        std::panic::set_hook(Box::new(|_| {}));
+    }
     let (out, code) = if hook.reads_stdin {
         let mut stdin = Vec::new();
         let _ = std::io::stdin().read_to_end(&mut stdin);

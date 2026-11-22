@@ -34,6 +34,7 @@ fn session(home: &Path) -> SessionDir {
         trim_threshold_bytes: 16384,
         head_lines: 60,
         tail_lines: 20,
+        ..Default::default()
     }
     .save(&sd)
     .unwrap();

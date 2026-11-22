@@ -7,3 +7,79 @@
 **Acceptance:** `cargo test -p zygo-hooks --test statusline_data && cargo test -p zygo --test compact_cmd && cargo test -p zygo --test cli_surface && cargo test -p zygo-config && cargo test -p zygo-proxy --test session_api --test passthrough && cargo test --workspace --locked --no-run && cargo test -p zygo-launch --test launcher && cargo test -p zygo --test statusline_git` → all pass, one test per H§14 item #5, #6, #7, #13, #14, #16, #17, #22, #23, #24, #25, #26, #27, #28, #30, #34, #35 (gates: #25 and the #26 newline and #6 directory cases `cfg(unix)`, the #26 invalid-UTF-8 case `cfg(target_os = "linux")`), and the `compact_cmd.rs` status line tests rewritten for the HUD
 
 ## Plan
+
+Steps:
+
+- [x] Read the contract, H§4-H§6.1, H§6.8, H§7 (all), H§8, H§11, H§12, H§14, H§17, the graph constraints and review focus 7 and 9, the HUD-8 plan and the code of `statusline/`.
+- [x] `crates/zygo-hooks/src/statusline/data.rs`: `collect`, `fetch_cap`, `width_source`, `log_width`; cache v2, lease, bounded stdin, three workers, test seams.
+- [x] `crates/zygo-hooks/tests/statusline_data.rs` (35 tests). First run: compile failure (`statusline::data` and `statusline::style` did not exist). Honest order: the draft of `data.rs` was on disk before this test file ran, but it was not part of the module tree. After the wiring, 34 tests passed and 1 failed for a wrong expectation of mine (the cyan of the git marks runs on into the cyan profile; gap absorption).
+- [x] Mutation check, because most tests passed on their first run: with the backoff test and the lease test of `collect` disabled, 5 tests failed (`h14_24_backoff…`, `h14_24_two_runs…`, `h14_24_a_dead_lock…`, `h14_25_cwd_change…`, `h14_28_ended…`). The mutants are removed.
+- [x] `statusline/mod.rs`: the old `run`, `render` function, `stripe`, `line_in`, `write_cache`, `fetch_line`, `test_block` and the `{at, line}` cache are removed with their unit tests; `short`, `pct` and `trimmed` stay (`cmd/status.rs`, `cmd/usage.rs`, `cmd/help.rs` and the render use them); `style` and `BOUND` added.
+- [x] `crates/zygo/src/cmd/hook.rs`: table entry `statusline` → `statusline_hud`, `reads_stdin: false`; the silent process-wide panic hook is set before `guarded` for this hook.
+- [x] `crates/zygo/tests/cli_surface.rs`: `reads_stdin` is false for `token` and `statusline`.
+- [x] `crates/zygo/tests/compact_cmd.rs`: the two status line tests rewritten for the HUD; four tests added (no session directory, style layers, `zygo work`, render panic).
+- [x] `crates/zygo/tests/statusline_git.rs` (new, 6 tests): marker safety with a control run, slow `rev-list`, git worker panic, hook's own cwd, invalid UTF-8, newline.
+- [x] Cross-layer tests (done by a helper agent in the same checkout, checked by the acceptance run): `h14_13_…` and `h14_16_…` in `zygo-proxy/tests/session_api.rs`, `h14_14_…` in `zygo-proxy/tests/passthrough.rs`, `h14_34_…` in `zygo-config/tests/config_layers.rs`, `h14_35_…` and `refresh_interval_seam_…` in `zygo-launch/tests/launcher.rs`. The five `h14_` tests passed on their first run (HUD-3, HUD-6 and HUD-7 merged the product code); the seam test failed first (`30` in place of `2`).
+- [x] `crates/zygo-launch/src/claude_code.rs`: `refresh_interval(ctx)`, the `ZYGO_TEST_REFRESH_INTERVAL` seam under `test-hooks`. `crates/zygo/Cargo.toml`: `test-hooks` also enables `zygo-launch/test-hooks`.
+- [x] Acceptance commands, `cargo test -p zygo-hooks --locked`, `cargo test -p zygo --locked`, `cargo clippy -p zygo-hooks -p zygo --all-targets --locked -- -D warnings`.
+
+H§14 items and their tests:
+
+| Item | Test |
+|---|---|
+| #5 | `h14_05_work_item_from_zygo_work_the_status_and_the_live_branch`, `h14_05_status_work_is_the_fallback` (`zygo-hooks/tests/statusline_data.rs`); `h14_05_hud_keeps_the_launch_time_item_after_zygo_work` (`zygo/tests/compact_cmd.rs`) |
+| #6 | `h14_06_worktree_segment_from_the_git_worker`, `h14_06_worktree_name_with_an_escape_sequence_is_escaped` (`cfg(unix)`) |
+| #7 | `h14_07_git_marks_from_the_git_worker` |
+| #13 | proxy: `h14_13_spend_is_the_sum_of_two_priced_rows` (`session_api.rs`); HUD: `h14_13_spend_of_the_status_reply_is_green` |
+| #14 | proxy: `h14_14_passthrough_rows_cost_zero_and_the_status_spend_is_notional` (`passthrough.rs`); HUD: `h14_14_notional_spend_has_a_dim_mark` |
+| #16 | proxy: `h14_16_unpriced_and_zero_token_requests_in_the_counts` (`session_api.rs`); HUD: `h14_16_spend_forms_of_unpriced_requests` |
+| #17 (review focus 7) | `h14_17_old_status_reply_drops_only_the_new_segments` |
+| #22 | `h14_22_stdin_is_bounded_and_never_breaks_the_hud` |
+| #23 | `h14_23_blocked_workers_end_at_the_deadline`; on the binary: `statusline_ends_within_the_bound_when_the_workers_block` (`compact_cmd.rs`) |
+| #24 | `h14_24_backoff_after_a_fetch_that_never_answers`, `h14_24_fetch_cap_follows_the_last_latency`, `h14_24_two_runs_make_one_request_under_the_lease`, `h14_24_a_dead_lock_is_removed_and_taken`, `h14_24_old_temp_files_are_removed_after_a_write`, `h14_24_git_worker_panic_gives_no_git_segments`; stderr line and exit 0: `h14_25_git_worker_panic_writes_one_stderr_line` (`statusline_git.rs`) |
+| #25 (review focus 9) | `h14_25_configured_programs_leave_no_marker_after_a_render` (`cfg(unix)`), `h14_25_slow_rev_list_keeps_the_worktree_and_the_branch` (`cfg(unix)`), `h14_25_git_worker_panic_writes_one_stderr_line` (`statusline_git.rs`); `h14_25_git_part_is_not_due_for_30_s`, `h14_25_cwd_change_ignores_the_lease_for_git` (`statusline_data.rs`) |
+| #26 | `h14_26_worktree_name_with_invalid_utf8_shows_the_replacement_character` (`cfg(target_os = "linux")`), `h14_26_newline_in_the_directory_name_gives_no_worktree_segment` (`cfg(unix)`) (`statusline_git.rs`) |
+| #27 | `h14_27_cache_holds_data_and_stdin_is_fresh` |
+| #28 | `h14_28_offline_keeps_the_local_segments`, `h14_28_stale_dims_the_proxy_segments_only`, `h14_28_suspended_session_keeps_the_cached_segments`, `h14_28_ended_session_drops_the_cached_segments` |
+| #30 | `h14_30_render_panic_prints_nothing_and_exits_0` (`compact_cmd.rs`) |
+| #34 | config: `h14_34_repo_file_statusline_is_ignored_with_one_note` (`config_layers.rs`); HUD: `h14_34_view_with_the_default_style_renders_compact` |
+| #35 | launcher: `h14_35_user_verbose_style_is_written_to_view_json` (`launcher.rs`); HUD: `h14_35_view_with_the_verbose_style_renders_two_rows` |
+
+The style reader (AU1; a `statusline` other than `compact` or `verbose` in `overrides.json` is ignored) has `style_from_the_overrides_then_the_view_then_the_default` and, on the binary, `statusline_style_from_the_overrides_then_the_view`.
+
+Public interface (HUD-10, HUD-11 and HUD-12 build on it):
+
+- `statusline::data::collect(stdin: Box<dyn Read + Send + 'static>, session_dir: &Path, paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, deadline: Instant) -> HudData`
+- `statusline::data::fetch_cap(status_age_s: Option<u64>, latency_ms: Option<u64>, left: Duration) -> Duration`
+- `statusline::data::width_source(env: &dyn Fn(&str) -> Option<OsString>, tty: &dyn Fn() -> Option<u16>) -> (&'static str, u16)` (`tty`, `COLUMNS` or `default`)
+- `statusline::data::log_width(dir: &SessionDir, source: &str, width: u16)`
+- `statusline::data::{CACHE_FILE, LOCK_FILE, WIDTH_FILE}` = `statusline.json`, `statusline.lock`, `statusline.width`
+- `statusline::style(overrides: &Overrides, view: Option<&SessionView>) -> Style`; `statusline::BOUND` = 3 s
+- `statusline::{short, pct, trimmed}` are unchanged.
+- Cache `statusline.json`: `{"v":2,"at":<s>,"outcome":"ok|offline|suspended|ended","retry_at":<s>,"latency_ms":<ms>,"status":{"at","model","profile","work","used","window","denominator","threshold":<n>|"off","tokens_in","tokens_out","spend_usd","spend_notional","requests_total","requests_priced","cache_read_share","passthrough","team_session"},"git":{"at","cwd","branch","ahead","behind","linked","worktree"}}`. A field with no value is absent. `model` is the display name (no leading `claude-`).
+- Lock `statusline.lock`: `{"tried_at":<s>,"retry_after":5}`.
+- Environment read through `env`: `ZYGO_WORK`, `ZYGO_URL`. The entry reads `ZYGO_SESSION_DIR`; `RenderEnv::from_env` reads the render variables.
+- Seams, feature `test-hooks`, read through `env`: `ZYGO_TEST_NOW` (clock, Unix seconds), `ZYGO_TEST_STATUSLINE_BLOCK` (the fetch waits 10 s first), `ZYGO_TEST_FETCH_DELAY_MS`, `ZYGO_TEST_GIT_DELAY_MS`, `ZYGO_TEST_GIT_PANIC=1`, `ZYGO_TEST_GIT_BUDGET_MS` (git budget in place of 400 ms), `ZYGO_TEST_HUD_DUMP=<file>` (`{"stdin_keys":[…],"effort":<stdin value>,"env":{<name>:<value or null>}}`). `zygo-launch`: `ZYGO_TEST_REFRESH_INTERVAL` (from `LaunchCtx.env`). HUD-8: `ZYGO_TEST_RENDER_PANIC=1`.
+- Session log line (not behind the feature): `statusline: width source <tty|COLUMNS|default>, width <n>` in `session.log`.
+
+Design calls:
+
+1. **Hook entry.** `statusline_hud` is in `cmd/hook.rs`, as the contract says. `zygo_hooks::statusline::run` is removed. The silent panic hook is set in `run` before `guarded`, by the hook name, because `zygo-core/src/hook.rs` is not in the file list.
+2. **Clock seam.** `collect` has no clock parameter, so the clock is the `test-hooks` variable `ZYGO_TEST_NOW`, read through `env`. No test sleeps to move time. Ages of temp files and of a lock with no body use the real file time.
+3. **Cache `status` part (H-C4).** It holds the render inputs, not the reply: `window` (printed), `denominator` (D of AU17, only with a known window), `threshold` (the number only when it is below the window, or `off`). `collect` gives `render` a `SessionStatus` built from this part on every call, also right after a fetch, so a fresh render and a cached render are the same. The status `work` is in the part: AU11 makes it the fallback of `ZYGO_WORK`, and H§7.7 does not list it.
+4. **`ended` drops the status part** from the cache (AU20: the cached data is ignored). `suspended` and `offline` keep it.
+5. **Due rule.** A part is due when it is missing, in the future, or 30 s old. The status part is not due before `retry_at`; a `retry_at` more than 300 s ahead is a clock change and is ignored.
+6. **Lease.** `create_new`, then the body. A lock is dead when its `tried_at` is more than `retry_after` (at most 60 s) old, or more than that in the future. A lock with no readable body (its holder is between the create and the write) is dead when the file is older than 5 s. A dead lock is removed and taken once. Two runs that both find a dead lock can both take it; the result is two fetches and two atomic cache writes, which is accepted. A run without the lease that has no cache shows `offline` for that one call.
+7. **Lease file write is not temp-then-rename**, because H§7.7 requires `create_new`. The cache, the dump and `statusline.width` are written to `<name>.<pid>.<n>.tmp`, then renamed.
+8. **Deadline.** The workers end 50 ms before `deadline` (time for the cache write). The entry passes `start + 3 s`. The git worker gets 400 ms; the hook waits up to 300 ms more for its answer (kill and reap of a slow `rev-list`). The trimmed query has a 1 s cap.
+9. **Stdin.** The reader thread parses when a chunk holds `}` (an object can end only there), and at end of file or 64 KiB. A value that is not an object, an object larger than 64 KiB, and a value not in at 200 ms are empty input. PH11 main case: the hook does not wait for the discard thread.
+10. **`effort`**: a string, or an object with a string `level`. Any other shape drops the effort part (PH5 fallback).
+11. **Hook's own cwd.** `collect` uses `std::env::current_dir()` when stdin names no directory (H§7.1). This is the one process value that the library reads; the signature has no parameter for it.
+12. **Failure outcomes.** `401` with `zygo_session_unknown` or `zygo_token_invalid` → `ended`; code `zygo_session_suspended` → `suspended`; every other failure, a timeout and a worker panic → `offline`. No error text is kept or printed (H-C6).
+13. **Width log.** One line for each change of the pair (source, width), not one for each run: a status line runs many times per minute. The last pair is in `statusline.width`. The file is `session.log` (`SessionDir::log`); the contract writes `$ZYGO_SESSION_DIR/log`.
+14. **Seam `ZYGO_TEST_GIT_BUDGET_MS`** (not in the contract): tests with the real git on a loaded machine cannot depend on the 150 ms of `rev-parse`.
+15. **Fake `git` tests are `cfg(unix)`** (also the slow `rev-list` case): Windows starts only `git.exe`, so a script named `git` is not run there. Windows runs the real-git cases.
+16. **H§14 #26 "a renamed file counts once"** has no count to test since OP14; the test checks that a staged rename changes nothing and that no `●` shows.
+17. **H§14 #25 control run.** The marker test first runs plain `git status`, `checkout` and `fetch` and requires the markers `fsmonitor`, `clean`, `reference-transaction`, `post-checkout` and `uploadpack`; then it removes them and renders. This closes the open no-marker check of H§7.5 for the current calls (git 2.55 on this machine).
+18. **Subprocess tests** set `ZYGO_NERD_FONT=1`, `COLUMNS=200` and, on unix, start the child with `setsid`, so that `/dev/tty` of a developer terminal does not set the width.
+19. **Workspace phase** (H§7.6) is not in this node: `HudData.phase` is `None`.

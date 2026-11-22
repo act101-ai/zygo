@@ -374,3 +374,381 @@ fn latest_compares_by_precedence() {
     assert_eq!(f.requests(), vec!["/latest/download/VERSION", "/latest/download/VERSION"]);
     assert_unchanged(&s, &before);
 }
+
+// ---- the update check at agent start (auto-update design) ----
+
+mod start {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::ffi::OsString;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use zygo::cmd::update::{start_check, PromptIo, StartOutcome};
+    use zygo_config::Config;
+    use zygo_core::paths::Paths;
+
+    /// A terminal that is not one: the TTY flag, the answers to give, and what was asked and said.
+    struct FakeIo {
+        tty: bool,
+        answers: VecDeque<&'static str>,
+        asked: Vec<String>,
+        said: Vec<String>,
+    }
+
+    impl FakeIo {
+        fn tty(answers: &[&'static str]) -> FakeIo {
+            FakeIo { tty: true, answers: answers.iter().copied().collect(), asked: Vec::new(), said: Vec::new() }
+        }
+    }
+
+    impl PromptIo for FakeIo {
+        fn is_tty(&self) -> bool {
+            self.tty
+        }
+        fn ask(&mut self, prompt: &str) -> std::io::Result<String> {
+            self.asked.push(prompt.to_string());
+            Ok(format!("{}\n", self.answers.pop_front().unwrap_or("")))
+        }
+        fn say(&mut self, line: &str) {
+            self.said.push(line.to_string());
+        }
+    }
+
+    /// A temp home: the zygo paths under it and a file that stands for the binary (never the test binary).
+    struct Home {
+        dir: tempfile::TempDir,
+        paths: Paths,
+        exe: PathBuf,
+    }
+
+    const OLD: &[u8] = b"old-binary";
+
+    fn home() -> Home {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let data = dir.path().join("data");
+        let paths = Paths {
+            config_file: dir.path().join("config.toml"),
+            sessions_dir: cache.join("sessions"),
+            marketplaces_dir: cache.join("marketplaces"),
+            plugin_store: data.join("plugins"),
+            approvals_file: data.join("approvals.toml"),
+            usage_db: data.join("usage.db"),
+            cache_dir: cache,
+            data_dir: data,
+        };
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let exe = bin.join(if cfg!(windows) { "zygo.exe" } else { "zygo" });
+        std::fs::write(&exe, OLD).unwrap();
+        Home { dir, paths, exe }
+    }
+
+    fn check_cfg(h: &Home, cfg: &Config, base: &str, args: &[&str], env: &[(&str, &str)], io: &mut FakeIo) -> StartOutcome {
+        let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+        let env = |k: &str| {
+            if k == "ZYGO_RELEASE_BASE" {
+                return Some(OsString::from(base));
+            }
+            env.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(v))
+        };
+        start_check(&h.paths, cfg, &args, &env, &h.exe, io)
+    }
+
+    fn check(h: &Home, base: &str, io: &mut FakeIo) -> StartOutcome {
+        check_cfg(h, &Config::default(), base, &[], &[], io)
+    }
+
+    fn prompt(new: &str) -> String {
+        format!("zygo {new} is available (you have {CUR}). Update now? [y/N/s]")
+    }
+
+    fn cache_file(h: &Home) -> PathBuf {
+        h.paths.cache_dir.join("update.json")
+    }
+
+    /// Moves the time of the last check 25 h back; every other field of `update.json` stays.
+    fn age_cache(h: &Home) {
+        let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(cache_file(h)).unwrap()).unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        v["checked_at"] = serde_json::json!(now - 25 * 60 * 60);
+        std::fs::write(cache_file(h), serde_json::to_vec(&v).unwrap()).unwrap();
+    }
+
+    fn assert_not_installed(h: &Home) {
+        assert_eq!(std::fs::read(&h.exe).unwrap(), OLD, "binary changed");
+        no_temp(h.exe.parent().unwrap());
+    }
+
+    /// A live session directory under `h`: `token`, and `pid` locked while the returned file is open.
+    fn live_session(h: &Home, name: &str) -> std::fs::File {
+        let d = h.paths.sessions_dir.join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("token"), "t").unwrap();
+        let pid = std::fs::File::create(d.join("pid")).unwrap();
+        fs4::FileExt::try_lock(&pid).unwrap();
+        pid
+    }
+
+    fn sessions_line(n: usize) -> String {
+        format!("{n} zygo sessions are running; they keep the old version until you restart them (zygo down / zygo up)")
+    }
+
+    #[test] // auto-update #1
+    fn a_newer_version_on_a_tty_prompts() {
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let h = home();
+        let mut io = FakeIo::tty(&[""]);
+        assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue);
+        assert_eq!(io.asked, vec![prompt(NEW)]);
+        assert!(io.said.is_empty(), "{:?}", io.said);
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+
+        // The same or an older release does not prompt.
+        for v in [CUR, "0.0.1"] {
+            let f = Fixture::start(vec![version_file(v)]);
+            let h = home();
+            let mut io = FakeIo::tty(&[]);
+            assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue);
+            assert!(io.asked.is_empty() && io.said.is_empty(), "{v}: {:?} {:?}", io.asked, io.said);
+            assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        }
+    }
+
+    #[test] // auto-update #2: in process, the binary to replace is a temp file
+    fn yes_installs_prints_the_relaunch_line_and_exits_0() {
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, b"fixture-binary"));
+        let f = Fixture::start(files);
+        for answer in ["y", "Y", "yes"] {
+            let h = home();
+            let mut io = FakeIo::tty(&[answer]);
+            // Exit, not Continue: the caller returns the code and does not start the agent.
+            assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Exit { code: 0 }, "{answer}");
+            assert_eq!(io.asked, vec![prompt(NEW)]);
+            assert_eq!(io.said, vec![format!("updated to {NEW}; relaunch zygo")]);
+            assert_eq!(std::fs::read(&h.exe).unwrap(), b"fixture-binary");
+            no_temp(h.exe.parent().unwrap());
+        }
+        let r = f.requests();
+        assert_eq!(r[0], "/latest/download/VERSION");
+        assert!(r.contains(&format!("/download/v{NEW}/SHA256SUMS")) && r.contains(&format!("/download/v{NEW}/{}", asset())), "{r:?}");
+    }
+
+    #[test] // auto-update #2: a failed install changes nothing, prints the error and does not start the agent
+    fn yes_with_a_bad_checksum_installs_nothing() {
+        let f = Fixture::start(vec![
+            version_file(NEW),
+            (format!("/download/v{NEW}/SHA256SUMS"), sums(&asset(), b"other-bytes").into_bytes()),
+            (format!("/download/v{NEW}/{}", asset()), b"fixture-binary".to_vec()),
+        ]);
+        let h = home();
+        let mut io = FakeIo::tty(&["y"]);
+        assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Exit { code: 1 });
+        assert_eq!(io.said, vec![format!("zygo update: checksum mismatch for {}", asset())]);
+        assert_not_installed(&h);
+    }
+
+    #[test] // auto-update #3
+    fn no_launches() {
+        let f = Fixture::start(vec![version_file(NEW)]);
+        for answer in ["", "n", "N", "no", "x", "yy"] {
+            let h = home();
+            let mut io = FakeIo::tty(&[answer]);
+            assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue, "{answer:?}");
+            assert_eq!(io.asked, vec![prompt(NEW)]);
+            assert!(io.said.is_empty(), "{:?}", io.said);
+            assert_not_installed(&h);
+        }
+        assert!(f.requests().iter().all(|p| p == "/latest/download/VERSION"), "{:?}", f.requests());
+
+        // N asks again after 24 h.
+        let h = home();
+        let mut io = FakeIo::tty(&["n", "n"]);
+        check(&h, &f.base(), &mut io);
+        age_cache(&h);
+        assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue);
+        assert_eq!(io.asked, vec![prompt(NEW), prompt(NEW)]);
+    }
+
+    #[test] // auto-update #4
+    fn skip_is_kept_until_a_newer_release() {
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let h = home();
+        let mut io = FakeIo::tty(&["s"]);
+        assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue);
+        assert_eq!(io.asked, vec![prompt(NEW)]);
+        assert_not_installed(&h);
+        let cache: serde_json::Value = serde_json::from_slice(&std::fs::read(cache_file(&h)).unwrap()).unwrap();
+        assert_eq!(cache["skip"], NEW, "{cache}");
+
+        // The same version, 25 h later: one request, no prompt.
+        age_cache(&h);
+        let mut io = FakeIo::tty(&[]);
+        assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue);
+        assert!(io.asked.is_empty() && io.said.is_empty(), "{:?} {:?}", io.asked, io.said);
+        assert_eq!(f.requests().len(), 2, "{:?}", f.requests());
+
+        // A newer release prompts.
+        age_cache(&h);
+        let newer = Fixture::start(vec![version_file("9.9.10")]);
+        let mut io = FakeIo::tty(&[""]);
+        assert_eq!(check(&h, &newer.base(), &mut io), StartOutcome::Continue);
+        assert_eq!(io.asked, vec![prompt("9.9.10")]);
+    }
+
+    #[test] // auto-update #5
+    fn skipped_cases_give_no_prompt_and_no_request() {
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let off = {
+            let mut c = Config::default();
+            c.update.check = false;
+            c
+        };
+        let on = Config::default();
+        type Case<'a> = (&'a str, bool, &'a Config, &'a [&'a str], &'a [(&'a str, &'a str)]);
+        let cases: [Case; 8] = [
+            ("non-TTY", false, &on, &[], &[]),
+            ("-p", true, &on, &["-p", "hi"], &[]),
+            ("--print", true, &on, &["--model", "x", "--print"], &[]),
+            ("ZYGO_SESSION", true, &on, &[], &[("ZYGO_SESSION", "01ABC")]),
+            ("ZYGO_WORKSPACE", true, &on, &[], &[("ZYGO_WORKSPACE", "w1")]),
+            ("[update] check = false", true, &off, &[], &[]),
+            ("ZYGO_NO_UPDATE_CHECK=1", true, &on, &[], &[("ZYGO_NO_UPDATE_CHECK", "1")]),
+            ("both opt-outs", true, &off, &[], &[("ZYGO_NO_UPDATE_CHECK", "1")]),
+        ];
+        for (name, tty, cfg, args, env) in cases {
+            let h = home();
+            let mut io = FakeIo { tty, ..FakeIo::tty(&["y"]) };
+            assert_eq!(check_cfg(&h, cfg, &f.base(), args, env, &mut io), StartOutcome::Continue, "{name}");
+            assert!(io.asked.is_empty() && io.said.is_empty(), "{name}: {:?} {:?}", io.asked, io.said);
+            assert!(f.requests().is_empty(), "{name}: {:?}", f.requests());
+            assert!(!cache_file(&h).exists(), "{name}: a skipped check wrote update.json");
+            assert_not_installed(&h);
+        }
+
+        // A check less than 24 h old: the first call asks (one request), the second does nothing.
+        let h = home();
+        let mut io = FakeIo::tty(&["n", "y"]);
+        assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue);
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        assert_eq!(check(&h, &f.base(), &mut io), StartOutcome::Continue);
+        assert_eq!(io.asked, vec![prompt(NEW)]);
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        assert_not_installed(&h);
+    }
+
+    #[test] // auto-update #6
+    fn an_unreachable_server_is_silent_and_bounded() {
+        // Nothing listens: the connection is refused.
+        let closed = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        // Listens and never accepts: the connection opens (backlog) and no reply comes.
+        let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+        let stalled = silent.local_addr().unwrap().port();
+        for port in [closed, stalled] {
+            let h = home();
+            let mut io = FakeIo::tty(&["y"]);
+            let t = Instant::now();
+            let got = check(&h, &format!("http://127.0.0.1:{port}"), &mut io);
+            let took = t.elapsed();
+            assert_eq!(got, StartOutcome::Continue);
+            // The limit is 2 s for the request; the margin covers the scheduler of a loaded test host.
+            assert!(took < Duration::from_millis(2500), "{took:?}");
+            assert!(io.asked.is_empty() && io.said.is_empty(), "{:?} {:?}", io.asked, io.said);
+            assert_not_installed(&h);
+
+            // The failed check counts as the check of these 24 h: the next launch does not wait again.
+            let t = Instant::now();
+            assert_eq!(check(&h, &format!("http://127.0.0.1:{port}"), &mut io), StartOutcome::Continue);
+            assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+        }
+        drop(silent);
+    }
+
+    #[test] // auto-update #7; the Windows branch runs on the windows-latest CI job
+    fn other_live_sessions_add_the_line() {
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, b"fixture-binary"));
+        let f = Fixture::start(files);
+        let h = home();
+        let _a = live_session(&h, "01A");
+        let _b = live_session(&h, "01B");
+        // Not live: no lock on `pid`.
+        let dead = h.paths.sessions_dir.join("01C");
+        std::fs::create_dir_all(&dead).unwrap();
+        std::fs::write(dead.join("token"), "t").unwrap();
+        std::fs::write(dead.join("pid"), "1").unwrap();
+
+        let mut io = FakeIo::tty(&["y"]);
+        let got = check(&h, &f.base(), &mut io);
+        assert_eq!(io.said[0], sessions_line(2));
+        if cfg!(windows) {
+            // The install is deferred: no prompt, the launch continues.
+            assert_eq!(got, StartOutcome::Continue);
+            assert_eq!(io.said.len(), 1, "{:?}", io.said);
+            assert!(io.asked.is_empty(), "{:?}", io.asked);
+            assert_not_installed(&h);
+            assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        } else {
+            assert_eq!(got, StartOutcome::Exit { code: 0 });
+            assert_eq!(io.asked, vec![prompt(NEW)]);
+            assert_eq!(io.said, vec![sessions_line(2), format!("updated to {NEW}; relaunch zygo")]);
+            assert_eq!(std::fs::read(&h.exe).unwrap(), b"fixture-binary");
+        }
+
+        // No live session: no line.
+        let h = home();
+        let mut io = FakeIo::tty(&["n"]);
+        check(&h, &f.base(), &mut io);
+        assert!(io.said.is_empty(), "{:?}", io.said);
+        assert_eq!(io.asked, vec![prompt(NEW)]);
+        drop(h.dir);
+    }
+
+    /// `zygo <agent>` with `ZYGO_TEST_ASSUME_TTY=1` and `y` on stdin: the dispatch runs the check before the launch.
+    /// The binary replaced is the copy in the temp dir. `PATH` holds no agent, so exit 0 proves no launch was tried.
+    fn dispatch_installs_and_does_not_launch(agent: &str) {
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, b"fixture-binary"));
+        let f = Fixture::start(files);
+        let s = setup();
+        let empty = s.dir.path().join("no-agents");
+        std::fs::create_dir(&empty).unwrap();
+        let mut cmd = Command::new(&s.copy);
+        cmd.arg(agent)
+            .env("ZYGO_RELEASE_BASE", f.base())
+            .env("ZYGO_TEST_ASSUME_TTY", "1")
+            .env("HOME", s.dir.path())
+            .env("LOCALAPPDATA", s.dir.path())
+            .env("APPDATA", s.dir.path())
+            .env("PATH", &empty)
+            .env_remove("ZYGO_SESSION")
+            .env_remove("ZYGO_WORKSPACE")
+            .env_remove("ZYGO_NO_UPDATE_CHECK")
+            .env_remove("ZYGO_CONFIG")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let g = COPY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut child = cmd.spawn().unwrap();
+        drop(g);
+        child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+        let o = child.wait_with_output().unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
+        assert_eq!(out(&o), "");
+        assert_eq!(std::fs::read(&s.copy).unwrap(), b"fixture-binary");
+    }
+
+    #[test]
+    fn zygo_claude_runs_the_check_before_the_launch() {
+        dispatch_installs_and_does_not_launch("claude");
+    }
+
+    #[test]
+    fn zygo_opencode_runs_the_check_before_the_launch() {
+        dispatch_installs_and_does_not_launch("opencode");
+    }
+}

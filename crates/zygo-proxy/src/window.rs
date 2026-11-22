@@ -9,7 +9,7 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
-use zygo_config::ModelRow;
+use zygo_config::{Facts, ModelRow};
 use zygo_core::Agent;
 
 use crate::errors::ZygoError;
@@ -49,6 +49,32 @@ pub fn one_m(suffix: bool, headers: &HeaderMap) -> bool {
             .any(|t| t.trim().starts_with(ONE_M_BETA))
 }
 
+/// The agent's assumed window for one request (§10.2.2, AU29): 1M for a `[1m]` request, else `agent_window(row)`.
+pub(crate) fn agent_window_for(suffix: bool, headers: &HeaderMap, row: &ModelRow) -> u64 {
+    if one_m(suffix, headers) { ONE_M_WINDOW } else { agent_window(row) }
+}
+
+/// What the status needs of a served row (AU29): its id, its soft window, its context window and the agent window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestWindows {
+    pub(crate) id: String,
+    pub(crate) soft: Option<u64>,
+    pub(crate) context_window: Option<u64>,
+    pub(crate) agent_window: u64,
+}
+
+impl RequestWindows {
+    pub(crate) fn of(row: &ModelRow, agent_window: u64) -> RequestWindows {
+        RequestWindows { id: row.id.clone(), soft: row.soft_context_window, context_window: context_window(row), agent_window }
+    }
+    /// A row holding the values the window functions read: `id` (`agent_window`), `soft_context_window` and
+    /// `facts.context_window` (`soft_threshold`, `effective_for`, `context_window`); the rest is default.
+    pub(crate) fn view(&self) -> ModelRow {
+        let facts = self.context_window.map(|context_window| Facts { context_window, ..Default::default() });
+        ModelRow { id: self.id.clone(), soft_context_window: self.soft, facts, ..Default::default() }
+    }
+}
+
 /// 90 % of `cw` (floor) when the agent assumes a larger window (§10.2.1).
 pub fn safety(cw: u64, agent_window: u64) -> Option<u64> {
     (agent_window > cw).then(|| (u128::from(cw) * 9 / 10) as u64)
@@ -73,7 +99,7 @@ pub fn compact_tool(name: &str) -> bool {
 }
 
 /// Trigger 1's threshold: the override, else `soft`; none when `off`; then at most `safety` (§10.2.1).
-fn soft_threshold(compact: Option<WindowArg>, row: &ModelRow, safety: Option<u64>) -> Option<u64> {
+pub fn soft_threshold(compact: Option<WindowArg>, row: &ModelRow, safety: Option<u64>) -> Option<u64> {
     let t = match compact {
         Some(WindowArg::Tokens(n)) => Some(n),
         Some(WindowArg::Off) => None,
@@ -130,7 +156,7 @@ impl Stage for WindowStage {
             Some("message_delta") => {
                 let Some(row) = ctx.cfg.config.catalog.get(&ctx.resolved.model) else { return };
                 let Some(cw) = context_window(row) else { return };
-                let aw = if one_m(ctx.resolved.one_m, &ctx.headers) { ONE_M_WINDOW } else { agent_window(row) };
+                let aw = agent_window_for(ctx.resolved.one_m, &ctx.headers, row);
                 let s = safety(cw, aw);
                 let p = prompt(ctx.usage);
                 let main = ctx.headers.get("x-claude-code-request-class").is_some_and(|c| c == "main");
@@ -265,4 +291,23 @@ pub fn rewrite_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec<u8>> {
         out.replace_range(a..b, &text);
     }
     Some(out.into_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, soft: Option<u64>, cw: u64) -> ModelRow {
+        ModelRow { id: id.into(), soft_context_window: soft, facts: Some(Facts { context_window: cw, ..Default::default() }), ..Default::default() }
+    }
+
+    #[test]
+    fn view_keeps_the_agent_window_of_the_row() { // HUD-5 round 2 (F4): `view()` is a row `agent_window` reads right
+        for r in [row("claude-t-1", Some(150_000), 200_000), row("gpt-t-1", None, 400_000), row("claude-nf", None, 0)] {
+            let w = RequestWindows::of(&r, agent_window(&r));
+            assert_eq!(agent_window(&w.view()), w.agent_window, "{}", r.id);
+            assert_eq!((w.view().soft_context_window, context_window(&w.view())), (r.soft_context_window, context_window(&r)), "{}", r.id);
+        }
+        assert_eq!(agent_window(&RequestWindows::of(&row("claude-t-1", None, 200_000), 200_000).view()), 200_000);
+    }
 }

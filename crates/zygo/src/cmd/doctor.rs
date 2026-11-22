@@ -13,6 +13,7 @@ use zygo_core::exit::ExitCode;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
+use zygo_hooks::statusline::render::{glyphs, icon_set, IconSet};
 use zygo_plugins::check::esc;
 use zygo_plugins::select::selection;
 use zygo_plugins::snapshot::missing_commands;
@@ -210,9 +211,23 @@ pub fn report(env: &Env, merged: &Merged) -> Vec<String> {
         Some(url) => format!("server: {}", esc(url)),
     });
     plugin_lines(env, merged, &mut out);
+    out.push(icon_line(icon_set(env.env)));
     // `describe` prints the repo path as is; every line of it is escaped (D10).
     out.push(esc(&Policy::resolve(merged, env.repo.unwrap_or(Path::new(""))).describe()));
     out
+}
+
+/// The icon test line (AU2, H§14 #32): the icon set that the status line uses in this environment (`active`), the
+/// `ZYGO_NERD_FONT` value that selects the other set, and every Nerd glyph of H§6.5 in the order of its table. The
+/// glyphs are the Nerd ones with each set: a user who sees them all can use the Nerd set, and a user who sees boxes
+/// can select the plain set.
+fn icon_line(active: IconSet) -> String {
+    let test: Vec<&str> = glyphs(IconSet::Nerd).iter().map(|(_, glyph)| *glyph).collect();
+    let (name, other) = match active {
+        IconSet::Nerd => ("nerd", "ZYGO_NERD_FONT=0 selects the plain set"),
+        IconSet::Plain => ("plain", "ZYGO_NERD_FONT=1 selects the nerd set"),
+    };
+    format!("icons: {name} set ({other}); test: {}", test.join(" "))
 }
 
 /// §15.3 last bullet and §17: the plugin store, the selected plugins, and the same plugins in Claude Code's own config.

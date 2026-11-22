@@ -28,6 +28,8 @@ pub struct Config {
     pub limits: LimitsConfig,
     pub work: WorkConfig,
     pub usage: UsageConfig,
+    pub statusline: StatuslineConfig,
+    pub update: UpdateConfig,
     #[serde(rename = "marketplace")]
     pub marketplaces: Vec<Marketplace>,
     pub plugins: PluginsConfig,
@@ -54,6 +56,8 @@ impl Default for Config {
             limits: LimitsConfig::default(),
             work: WorkConfig::default(),
             usage: UsageConfig::default(),
+            statusline: StatuslineConfig::default(),
+            update: UpdateConfig::default(),
             marketplaces: Vec::new(),
             plugins: PluginsConfig::default(),
             redaction: RedactionConfig::default(),
@@ -213,13 +217,80 @@ impl Default for Provider {
     }
 }
 
+/// USD per million tokens (§6.3). `config check` refuses a rate that is negative or not finite (AU32).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prices {
     pub input: f64,
     pub output: f64,
     pub cache_read: f64,
+    /// The rate of a cache write with no 5-minute rate of its own; for Anthropic, the 1-hour rate (AU33).
     pub cache_write: f64,
+    /// The rate of a 5-minute cache write; absent = `cache_write` (AU33).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_5m: Option<f64>,
+    /// The rates of a request whose prompt is longer than `long_context.above` (H§7.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub long_context: Option<LongContextPrices>,
+}
+
+/// The price tier of a long prompt: every rate of the request comes from here when
+/// input + cache read + cache write tokens > `above` (H§7.3).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LongContextPrices {
+    /// Prompt tokens; `config check` refuses 0 (AU32).
+    pub above: u64,
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: f64,
+    /// Absent = this tier's `cache_write`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_5m: Option<f64>,
+}
+
+/// The token counts of one request, as `Prices::cost` reads them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    /// Input tokens that are not a cache read or a cache write.
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    /// All cache-write tokens, of every TTL.
+    pub cache_write: u64,
+    /// The 5-minute part of `cache_write`, when the provider reports the split (AU33).
+    pub cache_write_5m: Option<u64>,
+    /// The 1-hour part of `cache_write`, when the provider reports the split (AU33).
+    pub cache_write_1h: Option<u64>,
+}
+
+impl Prices {
+    /// The list price of one request in USD (AU5, H§7.3 step 1); `None` when the result is not finite (AU32).
+    ///
+    /// All rates come from `long_context` when the prompt (input + cache read + cache write) is longer than
+    /// its `above`. 5-minute writes use `cache_write_5m`, else `cache_write`; 1-hour writes and writes with
+    /// no TTL use `cache_write` (AU33). A split larger than `cache_write` is priced, and counted in the
+    /// prompt, as reported.
+    pub fn cost(&self, u: &TokenUsage) -> Option<f64> {
+        let write_5m = u.cache_write_5m.unwrap_or(0);
+        let write_1h = u.cache_write_1h.unwrap_or(0);
+        let split = write_5m.saturating_add(write_1h);
+        let written = u.cache_write.max(split);
+        let prompt = u.input.saturating_add(u.cache_read).saturating_add(written);
+        let (input, output, cache_read, cache_write, cache_write_5m) = match &self.long_context {
+            Some(l) if prompt > l.above => (l.input, l.output, l.cache_read, l.cache_write, l.cache_write_5m),
+            _ => (self.input, self.output, self.cache_read, self.cache_write, self.cache_write_5m),
+        };
+        let per_mtok = u.input as f64 * input
+            + u.output as f64 * output
+            + u.cache_read as f64 * cache_read
+            + write_5m as f64 * cache_write_5m.unwrap_or(cache_write)
+            + write_1h as f64 * cache_write
+            + (written - split) as f64 * cache_write;
+        let usd = per_mtok / 1e6;
+        usd.is_finite().then_some(usd)
+    }
 }
 
 /// §7.5; open for later keys (unknown keys are a `config check` warning).
@@ -546,6 +617,37 @@ pub struct UsageConfig {
 impl Default for UsageConfig {
     fn default() -> Self {
         UsageConfig { retain_days: 90 }
+    }
+}
+
+/// `[statusline]` (statusline HUD design §8, OP7, AU1). User config only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StatuslineConfig {
+    /// One of [`STATUSLINE_STYLES`]; `config check` refuses any other value.
+    pub style: String,
+}
+
+/// The values of `statusline.style`; the first is the default.
+pub const STATUSLINE_STYLES: [&str; 2] = ["compact", "verbose"];
+
+impl Default for StatuslineConfig {
+    fn default() -> Self {
+        StatuslineConfig { style: STATUSLINE_STYLES[0].into() }
+    }
+}
+
+/// `[update]` (auto-update design, "Opt-out"). User config only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// `false` turns the update check off.
+    pub check: bool,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        UpdateConfig { check: true }
     }
 }
 
