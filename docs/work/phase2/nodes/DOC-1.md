@@ -38,7 +38,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   - The status line shows the soft or override threshold as `⇣600k`, and `⇣off` for an override of `off`; a safety-only window shows no `⇣` (HUD design H§6.1 AU28). *(2026-11-22, HUD design)*
   ```
 
-- [ ] 5. H§9 row "§10.2.2, N15 note, last sentence" → base §10.2.2, the note `*(Note 2026-11-19, N15 planning: …)*`. Replace its last sentence `The status `effective_window` is §10.2.1 `effective` for the main role's model, safety window included.` with:
+- [x] 5. H§9 row "§10.2.2, N15 note, last sentence" → base §10.2.2, the note `*(Note 2026-11-19, N15 planning: …)*`. Replace its last sentence `The status `effective_window` is §10.2.1 `effective` for the main role's model, safety window included.` with:
 
   ```text
   The status `effective_window` is §10.2.1 `effective`, safety window included, computed for the model of the last main-loop request, else the main role's model (HUD design AU29, 2026-11-22).

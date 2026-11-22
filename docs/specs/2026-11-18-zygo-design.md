@@ -444,7 +444,7 @@ Claude Code sizes a role name by the picker's `behavesAs` (§8.5) or, without on
 
 Common conditions for both triggers: Claude Code session (A-16 row); the served model has `context_window`; a streamed 2xx response on `/anthropic/v1/messages`; not a compaction request.
 
-*(Note 2026-11-19, N15 planning: the rewrite replaces only the three numbers in the received line; a field the object lacks is inserted after its `{`; a line whose edited object repeats a key is not rewritten. Codes are recorded only for a rewritten line, at most once per trigger per response, in the order `context_safety`, `context_signal`, `context_compact`. Only an SSE upstream response is armed: a translated non-SSE body sent to the client as SSE is not rewritten. The status `effective_window` is §10.2.1 `effective` for the main role's model, safety window included.)*
+*(Note 2026-11-19, N15 planning: the rewrite replaces only the three numbers in the received line; a field the object lacks is inserted after its `{`; a line whose edited object repeats a key is not rewritten. Codes are recorded only for a rewritten line, at most once per trigger per response, in the order `context_safety`, `context_signal`, `context_compact`. Only an SSE upstream response is armed: a translated non-SSE body sent to the client as SSE is not rewritten. The status `effective_window` is §10.2.1 `effective`, safety window included, computed for the model of the last main-loop request, else the main role's model (HUD design AU29, 2026-11-22).)*
 
 #### 10.2.3 Triggers
 
