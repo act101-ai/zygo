@@ -20,7 +20,7 @@ Sources checked for the texts below: H§6.1 (AU2, AU14, AU26, AU28, AU29, AU33),
   `zygo hook statusline`: the status line is the HUD of `docs/specs/2026-11-21-statusline-hud-design.md`. It reads `GET /v1/zygo/sessions/{id}/status` (cached 30 s in the session directory) and the session's trimmed bytes from the local usage store, opened read-only; the whole run has a 3 s deadline. *(2026-11-22, HUD design)* *(Note 2026-11-19, N38, P-N28-1: on Claude Code 2.1.328 the status line is shown (`zygo ◇ … ◇ compact 777k`, `fixtures/claude-code/live/p-n28-1-pane.txt`) and its text is in no request sent upstream (C7 holds).)*
   ```
 
-- [ ] 2. H§9 row "§17, command table" → base §17 command table. Insert this row after the `zygo usage` row:
+- [x] 2. H§9 row "§17, command table" → base §17 command table. Insert this row after the `zygo usage` row:
 
   ```text
   | `zygo statusline [compact\|verbose] [--save]` | Status line style (HUD design H§8): a session change; `--save` also writes `[statusline] style` to user config; with no argument, prints the style and its source. *(2026-11-22, HUD design)* |

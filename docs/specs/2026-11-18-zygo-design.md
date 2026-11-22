@@ -794,6 +794,7 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `zygo profile list\|show\|use` | §11. |
 | `zygo work [<id>\|clear]`, `zygo work report` | §13. |
 | `zygo usage` | §10.7. |
+| `zygo statusline [compact\|verbose] [--save]` | Status line style (HUD design H§8): a session change; `--save` also writes `[statusline] style` to user config; with no argument, prints the style and its source. *(2026-11-22, HUD design)* |
 | `zygo marketplace add\|list\|update\|remove` | §15.8. |
 | `zygo plugins list\|sync\|enable\|disable\|approve`, `zygo plugin check <dir>` | §15.2, §15.3, §15.6, §15.7. |
 | `zygo keys set\|rm\|list <provider>` | §6.2. |
