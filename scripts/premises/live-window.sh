@@ -71,7 +71,7 @@ with open(sys.argv[1], "w") as f:
 PY
 live_exec python3 -I "$PREMISES_DIR/drive_stream.py" "$RUN/out.jsonl" "$RUN/msgs" -- \
   "$ZYGO_BIN" claude -- -p --max-turns 4 --input-format stream-json --output-format stream-json --verbose >/dev/null 2>"$RUN/err.txt" || true
-LIVE_VER=$(usage_version); LIVE_VER=${LIVE_VER:-$PIN_CC}
+LIVE_VER=$(usage_version); LIVE_VER=${LIVE_VER:-$LIVE_CC_VER}
 usage_rows "$FX/21-usage.json"
 v=$(python3 -I - "$RUN/usage.json" "$RUN/hooks" <<'PY'
 import json, os, sys

@@ -9,7 +9,7 @@ PIN_CC=$(sed -n 's/^Claude Code: *//p' "$REPO_DIR/docs/premises.md" | head -n 1)
 PIN_OC=$(sed -n 's/^OpenCode: *//p' "$REPO_DIR/docs/premises.md" | head -n 1)
 LIVE_KEYS=${LIVE_KEYS:-}
 LIVE_VARS=${LIVE_VARS:-}
-LIVE_VER=${LIVE_VER:-$PIN_CC}
+LIVE_VER=${LIVE_VER:-}   # set by pinned_agents (or a script's own check); empty prints "agent ?", never the pin
 LIVE_TIMEOUT=${LIVE_TIMEOUT:-}   # seconds; live_exec bounds its command by it when set
 LIVE_PIDS=""   # background processes a script starts itself (besides MOCK_PID and WEB_PID)
 

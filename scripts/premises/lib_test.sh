@@ -195,8 +195,8 @@ c=L11; prep $c caller; ERR=$T/$c.err; echo 'LIVE OLD' >"$T/keep-$c/results.txt"
 child $c 1 'result X1 pass one; result X2 pass two; exit 0'; run $c
 l11() {
   [ "$(cat "$T/keep-L11/results.txt")" = "LIVE OLD
-LIVE X1 pass (agent 2.1.328): one
-LIVE X2 pass (agent 2.1.328): two" ] || { why="results.txt: $(tr '\n' '|' <"$T/keep-L11/results.txt")"; return 1; }
+LIVE X1 pass (agent ?): one
+LIVE X2 pass (agent ?): two" ] || { why="results.txt: $(tr '\n' '|' <"$T/keep-L11/results.txt")"; return 1; }
   kept L11
 }
 res "L11 results.txt is not truncated by two result calls" 0 l11

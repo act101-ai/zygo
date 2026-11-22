@@ -20,6 +20,8 @@ pinned_agents
 FX="$REPO_DIR/fixtures/claude-code/live"
 mkdir -p "$FX"
 STRICT="$PREMISES_DIR/live/strict"
+# The version the claude-curl.sh stand-in reports (LIVE_PIN_CC): N14-S runs the stand-in, not the installed claude.
+STANDIN_CC=$PIN_CC
 WORK="$N2_SCRATCH/live-$$/work"
 mkdir -p "$WORK"
 
@@ -59,7 +61,7 @@ T
   mkdir -p "$RUN/bin"
   ln -sf "$PREMISES_DIR/live/claude-curl.sh" "$RUN/bin/claude"
   OLD_PATH=$TOOL_PATH; TOOL_PATH="$RUN/bin:$TOOL_PATH"
-  LIVE_KEYS="" LIVE_VARS="LIVE_PIN_CC=$PIN_CC LIVE_STRICT_DIR=$STRICT" run_zygo claude </dev/null >"$RUN/out.txt" 2>&1 || true
+  LIVE_KEYS="" LIVE_VARS="LIVE_PIN_CC=$STANDIN_CC LIVE_STRICT_DIR=$STRICT" run_zygo claude </dev/null >"$RUN/out.txt" 2>&1 || true
   TOOL_PATH=$OLD_PATH
   stop_mock
   # The rewritten schema of each probe file, by its marker, from the recorded requests.
@@ -147,7 +149,7 @@ for f in "$STRICT"/*.json; do
 done
 printf ']\n' >>"$WORK/strict.json"
 jq . "$WORK/strict.json" >"$FX/n14-strict.json"
-LIVE_VER=$PIN_CC
+LIVE_VER=$STANDIN_CC
 result N14-S "$n14s" "rewritten schema not 200: $(jq -c '[.[] | select(.rewritten_status != "200") | "\(.family)-\(.code)/\(.api)=\(.rewritten_status)"]' "$FX/n14-strict.json")"
 
 # N14-E

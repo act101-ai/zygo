@@ -1,0 +1,25 @@
+{
+  "version": "1.19.6",
+  "help_hits": [],
+  "help": {
+    "--help": {
+      "rc": 0,
+      "bytes": 4278
+    },
+    "debug --help": {
+      "rc": 0,
+      "bytes": 1367
+    }
+  },
+  "control": {
+    "username": "kept",
+    "zygoProbeUnknownKey": "dropped"
+  },
+  "keys": {
+    "statusLine": "dropped",
+    "statusline": "dropped",
+    "status_line": "dropped"
+  },
+  "help_measured": true,
+  "pass": true
+}

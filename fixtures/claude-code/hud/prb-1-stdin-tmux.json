@@ -1,0 +1,24 @@
+{
+  "phase": "verbose",
+  "keys": [
+    "session_id",
+    "transcript_path",
+    "cwd",
+    "scratchpad_dir",
+    "effort",
+    "model",
+    "workspace",
+    "version",
+    "output_style",
+    "cost",
+    "context_window",
+    "exceeds_200k_tokens",
+    "fast_mode",
+    "thinking"
+  ],
+  "effort": {
+    "level": "medium"
+  },
+  "stdin_end": "eof",
+  "runs": 26
+}
