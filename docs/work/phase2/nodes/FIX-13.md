@@ -92,3 +92,23 @@ The Files line is right: the fix and the new test change only `stub.rs` and `stu
 ```text
 **Acceptance:** `cargo test -p zygo-launch --locked --test stub_launch --test stub_member` → all pass, including a stub launch with `--session-id=U1` that writes `session-arg.json` naming `--session-id` with the id `U1`, and one with `--resume=U1` whose `SessionStart` input has `source` `resume` (both in `stub_launch`), and the existing split-form cases `session_argument_is_recorded`, `session_start_hook_gets_the_session_id` and `launched_member_calls_the_generated_session_start_hook_and_returns_the_exit_step` (in `stub_member`)
 ```
+
+## Round 2
+
+Diff review round 2 (the coordinator's decisions, the author's call). Each fix is test first, in `crates/zygo-launch/tests/stub_member.rs` (direct stub tests, through the helper `recorded`):
+
+- R1. `session_arg` reads only the tokens before the first `--`; tokens after it are prompt words, as in the launcher's `has_session_arg` (`zygo_workspace::args`). Test `session_argument_after_double_dash_is_a_prompt_word`: `-- --resume=x` gives no session argument and the `SessionStart` input has `source` `startup`. Red before the fix: `left: Some(("--resume", "x"))`, `right: None`.
+- R2. In the split form, a next token that starts with `-` is not an id, and the walk goes on. Test `split_session_flag_followed_by_a_flag_has_no_id`: `--resume --model x` gives none. Red before the fix: `left: Some(("--resume", "--model"))`, `right: None`.
+- R3. Test `one_token_session_argument_filters` for the D1 and D2 filters: `--session-id= --session-id=U2` gives `U2`; `-s=x` gives none; `--resume=a=b` gives `a=b`; a trailing `--resume` gives none. It passed with the filters in place; with each filter deleted in turn it failed at its line (empty value: `left: Some(("--session-id", ""))`; `-s`: `left: Some(("-s", "x"))`; id after the last `=`: `left: Some(("--resume", "b"))`; no next-token bound: the stub panics, exit 101).
+
+The check of the plan's commit step ("`git show --stat HEAD` names only the two files") was wrong: the commit also holds this node file with its ticked boxes, which are the resume state. D4's "`stub_member.rs` is not changed" is replaced by R1-R3.
+
+## Round 2 spec changes for the controller
+
+The Files line gains `crates/zygo-launch/tests/stub_member.rs` (the R1-R3 tests). Replace it with:
+
+```text
+**Files:** `crates/zygo-launch/tests/stub_agent/stub.rs`, `crates/zygo-launch/tests/stub_launch.rs`, `crates/zygo-launch/tests/stub_member.rs`
+```
+
+The Acceptance does not change: its command already runs `--test stub_member`, so "all pass" covers the R1-R3 tests.
