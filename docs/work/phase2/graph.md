@@ -79,7 +79,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | IN-PROGRESS | judgment | wt .worktrees/phase2/C1 |
 | X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | IN-PROGRESS | judgment | wt .worktrees/phase2/X1 |
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | TODO | implementation | — |
-| W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | TODO | judgment | — |
+| W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | PLANNED | judgment | — |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | TODO | judgment | — |
 
 ## Log
