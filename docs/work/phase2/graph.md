@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
 | LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | DONE | implementation | c60383a; live run 4 (Claude Code 2.1.330, tmux 3.7c): PH1 PH2 PH3 PH5 PH9 PH12 C7 verified, PH4 failed; acceptance exit 0 in the node checkout; forbidden_content, check-premises, live-selftest ok (merged tree) |
 | LIV-2 | Windows part without a Windows machine: PH8/PH10 fallback, W-SHELL part 2 text, not-run records | LIV-1, PRB-1, FIX-5, FIX-7, P2 | DONE | implementation | 37c78eb; statusline_render 25, usage_doctor 46; PH8, PH10, W-SHELL part 2 not run: no Windows machine, fallback applied; review round 2 fixed 8 record defects |
 | DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1, FIX-5 | DONE | implementation | fdcea4a; acceptance empty; review round 2 fixed 12 findings |
@@ -67,7 +66,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
-| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | IN-PROGRESS | judgment | .worktrees/phase2/W3 |
+| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | DONE | judgment | f945872; mux 42 on 3.7c and 3.2a; review round 2 fixed B1 (3.2a window names) and M1-M7 |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
@@ -203,3 +202,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | L2 planned: 18 steps; review B1-B3, 12 minor fixed; OpenCode turn start = first session.status busy (AU27); session flags from W4 args.rs; Files add launcher.rs, args.rs, Cargo.lock (author's call) |
 | 2026-11-22 | W9 DONE (e167624): activity.json under fs4 lock, drain idle rule. Merged tree: activity 33 + 1 ignored, drain 27, workspace 111, clippy clean. Round 2: Busy gets rule_skipped; W10 Spec prints the skip line for it. |
 | 2026-11-22 | FIX-9 planned: 6 steps, test first. No offline test for live-tmux.sh, so live runs on tmux 3.7c, red then green, and 3.2a are the test; 6.30 uses ver_ge 3.3 for session 5, window 3. |
+| 2026-11-22 | W3 DONE (f945872): tmux Multiplexer layer. Merged tree: mux 42 + 1 ignored on 3.7c and 3.2a, workspace 153, clippy clean. Round 2: windows named by rename-window; 3.2 -n name with escapes is a known limit (AU99); W6, W7 Spec notes. |
