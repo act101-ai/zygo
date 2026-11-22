@@ -54,9 +54,10 @@ pub(crate) fn agent_window_for(suffix: bool, headers: &HeaderMap, row: &ModelRow
     if one_m(suffix, headers) { ONE_M_WINDOW } else { agent_window(row) }
 }
 
-/// What the status needs of a served row (AU29): its soft window, its context window and the agent window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the status needs of a served row (AU29): its id, its soft window, its context window and the agent window.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequestWindows {
+    pub(crate) id: String,
     pub(crate) soft: Option<u64>,
     pub(crate) context_window: Option<u64>,
     pub(crate) agent_window: u64,
@@ -64,12 +65,13 @@ pub(crate) struct RequestWindows {
 
 impl RequestWindows {
     pub(crate) fn of(row: &ModelRow, agent_window: u64) -> RequestWindows {
-        RequestWindows { soft: row.soft_context_window, context_window: context_window(row), agent_window }
+        RequestWindows { id: row.id.clone(), soft: row.soft_context_window, context_window: context_window(row), agent_window }
     }
-    /// A row holding only the two values `soft_threshold` and `effective_for` read.
+    /// A row holding the values the window functions read: `id` (`agent_window`), `soft_context_window` and
+    /// `facts.context_window` (`soft_threshold`, `effective_for`, `context_window`); the rest is default.
     pub(crate) fn view(&self) -> ModelRow {
         let facts = self.context_window.map(|context_window| Facts { context_window, ..Default::default() });
-        ModelRow { soft_context_window: self.soft, facts, ..Default::default() }
+        ModelRow { id: self.id.clone(), soft_context_window: self.soft, facts, ..Default::default() }
     }
 }
 
@@ -289,4 +291,23 @@ pub fn rewrite_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec<u8>> {
         out.replace_range(a..b, &text);
     }
     Some(out.into_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: &str, soft: Option<u64>, cw: u64) -> ModelRow {
+        ModelRow { id: id.into(), soft_context_window: soft, facts: Some(Facts { context_window: cw, ..Default::default() }), ..Default::default() }
+    }
+
+    #[test]
+    fn view_keeps_the_agent_window_of_the_row() { // HUD-5 round 2 (F4): `view()` is a row `agent_window` reads right
+        for r in [row("claude-t-1", Some(150_000), 200_000), row("gpt-t-1", None, 400_000), row("claude-nf", None, 0)] {
+            let w = RequestWindows::of(&r, agent_window(&r));
+            assert_eq!(agent_window(&w.view()), w.agent_window, "{}", r.id);
+            assert_eq!((w.view().soft_context_window, context_window(&w.view())), (r.soft_context_window, context_window(&r)), "{}", r.id);
+        }
+        assert_eq!(agent_window(&RequestWindows::of(&row("claude-t-1", None, 200_000), 200_000).view()), 200_000);
+    }
 }

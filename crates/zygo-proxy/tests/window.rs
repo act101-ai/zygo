@@ -1275,3 +1275,26 @@ fn status_model_name_capped() { // author's call (HUD-5 review): at most 128 byt
     assert_eq!(w, (Some(format!("x{}", "é".repeat(63))), None, None, None)); // byte 128 is inside an `é`: 127 bytes
     assert_eq!(w.0.unwrap().len(), 127);
 }
+
+#[test]
+fn status_ignores_zero_prompt_reply() { // AU29 (HUD-5 round 2, F3): a 2xx main-loop reply with prompt 0 stores nothing
+    let t = setup("claude-t-1");
+    let g = grant(&t, Agent::ClaudeCode);
+    run(&t, &g, "/b", &reply(S0(), &TEXT(), "end_turn", U15()), "triage", &[MAIN]);
+    let before = windows(&t, &g);
+    assert_eq!(before, (Some("claude-big".into()), Some(2000000), Some(900000), Some(900000)));
+    // message_start and message_delta with zero usage: the prompt is 0.
+    run(&t, &g, "/ns", &reply(u4(0, 0, 0, 0), &TEXT(), "end_turn", u4(0, 0, 0, 0)), "plan", &[MAIN]);
+    assert_eq!(windows(&t, &g), before);
+    assert_eq!(last(&t, &g).status, 200);
+    assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(151000));
+    // A stream dropped before any usage: only `ping` events reach the client.
+    let mut r = sse_reply(&sse(&[("ping", json!({}))]));
+    r.pings = true;
+    t.up.script("/ns", vec![r]);
+    read_then_drop(&t, &g, "plan", &[MAIN], "ping");
+    assert_eq!(windows(&t, &g), before);
+    let row = last(&t, &g);
+    assert_eq!((row.status, tokens(&row).0), (200, 0));
+    assert_eq!(t.h.session(&g.session).unwrap().status().used_context, Some(151000));
+}

@@ -274,7 +274,7 @@ impl SessionState {
     pub fn status(&self) -> SessionStatus {
         let l = lock(&self.live);
         let (model, w) = match &l.main_loop {
-            Some(m) => (m.model.clone(), m.windows),
+            Some(m) => (m.model.clone(), m.windows.clone()),
             None if self.passthrough => (None, None),
             None => {
                 let r = self.config.roles.get(&self.config.main_role);
@@ -282,7 +282,7 @@ impl SessionState {
                 (r.map(|r| r.model.clone()), row.map(|row| RequestWindows::of(row, window::agent_window(row))))
             }
         };
-        let context_window = w.and_then(|w| w.context_window);
+        let context_window = w.as_ref().and_then(|w| w.context_window);
         let (threshold, effective_window) = w.map_or((None, None), |w| {
             let row = w.view();
             let s = context_window.and_then(|cw| window::safety(cw, w.agent_window));
