@@ -106,7 +106,9 @@ fn load(path: &Path) -> Load {
 /// The known fields of a newer file, whatever their types (round 2, B1): `version` when it is a u32, else
 /// `u32::MAX` (newer than any zygo); `busy` when it is a bool, else `true`, so the drain does not count the member
 /// as idle on a field it cannot read; each key of `running` with its type: the value when it is a string, the
-/// string `type` member when the value is an object, else empty; `updated_at` when it is a number, else 0.
+/// string `type` member when the value is an object, else empty; `updated_at` when it is a number, else 0. A
+/// `running` that is present but not an object gives an empty set and `busy = true`, so the drain never counts the
+/// member as idle on subagents it cannot read; a missing `running` gives an empty set and leaves `busy` as read.
 fn lenient(fields: &serde_json::Map<String, serde_json::Value>) -> Activity {
     use serde_json::Value;
     let agent_type = |v: &Value| match v {
@@ -114,9 +116,10 @@ fn lenient(fields: &serde_json::Map<String, serde_json::Value>) -> Activity {
         Value::Object(o) => o.get("type").and_then(Value::as_str).unwrap_or_default().to_string(),
         _ => String::new(),
     };
+    let running_unreadable = fields.get("running").is_some_and(|v| !v.is_object());
     Activity {
         version: fields.get("version").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()).unwrap_or(u32::MAX),
-        busy: fields.get("busy").and_then(Value::as_bool).unwrap_or(true),
+        busy: running_unreadable || fields.get("busy").and_then(Value::as_bool).unwrap_or(true),
         running: fields
             .get("running")
             .and_then(Value::as_object)

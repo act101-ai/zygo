@@ -303,6 +303,15 @@ fn read_of_a_newer_file_takes_fields_of_other_types_leniently() {
 }
 
 #[test]
+fn read_of_a_newer_file_whose_running_is_not_an_object_is_busy() {
+    let (_t, d) = dir();
+    fs::write(d.activity_json(), br#"{"version":2,"busy":false,"running":["a1"],"updated_at":5}"#).unwrap();
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: true, running: BTreeMap::new(), updated_at: 5 });
+    fs::write(d.activity_json(), br#"{"version":2,"busy":false,"updated_at":5}"#).unwrap();
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: false, running: BTreeMap::new(), updated_at: 5 });
+}
+
+#[test]
 fn update_rewrites_a_version_0_file_as_version_1() {
     let (_t, d) = dir();
     fs::write(d.activity_json(), br#"{"version":0,"busy":true,"running":{"a1":"t1"},"updated_at":1}"#).unwrap();
