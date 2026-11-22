@@ -55,7 +55,9 @@ export const ZygoPlugin = async ({ directory }) => {
     const s = (e.properties || {}).status;
     return s && typeof s === "object" ? s.type : s;
   };
-  // Decides and queues before any wait (D11).
+  // Decides and queues before any wait (D11). The main session is the active top session: a session with a known
+  // `parentID` (a `task` subagent) never is; a new top session, or a `busy` status of another top session (a TUI
+  // switch to an existing session), makes it the main session. One `prompt` per turn start, one `stop` per turn end.
   const step = (e) => {
     const id = sessionOf(e);
     if (typeof id !== "string" || id === "") return;
@@ -65,16 +67,18 @@ export const ZygoPlugin = async ({ directory }) => {
       return;
     }
     if (children.has(id)) return;
-    if (main === null || (e.type === "session.created" && id !== main)) {
+    const busy = e.type === "session.status" && statusOf(e) === "busy";
+    const idle = e.type === "session.idle" || (e.type === "session.status" && statusOf(e) === "idle");
+    if (main === null || (id !== main && (e.type === "session.created" || busy))) {
       main = id;
       idleNow = true;
       ws("session", { sessionID: id });
     }
     if (id !== main) return;
-    if (e.type === "session.status" && statusOf(e) === "busy" && idleNow) {
+    if (busy && idleNow) {
       idleNow = false;
       ws("prompt", { sessionID: id });
-    } else if (e.type === "session.idle" || (e.type === "session.status" && statusOf(e) === "idle")) {
+    } else if (idle && !idleNow) {
       idleNow = true;
       ws("stop", { sessionID: id });
     }
