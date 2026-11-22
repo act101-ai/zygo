@@ -4,7 +4,7 @@
 //!
 //! Control mode (L3, the workspace tests): when `ZYGO_STUB_CONTROL` names a directory, the agent does not exit after the
 //! capture. It serves the lines of `<dir>/steps` in order (a test appends them with `stub_control`) and appends to
-//! `<dir>/done` the line `start <pid>`, then the text of each step when that step has finished. A step that cannot run
+//! `<dir>/done` the line `start <pid>` (after it called the `SessionStart` hooks of the `--settings` file), then the text of each step when that step has finished. A step that cannot run
 //! ends the stub with code 2 and no `done` line. The stub installs no signal handler: a signal ends it by the default
 //! action. `ZYGO_STUB_EXIT` and the `shell.json` capture are not used in control mode.
 
@@ -87,6 +87,63 @@ fn append(p: &Path, line: &str) {
     f.write_all(format!("{line}\n").as_bytes()).unwrap();
 }
 
+/// The stdin JSON of one hook call, in the shapes of `fixtures/claude-code/hooks/*.json`. `overlay` replaces top-level keys.
+fn hook_input(event: &str, argv: &[String], out: &Path, overlay: Option<&Map<String, Value>>) -> Value {
+    let arg = session_arg(argv);
+    let id = arg.as_ref().map(|(_, id)| id.clone()).unwrap_or_else(|| format!("00000000-0000-4000-8000-{:012x}", std::process::id()));
+    let mut v = json!({
+        "session_id": id,
+        "transcript_path": out.join("transcript.jsonl").to_string_lossy(),
+        "cwd": std::env::current_dir().unwrap().to_string_lossy(),
+        "hook_event_name": event,
+    });
+    let stop = json!({"stop_hook_active": false, "background_tasks": []});
+    let sub = json!({"agent_id": "stub-sub-1", "agent_type": "claude"});
+    let added = match event {
+        "SessionStart" => vec![json!({"source": if matches!(arg, Some(("--resume", _))) { "resume" } else { "startup" }})],
+        "UserPromptSubmit" => vec![json!({"prompt": "stub prompt"})],
+        "PreToolUse" => vec![json!({
+            "tool_name": "Agent",
+            "tool_input": {"description": "stub", "prompt": "stub", "subagent_type": "claude", "run_in_background": false},
+            "tool_use_id": "toolu_stub",
+        })],
+        "Stop" => vec![stop],
+        "SubagentStart" => vec![sub],
+        "SubagentStop" => vec![sub, stop],
+        _ => vec![],
+    };
+    let m = v.as_object_mut().unwrap();
+    for a in added {
+        m.extend(a.as_object().unwrap().clone());
+    }
+    m.extend(overlay.cloned().unwrap_or_default());
+    v
+}
+
+/// Calls the hooks that `settings` (the `--settings` file) has for `event`, in order, each with `input` on stdin, and
+/// appends one record per call to `hooks.jsonl`. A `PreToolUse` entry runs only when its `matcher` allows the tool name.
+fn call_hooks(settings: &Value, event: &str, input: &Value, out: &Path) {
+    use std::io::Write;
+    use std::process::Stdio;
+    let sh = var("ZYGO_STUB_SHELL").unwrap_or_else(|| "/bin/sh".into());
+    let tool = input["tool_name"].as_str().unwrap_or_default();
+    for entry in settings["hooks"][event].as_array().into_iter().flatten() {
+        if event == "PreToolUse" && entry["matcher"].as_str().is_some_and(|m| m != "*" && !m.split('|').any(|p| p == tool)) {
+            continue;
+        }
+        for c in entry["hooks"].as_array().into_iter().flatten().filter_map(|h| h["command"].as_str()) {
+            let o = Command::new(&sh).arg("-c").arg(c).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().and_then(|mut child| {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(input.to_string().as_bytes());
+                }
+                child.wait_with_output()
+            });
+            let r = result(o);
+            append(&out.join("hooks.jsonl"), &json!({"event": event, "command": c, "input": input, "out": r["out"], "code": r["code"]}).to_string());
+        }
+    }
+}
+
 /// Runs one step line. `Ok(Some(code))` is an `exit` step: the caller writes the `done` line, then exits.
 fn step(line: &str, _out: &Path, _settings: &Value, _argv: &[String]) -> Result<Option<i32>, String> {
     let (verb, rest) = line.split_once(' ').unwrap_or((line, ""));
@@ -114,6 +171,7 @@ fn control(ctl: &Path, out: &Path, settings: &Value, argv: &[String]) -> ! {
     let (steps, done) = (ctl.join("steps"), ctl.join("done"));
     std::fs::create_dir_all(ctl).unwrap();
     let mut cursor = text(&done).unwrap_or_default().lines().filter(|l| !l.starts_with("start ")).count();
+    call_hooks(settings, "SessionStart", &hook_input("SessionStart", argv, out, None), out);
     append(&done, &format!("start {}", std::process::id()));
     loop {
         let all = text(&steps).unwrap_or_default();

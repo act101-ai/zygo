@@ -127,3 +127,71 @@ fn session_argument_is_recorded() {
     assert_eq!(wait_exit(&mut s.child).code(), Some(0));
     assert!(!s.out.join("session-arg.json").exists());
 }
+
+/// `cat` prints the hook's stdin, so `out` in `hooks.jsonl` is what the hook process received.
+fn settings(dir: &Path) -> String {
+    let cat = json!([{"hooks": [{"type": "command", "command": "cat"}]}]);
+    let mut hooks = serde_json::Map::new();
+    for e in ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SubagentStart", "SubagentStop"] {
+        hooks.insert(e.into(), cat.clone());
+    }
+    hooks.insert("PreToolUse".into(), json!([
+        {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "echo no"}]},
+        {"matcher": "Agent", "hooks": [{"type": "command", "command": "cat"}]},
+        {"matcher": "*", "hooks": [{"type": "command", "command": "echo star"}]},
+    ]));
+    let p = dir.join("settings.json");
+    std::fs::write(&p, json!({"hooks": hooks}).to_string()).unwrap();
+    p.to_string_lossy().into_owned()
+}
+/// The input the stub must send: the common keys plus `extra`.
+fn input(s: &Stub, event: &str, id: &str, extra: Value) -> Value {
+    let mut v = json!({"session_id": id, "transcript_path": s.out.join("transcript.jsonl").to_string_lossy(),
+        "cwd": std::fs::read_to_string(s.out.join("cwd.txt")).unwrap(), "hook_event_name": event});
+    v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+    v
+}
+/// One `cat` call: the record holds `want`, and the hook process received exactly `want`.
+fn assert_cat(line: &Value, event: &str, want: &Value) {
+    assert_eq!((&line["event"], &line["command"], &line["code"], &line["input"]), (&json!(event), &json!("cat"), &json!(0), want));
+    assert_eq!(&serde_json::from_str::<Value>(line["out"].as_str().unwrap()).unwrap(), want);
+}
+
+#[test]
+fn session_start_hook_gets_the_session_id() {
+    for (args, source) in [(vec!["--session-id", ID], "startup"), (vec!["--resume", ID], "resume"), (vec![], "startup")] {
+        let t = tempfile::tempdir().unwrap();
+        let set = settings(t.path());
+        let mut a = args.clone();
+        a.extend(["--settings", set.as_str()]);
+        let s = spawn_in(t, &a, true, "");
+        wait_done(&s.ctl, 1); // `start` is written after the SessionStart hooks
+        let own = format!("00000000-0000-4000-8000-{:012x}", s.child.id());
+        let id = if args.is_empty() { own.as_str() } else { ID };
+        let h = jsonl(&s.out.join("hooks.jsonl"));
+        assert_eq!(h.len(), 1);
+        assert_cat(&h[0], "SessionStart", &input(&s, "SessionStart", id, json!({"source": source})));
+    }
+}
+
+/// Through the real launcher and the settings that `ClaudeCode` generates: the `zygo` of the rig is a stub copy that prints its argv.
+#[test]
+fn launched_member_calls_the_generated_session_start_hook_and_returns_the_exit_step() {
+    use harness::*;
+    let rig = rig();
+    let ctl = rig.root.join("ctl");
+    stub_control(&ctl, "exit 7").unwrap();
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+        o.args = vec!["--session-id".into(), ID.into()];
+        o.env.0.push(("ZYGO_STUB_CONTROL".into(), ctl.clone().into_os_string()));
+        o.env.0.push(("ZYGO_STUB_SHELL".into(), shell().into_os_string()));
+    });
+    assert_eq!(r.code, 7, "{}", r.stderr);
+    assert_eq!(r.cap.session_arg, Some(("--session-id".to_string(), ID.to_string())));
+    assert!(r.cap.shell.is_empty()); // control mode: no shell.json
+    let h = jsonl(&rig.root.join("out/hooks.jsonl"));
+    assert_eq!(h.len(), 1);
+    assert_eq!((&h[0]["event"], &h[0]["out"], &h[0]["code"]), (&json!("SessionStart"), &json!("hook session-start"), &json!(0)));
+    assert_eq!(h[0]["command"], format!("{} hook session-start", spec_quote(&rig.zygo)));
+    assert_eq!((&h[0]["input"]["session_id"], &h[0]["input"]["source"]), (&json!(ID), &json!("startup")));
+}
