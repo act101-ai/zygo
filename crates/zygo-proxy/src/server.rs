@@ -85,7 +85,12 @@ pub(crate) fn app(served: Served, opts: StartOpts, body_idle: Option<Duration>) 
         #[cfg(feature = "test-hooks")]
         panic: opts.usage_panic,
     };
-    let (usage, usage_note) = UsageSink::open(opts.usage_db.as_deref(), hooks);
+    // The secret deadline of stage 6 for the upstream_errors fields (§14, FIX-10).
+    #[cfg(feature = "test-hooks")]
+    let secret = opts.redact_limits.as_ref().map(|l| l.secret.clone()).unwrap_or_default();
+    #[cfg(not(feature = "test-hooks"))]
+    let secret = zygo_redact::DeadlinePolicy::default();
+    let (usage, usage_note) = UsageSink::open(opts.usage_db.as_deref(), hooks, secret);
     #[cfg(feature = "test-hooks")]
     let rows_wait = opts.rows_wait;
     #[cfg(not(feature = "test-hooks"))]

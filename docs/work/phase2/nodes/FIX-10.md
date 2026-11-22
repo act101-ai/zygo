@@ -519,7 +519,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
 
 #### Task 3: the proxy code (`crates/zygo-proxy/src`)
 
-- [ ] **3.1** In `crates/zygo-proxy/src/redact_stage.rs`: change the import to `use zygo_redact::secret::{redact, redact_after_wait, RedactError};`, add `use serde_json::Value;` and `use crate::session::SessionState;`, and add:
+- [x] **3.1** In `crates/zygo-proxy/src/redact_stage.rs`: change the import to `use zygo_redact::secret::{redact, redact_after_wait, RedactError};`, add `use serde_json::Value;` and `use crate::session::SessionState;`, and add:
 
   ```rust
   /// `text` through the session's secret pass under `policy`; `None` on a `block` match, a timeout or a panic. Shared by
@@ -538,7 +538,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   In `crates/zygo-proxy/src/forward.rs`, replace the body of `row_name` (`forward.rs:737-747`) with `crate::redact_stage::secret_pass(s, name, &DeadlinePolicy::default()).map(|n| strip_1m(&n))`. Result: `row_name` keeps its behavior (the same `Ok(Ok(_))` rule, the same deadline); the pass code exists once.
-- [ ] **3.2** In `crates/zygo-proxy/src/tee.rs`, `Tee`: add the field `/// Keep the non-streamed copy after `finish`, for `body` (FIX-10). keep: bool,` after `copy_over`; set `keep: false` in `Tee::new` (`tee.rs:137`); in `Tee::finish` change `self.copy = Vec::new();` (`tee.rs:182`) to `if !self.keep { self.copy = Vec::new(); }`; add:
+- [x] **3.2** In `crates/zygo-proxy/src/tee.rs`, `Tee`: add the field `/// Keep the non-streamed copy after `finish`, for `body` (FIX-10). keep: bool,` after `copy_over`; set `keep: false` in `Tee::new` (`tee.rs:137`); in `Tee::finish` change `self.copy = Vec::new();` (`tee.rs:182`) to `if !self.keep { self.copy = Vec::new(); }`; add:
 
   ```rust
   /// `body` returns the non-streamed copy after `finish` (FIX-10). No effect on a streamed response.
@@ -554,7 +554,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: without `keep_body`, `Tee` behaves as before (the `Tee` tests in `request_path.rs:620-690` and `session_api.rs:1084-1170` do not call it).
-- [ ] **3.3** In `tee.rs`, add the imports `use zygo_config::keys::Secret;`, `use zygo_redact::DeadlinePolicy;`, `use crate::redact_stage::secret_pass;`, `use crate::session::SessionState;`, `use crate::translate::{error_message, error_object, scrub};`, change `use zygo_usage::{RequestRow, Store};` to `use zygo_usage::{RequestRow, Store, UpstreamErrorRow};`, and add before `struct Ticket`:
+- [x] **3.3** In `tee.rs`, add the imports `use zygo_config::keys::Secret;`, `use zygo_redact::DeadlinePolicy;`, `use crate::redact_stage::secret_pass;`, `use crate::session::SessionState;`, `use crate::translate::{error_message, error_object, scrub};`, change `use zygo_usage::{RequestRow, Store};` to `use zygo_usage::{RequestRow, Store, UpstreamErrorRow};`, and add before `struct Ticket`:
 
   ```rust
   /// The most bytes of the relayed body that `Flow::drop` copies for the usage writer (§14, FIX-10 B1).
@@ -645,7 +645,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the parse, the scrubs, the pass and the cuts live in `tee.rs` and run only where `error_row` is called (the writer, step 3.4).
-- [ ] **3.4** In `tee.rs`, `UsageSink`: `type RowSender = mpsc::Sender<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>;` (`tee.rs:307`); `UsageSink::open` gets the parameter `secret: DeadlinePolicy` (signature `pub(crate) fn open(db: Option<&Path>, #[allow(unused_variables)] hooks: WriterHooks, secret: DeadlinePolicy) -> (UsageSink, Option<String>)`); the channel becomes `mpsc::channel::<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>()` (`tee.rs:339`); the writer loop becomes `for (row, error, ticket) in rx {` with the test hooks as they are, then:
+- [x] **3.4** In `tee.rs`, `UsageSink`: `type RowSender = mpsc::Sender<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>;` (`tee.rs:307`); `UsageSink::open` gets the parameter `secret: DeadlinePolicy` (signature `pub(crate) fn open(db: Option<&Path>, #[allow(unused_variables)] hooks: WriterHooks, secret: DeadlinePolicy) -> (UsageSink, Option<String>)`); the channel becomes `mpsc::channel::<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>()` (`tee.rs:339`); the writer loop becomes `for (row, error, ticket) in rx {` with the test hooks as they are, then:
 
   ```rust
   let e = error.map(|c| error_row(&row, &c, &secret));
@@ -669,7 +669,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: the error row is built and written on the writer thread, in one transaction with its request row (D6).
-- [ ] **3.5** In `crates/zygo-proxy/src/server.rs`, `app` (`server.rs:80-88`), before `UsageSink::open`:
+- [x] **3.5** In `crates/zygo-proxy/src/server.rs`, `app` (`server.rs:80-88`), before `UsageSink::open`:
 
   ```rust
   // The secret deadline of stage 6 for the upstream_errors fields (§14, FIX-10).
@@ -680,7 +680,7 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   and call `UsageSink::open(opts.usage_db.as_deref(), hooks, secret)`. Result: the writer uses the configured `RedactLimits.secret` (the spec default outside tests).
-- [ ] **3.6** In `crates/zygo-proxy/src/forward.rs`: keep the existing `use zygo_config::keys::Secret;` (`forward.rs:21`), add `AUTHORIZATION` to the `http::header` import (`forward.rs:16`), and change the `crate::tee` import (`forward.rs:34`) to add `ErrorCapture, ERROR_BODY_MAX`. In `struct Pending` (`forward.rs:208-225`) add `/// Passthrough, an upstream status that is not 2xx: the capture for the `upstream_errors` row (§14, FIX-10). upstream_error: Option<ErrorCapture>,`; in the `Pending` literal of `handle` (`forward.rs:301`) add `upstream_error: None`; in `Pending::drop` change the last line (`forward.rs:266`) to `self.sink.send(std::mem::take(&mut self.row), self.upstream_error.take(), self.ticket.take());`. In `run` (`forward.rs:318`), after `let mut tee = Tee::new(streamed);` (`forward.rs:539`), add `if s.passthrough && !status.is_success() { tee.keep_body(); }`. In `Flow::drop` (`forward.rs:1052-1063`), after `self.pending.split = self.tee.cache_split();`, add:
+- [x] **3.6** In `crates/zygo-proxy/src/forward.rs`: keep the existing `use zygo_config::keys::Secret;` (`forward.rs:21`), add `AUTHORIZATION` to the `http::header` import (`forward.rs:16`), and change the `crate::tee` import (`forward.rs:34`) to add `ErrorCapture, ERROR_BODY_MAX`. In `struct Pending` (`forward.rs:208-225`) add `/// Passthrough, an upstream status that is not 2xx: the capture for the `upstream_errors` row (§14, FIX-10). upstream_error: Option<ErrorCapture>,`; in the `Pending` literal of `handle` (`forward.rs:301`) add `upstream_error: None`; in `Pending::drop` change the last line (`forward.rs:266`) to `self.sink.send(std::mem::take(&mut self.row), self.upstream_error.take(), self.ticket.take());`. In `run` (`forward.rs:318`), after `let mut tee = Tee::new(streamed);` (`forward.rs:539`), add `if s.passthrough && !status.is_success() { tee.keep_body(); }`. In `Flow::drop` (`forward.rs:1052-1063`), after `self.pending.split = self.tee.cache_split();`, add:
 
   ```rust
   // Passthrough, not 2xx: raw bytes and the login for the usage writer; no parse and no pass here (§14, FIX-10 B1).
@@ -695,10 +695,10 @@ Work in the node's checkout. Run each command from the repository root. Each com
   ```
 
   Result: `RequestRow` and its literals are unchanged; a refusal (no `Flow`) sends `None`; the relayed status, headers and bytes are not touched (the tee returns each chunk unchanged, `tee.rs:161`); the response path copies at most 16 KiB and does no parse, lock or pass.
-- [ ] **3.7** Run `cargo check -p zygo-proxy --locked --all-targets`. Expected: exit 0, no warning in `forward.rs`, `tee.rs`, `redact_stage.rs` or `server.rs`.
-- [ ] **3.8** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: 0 failed; the output lists `... ok` for the fourteen tests of steps 2.2 and 2.3, for `upstream_429_reaches_the_client_once_and_unchanged`, `cover_model_secret_not_in_row` and `cover_model_secret_redacted_upstream` (the `row_name` refactor).
-- [ ] **3.9** Run `cargo test -p zygo-proxy --locked --test request_path --test session_api --test redaction_e2e --lib`. Expected: 0 failed (the `Tee` and usage-writer tests, `usage_written_on_client_disconnect` among them, and the redaction tests are unchanged by `keep_body`, the new channel item and `secret_pass`).
-- [ ] **3.10** Commit `crates/zygo-proxy/src/tee.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`, `crates/zygo-proxy/src/server.rs` and this file: `fix(proxy): record the upstream error type and message of a non-2xx passthrough answer`.
+- [x] **3.7** Run `cargo check -p zygo-proxy --locked --all-targets`. Expected: exit 0, no warning in `forward.rs`, `tee.rs`, `redact_stage.rs` or `server.rs`.
+- [x] **3.8** Run `cargo test -p zygo-proxy --locked --test passthrough`. Expected: 0 failed; the output lists `... ok` for the fourteen tests of steps 2.2 and 2.3, for `upstream_429_reaches_the_client_once_and_unchanged`, `cover_model_secret_not_in_row` and `cover_model_secret_redacted_upstream` (the `row_name` refactor).
+- [x] **3.9** Run `cargo test -p zygo-proxy --locked --test request_path --test session_api --test redaction_e2e --lib`. Expected: 0 failed (the `Tee` and usage-writer tests, `usage_written_on_client_disconnect` among them, and the redaction tests are unchanged by `keep_body`, the new channel item and `secret_pass`).
+- [x] **3.10** Commit `crates/zygo-proxy/src/tee.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/redact_stage.rs`, `crates/zygo-proxy/src/server.rs` and this file: `fix(proxy): record the upstream error type and message of a non-2xx passthrough answer`.
 
 #### Task 4: the base spec (`docs/specs/2026-11-18-zygo-design.md`)
 

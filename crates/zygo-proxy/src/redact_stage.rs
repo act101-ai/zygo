@@ -6,13 +6,15 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use http::StatusCode;
+use serde_json::Value;
 use zygo_config::Dialect;
 use zygo_redact::content::{admits, filter, Layout, Shape};
-use zygo_redact::secret::{redact_after_wait, RedactError};
+use zygo_redact::secret::{redact, redact_after_wait, RedactError};
 use zygo_redact::DeadlinePolicy;
 
 use crate::errors::ZygoError;
 use crate::pipeline::{RequestCtx, Stage};
+use crate::session::SessionState;
 
 /// Deadlines of the two passes (§16.1: 200 ms + 50 ms/MiB; §16.2: 200 ms).
 #[derive(Debug, Clone)]
@@ -89,6 +91,20 @@ impl RedactStage {
 /// A cache holds plain entries: a lock poisoned by a panic is used again.
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// `text` through the session's secret pass under `policy`; `None` on a `block` match, a timeout or a panic. Shared by
+/// the usage row's model name (`forward::row_name`) and the `upstream_errors` fields (§14, FIX-10).
+pub(crate) fn secret_pass(s: &SessionState, text: &str, policy: &DeadlinePolicy) -> Option<String> {
+    let mut v = Value::String(text.to_string());
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        let mut cache = lock(&s.redaction.secret_cache);
+        redact(&mut v, &s.redaction.compiled, &mut cache, policy)
+    }));
+    match (r, v) {
+        (Ok(Ok(_)), Value::String(t)) => Some(t),
+        _ => None,
+    }
 }
 
 fn unavailable(m: &'static str) -> ZygoError {

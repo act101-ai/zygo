@@ -10,7 +10,13 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use serde_json::Value;
-use zygo_usage::{RequestRow, Store};
+use zygo_config::keys::Secret;
+use zygo_redact::DeadlinePolicy;
+use zygo_usage::{RequestRow, Store, UpstreamErrorRow};
+
+use crate::redact_stage::secret_pass;
+use crate::session::SessionState;
+use crate::translate::{error_message, error_object, scrub};
 
 pub const HOLD_MAX: usize = 4 << 20; // §10.2.6
 pub const COPY_MAX: usize = 4 << 20; // §14
@@ -52,6 +58,8 @@ pub struct Tee {
     /// Non-streamed copy (§14).
     copy: Vec<u8>,
     copy_over: bool,
+    /// Keep the non-streamed copy after `finish`, for `body` (FIX-10).
+    keep: bool,
     usage: Usage,
     /// `None` until a usage object carries a part of the split.
     split: Option<CacheSplit>,
@@ -134,7 +142,18 @@ impl Usage {
 
 impl Tee {
     pub fn new(streamed: bool) -> Tee {
-        Tee { streamed, line_mode: false, held: Vec::new(), over: false, copy: Vec::new(), copy_over: false, usage: Usage::default(), split: None }
+        Tee { streamed, line_mode: false, held: Vec::new(), over: false, copy: Vec::new(), copy_over: false, keep: false, usage: Usage::default(), split: None }
+    }
+
+    /// `body` returns the non-streamed copy after `finish` (FIX-10). No effect on a streamed response.
+    pub fn keep_body(&mut self) {
+        self.keep = true;
+    }
+
+    /// The non-streamed body as copied (at most COPY_MAX), when `keep_body` was called; `None` for a streamed body or
+    /// a body over COPY_MAX.
+    pub fn body(&self) -> Option<&[u8]> {
+        (self.keep && !self.streamed && !self.copy_over).then_some(self.copy.as_slice())
     }
 
     /// No effect when the response is not streamed.
@@ -179,7 +198,9 @@ impl Tee {
                 self.usage.set(u);
                 CacheSplit::read(&mut self.split, u, false);
             }
-            self.copy = Vec::new();
+            if !self.keep {
+                self.copy = Vec::new();
+            }
             return Bytes::new();
         }
         let tail = std::mem::take(&mut self.held);
@@ -248,6 +269,92 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The most bytes of the relayed body that `Flow::drop` copies for the usage writer (§14, FIX-10 B1).
+pub(crate) const ERROR_BODY_MAX: usize = 16 << 10;
+/// The most bytes of `error.type` and `error.message` that reach the scrub and the secret pass (FIX-10 B1, M7).
+const ERROR_FIELD_IN_MAX: usize = 2 << 10;
+/// The most characters stored in each field (§14, FIX-10).
+const ERROR_TEXT_MAX: usize = 300;
+/// The shortest run of the login that `scrub_partial` removes (FIX-10 M6).
+const PARTIAL_MIN: usize = 8;
+
+/// What the usage writer needs for a passthrough request's `upstream_errors` row (§14, FIX-10). Built on the response
+/// path with no parse and no pass (B1).
+pub(crate) struct ErrorCapture {
+    /// At most ERROR_BODY_MAX bytes of the relayed body; empty for a streamed body or one over COPY_MAX.
+    pub head: Vec<u8>,
+    /// The client's login (the `Authorization` value after its scheme): removed from both fields, never stored.
+    pub credential: Option<Secret>,
+    pub session: Arc<SessionState>,
+}
+
+/// The longest prefix of `t` of at most `max` bytes that ends at a character boundary.
+fn head(t: &str, max: usize) -> &str {
+    let mut end = t.len().min(max);
+    while !t.is_char_boundary(end) {
+        end -= 1;
+    }
+    &t[..end]
+}
+
+/// Each control character as a space; at most ERROR_TEXT_MAX characters.
+fn clean(t: &str) -> String {
+    t.chars().map(|c| if c.is_control() { ' ' } else { c }).take(ERROR_TEXT_MAX).collect()
+}
+
+/// Each run of at least PARTIAL_MIN characters of `m` that is also a part of `cred` becomes the marker of
+/// `translate::scrub` (M6: an upstream that echoes a part of the login). Runs on at most ERROR_FIELD_IN_MAX bytes.
+fn scrub_partial(m: &str, cred: &str) -> String {
+    let mark = scrub(cred, Some(cred));
+    let c: Vec<char> = m.chars().collect();
+    let (mut out, mut i) = (String::with_capacity(m.len()), 0);
+    while i < c.len() {
+        let (mut run, mut n) = (String::new(), 0);
+        while i + n < c.len() {
+            run.push(c[i + n]);
+            if !cred.contains(run.as_str()) {
+                break;
+            }
+            n += 1;
+        }
+        if n >= PARTIAL_MIN {
+            out.push_str(&mark);
+            i += n;
+        } else {
+            out.push(c[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// One stored field (D2, D5): the 2 KiB cut, the login removed (whole, then each run), the secret pass under
+/// `policy` (empty on a block, a timeout or a panic), then `clean`.
+fn error_field(raw: &str, cred: Option<&str>, s: &SessionState, policy: &DeadlinePolicy) -> String {
+    let mut t = scrub(head(raw, ERROR_FIELD_IN_MAX), cred);
+    if let Some(c) = cred.filter(|c| !c.is_empty()) {
+        t = scrub_partial(&t, c);
+    }
+    secret_pass(s, &t, policy).map(|t| clean(&t)).unwrap_or_default()
+}
+
+/// The `upstream_errors` row of `row` from its capture (D8): `error.type` and `error.message` of the head, each
+/// through `error_field`; empty when the head is not such JSON.
+fn error_row(row: &RequestRow, c: &ErrorCapture, policy: &DeadlinePolicy) -> UpstreamErrorRow {
+    let v = serde_json::from_slice::<Value>(&c.head).ok();
+    let cred = c.credential.as_ref().map(Secret::expose);
+    let field = |x: Option<&str>| x.map(|x| error_field(x, cred, &c.session, policy)).unwrap_or_default();
+    UpstreamErrorRow {
+        ts: row.ts,
+        session: row.session.clone(),
+        request_class: row.request_class.clone(),
+        model: row.model.clone(),
+        status: row.status,
+        error_type: field(v.as_ref().and_then(|v| error_object(v).get("type")).and_then(Value::as_str)),
+        error_message: field(v.as_ref().and_then(error_message)),
+    }
+}
+
 /// Rows begun but not yet inserted or dropped, per session.
 type Queued = Arc<(Mutex<HashMap<String, u64>>, Condvar)>;
 
@@ -303,8 +410,8 @@ pub(crate) struct WriterHooks {
     pub panic: bool,
 }
 
-/// A row and its ticket, to the writer.
-type RowSender = mpsc::Sender<(RequestRow, Option<Ticket>)>;
+/// A row, its `upstream_errors` capture and its ticket, to the writer.
+type RowSender = mpsc::Sender<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>;
 
 /// The usage-row writer (§14): one thread owns the store (`Store` is not `Sync`).
 pub(crate) struct UsageSink {
@@ -321,8 +428,9 @@ fn count(h: &(Mutex<u64>, Condvar)) {
 }
 
 impl UsageSink {
-    /// `None`: no rows. A store that does not open: no rows and `USAGE_OFF_NOTE` (fail open).
-    pub(crate) fn open(db: Option<&Path>, #[allow(unused_variables)] hooks: WriterHooks) -> (UsageSink, Option<String>) {
+    /// `None`: no rows. A store that does not open: no rows and `USAGE_OFF_NOTE` (fail open). `secret`: the deadline of
+    /// the secret pass on the `upstream_errors` fields (FIX-10).
+    pub(crate) fn open(db: Option<&Path>, #[allow(unused_variables)] hooks: WriterHooks, secret: DeadlinePolicy) -> (UsageSink, Option<String>) {
         let handled = Arc::new((Mutex::new(0), Condvar::new()));
         let queued: Queued = Arc::default();
         let store = match db.map(Store::open) {
@@ -336,11 +444,11 @@ impl UsageSink {
         let (tx, writer) = match store {
             None => (None, None),
             Some(store) => {
-                let (tx, rx) = mpsc::channel::<(RequestRow, Option<Ticket>)>();
+                let (tx, rx) = mpsc::channel::<(RequestRow, Option<ErrorCapture>, Option<Ticket>)>();
                 let h = handled.clone();
                 let writer = std::thread::Builder::new().name("zygo-usage".into()).spawn(move || {
                     // The proxy has no log: a failed insert drops the row.
-                    for (row, ticket) in rx {
+                    for (row, error, ticket) in rx {
                         #[cfg(feature = "test-hooks")]
                         {
                             if let Some(h) = &hooks.hold {
@@ -348,7 +456,12 @@ impl UsageSink {
                             }
                             assert!(!hooks.panic, "usage writer: test panic");
                         }
-                        let _ = store.insert_request(&row);
+                        // The error row is built here, on the writer thread, and written with its request row (D6).
+                        let e = error.map(|c| error_row(&row, &c, &secret));
+                        let _ = match &e {
+                            Some(e) => store.insert_request_and_error(&row, e),
+                            None => store.insert_request(&row),
+                        };
                         drop(ticket);
                         count(&h);
                     }
@@ -371,9 +484,10 @@ impl UsageSink {
         Ticket { queued: self.queued.clone(), session: session.to_string() }
     }
 
-    /// No store or closed: the row is counted and dropped (with its ticket).
-    pub(crate) fn send(&self, r: RequestRow, t: Option<Ticket>) {
-        let sent = lock(&self.tx).as_ref().is_some_and(|tx| tx.send((r, t)).is_ok());
+    /// No store or closed: the row and its capture are counted and dropped (with the ticket). `e`: the request's
+    /// `upstream_errors` capture (FIX-10).
+    pub(crate) fn send(&self, r: RequestRow, e: Option<ErrorCapture>, t: Option<Ticket>) {
+        let sent = lock(&self.tx).as_ref().is_some_and(|tx| tx.send((r, e, t)).is_ok());
         if !sent {
             count(&self.handled);
         }
