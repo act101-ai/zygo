@@ -3,6 +3,101 @@
 pub mod tmux;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// The oldest tmux that workspaces support (AU7).
+pub const MIN_VERSION: (u32, u32) = (3, 2);
+
+/// The bound of every tmux call except `attach` (W§13).
+pub const BOUND: Duration = Duration::from_secs(2);
+
+/// The answer to "does this tmux session exist" (AU87 (1)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionAnswer {
+    Exists,
+    /// tmux said explicitly that the session or its server is gone ([`is_gone_message`]).
+    Gone,
+    /// Any other tmux error: a timeout, a permission error, a spawn error or another message.
+    Error { message: String },
+}
+
+/// The error of a tmux call (W3 D1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MuxError {
+    /// The session or its server is gone ([`is_gone_message`]).
+    Gone { message: String },
+    /// The window or pane does not exist ([`is_no_target_message`]); the session can still exist.
+    NoTarget { message: String },
+    /// Any other failure, with tmux's stderr (trimmed) or the refusal text.
+    Failed { message: String },
+    /// The call did not end within [`BOUND`].
+    TimedOut,
+    /// tmux could not be started.
+    Spawn { message: String },
+}
+
+impl MuxError {
+    pub fn is_gone(&self) -> bool { matches!(self, MuxError::Gone { .. }) }
+
+    /// A `Failed` error whose message holds `no space for` (a split that does not fit).
+    pub fn is_no_space(&self) -> bool { matches!(self, MuxError::Failed { message } if message.contains("no space for")) }
+}
+
+impl std::fmt::Display for MuxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MuxError::Gone { message }
+            | MuxError::NoTarget { message }
+            | MuxError::Failed { message }
+            | MuxError::Spawn { message } => f.write_str(message),
+            MuxError::TimedOut => write!(f, "tmux timed out after {} s", BOUND.as_secs()),
+        }
+    }
+}
+
+impl std::error::Error for MuxError {}
+
+/// Whether the first line of tmux's stderr says that the session or its server is gone (AU87 (1), W3 D2).
+pub fn is_gone_message(stderr: &str) -> bool {
+    let l = stderr.lines().next().unwrap_or("").trim_end();
+    l.starts_with("can't find session")
+        || l.starts_with("no such session:")
+        || l.starts_with("no server running on ")
+        || l == "server exited unexpectedly"
+        || (l.starts_with("error connecting to ")
+            && (l.ends_with(" (No such file or directory)") || l.ends_with(" (Connection refused)")))
+}
+
+/// Whether the first line of tmux's stderr says that a window or pane does not exist (W3 D1).
+pub fn is_no_target_message(stderr: &str) -> bool {
+    let l = stderr.lines().next().unwrap_or("");
+    ["can't find window:", "no such window:", "can't find pane:", "no such pane:"].iter().any(|p| l.starts_with(p))
+}
+
+/// The first `<digits>.<digits>` after `tmux ` in `tmux -V` output: `tmux 3.2a` gives (3, 2), `tmux next-3.6` gives
+/// (3, 6), and `tmux master` gives none (W3 D13).
+pub fn parse_version(out: &str) -> Option<(u32, u32)> {
+    let rest = out.lines().next()?.strip_prefix("tmux ")?;
+    let b = rest.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let major_end = i + b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if b.get(major_end) == Some(&b'.') {
+            let minor_len = b[major_end + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+            if minor_len > 0 {
+                let major = rest[i..major_end].parse().ok()?;
+                let minor = rest[major_end + 1..major_end + 1 + minor_len].parse().ok()?;
+                return Some((major, minor));
+            }
+        }
+        i = major_end;
+    }
+    None
+}
 
 /// The `list-panes -F` format (W§19, AU99): 13 fields split by `|`. The window name and the pane key are read through
 /// `q:`, so a `|` in them arrives as `\|`. The pane path is last and raw: it takes the rest of the line.

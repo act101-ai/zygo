@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use zygo_workspace::mux::{
-    check_path, format_escape, hook_command, parse_pane_line, vis_decode, PaneRow, ParseError, UnsafePath, WindowRow,
-    PANE_FIELDS, PANE_FORMAT, UNSAFE_PATH_MESSAGE,
+    check_path, format_escape, hook_command, is_gone_message, is_no_target_message, parse_pane_line, parse_version,
+    vis_decode, MuxError, PaneRow, ParseError, UnsafePath, WindowRow, MIN_VERSION, PANE_FIELDS, PANE_FORMAT,
+    UNSAFE_PATH_MESSAGE,
 };
 
 /// Held by every test that forks a process, from its first stub write or fork until its last program has ended, so no
@@ -117,4 +118,60 @@ fn vis_decode_gives_the_typed_name() {
     assert_eq!(vis_decode("u€v"), "u€v");
     assert_eq!(vis_decode(r"\303\251"), "é");
     assert_eq!(vis_decode(r"a\qb"), r"a\qb");
+}
+
+#[test]
+fn gone_messages_are_the_au87_answers() {
+    for m in [
+        "can't find session: zygo-t",
+        "no such session: =zygo-t:",
+        "no server running on /tmp/x/s",
+        "server exited unexpectedly",
+        "error connecting to /tmp/x/s (No such file or directory)",
+        "error connecting to /tmp/x/s (Connection refused)",
+        "can't find session: zygo-t\nmore",
+    ] {
+        assert!(is_gone_message(m), "{m}");
+    }
+    for m in [
+        "error connecting to /tmp/x/s (Permission denied)",
+        "can't find window: 9",
+        "no such window: =zygo-t:9",
+        "invalid option: @zygo-pane",
+        "",
+    ] {
+        assert!(!is_gone_message(m), "{m}");
+    }
+}
+
+#[test]
+fn no_target_messages() {
+    for m in ["can't find window: 9", "no such window: =zygo-t:9", "can't find pane: %99", "no such pane: %99"] {
+        assert!(is_no_target_message(m), "{m}");
+    }
+    for m in ["can't find session: zygo-t", "no such session: =zygo-t:", "no space for new pane"] {
+        assert!(!is_no_target_message(m), "{m}");
+    }
+}
+
+#[test]
+fn parse_version_reads_tmux_v_output() {
+    assert_eq!(parse_version("tmux 3.2a\n"), Some((3, 2)));
+    assert_eq!(parse_version("tmux 3.7c"), Some((3, 7)));
+    assert_eq!(parse_version("tmux next-3.6"), Some((3, 6)));
+    assert_eq!(parse_version("tmux 3.1"), Some((3, 1)));
+    assert_eq!(parse_version("tmux master"), None);
+    assert_eq!(parse_version(""), None);
+    assert_eq!(MIN_VERSION, (3, 2));
+}
+
+#[test]
+fn mux_error_kinds() {
+    assert!(MuxError::Gone { message: "can't find session: s".into() }.is_gone());
+    assert!(!MuxError::NoTarget { message: "can't find window: 9".into() }.is_gone());
+    assert!(!MuxError::TimedOut.is_gone());
+    assert_eq!(MuxError::TimedOut.to_string(), "tmux timed out after 2 s");
+    assert!(MuxError::Failed { message: "no space for new pane".into() }.is_no_space());
+    assert!(MuxError::Failed { message: "size or position no space for a new pane".into() }.is_no_space());
+    assert!(!MuxError::Failed { message: "other".into() }.is_no_space());
 }
