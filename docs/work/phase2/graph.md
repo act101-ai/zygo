@@ -93,7 +93,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | DONE | mechanical | 7ee20d6; acceptance ok |
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
-| FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | TODO | mechanical | — |
+| FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | PLANNED | mechanical | — |
 
 ## Log
 
@@ -208,3 +208,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W6 planned: 22 steps, test first. C1-C16 applied: W2, W3 Produces; W7, W10, M1, M2, M4 Spec; H1 runs the pending snapshot in a detached child; spec W§7.1-7.4, W§10, AU38, AU84, AU89. Adds snapshot_seq to state.rs (author's call). |
 | 2026-11-22 | FIX-13 DONE (3be5519): stub reads --session-id=<id> and --resume=<id>. Merged tree: stub_launch 17, stub_member 19, zygo-launch all pass. R2: Files add stub_member.rs. Spec W§7.3 wait bounds: up/down snapshots 5 s (author's call). |
 | 2026-11-22 | W6 DONE (8978541): snapshot. Merged tree: snapshot 33, state 22, zygo-workspace all pass, check --tests clean. I1-I5, R1-R8, S1-S8 applied: spec W§7.3, W§7.4; W3 gains Multiplexer::socket. FIX-14 added: state.rs hold retries the lock. W7 ready. |
+| 2026-11-22 | FIX-14 planned: 6 steps, test first. The race is not forked in the test: a second handle holds the lock and a thread drops it after 50 ms, then hold must return (author's call). |
