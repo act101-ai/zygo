@@ -1,11 +1,13 @@
 //! `workspace.json` types, atomic write, locks, live check. Owner: node W2 (W§7.1-W§7.3).
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use zygo_core::paths::Paths;
+use zygo_core::session_dir::{SessionDir, write_atomic};
 
 use crate::identity::{valid_name, valid_pane_key, valid_tmux_session, valid_ws_id};
 
@@ -329,6 +331,13 @@ fn validate(ws: &Workspace, id: &str) -> Result<(), String> {
 }
 
 const STATE_FILE: &str = "workspace.json";
+const LOCK_FILE: &str = "lock";
+const OP_LOCK_FILE: &str = "op.lock";
+const ERRORS_FILE: &str = "errors.log";
+/// The time between two tries for a lock that another holder has.
+const LOCK_POLL: Duration = Duration::from_millis(5);
+/// The largest text of one `errors.log` line, in bytes.
+const ERROR_LINE_MAX: usize = 1024;
 
 /// The state of one workspace: the files in `<workspaces_dir>/<id>`.
 #[derive(Debug, Clone)]
@@ -391,5 +400,104 @@ impl Store {
     /// The phase as the file has it now, with no lock; `None` when the state is missing or cannot be read.
     pub fn phase_unlocked(&self) -> Option<Phase> {
         self.read().ok().flatten().map(|ws| ws.phase)
+    }
+
+    /// Makes the state directory (mode 0700 on unix) after the id check: no path is made from an id that is not
+    /// valid.
+    fn ensure_dir(&self) -> Result<(), StateError> {
+        if !valid_ws_id(&self.id) {
+            return Err(self.invalid_id());
+        }
+        SessionDir::new(self.dir.clone()).create().map_err(|e| StateError::Io(std::io::Error::other(e)))
+    }
+
+    /// Read-modify-write of `workspace.json` under `lock` (W§7.3): waits for the lock at most `bound`, reads the
+    /// state (`Workspace::new` when none exists), applies `f`, checks the result (AU84) and replaces the file in one
+    /// rename (W-C4). An error of the read, of `f` or of the check writes nothing. It runs no other program and
+    /// waits for nothing but the lock.
+    pub fn update(
+        &self, bound: Duration, f: &mut dyn FnMut(&mut Workspace) -> anyhow::Result<()>,
+    ) -> Result<Workspace, StateError> {
+        self.ensure_dir()?;
+        let Some(_lock) = lock_file(&self.dir.join(LOCK_FILE), bound)? else {
+            return Err(StateError::Busy);
+        };
+        let mut ws = match self.read()? {
+            Some(ws) => ws,
+            None => Workspace::new(&self.id),
+        };
+        f(&mut ws).map_err(StateError::Refused)?;
+        let path = self.state_file();
+        if let Err(reason) = validate(&ws, &self.id) {
+            return Err(StateError::Invalid { path, reason });
+        }
+        let bytes = serde_json::to_vec_pretty(&ws).map_err(|e| StateError::Io(std::io::Error::other(e)))?;
+        write_atomic(&path, &bytes).map_err(|e| StateError::Io(std::io::Error::other(e)))?;
+        Ok(ws)
+    }
+
+    /// Takes `op.lock`, the lock of `up` and `down`; tries again for `OP_LOCK_RETRY` before `OpHeld` (AU83).
+    pub fn op_lock(&self) -> Result<OpLock, StateError> {
+        self.ensure_dir()?;
+        match lock_file(&self.dir.join(OP_LOCK_FILE), OP_LOCK_RETRY)? {
+            Some(f) => Ok(OpLock { _file: f }),
+            None => Err(StateError::OpHeld),
+        }
+    }
+
+    /// Adds the line `<unix seconds> <text>` to `errors.log`. The caller has no place to report a failure of the
+    /// log, so every error is ignored.
+    pub fn log_error(&self, line: &str) {
+        if self.ensure_dir().is_err() {
+            return;
+        }
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let text = line.replace(['\n', '\r'], " ");
+        let mut end = text.len().min(ERROR_LINE_MAX);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let entry = format!("{secs} {}\n", &text[..end]);
+        if let Ok(mut f) = private().append(true).create(true).open(self.dir.join(ERRORS_FILE)) {
+            let _ = f.write_all(entry.as_bytes());
+        }
+    }
+}
+
+/// `op.lock` held by this process; the lock ends when the value is dropped.
+#[derive(Debug)]
+pub struct OpLock {
+    _file: File,
+}
+
+/// Open options for a file that only its owner can read: mode 0600 on unix. On Windows the file gets the access
+/// list of the user's data directory.
+fn private() -> fs::OpenOptions {
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut o = fs::OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o
+}
+
+/// Opens (and creates) the lock file `path` and takes its lock: tries each 5 ms until `bound` ends. `Ok(None)` when
+/// another holder kept the lock for the whole bound. The lock ends when the file is dropped.
+fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<File>> {
+    let f = private().read(true).write(true).create(true).truncate(false).open(path)?;
+    let deadline = Instant::now() + bound;
+    loop {
+        match fs4::FileExt::try_lock(&f) {
+            Ok(()) => return Ok(Some(f)),
+            Err(fs4::TryLockError::Error(e)) => return Err(e),
+            Err(fs4::TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return Ok(None);
+                }
+                std::thread::sleep(LOCK_POLL);
+            }
+        }
     }
 }

@@ -228,3 +228,112 @@ fn an_invalid_store_id_reads_nothing() {
         assert_eq!(store.phase_unlocked(), None);
     }
 }
+
+#[test] // W§7.3: `update` creates the state from `Workspace::new`, and each later call reads, changes and writes
+fn update_creates_then_reads_modifies_and_writes() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let made = store.update(S5, &mut identity).unwrap();
+    assert_eq!((made.version, made.id.as_str(), made.phase), (1, ID, Phase::Building));
+    assert_eq!(store.read().unwrap().unwrap(), made);
+    store.update(S5, &mut |ws| { ws.members.insert(KEY.into(), MemberRecord::new(Agent::ClaudeCode)); Ok(()) }).unwrap();
+    let got = store.update(S5, &mut |ws| { ws.snapshot_at = Some(7); Ok(()) }).unwrap();
+    assert!(got.members.contains_key(KEY)); // the second writer kept the first writer's change
+    assert_eq!(got.snapshot_at, Some(7));
+    assert_eq!(store.read().unwrap().unwrap(), got);
+}
+
+#[cfg(unix)]
+#[test] // AU2, W§7.1: directory 0700, files 0600
+fn modes_are_0700_and_0600() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    store.update(S5, &mut identity).unwrap();
+    let _op = store.op_lock().unwrap();
+    store.log_error("x");
+    let mode = |p: PathBuf| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(store.dir().to_path_buf()), 0o700);
+    for f in ["workspace.json", "lock", "op.lock", "errors.log"] {
+        assert_eq!(mode(store.dir().join(f)), 0o600, "{f}");
+    }
+}
+
+#[test] // AU78, W§18 #11 second half: a version 1 file with extra fields keeps them after a write
+fn update_keeps_unknown_fields() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut v = doc();
+    v["future"] = json!({"a": 1});
+    v["windows"] = json!([{"index": 0, "layout": "l", "width": 80, "height": 24, "glow": true}]);
+    v["panes"] = json!([{"key": KEY, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "shell", "title": "t"}]);
+    v["members"] = json!({KEY: {"state": "resumable", "launch": {"kind": "opencode", "tier": 3}, "badge": [1],
+        "pending": {"zygo_session": "s1", "started_at": 5, "why": "w"}, "interrupted": [{"agent_id": "a", "agent_type": "b", "depth": 2}]}});
+    put(&store, &v);
+    store.update(S5, &mut |ws| { ws.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert_eq!(after["phase"], json!("down"));
+    assert_eq!(after["future"], json!({"a": 1}));
+    assert_eq!(after["windows"][0]["glow"], json!(true));
+    assert_eq!(after["panes"][0]["title"], json!("t"));
+    assert_eq!(after["members"][KEY]["badge"], json!([1]));
+    assert_eq!(after["members"][KEY]["launch"]["tier"], json!(3));
+    assert_eq!(after["members"][KEY]["pending"]["why"], json!("w"));
+    assert_eq!(after["members"][KEY]["interrupted"][0]["depth"], json!(2));
+}
+
+#[test] // AU29, W§18 #11 first half; W§10: a state that does not parse is not changed
+fn update_changes_no_file_it_cannot_read() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut newer = doc();
+    newer["version"] = json!(2);
+    let mut hostile = doc();
+    hostile["name"] = json!("a b");
+    for (v, is_newer) in [(newer, true), (hostile, false)] {
+        put(&store, &v);
+        let before = raw(&store);
+        let mut calls = 0;
+        let e = store.update(S5, &mut |ws| { calls += 1; ws.phase = Phase::Down; Ok(()) }).unwrap_err();
+        assert_eq!(matches!(e, StateError::Newer { .. }), is_newer);
+        assert_eq!(matches!(e, StateError::Invalid { .. }), !is_newer);
+        assert_eq!(calls, 0);
+        assert_eq!(raw(&store), before);
+    }
+}
+
+#[test] // AU84 at the write; a closure error writes nothing
+fn update_refuses_an_invalid_result_and_a_closure_error() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    // a member write for a workspace with no state creates none (design call b)
+    let e = store.update(S5, &mut |ws| { ws.members.insert(KEY.into(), MemberRecord::new(Agent::ClaudeCode)); Ok(()) }).unwrap_err();
+    assert!(matches!(e, StateError::Invalid { reason, .. } if reason == "invalid name"));
+    assert!(!store.dir().join("workspace.json").exists());
+    store.update(S5, &mut identity).unwrap();
+    let before = raw(&store);
+    let hostile: [(&str, fn(&mut Workspace)); 6] = [
+        ("invalid version", |ws| ws.version = 2),
+        ("invalid id", |ws| ws.id = "fedcba9876543210".into()),
+        ("invalid name", |ws| ws.name = "a b".into()),
+        ("invalid tmux_session", |ws| ws.tmux_session = "other".into()),
+        ("invalid pane key", |ws| ws.panes.push(Pane { key: "k$(x)".into(), ..Default::default() })),
+        ("invalid pane key", |ws| { ws.members.insert("#{pane_id}".into(), MemberRecord::new(Agent::OpenCode)); }),
+    ];
+    for (reason, change) in hostile {
+        let e = store.update(S5, &mut |ws| { change(ws); Ok(()) }).unwrap_err();
+        assert!(matches!(&e, StateError::Invalid { reason: r, .. } if r == reason), "{reason}: {e}");
+        assert_eq!(raw(&store), before);
+    }
+    let e = store.update(S5, &mut |ws| { ws.phase = Phase::Down; anyhow::bail!("pane gone") }).unwrap_err();
+    assert!(matches!(e, StateError::Refused(_)));
+    assert_eq!(e.to_string(), "pane gone");
+    assert_eq!(raw(&store), before);
+    // an invalid store id: no directory is made
+    let p = paths(t.path());
+    let bad = Store::open(&p, "../x");
+    assert!(matches!(bad.update(S5, &mut identity), Err(StateError::Invalid { .. })));
+    assert!(matches!(bad.op_lock(), Err(StateError::Invalid { .. })));
+    bad.log_error("x");
+    assert!(!p.workspaces_dir().join("../x").exists());
+}
