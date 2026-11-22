@@ -7,3 +7,17 @@
 **Acceptance:** `cargo test -p zygo --test update && cargo test --workspace --locked --no-run` → all pass and the workspace builds, the #2 install replacing a temp file given as `exe` (never the test binary), the existing `zygo update` tests unchanged, one test per auto-update acceptance item #1, #2, #3, #4, #5, #6, #7 (the #7 test is cross-platform and runs on the host here; the Windows deferral is verified by the PR's windows-latest job of `.github/workflows/ci.yml`)
 
 ## Plan
+
+- [x] Tests first in `crates/zygo/tests/update.rs` (module `start`): one test for each of auto-update #1 to #7, in process, with a fake `PromptIo`, an injected environment and a temp file as `exe`; one more #2 test for a failed install; two subprocess tests for the `zygo claude` and `zygo opencode` dispatch (`ZYGO_TEST_ASSUME_TTY=1`, `y` on stdin, the copied binary). Seen to fail: the file did not compile (no `start_check`, `PromptIo`, `StartOutcome`).
+- [x] `update.rs`: `install(target, release_base, version)` and `release_base(env)` split out of `run_inner`; `Failure` made public; `update::run` calls `install` with `current_exe()` (canonical) and `release_base(&|k| std::env::var_os(k))`. The 16 `zygo update` tests are unchanged and pass.
+- [x] `update.rs`: `PromptIo`, `Terminal` (the real terminal: `std::io::IsTerminal` on stdin and stderr), `StartOutcome`, `start_check`. Skip list, then the 24 h rule, then one GET for VERSION on its own thread with a 2 s total limit, then the prompt. Cache `update.json` in the cache directory: `checked_at`, `latest`, `skip`; atomic write. In-process tests pass; the two dispatch tests still fail (exit 13, agent not found).
+- [x] `cmd/mod.rs`: `start_check` before `claude::run` and `opencode::run`; reads `current_exe()`, the process environment, the user config and `ZYGO_TEST_ASSUME_TTY` (under `test-hooks`). The dispatch tests pass.
+- [x] Builder decisions (design "Left to the builder" and gaps):
+  - `ZYGO_SESSION`, `ZYGO_WORKSPACE` and `ZYGO_NO_UPDATE_CHECK` count as set when they are not empty; `ZYGO_NO_UPDATE_CHECK` opts out with any value that is not empty.
+  - A failed check also sets `checked_at`: an offline machine waits one time in 24 h, not at each launch.
+  - A failed install after `y` prints `zygo update: <error>` and returns `Exit` with the error's code: the agent does not start, so the error stays on the screen. The binary is unchanged.
+  - `s` compares by semver precedence: no prompt until a release newer than the skipped one exists.
+  - The sessions line is printed before the prompt. On Windows with live sessions only that line is printed, there is no prompt, and the launch continues.
+  - A user config that does not load gives no check; the launch reports the error.
+- [x] `cargo clippy -p zygo --all-targets` and `cargo build -p zygo` (no `test-hooks`): no warning. `cargo test -p zygo --locked`: all pass.
+- [x] Acceptance: `cargo test -p zygo --test update` (26 passed) and `cargo test --workspace --locked --no-run` (builds).

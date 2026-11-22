@@ -370,6 +370,27 @@ fn slash(verb: &str, args: &str) -> anyhow::Result<String> {
     run_verb(verb, args.split_whitespace().map(str::to_owned).collect(), true)
 }
 
+/// The update check before an agent launch (auto-update design), with the process's own environment, binary and
+/// terminal. `rest` holds the arguments passed to the agent. `Some(code)`: exit with `code` and do not launch.
+/// A user config that does not load gives no check: the launch reports the error.
+fn start_check(rest: &[String]) -> Option<i32> {
+    let env = |k: &str| std::env::var_os(k);
+    #[cfg(feature = "test-hooks")]
+    let assume_tty = env("ZYGO_TEST_ASSUME_TTY").is_some_and(|v| v == "1");
+    #[cfg(not(feature = "test-hooks"))]
+    let assume_tty = false;
+    let mut io = update::Terminal::new(assume_tty);
+    let paths = Paths::from_env();
+    // `[update]` comes from user config only: no repository and no team layer.
+    let cfg = zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None }).ok()?.config;
+    let exe = std::env::current_exe().and_then(std::fs::canonicalize).ok()?;
+    let args: Vec<std::ffi::OsString> = rest.iter().map(std::ffi::OsString::from).collect();
+    match update::start_check(&paths, &cfg, &args, &env, &exe, &mut io) {
+        update::StartOutcome::Continue => None,
+        update::StartOutcome::Exit { code } => Some(code),
+    }
+}
+
 /// Entry point of the binary; returns the process exit code.
 pub fn run() -> i32 {
     set_slash_dispatch(slash);
@@ -392,8 +413,8 @@ pub fn run() -> i32 {
         zygo_results::sweep(&Paths::from_env().cache_dir, SystemTime::now());
     }
     let verb = match &cli.command {
-        Cmd::Claude(l) => return claude::run(l),
-        Cmd::Opencode(a) => return opencode::run(a),
+        Cmd::Claude(l) => return start_check(&l.rest).unwrap_or_else(|| claude::run(l)),
+        Cmd::Opencode(a) => return start_check(&a.rest).unwrap_or_else(|| opencode::run(a)),
         Cmd::Serve { .. } => return serve::run(),
         Cmd::Doctor => return doctor::run(),
         Cmd::Plugin { sub: PluginCmd::Check { dir } } => return plugin::run(dir),
