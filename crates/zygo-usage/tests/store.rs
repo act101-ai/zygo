@@ -452,6 +452,29 @@ fn bytes_trimmed_equals_summary_for_the_session() { // H§7.4
     assert_eq!(s.bytes_trimmed("none").unwrap(), 0);
 }
 
+/// H§14 #18 (store part): for the 92,160-byte fixture `bytes_trimmed` equals `summary` for each session, the estimate
+/// is 23,040 tokens, and one read-only handle gives a row written after its first read (the HUD caches no count).
+#[test]
+fn h14_18_bytes_trimmed_equals_summary_and_follows_a_new_row() {
+    let t = Tmp::new();
+    let w = Store::open(&t.db()).unwrap();
+    w.insert_trim(&trim("S1", 1, 100_000, 7_840)).unwrap();
+    w.insert_trim(&trim("S2", 2, 4_000, 0)).unwrap();
+    let r = Store::open_read_only(&t.db()).unwrap();
+    let both = |session: &str| {
+        let n = r.bytes_trimmed(session).unwrap();
+        assert_eq!(n, r.summary(&Filter { session: Some(session.into()), since: None }).unwrap().bytes_trimmed, "{session}");
+        n
+    };
+    assert_eq!(both("S1"), 92_160);
+    assert_eq!(both("S1").div_ceil(zygo_core::tokens::BYTES_PER_TOKEN), 23_040);
+    assert_eq!(both("S2"), 4_000);
+    w.insert_trim(&trim("S1", 3, 5, 0)).unwrap();
+    assert_eq!(both("S1"), 92_165);
+    assert_eq!(both("S1").div_ceil(zygo_core::tokens::BYTES_PER_TOKEN), 23_042);
+    assert_eq!(both("S2"), 4_000);
+}
+
 #[test]
 fn bytes_trimmed_query_uses_the_session_index() { // H§7.4: one indexed SUM
     let t = Tmp::new();

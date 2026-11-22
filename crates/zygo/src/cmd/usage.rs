@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
 use anyhow::anyhow;
+use zygo_core::tokens::BYTES_PER_TOKEN;
 use zygo_hooks::statusline::pct;
 use zygo_plugins::check::esc;
 use zygo_usage::{Filter, Store, Summary};
@@ -99,7 +100,9 @@ pub fn run(ctx: &VerbCtx, args: &[String], env_session: Option<&str>) -> anyhow:
     let _ = writeln!(o, "scope: {scope}\nrequests: {}", s.requests);
     let _ = writeln!(o, "tokens: {} in, {} out, {} cache read, {} cache write", s.input_tokens, s.output_tokens, s.cache_read_tokens, s.cache_write_tokens);
     let _ = writeln!(o, "cache read share: {}\nestimated cost: ${:.4}", pct(share), s.estimated_usd);
-    let _ = writeln!(o, "bytes trimmed: {}\ncompaction signals: {}\ncompactions observed: {}", s.bytes_trimmed, s.compaction_signals, s.compactions_observed);
+    // AU26: the exact byte count stays; the estimate is `ceil(bytes ÷ BYTES_PER_TOKEN)` (H§6.6), as the status line shows it.
+    let _ = writeln!(o, "bytes trimmed: {}\ntokens trimmed (estimate): {}", s.bytes_trimmed, s.bytes_trimmed.div_ceil(BYTES_PER_TOKEN));
+    let _ = writeln!(o, "compaction signals: {}\ncompactions observed: {}", s.compaction_signals, s.compactions_observed);
     let _ = writeln!(o, "guard events: {}", if events.is_empty() { "none".into() } else { events.join(", ") });
     if s.by_role_model.is_empty() {
         o.push_str("by role and model: none");

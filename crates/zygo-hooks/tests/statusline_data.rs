@@ -569,6 +569,45 @@ fn h14_17_old_status_reply_drops_only_the_new_segments() {
     assert!(!fx.lock().exists());
 }
 
+// ---- H§14 #18 ----
+
+/// H§14 #18 (data part), AU4: the trimmed count is not cached. A trimmed row written between two calls 1 s apart
+/// shows at the second call, while the status part comes from the cache (one request in all). The count is the
+/// one of the session of `view.json` in the usage store of `paths`.
+#[test]
+fn h14_18_trimmed_row_between_two_calls_shows_at_the_second_call() {
+    let server = Server::ok(&op13());
+    let fx = Fx::served(&server);
+    let first = fx.run(&[], T);
+    assert_eq!(first.trimmed_bytes, None); // no usage store yet
+    assert!(!text(&first, V).contains("trimmed") && !text(&first, C).contains('✂'), "{}", text(&first, V));
+
+    fx.trim();
+    let second = fx.run(&[], T + 1);
+    assert_eq!(second.trimmed_bytes, Some(92_160));
+    assert_eq!(server.hits(), 1);
+    assert!(text(&second, C).ends_with("  ✂ 23k"), "{}", text(&second, C));
+    assert!(plain_text(&second, C).ends_with("  trim 23k"), "{}", plain_text(&second, C));
+    assert!(text(&second, V).ends_with("   trimmed 23k tok"), "{}", text(&second, V));
+    assert_eq!(text(&first, V), text(&second, V).replace("   trimmed 23k tok", ""));
+
+    // A row of another session does not count; one more row of this session does, again with no request.
+    let store = Store::open(&fx.paths().usage_db).unwrap();
+    store.insert_trim(&TrimRow { session: "S2".into(), stored_bytes: 8_000, ..Default::default() }).unwrap();
+    assert_eq!(fx.run(&[], T + 2).trimmed_bytes, Some(92_160));
+    store.insert_trim(&TrimRow { session: "S1".into(), stored_bytes: 4_000, ..Default::default() }).unwrap();
+    let fourth = fx.run(&[], T + 3);
+    assert_eq!(fourth.trimmed_bytes, Some(96_160));
+    assert!(text(&fourth, V).ends_with("   trimmed 24k tok"), "{}", text(&fourth, V));
+    assert_eq!(server.hits(), 1);
+
+    // The cache file has no trimmed value.
+    let cache = fx.cache();
+    for part in [&cache, &cache["status"]] {
+        assert!(part.as_object().unwrap().keys().all(|k| !k.contains("trim")), "{cache}");
+    }
+}
+
 // ---- H§14 #22 ----
 
 /// A reader that gives `head`, then blocks until the test drops its sender.
