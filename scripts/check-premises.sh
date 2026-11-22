@@ -12,7 +12,7 @@ P=docs/premises.md
 SPEC=docs/specs/2026-11-18-zygo-design.md
 IDS="P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7"
 WSPEC=docs/specs/2026-11-20-workspaces-design.md
-WIDS="PW6 PW11 PW15"
+WIDS="PW6 PW11 PW15 PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16"
 WSKIP=""
 
 fail() { echo "check-premises: $*"; exit 1; }
