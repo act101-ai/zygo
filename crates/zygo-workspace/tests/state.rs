@@ -465,3 +465,31 @@ fn op_lock_gets_a_lock_released_inside_the_retry_time() {
     assert!(store.op_lock().is_ok());
     holder.join().unwrap();
 }
+
+#[test] // W§7.1: one line per call, at most 64 KiB, the newest lines stay
+fn errors_log_has_one_line_per_call_and_at_most_64_kib() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let log = store.dir().join("errors.log");
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    store.log_error("snapshot: tmux\nfailed\r");
+    let text = fs::read_to_string(&log).unwrap();
+    let (secs, rest) = text.split_once(' ').unwrap();
+    assert!(secs.parse::<u64>().unwrap() >= now);
+    assert_eq!(rest, "snapshot: tmux failed \n");
+    store.log_error(&"é".repeat(2000)); // 4000 bytes: cut to 1024 at a char boundary
+    let text = fs::read_to_string(&log).unwrap();
+    assert_eq!(text.lines().count(), 2);
+    assert_eq!(text.lines().nth(1).unwrap().split_once(' ').unwrap().1, "é".repeat(512));
+    for i in 0..1500 {
+        store.log_error(&format!("line {i:04} {}", "x".repeat(90)));
+        assert!(fs::metadata(&log).unwrap().len() <= 64 * 1024, "after line {i}");
+    }
+    let text = fs::read_to_string(&log).unwrap();
+    assert!(text.ends_with(&format!(" line 1499 {}\n", "x".repeat(90))));
+    assert!(text.lines().count() > 200 && text.len() > 30 * 1024); // the limit cuts old lines; it does not empty the file
+    for l in text.lines() { // no line is cut in two
+        let (secs, rest) = l.split_once(' ').unwrap();
+        assert!(secs.parse::<u64>().is_ok() && rest.starts_with("line ") && rest.ends_with(&"x".repeat(90)), "{l:?}");
+    }
+}

@@ -473,9 +473,23 @@ impl Store {
             end -= 1;
         }
         let entry = format!("{secs} {}\n", &text[..end]);
-        if let Ok(mut f) = private().append(true).create(true).open(self.dir.join(ERRORS_FILE)) {
-            let _ = f.write_all(entry.as_bytes());
+        let path = self.dir.join(ERRORS_FILE);
+        let len = fs::metadata(&path).map_or(0, |m| m.len());
+        if len + entry.len() as u64 <= ERRORS_LOG_MAX {
+            if let Ok(mut f) = private().append(true).create(true).open(&path) {
+                let _ = f.write_all(entry.as_bytes());
+            }
+            return;
         }
+        // The file is full: keep its newest whole lines within half of the limit, so a rewrite occurs one time
+        // per 32 KiB of lines and not at each line.
+        let Ok(mut all) = fs::read(&path) else {
+            return;
+        };
+        all.extend_from_slice(entry.as_bytes());
+        let keep = (ERRORS_LOG_MAX / 2) as usize;
+        let from = (0..all.len()).find(|&o| all.len() - o <= keep && (o == 0 || all[o - 1] == b'\n')).unwrap_or(all.len());
+        let _ = write_atomic(&path, &all[from..]);
     }
 }
 
