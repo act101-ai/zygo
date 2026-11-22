@@ -137,6 +137,24 @@ fn defaults_when_keys_omitted() {
     assert_eq!(cfg("[guards]\nclaims = \"notify\"").guards.trailers, Level::Notify);
 }
 
+#[test]
+fn workspace_tool_defaults_off_and_only_the_config_sets_it() {
+    assert!(!Features::default().workspace_tool);
+    assert!(!Config::default().features.workspace_tool);
+    assert!(!cfg("[features]\nresults = false").features.workspace_tool);
+    assert!(!loaded("").config.features.workspace_tool);
+    let m = loaded("[features]\nworkspace_tool = true\n");
+    assert!(m.config.features.workspace_tool);
+    assert_eq!(m.source_of("features.workspace_tool"), Layer::User);
+    // A profile cannot set it (AU65): profile validation refuses the key.
+    let m = loaded("[profile.p]\nfeatures = { workspace_tool = true }\n");
+    let p = zygo_config::profile::select(&m, Some("p")).unwrap();
+    let c = &m.config;
+    let v = zygo_config::profile::validate(&p, &c.role, &c.main_role, &c.catalog.view(), Dialect::Anthropic, &BTreeSet::new())
+        .unwrap_err();
+    assert_eq!(v.to_string(), "profile.p.features.workspace_tool: not a feature key");
+}
+
 const SPEC_6_3: &str = r#"
 [[model]]
 id = "claude-opus-5-5"
