@@ -448,6 +448,18 @@ impl Store {
         }
     }
 
+    /// `false` only while another holder has `op.lock`. It creates no file and no directory. When the lock is free,
+    /// the check holds it until the return; `op_lock` tries again for that short hold (AU83).
+    pub fn op_lock_free(&self) -> bool {
+        if !valid_ws_id(&self.id) {
+            return true;
+        }
+        match File::open(self.dir.join(OP_LOCK_FILE)) {
+            Ok(f) => !matches!(fs4::FileExt::try_lock(&f), Err(fs4::TryLockError::WouldBlock)),
+            Err(_) => true,
+        }
+    }
+
     /// Adds the line `<unix seconds> <text>` to `errors.log`. The caller has no place to report a failure of the
     /// log, so every error is ignored.
     pub fn log_error(&self, line: &str) {

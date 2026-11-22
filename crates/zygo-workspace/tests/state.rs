@@ -418,3 +418,50 @@ fn a_killed_write_leaves_the_state_whole_and_the_next_write_removes_old_tmp_file
     assert!(other.exists()); // only `.tmp*`
     assert_eq!(store.read().unwrap().unwrap().phase, Phase::Up);
 }
+
+#[test] // AU83: 200 ms of retries before "held"
+fn op_lock_reports_held_after_200_ms() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    assert!(store.op_lock_free()); // no file yet
+    assert!(!store.dir().exists()); // and the check made none
+    let held = Store::open(&p, ID).op_lock().unwrap();
+    assert!(!store.op_lock_free());
+    let start = Instant::now();
+    let r = store.op_lock();
+    let waited = start.elapsed();
+    assert!(matches!(r, Err(StateError::OpHeld)));
+    assert_eq!(StateError::OpHeld.to_string(), "up or down is in progress");
+    assert!(waited >= Duration::from_millis(200) && waited < Duration::from_secs(2), "{waited:?}");
+    assert!(!store.op_lock_free()); // the check took nothing from the holder
+    drop(held);
+    assert!(store.op_lock_free());
+    assert!(store.op_lock_free()); // the check released its own short hold
+    let mine = store.op_lock().unwrap();
+    assert!(!Store::open(&p, ID).op_lock_free());
+    drop(mine);
+    assert!(Store::open(&p, "nothex").op_lock_free()); // design call a
+}
+
+#[test] // AU83: a short hold by a hook does not make `up` or `down` fail
+fn op_lock_gets_a_lock_released_inside_the_retry_time() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let other = Store::open(&p, ID);
+    let holder = std::thread::spawn(move || {
+        let lock = other.op_lock().unwrap();
+        held_tx.send(()).unwrap();
+        go_rx.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        drop(lock);
+    });
+    held_rx.recv().unwrap();
+    assert!(!store.op_lock_free());
+    go_tx.send(()).unwrap();
+    assert!(store.op_lock().is_ok());
+    holder.join().unwrap();
+}
