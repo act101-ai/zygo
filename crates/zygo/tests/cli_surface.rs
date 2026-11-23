@@ -34,6 +34,7 @@ fn help_lists_every_command() {
         "claude", "opencode", "serve", "status", "doctor", "compact", "profile", "work", "usage",
         "marketplace", "plugins", "plugin", "keys", "config", "update", "help", "results",
         "redaction", "guards", "units", "compact-tool", "statusline", "mcp", "hook",
+        "up", "down", "ls", "attach", "loadout", "workspace", "ws",
     ] {
         assert!(listed.contains(c), "--help Commands lacks {c}: {listed:?}");
     }
@@ -41,13 +42,38 @@ fn help_lists_every_command() {
 
 #[test]
 fn every_command_exists() {
-    let cmds = "claude|opencode|serve|serve token new|serve reload|status|doctor|compact|profile list|profile show|profile use|work|work report|usage|marketplace add|marketplace list|marketplace update|marketplace remove|plugins list|plugins sync|plugins enable|plugins disable|plugins approve|plugin check|keys set|keys rm|keys list|config show|config check|update|help|results|redaction|guards|units|compact-tool|statusline|mcp|hook";
+    let cmds = "claude|opencode|serve|serve token new|serve reload|status|doctor|compact|profile list|profile show|profile use|work|work report|usage|marketplace add|marketplace list|marketplace update|marketplace remove|plugins list|plugins sync|plugins enable|plugins disable|plugins approve|plugin check|keys set|keys rm|keys list|config show|config check|update|help|results|redaction|guards|units|compact-tool|statusline|mcp|hook|up|down|ls|attach|loadout list|workspace|ws forget|ws forget-pane|ws snapshot";
     for c in cmds.split('|') {
         let mut argv: Vec<&str> = c.split(' ').collect();
         argv.push("--help");
         let out = zygo(&argv);
         assert!(out.status.success(), "zygo {c} --help exited {:?}", out.status.code());
     }
+}
+
+/// W§12, AU44: the flags of the workspace verbs; `ws snapshot` is hidden.
+#[test]
+fn workspace_verb_flags() {
+    let up = help_of(&["up"]);
+    for f in ["--loadout", "--reset", "--no-attach", "--all"] {
+        assert!(up.contains(f), "up lacks {f}: {up}");
+    }
+    let down = help_of(&["down"]);
+    for f in ["--now", "--timeout", "--wait", "--all"] {
+        assert!(down.contains(f), "down lacks {f}: {down}");
+    }
+    let pane = help_of(&["ws", "forget-pane"]);
+    assert!(pane.contains("--name"), "{pane}");
+    let ws = help_of(&["ws"]);
+    let listed: HashSet<&str> = ws
+        .lines()
+        .skip_while(|l| l.trim() != "Commands:")
+        .skip(1)
+        .take_while(|l| !l.trim().is_empty())
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    assert!(listed.contains("forget") && listed.contains("forget-pane"), "{ws}");
+    assert!(!listed.contains("snapshot"), "{ws}");
 }
 
 #[test]

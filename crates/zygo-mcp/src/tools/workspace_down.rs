@@ -95,8 +95,10 @@ impl Tool for WorkspaceDown {
     fn call(&self, args: Value) -> Result<Value, ToolError> {
         let now = parse_now(&args)?;
         let name = self.name()?;
-        // `zygo down` has no `--` handling (crates/zygo/src/cmd has no `down` subcommand yet), so a name that starts
-        // with `-` would be read as a flag. AU84 allows `-` anywhere in a name, so refuse it here.
+        // This tool passes the name to `zygo down` with no `--` before it, so the clap parser of `zygo down`
+        // (`crates/zygo/src/cmd/down.rs`) reads a name that starts with `-` as a flag. AU84 allows `-` anywhere in a
+        // name (`valid_name`, `crates/zygo-workspace/src/identity.rs:69`, which `validate` in `state.rs` calls), so
+        // `Store::read` gives such a name; this check is the only guard, so refuse it here.
         if name.starts_with('-') {
             return Err(ToolError::Failed(format!("zygo: workspace name `{name}` starts with `-`; zygo down would read it as a flag")));
         }

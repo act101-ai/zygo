@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-27, FIX-24
+**Next:** M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-27, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,11 +56,10 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | DONE | judgment | a75e36f; acceptance exit 0, zygo-hooks 197 + 1 ignored, zygo-core 28, zygo-workspace 316 + 2 ignored, zygo-launch 244 + 6 ignored, zygo 387, clippy -D warnings clean (merged tree) |
 | H3 | OpenCode plugin: session classification, main session and turn set | H1 | DONE | judgment | dd25ae1; acceptance opencode 77 + 1 ignored, zygo-launch all pass, zygo-hooks workspace 22 + 1 ignored, clippy -D warnings clean, check --workspace --tests clean (merged tree) |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
-| M1 | CLI verbs, /zygo:down detached, doctor tmux line, results sweep AU69 (a) | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | IN-PROGRESS | judgment | .worktrees/phase2/M1; re-planned 2026-11-23 after 3 rounds: split, loadout show and config check hiding moved to FIX-27; attempt 1 diff kept in scratchpad m1-attempt1.diff |
+| M1 | CLI verbs, /zygo:down detached, doctor tmux line, results sweep AU69 (a) | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | DONE | judgment | 09ed93b; acceptance workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172 (merged tree) |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
@@ -245,3 +244,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | M1 re-planned (split): M1 keeps verbs, /zygo:down, doctor tmux line, sweep AU69 (a), ZYGO_SESSION rule; FIX-27 added for loadout show/config show/config check secret hiding and labels. Plan review applied. FIX-24 depends on FIX-27. |
 | 2026-11-23 | FIX-23 DONE (f052dd4): merged after re-plan; review found no defect. Merged tree: Acceptance zygo-core lib 2, zygo-launch lib 3, claude_code 44; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
 | 2026-11-23 | FIX-26 DONE (25194af): merged after 1 review round (visible skip notes, Windows type-check risk stated). Merged tree: Acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
+| 2026-11-23 | M1 DONE (09ed93b): merged after re-plan; 1 review round (stub-agent built on demand, marker target test, tmux lookup tests, exact detach condition, cwd read only when needed). Merged tree: workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172. |

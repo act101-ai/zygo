@@ -356,7 +356,7 @@ fn sweep_removes_results_24_hours_after_the_session_directory_changed() {
     let exact = session(t.path(), "exact", false, now - DAY);
     let young = session(t.path(), "young", false, now - 23 * HOUR);
     let future = session(t.path(), "future", false, now + 10 * HOUR);
-    sweep(t.path(), now);
+    sweep(t.path(), &t.path().join("workspaces"), now);
     assert!(!old.exists(), "25 h: removed although results/f0 was written just now");
     assert!(!exact.exists(), "exactly 24 h counts as expired");
     assert!(young.join("results").join("f0").exists(), "23 h: kept");
@@ -373,11 +373,12 @@ fn sweep_keeps_a_live_session_and_ignores_stray_entries() {
     let held = lock_pid(&live);
     std::fs::write(t.path().join("sessions").join("stray-file"), "x").unwrap();
     std::fs::create_dir_all(t.path().join("sessions").join("no-results")).unwrap();
-    sweep(t.path(), now);
+    sweep(t.path(), &t.path().join("workspaces"), now);
     assert!(live.join("results").join("f0").exists() && live.join("token").exists(), "locked pid: live, kept");
     assert!(t.path().join("sessions").join("stray-file").exists());
     assert!(t.path().join("sessions").join("no-results").exists());     // changed just now
-    sweep(&t.path().join("missing"), now);                                // no sessions directory: no panic
+    let missing = t.path().join("missing");
+    sweep(&missing, &missing.join("workspaces"), now);                    // no sessions directory: no panic
     drop(held);
 }
 
@@ -397,7 +398,7 @@ fn sweep_removes_a_session_whose_launcher_is_gone() {
     let young = session(t.path(), "young", true, now - 23 * HOUR);
     std::fs::write(young.join("pid"), "1").unwrap();
     age(&young, now - 23 * HOUR);
-    sweep(t.path(), now);
+    sweep(t.path(), &t.path().join("workspaces"), now);
     assert!(!crashed.exists(), "unlocked pid + token, 25 h: swept with its token");
     assert!(!bare.exists(), "a dead launcher's directory without results/ is swept too");
     assert!(young.join("token").exists(), "23 h: the age rule still applies");
@@ -423,7 +424,7 @@ fn sweep_ages_a_session_by_its_newest_direct_entry() {
     set_mtime(&by_results, now - 25 * HOUR);
     set_mtime(&by_log.join("session.log"), now - HOUR);                  // a log line 1 h ago
     set_mtime(&by_log, now - 25 * HOUR);
-    sweep(t.path(), now);
+    sweep(t.path(), &t.path().join("workspaces"), now);
     assert!(by_results.join("token").exists(), "dir 25 h, results/ 1 h: kept");
     assert!(by_log.join("token").exists(), "dir 25 h, session.log 1 h: kept");
     assert!(ended.join("results").exists(), "dir 1 h, results/ 30 h: kept");
@@ -446,10 +447,239 @@ fn sweep_does_not_follow_a_symlinked_session_or_results_directory() {
     let real = t.path().join("sessions").join("real");
     std::fs::create_dir_all(&real).unwrap();
     std::os::unix::fs::symlink(other.join("results"), real.join("results")).unwrap();
-    sweep(t.path(), now + 48 * HOUR);
+    sweep(t.path(), &t.path().join("workspaces"), now + 48 * HOUR);
     assert!(outside.join("results").join("f0").exists(), "the target of a symlinked session is kept");
     assert!(other.join("results").join("f0").exists(), "the target of a symlinked results is kept");
     assert!(real.join("results").symlink_metadata().is_ok(), "a session whose results is a symlink is skipped");
+}
+
+#[cfg(unix)]
+fn pane_results(root: &Path, key: &str) -> std::path::PathBuf {
+    let r = root.join("workspaces").join("0123456789abcdef").join("results").join(key);
+    std::fs::create_dir_all(&r).unwrap();
+    std::fs::write(r.join("f0"), "x").unwrap();
+    r
+}
+
+/// A session folder with `token`, `pid` (no lock: the launcher has ended; with `lock_pid` it is live, because `live`
+/// needs `token` and a held lock, `zygo-core/src/session_dir.rs:13-17`), `session.log`, and `results` as a symlink to
+/// `target`. Every entry is new: its age comes from the `now` given to `sweep`.
+#[cfg(unix)]
+fn linked_session(root: &Path, name: &str, target: &Path) -> std::path::PathBuf {
+    let d = root.join("sessions").join(name);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("token"), "t").unwrap();
+    std::fs::write(d.join("pid"), "1").unwrap();
+    std::fs::write(d.join("session.log"), "line\n").unwrap();
+    std::os::unix::fs::symlink(target, d.join("results")).unwrap();
+    d
+}
+
+#[cfg(unix)]
+#[test]
+fn au69_a_deletes_an_ended_linked_session_after_24_hours() {
+    let t = tempfile::tempdir().unwrap();
+    let target = pane_results(t.path(), "kaaaaaaaa");
+    let s = linked_session(t.path(), "ended", &target);
+    sweep(t.path(), &t.path().join("workspaces"), whole_now() + 25 * HOUR);
+    assert!(s.symlink_metadata().is_err(), "an ended session linked into the workspace cache, 25 h: removed");
+    assert_eq!(std::fs::read_to_string(target.join("f0")).unwrap(), "x", "the link target is never touched");
+}
+
+#[cfg(unix)]
+#[test]
+fn au69_a_keeps_an_ended_linked_session_younger_than_24_hours() {
+    let t = tempfile::tempdir().unwrap();
+    let target = pane_results(t.path(), "kaaaaaaaa");
+    let s = linked_session(t.path(), "ended", &target);
+    sweep(t.path(), &t.path().join("workspaces"), whole_now() + 23 * HOUR);
+    assert!(s.join("results").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "23 h: kept");
+    assert!(s.join("session.log").exists());
+    assert_eq!(std::fs::read_to_string(target.join("f0")).unwrap(), "x");
+}
+
+#[cfg(unix)]
+#[test]
+fn au69_a_keeps_a_live_linked_session() {
+    let t = tempfile::tempdir().unwrap();
+    let target = pane_results(t.path(), "kaaaaaaaa");
+    let s = linked_session(t.path(), "live", &target);
+    let held = lock_pid(&s);
+    sweep(t.path(), &t.path().join("workspaces"), whole_now() + 48 * HOUR);
+    assert!(s.join("results").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "locked pid: live, kept");
+    assert!(s.join("token").exists());
+    assert_eq!(std::fs::read_to_string(target.join("f0")).unwrap(), "x");
+    drop(held);
+}
+
+#[cfg(unix)]
+#[test]
+fn au69_a_keeps_a_session_linked_outside_the_workspace_cache() {
+    let t = tempfile::tempdir().unwrap();
+    let target = t.path().join("elsewhere").join("results");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("f0"), "x").unwrap();
+    let s = linked_session(t.path(), "ended", &target);
+    sweep(t.path(), &t.path().join("workspaces"), whole_now() + 48 * HOUR);
+    assert!(s.join("results").symlink_metadata().is_ok(), "a link outside the workspace cache: kept");
+    assert!(target.join("f0").exists());
+}
+
+/// M1 review round 1 (M1, D1): a link whose target is gone (after `zygo ws forget` or `forget-pane`) is decided by its
+/// text, made absolute against the session folder: under the workspace cache, the AU69 (a) rule applies. Round 3 (F4):
+/// only a link text with no `..` component is decided this way (the `..` cases moved to the next test).
+#[cfg(unix)]
+#[test]
+fn au69_a_sweeps_an_ended_session_linked_to_a_missing_folder_in_the_workspace_cache() {
+    let t = tempfile::tempdir().unwrap();
+    let cache = t.path().join("workspaces");
+    std::fs::create_dir_all(&cache).unwrap();
+    let gone = cache.join("0123456789abcdef").join("results").join("kaaaaaaaa");
+    let absolute = linked_session(t.path(), "absolute", &gone);
+    let dotted = linked_session(t.path(), "dotted", &cache.join(".").join("0123456789abcdef").join(".").join("results"));
+    sweep(t.path(), &cache, whole_now() + 3 * DAY);
+    for s in [&absolute, &dotted] {
+        assert!(s.symlink_metadata().is_err(), "{}: an ended session, 3 days, linked to a missing folder in the cache: removed", s.display());
+    }
+    assert!(cache.is_dir(), "the workspace cache is never touched");
+}
+
+/// M1 review round 1 (M1, D1): a link to a missing folder outside the workspace cache keeps the session folder. Round 3
+/// (F4): a link text with a `..` component keeps the session folder, also when its lexical form is in the cache.
+#[cfg(unix)]
+#[test]
+fn au69_a_keeps_an_ended_session_linked_to_a_missing_folder_outside_the_workspace_cache() {
+    let t = tempfile::tempdir().unwrap();
+    let cache = t.path().join("workspaces");
+    std::fs::create_dir_all(&cache).unwrap();
+    let outside = linked_session(t.path(), "outside", &t.path().join("elsewhere").join("results"));
+    let escape = linked_session(t.path(), "escape", &cache.join("..").join("elsewhere").join("results"));
+    let relative = linked_session(t.path(), "relative", Path::new("../../elsewhere/results"));
+    let prefix = linked_session(t.path(), "prefix", &t.path().join("workspaces-other").join("results"));
+    let up_in = linked_session(t.path(), "up-in", Path::new("../../workspaces/0123456789abcdef/results/kaaaaaaaa"));
+    let dotted_in = linked_session(t.path(), "dotted-in", &cache.join("x").join("..").join("0123456789abcdef").join("results"));
+    sweep(t.path(), &cache, whole_now() + 3 * DAY);
+    for s in [&outside, &escape, &relative, &prefix, &up_in, &dotted_in] {
+        assert!(s.join("results").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "{}: kept", s.display());
+        assert!(s.join("token").exists() && s.join("pid").exists() && s.join("session.log").exists(), "{}", s.display());
+    }
+}
+
+/// M1 review round 3 (F4, D1): the link text `<cache>/L/../x`, where `<cache>/L` is a symlink to a folder outside the
+/// cache. Lexically it is `<cache>/x`; the kernel resolves it to `<outside parent>/x`. The `..` keeps the folder.
+#[cfg(unix)]
+#[test]
+fn au69_a_keeps_a_session_whose_dangling_link_text_has_dot_dot_through_a_symlink() {
+    let t = tempfile::tempdir().unwrap();
+    let cache = t.path().join("workspaces");
+    std::fs::create_dir_all(&cache).unwrap();
+    let outside = t.path().join("elsewhere").join("deep");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, cache.join("L")).unwrap();
+    let s = linked_session(t.path(), "ended", &cache.join("L").join("..").join("x"));
+    sweep(t.path(), &cache, whole_now() + 3 * DAY);
+    assert!(s.join("results").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "a `..` in the link text: kept");
+    assert!(s.join("token").exists() && s.join("pid").exists() && s.join("session.log").exists());
+    assert!(outside.is_dir() && cache.join("L").symlink_metadata().is_ok());
+}
+
+/// M1 review round 3 (F4, D1): the workspace cache path is itself a symlink, and the dangling link text goes through
+/// it (no `..`): its existing part made canonical is under the canonical cache, so the folder is swept.
+#[cfg(unix)]
+#[test]
+fn au69_a_sweeps_a_dangling_link_under_a_symlinked_workspace_cache() {
+    let t = tempfile::tempdir().unwrap();
+    let real = t.path().join("real-cache");
+    std::fs::create_dir_all(&real).unwrap();
+    let cache = t.path().join("workspaces");
+    std::os::unix::fs::symlink(&real, &cache).unwrap();
+    let s = linked_session(t.path(), "ended", &cache.join("0123456789abcdef").join("results").join("kaaaaaaaa"));
+    sweep(t.path(), &cache, whole_now() + 3 * DAY);
+    assert!(s.symlink_metadata().is_err(), "a dangling link under a symlinked cache: removed");
+    assert!(real.is_dir() && cache.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "the cache is never touched");
+}
+
+/// M1 review round 3 (F4, D1): a dangling link text with no `..` that goes through a symlinked parent is decided where
+/// the kernel resolves it: through `<root>/alias` (a symlink to the cache) it is in the cache and swept; through
+/// `<cache>/L` (a symlink to a folder outside) it is outside and kept.
+#[cfg(unix)]
+#[test]
+fn au69_a_decides_a_dangling_link_through_a_symlinked_parent_where_it_resolves() {
+    let t = tempfile::tempdir().unwrap();
+    let cache = t.path().join("workspaces");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::os::unix::fs::symlink(&cache, t.path().join("alias")).unwrap();
+    let outside = t.path().join("elsewhere");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, cache.join("L")).unwrap();
+    let inside = linked_session(t.path(), "inside", &t.path().join("alias").join("0123456789abcdef").join("results"));
+    let out = linked_session(t.path(), "out", &cache.join("L").join("0123456789abcdef").join("results"));
+    sweep(t.path(), &cache, whole_now() + 3 * DAY);
+    assert!(inside.symlink_metadata().is_err(), "through a symlink to the cache: removed");
+    assert!(out.join("results").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "through a symlink to outside: kept");
+    assert!(out.join("token").exists() && outside.is_dir());
+}
+
+/// Plan review F7 (D1): the dangling link text `<cache>/D/x`, where `<cache>/D` is a symlink whose target is missing.
+/// `canonicalize` cannot resolve `<cache>/D`, so the walk cannot tell where the text points: the folder is kept. Kills a
+/// walk that adds every missing part back as text (it would see `<cache>/D/x` under the cache and sweep).
+#[cfg(unix)]
+#[test]
+fn au69_a_keeps_a_session_whose_dangling_link_goes_through_a_missing_inner_link() {
+    let t = tempfile::tempdir().unwrap();
+    let cache = t.path().join("workspaces");
+    std::fs::create_dir_all(&cache).unwrap();
+    std::os::unix::fs::symlink(t.path().join("elsewhere").join("gone"), cache.join("D")).unwrap();
+    let s = linked_session(t.path(), "ended", &cache.join("D").join("x"));
+    sweep(t.path(), &cache, whole_now() + 3 * DAY);
+    assert!(s.join("results").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "a missing inner link: kept");
+    assert!(s.join("token").exists());
+    assert!(cache.join("D").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "the inner link stays");
+}
+
+/// M1 review round 1 (M2): the link first, the folder only when that worked. With a read-only session folder the link
+/// cannot be removed, so the folder and every entry stay. Stated limit (D1, plan review F8): a read-only folder also
+/// stops `remove_dir_all` of the other entries, so this test fixes the outcome but cannot tell the guarded removal from
+/// an unguarded one; no fault stops only the unlink of the link.
+#[cfg(unix)]
+#[test]
+fn au69_a_keeps_the_folder_when_the_link_cannot_be_removed() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let target = pane_results(t.path(), "kaaaaaaaa");
+    let s = linked_session(t.path(), "ended", &target);
+    std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::write(s.join("probe"), "").is_ok() {
+        // the mode does not stop this user (root): the fault cannot be made here
+        std::fs::remove_file(s.join("probe")).unwrap();
+        std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("au69_a_keeps_the_folder_when_the_link_cannot_be_removed: skipped, a read-only folder does not stop this user");
+        return;
+    }
+    sweep(t.path(), &t.path().join("workspaces"), whole_now() + 48 * HOUR);
+    std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(s.join("results").symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()), "the link stays");
+    for f in ["token", "pid", "session.log"] {
+        assert!(s.join(f).exists(), "{f} stays");
+    }
+    assert_eq!(std::fs::read_to_string(target.join("f0")).unwrap(), "x");
+}
+
+/// W§18 #61: AU69 (b) is dropped (D1); results have no age rule (FIX-20).
+#[cfg(unix)]
+#[test]
+fn w18_61_the_sweep_deletes_no_workspace_result() {
+    let t = tempfile::tempdir().unwrap();
+    let state = t.path().join("state").join("workspaces").join("0123456789abcdef");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("workspace.json"), "{").unwrap();     // a state that does not parse; the sweep reads none
+    let linked = pane_results(t.path(), "kaaaaaaaa");
+    let orphan = pane_results(t.path(), "kbbbbbbbb");
+    set_mtime(&orphan.join("f0"), whole_now() - 30 * DAY);
+    set_mtime(&orphan, whole_now() - 30 * DAY);
+    linked_session(t.path(), "ended", &linked);
+    sweep(t.path(), &t.path().join("workspaces"), whole_now() + 48 * HOUR);
+    assert!(linked.join("f0").exists() && orphan.join("f0").exists(), "the sweep deletes no workspace result");
 }
 
 #[test]
