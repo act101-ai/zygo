@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W8, W10, FIX-15, H1, M1, M2, M3, M4, M5, E1, E2, D1
+**Next:** W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | DONE | judgment | f945872; mux 42 on 3.7c and 3.2a; review round 2 fixed B1 (3.2a window names) and M1-M7 |
@@ -92,7 +91,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
-| FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-15 |
+| FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
 
 ## Log
 
@@ -212,3 +211,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W7 planned: 39 steps, test first. C1-C15 applied: W3, W5 Produces; W8, W10 Consumes and Spec; spec AU30, AU96, AU98, W§7.4, W§8.1 steps 3, 5, 7, 9, 12, W§10, W§13. Adds Multiplexer::rename_window, NewSession.owner, args::filter_from (author's call). |
 | 2026-11-22 | W7 DONE (3d51ad4): zygo up. Merged tree: up 45, mux 46 + 1 ignored, snapshot 33, state 23, args 13, 3.2a first_window 2. S1-S5, RS1-RS7, TS1-TS9 applied. The R3-7 pending check after the undo has no test (accepted). W8, W10 ready. |
 | 2026-11-22 | FIX-15 added and planned (operator defect): short renders 1000m for 1e9. 6 steps, test first; spec H§6.6 gains 1b, 1.2b. status and help reuse short; no other formatter of the kind; no unit above b (author's call). |
+| 2026-11-22 | FIX-15 DONE (79a70fc): short rolls over to b after 999m. Merged tree: statusline lib 4, statusline_render 25, zygo-hooks 173, zygo 378 pass. R2 added b tenths, b-range tokens and ctx tests; no compact 1b test, window cap 10m. |

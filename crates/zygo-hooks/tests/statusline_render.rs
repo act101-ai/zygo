@@ -372,6 +372,11 @@ fn h14_08_ctx_numbers_bar_and_threshold_mark() {
     // A threshold that is not below the window.
     let at = with(|s| (s.threshold, s.effective_window) = (Some(1_000_000), Some(1_000_000)));
     assert!(!compact_text(&at).contains('⇣') && compact_text(&at).contains("ctx 196k/1m ▰▱▱▱▱"));
+    // H§6.6, FIX-15: ctx numbers in the `b` range.
+    let big = with(|s| {
+        (s.context_window, s.effective_window, s.threshold, s.used_context) = (Some(2_000_000_000), Some(2_000_000_000), None, Some(1_250_000_000));
+    });
+    assert!(compact_text(&big).contains("ctx 1.2b/2b ") && verbose_text(&big).contains("ctx 1.2b/2b "), "{}", compact_text(&big));
 
     // Safety only: window 200,000, `effective_window` 180,000, no `threshold`, used 90,000 → no mark, fraction 0.5.
     let safety = with(|s| {
@@ -944,6 +949,9 @@ fn tokens_spend_cache_trimmed() {
     // A team session has no `spend_usd` yet: no spend segment.
     let team = with(|s| (s.spend_usd, s.requests_priced, s.spend_notional) = (None, None, Some(true)));
     assert!(compact_text(&team).contains(&format!("↑1.2m ↓48k  {DB} 92%")), "{}", compact_text(&team));
+    // H§6.6, FIX-15: token counts in the `b` range.
+    let big = with(|s| (s.tokens_in, s.tokens_out) = (Some(1_250_000_000), Some(1_000_000_000)));
+    assert!(compact_text(&big).contains("↑1.2b ↓1b  ") && verbose_text(&big).contains("↑ 1.2b in  ↓ 1b out"), "{}", compact_text(&big));
 
     // Cache: red below 50 %.
     let low = with(|s| s.cache_read_share = Some(0.49));
@@ -979,7 +987,7 @@ fn h14_18_trimmed_bytes_show_as_estimated_tokens() {
     assert!(plain(&d, V).ends_with("   trimmed 23k tok"), "{}", plain(&d, V));
     assert!(render(&d, &nerd(C)).ends_with("  ✂ 23k\x1b[0m") && render(&d, &nerd(V)).ends_with("   trimmed 23k tok\x1b[0m"));
     assert_eq!(zygo_core::tokens::BYTES_PER_TOKEN, 4);
-    let cases = [(0, "0"), (1, "1"), (4, "1"), (5, "2"), (3_996, "999"), (3_997, "1k"), (92_157, "23k"), (4_000_000, "1m"), (4_800_001, "1.2m")];
+    let cases = [(0, "0"), (1, "1"), (4, "1"), (5, "2"), (3_996, "999"), (3_997, "1k"), (92_157, "23k"), (4_000_000, "1m"), (4_800_001, "1.2m"), (3_999_999_996, "999.9m"), (4_000_000_000, "1b"), (4_800_000_001, "1.2b")];
     for (bytes, want) in cases {
         let d = trimmed(bytes);
         assert!(compact_text(&d).ends_with(&format!("  ✂ {want}")), "{bytes}: {}", compact_text(&d));

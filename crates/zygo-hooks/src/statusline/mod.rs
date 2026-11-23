@@ -33,16 +33,18 @@ pub fn style(overrides: &Overrides, view: Option<&SessionView>) -> Style {
         .unwrap_or_default()
 }
 
-/// `999`, `412k` (floor), `1m`, `1.2m` (tenths, floor).
+/// `999`, `412k` (floor), `1m`, `1.2m`, `1b`, `1.2b` (tenths, floor; H§6.6).
 pub fn short(n: u64) -> String {
-    if n < 1000 {
-        n.to_string()
-    } else if n.is_multiple_of(1_000_000) {
-        format!("{}m", n / 1_000_000)
-    } else if n >= 1_000_000 {
-        format!("{}.{}m", n / 1_000_000, n % 1_000_000 / 100_000)
+    let (unit, suffix) = match n {
+        0..1000 => return n.to_string(),
+        1000..1_000_000 => return format!("{}k", n / 1000),
+        1_000_000..1_000_000_000 => (1_000_000, 'm'),
+        _ => (1_000_000_000, 'b'),
+    };
+    if n.is_multiple_of(unit) {
+        format!("{}{suffix}", n / unit)
     } else {
-        format!("{}k", n / 1000)
+        format!("{}.{}{suffix}", n / unit, n % unit / (unit / 10))
     }
 }
 
@@ -75,6 +77,14 @@ mod tests {
             (1_250_000, "1.2m"),
             (1_500_000, "1.5m"),
             (10_000_000, "10m"),
+            (999_999_999, "999.9m"),
+            (1_000_000_000, "1b"),
+            (1_250_000_000, "1.2b"),
+            (12_000_000_000, "12b"),
+            (1_099_999_999, "1.0b"),
+            (1_100_000_000, "1.1b"),
+            (999_999_999_999, "999.9b"),
+            (u64::MAX, "18446744073.7b"),
         ] {
             assert_eq!(short(n), want, "{n}");
         }
