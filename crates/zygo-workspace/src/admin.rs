@@ -373,7 +373,7 @@ fn sweep(paths: &Paths) {
 
 /// The workspace that `forget` or `forget-pane` names (D14).
 enum Found {
-    Readable(Workspace),
+    Readable(Box<Workspace>),
     /// A state that does not parse or fails AU84, by its id.
     Invalid(String),
 }
@@ -384,7 +384,7 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
     let fail = |message: String| Exit { code: 1, message };
     if valid_ws_id(arg) && paths.workspaces_dir().join(arg).is_dir() {
         match Store::open(paths, arg).read() {
-            Ok(Some(ws)) => return Ok(Found::Readable(ws)),
+            Ok(Some(ws)) => return Ok(Found::Readable(Box::new(ws))),
             Ok(None) => {}
             Err(StateError::Newer { .. }) => return Err(fail(NEWER.into())),
             Err(_) => return Ok(Found::Invalid(arg.to_string())),
@@ -394,7 +394,7 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
     let mut named: Vec<&Workspace> = all.iter().filter_map(|(_, r)| r.as_ref().ok().filter(|w| w.name == arg)).collect();
     match named.len() {
         0 => {}
-        1 => return Ok(Found::Readable(named.remove(0).clone())),
+        1 => return Ok(Found::Readable(Box::new(named.remove(0).clone()))),
         _ => {
             let tail = if for_pane {
                 "run in its checkout".to_string()
@@ -578,7 +578,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     let not_found = || name.map_or_else(|| NO_FOLDER.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
     let ws = match name {
         Some(n) => match find(paths, n, true).map_err(|e| e.message)? {
-            Found::Readable(ws) => ws,
+            Found::Readable(ws) => *ws,
             Found::Invalid(id) => match Store::open(paths, &id).read() {
                 Ok(Some(ws)) => ws,
                 Ok(None) => return Err(not_found()),

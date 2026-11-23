@@ -374,6 +374,9 @@ fn list_display() {
 
 // ---- step 10 ----
 
+/// One `ls` row as step 10 checks it: name, state, agents, clients.
+type Seen = (String, ListState, Option<(usize, usize, usize)>, Option<u32>);
+
 #[test] // D8, D9, AU87, W§12 `ls`: every state, the agents and the clients
 fn list_gives_each_state() {
     let _s = serial();
@@ -430,10 +433,9 @@ fn list_gives_each_state() {
     raw_newer(&p, "e");
 
     let rows = admin::list(&p, &tmux);
-    let got: Vec<(String, ListState, Option<(usize, usize, usize)>, Option<u32>)> =
-        rows.iter().map(|r| (r.name.clone(), r.state, r.agents, r.clients)).collect();
+    let got: Vec<Seen> = rows.iter().map(|r| (r.name.clone(), r.state, r.agents, r.clients)).collect();
     use ListState::*;
-    let want: Vec<(String, ListState, Option<(usize, usize, usize)>, Option<u32>)> = vec![
+    let want: Vec<Seen> = vec![
         ("building".into(), Building, Some((0, 0, 0)), None),
         ("down".into(), Down, Some((0, 1, 1)), None),
         ("draining".into(), Draining, Some((0, 0, 0)), None),
