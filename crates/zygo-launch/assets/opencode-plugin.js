@@ -40,12 +40,11 @@ export const ZygoPlugin = async ({ directory }) => {
   };
   // Workspace member events (W§9.1, AU27, AU104). The gate is cheap in the agent process; hooks read the view marker (AU58).
   const member = typeof process.env.ZYGO_WORKSPACE === "string" && process.env.ZYGO_WORKSPACE !== "";
-  let main = null;
-  let idleNow = true;
-  const children = new Set();
   let chain = Promise.resolve("");
   // One call after another, in decision order; `run` never rejects, so the chain cannot break.
   const ws = (event, payload) => (chain = chain.then(() => run("workspace", payload, ["--event", event])));
+  // The factory runs only in a spawned agent: this call commits the pending start (AU92, AU104).
+  if (member) ws("session", {});
   const sessionOf = (e) => {
     const p = e.properties || {};
     const i = p.info || {};
@@ -55,33 +54,54 @@ export const ZygoPlugin = async ({ directory }) => {
     const s = (e.properties || {}).status;
     return s && typeof s === "object" ? s.type : s;
   };
-  // Decides and queues before any wait (D11). The main session is the active top session: a session with a known
-  // `parentID` (a `task` subagent) never is; a new top session, or a `busy` status of another top session (a TUI
-  // switch to an existing session), makes it the main session. One `prompt` per turn start, one `stop` per turn end.
-  const step = (e) => {
-    const id = sessionOf(e);
-    if (typeof id !== "string" || id === "") return;
-    const info = (e.properties || {}).info || {};
-    if (String(e.type).startsWith("session.") && info.parentID) {
-      children.add(id);
-      return;
-    }
-    if (children.has(id)) return;
-    const busy = e.type === "session.status" && statusOf(e) === "busy";
-    const idle = e.type === "session.idle" || (e.type === "session.status" && statusOf(e) === "idle");
-    if (main === null || (id !== main && (e.type === "session.created" || busy))) {
-      main = id;
-      idleNow = true;
+  // Session kinds (`top` or `child`, only from the `info` of a `session.*` event, first value final), activation
+  // numbers from one counter, the main session (the known top session activated last), the id of the last
+  // `session` call with an id, and the turn set (sessions in a turn that are not known children).
+  const kind = new Map();
+  const act = new Map();
+  let n = 0;
+  let main = null;
+  let mainAct = 0;
+  let sent = null;
+  const inTurn = new Set();
+  const isId = (s) => typeof s === "string" && s !== "";
+  const leave = (id) => {
+    if (inTurn.delete(id) && inTurn.size === 0) ws("stop", { sessionID: id });
+  };
+  const consider = (id) => {
+    const a = act.get(id);
+    if (kind.get(id) !== "top" || a === undefined || (main !== null && a <= mainAct)) return;
+    main = id;
+    mainAct = a;
+    if (id !== sent) {
+      sent = id;
       ws("session", { sessionID: id });
     }
-    if (id !== main) return;
-    if (busy && idleNow) {
-      idleNow = false;
-      ws("prompt", { sessionID: id });
-    } else if (idle && !idleNow) {
-      idleNow = true;
-      ws("stop", { sessionID: id });
+  };
+  // AU27, W§9.1. Decides and queues before any wait (D11): (1) classify from `info`; a new child leaves the turn
+  // set; (2) `session.created` or a `busy` status activates; (3) the turn set sends `prompt` when it becomes
+  // non-empty and `stop` when it becomes empty; (4) a known top session activated later than the main session
+  // becomes the main session and is sent once.
+  const step = (e) => {
+    const id = sessionOf(e);
+    const p = e.properties || {};
+    const info = p.info && typeof p.info === "object" ? p.info : null;
+    const infoId = String(e.type).startsWith("session.") && info && isId(info.id) ? info.id : null;
+    if (infoId !== null && !kind.has(infoId)) {
+      kind.set(infoId, info.parentID ? "child" : "top");
+      if (info.parentID) leave(infoId);
     }
+    const busy = e.type === "session.status" && statusOf(e) === "busy";
+    const idle = e.type === "session.idle" || (e.type === "session.status" && statusOf(e) === "idle");
+    if (e.type === "session.created" && infoId !== null) act.set(infoId, ++n);
+    if (busy && isId(id)) act.set(id, ++n);
+    if (busy && isId(id) && kind.get(id) !== "child" && !inTurn.has(id)) {
+      inTurn.add(id);
+      if (inTurn.size === 1) ws("prompt", { sessionID: id });
+    } else if (idle && isId(id)) {
+      leave(id);
+    }
+    for (const s of new Set([id, infoId])) if (isId(s)) consider(s);
   };
   return {
     // Does not wait for the queued calls.
