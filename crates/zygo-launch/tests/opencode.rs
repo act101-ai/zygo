@@ -1893,3 +1893,70 @@ fn plugin_order_p15_decides_before_waits() {
     let r = ws_node(&fx, Ws { parallel: true, ..ws_opts("p15", Some(M), "slow", "A", json!(p1_events())) });
     assert_eq!(ws_seq(&r), after_p1(&[]));
 }
+
+#[cfg(unix)]
+#[test] // AU27, W§9.1 (H3 review round 1, F1): a session with no `info` until its `session.deleted` is never recorded
+fn plugin_deleted_session_never_takes_the_record() {
+    if no_node("plugin_deleted_session_never_takes_the_record") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![busy("Y"), idle("Y"), deleted("Y")]);
+    assert_eq!(order(&fx, "del-y", Some(M), ev), after_p1(&["prompt Y", "stop Y"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 1, F1): a deleted main session moves the record to the newest known top session
+fn plugin_deleted_main_moves_the_record_to_the_newest_top_session() {
+    if no_node("plugin_deleted_main_moves_the_record_to_the_newest_top_session") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![created("B"), busy("B"), idle("B"), deleted("B")]);
+    assert_eq!(order(&fx, "del-main", Some(M), ev), after_p1(&["session B", "prompt B", "stop B", "session A"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 1, F1): a deleted main session with no other known top session sends nothing
+fn plugin_deleted_main_with_no_other_top_session_sends_nothing() {
+    if no_node("plugin_deleted_main_with_no_other_top_session_sends_nothing") {
+        return;
+    }
+    let fx = fx();
+    assert_eq!(order(&fx, "del-only", Some(M), p1_then(vec![deleted("A")])), after_p1(&[]));
+    // a later top session is still taken and sent
+    let ev = p1_then(vec![deleted("A"), created("B"), busy("B"), idle("B")]);
+    assert_eq!(order(&fx, "del-only-new", Some(M), ev), after_p1(&["session B", "prompt B", "stop B"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 1, F1): a deleted session leaves the turn set; `stop` when the set becomes empty
+fn plugin_deleted_session_leaves_the_turn_set() {
+    if no_node("plugin_deleted_session_leaves_the_turn_set") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), deleted("A")]);
+    assert_eq!(order(&fx, "del-turn", Some(M), ev), ["session{}", "session A", "prompt A", "stop A", "pre-tool A"]);
+    let ev = json!([created("A"), busy("A"), created("B"), busy("B"), deleted("B"), idle("A")]);
+    assert_eq!(
+        order(&fx, "del-turn-two", Some(M), ev),
+        ["session{}", "session A", "prompt A", "session B", "session A", "stop A", "pre-tool A"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // AU27, W§7.2 (H3 review round 1, F3): any present, non-null `parentID` makes a child
+fn plugin_child_by_present_parent_id() {
+    if no_node("plugin_child_by_present_parent_id") {
+        return;
+    }
+    let fx = fx();
+    for (name, parent) in [("child-empty", json!("")), ("child-zero", json!(0))] {
+        let ev = json!([["session.created", {"info": {"id": "K", "parentID": parent}}], busy("K"), idle("K")]);
+        assert_eq!(order(&fx, name, Some(M), ev), ["session{}", "pre-tool A"], "{name}");
+    }
+    // a null `parentID` is a top session
+    let ev = json!([["session.created", {"info": {"id": "K", "parentID": null}}]]);
+    assert_eq!(order(&fx, "child-null", Some(M), ev), ["session{}", "session K", "pre-tool A"]);
+}
