@@ -122,7 +122,8 @@ pub mod testing {
     /// the pane read of `Builder::dead_lines`; an error there is that read's error), `dead_pane` (before the read of
     /// each pane of `Builder::dead_lines`; an error there is that pane's error; FIX-29 round 2), `add_window` (after
     /// the `new-window` of `Builder::add_window`, before the key; an error there is that window's error; FIX-29 round
-    /// 3); the admin
+    /// 3), `release_all` (before the window read of `Builder::release_all`; an error there is that read's error;
+    /// FIX-29 round 3); the admin
     /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (under both locks, before anything is
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
     /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
@@ -542,7 +543,7 @@ impl Builder<'_> {
     /// at the next `up` (AU68); a window with no zygo pane (the user's) is never changed. A gone session gives no line;
     /// any other error of the window read prints `zygo: <name>: could not release the build hold: <error>`.
     pub fn release_all(&self, name: &str, err: &mut dyn Write) {
-        let rows = match self.mux.list_panes(self.session) {
+        let rows = match fire(self.dir, "release_all").and_then(|()| self.mux.list_panes(self.session)) {
             Ok(rows) => rows,
             Err(MuxError::NoTarget { .. } | MuxError::Gone { .. }) => return,
             Err(e) => return say(err, &format!("zygo: {}: could not release the build hold: {e}", esc(name))),

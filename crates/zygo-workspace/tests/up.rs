@@ -2476,6 +2476,42 @@ fn up_all_ends_a_left_hold_of_a_live_session() {
     assert_eq!((remain(&l, 0), remain(&l, 1), remain(&l, user)), ("off".to_string(), "off".to_string(), "on".to_string()));
 }
 
+#[test] // FIX-29 diff review round 3, finding 7, W§8.1 step 6: a failed window read of the release is one line
+fn a_failed_window_read_of_the_step_6_release_is_one_line() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    up_pair(&mut l);
+    let store = l.store();
+    up::testing::hook(store.dir(), "release_all", Some(Box::new(|| Err("injected".into()))));
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "release_all", None);
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "zygo: app is up\n", "zygo: app: could not release the build hold: injected\n"));
+}
+
+#[test] // FIX-29 diff review round 3, finding 7, W§8.1 step 6: a session that is gone at the release gives no line
+fn a_gone_session_at_the_step_6_release_gives_no_line() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    up_pair(&mut l);
+    let store = l.store();
+    let w = l.srv.wrapper().to_path_buf();
+    up::testing::hook(
+        store.dir(),
+        "release_all",
+        Some(Box::new(move || {
+            let st = Command::new(&w).args(["kill-session", "-t", "=zygo-app:"]).status().unwrap();
+            assert!(st.success(), "kill-session failed");
+            Ok(())
+        })),
+    );
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "release_all", None);
+    assert!(l.srv.run(&["has-session", "-t", "=zygo-app:"]).is_err(), "the hook did not run");
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "zygo: app is up\n", ""));
+}
+
 #[test] // FIX-29 diff review round 3, finding 1, AU67: a repair whose split fails ends the hold of every window
 fn a_repair_that_stops_in_the_middle_releases_every_window() {
     let _g = serial();
