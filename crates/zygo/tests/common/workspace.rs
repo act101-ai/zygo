@@ -40,22 +40,88 @@ pub fn wait_child(child: &mut Child, what: &str) -> ExitStatus {
     }
 }
 
+type Reader = Option<std::thread::JoinHandle<Vec<u8>>>;
+
+/// Reads `r` to its end on its own thread.
+fn reader(r: Option<impl Read + Send + 'static>) -> Reader {
+    r.map(|mut r| {
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = r.read_to_end(&mut b);
+            b
+        })
+    })
+}
+
+fn joined(h: Reader) -> Vec<u8> {
+    h.map(|h| h.join().unwrap_or_default()).unwrap_or_default()
+}
+
 /// [`wait_child`], with stdout and stderr read on two threads, so a full pipe cannot block the child (D15).
 pub fn output_child(mut child: Child, what: &str) -> Output {
-    fn reader(r: Option<impl Read + Send + 'static>) -> Option<std::thread::JoinHandle<Vec<u8>>> {
-        r.map(|mut r| {
-            std::thread::spawn(move || {
-                let mut b = Vec::new();
-                let _ = r.read_to_end(&mut b);
-                b
-            })
-        })
-    }
     let out = reader(child.stdout.take());
     let err = reader(child.stderr.take());
     let status = wait_child(&mut child, what);
-    let join = |h: Option<std::thread::JoinHandle<Vec<u8>>>| h.map(|h| h.join().unwrap_or_default()).unwrap_or_default();
-    Output { status, stdout: join(out), stderr: join(err) }
+    Output { status, stdout: joined(out), stderr: joined(err) }
+}
+
+/// A child that leads its own process group, held until the test reaps it (M2 review round 2 finding 6). When the
+/// value drops with the child not reaped (a failed assert), `Drop` sends SIGKILL to the whole group, so the agent
+/// that the child started goes too, then reaps the child. The group id is the child's pid, which stays unused by
+/// any other process until the child is reaped.
+pub struct Guarded(Option<Child>);
+
+impl Guarded {
+    /// Spawns `c` as the leader of a new process group.
+    pub fn spawn(mut c: Command) -> Guarded {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0);
+        Guarded(Some(c.spawn().unwrap()))
+    }
+
+    /// The pid of the child.
+    pub fn id(&self) -> u32 {
+        self.child().id()
+    }
+
+    fn child(&self) -> &Child {
+        self.0.as_ref().expect("the child is reaped")
+    }
+
+    /// The stdin pipe of the child, when it was spawned with one.
+    pub fn stdin(&mut self) -> Option<std::process::ChildStdin> {
+        self.0.as_mut().and_then(|c| c.stdin.take())
+    }
+
+    /// [`wait_child`]; the child counts as reaped after it.
+    pub fn wait(&mut self, what: &str) -> ExitStatus {
+        let st = wait_child(self.0.as_mut().expect("the child is reaped"), what);
+        self.0 = None;
+        st
+    }
+
+    /// [`output_child`] on the guarded child.
+    pub fn output(mut self, what: &str) -> Output {
+        let c = self.0.as_mut().expect("the child is reaped");
+        let out = reader(c.stdout.take());
+        let err = reader(c.stderr.take());
+        let status = self.wait(what);
+        Output { status, stdout: joined(out), stderr: joined(err) }
+    }
+}
+
+impl Drop for Guarded {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.0.take() {
+            // SAFETY: `kill` takes plain integers; the group is the one this child leads, and the child is not
+            // reaped yet, so its pid is not reused.
+            unsafe {
+                libc::kill(-(c.id() as libc::pid_t), libc::SIGKILL);
+            }
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
 }
 
 /// Makes an executable that this process just wrote safe to run (D14): runs `path --version` with stdin null; on a

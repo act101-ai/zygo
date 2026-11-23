@@ -151,14 +151,15 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
         let _ = std::env::set_current_dir(&main_root);
         let resumable = if shell { None } else { rec.as_ref().and_then(|r| r.agent_session.as_deref().map(|id| (r.launch.kind, id))) };
         match resumable {
-            // AU61: zygo does not resume the conversation in another folder.
+            // AU61: zygo does not resume the conversation in another folder. The command quotes its paths.
             Some((kind, id)) => {
                 let id = zygo_core::esc(id);
+                let config_dir = rec.as_ref().and_then(|r| r.config_dir.as_deref());
                 print_err(&format!(
                     "zygo: {} is gone; agent session {id} not resumed; to resume it: cd {} && {}\n",
                     shown(&cwd),
-                    shown(&cwd),
-                    member::resume_command(kind, &id)
+                    member::quoted(&cwd),
+                    member::resume_command(kind, &id, config_dir)
                 ));
             }
             None => print_err(&format!("zygo: {} is gone\n", shown(&cwd))),
@@ -208,7 +209,7 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
             let d = OpenCode::default();
             let saved = if resumed.is_some() { saved_program(&opts.env, d.program(), rec.program.as_deref(), cwd) } else { None };
             if let Some(saved) = saved {
-                match program_folder_on_path(&mut opts.env, &paths.workspace_cache_dir(), ws_id, pane, &saved) {
+                match program_folder_on_path(&mut opts.env, paths, ws_id, pane, &saved) {
                     Ok(()) => {}
                     Err(e) => print_err(&format!("zygo: {}\n", zygo_core::esc(&e.to_string()))),
                 }
@@ -224,8 +225,8 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
 
 /// D8 (OpenCode): the program folder of `saved` at the end of the launch `PATH`.
 #[cfg(unix)]
-fn program_folder_on_path(env: &mut Env, cache: &Path, ws_id: &str, pane: &str, saved: &Path) -> std::io::Result<()> {
-    let dir = program_folder(cache, ws_id, pane, saved)?;
+fn program_folder_on_path(env: &mut Env, paths: &Paths, ws_id: &str, pane: &str, saved: &Path) -> std::io::Result<()> {
+    let dir = program_folder(paths, ws_id, pane, saved)?;
     let old = env.get("PATH").map(OsStr::to_os_string).unwrap_or_default();
     let joined = std::env::join_paths(std::env::split_paths(&old).chain([dir])).map_err(std::io::Error::other)?;
     env.0.retain(|(k, _)| k != OsStr::new("PATH"));
@@ -235,7 +236,7 @@ fn program_folder_on_path(env: &mut Env, cache: &Path, ws_id: &str, pane: &str, 
 
 /// D11: the program folder is unix only.
 #[cfg(not(unix))]
-fn program_folder_on_path(_env: &mut Env, _cache: &Path, _ws_id: &str, _pane: &str, _saved: &Path) -> std::io::Result<()> {
+fn program_folder_on_path(_env: &mut Env, _paths: &Paths, _ws_id: &str, _pane: &str, _saved: &Path) -> std::io::Result<()> {
     Err(std::io::Error::other("needs unix"))
 }
 
@@ -366,12 +367,13 @@ pub(crate) fn saved_program(env: &Env, program: &str, saved: Option<&Path>, cwd:
     saved.filter(|p| p.is_file()).map(Path::to_path_buf)
 }
 
-/// AU61 (D8, OpenCode): the folder `<cache>/<ws_id>/program/<pane>` (mode 0700) that holds only the link `opencode`
-/// to `saved`; an old entry of that name is replaced.
+/// AU61 (D8, OpenCode): the folder `<workspace cache>/<ws_id>/program/<pane>` (mode 0700) that holds only the link
+/// `opencode` to `saved`; an old entry of that name is replaced. A link at `<ws_id>`, `program` or `<pane>` refuses
+/// before anything is made or deleted (`admin::pane_cache_create`, the rule of `ws forget-pane`).
 #[cfg(unix)]
-pub(crate) fn program_folder(cache: &Path, ws_id: &str, pane: &str, saved: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn program_folder(paths: &Paths, ws_id: &str, pane: &str, saved: &Path) -> std::io::Result<PathBuf> {
     use std::os::unix::fs::DirBuilderExt;
-    let dir = cache.join(ws_id).join("program").join(pane);
+    let dir = admin::pane_cache_create(paths, ws_id, "program", pane).map_err(std::io::Error::other)?;
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
     let link = dir.join("opencode");
     match std::fs::remove_file(&link) {
@@ -515,12 +517,13 @@ mod tests {
         let saved = t.path().join("saved/opencode");
         std::fs::create_dir_all(saved.parent().unwrap()).unwrap();
         std::fs::write(&saved, "").unwrap();
-        let cache = t.path().join("cache");
-        let dir = program_folder(&cache, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap();
-        assert_eq!(dir, cache.join("0123456789abcdef/program/kaaaaaaaa"));
+        let mut p = paths();
+        p.cache_dir = t.path().join("cache");
+        let dir = program_folder(&p, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap();
+        assert_eq!(dir, p.workspace_cache_dir().join("0123456789abcdef/program/kaaaaaaaa"));
         let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, [OsString::from("opencode")]);
         assert_eq!(std::fs::read_link(dir.join("opencode")).unwrap(), saved);
-        assert_eq!(program_folder(&cache, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap(), dir); // again: the link is replaced
+        assert_eq!(program_folder(&p, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap(), dir); // again: the link is replaced
     }
 }

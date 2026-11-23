@@ -13,7 +13,7 @@ use zygo_launch::env::Env;
 use zygo_launch::launcher::{AgentSession, LaunchOutcome};
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 use zygo_proxy::client::{SessionClient, SessionSettings};
-use zygo_workspace::args;
+use zygo_workspace::{admin, args};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Pending, StateError, Store, Workspace};
@@ -56,6 +56,8 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         Agent::ClaudeCode => effective_config_dir(&opts.env, &opts.cwd),
         Agent::OpenCode => None,
     };
+    // The config dir of the printed resume command (AU61, PW16).
+    let shown_dir = config_dir.clone();
     // The zygo session of this start, set only when the callback's record write gave a state (D3, D5).
     let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let paths = opts.paths.clone();
@@ -100,7 +102,7 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
             )),
         }
     }
-    for l in exit_lines(kind, &o, exit, resumed.as_deref(), kept.as_deref()) {
+    for l in exit_lines(kind, &o, exit, resumed.as_deref(), kept.as_deref(), shown_dir.as_deref()) {
         print_err(&format!("{l}\n"));
     }
     o
@@ -143,7 +145,17 @@ impl Callback {
         let ws = match written {
             Ok(Some(ws)) => ws,
             Ok(None) => anyhow::bail!("no workspace state for {}; no member record written", self.ws_id),
-            Err(e) => anyhow::bail!("{e}"),
+            // The record is gone (`ws forget-pane`): no member, so nothing to see (D3).
+            Err(e @ StateError::Refused(_)) => anyhow::bail!("{e}"),
+            Err(e) => {
+                // W§8.2 step 4: the agent starts with no record of this start, so no live check sees it.
+                print_err(&format!(
+                    "zygo: could not record the launch of pane {}: {}; zygo cannot see this agent as live\n",
+                    self.pane,
+                    zygo_core::esc(&e.to_string())
+                ));
+                anyhow::bail!("{e}")
+            }
         };
         *self.seen.lock().unwrap_or_else(|e| e.into_inner()) = Some(session.to_string());
         let mut errors = Vec::new();
@@ -212,11 +224,12 @@ fn gate(point: &str) {
 fn gate(_point: &str) {}
 
 /// AU16: the folder `<workspace cache>/<ws_id>/results/<pane>` (mode 0700) and the absolute link `results` of the
-/// session folder to it.
+/// session folder to it. A link at `<ws_id>`, `results` or `<pane>` refuses before anything is made
+/// (`admin::pane_cache_create`, the rule of `ws forget-pane`).
 #[cfg(unix)]
 fn results_link(paths: &Paths, ws_id: &str, pane: &str, sd: &SessionDir) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
-    let dir = paths.workspace_cache_dir().join(ws_id).join("results").join(pane);
+    let dir = admin::pane_cache_create(paths, ws_id, "results", pane).map_err(std::io::Error::other)?;
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
     std::os::unix::fs::symlink(&dir, sd.results())
 }
@@ -343,18 +356,29 @@ pub(crate) fn verb(kind: Agent) -> &'static str {
     }
 }
 
-/// The command that resumes the agent session `id` (D7, AU3): `zygo claude -- --resume <id>` or
-/// `zygo opencode -- --session=<id>`. `id` is printed as given; a caller escapes it.
-pub(crate) fn resume_command(kind: Agent, id: &str) -> String {
-    match kind {
-        Agent::ClaudeCode => format!("zygo claude -- --resume {id}"),
-        Agent::OpenCode => format!("zygo opencode -- --session={id}"),
+/// `p` as one shell word for a printed command: single-quoted (`'` written as `'\''`, `shell_quote`), then escaped
+/// (C6).
+pub(crate) fn quoted(p: &Path) -> String {
+    zygo_core::esc(&zygo_launch::claude_code::shell_quote(p))
+}
+
+/// The command that resumes the agent session `id` (D7, AU3): `zygo claude -- --resume <id>`, with
+/// `CLAUDE_CONFIG_DIR=<dir>` in front when the member has a config dir (AU61, PW16), or
+/// `zygo opencode -- --session=<id>`. `<dir>` is [`quoted`]; `id` is printed as given and a caller escapes it.
+pub(crate) fn resume_command(kind: Agent, id: &str, config_dir: Option<&Path>) -> String {
+    match (kind, config_dir) {
+        (Agent::ClaudeCode, Some(d)) => format!("CLAUDE_CONFIG_DIR={} zygo claude -- --resume {id}", quoted(d)),
+        (Agent::ClaudeCode, None) => format!("zygo claude -- --resume {id}"),
+        (Agent::OpenCode, _) => format!("zygo opencode -- --session={id}"),
     }
 }
 
 /// The lines `ws run` prints after the agent (D7). `resumed` is the id that this launch resumed; `kept` is the
-/// `agent_session` of the record that the exit write gave back (none when it gave none or an error).
-pub(crate) fn exit_lines(kind: Agent, o: &LaunchOutcome, exit: Exit, resumed: Option<&str>, kept: Option<&str>) -> Vec<String> {
+/// `agent_session` of the record that the exit write gave back (none when it gave none or an error); `config_dir` is
+/// the config dir of this launch, for the resume command.
+pub(crate) fn exit_lines(
+    kind: Agent, o: &LaunchOutcome, exit: Exit, resumed: Option<&str>, kept: Option<&str>, config_dir: Option<&Path>,
+) -> Vec<String> {
     let k = verb(kind);
     let n = o.code;
     match exit {
@@ -362,7 +386,7 @@ pub(crate) fn exit_lines(kind: Agent, o: &LaunchOutcome, exit: Exit, resumed: Op
         Exit::Resumable { failed_fast: true } => match resumed {
             Some(id) => {
                 let id = zygo_core::esc(id);
-                vec![format!("zygo: resume of {k} session {id} failed (exit {n}); try: {}", resume_command(kind, &id))]
+                vec![format!("zygo: resume of {k} session {id} failed (exit {n}); try: {}", resume_command(kind, &id, config_dir))]
             }
             None => vec![],
         },
@@ -371,7 +395,7 @@ pub(crate) fn exit_lines(kind: Agent, o: &LaunchOutcome, exit: Exit, resumed: Op
                 let id = zygo_core::esc(id);
                 vec![format!(
                     "zygo: {k} exited {n}; agent session {id} is kept by the agent; to resume it: {}",
-                    resume_command(kind, &id)
+                    resume_command(kind, &id, config_dir)
                 )]
             }
             None => vec![],
@@ -530,32 +554,57 @@ mod tests {
     #[test]
     fn exit_lines_are_the_spec_texts() { // D7
         assert_eq!(
-            exit_lines(Agent::ClaudeCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None),
+            exit_lines(Agent::ClaudeCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, None),
             ["zygo: resume of claude session abc failed (exit 1); try: zygo claude -- --resume abc"]
         );
         assert_eq!(
-            exit_lines(Agent::OpenCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("ses_1"), Some("ses_1")),
+            exit_lines(Agent::OpenCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("ses_1"), Some("ses_1"), None),
             ["zygo: resume of opencode session ses_1 failed (exit 1); try: zygo opencode -- --session=ses_1"]
         );
         assert_eq!(
-            exit_lines(Agent::OpenCode, &out(3, None, false, 60), Exit::Ended, None, Some("ses_1")),
+            exit_lines(Agent::OpenCode, &out(3, None, false, 60), Exit::Ended, None, Some("ses_1"), None),
             ["zygo: opencode exited 3; agent session ses_1 is kept by the agent; to resume it: zygo opencode -- --session=ses_1"]
         );
         assert_eq!(
-            exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, Some("abc")),
+            exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, Some("abc"), None),
             ["zygo: claude exited 3; agent session abc is kept by the agent; to resume it: zygo claude -- --resume abc"]
         );
         for code in [12, 13] {
             assert_eq!(
-                exit_lines(Agent::ClaudeCode, &not_spawned(code), Exit::NotStarted, Some("abc"), None),
+                exit_lines(Agent::ClaudeCode, &not_spawned(code), Exit::NotStarted, Some("abc"), None, None),
                 [format!("zygo: the claude launch failed before the agent started (exit {code})")]
             );
         }
-        assert!(exit_lines(Agent::ClaudeCode, &out(0, None, false, 60), Exit::Ended, None, Some("abc")).is_empty());
+        assert!(exit_lines(Agent::ClaudeCode, &out(0, None, false, 60), Exit::Ended, None, Some("abc"), None).is_empty());
         assert!(
-            exit_lines(Agent::ClaudeCode, &out(143, None, true, 60), Exit::Resumable { failed_fast: false }, None, Some("abc"))
+            exit_lines(Agent::ClaudeCode, &out(143, None, true, 60), Exit::Resumable { failed_fast: false }, None, Some("abc"), None)
                 .is_empty()
         );
-        assert!(exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, None).is_empty()); // no saved record (D5)
+        assert!(exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, None, None).is_empty()); // no saved record (D5)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_resume_command_names_the_config_dir_quoted() { // AU61, PW16; review round 2 finding 2
+        let dir = Path::new("/c c/it's");
+        assert_eq!(
+            resume_command(Agent::ClaudeCode, "abc", Some(dir)),
+            r"CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume abc"
+        );
+        assert_eq!(resume_command(Agent::ClaudeCode, "abc", None), "zygo claude -- --resume abc");
+        assert_eq!(resume_command(Agent::OpenCode, "ses_1", Some(dir)), "zygo opencode -- --session=ses_1");
+        assert_eq!(
+            exit_lines(Agent::ClaudeCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, Some(dir)),
+            [r"zygo: resume of claude session abc failed (exit 1); try: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume abc"]
+        );
+        assert_eq!(
+            exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, Some("abc"), Some(dir)),
+            [r"zygo: claude exited 3; agent session abc is kept by the agent; to resume it: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume abc"]
+        );
+        // C6: a control character in the path is escaped after the quoting.
+        assert_eq!(
+            resume_command(Agent::ClaudeCode, "abc", Some(Path::new("/a\nb"))),
+            r"CLAUDE_CONFIG_DIR='/a\nb' zygo claude -- --resume abc"
+        );
     }
 }
