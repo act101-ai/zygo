@@ -288,8 +288,8 @@ fn live_sessions(sessions_dir: &Path) -> usize {
 ///
 /// No request and no prompt when: `io` is not a terminal; `-p` or `--print` is in `args`; `ZYGO_SESSION` or
 /// `ZYGO_WORKSPACE` is set, an empty value too (the AU64 and AU95 meaning, `cmd/mod.rs:112-116`);
-/// `ZYGO_NO_UPDATE_CHECK` is set and not empty; `[update] check = false`; or the last check is less than 24 h old. Else one GET for the release's public VERSION file, bounded by 2 s, the system proxy not used; a
-/// failure is silent. A newer version that was not skipped is asked about: `y` installs it and returns `Exit`, `s`
+/// `ZYGO_NO_UPDATE_CHECK` is set and not empty; `[update] check = false`; or the last check is less than 24 h old.
+/// Else one GET for the release's public VERSION file, bounded by 2 s, the system proxy not used; a failure is silent. A newer version that was not skipped is asked about: `y` installs it and returns `Exit`, `s`
 /// records the skip, any other answer continues.
 pub fn start_check(
     paths: &Paths,
