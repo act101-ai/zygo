@@ -34,6 +34,7 @@ Steps:
 - [x] Apply "Spec text" below to `docs/specs/2026-11-20-workspaces-design.md`, and "Contract text" below to `M1.md` and `E2.md`.
 - [x] Run the Acceptance → all pass. Then `cargo test -p zygo-workspace --locked --no-fail-fast 2>&1`, `cargo check --workspace --locked --tests 2>&1`, `cargo clippy -p zygo-workspace --locked --tests -- -D warnings` → all clean; `rg -n "60 s|interrupted turn|last_run_at|30 days" docs/specs/2026-11-20-workspaces-design.md` shows only the change-log rows and the dated notes.
 - [x] Tick the steps; commit the files of Files and this file: "fix(workspace): FIX-20 an open turn stays busy; no 30-day results deletion".
+- [x] Round 2: review findings 2, 4, 5 fixed.
 
 ## Spec text
 

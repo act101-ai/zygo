@@ -930,6 +930,39 @@ fn open_turn_is_busy_until_the_drain_timeout() {
     }
 }
 
+#[test]
+fn open_turn_has_no_fallback_before_a_long_drain_timeout() {
+    // FIX-20 guard: no quiet time, however long, counts an open turn as idle. With a 3600 s drain timeout and no
+    // Stop, `down` keeps polling to the timeout; a fallback at any earlier time would stop the member and exit 0.
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let (mut o, store, mut l) = one_member(t);
+    set_activity(&o, SID, true, &[]);
+    let mut h = hooks();
+    h.status = Some(Box::new(|_: &str| Ok(quiet())));
+    let last = Arc::new(Mutex::new(Duration::ZERO));
+    let lp = last.clone();
+    h.on_poll = Some(Box::new(move |_, t| {
+        *lp.lock().unwrap() = t;
+        false
+    }));
+    o.timeout = Some(Duration::from_secs(3600));
+    let (code, out, err) = run(&o, &h);
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    assert!(*last.lock().unwrap() >= Duration::from_secs(3600), "{:?}", *last.lock().unwrap());
+    assert_eq!(count(&err, "zygo: app: drain timed out after 3600 s; phase is up again"), 1, "{err}");
+    assert_eq!(count(&err, "zygo: app pane kaaaaaaaa: busy: no Stop since its last prompt"), 1, "{err}");
+    assert_eq!(count(&err, TURN), 0);
+    assert_eq!(count(&err, SKIP), 0);
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!(ws.phase, Phase::Up);
+    assert_eq!(ws.phase_since, 1_800_003_600); // the virtual clock at the timeout
+    assert!(!ws.members[KEY].clean_stop);
+    assert!(l.child.try_wait().unwrap().is_none()); // never signalled
+    l.child.kill().unwrap();
+}
+
 // ---- step 8 ----
 
 #[test]
