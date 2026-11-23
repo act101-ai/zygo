@@ -434,6 +434,35 @@ fn role_guard_follows_the_effective_role() {
     }
 }
 
+/// §8.6 item 7: the attribution sentence (operator, 2026-11-22).
+const NO_ATTRIBUTION: &str = "Never add Claude attribution to commits, pull request titles or bodies, tags, release notes or comments: no `Co-Authored-By: Claude` trailer, no `noreply@anthropic.com` address, no `Generated with Claude Code` line and no Claude session link.";
+
+#[test] // FIX-21, §8.5: kills: the attribution keys written only outside passthrough, only for members or only with work units
+fn settings_force_no_claude_attribution() {
+    for name in ["default", "passthrough", "member", "units off"] {
+        let fx = fx();
+        let c = match name {
+            "member" => member_ctx(&fx, true),
+            _ => {
+                let mut c = ctx(&fx, "");
+                c.passthrough = name == "passthrough";
+                c.view.work_units = name != "units off";
+                c
+            }
+        };
+        let spec = cc(&fx).build(&c).unwrap();
+        let s = settings(&fx);
+        assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{name}");
+        assert_eq!(s["includeCoAuthoredBy"], json!(false), "{name}");
+        let agents = agents_of(&spec.args);
+        let zygo: Vec<(&String, &Value)> = agents.as_object().unwrap().iter().filter(|(k, _)| k.starts_with("zygo-")).collect();
+        assert!(!zygo.is_empty(), "{name}");
+        for (k, a) in zygo {
+            assert!(a["prompt"].as_str().unwrap().contains(NO_ATTRIBUTION), "{name} {k}");
+        }
+    }
+}
+
 #[test]
 fn work_units_off_keeps_only_the_redaction_guard() {
     let fx = fx();

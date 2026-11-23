@@ -288,11 +288,14 @@ impl ClaudeCode {
         Value::Object(h)
     }
 
+    /// §8.5; `attribution` and `includeCoAuthoredBy` in every mode (operator, 2026-11-22).
     fn settings(&self, ctx: &LaunchCtx, env: &[(String, String)]) -> Value {
         let z = shell_quote(&self.zygo);
         let env: Map<String, Value> = env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
         let mut s = json!({
             "disableAllHooks": false,
+            "attribution": { "commit": "", "pr": "", "sessionUrl": false },
+            "includeCoAuthoredBy": false,
             "statusLine": { "type": "command", "command": format!("{z} hook statusline"), "refreshInterval": refresh_interval(ctx) },
             "hooks": self.hooks(ctx),
             "env": env,

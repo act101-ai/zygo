@@ -477,3 +477,20 @@ fn binary_guard_says_nothing_of_a_user_model_in_a_session() {
     assert_eq!((code, err.as_str()), (Some(0), ""));
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["hookSpecificOutput"]["permissionDecision"], "deny"); // the team layer loaded
 } // mutation: the `[[model]]` warning not filtered (→ one `zygo hook: config: [[model]] …` line)
+
+#[test] // FIX-21, §13.4: the attribution guard through the binary, on a pull request body; a product name passes
+fn binary_guard_denies_claude_attribution_in_a_pr_body() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path();
+    let sd = session(home);
+    let mut v = fixture("PreToolUse-Bash-sub.json");
+    v["cwd"] = json!(home.to_str().unwrap());
+    v["tool_input"] = json!({"command": "gh pr create --title t --body \"Co-Authored-By: Claude <noreply@anthropic.com>\""});
+    let (code, out, err) = hook(home, &sd, v.to_string().as_bytes());
+    assert_eq!((code, err.as_str()), (Some(0), ""));
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": "zygo: Claude attribution is never allowed in commits, pull requests or releases. Remove the line with `noreply@anthropic.com` from the message and run the command again."}}));
+    v["tool_input"] = json!({"command": "gh pr create --title t --body \"Adds the Claude Code host\""});
+    assert_eq!(hook(home, &sd, v.to_string().as_bytes()), (Some(0), String::new(), String::new()));
+}

@@ -14,6 +14,8 @@ pub enum Guard {
     Repeat,
     Lead,
     Redaction,
+    /// FIX-21: Claude attribution in a commit, tag, pull request, issue or release; fixed `enforce`, no `[guards]` key.
+    Attribution,
 }
 
 impl Guard {
@@ -31,6 +33,7 @@ impl Guard {
             Guard::Repeat => "repeat",
             Guard::Lead => "lead",
             Guard::Redaction => "redaction",
+            Guard::Attribution => "attribution",
         }
     }
 }
@@ -64,7 +67,7 @@ impl Policy {
 
     pub fn level(&self, g: Guard) -> Level {
         match g {
-            Guard::Lead | Guard::Redaction => Level::Enforce,
+            Guard::Lead | Guard::Redaction | Guard::Attribution => Level::Enforce,
             Guard::Repeat => Level::Monitor,
             _ => self.guards.get(g.name()).unwrap_or_default(),
         }

@@ -351,6 +351,8 @@ fn claude_code_flags_settings_agents_and_mcp_match_the_spec() {
     let roles = zygo_config::builtin::defaults().role; // BTreeMap, sorted by name
     let s = &r.cap.settings;
     assert_eq!(s["disableAllHooks"], false);
+    assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}));
+    assert_eq!(s["includeCoAuthoredBy"], false);
     assert_eq!(s["apiKeyHelper"], format!("{q} hook token"));
     assert_eq!(s["model"], "lead");
     assert_eq!(s["availableModels"], json!(roles.keys().collect::<Vec<_>>()));

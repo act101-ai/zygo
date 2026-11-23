@@ -37,7 +37,7 @@ pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
     run_with(input, &hooks::env_ctx(&sd))
 }
 
-/// `PreToolUse` → [`pre_tool`]; other events → nothing. Units off or no config: redaction only (G3).
+/// `PreToolUse` → [`pre_tool`]; other events → nothing. Units off or no config: redaction and attribution only (G3, FIX-21).
 pub fn run_with(input: &HookInput, ctx: &HookCtx) -> anyhow::Result<HookOutput> {
     if input.event.as_deref() != Some("PreToolUse") {
         return Ok(HookOutput::None);
@@ -54,7 +54,7 @@ pub fn pre_tool(input: &HookInput, p: &Policy, nav_lines: u32, ctx: &HookCtx) ->
     guard_tool(input, Some((p, nav_lines)), ctx)
 }
 
-/// The `PreToolUse` guards in G2 order; `None` runs redaction only.
+/// The `PreToolUse` guards in G2 order; `None` runs redaction and attribution only.
 fn guard_tool(input: &HookInput, p: Option<(&Policy, u32)>, ctx: &HookCtx) -> anyhow::Result<HookOutput> {
     let (agent, _agent_type) = hooks::agent_of(input)?;
     if log::check_agent(&agent).is_err() {
@@ -66,8 +66,18 @@ fn guard_tool(input: &HookInput, p: Option<(&Policy, u32)>, ctx: &HookCtx) -> an
     if redaction(tool, tin) {
         events.push(Event { guard: Guard::Redaction, level: Level::Enforce, text: REDACTION.into() });
     }
+    let cwd = hooks::cwd_of(input)?;
+    let command = if tool.eq_ignore_ascii_case("Bash") { tin.get("command").and_then(Value::as_str) } else { None };
+    let segs = command.map(segments).unwrap_or_default();
+    // FIX-21: always `enforce`, with or without work units and a config; the commit text first.
+    if let Some(cmd) = command
+        && let Some(label) = commit_text(cmd, &segs, &cwd)
+            .and_then(|t| claude_attribution(&t))
+            .or_else(|| message_text(cmd, &segs, &cwd).and_then(|t| claude_attribution(&t)))
+    {
+        events.push(Event { guard: Guard::Attribution, level: Level::Enforce, text: attribution_text(label) });
+    }
     if let Some((p, nav_lines)) = p {
-        let cwd = hooks::cwd_of(input)?;
         let unit = log::open_unit(&ctx.session_dir.work(), &agent);
         let edit_path = ["Edit", "Write", "NotebookEdit"]
             .iter()
@@ -96,9 +106,7 @@ fn guard_tool(input: &HookInput, p: Option<(&Policy, u32)>, ctx: &HookCtx) -> an
                 events.push(Event { guard: Guard::Navigation, level: p.level(Guard::Navigation), text });
             }
         }
-        let command = if tool.eq_ignore_ascii_case("Bash") { tin.get("command").and_then(Value::as_str) } else { None };
         if let Some(cmd) = command {
-            let segs = segments(cmd);
             if store_on(ctx.session_dir) && shortens_output(&segs) {
                 events.push(Event { guard: Guard::Output, level: p.level(Guard::Output), text: OUTPUT.into() });
             }
@@ -502,113 +510,301 @@ fn out_of_scope(p: &Path, files: &[String], temp_roots: &[PathBuf]) -> Option<St
     (!listed).then_some(rel)
 }
 
+/// Round 2 fix 5: a `VAR=value` word.
+fn assignment(x: &str) -> bool {
+    x.split_once('=').is_some_and(|(n, _)| {
+        n.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    })
+}
+
+/// The words of `s` from its program on: after a `{` that opens a group, leading `VAR=value` words, `command`, `time`
+/// and `env` with `-i`, `-u NAME` and `VAR=value` (Round 3 fix 5).
+fn program_words(s: &Segment) -> &[String] {
+    let mut w: &[String] = s.command();
+    loop {
+        match w.first().map(String::as_str) {
+            Some(x) if assignment(x) => w = &w[1..],
+            Some("command" | "time") => w = &w[1..],
+            Some("env") => {
+                w = &w[1..];
+                loop {
+                    match w.first().map(String::as_str) {
+                        Some("-i") => w = &w[1..],
+                        Some("-u") => w = w.get(2..).unwrap_or_default(),
+                        Some(x) if assignment(x) => w = &w[1..],
+                        _ => break,
+                    }
+                }
+            }
+            _ => return w,
+        }
+    }
+}
+
+/// Git global options that take the next word as their value (Round 2 fix 5).
+const GIT_VALUED: [&str; 8] = ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"];
+
+/// For program words `w` that run `git` (which may be a path): the index of its subcommand and the directory its `-C`
+/// options name, resolved from `cwd`; `None` for another program or no subcommand.
+fn git_sub(w: &[String], cwd: &Path) -> Option<(usize, PathBuf)> {
+    if !w.first().is_some_and(|x| x == "git" || x.ends_with("/git")) {
+        return None;
+    }
+    let mut dir = cwd.to_path_buf();
+    let mut j = 1;
+    while let Some(x) = w.get(j)
+        && x.starts_with('-')
+    {
+        if *x == "-C"
+            && let Some(d) = w.get(j + 1)
+        {
+            dir = dir.join(d);
+        }
+        j += if GIT_VALUED.contains(&x.as_str()) { 2 } else { 1 };
+    }
+    w.get(j).map(|_| (j, dir))
+}
+
 /// G14: the text to search of a `git commit` with `-m`/`--message` (the whole command) or `-F`/`--file` (the file's last
 /// `TAIL_BYTES`); `None` for no such commit, or a file message that cannot be read here.
 fn commit_text(cmd: &str, segs: &[Segment], cwd: &Path) -> Option<String> {
-    // Round 2 fix 5: leading `VAR=value` words; git global options, the listed ones with a separate value.
-    let assignment = |x: &str| x.split_once('=').is_some_and(|(n, _)| {
-        n.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    });
-    const VALUED: [&str; 8] = ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"];
     for (i, s) in segs.iter().enumerate() {
-        // Round 3 fix 5: `env` (with `-i`, `-u NAME`, `VAR=value`), `command` and `time` before `git`, which may be a path.
-        let mut w: &[String] = s.command();
-        loop {
-            match w.first().map(String::as_str) {
-                Some(x) if assignment(x) => w = &w[1..],
-                Some("command" | "time") => w = &w[1..],
-                Some("env") => {
-                    w = &w[1..];
-                    loop {
-                        match w.first().map(String::as_str) {
-                            Some("-i") => w = &w[1..],
-                            Some("-u") => w = w.get(2..).unwrap_or_default(),
-                            Some(x) if assignment(x) => w = &w[1..],
-                            _ => break,
-                        }
-                    }
-                }
-                _ => break,
-            }
-        }
-        if !w.first().is_some_and(|x| x == "git" || x.ends_with("/git")) {
+        let w = program_words(s);
+        let Some((j, dir)) = git_sub(w, cwd) else { continue };
+        if w[j] != "commit" {
             continue;
         }
-        let mut dir = cwd.to_path_buf();
-        let mut j = 1;
-        while let Some(x) = w.get(j)
-            && x.starts_with('-')
-        {
-            if *x == "-C"
-                && let Some(d) = w.get(j + 1)
-            {
-                dir = dir.join(d);
-            }
-            j += if VALUED.contains(&x.as_str()) { 2 } else { 1 };
-        }
-        if w.get(j).map(|x| x.as_str()) != Some("commit") {
-            continue;
-        }
-        let (mut inline, mut file) = (false, None);
-        let mut k = j + 1;
-        while let Some(x) = w.get(k) {
-            if let Some(long) = x.strip_prefix("--") {
-                // Round 3 fix 5: a long option or its unique abbreviation, as git's parse-options takes it.
-                let (name, attached) = match long.split_once('=') {
-                    Some((n, v)) => (n, Some(v.to_string())),
-                    None => (long, None),
-                };
-                if let Some((opt, valued)) = commit_option(name) {
-                    let value = match attached {
-                        Some(v) => Some(v),
-                        None if valued => {
-                            k += 1;
-                            w.get(k).map(|v| v.to_string())
-                        }
-                        None => None,
-                    };
-                    match opt {
-                        "message" => inline = true,
-                        "file" => file = value,
-                        _ => {}
-                    }
-                }
-            } else if let Some(flags) = x.strip_prefix('-').filter(|f| !f.starts_with('-')) {
-                // A short-option cluster: `m`, `F`, `c`, `C`, `t` take a value, attached or the next word; `S`, `u` an
-                // optional attached one.
-                for (n, ch) in flags.char_indices() {
-                    let rest = &flags[n + ch.len_utf8()..];
-                    if matches!(ch, 'S' | 'u') {
-                        break;
-                    }
-                    if matches!(ch, 'm' | 'F' | 'c' | 'C' | 't') {
-                        let value = if rest.is_empty() {
-                            k += 1;
-                            w.get(k).map(|v| v.to_string())
-                        } else {
-                            Some(rest.to_string())
-                        };
-                        match ch {
-                            'm' => inline = true,
-                            'F' => file = value,
-                            _ => {}
-                        }
-                        break;
-                    }
-                }
-            }
-            k += 1;
-        }
+        let (inline, file) = commit_args(w, j + 1);
         if inline {
             return Some(cmd.to_string());
         }
         let Some(f) = file else { continue };
-        if f == "-" || f == "/dev/stdin" || segs[..i].iter().any(|s| s.words.first().map(String::as_str) == Some("cd")) {
+        if f == "-" || f == "/dev/stdin" || after_cd(segs, i) {
             return None;
         }
         return read_last(&dir.join(f));
     }
     None
+}
+
+/// A segment before index `i` starts with `cd`: a relative file is then not resolved here.
+fn after_cd(segs: &[Segment], i: usize) -> bool {
+    segs[..i].iter().any(|s| s.words.first().map(String::as_str) == Some("cd"))
+}
+
+/// The `git commit` options in `w` from index `from`: whether a `-m`/`--message` is given, and the last `-F`/`--file` value.
+fn commit_args(w: &[String], from: usize) -> (bool, Option<String>) {
+    let (mut inline, mut file) = (false, None);
+    let mut k = from;
+    while let Some(x) = w.get(k) {
+        if let Some(long) = x.strip_prefix("--") {
+            // Round 3 fix 5: a long option or its unique abbreviation, as git's parse-options takes it.
+            let (name, attached) = match long.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_string())),
+                None => (long, None),
+            };
+            if let Some((opt, valued)) = long_option(&COMMIT_LONG, name) {
+                let value = match attached {
+                    Some(v) => Some(v),
+                    None if valued => {
+                        k += 1;
+                        w.get(k).map(|v| v.to_string())
+                    }
+                    None => None,
+                };
+                match opt {
+                    "message" => inline = true,
+                    "file" => file = value,
+                    _ => {}
+                }
+            }
+        } else if let Some(flags) = x.strip_prefix('-').filter(|f| !f.starts_with('-')) {
+            // A short-option cluster: `m`, `F`, `c`, `C`, `t` take a value, attached or the next word; `S`, `u` an
+            // optional attached one.
+            for (n, ch) in flags.char_indices() {
+                let rest = &flags[n + ch.len_utf8()..];
+                if matches!(ch, 'S' | 'u') {
+                    break;
+                }
+                if matches!(ch, 'm' | 'F' | 'c' | 'C' | 't') {
+                    let value = if rest.is_empty() {
+                        k += 1;
+                        w.get(k).map(|v| v.to_string())
+                    } else {
+                        Some(rest.to_string())
+                    };
+                    match ch {
+                        'm' => inline = true,
+                        'F' => file = value,
+                        _ => {}
+                    }
+                    break;
+                }
+            }
+        }
+        k += 1;
+    }
+    (inline, file)
+}
+
+/// FIX-21: the last `-F`/`--file` value of the `git tag` options in `w` from index `from`. `m`, `F` and `u` take a value,
+/// attached or the next word; `n` an optional attached one; `--` ends the options.
+fn tag_file(w: &[String], from: usize) -> Option<String> {
+    let mut file = None;
+    let mut k = from;
+    while let Some(x) = w.get(k) {
+        if x == "--" {
+            break;
+        }
+        if let Some(long) = x.strip_prefix("--") {
+            let (name, attached) = match long.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_string())),
+                None => (long, None),
+            };
+            if let Some((opt, valued)) = long_option(&TAG_LONG, name) {
+                let value = match attached {
+                    Some(v) => Some(v),
+                    None if valued => {
+                        k += 1;
+                        w.get(k).map(|v| v.to_string())
+                    }
+                    None => None,
+                };
+                if opt == "file" {
+                    file = value;
+                }
+            }
+        } else if let Some(flags) = x.strip_prefix('-') {
+            for (n, ch) in flags.char_indices() {
+                let rest = &flags[n + ch.len_utf8()..];
+                if ch == 'n' {
+                    break;
+                }
+                if matches!(ch, 'm' | 'F' | 'u') {
+                    let value = if rest.is_empty() {
+                        k += 1;
+                        w.get(k).map(|v| v.to_string())
+                    } else {
+                        Some(rest.to_string())
+                    };
+                    if ch == 'F' {
+                        file = value;
+                    }
+                    break;
+                }
+            }
+        }
+        k += 1;
+    }
+    file
+}
+
+/// FIX-21: for program words `w` that run `gh` (which may be a path) with `pr create|new|edit|comment|review`,
+/// `issue create|new|edit|comment` or `release create|new|edit`: the files named by `-F <f>`, `-F<f>`, `-F=<f>`,
+/// `--body-file <f>`, `--body-file=<f>`, `--notes-file <f>` and `--notes-file=<f>`. The value of `-t`, `--title`, `-b`,
+/// `--body`, `-n`, `--notes`, `-R` or `--repo` is never a file; `--` ends the options. `None` for another command.
+fn gh_files(w: &[String]) -> Option<Vec<String>> {
+    if !w.first().is_some_and(|x| x == "gh" || x.ends_with("/gh")) {
+        return None;
+    }
+    let verbs: &[&str] = match w.get(1).map(String::as_str) {
+        Some("pr") => &["create", "new", "edit", "comment", "review"],
+        Some("issue") => &["create", "new", "edit", "comment"],
+        Some("release") => &["create", "new", "edit"],
+        _ => return None,
+    };
+    if !w.get(2).is_some_and(|v| verbs.contains(&v.as_str())) {
+        return None;
+    }
+    const TEXT: [&str; 8] = ["-t", "--title", "-b", "--body", "-n", "--notes", "-R", "--repo"];
+    let mut files = Vec::new();
+    let mut k = 3;
+    while let Some(x) = w.get(k) {
+        let x = x.as_str();
+        if x == "--" {
+            break;
+        }
+        if TEXT.contains(&x) {
+            k += 1;
+        } else if matches!(x, "-F" | "--body-file" | "--notes-file") {
+            k += 1;
+            files.extend(w.get(k).cloned());
+        } else if let Some(f) = x.strip_prefix("--body-file=").or_else(|| x.strip_prefix("--notes-file=")) {
+            files.push(f.to_string());
+        } else if let Some(f) = x.strip_prefix("-F") {
+            files.push(f.strip_prefix('=').unwrap_or(f).to_string());
+        }
+        k += 1;
+    }
+    Some(files)
+}
+
+/// FIX-21, §13.4: the text the attribution guard searches: the whole command (inline messages, titles, bodies and notes,
+/// heredoc bodies included), then the last `TAIL_BYTES` of each message, body or notes file a `git commit`, `git tag` or
+/// `gh` message command ([`gh_files`]) names. A file `-` or `/dev/stdin`, or any file after a `cd`, is not read. `None`
+/// when no segment runs such a command.
+fn message_text(cmd: &str, segs: &[Segment], cwd: &Path) -> Option<String> {
+    let mut text: Option<String> = None;
+    for (i, s) in segs.iter().enumerate() {
+        let w = program_words(s);
+        let (dir, files): (PathBuf, Vec<String>) = match git_sub(w, cwd) {
+            Some((j, dir)) if w[j] == "commit" => (dir, commit_args(w, j + 1).1.into_iter().collect()),
+            Some((j, dir)) if w[j] == "tag" => (dir, tag_file(w, j + 1).into_iter().collect()),
+            Some(_) => continue,
+            None => match gh_files(w) {
+                Some(files) => (cwd.to_path_buf(), files),
+                None => continue,
+            },
+        };
+        let t = text.get_or_insert_with(|| cmd.to_string());
+        if after_cd(segs, i) {
+            continue;
+        }
+        for f in files.iter().filter(|f| *f != "-" && *f != "/dev/stdin") {
+            if let Some(body) = read_last(&dir.join(f)) {
+                t.push('\n');
+                t.push_str(&body);
+            }
+        }
+    }
+    text
+}
+
+/// FIX-21, §13.4: the first Claude attribution form in `text`, matched without case, as the label the guard text names:
+/// `noreply@anthropic.com`; `Co-Authored-By:`, optional blanks, then `claude` as a whole word; `Generated with`,
+/// optional blanks, then `[Claude Code]`, or `Claude Code` as whole words; `🤖`, optional blanks, then `Generated`;
+/// `Claude-Session:`. A product name such as "Claude Code plugin" is not attribution.
+pub fn claude_attribution(text: &str) -> Option<&'static str> {
+    let t = text.to_lowercase();
+    // What follows each occurrence of `m`, leading blanks removed.
+    let after = |m: &str| t.match_indices(m).map(|(i, _)| t[i + m.len()..].trim_start_matches([' ', '\t'])).collect::<Vec<_>>();
+    let word_end = |s: &str| !s.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
+    if t.contains("noreply@anthropic.com") {
+        return Some("noreply@anthropic.com");
+    }
+    if after("co-authored-by:").iter().any(|r| r.strip_prefix("claude").is_some_and(word_end)) {
+        return Some("Co-Authored-By: Claude");
+    }
+    for r in after("generated with") {
+        if r.starts_with("[claude code]") {
+            return Some("Generated with [Claude Code]");
+        }
+        if r.strip_prefix("claude code").is_some_and(word_end) {
+            return Some("Generated with Claude Code");
+        }
+    }
+    if after("🤖").iter().any(|r| r.starts_with("generated")) {
+        return Some("🤖 Generated");
+    }
+    if t.contains("claude-session:") {
+        return Some("Claude-Session:");
+    }
+    None
+}
+
+/// §13.4: the attribution guard's text for the matched form `label`.
+fn attribution_text(label: &str) -> String {
+    format!("zygo: Claude attribution is never allowed in commits, pull requests or releases. Remove the line with `{label}` from the message and run the command again.")
 }
 
 /// `git commit`'s long options (git 2.50 `builtin/commit.c`, hidden ones included) and whether each takes a value in
@@ -624,16 +820,26 @@ const COMMIT_LONG: [(&str, bool); 40] = [
     ("allow-empty", false), ("allow-empty-message", false),
 ];
 
-/// The `git commit` long option `name` names, exactly or as a unique abbreviation, with whether it takes the next word as
-/// its value; `None` for a `no-` form or a name git would refuse (unknown or ambiguous).
-fn commit_option(name: &str) -> Option<(&'static str, bool)> {
-    if let Some(o) = COMMIT_LONG.iter().find(|(o, _)| *o == name) {
+/// `git tag`'s long options (git 2.50 `builtin/tag.c`) and whether each takes a value in the next word (FIX-21).
+/// `--column` and `--color` take one only after `=`; `--contains`, `--merged` and `--points-at` take the next word.
+const TAG_LONG: [(&str, bool); 24] = [
+    ("list", false), ("delete", false), ("verify", false), ("annotate", false), ("message", true), ("file", true),
+    ("trailer", true), ("edit", false), ("sign", false), ("cleanup", true), ("local-user", true), ("force", false),
+    ("create-reflog", false), ("column", false), ("contains", true), ("no-contains", true), ("merged", true),
+    ("no-merged", true), ("points-at", true), ("sort", true), ("color", false), ("ignore-case", false),
+    ("omit-empty", false), ("format", true),
+];
+
+/// The long option of `table` that `name` names, exactly or as a unique abbreviation, with whether it takes the next word
+/// as its value; `None` for a `no-` form or a name git would refuse (unknown or ambiguous).
+fn long_option(table: &[(&'static str, bool)], name: &str) -> Option<(&'static str, bool)> {
+    if let Some(o) = table.iter().find(|(o, _)| *o == name) {
         return Some(*o);
     }
     if name.is_empty() || name.starts_with("no-") {
         return None;
     }
-    let mut hits = COMMIT_LONG.iter().filter(|(o, _)| o.starts_with(name));
+    let mut hits = table.iter().filter(|(o, _)| o.starts_with(name));
     match (hits.next(), hits.next()) {
         (Some(o), None) => Some(*o),
         _ => None,

@@ -4,6 +4,8 @@ use zygo_core::session_view::SessionView;
 use zygo_core::Agent;
 
 const REDACT: &str = "`[REDACTED:<id>]` marks a secret zygo removed; never write it into a file.";
+/// §8.6 item 7: the attribution sentence, always in (operator, 2026-11-22).
+const ATTRIBUTION: &str = "Never add Claude attribution to commits, pull request titles or bodies, tags, release notes or comments: no `Co-Authored-By: Claude` trailer, no `noreply@anthropic.com` address, no `Generated with Claude Code` line and no Claude session link.";
 const STORE: &str = "Large tool outputs are stored by zygo; read them with result_view, result_search or result_tree using the id in the marker; do not shorten output with head or tail.";
 const NAV: &str = "Use act-lite's skeleton, symbols or repo_outline before reading a whole source file.";
 const TRAILER: &str = "Add the commit trailers `Zygo-Session: <session>` and, when your brief names a unit, `Zygo-Work: <unit>`, each on its own line at the end of the message.";
@@ -12,9 +14,9 @@ const ALIAS_MID: &str = "When a skill still names a model, use the subagent inst
 const ALIAS_TAIL: &str = "Do not set a model on the subagent call.";
 const TEXT_ROLES: [&str; 3] = ["plan", "triage", "review"];
 
-/// §8.6 item 7: reads only the view.
+/// §8.6 item 7: reads only the view; the attribution sentence is always in.
 pub fn mechanics(v: &SessionView) -> String {
-    let mut parts = vec![REDACT];
+    let mut parts = vec![REDACT, ATTRIBUTION];
     if v.results {
         parts.push(STORE);
     }
