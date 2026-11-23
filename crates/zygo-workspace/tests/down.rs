@@ -274,19 +274,25 @@ fn statuses(h: &mut Hooks, map: StatusMap) -> Arc<Mutex<Vec<String>>> {
     calls
 }
 
-/// The point `after_sigterm`: drops each held launcher lock and sets each `(workspace id, member key)` to
-/// `resumable`, as a launcher and its wrapper do after SIGTERM.
+/// The point `after_sigterm`: for each `(workspace id, member key)`, paired in order with a held launcher lock, whose
+/// workspace is in `stopping` (the point runs after the step 10 of every workspace, so with `--all` another
+/// workspace's stop must not release this member): drops the lock and sets the member to `resumable`, as a launcher
+/// and its wrapper do after SIGTERM.
 fn release_on_sigterm(h: &mut Hooks, o: &DownOpts, locks: Vec<Arc<Mutex<Option<File>>>>, keys: &[(&str, &str)]) {
-    let keys: Vec<(String, String)> = keys.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    assert_eq!(locks.len(), keys.len());
+    let pairs: Vec<(Arc<Mutex<Option<File>>>, String, String)> =
+        locks.into_iter().zip(keys).map(|(l, (a, b))| (l, a.to_string(), b.to_string())).collect();
     let p = o.paths.clone();
     h.points.insert(
         "after_sigterm",
         Box::new(move || {
-            for l in &locks {
-                l.lock().unwrap().take();
-            }
-            for (id, key) in &keys {
-                Store::open(&p, id)
+            for (lock, id, key) in &pairs {
+                let store = Store::open(&p, id);
+                if store.read().unwrap().unwrap().phase != Phase::Stopping {
+                    continue;
+                }
+                lock.lock().unwrap().take();
+                store
                     .update(S5, &mut |ws| {
                         if let Some(m) = ws.members.get_mut(key) {
                             m.state = MemberState::Resumable;
@@ -1042,7 +1048,7 @@ fn all_workspaces_drain_under_one_timeout() {
         }));
         let (code, _, err) = run(&o, &h);
         assert_eq!(code, 0, "{err}");
-        assert_eq!(*seen.lock().unwrap(), Some((Phase::Down, Phase::Draining)));
+        assert_eq!(*seen.lock().unwrap(), Some((Phase::Down, Phase::Draining)), "{err}");
         assert_eq!((phase_all(&o, A), phase_all(&o, B)), ((Phase::Down, true), (Phase::Down, true)));
         l.child.wait().unwrap();
     }
