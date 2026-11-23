@@ -219,7 +219,9 @@ pub struct NewSession<'a> {
     pub argv: &'a [OsString],
     /// The workspace id and the first pane key (W7 D27). With `Some`, the same tmux invocation as `new-session` sets
     /// the session option `@zygo-ws`, the first pane's `@zygo-pane` and the session's `destroy-unattached off` (W7 I2),
-    /// so no session of a workspace exists without its owner, and a global `destroy-unattached on` does not end it. An id that fails `identity::valid_ws_id` or a key that fails `identity::valid_pane_key` gives
+    /// so no session of a workspace exists without its owner, and a global `destroy-unattached on` does not end it.
+    /// With `Some`, `new-session -e ZYGO_WORKSPACE=<id>` also gives the first pane the id, in session scope only
+    /// (W§8.1 step 9). An id that fails `identity::valid_ws_id` or a key that fails `identity::valid_pane_key` gives
     /// `Failed` before any spawn.
     pub owner: Option<(&'a str, &'a str)>,
 }

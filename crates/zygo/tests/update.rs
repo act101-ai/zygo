@@ -912,7 +912,8 @@ mod workspace_check {
         }
         let srv = h.server.as_ref().unwrap();
         locked(|| srv.kill_server()); // both stay `up` in their state: `--all` restores both
-        // A restore waits until no launcher of the killed panes is live (AU87); they end shortly after the server.
+        // The launchers of the killed panes end shortly after the server, and while one is live `up` refuses the
+        // restore (AU87). So the test waits until none is live.
         let live = || {
             let d = std::fs::read_dir(&h.paths.sessions_dir);
             d.map(|d| d.flatten().filter(|e| zygo_core::session_dir::live(&e.path())).count()).unwrap_or(0)
@@ -933,6 +934,43 @@ mod workspace_check {
         let names = locked(|| srv.run(&["list-sessions", "-F", "#{session_name}"])).unwrap();
         assert_eq!(names.lines().count(), 2, "{names}");
         assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+    }
+
+    /// `zygo up --no-attach` whose own check does not run, on a fresh `update.json`, with the update check on for its
+    /// panes (`extra` and `tty` say why `up` skips). The first pane is a TTY. Without `ZYGO_WORKSPACE` from
+    /// `new-session -e` (W§8.1 step 9), its `ws run` made the request, and the prompt waited in the pane, so the
+    /// member did not start. No request means no prompt: the prompt comes only after the answer of the request.
+    fn first_pane_makes_no_request(extra: &[(&str, &OsStr)], tty: bool) {
+        let Some(h) = locked(Harness::new) else { return };
+        git_repo(&h, &h.repo());
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
+        let tmux = OsString::from(format!("{},1,0", h.socket().display()));
+        let mut all: Vec<(&str, &OsStr)> = vec![("TMUX", tmux.as_os_str())];
+        all.extend(stub.iter().map(|(k, v)| (*k, v.as_os_str())));
+        all.extend_from_slice(extra);
+        let mut c = h.zygo(&["up", "--no-attach"], &all);
+        c.env_remove("ZYGO_NO_UPDATE_CHECK").env("ZYGO_RELEASE_BASE", &base).current_dir(h.repo());
+        if tty {
+            c.env("ZYGO_TEST_ASSUME_TTY", "1");
+        }
+        let o = locked(|| Guarded::spawn(c)).output("zygo up");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert!(!err(&o).contains(&prompt(NEW)), "{}", err(&o));
+        assert!(until(Duration::from_secs(20), || out.join("argv.json").exists()), "no member; requests {:?}", f.requests());
+        assert!(f.requests().is_empty(), "{:?}", f.requests());
+        assert!(!update_json(&h).exists());
+    }
+
+    #[test] // M5 round 2 finding 1 (FIX-28 folded): `up` inside an agent skips its own check; the first pane skips too
+    fn zygo_up_inside_an_agent_its_first_pane_makes_no_request() {
+        first_pane_makes_no_request(&[("ZYGO_SESSION", OsStr::new("01JZ0000000000000000000000"))], true);
+    }
+
+    #[test] // M5 round 2 finding 5: `up` with no TTY asks nothing; its first pane (a TTY) asks nothing either
+    fn zygo_up_without_a_tty_and_its_first_pane_ask_nothing() {
+        first_pane_makes_no_request(&[], false);
     }
 
     #[test] // auto-update #5, the `ZYGO_WORKSPACE` bullet: the opt-out is removed, so only `ZYGO_WORKSPACE` stops it

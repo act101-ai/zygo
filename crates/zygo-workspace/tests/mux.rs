@@ -1162,7 +1162,7 @@ fn new_session_sets_the_owner_in_the_same_call() {
     let d = Path::new("/w");
     let ns = |owner| NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner };
     let _ = t.new_session(&ns(Some(("0123456789abcdef", "kaaaaaaaa"))));
-    let want = "LC_ALL=unset -u new-session -d -P -F #{window_index} -s zygo-t -c /w -x 80 -y 24 -- sleep 600 ; \
+    let want = "LC_ALL=unset -u new-session -d -P -F #{window_index} -s zygo-t -c /w -e ZYGO_WORKSPACE=0123456789abcdef -x 80 -y 24 -- sleep 600 ; \
                 set-option -t =zygo-t: -- @zygo-ws 0123456789abcdef ; set-option -p -t =zygo-t: -- @zygo-pane kaaaaaaaa ; \
                 set-option -t =zygo-t: -- destroy-unattached off";
     assert_eq!(log_lines(dir.path()), [want]);
