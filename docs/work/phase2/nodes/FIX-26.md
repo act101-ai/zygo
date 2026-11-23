@@ -62,8 +62,8 @@ Decisions:
 
 Steps:
 
-- [ ] Refactor with no behavior change, in `crates/zygo-launch/src/claude_code.rs`: add the field `agents_files` and `ClaudeCode::new` with the doc comments under Interfaces; `Default` returns `ClaudeCode::new("claude", MANAGED.into(), std::env::current_exe().unwrap_or_default())`. Replace the struct literals: `crates/zygo-launch/tests/claude_code.rs:191` (`cc`) with `ClaudeCode::new("claude", fx.managed.clone(), fx.root.join("bin").join("zygo"))`; `:846` with `ClaudeCode::new("claude", fx.managed.clone(), fx.bin.join("zygo"))`; `:350` with `let mut a = cc(&fx); a.zygo = PathBuf::new(); let e = a.build(&c).err().unwrap();`; `:361` with `let mut a = cc(&fx); a.zygo = zygo; let e = a.build(&c).err().unwrap();`; `crates/zygo-launch/tests/stub_agent/harness.rs:70` with `ClaudeCode::new("claude", rig.root.join("managed-settings.json"), rig.zygo.clone())`. Run `cargo test -p zygo-launch --locked --no-fail-fast 2>&1` → all pass, as before the step.
-- [ ] In `crates/zygo-launch/tests/claude_code.rs`, replace the helper `unreadable(value: &str) -> String` (after `defeating_flags_are_logged_and_settings_warns`) with:
+- [x] Refactor with no behavior change, in `crates/zygo-launch/src/claude_code.rs`: add the field `agents_files` and `ClaudeCode::new` with the doc comments under Interfaces; `Default` returns `ClaudeCode::new("claude", MANAGED.into(), std::env::current_exe().unwrap_or_default())`. Replace the struct literals: `crates/zygo-launch/tests/claude_code.rs:191` (`cc`) with `ClaudeCode::new("claude", fx.managed.clone(), fx.root.join("bin").join("zygo"))`; `:846` with `ClaudeCode::new("claude", fx.managed.clone(), fx.bin.join("zygo"))`; `:350` with `let mut a = cc(&fx); a.zygo = PathBuf::new(); let e = a.build(&c).err().unwrap();`; `:361` with `let mut a = cc(&fx); a.zygo = zygo; let e = a.build(&c).err().unwrap();`; `crates/zygo-launch/tests/stub_agent/harness.rs:70` with `ClaudeCode::new("claude", rig.root.join("managed-settings.json"), rig.zygo.clone())`. Run `cargo test -p zygo-launch --locked --no-fail-fast 2>&1` → all pass, as before the step.
+- [x] In `crates/zygo-launch/tests/claude_code.rs`, replace the helper `unreadable(value: &str) -> String` (after `defeating_flags_are_logged_and_settings_warns`) with:
   ```rust
   /// §8.5 Flags (FIX-26 D2): the line for a user `--settings` value that names an entry zygo cannot read as a JSON object;
   /// `why` is the error.
@@ -168,7 +168,7 @@ Steps:
       assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "test setup: mkfifo {}", p.display());
   }
   ```
-- [ ] In the same file, change the rows that expect the old texts. `defeating_flags_are_logged_and_settings_warns`: `assert_eq!(spec.lines, [unreadable("x.json")]);` becomes `assert_eq!(spec.lines, [NO_FILE]);`. `unreadable_user_settings_keep_only_zygos_file`: the `cases` become
+- [x] In the same file, change the rows that expect the old texts. `defeating_flags_are_logged_and_settings_warns`: `assert_eq!(spec.lines, [unreadable("x.json")]);` becomes `assert_eq!(spec.lines, [NO_FILE]);`. `unreadable_user_settings_keep_only_zygos_file`: the `cases` become
   ```rust
   (vec!["--settings", "missing.json", "-p", "hi"], vec![NO_FILE.to_string()]),
   (vec!["--settings", "bad.json", "-p", "hi"], vec![unreadable("bad.json", NOT_JSON)]),
@@ -179,7 +179,7 @@ Steps:
   (vec!["--settings", "good.json", "--settings", "missing.json", "-p", "hi"], vec![MERGE_WARN.to_string(), NO_FILE.to_string()]),
   ```
   and its comment gains `; FIX-26: kills: a value with no entry printed`. `merge_line_is_true_when_disable_all_hooks_is_set`: the `lines` of row `true and unreadable` become `vec![MERGE_HOOKS_OFF.to_string(), NO_FILE.to_string()]`, of row `number and unreadable` `vec![MERGE_WARN.to_string(), bad_hooks("a number"), NO_FILE.to_string()]`. `settings_lines_escape_every_control_character`: the third expected line becomes `r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used: syntax error at line 1 column 2"#.to_string()`. `settings_lines_on_stderr_are_safe_and_in_order`: `let path_line = at(r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used: syntax error at line 1 column 2"#);` and `let missing = at(NO_FILE);`.
-- [ ] In the same file, after `user_disable_all_hooks_wins_and_attribution_keys_stay`, add `settings_value_text_is_printed_only_for_a_file`, with no `cfg`, comment `// FIX-26 (D1, D2), §8.5 Flags: kills: a value with no entry at its path printed (a BOM or U+200B prefix, an array, a broken array, a JSON string, broken inline JSON on a member launch or in the = form), so a secret reaches stderr; a first-character rule that takes the file "{x" as inline; on Windows an invalid name given the open-error line in place of NO_FILE; a printed path with a raw bidi control`. Body:
+- [x] In the same file, after `user_disable_all_hooks_wins_and_attribution_keys_stay`, add `settings_value_text_is_printed_only_for_a_file`, with no `cfg`, comment `// FIX-26 (D1, D2), §8.5 Flags: kills: a value with no entry at its path printed (a BOM or U+200B prefix, an array, a broken array, a JSON string, broken inline JSON on a member launch or in the = form), so a secret reaches stderr; a first-character rule that takes the file "{x" as inline; on Windows an invalid name given the open-error line in place of NO_FILE; a printed path with a raw bidi control`. Body:
   ```rust
   let fx = fx();
   const BAD_INLINE: &str = r#"{"env": {"TOKEN":"s3cret"}, "disableAllHooks": tru}"#;
@@ -214,7 +214,7 @@ Steps:
   }
   assert!(failed.is_empty(), "{failed:#?}");
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `settings_path_errors_show_the_value_only_for_an_entry`, comment `// FIX-26 (D2, D6), §8.5 Flags: kills: an error with no entry at the path (ENOTDIR, ELOOP in a folder part) given NO_FILE or printed with the value; an entry at the path (a link loop at the last part, a dangling link, a directory) given NO_FILE or the open-error line`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `settings_path_errors_show_the_value_only_for_an_entry`, comment `// FIX-26 (D2, D6), §8.5 Flags: kills: an error with no entry at the path (ENOTDIR, ELOOP in a folder part) given NO_FILE or printed with the value; an entry at the path (a link loop at the last part, a dangling link, a directory) given NO_FILE or the open-error line`. Body:
   ```rust
   let fx = fx();
   std::fs::write(fx.cwd.join("file.json"), "{}").unwrap();
@@ -234,7 +234,7 @@ Steps:
       assert!(hidden.is_empty() || !got.iter().any(|l| l.contains(hidden)), "{value}: {got:?}");
   }
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `settings_link_to_a_file_is_followed`, comment `// FIX-26 (D3), §8.5 Flags: kills: a user --settings link not followed (O_NOFOLLOW, or a type check on the link itself)`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `settings_link_to_a_file_is_followed`, comment `// FIX-26 (D3), §8.5 Flags: kills: a user --settings link not followed (O_NOFOLLOW, or a type check on the link itself)`. Body:
   ```rust
   let fx = fx();
   std::fs::write(fx.cwd.join("good.json"), r#"{"outputStyle": "x"}"#).unwrap();
@@ -242,7 +242,7 @@ Steps:
   assert_eq!(lines_of(&fx, &["--settings", "link.json"]), [MERGE_WARN]);
   assert_eq!(settings(&fx)["outputStyle"], "x");
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `settings_from_a_pipe_are_used`, comment `// FIX-26 (D3), §8.5 Flags: kills: a pipe (the <(…) form /dev/fd/<n>) refused as not a regular file, or a link to one not followed, so process substitution no longer works`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `settings_from_a_pipe_are_used`, comment `// FIX-26 (D3), §8.5 Flags: kills: a pipe (the <(…) form /dev/fd/<n>) refused as not a regular file, or a link to one not followed, so process substitution no longer works`. Body:
   ```rust
   let fx = fx();
   let (_r1, direct) = pipe_with(r#"{"outputStyle": "x"}"#);
@@ -252,7 +252,7 @@ Steps:
   let s = settings(&fx);
   assert_eq!((s["outputStyle"].as_str(), s["theme"].as_str()), (Some("x"), Some("dark")));
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `settings_from_a_pipe_with_a_late_writer_are_used`, comment `// FIX-26 (D3), §8.5 Flags: kills: a user --settings pipe read with O_NONBLOCK or with a type check that ends the read at once, so a writer that writes after the build starts is dropped (an eof error line in place of the merge)`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `settings_from_a_pipe_with_a_late_writer_are_used`, comment `// FIX-26 (D3), §8.5 Flags: kills: a user --settings pipe read with O_NONBLOCK or with a type check that ends the read at once, so a writer that writes after the build starts is dropped (an eof error line in place of the merge)`. Body:
   ```rust
   let fx = Arc::new(fx());
   let f = Arc::clone(&fx);
@@ -260,7 +260,7 @@ Steps:
   assert_eq!(lines, [MERGE_WARN]);
   assert_eq!(settings(&fx)["outputStyle"], "x");
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `settings_under_unsearchable_folder_are_not_shown`, comment `// FIX-26 (D2), §8.5 Flags: kills: EACCES on a parent folder (no entry found) given NO_FILE, or printed with the value`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `settings_under_unsearchable_folder_are_not_shown`, comment `// FIX-26 (D2), §8.5 Flags: kills: EACCES on a parent folder (no entry found) given NO_FILE, or printed with the value`. Body:
   ```rust
   use std::os::unix::fs::PermissionsExt;
   /// Gives the folder its search right back, also when an assertion fails, so the test folder can be removed.
@@ -284,7 +284,7 @@ Steps:
   assert_eq!(lines, [not_opened(&os_error(libc::EACCES))]);
   assert!(!lines.iter().any(|l| l.contains("locked") || l.contains("x.json")), "{lines:?}");
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `settings_file_with_mode_0_names_the_path_and_error`, comment `// FIX-26 (D2, D6), §8.5 Flags: kills: a file that exists but cannot be opened given NO_FILE or the open-error line with no path`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `settings_file_with_mode_0_names_the_path_and_error`, comment `// FIX-26 (D2, D6), §8.5 Flags: kills: a file that exists but cannot be opened given NO_FILE or the open-error line with no path`. Body:
   ```rust
   use std::os::unix::fs::PermissionsExt;
   let fx = fx();
@@ -297,7 +297,7 @@ Steps:
   }
   assert_eq!(lines_of(&fx, &["--settings", "noperm.json"]), [unreadable("noperm.json", &os_error(libc::EACCES))]);
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `long_broken_inline_settings_are_not_shown`, comment `// FIX-26 (D2), §8.5 Flags: kills: ENAMETOOLONG (ErrorKind::InvalidFilename on unix) given NO_FILE, that is the Windows invalid-name rule applied on unix; broken inline JSON longer than NAME_MAX printed`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `long_broken_inline_settings_are_not_shown`, comment `// FIX-26 (D2), §8.5 Flags: kills: ENAMETOOLONG (ErrorKind::InvalidFilename on unix) given NO_FILE, that is the Windows invalid-name rule applied on unix; broken inline JSON longer than NAME_MAX printed`. Body:
   ```rust
   let fx = fx();
   let head = r#"{"env": {"TOKEN": "s3cret"}, "pad": ""#;
@@ -308,7 +308,7 @@ Steps:
   assert_eq!(lines, [not_opened(&os_error(libc::ENAMETOOLONG))]);
   assert!(!lines.iter().any(|l| l.contains("s3cret") || l.contains("TOKEN")), "{lines:?}");
   ```
-- [ ] In the same file, after that test, add `settings_file_parse_errors_name_only_category_and_position`, with no `cfg`, comment `// FIX-26 (D4), §8.5 Flags: kills: serde_json's error text printed (for a data error it holds the literal 1234567890123 through the $serde_json::private::Number key); a category written as the wrong word; the position lost`. Body:
+- [x] In the same file, after that test, add `settings_file_parse_errors_name_only_category_and_position`, with no `cfg`, comment `// FIX-26 (D4), §8.5 Flags: kills: serde_json's error text printed (for a data error it holds the literal 1234567890123 through the $serde_json::private::Number key); a category written as the wrong word; the position lost`. Body:
   ```rust
   let fx = fx();
   let cases = [
@@ -323,7 +323,7 @@ Steps:
       assert!(!lines.iter().any(|l| l.contains("1234567890123") || l.contains("expected") || l.contains("EOF while")), "{lines:?}");
   }
   ```
-- [ ] In the same file, after `bad_user_agents_are_refused`, add `#[cfg(unix)]` `print_agents_from_a_pipe_are_used`, comment `// FIX-26 (D10, D12), §8.5 Subagents: kills: the --agents file read again in build after refusal read it, so a pipe is empty there and the user's agents are dropped with no line; an --agents pipe refused`. One adapter serves both calls, as in the launcher (`launcher.rs:583`, `:587`). Body:
+- [x] In the same file, after `bad_user_agents_are_refused`, add `#[cfg(unix)]` `print_agents_from_a_pipe_are_used`, comment `// FIX-26 (D10, D12), §8.5 Subagents: kills: the --agents file read again in build after refusal read it, so a pipe is empty there and the user's agents are dropped with no line; an --agents pipe refused`. One adapter serves both calls, as in the launcher (`launcher.rs:583`, `:587`). Body:
   ```rust
   let fx = fx();
   let (_r, value) = pipe_with(r#"{"helper": {"description": "h", "prompt": "y"}}"#);
@@ -334,7 +334,7 @@ Steps:
   let spec = a.build(&c).unwrap();
   assert_eq!(agents_of(&spec.args)["helper"]["prompt"], "y");
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `print_agents_from_a_pipe_with_a_late_writer_are_used`, comment `// FIX-26 (D3, D10, D12), §8.5 Subagents: kills: the --print --agents pipe read with O_NONBLOCK or ended at once, so a writer that writes after the launch starts is dropped and the launch is refused; the file read twice`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `print_agents_from_a_pipe_with_a_late_writer_are_used`, comment `// FIX-26 (D3, D10, D12), §8.5 Subagents: kills: the --print --agents pipe read with O_NONBLOCK or ended at once, so a writer that writes after the launch starts is dropped and the launch is refused; the file read twice`. Body:
   ```rust
   let fx = Arc::new(fx());
   let f = Arc::clone(&fx);
@@ -349,7 +349,7 @@ Steps:
   assert_eq!(refusal, None);
   assert_eq!(agents["helper"]["prompt"], "y");
   ```
-- [ ] In the same file, after `repo_root_settings_stop_the_launch`, add `#[cfg(unix)]` `preflight_skips_a_found_fifo_with_no_hang`, comment `// FIX-26 (D9), §8.4 Preflight, §12.3: kills: a found settings file or the managed file opened with a blocking open, so a FIFO with no writer at <cwd>/.claude/settings.json or at the managed path makes the launch, the preflight or the passthrough refusal wait for ever`. Body:
+- [x] In the same file, after `repo_root_settings_stop_the_launch`, add `#[cfg(unix)]` `preflight_skips_a_found_fifo_with_no_hang`, comment `// FIX-26 (D9), §8.4 Preflight, §12.3: kills: a found settings file or the managed file opened with a blocking open, so a FIFO with no writer at <cwd>/.claude/settings.json or at the managed path makes the launch, the preflight or the passthrough refusal wait for ever`. Body:
   ```rust
   let fx = Arc::new(fx());
   script(&fx, "claude", "[ \"$1\" = --version ] && exit 0\nexit 0");
@@ -372,7 +372,7 @@ Steps:
   });
   assert_eq!((preflight, refusal), (Ok(()), None));
   ```
-- [ ] In the same file, after that test, add `#[cfg(target_os = "linux")]` `preflight_does_not_open_a_found_fifo_link_or_device`, comment `// FIX-26 (D9), §8.4 Preflight, §12.3: kills: a found FIFO, a found link to a FIFO or a found device (here the managed path is a pseudo-terminal slave) opened before the type check, with O_NONBLOCK too: an IN_OPEN event on a path that only this test can open`. Body:
+- [x] In the same file, after that test, add `#[cfg(target_os = "linux")]` `preflight_does_not_open_a_found_fifo_link_or_device`, comment `// FIX-26 (D9), §8.4 Preflight, §12.3: kills: a found FIFO, a found link to a FIFO or a found device (here the managed path is a pseudo-terminal slave) opened before the type check, with O_NONBLOCK too: an IN_OPEN event on a path that only this test can open`. Body:
   ```rust
   use std::os::fd::{FromRawFd, OwnedFd};
   let fx = Arc::new(fx());
@@ -428,7 +428,7 @@ Steps:
   assert_eq!(n, -1, "a found FIFO, a link to a FIFO or the device {slave} was opened: inotify reported IN_OPEN");
   drop((ino, master));
   ```
-- [ ] In the same file, after that test, add `#[cfg(unix)]` `preflight_follows_a_link_to_a_settings_file`, comment `// FIX-26 (D9), §8.4 Preflight: kills: a found settings file that is a link not followed (O_NOFOLLOW, or a type check on the link itself), so its credential key does not stop the launch`. Body:
+- [x] In the same file, after that test, add `#[cfg(unix)]` `preflight_follows_a_link_to_a_settings_file`, comment `// FIX-26 (D9), §8.4 Preflight: kills: a found settings file that is a link not followed (O_NOFOLLOW, or a type check on the link itself), so its credential key does not stop the launch`. Body:
   ```rust
   let fx = fx();
   put(&fx.cwd.join("real.json"), r#"{"env":{"CLAUDE_CODE_USE_VERTEX":"1"}}"#);
@@ -437,7 +437,7 @@ Steps:
   std::os::unix::fs::symlink(fx.cwd.join("real.json"), &link).unwrap();
   assert_eq!(cc(&fx).preflight(&ctx(&fx, "")), pf(link, "env.CLAUDE_CODE_USE_VERTEX"));
   ```
-- [ ] In the same file, after that test, add `#[cfg(target_os = "linux")]` `preflight_reads_a_leased_settings_file_after_a_blocking_open`, comment `// FIX-26 (D9), §8.4 Preflight: kills: a found regular file skipped when the O_NONBLOCK open fails with EWOULDBLOCK (a lease) and is not opened again without O_NONBLOCK, so its credential key does not stop the launch`. A Linux write lease is taken without root by the file owner (premise check); macOS has no `F_SETLEASE` in `libc`. Body:
+- [x] In the same file, after that test, add `#[cfg(target_os = "linux")]` `preflight_reads_a_leased_settings_file_after_a_blocking_open`, comment `// FIX-26 (D9), §8.4 Preflight: kills: a found regular file skipped when the O_NONBLOCK open fails with EWOULDBLOCK (a lease) and is not opened again without O_NONBLOCK, so its credential key does not stop the launch`. A Linux write lease is taken without root by the file owner (premise check); macOS has no `F_SETLEASE` in `libc`. Body:
   ```rust
   use std::os::unix::io::AsRawFd;
   use std::time::{Duration, Instant};
@@ -474,7 +474,7 @@ Steps:
   unsafe { libc::signal(libc::SIGIO, old) };
   assert_eq!(result, pf(p, "env.CLAUDE_CODE_USE_VERTEX"));
   ```
-- [ ] In `crates/zygo-launch/tests/stub_launch.rs`, replace `unreadable(value: &str) -> String` (`:137-140`) with the two-argument `unreadable(value: &str, why: &str) -> String` and the `NO_FILE` constant, with the same texts and doc comments as in `tests/claude_code.rs`. In `unreadable_user_settings_launch_with_only_zygos_file`, the loop becomes
+- [x] In `crates/zygo-launch/tests/stub_launch.rs`, replace `unreadable(value: &str) -> String` (`:137-140`) with the two-argument `unreadable(value: &str, why: &str) -> String` and the `NO_FILE` constant, with the same texts and doc comments as in `tests/claude_code.rs`. In `unreadable_user_settings_launch_with_only_zygos_file`, the loop becomes
   ```rust
   for (value, line) in [(missing.as_str(), NO_FILE.to_string()), (bad.as_str(), unreadable(&bad, "syntax error at line 1 column 2")), ("[1]", NO_FILE.to_string())] {
       let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| o.args = vec!["--settings".into(), value.into()]);
@@ -485,12 +485,12 @@ Steps:
   }
   ```
   and its comment gains `; FIX-26: kills: a value with no entry printed, or a file line with no reason`. In `member_with_unreadable_user_settings_stays_a_member`, `assert!(r.stderr.lines().any(|l| l == unreadable("missing.json")), "{}", r.stderr);` becomes `assert!(r.stderr.lines().any(|l| l == NO_FILE), "{}", r.stderr);`.
-- [ ] Run and see red: `cargo test -p zygo-launch --locked --test claude_code --test stub_launch 2>&1`. Expected failures, with `left` holding the old line `zygo: your --settings value "<value>" could not be read as a JSON object and was not used` (no reason) or the old value text, or a guard panic: `defeating_flags_are_logged_and_settings_warns`, `unreadable_user_settings_keep_only_zygos_file`, `merge_line_is_true_when_disable_all_hooks_is_set` (row `true and unreadable`), `settings_lines_escape_every_control_character`, `settings_lines_on_stderr_are_safe_and_in_order` (the path line not found), `settings_value_text_is_printed_only_for_a_file` (every row; `BOM prefix` holds `s3cret`), `settings_path_errors_show_the_value_only_for_an_entry`, `settings_under_unsearchable_folder_are_not_shown` (or its skip note as root), `settings_file_with_mode_0_names_the_path_and_error` (or its skip note as root), `long_broken_inline_settings_are_not_shown`, `settings_file_parse_errors_name_only_category_and_position`, `print_agents_from_a_pipe_are_used` and `print_agents_from_a_pipe_with_a_late_writer_are_used` (no `helper` in the `--agents` argument: the second read was empty), `preflight_skips_a_found_fifo_with_no_hang` (`launch: did not return within 20 s`), `preflight_does_not_open_a_found_fifo_link_or_device` (`preflight and passthrough refusal: did not return within 20 s`: the old blocking open of the FIFO waits), and in `stub_launch` `unreadable_user_settings_launch_with_only_zygos_file` and `member_with_unreadable_user_settings_stays_a_member`. Five new tests pass on the old code, because the old reader is the blocking `std::fs::read`, which follows links and reads pipes and leased files: `settings_link_to_a_file_is_followed`, `settings_from_a_pipe_are_used`, `settings_from_a_pipe_with_a_late_writer_are_used`, `preflight_follows_a_link_to_a_settings_file` and `preflight_reads_a_leased_settings_file_after_a_blocking_open`; they keep D3 and D9 against a later `O_NONBLOCK` read of user values, `O_NOFOLLOW`, or a skip on `WouldBlock`.
-- [ ] Implement in `crates/zygo-launch/src/claude_code.rs`, as under Interfaces, D6 and D9: the constants `NO_FILE`, `NOT_OBJECT` and `enum FileError` with the doc comments under Interfaces; `read_settings_file` (D6); `parse_error`; the new `unreadable_line`; `user_settings` calling `read_settings_file` and pushing finished lines; `build` extending `lines` with `u.unreadable.iter().cloned()` after the `bad_hooks` lines; `read_object` with the steps of D9; `user_agents` as a method with the memo (D10, D12), and its two callers. The unix parts of `read_object` use `std::os::unix::fs::OpenOptionsExt::custom_flags(libc::O_NONBLOCK)` and `std::os::unix::io::AsRawFd`, behind `#[cfg(unix)]`, with a `// SAFETY:` comment on each `fcntl` call as in `session_view.rs:182-199`. `preflight`, `refusal` (except the method call) and `BAD_AGENTS` do not change.
-- [ ] Run and see green: `cargo test -p zygo-launch --locked --test claude_code --test stub_launch 2>&1` → all pass. A test that prints a skip note did not check its case (see Acceptance).
-- [ ] Apply "Spec text" below to `docs/specs/2026-11-18-zygo-design.md`. Checks: `rg -n -F "names no file; it was not used" docs/specs/2026-11-18-zygo-design.md crates/zygo-launch` → hits in §8.5 Flags, the change-log row, `src/claude_code.rs`, `tests/claude_code.rs` and `tests/stub_launch.rs`; `rg -n -F "could not be read as a JSON object and was not used\`" docs/specs/2026-11-18-zygo-design.md` → no hit (every quote of that line ends with `: <error>`); `rg -n -F "is not a regular file or pipe" docs/specs/2026-11-18-zygo-design.md crates/zygo-launch` → no hit; `rg -n -F "O_PATH" docs/specs/2026-11-18-zygo-design.md` → one hit, in §8.4 Preflight; `rg -n -F "zygo: --agents: not a JSON object (or, with --print, a file that holds one)" docs/specs/2026-11-18-zygo-design.md` → hits in §8.5 Subagents and the change-log row.
-- [ ] Package and lint checks, scoped to `zygo-launch`: `cargo test -p zygo-launch --locked --no-fail-fast 2>&1` → all pass (`stub_member` and `premise` use the changed `harness::claude`); `cargo clippy -p zygo-launch --locked --tests -- -D warnings 2>&1` → clean. The Windows rows (the `settings_value_text_is_printed_only_for_a_file` rows, `settings_file_parse_errors_name_only_category_and_position`, the `stub_launch` tests) are checked by the CI job `test` on windows-latest, and the unix rows on macOS by the job on macos-latest (including the `/dev/fd/<n>` pipe tests); a local `cargo check --target x86_64-pc-windows-gnu` stops at `ring`'s C build here (no `x86_64-w64-mingw32-gcc`, run 2026-11-23).
-- [ ] Tick these steps in this file. Write the message below to `"$(git rev-parse --git-path FIX-26.msg)"`. Stage exactly `git add crates/zygo-launch/src/claude_code.rs crates/zygo-launch/tests/claude_code.rs crates/zygo-launch/tests/stub_launch.rs crates/zygo-launch/tests/stub_agent/harness.rs docs/specs/2026-11-18-zygo-design.md docs/work/phase2/nodes/FIX-26.md`, then commit with `GIT_AUTHOR_NAME=kagemartin GIT_AUTHOR_EMAIL=1011970+kagemartin@users.noreply.github.com GIT_COMMITTER_NAME=kagemartin GIT_COMMITTER_EMAIL=1011970+kagemartin@users.noreply.github.com git commit -F "$(git rev-parse --git-path FIX-26.msg)"`. Message (no other trailer, no attribution of any kind):
+- [x] Run and see red: `cargo test -p zygo-launch --locked --test claude_code --test stub_launch 2>&1`. Expected failures, with `left` holding the old line `zygo: your --settings value "<value>" could not be read as a JSON object and was not used` (no reason) or the old value text, or a guard panic: `defeating_flags_are_logged_and_settings_warns`, `unreadable_user_settings_keep_only_zygos_file`, `merge_line_is_true_when_disable_all_hooks_is_set` (row `true and unreadable`), `settings_lines_escape_every_control_character`, `settings_lines_on_stderr_are_safe_and_in_order` (the path line not found), `settings_value_text_is_printed_only_for_a_file` (every row; `BOM prefix` holds `s3cret`), `settings_path_errors_show_the_value_only_for_an_entry`, `settings_under_unsearchable_folder_are_not_shown` (or its skip note as root), `settings_file_with_mode_0_names_the_path_and_error` (or its skip note as root), `long_broken_inline_settings_are_not_shown`, `settings_file_parse_errors_name_only_category_and_position`, `print_agents_from_a_pipe_are_used` and `print_agents_from_a_pipe_with_a_late_writer_are_used` (no `helper` in the `--agents` argument: the second read was empty), `preflight_skips_a_found_fifo_with_no_hang` (`launch: did not return within 20 s`), `preflight_does_not_open_a_found_fifo_link_or_device` (`preflight and passthrough refusal: did not return within 20 s`: the old blocking open of the FIFO waits), and in `stub_launch` `unreadable_user_settings_launch_with_only_zygos_file` and `member_with_unreadable_user_settings_stays_a_member`. Five new tests pass on the old code, because the old reader is the blocking `std::fs::read`, which follows links and reads pipes and leased files: `settings_link_to_a_file_is_followed`, `settings_from_a_pipe_are_used`, `settings_from_a_pipe_with_a_late_writer_are_used`, `preflight_follows_a_link_to_a_settings_file` and `preflight_reads_a_leased_settings_file_after_a_blocking_open`; they keep D3 and D9 against a later `O_NONBLOCK` read of user values, `O_NOFOLLOW`, or a skip on `WouldBlock`.
+- [x] Implement in `crates/zygo-launch/src/claude_code.rs`, as under Interfaces, D6 and D9: the constants `NO_FILE`, `NOT_OBJECT` and `enum FileError` with the doc comments under Interfaces; `read_settings_file` (D6); `parse_error`; the new `unreadable_line`; `user_settings` calling `read_settings_file` and pushing finished lines; `build` extending `lines` with `u.unreadable.iter().cloned()` after the `bad_hooks` lines; `read_object` with the steps of D9; `user_agents` as a method with the memo (D10, D12), and its two callers. The unix parts of `read_object` use `std::os::unix::fs::OpenOptionsExt::custom_flags(libc::O_NONBLOCK)` and `std::os::unix::io::AsRawFd`, behind `#[cfg(unix)]`, with a `// SAFETY:` comment on each `fcntl` call as in `session_view.rs:182-199`. `preflight`, `refusal` (except the method call) and `BAD_AGENTS` do not change.
+- [x] Run and see green: `cargo test -p zygo-launch --locked --test claude_code --test stub_launch 2>&1` → all pass. A test that prints a skip note did not check its case (see Acceptance).
+- [x] Apply "Spec text" below to `docs/specs/2026-11-18-zygo-design.md`. Checks: `rg -n -F "names no file; it was not used" docs/specs/2026-11-18-zygo-design.md crates/zygo-launch` → hits in §8.5 Flags, the change-log row, `src/claude_code.rs`, `tests/claude_code.rs` and `tests/stub_launch.rs`; `rg -n -F "could not be read as a JSON object and was not used\`" docs/specs/2026-11-18-zygo-design.md` → no hit (every quote of that line ends with `: <error>`); `rg -n -F "is not a regular file or pipe" docs/specs/2026-11-18-zygo-design.md crates/zygo-launch` → no hit; `rg -n -F "O_PATH" docs/specs/2026-11-18-zygo-design.md` → one hit, in §8.4 Preflight; `rg -n -F "zygo: --agents: not a JSON object (or, with --print, a file that holds one)" docs/specs/2026-11-18-zygo-design.md` → hits in §8.5 Subagents and the change-log row.
+- [x] Package and lint checks, scoped to `zygo-launch`: `cargo test -p zygo-launch --locked --no-fail-fast 2>&1` → all pass (`stub_member` and `premise` use the changed `harness::claude`); `cargo clippy -p zygo-launch --locked --tests -- -D warnings 2>&1` → clean. The Windows rows (the `settings_value_text_is_printed_only_for_a_file` rows, `settings_file_parse_errors_name_only_category_and_position`, the `stub_launch` tests) are checked by the CI job `test` on windows-latest, and the unix rows on macOS by the job on macos-latest (including the `/dev/fd/<n>` pipe tests); a local `cargo check --target x86_64-pc-windows-gnu` stops at `ring`'s C build here (no `x86_64-w64-mingw32-gcc`, run 2026-11-23).
+- [x] Tick these steps in this file. Write the message below to `"$(git rev-parse --git-path FIX-26.msg)"`. Stage exactly `git add crates/zygo-launch/src/claude_code.rs crates/zygo-launch/tests/claude_code.rs crates/zygo-launch/tests/stub_launch.rs crates/zygo-launch/tests/stub_agent/harness.rs docs/specs/2026-11-18-zygo-design.md docs/work/phase2/nodes/FIX-26.md`, then commit with `GIT_AUTHOR_NAME=kagemartin GIT_AUTHOR_EMAIL=1011970+kagemartin@users.noreply.github.com GIT_COMMITTER_NAME=kagemartin GIT_COMMITTER_EMAIL=1011970+kagemartin@users.noreply.github.com git commit -F "$(git rev-parse --git-path FIX-26.msg)"`. Message (no other trailer, no attribution of any kind):
   ```
   fix(launch): FIX-26 safe settings lines, one --agents read, safe found files
 

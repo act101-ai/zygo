@@ -22,6 +22,10 @@ const BAD_AGENTS: &str = "--agents: not a JSON object (or, with --print, a file 
 const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
 /// §8.5 Flags (FIX-23): the merge line when the merged settings set `disableAllHooks: true`, which stops every hook and the status line, zygo's included.
 const MERGE_HOOKS_OFF: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys stay in force; your disableAllHooks stops every hook and the status line, zygo's included";
+/// §8.5 Flags (FIX-26 D2): the line for a user `--settings` value that is not a JSON object and has no entry at its path (no file found, or on Windows a name the system refuses); it does not hold the value, which can be inline settings with secrets.
+const NO_FILE: &str = "zygo: your --settings value (not shown) is not a JSON object and names no file; it was not used";
+/// §8.5 Flags (FIX-26 D7): the error for a file that holds JSON that is not an object.
+const NOT_OBJECT: &str = "the file holds JSON that is not an object";
 const NO_EDIT: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
 #[cfg(target_os = "macos")]
@@ -35,11 +39,20 @@ pub struct ClaudeCode {
     pub program: String,
     pub managed_settings: PathBuf,
     pub zygo: PathBuf,
+    /// FIX-26 D12, §8.5 Subagents: the `--print` `--agents` files read in this launch, by path, so a pipe such as `<(gen)` is read once: `refusal` reads and stores, `build` uses the stored value. It holds values for one launch: one adapter serves one launch (`crates/zygo/src/cmd/claude.rs:21` makes one `ClaudeCode::default()` per `zygo claude` process).
+    agents_files: std::sync::Mutex<std::collections::HashMap<PathBuf, Option<Map<String, Value>>>>,
+}
+
+impl ClaudeCode {
+    /// A Claude Code adapter for one launch, with an empty `--agents` file memo (FIX-26 D12). Make a new one for each launch, as `crates/zygo/src/cmd/claude.rs:21` does.
+    pub fn new(program: impl Into<String>, managed_settings: PathBuf, zygo: PathBuf) -> ClaudeCode {
+        ClaudeCode { program: program.into(), managed_settings, zygo, agents_files: Default::default() }
+    }
 }
 
 impl Default for ClaudeCode {
     fn default() -> Self {
-        ClaudeCode { program: "claude".into(), managed_settings: MANAGED.into(), zygo: std::env::current_exe().unwrap_or_default() }
+        ClaudeCode::new("claude", MANAGED.into(), std::env::current_exe().unwrap_or_default())
     }
 }
 
@@ -74,23 +87,6 @@ pub fn has_user_settings(args: &[String]) -> bool {
 
 fn strip_1m(v: &str) -> &str {
     v.strip_suffix("[1m]").unwrap_or(v)
-}
-
-/// The user's `--agents` values merged in order; `None` when one is not a JSON object (with `-p`/`--print`, a value
-/// that is not JSON is read as a file that holds one).
-fn user_agents(ctx: &LaunchCtx) -> Option<Map<String, Value>> {
-    let print = has_flag(&ctx.args, "--print");
-    let mut out = Map::new();
-    for v in flag_values(&ctx.args, "--agents") {
-        let parsed = match serde_json::from_str::<Value>(&v) {
-            Ok(x) => x,
-            Err(_) if print => serde_json::from_slice(&std::fs::read(ctx.cwd.join(&v)).ok()?).ok()?,
-            Err(_) => return None,
-        };
-        let Value::Object(m) = parsed else { return None };
-        out.extend(m);
-    }
-    Some(out)
 }
 
 /// The role a Claude Code model alias names (§8.5).
@@ -154,7 +150,7 @@ struct UserSettings {
     merged: Map<String, Value>,
     /// How many values were merged.
     read: usize,
-    /// The values that are not a readable JSON object, as typed; zygo does not use them.
+    /// One line per value that is not a readable JSON object, in value order; zygo does not use those values.
     unreadable: Vec<String>,
     /// The user `disableAllHooks` values that are not `true` or `false`, in value order; zygo does not use them.
     bad_hooks: Vec<Value>,
@@ -167,11 +163,11 @@ fn user_settings(ctx: &LaunchCtx) -> UserSettings {
     let mut out = UserSettings { merged: Map::new(), read: 0, unreadable: vec![], bad_hooks: vec![] };
     for v in flag_values(&ctx.args, "--settings") {
         let m = match serde_json::from_str::<Value>(&v) {
-            Ok(Value::Object(m)) => Some(m),
-            _ => read_object(&ctx.cwd.join(&v)),
+            Ok(Value::Object(m)) => Ok(m),
+            _ => read_settings_file(&ctx.cwd.join(&v)),
         };
         match m {
-            Some(mut m) => {
+            Ok(mut m) => {
                 // FIX-23 D4: a `disableAllHooks` that is not a JSON boolean is not used.
                 if m.get("disableAllHooks").is_some_and(|h| !h.is_boolean())
                     && let Some(h) = m.remove("disableAllHooks")
@@ -181,15 +177,62 @@ fn user_settings(ctx: &LaunchCtx) -> UserSettings {
                 out.merged.extend(m);
                 out.read += 1;
             }
-            None => out.unreadable.push(v),
+            Err(e) => out.unreadable.push(unreadable_line(&v, &e)),
         }
     }
     out
 }
 
-/// §8.5 Flags (FIX-21 round 3, FIX-23 D6): the line for a user `--settings` value that zygo cannot read as a JSON object. The value is written as a JSON string, then through `zygo_core::esc`, so the line is one line.
-fn unreadable_line(value: &str) -> String {
-    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", zygo_core::esc(&Value::from(value).to_string()))
+/// §8.5 Flags (FIX-26 D2, D6): why a user value that is not a JSON object could not be used as a file.
+enum FileError {
+    /// No entry at the path, and no file was found.
+    NoFile,
+    /// No entry at the path for another reason: the system error text, which holds no path.
+    NotOpened(String),
+    /// An entry exists at the path and could not be used: the error.
+    File(String),
+}
+
+/// §8.5 Flags (FIX-26 D2, D3, D6): a file the user gave (`--settings`, `--print --agents`) as a JSON object, read as before FIX-26 (one blocking open that follows links), with the entry rule for the error.
+fn read_settings_file(p: &Path) -> Result<Map<String, Value>, FileError> {
+    if let Err(e) = std::fs::symlink_metadata(p) {
+        let no_file = e.kind() == std::io::ErrorKind::NotFound || (cfg!(windows) && e.kind() == std::io::ErrorKind::InvalidFilename);
+        return Err(if no_file { FileError::NoFile } else { FileError::NotOpened(e.to_string()) });
+    }
+    let bytes = std::fs::read(p).map_err(|e| FileError::File(e.to_string()))?;
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Object(m)) => Ok(m),
+        Ok(_) => Err(FileError::File(NOT_OBJECT.into())),
+        Err(e) => Err(FileError::File(parse_error(&e))),
+    }
+}
+
+/// §8.5 Flags (FIX-26 D4): a `serde_json` error of user input as its category and position only; its text can hold literals of the input.
+fn parse_error(e: &serde_json::Error) -> String {
+    use serde_json::error::Category;
+    let category = match e.classify() {
+        Category::Io => "io",
+        Category::Syntax => "syntax",
+        Category::Data => "data",
+        Category::Eof => "eof",
+    };
+    format!("{category} error at line {} column {}", e.line(), e.column())
+}
+
+/// §8.5 Flags (FIX-21 round 3, FIX-23 D6, FIX-26 D2): the line for a user `--settings` value that zygo cannot read as a JSON object. The value is in the line only when an entry exists at its path (`FileError::File`); it is written as a JSON string, then through `zygo_core::esc`, and the error through `zygo_core::esc`, so the line is one line.
+fn unreadable_line(value: &str, error: &FileError) -> String {
+    match error {
+        FileError::File(error) => format!(
+            "zygo: your --settings value {} could not be read as a JSON object and was not used: {}",
+            zygo_core::esc(&Value::from(value).to_string()),
+            zygo_core::esc(error)
+        ),
+        FileError::NotOpened(error) => format!(
+            "zygo: your --settings value (not shown) is not a JSON object and could not be opened as a file: {}; it was not used",
+            zygo_core::esc(error)
+        ),
+        FileError::NoFile => NO_FILE.to_string(),
+    }
 }
 
 /// §8.5 Flags (FIX-23 D4): the line for a user `disableAllHooks` value that is not `true` or `false`. It names only the JSON type: the value can hold any text, for example a token.
@@ -245,9 +288,44 @@ fn merge_settings(mut zygo: Value, user: Map<String, Value>) -> Value {
     zygo
 }
 
-/// A settings file as a JSON object; `None` when absent, unreadable or not an object.
+/// §8.4 (FIX-26 D9): a settings file that zygo found by itself, as a JSON object; `None` (the caller skips it with no line) when it is absent, is not a regular file (never opened then), cannot be read, is not JSON or is not an object.
 fn read_object(p: &Path) -> Option<Map<String, Value>> {
-    match serde_json::from_slice(&std::fs::read(p).ok()?).ok()? {
+    use std::io::Read;
+    if !std::fs::metadata(p).ok()?.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    let (mut f, nonblock) = {
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(p) {
+            Ok(f) => (f, true),
+            // A file lease: one open with no `O_NONBLOCK`, which waits for the lease break; no third open, no loop.
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => (std::fs::File::open(p).ok()?, false),
+            Err(_) => return None,
+        }
+    };
+    #[cfg(not(unix))]
+    let mut f = std::fs::File::open(p).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    if nonblock {
+        use std::os::unix::io::AsRawFd;
+        let fd = f.as_raw_fd();
+        // SAFETY: `fd` is the open descriptor of `f`, which lives for the call.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags == -1 {
+            return None;
+        }
+        // SAFETY: `fd` is the open descriptor of `f`, which lives for the call.
+        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } == -1 {
+            return None;
+        }
+    }
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).ok()?;
+    match serde_json::from_slice(&bytes).ok()? {
         Value::Object(m) => Some(m),
         _ => None,
     }
@@ -341,6 +419,25 @@ fn refresh_interval(_ctx: &LaunchCtx) -> u64 {
 }
 
 impl ClaudeCode {
+    /// The user's `--agents` values merged in order; `None` when one is not a JSON object (with `--print`, a value that is not JSON is read as a file that holds one, as a `--settings` file is read, once per launch: FIX-26 D10, D12).
+    fn user_agents(&self, ctx: &LaunchCtx) -> Option<Map<String, Value>> {
+        let print = has_flag(&ctx.args, "--print");
+        let mut out = Map::new();
+        for v in flag_values(&ctx.args, "--agents") {
+            let m = match serde_json::from_str::<Value>(&v) {
+                Ok(Value::Object(m)) => m,
+                Ok(_) => return None,
+                Err(_) if print => {
+                    let mut memo = self.agents_files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    memo.entry(ctx.cwd.join(&v)).or_insert_with_key(|p| read_settings_file(p).ok()).clone()?
+                }
+                Err(_) => return None,
+            };
+            out.extend(m);
+        }
+        Some(out)
+    }
+
     fn hooks(&self, ctx: &LaunchCtx) -> Value {
         let z = shell_quote(&self.zygo);
         let entry = |matcher: Option<&str>, name: &str| {
@@ -502,7 +599,7 @@ impl AgentAdapter for ClaudeCode {
             "--settings".into(),
             path(&settings),
             "--agents".into(),
-            agents(ctx, user_agents(ctx).unwrap_or_default()).to_string(),
+            agents(ctx, self.user_agents(ctx).unwrap_or_default()).to_string(),
         ];
         if let Plugins::Snapshot(s) = &ctx.plugins
             && !s.plugin_dirs().is_empty()
@@ -519,7 +616,7 @@ impl AgentAdapter for ClaudeCode {
                 lines.push(if hooks_off { MERGE_HOOKS_OFF } else { MERGE_WARN }.to_string());
             }
             lines.extend(u.bad_hooks.iter().map(bad_hooks_line));
-            lines.extend(u.unreadable.iter().map(|v| unreadable_line(v)));
+            lines.extend(u.unreadable.iter().cloned());
             log.push("degraded: --settings".to_string());
         }
         if has_flag(&ctx.args, "--bare") {
@@ -543,7 +640,7 @@ impl AgentAdapter for ClaudeCode {
         Ok(())
     }
     fn refusal(&self, ctx: &LaunchCtx) -> Option<String> {
-        let Some(user) = user_agents(ctx) else { return Some(BAD_AGENTS.into()) };
+        let Some(user) = self.user_agents(ctx) else { return Some(BAD_AGENTS.into()) };
         if !ctx.passthrough {
             return None;
         }

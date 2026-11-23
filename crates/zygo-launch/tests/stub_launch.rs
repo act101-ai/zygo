@@ -134,10 +134,15 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
 /// §8.5 Flags: the line for a user `--settings` value that zygo merges.
 const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
 
-/// §8.5 Flags: the line for a user `--settings` value that zygo cannot read as a JSON object (FIX-21 round 3).
-fn unreadable(value: &str) -> String {
-    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", json!(value))
+/// §8.5 Flags (FIX-26 D2): the line for a user `--settings` value that names an entry zygo cannot read as a JSON object;
+/// `why` is the error.
+fn unreadable(value: &str, why: &str) -> String {
+    format!("zygo: your --settings value {} could not be read as a JSON object and was not used: {why}", json!(value))
 }
+
+/// §8.5 Flags (FIX-26 D2): the line for a user `--settings` value that is not a JSON object and has no entry at its
+/// path (no file found, or on Windows a name the system refuses).
+const NO_FILE: &str = "zygo: your --settings value (not shown) is not a JSON object and names no file; it was not used";
 
 /// The commands of the hooks of `event` in the settings file the stub read.
 fn hook_commands(settings: &Value, event: &str) -> Vec<String> {
@@ -161,17 +166,17 @@ fn assert_only_zygos_settings(r: &Run, rig: &Rig) {
 }
 
 #[test] // FIX-21 round 3, §8.5 Flags: kills: an unreadable value passed on to the agent, the attribution keys or the guard
-        // hook lost, the line missing from stderr
+        // hook lost, the line missing from stderr; FIX-26: kills: a value with no entry printed, or a file line with no reason
 fn unreadable_user_settings_launch_with_only_zygos_file() {
     let rig = rig();
     let bad = rig.cwd.join("bad.json");
     std::fs::write(&bad, "not json").unwrap();
     let missing = rig.cwd.join("missing.json").display().to_string();
     let bad = bad.display().to_string();
-    for value in [missing.as_str(), bad.as_str(), "[1]"] {
+    for (value, line) in [(missing.as_str(), NO_FILE.to_string()), (bad.as_str(), unreadable(&bad, "syntax error at line 1 column 2")), ("[1]", NO_FILE.to_string())] {
         let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| o.args = vec!["--settings".into(), value.into()]);
         assert_eq!(r.code, 0, "{value}: {}", r.stderr);
-        assert!(r.stderr.lines().any(|l| l == unreadable(value)), "{value}: {}", r.stderr);
+        assert!(r.stderr.lines().any(|l| l == line), "{value}: {}", r.stderr);
         assert!(!r.stderr.contains(MERGE_WARN), "{value}: {}", r.stderr);
         assert_only_zygos_settings(&r, &rig);
     }
@@ -210,7 +215,7 @@ fn member_with_unreadable_user_settings_stays_a_member() { // AU58, AU59 (FIX-21
         o.args = vec!["--settings".into(), "missing.json".into()];
     });
     assert_eq!(r.code, 0, "{}", r.stderr);
-    assert!(r.stderr.lines().any(|l| l == unreadable("missing.json")), "{}", r.stderr);
+    assert!(r.stderr.lines().any(|l| l == NO_FILE), "{}", r.stderr);
     assert!(!r.stderr.contains("not saved by the workspace"), "{}", r.stderr);
     assert_eq!((r.cap.env["ZYGO_WORKSPACE"].as_str(), r.cap.env["ZYGO_PANE"].as_str()), ("ws-1", "p-1"));
     let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
