@@ -8,7 +8,7 @@ zygo is one native binary that wraps Claude Code and OpenCode (and other coding 
 
 ### A status line that tells you want you want to know
 
-<img width="1072" height="93" alt="image" src="https://github.com/user-attachments/assets/6365701c-305f-418b-a85d-6f00fb35b464" />
+<img width="1091" height="140" alt="image" src="https://github.com/user-attachments/assets/c8d3dc64-27cd-45c2-9f2d-4e641cfcb0dc" />
 
 ## Role-based model routing
 
