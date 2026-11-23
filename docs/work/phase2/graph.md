@@ -92,7 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
-| FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | TODO | implementation | — |
+| FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | PLANNED | implementation | — |
 
 ## Log
 
@@ -216,3 +216,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W8 planned: 35 steps, test first. C1-C8 applied: W7 Produces (member_live, socket_is_private, fire), W3 Produces (mux::BOUND), M1 Spec; spec W§8.1 up --all, W§12 rows workspace, ls, ws forget, ws forget-pane. |
 | 2026-11-22 | W10 planned: 30 steps, test first. C1-C4, C6-C18 applied: W2, W7, W9 Produces; M1 Spec, Consumes; spec AU18, AU97, W§9.3, W§11, W§12, W§18 #80, W§19. C5 as FIX-16 (FIX-15 taken), depends W10, W11, M1 (author's call). |
 | 2026-11-22 | W8 DONE (0921fb6): up --all, ls, status, forget, forget-pane. Merged tree: admin 21, up 45, up_all 7, zygo-workspace 267 pass. I1, I2, I4, R2 spec rows applied. FIX-17 added: store refuses a linked state folder, caps reads at 1 MiB; H1, M1 depend on it. |
+| 2026-11-22 | FIX-17 planned: 9 steps, test first. One variant StateError::NotADirectory { path, link }; read refuses a linked folder too; cap 1 MiB, exactly 1 MiB reads; session_dir.rs unchanged; up.rs:370 uncapped read reported, not changed (author's call). |

@@ -5,3 +5,36 @@
 **Consumes:** `state::Store::update` (W2)
 **Produces:** state store refuses linked folders and caps reads at 1 MiB
 **Acceptance:** `cargo test -p zygo-workspace --locked --test state && cargo test -p zygo-core --locked` → all pass, including (unix) a state folder that is a symbolic link to a `0755` folder, on which `op_lock` and `update` return the link error, `log_error` returns, and the target folder keeps mode `0755` and gets no new file; and a 2 MiB `workspace.json` that `read`, `list_all` and `update` report as `state file too large`, with the bytes of that file unchanged after `update`
+
+## Plan
+
+The fix is in `crates/zygo-workspace/src/state.rs` only: one folder check that `read`, `update`, `op_lock` and `log_error` run first, one capped read of `workspace.json`, and one new `StateError` variant. The tests go in `crates/zygo-workspace/tests/state.rs`, on temporary folders only.
+
+Builds on: (signatures in the code now)
+- `Store::read(&self) -> Result<Option<Workspace>, StateError>` (`state.rs:404`), `Store::update` (`:450`), `Store::op_lock` (`:473`), `Store::log_error(&self, &str)` (`:513`), private `Store::ensure_dir` (`:439`), `pub fn list_all(&Paths) -> Vec<(String, Result<Workspace, StateError>)>` (`:605`), from W2.
+- `zygo_core::session_dir::SessionDir::create` (`crates/zygo-core/src/session_dir.rs:37`), which runs `set_permissions(0o700)` on the path it is given and follows a link there.
+
+Plan produces:
+- `StateError::NotADirectory { path: PathBuf, link: bool }`: the state folder `<workspaces_dir>/<id>` is a symbolic link (`link = true`) or an entry that is not a folder (`link = false`). Display: `<path>: state folder is a link` or `<path>: state folder is not a folder`.
+- `Store::read`, `update`, `op_lock` return it before they open, create, chmod, lock or write anything; `log_error` writes nothing on such a folder.
+- Every store read of `workspace.json` reads at most 1 MiB + 1 byte; a file larger than 1 MiB gives `StateError::Invalid { path, reason: "state file too large" }`. `list_all` and `update` get this through `read`.
+
+Decisions (author's call):
+- D1. One new variant with a `link` flag, not two variants: callers report both the same way, through Display. The `path` is the state folder, not `workspace.json`, because the folder is what is wrong. Every other match on `StateError` in the workspace has a catch-all arm, so no caller changes; `cargo check --workspace --locked --tests` proves it.
+- D2. A private `Store::check_dir(&self) -> Result<(), StateError>` runs `fs::symlink_metadata` on the state folder: a link or a non-folder gives `NotADirectory`; a missing folder is accepted, so `read` still gives `Ok(None)` and `update`, `op_lock` and `log_error` still create the folder with mode 0700; another error of `symlink_metadata` gives `StateError::Io`. `ensure_dir` calls it after the id check and before `SessionDir::create`; `read` calls it after the id check and before the file open.
+- D3. `read` refuses a linked folder too, as the brief says: a read through a link would report the state of another folder. `list_all` already skips a link (`DirEntry::file_type` does not follow it); W8's `admin` checks run before the store and stay unchanged.
+- D4. `session_dir.rs` does not change: the store holds the check, so `SessionDir::create` is never called on a link by the store. A link put in place between the check and the create is a race of a process of the same user; the store does not close it (the same model as W8 `admin`).
+- D5. The cap is a private `const STATE_FILE_MAX: u64 = 1024 * 1024`, the same value as `admin::STATE_MAX`; `read` uses `File::open(...).take(STATE_FILE_MAX + 1).read_to_end`, and a result longer than `STATE_FILE_MAX` is too large. A file of exactly 1 MiB reads, as `admin::too_large` (`len > STATE_MAX`) also accepts it. The cap is checked before the parse, so a large file is never parsed.
+- D6. `up.rs:370` (`resolve` name claim) reads `workspace.json` of an invalid state with `fs::read`, not through the store; that read is outside this node's Files and brief, and it is reported to the controller as a finding, not changed here.
+
+Steps:
+
+- [ ] Write the failing tests in `crates/zygo-workspace/tests/state.rs` (unix ones under `#[cfg(unix)]`): (1) `linked_state_folder_is_refused_and_not_changed`: a target folder in the temp folder with mode 0755 and a valid `workspace.json`, and `<workspaces_dir>/<id>` a symbolic link to it; `op_lock`, `update` (closure not run) and `read` return `NotADirectory { link: true }` with Display `<dir>: state folder is a link`; `log_error` returns; after that the target mode is 0755, its only entry is `workspace.json`, and its bytes are unchanged. (2) `state_folder_that_is_a_file_is_refused`: `<workspaces_dir>/<id>` a regular file; `op_lock`, `update`, `read` return `NotADirectory { link: false }`, Display `<dir>: state folder is not a folder`; `log_error` returns; the file bytes are unchanged. (3) `state_file_over_1_mib_is_too_large`: a valid document padded with spaces to 1 MiB + 1, 1 MiB + 2 and 2 MiB bytes; `read`, the `list_all` entry and `update` give `Invalid` with reason `state file too large`, and the file bytes are unchanged after `update`. (4) `state_file_of_1_mib_reads`: the same document padded to exactly 1 MiB reads and `update` writes it.
+- [ ] Run them and see them fail: `cargo test -p zygo-workspace --locked --test state` → does not compile (no `NotADirectory`); with the variant added only to the enum, (1) and (2) fail on `op_lock` and (3) fails on `read`. Record the red lines.
+- [ ] Implement D1: the variant and its Display arm.
+- [ ] Implement D2 and D3: `check_dir`, called from `ensure_dir` and `read`.
+- [ ] Implement D5: the capped read in `read`.
+- [ ] Run the tests and see them pass: `cargo test -p zygo-workspace --locked --test state`.
+- [ ] Run the Acceptance: `cargo test -p zygo-workspace --locked --test state && cargo test -p zygo-core --locked` → all pass.
+- [ ] Run `cargo test -p zygo-workspace --locked --no-fail-fast`, `cargo clippy -p zygo-workspace -p zygo-core --locked --tests -- -D warnings`, `cargo check --workspace --locked --tests` → all clean.
+- [ ] Tick the steps, commit `crates/zygo-workspace/src/state.rs`, `crates/zygo-workspace/tests/state.rs` and this file: "fix(workspace): FIX-17 store refuses a linked state folder, caps reads at 1 MiB".
