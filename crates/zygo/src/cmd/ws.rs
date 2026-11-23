@@ -1,14 +1,19 @@
 //! `zygo ws forget <name>`, `zygo ws forget-pane <key> [--name <name>]` and the hidden `zygo ws snapshot` (W§12,
 //! AU44). `zygo ws` does not sweep (AU71).
 
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+
 use zygo_core::paths::Paths;
+use zygo_core::session_view::{ResumeNote, SubagentRef};
 use zygo_hooks::workspace::snapshot_child;
+use zygo_launch::env::Env;
 use zygo_workspace::admin;
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::snapshot::{self, SkipReason, SnapshotOutcome, HOOK_WAIT, OP_WAIT};
-use zygo_workspace::state::Store;
+use zygo_workspace::state::{CompactOverride, MemberRecord, Store};
 
-use super::{cwd_or_exit, op5_exit, print_err, tmux_program};
+use super::{cwd_or_exit, op5_exit, print_err, tmux_program, Launch, LaunchOpenCode};
 
 #[derive(clap::Args)]
 pub struct WsArgs {
@@ -102,5 +107,239 @@ fn snapshot_cmd(paths: &Paths, ws_id: &str, event: Option<&str>, force: bool) {
             }
         }
         Err(e) => print_err(&format!("zygo: {}\n", zygo_core::esc(&e.to_string()))),
+    }
+}
+
+/// The compaction window of a member launch (AU32): the override `set <w>` gives `w`, `cleared` gives none, no
+/// override gives the saved `--compact`.
+pub(crate) fn effective_compact(rec: &MemberRecord) -> Option<String> {
+    match &rec.compact {
+        Some(CompactOverride::Set(w)) => Some(w.clone()),
+        Some(CompactOverride::Cleared) => None,
+        None => rec.launch.compact.clone(),
+    }
+}
+
+/// The resume note inputs of a member launch (W§8.2 step 4, W§9.4, AU72): none unless `note_pending`; bound to the
+/// agent session that the launch resumes, none for a fresh start.
+pub(crate) fn resume_note(rec: &MemberRecord, resumed: Option<&str>) -> Option<ResumeNote> {
+    if !rec.note_pending {
+        return None;
+    }
+    Some(ResumeNote {
+        clean_stop: rec.clean_stop,
+        interrupted: rec
+            .interrupted
+            .iter()
+            .map(|s| SubagentRef { agent_id: s.agent_id.clone(), agent_type: s.agent_type.clone(), ..Default::default() })
+            .collect(),
+        closed_units: rec.closed_units.clone(),
+        agent_session: resumed.map(String::from),
+        ..Default::default()
+    })
+}
+
+/// The `zygo claude` flags of a saved member launch (AU45): the saved fields, the AU32 compaction and, at a resume, no
+/// `--config-dir` (AU61: `ws run` sets the saved `CLAUDE_CONFIG_DIR` itself).
+pub(crate) fn launch_of(rec: &MemberRecord, resumed: bool) -> Launch {
+    let l = &rec.launch;
+    Launch {
+        profile: l.profile.clone(),
+        passthrough: l.passthrough,
+        server: l.server.clone(),
+        compact: effective_compact(rec),
+        yolo: l.yolo,
+        config_dir: if resumed { None } else { l.config_dir.clone() },
+        rest: l.args.clone(),
+    }
+}
+
+/// The `zygo opencode` flags of a saved member launch (AU45, AU32).
+pub(crate) fn launch_open_code_of(rec: &MemberRecord) -> LaunchOpenCode {
+    let l = &rec.launch;
+    LaunchOpenCode {
+        profile: l.profile.clone(),
+        server: l.server.clone(),
+        compact: effective_compact(rec),
+        yolo: l.yolo,
+        rest: l.args.clone(),
+    }
+}
+
+/// AU61, PW16 (D8; Claude Code members, at a resume): removes `CLAUDE_CONFIG_DIR` from `env`, then sets it to `saved`
+/// when there is one.
+pub(crate) fn saved_config_dir(env: &mut Env, saved: Option<&Path>) {
+    const VAR: &str = "CLAUDE_CONFIG_DIR";
+    let same = |n: &OsStr| if cfg!(windows) { n.to_str().is_some_and(|n| n.eq_ignore_ascii_case(VAR)) } else { n == VAR };
+    env.0.retain(|(k, _)| !same(k));
+    if let Some(s) = saved {
+        env.0.push((VAR.into(), s.as_os_str().to_os_string()));
+    }
+}
+
+/// AU61 (D8, at a resume): `None` when the launch `PATH` has `program`; else `saved` when it is an existing file.
+pub(crate) fn saved_program(env: &Env, program: &str, saved: Option<&Path>, cwd: &Path) -> Option<PathBuf> {
+    if which::which_in(program, env.get("PATH"), cwd).is_ok() {
+        return None;
+    }
+    saved.filter(|p| p.is_file()).map(Path::to_path_buf)
+}
+
+/// AU61 (D8, OpenCode): the folder `<cache>/<ws_id>/program/<pane>` (mode 0700) that holds only the link `opencode`
+/// to `saved`; an old entry of that name is replaced.
+#[cfg(unix)]
+pub(crate) fn program_folder(cache: &Path, ws_id: &str, pane: &str, saved: &Path) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    let dir = cache.join(ws_id).join("program").join(pane);
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+    let link = dir.join("opencode");
+    match std::fs::remove_file(&link) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    std::os::unix::fs::symlink(saved, &link)?;
+    Ok(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::{OsStr, OsString};
+    use std::path::{Path, PathBuf};
+    use zygo_core::Agent;
+    use zygo_launch::env::Env;
+    use zygo_workspace::state::{CompactOverride, MemberRecord, Subagent};
+
+    fn paths() -> Paths {
+        let p = |s: &str| PathBuf::from(s);
+        Paths {
+            config_file: p("c"),
+            cache_dir: p("k"),
+            data_dir: p("d"),
+            sessions_dir: p("s"),
+            marketplaces_dir: p("m"),
+            plugin_store: p("ps"),
+            approvals_file: p("a"),
+            usage_db: p("u"),
+        }
+    }
+
+    #[test]
+    fn effective_compact_has_three_states() { // AU32
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        r.launch.compact = Some("600000".into());
+        assert_eq!(effective_compact(&r).as_deref(), Some("600000"));
+        r.compact = Some(CompactOverride::Set("300000".into()));
+        assert_eq!(effective_compact(&r).as_deref(), Some("300000"));
+        r.compact = Some(CompactOverride::Cleared);
+        assert_eq!(effective_compact(&r), None);
+    }
+
+    #[test]
+    fn the_compact_argument_of_the_m4_values() { // AU32, AU105: the values M4 stores (M4.md:1129-1131)
+        use zygo_proxy::client::WindowArg;
+        for (o, want) in [
+            (Some(CompactOverride::Set("off".into())), Some(WindowArg::Off)),
+            (Some(CompactOverride::Set("600000".into())), Some(WindowArg::Tokens(600_000))),
+            (Some(CompactOverride::Cleared), None),
+        ] {
+            let mut r = MemberRecord::new(Agent::ClaudeCode);
+            r.launch.compact = Some("300000".into());
+            r.compact = o.clone();
+            let c = super::super::claude::launch_opts(&launch_of(&r, false), Env::default(), PathBuf::from("w"), paths()).unwrap();
+            assert_eq!(c.compact, want, "{o:?}");
+            let c = super::super::opencode::launch_opts(&launch_open_code_of(&r), Env::default(), PathBuf::from("w"), paths()).unwrap();
+            assert_eq!(c.compact, want, "{o:?}");
+        }
+    }
+
+    #[test]
+    fn resume_note_only_with_note_pending_and_bound_to_the_resume_id() { // W§9.4, AU72, H1 seam a
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        assert_eq!(resume_note(&r, Some("abc")), None);
+        r.note_pending = true;
+        r.clean_stop = true;
+        r.closed_units = vec!["u1".into()];
+        r.interrupted = vec![Subagent { agent_id: "a1".into(), agent_type: "t1".into(), ..Default::default() }];
+        let n = resume_note(&r, Some("abc")).unwrap();
+        assert_eq!((n.clean_stop, n.closed_units.clone(), n.agent_session.as_deref()), (true, vec!["u1".to_string()], Some("abc")));
+        assert_eq!((n.interrupted[0].agent_id.as_str(), n.interrupted[0].agent_type.as_str()), ("a1", "t1"));
+        assert_eq!(resume_note(&r, None).unwrap().agent_session, None);
+    }
+
+    #[test]
+    fn launch_of_maps_the_saved_fields() { // AU45, D8
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        r.launch.profile = Some("p".into());
+        r.launch.passthrough = true;
+        r.launch.server = Some("https://s.invalid".into());
+        r.launch.compact = Some("600000".into());
+        r.launch.yolo = true;
+        r.launch.config_dir = Some("/c".into());
+        r.launch.args = vec!["--model".into(), "lead".into()];
+        let l = launch_of(&r, false);
+        assert_eq!(
+            (l.profile.as_deref(), l.passthrough, l.server.as_deref(), l.compact.as_deref(), l.yolo, l.config_dir.as_deref()),
+            (Some("p"), true, Some("https://s.invalid"), Some("600000"), true, Some("/c"))
+        );
+        assert_eq!(l.rest, ["--model", "lead"]);
+        assert_eq!(launch_of(&r, true).config_dir, None);
+        let o = launch_open_code_of(&r);
+        assert_eq!(
+            (o.profile.as_deref(), o.server.as_deref(), o.compact.as_deref(), o.yolo, o.rest.clone()),
+            (Some("p"), Some("https://s.invalid"), Some("600000"), true, vec!["--model".to_string(), "lead".to_string()])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_config_dir_replaces_or_removes_the_variable() { // AU61, PW16 (Claude Code members only, D8)
+        let mut e = Env(vec![("CLAUDE_CONFIG_DIR".into(), "/other".into()), ("PATH".into(), "/bin".into())]);
+        saved_config_dir(&mut e, None);
+        assert_eq!((e.get("CLAUDE_CONFIG_DIR"), e.get("PATH")), (None, Some(OsStr::new("/bin"))));
+        saved_config_dir(&mut e, Some(Path::new("/saved")));
+        assert_eq!(e.get("CLAUDE_CONFIG_DIR"), Some(OsStr::new("/saved")));
+        assert_eq!(e.0.iter().filter(|(k, _)| k == "CLAUDE_CONFIG_DIR").count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_program_only_when_path_has_none() { // AU61, D8
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let exe = |d: &str| -> PathBuf {
+            let dir = t.path().join(d);
+            std::fs::create_dir_all(&dir).unwrap();
+            let p = dir.join("claude");
+            std::fs::write(&p, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        let (on_path, saved) = (exe("bin"), exe("saved"));
+        let empty = t.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let e = Env(vec![("PATH".into(), on_path.parent().unwrap().into())]);
+        assert_eq!(saved_program(&e, "claude", Some(&saved), t.path()), None);
+        let e = Env(vec![("PATH".into(), empty.clone().into())]);
+        assert_eq!(saved_program(&e, "claude", Some(&saved), t.path()), Some(saved.clone()));
+        assert_eq!(saved_program(&e, "claude", Some(&t.path().join("gone/claude")), t.path()), None);
+        assert_eq!(saved_program(&e, "claude", None, t.path()), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn program_folder_holds_only_the_link() { // AU61, D8 (OpenCode)
+        let t = tempfile::tempdir().unwrap();
+        let saved = t.path().join("saved/opencode");
+        std::fs::create_dir_all(saved.parent().unwrap()).unwrap();
+        std::fs::write(&saved, "").unwrap();
+        let cache = t.path().join("cache");
+        let dir = program_folder(&cache, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap();
+        assert_eq!(dir, cache.join("0123456789abcdef/program/kaaaaaaaa"));
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, [OsString::from("opencode")]);
+        assert_eq!(std::fs::read_link(dir.join("opencode")).unwrap(), saved);
+        assert_eq!(program_folder(&cache, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap(), dir); // again: the link is replaced
     }
 }
