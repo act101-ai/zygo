@@ -32,6 +32,12 @@ Version 0.1.0.
 
 * Solution: Save the full results from tool calls and provide recall and navigation tools
 
+### Cache Annotation
+
+- Anti-pattern: Coding agent doesn't mark all segments for caching resulting in higher costs
+
+- Solution: zygo ensures that all context segments are marked for caching, resulting in higher cache hit rates and lower token costs.
+
 ### Inline DLP
 
 - Anti-pattern: Agent reads secrets into context but doesn't realize until inference time, when it's too late
