@@ -1156,6 +1156,26 @@ mod workspace_check {
         assert!(e.starts_with(&head), "{e}");
         assert_member_ran(&h, &r);
         assert_eq!(f.requests(), check_and_install());
+        // M5 round 3 finding 1: the install replaced the binary, so `/proc/self/exe` now names `<path> (deleted)`.
+        // Every zygo command in the settings that the agent got names the canonical path that `ws run` read first.
+        let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(r.out.join("settings.json")).unwrap()).unwrap();
+        let mut commands: Vec<String> = Vec::new();
+        commands.extend(settings["apiKeyHelper"].as_str().map(String::from));
+        commands.extend(settings["statusLine"]["command"].as_str().map(String::from));
+        for list in settings["hooks"].as_object().into_iter().flat_map(|m| m.values()) {
+            for entry in list.as_array().into_iter().flatten() {
+                for hook in entry["hooks"].as_array().into_iter().flatten() {
+                    commands.extend(hook["command"].as_str().map(String::from));
+                }
+            }
+        }
+        let quoted = format!("'{}'", std::fs::canonicalize(&s.copy).unwrap().display());
+        assert!(commands.iter().any(|c| c.contains(" guard")), "{commands:?}");
+        assert!(commands.iter().any(|c| c.contains("role-guard")), "{commands:?}");
+        for c in &commands {
+            assert!(!c.contains("(deleted)"), "{c}");
+            assert!(c.contains(&quoted), "{c} does not name {quoted}");
+        }
     }
 
     #[test] // M5 round 2 finding 4: a cache that cannot be written does not give a second check after the relaunch

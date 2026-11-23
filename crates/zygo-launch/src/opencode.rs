@@ -27,9 +27,16 @@ pub struct OpenCode {
     pub zygo: PathBuf,
 }
 
+impl OpenCode {
+    /// An OpenCode adapter whose plugin and hooks run the zygo binary `zygo` (as `ClaudeCode::new` takes it).
+    pub fn new(zygo: PathBuf) -> OpenCode {
+        OpenCode { zygo }
+    }
+}
+
 impl Default for OpenCode {
     fn default() -> Self {
-        OpenCode { zygo: std::env::current_exe().unwrap_or_default() }
+        OpenCode::new(std::env::current_exe().unwrap_or_default())
     }
 }
 

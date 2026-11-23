@@ -48,11 +48,17 @@ impl ClaudeCode {
     pub fn new(program: impl Into<String>, managed_settings: PathBuf, zygo: PathBuf) -> ClaudeCode {
         ClaudeCode { program: program.into(), managed_settings, zygo, agents_files: Default::default() }
     }
+
+    /// [`ClaudeCode::new`] with the default program (`claude`) and managed-settings path, and the zygo binary `zygo`
+    /// that the hooks run (`zygo ws run` gives the path it read before its update check).
+    pub fn for_zygo(zygo: PathBuf) -> ClaudeCode {
+        ClaudeCode::new("claude", MANAGED.into(), zygo)
+    }
 }
 
 impl Default for ClaudeCode {
     fn default() -> Self {
-        ClaudeCode::new("claude", MANAGED.into(), std::env::current_exe().unwrap_or_default())
+        ClaudeCode::for_zygo(std::env::current_exe().unwrap_or_default())
     }
 }
 

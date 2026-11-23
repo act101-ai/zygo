@@ -128,6 +128,12 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
     // relaunch fails, `ws run` continues as a normal `ws run`, so the member starts and its record is not left
     // `running` without a launcher.
     let exe = std::env::current_exe().and_then(std::fs::canonicalize);
+    // The zygo binary of every launch in this `ws run` (M5 round 3): the path read before the check, so hook commands
+    // never name the deleted file after an install. Only when that read failed, the path of `current_exe`.
+    let zygo = match &exe {
+        Ok(p) => p.clone(),
+        Err(_) => std::env::current_exe().unwrap_or_default(),
+    };
     if std::env::var_os(zygo_workspace::env::RELAUNCHED).is_none() && super::start_check(&[]) == Some(0) {
         let args: Vec<OsString> = std::env::args_os().skip(1).collect();
         let e = match &exe {
@@ -189,13 +195,17 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
         print_err(&format!("zygo: pane {pane} has no member record; started a shell\n"));
         return exec_shell(env, ws_id, &cwd);
     };
-    launch_member(paths, store, ws_id, pane, &rec, &env, &cwd);
+    launch_member(paths, store, ws_id, pane, &rec, &env, &cwd, &zygo);
     exec_shell(env, ws_id, &cwd)
 }
 
 /// W§8.2 steps 2-7: the saved launch of `rec` (AU45, AU32), the resume of its agent session (W§8.3, AU3, AU61, D8),
-/// the resume note inputs (W§9.4), then the member wrapper.
-fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &MemberRecord, env: &[(OsString, OsString)], cwd: &Path) {
+/// the resume note inputs (W§9.4), then the member wrapper. `zygo` is the binary that the hooks and the plugin run.
+#[allow(clippy::too_many_arguments)]
+fn launch_member(
+    paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &MemberRecord, env: &[(OsString, OsString)], cwd: &Path,
+    zygo: &Path,
+) {
     let kind = rec.launch.kind;
     let resumed = if zygo_workspace::args::has_session_arg(kind, &rec.launch.args) { None } else { rec.agent_session.clone() };
     let built = match kind {
@@ -211,7 +221,7 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
     };
     let adapter: Box<dyn AgentAdapter> = match kind {
         Agent::ClaudeCode => {
-            let d = ClaudeCode::default();
+            let d = ClaudeCode::for_zygo(zygo.to_path_buf());
             if resumed.is_some() {
                 saved_config_dir(&mut opts.env, rec.config_dir.as_deref());
             }
@@ -222,7 +232,7 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
             }
         }
         Agent::OpenCode => {
-            let d = OpenCode::default();
+            let d = OpenCode::new(zygo.to_path_buf());
             let saved = if resumed.is_some() { saved_program(&opts.env, d.program(), rec.program.as_deref(), cwd) } else { None };
             if let Some(saved) = saved {
                 member::gate("program");
