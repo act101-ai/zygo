@@ -63,7 +63,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | DONE | judgment | 8978541; acceptance snapshot 33, state 22, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M7, D1-D6 |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | DONE | judgment | 3d51ad4; acceptance up 45, mux 46, snapshot 33, state 23, args 13, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M5, R3-1..R3-8 |
-| W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | PLANNED | judgment | — |
+| W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | IN-PROGRESS | judgment | .worktrees/phase2/W8 |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
