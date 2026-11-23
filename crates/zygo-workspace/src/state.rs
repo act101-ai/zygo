@@ -122,6 +122,9 @@ pub struct MemberRecord {
     pub clean_stop: bool,
     #[serde(default)]
     pub note_pending: bool,
+    /// The zygo session whose stop by `down` wrote `closed_units`, `interrupted` and `clean_stop` (W§9.3 step 8, AU60).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_for: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -295,6 +298,7 @@ impl MemberRecord {
             dropped_flags: Vec::new(),
             clean_stop: false,
             note_pending: false,
+            saved_for: None,
             extra: Extra::new(),
         }
     }
@@ -481,8 +485,9 @@ impl Store {
 
     /// Read-modify-write of `workspace.json` under `lock` (W§7.3): waits for the lock at most `bound`, reads the
     /// state (`Workspace::new` when none exists), applies `f`, checks the result (AU84) and replaces the file in one
-    /// rename (W-C4). An error of the read, of `f` or of the check writes nothing. It runs no other program and
-    /// waits for nothing but the lock.
+    /// rename (W-C4). A result larger than `STATE_FILE_MAX` (1 MiB, the limit of every reader) is refused, so no
+    /// reader ever finds a file it cannot read (AU84, W§7.3). An error of the read, of `f` or of the checks writes
+    /// nothing. It runs no other program and waits for nothing but the lock.
     pub fn update(
         &self, bound: Duration, f: &mut dyn FnMut(&mut Workspace) -> anyhow::Result<()>,
     ) -> Result<Workspace, StateError> {
@@ -501,6 +506,15 @@ impl Store {
         }
         sweep_tmp(&self.dir);
         let bytes = serde_json::to_vec_pretty(&ws).map_err(|e| StateError::Io(std::io::Error::other(e)))?;
+        if bytes.len() as u64 > STATE_FILE_MAX {
+            return Err(StateError::Invalid {
+                path,
+                reason: format!(
+                    "the new state is {} bytes, more than the {STATE_FILE_MAX} bytes that every reader accepts (AU84); not written",
+                    bytes.len()
+                ),
+            });
+        }
         write_atomic(&path, &bytes).map_err(|e| StateError::Io(std::io::Error::other(e)))?;
         Ok(ws)
     }

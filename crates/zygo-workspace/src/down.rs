@@ -1257,11 +1257,13 @@ impl Run<'_> {
         let name = self.jobs[i].name.clone();
         let members: Vec<(String, MemberRecord)> = self.jobs[i].ws.members.iter().map(|(k, m)| (k.clone(), m.clone())).collect();
         let mut live: BTreeMap<String, PathBuf> = BTreeMap::new();
-        let mut values: BTreeMap<String, (Vec<String>, Vec<Subagent>)> = BTreeMap::new();
+        let mut values: BTreeMap<String, (Vec<String>, Vec<Subagent>, String)> = BTreeMap::new();
         for (key, m) in members {
             let Some(dir) = live_session(&opts.paths, &m) else {
                 continue;
             };
+            // W§9.3 step 8, AU60: the zygo session that this stop ends, so its own commit keeps these values
+            let sid = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
             let units = closed_units(&dir.join("work"));
             let interrupted = if opts.now {
                 match activity::read(&SessionDir::new(dir.clone())) {
@@ -1278,7 +1280,7 @@ impl Run<'_> {
             } else {
                 Vec::new()
             };
-            values.insert(key.clone(), (units, interrupted));
+            values.insert(key.clone(), (units, interrupted, sid));
             live.insert(key, dir);
         }
         if values.is_empty() {
@@ -1287,11 +1289,12 @@ impl Run<'_> {
         let mut set = 0;
         let written = self.write(i, "members", &mut |c| {
             set = 0;
-            for (key, (units, interrupted)) in &values {
+            for (key, (units, interrupted, sid)) in &values {
                 if let Some(m) = c.members.get_mut(key) {
                     m.closed_units = units.clone();
                     m.interrupted = interrupted.clone();
                     m.clean_stop = true;
+                    m.saved_for = Some(sid.clone());
                     set += 1;
                 }
             }

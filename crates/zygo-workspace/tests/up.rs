@@ -1275,6 +1275,7 @@ fn repair_from_stopping() {
     let mut z = MemberRecord::new(Agent::ClaudeCode);
     z.clean_stop = true;
     z.closed_units = vec!["u2".into()];
+    z.saved_for = Some("01OLD".into());
     let (a2, z2) = (agent.clone(), z.clone());
     set(&store, move |w| {
         w.phase = Phase::Stopping;
@@ -1284,6 +1285,7 @@ fn repair_from_stopping() {
         m.clean_stop = true;
         m.closed_units = vec!["u1".into()];
         m.interrupted = vec![Subagent { agent_id: "a".into(), agent_type: "t".into(), ..Subagent::default() }];
+        m.saved_for = Some("01LIVE".into());
         w.members.insert("kzzzzzzzz".into(), z2.clone());
     });
     repair_run(&store, &mux, &l.o.zygo).0.unwrap();
@@ -1291,6 +1293,7 @@ fn repair_from_stopping() {
     assert_eq!(ws.phase, Phase::Up);
     let m = &ws.members[&agent];
     assert!(!m.clean_stop && m.closed_units.is_empty() && m.interrupted.is_empty());
+    assert_eq!(m.saved_for, None);
     assert_eq!(ws.members["kzzzzzzzz"], z);
     l.srv.run(&["has-session", "-t", "=zygo-app:"]).unwrap();
 }

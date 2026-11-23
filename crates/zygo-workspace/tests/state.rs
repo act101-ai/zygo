@@ -64,6 +64,7 @@ fn full() -> Workspace {
     m.dropped_flags = vec!["--agents".into()];
     m.clean_stop = true;
     m.note_pending = true;
+    m.saved_for = Some("01JD0000000000000000000000".into());
     ws.members.insert(KEY.into(), m);
     ws
 }
@@ -85,7 +86,8 @@ fn json_has_the_fields_of_w7_2() {
             "config_dir": "/home/u/work", "program": "/usr/bin/claude",
             "overrides": {"results": false, "guards": {}}, "compact": "set 120000",
             "interrupted": [{"agent_id": "a1", "agent_type": "Explore"}],
-            "closed_units": ["W2"], "dropped_flags": ["--agents"], "clean_stop": true, "note_pending": true}}
+            "closed_units": ["W2"], "dropped_flags": ["--agents"], "clean_stop": true, "note_pending": true,
+            "saved_for": "01JD0000000000000000000000"}}
     });
     assert_eq!(serde_json::to_value(full()).unwrap(), want);
     assert_eq!(serde_json::from_value::<Workspace>(want).unwrap(), full());
@@ -240,6 +242,27 @@ fn update_creates_then_reads_modifies_and_writes() {
     assert!(got.members.contains_key(KEY)); // the second writer kept the first writer's change
     assert_eq!(got.snapshot_at, Some(7));
     assert_eq!(store.read().unwrap().unwrap(), got);
+}
+
+#[test] // AU84, W§7.3: a writer refuses a result that no reader would accept, and writes nothing
+fn update_refuses_a_result_larger_than_the_read_limit() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    store.update(S5, &mut identity).unwrap();
+    store.update(S5, &mut |ws| { ws.members.insert(KEY.into(), MemberRecord::new(Agent::ClaudeCode)); Ok(()) }).unwrap();
+    let before = raw(&store);
+    let r = store.update(S5, &mut |ws| {
+        ws.members.get_mut(KEY).unwrap().zygo_session = Some("x".repeat(2 * 1024 * 1024));
+        Ok(())
+    });
+    let Err(e) = r else { panic!("a state larger than the read limit was written") };
+    assert!(
+        matches!(&e, StateError::Invalid { reason, .. } if reason.starts_with("the new state is ")
+            && reason.ends_with(" bytes, more than the 1048576 bytes that every reader accepts (AU84); not written")),
+        "{e}"
+    );
+    assert_eq!(raw(&store), before);
+    assert!(matches!(store.read(), Ok(Some(_))));
 }
 
 #[cfg(unix)]
