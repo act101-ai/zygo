@@ -27,10 +27,14 @@ pub struct UpArgs {
     pub all: bool,
 }
 
-/// The CLI form: the OP5 check first, then the user config (D3), the folder and the binary (D10), then `up::up` or,
-/// with `--all`, `up::up_all` (which refuses a name, `--loadout` and `--reset` itself).
+/// The CLI form: the OP5 check first, then the update check (auto-update design; `y` ends `up` before any library
+/// call), then the user config (D3), the folder and the binary (D10), then `up::up` or, with `--all`, `up::up_all`
+/// (which refuses a name, `--loadout` and `--reset` itself).
 pub fn run(a: &UpArgs) -> i32 {
     if let Some(code) = op5_exit() {
+        return code;
+    }
+    if let Some(code) = super::start_check(&[]) {
         return code;
     }
     let paths = Paths::from_env();

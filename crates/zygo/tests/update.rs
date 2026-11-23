@@ -842,4 +842,96 @@ mod workspace_check {
         let h = locked(Harness::no_tmux);
         assert!(h.env().iter().any(|(k, v)| k == "ZYGO_NO_UPDATE_CHECK" && v == "1"), "{:?}", h.env());
     }
+
+    #[test]
+    fn zygo_up_prompts_once_before_any_pane_starts() {
+        let Some(h) = locked(Harness::new) else { return };
+        git_repo(&h, &h.repo());
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
+        let tmux = OsString::from(format!("{},1,0", h.socket().display()));
+        let mut extra: Vec<(&str, &OsStr)> = vec![("TMUX", tmux.as_os_str())];
+        extra.extend(stub.iter().map(|(k, v)| (*k, v.as_os_str())));
+        let mut c = checked(h.zygo(&["up", "--no-attach"], &extra), &base);
+        c.current_dir(h.repo()).stdin(Stdio::piped());
+        let mut g = locked(|| Guarded::spawn(c));
+        let mut stdin = g.stdin().unwrap();
+        // Asked, not answered: no server, no state, no agent.
+        assert!(until(Duration::from_secs(10), || f.requests().len() == 1), "{:?}", f.requests());
+        std::thread::sleep(Duration::from_millis(500));
+        let srv = h.server.as_ref().unwrap();
+        assert!(locked(|| srv.run(&["list-sessions"])).is_err(), "a pane started before the answer");
+        assert_eq!(state_entries(&h), 0);
+        assert!(!out.exists());
+        stdin.write_all(b"n\n").unwrap();
+        drop(stdin);
+        let o = g.output("zygo up");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(err(&o).matches(&prompt(NEW)).count(), 1, "{}", err(&o));
+        // The member pane starts after the answer; its `ws run` makes no second request (the 24 h rule; P2).
+        assert!(until(Duration::from_secs(20), || out.join("argv.json").exists()));
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        assert!(update_json(&h).is_file());
+    }
+
+    #[test]
+    fn zygo_up_yes_installs_and_starts_nothing() {
+        let h = locked(Harness::no_tmux); // `bin/tmux` fails every call
+        git_repo(&h, &h.repo());
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, b"fixture-binary"));
+        let f = Fixture::start(files);
+        let base = OsString::from(f.base());
+        let s = setup(); // a copy: the test binary is never replaced
+        let mut c = Command::new(&s.copy);
+        c.args(["up", "--no-attach"]).env_clear().envs(h.env());
+        let mut c = checked(c, &base);
+        c.current_dir(h.repo()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = locked(|| Guarded::spawn(c));
+        child.stdin().unwrap().write_all(b"y\n").unwrap();
+        let o = child.output("zygo up");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
+        assert_eq!(std::fs::read(&s.copy).unwrap(), b"fixture-binary");
+        assert_eq!(state_entries(&h), 0);
+    }
+
+    #[test]
+    fn zygo_up_all_asks_one_time_for_two_workspaces() {
+        let Some(h) = locked(Harness::new) else { return };
+        let tmux = OsString::from(format!("{},1,0", h.socket().display()));
+        let repos = [h.repo(), h.root().join("repo2")];
+        for r in &repos {
+            git_repo(&h, r);
+            // The harness opt-out stays: these two `up` runs make no check.
+            let mut c = h.zygo(&["up", "--no-attach"], &[("TMUX", tmux.as_os_str())]);
+            c.current_dir(r);
+            let o = locked(|| Guarded::spawn(c)).output("zygo up");
+            assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        }
+        let srv = h.server.as_ref().unwrap();
+        locked(|| srv.kill_server()); // both stay `up` in their state: `--all` restores both
+        // A restore waits until no launcher of the killed panes is live (AU87); they end shortly after the server.
+        let live = || {
+            let d = std::fs::read_dir(&h.paths.sessions_dir);
+            d.map(|d| d.flatten().filter(|e| zygo_core::session_dir::live(&e.path())).count()).unwrap_or(0)
+        };
+        assert!(until(Duration::from_secs(15), || live() == 0), "launchers still live");
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        // The restored panes are shells; the harness test shell exits at once and would end the session, so they
+        // get an interactive `/bin/sh`, which waits in its pane.
+        let sh = OsStr::new("/bin/sh");
+        let mut c = checked(h.zygo(&["up", "--all"], &[("TMUX", tmux.as_os_str()), ("SHELL", sh)]), &base);
+        c.current_dir(h.root()).stdin(Stdio::piped());
+        let mut g = locked(|| Guarded::spawn(c));
+        g.stdin().unwrap().write_all(b"n\n").unwrap();
+        let o = g.output("zygo up --all");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(err(&o).matches(&prompt(NEW)).count(), 1, "{}", err(&o));
+        let names = locked(|| srv.run(&["list-sessions", "-F", "#{session_name}"])).unwrap();
+        assert_eq!(names.lines().count(), 2, "{names}");
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+    }
 }
