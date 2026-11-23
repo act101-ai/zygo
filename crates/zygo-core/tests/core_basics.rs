@@ -313,16 +313,17 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     old.save(&d).unwrap();
     assert_eq!(SessionView::load(&d).unwrap(), old);
     // A member with a resume note (AU58, AU72).
-    let member = Member { ws_id: "w1".into(), pane: "p1".into() };
+    let member = Member { ws_id: "w1".into(), pane: "p1".into(), ..Default::default() };
     let note = ResumeNote {
         clean_stop: true,
-        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into() }],
+        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into(), ..Default::default() }],
         closed_units: vec!["C1".into()],
         agent_session: None,
+        ..Default::default()
     };
     let note_clone = note.clone();
     let v = SessionView {
-        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note) }),
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note), ..Default::default() }),
         ..old.clone()
     };
     v.save(&d).unwrap();
@@ -342,7 +343,7 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     // Inputs bound to an agent session (W§9.4): the id is written and read back; an older file reads as none.
     let bound = ResumeNote { agent_session: Some("ses_R".into()), ..note_clone };
     let vb = SessionView {
-        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(bound) }),
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(bound), ..Default::default() }),
         ..old.clone()
     };
     vb.save(&d).unwrap();
@@ -355,7 +356,7 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     );
     // A member with no note: `resume_note` is not in the file.
     let m: ViewWorkspace = serde_json::from_str(r#"{"member":{"ws_id":"w1","pane":"p1"}}"#).unwrap();
-    assert_eq!(m, ViewWorkspace { member, resume_note: None });
+    assert_eq!(m, ViewWorkspace { member, resume_note: None, ..Default::default() });
 }
 
 #[test]
@@ -379,6 +380,26 @@ fn session_view_save_keeps_unknown_top_level_fields() { // H1 attempt-2 review r
     let plain = SessionView::default();
     let keys: Vec<String> = serde_json::to_value(&plain).unwrap().as_object().unwrap().keys().cloned().collect();
     assert!(!keys.iter().any(|k| k.starts_with("future_") || k == "extra"), "{keys:?}");
+}
+
+#[test]
+fn session_view_save_keeps_unknown_nested_fields() { // H1 attempt-2 review round 2, R5 (AU78 pattern)
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let text = r#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":false,"results":false,"navigation":false,"workspace":{"member":{"ws_id":"w","pane":"p","future_m":1},"resume_note":{"clean_stop":true,"interrupted":[{"agent_id":"a1","agent_type":"x","future_s":[2]}],"closed_units":[],"future_n":{"k":"v"}},"future_w":true},"future_top":3}"#;
+    std::fs::write(d.view_json(), text).unwrap();
+    let mut v = SessionView::load(&d).unwrap();
+    v.main_role = "code".into();
+    v.save(&d).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(after["main_role"], "code");
+    assert_eq!(after["future_top"], 3);
+    assert_eq!(after["workspace"]["future_w"], true);
+    assert_eq!(after["workspace"]["member"], serde_json::json!({"ws_id": "w", "pane": "p", "future_m": 1}));
+    assert_eq!(after["workspace"]["resume_note"]["future_n"], serde_json::json!({"k": "v"}));
+    assert_eq!(after["workspace"]["resume_note"]["interrupted"][0], serde_json::json!({"agent_id": "a1", "agent_type": "x", "future_s": [2]}));
+    assert_eq!(SessionView::load(&d).unwrap(), v);
 }
 
 #[test]

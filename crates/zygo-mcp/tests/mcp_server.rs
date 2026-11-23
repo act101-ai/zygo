@@ -499,7 +499,7 @@ use zygo_workspace::state::Store;
 const WS_ID: &str = "0123456789abcdef";
 
 fn member_view() -> SessionView {
-    SessionView { workspace: Some(ViewWorkspace { member: Member { ws_id: WS_ID.into(), pane: "kabcdefgh".into() }, resume_note: None }),
+    SessionView { workspace: Some(ViewWorkspace { member: Member { ws_id: WS_ID.into(), pane: "kabcdefgh".into(), ..Default::default() }, resume_note: None, ..Default::default() }),
         ..view(true, true, true) }
 }
 /// A valid `workspace.json` for `WS_ID` with the name `app`.

@@ -57,7 +57,7 @@ fn parsed(out: anyhow::Result<Option<String>>) -> Value {
 }
 
 fn marker(ws_id: &str, pane: &str, note: Option<ResumeNote>) -> ViewWorkspace {
-    ViewWorkspace { member: Member { ws_id: ws_id.into(), pane: pane.into() }, resume_note: note }
+    ViewWorkspace { member: Member { ws_id: ws_id.into(), pane: pane.into(), ..Default::default() }, resume_note: note, ..Default::default() }
 }
 
 struct Fx {
@@ -185,11 +185,11 @@ fn view_note(f: &Fx) -> Option<ResumeNote> {
 }
 
 fn sub(id: &str, ty: &str) -> SubagentRef {
-    SubagentRef { agent_id: id.into(), agent_type: ty.into() }
+    SubagentRef { agent_id: id.into(), agent_type: ty.into(), ..Default::default() }
 }
 
 fn rn(clean_stop: bool, interrupted: Vec<SubagentRef>, units: &[&str]) -> ResumeNote {
-    ResumeNote { clean_stop, interrupted, closed_units: units.iter().map(|u| u.to_string()).collect(), agent_session: None }
+    ResumeNote { clean_stop, interrupted, closed_units: units.iter().map(|u| u.to_string()).collect(), agent_session: None, ..Default::default() }
 }
 
 /// `n` bound to the agent session `id` (W§9.4, H1 D13).
@@ -802,12 +802,26 @@ fn view_rewrites_keep_unknown_fields() {
     // Attempt-2 review round 1, F4: `clear_note` and `bind_note` read, change and save the view; a field of a newer
     // zygo stays (AU78 pattern).
     let _s = serial();
+    // Also inside `workspace`, `member`, `resume_note` and its subagents (R5).
     let add_field = |f: &Fx| {
         let mut v: Value = serde_json::from_slice(&fs::read(f.dir.view_json()).unwrap()).unwrap();
         v["future_field"] = json!({"kept": [1, 2]});
+        v["workspace"]["future_w"] = json!(1);
+        v["workspace"]["member"]["future_m"] = json!("m");
+        v["workspace"]["resume_note"]["future_n"] = json!([3]);
+        v["workspace"]["resume_note"]["interrupted"][0]["future_s"] = json!(false);
         fs::write(f.dir.view_json(), serde_json::to_vec(&v).unwrap()).unwrap();
     };
-    let field = |f: &Fx| -> Value { serde_json::from_slice::<Value>(&fs::read(f.dir.view_json()).unwrap()).unwrap()["future_field"].clone() };
+    let doc = |f: &Fx| -> Value { serde_json::from_slice::<Value>(&fs::read(f.dir.view_json()).unwrap()).unwrap() };
+    let field = |f: &Fx| -> Value {
+        let v = doc(f);
+        assert_eq!((&v["workspace"]["future_w"], &v["workspace"]["member"]["future_m"]), (&json!(1), &json!("m")));
+        v["future_field"].clone()
+    };
+    let note_fields = |f: &Fx| -> (Value, Value) {
+        let v = doc(f);
+        (v["workspace"]["resume_note"]["future_n"].clone(), v["workspace"]["resume_note"]["interrupted"][0]["future_s"].clone())
+    };
     // Claude Code SessionStart: the note is cleared (clear_note).
     let f = fx_with(Agent::ClaudeCode, Some(marker(ID, KEY, Some(note_iu()))));
     ws_state(&f, Phase::Up, rec_pending());
@@ -821,8 +835,14 @@ fn view_rewrites_keep_unknown_fields() {
     add_field(&g);
     let gm = g.t.path().join("missing");
     ws_with(&g, &gm, "session", oc("ses_A")).unwrap();
-    assert_eq!(view_note(&g), Some(bound(note_iu(), "ses_A")));
+    let known = |n: ResumeNote| ResumeNote {
+        interrupted: n.interrupted.into_iter().map(|s| SubagentRef { extra: Default::default(), ..s }).collect(),
+        extra: Default::default(),
+        ..n
+    };
+    assert_eq!(view_note(&g).map(known), Some(bound(note_iu(), "ses_A")));
     assert_eq!(field(&g), json!({"kept": [1, 2]}));
+    assert_eq!(note_fields(&g), (json!([3]), json!(false)));
     ws_with(&g, &gm, "session", oc("ses_B")).unwrap();
     assert_eq!(view_note(&g), None);
     assert_eq!(field(&g), json!({"kept": [1, 2]}));

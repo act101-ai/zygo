@@ -547,7 +547,7 @@ impl Session<'_> {
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
             statusline_style: c.statusline.style.clone(),
-            workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone() }),
+            workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone(), ..Default::default() }),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {

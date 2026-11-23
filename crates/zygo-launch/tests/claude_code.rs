@@ -944,7 +944,7 @@ fn missing_claude_exits_13_with_the_hint() {
 fn member_ctx(fx: &Fx, work_units: bool) -> LaunchCtx {
     let mut c = ctx(fx, "");
     c.view.work_units = work_units;
-    c.view.workspace = Some(ViewWorkspace { member: Member { ws_id: "0123456789abcdef".into(), pane: "p1".into() }, resume_note: None });
+    c.view.workspace = Some(ViewWorkspace { member: Member { ws_id: "0123456789abcdef".into(), pane: "p1".into(), ..Default::default() }, resume_note: None, ..Default::default() });
     c
 }
 

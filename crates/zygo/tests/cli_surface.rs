@@ -232,12 +232,12 @@ fn member_home(h: &std::path::Path, agent: zygo_core::Agent) -> (zygo_core::sess
     use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
     let sd = zygo_core::session_dir::SessionDir::new(h.join("s"));
     sd.create().unwrap();
-    let member = Member { ws_id: WS_ID.into(), pane: WS_KEY.into() };
+    let member = Member { ws_id: WS_ID.into(), pane: WS_KEY.into(), ..Default::default() };
     SessionView {
         session: WS_SID.into(),
         agent,
         main_role: "lead".into(),
-        workspace: Some(ViewWorkspace { member, resume_note: None }),
+        workspace: Some(ViewWorkspace { member, resume_note: None, ..Default::default() }),
         ..Default::default()
     }
     .save(&sd)
@@ -427,7 +427,7 @@ fn member_session_start_refuses_a_linked_or_relative_session_folder() {
             let (sd, _paths) = member_home(h.path(), zygo_core::Agent::ClaudeCode);
             let mut v = SessionView::load(&sd).unwrap();
             v.workspace.as_mut().unwrap().resume_note =
-                Some(ResumeNote { clean_stop: false, interrupted: vec![], closed_units: vec!["gh:7".into()], agent_session: None });
+                Some(ResumeNote { clean_stop: false, interrupted: vec![], closed_units: vec!["gh:7".into()], agent_session: None, ..Default::default() });
             v.save(&sd).unwrap();
             if !view_ok {
                 std::fs::write(sd.view_json(), "{").unwrap();
