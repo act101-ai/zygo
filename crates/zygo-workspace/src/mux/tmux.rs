@@ -338,6 +338,11 @@ impl Multiplexer for Tmux {
             // A global `destroy-unattached on` destroys a detached session when the command list ends (probe, tmux
             // 3.2a and 3.7c, 2026-11-22), so the session's own `off` (AU68) is set in the same invocation (W7 I2).
             c.args([";", "set-option", "-t", &target, "--", "destroy-unattached", "off"]);
+            // FIX-29, W§8.1 step 9: the build hold. tmux runs this item in the same command-queue pass as
+            // `new-session`, before it handles the exit of the new pane (3.2a cmd-queue.c:704-745; live on 3.2a and
+            // 3.8), so a first pane that exits at once stays as a dead pane and the session stays. `up` releases it
+            // before its `phase = up` write.
+            c.args([";", "set-option", "-w", "-t", &target, "--", "remain-on-exit", "on"]);
         }
         window_index(finish(run_bounded(c, BOUND)?)?)
     }
@@ -401,11 +406,23 @@ impl Multiplexer for Tmux {
             check_window_name(n)?;
         }
         let dir = start_dir_arg(spec.start_dir)?;
+        let end = format!("={}:{{end}}", spec.session);
         let mut args: Vec<OsString> =
-            ["new-window", "-d", "-P", "-F", "#{window_index}", "-t"].iter().map(OsString::from).collect();
-        args.push(session_target(spec.session).into());
+            ["new-window", "-d", "-P", "-F", "#{window_index}"].iter().map(OsString::from).collect();
+        if spec.hold {
+            // FIX-29: `-a` after `{end}` makes the new window the highest index, so `{end}` names it in the chained
+            // item (3.2a cmd-find.c:419-425, cmd-new-window.c:99-100).
+            args.extend(["-a".into(), "-t".into(), end.clone().into()]);
+        } else {
+            args.extend(["-t".into(), session_target(spec.session).into()]);
+        }
         args.extend(["-c".into(), dir.into(), "--".into()]);
         args.extend(spec.argv.iter().cloned());
+        if spec.hold {
+            args.extend(
+                [";", "set-option", "-w", "-t", end.as_str(), "--", "remain-on-exit", "on"].iter().map(OsString::from),
+            );
+        }
         let index = window_index(self.call(&args)?)?;
         if let Some(n) = spec.name {
             self.rename_window(spec.session, index, n)?;

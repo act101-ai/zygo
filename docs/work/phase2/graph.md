@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** FIX-29, FIX-24, E1, E2, D1
+**Next:** FIX-24, E1, E2, FIX-30, D1
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -58,8 +58,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 |----|------|---------|-------|------------|------|
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | PLANNED | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | TODO | implementation | — |
-| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29 | TODO | implementation | — |
-| FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
+| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30 | TODO | implementation | — |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
 | FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
@@ -85,7 +84,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
 | FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | DONE | judgment | bd55c63; acceptance args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26, workspace --no-run ok; workspace 2757 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | DROPPED(folded into M5, diff review round 2; see nodes/M5.md) | implementation | — |
-| FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | IN-PROGRESS | judgment | .worktrees/phase2/FIX-29 |
+| FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | DONE | judgment | 7db2fac; acceptance zygo-workspace 372 + 2 ignored; workspace 2860 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
+| FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | TODO | implementation | — |
 
 ## Log
 
@@ -254,3 +254,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | M3 DONE (1eb6e3a): merged after 3 review rounds. The resume command reproduces the ws run launch; Pending.own_session added. |
 | 2026-11-23 | FIX-29 and FIX-24 planned and reviewed. FIX-29 holds each window with remain-on-exit during the up build (tmux 3.2a verified). FIX-24 uses one launch.events_off flag, set by every start write. |
 | 2026-11-23 | E1 planned and reviewed (28 steps, 17 W§18 items + PW11, live check with passthrough); E1 now depends on FIX-24 (spec overlap). |
+| 2026-11-23 | FIX-29 DONE (7db2fac): merged after 3 review rounds (build hold, repair hold, one AU54 rule). FIX-30 added for the saved-socket uses in admin.rs and member.rs that have no AU54 check. |

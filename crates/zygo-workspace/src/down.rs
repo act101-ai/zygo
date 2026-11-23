@@ -26,7 +26,7 @@ use crate::drain::{self, Idle};
 use crate::identity::{valid_pane_key, valid_ws_id};
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer, MIN_VERSION};
-use crate::repair::repair;
+use crate::repair::{check_saved_socket, repair, repair_failure};
 use crate::snapshot::{self, SkipReason, SnapshotOutcome, OP_WAIT};
 use crate::state::{list_all, MemberRecord, MemberState, OpLock, Phase, StateError, Store, Subagent, Workspace};
 use crate::up::{self, not_owned, preflight, socket_is_private, unreachable, Exit};
@@ -478,6 +478,8 @@ fn pane_id(v: &OsStr) -> Option<&str> {
 /// socket's folder exists and fails the check. A folder that does not exist holds no server, so the tmux call that
 /// follows answers for itself; nothing is created here.
 fn check_socket(ws: &Workspace) -> Result<(), Exit> {
+    // FIX-29 round 3 (AU54): the saved socket before any use, in every phase; the AU54 line and exit 2.
+    check_saved_socket(ws).map_err(|e| Exit { code: 2, message: e.to_string() })?;
     let Some(sock) = ws.tmux_socket.as_deref() else {
         return Ok(());
     };
@@ -982,6 +984,11 @@ impl Run<'_> {
                 return self.fail(1);
             }
         };
+        // FIX-29 rounds 2-3: the AU54 check of the saved socket, in every phase, before any use (as `up`).
+        if let Err(e) = check_saved_socket(&ws) {
+            self.e(&e.to_string());
+            return self.fail(2);
+        }
         if let Some(sock) = &ws.tmux_socket
             && let Err(t) = socket_is_private(sock, true)
         {
@@ -990,8 +997,9 @@ impl Run<'_> {
         }
         let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
         if let Err(e) = repair(&store, &mux, &opts.zygo, &mut *self.out, &mut *self.err) {
-            self.e(&format!("zygo: {e:#}"));
-            return self.fail(1);
+            let (code, line) = repair_failure(&e);
+            self.e(&line);
+            return self.fail(code);
         }
         let ws = match self.read_state(&store) {
             Ok(Some(ws)) => ws,
@@ -1307,7 +1315,7 @@ impl Run<'_> {
     }
 
     /// D20, AU24: one warning for each pane that is not a member live at step 8 and runs something other than a
-    /// shell. Every tmux error is ignored.
+    /// shell; a dead pane (`#{pane_dead}` = 1) is skipped (FIX-29). Every tmux error is ignored.
     fn busy_shells(&mut self, i: usize, live: &BTreeMap<String, PathBuf>) {
         let opts = self.opts;
         let (name, ws) = (self.jobs[i].name.clone(), self.jobs[i].ws.clone());
@@ -1322,14 +1330,16 @@ impl Run<'_> {
             if live.contains_key(&p.key) {
                 continue;
             }
-            let Ok(command) = mux.display(&p.id, "#{pane_current_command}") else {
+            let Ok(v) = mux.display(&p.id, "#{pane_dead}|#{pane_current_command}") else {
                 continue;
             };
-            if command.is_empty() || is_shell(&command) {
+            let (dead, command) = v.split_once('|').unwrap_or(("", v.as_str()));
+            // FIX-29: a dead pane (held by `remain-on-exit`) runs nothing; tmux still names its last program.
+            if dead == "1" || command.is_empty() || is_shell(command) {
                 continue;
             }
             let pane = if valid_pane_key(&p.key) { p.key.clone() } else { p.id.clone() };
-            self.e(&format!("zygo: {name} pane {pane}: {} is running; it stops with the session", esc(&command)));
+            self.e(&format!("zygo: {name} pane {pane}: {} is running; it stops with the session", esc(command)));
         }
     }
 

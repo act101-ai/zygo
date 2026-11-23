@@ -930,7 +930,7 @@ fn live_keys_layout_and_flags() {
     let Some(_) = require_tmux() else { return };
     let l = live(2, None);
     let argv = os(&["sleep", "600"]);
-    l.tmux.new_window(&NewWindow { session: "zygo-app", name: Some("logs"), start_dir: l._dir.path(), argv: &argv }).unwrap();
+    l.tmux.new_window(&NewWindow { session: "zygo-app", name: Some("logs"), start_dir: l._dir.path(), argv: &argv, hold: false }).unwrap();
     l.srv.run(&["resize-pane", "-Z", "-t", &l.panes[1]]).unwrap();
     assert_eq!(run(&l.paths, &l.tmux, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
     let ws = l.store.read().unwrap().unwrap();
@@ -1548,4 +1548,25 @@ fn pending_functions_refuse_a_linked_state_folder() {
     names.sort();
     assert_eq!(names, vec!["op.lock".to_string(), "snapshot.pending".to_string()]);
     assert_eq!(fs::read_to_string(target.join("snapshot.pending")).unwrap(), "force");
+}
+
+#[test] // FIX-29, W§7.4 step 5: a dead pane reads an empty path; the stored cwd stays
+fn empty_pane_path_keeps_the_stored_cwd() {
+    let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);
+    let fake = Fake::new(
+        Some(ID),
+        vec![Ok(vec![
+            line(0, "main", 0, "%0", 0, 1, "kaaaaaaaa", ""),
+            line(0, "main", 0, "%1", 1, 0, "kbbbbbbbb", "/b"),
+            line(0, "main", 0, "%2", 2, 0, "", ""),
+        ])],
+    );
+    fake.opt("%2", "");
+    assert_eq!(run(&p, &fake, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
+    let ws = store.read().unwrap().unwrap();
+    // Kept, replaced, and a new pane with no stored entry stays empty.
+    assert_eq!(
+        ws.panes.iter().map(|x| x.cwd.clone()).collect::<Vec<_>>(),
+        [PathBuf::from("/srv/app"), PathBuf::from("/b"), PathBuf::new()]
+    );
 }

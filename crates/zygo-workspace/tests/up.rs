@@ -5,7 +5,7 @@
 //! (`PrivateServer`), so no call reaches the default tmux server.
 #![cfg(unix)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
@@ -26,7 +26,7 @@ use zygo_core::Agent;
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::tmux::Tmux;
-use zygo_workspace::mux::Multiplexer;
+use zygo_workspace::mux::{Multiplexer, UnsafePath};
 use zygo_workspace::repair;
 use zygo_workspace::state::{
     BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Pending, Phase, Store, Subagent, Window, Workspace,
@@ -1228,6 +1228,7 @@ fn repair_after_a_failure_after_new_session() {
     assert_eq!((r1.0, r1.2.as_str()), (1, "zygo: tmux: injected\n"));
     let ws = read(&store);
     assert_eq!(ws.phase, Phase::Building);
+    assert_eq!(remain(&l, 0), "on"); // the build hold that the stopped up left
     assert_eq!(l.srv.run(&["show-options", "-qv", "-t", "=zygo-app:", "@zygo-ws"]).unwrap(), l.id);
     assert!(by_key(&l.srv).contains_key(&ws.panes[0].key));
     l.o.loadout = None;
@@ -1243,6 +1244,9 @@ fn repair_after_a_failure_after_new_session() {
     let hooks = l.srv.run(&["show-hooks", "-t", "=zygo-app:"]).unwrap();
     // Each line names its hook twice (`after-new-window[0] … --event after-new-window`): count the entries.
     assert_eq!(hooks.lines().filter(|l| l.starts_with("after-new-window[")).count(), 1, "{hooks}");
+    for w in by_key(&l.srv).values().map(|(w, _)| *w).collect::<BTreeSet<u32>>() {
+        assert_eq!(remain(&l, w), "off", "window {w}"); // AU67 repair releases every window
+    }
 }
 
 #[test] // M1, M7, AU96
@@ -2094,4 +2098,547 @@ fn first_pane_of_a_new_session_gets_zygo_workspace_in_session_scope_only() {
     // This `up` started the server, which copied the client environment into its global environment.
     let global = l.srv.run(&["show-environment", "-g"]).unwrap();
     assert!(!global.lines().any(|x| x.starts_with("ZYGO_WORKSPACE")), "{global}");
+}
+
+// ---- FIX-29: panes that exit at once during the build ----
+
+/// FIX-29: a zygo stand-in whose `ws run` runs `body` at once; every other call exits 0.
+fn ws_run_does(l: &Live, name: &str, body: &str) -> PathBuf {
+    script(l.t.path(), name, &format!("if [ \"$1\" = ws ] && [ \"$2\" = run ]; then {body}; fi\nexit 0"))
+}
+
+/// FIX-29: true when `zygo-app` has `n` panes and all are dead, or when the session or its server is gone (the
+/// defect: then there is nothing to wait for).
+fn all_dead(wrapper: &Path, n: usize) -> bool {
+    let out = Command::new(wrapper).args(["list-panes", "-s", "-t", "=zygo-app:", "-F", "#{pane_dead}"]).output().unwrap();
+    if !out.status.success() {
+        return true;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    let v: Vec<&str> = s.lines().collect();
+    v.len() == n && v.iter().all(|x| *x == "1")
+}
+
+type Hook = Box<dyn Fn() -> Result<(), String> + Send + Sync>;
+
+/// FIX-29: hooks that make the panes exit before `up` goes on: at `after_new_session` the first pane, at
+/// `before_final_snapshot` all `n` panes (each wait at most 5 s). `None` clears both.
+fn wait_for_dead_panes(dir: &Path, wrapper: Option<&Path>, n: usize) {
+    let (a, b) = match wrapper {
+        Some(w) => {
+            let (w1, w2) = (w.to_path_buf(), w.to_path_buf());
+            let a: Hook = Box::new(move || {
+                assert!(wait_for(S5, || all_dead(&w1, 1)), "after_new_session: the first pane did not die within 5 s");
+                Ok(())
+            });
+            let b: Hook = Box::new(move || {
+                assert!(wait_for(S5, || all_dead(&w2, n)), "before_final_snapshot: the {n} panes did not all die within 5 s");
+                Ok(())
+            });
+            (Some(a), Some(b))
+        }
+        None => (None, None),
+    };
+    up::testing::hook(dir, "after_new_session", a);
+    up::testing::hook(dir, "before_final_snapshot", b);
+}
+
+/// FIX-29: the line of a pane that exited while held; `how` is `exit <n>` or `no exit status`.
+fn exited(key: &str, how: &str, socket: &Path, pane: &str) -> String {
+    format!(
+        "zygo: pane {key} exited during up ({how}); its dead pane stays: tmux -S '{}' respawn-pane -t {pane} starts it again\n",
+        socket.display()
+    )
+}
+
+/// FIX-29: `remain-on-exit` of window `w` of `zygo-app`.
+fn remain(l: &Live, w: u32) -> String {
+    l.srv.run(&["show-options", "-wv", "-t", &format!("=zygo-app:{w}"), "remain-on-exit"]).unwrap()
+}
+
+#[test] // FIX-29, W§8.1 steps 9-12, AU68, W-C3: panes whose command exits at once stay as dead panes; one line each
+fn restored_panes_that_exit_at_once_stay_dead_and_are_reported() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo.clone(),
+        vec![win(0, Some("one"), "tiled", 120, 40), win(1, Some("two"), "tiled", 120, 40)],
+        vec![
+            pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo),
+            pane("kbbbbbbbb", 0, 1, PaneKind::Shell, &l.wt),
+            pane("kcccccccc", 1, 0, PaneKind::Shell, &l.wt),
+        ],
+        vec![],
+    );
+    l.o.zygo = ws_run_does(&l, "zygo-exits", "exit 3");
+    l.srv.run(&["new-session", "-d", "-s", "base", "sleep", "600"]).unwrap();
+    let g0 = globals(&l.srv);
+    wait_for_dead_panes(store.dir(), Some(l.srv.wrapper()), 3);
+    let t0 = Instant::now();
+    let (code, out, err) = run(&l.o);
+    let took = t0.elapsed();
+    wait_for_dead_panes(store.dir(), None, 0);
+    // The test bound proves no hang; the product has no time limit.
+    assert!(took < Duration::from_secs(30), "up took {took:?}");
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    assert!(!err.contains("zygo: tmux:"), "{err}");
+    let sock = read(&store).tmux_socket.unwrap();
+    assert_eq!(sock, l.srv.socket());
+    let ids = by_key(&l.srv);
+    assert_eq!(ids.keys().cloned().collect::<Vec<_>>(), ["kaaaaaaaa", "kbbbbbbbb", "kcccccccc"]);
+    for (k, (_, id)) in &ids {
+        assert_eq!(err.matches(&exited(k, "exit 3", &sock, id)).count(), 1, "{err}");
+    }
+    assert_eq!(
+        l.srv.run(&["list-panes", "-s", "-t", "=zygo-app:", "-F", "#{@zygo-pane} #{pane_dead} #{pane_dead_status}"]).unwrap(),
+        "kaaaaaaaa 1 3\nkbbbbbbbb 1 3\nkcccccccc 1 3"
+    );
+    assert_eq!((remain(&l, 0), remain(&l, 1)), ("off".to_string(), "off".to_string()));
+    assert_eq!(globals(&l.srv), g0);
+    let ws = read(&store);
+    assert_eq!((ws.phase, ws.down_all, ws.build_plan, ws.fresh_members.len()), (Phase::Up, false, None, 0));
+    assert_eq!(ws.windows.iter().map(|w| w.name.clone()).collect::<Vec<_>>(), [Some("one".to_string()), Some("two".to_string())]);
+    assert_eq!(
+        ws.panes.iter().map(|p| (p.key.clone(), p.cwd.clone())).collect::<Vec<_>>(),
+        [
+            ("kaaaaaaaa".to_string(), l.repo.clone()),
+            ("kbbbbbbbb".to_string(), l.wt.clone()),
+            ("kcccccccc".to_string(), l.wt.clone())
+        ]
+    );
+}
+
+#[test] // FIX-29 reproduction (M5 implementer): up --all after a server death, panes whose command exits at once
+fn up_all_after_a_server_death_reports_panes_that_exit_at_once() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    up_pair(&mut l);
+    let store = l.store();
+    let before = read(&store);
+    let keys: Vec<String> = before.panes.iter().map(|p| p.key.clone()).collect();
+    let cwds: Vec<PathBuf> = before.panes.iter().map(|p| p.cwd.clone()).collect();
+    assert_eq!(keys.len(), 3);
+    // There is no `base` session, so the server ends with the workspace session, as in the reproduction.
+    l.srv.kill_server();
+    l.o.zygo = ws_run_does(&l, "zygo-exits", "exit 3");
+    wait_for_dead_panes(store.dir(), Some(l.srv.wrapper()), 3);
+    let (mut o, mut e) = (Vec::new(), Vec::new());
+    let code = up::testing::run_all_with(&l.o, &mut o, &mut e);
+    wait_for_dead_panes(store.dir(), None, 0);
+    let (out, err) = (text(o), text(e));
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    assert!(!err.contains("zygo: tmux:") && !err.contains("skipped"), "{err}");
+    let sock = read(&store).tmux_socket.unwrap();
+    let ids = by_key(&l.srv);
+    for k in &keys {
+        assert_eq!(err.matches(&exited(k, "exit 3", &sock, &ids[k].1)).count(), 1, "{err}");
+    }
+    let ws = read(&store);
+    assert_eq!(ws.phase, Phase::Up);
+    assert_eq!(ws.panes.iter().map(|p| p.key.clone()).collect::<Vec<_>>(), keys);
+    assert_eq!(ws.panes.iter().map(|p| p.cwd.clone()).collect::<Vec<_>>(), cwds);
+}
+
+#[test] // FIX-29 (review item 7b): a pane ended by a signal has no exit status
+fn a_pane_ended_by_a_signal_is_reported_with_no_exit_status() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    saved(&store, &l.repo.clone(), vec![win(0, None, "tiled", 120, 40)], vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo)], vec![]);
+    l.o.zygo = ws_run_does(&l, "zygo-killed", "kill -9 $$");
+    wait_for_dead_panes(store.dir(), Some(l.srv.wrapper()), 1);
+    let (code, out, err) = run(&l.o);
+    wait_for_dead_panes(store.dir(), None, 0);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    let sock = read(&store).tmux_socket.unwrap();
+    let ids = by_key(&l.srv);
+    assert_eq!(err.matches(&exited("kaaaaaaaa", "no exit status", &sock, &ids["kaaaaaaaa"].1)).count(), 1, "{err}");
+}
+
+#[test] // FIX-29 (review items 2, 7c): a release failure is one line; up goes on and keeps its exit code
+fn a_failed_release_is_reported_and_up_goes_on() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    fs::create_dir_all(store.dir()).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let c = calls.clone();
+    up::testing::hook(
+        store.dir(),
+        "release",
+        Some(Box::new(move || if c.fetch_add(1, Ordering::SeqCst) == 0 { Err("injected".into()) } else { Ok(()) })),
+    );
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "release", None);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    // Both windows were tried: there was no early return.
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(err.matches("zygo: app: could not release the build hold of window 0: injected\n").count(), 1, "{err}");
+    assert_eq!((remain(&l, 0), remain(&l, 1)), ("on".to_string(), "off".to_string()));
+    assert_eq!(read(&store).phase, Phase::Up);
+    // Diff review round 2, finding 3 (W§8.1 step 6, AU68): the next `up` attaches to the live session and first ends
+    // the hold that the failed release left.
+    l.o.loadout = None;
+    let (code2, _, err2) = run(&l.o);
+    assert_eq!(code2, 0, "{err2}");
+    assert!(!err2.contains("could not release"), "{err2}");
+    assert_eq!((remain(&l, 0), remain(&l, 1)), ("off".to_string(), "off".to_string()));
+}
+
+#[test] // FIX-29 (review item 8), AU67: a repair prints the line of a pane that died during the hold
+fn repair_reports_a_pane_that_died_during_the_hold() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    let normal = l.o.zygo.clone();
+    saved(
+        &store,
+        &l.repo.clone(),
+        vec![win(0, Some("one"), "tiled", 120, 40)],
+        vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo), pane("kbbbbbbbb", 0, 1, PaneKind::Shell, &l.wt)],
+        vec![],
+    );
+    l.o.zygo = ws_run_does(&l, "zygo-exits", "exit 3");
+    let w = l.srv.wrapper().to_path_buf();
+    up::testing::hook(
+        store.dir(),
+        "after_new_session",
+        Some(Box::new(move || {
+            assert!(wait_for(S5, || all_dead(&w, 1)), "after_new_session: the first pane did not die within 5 s");
+            Err("injected".into())
+        })),
+    );
+    let r1 = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!((r1.0, r1.2.as_str()), (1, "zygo: tmux: injected\n"));
+    assert_eq!(read(&store).phase, Phase::Building);
+    assert_eq!(remain(&l, 0), "on");
+    l.o.zygo = normal;
+    let (code, out, err) = run(&l.o);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    let sock = read(&store).tmux_socket.unwrap();
+    let ids = by_key(&l.srv);
+    assert_eq!(err.matches(&exited("kaaaaaaaa", "exit 3", &sock, &ids["kaaaaaaaa"].1)).count(), 1, "{err}");
+    // `kbbbbbbbb` was built alive by the repair.
+    assert_eq!(err.matches("exited during up").count(), 1, "{err}");
+    assert_eq!(remain(&l, 0), "off");
+    assert_eq!(read(&store).phase, Phase::Up);
+}
+
+/// FIX-29 round 2: the number of dead panes of `zygo-app`; 0 when the session or its server is gone.
+fn dead_count(wrapper: &Path) -> usize {
+    let out = Command::new(wrapper).args(["list-panes", "-s", "-t", "=zygo-app:", "-F", "#{pane_dead}"]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).lines().filter(|x| *x == "1").count()
+}
+
+#[test] // FIX-29 diff review round 2, finding 1, AU67: a repair builds with the hold; a pane it creates may exit at once
+fn repair_holds_the_panes_it_creates_and_reports_them() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo.clone(),
+        vec![win(0, Some("one"), "tiled", 120, 40), win(1, Some("two"), "tiled", 120, 40)],
+        vec![
+            pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo),
+            pane("kbbbbbbbb", 0, 1, PaneKind::Shell, &l.wt),
+            pane("kcccccccc", 1, 0, PaneKind::Shell, &l.wt),
+        ],
+        vec![],
+    );
+    // The first `up` stops after `new-session`: only `kaaaaaaaa` exists, alive.
+    up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+    let r1 = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!((r1.0, r1.2.as_str()), (1, "zygo: tmux: injected\n"));
+    assert_eq!(read(&store).phase, Phase::Building);
+    // The repair creates `kbbbbbbbb` (a split) and `kcccccccc` (a new window); both exit at once.
+    let exits = ws_run_does(&l, "zygo-exits", "exit 3");
+    let w = l.srv.wrapper().to_path_buf();
+    up::testing::hook(
+        store.dir(),
+        "release",
+        Some(Box::new(move || {
+            assert!(wait_for(S5, || dead_count(&w) == 2), "the two repaired panes did not die within 5 s");
+            Ok(())
+        })),
+    );
+    let mux = up::server(&l.o.tmux, Some(l.srv.socket()), None);
+    let (r, _, err) = repair_run(&store, &mux, &exits);
+    up::testing::hook(store.dir(), "release", None);
+    assert!(r.is_ok(), "repair failed: {r:?} {err}");
+    assert!(!err.contains("tmux:"), "{err}");
+    let ids = by_key(&l.srv);
+    assert_eq!(
+        ids.iter().map(|(k, (w, _))| (k.clone(), *w)).collect::<Vec<_>>(),
+        [("kaaaaaaaa".to_string(), 0), ("kbbbbbbbb".to_string(), 0), ("kcccccccc".to_string(), 1)]
+    );
+    let sock = l.srv.socket().to_path_buf();
+    for k in ["kbbbbbbbb", "kcccccccc"] {
+        assert_eq!(err.matches(&exited(k, "exit 3", &sock, &ids[k].1)).count(), 1, "{err}");
+    }
+    assert_eq!(err.matches("exited during up").count(), 2, "{err}");
+    assert_eq!(read(&store).phase, Phase::Up);
+    for w in ids.values().map(|(w, _)| *w).collect::<BTreeSet<u32>>() {
+        assert_eq!(remain(&l, w), "off", "window {w}");
+    }
+}
+
+#[test] // FIX-29 diff review round 2, finding 4, W§8.1 step 12: a failed read of the panes is one line; up goes on
+fn a_failed_dead_pane_read_is_one_line_and_up_goes_on() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    fs::create_dir_all(store.dir()).unwrap();
+    up::testing::hook(store.dir(), "dead_lines", Some(Box::new(|| Err("injected".into()))));
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "dead_lines", None);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    assert_eq!(err.matches("zygo: app: could not read the dead panes: injected\n").count(), 1, "{err}");
+    assert_eq!(read(&store).phase, Phase::Up);
+}
+
+#[test] // FIX-29 diff review round 2, finding 4, W§8.1 step 12: a failed read of one pane is one line; the rest are read
+fn a_failed_read_of_one_pane_is_one_line_and_up_goes_on() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    fs::create_dir_all(store.dir()).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let c = calls.clone();
+    up::testing::hook(
+        store.dir(),
+        "dead_pane",
+        Some(Box::new(move || if c.fetch_add(1, Ordering::SeqCst) == 0 { Err("injected".into()) } else { Ok(()) })),
+    );
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "dead_pane", None);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    let ws = read(&store);
+    // Each of the three panes was read: there was no early return.
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(err.matches(&format!("zygo: app: could not read pane {}: injected\n", ws.panes[0].key)).count(), 1, "{err}");
+    assert_eq!(err.matches("could not read pane").count(), 1, "{err}");
+    assert_eq!(ws.phase, Phase::Up);
+}
+
+/// FIX-29 round 3: after `up` with `pair`, a user window with no zygo pane and `remain-on-exit on`, and window 0
+/// left `on` (a hold that a failed release left); returns the user window index.
+fn user_window_and_left_hold(l: &mut Live) -> u32 {
+    up_pair(l);
+    let w = l.srv.run(&["new-window", "-d", "-P", "-F", "#{window_index}", "-t", "=zygo-app:", "--", "sleep", "600"]).unwrap();
+    let w: u32 = w.parse().unwrap();
+    l.srv.run(&["set-option", "-w", "-t", &format!("=zygo-app:{w}"), "remain-on-exit", "on"]).unwrap();
+    l.srv.run(&["set-option", "-w", "-t", "=zygo-app:0", "remain-on-exit", "on"]).unwrap();
+    assert_eq!(l.srv.run(&["display-message", "-p", "-t", &format!("=zygo-app:{w}"), "#{@zygo-pane}"]).unwrap(), "");
+    w
+}
+
+#[test] // FIX-29 diff review round 3, finding 5, AU68: the step 6 release changes only windows with a zygo pane
+fn an_attaching_up_leaves_a_user_window_alone() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let user = user_window_and_left_hold(&mut l);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("could not release"), "{err}");
+    assert_eq!((remain(&l, 0), remain(&l, 1), remain(&l, user)), ("off".to_string(), "off".to_string(), "on".to_string()));
+}
+
+#[test] // FIX-29 diff review round 3, finding 6, AU68: `up --all` ends a left hold of a live session, zygo windows only
+fn up_all_ends_a_left_hold_of_a_live_session() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let user = user_window_and_left_hold(&mut l);
+    let (mut o, mut e) = (Vec::new(), Vec::new());
+    let code = up::testing::run_all_with(&l.o, &mut o, &mut e);
+    let (out, err) = (text(o), text(e));
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "", "zygo: up --all found no workspace to restore\n"));
+    assert_eq!((remain(&l, 0), remain(&l, 1), remain(&l, user)), ("off".to_string(), "off".to_string(), "on".to_string()));
+}
+
+#[test] // FIX-29 diff review round 3, finding 7, W§8.1 step 6: a failed window read of the release is one line
+fn a_failed_window_read_of_the_step_6_release_is_one_line() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    up_pair(&mut l);
+    let store = l.store();
+    up::testing::hook(store.dir(), "release_all", Some(Box::new(|| Err("injected".into()))));
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "release_all", None);
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "zygo: app is up\n", "zygo: app: could not release the build hold: injected\n"));
+}
+
+#[test] // FIX-29 diff review round 3, finding 7, W§8.1 step 6: a session that is gone at the release gives no line
+fn a_gone_session_at_the_step_6_release_gives_no_line() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    up_pair(&mut l);
+    let store = l.store();
+    let w = l.srv.wrapper().to_path_buf();
+    up::testing::hook(
+        store.dir(),
+        "release_all",
+        Some(Box::new(move || {
+            let st = Command::new(&w).args(["kill-session", "-t", "=zygo-app:"]).status().unwrap();
+            assert!(st.success(), "kill-session failed");
+            Ok(())
+        })),
+    );
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "release_all", None);
+    assert!(l.srv.run(&["has-session", "-t", "=zygo-app:"]).is_err(), "the hook did not run");
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "zygo: app is up\n", ""));
+}
+
+#[test] // FIX-29 diff review round 3, finding 1, AU67: a repair whose split fails ends the hold of every window
+fn a_repair_that_stops_in_the_middle_releases_every_window() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let ids = stopped_repair("split");
+    assert_eq!(ids, [("kaaaaaaaa".to_string(), 0), ("kbbbbbbbb".to_string(), 1)]);
+}
+
+#[test] // FIX-29 diff review round 3, finding 1, AU67: a window that a failed `add_window` made is released too
+fn a_repair_whose_new_window_fails_releases_that_window() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    // The window was made (held) but got no key before the error.
+    let ids = stopped_repair("add_window");
+    assert_eq!(ids, [("kaaaaaaaa".to_string(), 0)]);
+}
+
+/// FIX-29 round 3, finding 1: an `up` stops after `new-session` (window 0, `kaaaaaaaa`); the repair of the next `up`
+/// sets the hold on window 0, makes window 1 (`kbbbbbbbb`, `kcccccccc`) with the hold, and fails at the test point
+/// `point`. Asserts the one error line, `phase = building`, and windows 0 and 1 `off`; returns key → window.
+fn stopped_repair(point: &'static str) -> Vec<(String, u32)> {
+    let l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo.clone(),
+        vec![win(0, Some("one"), "tiled", 120, 40), win(1, Some("two"), "tiled", 120, 40)],
+        vec![
+            pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo),
+            pane("kbbbbbbbb", 1, 0, PaneKind::Shell, &l.wt),
+            pane("kcccccccc", 1, 1, PaneKind::Shell, &l.wt),
+        ],
+        vec![],
+    );
+    up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+    let r1 = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!((r1.0, r1.2.as_str()), (1, "zygo: tmux: injected\n"));
+    up::testing::hook(store.dir(), point, Some(Box::new(|| Err("injected".into()))));
+    let r2 = run(&l.o);
+    up::testing::hook(store.dir(), point, None);
+    assert_eq!(r2, (1, String::new(), "zygo: tmux: injected\n".to_string()), "{point}");
+    let windows = l.srv.run(&["list-windows", "-t", "=zygo-app:", "-F", "#{window_index}"]).unwrap();
+    assert_eq!(windows, "0\n1", "{point}");
+    assert_eq!((remain(&l, 0), remain(&l, 1)), ("off".to_string(), "off".to_string()), "{point}");
+    assert_eq!(read(&store).phase, Phase::Building, "{point}");
+    by_key(&l.srv).into_iter().map(|(k, (w, _))| (k, w)).collect()
+}
+
+/// FIX-29 round 2, finding 2: a state in phase `building` whose saved `tmux_socket` holds `'`.
+fn quoted_socket_state(t: &Path) -> (UpOpts, Store, PathBuf) { quoted_socket_state_in(t, Phase::Building) }
+
+#[test] // FIX-29 diff review round 3, findings 2-3, AU54: in phase `up`, `up` (attach) and `zygo attach` refuse the socket
+fn up_and_attach_refuse_a_saved_socket_with_a_quote_in_phase_up() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (mut o, store, sock) = quoted_socket_state_in(t, Phase::Up);
+    o.no_attach = false;
+    let before = raw(&store);
+    assert_eq!(run(&o), (2, String::new(), format!("{AU54}\n")), "up");
+    assert_eq!(tmux_log(t), ["-u -V"], "up");
+    let _ = fs::remove_file(t.join("tmux.log"));
+    assert_eq!(attach_run(&o, None, None), (2, String::new(), format!("{AU54}\n")), "zygo attach");
+    assert_eq!(tmux_log(t), ["-u -V"], "zygo attach");
+    assert_eq!(raw(&store), before);
+    assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
+}
+
+#[test] // FIX-29 diff review round 3, findings 2-3, AU54: `up --all` skips a state whose saved socket holds a quote
+fn up_all_skips_a_saved_socket_with_a_quote() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (o, store, sock) = quoted_socket_state_in(t, Phase::Up);
+    let before = raw(&store);
+    let (mut out, mut e) = (Vec::new(), Vec::new());
+    let code = up::testing::run_all_with(&o, &mut out, &mut e);
+    let (out, err) = (text(out), text(e));
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    let reason = AU54.trim_start_matches("zygo: ");
+    assert_eq!(err, format!("zygo: app skipped: {reason}\nzygo: up --all found no workspace to restore\n"));
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert_eq!(raw(&store), before);
+    assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
+}
+
+/// FIX-29 round 3: a state in `phase` whose saved `tmux_socket` holds `'`.
+fn quoted_socket_state_in(t: &Path, phase: Phase) -> (UpOpts, Store, PathBuf) {
+    let r = repo(t, "app");
+    let g = gone_tmux(t);
+    let o = opts(t, &r, &g, &t.join("zygo"));
+    let store = state_of(&o, &r);
+    let sock = t.join("so'ck").join("s");
+    saved(&store, &r, vec![win(0, None, "tiled", 200, 50)], vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &r)], vec![]);
+    set(&store, |ws| {
+        ws.phase = phase;
+        ws.tmux_socket = Some(sock.clone());
+    });
+    (o, store, sock)
+}
+
+#[test] // FIX-29 diff review round 2, finding 2, AU54: up refuses a saved socket with `'` before any use, as at step 9
+fn up_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (o, store, sock) = quoted_socket_state(t);
+    let before = raw(&store);
+    assert_eq!(run(&o), (2, String::new(), format!("{AU54}\n")));
+    assert_eq!(raw(&store), before);
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
+}
+
+#[test] // FIX-29 diff review round 2, finding 2, AU54: repair itself refuses the saved socket before any tmux call
+fn repair_refuses_a_saved_socket_that_holds_a_quote() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (o, store, sock) = quoted_socket_state(t);
+    let before = raw(&store);
+    let mux = up::server(&o.tmux, Some(&sock), None);
+    let (r, out, err) = repair_run(&store, &mux, &o.zygo);
+    let e = r.unwrap_err();
+    assert_eq!(e.downcast_ref::<UnsafePath>(), Some(&UnsafePath), "{e:#}");
+    assert_eq!((out.as_str(), err.as_str()), ("", ""));
+    assert_eq!(raw(&store), before);
+    assert!(tmux_log(t).is_empty(), "{:?}", tmux_log(t));
 }

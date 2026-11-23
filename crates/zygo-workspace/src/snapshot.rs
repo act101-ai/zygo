@@ -308,7 +308,7 @@ fn key_text(e: KeyError, pane: &str) -> String {
 /// `keys` has one key per row. Member records stay. A pane that has the key of a stored pane keeps that pane's
 /// unknown fields (AU78). A window keeps the unknown fields of the stored window with its index only when that stored
 /// window had a pane whose key is on a pane of this window now (round 3 D5): a new window at the index of a closed one
-/// gets none.
+/// gets none. A pane whose read path is empty keeps the `cwd` of the stored pane with its key (FIX-29).
 fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
     let mut windows: Vec<Window> = Vec::new();
     for (w, _) in rows {
@@ -341,7 +341,12 @@ fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
             window: w.index,
             index: p.index,
             active: p.active,
-            cwd: p.cwd.clone(),
+            // FIX-29: tmux gives no `#{pane_current_path}` for a dead pane (3.2a and 3.8 probe); keep the stored cwd.
+            cwd: if p.cwd.as_os_str().is_empty() {
+                ws.panes.iter().find(|x| x.key == *key).map(|x| x.cwd.clone()).unwrap_or_default()
+            } else {
+                p.cwd.clone()
+            },
             kind: kind_of(ws, key),
             extra: ws.panes.iter().find(|x| x.key == *key).map(|x| x.extra.clone()).unwrap_or_default(),
         })

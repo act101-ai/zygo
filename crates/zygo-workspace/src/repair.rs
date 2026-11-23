@@ -9,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail};
 
-use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer};
+use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer, UnsafePath};
 use crate::snapshot::OP_WAIT;
 use crate::state::{Pane, PaneKind, Phase, StateError, Store, Workspace};
 use crate::up::{
@@ -57,9 +57,30 @@ fn gone(store: &Store, mux: &dyn Multiplexer, ws: &Workspace) -> anyhow::Result<
     }
 }
 
+/// FIX-29 rounds 2-3 (AU54): the saved `tmux_socket` of a state, in every phase, must pass [`check_path`], as the
+/// read socket does in W§8.1 step 9, because the dead-pane lines and the AU100 attach line quote it. Every caller
+/// runs it before any use of the socket (`socket_is_private`, the tmux calls, a printed line): `up` (step 5), `up
+/// --all` (its session check), `zygo attach`, `down` and `repair`.
+pub(crate) fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {
+    match &ws.tmux_socket {
+        Some(s) => check_path(s).map(|_| ()),
+        None => Ok(()),
+    }
+}
+
+/// FIX-29 round 3: the exit code and the line of a [`repair`] error, for `up` and `down`: [`UnsafePath`] gives exit 2
+/// and its text once (it holds the `zygo: ` prefix, AU54); any other error gives exit 1 and `zygo: <error>` with its
+/// causes.
+pub(crate) fn repair_failure(e: &anyhow::Error) -> (i32, String) {
+    match e.downcast_ref::<UnsafePath>() {
+        Some(u) => (2, u.to_string()),
+        None => (1, format!("zygo: {e:#}")),
+    }
+}
+
 /// Repairs the state of a dead `up` or `down` (W§8.1 step 5, D20). The caller holds `op.lock`. No state, or phase
 /// `up` or `down`, makes no tmux call. The AU96 and layout lines go to `err`. `Err` holds the text without the
-/// `zygo: ` prefix.
+/// `zygo: ` prefix, except a saved socket that fails AU54: that `Err` is [`UnsafePath`] itself, before any tmux call.
 pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn Write, err: &mut dyn Write) -> anyhow::Result<()> {
     let Some(ws) = store.read()? else {
         return Ok(());
@@ -67,6 +88,7 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
     if matches!(ws.phase, Phase::Up | Phase::Down) {
         return Ok(());
     }
+    check_saved_socket(&ws)?;
     let answer = mux.session_exists(&ws.tmux_session);
     if let SessionAnswer::Error { message } = &answer {
         bail!("tmux: {message}");
@@ -127,9 +149,11 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
 }
 
 /// AU67 on a session that exists and is ours: the session setup again, then each missing pane as in W§8.1 step 11,
-/// then `phase = up` with the panes that did not fit removed (M1).
+/// with the build hold on every window (FIX-29 round 2); then, as `up` does in step 12, the release of the hold and
+/// the read of the dead panes, `phase = up` with the panes that did not fit removed (M1), and one line per dead pane.
 fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, err: &mut dyn Write) -> anyhow::Result<()> {
-    let b = Builder { mux, session: &ws.tmux_session, zygo, id: &ws.id, main_root: &ws.main_root, dir: store.dir() };
+    let b =
+        Builder { mux, session: &ws.tmux_session, zygo, id: &ws.id, main_root: &ws.main_root, dir: store.dir(), hold: true };
     b.session_setup(true).map_err(tmux)?;
     let mut present: BTreeMap<String, u32> = BTreeMap::new();
     let mut windows: BTreeSet<u32> = BTreeSet::new();
@@ -140,7 +164,31 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
             present.insert(p.key, w.index);
         }
     }
+    // FIX-29 round 3: from the first `window_setup` on, every exit path ends the hold. On an error, release (best
+    // effort) each window that the hold may cover: the windows set so far, and each window of the session that was
+    // not there before the repair (a window that `add_window` made before it failed); then return the error.
+    let before = windows.clone();
+    let mut held: BTreeSet<u32> = BTreeSet::new();
+    match held_build(&b, store, mux, ws, &present, windows, &mut held, err) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if let Ok(lines) = mux.list_panes(&ws.tmux_session) {
+                held.extend(lines.iter().filter_map(|l| parse_pane_line(l).ok()).map(|(w, _)| w.index).filter(|w| !before.contains(w)));
+            }
+            b.release(&held.into_iter().collect::<Vec<_>>(), &ws.name, err);
+            Err(e)
+        }
+    }
+}
+
+/// The part of [`building`] under the build hold. `held` gets each window before its hold is set.
+#[allow(clippy::too_many_arguments)]
+fn held_build(
+    b: &Builder<'_>, store: &Store, mux: &dyn Multiplexer, ws: &Workspace, present: &BTreeMap<String, u32>,
+    mut windows: BTreeSet<u32>, held: &mut BTreeSet<u32>, err: &mut dyn Write,
+) -> anyhow::Result<()> {
     for w in &windows {
+        held.insert(*w);
         b.window_setup(*w).map_err(tmux)?;
     }
     let mut groups: BTreeMap<u32, Vec<&Pane>> = BTreeMap::new();
@@ -165,6 +213,8 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
                     panes: vec![bp(group[0])],
                 };
                 let (index, _) = b.add_window(&w).map_err(tmux)?;
+                held.insert(index);
+                windows.insert(index);
                 (index, &group[1..])
             }
         };
@@ -186,6 +236,14 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
             Some(s)
         }
     };
+    // FIX-29 round 2: as `up` in W§8.1 step 12: end the build hold on every window of the session (best effort), read
+    // the dead panes (of the stopped build and of this repair), write `phase = up`, then print one line per dead pane.
+    let windows: Vec<u32> = windows.into_iter().collect();
+    b.release(&windows, &ws.name, err);
+    let exited = match socket.clone().or_else(|| ws.tmux_socket.clone()) {
+        Some(sock) => b.dead_lines(&sock, &ws.name, err),
+        None => Vec::new(),
+    };
     write(store, &ws.name, &mut |c| {
         set_up(c);
         if let Some(s) = &socket {
@@ -196,5 +254,22 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
             c.snapshot_seq += 1;
         }
     })?;
+    for line in &exited {
+        let _ = writeln!(err, "{line}");
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mux::UNSAFE_PATH_MESSAGE;
+
+    #[test] // FIX-29 diff review round 3, finding 4: an `UnsafePath` from repair is the AU54 line once, exit 2
+    fn repair_failure_maps_unsafe_path_to_exit_2_and_other_errors_to_exit_1() {
+        assert_eq!(repair_failure(&anyhow::Error::new(UnsafePath)), (2, UNSAFE_PATH_MESSAGE.to_string()));
+        assert_eq!(repair_failure(&anyhow!("tmux: injected")), (1, "zygo: tmux: injected".to_string()));
+        let chained = anyhow!("inner").context("outer");
+        assert_eq!(repair_failure(&chained), (1, "zygo: outer: inner".to_string()));
+    }
 }
