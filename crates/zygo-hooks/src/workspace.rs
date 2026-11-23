@@ -455,14 +455,15 @@ pub struct VerbMember {
     pub session: String,
 }
 
+/// A reader of process variables (`std::env::var_os` outside tests): the `ZYGO_WORKSPACE` gate of `verb_member`.
+pub type EnvGate<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
 /// The marker of `dir` by the hook rule. With `gate` (the slash form, which runs in the prompt hook), `None` unless
 /// `gate("ZYGO_WORKSPACE")` is set and not empty, before any read (the gate of `prompt::run_in_env`; W§18 #89). Then
 /// `check_folder`, `read_view` and `ctx_of` with `log = false`: `None` (not a member) for a refused folder, a
 /// `view.json` that is missing, a link, a FIFO, empty, not JSON or unreadable, no marker, or a workspace id or pane
 /// key that fails AU84. It writes no line and no file.
-pub fn verb_member(
-    dir: &SessionDir, paths: &Paths, gate: Option<&dyn Fn(&str) -> Option<OsString>>,
-) -> Option<VerbMember> {
+pub fn verb_member(dir: &SessionDir, paths: &Paths, gate: Option<EnvGate<'_>>) -> Option<VerbMember> {
     if let Some(gate) = gate
         && !gate("ZYGO_WORKSPACE").is_some_and(|v| !v.is_empty())
     {

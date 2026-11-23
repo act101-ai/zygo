@@ -553,12 +553,17 @@ fn au105_pending_start_of_this_session_is_saved() {
     assert_eq!(mf::record(&store, mf::WS_KEY), want);
 }
 
+/// One case of `w18_89_unreadable_marker_is_not_a_member`: its name and the maker of the session folder `s` in the
+/// home `h`.
+#[cfg(unix)]
+type MarkerCase<'a> = (&'a str, &'a dyn Fn(&Path, &Path));
+
 /// W§18 #89, W-C6, AU84, CLI form: a view that is a link, a FIFO, empty, not JSON or unreadable, and a marker with
 /// an invalid workspace id or pane key, are not a member: today's reply, no record change, no `session.log`.
 #[cfg(unix)]
 #[test]
 fn w18_89_unreadable_marker_is_not_a_member() {
-    let cases: [(&str, &dyn Fn(&Path, &Path)); 7] = [
+    let cases: [MarkerCase; 7] = [
         ("link", &|h, s| {
             mf::view(&h.join("real"), mf::SID, mf::WS_ID, mf::WS_KEY);
             std::fs::create_dir_all(s).unwrap();
