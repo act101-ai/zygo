@@ -59,7 +59,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13, M4 | DONE | judgment | 5673089; acceptance stub-agent build ok, workspace_run 52, workspace --no-run ok; workspace 2700 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6, FIX-27, M5 | PLANNED | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1, FIX-16 | DONE | judgment | f9f3328; acceptance compact_cmd 23, session_verbs 28, slash_parity 8, lib cmd:: 174 + 2 ignored, plugins snapshot 31, cli_surface 23, hooks workspace 23 + 1 ignored, lib prompt 16, state 34 (merged tree) |
-| M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | PLANNED | implementation | — |
+| M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | IN-PROGRESS | implementation | `.worktrees/phase2/M5` |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-28 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | TODO | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-28 | TODO | implementation | — |
