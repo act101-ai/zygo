@@ -38,8 +38,8 @@ The check runs in `zygo claude`, `zygo opencode` and `zygo up`, before the launc
 - stdin or stderr is not a TTY.
 - `-p` or `--print` is given.
 - The command is `zygo serve`.
-- The command runs inside a zygo session (`ZYGO_SESSION` is set).
-- The command runs in a workspace pane (`ZYGO_WORKSPACE` is set): the workspace's `zygo up` already asked. `ws run` runs the check before it cleans its environment, so it sees the session's `ZYGO_WORKSPACE` and skips too.
+- The command runs inside a zygo session (`ZYGO_SESSION` is set, an empty value too, as AU64 and AU95 count it).
+- The command runs in a workspace pane (`ZYGO_WORKSPACE` is set, an empty value too): the workspace's `zygo up` already asked. `ws run` runs the check before it cleans its environment, so it sees `ZYGO_WORKSPACE` and skips too. `up` gives the first pane of a new session `ZYGO_WORKSPACE=<id>` with `new-session -e` (W§8.1 step 9), because that pane starts before step 10 sets the session environment.
 - `zygo up` asks one time for the whole workspace.
 
 ### Check
@@ -56,7 +56,7 @@ zygo <new> is available (you have <old>). Update now? [y/N/s]
 ```
 
 - **y:** Run the existing `zygo update` path (checksum, atomic replace). Print `updated to <new>; relaunch zygo`. Exit 0. Do not start the agent. Reason: hooks run the absolute binary path (crates/zygo-launch/src/claude_code.rs:38), so a running session would mix versions.
-- In `zygo ws run` (a workspace pane), `y` does not exit: after the relaunch line, `ws run` relaunches itself from the updated binary with the same arguments, so the pane starts its member as before (W§8.2 step 1a).
+- In `zygo ws run` (a workspace pane), `y` does not exit: after the relaunch line, `ws run` relaunches itself from the updated binary with the same arguments, so the pane starts its member as before. The relaunched process does not check again. If the relaunch fails, the pane starts its member from the running binary (W§8.2 step 1a).
 - **N (default):** The launch continues. Ask again after 24 h.
 - **s:** Skip this version. Do not ask again until a newer release exists.
 
@@ -125,4 +125,6 @@ All cited line numbers were verified against the repo on 2026-11-21 (branch feat
 | 2026-11-21 | When the check is skipped | author's call | The intent "workspace panes never ask" was false for a member started by hand in a pane: `up` and `ws run` remove `ZYGO_SESSION` from the pane environment (W§18 #17), but the pane keeps `ZYGO_WORKSPACE` (AU93). |
 | 2026-11-21 | Acceptance #5 | author's call | Matches the `ZYGO_WORKSPACE` skip added to "When the check is skipped". |
 | 2026-11-21 | When the check is skipped (`ZYGO_WORKSPACE` bullet) | author's call | `ws run` now passes through the start check, so a test can prove that the `ZYGO_WORKSPACE` skip is what keeps panes from asking. |
-| 2026-11-23 | Prompt (`ws run` bullet after **y**) | author's call (M5 plan, controller decision 2) | In a workspace pane an exit after the install would leave the pane without its member; `ws run` relaunches itself instead (W§8.2 step 1a). |
+| 2026-11-23 | Prompt (`ws run` bullet after **y**) | author's call (M5 plan, controller decision 2; M5 diff review round 2, findings 3-4) | In a workspace pane an exit after the install would leave the pane without its member; `ws run` relaunches itself instead, does not check again after the relaunch, and starts the member also when the relaunch fails (W§8.2 step 1a). |
+| 2026-11-23 | When the check is skipped (`ZYGO_WORKSPACE` bullet) | author's call (FIX-28, folded into M5; M5 diff review round 2, finding 1) | The first pane of a new session starts before `up` sets the session environment; `new-session -e` gives it `ZYGO_WORKSPACE`, so it skips too. |
+| 2026-11-23 | When the check is skipped (`ZYGO_SESSION` and `ZYGO_WORKSPACE` bullets) | author's call (M5 diff review round 2, finding 6) | One meaning everywhere: an empty value counts as set, as AU64 and AU95 count it (`crates/zygo/src/cmd/mod.rs:112-116`). This also applies to `zygo claude` and `zygo opencode`. |
