@@ -2284,6 +2284,13 @@ fn a_failed_release_is_reported_and_up_goes_on() {
     assert_eq!(err.matches("zygo: app: could not release the build hold of window 0: injected\n").count(), 1, "{err}");
     assert_eq!((remain(&l, 0), remain(&l, 1)), ("on".to_string(), "off".to_string()));
     assert_eq!(read(&store).phase, Phase::Up);
+    // Diff review round 2, finding 3 (W§8.1 step 6, AU68): the next `up` attaches to the live session and first ends
+    // the hold that the failed release left.
+    l.o.loadout = None;
+    let (code2, _, err2) = run(&l.o);
+    assert_eq!(code2, 0, "{err2}");
+    assert!(!err2.contains("could not release"), "{err2}");
+    assert_eq!((remain(&l, 0), remain(&l, 1)), ("off".to_string(), "off".to_string()));
 }
 
 #[test] // FIX-29 (review item 8), AU67: a repair prints the line of a pane that died during the hold

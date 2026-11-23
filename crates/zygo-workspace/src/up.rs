@@ -532,6 +532,19 @@ impl Builder<'_> {
         }
     }
 
+    /// FIX-29 round 2, W§8.1 step 6: [`Builder::release`] on every window of the session, so a hold that a failed
+    /// release left ends at the next `up` (AU68). A gone session gives no line; any other error of the window read
+    /// prints `zygo: <name>: could not release the build hold: <error>`.
+    pub fn release_all(&self, name: &str, err: &mut dyn Write) {
+        let rows = match self.mux.list_panes(self.session) {
+            Ok(rows) => rows,
+            Err(MuxError::NoTarget { .. } | MuxError::Gone { .. }) => return,
+            Err(e) => return say(err, &format!("zygo: {}: could not release the build hold: {e}", esc(name))),
+        };
+        let windows: BTreeSet<u32> = rows.iter().filter_map(|r| parse_pane_line(r).ok()).map(|(w, _)| w.index).collect();
+        self.release(&windows.into_iter().collect::<Vec<_>>(), name, err);
+    }
+
     /// FIX-29: one [`exited_line`] for each dead pane of the session that has a valid pane key, in `list-panes` order,
     /// best effort. A gone session or pane gives no line; any other error prints one line and goes on.
     pub fn dead_lines(&self, socket: &Path, name: &str, err: &mut dyn Write) -> Vec<String> {
@@ -968,6 +981,17 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             if opts.reset || opts.loadout.is_some() {
                 return Err(fail(format!("zygo: {name} is running; run zygo down -- {name} first")));
             }
+            // FIX-29 round 2 (AU68): end any build hold that a failed release left, best effort.
+            let b6 = Builder {
+                mux: &mux6,
+                session: &session,
+                zygo: &opts.zygo,
+                id: &id,
+                main_root: &target.main_root,
+                dir: store.dir(),
+                hold: false,
+            };
+            b6.release_all(&name, err);
             let socket = match saved_socket {
                 Some(s) => s,
                 None => mux6.socket_path(&session).map_err(tmux_err)?,
