@@ -2,8 +2,6 @@
 
 zygo is one native binary that wraps Claude Code and OpenCode: it routes each agent role to a chosen model through a local proxy, saves tokens, redacts secrets from requests, tracks work units, and delivers plugins from approved marketplaces, with act-lite and other token-saving tools built in.
 
-Version 0.1.0.
-
 ---
 
 ## Agentic coding like you've never experienced before
