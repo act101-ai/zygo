@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16
+**Next:** W10, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-17
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,22 +56,21 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
 | W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | DONE | judgment | f945872; mux 42 on 3.7c and 3.2a; review round 2 fixed B1 (3.2a window names) and M1-M7 |
 | W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | DONE | judgment | 8978541; acceptance snapshot 33, state 22, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M7, D1-D6 |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | DONE | judgment | 3d51ad4; acceptance up 45, mux 46, snapshot 33, state 23, args 13, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M5, R3-1..R3-8 |
-| W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | IN-PROGRESS | judgment | .worktrees/phase2/W8 |
+| W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | DONE | judgment | 0921fb6; acceptance admin 21, up 45, up_all 7, workspace --no-run ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | IN-PROGRESS | judgment | .worktrees/phase2/W10 |
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
-| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11 | TODO | judgment | — |
+| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17 | TODO | judgment | — |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
-| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2 | TODO | judgment | — |
+| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
@@ -93,6 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
+| FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | TODO | implementation | — |
 
 ## Log
 
@@ -215,3 +215,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-15 DONE (79a70fc): short rolls over to b after 999m. Merged tree: statusline lib 4, statusline_render 25, zygo-hooks 173, zygo 378 pass. R2 added b tenths, b-range tokens and ctx tests; no compact 1b test, window cap 10m. |
 | 2026-11-22 | W8 planned: 35 steps, test first. C1-C8 applied: W7 Produces (member_live, socket_is_private, fire), W3 Produces (mux::BOUND), M1 Spec; spec W§8.1 up --all, W§12 rows workspace, ls, ws forget, ws forget-pane. |
 | 2026-11-22 | W10 planned: 30 steps, test first. C1-C4, C6-C18 applied: W2, W7, W9 Produces; M1 Spec, Consumes; spec AU18, AU97, W§9.3, W§11, W§12, W§18 #80, W§19. C5 as FIX-16 (FIX-15 taken), depends W10, W11, M1 (author's call). |
+| 2026-11-22 | W8 DONE (0921fb6): up --all, ls, status, forget, forget-pane. Merged tree: admin 21, up 45, up_all 7, zygo-workspace 267 pass. I1, I2, I4, R2 spec rows applied. FIX-17 added: store refuses a linked state folder, caps reads at 1 MiB; H1, M1 depend on it. |

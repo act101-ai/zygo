@@ -32,8 +32,8 @@ use crate::state::{
 
 /// The lock wait of every write of `up` (W§7.3).
 const LOCK_WAIT: Duration = snapshot::OP_WAIT;
-/// The bound of the git calls of `preflight` (finding 9).
-const GIT_BOUND: Duration = Duration::from_secs(5);
+/// The bound of the git calls of `preflight` (finding 9) and of `ws forget-pane` (W8 D23).
+pub(crate) const GIT_BOUND: Duration = Duration::from_secs(5);
 /// The size of a loadout window and of a window with no saved entry (D7, D15).
 pub(crate) const LOADOUT_SIZE: (u32, u32) = (200, 50);
 /// tmux's window maximum (D31).
@@ -114,9 +114,11 @@ pub mod testing {
 
     /// Sets (`Some`) or clears (`None`) the hook of `point` for the state folder `dir`. Points: `before_op_lock`,
     /// `before_plan_write` (before the step 8 write), `after_new_session`, `split` (before each `split_window`),
-    /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`. An `Err(text)`
-    /// of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is the undo's write
-    /// error.
+    /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`; the admin
+    /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (after the results cache is removed),
+    /// `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`, `forget_pane_before_cache`.
+    /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
+    /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {
         let mut hooks = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
         match f {
@@ -137,6 +139,9 @@ pub mod testing {
 
     /// [`super::up`] with the given writers.
     pub fn run_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run(opts, out, err) }
+
+    /// [`super::up_all`] with the given writers.
+    pub fn run_all_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run_all(opts, out, err) }
 
     /// [`super::attach`] with the given writers.
     pub fn attach_with(
@@ -292,10 +297,11 @@ pub(crate) fn socket_is_private(path: &Path, create_parent: bool) -> Result<(), 
 #[cfg(not(unix))]
 pub(crate) fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), String> { Ok(()) }
 
-/// The checkout of `cwd`, the worktree list and the main worktree (AU25, AU77, D4).
-fn find_checkout(cwd: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+/// The checkout of `cwd`, the worktree list and the main worktree (AU25, AU77, D4). Every git call ends by
+/// `Instant::now() + bound` (W8 D23).
+pub(crate) fn find_checkout(cwd: &Path, bound: Duration) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
     let usage = |m: &str| Exit { code: 2, message: m.to_string() };
-    let deadline = Instant::now() + GIT_BOUND;
+    let deadline = Instant::now() + bound;
     let co = match checkout(cwd, deadline) {
         Some(c) => c,
         None => {
@@ -314,17 +320,21 @@ fn find_checkout(cwd: &Path) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit>
     Ok((co, list, main))
 }
 
-/// W§8.1 steps 2-3 and the id of step 4 (D1, D4, D5).
-pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> Result<Target, Exit> {
+/// The tmux version check of W§8.1 step 2 (code 2): tmux missing, older than 3.2, or a version that cannot be read
+/// (W8 D4).
+pub(crate) fn tmux_check(tmux: &Path) -> Result<(), Exit> {
     let usage = |m: String| Exit { code: 2, message: m };
     match Tmux::new(tmux.to_path_buf(), None).version() {
-        Ok(v) if v >= MIN_VERSION => {}
-        Ok((major, minor)) => {
-            return Err(usage(format!("zygo: tmux {major}.{minor} is too old; workspaces need tmux 3.2 or later")));
-        }
-        Err(MuxError::Spawn { .. }) => return Err(usage(NO_TMUX.into())),
-        Err(e) => return Err(usage(format!("zygo: cannot read the tmux version: {e}"))),
+        Ok(v) if v >= MIN_VERSION => Ok(()),
+        Ok((major, minor)) => Err(usage(format!("zygo: tmux {major}.{minor} is too old; workspaces need tmux 3.2 or later"))),
+        Err(MuxError::Spawn { .. }) => Err(usage(NO_TMUX.into())),
+        Err(e) => Err(usage(format!("zygo: cannot read the tmux version: {e}"))),
     }
+}
+
+/// W§8.1 steps 2-3 and the id of step 4 (D1, D4, D5).
+pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> Result<Target, Exit> {
+    tmux_check(tmux)?;
     let all = list_all(paths);
     if let Some(n) = name {
         let tree = |common_dir: &Path, main_root: &Path| {
@@ -387,7 +397,7 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
             }
         }
     }
-    let (co, list, main_root) = find_checkout(cwd)?;
+    let (co, list, main_root) = find_checkout(cwd, GIT_BOUND)?;
     let id = workspace_id(&co.common_dir);
     let taken: BTreeSet<String> =
         all.iter().filter(|(i, _)| *i != id).filter_map(|(_, r)| r.as_ref().ok().map(|w| w.name.clone())).collect();
@@ -1286,6 +1296,151 @@ fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 pub fn up(opts: &UpOpts) -> i32 {
     let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
     run(opts, &mut stdout.lock(), &mut stderr.lock())
+}
+
+const ALL_FLAGS: &str = "zygo: up --all takes no workspace name, --loadout or --reset";
+const NOTHING: &str = "zygo: up --all found no workspace to restore";
+
+/// `zygo up --all` (W§8.1, AU52, AU80; W8 D2-D7), on the process stdout and stderr. It attaches to none.
+pub fn up_all(opts: &UpOpts) -> i32 {
+    let (stdout, stderr) = (std::io::stdout(), std::io::stderr());
+    run_all(opts, &mut stdout.lock(), &mut stderr.lock())
+}
+
+/// What the D2 session check found for one candidate.
+enum Found {
+    /// No session: the workspace is restored.
+    Chosen,
+    /// The session exists: not restored, no line (D6).
+    Running,
+    /// Not restored: `zygo: <name> skipped: <reason>`.
+    Skip(String),
+}
+
+fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    // D4: refusals before any session check.
+    if opts.name.is_some() || opts.loadout.is_some() || opts.reset {
+        say(err, ALL_FLAGS);
+        return 2;
+    }
+    if let Err(e) = check_path(&opts.zygo) {
+        say(err, &e.to_string());
+        return 2;
+    }
+    if let Err(e) = tmux_check(&opts.tmux) {
+        say(err, &e.message);
+        return e.code;
+    }
+    // D3: the states that cannot be read first, in id order (AU80).
+    let mut skipped = false;
+    let mut readable: Vec<Workspace> = Vec::new();
+    for (id, r) in list_all(&opts.paths) {
+        match r {
+            Ok(ws) => readable.push(ws),
+            Err(e) => {
+                say(err, &format!("zygo: workspace {id} skipped: {e}"));
+                skipped = true;
+            }
+        }
+    }
+    // D2: the candidates, in (name, id) order.
+    readable.retain(|ws| ws.down_all || ws.phase == Phase::Up);
+    readable.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
+    let mut chosen = false;
+    for ws in readable {
+        let name = ws.name.clone();
+        let mut skip = |err: &mut dyn Write, reason: &str| {
+            say(err, &format!("zygo: {name} skipped: {reason}"));
+            skipped = true;
+        };
+        match session_check(opts, &ws) {
+            Found::Chosen => {}
+            Found::Running => continue,
+            Found::Skip(reason) => {
+                skip(err, &reason);
+                continue;
+            }
+        }
+        chosen = true;
+        let target = match preflight(&opts.paths, &opts.tmux, Some(&name), &opts.cwd) {
+            Ok(t) => t,
+            Err(e) if e.code == 2 => {
+                say(err, &e.message);
+                return 2;
+            }
+            Err(e) => {
+                skip(err, e.message.strip_prefix("zygo: ").unwrap_or(&e.message));
+                continue;
+            }
+        };
+        // D5: `preflight` by name gives the first readable state of that name in id order.
+        if target.id != ws.id {
+            skip(err, &format!("more than one workspace state has the name {name}"));
+            continue;
+        }
+        // D7: `up_target` takes and releases its own `op.lock`.
+        if up_target(opts, target, out, err, false) == 0 {
+            say(out, &format!("zygo: {name} is up"));
+        } else {
+            say(err, &format!("zygo: {name} skipped"));
+            skipped = true;
+        }
+    }
+    if !chosen {
+        say(err, NOTHING);
+    }
+    i32::from(skipped)
+}
+
+/// The D2 session check of one candidate: the AU62 check of its socket, then `has-session` on its server; a session
+/// that exists goes to [`clear_down_all`] (D6).
+fn session_check(opts: &UpOpts, ws: &Workspace) -> Found {
+    if let Some(sock) = &ws.tmux_socket
+        && let Err(t) = socket_is_private(sock, true)
+    {
+        return Found::Skip(t);
+    }
+    let mux = server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
+    match mux.session_exists(&ws.tmux_session) {
+        SessionAnswer::Gone => Found::Chosen,
+        SessionAnswer::Error { message } => Found::Skip(format!("tmux: {message}")),
+        SessionAnswer::Exists => match clear_down_all(opts, ws, &mux) {
+            Ok(()) => Found::Running,
+            Err(reason) => Found::Skip(reason),
+        },
+    }
+}
+
+/// D6: a session that exists is not restored. When it holds this workspace's `@zygo-ws` and `down_all = true`, the
+/// workspace is up: `down_all` is cleared under `op.lock` after a second session and owner check, in one write under
+/// `lock`; then the W§7.3 `snapshot.pending` check. A held `op.lock` changes nothing. `Err` holds the skip reason.
+fn clear_down_all(opts: &UpOpts, ws: &Workspace, mux: &dyn Multiplexer) -> Result<(), String> {
+    let ours = |mux: &dyn Multiplexer| match mux.show_session_option(&ws.tmux_session, WS_OPTION) {
+        Ok(v) => Ok(v.as_deref() == Some(ws.id.as_str())),
+        Err(e) => Err(format!("tmux: {e}")),
+    };
+    if !ours(mux)? || !ws.down_all {
+        return Ok(());
+    }
+    let store = Store::open(&opts.paths, &ws.id);
+    let _op = match store.op_lock() {
+        Ok(l) => l,
+        Err(StateError::OpHeld) => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    if mux.session_exists(&ws.tmux_session) != SessionAnswer::Exists || !ours(mux)? {
+        return Ok(());
+    }
+    let written = store
+        .update(snapshot::OP_WAIT, &mut |cur| {
+            if cur.down_all {
+                cur.down_all = false;
+            }
+            Ok(())
+        })
+        .map_err(|e| e.to_string())?;
+    let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), written.tmux_socket), &ws.id, snapshot::OP_WAIT);
+    Ok(())
 }
 
 /// `zygo attach` (W§12, D21), on the process stdout and stderr.
