@@ -1307,7 +1307,7 @@ impl Run<'_> {
     }
 
     /// D20, AU24: one warning for each pane that is not a member live at step 8 and runs something other than a
-    /// shell. Every tmux error is ignored.
+    /// shell; a dead pane (`#{pane_dead}` = 1) is skipped (FIX-29). Every tmux error is ignored.
     fn busy_shells(&mut self, i: usize, live: &BTreeMap<String, PathBuf>) {
         let opts = self.opts;
         let (name, ws) = (self.jobs[i].name.clone(), self.jobs[i].ws.clone());
@@ -1322,14 +1322,16 @@ impl Run<'_> {
             if live.contains_key(&p.key) {
                 continue;
             }
-            let Ok(command) = mux.display(&p.id, "#{pane_current_command}") else {
+            let Ok(v) = mux.display(&p.id, "#{pane_dead}|#{pane_current_command}") else {
                 continue;
             };
-            if command.is_empty() || is_shell(&command) {
+            let (dead, command) = v.split_once('|').unwrap_or(("", v.as_str()));
+            // FIX-29: a dead pane (held by `remain-on-exit`) runs nothing; tmux still names its last program.
+            if dead == "1" || command.is_empty() || is_shell(command) {
                 continue;
             }
             let pane = if valid_pane_key(&p.key) { p.key.clone() } else { p.id.clone() };
-            self.e(&format!("zygo: {name} pane {pane}: {} is running; it stops with the session", esc(&command)));
+            self.e(&format!("zygo: {name} pane {pane}: {} is running; it stops with the session", esc(command)));
         }
     }
 

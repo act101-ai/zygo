@@ -228,7 +228,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
   - Update the doc comment of `apply` (`:307-311`): ``A pane whose read path is empty keeps the `cwd` of the stored pane with its key (FIX-29).``
   - Check: `cargo test -p zygo-workspace --locked --test snapshot` passes.
 
-- [ ] **5. Test: `down` does not call a dead pane busy (`crates/zygo-workspace/tests/down.rs`, at the end of the file).**
+- [x] **5. Test: `down` does not call a dead pane busy (`crates/zygo-workspace/tests/down.rs`, at the end of the file).**
   - New `#[test] // FIX-29, AU24: a dead pane runs nothing; no "is running" line` `fn live_down_does_not_warn_about_a_dead_pane()`:
     - `let _s = serial(); let Some(_) = require_tmux() else { return }; let l = live(); let o = live_opts(&l);`
     - `assert!(wait_for(S5, || l.srv.run(&["display-message", "-p", "-t", "=zygo-app:", "#{pane_current_command}"]).is_ok_and(|c| c == "sleep")));`
@@ -242,7 +242,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
     - `assert_eq!(count(&err, &format!("zygo: app pane {dead}: sleep is running; it stops with the session")), 0, "{err}");`
   - Check: `cargo test -p zygo-workspace --locked --test down live_down_does_not_warn_about_a_dead_pane` fails at the last assertion (count 1).
 
-- [ ] **6. Code: `busy_shells` skips dead panes (`crates/zygo-workspace/src/down.rs:1311-1333`).**
+- [x] **6. Code: `busy_shells` skips dead panes (`crates/zygo-workspace/src/down.rs:1311-1333`).**
   - Replace the `display` call and its check with
     ```rust
     let Ok(v) = mux.display(&p.id, "#{pane_dead}|#{pane_current_command}") else {
@@ -535,3 +535,15 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
   - Code: one tmux item in `new_session`, one hold form in `new_window`, one field, two best-effort `Builder` methods, a 5-line snapshot rule, a 3-line `busy_shells` change, a 5-line repair report.
   - Tests: 7 new tests and 3 updated tests.
   - Rejected as larger: a placeholder first pane plus `respawn-pane` (it delays every first pane and needs a portable placeholder program), a new `Multiplexer` method (it changes two fakes), and code for a user hook that moves `{end}` (item 9: known limit).
+
+## Result
+
+Executed 2026-11-23 in `.worktrees/phase2/FIX-29` (branch `worktree-zygo-phase-2--FIX-29`, from `881f98f`).
+
+### Premise check (before the first test)
+
+Every cited path, symbol and line of the plan was read in the live code at `881f98f` and holds: `up.rs:20`, `:24`, `:43`, `:126-148`, `:192`, `:459`, `:478-479`, `:517-521`, `:819`, `:1107`, `:1142`, `:1147`, `:1167`, `:1254`, `:1259-1260`, `:1288`, `:1307`; `mux/mod.rs:59`, `:95-170`, `:211-238`, `:314-343`; `mux/tmux.rs:314-343`, `:397-414`; `snapshot.rs:307-347`; `down.rs:1309-1333`; `repair.rs:131-144`, `:180-189`; the 12 `NewWindow` literals of `tests/mux.rs`, `tests/snapshot.rs:933` and `up.rs:521`; the `Builder` literals `up.rs:1107`, `:1167`, `repair.rs:132`.
+
+### Premise adaptations
+
+- Step 5 (drift in the test detail only). The plan's last assertion counts the line `zygo: app pane <pane id>: sleep is running; …` for the dead pane. Live run: the step 8 snapshot of `down` gives the dead pane a pane key, and `busy_shells` names a pane by its key when the key is valid (`down.rs:1331`), so before the fix the line was `zygo: app pane k6f5eo374: sleep is running; it stops with the session`. The assertion on the pane id was green before step 6 (false green). Adapted: the test keeps the pane-id assertion and adds one on the saved key of the dead pane (window 0, index 1, read from the state after `down`). Red before step 6 at that assertion (count 1), green after it.

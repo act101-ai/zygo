@@ -2220,3 +2220,32 @@ fn relative_zygo_path_in_an_unsafe_cwd_is_refused() {
     assert_eq!(run(&o, &hooks()), (2, String::new(), format!("{AU54}\n")));
     assert!(!store.dir().join("down.log").exists() && !t.join("child.pid").exists());
 }
+
+#[test] // FIX-29, AU24: a dead pane runs nothing; no "is running" line
+fn live_down_does_not_warn_about_a_dead_pane() {
+    let _s = serial();
+    let Some(_) = require_tmux() else { return };
+    let l = live();
+    let o = live_opts(&l);
+    assert!(wait_for(S5, || l
+        .srv
+        .run(&["display-message", "-p", "-t", "=zygo-app:", "#{pane_current_command}"])
+        .is_ok_and(|c| c == "sleep")));
+    let key = l.store().read().unwrap().unwrap().panes[0].key.clone();
+    l.srv.run(&["set-option", "-w", "-t", "=zygo-app:", "remain-on-exit", "on"]).unwrap();
+    let dead = l.srv.run(&["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", "=zygo-app:", "--", "sleep", "0"]).unwrap();
+    // tmux still names the last program of a dead pane (e5).
+    assert!(wait_for(S5, || l
+        .srv
+        .run(&["display-message", "-p", "-t", &dead, "#{pane_dead}|#{pane_current_command}"])
+        .is_ok_and(|c| c == "1|sleep")));
+    let (code, out, err) = run(&o, &hooks());
+    assert_eq!((code, out.as_str()), (0, "zygo: app is down (0 agents saved)\n"), "{err}");
+    assert_eq!(count(&err, &format!("zygo: app pane {key}: sleep is running; it stops with the session")), 1, "{err}");
+    assert_eq!(count(&err, &format!("zygo: app pane {dead}: sleep is running; it stops with the session")), 0, "{err}");
+    // Drift (FIX-29 step 5): the step 8 snapshot of `down` gives the dead pane a key, and AU24 names a pane by its key.
+    let ws = l.store().read().unwrap().unwrap();
+    let dead_key = ws.panes.iter().find(|p| p.window == 0 && p.index == 1).map(|p| p.key.clone()).unwrap();
+    assert_ne!(dead_key, key);
+    assert_eq!(count(&err, &format!("zygo: app pane {dead_key}: sleep is running; it stops with the session")), 0, "{err}");
+}
