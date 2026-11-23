@@ -31,7 +31,7 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 
 ## 3. Non-goals
 
-- Mail between workspaces, machines or OS users.
+- Mail between workspaces, machines or OS users. Mail between machines is phase-3 item P3-2: sync on a side branch (`docs/roadmap/phase-3.md`) **(operator, 2026-11-22)**.
 - Network delivery, read receipts, threads, priorities, or an order other than the ULID order.
 - A workflow (a fixed lead/worker protocol, merge rules, review steps). Mail is a primitive.
 - Triggers and automatic actions on mail, other than the wake of M§7.
@@ -57,7 +57,7 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 ```
 
 - The folder is keyed by the pane key (W§5), which stays the same after a restore. The name (M§6) maps to the pane key.
-- A message file (version 1): `{ "version": 1, "id": <ULID>, "from": <name or "cli">, "to": <name>, "sent_at": <RFC 3339>, "subject": <text, at most 200 bytes>, "body": <text, at most 1 MiB> }`. Fields that a reader does not know are kept (AU78).
+- A message file (version 1): `{ "version": 1, "id": <ULID>, "from": <name or "cli">, "to": <name>, "sent_at": <RFC 3339>, "subject": <text, at most 200 bytes>, "body": <text, at most 1 MiB> }`. Fields that a reader does not know are kept (AU78). The file format and the ULID names are fixed so that phase 3 can carry the same files on a side branch with no change (`docs/roadmap/phase-3.md`, P3-2): a message file is never edited after its rename into `new/`, and the move to `cur/` is local read state, not part of the message.
 - Send: write `tmp/<ULID>.json` (`0600`), `fsync`, rename to `new/<ULID>.json`. A send to `all` writes one file per member, sender excluded.
 - Read: rename `new/<ULID>.json` to `cur/<ULID>.json`, then return it. A rename that fails because the file is gone means another reader took it: skip it.
 - Retention: the sweep (AU69) deletes `cur/` files older than `[mail] keep = "30d"`. `zygo ws forget` deletes `mail/`. `zygo ws forget-pane <key>` deletes `mail/<key>/`.
@@ -146,6 +146,7 @@ name = "elena"          # M§6
 ## 12. Alternatives rejected
 
 - **A supervisor daemon that owns messages and wakes** (an earlier zygo draft): rejected by W-G6 and A2; the hooks and the sender's own process cover delivery.
+- **Mail in git for phase 2** (in `main`, or a side branch at once): one machine needs no sync, and a commit on `main` fills history and races between worktrees. The side branch is the phase-3 transport between machines (P3-2), on top of this local store.
 - **Typing the message into the pane** (today's script): cuts long text, races with the agent's input, and breaks on restore.
 - **Mail inside `workspace.json`**: breaks W-C7 and makes every snapshot write carry content.
 - **A poll in the model**: the lead goes idle when a task outruns its poll, and nothing wakes it (the deadlock that motivated phase 2's drain design).
