@@ -698,6 +698,16 @@ impl Session<'_> {
 /// Puts the agent session arguments `extra` before the user's arguments, so before any `--` (W§8.3, AU3). For
 /// OpenCode, when the first positional token before `--` (by W4's walk, so not a flag value) is the subcommand `run`,
 /// they go right after it.
+/// The agent arguments of a resume of `id`, as [`Launcher::run`] builds them from `args` and
+/// `AgentSession::Resume(id)`: the adapter's resume tokens inserted by [`insert_session_args`]. Gives the arguments and
+/// the range of the inserted tokens. The printed resume command of a member uses it (AU61), so it cannot drift from
+/// the launch.
+pub fn resume_argv(adapter: &dyn AgentAdapter, args: &[String], id: &str) -> (Vec<String>, std::ops::Range<usize>) {
+    let mut a = args.to_vec();
+    let r = insert_session_args(adapter.agent(), &mut a, adapter.resume_args(id));
+    (a, r)
+}
+
 /// Inserts `extra` into `args` (W§8.3, AU3) and gives the range of the inserted tokens.
 fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) -> std::ops::Range<usize> {
     let at = match agent {

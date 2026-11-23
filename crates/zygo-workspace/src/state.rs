@@ -135,6 +135,10 @@ pub struct Pending {
     pub zygo_session: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
+    /// `agent_session` is the user's own session argument of a hand start (W§8.4), not a pre-assigned id: only a member
+    /// hook commits it, the exit write never does (W§8.2 step 7). Absent (false) in a file of an older zygo.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub own_session: bool,
     pub started_at: u64,
     #[serde(flatten)]
     pub extra: Extra,

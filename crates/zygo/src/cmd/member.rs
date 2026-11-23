@@ -12,7 +12,9 @@ use zygo_core::session_dir::{write_atomic, SessionDir};
 use zygo_core::session_view::Member;
 use zygo_core::Agent;
 use zygo_launch::env::Env;
-use zygo_launch::launcher::{AgentSession, LaunchOutcome, NotMember};
+use zygo_launch::claude_code::ClaudeCode;
+use zygo_launch::launcher::{resume_argv, AgentSession, LaunchOutcome, NotMember};
+use zygo_launch::opencode::OpenCode;
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 use zygo_proxy::client::{SessionClient, SessionSettings};
 use zygo_workspace::{admin, args};
@@ -81,6 +83,8 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
     let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     // A hand start: the record of the key before the callback's write, or none (review round 2, finding 5).
     let previous: Arc<Mutex<Option<MemberRecord>>> = Arc::new(Mutex::new(None));
+    // The record as the callback's write left it (review round 3, findings 7 and 12).
+    let written: Arc<Mutex<Option<MemberRecord>>> = Arc::new(Mutex::new(None));
     let paths = opts.paths.clone();
     let cb = Callback {
         paths: opts.paths.clone(),
@@ -93,6 +97,7 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         config_dir,
         seen: seen.clone(),
         previous: previous.clone(),
+        written: written.clone(),
     };
     opts.on_session = Some(Box::new(move |sd, session, program, _member| cb.run(sd, session, program)));
     gate("launch");
@@ -101,14 +106,18 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
     let exit = classify(&o, resumed.is_some());
     let session = seen.lock().unwrap_or_else(|e| e.into_inner()).take();
     let wrote = session.is_some();
+    let written = written.lock().unwrap_or_else(|e| e.into_inner()).take();
     let mut kept = None;
+    let mut after_exit = None;
     if let Some(session) = session {
         let pane = m.pane.clone();
         let previous = previous.lock().unwrap_or_else(|e| e.into_inner()).take();
         let r = m.store.update_existing(WRAPPER_WAIT, &mut |ws| {
-            // Review round 2, finding 5: a hand start whose agent never started puts the record of the key back.
+            // Review round 2, finding 5; round 3, finding 12: a hand start whose agent never started puts the record
+            // of the key back when nothing else wrote it since.
             if m.hand.is_some() && exit == Exit::NotStarted {
-                if !undo_start(ws, &pane, &session, previous.clone()) {
+                let Some(w) = &written else { anyhow::bail!("unchanged") };
+                if !undo_start(ws, &pane, w, previous.clone()) {
                     anyhow::bail!("unchanged");
                 }
                 return Ok(());
@@ -121,7 +130,8 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         });
         match r {
             Ok(Some(ws)) => {
-                kept = ws.members.get(&m.pane).and_then(|r| r.agent_session.clone());
+                after_exit = ws.members.get(&m.pane).cloned();
+                kept = after_exit.as_ref().and_then(|r| r.agent_session.clone());
                 // W§7.3 writer check, then the snapshot at agent exit (W§7.4, PW6 option A).
                 after_write(&paths, &ws, &m.ws_id);
                 agent_snapshot(&paths, &ws, &m.ws_id);
@@ -136,8 +146,15 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
     }
     // Review round 2, finding 4: a hand start prints the exit lines only when its callback wrote the member record;
     // `ws run` prints them as W§8.2 step 7 says, also for a launch that ends before its callback.
+    // Review round 3, finding 7: the resume command is made from the record as it is after the exit write, else as the
+    // start write left it (a hand resume keeps the saved launch), else from the launch of this member.
     if wrote || m.hand.is_none() {
-        for l in exit_lines(&m.launch, &o, exit, resumed.as_deref(), kept.as_deref(), shown_dir.as_deref()) {
+        let rec = after_exit.or(written).unwrap_or_else(|| {
+            let mut r = MemberRecord::new(m.launch.kind);
+            r.launch = m.launch.clone();
+            r
+        });
+        for l in exit_lines(&rec, &o, exit, resumed.as_deref(), kept.as_deref(), shown_dir.as_deref()) {
             print_err(&format!("{l}\n"));
         }
     }
@@ -156,6 +173,7 @@ struct Callback {
     config_dir: Option<PathBuf>,
     seen: Arc<Mutex<Option<String>>>,
     previous: Arc<Mutex<Option<MemberRecord>>>,
+    written: Arc<Mutex<Option<MemberRecord>>>,
 }
 
 impl Callback {
@@ -206,6 +224,7 @@ impl Callback {
                 anyhow::bail!("{e}")
             }
         };
+        *self.written.lock().unwrap_or_else(|e| e.into_inner()) = ws.members.get(&self.pane).cloned();
         *self.seen.lock().unwrap_or_else(|e| e.into_inner()) = Some(session.to_string());
         let mut errors = Vec::new();
         if let Err(e) = results_link(&self.paths, &self.ws_id, &self.pane, sd) {
@@ -389,29 +408,37 @@ pub(crate) fn record_start_fields(rec: &mut MemberRecord, s: &Start) {
     rec.program = Some(s.program.clone());
 }
 
-/// The undo of a hand start whose agent never started (review round 2, finding 5): when the record of `key` is still
-/// the one that the callback of `zygo_session` wrote (its `pending` names that session), it becomes `previous` again,
-/// or the key loses its record when there was none. Any other record is not changed. Gives whether it changed `ws`.
-pub(crate) fn undo_start(ws: &mut Workspace, key: &str, zygo_session: &str, previous: Option<MemberRecord>) -> bool {
-    let ours = ws.members.get(key).is_some_and(|r| r.pending.as_ref().is_some_and(|p| p.zygo_session == zygo_session));
-    if !ours {
-        return false;
-    }
-    match previous {
-        Some(r) => {
-            ws.members.insert(key.to_string(), r);
+/// The undo of a hand start whose agent never started (review round 2, finding 5; round 3, finding 12). When the
+/// record of `key` is exactly `written`, the record that the callback wrote, it becomes `previous` again, or the key
+/// loses its record when there was none. When another write changed it since, only the `pending` of this start (the
+/// zygo session of `written`) goes and the rest stays. Any other record is not changed. Gives whether it changed `ws`.
+pub(crate) fn undo_start(ws: &mut Workspace, key: &str, written: &MemberRecord, previous: Option<MemberRecord>) -> bool {
+    let Some(session) = written.pending.as_ref().map(|p| p.zygo_session.clone()) else { return false };
+    if ws.members.get(key) == Some(written) {
+        match previous {
+            Some(r) => {
+                ws.members.insert(key.to_string(), r);
+            }
+            None => {
+                ws.members.remove(key);
+            }
         }
-        None => {
-            ws.members.remove(key);
-        }
+        return true;
     }
-    true
+    match ws.members.get_mut(key) {
+        Some(r) if r.pending.as_ref().is_some_and(|p| p.zygo_session == session) => {
+            r.pending = None;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// The exit write (D5, AU60, AU92, H1 seam b-d). It changes a record only when its `pending` or its `zygo_session`
 /// names `zygo_session`; it gives `false` with the record unchanged otherwise. `NotStarted` removes that `pending`.
-/// Other exits commit that `pending` when no hook did (its `agent_session` only when set, never a stored id replaced
-/// with none) and set the state; `closed_units`, `interrupted`, `clean_stop`, `saved_for` and `note_pending` stay.
+/// Other exits commit that `pending` when no hook did (its `agent_session` only when set and not the user's own session
+/// argument, which only a hook commits; never a stored id replaced with none) and set the state; `closed_units`,
+/// `interrupted`, `clean_stop`, `saved_for` and `note_pending` stay.
 pub(crate) fn record_exit(rec: &mut MemberRecord, zygo_session: &str, exit: Exit) -> bool {
     let names = |r: &MemberRecord| r.pending.as_ref().is_some_and(|p| p.zygo_session == zygo_session);
     if exit == Exit::NotStarted {
@@ -425,7 +452,8 @@ pub(crate) fn record_exit(rec: &mut MemberRecord, zygo_session: &str, exit: Exit
         && let Some(p) = rec.pending.take()
     {
         rec.zygo_session = Some(p.zygo_session);
-        if p.agent_session.is_some() {
+        // Review round 3, finding 6: a typed id that the agent never confirmed is not saved.
+        if p.agent_session.is_some() && !p.own_session {
             rec.agent_session = p.agent_session;
         }
     }
@@ -498,56 +526,88 @@ pub(crate) fn quoted(p: &Path) -> String {
     shell_word(p.as_os_str())
 }
 
-/// The command that resumes the agent session `id` (D7, AU3, AU61, PW16), each path and the id as one shell word
-/// ([`shell_word`] of the raw value): for Claude Code `CLAUDE_CONFIG_DIR=<dir> zygo claude -- --resume <id>` when the
-/// member has a config dir, else `env -u CLAUDE_CONFIG_DIR zygo claude -- --resume <id>`, as `ws run` removes the
-/// variable at a resume (AU61); for OpenCode `zygo opencode -- --session=<id>`.
-pub(crate) fn resume_command(launch: &zygo_workspace::state::Launch, id: &str, config_dir: Option<&Path>) -> String {
-    let id = shell_word(OsStr::new(id));
-    let flags = saved_flags(launch);
-    match (launch.kind, config_dir) {
-        (Agent::ClaudeCode, Some(d)) => format!("CLAUDE_CONFIG_DIR={} zygo claude{flags} -- --resume {id}", quoted(d)),
-        (Agent::ClaudeCode, None) => format!("env -u CLAUDE_CONFIG_DIR zygo claude{flags} -- --resume {id}"),
-        (Agent::OpenCode, _) => format!("zygo opencode{flags} -- --session={id}"),
-    }
-}
-
-/// The saved launch values that change the launch, as flags of the printed resume command (AU61; review round 2,
-/// finding 6(a)): ` --profile <p>`, ` --server <url>`, ` --yolo`, ` --compact <c>`, each value one shell word. A server
-/// with user info is shown as `<user info removed>` and any other server by the FIX-27 field rule (`loadout show`).
-fn saved_flags(launch: &zygo_workspace::state::Launch) -> String {
+/// The command that resumes the agent session `id` of the member `rec` (D7, AU3, AU61, PW16): the `zygo` launch that
+/// reproduces the `ws run` resume of `rec`. Its flags are those of `ws::launch_of` (Claude Code) or
+/// `ws::launch_open_code_of` (OpenCode), the functions that `ws run` gives `launch_opts`: `--profile`,
+/// `--passthrough`, `--server` (the saved value), `--compact` (the effective compaction of AU32; none when cleared),
+/// `--yolo`. After `--` come the agent arguments of [`resume_argv`]: the saved `launch.args` with the resume tokens of
+/// the adapter where the launcher puts them. Each value is one shell word ([`shell_word`] of the raw bytes); a resume
+/// token is `<flag>=<id word>`. For Claude Code the command starts with `CLAUDE_CONFIG_DIR=<dir>` when the member has
+/// a config dir, else `env -u CLAUDE_CONFIG_DIR`, as `ws run` sets the variable at a resume (AU61).
+pub(crate) fn resume_command(rec: &MemberRecord, id: &str, config_dir: Option<&Path>) -> String {
     let word = |v: &str| shell_word(OsStr::new(v));
-    let mut o = String::new();
-    if let Some(p) = &launch.profile {
-        o.push_str(&format!(" --profile {}", word(p)));
+    let mut flags = String::new();
+    let mut flag = |name: &str, value: Option<&str>| match value {
+        Some(v) => flags.push_str(&format!(" --{name} {}", word(v))),
+        None => flags.push_str(&format!(" --{name}")),
+    };
+    let (args, inserted) = match rec.launch.kind {
+        Agent::ClaudeCode => {
+            let l = super::ws::launch_of(rec, true);
+            if let Some(p) = &l.profile {
+                flag("profile", Some(p));
+            }
+            if l.passthrough {
+                flag("passthrough", None);
+            }
+            if let Some(s) = &l.server {
+                flag("server", Some(s));
+            }
+            if let Some(c) = &l.compact {
+                flag("compact", Some(c));
+            }
+            if l.yolo {
+                flag("yolo", None);
+            }
+            resume_argv(&ClaudeCode::for_zygo(PathBuf::new()), &l.rest, id)
+        }
+        Agent::OpenCode => {
+            let l = super::ws::launch_open_code_of(rec);
+            if let Some(p) = &l.profile {
+                flag("profile", Some(p));
+            }
+            if let Some(s) = &l.server {
+                flag("server", Some(s));
+            }
+            if let Some(c) = &l.compact {
+                flag("compact", Some(c));
+            }
+            if l.yolo {
+                flag("yolo", None);
+            }
+            resume_argv(&OpenCode::new(PathBuf::new()), &l.rest, id)
+        }
+    };
+    let words: Vec<String> = args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| match a.split_once('=') {
+            Some((f, v)) if inserted.contains(&i) => format!("{f}={}", word(v)),
+            _ => word(a),
+        })
+        .collect();
+    let tail = format!("{flags} -- {}", words.join(" "));
+    match (rec.launch.kind, config_dir) {
+        (Agent::ClaudeCode, Some(d)) => format!("CLAUDE_CONFIG_DIR={} zygo claude{tail}", quoted(d)),
+        (Agent::ClaudeCode, None) => format!("env -u CLAUDE_CONFIG_DIR zygo claude{tail}"),
+        (Agent::OpenCode, _) => format!("zygo opencode{tail}"),
     }
-    if let Some(s) = &launch.server {
-        let shown = if args::has_user_info(s) { "<user info removed>".to_string() } else { super::loadout::shown_field(s) };
-        o.push_str(&format!(" --server {}", word(&shown)));
-    }
-    if launch.yolo {
-        o.push_str(" --yolo");
-    }
-    if let Some(c) = &launch.compact {
-        o.push_str(&format!(" --compact {}", word(c)));
-    }
-    o
 }
 
-/// The lines `ws run` prints after the agent (D7). `resumed` is the id that this launch resumed; `kept` is the
-/// `agent_session` of the record that the exit write gave back (none when it gave none or an error); `config_dir` is
-/// the config dir of this launch, for the resume command.
+/// The lines `ws run` prints after the agent (D7). `rec` is the member record whose launch the resume command
+/// reproduces; `resumed` is the id that this launch resumed; `kept` is the `agent_session` of the record that the exit
+/// write gave back (none when it gave none or an error); `config_dir` is the config dir of this launch, for the resume
+/// command.
 pub(crate) fn exit_lines(
-    launch: &zygo_workspace::state::Launch, o: &LaunchOutcome, exit: Exit, resumed: Option<&str>, kept: Option<&str>,
-    config_dir: Option<&Path>,
+    rec: &MemberRecord, o: &LaunchOutcome, exit: Exit, resumed: Option<&str>, kept: Option<&str>, config_dir: Option<&Path>,
 ) -> Vec<String> {
-    let k = verb(launch.kind);
+    let k = verb(rec.launch.kind);
     let n = o.code;
     match exit {
         Exit::NotStarted => vec![format!("zygo: the {k} launch failed before the agent started (exit {n})")],
         Exit::Resumable { failed_fast: true } => match resumed {
             Some(id) => {
-                let cmd = resume_command(launch, id, config_dir);
+                let cmd = resume_command(rec, id, config_dir);
                 let id = zygo_core::esc(id);
                 vec![format!("zygo: resume of {k} session {id} failed (exit {n}); try: {cmd}")]
             }
@@ -555,7 +615,7 @@ pub(crate) fn exit_lines(
         },
         Exit::Ended if n != 0 => match kept {
             Some(id) => {
-                let cmd = resume_command(launch, id, config_dir);
+                let cmd = resume_command(rec, id, config_dir);
                 let id = zygo_core::esc(id);
                 vec![format!("zygo: {k} exited {n}; agent session {id} is kept by the agent; to resume it: {cmd}")]
             }
@@ -654,16 +714,24 @@ impl Conflict {
 }
 
 /// The AU94 and W-C9 checks of a hand start of agent kind `kind` on the pane key `key` (D3): first a record under
-/// another key, not `ended`, whose `agent_session` or `pending.agent_session` is the launch's own session argument
-/// `own`, of any agent kind; then a live launcher on `key` (`live` gives its zygo session); then a `running` or
+/// another key, not `ended`, of any agent kind, whose `agent_session` is the launch's own session argument `own`, or
+/// whose `pending.agent_session` is `own` while the launcher of that pending start is live (`live` of the record
+/// without its committed `zygo_session`); then a live launcher on `key` (`live` gives its zygo session); then a `running` or
 /// `resumable` record of `key` with an `agent_session`, unless that id is `own` and the record's kind is `kind`. Any
 /// other record, or none, gives none.
 pub(crate) fn conflict(
     ws: &Workspace, key: &str, kind: Agent, own: Option<&str>, live: &dyn Fn(&MemberRecord) -> Option<String>,
 ) -> Option<Conflict> {
-    // W-C9 (review round 2, finding 1): the committed id and the id of a start that is not committed yet.
+    // W-C9 (review round 2, finding 1): the committed id, and the id of a start that is not committed yet while the
+    // launcher of that start is live (review round 3, finding 5: a start whose launcher died holds nothing).
+    let pending_live = |r: &MemberRecord| {
+        let mut start = r.clone();
+        start.zygo_session = None;
+        live(&start).is_some()
+    };
     let holds = |r: &MemberRecord, id: &str| {
-        r.agent_session.as_deref() == Some(id) || r.pending.as_ref().and_then(|p| p.agent_session.as_deref()) == Some(id)
+        r.agent_session.as_deref() == Some(id)
+            || (r.pending.as_ref().and_then(|p| p.agent_session.as_deref()) == Some(id) && pending_live(r))
     };
     if let Some(own) = own
         && let Some((other, _)) =
@@ -679,7 +747,7 @@ pub(crate) fn conflict(
     let own_resume = |a: &str| own == Some(a) && rec.launch.kind == kind;
     match &rec.agent_session {
         Some(a) if matches!(rec.state, MemberState::Running | MemberState::Resumable) && !own_resume(a) => {
-            Some(Conflict::Resumable { id: a.clone(), command: resume_command(&rec.launch, a, rec.config_dir.as_deref()) })
+            Some(Conflict::Resumable { id: a.clone(), command: resume_command(rec, a, rec.config_dir.as_deref()) })
         }
         _ => None,
     }
@@ -720,6 +788,8 @@ pub(crate) fn join(
         && p.agent_session.is_none()
     {
         p.agent_session = Some(o.to_string());
+        // Review round 3, finding 6: only a member hook commits it.
+        p.own_session = true;
     }
     Ok(())
 }
@@ -845,7 +915,7 @@ mod tests {
     use zygo_core::Agent;
     use zygo_launch::env::Env;
     use zygo_launch::launcher::LaunchOutcome;
-    use zygo_workspace::state::{Launch, MemberRecord, MemberState, Pending, Phase, Subagent};
+    use zygo_workspace::state::{CompactOverride, Launch, MemberRecord, MemberState, Pending, Phase, Subagent};
 
     fn out(code: i32, signal: Option<i32>, received: bool, ran: u64) -> LaunchOutcome {
         LaunchOutcome { code, signal, spawned: true, received, ran: Some(Duration::from_secs(ran)) }
@@ -987,36 +1057,36 @@ mod tests {
     #[test]
     fn exit_lines_are_the_spec_texts() { // D7; review round 3 findings 1 and 2
         assert_eq!(
-            exit_lines(&Launch::new(Agent::ClaudeCode), &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, None),
-            ["zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'"]
+            exit_lines(&MemberRecord::new(Agent::ClaudeCode), &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, None),
+            ["zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'"]
         );
         assert_eq!(
-            exit_lines(&Launch::new(Agent::OpenCode), &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("ses_1"), Some("ses_1"), None),
+            exit_lines(&MemberRecord::new(Agent::OpenCode), &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("ses_1"), Some("ses_1"), None),
             ["zygo: resume of opencode session ses_1 failed (exit 1); try: zygo opencode -- --session='ses_1'"]
         );
         assert_eq!(
-            exit_lines(&Launch::new(Agent::OpenCode), &out(3, None, false, 60), Exit::Ended, None, Some("ses_1"), None),
+            exit_lines(&MemberRecord::new(Agent::OpenCode), &out(3, None, false, 60), Exit::Ended, None, Some("ses_1"), None),
             ["zygo: opencode exited 3; agent session ses_1 is kept by the agent; to resume it: zygo opencode -- --session='ses_1'"]
         );
         assert_eq!(
-            exit_lines(&Launch::new(Agent::ClaudeCode), &out(3, None, false, 60), Exit::Ended, None, Some("abc"), None),
-            ["zygo: claude exited 3; agent session abc is kept by the agent; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'"]
+            exit_lines(&MemberRecord::new(Agent::ClaudeCode), &out(3, None, false, 60), Exit::Ended, None, Some("abc"), None),
+            ["zygo: claude exited 3; agent session abc is kept by the agent; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'"]
         );
         for code in [12, 13] {
             assert_eq!(
-                exit_lines(&Launch::new(Agent::ClaudeCode), &not_spawned(code), Exit::NotStarted, Some("abc"), None, None),
+                exit_lines(&MemberRecord::new(Agent::ClaudeCode), &not_spawned(code), Exit::NotStarted, Some("abc"), None, None),
                 [format!("zygo: the claude launch failed before the agent started (exit {code})")]
             );
         }
-        assert!(exit_lines(&Launch::new(Agent::ClaudeCode), &out(0, None, false, 60), Exit::Ended, None, Some("abc"), None).is_empty());
+        assert!(exit_lines(&MemberRecord::new(Agent::ClaudeCode), &out(0, None, false, 60), Exit::Ended, None, Some("abc"), None).is_empty());
         assert!(
-            exit_lines(&Launch::new(Agent::ClaudeCode), &out(143, None, true, 60), Exit::Resumable { failed_fast: false }, None, Some("abc"), None)
+            exit_lines(&MemberRecord::new(Agent::ClaudeCode), &out(143, None, true, 60), Exit::Resumable { failed_fast: false }, None, Some("abc"), None)
                 .is_empty()
         );
-        assert!(exit_lines(&Launch::new(Agent::ClaudeCode), &out(3, None, false, 60), Exit::Ended, None, None, None).is_empty()); // no saved record (D5)
+        assert!(exit_lines(&MemberRecord::new(Agent::ClaudeCode), &out(3, None, false, 60), Exit::Ended, None, None, None).is_empty()); // no saved record (D5)
         // The prose names the id escaped (C6); the command names it as one shell word.
         assert_eq!(
-            exit_lines(&Launch::new(Agent::OpenCode), &out(3, None, false, 60), Exit::Ended, None, Some("s'\n1"), None),
+            exit_lines(&MemberRecord::new(Agent::OpenCode), &out(3, None, false, 60), Exit::Ended, None, Some("s'\n1"), None),
             [r"zygo: opencode exited 3; agent session s'\n1 is kept by the agent; to resume it: zygo opencode -- --session=$'s\'\x0a1'"]
         );
     }
@@ -1026,23 +1096,23 @@ mod tests {
     fn the_resume_command_names_the_config_dir_quoted() { // AU61, PW16; review round 2 finding 2, round 3 findings 1-3
         let dir = Path::new("/c c/it's");
         assert_eq!(
-            resume_command(&Launch::new(Agent::ClaudeCode), "abc", Some(dir)),
-            r"CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume 'abc'"
+            resume_command(&MemberRecord::new(Agent::ClaudeCode), "abc", Some(dir)),
+            r"CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume='abc'"
         );
-        assert_eq!(resume_command(&Launch::new(Agent::ClaudeCode), "abc", None), "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'");
-        assert_eq!(resume_command(&Launch::new(Agent::OpenCode), "ses_1", Some(dir)), "zygo opencode -- --session='ses_1'");
+        assert_eq!(resume_command(&MemberRecord::new(Agent::ClaudeCode), "abc", None), "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'");
+        assert_eq!(resume_command(&MemberRecord::new(Agent::OpenCode), "ses_1", Some(dir)), "zygo opencode -- --session='ses_1'");
         assert_eq!(
-            exit_lines(&Launch::new(Agent::ClaudeCode), &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, Some(dir)),
-            [r"zygo: resume of claude session abc failed (exit 1); try: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume 'abc'"]
+            exit_lines(&MemberRecord::new(Agent::ClaudeCode), &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, Some(dir)),
+            [r"zygo: resume of claude session abc failed (exit 1); try: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume='abc'"]
         );
         assert_eq!(
-            exit_lines(&Launch::new(Agent::ClaudeCode), &out(3, None, false, 60), Exit::Ended, None, Some("abc"), Some(dir)),
-            [r"zygo: claude exited 3; agent session abc is kept by the agent; to resume it: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume 'abc'"]
+            exit_lines(&MemberRecord::new(Agent::ClaudeCode), &out(3, None, false, 60), Exit::Ended, None, Some("abc"), Some(dir)),
+            [r"zygo: claude exited 3; agent session abc is kept by the agent; to resume it: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume='abc'"]
         );
         // A control byte: `$'…'` with `\xHH`, so the line stays one line and names the true path.
         assert_eq!(
-            resume_command(&Launch::new(Agent::ClaudeCode), "abc", Some(Path::new("/a\nb"))),
-            r"CLAUDE_CONFIG_DIR=$'/a\x0ab' zygo claude -- --resume 'abc'"
+            resume_command(&MemberRecord::new(Agent::ClaudeCode), "abc", Some(Path::new("/a\nb"))),
+            r"CLAUDE_CONFIG_DIR=$'/a\x0ab' zygo claude -- --resume='abc'"
         );
     }
 
@@ -1121,6 +1191,19 @@ mod tests {
         w
     }
 
+    /// The `live` input of [`conflict`] as [`live_session`] gives it when the zygo sessions `ids` are live: the first of
+    /// the record's `zygo_session` and `pending.zygo_session` that is one of them.
+    fn live_of(ids: &'static [&'static str]) -> impl Fn(&MemberRecord) -> Option<String> {
+        move |r: &MemberRecord| {
+            r.zygo_session
+                .iter()
+                .map(String::as_str)
+                .chain(r.pending.as_ref().map(|p| p.zygo_session.as_str()))
+                .find(|z| ids.contains(z))
+                .map(String::from)
+        }
+    }
+
     fn rec(state: MemberState, agent: Option<&str>) -> MemberRecord {
         let mut r = MemberRecord::new(Agent::ClaudeCode);
         r.state = state;
@@ -1134,7 +1217,7 @@ mod tests {
         let k = "kaaaaaaaa";
         let none = |_: &MemberRecord| None;
         let live = |_: &MemberRecord| Some("01JLLLLLLLLLLLLLLLLLLLLLLL".to_string());
-        let cmd = "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'";
+        let cmd = "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'";
         let res = Some(Conflict::Resumable { id: "abc".into(), command: cmd.into() });
         assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Resumable, Some("abc")))]), k, Agent::ClaudeCode, None, &none), res);
         assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Running, Some("abc")))]), k, Agent::ClaudeCode, None, &none), res);
@@ -1159,7 +1242,7 @@ mod tests {
         c.config_dir = Some("/c c".into());
         assert_eq!(
             conflict(&ws_with(&[(k, c)]), k, Agent::ClaudeCode, None, &none),
-            Some(Conflict::Resumable { id: "abc".into(), command: "CLAUDE_CONFIG_DIR='/c c' zygo claude -- --resume 'abc'".into() })
+            Some(Conflict::Resumable { id: "abc".into(), command: "CLAUDE_CONFIG_DIR='/c c' zygo claude -- --resume='abc'".into() })
         );
     }
 
@@ -1276,9 +1359,17 @@ mod tests {
         // W-C9: an own session that another key's start wrote as `pending.agent_session` (not committed yet).
         let mut p = rec(MemberState::Running, None);
         p.pending = Some(Pending { zygo_session: "S9".into(), agent_session: Some("abc".into()), ..Default::default() });
-        assert_eq!(conflict(&ws_with(&[("kbbbbbbbb", p.clone())]), k, cc, Some("abc"), &none), other("abc"));
+        assert_eq!(conflict(&ws_with(&[("kbbbbbbbb", p.clone())]), k, cc, Some("abc"), &live_of(&["S9"])), other("abc"));
+        // Round 3, finding 5: a pending id whose launcher is not live (a stale start) does not hold it; a live launcher
+        // of the committed session is not the launcher of that start.
+        assert_eq!(conflict(&ws_with(&[("kbbbbbbbb", p.clone())]), k, cc, Some("abc"), &none), None);
+        assert_eq!(conflict(&ws_with(&[("kbbbbbbbb", p.clone())]), k, cc, Some("abc"), &live_of(&["01JZZZZZZZZZZZZZZZZZZZZZZZ"])), None);
+        // A committed id holds it with no live launcher.
+        let mut c = rec(MemberState::Resumable, Some("abc"));
+        c.pending = None;
+        assert_eq!(conflict(&ws_with(&[("kbbbbbbbb", c)]), k, cc, Some("abc"), &none), other("abc"));
         p.state = MemberState::Ended;
-        assert_eq!(conflict(&ws_with(&[("kbbbbbbbb", p)]), k, cc, Some("abc"), &none), None);
+        assert_eq!(conflict(&ws_with(&[("kbbbbbbbb", p)]), k, cc, Some("abc"), &live_of(&["S9"])), None);
         // AU94: the own session of a record of another agent kind is not the printed resume.
         let mut oc = MemberRecord::new(Agent::OpenCode);
         oc.state = MemberState::Resumable;
@@ -1336,58 +1427,100 @@ mod tests {
         assert_eq!((m.launch.kind, m.agent_session.clone(), m.overrides.clone()), (Agent::ClaudeCode, None, None));
     }
 
+    /// A saved launch with every value that changes a launch (AU45, AU61).
+    fn saved(kind: Agent) -> MemberRecord {
+        let mut r = MemberRecord::new(kind);
+        r.launch.profile = Some("p 1".into());
+        r.launch.server = Some("http://127.0.0.1:8080/x".into());
+        r.launch.yolo = true;
+        r.launch.compact = Some("600k".into());
+        r.launch.args = vec!["--model".into(), "m".into()];
+        r
+    }
+
     #[test]
-    fn undo_start_puts_the_previous_record_back_only_over_its_own_start() { // diff review round 2, finding 5
+    fn the_resume_command_reproduces_the_ws_run_launch() { // diff review round 3, findings 1-4; AU61
+        let mut r = saved(Agent::ClaudeCode);
+        r.launch.passthrough = true;
+        let flags = "--profile 'p 1' --passthrough --server 'http://127.0.0.1:8080/x'";
+        let tail = "--yolo -- --resume='abc' '--model' 'm'";
+        assert_eq!(resume_command(&r, "abc", None), format!("env -u CLAUDE_CONFIG_DIR zygo claude {flags} --compact '600k' {tail}"));
+        // The effective compaction (AU32, `ws::effective_compact`): `cleared` gives no flag, as `ws run` gives none.
+        r.compact = Some(CompactOverride::Cleared);
+        assert_eq!(resume_command(&r, "abc", None), format!("env -u CLAUDE_CONFIG_DIR zygo claude {flags} {tail}"));
+        r.compact = Some(CompactOverride::Set("800k".into()));
+        assert_eq!(resume_command(&r, "abc", None), format!("env -u CLAUDE_CONFIG_DIR zygo claude {flags} --compact '800k' {tail}"));
+        // The saved server as it is (W-C7: the state holds no user info, so there is nothing to mask).
+        r.launch.server = Some("https://u:p@h/x?token=1".into());
+        assert!(resume_command(&r, "abc", None).contains(" --server 'https://u:p@h/x?token=1' "), "{}", resume_command(&r, "abc", None));
+        // OpenCode: the session after `run`, where the launcher puts it.
+        let mut o = saved(Agent::OpenCode);
+        o.launch.args = vec!["run".into(), "--model".into(), "m".into()];
+        assert_eq!(
+            resume_command(&o, "ses_1", None),
+            "zygo opencode --profile 'p 1' --server 'http://127.0.0.1:8080/x' --compact '600k' --yolo -- 'run' --session='ses_1' '--model' 'm'"
+        );
+    }
+
+    #[test]
+    fn an_own_session_pending_id_commits_only_through_a_hook() { // diff review round 3, finding 6
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let mut w = ws_with(&[]);
+        join(&mut w, k, &Launch::new(Agent::ClaudeCode), &Start { agent_session: None, ..start() }, Some("typo"), &none).unwrap();
+        let typed = w.members[k].clone();
+        let p = typed.pending.clone().unwrap();
+        assert_eq!((p.agent_session.as_deref(), p.own_session), (Some("typo"), true));
+        let mut w = ws_with(&[]);
+        join(&mut w, k, &Launch::new(Agent::ClaudeCode), &start(), None, &none).unwrap();
+        assert!(!w.members[k].pending.as_ref().unwrap().own_session); // a pre-assign
+        for exit in [Exit::Ended, Exit::Resumable { failed_fast: false }] {
+            let mut r = typed.clone();
+            assert!(record_exit(&mut r, "S1", exit));
+            assert_eq!((r.zygo_session.as_deref(), r.agent_session.as_deref(), r.pending.is_none()), (Some("S1"), None, true), "{exit:?}");
+            assert!(exit_lines(&r, &out(1, None, false, 60), exit, None, r.agent_session.as_deref(), None).is_empty(), "{exit:?}");
+        }
+        // A kept record's committed id stays.
+        let mut r = typed.clone();
+        r.agent_session = Some("abc".into());
+        assert!(record_exit(&mut r, "S1", Exit::Ended));
+        assert_eq!(r.agent_session.as_deref(), Some("abc"));
+        // A state file of an older zygo reads as `false`; `false` is not written.
+        let old: Pending = serde_json::from_str(r#"{"zygo_session":"S","started_at":1}"#).unwrap();
+        assert!(!old.own_session);
+        assert!(!serde_json::to_string(&old).unwrap().contains("own_session"));
+    }
+
+    #[test]
+    fn undo_start_restores_only_the_exact_written_record() { // diff review round 3, finding 12
         let k = "kaaaaaaaa";
         let none = |_: &MemberRecord| None;
         let mut old = rec(MemberState::Ended, Some("old"));
         old.overrides = Some(serde_json::json!({"results": false}));
-        let mut w = ws_with(&[(k, old.clone())]);
-        join(&mut w, k, &Launch::new(Agent::ClaudeCode), &start(), None, &none).unwrap();
-        assert!(undo_start(&mut w, k, "S1", Some(old.clone())));
+        let started = |members: &[(&str, MemberRecord)]| {
+            let mut w = ws_with(members);
+            join(&mut w, k, &Launch::new(Agent::ClaudeCode), &start(), None, &none).unwrap();
+            let written = w.members[k].clone();
+            (w, written)
+        };
+        let (mut w, written) = started(&[(k, old.clone())]);
+        assert!(undo_start(&mut w, k, &written, Some(old.clone())));
         assert_eq!(w.members[k], old);
-        let mut w = ws_with(&[]);
-        join(&mut w, k, &Launch::new(Agent::ClaudeCode), &start(), None, &none).unwrap();
-        assert!(undo_start(&mut w, k, "S1", None));
+        let (mut w, written) = started(&[]);
+        assert!(undo_start(&mut w, k, &written, None));
         assert!(!w.members.contains_key(k));
-        // The record of another start is not changed.
-        let mut w = ws_with(&[]);
-        join(&mut w, k, &Launch::new(Agent::ClaudeCode), &start(), None, &none).unwrap();
+        // Another write came between: only this start's `pending` goes, nothing is put back.
+        let (mut w, written) = started(&[(k, old.clone())]);
+        w.members.get_mut(k).unwrap().overrides = Some(serde_json::json!({"results": true}));
+        let mut want = w.members[k].clone();
+        want.pending = None;
+        assert!(undo_start(&mut w, k, &written, Some(old.clone())));
+        assert_eq!(w.members[k], want);
+        // The record of another start: no change.
+        let (mut w, written) = started(&[]);
+        w.members.get_mut(k).unwrap().pending.as_mut().unwrap().zygo_session = "S2".into();
         let before = w.clone();
-        assert!(!undo_start(&mut w, k, "S2", Some(old.clone())));
+        assert!(!undo_start(&mut w, k, &written, Some(old.clone())));
         assert_eq!(w, before);
-        // A record whose start a hook committed is not changed.
-        let m = w.members.get_mut(k).unwrap();
-        m.zygo_session = m.pending.take().map(|p| p.zygo_session);
-        let before = w.clone();
-        assert!(!undo_start(&mut w, k, "S1", Some(old.clone())));
-        assert_eq!(w, before);
-    }
-
-    #[test]
-    fn the_resume_command_names_the_saved_launch_values() { // diff review round 2, finding 6(a); AU61
-        let mut l = Launch::new(Agent::ClaudeCode);
-        l.profile = Some("p 1".into());
-        l.server = Some("https://h.example/x".into());
-        l.yolo = true;
-        l.compact = Some("600k".into());
-        assert_eq!(
-            resume_command(&l, "abc", None),
-            "env -u CLAUDE_CONFIG_DIR zygo claude --profile 'p 1' --server 'https://h.example/x' --yolo --compact '600k' -- --resume 'abc'"
-        );
-        l.server = Some("https://u:p@h".into());
-        assert_eq!(
-            resume_command(&l, "abc", Some(Path::new("/c"))),
-            "CLAUDE_CONFIG_DIR='/c' zygo claude --profile 'p 1' --server '<user info removed>' --yolo --compact '600k' -- --resume 'abc'"
-        );
-        // The AU98 parser (`args::has_user_info`) also reads these forms as user info; each is removed.
-        for s in ["https:\\\\u@h", "https:/u@h", " https://u@h", "https://h\\@evil"] {
-            l.server = Some(s.into());
-            assert!(resume_command(&l, "abc", None).contains(" --server '<user info removed>' "), "{s}");
-        }
-        let mut o = Launch::new(Agent::OpenCode);
-        o.profile = Some("p1".into());
-        o.compact = Some("600k".into());
-        assert_eq!(resume_command(&o, "ses_1", None), "zygo opencode --profile 'p1' --compact '600k' -- --session='ses_1'");
     }
 }

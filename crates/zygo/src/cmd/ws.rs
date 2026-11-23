@@ -167,13 +167,12 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
         let _ = std::env::set_current_dir(&cwd);
     } else {
         let _ = std::env::set_current_dir(&main_root);
-        let resumable = if shell { None } else { rec.as_ref().and_then(|r| r.agent_session.as_deref().map(|id| (&r.launch, id))) };
+        let resumable = if shell { None } else { rec.as_ref().and_then(|r| r.agent_session.as_deref().map(|id| (r, id))) };
         match resumable {
             // AU61: zygo does not resume the conversation in another folder. The command names each path and the id
             // as one shell word; the text before it escapes them (C6).
-            Some((launch, id)) => {
-                let config_dir = rec.as_ref().and_then(|r| r.config_dir.as_deref());
-                let cmd = member::resume_command(launch, id, config_dir);
+            Some((r, id)) => {
+                let cmd = member::resume_command(r, id, r.config_dir.as_deref());
                 print_err(&format!(
                     "zygo: {} is gone; agent session {} not resumed; to resume it: cd {} && {cmd}\n",
                     shown(&cwd),

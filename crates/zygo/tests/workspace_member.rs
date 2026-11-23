@@ -2,6 +2,7 @@
 #![cfg(unix)]
 mod common;
 
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -10,13 +11,15 @@ use std::time::Duration;
 use common::workspace::{ready_exe, Guarded, Harness, WS_ID};
 use serde_json::{json, Value};
 use zygo_core::Agent;
-use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Workspace};
+use zygo_workspace::state::{CompactOverride, MemberRecord, MemberState, Pane, PaneKind, Pending, Phase, Workspace};
 
 const KEY: &str = "kaaaaaaaa";
 const KEY2: &str = "kbbbbbbbb";
 const OTHER_ID: &str = "fedcba9876543210";
 const OLD_ZS: &str = "01JAAAAAAAAAAAAAAAAAAAAAAA";
 const LIVE_ZS: &str = "01JBBBBBBBBBBBBBBBBBBBBBBB";
+/// A zygo session with no session folder: its launcher is not live.
+const DEAD_ZS: &str = "01JCCCCCCCCCCCCCCCCCCCCCCC";
 const MERGE: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
 const NO_FILE: &str = "zygo: your --settings value (not shown) is not a JSON object and names no file; it was not used";
 const AU98: &str = "zygo: --server holds user info; this agent is not saved by the workspace";
@@ -493,7 +496,7 @@ fn w18_32_a_resumable_key_refuses_with_its_resume_command_and_an_ended_key_joins
     assert_eq!(o.status.code(), Some(1));
     assert_eq!(
         text(&o.stderr),
-        format!("zygo: pane {KEY} holds resumable session abc; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'; or run zygo ws forget-pane {KEY}\n")
+        format!("zygo: pane {KEY} holds resumable session abc; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'; or run zygo ws forget-pane {KEY}\n")
     );
     assert_eq!(raw_member(&h, KEY), before);
     assert!(!out.join("argv.json").exists());
@@ -634,8 +637,11 @@ fn a_launch_that_ends_before_the_callback_leaves_the_record_byte_equal() { // de
     assert!(!text(&o.stderr).contains(NOT_STARTED), "{}", text(&o.stderr));
 }
 
+/// A guard, not evidence for a rule of the member wrapper: a v1 launch never enters `run_wrapped` (`launch_hand`,
+/// `HandStart::V1`), so no change of the wrapper can make it fail. It keeps a later change from giving v1 launches a
+/// wrapper line.
 #[test]
-fn a_v1_launch_that_fails_prints_no_wrapper_line() { // review round 2, finding 4
+fn guard_a_v1_launch_that_fails_prints_no_wrapper_line() {
     let h = Harness::no_tmux();
     let bin2 = h.root().join("bin2");
     std::fs::create_dir(&bin2).unwrap();
@@ -969,7 +975,9 @@ fn w_c9_two_hand_starts_with_one_own_session_start_one_agent() { // finding 1
     let g = h.root().join("gate");
     let hold = Hold::new(&g, "callback");
     let (out_a, mut env_a) = h.stub(Agent::ClaudeCode, "a");
+    let ca = ctl(&h, "a");
     env_a.push(("ZYGO_TEST_MEMBER_GATE", g.clone().into_os_string()));
+    env_a.push(("ZYGO_STUB_CONTROL", ca.clone().into_os_string()));
     let first = Guarded::spawn(hand(&h, &a, &["claude", "--", "--resume", "X1"], &pairs(&env_a)));
     assert!(until(Duration::from_secs(20), || g.join("callback").exists()));
     // The start write holds the own session as `pending.agent_session`; AU30 keeps it out of `launch.args`.
@@ -986,6 +994,9 @@ fn w_c9_two_hand_starts_with_one_own_session_start_one_agent() { // finding 1
     );
     assert!(!out_b.join("argv.json").exists());
     drop(hold);
+    // Round 3, finding 6: the own session commits through the `SessionStart` hook, which the stub calls at start.
+    assert!(started(&ca));
+    common::stub_control(&ca, "exit 0").unwrap();
     let o = first.output("first hand start");
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     assert!(out_a.join("argv.json").exists());
@@ -1023,7 +1034,7 @@ fn a_resume_command_names_the_saved_launch_and_a_hand_resume_keeps_it() { // fin
     let (_, env) = h.stub(Agent::ClaudeCode, "a");
     let o = Guarded::spawn(hand(&h, &first, &["claude"], &pairs(&env))).output("hand start");
     assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
-    let command = "env -u CLAUDE_CONFIG_DIR zygo claude --profile 'p1' --compact '600k' -- --resume 'abc'";
+    let command = "env -u CLAUDE_CONFIG_DIR zygo claude --profile 'p1' --compact '600k' -- --resume='abc' '--model' 'm'";
     assert_eq!(
         text(&o.stderr),
         format!("zygo: pane {KEY} holds resumable session abc; to resume it: {command}; or run zygo ws forget-pane {KEY}\n")
@@ -1038,7 +1049,7 @@ fn a_resume_command_names_the_saved_launch_and_a_hand_resume_keeps_it() { // fin
     sh.current_dir(h.root()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
     let o = Guarded::spawn(sh).output("resume command");
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    assert!(argv(&out).iter().any(|t| t == "abc"), "{:?}", argv(&out));
+    assert!(argv(&out).iter().any(|t| t == "--resume=abc"), "{:?}", argv(&out));
     let m = member(&h, KEY).unwrap();
     assert_eq!(m.launch, r.launch);
     assert_eq!(m.zygo_session.as_deref(), stub_env(&out)["ZYGO_SESSION"].as_str());
@@ -1244,4 +1255,279 @@ fn w18_19_up_starts_a_user_info_pane_as_a_shell() { // AU98 in a loadout, throug
     let raw = std::fs::read_to_string(h.store(&id).dir().join("workspace.json")).unwrap();
     assert!(!raw.contains("u:p"));
     cli(&h, &["down", &ws.name, "--now", "--wait"], &[]);
+}
+
+// ---- Diff review round 3 ----
+
+/// A team server on 127.0.0.1:0 with one token, as `workspace_run.rs` `team_server` (`tests/serve_cli.rs:57-87`)
+/// builds it; returns its folder, handle and token.
+fn team_server() -> (tempfile::TempDir, zygo_proxy::serve::ServeHandle, String) {
+    use std::sync::Arc;
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().to_path_buf();
+    let (token, sha) = zygo_proxy::team::new_token();
+    let config_file = root.join("config.toml");
+    std::fs::write(&config_file, format!("[serve]\ntokens = [{{ label = \"m3\", sha256 = \"{sha}\" }}]\n")).unwrap();
+    let paths = zygo_core::paths::Paths {
+        config_file: config_file.clone(),
+        cache_dir: root.join("cache"),
+        data_dir: root.join("data"),
+        sessions_dir: root.join("cache/sessions"),
+        marketplaces_dir: root.join("cache/marketplaces"),
+        plugin_store: root.join("data/plugins"),
+        approvals_file: root.join("data/approvals.toml"),
+        usage_db: root.join("data/usage.db"),
+    };
+    let ctx = zygo_config::LoadContext { paths, repo: None, team: None };
+    let mut builtin = toml::Table::try_from(zygo_config::builtin::defaults()).unwrap();
+    builtin.remove("marketplace");
+    let h = zygo_proxy::serve::start(zygo_proxy::serve::ServeOpts {
+        listen: "127.0.0.1:0".into(),
+        tls: None,
+        config_file,
+        load: Arc::new(move || Ok(zygo_config::load_with_builtin(&ctx, builtin.clone())?)),
+        report: Arc::new(|_: &str| {}),
+        pid_file: None,
+        signals: false,
+        start: zygo_proxy::server::StartOpts { usage_db: Some(root.join("data/usage.db")), ..Default::default() },
+    })
+    .unwrap();
+    (d, h, token)
+}
+
+/// What the stub received: argv, environment, cwd (see [`launch_seen`]).
+type Seen = (Vec<String>, BTreeMap<String, String>, String);
+
+/// A command made from the environment pairs of one run.
+type MakeCommand<'a> = dyn Fn(&[(&str, &OsStr)]) -> Command + 'a;
+
+/// What the stub received: its argv, its environment and its cwd, with the values of this one launch (its session
+/// folder, its zygo session, its proxy URL and its session token) written as their names, so two launches of one
+/// record compare.
+fn launch_seen(out: &Path) -> Seen {
+    let env: BTreeMap<String, String> = serde_json::from_value(stub_env(out)).unwrap();
+    let mut own: Vec<(String, &str)> =
+        ["ZYGO_SESSION_DIR", "ZYGO_SESSION", "ZYGO_URL"].into_iter().filter_map(|k| env.get(k).map(|v| (v.clone(), k))).collect();
+    let token = json_file(&out.join("session.json"))["token"].as_str().unwrap().trim().to_string();
+    assert!(!token.is_empty());
+    own.push((token, "token"));
+    let norm = |t: &str| own.iter().fold(t.to_string(), |acc, (v, k)| acc.replace(v.as_str(), &format!("<{k}>")));
+    let cwd = std::fs::read_to_string(out.join("cwd.txt")).unwrap();
+    (argv(out).iter().map(|a| norm(a)).collect(), env.iter().map(|(k, v)| (k.clone(), norm(v))).collect(), cwd)
+}
+
+/// `line` run by `/bin/sh -c` in `h.repo()` with the environment of a hand start in `pane` and `extra`.
+fn sh_in_pane(h: &Harness, pane: &str, line: &str, extra: &[(&str, &OsStr)]) -> Command {
+    for (name, target) in [("zygo", PathBuf::from(env!("CARGO_BIN_EXE_zygo"))), ("env", which::which("env").unwrap())] {
+        let link = h.bin.join(name);
+        if !link.exists() {
+            std::os::unix::fs::symlink(target, link).unwrap();
+        }
+    }
+    let c = hand(h, pane, &[], extra);
+    let mut sh = Command::new("/bin/sh");
+    sh.args(["-c", line]).env_clear().envs(c.get_envs().filter_map(|(k, v)| v.map(|v| (k.to_os_string(), v.to_os_string()))));
+    sh.current_dir(h.repo()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    sh
+}
+
+/// Runs `cmd` with a control-mode stub `name` and `extra`; while the agent runs, reads the session's compaction; then
+/// ends the agent with exit 0. Gives what the stub received, the compaction and the output.
+fn controlled(
+    h: &Harness, name: &str, extra: &[(&str, &OsStr)], cmd: &MakeCommand<'_>,
+) -> (Seen, Option<zygo_proxy::client::WindowArg>, Output) {
+    let (out, mut env) = h.stub(Agent::ClaudeCode, name);
+    let c = ctl(h, name);
+    env.push(("ZYGO_STUB_CONTROL", c.clone().into_os_string()));
+    let mut all = pairs(&env);
+    all.extend_from_slice(extra);
+    let child = Guarded::spawn(cmd(&all));
+    if !started(&c) {
+        let o = child.output(name);
+        panic!("{name}: the agent did not start: {}", text(&o.stderr));
+    }
+    let dir = PathBuf::from(stub_env(&out)["ZYGO_SESSION_DIR"].as_str().unwrap());
+    let compact = zygo_proxy::client::SessionClient::from_session_dir(&dir).unwrap().status().unwrap().compact;
+    common::stub_control(&c, "exit 0").unwrap();
+    let o = child.output(name);
+    (launch_seen(&out), compact, o)
+}
+
+#[test]
+fn the_printed_resume_command_starts_the_agent_as_ws_run_does() { // diff review round 3, findings 1-4; AU61
+    // The serve mode refuses a passthrough session (`zygo-proxy` `routes.rs:129`, "passthrough is local mode only"), so
+    // passthrough and a server are two records: passthrough in local mode with the `cleared` override, and a server
+    // with a port with the `set` override.
+    for (case, passthrough, serve, compact, flag) in [
+        ("passthrough, cleared", true, false, CompactOverride::Cleared, ""),
+        ("server, set", false, true, CompactOverride::Set("800k".into()), " --compact '800k'"),
+    ] {
+        let Some(h) = Harness::new() else { return };
+        let (_d, srv, token) = team_server();
+        let config = if serve { TEAM_SERVER } else { "" };
+        std::fs::write(h.root().join("config.toml"), format!("{config}[profile.p1]\nprompt = \"P\"\n")).unwrap();
+        let first = workspace_session(&h, Some(KEY), Some(WS_ID));
+        let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
+        r.launch.profile = Some("p1".into());
+        r.launch.passthrough = passthrough;
+        r.launch.server = serve.then(|| srv.url().to_string());
+        r.launch.yolo = true;
+        r.launch.compact = Some("600k".into());
+        r.launch.args = vec!["--model".into(), "m".into()];
+        r.compact = Some(compact);
+        up_state(&h, &[(KEY, r.clone())], &mut |_| {});
+        let token = OsString::from(token);
+        let extra = [("ZYGO_TEAM_TOKEN", token.as_os_str())];
+        // The command that zygo prints for the record (AU94 refusal of a hand start with no session argument).
+        let (_, env) = h.stub(Agent::ClaudeCode, "refused");
+        let mut all = pairs(&env);
+        all.extend_from_slice(&extra);
+        let o = Guarded::spawn(hand(&h, &first, &["claude"], &all)).output("hand start");
+        assert_eq!(o.status.code(), Some(1), "{case}: {}", text(&o.stderr));
+        let mid = match (passthrough, serve) {
+            (true, _) => " --passthrough".to_string(),
+            (_, true) => format!(" --server '{}'", srv.url()),
+            _ => String::new(),
+        };
+        let command = format!("env -u CLAUDE_CONFIG_DIR zygo claude --profile 'p1'{mid}{flag} --yolo -- --resume='abc' '--model' 'm'");
+        assert_eq!(
+            text(&o.stderr),
+            format!("zygo: pane {KEY} holds resumable session abc; to resume it: {command}; or run zygo ws forget-pane {KEY}\n"),
+            "{case}"
+        );
+        // `ws run` of the record, then the printed command on the same record. Both run as `/bin/sh -c 'env …'` with one
+        // stub name, so the shell's `_` and the stub's own variables are the same in the two runs.
+        let ws_run = format!("env zygo ws run --ws-id {WS_ID} --pane {KEY}");
+        let (by_ws_run, compact_ws_run, o) = controlled(&h, "s", &extra, &|all| sh_in_pane(&h, &first, &ws_run, all));
+        assert_eq!(o.status.code(), Some(0), "{case}: {}", text(&o.stderr));
+        up_state(&h, &[(KEY, r.clone())], &mut |_| {});
+        for d in [h.root().join("out/s"), ctl(&h, "s")] {
+            std::fs::remove_dir_all(d).unwrap();
+        }
+        let (by_command, compact_command, o) = controlled(&h, "s", &extra, &|all| sh_in_pane(&h, &first, &command, all));
+        assert_eq!(o.status.code(), Some(0), "{case}: {}", text(&o.stderr));
+        assert_eq!(by_command.0, by_ws_run.0, "{case}: argv");
+        assert_eq!(by_command.1, by_ws_run.1, "{case}: environment");
+        assert_eq!(by_command.2, by_ws_run.2, "{case}: cwd");
+        assert_eq!(compact_command, compact_ws_run, "{case}: compaction");
+        assert!(by_ws_run.0.iter().any(|a| a == "--resume=abc"), "{case}: {:?}", by_ws_run.0);
+        srv.shutdown();
+    }
+}
+
+#[test]
+fn w_c9_a_pending_id_of_a_launcher_that_is_not_live_does_not_hold_it() { // diff review round 3, finding 5
+    let Some(h) = Harness::new() else { return };
+    let mut held = record(Agent::ClaudeCode, MemberState::Running, None, None);
+    held.pending = Some(Pending { zygo_session: DEAD_ZS.into(), agent_session: Some("X1".into()), started_at: 1, ..Default::default() });
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[(KEY, held)], &mut |_| {});
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--", "--resume", "X1"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(json_file(&out.join("session-arg.json")), json!({"flag": "--resume", "id": "X1"}));
+    let key = pane_key(&h, &pane);
+    assert_eq!(stub_env(&out)["ZYGO_PANE"].as_str(), Some(key.as_str()));
+    assert!(member(&h, &key).is_some());
+}
+
+#[test]
+fn a_typed_id_that_does_not_exist_is_not_saved() { // diff review round 3, finding 6
+    let Some(h) = Harness::new() else { return };
+    let pane = split_in_workspace(&h, &mut |_| {});
+    // The agent exits 1 before any hook (as Claude Code does for an id it does not know).
+    let (out, mut env) = h.stub(Agent::ClaudeCode, "a");
+    env.push(("ZYGO_STUB_EXIT", "1".into()));
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--", "--resume", "typo"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    assert!(out.join("argv.json").exists());
+    let key = pane_key(&h, &pane);
+    let m = member(&h, &key).unwrap();
+    assert_eq!((m.agent_session.as_deref(), m.pending.is_none()), (None, true));
+    assert_eq!(m.zygo_session.as_deref(), stub_env(&out)["ZYGO_SESSION"].as_str());
+    assert!(!raw_member(&h, &key).to_string().contains("typo"), "{}", raw_member(&h, &key));
+    assert!(!text(&o.stderr).contains("is kept by the agent"), "{}", text(&o.stderr));
+    // A signal ends the launch and no hook ran (the stub's hook shell fails): no resumable record with the typed id.
+    let pane2 = split(&h, "=zygo-app:", "cat");
+    let (_, mut env) = h.stub(Agent::ClaudeCode, "b");
+    let c = ctl(&h, "b");
+    env.push(("ZYGO_STUB_CONTROL", c.clone().into_os_string()));
+    env.push(("ZYGO_STUB_SHELL", "/bin/false".into()));
+    let child = Guarded::spawn(hand(&h, &pane2, &["claude", "--", "--resume", "typo2"], &pairs(&env)));
+    assert!(started(&c));
+    // SAFETY: `kill` sends SIGTERM to this test's own child, the zygo launcher.
+    assert_eq!(unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) }, 0);
+    let o = child.output("signal");
+    let key2 = pane_key(&h, &pane2);
+    let m = member(&h, &key2).unwrap();
+    assert_eq!((m.state, m.agent_session.as_deref()), (MemberState::Resumable, None), "{}", text(&o.stderr));
+    assert!(!raw_member(&h, &key2).to_string().contains("typo2"), "{}", raw_member(&h, &key2));
+}
+
+#[test]
+fn a_hand_start_exit_line_names_the_saved_launch() { // diff review round 3, finding 7
+    let Some(h) = Harness::new() else { return };
+    std::fs::write(h.root().join("config.toml"), "[profile.p1]\nprompt = \"P\"\n[profile.p2]\nprompt = \"Q\"\n").unwrap();
+    let first = workspace_session(&h, Some(KEY), Some(WS_ID));
+    let mut r = record(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS));
+    r.launch.profile = Some("p1".into());
+    up_state(&h, &[(KEY, r)], &mut |_| {});
+    let (_, mut env) = h.stub(Agent::ClaudeCode, "a");
+    env.push(("ZYGO_STUB_EXIT", "3".into()));
+    let o = Guarded::spawn(hand(&h, &first, &["claude", "--profile", "p2", "--", "--resume", "abc"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(3), "{}", text(&o.stderr));
+    let line = "zygo: claude exited 3; agent session abc is kept by the agent; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude --profile 'p1' -- --resume='abc'\n";
+    assert_eq!(text(&o.stderr).matches(line).count(), 1, "{}", text(&o.stderr));
+}
+
+#[test]
+fn a_not_member_launch_keeps_every_typed_token_in_order() { // diff review round 3, finding 9
+    let Some(h) = Harness::new() else { return };
+    // Claude Code takes its session tokens at index 0 (`launcher.rs` `insert_session_args`), so every typed token is
+    // after the pre-assign.
+    let (o, out, _) = refused_in_callback(&h, &["claude", "--", "--model", "m", "-p", "hi"], &mut |h, _| {
+        h.store(WS_ID)
+            .update_existing(Duration::from_secs(5), &mut |w| {
+                w.phase = Phase::Down;
+                Ok(())
+            })
+            .unwrap();
+    });
+    v1_with(&o, &out, "a member starts only in phase up or draining, not down");
+    let a = argv(&out);
+    assert!(a.windows(4).any(|w| w == ["--model", "m", "-p", "hi"]), "{a:?}");
+    assert!(!a.iter().any(|t| t.starts_with("--session-id")), "{a:?}");
+}
+
+#[test]
+fn w_c9_the_callback_refuses_a_second_start_of_one_own_session() { // diff review round 3, finding 11
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[], &mut |_| {});
+    let a = split(&h, "=zygo-app:", "cat");
+    let b = split(&h, "=zygo-app:", "cat");
+    let (ga, gb) = (h.root().join("gate-a"), h.root().join("gate-b"));
+    let launch_a = Hold::new(&ga, "launch");
+    let callback_a = Hold::new(&ga, "callback");
+    let launch_b = Hold::new(&gb, "launch");
+    let (out_a, mut env_a) = h.stub(Agent::ClaudeCode, "a");
+    env_a.push(("ZYGO_TEST_MEMBER_GATE", ga.clone().into_os_string()));
+    let (out_b, mut env_b) = h.stub(Agent::ClaudeCode, "b");
+    env_b.push(("ZYGO_TEST_MEMBER_GATE", gb.clone().into_os_string()));
+    let first = Guarded::spawn(hand(&h, &a, &["claude", "--", "--resume", "X1"], &pairs(&env_a)));
+    let second = Guarded::spawn(hand(&h, &b, &["claude", "--", "--resume", "X1"], &pairs(&env_b)));
+    // Both starts passed the checks before the launch (W§8.4).
+    assert!(until(Duration::from_secs(20), || ga.join("launch").exists() && gb.join("launch").exists()));
+    drop(launch_a);
+    assert!(until(Duration::from_secs(20), || ga.join("callback").exists()));
+    let key_a = pane_key(&h, &a);
+    drop(launch_b);
+    let o = second.output("second hand start");
+    v1_with(&o, &out_b, &format!("agent session X1 belongs to pane {key_a}"));
+    assert_eq!(member(&h, &pane_key(&h, &b)), None);
+    drop(callback_a);
+    let o = first.output("first hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(stub_env(&out_a)["ZYGO_PANE"].as_str(), Some(key_a.as_str()));
 }
