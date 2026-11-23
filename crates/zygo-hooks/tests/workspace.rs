@@ -755,6 +755,37 @@ fn killed_down_releases_the_block_at_once() {
 }
 
 #[test] // AU92 as amended by FIX-20, AU60 order, W§7.4 trigger, D10, D12, D14, D15; controller decisions 6, 9, 13
+fn view_rewrites_keep_unknown_fields() {
+    // Attempt-2 review round 1, F4: `clear_note` and `bind_note` read, change and save the view; a field of a newer
+    // zygo stays (AU78 pattern).
+    let _s = serial();
+    let add_field = |f: &Fx| {
+        let mut v: Value = serde_json::from_slice(&fs::read(f.dir.view_json()).unwrap()).unwrap();
+        v["future_field"] = json!({"kept": [1, 2]});
+        fs::write(f.dir.view_json(), serde_json::to_vec(&v).unwrap()).unwrap();
+    };
+    let field = |f: &Fx| -> Value { serde_json::from_slice::<Value>(&fs::read(f.dir.view_json()).unwrap()).unwrap()["future_field"].clone() };
+    // Claude Code SessionStart: the note is cleared (clear_note).
+    let f = fx_with(Agent::ClaudeCode, Some(marker(ID, KEY, Some(note_iu()))));
+    ws_state(&f, Phase::Up, rec_pending());
+    add_field(&f);
+    let missing = f.t.path().join("missing");
+    session_start::run_member(&ss(AS1), &f.dir, &f.paths, &missing, &mut Vec::new()).unwrap();
+    assert_eq!(view_note(&f), None);
+    assert_eq!(field(&f), json!({"kept": [1, 2]}));
+    // OpenCode session: the note is bound (bind_note), then removed for another id.
+    let g = fx_with(Agent::OpenCode, Some(marker(ID, KEY, Some(note_iu()))));
+    add_field(&g);
+    let gm = g.t.path().join("missing");
+    ws_with(&g, &gm, "session", oc("ses_A")).unwrap();
+    assert_eq!(view_note(&g), Some(bound(note_iu(), "ses_A")));
+    assert_eq!(field(&g), json!({"kept": [1, 2]}));
+    ws_with(&g, &gm, "session", oc("ses_B")).unwrap();
+    assert_eq!(view_note(&g), None);
+    assert_eq!(field(&g), json!({"kept": [1, 2]}));
+}
+
+#[test]
 fn session_start_prints_then_commits_and_clears_once() {
     let _s = serial();
     let f = fx_with(Agent::ClaudeCode, Some(marker(ID, KEY, Some(note_iu()))));

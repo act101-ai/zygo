@@ -35,6 +35,10 @@ pub struct SessionView {
     /// and for a `view.json` without the field.
     #[serde(default)]
     pub workspace: Option<ViewWorkspace>,
+    /// The top-level fields of `view.json` that this zygo does not know; a save puts them back, so a read, change and
+    /// save of the view (the member hooks, H1) keeps the fields of a newer zygo (the AU78 pattern of `workspace.json`).
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Each field that has a serde default holds that default; `agent` is Claude Code; every other field is empty or `false`.
@@ -61,6 +65,7 @@ impl Default for SessionView {
             tail_lines: default_tail_lines(),
             statusline_style: default_statusline_style(),
             workspace: None,
+            extra: serde_json::Map::new(),
         }
     }
 }

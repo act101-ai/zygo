@@ -359,6 +359,29 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
 }
 
 #[test]
+fn session_view_save_keeps_unknown_top_level_fields() { // H1 attempt-2 review round 1, F4 (AU78 pattern)
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    SessionView { session: "s".into(), main_role: "lead".into(), ..Default::default() }.save(&d).unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    json["future_field"] = serde_json::json!({"a": [1, "b"]});
+    json["future_flag"] = serde_json::json!(true);
+    std::fs::write(d.view_json(), serde_json::to_vec(&json).unwrap()).unwrap();
+    let mut v = SessionView::load(&d).unwrap();
+    v.main_role = "code".into();
+    v.save(&d).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(after["future_field"], serde_json::json!({"a": [1, "b"]}));
+    assert_eq!(after["future_flag"], serde_json::json!(true));
+    assert_eq!(after["main_role"], "code");
+    // A view of this zygo writes no extra field.
+    let plain = SessionView::default();
+    let keys: Vec<String> = serde_json::to_value(&plain).unwrap().as_object().unwrap().keys().cloned().collect();
+    assert!(!keys.iter().any(|k| k.starts_with("future_") || k == "extra"), "{keys:?}");
+}
+
+#[test]
 fn session_log_appends_lines_and_refuses_links_and_fifos() { // H1 D21: the one session-log writer
     let t = tempfile::tempdir().unwrap();
     let sd = SessionDir::new(t.path().join("s"));
