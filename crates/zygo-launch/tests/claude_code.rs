@@ -1771,3 +1771,11 @@ fn session_methods_default_to_none() {
     assert!(Bare.preassign_args("U1").is_empty());
     assert!(Bare.resume_args("U1").is_empty());
 }
+
+#[test] // M5 round 3 finding 1: `for_zygo` keeps the default program and managed path and takes the given zygo binary
+fn for_zygo_takes_the_given_binary() {
+    let z = PathBuf::from("/opt/zygo/bin/zygo");
+    let a = ClaudeCode::for_zygo(z.clone());
+    let d = ClaudeCode::default();
+    assert_eq!((a.program.as_str(), &a.managed_settings, &a.zygo), (d.program.as_str(), &d.managed_settings, &z));
+}

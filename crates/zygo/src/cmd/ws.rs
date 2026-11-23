@@ -111,7 +111,8 @@ fn shown(p: &Path) -> String {
 }
 
 /// `zygo ws run` (W§8.2): one pane of a workspace. The ids are checked first (AU84, exit 1); every other path ends in
-/// the shell of step 8.
+/// the shell of step 8. The update check runs after the id checks and before the environment cleaning; on an
+/// installed update `ws run` relaunches itself (D4).
 fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
     if !valid_ws_id(ws_id) {
         print_err(&format!("zygo: invalid workspace id {}\n", zygo_core::esc(ws_id)));
@@ -120,6 +121,26 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
     if !valid_pane_key(pane) {
         print_err(&format!("zygo: invalid pane key {}\n", zygo_core::esc(pane)));
         return 1;
+    }
+    // The update check (auto-update design; W§8.2 step 1a), before the environment cleaning (AU64), so it sees
+    // `ZYGO_WORKSPACE`. A relaunched `ws run` (`ZYGO_RELAUNCHED` set) does not check again, also when the cache was
+    // not written. The binary path is read first: after an install, `/proc/self/exe` names a deleted file. When the
+    // relaunch fails, `ws run` continues as a normal `ws run`, so the member starts and its record is not left
+    // `running` without a launcher.
+    let exe = std::env::current_exe().and_then(std::fs::canonicalize);
+    // The zygo binary of every launch in this `ws run` (M5 round 3): the path read before the check, so hook commands
+    // never name the deleted file after an install. Only when that read failed, the path of `current_exe`.
+    let zygo = match &exe {
+        Ok(p) => p.clone(),
+        Err(_) => std::env::current_exe().unwrap_or_default(),
+    };
+    if std::env::var_os(zygo_workspace::env::RELAUNCHED).is_none() && super::start_check(&[]) == Some(0) {
+        let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+        let e = match &exe {
+            Ok(p) => relaunch(p, &args),
+            Err(e) => std::io::Error::new(e.kind(), e.to_string()),
+        };
+        print_err(&format!("zygo: cannot relaunch zygo ws run: {}\n", zygo_core::esc(&e.to_string())));
     }
     // AU64: the environment of the pane; the process environment itself is not changed.
     let env = zygo_workspace::env::cleaned(std::env::vars_os().collect());
@@ -174,13 +195,17 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
         print_err(&format!("zygo: pane {pane} has no member record; started a shell\n"));
         return exec_shell(env, ws_id, &cwd);
     };
-    launch_member(paths, store, ws_id, pane, &rec, &env, &cwd);
+    launch_member(paths, store, ws_id, pane, &rec, &env, &cwd, &zygo);
     exec_shell(env, ws_id, &cwd)
 }
 
 /// W§8.2 steps 2-7: the saved launch of `rec` (AU45, AU32), the resume of its agent session (W§8.3, AU3, AU61, D8),
-/// the resume note inputs (W§9.4), then the member wrapper.
-fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &MemberRecord, env: &[(OsString, OsString)], cwd: &Path) {
+/// the resume note inputs (W§9.4), then the member wrapper. `zygo` is the binary that the hooks and the plugin run.
+#[allow(clippy::too_many_arguments)]
+fn launch_member(
+    paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &MemberRecord, env: &[(OsString, OsString)], cwd: &Path,
+    zygo: &Path,
+) {
     let kind = rec.launch.kind;
     let resumed = if zygo_workspace::args::has_session_arg(kind, &rec.launch.args) { None } else { rec.agent_session.clone() };
     let built = match kind {
@@ -196,7 +221,7 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
     };
     let adapter: Box<dyn AgentAdapter> = match kind {
         Agent::ClaudeCode => {
-            let d = ClaudeCode::default();
+            let d = ClaudeCode::for_zygo(zygo.to_path_buf());
             if resumed.is_some() {
                 saved_config_dir(&mut opts.env, rec.config_dir.as_deref());
             }
@@ -207,7 +232,7 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
             }
         }
         Agent::OpenCode => {
-            let d = OpenCode::default();
+            let d = OpenCode::new(zygo.to_path_buf());
             let saved = if resumed.is_some() { saved_program(&opts.env, d.program(), rec.program.as_deref(), cwd) } else { None };
             if let Some(saved) = saved {
                 member::gate("program");
@@ -309,6 +334,36 @@ fn exec_shell(env: Vec<(OsString, OsString)>, ws_id: &str, cwd: &Path) -> i32 {
 #[cfg(not(unix))]
 fn exec_shell(_env: Vec<(OsString, OsString)>, _ws_id: &str, _cwd: &Path) -> i32 {
     2
+}
+
+/// D4: `exec` of the updated binary `exe` with the `ws run` arguments `args`, the uncleaned environment and
+/// `ZYGO_RELAUNCHED=1` (W§8.2 step 1a). Returns only when the `exec` fails.
+#[cfg(unix)]
+fn relaunch(exe: &Path, args: &[OsString]) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    std::process::Command::new(relaunch_target(exe)).args(args).env(zygo_workspace::env::RELAUNCHED, "1").exec()
+}
+
+/// The test seam (feature `test-hooks` only, as the member gate of D9): with `ZYGO_TEST_RELAUNCH_FAIL` set, the
+/// relaunch executes a path that does not exist, so a test sees the `exec` failure.
+#[cfg(all(unix, feature = "test-hooks"))]
+fn relaunch_target(exe: &Path) -> PathBuf {
+    if std::env::var_os("ZYGO_TEST_RELAUNCH_FAIL").is_some() {
+        return PathBuf::from("/nonexistent/zygo-test-relaunch");
+    }
+    exe.to_path_buf()
+}
+
+/// A build without `test-hooks` has no seam.
+#[cfg(all(unix, not(feature = "test-hooks")))]
+fn relaunch_target(exe: &Path) -> PathBuf {
+    exe.to_path_buf()
+}
+
+/// Not reached: OP5 ends every workspace verb on Windows first.
+#[cfg(not(unix))]
+fn relaunch(_exe: &Path, _args: &[OsString]) -> std::io::Error {
+    std::io::ErrorKind::Unsupported.into()
 }
 
 /// The whole snapshot body runs through `snapshot_child` (H1 D15), so a body that fails queues `snapshot.pending`
@@ -565,5 +620,12 @@ mod tests {
         assert_eq!(names, [OsString::from("opencode")]);
         assert_eq!(std::fs::read_link(dir.join("opencode")).unwrap(), saved);
         assert_eq!(program_folder(&p, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap(), dir); // again: the link is replaced
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relaunch_returns_the_exec_error() { // D4: the exec failure path
+        let e = super::relaunch(Path::new("/nonexistent/zygo-m5"), &[OsString::from("ws")]);
+        assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
     }
 }

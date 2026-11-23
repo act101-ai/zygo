@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
+mod common;
+
 /// Held while a copy of the binary is written and while a child is spawned, so no other test's `fork` holds a write
 /// descriptor of an executable that is being exec'd (ETXTBSY).
 static COPY_LOCK: Mutex<()> = Mutex::new(());
@@ -35,6 +37,11 @@ struct Fixture {
 
 impl Fixture {
     fn start(files: Vec<(String, Vec<u8>)>) -> Fixture {
+        Fixture::start_failing(files, Vec::new())
+    }
+
+    /// [`Fixture::start`], and each path of `failing` answers `500 Internal Server Error`.
+    fn start_failing(files: Vec<(String, Vec<u8>)>, failing: Vec<String>) -> Fixture {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -55,6 +62,7 @@ impl Fixture {
                 log2.lock().unwrap().push(path.clone());
                 let hit = files.iter().find(|(p, _)| *p == path);
                 let (status, body): (&str, &[u8]) = match hit {
+                    _ if failing.contains(&path) => ("500 Internal Server Error", b"failed"),
                     Some((_, b)) => ("200 OK", b),
                     None => ("404 Not Found", b"not found"),
                 };
@@ -606,12 +614,15 @@ mod start {
         };
         let on = Config::default();
         type Case<'a> = (&'a str, bool, &'a Config, &'a [&'a str], &'a [(&'a str, &'a str)]);
-        let cases: [Case; 8] = [
+        let cases: [Case; 10] = [
             ("non-TTY", false, &on, &[], &[]),
             ("-p", true, &on, &["-p", "hi"], &[]),
             ("--print", true, &on, &["--model", "x", "--print"], &[]),
             ("ZYGO_SESSION", true, &on, &[], &[("ZYGO_SESSION", "01ABC")]),
+            // M5 round 2 finding 6: an empty marker counts as set, as AU64 and AU95 count it (`cmd/mod.rs:112-116`).
+            ("empty ZYGO_SESSION", true, &on, &[], &[("ZYGO_SESSION", "")]),
             ("ZYGO_WORKSPACE", true, &on, &[], &[("ZYGO_WORKSPACE", "w1")]),
+            ("empty ZYGO_WORKSPACE", true, &on, &[], &[("ZYGO_WORKSPACE", "")]),
             ("[update] check = false", true, &off, &[], &[]),
             ("ZYGO_NO_UPDATE_CHECK=1", true, &on, &[], &[("ZYGO_NO_UPDATE_CHECK", "1")]),
             ("both opt-outs", true, &off, &[], &[("ZYGO_NO_UPDATE_CHECK", "1")]),
@@ -742,6 +753,47 @@ mod start {
         assert_eq!(std::fs::read(&s.copy).unwrap(), b"fixture-binary");
     }
 
+    /// `zygo <agent>` with an empty `ZYGO_SESSION`, on a TTY (`ZYGO_TEST_ASSUME_TTY=1`): the check skips (M5 round 2
+    /// finding 6). No answer is given and no agent is on `PATH`, so the real test binary is never replaced.
+    fn dispatch_with_an_empty_session_skips(agent: &str) {
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("no-agents");
+        std::fs::create_dir(&empty).unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+        cmd.arg(agent)
+            .env("ZYGO_RELEASE_BASE", f.base())
+            .env("ZYGO_TEST_ASSUME_TTY", "1")
+            .env("ZYGO_SESSION", "")
+            .env("HOME", dir.path())
+            .env("LOCALAPPDATA", dir.path())
+            .env("APPDATA", dir.path())
+            .env("PATH", &empty)
+            .env_remove("ZYGO_WORKSPACE")
+            .env_remove("ZYGO_NO_UPDATE_CHECK")
+            .env_remove("ZYGO_CONFIG")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let g = COPY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let child = cmd.spawn().unwrap();
+        drop(g);
+        let o = child.wait_with_output().unwrap();
+        assert!(!err(&o).contains("is available"), "{}", err(&o));
+        assert!(f.requests().is_empty(), "{:?}", f.requests());
+        assert!(!dir.path().join(".cache/zygo/update.json").exists());
+    }
+
+    #[test]
+    fn zygo_claude_with_an_empty_zygo_session_skips_the_check() {
+        dispatch_with_an_empty_session_skips("claude");
+    }
+
+    #[test]
+    fn zygo_opencode_with_an_empty_zygo_session_skips_the_check() {
+        dispatch_with_an_empty_session_skips("opencode");
+    }
+
     #[test]
     fn zygo_claude_runs_the_check_before_the_launch() {
         dispatch_installs_and_does_not_launch("claude");
@@ -750,5 +802,484 @@ mod start {
     #[test]
     fn zygo_opencode_runs_the_check_before_the_launch() {
         dispatch_installs_and_does_not_launch("opencode");
+    }
+}
+
+// ---- the update check of `zygo up` and `zygo ws run` (M5; auto-update design, "Where") ----
+
+#[cfg(unix)]
+mod workspace_check {
+    use super::*;
+    use common::workspace::{Guarded, Harness, WS_ID};
+    use std::ffi::{OsStr, OsString};
+    use std::os::unix::fs::MetadataExt;
+    use std::time::Duration;
+    use zygo_core::Agent;
+    use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind};
+
+    /// `f` while `COPY_LOCK` is held: every spawn and fork of this module runs under it (D8).
+    fn locked<R>(f: impl FnOnce() -> R) -> R {
+        let _g = COPY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        f()
+    }
+
+    /// The prompt of the auto-update design.
+    fn prompt(new: &str) -> String {
+        format!("zygo {new} is available (you have {CUR}). Update now? [y/N/s]")
+    }
+
+    /// Polls `f` every 20 ms until it is true or `bound` is over; the last result.
+    fn until(bound: Duration, mut f: impl FnMut() -> bool) -> bool {
+        let t0 = std::time::Instant::now();
+        loop {
+            if f() {
+                return true;
+            }
+            if t0.elapsed() >= bound {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A git repository in `dir` with one empty commit and no user or system git config; `git` linked into `h.bin`.
+    fn git_repo(h: &Harness, dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        for args in [&["init", "-q", "-b", "main"][..], &["commit", "-q", "--allow-empty", "-m", "a"][..]] {
+            let mut c = Command::new("git");
+            c.args(["-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .current_dir(dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let child = locked(|| c.spawn().unwrap());
+            let o = child.wait_with_output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", err(&o));
+        }
+        let link = h.bin.join("git");
+        if !link.exists() {
+            std::os::unix::fs::symlink(which::which("git").unwrap(), link).unwrap();
+        }
+    }
+
+    /// `c` with the update check on: the harness opt-out removed, the fixture release base, and a TTY assumed (D7).
+    fn checked(mut c: Command, base: &OsStr) -> Command {
+        c.env_remove("ZYGO_NO_UPDATE_CHECK").env("ZYGO_RELEASE_BASE", base).env("ZYGO_TEST_ASSUME_TTY", "1");
+        c
+    }
+
+    fn update_json(h: &Harness) -> PathBuf {
+        h.paths.cache_dir.join("update.json")
+    }
+
+    /// The number of entries of the state folder of workspaces; 0 when it does not exist.
+    fn state_entries(h: &Harness) -> usize {
+        std::fs::read_dir(h.paths.data_dir.join("state/workspaces")).map(|d| d.count()).unwrap_or(0)
+    }
+
+    /// The record that `up` writes for a new loadout member (`zygo-workspace/src/up.rs:565-568`).
+    fn loadout_member() -> MemberRecord {
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        r.state = MemberState::Running;
+        r
+    }
+
+    #[test]
+    fn harness_env_opts_out_of_the_update_check() {
+        let h = locked(Harness::no_tmux);
+        assert!(h.env().iter().any(|(k, v)| k == "ZYGO_NO_UPDATE_CHECK" && v == "1"), "{:?}", h.env());
+    }
+
+    #[test]
+    fn zygo_up_prompts_once_before_any_pane_starts() {
+        let Some(h) = locked(Harness::new) else { return };
+        git_repo(&h, &h.repo());
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
+        let tmux = OsString::from(format!("{},1,0", h.socket().display()));
+        let mut extra: Vec<(&str, &OsStr)> = vec![("TMUX", tmux.as_os_str())];
+        extra.extend(stub.iter().map(|(k, v)| (*k, v.as_os_str())));
+        let mut c = checked(h.zygo(&["up", "--no-attach"], &extra), &base);
+        c.current_dir(h.repo()).stdin(Stdio::piped());
+        let mut g = locked(|| Guarded::spawn(c));
+        let mut stdin = g.stdin().unwrap();
+        // Asked, not answered: no server, no state, no agent.
+        assert!(until(Duration::from_secs(10), || f.requests().len() == 1), "{:?}", f.requests());
+        std::thread::sleep(Duration::from_millis(500));
+        let srv = h.server.as_ref().unwrap();
+        assert!(locked(|| srv.run(&["list-sessions"])).is_err(), "a pane started before the answer");
+        assert_eq!(state_entries(&h), 0);
+        assert!(!out.exists());
+        stdin.write_all(b"n\n").unwrap();
+        drop(stdin);
+        let o = g.output("zygo up");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(err(&o).matches(&prompt(NEW)).count(), 1, "{}", err(&o));
+        // The member pane starts after the answer; its `ws run` makes no second request (the 24 h rule; P2).
+        assert!(until(Duration::from_secs(20), || out.join("argv.json").exists()));
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        assert!(update_json(&h).is_file());
+    }
+
+    #[test]
+    fn zygo_up_yes_installs_and_starts_nothing() {
+        let h = locked(Harness::no_tmux); // `bin/tmux` fails every call
+        git_repo(&h, &h.repo());
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, b"fixture-binary"));
+        let f = Fixture::start(files);
+        let base = OsString::from(f.base());
+        let s = setup(); // a copy: the test binary is never replaced
+        let mut c = Command::new(&s.copy);
+        c.args(["up", "--no-attach"]).env_clear().envs(h.env());
+        let mut c = checked(c, &base);
+        c.current_dir(h.repo()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = locked(|| Guarded::spawn(c));
+        child.stdin().unwrap().write_all(b"y\n").unwrap();
+        let o = child.output("zygo up");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
+        assert_eq!(std::fs::read(&s.copy).unwrap(), b"fixture-binary");
+        assert_eq!(state_entries(&h), 0);
+    }
+
+    #[test]
+    fn zygo_up_all_asks_one_time_for_two_workspaces() {
+        let Some(h) = locked(Harness::new) else { return };
+        let tmux = OsString::from(format!("{},1,0", h.socket().display()));
+        let repos = [h.repo(), h.root().join("repo2")];
+        for r in &repos {
+            git_repo(&h, r);
+            // The harness opt-out stays: these two `up` runs make no check.
+            let mut c = h.zygo(&["up", "--no-attach"], &[("TMUX", tmux.as_os_str())]);
+            c.current_dir(r);
+            let o = locked(|| Guarded::spawn(c)).output("zygo up");
+            assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        }
+        let srv = h.server.as_ref().unwrap();
+        locked(|| srv.kill_server()); // both stay `up` in their state: `--all` restores both
+        // The launchers of the killed panes end shortly after the server, and while one is live `up` refuses the
+        // restore (AU87). So the test waits until none is live.
+        let live = || {
+            let d = std::fs::read_dir(&h.paths.sessions_dir);
+            d.map(|d| d.flatten().filter(|e| zygo_core::session_dir::live(&e.path())).count()).unwrap_or(0)
+        };
+        assert!(until(Duration::from_secs(15), || live() == 0), "launchers still live");
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        // The restored panes are shells; the harness test shell exits at once and would end the session, so they
+        // get an interactive `/bin/sh`, which waits in its pane.
+        let sh = OsStr::new("/bin/sh");
+        let mut c = checked(h.zygo(&["up", "--all"], &[("TMUX", tmux.as_os_str()), ("SHELL", sh)]), &base);
+        c.current_dir(h.root()).stdin(Stdio::piped());
+        let mut g = locked(|| Guarded::spawn(c));
+        g.stdin().unwrap().write_all(b"n\n").unwrap();
+        let o = g.output("zygo up --all");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert_eq!(err(&o).matches(&prompt(NEW)).count(), 1, "{}", err(&o));
+        let names = locked(|| srv.run(&["list-sessions", "-F", "#{session_name}"])).unwrap();
+        assert_eq!(names.lines().count(), 2, "{names}");
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+    }
+
+    /// `zygo up --no-attach` whose own check does not run, on a fresh `update.json`, with the update check on for its
+    /// panes (`extra` and `tty` say why `up` skips). The first pane is a TTY. Without `ZYGO_WORKSPACE` from
+    /// `new-session -e` (W§8.1 step 9), its `ws run` made the request, and the prompt waited in the pane, so the
+    /// member did not start. No request means no prompt: the prompt comes only after the answer of the request.
+    fn first_pane_makes_no_request(extra: &[(&str, &OsStr)], tty: bool) {
+        let Some(h) = locked(Harness::new) else { return };
+        git_repo(&h, &h.repo());
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
+        let tmux = OsString::from(format!("{},1,0", h.socket().display()));
+        let mut all: Vec<(&str, &OsStr)> = vec![("TMUX", tmux.as_os_str())];
+        all.extend(stub.iter().map(|(k, v)| (*k, v.as_os_str())));
+        all.extend_from_slice(extra);
+        let mut c = h.zygo(&["up", "--no-attach"], &all);
+        c.env_remove("ZYGO_NO_UPDATE_CHECK").env("ZYGO_RELEASE_BASE", &base).current_dir(h.repo());
+        if tty {
+            c.env("ZYGO_TEST_ASSUME_TTY", "1");
+        }
+        let o = locked(|| Guarded::spawn(c)).output("zygo up");
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert!(!err(&o).contains(&prompt(NEW)), "{}", err(&o));
+        assert!(until(Duration::from_secs(20), || out.join("argv.json").exists()), "no member; requests {:?}", f.requests());
+        assert!(f.requests().is_empty(), "{:?}", f.requests());
+        assert!(!update_json(&h).exists());
+    }
+
+    #[test] // M5 round 2 finding 1 (FIX-28 folded): `up` inside an agent skips its own check; the first pane skips too
+    fn zygo_up_inside_an_agent_its_first_pane_makes_no_request() {
+        first_pane_makes_no_request(&[("ZYGO_SESSION", OsStr::new("01JZ0000000000000000000000"))], true);
+    }
+
+    #[test] // M5 round 2 finding 5: `up` with no TTY asks nothing; its first pane (a TTY) asks nothing either
+    fn zygo_up_without_a_tty_and_its_first_pane_ask_nothing() {
+        first_pane_makes_no_request(&[], false);
+    }
+
+    #[test] // auto-update #5, the `ZYGO_WORKSPACE` bullet: the opt-out is removed, so only `ZYGO_WORKSPACE` stops it
+    fn ws_run_with_zygo_workspace_makes_no_request() {
+        let h = locked(Harness::no_tmux);
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let c = h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", "kaaaaaaaa"], &[("ZYGO_WORKSPACE", OsStr::new(WS_ID))]);
+        let c = checked(c, &base);
+        let o = locked(|| Guarded::spawn(c)).output("ws run");
+        assert_eq!((o.status.code(), err(&o)), (Some(0), format!("zygo: no workspace with id {WS_ID}\n")));
+        assert!(f.requests().is_empty(), "{:?}", f.requests());
+        assert!(!update_json(&h).exists());
+    }
+
+    #[test] // the same run: the skip is what stops it; AU93 still holds after the check
+    fn ws_run_without_zygo_workspace_makes_the_request() {
+        let h = locked(Harness::no_tmux);
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let c = checked(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", "kaaaaaaaa"], &[]), &base);
+        let o = locked(|| Guarded::spawn(c)).output("ws run");
+        // stdin is null: the prompt reads "" and the run continues (D6).
+        assert_eq!((o.status.code(), err(&o)), (Some(0), format!("{} zygo: no workspace with id {WS_ID}\n", prompt(NEW))));
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        assert!(update_json(&h).is_file());
+        let env = std::fs::read_to_string(h.root().join("shell/env")).unwrap();
+        assert!(env.lines().any(|l| l == format!("ZYGO_WORKSPACE={WS_ID}")), "{env}"); // AU93
+    }
+
+    /// The pane key of the `ws run` tests.
+    const KEY: &str = "kaaaaaaaa";
+
+    /// What one `ws run` of the member pane gave.
+    struct Run {
+        o: Output,
+        out: PathBuf,
+        took: Duration,
+    }
+
+    /// `exe ws run` of a loadout member pane (the record that `up` writes, W§8.1 step 8), with `answer` on stdin and
+    /// `extra` in the environment. With `check`, the update check is on (fixture `base`); else the harness opt-out
+    /// stays. `exe` is a `setup()` copy for each answer that can install.
+    fn ws_run_member(h: &Harness, exe: &Path, base: &OsStr, check: bool, answer: &[u8], extra: &[(&str, &OsStr)]) -> Run {
+        h.seed(WS_ID, &mut |w| {
+            w.panes = vec![Pane { key: KEY.into(), cwd: h.repo(), kind: PaneKind::ClaudeCode, ..Default::default() }];
+            w.members.clear();
+            w.members.insert(KEY.into(), loadout_member());
+        });
+        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
+        let mut c = Command::new(exe);
+        c.args(["ws", "run", "--ws-id", WS_ID, "--pane", KEY]).env_clear().envs(h.env()).envs(stub);
+        if check {
+            c = checked(c, base);
+        }
+        for (k, v) in extra {
+            c.env(k, v);
+        }
+        c.current_dir(h.root()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let t0 = std::time::Instant::now();
+        let mut child = locked(|| Guarded::spawn(c));
+        child.stdin().unwrap().write_all(answer).unwrap();
+        let o = child.output("ws run");
+        Run { o, out, took: t0.elapsed() }
+    }
+
+    /// The member started and ended as a normal `ws run`: exit 0 (the test shell after the member), the agent ran, its
+    /// record does not stay `running` without a launcher, and `ZYGO_RELAUNCHED` reached neither the agent nor the
+    /// shell (AU64).
+    fn assert_member_ran(h: &Harness, r: &Run) {
+        let e = err(&r.o);
+        assert_eq!(r.o.status.code(), Some(0), "{e}");
+        assert!(r.out.join("argv.json").exists(), "the agent did not start: {e}");
+        assert_ne!(h.store(WS_ID).read().unwrap().unwrap().members[KEY].state, MemberState::Running);
+        let agent = std::fs::read_to_string(r.out.join("env.json")).unwrap();
+        assert!(!agent.contains("ZYGO_RELAUNCHED"), "{agent}");
+        let shell = std::fs::read_to_string(h.root().join("shell/env")).unwrap();
+        assert!(!shell.lines().any(|l| l.starts_with("ZYGO_RELAUNCHED=")), "{shell}");
+    }
+
+    /// The requests of one check and one install of `NEW`.
+    fn check_and_install() -> Vec<String> {
+        vec!["/latest/download/VERSION".to_string(), format!("/download/v{NEW}/SHA256SUMS"), format!("/download/v{NEW}/{}", asset())]
+    }
+
+    /// `answer` installs a release that is a real zygo, so the relaunched process runs (D4; W§8.2 step 1a).
+    fn yes_relaunches_into_the_member(answer: &[u8]) {
+        let h = locked(Harness::no_tmux);
+        let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, &zygo));
+        let f = Fixture::start(files);
+        let s = setup();
+        let ino = std::fs::metadata(&s.copy).unwrap().ino();
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, answer, &[]);
+        let e = err(&r.o);
+        assert!(e.starts_with(&format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW))), "{e}");
+        assert_eq!(e.matches(&prompt(NEW)).count(), 1, "{e}");
+        assert!(!e.contains("cannot relaunch"), "{e}");
+        // Installed in the copy: a new inode with the release bytes.
+        assert_ne!(std::fs::metadata(&s.copy).unwrap().ino(), ino);
+        assert_eq!(std::fs::read(&s.copy).unwrap(), zygo);
+        assert_member_ran(&h, &r);
+        // The relaunched process made no request (ZYGO_RELAUNCHED).
+        assert_eq!(f.requests(), check_and_install());
+    }
+
+    #[test] // D4
+    fn ws_run_yes_installs_and_relaunches_into_the_member() {
+        yes_relaunches_into_the_member(b"y\n");
+    }
+
+    #[test] // M5 round 2 finding 5: `yes` is the long form of `y`
+    fn ws_run_yes_in_full_installs_and_relaunches_into_the_member() {
+        yes_relaunches_into_the_member(b"yes\n");
+    }
+
+    #[test] // M5 round 2 finding 3: a failed relaunch continues as a normal `ws run`, so the member starts
+    fn ws_run_relaunch_failure_starts_the_member() {
+        let h = locked(Harness::no_tmux);
+        let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, &zygo));
+        let f = Fixture::start(files);
+        let s = setup();
+        // The `test-hooks` seam: the relaunch execs a path that does not exist.
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, b"y\n", &[("ZYGO_TEST_RELAUNCH_FAIL", OsStr::new("1"))]);
+        let e = err(&r.o);
+        let head = format!(
+            "{} updated to {NEW}; relaunch zygo\nzygo: cannot relaunch zygo ws run: No such file or directory (os error 2)\n",
+            prompt(NEW)
+        );
+        assert!(e.starts_with(&head), "{e}");
+        assert_member_ran(&h, &r);
+        assert_eq!(f.requests(), check_and_install());
+        // M5 round 3 finding 1: the install replaced the binary, so `/proc/self/exe` now names `<path> (deleted)`.
+        // Every zygo command in the settings that the agent got names the canonical path that `ws run` read first.
+        let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(r.out.join("settings.json")).unwrap()).unwrap();
+        let mut commands: Vec<String> = Vec::new();
+        commands.extend(settings["apiKeyHelper"].as_str().map(String::from));
+        commands.extend(settings["statusLine"]["command"].as_str().map(String::from));
+        for list in settings["hooks"].as_object().into_iter().flat_map(|m| m.values()) {
+            for entry in list.as_array().into_iter().flatten() {
+                for hook in entry["hooks"].as_array().into_iter().flatten() {
+                    commands.extend(hook["command"].as_str().map(String::from));
+                }
+            }
+        }
+        let quoted = format!("'{}'", std::fs::canonicalize(&s.copy).unwrap().display());
+        assert!(commands.iter().any(|c| c.contains(" guard")), "{commands:?}");
+        assert!(commands.iter().any(|c| c.contains("role-guard")), "{commands:?}");
+        for c in &commands {
+            assert!(!c.contains("(deleted)"), "{c}");
+            assert!(c.contains(&quoted), "{c} does not name {quoted}");
+        }
+    }
+
+    /// Removes the directory at its path when dropped, also when an assertion failed.
+    struct RemoveDir(PathBuf);
+
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test] // M5 round 2 finding 4, round 3 finding 4: a cache that cannot be written gives no second check
+    fn ws_run_yes_with_an_unwritable_cache_checks_once() {
+        let h = locked(Harness::no_tmux);
+        let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, &zygo));
+        let f = Fixture::start(files);
+        let s = setup();
+        // A directory at the `update.json` path: the cache write (a rename onto it) fails for every uid, also root,
+        // and a read finds no cache.
+        let blocked = update_json(&h);
+        std::fs::create_dir_all(blocked.join("keep")).unwrap();
+        let _guard = RemoveDir(blocked.clone());
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, b"y\n", &[]);
+        let e = err(&r.o);
+        assert!(blocked.join("keep").is_dir(), "the cache write replaced the directory");
+        assert_eq!(e.matches(&prompt(NEW)).count(), 1, "{e}");
+        assert_member_ran(&h, &r);
+        assert_eq!(f.requests(), check_and_install());
+    }
+
+    /// `y` with an install that fails: the update line names the failure as UPD-1 prints it (`zygo update: <msg>`),
+    /// the binary is unchanged, and `ws run` continues as a normal `ws run` with no relaunch (D4). The `test-hooks`
+    /// seam makes any relaunch fail with a line, so a relaunch that is tried shows.
+    fn failed_install_starts_the_member(f: &Fixture, line: &str) {
+        let h = locked(Harness::no_tmux);
+        let s = setup();
+        let before = std::fs::read(&s.copy).unwrap();
+        let seam = [("ZYGO_TEST_RELAUNCH_FAIL", OsStr::new("1"))];
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, b"y\n", &seam);
+        let e = err(&r.o);
+        assert!(e.starts_with(&format!("{} {line}\n", prompt(NEW))), "{e}");
+        assert!(!e.contains("relaunch"), "{e}");
+        assert_eq!(std::fs::read(&s.copy).unwrap(), before);
+        assert_member_ran(&h, &r);
+        assert_eq!(f.requests(), check_and_install());
+    }
+
+    #[test] // M5 round 2 finding 5
+    fn ws_run_install_with_a_bad_checksum_starts_the_member() {
+        let mut files = vec![version_file(NEW)];
+        files.push((format!("/download/v{NEW}/SHA256SUMS"), sums(&asset(), b"other-bytes").into_bytes()));
+        files.push((format!("/download/v{NEW}/{}", asset()), b"fixture-binary".to_vec()));
+        let f = Fixture::start(files);
+        failed_install_starts_the_member(&f, &format!("zygo update: checksum mismatch for {}", asset()));
+    }
+
+    #[test] // M5 round 2 finding 5
+    fn ws_run_install_with_http_500_starts_the_member() {
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, b"fixture-binary"));
+        let failing = format!("/download/v{NEW}/{}", asset());
+        let f = Fixture::start_failing(files, vec![failing.clone()]);
+        let line = format!("zygo update: cannot download {}{failing}: HTTP 500 Internal Server Error", f.base());
+        failed_install_starts_the_member(&f, &line);
+    }
+
+    #[test] // M5 round 2 finding 5, round 3 finding 3: a server that accepts and never answers ends at the 2 s bound
+    fn ws_run_with_a_stalled_server_starts_the_member_at_the_bound() {
+        // The total time limit of the check (auto-update design, "Check").
+        const BOUND: Duration = Duration::from_secs(2);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        // Each connection is accepted and kept open with no answer.
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for c in l.incoming().flatten() {
+                held.push(c);
+            }
+        });
+        let h = locked(Harness::no_tmux);
+        let base = OsString::from(format!("http://127.0.0.1:{port}"));
+        let r = ws_run_member(&h, Path::new(env!("CARGO_BIN_EXE_zygo")), &base, true, b"", &[]);
+        let e = err(&r.o);
+        assert!(!e.contains("is available") && !e.contains("zygo update"), "{e}");
+        assert_member_ran(&h, &r);
+        assert!(r.took >= BOUND - Duration::from_millis(200), "{:?}: the run did not wait for the bound", r.took);
+        assert!(r.took < BOUND + Duration::from_secs(3), "{:?}", r.took);
+    }
+
+    #[test] // M5 round 2 finding 5: `n`, `s` and `skip` start the member and install nothing; `s` and `skip` keep the skip
+    fn ws_run_other_answers_start_the_member() {
+        for (answer, skip) in [(&b"n\n"[..], None), (b"s\n", Some(NEW)), (b"skip\n", Some(NEW))] {
+            let h = locked(Harness::no_tmux);
+            let f = Fixture::start(vec![version_file(NEW)]);
+            let r = ws_run_member(&h, Path::new(env!("CARGO_BIN_EXE_zygo")), OsStr::new(&f.base()), true, answer, &[]);
+            let e = err(&r.o);
+            assert!(e.starts_with(&format!("{} ", prompt(NEW))), "{e}");
+            assert!(!e.contains("zygo update") && !e.contains("updated to"), "{e}");
+            assert_member_ran(&h, &r);
+            assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+            let v: serde_json::Value = serde_json::from_slice(&std::fs::read(update_json(&h)).unwrap()).unwrap();
+            assert_eq!(v["skip"].as_str(), skip, "{answer:?}: {v}");
+        }
     }
 }

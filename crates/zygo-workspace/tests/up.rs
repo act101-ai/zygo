@@ -2071,3 +2071,27 @@ fn undo_keeps_a_socket_that_another_writer_set() {
     let ws = read(&store);
     assert_eq!((ws.phase, ws.tmux_socket.as_deref()), (Phase::Down, Some(x.as_path())), "{err}");
 }
+
+#[test] // M5 round 2 finding 1 (FIX-28 folded), W§8.1 step 9: the first pane starts with `ZYGO_WORKSPACE`; the server does not
+fn first_pane_of_a_new_session_gets_zygo_workspace_in_session_scope_only() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    // A zygo stand-in whose `ws run` writes its process environment to `<envs>/<key>.env` (complete when it exists).
+    let envs = l.t.path().join("envs");
+    let body = format!(
+        "if [ \"$1\" = ws ] && [ \"$2\" = run ]; then\nmkdir -p '{d}'\nenv > '{d}'/\"$6\".tmp\nmv '{d}'/\"$6\".tmp '{d}'/\"$6\".env\nexec sleep 600\nfi\nexit 0",
+        d = envs.display()
+    );
+    l.o.zygo = script(l.t.path(), "zygo-env", &body);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&l.store());
+    let first = envs.join(format!("{}.env", ws.panes[0].key));
+    assert!(wait_for(S5 * 2, || first.exists()), "no environment from the first pane");
+    let env = fs::read_to_string(&first).unwrap();
+    assert!(env.lines().any(|x| x == format!("ZYGO_WORKSPACE={}", l.id)), "{env}");
+    // This `up` started the server, which copied the client environment into its global environment.
+    let global = l.srv.run(&["show-environment", "-g"]).unwrap();
+    assert!(!global.lines().any(|x| x.starts_with("ZYGO_WORKSPACE")), "{global}");
+}

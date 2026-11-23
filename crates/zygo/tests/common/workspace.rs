@@ -307,7 +307,8 @@ impl Harness {
         }
     }
 
-    /// The environment of every `zygo` that a test runs.
+    /// The environment of every `zygo` that a test runs, with the update check off (auto-update design, Opt-out), so no
+    /// pane and no test command reaches the release server; a test that needs the check removes the name.
     pub fn env(&self) -> Vec<(OsString, OsString)> {
         let tmp = self.root.join("tmux");
         std::fs::create_dir_all(&tmp).unwrap();
@@ -320,6 +321,7 @@ impl Harness {
             ("PATH".into(), self.bin.clone().into()),
             ("TMUX_TMPDIR".into(), tmp.into()),
             ("SHELL".into(), self.root.join("shell.sh").into()),
+            ("ZYGO_NO_UPDATE_CHECK".into(), "1".into()),
         ]
     }
 

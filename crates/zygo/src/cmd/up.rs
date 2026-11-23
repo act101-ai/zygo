@@ -27,10 +27,14 @@ pub struct UpArgs {
     pub all: bool,
 }
 
-/// The CLI form: the OP5 check first, then the user config (D3), the folder and the binary (D10), then `up::up` or,
-/// with `--all`, `up::up_all` (which refuses a name, `--loadout` and `--reset` itself).
+/// The CLI form: the OP5 check first, then the update check (auto-update design; `y` ends `up` before any library
+/// call), then the user config (D3), the folder and the binary (D10), then `up::up` or, with `--all`, `up::up_all`
+/// (which refuses a name, `--loadout` and `--reset` itself).
 pub fn run(a: &UpArgs) -> i32 {
     if let Some(code) = op5_exit() {
+        return code;
+    }
+    if let Some(code) = super::start_check(&[]) {
         return code;
     }
     let paths = Paths::from_env();
@@ -52,7 +56,7 @@ pub fn run(a: &UpArgs) -> i32 {
 
 /// The `UpOpts` of the CLI form; `env` gives `TMUX` and `ZYGO_SESSION` (`std::env::var_os` outside tests).
 /// `ZYGO_SESSION` goes to the library as it is, an empty value too (D8): the library counts an empty value as set for
-/// each "inside an agent" decision (AU64, AU95; `zygo-workspace/src/env.rs:52-55`, `up.rs:894`, `up.rs:1091`).
+/// each "inside an agent" decision (AU64, AU95; `zygo-workspace/src/env.rs:62`, `up.rs:897`, `up.rs:1094`).
 fn opts(a: &UpArgs, cwd: PathBuf, zygo: PathBuf, paths: Paths, config: Config, env: &dyn Fn(&str) -> Option<OsString>) -> UpOpts {
     UpOpts {
         name: a.name.clone(),
@@ -77,8 +81,8 @@ mod tests {
     use super::{opts, UpArgs};
 
     /// D8 (M1 review round 3, F3): `zygo up` gives the library `ZYGO_SESSION` as it is. An empty value is `Some("")`:
-    /// the library counts it as set for each "inside an agent" decision (AU64, AU95; `zygo-workspace/src/env.rs:52-55`,
-    /// `up.rs:894`, `up.rs:1091`). Kills: `zygo up` filtering an empty value.
+    /// the library counts it as set for each "inside an agent" decision (AU64, AU95; `zygo-workspace/src/env.rs:62`,
+    /// `up.rs:897`, `up.rs:1094`). Kills: `zygo up` filtering an empty value.
     #[test]
     fn zygo_up_passes_zygo_session_as_it_is() {
         let t = tempfile::tempdir().unwrap();

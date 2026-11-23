@@ -323,6 +323,12 @@ impl Multiplexer for Tmux {
         let mut c = self.command(false, true);
         c.env_clear().envs(spec.env.iter().map(|(k, v)| (k, v)));
         c.args(["new-session", "-d", "-P", "-F", "#{window_index}", "-s", spec.name, "-c", &dir]);
+        if let Some((id, _)) = spec.owner {
+            // W§8.1 step 9: the first pane starts before step 10 sets the session environment. `-e` sets the id in
+            // this session only; it never goes into `spec.env`, because a server that this call starts copies the
+            // client environment into its global environment.
+            c.args(["-e", &format!("ZYGO_WORKSPACE={id}")]);
+        }
         c.args(["-x", &spec.width.to_string(), "-y", &spec.height.to_string(), "--"]);
         c.args(spec.argv);
         if let Some((id, key)) = spec.owner {

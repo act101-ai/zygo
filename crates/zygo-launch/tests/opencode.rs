@@ -2454,3 +2454,9 @@ fn plugin_tool_denied_task_of_a_child_is_not_counted() {
     assert_eq!(res["stepThrew"], json!(["R2", null]));
     assert_eq!(res["threw"], "R2");
 }
+
+#[test] // M5 round 3 finding 1: `new` takes the zygo binary that the plugin and the hooks run
+fn new_takes_the_given_binary() {
+    let z = PathBuf::from("/opt/zygo/bin/zygo");
+    assert_eq!(OpenCode::new(z.clone()).zygo, z);
+}

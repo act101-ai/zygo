@@ -112,7 +112,7 @@ pub(crate) fn tmux_program() -> PathBuf {
 /// A usable session id (D8): `ZYGO_SESSION` as `env` gives it (`std::env::var_os` outside tests), `None` when it is
 /// unset or empty. Its users are the two reads that need a session id: `/zygo:down` (`down::session_of`) and the
 /// `zygo down` CLI form (`down::cli_opts`). It does not decide "inside an agent": that rule counts an empty value as
-/// set (AU64, AU95; `zygo-workspace/src/env.rs:52-55`, `up.rs:894`, `up.rs:1091`), so `zygo up` passes
+/// set (AU64, AU95; `zygo-workspace/src/env.rs:62`, `up.rs:897`, `up.rs:1094`), so `zygo up` passes
 /// `ZYGO_SESSION` as it is.
 pub(crate) fn usable_session_id(env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
     env("ZYGO_SESSION").filter(|v| !v.is_empty())
