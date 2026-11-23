@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, filter, flags, has_session_arg, has_user_info, occurrences, removable, session_flags, Filtered};
+use zygo_workspace::args::{bypass_flags, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, removable, session_flags, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -118,6 +118,28 @@ fn prompt_file_flags_keep_the_absolute_path() {
     // no existence check for a prompt file
     assert_eq!(cc(&["--system-prompt-file", "no-such.md"]).kept, s(&["--system-prompt-file", &abs("no-such.md")]));
     assert_eq!(removable(Agent::ClaudeCode, &s(&["--system-prompt-file", "Cargo.toml"])), s(&[]));
+}
+
+#[test] // W7 D32, AU30: a relative path in a loadout pane's `args` is taken relative to that pane's folder
+fn filter_from_resolves_against_the_base() {
+    let t = tempfile::TempDir::new().unwrap();
+    let b = t.path();
+    std::fs::write(b.join("x.json"), "{}").unwrap();
+    let ab = |rel: &str| std::path::absolute(b.join(rel)).unwrap().to_str().unwrap().to_string();
+    let r = filter_from(Agent::ClaudeCode, &s(&["--agents", "./x.json", "--append-system-prompt-file", "p.md"]), b);
+    assert_eq!(r, Filtered { kept: s(&["--agents", &ab("./x.json"), "--append-system-prompt-file", &ab("p.md")]), dropped_flags: vec![] });
+    assert_eq!(filter_from(Agent::ClaudeCode, &s(&["--agents", "./none.json"]), b), Filtered { kept: vec![], dropped_flags: s(&["--agents"]) });
+    let here = std::env::current_dir().unwrap();
+    let cases: &[&[&str]] = &[
+        &["--mcp-config", "Cargo.toml", INLINE, "--model", "lead"], &["--mcp-config", INLINE, "--mcp-config=also-inline"],
+        &["--agents", "Cargo.toml"], &["--agents=Cargo.toml"], &["--agents", "src"], &["--agents"],
+        &["--json-schema", r#"{"type":"object"}"#, "--plugin-url", "https://example.com/p.zip", "--verbose"],
+        &["--system-prompt-file", "Cargo.toml"], &["--append-system-prompt-file=Cargo.toml"], &["--system-prompt-file", "no-such.md"],
+        &["--resume", "abc", "fix it"], &["-r", "--model", "lead"], &["--model", "lead", "--", "fix it", "--verbose"], &["-pn", "my name"],
+    ];
+    for a in cases {
+        assert_eq!(filter_from(Agent::ClaudeCode, &s(a), &here), cc(a), "{a:?}");
+    }
 }
 
 // ---- the pinned help (review focus 4) ----

@@ -567,3 +567,26 @@ fn list_all_gives_each_workspace_with_its_read_result() {
     assert!(matches!(all[1].1, Err(StateError::Invalid { .. })));
     assert_eq!(all[2].1.as_ref().unwrap().name, "app");
 }
+
+#[test] // W7 Round 3 R3-2: `build_plan` and `fresh_members`; absent when empty, so an older file reads; AU84 on the keys
+fn build_plan_and_fresh_members() {
+    let v = serde_json::to_value(full()).unwrap();
+    assert!(v.get("build_plan").is_none() && v.get("fresh_members").is_none(), "{v}");
+    let mut ws = full();
+    ws.build_plan = Some(BuildPlan::Loadout);
+    ws.fresh_members = vec![KEY.into()];
+    let v = serde_json::to_value(&ws).unwrap();
+    assert_eq!((&v["build_plan"], &v["fresh_members"]), (&json!("loadout"), &json!([KEY])));
+    assert_eq!(serde_json::from_value::<Workspace>(v).unwrap(), ws);
+    assert_eq!(serde_json::to_value(BuildPlan::Restore).unwrap(), json!("restore"));
+    let old: Workspace = serde_json::from_value(doc()).unwrap();
+    assert_eq!((old.build_plan, old.fresh_members.len()), (None, 0));
+    let new = Workspace::new(ID);
+    assert_eq!((new.build_plan, new.fresh_members.len()), (None, 0));
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut v = doc();
+    v["fresh_members"] = json!(["../x"]);
+    put(&store, &v);
+    assert!(matches!(store.read(), Err(StateError::Invalid { reason, .. }) if reason == "invalid pane key"));
+}

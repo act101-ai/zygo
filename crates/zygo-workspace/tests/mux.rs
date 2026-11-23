@@ -251,7 +251,7 @@ fn every_call_passes_the_socket_the_c_locale_and_u() {
     let _ = t.version();
     let _ = t.socket_path("zygo-t");
     let _ = t.session_exists("zygo-t");
-    let _ = t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 173, height: 47, env: &env, argv: &argv });
+    let _ = t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 173, height: 47, env: &env, argv: &argv, owner: None });
     let _ = t.resize_window("zygo-t", 0, 173, 47);
     let _ = t.unset_window_option("zygo-t", 0, "window-size");
     let _ = t.set_window_option("=zygo-t:1", "remain-on-exit", "off");
@@ -470,7 +470,7 @@ fn bad_option_environment_and_session_names_are_refused_before_any_spawn() {
         let bad = format!("invalid tmux session name: {s:?}");
         assert_eq!(t.session_exists(s), SessionAnswer::Error { message: bad.clone() });
         assert_eq!(
-            t.new_session(&NewSession { name: s, start_dir: Path::new("/w"), width: 80, height: 24, env: &[], argv: &argv }),
+            t.new_session(&NewSession { name: s, start_dir: Path::new("/w"), width: 80, height: 24, env: &[], argv: &argv, owner: None }),
             Err(MuxError::Failed { message: bad.clone() })
         );
         assert_eq!(t.set_env(s, "A", "1"), Err(MuxError::Failed { message: bad.clone() }));
@@ -490,7 +490,7 @@ fn short_argument_lists_are_refused_before_any_spawn() {
     let refused = Err(MuxError::Failed { message: "tmux needs an argument list of 2 or more items".into() });
     let d = Path::new("/w");
     for argv in [os(&["zygo"]), Vec::new()] {
-        assert_eq!(t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv }), refused);
+        assert_eq!(t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner: None }), refused);
         assert_eq!(t.new_window(&NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv }), refused);
         assert_eq!(
             t.split_window(&Split { target: "%1", start_dir: None, argv: &argv }),
@@ -529,8 +529,8 @@ fn created_indexes_and_ids_are_read() {
     };
     let argv = os(&["sleep", "600"]);
     let d = Path::new("/w");
-    let ns = NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv };
-    let nw = NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv };
+    let ns = NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner: None };
+    let nw =NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv };
     let sp = Split { target: "%1", start_dir: None, argv: &argv };
 
     let t = at("four", "printf '4\\n'");
@@ -608,7 +608,8 @@ fn sorted<S: Into<String>>(v: Vec<S>) -> Vec<String> {
 
 #[cfg(unix)]
 fn session(t: &Tmux, dir: &Path, w: u32, h: u32) -> u32 {
-    t.new_session(&NewSession { name: "zygo-t", start_dir: dir, width: w, height: h, env: &env(), argv: &argv() }).unwrap()
+    t.new_session(&NewSession { name: "zygo-t", start_dir: dir, width: w, height: h, env: &env(), argv: &argv(), owner: None })
+        .unwrap()
 }
 
 /// Window index and name, one entry per window of `zygo-t`.
@@ -675,6 +676,23 @@ fn session_answers_follow_au87() {
             "{a:?}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_server_with_no_session_gives_gone() {
+    // W7 I5: with `exit-empty off` the server runs on with no session; tmux 3.2a and 3.7c then answer `has-session`
+    // with `no current target`
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    srv.run(&["new-session", "-d", "-s", "zygo-keep", "--", "sleep", "600"]).unwrap();
+    srv.run(&["set-option", "-g", "exit-empty", "off"]).unwrap();
+    srv.run(&["kill-session", "-t", "=zygo-keep:"]).unwrap();
+    srv.run(&["list-sessions"]).unwrap();
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Gone);
+    assert!(is_gone_message("no current target"));
 }
 
 #[cfg(unix)]
@@ -1113,4 +1131,70 @@ fn held_pipe_sigchld_child() {
         assert_eq!(threads(), before, "a reader thread stays");
     }
     fs::write(mark, "ok").unwrap();
+}
+
+// Node W7 (D6, D27): `rename_window` and the owner of `new_session`.
+
+#[cfg(unix)]
+#[test]
+fn rename_window_escapes_and_refuses() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), None);
+    let _ = t.rename_window("zygo-t", 2, "a#b");
+    for name in ["a\nb", "del\u{7f}"] {
+        assert_eq!(
+            t.rename_window("zygo-t", 2, name),
+            Err(MuxError::Failed { message: "window name holds a control character".into() })
+        );
+    }
+    assert!(matches!(t.rename_window("bad", 2, "x"), Err(MuxError::Failed { .. })));
+    assert_eq!(log_lines(dir.path()), ["LC_ALL=C -u rename-window -t =zygo-t:2 -- a##b"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_session_sets_the_owner_in_the_same_call() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), None);
+    let argv = os(&["sleep", "600"]);
+    let d = Path::new("/w");
+    let ns = |owner| NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner };
+    let _ = t.new_session(&ns(Some(("0123456789abcdef", "kaaaaaaaa"))));
+    let want = "LC_ALL=unset -u new-session -d -P -F #{window_index} -s zygo-t -c /w -x 80 -y 24 -- sleep 600 ; \
+                set-option -t =zygo-t: -- @zygo-ws 0123456789abcdef ; set-option -p -t =zygo-t: -- @zygo-pane kaaaaaaaa ; \
+                set-option -t =zygo-t: -- destroy-unattached off";
+    assert_eq!(log_lines(dir.path()), [want]);
+    assert!(matches!(t.new_session(&ns(Some(("x", "kaaaaaaaa")))), Err(MuxError::Failed { .. })));
+    assert!(matches!(t.new_session(&ns(Some(("0123456789abcdef", "k$")))), Err(MuxError::Failed { .. })));
+    assert_eq!(log_lines(dir.path()), [want]);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_session_sets_the_owner_live() {
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let ns = NewSession {
+        name: "zygo-t",
+        start_dir: dir.path(),
+        width: 80,
+        height: 24,
+        env: &env(),
+        argv: &argv(),
+        owner: Some(("0123456789abcdef", "kaaaaaaaa")),
+    };
+    // W7 I2: a global `destroy-unattached on` does not end the new session
+    srv.run(&["new-session", "-d", "-s", "base", "sleep", "600"]).unwrap();
+    srv.run(&["set-option", "-g", "exit-empty", "off"]).unwrap();
+    srv.run(&["set-option", "-g", "destroy-unattached", "on"]).unwrap();
+    assert_eq!(t.new_session(&ns), Ok(0));
+    assert_eq!(t.show_session_option("zygo-t", "@zygo-ws"), Ok(Some("0123456789abcdef".into())));
+    assert_eq!(t.display("=zygo-t:", "#{@zygo-pane}"), Ok("kaaaaaaaa".into()));
+    assert_eq!(t.show_session_option("zygo-t", "destroy-unattached"), Ok(Some("off".into())));
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Exists);
 }
