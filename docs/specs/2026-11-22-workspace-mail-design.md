@@ -118,6 +118,22 @@ Slash forms: `/zygo:mail` (list) only, per O14; send and read stay tools, becaus
 - `zygo workspace` and `zygo ls` show unread counts per member.
 - A wake never counts as a `UserPromptSubmit` for AU26 until the agent's turn starts.
 
+## 9a. Status line (HUD)
+
+**(operator, 2026-11-22)** Two fixed segments join the HUD of `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`). Both are fixed segments: HUD OP4 (no segment list, no format string) does not change. Both follow the rules of the workspace phase segment (H AU25): shown only for a workspace member, read fresh on each call, never cached, hidden on any read error, no dependency of the hook on `zygo-workspace`.
+
+| Segment | Text (Nerd / plain) | Shown when | Source | Color | Place | Width |
+|---|---|---|---|---|---|---|
+| Member name | `<name>` / `<name>` | the member has a name (M§6), and the name is not equal to the worktree segment's name (H AU21) | the member's `name`, written by the launcher into the session view's workspace marker: a new field `name: Option<String>` on `Member` (`crates/zygo-core/src/session_view.rs:103-106`, today `ws_id` and `pane` only), added with `#[serde(default)]` so older views still load | bold default, `1` | first group, right after the workspace phase; verbose row 1, own group before the work item | 32 cells (H AU19) |
+| Unread mail | `✉ <n>` / `mail <n>` | `n` ≥ 1 | count of `*.json` in `mail/<pane key>/new/` (M§5); the pane key from `view.workspace.member.pane` | yellow `33` | first group, after the member name | `99+` above 99 |
+
+- Neither segment is dropped for width (as the phase segment, H AU25).
+- The hook validates the pane key (`^k[a-z2-7]{8}$`, WS AU84) before it builds the path, reads the directory with the H§7.7 deadline, and counts names only; it never opens a message (M-C2). The status line reaches only the user (H-C4), so the count tells the agent nothing.
+- The name passes `zygo_core::esc` (H-C6), although M§6 already limits it to `[a-z0-9-]`.
+- Use: an idle pane whose unread count grows shows a failed wake (M§7.3).
+
+HUD changes: two rows in the segment table (H§6.2), the compact group `[logo, workspace phase, member name, mail, work item, worktree]`, the verbose row-1 groups `[workspace phase], [member name, mail], [work item, worktree, ahead/behind], …` (H AU9), and `✉` U+2709 in the Nerd icon set with `mail` in the plain set (H§6.5).
+
 ## 10. Failure handling
 
 | Case | Behavior |
@@ -162,6 +178,8 @@ name = "elena"          # M§6
 7. `zygo mail watch` returns within 1 s of a send and exits 1 at its timeout.
 8. No mail text appears in `workspace.json`, `activity.json`, any log or the usage store.
 9. A hook with an unreadable `mail/` exits 0 and changes no decision.
+10. The HUD shows `✉ 3` for a member with three unread messages, nothing at zero, and `99+` above 99; no message file is opened (M§9a).
+11. The HUD shows the member name for a named member outside a worktree, and shows it once when it equals the worktree name.
 
 ## 14. Premises the first build verifies
 
