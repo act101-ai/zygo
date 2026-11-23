@@ -436,3 +436,58 @@ fn session_log_appends_lines_and_refuses_links_and_fifos() { // H1 D21: the one 
         assert!(std::fs::symlink_metadata(sd.log()).unwrap().file_type().is_fifo());
     }
 }
+
+#[test] // FIX-22: W-C1 (C6); only a FIFO is refused; no size cap; a link is still followed
+fn session_view_load_does_not_wait_on_a_fifo() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().join("s"));
+    d.create().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::FileTypeExt;
+        // A FIFO: the error `<path>: is a FIFO` within 5 s; the FIFO stays.
+        let c = std::ffi::CString::new(d.view_json().as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let d2 = d.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(SessionView::load(&d2).map_err(|e| format!("{e:#}")));
+        });
+        let r = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("SessionView::load waited on a FIFO");
+        assert_eq!(r.unwrap_err(), format!("{}: is a FIFO", d.view_json().display()));
+        assert!(std::fs::symlink_metadata(d.view_json()).unwrap().file_type().is_fifo());
+        std::fs::remove_file(d.view_json()).unwrap();
+        // A folder, and a link to a folder: today's error, the one of `std::fs::read`.
+        std::fs::create_dir(t.path().join("dir")).unwrap();
+        let today = std::fs::read(t.path().join("dir")).unwrap_err().to_string();
+        #[cfg(target_os = "linux")]
+        assert_eq!(today, "Is a directory (os error 21)");
+        std::fs::create_dir(d.view_json()).unwrap();
+        assert_eq!(format!("{:#}", SessionView::load(&d).unwrap_err()), today);
+        std::fs::remove_dir(d.view_json()).unwrap();
+        std::os::unix::fs::symlink(t.path().join("dir"), d.view_json()).unwrap();
+        assert_eq!(format!("{:#}", SessionView::load(&d).unwrap_err()), today);
+        std::fs::remove_file(d.view_json()).unwrap();
+    }
+    // A missing view keeps today's error: the bare io error, no path added.
+    let e = SessionView::load(&d).unwrap_err();
+    assert_eq!(e.downcast_ref::<std::io::Error>().map(|e| e.kind()), Some(std::io::ErrorKind::NotFound), "{e:#}");
+    assert!(!format!("{e:#}").contains("view.json"), "{e:#}");
+    let v = SessionView { session: "s".into(), main_role: "main".into(), ..Default::default() };
+    v.save(&d).unwrap();
+    // More than 1 MiB still loads: no cap.
+    let mut b = std::fs::read(d.view_json()).unwrap();
+    b.extend(std::iter::repeat_n(b' ', 2 << 20));
+    std::fs::write(d.view_json(), &b).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), v);
+    // A link to a regular view still loads.
+    #[cfg(unix)]
+    {
+        std::fs::rename(d.view_json(), t.path().join("v.json")).unwrap();
+        std::os::unix::fs::symlink(t.path().join("v.json"), d.view_json()).unwrap();
+        assert_eq!(SessionView::load(&d).unwrap(), v);
+    }
+}

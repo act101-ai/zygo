@@ -710,6 +710,23 @@ fn session_start_read_errors_member_and_not() {
     assert_eq!(slog(&f), [format!("workspace hook session-start: {view}: is a link; not read")]);
     assert_eq!(member(&f), rec_pending());
     assert_eq!(view_note(&f), Some(note_iu())); // the copy still holds the note
+    // A member SessionStart whose view.json is a FIFO (FIX-22): no wait, one line, no output, no change.
+    let f = fx_note();
+    let missing = f.t.path().join("missing");
+    ws_state(&f, Phase::Up, rec_pending());
+    fs::remove_file(f.dir.view_json()).unwrap();
+    mkfifo(&f.dir.view_json());
+    let (dir, paths, miss) = (f.dir.clone(), f.paths.clone(), missing.clone());
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let r = session_start::run_member(&ssm(AS1), &dir, &paths, &miss, &mut out);
+        let _ = tx.send((matches!(r, Ok(HookOutput::None)), out.is_empty()));
+    });
+    assert_eq!(rx.recv_timeout(S5).expect("the hook waited"), (true, true));
+    assert_eq!(slog(&f), [format!("workspace hook session-start: {}: is a FIFO", f.dir.view_json().display())]);
+    assert_eq!(member(&f), rec_pending());
+    assert!(is_fifo(&f.dir.view_json()));
     // A launch that is not a member: the output or the error of `run_in`, and no line.
     for linked in [false, true] {
         let g = fx_with(Agent::ClaudeCode, None);
@@ -1607,29 +1624,30 @@ fn non_member_session_start_is_unchanged() {
         assert!(!g.dir.activity_json().exists(), "{case}");
         assert!(!g.paths.state_dir().exists(), "{case}");
     }
-    // A FIFO view.json: the read waits for a writer as today; the test is that writer.
+    // A FIFO view.json (FIX-22, controller 2026-11-23): the read does not wait; run_member gives run_in's error and writes nothing.
     let g = fx_with(Agent::ClaudeCode, None);
-    let plain = fs::read(g.dir.view_json()).unwrap();
     fs::remove_file(g.dir.view_json()).unwrap();
     mkfifo(&g.dir.view_json());
     let (dir, paths, zygo) = (g.dir.clone(), g.paths.clone(), g.zygo.clone());
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut out = Vec::new();
-        let r = session_start::run_member(&ss(AS1), &dir, &paths, &zygo, &mut out).map(|o| o.to_stdout());
-        let _ = tx.send((r.map_err(|e| format!("{e:#}")), out.is_empty()));
+        let a = session_start::run_member(&ss(AS1), &dir, &paths, &zygo, &mut out);
+        let b = session_start::run_in(&ss(AS1), &dir);
+        let _ = tx.send((
+            a.map(|o| o.to_stdout()).map_err(|e| format!("{e:#}")),
+            b.map(|o| o.to_stdout()).map_err(|e| format!("{e:#}")),
+            out.is_empty(),
+        ));
     });
-    {
-        use std::io::Write;
-        let mut w = fs::OpenOptions::new().write(true).open(g.dir.view_json()).unwrap();
-        w.write_all(&plain).unwrap();
-    }
-    let (got, quiet) = rx.recv_timeout(S5).expect("the hook did not answer");
-    let h = fx_with(Agent::ClaudeCode, None);
-    assert_eq!(got.unwrap(), session_start::run_in(&ss(AS1), &h.dir).unwrap().to_stdout());
+    let (a, b, quiet) = rx.recv_timeout(S5).expect("the hook waited");
+    assert_eq!(a, Err(format!("{}: is a FIFO", g.dir.view_json().display())));
+    assert_eq!(a, b);
     assert!(quiet);
     assert!(is_fifo(&g.dir.view_json()));
     assert!(!g.dir.log().exists());
+    assert!(!g.dir.activity_json().exists());
+    assert!(!g.paths.state_dir().exists());
 }
 
 /// A `/zygo:` dispatcher whose verb panics (round 4 T2).
