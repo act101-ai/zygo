@@ -341,3 +341,38 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     let m: ViewWorkspace = serde_json::from_str(r#"{"member":{"ws_id":"w1","pane":"p1"}}"#).unwrap();
     assert_eq!(m, ViewWorkspace { member, resume_note: None });
 }
+
+#[test]
+fn session_log_appends_lines_and_refuses_links_and_fifos() { // H1 D21: the one session-log writer
+    let t = tempfile::tempdir().unwrap();
+    let sd = SessionDir::new(t.path().join("s"));
+    sd.create().unwrap();
+    sd.append_log("a");
+    sd.append_log("b\nc\rd");
+    assert_eq!(std::fs::read_to_string(sd.log()).unwrap(), "a\nb c d\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        assert_eq!(std::fs::metadata(sd.log()).unwrap().permissions().mode() & 0o777, 0o600);
+        // A link: the target is not written and the link stays a link.
+        let outside = t.path().join("outside");
+        std::fs::write(&outside, "x").unwrap();
+        std::fs::remove_file(sd.log()).unwrap();
+        std::os::unix::fs::symlink(&outside, sd.log()).unwrap();
+        sd.append_log("e");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "x");
+        assert!(std::fs::symlink_metadata(sd.log()).unwrap().file_type().is_symlink());
+        // A FIFO: the writer does not wait for a reader.
+        std::fs::remove_file(sd.log()).unwrap();
+        let c = std::ffi::CString::new(sd.log().as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sd2 = sd.clone();
+        std::thread::spawn(move || {
+            sd2.append_log("f");
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("append_log waited on a FIFO");
+        assert!(std::fs::symlink_metadata(sd.log()).unwrap().file_type().is_fifo());
+    }
+}

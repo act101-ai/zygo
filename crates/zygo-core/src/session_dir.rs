@@ -86,6 +86,27 @@ impl SessionDir {
         self.root.join("activity.lock")
     }
 
+    /// Appends one line to the session log (§8.4): the one writer of `session.log` (H1 D21). Each `\n` and `\r` in
+    /// `line` becomes a space, then one `\n` ends the line. Created with mode 0600 on unix and opened with
+    /// `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, so a link is not followed and a FIFO does not make the writer wait;
+    /// only a regular file is written. Every error is ignored.
+    pub fn append_log(&self, line: &str) {
+        let mut o = fs::OpenOptions::new();
+        o.append(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+        }
+        let Ok(mut f) = o.open(self.log()) else { return };
+        if !f.metadata().is_ok_and(|m| m.file_type().is_file()) {
+            return;
+        }
+        let mut text = line.replace(['\n', '\r'], " ");
+        text.push('\n');
+        let _ = f.write_all(text.as_bytes());
+    }
+
     pub fn read_token(&self) -> anyhow::Result<String> {
         let t = fs::read_to_string(self.token()).context("read session token")?;
         Ok(t.trim().to_string())

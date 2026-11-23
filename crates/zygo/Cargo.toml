@@ -39,6 +39,7 @@ walkdir.workspace = true
 tempfile.workspace = true
 fs4.workspace = true
 ulid.workspace = true
+zygo-workspace.workspace = true
 zygo = { path = ".", features = ["test-hooks"] }
 
 [[test]]
