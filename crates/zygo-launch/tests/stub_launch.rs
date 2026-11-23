@@ -132,7 +132,8 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
 #[test]
 fn member_with_user_settings_launches_as_a_plain_launch() { // AU58, AU59
     use zygo_core::session_view::Member;
-    const WARN: &str = "zygo: your --settings replaces zygo's settings file; the lead guard is off";
+    // FIX-21 round 2 F1: a readable user file is merged into zygo's settings file.
+    const WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
     const AU59: &str = "zygo: --settings replaces zygo's hooks; this agent is not saved by the workspace";
     let rig = rig();
     let user = rig.cwd.join("user-settings.json");
@@ -152,6 +153,10 @@ fn member_with_user_settings_launches_as_a_plain_launch() { // AU58, AU59
         let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
         assert!(view["workspace"].is_null(), "{view}");
         assert!(r.cap.session.values().all(|t| !t.contains("hook workspace")));
+        // FIX-21 round 2 F1: the agent gets only zygo's merged file, with the attribution keys.
+        assert_eq!(r.cap.argv.iter().filter(|a| a.starts_with("--settings")).count(), 1, "{:?}", r.cap.argv);
+        assert_eq!(r.cap.settings["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}));
+        assert_eq!(r.cap.settings["includeCoAuthoredBy"], false);
     }
 }
 

@@ -437,12 +437,24 @@ fn role_guard_follows_the_effective_role() {
 /// §8.6 item 7: the attribution sentence (operator, 2026-11-22).
 const NO_ATTRIBUTION: &str = "Never add Claude attribution to commits, pull request titles or bodies, tags, release notes or comments: no `Co-Authored-By: Claude` trailer, no `noreply@anthropic.com` address, no `Generated with Claude Code` line and no Claude session link.";
 
-#[test] // FIX-21, §8.5: kills: the attribution keys written only outside passthrough, only for members or only with work units
+/// A user `--settings` value that tries to turn attribution back on, with its own hooks and keys (FIX-21 round 2 F1).
+const USER_SETTINGS: &str = r#"{"attribution": {"commit": "Co-Authored-By: Claude", "pr": "Generated", "sessionUrl": true},
+    "includeCoAuthoredBy": true, "model": "user-model", "permissions": {"allow": ["Bash"]}, "env": {"USER_VAR": "1"},
+    "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "user-pre"}]}],
+              "Stop": [{"hooks": [{"type": "command", "command": "user-stop"}]}]}}"#;
+/// §8.5 Flags: the line for a user `--settings` value that zygo merges.
+const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
+
+#[test] // FIX-21, §8.5: kills: the attribution keys written only outside passthrough, only for members or only with work units;
+        // a user `--settings` file or inline value that replaces zygo's file, drops the guard hook or the user's hooks and
+        // keys, or turns attribution back on (round 2 F1)
 fn settings_force_no_claude_attribution() {
-    for name in ["default", "passthrough", "member", "units off"] {
+    for name in ["default", "passthrough", "member", "units off", "user file", "user inline", "member user file", "user file twice"] {
         let fx = fx();
-        let c = match name {
-            "member" => member_ctx(&fx, true),
+        let user_file = fx.cwd.join("user-settings.json");
+        std::fs::write(&user_file, USER_SETTINGS).unwrap();
+        let mut c = match name {
+            "member" | "member user file" => member_ctx(&fx, true),
             _ => {
                 let mut c = ctx(&fx, "");
                 c.passthrough = name == "passthrough";
@@ -450,10 +462,38 @@ fn settings_force_no_claude_attribution() {
                 c
             }
         };
-        let spec = cc(&fx).build(&c).unwrap();
+        c.args = match name {
+            "user file" | "member user file" => strings(&["--settings", "user-settings.json", "-p", "hi"]),
+            "user inline" => strings(&[&format!("--settings={USER_SETTINGS}"), "-p", "hi"]),
+            "user file twice" => strings(&["--settings", r#"{"model": "first", "outputStyle": "x"}"#, "--settings", user_file.to_str().unwrap()]),
+            _ => vec![],
+        };
+        let cc = cc(&fx);
+        let spec = cc.build(&c).unwrap();
         let s = settings(&fx);
         assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{name}");
         assert_eq!(s["includeCoAuthoredBy"], json!(false), "{name}");
+        let guard = (Some("Edit|Write|NotebookEdit|Read|Bash".to_string()), format!("{} hook guard", shell_quote(&cc.zygo)));
+        assert!(hook_commands(&s, "PreToolUse").contains(&guard), "{name}");
+        if name.contains("user") {
+            assert_eq!(flag(&spec.args, "--settings"), [fx.sd.settings_json().to_string_lossy().into_owned()], "{name}");
+            assert!(!spec.args.iter().any(|a| a.starts_with("--settings=")), "{name}");
+            assert!(hook_commands(&s, "PreToolUse").contains(&(Some("Bash".to_string()), "user-pre".to_string())), "{name}");
+            assert!(hook_commands(&s, "Stop").contains(&(None, "user-stop".to_string())), "{name}");
+            assert_eq!(s["model"], "user-model", "{name}");
+            assert_eq!(s["permissions"], json!({"allow": ["Bash"]}), "{name}");
+            assert_eq!(s["env"]["USER_VAR"], "1", "{name}");
+            assert!(s["env"]["ANTHROPIC_BASE_URL"].as_str().is_some_and(|u| u.ends_with("/anthropic")), "{name}");
+            assert_eq!(spec.lines, [MERGE_WARN], "{name}");
+            assert_eq!(spec.log, ["degraded: --settings"], "{name}");
+        }
+        if name == "user file twice" {
+            assert_eq!(s["outputStyle"], "x");
+        }
+        if name == "member user file" {
+            let z = shell_quote(&cc.zygo);
+            assert!(hook_commands(&s, "Stop").contains(&(None, format!("{z} hook workspace --event stop"))), "{name}");
+        }
         let agents = agents_of(&spec.args);
         let zygo: Vec<(&String, &Value)> = agents.as_object().unwrap().iter().filter(|(k, _)| k.starts_with("zygo-")).collect();
         assert!(!zygo.is_empty(), "{name}");
@@ -586,6 +626,26 @@ fn defeating_flags_are_logged_and_settings_warns() {
     let spec = cc(&fx).build(&c).unwrap();
     assert!(spec.log.is_empty());
     assert!(spec.lines.is_empty());
+}
+
+#[test] // FIX-21 round 2 F1: a user `--settings` value zygo cannot read as a JSON object keeps the replace path: every
+        // user `--settings` passes unchanged after zygo's, with the replace line
+fn unreadable_user_settings_pass_unchanged() {
+    let fx = fx();
+    std::fs::write(fx.cwd.join("bad.json"), "not json").unwrap();
+    std::fs::write(fx.cwd.join("list.json"), "[1]").unwrap();
+    std::fs::write(fx.cwd.join("good.json"), "{}").unwrap();
+    for args in [vec!["--settings", "missing.json"], vec!["--settings", "bad.json"], vec!["--settings", "list.json"],
+                 vec!["--settings", "{bad"], vec!["--settings=[1]"], vec!["--settings", "good.json", "--settings", "missing.json"]] {
+        let mut c = ctx(&fx, "");
+        c.args = strings(&args);
+        let spec = cc(&fx).build(&c).unwrap();
+        assert_eq!(spec.args[2..4], ["--settings".to_string(), fx.sd.settings_json().to_string_lossy().into_owned()], "{args:?}");
+        assert!(spec.args.ends_with(&c.args), "{args:?}: {:?}", spec.args);
+        assert_eq!(spec.lines, ["zygo: your --settings replaces zygo's settings file; the lead guard is off"], "{args:?}");
+        assert_eq!(spec.log, ["degraded: --settings"], "{args:?}");
+        assert_eq!(settings(&fx)["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{args:?}");
+    }
 }
 
 fn pf(file: PathBuf, key: &str) -> Result<(), Preflight> {

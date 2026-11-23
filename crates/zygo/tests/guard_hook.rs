@@ -490,7 +490,7 @@ fn binary_guard_denies_claude_attribution_in_a_pr_body() {
     assert_eq!((code, err.as_str()), (Some(0), ""));
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap(), json!({"hookSpecificOutput": {"hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": "zygo: Claude attribution is never allowed in commits, pull requests or releases. Remove the line with `noreply@anthropic.com` from the message and run the command again."}}));
+        "permissionDecisionReason": "zygo: Claude attribution is never allowed in commits, tags, notes, pull requests, issues, comments, reviews or releases. `noreply@anthropic.com` is in a command argument; reword that text without it and run the command again."}}));
     v["tool_input"] = json!({"command": "gh pr create --title t --body \"Adds the Claude Code host\""});
     assert_eq!(hook(home, &sd, v.to_string().as_bytes()), (Some(0), String::new(), String::new()));
 }
