@@ -221,12 +221,18 @@ impl Launcher {
     /// The launch; returns the process exit code and records the rest of the outcome in `marks`.
     fn launch(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, marks: &Marks) -> i32 {
         let on_session = opts.on_session.take();
+        // The tokens of a member pre-assign that this launch added to `opts.args`; a `NotMember` callback removes them
+        // (AU34; M3 diff review round 2, finding 3). A user's own session argument is never in this range.
+        let mut preassigned: Option<std::ops::Range<usize>> = None;
         if let Some(s) = &opts.agent_session {
             let extra = match s {
                 AgentSession::Preassign(id) => adapter.preassign_args(id),
                 AgentSession::Resume(id) => adapter.resume_args(id),
             };
-            insert_session_args(adapter.agent(), &mut opts.args, extra);
+            let added = insert_session_args(adapter.agent(), &mut opts.args, extra);
+            if matches!(s, AgentSession::Preassign(_)) {
+                preassigned = Some(added);
+            }
         }
         let out = Out {
             #[cfg(feature = "test-hooks")]
@@ -426,6 +432,10 @@ impl Launcher {
             if e.downcast_ref::<NotMember>().is_some() {
                 opts.member = None;
                 opts.resume_note = None;
+                if let Some(r) = preassigned.take() {
+                    opts.args.drain(r);
+                }
+                opts.agent_session = None;
             }
         }
         if let Some(t) = &team
@@ -688,7 +698,8 @@ impl Session<'_> {
 /// Puts the agent session arguments `extra` before the user's arguments, so before any `--` (W§8.3, AU3). For
 /// OpenCode, when the first positional token before `--` (by W4's walk, so not a flag value) is the subcommand `run`,
 /// they go right after it.
-fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) {
+/// Inserts `extra` into `args` (W§8.3, AU3) and gives the range of the inserted tokens.
+fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) -> std::ops::Range<usize> {
     let at = match agent {
         Agent::ClaudeCode => 0,
         Agent::OpenCode => {
@@ -700,7 +711,9 @@ fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>)
                 .map_or(0, |i| i + 1)
         }
     };
+    let n = extra.len();
     args.splice(at..at, extra);
+    at..at + n
 }
 
 #[cfg(feature = "test-hooks")]
