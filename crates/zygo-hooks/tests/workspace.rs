@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
-use zygo_core::hook::{HookInput, HookOutput, SlashDispatch};
+use zygo_core::hook::{guarded, HookInput, HookOutput, SlashDispatch};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace};
@@ -349,6 +349,15 @@ impl Drop for Held {
     }
 }
 
+/// Restores the mode of a folder when the test ends, also when it fails, so the temporary folder can be removed.
+struct Mode(PathBuf, u32);
+
+impl Drop for Mode {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(self.1));
+    }
+}
+
 fn hold_activity(dir: &SessionDir) -> Held {
     let dir = dir.clone();
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -394,6 +403,12 @@ fn is_fifo(p: &Path) -> bool {
 /// The count of opens of `dir/name` while `f` runs, seen by inotify.
 #[cfg(target_os = "linux")]
 fn opens(dir: &Path, name: &str, f: impl FnOnce()) -> usize {
+    opened(dir, f).iter().filter(|n| *n == name).count()
+}
+
+/// The name of each open in `dir` while `f` runs, seen by inotify; an open of `dir` itself is `.`.
+#[cfg(target_os = "linux")]
+fn opened(dir: &Path, f: impl FnOnce()) -> Vec<String> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).unwrap();
     // SAFETY: plain inotify calls on a descriptor this function owns; each event is read from the buffer the kernel
@@ -403,7 +418,7 @@ fn opens(dir: &Path, name: &str, f: impl FnOnce()) -> usize {
         assert!(fd >= 0, "inotify_init1");
         assert!(libc::inotify_add_watch(fd, c.as_ptr(), libc::IN_OPEN) >= 0, "inotify_add_watch");
         f();
-        let mut n = 0;
+        let mut names = Vec::new();
         let mut buf = [0u8; 8192];
         loop {
             let r = libc::read(fd, buf.as_mut_ptr().cast(), buf.len());
@@ -415,15 +430,21 @@ fn opens(dir: &Path, name: &str, f: impl FnOnce()) -> usize {
                 let ev = std::ptr::read_unaligned(buf.as_ptr().add(off).cast::<libc::inotify_event>());
                 let start = off + std::mem::size_of::<libc::inotify_event>();
                 let raw_name = &buf[start..start + ev.len as usize];
-                if raw_name.split(|b| *b == 0).next() == Some(name.as_bytes()) {
-                    n += 1;
-                }
+                let name = raw_name.split(|b| *b == 0).next().unwrap_or_default();
+                names.push(if name.is_empty() { ".".to_string() } else { String::from_utf8_lossy(name).into_owned() });
                 off = start + ev.len as usize;
             }
         }
         libc::close(fd);
-        n
+        names
     }
+}
+
+/// The sorted entry names of `dir`.
+fn entries(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    v.sort();
+    v
 }
 
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -1382,29 +1403,73 @@ fn hostile_inputs_change_nothing() {
     mkfifo(&f.dir.log());
     assert_eq!(ws_bg(&f, "stop", fixture("Stop-main")).unwrap(), None);
     assert!(is_fifo(&f.dir.activity_json()) && is_fifo(&f.dir.log()));
+    // A file of a newer zygo is a persistent condition (round 4 T3): `pre-tool`, `tool-end` and `stop` write no line,
+    // a `prompt` writes one; the file is kept.
     let f = fx(Agent::ClaudeCode);
     let act_path = f.dir.activity_json().display().to_string();
     fs::write(f.dir.activity_json(), r#"{"version": 2, "busy": true}"#).unwrap();
+    assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+    assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
     assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
-    assert_eq!(fs::read_to_string(f.dir.activity_json()).unwrap(), r#"{"version": 2, "busy": true}"#);
-    // The newer-zygo error is a one-off failure (round 3 S2, S4): every event writes its line.
-    let newer = |ev: &str| format!("workspace hook {ev}: {act_path}: written by a newer zygo (version 2)");
-    assert_eq!(slog(&f), [newer("stop")]);
+    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
     assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(fs::read_to_string(f.dir.activity_json()).unwrap(), r#"{"version": 2, "busy": true}"#);
-    assert_eq!(slog(&f), [newer("stop"), newer("prompt")]);
+    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: written by a newer zygo (version 2)")]);
+    // An activity.lock that is a link is a persistent condition (round 4 T3): the same; the target is not changed.
+    let f = fx(Agent::ClaudeCode);
+    let lock_path = f.dir.activity_lock().display().to_string();
+    fs::write(f.t.path().join("outside.lock"), "x").unwrap();
+    std::os::unix::fs::symlink(f.t.path().join("outside.lock"), f.dir.activity_lock()).unwrap();
+    assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+    assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
+    assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
+    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
+    assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
+    assert_eq!(fs::read_to_string(f.t.path().join("outside.lock")).unwrap(), "x");
+    assert!(!f.dir.activity_json().exists());
+    assert_eq!(
+        slog(&f),
+        [format!("workspace hook prompt: {lock_path}: open lock file: {lock_path}: is a link; it is not followed")]
+    );
+    // A session folder made read-only: the write fails, a persistent condition (round 4 T3). The session log exists
+    // before, so its lines can still be appended. Root writes in a read-only folder, so the case is skipped there.
+    // SAFETY: `geteuid` takes no argument and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped the read-only session folder case: the test runs as root");
+    } else {
+        let f = fx(Agent::ClaudeCode);
+        set_act(&f, true, 1);
+        let before = fs::read(f.dir.activity_json()).unwrap();
+        fs::write(f.dir.log(), "").unwrap();
+        let _mode = Mode(f.dir.root.clone(), fs::metadata(&f.dir.root).unwrap().permissions().mode());
+        fs::set_permissions(&f.dir.root, fs::Permissions::from_mode(0o500)).unwrap();
+        assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+        assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
+        assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
+        assert!(slog(&f).is_empty(), "{:?}", slog(&f));
+        assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
+        assert!(fs::read(f.dir.activity_json()).unwrap() == before, "activity.json changed");
+        let lines = slog(&f);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with(&format!("workspace hook prompt: {}: ", f.dir.activity_json().display())), "{lines:?}");
+    }
     // A 2 MiB agent_id in an open turn (attempt-2 review round 1, F1): the result would pass the read limit, so
     // nothing is written, and the turn stays busy through the next tool events. The refused result is a one-off
-    // failure (round 3 S2, S4): `subagent-start` writes one line; the next tool events succeed and write none.
+    // failure (round 3 S2, S4; round 4 T3): each `subagent-start` writes one line; the next tool events succeed and
+    // write none.
     let f = fx(Agent::ClaudeCode);
     set_act(&f, true, 0);
     let before = fs::read(f.dir.activity_json()).unwrap();
     let mut big = fixture("SubagentStart-sub");
     big["agent_id"] = json!("x".repeat(2 << 20));
+    assert_eq!(ws(&f, "subagent-start", big.clone()).unwrap(), None);
+    assert!(fs::read(f.dir.activity_json()).unwrap() == before, "activity.json changed");
+    assert_eq!(slog(&f).len(), 1);
     assert_eq!(ws(&f, "subagent-start", big).unwrap(), None);
     assert!(fs::read(f.dir.activity_json()).unwrap() == before, "activity.json changed");
     let refused = slog(&f);
-    assert_eq!(refused.len(), 1);
+    assert_eq!(refused.len(), 2);
+    assert!(refused[1].starts_with(&format!("workspace hook subagent-start: {}: the new activity is ", f.dir.activity_json().display())));
     assert!(
         refused[0].starts_with(&format!("workspace hook subagent-start: {}: the new activity is ", f.dir.activity_json().display()))
             && refused[0].ends_with(" bytes, more than the 1048576 bytes that every reader accepts; not written"),
@@ -1565,4 +1630,100 @@ fn non_member_session_start_is_unchanged() {
     assert!(quiet);
     assert!(is_fifo(&g.dir.view_json()));
     assert!(!g.dir.log().exists());
+}
+
+/// A `/zygo:` dispatcher whose verb panics (round 4 T2).
+fn panicking(_: &str, _: &str) -> anyhow::Result<String> {
+    panic!("verb panicked")
+}
+
+/// A `/zygo:` dispatcher whose verb replies (round 4 T2).
+fn replying(_: &str, _: &str) -> anyhow::Result<String> {
+    Ok("x".into())
+}
+
+/// `prompt::run_in_env` as `zygo hook prompt` runs it, through `guarded`, with the environment `env`.
+fn prompt_hook(f: &Fx, p: &str, d: SlashDispatch, env: &dyn Fn(&str) -> Option<OsString>) -> (String, i32) {
+    let bytes = serde_json::to_vec(&ups(p)).unwrap();
+    guarded(
+        &|b| prompt::run_in_env(&HookInput::parse(Agent::ClaudeCode, b)?, Some(d), prompt::HOOK_DEADLINE, &f.paths, env),
+        &bytes,
+    )
+}
+
+#[test] // W§9.1 `UserPromptSubmit` row, C6 (base spec N28), AU58; H1 attempt-2 review round 4 T2
+fn panicking_verb_lets_the_line_pass_and_marks_only_a_member_busy() {
+    let _s = serial();
+    let text = "prompt: verb `status` ended without a reply";
+    // A member (`ZYGO_WORKSPACE` set, member view): one stderr line (the error of C6), no block, and the turn of the
+    // line that reaches the model is busy, as the `workspace --event prompt` entry would make it.
+    let f = fx(Agent::ClaudeCode);
+    let sd = f.dir.root.clone().into_os_string();
+    let env = |k: &str| match k {
+        "ZYGO_SESSION_DIR" => Some(sd.clone()),
+        "ZYGO_WORKSPACE" => Some(OsString::from(ID)),
+        _ => None,
+    };
+    set_act(&f, false, 2);
+    let input = hook(Agent::ClaudeCode, &ups("/zygo:status"));
+    let Err(e) = prompt::run_in_env(&input, Some(panicking), prompt::HOOK_DEADLINE, &f.paths, &env) else {
+        panic!("not an error")
+    };
+    assert_eq!(format!("{e:#}"), text);
+    assert_eq!(bt(&f), (true, 0));
+    set_act(&f, false, 2);
+    assert_eq!(prompt_hook(&f, "/zygo:status", panicking, &env), (String::new(), 0));
+    assert_eq!(bt(&f), (true, 0));
+    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
+    // A verb that replies blocks its line and marks nothing; a line that is not a verb passes with no mark here (the
+    // `workspace --event prompt` entry marks it).
+    set_act(&f, false, 2);
+    assert_eq!(serde_json::from_str::<Value>(&prompt_hook(&f, "/zygo:status", replying, &env).0).unwrap()["decision"], "block");
+    assert_eq!(prompt_hook(&f, "hello", panicking, &env), (String::new(), 0));
+    assert_eq!(bt(&f), (false, 2));
+    // The mark follows the logging rules of the `prompt` event: a persistent condition of `activity.json` writes one
+    // session-log line and changes nothing.
+    let g = fx(Agent::ClaudeCode);
+    let gsd = g.dir.root.clone().into_os_string();
+    let genv = |k: &str| match k {
+        "ZYGO_SESSION_DIR" => Some(gsd.clone()),
+        "ZYGO_WORKSPACE" => Some(OsString::from(ID)),
+        _ => None,
+    };
+    fs::write(g.dir.activity_json(), "{not json").unwrap();
+    assert_eq!(prompt_hook(&g, "/zygo:status", panicking, &genv), (String::new(), 0));
+    assert_eq!(fs::read_to_string(g.dir.activity_json()).unwrap(), "{not json");
+    let lines = slog(&g);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].starts_with(&format!("workspace hook prompt: {}: ", g.dir.activity_json().display())), "{lines:?}");
+    // A launch that is not a member (`ZYGO_WORKSPACE` unset or empty) keeps today's behaviour: the error, no block,
+    // and no read or write in the session folder; the hook asks the environment for nothing else. A member view in
+    // the folder does not change that.
+    for (case, ws) in [("no marker, unset", None), ("marker, unset", None), ("marker, empty", Some(OsString::new()))] {
+        let h = if case.starts_with("no marker") { fx_with(Agent::ClaudeCode, None) } else { fx(Agent::ClaudeCode) };
+        let hsd = h.dir.root.clone().into_os_string();
+        let asked = Mutex::new(Vec::new());
+        let henv = |k: &str| {
+            asked.lock().unwrap().push(k.to_string());
+            match k {
+                "ZYGO_SESSION_DIR" => Some(hsd.clone()),
+                "ZYGO_WORKSPACE" => ws.clone(),
+                _ => None,
+            }
+        };
+        let before = entries(&h.dir.root);
+        let run = || assert_eq!(prompt_hook(&h, "/zygo:status", panicking, &henv), (String::new(), 0), "{case}");
+        #[cfg(target_os = "linux")]
+        assert_eq!(opened(&h.dir.root, run), Vec::<String>::new(), "{case}");
+        #[cfg(not(target_os = "linux"))]
+        run();
+        assert_eq!(entries(&h.dir.root), before, "{case}");
+        assert_eq!(*asked.lock().unwrap(), ["ZYGO_WORKSPACE"], "{case}");
+    }
+    // The watch sees the member's reads (a check of the check above).
+    #[cfg(target_os = "linux")]
+    assert!(opened(&f.dir.root, || {
+        prompt_hook(&f, "/zygo:status", panicking, &env);
+    })
+    .contains(&"view.json".to_string()));
 }

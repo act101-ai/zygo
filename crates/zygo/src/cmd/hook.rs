@@ -25,7 +25,7 @@ pub static TABLE: &[Hook] = &[
     Hook { name: "trim", run: zygo_hooks::trim::run, reads_stdin: true },
     Hook { name: "session-start", run: zygo_hooks::session_start::run, reads_stdin: true },
     Hook { name: "role-guard", run: zygo_hooks::role_guard::run, reads_stdin: true },
-    Hook { name: "prompt", run: zygo_hooks::prompt::run, reads_stdin: true },
+    Hook { name: "prompt", run: prompt_hook, reads_stdin: true },
     Hook { name: "pre-compact", run: zygo_hooks::pre_compact::run, reads_stdin: true },
     Hook { name: "work", run: zygo_work::hooks::run, reads_stdin: true },
     Hook { name: "guard", run: zygo_work::guards::run, reads_stdin: true },
@@ -59,6 +59,18 @@ fn statusline_hud(_input: &HookInput) -> anyhow::Result<HookOutput> {
         start + statusline::BOUND,
     );
     Ok(HookOutput::Text(statusline::render::render(&data, &render_env)))
+}
+
+/// `zygo hook prompt` (§17.1, W§9.1): the registered dispatcher, the paths and the real environment for
+/// `prompt::run_in_env`, which reads `ZYGO_WORKSPACE` only after a verb panicked (H1 attempt-2 review round 4, T2).
+fn prompt_hook(input: &HookInput) -> anyhow::Result<HookOutput> {
+    zygo_hooks::prompt::run_in_env(
+        input,
+        zygo_core::hook::slash_dispatch(),
+        zygo_hooks::prompt::HOOK_DEADLINE,
+        &Paths::from_env(),
+        &|k| std::env::var_os(k),
+    )
 }
 
 /// `zygo hook workspace --event <event>` (workspaces design W§9.1, H1 D18): the one place that reads the real

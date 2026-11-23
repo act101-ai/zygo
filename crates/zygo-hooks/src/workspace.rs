@@ -168,11 +168,11 @@ fn member<'a>(event: &'a str, dir: &'a SessionDir, paths: &'a Paths) -> anyhow::
 
 /// One change of `activity.json` under `activity.lock` with the hook bound (AU56, D14). An `activity.json` that is a
 /// link or not a regular file is not changed. Each failure writes one session-log line by its class (round 3, S2 and
-/// S4). A persistent condition of the file repeats on every event, so its line is written only for the events of
-/// `MARKER_LOG_EVENTS`, a line per turn and not per tool call: the file is a link, is not a regular file, or the
-/// update gives `activity::Unreadable` (the file cannot be read, does not parse or is over the read limit). A one-off
-/// failure writes its line on every event where it happens: a missed lock (the AU56 bound), a file of a newer zygo,
-/// a refused over-limit result, and each other update error.
+/// S4; round 4, T3). A persistent condition repeats on every event, so its line is written only for the events of
+/// `MARKER_LOG_EVENTS`, a line per turn and not per tool call: `activity.json` is a link or not a regular file, or the
+/// update gives `activity::FileCondition` (the file cannot be read, is over the read limit, does not parse or is of a
+/// newer version; the lock file cannot be opened; the write failed). A one-off failure writes its line on every event
+/// where it happens: the lock not taken within the AU56 bound, and a refused over-limit result.
 fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
     let path = c.dir.activity_json();
     let persistent = |text: String| {
@@ -189,9 +189,31 @@ fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
     }
     match activity::update(c.dir, activity::LOCK_BOUND, f) {
         Ok(()) => {}
-        Err(e) if e.is::<activity::Unreadable>() => persistent(format!("{e:#}")),
+        Err(e) if e.is::<activity::FileCondition>() => persistent(format!("{e:#}")),
         Err(e) => slog(c.dir, c.event, &format!("{e:#}")),
     }
+}
+
+/// The change of a main-loop `prompt` (W§9.1, AU43): a turn starts, `busy = true`, `tools_running = 0`.
+fn start_turn(a: &mut Activity) {
+    a.busy = true;
+    a.tools_running = 0;
+}
+
+/// The busy mark of a member whose `/zygo:` verb panicked (W§9.1 `UserPromptSubmit` row; H1 attempt-2 review
+/// round 4, T2). `zygo hook prompt` then lets the line reach the model (C6), while `workspace --event prompt` skipped
+/// that line as consumed (`prompt::consumes`), so the prompt hook calls this when `ZYGO_WORKSPACE` is set. It is the
+/// `prompt` change of `run_with` (`start_turn`) through `member` and `change`, with the log rules of the `prompt` event;
+/// membership still comes only from the view marker (AU58), and the AU86 block does not apply, since the line has
+/// already passed. No or an empty `ZYGO_SESSION_DIR` in `env`, no `view.json` or no marker: nothing. A refused session
+/// folder is an error (D2).
+pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>) -> anyhow::Result<()> {
+    let Some(sd) = env("ZYGO_SESSION_DIR").filter(|v| !v.is_empty()) else { return Ok(()) };
+    let dir = SessionDir::new(PathBuf::from(sd));
+    if let Some(c) = member("prompt", &dir, paths)? {
+        change(&c, &mut start_turn);
+    }
+    Ok(())
 }
 
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).
@@ -256,10 +278,7 @@ pub fn run_with(
                 return Ok(Some(json!({"decision": "block", "reason": STOPPING}).to_string()));
             }
             if main {
-                change(&c, &mut |a| {
-                    a.busy = true;
-                    a.tools_running = 0;
-                });
+                change(&c, &mut start_turn);
             }
         }
         "stop" if main => change(&c, &mut |a| {
