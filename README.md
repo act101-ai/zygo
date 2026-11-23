@@ -14,9 +14,9 @@ Version 0.1.0.
 
 ## Role-based model routing
 
-### Follows [https://research.google/pubs/elephants-goldfish-and-the-new-golden-age-of-software-engineering/](elephants-and-goldfish) model for improved generation and token efficiency.
+- Follows [https://research.google/pubs/elephants-goldfish-and-the-new-golden-age-of-software-engineering/](elephants-and-goldfish) model for improved generation and token efficiency.
 
-### Create your own model profiles to use any model natively for a chosen role
+- Create your own model profiles to use any model natively for a chosen role
 
 ### AST-based Code Navigation
 
