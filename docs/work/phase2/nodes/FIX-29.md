@@ -478,7 +478,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
     - `rg -n "keeps the saved .cwd. of the same key|keeps the .cwd. of the stored pane" docs/specs/2026-11-20-workspaces-design.md` shows W§7.2 and W§7.4 step 5.
     - `rg -n "pane_dead" docs/specs/2026-11-20-workspaces-design.md` shows AU24 and step 12.
 
-- [ ] **10. Acceptance, tmux 3.2a run, dependents.**
+- [x] **10. Acceptance, tmux 3.2a run, dependents.**
   - `cargo test -p zygo-workspace --locked`: all pass. The tmux cases run on the tmux on `PATH` (3.8 here), or print `tmux tests skipped: …`.
   - tmux 3.2a, as W3 and W7 did (`docs/work/phase2/graph.md:194`, `:206`). Run with `PATH=/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktrees/phase2/tmux32a/prefix/bin:$PATH`:
     - `cargo test -p zygo-workspace --locked --test mux new_window_with_hold held_panes_stay_dead new_session_sets_the_owner`
@@ -547,6 +547,8 @@ Every cited path, symbol and line of the plan was read in the live code at `881f
 ### Premise adaptations
 
 - Step 5 (drift in the test detail only). The plan's last assertion counts the line `zygo: app pane <pane id>: sleep is running; …` for the dead pane. Live run: the step 8 snapshot of `down` gives the dead pane a pane key, and `busy_shells` names a pane by its key when the key is valid (`down.rs:1331`), so before the fix the line was `zygo: app pane k6f5eo374: sleep is running; it stops with the session`. The assertion on the pane id was green before step 6 (false green). Adapted: the test keeps the pane-id assertion and adds one on the saved key of the dead pane (window 0, index 1, read from the state after `down`). Red before step 6 at that assertion (count 1), green after it.
+- Step 10 (command form only). `cargo test` takes one test-name filter before `--`; the plan's form `--test mux new_window_with_hold held_panes_stay_dead new_session_sets_the_owner` stops with `error: unexpected argument 'held_panes_stay_dead' found` (same for the `up` command). Adapted: the first filter stays before `--`, the others go after `--` (the test harness takes several filters): `--test mux new_window_with_hold -- held_panes_stay_dead new_session_sets_the_owner` and `--test up restored_panes_that_exit_at_once -- up_all_after_a_server_death a_pane_ended_by_a_signal a_failed_release repair_reports_a_pane repair_after_a_failure_after_new_session first_up_builds_the_loadout`. The `down` command is unchanged.
+- Build folder: the controller brief sets `CARGO_TARGET_DIR=…/.worktrees/phase2/fix29-target`; the plan's build rules name `FIX-29-target`. The brief's folder was used.
 
 ### Author's calls
 
@@ -560,3 +562,12 @@ Every cited path, symbol and line of the plan was read in the live code at `881f
 - Step 5: see the adaptation above. Step 6: down 29 passed.
 - Step 7: `a_failed_release_is_reported_and_up_goes_on` at `calls` (0, not 2); `a_pane_ended_by_a_signal_is_reported_with_no_exit_status` and `repair_reports_a_pane_that_died_during_the_hold` at the `exited(…)` count (0); `restored_panes_that_exit_at_once_stay_dead_and_are_reported` at code/out (`zygo: tmux: no such window: =zygo-app:1`); `up_all_after_a_server_death_reports_panes_that_exit_at_once` at code/out (`zygo: tmux: no such pane: %1`, `zygo: app skipped`). The extended `repair_after_a_failure_after_new_session` passed (guard). 49 passed, 5 failed. Step 8: up 54 passed.
 - Step 9: every anchor occurred once before the edit (W§7.2 `:287`, W§7.4 step 5 `:330`, W§8.1 steps 9-12 `:368-371`, AU24 `:165`, AU67 `:208`, AU68 `:209`); the texts went in as the plan gives them, with one change-log row. Check: `build hold` is on lines 208, 209, 368, 369, 370 and 371; the plan's check also names the change log, but the plan's final change-log text does not hold that phrase ("holds each window", "releases the hold"), so the row was kept as the plan gives it. The other three checks show the lines the plan names.
+
+### Measurements (2026-11-23, at `bb07df7`)
+
+- Acceptance `cargo test -p zygo-workspace --locked`: exit 0; 354 passed, 0 failed, 2 ignored in 13 test targets (activity 41 + 1 ignored, admin 29, args 21, down 29, drain 34, env 4, identity 9, loadout 7, mux 48 + 1 ignored, snapshot 37, state 34, up 54, up_all 7). The only `tmux tests skipped:` lines come from the two gate tests that test the skip (`no-tmux`, `tmux 3.1`); every tmux case ran on tmux 3.8.
+- Floor `cargo test -p zygo-workspace -p zygo --locked --no-fail-fast`: exit 0; 989 passed, 0 failed, 4 ignored (zygo 635 + 2 ignored, zygo-workspace 354 + 2 ignored).
+- `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings`: exit 0, no warning.
+- `cargo check --workspace --all-targets --locked`: exit 0, no warning.
+- tmux 3.2a (`…/tmux32a/prefix/bin` first on `PATH`, `tmux -V` → `tmux 3.2a`): mux 4 passed, up 7 passed, down 1 passed; 12 of 12, no skip line.
+- tmux 3.8 (`/usr/bin/tmux`): mux 4, up 7, down 1; 12 of 12, no skip line.
