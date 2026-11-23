@@ -1257,9 +1257,15 @@ fn plugin_workspace_events_match_pw4_fixtures() {
         assert!(TEMPLATE.contains(&format!("\"{t}\"")), "{t}");
     }
     assert_eq!(fixture("workspace/tool.execute.before-task.json")["tool"], "task");
+    // W§18 #91: both tool hooks carry the same `callID` and `sessionID` (AU27 tool count)
+    let b = fixture("plugin-hooks/tool.execute.before-bash.json");
+    let a = fixture("plugin-hooks/tool.execute.after-bash.json");
+    assert!(b["input"]["callID"].is_string());
+    assert_eq!(b["input"]["callID"], a["input"]["callID"]);
+    assert_eq!(b["input"]["sessionID"], a["input"]["sessionID"]);
     for t in [
         "event: async", "ZYGO_WORKSPACE", "parentID", "\"workspace\"", "\"--event\"", "\"session\"", "\"prompt\"", "\"busy\"", "\"stop\"", "\"pre-tool\"",
-        "input.tool === \"task\"", "tool_name: \"Agent\"",
+        "input.tool === \"task\"", "tool_name: \"Agent\"", "\"tool-end\"", "input.callID", "tool_name: input.tool",
     ] {
         assert!(TEMPLATE.contains(t), "{t}");
     }
@@ -1272,11 +1278,16 @@ struct Ws<'a> {
     /// The `ZYGO_WORKSPACE` value; `None` removes the name.
     member: Option<&'a str>,
     /// The stub mode: `ok`, `deny` (pre-tool denies), `slow` (session sleeps 0.3 s), `fail` (every call prints a
-    /// deny and exits 1), `hang` (every workspace call sleeps 12 s, more than the 10 s timeout of the plugin).
+    /// deny and exits 1), `hang` (every workspace call sleeps 12 s, more than the 10 s timeout of the plugin),
+    /// `hangpre` (only workspace `pre-tool` calls sleep 12 s), `slowpre` (only workspace `pre-tool` calls sleep
+    /// 0.3 s), `guarddeny` (each `guard` call sleeps 0.3 s before it writes its line to `calls.txt`, then denies
+    /// with the reason `R4` and exits 0).
     mode: &'a str,
     /// The session id of the `task` dispatch.
     main: &'a str,
-    /// `[type, properties]` of each event.
+    /// `[type, properties]` of each event, `["tool.execute.before", input]` / `["tool.execute.after", input]` of
+    /// a tool-hook step, `["start", step]` (starts `step` and does not wait for it) or `["join", null]` (waits for
+    /// every started step).
     events: Value,
     /// All events at once, without waiting.
     parallel: bool,
@@ -1293,9 +1304,12 @@ fn ws_opts<'a>(name: &'a str, member: Option<&'a str>, mode: &'a str, main: &'a 
     Ws { name, member, mode, main, events, parallel: false, missing: false, dir: "/r", tool: true }
 }
 
-/// Runs the generated plugin under node: the `event` hook gets each event of `w.events` (in order, or all at once
-/// when `w.parallel`), then, with `w.tool`, `tool.execute.before` runs for the PW4 `task` fixture in session
-/// `w.main`. The result holds `threw` (the thrown message or null), `eventMs` and `toolMs`.
+/// Runs the generated plugin under node: each step of `w.events` (in order, or all at once when `w.parallel`) goes
+/// to the `event` hook, except a tool-hook step (`["tool.execute.before", input]` or `["tool.execute.after", input]`),
+/// which calls that hook with `input` and an output; a `start` step runs its step without waiting, and a `join` step
+/// waits for every started step; then, with `w.tool`, `tool.execute.before` runs for the PW4 `task` fixture in
+/// session `w.main`. The result holds `threw` (the thrown message of the closing call or null), `stepThrew` (for each
+/// tool-hook step, the thrown message or null, in the order the steps end), `eventMs` and `toolMs`.
 #[cfg(unix)]
 fn ws_node(fx: &Fx, w: Ws) -> NodeRun {
     use std::os::unix::fs::PermissionsExt;
@@ -1304,6 +1318,9 @@ fn ws_node(fx: &Fx, w: Ws) -> NodeRun {
     let stub = dir.join("zygo-stub");
     let script = r#"#!/bin/sh
 d=$(dirname "$0")
+case "$2:$STUB_MODE" in
+  guard:guarddeny) sleep 0.3 ;;
+esac
 echo "$*" >> "$d/calls.txt"
 in=$(cat)
 printf '%s' "$in" > "$d/stdin-$2-$6.json"
@@ -1312,6 +1329,9 @@ case "$2:$6:$STUB_MODE" in
   workspace:session:slow) sleep 0.3 ;;
   workspace:pre-tool:deny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R2"}}' ;;
   *:*:fail) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R3"}}'; exit 1 ;;
+  workspace:pre-tool:hangpre) exec sleep 12 ;;
+  workspace:pre-tool:slowpre) sleep 0.3 ;;
+  guard::guarddeny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R4"}}' ;;
   workspace:*:hang) exec sleep 12 ;;
 esac
 "#;
@@ -1325,13 +1345,29 @@ esac
 import { ZygoPlugin } from "./plugin.mjs";
 const h = await ZygoPlugin({ directory: process.env.DIR });
 const task = JSON.parse(readFileSync(process.env.TASK_FX, "utf8"));
-const events = JSON.parse(process.env.EVENTS).map(([type, properties]) => ({ event: { type, properties } }));
-const res = { threw: null };
+const steps = JSON.parse(process.env.EVENTS);
+const res = { threw: null, stepThrew: [] };
+const started = [];
+const one = async ([type, properties]) => {
+  if (type === "start") {
+    started.push(one(properties));
+  } else if (type === "join") {
+    await Promise.all(started.splice(0));
+  } else if (type === "tool.execute.before" || type === "tool.execute.after") {
+    const output = type === "tool.execute.before" ? { args: {} } : { title: "", output: "o", metadata: {} };
+    try {
+      await h[type](properties, output);
+      res.stepThrew.push(null);
+    } catch (e) { res.stepThrew.push(e.message); }
+  } else {
+    await h.event({ event: { type, properties } });
+  }
+};
 let t = Date.now();
 if (process.env.PARALLEL === "1") {
-  await Promise.all(events.map((e) => h.event(e)));
+  await Promise.all(steps.map(one));
 } else {
-  for (const e of events) await h.event(e);
+  for (const s of steps) await one(s);
 }
 res.eventMs = Date.now() - t;
 if (process.env.TOOL === "1") {
@@ -1431,6 +1467,42 @@ fn deleted(s: &str) -> Value {
     json!(["session.deleted", {"info": {"id": s}}])
 }
 
+/// A `tool.execute.before` step of tool `tool` in session `s` with `callID` `call`.
+#[cfg(unix)]
+fn tool_before(tool: &str, s: &str, call: &str) -> Value {
+    json!(["tool.execute.before", {"tool": tool, "sessionID": s, "callID": call}])
+}
+
+/// A `tool.execute.after` step of tool `tool` in session `s` with `callID` `call`.
+#[cfg(unix)]
+fn tool_after(tool: &str, s: &str, call: &str) -> Value {
+    json!(["tool.execute.after", {"tool": tool, "sessionID": s, "callID": call, "args": {}}])
+}
+
+/// A step that starts `step` and does not wait for it.
+#[cfg(unix)]
+fn start(step: Value) -> Value {
+    json!(["start", step])
+}
+
+/// A step that waits for every started step.
+#[cfg(unix)]
+fn join() -> Value {
+    json!(["join", null])
+}
+
+/// The `zygo hook workspace` calls of a run as `ws_seq` gives them, with the `tool_name` of each `pre-tool`.
+#[cfg(unix)]
+fn tool_seq(r: &NodeRun) -> Vec<String> {
+    seq_of(r, true)
+}
+
+/// The tool-order call list of a run whose closing `task` call is in session `A`.
+#[cfg(unix)]
+fn tool_order(fx: &Fx, name: &str, member: Option<&str>, mode: &str, events: Value) -> Vec<String> {
+    tool_seq(&ws_node(fx, ws_opts(name, member, mode, "A", events)))
+}
+
 /// The `zygo hook workspace` calls of a run, one line each: the event, a space, the stdin JSON.
 #[cfg(unix)]
 fn ws_log(r: &NodeRun) -> Vec<String> {
@@ -1441,6 +1513,12 @@ fn ws_log(r: &NodeRun) -> Vec<String> {
 /// payload's `cwd` is `/r` (plan D7).
 #[cfg(unix)]
 fn ws_seq(r: &NodeRun) -> Vec<String> {
+    seq_of(r, false)
+}
+
+/// The body of `ws_seq`; with `tool_names`, a `pre-tool` line is `pre-tool <sessionID> <tool_name>`.
+#[cfg(unix)]
+fn seq_of(r: &NodeRun, tool_names: bool) -> Vec<String> {
     ws_log(r)
         .iter()
         .map(|line| {
@@ -1448,6 +1526,9 @@ fn ws_seq(r: &NodeRun) -> Vec<String> {
             let v: Value = serde_json::from_str(payload).unwrap_or_else(|e| panic!("{line}: {e}"));
             assert_eq!(v["cwd"], "/r", "{line}");
             match v["sessionID"].as_str() {
+                Some(id) if tool_names && event == "pre-tool" => {
+                    format!("{event} {id} {}", v["tool_name"].as_str().unwrap_or_else(|| panic!("{line}")))
+                }
                 Some(id) => format!("{event} {id}"),
                 None => format!("{event}{{}}"),
             }
@@ -2035,4 +2116,341 @@ fn plugin_deleted_main_skips_an_unclassified_session() {
         order(&fx, "del-unclassified", Some(M), ev),
         ["session{}", "session A", "prompt X", "session B", "session A", "session X", "pre-tool A"]
     );
+}
+
+/// The steps of W§18 #91 (1): a tool of a top session in its turn.
+#[cfg(unix)]
+fn t1_steps() -> Value {
+    json!([created("A"), busy("A"), tool_before("bash", "A", "a1"), tool_after("bash", "A", "a1"), idle("A")])
+}
+
+/// The call list of W§18 #91 (1).
+#[cfg(unix)]
+const T1_CALLS: [&str; 7] = ["session{}", "session A", "prompt A", "pre-tool A bash", "tool-end A", "stop A", "pre-tool A Agent"];
+
+/// The guard, trim, work and closing guard calls of the steps of W§18 #91 (1).
+#[cfg(unix)]
+const T1_OTHER: [&str; 4] =
+    ["hook guard --agent opencode", "hook trim --agent opencode", "hook work --agent opencode", "hook guard --agent opencode"];
+
+#[cfg(unix)]
+#[test] // W§18 #91 (1)
+fn plugin_tool_top_session_counts_in_its_turn() {
+    if no_node("plugin_tool_top_session_counts_in_its_turn") {
+        return;
+    }
+    let fx = fx();
+    let r = ws_node(&fx, ws_opts("t01", Some(M), "ok", "A", t1_steps()));
+    assert_eq!(tool_seq(&r), T1_CALLS);
+    let log = ws_log(&r);
+    assert!(log.contains(&r#"pre-tool {"sessionID":"A","tool_name":"bash","cwd":"/r"}"#.to_string()), "{log:?}");
+    assert!(log.contains(&r#"tool-end {"sessionID":"A","cwd":"/r"}"#.to_string()), "{log:?}");
+    assert_eq!(r.calls.lines().filter(|l| !l.starts_with("hook workspace")).collect::<Vec<_>>(), T1_OTHER);
+    assert_eq!(r.result.unwrap()["stepThrew"], json!([null, null]));
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (2)
+fn plugin_tool_unclassified_session_counts() {
+    if no_node("plugin_tool_unclassified_session_counts") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([busy("X"), tool_before("bash", "X", "x1"), tool_after("bash", "X", "x1"), idle("X")]);
+    assert_eq!(
+        tool_order(&fx, "t02", Some(M), "ok", ev),
+        ["session{}", "prompt X", "pre-tool X bash", "tool-end X", "stop X", "pre-tool A Agent"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (3)
+fn plugin_tool_known_child_sends_nothing() {
+    if no_node("plugin_tool_known_child_sends_nothing") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), created_child("K", "A"), tool_before("bash", "K", "k1"), tool_after("bash", "K", "k1")]);
+    assert_eq!(tool_order(&fx, "t03", Some(M), "ok", ev), ["session{}", "session A", "pre-tool A Agent"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (4)
+fn plugin_tool_end_after_the_session_becomes_a_child() {
+    if no_node("plugin_tool_end_after_the_session_becomes_a_child") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([tool_before("bash", "K", "k1"), created_child("K", "A"), tool_after("bash", "K", "k1")]);
+    assert_eq!(tool_order(&fx, "t04", Some(M), "ok", ev), ["session{}", "pre-tool K bash", "tool-end K", "pre-tool A Agent"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (5)
+fn plugin_tool_end_needs_a_counted_call() {
+    if no_node("plugin_tool_end_needs_a_counted_call") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([tool_after("bash", "A", "z9")]);
+    assert_eq!(tool_order(&fx, "t05-none", Some(M), "ok", ev), ["session{}", "pre-tool A Agent"]);
+    let ev = json!([tool_before("bash", "A", ""), tool_after("bash", "A", "")]);
+    assert_eq!(tool_order(&fx, "t05-empty", Some(M), "ok", ev), ["session{}", "pre-tool A bash", "pre-tool A Agent"]);
+    let ev = json!([tool_before("bash", "A", "a1"), tool_after("bash", "A", "a1"), tool_after("bash", "A", "a1")]);
+    assert_eq!(
+        tool_order(&fx, "t05-twice", Some(M), "ok", ev),
+        ["session{}", "pre-tool A bash", "tool-end A", "pre-tool A Agent"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (6)
+fn plugin_tool_task_counts_and_ends_in_any_session() {
+    if no_node("plugin_tool_task_counts_and_ends_in_any_session") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([
+        tool_before("task", "A", "t1"),
+        tool_after("task", "A", "t1"),
+        created("A"),
+        created_child("K", "A"),
+        tool_before("task", "K", "t2"),
+        tool_after("task", "K", "t2")
+    ]);
+    let r = ws_node(&fx, ws_opts("t06-ok", Some(M), "ok", "A", ev));
+    assert_eq!(
+        tool_seq(&r),
+        ["session{}", "pre-tool A Agent", "tool-end A", "session A", "pre-tool K Agent", "tool-end K", "pre-tool A Agent"]
+    );
+    assert_eq!(r.result.unwrap()["stepThrew"], json!([null, null, null, null]));
+    let ev = json!([
+        tool_before("task", "A", "t1"),
+        tool_after("task", "A", "t1"),
+        tool_before("bash", "A", "b1"),
+        tool_after("bash", "A", "b1")
+    ]);
+    let r = ws_node(&fx, ws_opts("t06-deny", Some(M), "deny", "A", ev));
+    assert_eq!(tool_seq(&r), ["session{}", "pre-tool A Agent", "pre-tool A bash", "tool-end A", "pre-tool A Agent"]);
+    let res = r.result.unwrap();
+    assert_eq!(res["stepThrew"], json!(["R2", null, null, null]));
+    assert_eq!(res["threw"], "R2");
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (7)
+fn plugin_tool_prompt_after_a_tool_with_no_end() {
+    if no_node("plugin_tool_prompt_after_a_tool_with_no_end") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), tool_before("bash", "A", "a1"), idle("A"), busy("A")]);
+    assert_eq!(
+        tool_order(&fx, "t07", Some(M), "ok", ev),
+        ["session{}", "session A", "prompt A", "pre-tool A bash", "stop A", "prompt A", "pre-tool A Agent"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (8)
+fn plugin_tool_events_need_a_member() {
+    if no_node("plugin_tool_events_need_a_member") {
+        return;
+    }
+    let fx = fx();
+    for (name, member) in [("t08-none", None), ("t08-empty", Some(""))] {
+        let r = ws_node(&fx, ws_opts(name, member, "ok", "A", t1_steps()));
+        assert!(tool_seq(&r).is_empty(), "{name}");
+        assert_eq!(r.calls.lines().collect::<Vec<_>>(), T1_OTHER, "{name}");
+    }
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (9)
+fn plugin_tool_calls_keep_order_when_zygo_fails_or_hangs() {
+    if no_node("plugin_tool_calls_keep_order_when_zygo_fails_or_hangs") {
+        return;
+    }
+    let fx = fx();
+    let r = ws_node(&fx, ws_opts("t09-fail", Some(M), "fail", "A", t1_steps()));
+    assert_eq!(tool_seq(&r), T1_CALLS);
+    let res = r.result.unwrap();
+    assert_eq!(res["stepThrew"], json!([null, null]));
+    assert_eq!(res["threw"], Value::Null);
+    let r = ws_node(&fx, ws_opts("t09-hang", Some(M), "hangpre", "A", t1_steps()));
+    assert_eq!(tool_seq(&r), T1_CALLS);
+    let res = r.result.unwrap();
+    assert_eq!(res["threw"], Value::Null);
+    let event_ms = res["eventMs"].as_u64().unwrap();
+    assert!(event_ms < 2000, "eventMs {event_ms}");
+    let tool_ms = res["toolMs"].as_u64().unwrap();
+    assert!((19_000..30_000).contains(&tool_ms), "toolMs {tool_ms}");
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (10)
+fn plugin_tool_two_open_calls_each_end() {
+    if no_node("plugin_tool_two_open_calls_each_end") {
+        return;
+    }
+    let fx = fx();
+    let want = ["session{}", "pre-tool A bash", "pre-tool A read", "tool-end A", "tool-end A", "pre-tool A Agent"];
+    let ev = json!([
+        tool_before("bash", "A", "a1"),
+        tool_before("read", "A", "a2"),
+        tool_after("bash", "A", "a1"),
+        tool_after("read", "A", "a2")
+    ]);
+    assert_eq!(tool_order(&fx, "t10-in-order", Some(M), "ok", ev), want);
+    let ev = json!([
+        tool_before("bash", "A", "a1"),
+        tool_before("read", "A", "a2"),
+        tool_after("read", "A", "a2"),
+        tool_after("bash", "A", "a1")
+    ]);
+    assert_eq!(tool_order(&fx, "t10-reversed", Some(M), "ok", ev), want);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (11)
+fn plugin_tool_reset_forgets_the_session_calls() {
+    if no_node("plugin_tool_reset_forgets_the_session_calls") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([
+        busy("A"),
+        tool_before("bash", "A", "a1"),
+        idle("A"),
+        busy("A"),
+        tool_before("bash", "A", "a2"),
+        tool_after("bash", "A", "a1"),
+        tool_after("bash", "A", "a2")
+    ]);
+    assert_eq!(
+        tool_order(&fx, "t11-stop", Some(M), "ok", ev),
+        ["session{}", "prompt A", "pre-tool A bash", "stop A", "prompt A", "pre-tool A bash", "tool-end A", "pre-tool A Agent"]
+    );
+    let ev = json!([tool_before("bash", "A", "a1"), busy("A"), tool_after("bash", "A", "a1")]);
+    assert_eq!(
+        tool_order(&fx, "t11-prompt", Some(M), "ok", ev),
+        ["session{}", "pre-tool A bash", "prompt A", "pre-tool A Agent"]
+    );
+    // plan review 7(c): a `stop` forgets the counted calls of every session
+    let ev = json!([
+        busy("A"),
+        tool_before("bash", "K", "k1"),
+        idle("A"),
+        busy("A"),
+        tool_before("bash", "A", "a2"),
+        tool_after("bash", "K", "k1"),
+        tool_after("bash", "A", "a2")
+    ]);
+    assert_eq!(
+        tool_order(&fx, "t11-other", Some(M), "ok", ev),
+        ["session{}", "prompt A", "pre-tool K bash", "stop A", "prompt A", "pre-tool A bash", "tool-end A", "pre-tool A Agent"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // W§18 #91 (12)
+fn plugin_tool_same_call_id_in_two_sessions() {
+    if no_node("plugin_tool_same_call_id_in_two_sessions") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([
+        tool_before("bash", "A", "c1"),
+        tool_before("bash", "B", "c1"),
+        tool_after("bash", "B", "c1"),
+        tool_after("bash", "A", "c1")
+    ]);
+    assert_eq!(
+        tool_order(&fx, "t12", Some(M), "ok", ev),
+        ["session{}", "pre-tool A bash", "pre-tool B bash", "tool-end B", "tool-end A", "pre-tool A Agent"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count: a `task` call is counted when its `pre-tool` is queued, before the wait
+fn plugin_tool_task_counted_before_its_wait() {
+    if no_node("plugin_tool_task_counted_before_its_wait") {
+        return;
+    }
+    let fx = fx();
+    // The `stop` is queued while the `task` waits for its `pre-tool` answer; it forgets the `task` call.
+    let ev = json!([
+        busy("A"),
+        tool_before("bash", "A", "x1"),
+        start(tool_before("task", "A", "t1")),
+        idle("A"),
+        join(),
+        tool_after("task", "A", "t1")
+    ]);
+    let r = ws_node(&fx, ws_opts("t13", Some(M), "slowpre", "A", ev));
+    assert_eq!(
+        tool_seq(&r),
+        ["session{}", "prompt A", "pre-tool A bash", "pre-tool A Agent", "stop A", "pre-tool A Agent"]
+    );
+    assert_eq!(r.result.unwrap()["stepThrew"], json!([null, null, null]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count: a `stop` forgets the counted calls with no `prompt` after it
+fn plugin_tool_stop_forgets_the_calls() {
+    if no_node("plugin_tool_stop_forgets_the_calls") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([busy("A"), tool_before("bash", "A", "a1"), idle("A"), tool_after("bash", "A", "a1")]);
+    assert_eq!(
+        tool_order(&fx, "t14", Some(M), "ok", ev),
+        ["session{}", "prompt A", "pre-tool A bash", "stop A", "pre-tool A Agent"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count, W§9.1: the `pre-tool` of a tool is queued before the guard runs
+fn plugin_tool_pre_tool_queued_before_the_guard() {
+    if no_node("plugin_tool_pre_tool_queued_before_the_guard") {
+        return;
+    }
+    let fx = fx();
+    // The guard of `guarddeny` writes its line 0.3 s after it starts, so a `pre-tool` queued before the guard runs
+    // writes its line first; a `pre-tool` queued after the guard answers writes its line after the guard line.
+    let r = ws_node(&fx, ws_opts("t15", Some(M), "guarddeny", "A", json!([tool_before("bash", "A", "b1")])));
+    assert_eq!(
+        r.calls.lines().collect::<Vec<_>>(),
+        [ws("session"), ws("pre-tool"), "hook guard --agent opencode".to_string(), ws("pre-tool"), "hook guard --agent opencode".to_string()]
+    );
+    let res = r.result.unwrap();
+    assert_eq!(res["stepThrew"], json!(["R4"]));
+    assert_eq!(res["threw"], "R4");
+}
+
+#[cfg(unix)]
+#[test] // AU27 known limit (6): a call that the guard denies sends no `tool-end`; the count stays until the `stop`
+fn plugin_tool_guard_deny_sends_no_tool_end() {
+    if no_node("plugin_tool_guard_deny_sends_no_tool_end") {
+        return;
+    }
+    let fx = fx();
+    let r = ws_node(&fx, ws_opts("t16", Some(M), "guarddeny", "A", json!([busy("A"), tool_before("bash", "A", "b1"), idle("A")])));
+    assert_eq!(tool_seq(&r), ["session{}", "prompt A", "pre-tool A bash", "stop A", "pre-tool A Agent"]);
+    assert_eq!(r.result.unwrap()["stepThrew"], json!(["R4"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count: a denied `task` of a known child is not counted
+fn plugin_tool_denied_task_of_a_child_is_not_counted() {
+    if no_node("plugin_tool_denied_task_of_a_child_is_not_counted") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), created_child("K", "A"), tool_before("task", "K", "t2"), tool_after("task", "K", "t2")]);
+    let r = ws_node(&fx, ws_opts("t17", Some(M), "deny", "A", ev));
+    assert_eq!(tool_seq(&r), ["session{}", "session A", "pre-tool K Agent", "pre-tool A Agent"]);
+    let res = r.result.unwrap();
+    assert_eq!(res["stepThrew"], json!(["R2", null]));
+    assert_eq!(res["threw"], "R2");
 }

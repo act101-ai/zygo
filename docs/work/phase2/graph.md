@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-27, FIX-24
+**Next:** M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-27, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | DONE | judgment | a75e36f; acceptance exit 0, zygo-hooks 197 + 1 ignored, zygo-core 28, zygo-workspace 316 + 2 ignored, zygo-launch 244 + 6 ignored, zygo 387, clippy -D warnings clean (merged tree) |
 | H3 | OpenCode plugin: session classification, main session and turn set | H1 | DONE | judgment | dd25ae1; acceptance opencode 77 + 1 ignored, zygo-launch all pass, zygo-hooks workspace 22 + 1 ignored, clippy -D warnings clean, check --workspace --tests clean (merged tree) |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
 | M1 | CLI verbs, /zygo:down detached, doctor tmux line, results sweep AU69 (a) | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | DONE | judgment | 09ed93b; acceptance workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172 (merged tree) |
@@ -83,7 +82,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1, FIX-19 | PLANNED | mechanical | — |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
-| FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-19; — |
+| FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | DONE | mechanical | 6b35869; acceptance opencode 94 + 1 ignored (merged tree) |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | DONE | implementation | 40aec7c; acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored (merged tree) |
@@ -246,3 +245,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-26 DONE (25194af): merged after 1 review round (visible skip notes, Windows type-check risk stated). Merged tree: Acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
 | 2026-11-23 | M1 DONE (09ed93b): merged after re-plan; 1 review round (stub-agent built on demand, marker target test, tmux lookup tests, exact detach condition, cwd read only when needed). Merged tree: workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172. |
 | 2026-11-23 | FIX-16 planned (18 steps): MCP workspace_down passes the name after --; up/admin/attach/ws-forget hints use -- <name>; real-parser tests; AU37/AU63/AU65/W§12/#78 rewritten. Edges FIX-19→FIX-16→FIX-27 for the shared spec and up.rs. |
+| 2026-11-23 | FIX-19 DONE (6b35869): merged after 1 review round (task counted before its wait; tests for stop reset, pre-tool before guard, guard deny, denied child task). Merged tree: Acceptance opencode 94 + 1 ignored; zygo-launch pass; hooks workspace 23 + 1 ignored; clippy, check clean. |
