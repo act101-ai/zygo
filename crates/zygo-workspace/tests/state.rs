@@ -661,7 +661,7 @@ fn state_folder_that_is_a_file_is_refused() {
     assert_eq!(names(&p.workspaces_dir()), vec![ID.to_string()]);
 }
 
-#[test] // FIX-17 (b), AU84: a `workspace.json` larger than 1 MiB is `state file too large` for read, list_all, update
+#[test] // FIX-17 (b), AU84, AU29 (Round 2 F1): a `workspace.json` larger than 1 MiB is `TooLarge` for read, list_all, update
 fn state_file_over_1_mib_is_too_large() {
     for len in [MIB + 1, MIB + 2, 2 * MIB] {
         let t = TempDir::new().unwrap();
@@ -670,9 +670,10 @@ fn state_file_over_1_mib_is_too_large() {
         fs::create_dir_all(store.dir()).unwrap();
         let body = padded(len);
         fs::write(store.dir().join("workspace.json"), &body).unwrap();
+        let file = store.dir().join("workspace.json");
+        let text = format!("{}: state file too large; it may be from a newer zygo, so zygo does not change it", file.display());
         let too_large = |r: &Result<Workspace, StateError>| {
-            matches!(r, Err(StateError::Invalid { path, reason })
-                if reason == "state file too large" && path == &store.dir().join("workspace.json"))
+            matches!(r, Err(e @ StateError::TooLarge { path }) if path == &file && e.to_string() == text)
         };
         let r = store.read().map(|w| w.unwrap());
         assert!(too_large(&r), "{len}: read {r:?}");
@@ -695,4 +696,114 @@ fn state_file_of_1_mib_reads() {
     let ws = store.update(S5, &mut |w| { w.loadout = "pair".into(); Ok(()) }).unwrap();
     assert_eq!(ws.loadout, "pair");
     assert_eq!(store.read().unwrap().unwrap().loadout, "pair");
+}
+
+/// Runs `f` in a thread and waits for it at most 10 s: a call that blocks fails the test (FIX-17 Round 2 F4).
+fn bounded<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(v) => v,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("{what} blocked"),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("{what} panicked (see the thread's message above)"),
+    }
+}
+
+#[cfg(unix)]
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+}
+
+#[cfg(unix)]
+#[test] // FIX-17 Round 2 F3, F4: a link at `lock`, `op.lock`, `errors.log` or `workspace.json` is never followed
+fn links_inside_the_state_folder_are_not_followed() {
+    use std::os::unix::fs::symlink;
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    store.update(S5, &mut identity).unwrap();
+    let dir = store.dir().to_path_buf();
+    let target = t.path().join("target");
+    fs::create_dir(&target).unwrap();
+    let is_link = |e: &StateError, name: &str| e.to_string() == format!("{}: is a link; it is not followed", dir.join(name).display());
+    // `lock` and `op.lock`: links to files that do not exist; nothing is created at the target.
+    fs::remove_file(dir.join("lock")).unwrap();
+    symlink(target.join("lock"), dir.join("lock")).unwrap();
+    symlink(target.join("op.lock"), dir.join("op.lock")).unwrap();
+    let before = raw(&store);
+    let s = store.clone();
+    let e = bounded("update", move || s.update(S5, &mut identity).unwrap_err());
+    assert!(is_link(&e, "lock"), "update: {e}");
+    let s = store.clone();
+    let e = bounded("op_lock", move || s.op_lock().unwrap_err());
+    assert!(is_link(&e, "op.lock"), "op_lock: {e}");
+    let s = store.clone();
+    assert!(bounded("op_lock_free", move || s.op_lock_free()));
+    assert_eq!(raw(&store), before);
+    // `errors.log`: a link to a file with content, below and above the log cap; the target keeps its bytes.
+    fs::write(target.join("log"), "keep").unwrap();
+    symlink(target.join("log"), dir.join("errors.log")).unwrap();
+    let s = store.clone();
+    bounded("log_error", move || s.log_error("must not be written"));
+    assert_eq!(fs::read(target.join("log")).unwrap(), b"keep");
+    let full = vec![b'x'; ERRORS_LOG_MAX as usize];
+    fs::write(target.join("log"), &full).unwrap();
+    let s = store.clone();
+    bounded("log_error", move || s.log_error("must not be written"));
+    assert!(fs::symlink_metadata(dir.join("errors.log")).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read(target.join("log")).unwrap(), full);
+    // `workspace.json`: a link to a valid state is not read.
+    fs::write(target.join("ws.json"), &before).unwrap();
+    fs::remove_file(dir.join("workspace.json")).unwrap();
+    symlink(target.join("ws.json"), dir.join("workspace.json")).unwrap();
+    let s = store.clone();
+    let r = bounded("read", move || s.read());
+    assert!(matches!(&r, Err(StateError::Invalid { reason, .. }) if reason == "state file is a link"), "{r:?}");
+    assert_eq!(names(&target), vec!["log".to_string(), "ws.json".to_string()]);
+    assert_eq!(fs::read(target.join("ws.json")).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test] // FIX-17 Round 2 F4: a FIFO at `workspace.json`, `lock`, `op.lock` or `errors.log` is refused or ignored, never waited on
+fn a_fifo_in_the_state_folder_never_blocks() {
+    use std::os::unix::fs::FileTypeExt;
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    store.update(S5, &mut identity).unwrap();
+    let dir = store.dir().to_path_buf();
+    let not_regular = |e: &StateError, name: &str| e.to_string() == format!("{}: is not a regular file", dir.join(name).display());
+    // `workspace.json`
+    fs::remove_file(dir.join("workspace.json")).unwrap();
+    mkfifo(&dir.join("workspace.json"));
+    let s = store.clone();
+    let r = bounded("read", move || s.read());
+    assert!(matches!(&r, Err(StateError::Invalid { reason, .. }) if reason == "state file is not a regular file"), "{r:?}");
+    let s = store.clone();
+    let r = bounded("update", move || s.update(S5, &mut identity));
+    assert!(matches!(&r, Err(StateError::Invalid { reason, .. }) if reason == "state file is not a regular file"), "{r:?}");
+    assert!(fs::symlink_metadata(dir.join("workspace.json")).unwrap().file_type().is_fifo());
+    // `lock`
+    fs::remove_file(dir.join("lock")).unwrap();
+    mkfifo(&dir.join("lock"));
+    let s = store.clone();
+    let e = bounded("update", move || s.update(S5, &mut identity).unwrap_err());
+    assert!(not_regular(&e, "lock"), "update: {e}");
+    // `op.lock`
+    mkfifo(&dir.join("op.lock"));
+    let s = store.clone();
+    let e = bounded("op_lock", move || s.op_lock().unwrap_err());
+    assert!(not_regular(&e, "op.lock"), "op_lock: {e}");
+    let s = store.clone();
+    assert!(bounded("op_lock_free", move || s.op_lock_free()));
+    // `errors.log`
+    mkfifo(&dir.join("errors.log"));
+    let s = store.clone();
+    bounded("log_error", move || s.log_error("must not be written"));
+    assert!(fs::symlink_metadata(dir.join("errors.log")).unwrap().file_type().is_fifo());
 }

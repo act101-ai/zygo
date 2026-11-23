@@ -1,7 +1,7 @@
 //! `workspace.json` types, atomic write, locks, live check. Owner: node W2 (W§7.1-W§7.3).
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -319,6 +319,9 @@ pub enum StateError {
     /// The state folder `path` is a symbolic link (`link`) or an entry that is not a folder; nothing in it or
     /// through it was opened, created, changed or written (FIX-17).
     NotADirectory { path: PathBuf, link: bool },
+    /// `workspace.json` is larger than 1 MiB (AU84). It may be from a newer zygo (AU29), so no writer changes,
+    /// renames or removes it (FIX-17 Round 2 F1).
+    TooLarge { path: PathBuf },
 }
 
 impl std::fmt::Display for StateError {
@@ -334,6 +337,11 @@ impl std::fmt::Display for StateError {
             StateError::NotADirectory { path, link: false } => {
                 write!(f, "{}: state folder is not a folder", path.display())
             }
+            StateError::TooLarge { path } => write!(
+                f,
+                "{}: state file too large; it may be from a newer zygo, so zygo does not change it",
+                path.display()
+            ),
         }
     }
 }
@@ -410,7 +418,8 @@ impl Store {
 
     /// Reads `workspace.json` with no lock: a write replaces the file in one rename, so a reader gets a whole
     /// file (W§7.3). `Ok(None)` when no state exists. It reads at most 1 MiB + 1 byte; a larger file is invalid
-    /// (AU84). A state directory that is a link or not a folder is `NotADirectory`; the link is not followed.
+    /// (AU84) and may be from a newer zygo (AU29): `TooLarge`. A state directory that is a link or not a folder is
+    /// `NotADirectory`; a `workspace.json` that is a link or not a regular file is `Invalid`; no link is followed.
     pub fn read(&self) -> Result<Option<Workspace>, StateError> {
         if !valid_ws_id(&self.id) {
             return Err(self.invalid_id());
@@ -418,8 +427,12 @@ impl Store {
         self.check_dir()?;
         let path = self.state_file();
         let bytes = match read_state_capped(&path) {
-            Ok(Some(b)) => b,
-            Ok(None) => return Err(StateError::Invalid { path, reason: "state file too large".to_string() }),
+            Ok(StateBytes::Bytes(b)) => b,
+            Ok(StateBytes::TooLarge) => return Err(StateError::TooLarge { path }),
+            Ok(StateBytes::Link) => return Err(StateError::Invalid { path, reason: "state file is a link".to_string() }),
+            Ok(StateBytes::NotFile) => {
+                return Err(StateError::Invalid { path, reason: "state file is not a regular file".to_string() });
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(StateError::Io(e)),
         };
@@ -447,8 +460,9 @@ impl Store {
     }
 
     /// The state directory as `symlink_metadata` sees it, so a link is never followed: a symbolic link or an entry
-    /// that is not a folder is `NotADirectory`; a folder, or no entry, is `Ok` (FIX-17).
-    fn check_dir(&self) -> Result<(), StateError> {
+    /// that is not a folder is `NotADirectory`; a folder, or no entry, is `Ok` (FIX-17). The snapshot module runs it
+    /// before its own files (Round 2 F5).
+    pub(crate) fn check_dir(&self) -> Result<(), StateError> {
         match fs::symlink_metadata(&self.dir) {
             Ok(m) if m.file_type().is_symlink() => Err(StateError::NotADirectory { path: self.dir.clone(), link: true }),
             Ok(m) if !m.is_dir() => Err(StateError::NotADirectory { path: self.dir.clone(), link: false }),
@@ -504,12 +518,14 @@ impl Store {
     }
 
     /// `false` only while another holder has `op.lock`. It creates no file and no directory. When the lock is free,
-    /// the check holds it until the return; `op_lock` tries again for that short hold (AU83).
+    /// the check holds it until the return; `op_lock` tries again for that short hold (AU83). A state folder that is a
+    /// link or not a folder, and an `op.lock` that is a link or not a regular file, give `true` with nothing opened
+    /// through the link and no wait; `op_lock` then gives the refusal (FIX-17 Round 2 F3-F5).
     pub fn op_lock_free(&self) -> bool {
-        if !valid_ws_id(&self.id) {
+        if !valid_ws_id(&self.id) || self.check_dir().is_err() {
             return true;
         }
-        match File::open(self.dir.join(OP_LOCK_FILE)) {
+        match open_regular(fs::OpenOptions::new().read(true), &self.dir.join(OP_LOCK_FILE)) {
             Ok(f) => !matches!(fs4::FileExt::try_lock(&f), Err(fs4::TryLockError::WouldBlock)),
             Err(_) => true,
         }
@@ -534,7 +550,8 @@ impl Store {
     }
 
     /// Adds the line `<unix seconds> <text>` to `errors.log`. The caller has no place to report a failure of the
-    /// log, so every error is ignored.
+    /// log, so every error is ignored. A link or an entry that is not a regular file at `errors.log` is not written
+    /// or followed, and the rewrite reads at most [`ERRORS_LOG_MAX`] bytes, the newest ones (FIX-17 Round 2 F3, F4).
     pub fn log_error(&self, line: &str) {
         if self.ensure_dir().is_err() {
             return;
@@ -547,18 +564,30 @@ impl Store {
         }
         let entry = format!("{secs} {}\n", &text[..end]);
         let path = self.dir.join(ERRORS_FILE);
-        let len = fs::metadata(&path).map_or(0, |m| m.len());
+        let len = match fs::symlink_metadata(&path) {
+            Ok(m) if m.is_file() => m.len(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            _ => return,
+        };
         if len + entry.len() as u64 <= ERRORS_LOG_MAX {
-            if let Ok(mut f) = private().append(true).create(true).open(&path) {
+            if let Ok(mut f) = open_regular(private().append(true).create(true), &path) {
                 let _ = f.write_all(entry.as_bytes());
             }
             return;
         }
         // The file is full: keep its newest whole lines within half of the limit, so a rewrite occurs one time
-        // per 32 KiB of lines and not at each line.
-        let Ok(mut all) = fs::read(&path) else {
+        // per 32 KiB of lines and not at each line. The read takes at most the log cap, from its end.
+        let Ok(mut f) = open_regular(fs::OpenOptions::new().read(true), &path) else {
             return;
         };
+        let size = f.metadata().map_or(0, |m| m.len());
+        if size > ERRORS_LOG_MAX && f.seek(SeekFrom::Start(size - ERRORS_LOG_MAX)).is_err() {
+            return;
+        }
+        let mut all = Vec::new();
+        if f.take(ERRORS_LOG_MAX).read_to_end(&mut all).is_err() {
+            return;
+        }
         all.extend_from_slice(entry.as_bytes());
         let keep = (ERRORS_LOG_MAX / 2) as usize;
         let from = (0..all.len()).find(|&o| all.len() - o <= keep && (o == 0 || all[o - 1] == b'\n')).unwrap_or(all.len());
@@ -566,13 +595,79 @@ impl Store {
     }
 }
 
+/// What [`open_nofollow`] found at a path.
+enum Opened {
+    File(File),
+    /// A symbolic link; it was not followed.
+    Link,
+    /// An entry that is not a regular file (a folder, a FIFO, a socket, a device); the handle was dropped.
+    NotFile,
+}
+
+/// Opens `path` with `o` without following a symbolic link at `path` and without waiting (unix: `O_NOFOLLOW |
+/// O_NONBLOCK`, so a FIFO opens at once), and checks the opened handle, not the path, so no other entry can take its
+/// place after the check (as `zygo-hooks/src/statusline/phase.rs` does). On other systems `o` opens as before, with
+/// no check (FIX-17 Round 2 F3, F4).
+fn open_nofollow(o: &mut fs::OpenOptions, path: &Path) -> std::io::Result<Opened> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        let f = match o.open(path) {
+            Ok(f) => f,
+            // `O_NOFOLLOW` on a link gives `ELOOP` on Linux; the second look covers the systems that give another code.
+            Err(e) if e.raw_os_error() == Some(libc::ELOOP)
+                || fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) =>
+            {
+                return Ok(Opened::Link);
+            }
+            Err(e) => return Err(e),
+        };
+        if !f.metadata()?.is_file() {
+            return Ok(Opened::NotFile);
+        }
+        Ok(Opened::File(f))
+    }
+    #[cfg(not(unix))]
+    {
+        o.open(path).map(Opened::File)
+    }
+}
+
+/// [`open_nofollow`] for a file the store locks or writes: a link or an entry that is not a regular file is an error
+/// whose text names the path.
+fn open_regular(o: &mut fs::OpenOptions, path: &Path) -> std::io::Result<File> {
+    match open_nofollow(o, path)? {
+        Opened::File(f) => Ok(f),
+        Opened::Link => Err(std::io::Error::other(format!("{}: is a link; it is not followed", path.display()))),
+        Opened::NotFile => Err(std::io::Error::other(format!("{}: is not a regular file", path.display()))),
+    }
+}
+
+/// The result of [`read_state_capped`].
+pub(crate) enum StateBytes {
+    /// The whole file, at most 1 MiB.
+    Bytes(Vec<u8>),
+    /// The file is larger than 1 MiB; only 1 MiB + 1 byte of it was read (AU84).
+    TooLarge,
+    /// `workspace.json` is a symbolic link; it was not followed.
+    Link,
+    /// `workspace.json` is not a regular file (a FIFO, a folder, ...); it was not read.
+    NotFile,
+}
+
 /// The bytes of the state file `path`, read with the one cap of AU84: at most 1 MiB + 1 byte are read, so a larger
-/// file allocates no more. `Ok(None)` when the file is larger than 1 MiB (`state file too large`). Every reader of
-/// `workspace.json` in this crate uses it (FIX-17).
-pub(crate) fn read_state_capped(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+/// file allocates no more. The open does not follow a link and does not wait on a FIFO ([`open_nofollow`]). Every
+/// reader of `workspace.json` in this crate uses it (FIX-17).
+pub(crate) fn read_state_capped(path: &Path) -> std::io::Result<StateBytes> {
+    let file = match open_nofollow(fs::OpenOptions::new().read(true), path)? {
+        Opened::File(f) => f,
+        Opened::Link => return Ok(StateBytes::Link),
+        Opened::NotFile => return Ok(StateBytes::NotFile),
+    };
     let mut bytes = Vec::new();
-    File::open(path)?.take(STATE_FILE_MAX + 1).read_to_end(&mut bytes)?;
-    Ok((bytes.len() as u64 <= STATE_FILE_MAX).then_some(bytes))
+    file.take(STATE_FILE_MAX + 1).read_to_end(&mut bytes)?;
+    Ok(if bytes.len() as u64 > STATE_FILE_MAX { StateBytes::TooLarge } else { StateBytes::Bytes(bytes) })
 }
 
 /// `op.lock` held by this process; the lock ends when the value is dropped.
@@ -614,9 +709,10 @@ pub(crate) fn sweep_tmp(dir: &Path) {
 }
 
 /// Opens (and creates) the lock file `path` and takes its lock: tries each 5 ms until `bound` ends. `Ok(None)` when
-/// another holder kept the lock for the whole bound. The lock ends when the file is dropped.
+/// another holder kept the lock for the whole bound. The lock ends when the file is dropped. A link at `path` is not
+/// followed and an entry that is not a regular file is refused ([`open_regular`], FIX-17 Round 2 F3).
 pub(crate) fn lock_file(path: &Path, bound: Duration) -> std::io::Result<Option<File>> {
-    let f = private().read(true).write(true).create(true).truncate(false).open(path)?;
+    let f = open_regular(private().read(true).write(true).create(true).truncate(false), path)?;
     // `None`: the bound is past the end of the clock, so no deadline exists.
     let deadline = Instant::now().checked_add(bound);
     loop {

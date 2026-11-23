@@ -27,7 +27,7 @@ use crate::mux::{
 use crate::repair::repair;
 use crate::snapshot;
 use crate::state::{
-    list_all, read_state_capped, BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Phase, StateError, Store, Window, Workspace,
+    list_all, read_state_capped, BuildPlan, StateBytes, MemberRecord, MemberState, Pane, PaneKind, Phase, StateError, Store, Window, Workspace,
 };
 
 /// The lock wait of every write of `up` (W§7.3).
@@ -367,8 +367,12 @@ pub fn preflight(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path) -> 
         for (id, r) in &all {
             let Err(e) = r else { continue };
             let file = paths.workspaces_dir().join(id).join("workspace.json");
-            // FIX-17 D8: the one cap of AU84; a file larger than 1 MiB is not read, so it matches no name.
-            let raw = read_state_capped(&file).ok().flatten();
+            // FIX-17 D8: the one cap of AU84; a file larger than 1 MiB (or a link, or not a regular file) is not read,
+            // so it matches no name.
+            let raw = match read_state_capped(&file) {
+                Ok(StateBytes::Bytes(b)) => Some(b),
+                _ => None,
+            };
             let Some(v) = raw.and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else {
                 continue;
             };

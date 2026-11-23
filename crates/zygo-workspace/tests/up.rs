@@ -1606,6 +1606,33 @@ fn preflight_by_name_skips_an_invalid_state_over_1_mib() {
     assert!(raw(&store) == before, "up changed the state file");
 }
 
+#[test] // FIX-17 Round 2 F1, AU29, AU84: a state file over 1 MiB may be from a newer zygo: `up` and `up --reset` refuse
+        // it with exit 1 and leave it in place (no `.bad` rename)
+fn up_reset_refuses_a_state_file_over_1_mib() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    let store = Store::open(&paths(t), &workspace_id(&canon(&r.join(".git"))));
+    let mut bytes = serde_json::to_vec_pretty(&doc(&store, &r)).unwrap();
+    bytes.resize(2 * 1024 * 1024, b' ');
+    fs::create_dir_all(store.dir()).unwrap();
+    fs::write(state_file(&store), &bytes).unwrap();
+    let line = format!(
+        "zygo: {}: state file too large; it may be from a newer zygo, so zygo does not change it\n",
+        state_file(&store).display()
+    );
+    let g = gone_tmux(t);
+    let mut o = opts(t, &r, &g, &t.join("zygo"));
+    o.reset = true;
+    assert_eq!(run(&o), (1, String::new(), line.clone()));
+    assert!(raw(&store) == bytes, "up --reset changed the state file");
+    assert!(!store.dir().join("workspace.json.bad").exists());
+    o.reset = false;
+    assert_eq!(run(&o), (1, String::new(), line));
+    assert!(raw(&store) == bytes, "up changed the state file");
+}
+
 // ---- Round 3 ----
 
 /// A tmux wrapper as `socket_only_tmux` whose `new-session` exits 1 with `injected`: `fail` makes no session, `make`

@@ -20,7 +20,7 @@ use crate::identity::{valid_name, valid_pane_key, valid_ws_id, workspace_id};
 use crate::mux::tmux::Tmux;
 use crate::mux::{session_target, Multiplexer, MuxError, SessionAnswer, BOUND};
 use crate::snapshot;
-use crate::state::{list_all, lock_file, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Workspace};
+use crate::state::{list_all, lock_file, read_state_capped, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Workspace};
 use crate::up::{find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};
 
 /// The git bound of `status`, so `/zygo:workspace` fits the 4.5 s hook bound (D12, D23).
@@ -33,7 +33,6 @@ const NO_STATUS: &str = "no workspace for this session or folder";
 const NO_FOLDER: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --name";
 /// The largest state file that W8 reads (Round 2 R6).
 const STATE_MAX: u64 = 1024 * 1024;
-const TOO_LARGE: &str = "state file too large";
 
 /// What `symlink_metadata` says of a path; a link is never followed (Round 2 R1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,20 +60,28 @@ fn state_kind(paths: &Paths, id: &str) -> Kind { kind(&paths.workspaces_dir().jo
 /// Whether `workspace.json` of `dir` is larger than [`STATE_MAX`].
 fn too_large(dir: &Path) -> bool { fs::metadata(dir.join("workspace.json")).is_ok_and(|m| m.len() > STATE_MAX) }
 
-/// [`Store::read`] with the cap of [`STATE_MAX`]: a larger file is `Invalid` with `state file too large` (Round 2 R6).
+/// The `TooLarge` error of the state file of `dir` (FIX-17 Round 2 F1).
+fn too_large_err(dir: &Path) -> StateError { StateError::TooLarge { path: dir.join("workspace.json") } }
+
+/// [`Store::read`] with the cap of [`STATE_MAX`]: a larger file is `TooLarge` (Round 2 R6; FIX-17 Round 2 F1). The
+/// store reads with the same cap, so this check agrees with it.
 fn read_capped(store: &Store) -> Result<Option<Workspace>, StateError> {
     if too_large(store.dir()) {
-        return Err(StateError::Invalid { path: store.dir().join("workspace.json"), reason: TOO_LARGE.into() });
+        return Err(too_large_err(store.dir()));
     }
     store.read()
 }
 
-/// The JSON of `workspace.json` of `dir`, read only when it is at most [`STATE_MAX`].
-fn raw_json(dir: &Path) -> Option<serde_json::Value> {
-    if too_large(dir) {
-        return None;
+/// The JSON of `workspace.json` of `dir`, read with the store's cap in the read itself ([`read_state_capped`]), so a
+/// file that grows after any earlier check is still not read past 1 MiB + 1 byte (FIX-17 Round 2 F2). A larger file is
+/// `Err(TooLarge)`; a file that is missing, a link, not a regular file or not JSON is `Ok(None)`.
+fn raw_json(dir: &Path) -> Result<Option<serde_json::Value>, StateError> {
+    let _ = fire(dir, "raw_json_before_read");
+    match read_state_capped(&dir.join("workspace.json")) {
+        Ok(StateBytes::Bytes(b)) => Ok(serde_json::from_slice(&b).ok()),
+        Ok(StateBytes::TooLarge) => Err(too_large_err(dir)),
+        Ok(StateBytes::Link | StateBytes::NotFile) | Err(_) => Ok(None),
     }
-    fs::read(dir.join("workspace.json")).ok().and_then(|b| serde_json::from_slice(&b).ok())
 }
 
 /// The state column of `ls` (W§12, D8).
@@ -482,6 +489,8 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
                 Ok(Some(ws)) => return Ok(Found::Readable(Box::new(ws))),
                 Ok(None) => {}
                 Err(StateError::Newer { .. }) => return Err(fail(NEWER.into())),
+                // FIX-17 Round 2 F1 (AU29): it may be from a newer zygo, so it is refused before any lock or write.
+                Err(e @ StateError::TooLarge { .. }) => return Err(fail(format!("zygo: {e}"))),
                 Err(_) => return Ok(Found::Invalid(arg.to_string())),
             },
             Kind::Missing | Kind::Other => {}
@@ -498,8 +507,10 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
         0 => {}
         1 => {
             let ws = named.remove(0);
-            if too_large(&paths.workspaces_dir().join(&ws.id)) {
-                return Ok(Found::Invalid(ws.id.clone()));
+            // The file grew after `list_all` read it (FIX-17 Round 2 F1: refused, as by id).
+            let dir = paths.workspaces_dir().join(&ws.id);
+            if too_large(&dir) {
+                return Err(fail(format!("zygo: {}", too_large_err(&dir))));
             }
             return Ok(Found::Readable(Box::new(ws.clone())));
         }
@@ -519,7 +530,7 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
         if kind(&dir) != Kind::Real {
             continue;
         }
-        let name = raw_json(&dir).and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string));
+        let name = raw_json(&dir).ok().flatten().and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string));
         if name.as_deref() == Some(arg) {
             return Err(fail(NEWER.into()));
         }
@@ -567,6 +578,7 @@ fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -
     let label = match read_capped(&store) {
         Ok(None) => return Err(format!("zygo: no workspace named {}", esc(arg))),
         Err(StateError::Newer { .. }) => return Err(NEWER.into()),
+        Err(e @ StateError::TooLarge { .. }) => return Err(format!("zygo: {e}")),
         Ok(Some(ws)) => {
             check_readable(&store, &ws, tmux, tmux_env)?;
             ws.name
@@ -630,11 +642,8 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
             "zygo: workspace {id} not forgotten: {reason}; its state cannot be read, so repair it with zygo up --reset in its checkout"
         )
     };
-    // Round 2 R6: a file over 1 MiB is not read, so no check can run on it.
-    if too_large(store.dir()) {
-        return Err(refuse(TOO_LARGE));
-    }
-    let v = raw_json(store.dir()).unwrap_or(serde_json::Value::Null);
+    // Round 2 R6, FIX-17 Round 2 F1, F2: one capped read; a file over 1 MiB may be from a newer zygo and is refused.
+    let v = raw_json(store.dir()).map_err(|e| format!("zygo: {e}"))?.unwrap_or(serde_json::Value::Null);
     let Some(name) = v.get("name").and_then(|n| n.as_str()).filter(|n| valid_name(n)) else {
         return Err(refuse("it has no valid name"));
     };
