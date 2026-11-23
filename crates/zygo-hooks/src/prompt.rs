@@ -18,6 +18,11 @@ pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
     run_with(input, slash_dispatch(), HOOK_DEADLINE)
 }
 
+/// A `/zygo:<verb>` line, trailing whitespace trimmed: the test of `run_with` (§17.1).
+pub fn is_slash(prompt: &str) -> bool {
+    RE.is_match(prompt.trim_end())
+}
+
 /// A matched line (trailing whitespace trimmed) blocks with the verb's reply or error text; an unknown verb runs `help`. A verb that does not reply
 /// within `deadline` blocks with the shell command; one that panics is an error, so the prompt passes (C6).
 pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Duration) -> anyhow::Result<HookOutput> {
