@@ -6,11 +6,17 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
-use zygo_config::{check, load, KeyRef, Layer, LoadContext, Merged, Severity};
+use std::path::{Path, PathBuf};
+use zygo_config::layers::seg;
+use zygo_config::{check, load, Config, KeyRef, Layer, LoadContext, Merged, Severity, Violation};
 use zygo_core::exit::ExitCode;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
+use zygo_core::Agent;
+use zygo_workspace::args::{has_user_info, removed_labels};
 
+use super::compact::{parse_window, Change};
+use super::loadout::{hide_secrets, print_folder_warning, PaneBase};
 use super::verbs::VerbCtx;
 
 #[derive(Parser)]
@@ -36,13 +42,19 @@ fn parse(tokens: &[String]) -> Result<ConfigArgs, clap::Error> {
 }
 
 /// The `show` text with each key as `<set>`, `<unset>` or `<error>`; one line on `err` per key the store could not read.
+/// Each loadout is shown after `hide_secrets`, with each pane's folder taken against `base` (FIX-27 D7).
 fn render_show(
     m: &Merged,
     layer: Option<Layer>,
     s: &dyn SecretStore,
     env: &dyn Fn(&str) -> Option<OsString>,
     err: &mut dyn Write,
+    base: &PaneBase,
 ) -> String {
+    let mut m = m.clone();
+    for l in m.config.loadout.values_mut() {
+        hide_secrets(l, base);
+    }
     let failed: RefCell<BTreeMap<String, String>> = RefCell::default();
     let mut text = m.show(layer, &|k: &KeyRef| match resolve_with(k, s, env) {
         Ok(v) => v.is_some(),
@@ -57,6 +69,49 @@ fn render_show(
         let _ = writeln!(err, "zygo config: cannot read {}: {}", zygo_core::esc(&r), zygo_core::esc(&e));
     }
     text
+}
+
+/// The loadout checks that need the compact parser, AU30 or AU98 (W§11, AU103; FIX-27 D9), per `claude-code` and
+/// `opencode` pane in loadout order: a `compact` that the launch refuses (`on` included) and a `server` with user info
+/// are errors; arguments that AU30 removes, taken against the pane's folder, give one warning that names them.
+fn loadout_checks(cfg: &Config, base: &PaneBase) -> Vec<Violation> {
+    let mut out = Vec::new();
+    for (name, l) in &cfg.loadout {
+        for (wi, w) in l.window.iter().enumerate() {
+            for (pi, p) in w.pane.iter().enumerate() {
+                let (agent, word) = match p.kind.parse::<Agent>() {
+                    Ok(Agent::ClaudeCode) => (Agent::ClaudeCode, "claude"),
+                    Ok(Agent::OpenCode) => (Agent::OpenCode, "opencode"),
+                    Err(_) => continue,
+                };
+                let path = format!("loadout.{}.window[{wi}].pane[{pi}]", seg(name));
+                if let Some(v) = p.compact.as_deref()
+                    && !matches!(parse_window(v), Some(Change::Set(_)))
+                {
+                    let full = super::bad_compact(word, v);
+                    let prefix = format!("zygo {word}: ");
+                    let message = full.strip_prefix(&prefix).unwrap_or(&full).to_string();
+                    out.push(Violation { severity: Severity::Error, path: format!("{path}.compact"), message });
+                }
+                if p.server.as_deref().is_some_and(has_user_info) {
+                    out.push(Violation {
+                        severity: Severity::Error,
+                        path: format!("{path}.server"),
+                        message: "holds user info; zygo up starts this pane as a shell and does not save it (AU98)".into(),
+                    });
+                }
+                let labels = removed_labels(agent, &p.args, &base.of(p));
+                if !labels.is_empty() {
+                    out.push(Violation {
+                        severity: Severity::Warning,
+                        path: format!("{path}.args"),
+                        message: format!("removed from the saved arguments (AU30): {}", labels.join(" ")),
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 pub fn run() -> i32 {
@@ -111,13 +166,24 @@ fn run_in(tokens: &[String], ctx: &LoadContext, s: &dyn SecretStore, team: &dyn 
     for w in &merged.warnings {
         super::print_err(&format!("{w}\n"));
     }
+    // D6: the pane folders by `zygo up`'s own lookup, only when there is a loadout (no git run otherwise)
+    let base = if merged.config.loadout.is_empty() {
+        PaneBase { main_root: PathBuf::new(), worktrees: vec![] }
+    } else {
+        let (base, warning) = PaneBase::from_folder(ctx.repo.as_deref().unwrap_or(Path::new("")));
+        if let Some(m) = warning {
+            print_folder_warning(&m);
+        }
+        base
+    };
     match args.sub {
         Sub::Show { .. } => {
-            super::print_out(&render_show(&merged, layer, s, &|n| std::env::var_os(n), &mut std::io::stderr()));
+            super::print_out(&render_show(&merged, layer, s, &|n| std::env::var_os(n), &mut std::io::stderr(), &base));
             0
         }
         Sub::Check => {
-            let violations = check(&merged.config);
+            let mut violations = check(&merged.config);
+            violations.extend(loadout_checks(&merged.config, &base));
             if violations.is_empty() {
                 super::print_out("config ok\n");
             }
@@ -192,9 +258,9 @@ key = "keychain:acme"
         let (_d, _, m) = merged_fixture();
         let s = MemStore::new();
         let mut err = Vec::new();
-        assert!(render_show(&m, None, &s, &no_env, &mut err).contains("\"keychain:acme\" <unset>"));
+        assert!(render_show(&m, None, &s, &no_env, &mut err, &PaneBase { main_root: _d.path().to_path_buf(), worktrees: vec![] }).contains("\"keychain:acme\" <unset>"));
         s.set("acme", &Secret::new(format!("c-{}", ulid::Ulid::generate()))).unwrap();
-        assert!(render_show(&m, None, &s, &no_env, &mut err).contains("\"keychain:acme\" <set>"));
+        assert!(render_show(&m, None, &s, &no_env, &mut err, &PaneBase { main_root: _d.path().to_path_buf(), worktrees: vec![] }).contains("\"keychain:acme\" <set>"));
         assert!(err.is_empty());
     }
 
@@ -207,7 +273,7 @@ key = "keychain:acme"
         let m = load(&LoadContext { paths, repo: None, team: None }).unwrap();
         let mut err = Vec::new();
         for layer in [None, Some(Layer::User)] {
-            let out = render_show(&m, layer, &MemStore::new(), &no_env, &mut err);
+            let out = render_show(&m, layer, &MemStore::new(), &no_env, &mut err, &PaneBase { main_root: _d.path().to_path_buf(), worktrees: vec![] });
             assert!(out.contains("marketplace.a.source = \"git+https://h.example/o/r.git\"  # user\n"), "{out}");
             assert!(out.contains("marketplace.b.source = \"https://h.example/o/r\"  # user\n"), "{out}");
             assert!(!out.contains(&t), "{out}");
@@ -225,7 +291,7 @@ key = "keychain:acme"
         std::fs::write(&file, format!("acme = {secret}\n")).unwrap();
         let a = Auto::new(None, FileStore::new(file));
         let mut err = Vec::new();
-        let out = render_show(&m, None, &a, &no_env, &mut err);
+        let out = render_show(&m, None, &a, &no_env, &mut err, &PaneBase { main_root: _d.path().to_path_buf(), worktrees: vec![] });
         assert!(out.contains("\"keychain:acme\" <error>"), "{out}");
         let err = String::from_utf8(err).unwrap();
         assert_eq!(err.lines().count(), 1, "{err}");
@@ -267,7 +333,7 @@ key = "keychain:acme"
     fn show_store_error_line_is_escaped() {
         let (_d, _, m) = merged_fixture();
         let mut err = Vec::new();
-        let out = render_show(&m, None, &Failing, &no_env, &mut err);
+        let out = render_show(&m, None, &Failing, &no_env, &mut err, &PaneBase { main_root: _d.path().to_path_buf(), worktrees: vec![] });
         assert!(out.contains("\"keychain:acme\" <error>"), "{out}");
         assert_eq!(String::from_utf8(err).unwrap(), "zygo config: cannot read keychain:acme: boom\\u{1b}[2K\\nzygo config: forged\n");
     }
