@@ -20,7 +20,8 @@ pub enum Idle {
     /// (`activity file unreadable: <error>`), running subagents (`subagents running: "<id>", "<id>"`, each id with
     /// Debug quoting, so an id that holds `, ` stays one id), then rule 3
     /// (`proxy status not read: <error>`, `model requests in flight: <n>`, `last model request ended <s> s ago`,
-    /// `last model request ended after the poll time`). `down` prints it in its timeout report (W§9.3 step 6).
+    /// `last model request ended after the poll time`), then an open turn with a running tool (`tool running`:
+    /// `busy` is `true` and `tools_running > 0`, W10 round 2). `down` prints it in its timeout report (W§9.3 step 6).
     /// `rule_skipped` is `true` when the status meets a skip case of rule 3, whatever decided `Busy` (an
     /// `activity.json` error or running subagents), so `down` prints the AU26 rule-skipped line also for a busy
     /// member (round 2, M1). A rule 3 failure, a status read error among them, gives `false`.
@@ -29,7 +30,8 @@ pub enum Idle {
     /// flight and `last_request_end` is not RFC 3339 or is more than `REQUEST_QUIET` after the poll time. `down`
     /// counts the member as idle and prints the AU26 rule-skipped line.
     IdleRuleSkipped,
-    /// `busy` is `true` while rules 2 and 3 hold: a turn with no `Stop` or `StopFailure`, as after Esc (PW7 7.2).
+    /// `busy` is `true` while rules 2 and 3 hold and no tool runs (`tools_running == 0`): a turn with no `Stop` or
+    /// `StopFailure`, as after Esc (PW7 7.2). A long tool call sends no model request, so it is `Busy`, never this.
     /// `rule_skipped` is `true` when rule 3 is skipped. Only `TurnOpen { rule_skipped: false }` counts toward the
     /// interrupted-turn 60 s of `down`; with `rule_skipped: true` the member waits until the drain timeout (AU26).
     TurnOpen { rule_skipped: bool },
@@ -91,6 +93,9 @@ pub fn idle(activity: Result<&Activity, &str>, status: Result<&SessionStatus, &s
     }
     if let Rule3::Failed(reason) = rule3 {
         return Idle::Busy { reason, rule_skipped: false };
+    }
+    if activity.busy && activity.tools_running > 0 {
+        return Idle::Busy { reason: "tool running".to_string(), rule_skipped };
     }
     match (activity.busy, rule_skipped) {
         (true, _) => Idle::TurnOpen { rule_skipped },

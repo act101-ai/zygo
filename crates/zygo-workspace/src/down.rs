@@ -25,15 +25,27 @@ use crate::activity::{self, Activity};
 use crate::drain::{self, Idle};
 use crate::identity::{valid_pane_key, valid_ws_id};
 use crate::mux::tmux::Tmux;
-use crate::mux::{check_path, parse_pane_line, session_target, Multiplexer, MuxError, SessionAnswer, MIN_VERSION};
+use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer, MIN_VERSION};
 use crate::repair::repair;
 use crate::snapshot::{self, SkipReason, SnapshotOutcome, OP_WAIT};
 use crate::state::{list_all, MemberRecord, MemberState, OpLock, Phase, StateError, Store, Subagent, Workspace};
 use crate::up::{self, not_owned, preflight, socket_is_private, unreachable, Exit};
 
-/// The mount-namespace probe of the AU18 guard: `self` or a process id to the namespace text, `None` when it cannot
-/// be read (D10).
-pub type MntNs = fn(&str) -> Option<String>;
+/// What the AU18 guard compares for a process: its mount and pid namespaces and its command name (round 2 item 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcIdentity {
+    /// The link text of `/proc/<pid>/ns/mnt` (`mnt:[<inode>]`).
+    pub mnt_ns: String,
+    /// The link text of `/proc/<pid>/ns/pid` (`pid:[<inode>]`).
+    pub pid_ns: String,
+    /// `/proc/<pid>/comm` without its newline; `None` on a system where it is not read (the guard then does not
+    /// check it).
+    pub comm: Option<String>,
+}
+
+/// The process probe of the AU18 guard: `self` or a process id to its identity, `None` when it cannot be read (D10,
+/// round 2 item 6).
+pub type ProcProbe = fn(&str) -> Option<ProcIdentity>;
 
 /// The workspace that `down` acts on (review round 1, M1).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +74,7 @@ pub struct DownOpts {
     pub tmux_env: Option<OsString>,
     pub tmux_pane: Option<OsString>,
     pub zygo_session: Option<OsString>,
-    pub mnt_ns: MntNs,
+    pub proc_probe: ProcProbe,
     pub paths: Paths,
     pub config: Config,
 }
@@ -104,20 +116,23 @@ fn valid_pid_text(pid: &str) -> bool {
     pid == "self" || ((1..=10).contains(&pid.len()) && pid.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The mount namespace of `pid` (`self` or 1 to 10 ASCII digits; any other value gives `None`, so no value names
-/// another path). Linux: the link text of `/proc/<pid>/ns/mnt`, `None` on any error. Other systems: an empty text
-/// for every valid `pid`, so the guard passes there (D10).
-pub fn proc_mnt_ns(pid: &str) -> Option<String> {
+/// The identity of `pid` (`self` or 1 to 10 ASCII digits; any other value gives `None`, so no value names another
+/// path). Linux: the link texts of `/proc/<pid>/ns/mnt` and `/proc/<pid>/ns/pid` and `/proc/<pid>/comm`, `None` when
+/// any of them cannot be read. Other systems: empty namespaces and no comm for every valid `pid`, so the guard passes
+/// there (D10).
+pub fn proc_identity(pid: &str) -> Option<ProcIdentity> {
     if !valid_pid_text(pid) {
         return None;
     }
     #[cfg(target_os = "linux")]
     {
-        fs::read_link(format!("/proc/{pid}/ns/mnt")).ok().map(|p| p.to_string_lossy().into_owned())
+        let link = |ns: &str| fs::read_link(format!("/proc/{pid}/ns/{ns}")).ok().map(|p| p.to_string_lossy().into_owned());
+        let comm = fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        Some(ProcIdentity { mnt_ns: link("mnt")?, pid_ns: link("pid")?, comm: Some(comm.trim_end_matches('\n').to_string()) })
     }
     #[cfg(not(target_os = "linux"))]
     {
-        Some(String::new())
+        Some(ProcIdentity { mnt_ns: String::new(), pid_ns: String::new(), comm: None })
     }
 }
 
@@ -129,6 +144,8 @@ trait Probe {
     fn poll(&self, n: u32, t: Duration) -> bool;
     fn status(&self, sid: &str) -> Option<Result<SessionStatus, String>>;
     fn fire(&self, point: &str);
+    /// The fault set for the write or step `name` (round 2 item 2); `None` lets it run.
+    fn fault(&self, name: &str) -> Option<StateError>;
 }
 
 /// The real clock and no hook.
@@ -148,6 +165,8 @@ impl Probe for Real {
     fn status(&self, _sid: &str) -> Option<Result<SessionStatus, String>> { None }
 
     fn fire(&self, _point: &str) {}
+
+    fn fault(&self, _name: &str) -> Option<StateError> { None }
 }
 
 /// Test hooks (D24). Only the `test-hooks` feature builds them.
@@ -161,6 +180,7 @@ pub mod testing {
     use zygo_proxy::client::SessionStatus;
 
     use super::{DownOpts, Probe};
+    use crate::state::StateError;
 
     /// The hooks of one or more `run_with` calls. Each call starts a new virtual clock at `start`: `sleep` adds to
     /// the virtual time and returns at once, so no state of one run reaches the next.
@@ -176,11 +196,26 @@ pub mod testing {
         /// Closures run at the points `after_draining`, `before_final_snapshot`, `after_stopping`, `after_sigterm`
         /// and `before_kill_session`.
         pub points: BTreeMap<&'static str, Box<dyn Fn()>>,
+        /// Faults by name (round 2 item 2): `Some` makes that write or step fail with it before it runs. Names:
+        /// `draining`, `gone` (the `phase = down` write of a gone session), `stopping`, `stopping_fallback`,
+        /// `members` (step 8), `down` (step 11), `revert` (timeout, cancel and refused snapshot), `snapshot` (step 4).
+        pub faults: BTreeMap<&'static str, Box<dyn Fn() -> Option<Fault>>>,
+    }
+
+    /// A fault of [`Hooks::faults`].
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Fault {
+        /// The `lock` of `workspace.json` was not taken within its bound (`StateError::Busy`).
+        Busy,
+        /// Any other error, with its text.
+        Error(String),
     }
 
     impl Hooks {
-        /// No hook, no point.
-        pub fn new(start: SystemTime) -> Hooks { Hooks { start, on_poll: None, status: None, points: BTreeMap::new() } }
+        /// No hook, no point, no fault.
+        pub fn new(start: SystemTime) -> Hooks {
+            Hooks { start, on_poll: None, status: None, points: BTreeMap::new(), faults: BTreeMap::new() }
+        }
     }
 
     /// The virtual clock of one run.
@@ -205,6 +240,13 @@ pub mod testing {
                 f();
             }
         }
+
+        fn fault(&self, name: &str) -> Option<StateError> {
+            self.hooks.faults.get(name).and_then(|f| f()).map(|f| match f {
+                Fault::Busy => StateError::Busy,
+                Fault::Error(text) => StateError::Io(std::io::Error::other(text)),
+            })
+        }
     }
 
     /// [`super::run`] with the hooks and a new virtual clock.
@@ -215,7 +257,41 @@ pub mod testing {
 
 fn say(w: &mut dyn Write, line: &str) { let _ = writeln!(w, "{line}"); }
 
-fn now_secs() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) }
+/// Unix seconds of `t`, for `phase_since` (round 2 item 10: the probe clock, so tests use the virtual clock).
+fn secs(t: SystemTime) -> u64 { t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) }
+
+/// A failed write of `workspace.json` (D18, round 2 item 3).
+enum WriteError {
+    /// `lock` was not taken within its bound.
+    Busy,
+    /// Any other error, with its text.
+    Other(String),
+}
+
+impl WriteError {
+    fn from_state(e: StateError) -> WriteError {
+        match e {
+            StateError::Busy => WriteError::Busy,
+            e => WriteError::Other(e.to_string()),
+        }
+    }
+
+    /// The error inside a longer line: `workspace <name> is busy; try again` or the error text.
+    fn text(&self, name: &str) -> String {
+        match self {
+            WriteError::Busy => format!("workspace {name} is busy; try again"),
+            WriteError::Other(t) => t.clone(),
+        }
+    }
+
+    /// The line of a write that ends the workspace: the D18 busy line, else `zygo: <name>: <e>`.
+    fn line(&self, name: &str) -> String {
+        match self {
+            WriteError::Busy => format!("zygo: workspace {name} is busy; try again"),
+            WriteError::Other(t) => format!("zygo: {name}: {t}"),
+        }
+    }
+}
 
 /// `<name> pane <key>`: both are checked at each state read (AU84), so the label needs no escape (D2).
 fn label(name: &str, key: &str) -> String { format!("{name} pane {key}") }
@@ -402,29 +478,68 @@ fn pane_id(v: &OsStr) -> Option<&str> {
     ((1..=10).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())).then_some(s)
 }
 
-/// D6: `--wait` forces the foreground; else `ZYGO_SESSION`, or a `$TMUX_PANE` of a target's session on the server of
-/// `$TMUX`.
-fn detach_wanted(opts: &DownOpts, targets: &[Workspace]) -> bool {
-    if opts.wait {
-        return false;
-    }
-    if opts.zygo_session.as_ref().is_some_and(|s| !s.is_empty()) {
-        return true;
-    }
-    let Some(pane) = opts.tmux_pane.as_deref().and_then(pane_id) else {
-        return false;
+/// AU62 before any tmux call on a saved socket in the detach path (round 2 item 8): `Err` with the AU62 line when the
+/// socket's folder exists and fails the check. A folder that does not exist holds no server, so the tmux call that
+/// follows answers for itself; nothing is created here.
+fn check_socket(ws: &Workspace) -> Result<(), Exit> {
+    let Some(sock) = ws.tmux_socket.as_deref() else {
+        return Ok(());
     };
-    let env_server = up::server(&opts.tmux, None, opts.tmux_env.as_deref());
-    let Some(env_socket) = env_server.socket() else {
-        return false;
-    };
-    targets.iter().filter(|ws| ws.tmux_socket.as_deref() == Some(env_socket)).any(|ws| {
-        let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
-        mux.display(pane, "#{session_name}").is_ok_and(|s| s == ws.tmux_session)
-    })
+    let folder_missing = sock
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .is_some_and(|p| matches!(fs::symlink_metadata(p), Err(e) if e.kind() == std::io::ErrorKind::NotFound));
+    if folder_missing {
+        return Ok(());
+    }
+    socket_is_private(sock, false).map_err(|t| Exit { code: 1, message: format!("zygo: {t}") })
 }
 
-/// D7, AU18: the server pid of each distinct server, then the two mount namespaces. Anything unreadable refuses.
+/// D6: `--wait` forces the foreground; else `ZYGO_SESSION`, or a `$TMUX_PANE` in the session of any target (round 2
+/// item 5): a target with a saved socket is looked up only when that socket is the socket of `$TMUX`, after the AU62
+/// check; a target with no saved socket is on the server that `up::server` gives it (the `$TMUX` server, else
+/// tmux's default). A tmux error counts as "not in that session". `Err` is the AU62 refusal.
+fn detach_wanted(opts: &DownOpts, targets: &[Workspace]) -> Result<bool, Exit> {
+    if opts.wait {
+        return Ok(false);
+    }
+    if opts.zygo_session.as_ref().is_some_and(|s| !s.is_empty()) {
+        return Ok(true);
+    }
+    let Some(pane) = opts.tmux_pane.as_deref().and_then(pane_id) else {
+        return Ok(false);
+    };
+    let env_server = up::server(&opts.tmux, None, opts.tmux_env.as_deref());
+    for ws in targets {
+        if let Some(sock) = ws.tmux_socket.as_deref() {
+            if env_server.socket() != Some(sock) {
+                continue;
+            }
+            check_socket(ws)?;
+        }
+        let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
+        if mux.display(pane, "#{session_name}").is_ok_and(|s| s == ws.tmux_session) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The pid of the server of `mux` (round 2 item 7): the first line of `list-sessions -F '#{pid}'` (one line per
+/// session, each the server pid, on tmux 3.2a and 3.7c), so no one target session decides it. `None` on any error.
+fn server_pid(opts: &DownOpts, mux: &Tmux) -> Option<String> {
+    let mut c = Command::new(&opts.tmux);
+    if let Some(sock) = mux.socket() {
+        c.arg("-S").arg(sock);
+    }
+    c.arg("-u").args(["list-sessions", "-F", "#{pid}"]).env("LC_ALL", "C");
+    let out = crate::mux::tmux::finish(crate::mux::tmux::run_bounded(c, crate::mux::BOUND).ok()?).ok()?;
+    out.lines().next().map(str::to_string)
+}
+
+/// D7, AU18 (round 2 items 6-8): for each distinct server, the AU62 check of its saved socket, then its pid; then
+/// each server must share the mount and the pid namespace of this process, and its command name must start with
+/// `tmux` when it is read. Anything unreadable refuses with exit 1.
 fn guard(opts: &DownOpts, targets: &[Workspace]) -> Result<(), Exit> {
     let refuse = || Exit { code: 1, message: AU18.into() };
     let mut seen: Vec<Option<&Path>> = Vec::new();
@@ -435,26 +550,31 @@ fn guard(opts: &DownOpts, targets: &[Workspace]) -> Result<(), Exit> {
             continue;
         }
         seen.push(socket);
+        check_socket(ws)?;
         let mux = up::server(&opts.tmux, socket, opts.tmux_env.as_deref());
-        let pid = mux.display(&session_target(&ws.tmux_session), "#{pid}").map_err(|_| refuse())?;
+        let pid = server_pid(opts, &mux).ok_or_else(refuse)?;
         if pid == "self" || !valid_pid_text(&pid) {
             return Err(refuse());
         }
         pids.push(pid);
     }
-    let own = (opts.mnt_ns)("self").ok_or_else(refuse)?;
+    let own = (opts.proc_probe)("self").ok_or_else(refuse)?;
     for pid in &pids {
-        if (opts.mnt_ns)(pid).ok_or_else(refuse)? != own {
+        let server = (opts.proc_probe)(pid).ok_or_else(refuse)?;
+        let not_tmux = server.comm.as_deref().is_some_and(|c| !c.starts_with("tmux"));
+        if server.mnt_ns != own.mnt_ns || server.pid_ns != own.pid_ns || not_tmux {
             return Err(refuse());
         }
     }
     Ok(())
 }
 
-/// D6: whether any target session exists (no lock); a tmux error other than "gone" ends `down`.
+/// D6: whether any target session exists (no lock), each saved socket checked first (AU62, round 2 item 8); a tmux
+/// error other than "gone" ends `down`.
 fn any_session(opts: &DownOpts, targets: &[Workspace]) -> Result<bool, Exit> {
     let mut any = false;
     for ws in targets {
+        check_socket(ws)?;
         match up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref()).session_exists(&ws.tmux_session) {
             SessionAnswer::Exists => any = true,
             SessionAnswer::Gone => {}
@@ -477,8 +597,10 @@ fn log_options() -> fs::OpenOptions {
 }
 
 /// D9, AU97: with `op.lock` of every target taken, a log larger than [`LOG_KEEP`] is cut in place to its newest whole
-/// lines within that size, through one handle (the file keeps its inode). With any lock held, nothing is cut. The
-/// locks are released before the return, so the detached process takes `op.lock` itself.
+/// lines within that size, through one handle (the file keeps its inode). When the window holds no line start (round
+/// 2 item 4), the window is kept as it is from its first UTF-8 character boundary, so a log with content is never
+/// cut to empty. With any lock held, nothing is cut. The locks are released before the return, so the detached
+/// process takes `op.lock` itself.
 fn cut_log(opts: &DownOpts, targets: &[Workspace], log: &Path) -> std::io::Result<()> {
     let mut locks: Vec<OpLock> = Vec::new();
     for ws in targets {
@@ -500,7 +622,7 @@ fn cut_log(opts: &DownOpts, targets: &[Workspace], log: &Path) -> std::io::Resul
     f.seek(SeekFrom::Start(len - LOG_KEEP - 1))?;
     let mut buf = Vec::new();
     (&mut f).take(LOG_KEEP + 1).read_to_end(&mut buf)?;
-    let keep = buf.iter().position(|&b| b == b'\n').map_or(&[][..], |p| &buf[p + 1..]);
+    let keep = cut_point(&buf);
     f.set_len(0)?;
     f.seek(SeekFrom::Start(0))?;
     f.write_all(keep)?;
@@ -508,10 +630,23 @@ fn cut_log(opts: &DownOpts, targets: &[Workspace], log: &Path) -> std::io::Resul
     Ok(())
 }
 
+/// The kept part of `buf`, the last [`LOG_KEEP`] bytes of a log and the byte before them: after the first `\n` that is
+/// not the last byte, else the window (`buf` without its first byte) from its first byte that is not a UTF-8
+/// continuation byte, skipping at most 3 (round 2 item 4).
+fn cut_point(buf: &[u8]) -> &[u8] {
+    let body = &buf[..buf.len().saturating_sub(1)];
+    if let Some(p) = body.iter().position(|&b| b == b'\n') {
+        return &buf[p + 1..];
+    }
+    let window = buf.get(1..).unwrap_or_default();
+    let skip = window.iter().take(3).take_while(|&&b| b & 0xC0 == 0x80).count();
+    &window[skip..]
+}
+
 /// D8: `<zygo> down [--now] [--timeout <n>s] --wait (--all | -- <name>)`, a new session leader with its cwd `/`,
 /// stdin `/dev/null`, stdout and stderr the log. The parent does not wait for it.
-fn spawn_detached(opts: &DownOpts, name: Option<&str>, log: File) -> std::io::Result<()> {
-    let mut c = Command::new(&opts.zygo);
+fn spawn_detached(opts: &DownOpts, zygo: &Path, name: Option<&str>, log: File) -> std::io::Result<()> {
+    let mut c = Command::new(zygo);
     c.arg("down");
     if opts.now {
         c.arg("--now");
@@ -536,8 +671,14 @@ fn spawn_detached(opts: &DownOpts, name: Option<&str>, log: File) -> std::io::Re
     c.spawn().map(drop)
 }
 
-/// W§9.3 step 2 after the guard: cut the log, start the detached `down`, print the line.
+/// W§9.3 step 2 after the guard: the AU54 check of the zygo path and the path made absolute against the cwd (round 2
+/// item 11; the child runs in `/`), cut the log, start the detached `down`, print the line.
 fn detach(opts: &DownOpts, targets: &[Workspace], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if let Err(e) = check_path(&opts.zygo) {
+        say(err, &e.to_string());
+        return 2;
+    }
+    let zygo = if opts.zygo.is_absolute() { opts.zygo.clone() } else { opts.cwd.join(&opts.zygo) };
     let all = opts.target == DownTarget::All;
     let log = if all {
         opts.paths.state_dir().join("down-all.log")
@@ -554,7 +695,7 @@ fn detach(opts: &DownOpts, targets: &[Workspace], out: &mut dyn Write, err: &mut
         }
     };
     let name = if all { None } else { Some(targets[0].name.as_str()) };
-    if let Err(e) = spawn_detached(opts, name, file) {
+    if let Err(e) = spawn_detached(opts, &zygo, name, file) {
         say(err, &format!("zygo: cannot start the detached down: {e}"));
         return 1;
     }
@@ -711,23 +852,31 @@ impl Run<'_> {
         }
     }
 
-    /// One write under `lock` (5 s), then the pending check with the state it wrote (D13). `Err` holds the text
-    /// without `zygo: `.
-    fn write(&mut self, i: usize, f: &mut dyn FnMut(&mut Workspace)) -> Result<(), String> {
-        let job = &mut self.jobs[i];
-        match job.store.update(OP_WAIT, &mut |c| {
-            f(c);
-            Ok(())
-        }) {
-            Ok(ws) => {
-                job.ws = ws;
-                let (id, socket) = (job.id.clone(), job.ws.tmux_socket.clone());
-                self.after_write(&id, socket);
-                Ok(())
-            }
-            Err(StateError::Busy) => Err(format!("workspace {} is busy; try again", job.name)),
-            Err(e) => Err(e.to_string()),
+    /// `phase_since` for a write now: Unix seconds of the probe clock (round 2 item 10).
+    fn now_secs(&self) -> u64 { secs(self.probe.now()) }
+
+    /// One write of `store` under `lock` (5 s), then the pending check with the state it wrote (D13). The fault
+    /// `fault` (tests only) fails it before it runs, so nothing is written and no pending check runs.
+    fn update(&mut self, store: &Store, fault: &str, f: &mut dyn FnMut(&mut Workspace)) -> Result<Workspace, WriteError> {
+        if let Some(e) = self.probe.fault(fault) {
+            return Err(WriteError::from_state(e));
         }
+        let ws = store
+            .update(OP_WAIT, &mut |c| {
+                f(c);
+                Ok(())
+            })
+            .map_err(WriteError::from_state)?;
+        self.after_write(&ws.id.clone(), ws.tmux_socket.clone());
+        Ok(ws)
+    }
+
+    /// [`Run::update`] of the state of job `i`; the job keeps the state written.
+    fn write(&mut self, i: usize, fault: &str, f: &mut dyn FnMut(&mut Workspace)) -> Result<(), WriteError> {
+        let store = self.jobs[i].store.clone();
+        let ws = self.update(&store, fault, f)?;
+        self.jobs[i].ws = ws;
+        Ok(())
     }
 
     /// Ends a job: its `op.lock` is released.
@@ -738,15 +887,22 @@ impl Run<'_> {
 
     /// `phase = up` (a failed write prints the "phase not restored" line), release, then `line` (D3).
     fn revert(&mut self, i: usize, line: &str) {
-        if let Err(t) = self.write(i, &mut |c| {
-            c.phase = Phase::Up;
-            c.phase_since = now_secs();
-        }) {
-            let name = self.jobs[i].name.clone();
-            self.e(&format!("zygo: {name}: phase not restored: {t}"));
-        }
+        self.restore(i, "revert");
         self.done(i);
         self.e(line);
+    }
+
+    /// The `phase = up` write of a revert or of the step 7 fallback (D18); a failure prints
+    /// `zygo: <name>: phase not restored: <e>`. A write that succeeds runs the pending check.
+    fn restore(&mut self, i: usize, fault: &str) {
+        let now = self.now_secs();
+        if let Err(e) = self.write(i, fault, &mut |c| {
+            c.phase = Phase::Up;
+            c.phase_since = now;
+        }) {
+            let name = self.jobs[i].name.clone();
+            self.e(&format!("zygo: {name}: phase not restored: {}", e.text(&name)));
+        }
     }
 
     /// D17: a pending signal cancels every workspace still in `drain` mode.
@@ -833,25 +989,16 @@ impl Run<'_> {
                     return self.fail(1);
                 }
                 if ws.phase != Phase::Down {
-                    let all = self.all();
-                    let written = store.update(OP_WAIT, &mut |c| {
+                    let (all, now) = (self.all(), self.now_secs());
+                    if let Err(e) = self.update(&store, "gone", &mut |c| {
                         c.phase = Phase::Down;
-                        c.phase_since = now_secs();
+                        c.phase_since = now;
                         if all {
                             c.down_all = true;
                         }
-                        Ok(())
-                    });
-                    match written {
-                        Ok(w) => self.after_write(&id, w.tmux_socket),
-                        Err(StateError::Busy) => {
-                            self.e(&format!("zygo: workspace {name} is busy; try again"));
-                            return self.fail(1);
-                        }
-                        Err(e) => {
-                            self.e(&format!("zygo: {e}"));
-                            return self.fail(1);
-                        }
+                    }) {
+                        self.e(&e.line(&name));
+                        return self.fail(1);
                     }
                 }
                 drop(op);
@@ -892,12 +1039,13 @@ impl Run<'_> {
         if cancelled(self) {
             return;
         }
-        if let Err(t) = self.write(i, &mut |c| {
+        let now = self.now_secs();
+        if let Err(e) = self.write(i, "draining", &mut |c| {
             c.phase = Phase::Draining;
-            c.phase_since = now_secs();
+            c.phase_since = now;
         }) {
             self.done(i);
-            self.e(&format!("zygo: {t}"));
+            self.e(&e.line(&name));
             return self.fail(1);
         }
         self.probe.fire("after_draining");
@@ -908,7 +1056,11 @@ impl Run<'_> {
         // Step 4 (D12).
         self.probe.fire("before_final_snapshot");
         let snap = Tmux::new(opts.tmux.clone(), self.jobs[i].ws.tmux_socket.clone());
-        match snapshot::run(&opts.paths, &snap, &id, None, true, OP_WAIT) {
+        let snapped = match self.probe.fault("snapshot") {
+            Some(e) => Err(anyhow::Error::from(e)),
+            None => snapshot::run(&opts.paths, &snap, &id, None, true, OP_WAIT),
+        };
+        match snapped {
             Err(e) => self.e(&format!("zygo: final snapshot not saved: {e:#}")),
             Ok(SnapshotOutcome::Skipped(SkipReason::Logged)) => {
                 let line = format!(
@@ -965,7 +1117,8 @@ impl Run<'_> {
         let mut busy: Vec<String> = Vec::new();
         for (key, m) in members {
             let who = label(&name, &key);
-            let read = live_session(&self.opts.paths, &m).map(|dir| self.read_member(&dir));            let track = self.jobs[i].track.entry(key.clone()).or_default();
+            let read = live_session(&self.opts.paths, &m).map(|dir| self.read_member(&dir));
+            let track = self.jobs[i].track.entry(key.clone()).or_default();
             let idle = match read {
                 None => {
                     track.open_since = None;
@@ -1056,17 +1209,16 @@ impl Run<'_> {
         }
         // Step 7.
         self.jobs[i].mode = Mode::Stopping;
-        if let Err(t) = self.write(i, &mut |c| {
+        let now = self.now_secs();
+        if let Err(e) = self.write(i, "stopping", &mut |c| {
             c.phase = Phase::Stopping;
-            c.phase_since = now_secs();
+            c.phase_since = now;
         }) {
-            let _ = self.jobs[i].store.update(OP_WAIT, &mut |c| {
-                c.phase = Phase::Up;
-                c.phase_since = now_secs();
-                Ok(())
-            });
+            // D18, round 2 item 3: the line of the failed write, then the fallback `phase = up` with its own report.
+            let name = self.jobs[i].name.clone();
+            self.e(&e.line(&name));
+            self.restore(i, "stopping_fallback");
             self.done(i);
-            self.e(&format!("zygo: {t}"));
             return self.fail(1);
         }
         self.probe.fire("after_stopping");
@@ -1123,7 +1275,7 @@ impl Run<'_> {
             return live;
         }
         let mut set = 0;
-        let written = self.write(i, &mut |c| {
+        let written = self.write(i, "members", &mut |c| {
             set = 0;
             for (key, (units, interrupted)) in &values {
                 if let Some(m) = c.members.get_mut(key) {
@@ -1136,7 +1288,7 @@ impl Run<'_> {
         });
         match written {
             Ok(()) => self.jobs[i].saved = set,
-            Err(t) => self.e(&format!("zygo: {name}: member records not saved: {t}")),
+            Err(e) => self.e(&format!("zygo: {name}: member records not saved: {}", e.text(&name))),
         }
         live
     }
@@ -1221,16 +1373,16 @@ impl Run<'_> {
             self.e(&line);
             return self.fail(1);
         }
-        let all = self.all();
-        if let Err(t) = self.write(i, &mut |c| {
+        let (all, now) = (self.all(), self.now_secs());
+        if let Err(e) = self.write(i, "down", &mut |c| {
             c.phase = Phase::Down;
-            c.phase_since = now_secs();
+            c.phase_since = now;
             if all {
                 c.down_all = true;
             }
         }) {
             self.done(i);
-            self.e(&format!("zygo: {name}: phase not written: {t}"));
+            self.e(&format!("zygo: {name}: phase not written: {}", e.text(&name)));
             return self.fail(1);
         }
         let saved = self.jobs[i].saved;
@@ -1272,7 +1424,14 @@ fn run_inner(opts: &DownOpts, probe: &dyn Probe, out: &mut dyn Write, err: &mut 
         Ok(t) => t,
         Err(code) => return code,
     };
-    if detach_wanted(opts, &targets) {
+    let wanted = match detach_wanted(opts, &targets) {
+        Ok(w) => w,
+        Err(e) => {
+            say(err, &e.message);
+            return e.code;
+        }
+    };
+    if wanted {
         if let Err(e) = guard(opts, &targets) {
             say(err, &e.message);
             return e.code;

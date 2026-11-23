@@ -13,7 +13,7 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
@@ -27,7 +27,7 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
 use zygo_proxy::client::SessionStatus;
 use zygo_workspace::activity;
-use zygo_workspace::down::{self, testing::Hooks, DownOpts, DownTarget};
+use zygo_workspace::down::{self, testing::{Fault, Hooks}, DownOpts, DownTarget, ProcIdentity};
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::snapshot;
@@ -42,7 +42,9 @@ const SID2: &str = "01JTESTSESSIONBBBBBBBBBBBB";
 const S5: Duration = Duration::from_secs(5);
 const AU18: &str =
     "zygo: down cannot run detached from a sandboxed shell; use the workspace_down tool ([features] workspace_tool) or /zygo:down";
-const AU63: &str = "zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget app";
+const AU54: &str =
+    "zygo: the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it";
+const AU63: &str ="zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget app";
 const IDLE: &str = "zygo: app pane kaaaaaaaa is idle";
 const TURN: &str = "zygo: app pane kaaaaaaaa: no Stop since its last prompt (interrupted turn); treated as idle";
 const SKIP: &str = "zygo: app pane kaaaaaaaa: proxy request state not usable; idle rule 3 skipped";
@@ -88,19 +90,22 @@ fn repo(parent: &Path, name: &str) -> PathBuf {
 
 /// The tmux stand-in `<dir>/tmux` that needs no tmux (step 1). `list-panes` answers "can't find session", so the
 /// snapshot gives `Skipped(Gone)` and step 9 warns about nothing; `<dir>/nosrv` makes every call but `-V` answer as a
-/// server that does not exist.
+/// server that does not exist. `list-sessions` prints the server pid (`<dir>/server.pid`, else 4242) twice, one line
+/// per session; a `display-message` of `#{pid}` on a gone session fails (round 2 item 7).
 fn fake_tmux(dir: &Path) -> PathBuf {
     let d = dir.display();
     let body = format!(
         "printf '%s\\036' \"$*\" >> '{d}/tmux.log'\n\
          s=; for a in \"$@\"; do case \"$a\" in -V) echo 'tmux 3.4'; exit 0;; =zygo-*) s=${{a#=}}; s=${{s%%:*}};; esac; done\n\
          if [ -e '{d}/nosrv' ]; then echo \"error connecting to {d}/sock/s (No such file or directory)\" >&2; exit 1; fi\n\
+         pid=$(cat '{d}/server.pid' 2>/dev/null || echo 4242)\n\
          case \" $* \" in\n\
          \x20 *\" has-session \"*) if [ -e '{d}/gone-'\"$s\" ]; then echo \"can't find session: $s\" >&2; exit 1; fi; exit 0;;\n\
          \x20 *\" show-options \"*) [ -e '{d}/gone-'\"$s\" ] || cat '{d}/ws-'\"$s\" 2>/dev/null; exit 0;;\n\
          \x20 *\" kill-session \"*) : > '{d}/gone-'\"$s\"; exit 0;;\n\
+         \x20 *\" list-sessions \"*) echo \"$pid\"; echo \"$pid\"; exit 0;;\n\
          \x20 *'#{{session_name}}'*) echo zygo-app; exit 0;;\n\
-         \x20 *'#{{pid}}'*) echo 4242; exit 0;;\n\
+         \x20 *'#{{pid}}'*) if [ -e '{d}/gone-'\"$s\" ]; then echo \"can't find session: $s\" >&2; exit 1; fi; echo \"$pid\"; exit 0;;\n\
          \x20 *) echo \"can't find session: $s\" >&2; exit 1;;\n\
          esac"
     );
@@ -174,10 +179,24 @@ fn phase_all(o: &DownOpts, id: &str) -> (Phase, bool) {
     (ws.phase, ws.down_all)
 }
 
-fn ns_same(_: &str) -> Option<String> { Some("mnt:[1]".into()) }
-fn ns_differs(p: &str) -> Option<String> { Some(if p == "self" { "mnt:[1]" } else { "mnt:[2]" }.into()) }
-fn ns_unreadable(p: &str) -> Option<String> { (p == "self").then(|| "mnt:[1]".into()) }
-fn ns_self_unreadable(p: &str) -> Option<String> { (p != "self").then(|| "mnt:[1]".into()) }
+/// A process identity of the stand-in probes: `comm` is ours for `self`, else the tmux server's.
+fn ident(p: &str, mnt: &str, pid: &str) -> ProcIdentity {
+    let comm = if p == "self" { "down-test" } else { "tmux: server" };
+    ProcIdentity { mnt_ns: mnt.into(), pid_ns: pid.into(), comm: Some(comm.into()) }
+}
+fn ns_same(p: &str) -> Option<ProcIdentity> { Some(ident(p, "mnt:[1]", "pid:[1]")) }
+fn ns_differs(p: &str) -> Option<ProcIdentity> { Some(ident(p, if p == "self" { "mnt:[1]" } else { "mnt:[2]" }, "pid:[1]")) }
+fn pidns_differs(p: &str) -> Option<ProcIdentity> { Some(ident(p, "mnt:[1]", if p == "self" { "pid:[1]" } else { "pid:[2]" })) }
+fn ns_unreadable(p: &str) -> Option<ProcIdentity> { (p == "self").then(|| ident(p, "mnt:[1]", "pid:[1]")) }
+fn ns_self_unreadable(p: &str) -> Option<ProcIdentity> { (p != "self").then(|| ident(p, "mnt:[1]", "pid:[1]")) }
+/// The server's namespaces match, but its comm is not tmux.
+fn comm_not_tmux(p: &str) -> Option<ProcIdentity> {
+    let mut i = ident(p, "mnt:[1]", "pid:[1]");
+    if p != "self" {
+        i.comm = Some("sleep".into());
+    }
+    Some(i)
+}
 
 fn opts(t: &Path, tmux: &Path) -> DownOpts {
     DownOpts {
@@ -191,7 +210,7 @@ fn opts(t: &Path, tmux: &Path) -> DownOpts {
         tmux_env: None,
         tmux_pane: None,
         zygo_session: None,
-        mnt_ns: ns_same,
+        proc_probe: ns_same,
         paths: paths(t),
         config: Config::default(),
     }
@@ -359,14 +378,63 @@ fn started(t: &Path) -> u32 {
 
 fn args(t: &Path) -> String { fs::read_to_string(t.join("child.args")).unwrap() }
 
-/// Ends the detached stand-in: this process started it (a child, or a child of the helper of step 15).
-fn end_child(pid: u32) {
-    // SAFETY: plain system calls on the pid of a process this test started; a pid that is not our child makes
-    // `waitpid` fail, which is ignored.
+/// Ends `pid` only while `waitpid(WNOHANG)` says it is a live child of this process (round 2 item 10).
+fn end_own_child(pid: i32) {
+    // SAFETY: plain system calls; `kill` runs only for a live child of this process, which `waitpid` then reaps.
     unsafe {
-        libc::kill(pid as i32, libc::SIGKILL);
-        libc::waitpid(pid as i32, std::ptr::null_mut(), 0);
+        if pid > 1 && libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) == 0 {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
     }
+}
+
+/// The detached stand-in that `down` started in this process (a child of this process): ended when the guard drops,
+/// also when an assertion fails.
+struct Detached {
+    t: PathBuf,
+}
+
+impl Detached {
+    fn new(t: &Path) -> Detached { Detached { t: t.to_path_buf() } }
+}
+
+impl Drop for Detached {
+    fn drop(&mut self) {
+        if let Some(pid) = fs::read_to_string(self.t.join("child.pid")).ok().and_then(|s| s.trim().parse().ok()) {
+            end_own_child(pid);
+        }
+    }
+}
+
+/// A `sleep 30` child of this process, ended on drop: a stand-in pid whose comm is not tmux (round 2 item 6).
+struct Sleeper(Child);
+
+impl Drop for Sleeper {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn set_tools(o: &DownOpts, sid: &str, n: u32) {
+    activity::update(&session_dir(o, sid), S5, &mut |a| a.tools_running = n).unwrap();
+}
+
+/// Every call of the write or step `name` fails with `f` (round 2 item 2).
+fn fault(h: &mut Hooks, name: &'static str, f: Fault) { h.faults.insert(name, Box::new(move || Some(f.clone()))); }
+
+fn disk_full() -> Fault { Fault::Error("disk full".into()) }
+
+fn no_socket(store: &Store) { store.update(S5, &mut |ws| { ws.tmux_socket = None; Ok(()) }).unwrap(); }
+
+fn unprivate(t: &Path) { fs::set_permissions(t.join("sock"), fs::Permissions::from_mode(0o755)).unwrap(); }
+
+fn not_private_line(t: &Path) -> String {
+    format!(
+        "zygo: tmux socket {}/sock/s is not private: the socket and its folder must be yours and the folder must have mode 0700\n",
+        t.display()
+    )
 }
 
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -444,18 +512,22 @@ fn constants_and_mount_namespace() {
     let _s = serial();
     assert_eq!(down::INTERRUPTED_TURN_AFTER, Duration::from_secs(60));
     for bad in ["", "../1", "1/ns", "12345678901", "-1", "self/.."] {
-        assert_eq!(down::proc_mnt_ns(bad), None, "{bad:?}");
+        assert_eq!(down::proc_identity(bad), None, "{bad:?}");
     }
     #[cfg(target_os = "linux")]
     {
-        let me = fs::read_link("/proc/self/ns/mnt").unwrap().to_string_lossy().into_owned();
-        assert!(me.starts_with("mnt:["));
-        assert_eq!(down::proc_mnt_ns("self"), Some(me.clone()));
-        assert_eq!(down::proc_mnt_ns(&std::process::id().to_string()), Some(me));
-        assert_eq!(down::proc_mnt_ns("4000000000"), None);
+        // Round 2 item 6: both namespaces and the comm.
+        let link = |n: &str| fs::read_link(format!("/proc/self/ns/{n}")).unwrap().to_string_lossy().into_owned();
+        let me = down::proc_identity("self").unwrap();
+        assert!(me.mnt_ns.starts_with("mnt:[") && me.pid_ns.starts_with("pid:["), "{me:?}");
+        assert_eq!((me.mnt_ns.clone(), me.pid_ns.clone()), (link("mnt"), link("pid")));
+        let comm = fs::read_to_string("/proc/self/comm").unwrap();
+        assert_eq!(me.comm.as_deref(), Some(comm.trim_end_matches('\n')));
+        assert_eq!(down::proc_identity(&std::process::id().to_string()), Some(me));
+        assert_eq!(down::proc_identity("4000000000"), None);
     }
     #[cfg(not(target_os = "linux"))]
-    assert_eq!(down::proc_mnt_ns("self"), Some(String::new()));
+    assert_eq!(down::proc_identity("self"), Some(ProcIdentity { mnt_ns: String::new(), pid_ns: String::new(), comm: None }));
 }
 
 // ---- step 3 ----
@@ -736,6 +808,7 @@ fn idle_member_is_saved_and_stopped() {
     assert_eq!(count(&err, IDLE), 1);
     let ws = store.read().unwrap().unwrap();
     assert_eq!((ws.phase, ws.down_all), (Phase::Down, false));
+    assert_eq!(ws.phase_since, 1_800_000_000); // round 2 item 10: the virtual clock, at 0 s
     let m = &ws.members[KEY];
     assert_eq!(
         (m.clean_stop, m.closed_units.clone(), m.interrupted.len(), m.state),
@@ -886,6 +959,7 @@ fn busy_member_times_out() {
         assert_eq!(*last.lock().unwrap(), Duration::from_secs(70));
         let ws = store.read().unwrap().unwrap();
         assert_eq!(ws.phase, Phase::Up);
+        assert_eq!(ws.phase_since, 1_800_000_070); // round 2 item 10: the virtual clock at the timeout
         assert!(!ws.members[KEY].clean_stop);
         assert!(store.op_lock_free());
         assert!(l.child.try_wait().unwrap().is_none()); // no signal
@@ -1249,30 +1323,31 @@ fn detach_rule_guard_and_log() {
     {
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, store) = detach_case(t);
         o.zygo_session = Some("01JCALLER".into());
         assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
-        let pid = started(t);
+        started(t);
         assert_eq!(args(t), "down --wait -- app\n");
         assert!(store.dir().join("down.log").exists());
-        end_child(pid);
     }
     {
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, _) = detach_case(t);
         o.zygo_session = Some("01JCALLER".into());
         o.now = true;
         o.timeout = Some(Duration::from_secs(90));
         assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
-        let pid = started(t);
+        started(t);
         assert_eq!(args(t), "down --now --timeout 90s --wait -- app\n");
-        end_child(pid);
     }
     {
         // R3: a name that starts with `-` goes after `--`.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let mut o = opts(t, &fake_tmux(t));
         o.zygo = rec(t);
         ws_state(&o, ID, "-x", Phase::Up, vec![]);
@@ -1280,16 +1355,16 @@ fn detach_rule_guard_and_log() {
         o.target = DownTarget::Name("-x".into());
         o.zygo_session = Some("01JCALLER".into());
         assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
-        let pid = started(t);
+        started(t);
         assert_eq!(args(t), "down --wait -- -x\n");
-        end_child(pid);
     }
-    for ns in [ns_differs as down::MntNs, ns_unreadable, ns_self_unreadable] {
+    for ns in [ns_differs as down::ProcProbe, pidns_differs, comm_not_tmux, ns_unreadable, ns_self_unreadable] {
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, store) = detach_case(t);
         o.zygo_session = Some("01JCALLER".into());
-        o.mnt_ns = ns;
+        o.proc_probe = ns;
         let before = raw(&store);
         assert_eq!(run(&o, &h), (1, String::new(), format!("{AU18}\n")));
         assert!(!store.dir().join("down.log").exists());
@@ -1300,6 +1375,7 @@ fn detach_rule_guard_and_log() {
         // R1: no server is an unreadable pid.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, store) = detach_case(t);
         fs::write(t.join("nosrv"), "").unwrap();
         o.zygo_session = Some("01JCALLER".into());
@@ -1315,6 +1391,7 @@ fn detach_rule_guard_and_log() {
         // The guard passes, the session is gone: foreground.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, store) = detach_case(t);
         gone(t, "zygo-app");
         o.zygo_session = Some("01JCALLER".into());
@@ -1326,18 +1403,19 @@ fn detach_rule_guard_and_log() {
         // A workspace pane on the server of $TMUX.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, _) = detach_case(t);
         o.tmux_pane = Some("%3".into());
         o.tmux_env = Some(format!("{}/sock/s,1,0", t.display()).into());
         assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
-        let pid = started(t);
+        started(t);
         assert_eq!(args(t), "down --wait -- app\n");
-        end_child(pid);
     }
     {
         // A pane value that is not a pane id is not looked up.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, _) = detach_case(t);
         o.tmux_pane = Some("%3;x".into());
         o.tmux_env = Some(format!("{}/sock/s,1,0", t.display()).into());
@@ -1348,6 +1426,7 @@ fn detach_rule_guard_and_log() {
         // A pane of another server never matches.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, _) = detach_case(t);
         o.tmux_pane = Some("%3".into());
         o.tmux_env = Some("/tmp/zygo-other/s,1,0".into());
@@ -1358,6 +1437,7 @@ fn detach_rule_guard_and_log() {
         // --wait forces the foreground.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, _) = detach_case(t);
         o.zygo_session = Some("01JCALLER".into());
         o.wait = true;
@@ -1368,6 +1448,7 @@ fn detach_rule_guard_and_log() {
         // R10: the log is cut in place only while `op.lock` is free.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, store) = detach_case(t);
         o.zygo_session = Some("01JCALLER".into());
         let log = store.dir().join("down.log");
@@ -1386,28 +1467,30 @@ fn detach_rule_guard_and_log() {
             assert_eq!(fs::metadata(&log).unwrap().ino(), ino); // cut in place, no rename
         }
         drop(lock);
-        let pid = started(t);
-        end_child(pid);
+        started(t);
     }
     {
         // --all.
         let t = TempDir::new().unwrap();
         let t = t.path();
+        let _g = Detached::new(t);
         let (mut o, _) = detach_case(t);
         o.target = DownTarget::All;
         o.zygo_session = Some("01JCALLER".into());
         assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
-        let pid = started(t);
+        started(t);
         assert_eq!(args(t), "down --wait --all\n");
         assert!(o.paths.state_dir().join("down-all.log").exists());
         assert!(o.paths.state_dir().starts_with(t));
-        end_child(pid);
     }
 }
 
 // ---- step 15 ----
 
 /// The child process of `detached_child_holds_no_caller_descriptor`; it does nothing unless `ZYGO_W10_HELPER` is set.
+/// After `down::down` returns, it puts `/dev/null` on its stdout and stderr (the caller's pipes), waits for EOF on
+/// stdin, then ends its own child, the detached stand-in, and exits with the code of `down` (round 2 item 10: each
+/// process signals only its own children).
 #[test]
 fn detach_helper() {
     let Some(d) = std::env::var_os("ZYGO_W10_HELPER") else { return };
@@ -1415,7 +1498,54 @@ fn detach_helper() {
     let mut o = opts(&d, &d.join("tmux"));
     o.zygo = d.join("rec");
     o.zygo_session = Some("01JCALLER".into());
-    std::process::exit(down::down(&o));
+    let code = down::down(&o);
+    let null = fs::OpenOptions::new().write(true).open("/dev/null").unwrap();
+    // SAFETY: `dup2` of an open descriptor onto 1 and 2; nothing else writes to them from here on.
+    unsafe {
+        use std::os::fd::AsRawFd;
+        libc::dup2(null.as_raw_fd(), 1);
+        libc::dup2(null.as_raw_fd(), 2);
+    }
+    let mut rest = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut rest);
+    if let Some(pid) = fs::read_to_string(d.join("child.pid")).ok().and_then(|s| s.trim().parse().ok()) {
+        end_own_child(pid);
+    }
+    std::process::exit(code);
+}
+
+/// The helper process of step 15, the leader of its own process group: on drop it closes the helper's stdin (the
+/// helper then ends its child and exits); a helper still running after 5 s is killed with its group.
+struct Helper {
+    child: Child,
+    stdin: Option<std::process::ChildStdin>,
+}
+
+impl Helper {
+    /// Closes stdin and waits (5 s bound) for the exit.
+    fn finish(&mut self) -> Option<std::process::ExitStatus> {
+        self.stdin = None;
+        let t0 = Instant::now();
+        loop {
+            if let Ok(Some(s)) = self.child.try_wait() {
+                return Some(s);
+            }
+            if t0.elapsed() >= S5 {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for Helper {
+    fn drop(&mut self) {
+        if self.finish().is_none() {
+            // SAFETY: the group of our own child, which it leads (`process_group(0)`).
+            unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) };
+            let _ = self.child.wait();
+        }
+    }
 }
 
 #[test]
@@ -1427,16 +1557,20 @@ fn detached_child_holds_no_caller_descriptor() {
     let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
     owner(d, "zygo-app", ID);
     rec(d);
-    let mut helper = Command::new(std::env::current_exe().unwrap())
+    let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "detach_helper", "--nocapture", "--test-threads=1"])
         .env("ZYGO_W10_HELPER", d)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .unwrap();
+    let (out, err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+    let stdin = child.stdin.take();
+    let mut helper = Helper { child, stdin };
     let (tx, rx) = mpsc::channel::<String>();
-    for mut pipe in [Box::new(helper.stdout.take().unwrap()) as Box<dyn Read + Send>, Box::new(helper.stderr.take().unwrap())] {
+    for mut pipe in [Box::new(out) as Box<dyn Read + Send>, Box::new(err)] {
         let tx = tx.clone();
         std::thread::spawn(move || {
             let mut s = String::new();
@@ -1447,7 +1581,6 @@ fn detached_child_holds_no_caller_descriptor() {
     let deadline = Instant::now() + Duration::from_secs(5);
     let a = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("first pipe at EOF before 5 s");
     let b = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("second pipe at EOF before 5 s");
-    assert!(helper.wait().unwrap().success(), "{a}{b}");
     assert!(a.contains("zygo: down started; end your turn") || b.contains("zygo: down started; end your turn"), "{a}{b}");
     let pid = started(d); // the detached child still runs: it lives 30 s, longer than the deadline
     #[cfg(target_os = "linux")]
@@ -1466,7 +1599,11 @@ fn detached_child_holds_no_caller_descriptor() {
         assert_eq!(fds["0"], Path::new("/dev/null"));
         assert_eq!((fds["1"].clone(), fds["2"].clone()), (store.dir().join("down.log"), store.dir().join("down.log")));
     }
-    end_child(pid);
+    // The helper ends its own child, the detached stand-in, and exits with the code of `down`.
+    let status = helper.finish().expect("helper exit before 5 s");
+    assert!(status.success(), "{a}{b}");
+    #[cfg(target_os = "linux")]
+    assert!(wait_for(S5, || !Path::new(&format!("/proc/{pid}")).exists()), "detached stand-in still runs");
 }
 
 // ---- step 16 ----
@@ -1514,14 +1651,14 @@ fn live_pane_key_refused_stops_nothing() {
 
 // ---- step 18 ----
 
-/// `mnt:[1]` for `self`; for a number, `mnt:[2]` when `/proc/<p>/comm` starts with `tmux`, else `mnt:[1]`.
+/// The real identity, with the mount namespace changed for a process whose comm starts with `tmux`.
 #[cfg(target_os = "linux")]
-fn ns_server_differs(p: &str) -> Option<String> {
-    if p == "self" {
-        return Some("mnt:[1]".into());
+fn ns_server_differs(p: &str) -> Option<ProcIdentity> {
+    let mut i = down::proc_identity(p)?;
+    if p != "self" && i.comm.as_deref().is_some_and(|c| c.starts_with("tmux")) {
+        i.mnt_ns = "mnt:[other]".into();
     }
-    let comm = fs::read_to_string(format!("/proc/{p}/comm")).unwrap_or_default();
-    Some(if comm.starts_with("tmux") { "mnt:[2]" } else { "mnt:[1]" }.into())
+    Some(i)
 }
 
 #[cfg(target_os = "linux")]
@@ -1530,18 +1667,374 @@ fn live_guard_reads_the_server_pid() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
     let l = live();
+    let _g = Detached::new(l.t.path());
     let mut o = live_opts(&l);
     o.zygo_session = Some("01JCALLER".into());
     o.zygo = rec(l.t.path());
-    o.mnt_ns = ns_server_differs;
+    o.proc_probe = ns_server_differs;
     assert_eq!(run(&o, &hooks()), (1, String::new(), format!("{AU18}\n")));
-    o.mnt_ns = down::proc_mnt_ns;
+    o.proc_probe = down::proc_identity;
     assert_eq!(run(&o, &hooks()), (0, STARTED.into(), String::new()));
-    let pid = started(l.t.path());
+    started(l.t.path());
     assert_eq!(args(l.t.path()), "down --wait -- app\n");
-    end_child(pid);
     l.srv.kill_server();
-    o.mnt_ns = down::proc_mnt_ns;
     assert_eq!(run(&o, &hooks()), (1, String::new(), format!("{AU18}\n")));
     assert_eq!(l.store().read().unwrap().unwrap().phase, Phase::Up);
+}
+
+/// Round 2 item 7: `list-sessions -F '#{pid}'` gives the server pid, whatever session exists; checked on the tmux of
+/// `PATH` (3.7c here, 3.2a with the scratch build first on `PATH`).
+#[cfg(target_os = "linux")]
+#[test]
+fn live_list_sessions_gives_the_server_pid() {
+    let _s = serial();
+    let Some(_) = require_tmux() else { return };
+    let srv = PrivateServer::start();
+    srv.run(&["new-session", "-d", "-s", "zygo-one", "sleep", "100"]).unwrap();
+    srv.run(&["new-session", "-d", "-s", "zygo-two", "sleep", "100"]).unwrap();
+    let first = |s: String| s.lines().next().unwrap_or_default().to_string();
+    let pid = first(srv.run(&["list-sessions", "-F", "#{pid}"]).unwrap());
+    assert_eq!(srv.run(&["display-message", "-p", "-t", "=zygo-two:", "#{pid}"]).unwrap(), pid);
+    let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap();
+    assert!(comm.starts_with("tmux"), "{comm:?}");
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap();
+    assert!(String::from_utf8_lossy(&cmdline).contains(&srv.socket().display().to_string()));
+    srv.run(&["kill-session", "-t", "=zygo-one"]).unwrap();
+    assert_eq!(first(srv.run(&["list-sessions", "-F", "#{pid}"]).unwrap()), pid);
+}
+
+// ---- round 2 ----
+
+#[test] // item 1: a tool call of 70 s and more, with no model request, never counts as idle
+fn a_long_tool_call_is_never_idle() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let (mut o, store, mut l) = one_member(t);
+    set_activity(&o, SID, true, &[]);
+    set_tools(&o, SID, 1);
+    let mut h = hooks();
+    statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
+    o.timeout = Some(Duration::from_secs(90));
+    let (code, out, err) = run(&o, &h);
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    assert_eq!(count(&err, TURN), 0, "{err}");
+    assert_eq!(count(&err, "zygo: app pane kaaaaaaaa: busy: tool running"), 1, "{err}");
+    assert_eq!(store.read().unwrap().unwrap().phase, Phase::Up);
+    assert!(l.child.try_wait().unwrap().is_none()); // no signal
+    l.child.kill().unwrap();
+}
+
+#[test] // item 2: each failure path gives its exit code and line, and leaves a known state
+fn failure_paths_report_and_leave_state() {
+    let _s = serial();
+    for (f, line) in [(disk_full(), "zygo: app: disk full\n"), (Fault::Busy, "zygo: workspace app is busy; try again\n")] {
+        // The `draining` write fails: nothing changed.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let o = opts(t, &fake_tmux(t));
+        let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
+        owner(t, "zygo-app", ID);
+        let before = raw(&store);
+        let mut h = hooks();
+        fault(&mut h, "draining", f);
+        assert_eq!(run(&o, &h), (1, String::new(), line.into()));
+        assert_eq!(raw(&store), before);
+        assert!(store.op_lock_free());
+        assert!(!tmux_log(t).iter().any(|l| l.contains("kill-session")));
+    }
+    {
+        // The `phase = down` write of a gone session fails.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let o = opts(t, &fake_tmux(t));
+        let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
+        gone(t, "zygo-app");
+        let mut h = hooks();
+        fault(&mut h, "gone", disk_full());
+        assert_eq!(run(&o, &h), (1, String::new(), "zygo: app: disk full\n".into()));
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Up);
+        assert!(store.op_lock_free());
+    }
+    {
+        // The step 8 write fails: the stop goes on; the member is not marked as a clean stop.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (o, store, mut l) = one_member(t);
+        set_activity(&o, SID, false, &[]);
+        let mut h = hooks();
+        statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
+        release_on_sigterm(&mut h, &o, vec![l.lock.clone()], &[(ID, KEY)]);
+        fault(&mut h, "members", disk_full());
+        let (code, out, err) = run(&o, &h);
+        assert_eq!((code, out.as_str()), (0, "zygo: app is down (0 agents saved)\n"), "{err}");
+        assert_eq!(count(&err, "zygo: app: member records not saved: disk full"), 1, "{err}");
+        let ws = store.read().unwrap().unwrap();
+        assert_eq!((ws.phase, ws.members[KEY].clean_stop), (Phase::Down, false));
+        assert_eq!(l.child.wait().unwrap().signal(), Some(libc::SIGTERM));
+    }
+    {
+        // A revert write fails (at the timeout): the phase stays `draining`, `op.lock` is released.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store, mut l) = one_member(t);
+        set_activity(&o, SID, false, &[]);
+        let mut h = hooks();
+        statuses(&mut h, status_map(vec![(SID, Ok(in_flight()))]));
+        fault(&mut h, "revert", disk_full());
+        o.timeout = Some(Duration::from_secs(2));
+        let (code, _, err) = run(&o, &h);
+        assert_eq!(code, 1, "{err}");
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(&lines[..2], ["zygo: app: phase not restored: disk full", "zygo: app: drain timed out after 2 s; phase is up again"], "{err}");
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Draining);
+        assert!(store.op_lock_free());
+        l.child.kill().unwrap();
+    }
+    {
+        // The `phase = down` write fails after the kill: the phase stays `stopping` (AU75 completes it).
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let o = opts(t, &fake_tmux(t));
+        let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
+        owner(t, "zygo-app", ID);
+        let mut h = hooks();
+        fault(&mut h, "down", disk_full());
+        assert_eq!(run(&o, &h), (1, String::new(), "zygo: app: phase not written: disk full\n".into()));
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Stopping);
+        assert!(tmux_log(t).iter().any(|c| c.ends_with("kill-session -t =zygo-app:")));
+        assert!(store.op_lock_free());
+    }
+    for (pid, why) in [("x", "pid file holds no process id: x"), ("1", "pid file holds 1, which no launcher has")] {
+        // The launcher is not signalled: the stop wait reports it after 30 s; the workspace still stops.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (o, store, mut l) = one_member(t);
+        set_activity(&o, SID, false, &[]);
+        fs::write(o.paths.sessions_dir.join(SID).join("pid"), pid).unwrap();
+        let mut h = hooks();
+        statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
+        let (code, out, err) = run(&o, &h);
+        assert_eq!((code, out.as_str()), (0, "zygo: app is down (1 agents saved)\n"), "{err}");
+        assert_eq!(count(&err, &format!("zygo: app pane kaaaaaaaa: launcher not signalled: {why}")), 1, "{err}");
+        assert_eq!(count(&err, "zygo: app pane kaaaaaaaa: agent still running after 30 s; it stops with the session"), 1);
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Down);
+        assert!(l.child.try_wait().unwrap().is_none()); // no signal went anywhere
+        l.child.kill().unwrap();
+    }
+    {
+        // AU62: a saved socket whose folder is not private; no tmux call names it.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let o = opts(t, &fake_tmux(t));
+        let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
+        owner(t, "zygo-app", ID);
+        unprivate(t);
+        let before = raw(&store);
+        assert_eq!(run(&o, &hooks()), (1, String::new(), not_private_line(t)));
+        assert_eq!(raw(&store), before);
+        assert!(!tmux_log(t).iter().any(|l| l.contains("-S")), "{:?}", tmux_log(t));
+        assert!(store.op_lock_free());
+    }
+    {
+        // The step 4 snapshot returns `Err`: one line, the stop goes on.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let o = opts(t, &fake_tmux(t));
+        let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
+        owner(t, "zygo-app", ID);
+        let mut h = hooks();
+        fault(&mut h, "snapshot", Fault::Error("cannot set snapshot.pending".into()));
+        assert_eq!(
+            run(&o, &h),
+            (0, "zygo: app is down (0 agents saved)\n".into(), "zygo: final snapshot not saved: cannot set snapshot.pending\n".into())
+        );
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Down);
+    }
+}
+
+#[test] // items 2 and 3: the `stopping` write fails; the fallback `phase = up` write
+fn stopping_write_failure_and_its_fallback() {
+    let _s = serial();
+    let setup = |t: &Path| -> (DownOpts, Store, Hooks) {
+        let o = opts(t, &fake_tmux(t));
+        let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
+        owner(t, "zygo-app", ID);
+        let mut h = hooks();
+        let p = o.paths.clone();
+        h.points.insert("after_draining", Box::new(move || snapshot::queue_pending(&p, ID, true).unwrap()));
+        (o, store, h)
+    };
+    {
+        // Busy: the D18 busy line; the fallback succeeds and runs the pending check.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (o, store, mut h) = setup(t);
+        fault(&mut h, "stopping", Fault::Busy);
+        assert_eq!(run(&o, &h), (1, String::new(), "zygo: workspace app is busy; try again\n".into()));
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Up);
+        assert!(!store.dir().join("snapshot.pending").exists()); // `after_write` of the fallback took it
+        assert!(store.op_lock_free());
+        assert!(!tmux_log(t).iter().any(|l| l.contains("kill-session")));
+    }
+    {
+        // Another error: `zygo: <name>: <e>`; the fallback fails too and says so.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (o, store, mut h) = setup(t);
+        fault(&mut h, "stopping", disk_full());
+        fault(&mut h, "stopping_fallback", disk_full());
+        assert_eq!(run(&o, &h), (1, String::new(), "zygo: app: disk full\nzygo: app: phase not restored: disk full\n".into()));
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Draining);
+        assert!(store.dir().join("snapshot.pending").exists()); // no write ran, so no pending check
+        assert!(store.op_lock_free());
+    }
+}
+
+#[test] // items 4, 5, 6, 7, 8, 11 and the detach failure paths of item 2
+fn detach_round_2() {
+    let _s = serial();
+    let h = hooks();
+    let caller = |o: &mut DownOpts| o.zygo_session = Some("01JCALLER".into());
+    for (body, expect) in [
+        // Item 4: one long unterminated line of 3-byte characters: the last 32 KiB from a character boundary.
+        ("€".repeat(14_000), "€".repeat(10_922)),
+        // One long line that ends with a newline: never cut to empty.
+        (format!("{}\n", "x".repeat(40_000)), format!("{}\n", "x".repeat(32_767))),
+        // A line that starts exactly at the window edge is kept whole.
+        (format!("{}\n{}\n", "a".repeat(10_000), "b".repeat(32_767)), format!("{}\n", "b".repeat(32_767))),
+    ] {
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let _g = Detached::new(t);
+        let (mut o, store) = detach_case(t);
+        caller(&mut o);
+        let log = store.dir().join("down.log");
+        fs::write(&log, &body).unwrap();
+        assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
+        let cut = fs::read_to_string(&log).unwrap();
+        assert!(!cut.is_empty() && cut.len() <= 32_768 && body.ends_with(&cut), "{}", cut.len());
+        assert_eq!(cut, expect);
+        started(t);
+    }
+    {
+        // Item 5: a state with no `tmux_socket` (the default server) and the caller in its session.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let _g = Detached::new(t);
+        let (mut o, store) = detach_case(t);
+        no_socket(&store);
+        o.tmux_pane = Some("%3".into());
+        o.tmux_env = Some("/tmp/zygo-w10-none/default,1,0".into());
+        assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
+        started(t);
+        assert_eq!(args(t), "down --wait -- app\n");
+    }
+    for (probe, name) in [(pidns_differs as down::ProcProbe, "pid ns"), (comm_not_tmux, "comm")] {
+        // Item 6: the pid namespace and the comm of the server.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store) = detach_case(t);
+        caller(&mut o);
+        o.proc_probe = probe;
+        assert_eq!(run(&o, &h), (1, String::new(), format!("{AU18}\n")), "{name}");
+        assert!(!store.dir().join("down.log").exists());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Item 6 with the real probe: the server pid is a `sleep` child of this test (same namespaces).
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let _g = Detached::new(t);
+        let (mut o, _) = detach_case(t);
+        caller(&mut o);
+        let sleeper = Sleeper(Command::new("sleep").arg("30").spawn().unwrap());
+        fs::write(t.join("server.pid"), sleeper.0.id().to_string()).unwrap();
+        o.proc_probe = down::proc_identity;
+        assert_eq!(run(&o, &h), (1, String::new(), format!("{AU18}\n")));
+        assert!(!t.join("child.pid").exists());
+    }
+    {
+        // Item 7: with --all, a stale first target does not decide the server pid.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let _g = Detached::new(t);
+        let mut o = opts(t, &fake_tmux(t));
+        o.zygo = rec(t);
+        o.target = DownTarget::All;
+        caller(&mut o);
+        two(&o, vec![]);
+        gone(t, "zygo-app");
+        assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
+        started(t);
+        assert_eq!(args(t), "down --wait --all\n");
+        assert!(tmux_log(t).iter().any(|l| l.contains("list-sessions -F #{pid}")));
+    }
+    for pane in [false, true] {
+        // Item 8: AU62 before any tmux call on the saved socket, in the detach path too.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store) = detach_case(t);
+        if pane {
+            o.tmux_pane = Some("%3".into());
+            o.tmux_env = Some(format!("{}/sock/s,1,0", t.display()).into());
+        } else {
+            caller(&mut o);
+        }
+        unprivate(t);
+        assert_eq!(run(&o, &h), (1, String::new(), not_private_line(t)), "pane {pane}");
+        assert!(!tmux_log(t).iter().any(|l| l.contains("-S")), "{:?}", tmux_log(t));
+        assert!(!store.dir().join("down.log").exists());
+    }
+    {
+        // Item 11: a relative zygo path is made absolute against the cwd before the start.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let _g = Detached::new(t);
+        let (mut o, _) = detach_case(t);
+        caller(&mut o);
+        o.zygo = PathBuf::from("./rec");
+        o.cwd = t.to_path_buf();
+        assert_eq!(run(&o, &h), (0, STARTED.into(), String::new()));
+        started(t);
+        assert_eq!(args(t), "down --wait -- app\n");
+    }
+    {
+        // Item 11: AU54 before the detached start.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store) = detach_case(t);
+        caller(&mut o);
+        o.zygo = script(t, "re'c", "exit 0");
+        assert_eq!(run(&o, &h), (2, String::new(), format!("{AU54}\n")));
+        assert!(!store.dir().join("down.log").exists());
+    }
+    {
+        // Item 2: the log cannot be opened (a symlink; O_NOFOLLOW).
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store) = detach_case(t);
+        caller(&mut o);
+        let log = store.dir().join("down.log");
+        std::os::unix::fs::symlink(t.join("elsewhere"), &log).unwrap();
+        let before = raw(&store);
+        let (code, out, err) = run(&o, &h);
+        assert_eq!((code, out.as_str()), (1, ""));
+        assert!(err.starts_with(&format!("zygo: cannot open {}: ", log.display())) && err.lines().count() == 1, "{err}");
+        assert!(!t.join("elsewhere").exists() && !t.join("child.pid").exists());
+        assert_eq!(raw(&store), before);
+    }
+    {
+        // Item 2: the detached child cannot start.
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store) = detach_case(t);
+        caller(&mut o);
+        o.zygo = t.join("missing");
+        let before = raw(&store);
+        let (code, out, err) = run(&o, &h);
+        assert_eq!((code, out.as_str()), (1, ""));
+        assert!(err.starts_with("zygo: cannot start the detached down: ") && err.lines().count() == 1, "{err}");
+        assert_eq!(raw(&store), before);
+    }
 }

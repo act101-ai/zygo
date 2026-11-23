@@ -28,7 +28,7 @@ fn fixture(rel: &str) -> Value {
 }
 
 fn empty() -> Activity {
-    Activity { version: 1, busy: false, running: BTreeMap::new(), updated_at: 0 }
+    Activity { version: 1, busy: false, running: BTreeMap::new(), updated_at: 0, tools_running: 0 }
 }
 
 #[test]
@@ -36,6 +36,26 @@ fn read_missing_file_is_default() {
     let (_t, d) = dir();
     assert_eq!(activity::read(&d).unwrap(), empty());
     assert_eq!(Activity::default(), empty());
+}
+
+#[test] // W10 round 2 item 1: a file of an older zygo has no `tools_running`; it reads 0
+fn tools_running_absent_reads_0_and_is_written_only_when_not_0() {
+    let (_t, d) = dir();
+    fs::write(d.activity_json(), br#"{"version":1,"busy":true,"running":{},"updated_at":7}"#).unwrap();
+    assert_eq!(activity::read(&d).unwrap().tools_running, 0);
+    activity::update(&d, S10, &mut |a| a.tools_running = 2).unwrap();
+    assert_eq!(file(&d)["tools_running"], json!(2));
+    assert_eq!(activity::read(&d).unwrap().tools_running, 2);
+    activity::update(&d, S10, &mut |a| a.tools_running = 0).unwrap();
+    assert!(file(&d).get("tools_running").is_none(), "{}", file(&d));
+    // A newer file: a number is taken; any other type reads 1, so the drain never counts the member as idle on a
+    // field it cannot read.
+    fs::write(d.activity_json(), br#"{"version":2,"busy":true,"running":{},"updated_at":7,"tools_running":3}"#).unwrap();
+    assert_eq!(activity::read(&d).unwrap().tools_running, 3);
+    fs::write(d.activity_json(), br#"{"version":2,"busy":true,"running":{},"updated_at":7,"tools_running":"x"}"#).unwrap();
+    assert_eq!(activity::read(&d).unwrap().tools_running, 1);
+    fs::write(d.activity_json(), br#"{"version":2,"busy":true,"running":{},"updated_at":7}"#).unwrap();
+    assert_eq!(activity::read(&d).unwrap().tools_running, 0);
 }
 
 #[test]
@@ -66,7 +86,8 @@ fn read_takes_known_fields_and_drops_unknown_ones() {
             version: 1,
             busy: true,
             running: BTreeMap::from([("agent-id-1".into(), "pw-sub".into())]),
-            updated_at: 7
+            updated_at: 7,
+            tools_running: 0
         }
     );
 }
@@ -77,7 +98,7 @@ fn read_of_a_newer_version_reads_its_known_fields() {
     fs::write(d.activity_json(), br#"{"version":2,"busy":true,"running":{},"updated_at":5,"phase":"x"}"#).unwrap();
     assert_eq!(
         activity::read(&d).unwrap(),
-        Activity { version: 2, busy: true, running: BTreeMap::new(), updated_at: 5 }
+        Activity { version: 2, busy: true, running: BTreeMap::new(), updated_at: 5, tools_running: 0 }
     );
 }
 
@@ -277,7 +298,7 @@ fn update_refuses_a_version_that_is_not_an_integer_and_writes_nothing() {
 fn read_of_a_newer_file_with_new_field_types_takes_its_known_fields() {
     let (_t, d) = dir();
     fs::write(d.activity_json(), P1).unwrap();
-    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: false, running: a1_pw_sub(), updated_at: 5 });
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: false, running: a1_pw_sub(), updated_at: 5, tools_running: 0 });
 }
 
 #[test]
@@ -286,7 +307,7 @@ fn read_of_a_version_that_is_not_an_integer_takes_the_known_fields_as_newest() {
     fs::write(d.activity_json(), P2).unwrap();
     assert_eq!(
         activity::read(&d).unwrap(),
-        Activity { version: u32::MAX, busy: false, running: a1_pw_sub(), updated_at: 5 }
+        Activity { version: u32::MAX, busy: false, running: a1_pw_sub(), updated_at: 5, tools_running: 0 }
     );
 }
 
@@ -299,16 +320,16 @@ fn read_of_a_newer_file_takes_fields_of_other_types_leniently() {
     )
     .unwrap();
     let running = BTreeMap::from([("a".into(), "t".into()), ("b".into(), String::new()), ("c".into(), String::new())]);
-    assert_eq!(activity::read(&d).unwrap(), Activity { version: 3, busy: true, running, updated_at: 0 });
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 3, busy: true, running, updated_at: 0, tools_running: 0 });
 }
 
 #[test]
 fn read_of_a_newer_file_whose_running_is_not_an_object_is_busy() {
     let (_t, d) = dir();
     fs::write(d.activity_json(), br#"{"version":2,"busy":false,"running":["a1"],"updated_at":5}"#).unwrap();
-    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: true, running: BTreeMap::new(), updated_at: 5 });
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: true, running: BTreeMap::new(), updated_at: 5, tools_running: 0 });
     fs::write(d.activity_json(), br#"{"version":2,"busy":false,"updated_at":5}"#).unwrap();
-    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: false, running: BTreeMap::new(), updated_at: 5 });
+    assert_eq!(activity::read(&d).unwrap(), Activity { version: 2, busy: false, running: BTreeMap::new(), updated_at: 5, tools_running: 0 });
 }
 
 #[test]
