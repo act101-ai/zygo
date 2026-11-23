@@ -261,7 +261,7 @@ pub fn server(tmux: &Path, tmux_socket: Option<&Path>, tmux_env: Option<&OsStr>)
 /// socket, when it exists, is owned by the current uid. A missing parent is created with mode 0700 only when
 /// `create_parent`. `Err` holds the line without the `zygo: ` prefix.
 #[cfg(unix)]
-pub(crate) fn socket_is_private(path: &Path, create_parent: bool) -> Result<(), String> {
+pub fn socket_is_private(path: &Path, create_parent: bool) -> Result<(), String> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let refused = || {
         format!(
@@ -299,7 +299,7 @@ pub(crate) fn socket_is_private(path: &Path, create_parent: bool) -> Result<(), 
 
 /// Other systems: M1 exits 2 there before any workspace verb (OP5).
 #[cfg(not(unix))]
-pub(crate) fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), String> { Ok(()) }
+pub fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<(), String> { Ok(()) }
 
 /// The checkout of `cwd`, the worktree list and the main worktree (AU25, AU77, D4). Every git call ends by
 /// `Instant::now() + bound` (W8 D23).

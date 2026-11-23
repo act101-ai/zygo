@@ -841,6 +841,21 @@ fn pending_file() {
     }
 }
 
+#[test]
+fn assign_key_after_a_forget_makes_no_state() { // M3 D7, S10: ws forget between the read and the lock
+    let (_d, _p, store) = up(&["kaaaaaaaa"]);
+    let fake = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
+    fake.opt("%2", "");
+    let dir = store.dir().to_path_buf();
+    let gone = dir.clone();
+    snapshot::testing::before_assign(&dir, Some(Box::new(move || std::fs::remove_dir_all(&gone).unwrap())));
+    let e = assign_key(&store, &fake, "%2").unwrap_err().to_string();
+    snapshot::testing::before_assign(&dir, None);
+    assert_eq!(e, "cannot assign a key to pane %2: no workspace state");
+    assert!(!dir.exists());
+    assert_eq!(fake.calls("set_pane_option"), 0);
+}
+
 #[test] // D12, AU41, AU79, review M7, round 2 B3, M5
 fn assign_key_with_fake() {
     let (_d, _p, store) = up(&["kaaaaaaaa"]);
