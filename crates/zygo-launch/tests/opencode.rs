@@ -1305,7 +1305,9 @@ fn ws_node(fx: &Fx, w: Ws) -> NodeRun {
     let script = r#"#!/bin/sh
 d=$(dirname "$0")
 echo "$*" >> "$d/calls.txt"
-cat > "$d/stdin-$2-$6.json"
+in=$(cat)
+printf '%s' "$in" > "$d/stdin-$2-$6.json"
+if [ "$2" = workspace ]; then printf '%s %s\n' "$6" "$in" >> "$d/ws.log"; fi
 case "$2:$6:$STUB_MODE" in
   workspace:session:slow) sleep 0.3 ;;
   workspace:pre-tool:deny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R2"}}' ;;
@@ -1420,6 +1422,57 @@ fn created_child(s: &str, parent: &str) -> Value {
 }
 
 #[cfg(unix)]
+fn updated(s: &str) -> Value {
+    json!(["session.updated", {"info": {"id": s}}])
+}
+
+#[cfg(unix)]
+fn deleted(s: &str) -> Value {
+    json!(["session.deleted", {"info": {"id": s}}])
+}
+
+/// The `zygo hook workspace` calls of a run, one line each: the event, a space, the stdin JSON.
+#[cfg(unix)]
+fn ws_log(r: &NodeRun) -> Vec<String> {
+    std::fs::read_to_string(r.dir.join("ws.log")).unwrap_or_default().lines().map(str::to_string).collect()
+}
+
+/// The `zygo hook workspace` calls of a run as `<event> <sessionID>`, or `<event>{}` with no `sessionID`; each
+/// payload's `cwd` is `/r` (plan D7).
+#[cfg(unix)]
+fn ws_seq(r: &NodeRun) -> Vec<String> {
+    ws_log(r)
+        .iter()
+        .map(|line| {
+            let (event, payload) = line.split_once(' ').unwrap_or_else(|| panic!("{line}"));
+            let v: Value = serde_json::from_str(payload).unwrap_or_else(|e| panic!("{line}: {e}"));
+            assert_eq!(v["cwd"], "/r", "{line}");
+            match v["sessionID"].as_str() {
+                Some(id) => format!("{event} {id}"),
+                None => format!("{event}{{}}"),
+            }
+        })
+        .collect()
+}
+
+/// The call list of a member run (tool on, so the closing `pre-tool A` drains the chain, plan D7).
+#[cfg(unix)]
+fn order(fx: &Fx, name: &str, member: Option<&str>, events: Value) -> Vec<String> {
+    ws_seq(&ws_node(fx, ws_opts(name, member, "ok", "A", events)))
+}
+
+#[cfg(unix)]
+fn p1_events() -> Vec<Value> {
+    vec![created("A"), busy("A"), idle("A")]
+}
+
+/// The event calls of P1, without the closing `pre-tool A`.
+#[cfg(unix)]
+fn p1_calls() -> Vec<String> {
+    ["session{}", "session A", "prompt A", "stop A"].map(str::to_string).to_vec()
+}
+
+#[cfg(unix)]
 const M: &str = "0123456789abcdef";
 
 #[cfg(unix)]
@@ -1442,7 +1495,10 @@ fn plugin_sends_member_events_under_node() {
     ]);
     let r = ws_node_run(&fx, "ws-ok", Some(M), "ok", &sid, ev.clone(), false);
     assert_eq!(r.result.clone().unwrap()["threw"], Value::Null);
-    assert_eq!(r.calls.lines().collect::<Vec<_>>(), [ws("session"), ws("prompt"), ws("stop"), ws("pre-tool"), "hook guard --agent opencode".to_string()]);
+    assert_eq!(
+        r.calls.lines().collect::<Vec<_>>(),
+        [ws("session"), ws("session"), ws("prompt"), ws("stop"), ws("pre-tool"), "hook guard --agent opencode".to_string()]
+    );
     assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": sid, "cwd": "/r"}));
     assert_eq!(stdin_of(&r, "stdin-workspace-stop.json"), json!({"sessionID": sid, "cwd": "/r"}));
     let pre = std::fs::read(r.dir.join("stdin-workspace-pre-tool.json")).unwrap();
@@ -1459,7 +1515,8 @@ fn plugin_sends_member_events_under_node() {
     let resume = json!([["message.part.updated", {"part": {"sessionID": "ses_resume"}}], busy("ses_resume"), idle("ses_resume")]);
     let r = ws_node_run(&fx, "ws-resume", Some(M), "ok", "ses_resume", resume, false);
     assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")]);
-    assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": "ses_resume", "cwd": "/r"}));
+    assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"cwd": "/r"}));
+    assert_eq!(ws_seq(&r), ["session{}", "prompt ses_resume", "stop ses_resume", "pre-tool ses_resume"]);
 
     for (name, member) in [("ws-none", None), ("ws-empty", Some(""))] {
         let r = ws_node_run(&fx, name, member, "deny", &sid, ev.clone(), false);
@@ -1490,12 +1547,12 @@ fn plugin_sends_prompt_for_a_turn_of_the_main_session_only() { // AU27 as amende
         status_idle(main)
     ]);
     let r = ws_node_run(&fx, "ws-prompt", Some(M), "ok", main, events, false);
-    assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("stop"), ws("prompt"), ws("stop"), ws("pre-tool")]);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("session"), ws("prompt"), ws("stop"), ws("prompt"), ws("stop"), ws("pre-tool")]);
     assert_eq!(stdin_of(&r, "stdin-workspace-prompt.json"), json!({"sessionID": main, "cwd": "/r"}));
 
     // a child's busy sends no prompt, and an idle with no turn sends no stop
     let r = ws_node_run(&fx, "ws-prompt-sub", Some(M), "ok", main, json!([created(main), idle(main), created_child("ses_child", main), busy("ses_child"), idle("ses_child")]), false);
-    assert_eq!(ws_calls(&r), [ws("session"), ws("pre-tool")]);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("session"), ws("pre-tool")]);
 
     let r = ws_node_run(&fx, "ws-prompt-none", None, "ok", main, json!([created(main), busy(main)]), false);
     assert!(ws_calls(&r).is_empty());
@@ -1513,7 +1570,7 @@ fn plugin_sends_one_stop_per_turn_end() { // L2 round 2 item 5
         let mut events = vec![created(m), busy(m), busy(m)];
         events.extend(end.as_array().unwrap().iter().cloned());
         let r = ws_node_run(&fx, name, Some(M), "ok", m, Value::Array(events), false);
-        assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")], "{name}");
+        assert_eq!(ws_calls(&r), [ws("session"), ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")], "{name}");
     }
 }
 
@@ -1540,7 +1597,19 @@ fn plugin_main_session_follows_the_active_top_session_and_never_a_child() { // r
     let r = ws_node_run(&fx, "ws-switch", Some(M), "ok", "ses_a", events, false);
     assert_eq!(
         ws_calls(&r),
-        [ws("session"), ws("prompt"), ws("stop"), ws("session"), ws("prompt"), ws("stop"), ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")]
+        [
+            ws("session"),
+            ws("session"),
+            ws("prompt"),
+            ws("stop"),
+            ws("session"),
+            ws("prompt"),
+            ws("stop"),
+            ws("prompt"),
+            ws("session"),
+            ws("stop"),
+            ws("pre-tool")
+        ]
     );
     assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": "ses_a", "cwd": "/r"}));
     assert_eq!(stdin_of(&r, "stdin-workspace-stop.json"), json!({"sessionID": "ses_a", "cwd": "/r"}));
@@ -1548,7 +1617,7 @@ fn plugin_main_session_follows_the_active_top_session_and_never_a_child() { // r
     // A child's events before any top session: the child never becomes the main session.
     let kid_first = json!([created_child("ses_kid", "ses_x"), busy("ses_kid"), idle("ses_kid")]);
     let r = ws_node_run(&fx, "ws-kid-first", Some(M), "ok", "ses_kid", kid_first, false);
-    assert_eq!(ws_calls(&r), [ws("pre-tool")]);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("pre-tool")]);
 }
 
 #[cfg(unix)]
@@ -1561,8 +1630,8 @@ fn plugin_follows_a_tui_switch_to_an_existing_session() { // L2 round 2 item 4
     // `ses_old` was made before this OpenCode started: no `session.created` event for it
     let events = json!([created("ses_new"), busy("ses_new"), idle("ses_new"), busy("ses_old"), busy("ses_old"), idle("ses_old"), status_idle("ses_old")]);
     let r = ws_node_run(&fx, "ws-tui-switch", Some(M), "ok", "ses_old", events, false);
-    assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("stop"), ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")]);
-    assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": "ses_old", "cwd": "/r"}));
+    assert_eq!(ws_calls(&r), [ws("session"), ws("session"), ws("prompt"), ws("stop"), ws("prompt"), ws("stop"), ws("pre-tool")]);
+    assert_eq!(stdin_of(&r, "stdin-workspace-session.json"), json!({"sessionID": "ses_new", "cwd": "/r"}));
     assert_eq!(stdin_of(&r, "stdin-workspace-prompt.json"), json!({"sessionID": "ses_old", "cwd": "/r"}));
 }
 
@@ -1599,20 +1668,21 @@ fn plugin_member_calls_survive_a_missing_failing_or_hung_zygo() { // L2 round 2 
     // a deny printed by a zygo that exits 1 is ignored, on `event` and on `pre-tool`
     let r = ws_node(&fx, ws_opts("ws-fail", Some(M), "fail", "ses_m", turn.clone()));
     assert_eq!(r.result.clone().unwrap()["threw"], Value::Null);
-    assert_eq!(r.calls.lines().collect::<Vec<_>>(), [ws("session"), ws("prompt"), ws("stop"), ws("pre-tool"), guard.clone()]);
+    assert_eq!(r.calls.lines().collect::<Vec<_>>(), [ws("session"), ws("session"), ws("prompt"), ws("stop"), ws("pre-tool"), guard.clone()]);
 
     // a hung zygo on `event`: the handler never waits for it
     let r = ws_node(&fx, Ws { tool: false, ..ws_opts("ws-hang-event", Some(M), "hang", "ses_m", turn.clone()) });
     let v = r.result.clone().unwrap();
     assert!(v["eventMs"].as_u64().unwrap() < 2000, "{v}");
 
-    // a hung zygo on `pre-tool`: the 10 s timeout ends the wait, no deny, the guard runs
+    // a hung zygo on the load call and on `pre-tool`: the 10 s timeout of each queued call ends the wait, no deny,
+    // the guard runs
     let r = ws_node(&fx, ws_opts("ws-hang-tool", Some(M), "hang", "ses_m", json!([])));
     let v = r.result.clone().unwrap();
     assert_eq!(v["threw"], Value::Null);
     let ms = v["toolMs"].as_u64().unwrap();
-    assert!((9_000..20_000).contains(&ms), "{v}");
-    assert_eq!(r.calls.lines().collect::<Vec<_>>(), [ws("pre-tool"), guard]);
+    assert!((19_000..30_000).contains(&ms), "{v}");
+    assert_eq!(r.calls.lines().collect::<Vec<_>>(), [ws("session"), ws("pre-tool"), guard]);
 }
 
 #[cfg(unix)]
@@ -1628,7 +1698,7 @@ fn plugin_passes_hostile_ids_as_exact_json() { // L2 round 2 item 6
     let cwd = format!("/r \"d\"\n$(touch {})\u{2028}`touch {}`", pwned("cwd1").display(), pwned("cwd2").display());
     let r = ws_node(&fx, Ws { dir: &cwd, ..ws_opts("ws-hostile", Some(M), "ok", &sid, json!([created(&sid), busy(&sid), idle(&sid)])) });
     assert_eq!(r.result.clone().unwrap()["threw"], Value::Null);
-    assert_eq!(ws_calls(&r), [ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")]);
+    assert_eq!(ws_calls(&r), [ws("session"), ws("session"), ws("prompt"), ws("stop"), ws("pre-tool")]);
     for e in ["session", "prompt", "stop"] {
         assert_eq!(stdin_of(&r, &format!("stdin-workspace-{e}.json")), json!({"sessionID": sid, "cwd": cwd}), "{e}");
     }
@@ -1636,4 +1706,190 @@ fn plugin_passes_hostile_ids_as_exact_json() { // L2 round 2 item 6
     for n in ["sid1", "sid2", "cwd1", "cwd2"] {
         assert!(!pwned(n).exists(), "{n}");
     }
+}
+
+/// `p1_calls()`, then `more`, then the closing `pre-tool A` (plan D7).
+#[cfg(unix)]
+fn after_p1(more: &[&str]) -> Vec<String> {
+    let mut v = p1_calls();
+    v.extend(more.iter().map(|s| s.to_string()));
+    v.push("pre-tool A".to_string());
+    v
+}
+
+/// `p1_events()`, then `more`.
+#[cfg(unix)]
+fn p1_then(more: Vec<Value>) -> Value {
+    let mut v = p1_events();
+    v.extend(more);
+    json!(v)
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (1), AU27, AU104: the load call, then the main session and its turn
+fn plugin_order_p01_run_fresh() {
+    if no_node("plugin_order_p01_run_fresh") {
+        return;
+    }
+    let fx = fx();
+    let r = ws_node(&fx, ws_opts("p01", Some(M), "ok", "A", json!(p1_events())));
+    assert_eq!(ws_seq(&r), ["session{}", "session A", "prompt A", "stop A", "pre-tool A"]);
+    assert_eq!(ws_log(&r)[0], r#"session {"cwd":"/r"}"#);
+    // the load call needs no event
+    assert_eq!(order(&fx, "p01-empty", Some(M), json!([])), ["session{}", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (2): a resumed session with no `info` is never sent
+fn plugin_order_p02_resume_no_info() {
+    if no_node("plugin_order_p02_resume_no_info") {
+        return;
+    }
+    let fx = fx();
+    assert_eq!(order(&fx, "p02", Some(M), json!([busy("A"), idle("A")])), ["session{}", "prompt A", "stop A", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (3): an `info` in the turn classifies the active session as top
+fn plugin_order_p03_resume_info_in_turn() {
+    if no_node("plugin_order_p03_resume_info_in_turn") {
+        return;
+    }
+    let fx = fx();
+    assert_eq!(
+        order(&fx, "p03", Some(M), json!([busy("A"), updated("A"), idle("A")])),
+        ["session{}", "prompt A", "session A", "stop A", "pre-tool A"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (4)
+fn plugin_order_p04_child_normal_order() {
+    if no_node("plugin_order_p04_child_normal_order") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), created_child("K", "A"), busy("K"), idle("K"), idle("A")]);
+    assert_eq!(order(&fx, "p04", Some(M), ev), ["session{}", "session A", "prompt A", "stop A", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (5): a child whose `busy` comes before its `info`
+fn plugin_order_p05_late_child() {
+    if no_node("plugin_order_p05_late_child") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), busy("K"), created_child("K", "A"), idle("K"), idle("A")]);
+    assert_eq!(order(&fx, "p05", Some(M), ev), ["session{}", "session A", "prompt A", "stop A", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (6)
+fn plugin_order_p06_two_late_children() {
+    if no_node("plugin_order_p06_two_late_children") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), busy("K1"), busy("K2"), created_child("K1", "A"), created_child("K2", "A"), idle("A")]);
+    assert_eq!(order(&fx, "p06", Some(M), ev), ["session{}", "session A", "prompt A", "stop A", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (7)
+fn plugin_order_p07_child_after_its_idle() {
+    if no_node("plugin_order_p07_child_after_its_idle") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), busy("K"), idle("K"), created_child("K", "A"), idle("A")]);
+    assert_eq!(order(&fx, "p07", Some(M), ev), ["session{}", "session A", "prompt A", "stop A", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (8): a child is never sent in a `session` call
+fn plugin_order_p08_late_child_alone() {
+    if no_node("plugin_order_p08_late_child_alone") {
+        return;
+    }
+    let fx = fx();
+    assert_eq!(order(&fx, "p08", Some(M), json!([busy("K"), created_child("K", "P")])), ["session{}", "prompt K", "stop K", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (9)
+fn plugin_order_p09_tui_switch_with_info() {
+    if no_node("plugin_order_p09_tui_switch_with_info") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![busy("B"), updated("B"), idle("B")]);
+    assert_eq!(order(&fx, "p09", Some(M), ev), after_p1(&["prompt B", "session B", "stop B"]));
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (10), AU27 known limit 1
+fn plugin_order_p10_tui_switch_no_info() {
+    if no_node("plugin_order_p10_tui_switch_no_info") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![busy("B"), idle("B")]);
+    assert_eq!(order(&fx, "p10", Some(M), ev), after_p1(&["prompt B", "stop B"]));
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (11): one turn set over two top sessions
+fn plugin_order_p11_overlapping_turns() {
+    if no_node("plugin_order_p11_overlapping_turns") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), created("B"), busy("B"), idle("A"), idle("B")]);
+    assert_eq!(order(&fx, "p11", Some(M), ev), ["session{}", "session A", "prompt A", "session B", "stop B", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (12): a late `info` of an older session does not take the main session
+fn plugin_order_p12_late_info_of_an_older_session() {
+    if no_node("plugin_order_p12_late_info_of_an_older_session") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([busy("Y"), created("X"), busy("X"), updated("Y")]);
+    assert_eq!(order(&fx, "p12", Some(M), ev), ["session{}", "prompt Y", "session X", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (13): an `info` event does not activate
+fn plugin_order_p13_info_event_does_not_activate() {
+    if no_node("plugin_order_p13_info_event_does_not_activate") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![created("B"), deleted("A")]);
+    assert_eq!(order(&fx, "p13", Some(M), ev), after_p1(&["session B"]));
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (14), W-C6: not a member, no workspace call
+fn plugin_order_p14_not_a_member() {
+    if no_node("plugin_order_p14_not_a_member") {
+        return;
+    }
+    let fx = fx();
+    let r = ws_node(&fx, ws_opts("p14", None, "ok", "A", json!(p1_events())));
+    assert!(ws_seq(&r).is_empty());
+    assert_eq!(r.calls.lines().collect::<Vec<_>>(), ["hook guard --agent opencode"]);
+}
+
+#[cfg(unix)]
+#[test] // W§18 #90 (15): decides before any wait
+fn plugin_order_p15_decides_before_waits() {
+    if no_node("plugin_order_p15_decides_before_waits") {
+        return;
+    }
+    let fx = fx();
+    let r = ws_node(&fx, Ws { parallel: true, ..ws_opts("p15", Some(M), "slow", "A", json!(p1_events())) });
+    assert_eq!(ws_seq(&r), after_p1(&[]));
 }
