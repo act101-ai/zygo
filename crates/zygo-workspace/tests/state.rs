@@ -830,7 +830,10 @@ fn a_fifo_in_the_state_folder_never_blocks() {
     assert!(fs::symlink_metadata(dir.join("errors.log")).unwrap().file_type().is_fifo());
 }
 
-/// M4: `update_existing` makes no folder and no state when none exists.
+/// M4: `update_existing` makes no folder and no state when none exists. With no state folder it creates nothing,
+/// not even the folder above it. With a state folder and no `workspace.json` (the case that `update` would fill with
+/// `Workspace::new`), it gives `Ok(None)`, runs no closure and writes no `workspace.json`; the only file it leaves is
+/// the `lock` file that taking the lock creates (M4 review F2b, F4).
 #[test]
 fn update_existing_makes_nothing_when_the_state_is_gone() {
     let t = TempDir::new().unwrap();
@@ -839,10 +842,11 @@ fn update_existing_makes_nothing_when_the_state_is_gone() {
     assert!(matches!(store.update_existing(S5, &mut |_| { calls += 1; Ok(()) }), Ok(None)));
     assert_eq!(calls, 0);
     assert!(!store.dir().exists());
+    assert!(!store.dir().parent().unwrap().exists());
     fs::create_dir_all(store.dir()).unwrap();
     assert!(matches!(store.update_existing(S5, &mut |_| { calls += 1; Ok(()) }), Ok(None)));
     assert_eq!(calls, 0);
-    assert!(!store.dir().join("workspace.json").exists());
+    assert_eq!(names(store.dir()), ["lock"]);
 }
 
 /// M4: on an existing state it is `update`; a closure error writes nothing.
@@ -859,8 +863,9 @@ fn update_existing_changes_an_existing_state() {
     assert_eq!(store.read().unwrap().unwrap().loadout, "other");
 }
 
-/// M4, `ws forget` racing the mirror: the folder goes away after the read; the write fails and no folder is made
-/// again.
+/// M4, `ws forget` racing the mirror: the folder goes away after the read, inside the closure; the write then fails
+/// and no folder is made. It does not tell `update_existing` from `update`, which also makes no folder after its
+/// read; `update_existing_makes_nothing_when_the_state_is_gone` does.
 #[test]
 fn update_existing_does_not_make_a_forgotten_folder_again() {
     let t = TempDir::new().unwrap();

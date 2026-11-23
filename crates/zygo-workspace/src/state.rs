@@ -503,8 +503,10 @@ impl Store {
     }
 
     /// `update` for a state that must already exist: it makes no folder and no `Workspace::new`. `Ok(None)` when the
-    /// state folder, its lock file's folder or `workspace.json` is gone (a `ws forget` that ran first); nothing is
-    /// created or written then. A write after the folder went away fails and makes no folder again.
+    /// state folder, its lock file's folder or `workspace.json` is gone (a `ws forget` that ran first), with no
+    /// closure run and no `workspace.json` written. With no state folder it creates nothing. When the state folder
+    /// exists without `workspace.json`, taking the lock creates the `lock` file in it (`lock_file`), and that file
+    /// stays. A write after the folder went away fails and makes no folder again.
     pub fn update_existing(
         &self, bound: Duration, f: &mut dyn FnMut(&mut Workspace) -> anyhow::Result<()>,
     ) -> Result<Option<Workspace>, StateError> {
