@@ -83,7 +83,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
-| FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | PLANNED | mechanical | — |
+| FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-19; — |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | DONE | implementation | 40aec7c; acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored (merged tree) |
