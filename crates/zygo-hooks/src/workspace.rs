@@ -115,8 +115,9 @@ fn elog(c: &Ctx, text: &str) {
     c.store.log_error(&format!("workspace hook {}: {text}", c.event));
 }
 
-/// The events of `zygo hook workspace` that write the line of a view that cannot be read or of a marker value that
-/// fails its check (AU84, D6): a few calls per turn, so the `*` tool matchers do not write a line per tool call.
+/// The events of `zygo hook workspace` that write the line of a view that cannot be read, of a marker value that
+/// fails its check (AU84, D6) or of an `activity.json` update that fails (AU56, R3): a few calls per turn, so the `*`
+/// tool matchers do not write a line per tool call.
 const MARKER_LOG_EVENTS: [&str; 3] = ["prompt", "session", "session-end"];
 
 /// The member context of `view` (D2, D6): `None` for a view with no marker. With `log`, a workspace id that fails its
@@ -166,7 +167,9 @@ fn member<'a>(event: &'a str, dir: &'a SessionDir, paths: &'a Paths) -> anyhow::
 }
 
 /// One change of `activity.json` under `activity.lock` with the hook bound (AU56, D14). An `activity.json` that is a
-/// link or not a regular file is not changed; that and every error of the update write one session-log line.
+/// link or not a regular file is not changed and writes one session-log line. An error of the update writes one
+/// session-log line only for the events of `MARKER_LOG_EVENTS` (R3), so a file that every update refuses (one that
+/// does not parse, is over the read limit or is of a newer zygo) writes a line per turn, not per tool call.
 fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
     let path = c.dir.activity_json();
     match fs::symlink_metadata(&path) {
@@ -178,7 +181,9 @@ fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
         }
         _ => {}
     }
-    if let Err(e) = activity::update(c.dir, activity::LOCK_BOUND, f) {
+    if let Err(e) = activity::update(c.dir, activity::LOCK_BOUND, f)
+        && MARKER_LOG_EVENTS.contains(&c.event)
+    {
         slog(c.dir, c.event, &format!("{e:#}"));
     }
 }
