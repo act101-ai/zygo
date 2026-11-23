@@ -1217,7 +1217,7 @@ fn docs_readme_and_passthrough_md() {
     }
     let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/passthrough.md")).unwrap();
     for s in ["claude-ai", "api.anthropic.com", "sk-ant-oat", "X-Zygo-Token", "zygo_passthrough_token_invalid", "zygo_passthrough_no_login",
-              "zygo_passthrough_local_only", "24 h", "/model", "consumer terms"] {
+              "zygo_passthrough_local_only", "no idle expiry", "/model", "consumer terms"] {
         assert!(doc.contains(s), "docs/passthrough.md: {s}");
     }
 }

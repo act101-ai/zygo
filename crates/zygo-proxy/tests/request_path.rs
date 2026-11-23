@@ -1033,9 +1033,7 @@ fn route_bad_requests_and_identity() {
 fn route_session_has_no_idle_expiry() {
     let t = setup(none);
     let (old, g) = (session(&t.h, Agent::ClaudeCode, None), session(&t.h, Agent::ClaudeCode, None));
-    t.c.advance(23 * HOUR);
-    assert_eq!(st(post(&t.h, &g, M, msg("nope"), &[])), (400, "zygo_unknown_model".into()));
-    t.c.advance(2 * HOUR);
+    t.c.advance(25 * HOUR);
     assert_eq!(post(&t.h, &g, M, msg("code"), &[]).0, 200);
     assert!(t.h.session(&old.session).is_some());
     assert_eq!(post(&t.h, &old, M, msg("code"), &[]).0, 200); // idle 25 h

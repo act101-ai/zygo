@@ -513,6 +513,22 @@ fn suspended_team_session_is_not_deleted_by_time() {
     assert_eq!(r.1["compact"], 600000);
 }
 
+/// §7.2 (FIX-18): the launcher's DELETE ends a suspended team session idle 25 h: 204, and the session is removed.
+#[test]
+fn delete_of_suspended_team_session_idle_25h_removes_it() {
+    let d = TempDir::new().unwrap();
+    let (h, c, ta, _) = start(cfg(&d));
+    let raw = Raw::new();
+    let u = h.url();
+    let bearer_a = format!("Bearer {ta}");
+    let t = team_session(&raw, &u, &bearer_a);
+    c.advance(Duration::from_secs(25 * 3600));
+    assert_eq!(st(raw.call(&u, "GET", &sp(&t), &sess(&t), None)), (401, json!("zygo_session_suspended")));
+    assert_eq!(raw.call(&u, "DELETE", &del(&t), &[("authorization", &bearer_a)], None).0, 204);
+    assert!(h.session(&t.session).is_none());
+    assert_eq!(st(raw.call(&u, "GET", &sp(&t), &sess(&t), None)), (401, json!("zygo_session_unknown")));
+}
+
 #[test]
 fn credentials_per_route() {
     let d = TempDir::new().unwrap();
