@@ -188,7 +188,7 @@ fn text_of(buf: &Arc<std::sync::Mutex<Vec<u8>>>) -> String {
 }
 
 fn cc(fx: &Fx) -> ClaudeCode {
-    ClaudeCode { program: "claude".into(), managed_settings: fx.managed.clone(), zygo: fx.root.join("bin").join("zygo") }
+    ClaudeCode::new("claude", fx.managed.clone(), fx.root.join("bin").join("zygo"))
 }
 
 fn strings(a: &[&str]) -> Vec<String> {
@@ -347,7 +347,9 @@ fn no_plugins_no_plugin_dir() {
 fn empty_zygo_path_fails_the_build() {
     let fx = fx();
     let c = ctx(&fx, "");
-    let e = ClaudeCode { zygo: PathBuf::new(), ..cc(&fx) }.build(&c).err().unwrap();
+    let mut a = cc(&fx);
+    a.zygo = PathBuf::new();
+    let e = a.build(&c).err().unwrap();
     assert_eq!(e.to_string(), "cannot find the path of the zygo binary");
 }
 
@@ -358,7 +360,9 @@ fn non_utf8_zygo_path_is_refused_not_rewritten() {
     let fx = fx();
     let c = ctx(&fx, "");
     let zygo = PathBuf::from(OsStr::from_bytes(b"/opt/zy\xffgo/zygo"));
-    let e = ClaudeCode { zygo, ..cc(&fx) }.build(&c).err().unwrap();
+    let mut a = cc(&fx);
+    a.zygo = zygo;
+    let e = a.build(&c).err().unwrap();
     assert_eq!(e.to_string(), "cannot find the path of the zygo binary");
     assert!(!c.session_dir.settings_json().exists(), "build wrote nothing before the refusal");
 }
@@ -612,6 +616,36 @@ fn bad_user_agents_are_refused() {
     assert_eq!(refusal(&["--print", "--agents", &good]), None);
 }
 
+#[cfg(unix)]
+#[test] // FIX-26 (D10, D12), §8.5 Subagents: kills: the --agents file read again in build after refusal read it, so a pipe is empty there and the user's agents are dropped with no line; an --agents pipe refused
+fn print_agents_from_a_pipe_are_used() {
+    let fx = fx();
+    let (_r, value) = pipe_with(r#"{"helper": {"description": "h", "prompt": "y"}}"#);
+    let mut c = ctx(&fx, "");
+    c.args = strings(&["--print", "--agents", &value]);
+    let a = cc(&fx);
+    assert_eq!(a.refusal(&c), None);
+    let spec = a.build(&c).unwrap();
+    assert_eq!(agents_of(&spec.args)["helper"]["prompt"], "y");
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D3, D10, D12), §8.5 Subagents: kills: the --print --agents pipe read with O_NONBLOCK or ended at once, so a writer that writes after the launch starts is dropped and the launch is refused; the file read twice
+fn print_agents_from_a_pipe_with_a_late_writer_are_used() {
+    let fx = Arc::new(fx());
+    let f = Arc::clone(&fx);
+    let (refusal, agents) = late_pipe(r#"{"helper": {"description": "h", "prompt": "y"}}"#, move |value| {
+        let mut c = ctx(&f, "");
+        c.args = strings(&["--print", "--agents", &value]);
+        let a = cc(&f);
+        let refusal = a.refusal(&c);
+        let spec = a.build(&c).unwrap();
+        (refusal, agents_of(&spec.args))
+    });
+    assert_eq!(refusal, None);
+    assert_eq!(agents["helper"]["prompt"], "y");
+}
+
 #[test]
 fn yolo_and_user_args_pass_through() {
     let fx = fx();
@@ -633,34 +667,132 @@ fn defeating_flags_are_logged_and_settings_warns() {
     c.effective_role = None;
     let spec = cc(&fx).build(&c).unwrap();
     assert_eq!(spec.log, ["degraded: --settings", "degraded: --bare", "degraded: --model claude-opus-5-5"]);
-    assert_eq!(spec.lines, [unreadable("x.json")]);
+    assert_eq!(spec.lines, [NO_FILE]);
     let c = ctx(&fx, "");
     let spec = cc(&fx).build(&c).unwrap();
     assert!(spec.log.is_empty());
     assert!(spec.lines.is_empty());
 }
 
-/// §8.5 Flags: the line for a user `--settings` value that zygo cannot read as a JSON object (FIX-21 round 3).
-fn unreadable(value: &str) -> String {
-    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", json!(value))
+/// §8.5 Flags (FIX-26 D2): the line for a user `--settings` value that names an entry zygo cannot read as a JSON object;
+/// `why` is the error.
+fn unreadable(value: &str, why: &str) -> String {
+    format!("zygo: your --settings value {} could not be read as a JSON object and was not used: {why}", json!(value))
+}
+
+/// §8.5 Flags (FIX-26 D2): the line for a user `--settings` value that is not a JSON object and has no entry at its
+/// path (no file found, or on Windows a name the system refuses).
+const NO_FILE: &str = "zygo: your --settings value (not shown) is not a JSON object and names no file; it was not used";
+
+/// §8.5 Flags (FIX-26 D2): the line for a value with no entry at its path for another reason than a missing file.
+#[cfg(unix)]
+fn not_opened(why: &str) -> String {
+    format!("zygo: your --settings value (not shown) is not a JSON object and could not be opened as a file: {why}; it was not used")
+}
+
+/// The error in `unreadable` for a file that holds `not json` (FIX-26 D4).
+const NOT_JSON: &str = "syntax error at line 1 column 2";
+/// The error in `unreadable` for a file that holds JSON that is not an object (FIX-26 D7).
+const NOT_OBJECT: &str = "the file holds JSON that is not an object";
+
+/// The system error text for `code`.
+#[cfg(unix)]
+fn os_error(code: i32) -> String {
+    std::io::Error::from_raw_os_error(code).to_string()
+}
+
+/// The lines of a build with the user arguments `args`.
+fn lines_of(fx: &Fx, args: &[&str]) -> Vec<String> {
+    let mut c = ctx(fx, "");
+    c.args = strings(args);
+    cc(fx).build(&c).unwrap().lines
+}
+
+/// `text` in an anonymous pipe whose write end is closed, and the `/dev/fd/<n>` path of its read end: the form of
+/// bash `<(printf ...)`. The data is in the pipe before the build starts.
+#[cfg(unix)]
+fn pipe_with(text: &str) -> (std::io::PipeReader, String) {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    let (r, mut w) = std::io::pipe().unwrap();
+    w.write_all(text.as_bytes()).unwrap();
+    drop(w);
+    let path = format!("/dev/fd/{}", r.as_raw_fd());
+    (r, path)
+}
+
+/// Runs `f` on its own thread and gives its result, or fails the test: a timeout means a hang in the code under test,
+/// a disconnect means the thread panicked in its setup. The 20 s bound is a guard of the test only; zygo has no time
+/// limit.
+#[cfg(unix)]
+fn no_hang<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(20)) {
+        Ok(v) => v,
+        Err(RecvTimeoutError::Timeout) => panic!("{what}: did not return within 20 s: it waits"),
+        Err(RecvTimeoutError::Disconnected) => panic!("{what}: test setup failed: the thread ended with no result (its panic is above)"),
+    }
+}
+
+/// Runs `f` with the `/dev/fd/<n>` path of an anonymous pipe whose write end the test keeps open, checks that `f` has
+/// not returned after 1 s (it waits for the writer), then writes `text`, closes the write end and gives the result of
+/// `f`: a writer that writes after the build starts (FIX-26 D3). The bounds are guards of the test only.
+#[cfg(unix)]
+fn late_pipe<T: Send + std::fmt::Debug + 'static>(text: &str, f: impl FnOnce(String) -> T + Send + 'static) -> T {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::Duration;
+    let (r, mut w) = std::io::pipe().unwrap();
+    let path = format!("/dev/fd/{}", r.as_raw_fd());
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f(path));
+    });
+    match rx.recv_timeout(Duration::from_secs(1)) {
+        Err(RecvTimeoutError::Timeout) => {}
+        Err(RecvTimeoutError::Disconnected) => panic!("test setup failed: the thread ended with no result (its panic is above)"),
+        Ok(v) => panic!("returned before the writer wrote, so a late writer is dropped: {v:?}"),
+    }
+    w.write_all(text.as_bytes()).unwrap();
+    drop(w);
+    let v = match rx.recv_timeout(Duration::from_secs(20)) {
+        Ok(v) => v,
+        Err(RecvTimeoutError::Timeout) => panic!("did not return within 20 s after the writer closed the pipe"),
+        Err(RecvTimeoutError::Disconnected) => panic!("test setup failed: the thread ended with no result (its panic is above)"),
+    };
+    drop(r);
+    v
+}
+
+/// Makes a FIFO at `p` (test setup).
+#[cfg(unix)]
+fn mkfifo(p: &Path) {
+    let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: `c` is a NUL-terminated path that lives for the call.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "test setup: mkfifo {}", p.display());
 }
 
 #[test] // FIX-21 round 3, §8.5 Flags: kills: an unreadable user `--settings` value passed on after zygo's file (Claude
         // Code then exits 1 or runs with neither file), the attribution keys or the guard hook lost, no line or a line
-        // that does not name the value, a readable value next to it not merged
+        // that does not name the value, a readable value next to it not merged; FIX-26: kills: a value with no entry printed
 fn unreadable_user_settings_keep_only_zygos_file() {
     let fx = fx();
     std::fs::write(fx.cwd.join("bad.json"), "not json").unwrap();
     std::fs::write(fx.cwd.join("list.json"), "[1]").unwrap();
     std::fs::write(fx.cwd.join("good.json"), r#"{"outputStyle": "x"}"#).unwrap();
     let cases: [(Vec<&str>, Vec<String>); 7] = [
-        (vec!["--settings", "missing.json", "-p", "hi"], vec![unreadable("missing.json")]),
-        (vec!["--settings", "bad.json", "-p", "hi"], vec![unreadable("bad.json")]),
-        (vec!["--settings", "list.json", "-p", "hi"], vec![unreadable("list.json")]),
-        (vec!["--settings", "{bad", "-p", "hi"], vec![unreadable("{bad")]),
-        (vec!["--settings=[1]", "-p", "hi"], vec![unreadable("[1]")]),
-        (vec!["--settings", "\"two\nlines\"", "-p", "hi"], vec![unreadable("\"two\nlines\"")]),
-        (vec!["--settings", "good.json", "--settings", "missing.json", "-p", "hi"], vec![MERGE_WARN.to_string(), unreadable("missing.json")]),
+        (vec!["--settings", "missing.json", "-p", "hi"], vec![NO_FILE.to_string()]),
+        (vec!["--settings", "bad.json", "-p", "hi"], vec![unreadable("bad.json", NOT_JSON)]),
+        (vec!["--settings", "list.json", "-p", "hi"], vec![unreadable("list.json", NOT_OBJECT)]),
+        (vec!["--settings", "{bad", "-p", "hi"], vec![NO_FILE.to_string()]),
+        (vec!["--settings=[1]", "-p", "hi"], vec![NO_FILE.to_string()]),
+        (vec!["--settings", "\"two\nlines\"", "-p", "hi"], vec![NO_FILE.to_string()]),
+        (vec!["--settings", "good.json", "--settings", "missing.json", "-p", "hi"], vec![MERGE_WARN.to_string(), NO_FILE.to_string()]),
     ];
     for (args, lines) in cases {
         let mut c = ctx(&fx, "");
@@ -696,6 +828,166 @@ fn user_disable_all_hooks_wins_and_attribution_keys_stay() {
     assert!(!spec.lines.iter().any(|l| l.contains("hooks stay in force")), "{:?}", spec.lines);
 }
 
+#[test] // FIX-26 (D1, D2), §8.5 Flags: kills: a value with no entry at its path printed (a BOM or U+200B prefix, an array, a broken array, a JSON string, broken inline JSON on a member launch or in the = form), so a secret reaches stderr; a first-character rule that takes the file "{x" as inline; on Windows an invalid name given the open-error line in place of NO_FILE; a printed path with a raw bidi control
+fn settings_value_text_is_printed_only_for_a_file() {
+    let fx = fx();
+    const BAD_INLINE: &str = r#"{"env": {"TOKEN":"s3cret"}, "disableAllHooks": tru}"#;
+    let rlo = "a\u{202e}b.json";
+    std::fs::write(fx.cwd.join("{x"), "not json").unwrap();
+    std::fs::write(fx.cwd.join(rlo), "not json").unwrap();
+    let bom = "\u{feff}{\"env\": {\"TOKEN\": \"s3cret\"}}";
+    let zwsp = "\u{200b}{\"env\": {\"TOKEN\": \"s3cret\"}}";
+    let eq_form = format!("--settings={BAD_INLINE}");
+    type Row<'a> = (&'a str, bool, Vec<&'a str>, Vec<String>);
+    let rows: [Row; 10] = [
+        ("BOM prefix", false, vec!["--settings", bom], vec![NO_FILE.to_string()]),
+        ("U+200B prefix", false, vec!["--settings", zwsp], vec![NO_FILE.to_string()]),
+        ("array", false, vec!["--settings", r#"["s3cret"]"#], vec![NO_FILE.to_string()]),
+        ("broken array", false, vec!["--settings", r#"["s3cret""#], vec![NO_FILE.to_string()]),
+        ("JSON string", false, vec!["--settings", r#""s3cret""#], vec![NO_FILE.to_string()]),
+        ("missing path", false, vec!["--settings", "nofile.json"], vec![NO_FILE.to_string()]),
+        ("broken inline, member", true, vec!["--settings", BAD_INLINE], vec![NO_FILE.to_string()]),
+        ("broken inline, = form", false, vec![&eq_form], vec![NO_FILE.to_string()]),
+        ("file named {x", false, vec!["--settings", "{x"], vec![unreadable("{x", NOT_JSON)]),
+        ("U+202E path", false, vec!["--settings", rlo], vec![r#"zygo: your --settings value "a\u{202e}b.json" could not be read as a JSON object and was not used: syntax error at line 1 column 2"#.to_string()]),
+    ];
+    let mut failed = vec![];
+    for (name, member, args, lines) in rows {
+        let mut c = if member { member_ctx(&fx, true) } else { ctx(&fx, "") };
+        c.args = strings(&args);
+        let spec = cc(&fx).build(&c).unwrap();
+        let ok = spec.lines == lines && !spec.lines.iter().any(|l| l.contains("s3cret") || l.contains('\u{202e}'));
+        if !ok {
+            failed.push(format!("{name}: {:?}", spec.lines));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D2, D6), §8.5 Flags: kills: an error with no entry at the path (ENOTDIR, ELOOP in a folder part) given NO_FILE or printed with the value; an entry at the path (a link loop at the last part, a dangling link, a directory) given NO_FILE or the open-error line
+fn settings_path_errors_show_the_value_only_for_an_entry() {
+    let fx = fx();
+    std::fs::write(fx.cwd.join("file.json"), "{}").unwrap();
+    std::os::unix::fs::symlink("loop.json", fx.cwd.join("loop.json")).unwrap();
+    std::os::unix::fs::symlink("nowhere.json", fx.cwd.join("dangle.json")).unwrap();
+    std::fs::create_dir(fx.cwd.join("dir.json")).unwrap();
+    let rows: [(&str, Vec<String>, &str); 5] = [
+        ("file.json/x", vec![not_opened(&os_error(libc::ENOTDIR))], "file.json"),
+        ("loop.json/x", vec![not_opened(&os_error(libc::ELOOP))], "loop.json"),
+        ("loop.json", vec![unreadable("loop.json", &os_error(libc::ELOOP))], ""),
+        ("dangle.json", vec![unreadable("dangle.json", &os_error(libc::ENOENT))], ""),
+        ("dir.json", vec![unreadable("dir.json", &os_error(libc::EISDIR))], ""),
+    ];
+    for (value, lines, hidden) in rows {
+        let got = lines_of(&fx, &["--settings", value]);
+        assert_eq!(got, lines, "{value}");
+        assert!(hidden.is_empty() || !got.iter().any(|l| l.contains(hidden)), "{value}: {got:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D3), §8.5 Flags: kills: a user --settings link not followed (O_NOFOLLOW, or a type check on the link itself)
+fn settings_link_to_a_file_is_followed() {
+    let fx = fx();
+    std::fs::write(fx.cwd.join("good.json"), r#"{"outputStyle": "x"}"#).unwrap();
+    std::os::unix::fs::symlink("good.json", fx.cwd.join("link.json")).unwrap();
+    assert_eq!(lines_of(&fx, &["--settings", "link.json"]), [MERGE_WARN]);
+    assert_eq!(settings(&fx)["outputStyle"], "x");
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D3), §8.5 Flags: kills: a pipe (the <(…) form /dev/fd/<n>) refused as not a regular file, or a link to one not followed, so process substitution no longer works
+fn settings_from_a_pipe_are_used() {
+    let fx = fx();
+    let (_r1, direct) = pipe_with(r#"{"outputStyle": "x"}"#);
+    let (_r2, target) = pipe_with(r#"{"theme": "dark"}"#);
+    std::os::unix::fs::symlink(&target, fx.cwd.join("pipelink.json")).unwrap();
+    assert_eq!(lines_of(&fx, &["--settings", &direct, "--settings", "pipelink.json"]), [MERGE_WARN]);
+    let s = settings(&fx);
+    assert_eq!((s["outputStyle"].as_str(), s["theme"].as_str()), (Some("x"), Some("dark")));
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D3), §8.5 Flags: kills: a user --settings pipe read with O_NONBLOCK or with a type check that ends the read at once, so a writer that writes after the build starts is dropped (an eof error line in place of the merge)
+fn settings_from_a_pipe_with_a_late_writer_are_used() {
+    let fx = Arc::new(fx());
+    let f = Arc::clone(&fx);
+    let lines = late_pipe(r#"{"outputStyle": "x"}"#, move |value| lines_of(&f, &["--settings", &value]));
+    assert_eq!(lines, [MERGE_WARN]);
+    assert_eq!(settings(&fx)["outputStyle"], "x");
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D2), §8.5 Flags: kills: EACCES on a parent folder (no entry found) given NO_FILE, or printed with the value
+fn settings_under_unsearchable_folder_are_not_shown() {
+    use std::os::unix::fs::PermissionsExt;
+    /// Gives the folder its search right back, also when an assertion fails, so the test folder can be removed.
+    struct Restore(PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    let fx = fx();
+    let locked = fx.cwd.join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::write(locked.join("x.json"), "{}").unwrap();
+    let _restore = Restore(locked.clone());
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
+    if std::fs::symlink_metadata(locked.join("x.json")).is_ok() {
+        eprintln!("note: settings_under_unsearchable_folder_are_not_shown skipped: the test runs as root, so the folder can be searched");
+        return;
+    }
+    let lines = lines_of(&fx, &["--settings", "locked/x.json"]);
+    assert_eq!(lines, [not_opened(&os_error(libc::EACCES))]);
+    assert!(!lines.iter().any(|l| l.contains("locked") || l.contains("x.json")), "{lines:?}");
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D2, D6), §8.5 Flags: kills: a file that exists but cannot be opened given NO_FILE or the open-error line with no path
+fn settings_file_with_mode_0_names_the_path_and_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fx();
+    let p = fx.cwd.join("noperm.json");
+    std::fs::write(&p, "{}").unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::File::open(&p).is_ok() {
+        eprintln!("note: settings_file_with_mode_0_names_the_path_and_error skipped: the test runs as root, so mode 0 does not stop an open");
+        return;
+    }
+    assert_eq!(lines_of(&fx, &["--settings", "noperm.json"]), [unreadable("noperm.json", &os_error(libc::EACCES))]);
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D2), §8.5 Flags: kills: ENAMETOOLONG (ErrorKind::InvalidFilename on unix) given NO_FILE, that is the Windows invalid-name rule applied on unix; broken inline JSON longer than NAME_MAX printed
+fn long_broken_inline_settings_are_not_shown() {
+    let fx = fx();
+    let head = r#"{"env": {"TOKEN": "s3cret"}, "pad": ""#;
+    let tail = r#"", tru}"#;
+    let value = format!("{head}{}{tail}", "x".repeat(400 - head.len() - tail.len()));
+    assert_eq!(value.len(), 400);
+    let lines = lines_of(&fx, &["--settings", &value]);
+    assert_eq!(lines, [not_opened(&os_error(libc::ENAMETOOLONG))]);
+    assert!(!lines.iter().any(|l| l.contains("s3cret") || l.contains("TOKEN")), "{lines:?}");
+}
+
+#[test] // FIX-26 (D4), §8.5 Flags: kills: serde_json's error text printed (for a data error it holds the literal 1234567890123 through the $serde_json::private::Number key); a category written as the wrong word; the position lost
+fn settings_file_parse_errors_name_only_category_and_position() {
+    let fx = fx();
+    let cases = [
+        ("syntax.json", "not json", "syntax error at line 1 column 2"),
+        ("data.json", r#"{"$serde_json::private::Number": 1234567890123}"#, "data error at line 1 column 46"),
+        ("eof.json", r#"{"a": 1"#, "eof error at line 1 column 7"),
+    ];
+    for (file, text, error) in cases {
+        std::fs::write(fx.cwd.join(file), text).unwrap();
+        let lines = lines_of(&fx, &["--settings", file]);
+        assert_eq!(lines, [unreadable(file, error)], "{file}");
+        assert!(!lines.iter().any(|l| l.contains("1234567890123") || l.contains("expected") || l.contains("EOF while")), "{lines:?}");
+    }
+}
+
 #[test] // FIX-23 (D1, D3, D4), §8.5 Flags: kills: the "hooks stay in force" line for merged settings that stop every hook; the new line for a user value that a later false overrides; the line for other user settings changed; a non-boolean disableAllHooks passed on, not named by its type, or printed with its value; a lost unreadable-value line
 fn merge_line_is_true_when_disable_all_hooks_is_set() {
     let fx = fx();
@@ -719,7 +1011,7 @@ fn merge_line_is_true_when_disable_all_hooks_is_set() {
             "true and unreadable",
             false,
             &["--settings", "off.json", "--settings", "missing.json"],
-            vec![MERGE_HOOKS_OFF.to_string(), unreadable("missing.json")],
+            vec![MERGE_HOOKS_OFF.to_string(), NO_FILE.to_string()],
             true,
             "",
         ),
@@ -747,7 +1039,7 @@ fn merge_line_is_true_when_disable_all_hooks_is_set() {
             "number and unreadable",
             false,
             &["--settings", r#"{"disableAllHooks": 17}"#, "--settings", "missing.json"],
-            vec![MERGE_WARN.to_string(), bad_hooks("a number"), unreadable("missing.json")],
+            vec![MERGE_WARN.to_string(), bad_hooks("a number"), NO_FILE.to_string()],
             false,
             "17",
         ),
@@ -843,7 +1135,7 @@ fn settings_lines_escape_every_control_character() {
         [
             MERGE_WARN.to_string(),
             bad_hooks("a string"),
-            r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used"#.to_string(),
+            r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used: syntax error at line 1 column 2"#.to_string(),
         ]
     );
     for l in &spec.lines {
@@ -1012,7 +1304,7 @@ fn passthrough_role_model_exits_2_through_the_launcher() {
     script(&fx, "claude", "exit 0");
     let o = launch_opts(&fx, &["--model", "lead"], true);
     let err = stderr_of(&o);
-    let adapter = ClaudeCode { program: "claude".into(), managed_settings: fx.managed.clone(), zygo: fx.bin.join("zygo") };
+    let adapter = ClaudeCode::new("claude", fx.managed.clone(), fx.bin.join("zygo"));
     assert_eq!(Launcher::run(&adapter, o).code, 2);
     assert!(text_of(&err).lines().any(|l| l == format!("zygo: {PT_MODEL}")), "{}", text_of(&err));
     assert_eq!(std::fs::read_dir(&fx.paths.sessions_dir).map_or(0, |d| d.count()), 0);
@@ -1078,8 +1370,8 @@ fn settings_lines_on_stderr_are_safe_and_in_order() {
     let merge = at(MERGE_WARN);
     let bad1 = at(&bad_hooks("a string"));
     let bad2 = at(&bad_hooks("a number"));
-    let path_line = at(r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used"#);
-    let missing = at(&unreadable("missing.json"));
+    let path_line = at(r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used: syntax error at line 1 column 2"#);
+    let missing = at(NO_FILE);
     assert_eq!([merge + 1, merge + 2, merge + 3, merge + 4], [bad1, bad2, path_line, missing], "{text:?}");
 }
 
@@ -1140,6 +1432,139 @@ fn repo_root_settings_stop_the_launch() {
     assert_eq!(Launcher::run(&cc(&fx), o).code, 2, "{}", text_of(&err));
     let want = format!("zygo: {}: sets env.CLAUDE_CODE_USE_VERTEX; zygo cannot launch with it", file.display());
     assert!(text_of(&err).lines().any(|l| l == want), "{}", text_of(&err));
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D9), §8.4 Preflight, §12.3: kills: a found settings file or the managed file opened with a blocking open, so a FIFO with no writer at <cwd>/.claude/settings.json or at the managed path makes the launch, the preflight or the passthrough refusal wait for ever
+fn preflight_skips_a_found_fifo_with_no_hang() {
+    let fx = Arc::new(fx());
+    script(&fx, "claude", "[ \"$1\" = --version ] && exit 0\nexit 0");
+    std::fs::create_dir_all(fx.cwd.join(".claude")).unwrap();
+    mkfifo(&fx.cwd.join(".claude/settings.json"));
+    mkfifo(&fx.managed);
+    let f = Arc::clone(&fx);
+    let (code, err) = no_hang("launch", move || {
+        let o = launch_opts(&f, &[], false);
+        let err = stderr_of(&o);
+        (Launcher::run(&cc(&f), o).code, text_of(&err))
+    });
+    assert_eq!(code, 0, "{err}");
+    let f = Arc::clone(&fx);
+    let (preflight, refusal) = no_hang("preflight and passthrough refusal", move || {
+        let mut c = ctx(&f, "");
+        c.passthrough = true;
+        let a = cc(&f);
+        (a.preflight(&c), a.refusal(&c))
+    });
+    assert_eq!((preflight, refusal), (Ok(()), None));
+}
+
+#[cfg(target_os = "linux")]
+#[test] // FIX-26 (D9), §8.4 Preflight, §12.3: kills: a found FIFO, a found link to a FIFO or a found device (here the managed path is a pseudo-terminal slave) opened before the type check, with O_NONBLOCK too: an IN_OPEN event on a path that only this test can open
+fn preflight_does_not_open_a_found_fifo_link_or_device() {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let fx = Arc::new(fx());
+    std::fs::create_dir_all(fx.cwd.join(".claude")).unwrap();
+    let fifo = fx.cwd.join(".claude/settings.json");
+    let other = fx.cwd.join("other-fifo");
+    mkfifo(&fifo);
+    mkfifo(&other);
+    std::os::unix::fs::symlink(&other, fx.cwd.join(".claude/settings.local.json")).unwrap();
+    // SAFETY: plain libc calls; every descriptor is owned below and closed on drop.
+    let m = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if m < 0 {
+        eprintln!("note: preflight_does_not_open_a_found_fifo_link_or_device skipped: posix_openpt failed ({})", std::io::Error::last_os_error());
+        return;
+    }
+    // SAFETY: `m` is a new descriptor that nothing else owns.
+    let master = unsafe { OwnedFd::from_raw_fd(m) };
+    // SAFETY: `m` is open for the calls.
+    if unsafe { libc::grantpt(m) } != 0 || unsafe { libc::unlockpt(m) } != 0 {
+        eprintln!("note: preflight_does_not_open_a_found_fifo_link_or_device skipped: grantpt or unlockpt failed ({})", std::io::Error::last_os_error());
+        return;
+    }
+    let mut name = [0 as libc::c_char; 128];
+    // SAFETY: `name` is a buffer of the given length.
+    assert_eq!(unsafe { libc::ptsname_r(m, name.as_mut_ptr(), name.len()) }, 0, "test setup: ptsname_r");
+    // SAFETY: `ptsname_r` wrote a NUL-terminated name.
+    let slave = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_str().unwrap().to_string();
+    // SAFETY: plain libc call.
+    let i = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+    assert!(i >= 0, "test setup: inotify_init1");
+    // SAFETY: `i` is a new descriptor that nothing else owns.
+    let ino = unsafe { OwnedFd::from_raw_fd(i) };
+    for p in [fifo.clone(), other.clone(), PathBuf::from(&slave)] {
+        let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path that lives for the call.
+        if unsafe { libc::inotify_add_watch(i, c.as_ptr(), libc::IN_OPEN) } < 0 {
+            eprintln!("note: preflight_does_not_open_a_found_fifo_link_or_device skipped: no inotify watch on {} ({})", p.display(), std::io::Error::last_os_error());
+            return;
+        }
+    }
+    let (f, s) = (Arc::clone(&fx), slave.clone());
+    let (preflight, refusal) = no_hang("preflight and passthrough refusal", move || {
+        let a = ClaudeCode::new("claude", PathBuf::from(s), f.root.join("bin").join("zygo"));
+        let mut c = ctx(&f, "");
+        let preflight = a.preflight(&c);
+        c.passthrough = true;
+        (preflight, a.refusal(&c))
+    });
+    assert_eq!((preflight, refusal), (Ok(()), None));
+    let mut ev = [0u8; 256];
+    // SAFETY: `ev` is a buffer of the given length; `i` is open (owned by `ino`).
+    let n = unsafe { libc::read(i, ev.as_mut_ptr().cast(), ev.len()) };
+    assert_eq!(n, -1, "a found FIFO, a link to a FIFO or the device {slave} was opened: inotify reported IN_OPEN");
+    drop((ino, master));
+}
+
+#[cfg(unix)]
+#[test] // FIX-26 (D9), §8.4 Preflight: kills: a found settings file that is a link not followed (O_NOFOLLOW, or a type check on the link itself), so its credential key does not stop the launch
+fn preflight_follows_a_link_to_a_settings_file() {
+    let fx = fx();
+    put(&fx.cwd.join("real.json"), r#"{"env":{"CLAUDE_CODE_USE_VERTEX":"1"}}"#);
+    std::fs::create_dir_all(fx.cwd.join(".claude")).unwrap();
+    let link = fx.cwd.join(".claude/settings.json");
+    std::os::unix::fs::symlink(fx.cwd.join("real.json"), &link).unwrap();
+    assert_eq!(cc(&fx).preflight(&ctx(&fx, "")), pf(link, "env.CLAUDE_CODE_USE_VERTEX"));
+}
+
+#[cfg(target_os = "linux")]
+#[test] // FIX-26 (D9), §8.4 Preflight: kills: a found regular file skipped when the O_NONBLOCK open fails with EWOULDBLOCK (a lease) and is not opened again without O_NONBLOCK, so its credential key does not stop the launch
+fn preflight_reads_a_leased_settings_file_after_a_blocking_open() {
+    use std::os::unix::io::AsRawFd;
+    use std::time::{Duration, Instant};
+    let fx = fx();
+    std::fs::create_dir_all(fx.cwd.join(".claude")).unwrap();
+    let p = fx.cwd.join(".claude/settings.json");
+    std::fs::write(&p, r#"{"env":{"CLAUDE_CODE_USE_VERTEX":"1"}}"#).unwrap();
+    let holder = std::fs::File::open(&p).unwrap();
+    let fd = holder.as_raw_fd();
+    // The kernel sends SIGIO to a lease holder when another open waits; the test ignores it and restores it at the end.
+    // SAFETY: a plain signal disposition change; no handler runs.
+    let old = unsafe { libc::signal(libc::SIGIO, libc::SIG_IGN) };
+    // SAFETY: `fd` is the open descriptor of `holder`, which lives for the test.
+    if unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_WRLCK) } != 0 {
+        let e = std::io::Error::last_os_error();
+        // SAFETY: restores the disposition read above.
+        unsafe { libc::signal(libc::SIGIO, old) };
+        eprintln!("note: preflight_reads_a_leased_settings_file_after_a_blocking_open skipped: no write lease on the test folder ({e})");
+        return;
+    }
+    let result = std::thread::scope(|s| {
+        let pre = s.spawn(|| cc(&fx).preflight(&ctx(&fx, "")));
+        // The O_NONBLOCK open fails with EWOULDBLOCK and starts the lease break, so the lease then reads F_RDLCK.
+        let start = Instant::now();
+        // SAFETY: as above.
+        while unsafe { libc::fcntl(fd, libc::F_GETLEASE) } != libc::F_RDLCK && start.elapsed() < Duration::from_secs(20) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // SAFETY: as above.
+        assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETLEASE, libc::F_UNLCK) }, 0, "release the lease");
+        pre.join().unwrap()
+    });
+    // SAFETY: restores the disposition read above.
+    unsafe { libc::signal(libc::SIGIO, old) };
+    assert_eq!(result, pf(p, "env.CLAUDE_CODE_USE_VERTEX"));
 }
 
 #[test]

@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-27, FIX-26, FIX-24
+**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-27, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | DONE | judgment | a75e36f; acceptance exit 0, zygo-hooks 197 + 1 ignored, zygo-core 28, zygo-workspace 316 + 2 ignored, zygo-launch 244 + 6 ignored, zygo 387, clippy -D warnings clean (merged tree) |
 | H3 | OpenCode plugin: session classification, main session and turn set | H1 | DONE | judgment | dd25ae1; acceptance opencode 77 + 1 ignored, zygo-launch all pass, zygo-hooks workspace 22 + 1 ignored, clippy -D warnings clean, check --workspace --tests clean (merged tree) |
@@ -92,7 +91,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks; a non-boolean disableAllHooks is removed and named; settings lines escaped through esc (U+061C added) | FIX-21, H1 | DONE | judgment | f052dd4; acceptance core lib 2, launch lib 3, claude_code 44 (merged tree) |
 | FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
-| FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | IN-PROGRESS | judgment | .worktrees/phase2/FIX-26; split from FIX-23 2026-11-23 (controller decisions; §8.4 reads, --agents file, plan reviews 1 and 2 same day); attempt 1 diff kept in session scratchpad fix23-attempt1.diff |
+| FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
 | FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19 | PLANNED | judgment | — |
 
 ## Log
@@ -245,3 +244,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-23 re-planned (split): FIX-23 keeps merge line, non-boolean disableAllHooks (type only), esc U+061C; FIX-26 added for --settings/--agents value printing and safe §8.4 reads. 2 plan reviews applied. FIX-24 depends on FIX-26. |
 | 2026-11-23 | M1 re-planned (split): M1 keeps verbs, /zygo:down, doctor tmux line, sweep AU69 (a), ZYGO_SESSION rule; FIX-27 added for loadout show/config show/config check secret hiding and labels. Plan review applied. FIX-24 depends on FIX-27. |
 | 2026-11-23 | FIX-23 DONE (f052dd4): merged after re-plan; review found no defect. Merged tree: Acceptance zygo-core lib 2, zygo-launch lib 3, claude_code 44; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
+| 2026-11-23 | FIX-26 DONE (25194af): merged after 1 review round (visible skip notes, Windows type-check risk stated). Merged tree: Acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |

@@ -67,7 +67,7 @@ pub fn builtin() -> toml::Table {
 }
 
 pub fn claude(rig: &Rig) -> ClaudeCode {
-    ClaudeCode { program: "claude".into(), managed_settings: rig.root.join("managed-settings.json"), zygo: rig.zygo.clone() }
+    ClaudeCode::new("claude", rig.root.join("managed-settings.json"), rig.zygo.clone())
 }
 
 pub fn opencode(rig: &Rig) -> OpenCode {
