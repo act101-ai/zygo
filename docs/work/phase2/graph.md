@@ -56,7 +56,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29 | TODO | implementation | — |
+| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | PLANNED | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | TODO | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29 | TODO | implementation | — |
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
@@ -253,3 +253,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | M5 DONE (f8c00c4): merged after 3 review rounds, FIX-28 folded in (first pane gets ZYGO_WORKSPACE by new-session -e). FIX-29 added: W7 up build fails with a raw tmux error when a restored pane exits at once. |
 | 2026-11-23 | M3 DONE (1eb6e3a): merged after 3 review rounds. The resume command reproduces the ws run launch; Pending.own_session added. |
 | 2026-11-23 | FIX-29 and FIX-24 planned and reviewed. FIX-29 holds each window with remain-on-exit during the up build (tmux 3.2a verified). FIX-24 uses one launch.events_off flag, set by every start write. |
+| 2026-11-23 | E1 planned and reviewed (28 steps, 17 W§18 items + PW11, live check with passthrough); E1 now depends on FIX-24 (spec overlap). |
