@@ -26,7 +26,7 @@ use crate::drain::{self, Idle};
 use crate::identity::{valid_pane_key, valid_ws_id};
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer, MIN_VERSION};
-use crate::repair::{check_saved_socket, repair};
+use crate::repair::{check_saved_socket, repair, repair_failure};
 use crate::snapshot::{self, SkipReason, SnapshotOutcome, OP_WAIT};
 use crate::state::{list_all, MemberRecord, MemberState, OpLock, Phase, StateError, Store, Subagent, Workspace};
 use crate::up::{self, not_owned, preflight, socket_is_private, unreachable, Exit};
@@ -997,8 +997,9 @@ impl Run<'_> {
         }
         let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
         if let Err(e) = repair(&store, &mux, &opts.zygo, &mut *self.out, &mut *self.err) {
-            self.e(&format!("zygo: {e:#}"));
-            return self.fail(1);
+            let (code, line) = repair_failure(&e);
+            self.e(&line);
+            return self.fail(code);
         }
         let ws = match self.read_state(&store) {
             Ok(Some(ws)) => ws,

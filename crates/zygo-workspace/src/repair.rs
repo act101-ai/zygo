@@ -68,6 +68,16 @@ pub(crate) fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {
     }
 }
 
+/// FIX-29 round 3: the exit code and the line of a [`repair`] error, for `up` and `down`: [`UnsafePath`] gives exit 2
+/// and its text once (it holds the `zygo: ` prefix, AU54); any other error gives exit 1 and `zygo: <error>` with its
+/// causes.
+pub(crate) fn repair_failure(e: &anyhow::Error) -> (i32, String) {
+    match e.downcast_ref::<UnsafePath>() {
+        Some(u) => (2, u.to_string()),
+        None => (1, format!("zygo: {e:#}")),
+    }
+}
+
 /// Repairs the state of a dead `up` or `down` (W§8.1 step 5, D20). The caller holds `op.lock`. No state, or phase
 /// `up` or `down`, makes no tmux call. The AU96 and layout lines go to `err`. `Err` holds the text without the
 /// `zygo: ` prefix, except a saved socket that fails AU54: that `Err` is [`UnsafePath`] itself, before any tmux call.
@@ -248,4 +258,18 @@ fn held_build(
         let _ = writeln!(err, "{line}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mux::UNSAFE_PATH_MESSAGE;
+
+    #[test] // FIX-29 diff review round 3, finding 4: an `UnsafePath` from repair is the AU54 line once, exit 2
+    fn repair_failure_maps_unsafe_path_to_exit_2_and_other_errors_to_exit_1() {
+        assert_eq!(repair_failure(&anyhow::Error::new(UnsafePath)), (2, UNSAFE_PATH_MESSAGE.to_string()));
+        assert_eq!(repair_failure(&anyhow!("tmux: injected")), (1, "zygo: tmux: injected".to_string()));
+        let chained = anyhow!("inner").context("outer");
+        assert_eq!(repair_failure(&chained), (1, "zygo: outer: inner".to_string()));
+    }
 }

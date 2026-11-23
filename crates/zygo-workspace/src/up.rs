@@ -26,7 +26,7 @@ use crate::mux::{
     check_path, check_window_name, hook_command, parse_pane_line, session_target, window_target, HookScope, Multiplexer,
     MuxError, NewSession, NewWindow, SessionAnswer, Split, UnsafePath, MIN_VERSION,
 };
-use crate::repair::{check_saved_socket, repair};
+use crate::repair::{check_saved_socket, repair, repair_failure};
 use crate::snapshot;
 use crate::state::{
     list_all, read_state_capped, BuildPlan, StateBytes, MemberRecord, MemberState, Pane, PaneKind, Phase, StateError, Store, Window, Workspace,
@@ -972,7 +972,10 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             socket_is_private(sock, true).map_err(|t| fail(format!("zygo: {t}")))?;
         }
         let mux = server(&opts.tmux, cur.tmux_socket.as_deref(), opts.tmux_env.as_deref());
-        repair(&store, &mux, &opts.zygo, out, err).map_err(|e| fail(format!("zygo: {e:#}")))?;
+        repair(&store, &mux, &opts.zygo, out, err).map_err(|e| {
+            let (code, message) = repair_failure(&e);
+            Exit { code, message }
+        })?;
         ws = read()?;
         let socket = ws.as_ref().and_then(|w| w.tmux_socket.clone());
         let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), socket), &id, snapshot::OP_WAIT);
