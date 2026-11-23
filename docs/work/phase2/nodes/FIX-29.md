@@ -617,3 +617,68 @@ Author's call (finding 5): the coordinator's text says "zygo does not change it 
 - `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings`: exit 0, no warning.
 - tmux 3.2a first on `PATH` (`tmux -V` → `tmux 3.2a`): mux 6, up 12, down 2; 20 of 20, no skip line.
 - tmux 3.8 (`/usr/bin/tmux`): mux 6, up 12, down 2; 20 of 20, no skip line.
+
+## Diff review round 3
+
+Review of `1d34877..ac5fc42` (coordinator message, 2026-11-23, the last round). Each new test failed first (red), and each test has a mutation run: the code changed back for one run, then restored. For findings 5 and 6 the red run before the fix is that mutation (the fix is the only change).
+
+### Findings and changes
+
+1. **Repair releases on every exit path.** Commit `0d874b5`.
+   - Change: `building` keeps the set `held` (each window that `window_setup` set `on`, and each window that `add_window` created). On an error of `held_build`, it reads the panes again, adds each window that is not in the list from before the build, sets `off` on each window of `held` (best effort) and returns the error. New hook point `add_window` (after `new-window`, before the key).
+   - Tests: `a_repair_that_stops_in_the_middle_releases_every_window` (the repair stops at the `release` point; both windows `off`), `a_repair_whose_new_window_fails_releases_that_window` (the repair stops at `add_window`; the new window is `off`).
+   - Red: both `("on", "on")`, not `("off", "off")`.
+   - Mutations: 1a (no release on the error path): both tests `("on", "on")`; 1b (no second pane read): only the `add_window` test fails, `("off", "on")`.
+2. **and 3. One socket rule in every phase.** Commit `1806170`.
+   - Change: `check_saved_socket` has no phase limit. It runs before any use of the saved socket: `up` step 5 (before `socket_is_private` and the AU100 line of step 13), `up --all` (`session_check`: a skip with the AU54 reason), `zygo attach` (`attach_to`, exit 2, before `socket_is_private`), `down` (`prepare`, and `check_socket` of the detach rule, exit 2) and `repair`. The `exited_line` comment (up.rs) names both socket sources.
+   - Tests: `up_and_attach_refuse_a_saved_socket_with_a_quote_in_phase_up` (exit 2, the AU54 line, only `-u -V` in the log, state unchanged, no folder), `up_all_skips_a_saved_socket_with_a_quote` (exit 1, `zygo: app skipped: <AU54 reason>` and `up --all found no workspace to restore`), `down_detach_refuses_a_saved_socket_that_holds_a_quote` (exit 2, log `["-u -V"]`).
+   - Red: `up` `(1, "", "zygo: tmux: no server running on /tmp/zygo-none/s\n")`; `up --all` `"zygo: tmux: no server running on /tmp/zygo-none/s\nzygo: app skipped\n"`; `down` detach `(0, "zygo: down started; end your turn\n", "")`.
+   - Mutations: 2a (the phase limit back): all three fail. 2b (each new call removed, one at a time): each test fails; `zygo attach` gave `(1, "", "zygo: app is down; run zygo up -- app\n")`, `up --all` gave the AU54 line and then a bare `zygo: app skipped`.
+4. **`repair_failure`.** Commit `e0d3398`.
+   - Change: `repair::repair_failure(&anyhow::Error) -> (i32, String)`: `UnsafePath` gives `(2, <its text>)`, any other error `(1, "zygo: <error>")`. `up` and `down` both use it.
+   - Test: unit test `repair_failure_maps_unsafe_path_to_exit_2_and_other_errors_to_exit_1` (`repair.rs`).
+   - Mutation: `UnsafePath` mapped as any other error → `(1, "zygo: zygo: the zygo path …")`, not `(2, "zygo: the zygo path …")`.
+5. **The step 6 release changes zygo windows only.** Commit `8eeba34`.
+   - Change: `release_all` reads `@zygo-pane` in the same `list-panes` call and releases only a window with a pane whose key is valid.
+   - Test: `an_attaching_up_leaves_a_user_window_alone` (a user window that is `on` stays `on`; the left zygo hold ends).
+   - Red (= mutation, all windows): `("off", "off", "off")`, not `("off", "off", "on")`.
+6. **`up --all` ends a left hold.** Commit `a6758d4`.
+   - Change: `clear_down_all` runs for each owned live session: it takes `op.lock` (held: no change), checks the session and `@zygo-ws` again, calls `release_all`, and then clears `down_all` only when it is set.
+   - Test: `up_all_ends_a_left_hold_of_a_live_session`.
+   - Red (= mutation, no `release_all` call): `("on", "off", "on")`, not `("off", "off", "on")`.
+7. **Lines of `release_all`.** Commit `3b4a474`.
+   - Change: hook point `release_all` before the window read of `Builder::release_all`, named in the `testing::hook` doc.
+   - Tests: `a_failed_window_read_of_the_step_6_release_is_one_line` (`(0, "zygo: app is up\n", "zygo: app: could not release the build hold: injected\n")`), `a_gone_session_at_the_step_6_release_gives_no_line` (the hook kills the session; `has-session` fails; `(0, "zygo: app is up\n", "")`).
+   - Red: the first gave `(0, "zygo: app is up\n", "")`; the second panicked with `the hook did not run` (the point did not exist).
+   - Mutation: the gone/no-target arm prints a line → `(0, "zygo: app is up\n", "zygo: MUTANT no server running on …")`, not `(…, "")`.
+8. **Weak tests.** Commit `8cc8ddc`.
+   - `held_window_with_base_index_1_is_made_after_the_last_and_held`: `base-index 1`, session window 1, held window 2, window 1 killed, then a held window must be `Ok(3)`; windows `2`, `3`. Mutation (plain `-t =<s>:`, no `-a`, no `{end}` on `new-window`): `Ok(1)`, not `Ok(3)` (the gap test fails the same way).
+   - `until5` and the inner `until` of `held_panes_stay_dead_and_an_unheld_window_closes` are now one module-level `until`.
+   - `down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair` asserts the exact log `["-u -V"]`, before the output. Probe run: `left: ["-u -V"]`. Mutation A (the check of `prepare` removed): the `repair` check still refuses before any tmux call, so the log stays `["-u -V"]`, and the test fails at `the socket folder was created`. Mutation B (`check_saved_socket` always `Ok`): the log assertion fails with `["-u -V", "-S …/so'ck/s -u has-session -t =zygo-app:", "-S …/so'ck/s -u show-options -qv -t =zygo-app: -- @zygo-ws"]`.
+
+### Spec (final text)
+
+Commits `e6dd629` and `017f9a6`. AU54 (the saved socket in every phase before any use; exit 2 for `up`, `zygo attach`, `down`; skip for `up --all`; the `repair` refusal printed once with exit 2), AU67 (a repair that stops releases), AU68 (zygo windows only; `up --all` releases under `op.lock`), W§8.1 step 5 (every phase; the exit mapping of a repair error), step 6 (zygo windows only), step 11 (the user hook window is not set back by step 6 either), the `up --all` paragraph, W§9.3 step 2 (AU54 before AU62), W§12 `zygo attach` row. One change-log row for each of findings 1, 2-3, 4, 5, 6 (author's call).
+
+### Decisions (author's call)
+
+- `up --all` with a bad saved socket skips that workspace (`zygo: <name> skipped: <AU54 reason>`, exit 1 at the end), as for an AU62 failure; it does not stop the run with exit 2.
+- The `down` detach path (`check_socket`) also runs the AU54 check, because it uses the saved socket before `prepare`.
+- `clear_down_all` takes `op.lock` for each owned live session, not only when `down_all` is set. A lock error other than `OpHeld` stays an error only when `down_all` is set, as before.
+- Step 11 known limit: corrected after finding 5 (it said that step 6 sets a user hook window back).
+
+### Out of the node (defects, not fixed)
+
+- `crates/zygo-workspace/src/admin.rs` and `crates/zygo/src/cmd/member.rs:845` use a saved `tmux_socket` with no AU54 check. They are outside the Files of this node.
+
+### Process note
+
+- One shell command used a pipe (`rg -n "#\[cfg\(test\)\]" src | rg -c ""`), against the rule. Its output changed no decision.
+
+### Measurements (2026-11-23, at `e6dd629`; `017f9a6` changes only spec text)
+
+- Acceptance `cargo test -p zygo-workspace --locked`: exit 0; 372 passed, 0 failed, 2 ignored (lib 1, activity 41 + 1 ignored, admin 29, args 21, down 31, drain 34, env 4, identity 9, loadout 7, mux 50 + 1 ignored, snapshot 37, state 34, up 67, up_all 7).
+- Floor `cargo test -p zygo-workspace -p zygo --locked --no-fail-fast`: exit 0; 41 test binaries, 1007 passed, 0 failed, 4 ignored.
+- `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings`: exit 0, no warning.
+- tmux 3.2a first on `PATH` (`tmux -V` → `tmux 3.2a`): mux 6, up 20, down 3; 29 of 29, no skip line.
+- tmux 3.8 (`/usr/bin/tmux`): mux 6, up 20, down 3; 29 of 29, no skip line.
