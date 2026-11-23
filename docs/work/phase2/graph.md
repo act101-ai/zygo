@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-23, FIX-26, FIX-24
+**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-27, FIX-23, FIX-26, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -62,7 +62,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | DONE | judgment | a75e36f; acceptance exit 0, zygo-hooks 197 + 1 ignored, zygo-core 28, zygo-workspace 316 + 2 ignored, zygo-launch 244 + 6 ignored, zygo 387, clippy -D warnings clean (merged tree) |
 | H3 | OpenCode plugin: session classification, main session and turn set | H1 | DONE | judgment | dd25ae1; acceptance opencode 77 + 1 ignored, zygo-launch all pass, zygo-hooks workspace 22 + 1 ignored, clippy -D warnings clean, check --workspace --tests clean (merged tree) |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
-| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | BLOCKED(3 rounds; round 3 review: config check reads content files against the process cwd, not the pane cwd; short-flag and later --mcp-config values print secrets; hiding hides model ids; split for re-plan) | judgment | /tmp/claude-1000/-home-kagemartin-Work-zygo--claude-worktrees-zygo-phase-2/58560339-0d35-4cf4-b289-b88946e38748/scratchpad/m1-attempt1.diff |
+| M1 | CLI verbs, /zygo:down detached, doctor tmux line, results sweep AU69 (a) | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | PLANNED | judgment | re-planned 2026-11-23 after 3 rounds: split, loadout show and config check hiding moved to FIX-27; attempt 1 diff kept in scratchpad m1-attempt1.diff |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
@@ -91,9 +91,10 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | DONE | implementation | 40aec7c; acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored (merged tree) |
 | FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks; a non-boolean disableAllHooks is removed and named; settings lines escaped through esc (U+061C added) | FIX-21, H1 | IN-PROGRESS | judgment | .worktrees/phase2/FIX-23; re-planned 2026-11-23 after BLOCKED (3 rounds): value-reading rules split to FIX-26 (controller decision); attempt 1 diff kept in session scratchpad fix23-attempt1.diff |
-| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26 | TODO | implementation | — |
+| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
 | FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | PLANNED | judgment | split from FIX-23 2026-11-23 (controller decisions; §8.4 reads, --agents file, plan reviews 1 and 2 same day); attempt 1 diff kept in session scratchpad fix23-attempt1.diff |
+| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19 | PLANNED | judgment | — |
 
 ## Log
 
@@ -243,3 +244,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-23 BLOCKED after 3 fix rounds; branch discarded (diff kept in scratchpad fix23-attempt1.diff); re-plan splits the --settings value-reading rules into a new node. |
 | 2026-11-23 | M1 BLOCKED after 3 fix rounds; branch discarded (diff kept in scratchpad m1-attempt1.diff); re-plan splits the show/check secret-hiding rules into a new node. |
 | 2026-11-23 | FIX-23 re-planned (split): FIX-23 keeps merge line, non-boolean disableAllHooks (type only), esc U+061C; FIX-26 added for --settings/--agents value printing and safe §8.4 reads. 2 plan reviews applied. FIX-24 depends on FIX-26. |
+| 2026-11-23 | M1 re-planned (split): M1 keeps verbs, /zygo:down, doctor tmux line, sweep AU69 (a), ZYGO_SESSION rule; FIX-27 added for loadout show/config show/config check secret hiding and labels. Plan review applied. FIX-24 depends on FIX-27. |
