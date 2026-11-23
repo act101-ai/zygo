@@ -979,7 +979,7 @@ fn h14_18_trimmed_bytes_show_as_estimated_tokens() {
     assert!(plain(&d, V).ends_with("   trimmed 23k tok"), "{}", plain(&d, V));
     assert!(render(&d, &nerd(C)).ends_with("  ✂ 23k\x1b[0m") && render(&d, &nerd(V)).ends_with("   trimmed 23k tok\x1b[0m"));
     assert_eq!(zygo_core::tokens::BYTES_PER_TOKEN, 4);
-    let cases = [(0, "0"), (1, "1"), (4, "1"), (5, "2"), (3_996, "999"), (3_997, "1k"), (92_157, "23k"), (4_000_000, "1m"), (4_800_001, "1.2m")];
+    let cases = [(0, "0"), (1, "1"), (4, "1"), (5, "2"), (3_996, "999"), (3_997, "1k"), (92_157, "23k"), (4_000_000, "1m"), (4_800_001, "1.2m"), (3_999_999_996, "999.9m"), (4_000_000_000, "1b"), (4_800_000_001, "1.2b")];
     for (bytes, want) in cases {
         let d = trimmed(bytes);
         assert!(compact_text(&d).ends_with(&format!("  ✂ {want}")), "{bytes}: {}", compact_text(&d));

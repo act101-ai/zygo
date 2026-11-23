@@ -26,9 +26,9 @@ Decisions (author's call):
 
 Steps:
 
-- [ ] Write the failing tests. In `short_forms` (`crates/zygo-hooks/src/statusline/mod.rs`), after `(10_000_000, "10m"),` add `(999_999_999, "999.9m"), (1_000_000_000, "1b"), (1_250_000_000, "1.2b"), (12_000_000_000, "12b"), (u64::MAX, "18446744073.7b"),`. In `crates/zygo-hooks/tests/statusline_render.rs:982`, append to `cases`: `(3_999_999_996, "999.9m"), (4_000_000_000, "1b"), (4_800_000_001, "1.2b")`.
-- [ ] Run them and see them fail: `cargo test -p zygo-hooks --locked --lib statusline::tests::short_forms` → 1 failed, `left: "1000m"`, `right: "1b"` for 1000000000; `cargo test -p zygo-hooks --locked --test statusline_render h14_18_trimmed_bytes_show_as_estimated_tokens` → 1 failed at 4000000000 (`✂ 1000m`).
-- [ ] Implement D1: replace the doc line and body of `short` with
+- [x] Write the failing tests. In `short_forms` (`crates/zygo-hooks/src/statusline/mod.rs`), after `(10_000_000, "10m"),` add `(999_999_999, "999.9m"), (1_000_000_000, "1b"), (1_250_000_000, "1.2b"), (12_000_000_000, "12b"), (u64::MAX, "18446744073.7b"),`. In `crates/zygo-hooks/tests/statusline_render.rs:982`, append to `cases`: `(3_999_999_996, "999.9m"), (4_000_000_000, "1b"), (4_800_000_001, "1.2b")`.
+- [x] Run them and see them fail: `cargo test -p zygo-hooks --locked --lib statusline::tests::short_forms` → 1 failed, `left: "1000m"`, `right: "1b"` for 1000000000; `cargo test -p zygo-hooks --locked --test statusline_render h14_18_trimmed_bytes_show_as_estimated_tokens` → 1 failed at 4000000000 (`✂ 1000m`). Seen: `mod.rs:84:13`, `left: "1000m"`, `right: "1b"` for 1000000000; `statusline_render.rs:985:9`, `4000000000: … ✂ 1000m`.
+- [x] Implement D1: replace the doc line and body of `short` with
 
   ```rust
   /// `999`, `412k` (floor), `1m`, `1.2m`, `1b`, `1.2b` (tenths, floor; H§6.6).
@@ -46,6 +46,6 @@ Steps:
       }
   }
   ```
-- [ ] Run them and see them pass: the two commands of step 2 → 1 passed each.
-- [ ] Run the Acceptance: `cargo test -p zygo-hooks --locked --lib statusline && cargo test -p zygo-hooks --locked --test statusline_render` → all pass. Then `cargo clippy -p zygo-hooks --locked --tests -- -D warnings` → exit 0.
-- [ ] Commit, in the FIX-15 checkout: `git add crates/zygo-hooks/src/statusline/mod.rs crates/zygo-hooks/tests/statusline_render.rs docs/work/phase2/nodes/FIX-15.md`, with the identity env and the message `fix(hud): short rolls over to b after 999m`, one blank line, `Zygo-Session: 01M80K6VKVFKHN736B0QCWTTKZ` and `Zygo-Work: FIX-15`.
+- [x] Run them and see them pass: the two commands of step 2 → 1 passed each.
+- [x] Run the Acceptance: `cargo test -p zygo-hooks --locked --lib statusline && cargo test -p zygo-hooks --locked --test statusline_render` → all pass. Seen: lib statusline 4 passed, statusline_render 25 passed. Then `cargo clippy -p zygo-hooks --locked --tests -- -D warnings` → exit 0.
+- [x] Commit, in the FIX-15 checkout: `git add crates/zygo-hooks/src/statusline/mod.rs crates/zygo-hooks/tests/statusline_render.rs docs/work/phase2/nodes/FIX-15.md`, with the identity env and the message `fix(hud): short rolls over to b after 999m`, one blank line, `Zygo-Session: 01M80K6VKVFKHN736B0QCWTTKZ` and `Zygo-Work: FIX-15`.
