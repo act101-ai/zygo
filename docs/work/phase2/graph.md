@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** FIX-21, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19
+**Next:** FIX-21, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-22
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -64,7 +64,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
-| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | TODO | judgment | — |
+| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | PLANNED | judgment | — |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
 | M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
@@ -93,6 +93,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1 | TODO | mechanical | — |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | IN-PROGRESS | judgment | .worktrees/phase2/FIX-21 |
+| FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | TODO | implementation | — |
 
 ## Log
 
@@ -224,3 +225,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-20 added and planned (operator: no invented requirement may end user work): AU26 60 s interrupted-turn idle and AU69 30-day results deletion removed; last_run_at goes (no reader). 8 steps, test first. M1, H1 depend on it. |
 | 2026-11-22 | FIX-21 added and planned (operator: there is never Claude attribution; zygo did not force it). Spec §8.5, §8.6, §13.4 rewritten. 11 steps, test first. Edge FIX-21 → H1: both change claude_code.rs and its tests. |
 | 2026-11-22 | FIX-20 DONE (862148f): merged. AU26 60 s interrupted-turn rule and AU69(b) 30-day results deletion removed; last_run_at removed. Operator decision 2026-11-22. Merged tree: down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean. |
+| 2026-11-22 | H1 planned: 28 steps, test first, written against the code after FIX-21. Review round 1 applied 17 controller decisions: no view.json cap, non-member session-start and prompt unchanged, OpenCode note on every request, no agent session id rule. |
+| 2026-11-22 | H1 C1-C13 applied: W2 Produces (state::Pending), M1 Spec (dev-dependency, snapshot_child); spec AU3, AU56, AU60, AU84, AU104, W§7.2, W§7.4, W§8.2 step 3, W§9.1, W§9.4. FIX-22 added (C9): session-folder readers do not wait on a FIFO; no cap. |
+| 2026-11-22 | H1 evidence: OpenCode 1.19.6 binds --session=<value> (an id starting with - reaches its id check), -s -x is a usage error; H1 step 3 resumes with --session=<id>. The probe made one real request to OpenCode's default provider from a scratch home. |
+| 2026-11-22 | H1 stays PLANNED with no worktree: it depends on FIX-21, which is in progress. |
