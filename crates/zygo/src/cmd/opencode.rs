@@ -43,6 +43,18 @@ pub(crate) fn launch_opts(a: &LaunchOpenCode, env: Env, cwd: PathBuf, paths: Pat
     Ok(o)
 }
 
+/// The saved launch of a hand-started member (W§8.4, AU45): every flag as typed, the arguments after `--`.
+fn saved_launch(a: &LaunchOpenCode) -> zygo_workspace::state::Launch {
+    zygo_workspace::state::Launch {
+        profile: a.profile.clone(),
+        server: a.server.clone(),
+        compact: a.compact.clone(),
+        yolo: a.yolo,
+        args: a.rest.clone(),
+        ..zygo_workspace::state::Launch::new(zygo_core::Agent::OpenCode)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use zygo_proxy::client::WindowArg;
@@ -100,5 +112,14 @@ mod tests {
             bad_compact("opencode", "on"),
             "zygo opencode: bad --compact value `on`: use <tokens>, <n>k or <n>m from 100k to 10m, or off"
         );
+    }
+
+    #[test]
+    fn saved_launch_keeps_the_flags_as_typed() {
+        let s = saved_launch(&args(Some("600k")));
+        assert_eq!(s.kind, zygo_core::Agent::OpenCode);
+        assert_eq!((s.profile.as_deref(), s.server.as_deref(), s.compact.as_deref()), (Some("p1"), Some("https://example.invalid"), Some("600k")));
+        assert_eq!((s.yolo, s.passthrough, s.config_dir.as_deref()), (true, false, None));
+        assert_eq!(s.args, ["run", "x"]);
     }
 }

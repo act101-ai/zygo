@@ -47,6 +47,20 @@ pub(crate) fn launch_opts(l: &Launch, mut env: Env, cwd: PathBuf, paths: Paths) 
     Ok(o)
 }
 
+/// The saved launch of a hand-started member (W§8.4, AU45): every flag as typed, the arguments after `--`.
+fn saved_launch(l: &Launch) -> zygo_workspace::state::Launch {
+    zygo_workspace::state::Launch {
+        profile: l.profile.clone(),
+        passthrough: l.passthrough,
+        server: l.server.clone(),
+        compact: l.compact.clone(),
+        yolo: l.yolo,
+        config_dir: l.config_dir.clone(),
+        args: l.rest.clone(),
+        ..zygo_workspace::state::Launch::new(zygo_core::Agent::ClaudeCode)
+    }
+}
+
 /// `--config-dir`: expands a leading `~`, makes a relative path absolute against `cwd` (not canonicalized), checks for a directory, and
 /// sets `CLAUDE_CONFIG_DIR` in `env` (the flag wins).
 fn set_config_dir(env: &mut Env, d: &str, cwd: &Path) -> Result<(), String> {
@@ -214,5 +228,15 @@ mod tests {
         let o = opts(&off).unwrap();
         assert!(!o.passthrough);
         assert!(!o.yolo);
+    }
+
+    #[test]
+    fn saved_launch_keeps_the_flags_as_typed() {
+        let l = Launch { compact: Some("600k".into()), config_dir: Some("~/cc".into()), ..args(None) };
+        let s = saved_launch(&l);
+        assert_eq!(s.kind, zygo_core::Agent::ClaudeCode);
+        assert_eq!((s.profile.as_deref(), s.passthrough, s.server.as_deref()), (Some("p"), true, Some("https://s.invalid")));
+        assert_eq!((s.compact.as_deref(), s.yolo, s.config_dir.as_deref()), (Some("600k"), true, Some("~/cc")));
+        assert_eq!(s.args, ["-p", "hi"]);
     }
 }
