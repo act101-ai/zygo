@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use zygo_core::paths::Paths;
 use zygo_launch::env::Env;
 use zygo_launch::opencode::OpenCode;
-use zygo_launch::{LaunchOpts, Launcher};
+use zygo_launch::{AgentAdapter, LaunchOpts};
 
 use super::compact::{parse_window, Change};
-use super::{bad_compact, print_err, LaunchOpenCode};
+use super::{bad_compact, member, print_err, LaunchOpenCode};
 
 /// `zygo opencode`: launches OpenCode (§8.2); returns the process exit code.
 pub(crate) fn run(a: &LaunchOpenCode) -> i32 {
@@ -18,7 +18,7 @@ pub(crate) fn run(a: &LaunchOpenCode) -> i32 {
         }
     };
     match launch_opts(a, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => Launcher::run(&OpenCode::default(), opts).code,
+        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(OpenCode::new(z)) }, opts, saved_launch(a)),
         Err(m) => {
             print_err(&format!("{m}\n"));
             2
@@ -41,6 +41,18 @@ pub(crate) fn launch_opts(a: &LaunchOpenCode, env: Env, cwd: PathBuf, paths: Pat
     o.compact = compact;
     o.yolo = a.yolo;
     Ok(o)
+}
+
+/// The saved launch of a hand-started member (W§8.4, AU45): every flag as typed, the arguments after `--`.
+fn saved_launch(a: &LaunchOpenCode) -> zygo_workspace::state::Launch {
+    zygo_workspace::state::Launch {
+        profile: a.profile.clone(),
+        server: a.server.clone(),
+        compact: a.compact.clone(),
+        yolo: a.yolo,
+        args: a.rest.clone(),
+        ..zygo_workspace::state::Launch::new(zygo_core::Agent::OpenCode)
+    }
 }
 
 #[cfg(test)]
@@ -100,5 +112,14 @@ mod tests {
             bad_compact("opencode", "on"),
             "zygo opencode: bad --compact value `on`: use <tokens>, <n>k or <n>m from 100k to 10m, or off"
         );
+    }
+
+    #[test]
+    fn saved_launch_keeps_the_flags_as_typed() {
+        let s = saved_launch(&args(Some("600k")));
+        assert_eq!(s.kind, zygo_core::Agent::OpenCode);
+        assert_eq!((s.profile.as_deref(), s.server.as_deref(), s.compact.as_deref()), (Some("p1"), Some("https://example.invalid"), Some("600k")));
+        assert_eq!((s.yolo, s.passthrough, s.config_dir.as_deref()), (true, false, None));
+        assert_eq!(s.args, ["run", "x"]);
     }
 }

@@ -83,6 +83,20 @@ impl Drop for Handling<'_> {
 /// with or without a user `--settings` (AU59).
 pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path, Option<&Member>) -> anyhow::Result<()> + Send>;
 
+/// The error a session callback returns to make the launch a v1 launch (workspaces design AU34, W§8.4): the launcher
+/// logs it as any callback error, then sets `member` and `resume_note` to none before it builds the view, the settings
+/// and the agent environment.
+#[derive(Debug)]
+pub struct NotMember(pub String);
+
+impl std::fmt::Display for NotMember {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotMember {}
+
 /// The agent session that the launcher starts or resumes (W§8.3, AU3). The launcher puts the adapter's
 /// `preassign_args` or `resume_args` before the user's arguments, so before any `--`; for OpenCode, right after a
 /// `run` subcommand.
@@ -207,12 +221,18 @@ impl Launcher {
     /// The launch; returns the process exit code and records the rest of the outcome in `marks`.
     fn launch(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, marks: &Marks) -> i32 {
         let on_session = opts.on_session.take();
+        // The tokens of a member pre-assign that this launch added to `opts.args`; a `NotMember` callback removes them
+        // (AU34; M3 diff review round 2, finding 3). A user's own session argument is never in this range.
+        let mut preassigned: Option<std::ops::Range<usize>> = None;
         if let Some(s) = &opts.agent_session {
             let extra = match s {
                 AgentSession::Preassign(id) => adapter.preassign_args(id),
                 AgentSession::Resume(id) => adapter.resume_args(id),
             };
-            insert_session_args(adapter.agent(), &mut opts.args, extra);
+            let added = insert_session_args(adapter.agent(), &mut opts.args, extra);
+            if matches!(s, AgentSession::Preassign(_)) {
+                preassigned = Some(added);
+            }
         }
         let out = Out {
             #[cfg(feature = "test-hooks")]
@@ -408,6 +428,15 @@ impl Launcher {
             && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref())
         {
             sd.append_log(&format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+            // AU34: a `NotMember` callback makes this launch a v1 launch.
+            if e.downcast_ref::<NotMember>().is_some() {
+                opts.member = None;
+                opts.resume_note = None;
+                if let Some(r) = preassigned.take() {
+                    opts.args.drain(r);
+                }
+                opts.agent_session = None;
+            }
         }
         if let Some(t) = &team
             && let Err(e) = write_team(&sd.root, t)
@@ -527,6 +556,7 @@ impl Session<'_> {
             .collect();
         let c = &self.cfg.config;
         // A user `--settings` does not change the member (AU59): its settings are merged into zygo's file (§8.5 Flags).
+        // The member is none after a `NotMember` callback (AU34).
         let member = opts.member.clone();
         // The base stays although every field is named today: a later field then needs no change here
         // until the launcher sets it (statusline HUD design H§17 note 1).
@@ -668,7 +698,18 @@ impl Session<'_> {
 /// Puts the agent session arguments `extra` before the user's arguments, so before any `--` (W§8.3, AU3). For
 /// OpenCode, when the first positional token before `--` (by W4's walk, so not a flag value) is the subcommand `run`,
 /// they go right after it.
-fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) {
+/// The agent arguments of a resume of `id`, as [`Launcher::run`] builds them from `args` and
+/// `AgentSession::Resume(id)`: the adapter's resume tokens inserted by [`insert_session_args`]. Gives the arguments and
+/// the range of the inserted tokens. The printed resume command of a member uses it (AU61), so it cannot drift from
+/// the launch.
+pub fn resume_argv(adapter: &dyn AgentAdapter, args: &[String], id: &str) -> (Vec<String>, std::ops::Range<usize>) {
+    let mut a = args.to_vec();
+    let r = insert_session_args(adapter.agent(), &mut a, adapter.resume_args(id));
+    (a, r)
+}
+
+/// Inserts `extra` into `args` (W§8.3, AU3) and gives the range of the inserted tokens.
+fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) -> std::ops::Range<usize> {
     let at = match agent {
         Agent::ClaudeCode => 0,
         Agent::OpenCode => {
@@ -680,7 +721,9 @@ fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>)
                 .map_or(0, |i| i + 1)
         }
     };
+    let n = extra.len();
     args.splice(at..at, extra);
+    at..at + n
 }
 
 #[cfg(feature = "test-hooks")]

@@ -281,8 +281,8 @@ fn w18_28_a_missing_cwd_opens_a_shell_in_the_main_worktree() {
         let o = ws_run(&h, &pairs(&env), false);
         let cmd = match (kind, config) {
             (Agent::OpenCode, _) => "zygo opencode -- --session='ses_1'".to_string(),
-            (_, false) => "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'".to_string(),
-            (_, true) => format!("CLAUDE_CONFIG_DIR='{}/c c'\\''d' zygo claude -- --resume 'abc'", h.root().display()),
+            (_, false) => "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'".to_string(),
+            (_, true) => format!("CLAUDE_CONFIG_DIR='{}/c c'\\''d' zygo claude -- --resume='abc'", h.root().display()),
         };
         let g = zygo_core::esc(&gone.display().to_string());
         let cd = if name == "it's gone" {
@@ -592,7 +592,7 @@ fn pw16_au12_a_failed_resume_runs_once_and_stays_resumable() {
     let o = ws_run(&h, &extra, false);
     assert_eq!(std::fs::read_to_string(h.root().join("launches")).unwrap(), "none\n");
     assert!(
-        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'\n"),
+        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'\n"),
         "{}",
         text(&o.stderr)
     );
@@ -652,7 +652,7 @@ fn au73_an_ended_member_with_a_non_zero_exit_prints_the_resume_command() {
     assert_eq!(m.state, MemberState::Ended);
     assert!(
         text(&o.stderr).contains(&format!(
-            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume '{id}'\n"
+            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='{id}'\n"
         )),
         "{}",
         text(&o.stderr)
@@ -675,7 +675,7 @@ fn au61_the_exit_line_names_the_config_dir_quoted() { // review round 2 finding 
     let q = format!("'{}/c c'\\''d'", h.root().display());
     assert!(
         text(&o.stderr).contains(&format!(
-            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: CLAUDE_CONFIG_DIR={q} zygo claude -- --resume '{id}'\n"
+            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: CLAUDE_CONFIG_DIR={q} zygo claude -- --resume='{id}'\n"
         )),
         "{}",
         text(&o.stderr)
@@ -1070,7 +1070,7 @@ fn m2_a_slow_setup_then_a_fast_exit_is_still_a_failed_fast_resume() { // control
     drop(hold);
     let o = child.output("ws run");
     assert!(
-        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'\n"),
+        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume='abc'\n"),
         "{}",
         text(&o.stderr)
     );

@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use zygo_core::paths::Paths;
 use zygo_launch::claude_code::ClaudeCode;
 use zygo_launch::env::Env;
-use zygo_launch::{LaunchOpts, Launcher};
+use zygo_launch::{AgentAdapter, LaunchOpts};
 
 use super::compact::{parse_window, Change};
-use super::{bad_compact, print_err, Launch};
+use super::{bad_compact, member, print_err, Launch};
 
 /// `zygo claude`: launches Claude Code (§8.2); returns the process exit code.
 pub(super) fn run(l: &Launch) -> i32 {
@@ -18,7 +18,7 @@ pub(super) fn run(l: &Launch) -> i32 {
         }
     };
     match launch_opts(l, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => Launcher::run(&ClaudeCode::default(), opts).code,
+        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(ClaudeCode::for_zygo(z)) }, opts, saved_launch(l)),
         Err(m) => {
             print_err(&format!("{m}\n"));
             2
@@ -45,6 +45,20 @@ pub(crate) fn launch_opts(l: &Launch, mut env: Env, cwd: PathBuf, paths: Paths) 
     o.compact = compact;
     o.yolo = l.yolo;
     Ok(o)
+}
+
+/// The saved launch of a hand-started member (W§8.4, AU45): every flag as typed, the arguments after `--`.
+fn saved_launch(l: &Launch) -> zygo_workspace::state::Launch {
+    zygo_workspace::state::Launch {
+        profile: l.profile.clone(),
+        passthrough: l.passthrough,
+        server: l.server.clone(),
+        compact: l.compact.clone(),
+        yolo: l.yolo,
+        config_dir: l.config_dir.clone(),
+        args: l.rest.clone(),
+        ..zygo_workspace::state::Launch::new(zygo_core::Agent::ClaudeCode)
+    }
 }
 
 /// `--config-dir`: expands a leading `~`, makes a relative path absolute against `cwd` (not canonicalized), checks for a directory, and
@@ -214,5 +228,15 @@ mod tests {
         let o = opts(&off).unwrap();
         assert!(!o.passthrough);
         assert!(!o.yolo);
+    }
+
+    #[test]
+    fn saved_launch_keeps_the_flags_as_typed() {
+        let l = Launch { compact: Some("600k".into()), config_dir: Some("~/cc".into()), ..args(None) };
+        let s = saved_launch(&l);
+        assert_eq!(s.kind, zygo_core::Agent::ClaudeCode);
+        assert_eq!((s.profile.as_deref(), s.passthrough, s.server.as_deref()), (Some("p"), true, Some("https://s.invalid")));
+        assert_eq!((s.compact.as_deref(), s.yolo, s.config_dir.as_deref()), (Some("600k"), true, Some("~/cc")));
+        assert_eq!(s.args, ["-p", "hi"]);
     }
 }

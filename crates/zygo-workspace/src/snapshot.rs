@@ -85,6 +85,7 @@ pub mod testing {
 
     const AFTER_QUEUE: &str = "after_queue";
     const AFTER_TAKE: &str = "after_take";
+    const BEFORE_ASSIGN: &str = "before_assign";
 
     fn set(point: &'static str, dir: &Path, hook: Option<Box<dyn Fn() + Send + Sync>>) {
         let mut hooks = HOOKS.lock().unwrap_or_else(|e| e.into_inner());
@@ -117,6 +118,16 @@ pub mod testing {
     /// `snapshot.pending` and its read of the taken file (round 3 D1).
     pub fn after_take(dir: &Path, hook: Option<Box<dyn Fn() + Send + Sync>>) {
         set(AFTER_TAKE, dir, hook);
+    }
+
+    /// Sets (`Some`) or clears (`None`) the hook that `assign_key` runs after its state read and before it takes
+    /// `lock` (M3 D7).
+    pub fn before_assign(dir: &Path, hook: Option<Box<dyn Fn() + Send + Sync>>) {
+        set(BEFORE_ASSIGN, dir, hook);
+    }
+
+    pub(super) fn run_before_assign(dir: &Path) {
+        fire(BEFORE_ASSIGN, dir);
     }
 
     pub(super) fn run_after_queue(dir: &Path) {
@@ -775,19 +786,27 @@ pub fn after_write(paths: &Paths, mux: &dyn Multiplexer, ws_id: &str, wait: Dura
 /// is set. When the key was set now and the state write then fails, the rollback takes `lock` again, reads the state,
 /// and sets `@zygo-pane` back to the empty value only when no `panes[]` entry holds the key (round 2 M2). After the
 /// lock it runs the W§7.3 `snapshot.pending` check with [`HOOK_WAIT`]; that outcome does not change the result.
+/// It changes only a state that exists (`Store::update_existing`), so a `ws forget` after its read makes no folder
+/// again (M3 D7).
 pub fn assign_key(store: &Store, mux: &dyn Multiplexer, pane: &str) -> anyhow::Result<String> {
     if !valid_pane_id(pane) {
         bail!("invalid pane id {pane:?}");
     }
-    let Some(ws) = store.read()? else {
-        bail!("no workspace state");
+    // M3 A4: every error after the pane id check names the pane, as the locked path does.
+    let Some(ws) = store.read().map_err(|e| anyhow!("cannot assign a key to pane {pane}: {e}"))? else {
+        bail!("cannot assign a key to pane {pane}: no workspace state");
     };
     let allowed = |phase: Phase| matches!(phase, Phase::Up | Phase::Draining);
     if !allowed(ws.phase) {
-        bail!("a member starts only in phase up or draining, not {}", format!("{:?}", ws.phase).to_lowercase());
+        bail!(
+            "cannot assign a key to pane {pane}: a member starts only in phase up or draining, not {}",
+            format!("{:?}", ws.phase).to_lowercase()
+        );
     }
+    #[cfg(feature = "test-hooks")]
+    testing::run_before_assign(store.dir());
     let mut got: Option<(String, bool)> = None;
-    let result = store.update(OP_WAIT, &mut |cur| {
+    let result = store.update_existing(OP_WAIT, &mut |cur| {
         if !allowed(cur.phase) {
             bail!("a member starts only in phase up or draining, not {}", format!("{:?}", cur.phase).to_lowercase());
         }
@@ -800,8 +819,13 @@ pub fn assign_key(store: &Store, mux: &dyn Multiplexer, pane: &str) -> anyhow::R
             Err(e) => Err(anyhow!(key_text(e, pane))),
         }
     });
+    let result = match result {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(anyhow!("no workspace state")),
+        Err(e) => Err(anyhow!(e)),
+    };
     match result {
-        Ok(_) => {
+        Ok(()) => {
             let key = got.map(|(k, _)| k).ok_or_else(|| anyhow!("no key for pane {pane}"))?;
             let _ = pending_check(store, mux, HOOK_WAIT);
             Ok(key)

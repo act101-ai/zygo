@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6, FIX-27, M5 | IN-PROGRESS | judgment | `.worktrees/phase2/M3` |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | TODO | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29 | TODO | implementation | — |
@@ -252,3 +251,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | M3 and M5 planned and reviewed. FIX-28 added from M5 premise P2: up starts the first pane of a new session without ZYGO_WORKSPACE, so its ws run does not skip the update check. Edges FIX-27, M5 → M3 → FIX-28 → FIX-24 (shared ws.rs, up.rs, specs). |
 | 2026-11-23 | FIX-27 DONE (bd55c63): merged after 3 review rounds. Known limit accepted (W§12): `--secret --x S` hides `--x` as the value and shows S. Merged tree: args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26; workspace 2757 + 14 ignored; test-install ok; clippy clean. |
 | 2026-11-23 | M5 DONE (f8c00c4): merged after 3 review rounds, FIX-28 folded in (first pane gets ZYGO_WORKSPACE by new-session -e). FIX-29 added: W7 up build fails with a raw tmux error when a restored pane exits at once. |
+| 2026-11-23 | M3 DONE (1eb6e3a): merged after 3 review rounds. The resume command reproduces the ws run launch; Pending.own_session added. |

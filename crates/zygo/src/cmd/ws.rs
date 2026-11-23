@@ -130,10 +130,7 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
     let exe = std::env::current_exe().and_then(std::fs::canonicalize);
     // The zygo binary of every launch in this `ws run` (M5 round 3): the path read before the check, so hook commands
     // never name the deleted file after an install. Only when that read failed, the path of `current_exe`.
-    let zygo = match &exe {
-        Ok(p) => p.clone(),
-        Err(_) => std::env::current_exe().unwrap_or_default(),
-    };
+    let zygo = member::zygo_binary(&exe);
     if std::env::var_os(zygo_workspace::env::RELAUNCHED).is_none() && super::start_check(&[]) == Some(0) {
         let args: Vec<OsString> = std::env::args_os().skip(1).collect();
         let e = match &exe {
@@ -170,13 +167,12 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
         let _ = std::env::set_current_dir(&cwd);
     } else {
         let _ = std::env::set_current_dir(&main_root);
-        let resumable = if shell { None } else { rec.as_ref().and_then(|r| r.agent_session.as_deref().map(|id| (r.launch.kind, id))) };
+        let resumable = if shell { None } else { rec.as_ref().and_then(|r| r.agent_session.as_deref().map(|id| (r, id))) };
         match resumable {
             // AU61: zygo does not resume the conversation in another folder. The command names each path and the id
             // as one shell word; the text before it escapes them (C6).
-            Some((kind, id)) => {
-                let config_dir = rec.as_ref().and_then(|r| r.config_dir.as_deref());
-                let cmd = member::resume_command(kind, id, config_dir);
+            Some((r, id)) => {
+                let cmd = member::resume_command(r, id, r.config_dir.as_deref());
                 print_err(&format!(
                     "zygo: {} is gone; agent session {} not resumed; to resume it: cd {} && {cmd}\n",
                     shown(&cwd),
@@ -256,7 +252,8 @@ fn launch_member(
     };
     opts.agent_session = resumed.clone().map(AgentSession::Resume);
     opts.resume_note = resume_note(rec, resumed.as_deref());
-    let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone() };
+    // D1: `ws run` writes only a record that exists (no hand join).
+    let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone(), hand: None };
     member::run_wrapped(adapter.as_ref(), opts, &ctx);
 }
 
