@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-23, FIX-24
+**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-23, FIX-26, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -90,9 +90,10 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | DONE | implementation | 40aec7c; acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored (merged tree) |
-| FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks | FIX-21, H1 | BLOCKED(3 rounds; round 3 review blocker: Windows open of broken inline --settings gives InvalidFilename, not NO_FILE; O_NONBLOCK open refuses leased files; split for re-plan) | implementation | /tmp/claude-1000/-home-kagemartin-Work-zygo--claude-worktrees-zygo-phase-2/58560339-0d35-4cf4-b289-b88946e38748/scratchpad/fix23-attempt1.diff |
-| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19 | TODO | implementation | — |
+| FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks; a non-boolean disableAllHooks is removed and named; settings lines escaped through esc (U+061C added) | FIX-21, H1 | PLANNED | judgment | re-planned 2026-11-23 after BLOCKED (3 rounds): value-reading rules split to FIX-26 (controller decision); attempt 1 diff kept in session scratchpad fix23-attempt1.diff |
+| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
+| FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | PLANNED | judgment | split from FIX-23 2026-11-23 (controller decisions; §8.4 reads, --agents file, plan reviews 1 and 2 same day); attempt 1 diff kept in session scratchpad fix23-attempt1.diff |
 
 ## Log
 
@@ -241,3 +242,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-22 DONE (40aec7c): merged after 2 review rounds. Merged tree: Acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored; zygo-workspace, zygo-hooks, zygo-core pass; clippy clean. |
 | 2026-11-23 | FIX-23 BLOCKED after 3 fix rounds; branch discarded (diff kept in scratchpad fix23-attempt1.diff); re-plan splits the --settings value-reading rules into a new node. |
 | 2026-11-23 | M1 BLOCKED after 3 fix rounds; branch discarded (diff kept in scratchpad m1-attempt1.diff); re-plan splits the show/check secret-hiding rules into a new node. |
+| 2026-11-23 | FIX-23 re-planned (split): FIX-23 keeps merge line, non-boolean disableAllHooks (type only), esc U+061C; FIX-26 added for --settings/--agents value printing and safe §8.4 reads. 2 plan reviews applied. FIX-24 depends on FIX-26. |
