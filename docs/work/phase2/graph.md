@@ -56,7 +56,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6, FIX-27, M5 | PLANNED | judgment | — |
+| M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6, FIX-27, M5 | IN-PROGRESS | judgment | `.worktrees/phase2/M3` |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | TODO | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29 | TODO | implementation | — |
