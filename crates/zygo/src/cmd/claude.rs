@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use zygo_core::paths::Paths;
 use zygo_launch::claude_code::ClaudeCode;
 use zygo_launch::env::Env;
-use zygo_launch::{LaunchOpts, Launcher};
+use zygo_launch::{AgentAdapter, LaunchOpts};
 
 use super::compact::{parse_window, Change};
-use super::{bad_compact, print_err, Launch};
+use super::{bad_compact, member, print_err, Launch};
 
 /// `zygo claude`: launches Claude Code (§8.2); returns the process exit code.
 pub(super) fn run(l: &Launch) -> i32 {
@@ -18,7 +18,7 @@ pub(super) fn run(l: &Launch) -> i32 {
         }
     };
     match launch_opts(l, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => Launcher::run(&ClaudeCode::default(), opts).code,
+        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(ClaudeCode::for_zygo(z)) }, opts, saved_launch(l)),
         Err(m) => {
             print_err(&format!("{m}\n"));
             2

@@ -1,7 +1,8 @@
 //! The member wrapper of `zygo ws run` (W§8.2 steps 4, 5 and 7): the member record at the start and at the exit of
-//! the agent, the pre-assigned session id, the exit classification and the exit lines.
+//! the agent, the pre-assigned session id, the exit classification and the exit lines. The hand start of `zygo claude`
+//! and `zygo opencode` in a workspace pane (W§8.4) uses the same wrapper.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,12 +12,13 @@ use zygo_core::session_dir::{write_atomic, SessionDir};
 use zygo_core::session_view::Member;
 use zygo_core::Agent;
 use zygo_launch::env::Env;
-use zygo_launch::launcher::{AgentSession, LaunchOutcome};
+use zygo_launch::launcher::{AgentSession, LaunchOutcome, NotMember};
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 use zygo_proxy::client::{SessionClient, SessionSettings};
 use zygo_workspace::{admin, args};
 use zygo_workspace::mux::tmux::Tmux;
-use zygo_workspace::snapshot;
+use zygo_workspace::mux::Multiplexer;
+use zygo_workspace::{snapshot, up};
 use zygo_workspace::identity::{valid_name, valid_ws_id};
 use zygo_workspace::state::{valid_session_id, MemberRecord, MemberState, Pending, Phase, StateError, Store, Workspace};
 
@@ -28,12 +30,27 @@ const FAST_FAIL: Duration = Duration::from_secs(10);
 /// The `lock` wait of the member wrapper's writes (W§7.3: launchers and the member wrapper 5 s).
 const WRAPPER_WAIT: Duration = Duration::from_secs(5);
 
+/// The line of a hand start whose server URL holds user info (AU98).
+const AU98_LINE: &str = "zygo: --server holds user info; this agent is not saved by the workspace";
+
+/// The head of the line of a hand start that goes on as a v1 launch (W§8.4).
+const NOT_SAVED: &str = "zygo: this agent is not saved by the workspace: ";
+
 /// The member of one wrapped launch: its workspace, its pane key, its state and its saved launch as typed (D1).
+/// `hand` is `Some` for a hand start (W§8.4, M3 D1): its callback may create or replace the record of the key. `ws
+/// run` passes `None`: its callback writes only a record that exists.
 pub struct MemberCtx {
     pub ws_id: String,
     pub pane: String,
     pub store: Store,
     pub launch: zygo_workspace::state::Launch,
+    pub hand: Option<HandJoin>,
+}
+
+/// What the callback of a hand start needs (M3 D1): the launch's own session argument (AU94).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandJoin {
+    pub own_session: Option<String>,
 }
 
 /// The member wrapper (W§8.2 steps 4, 5 and 7): marks the launch as a member (AU102), pre-assigns a Claude Code
@@ -69,6 +86,7 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         pane: m.pane.clone(),
         store: m.store.clone(),
         launch: m.launch.clone(),
+        hand: m.hand.clone(),
         pre,
         config_dir,
         seen: seen.clone(),
@@ -117,6 +135,7 @@ struct Callback {
     pane: String,
     store: Store,
     launch: zygo_workspace::state::Launch,
+    hand: Option<HandJoin>,
     pre: Option<String>,
     config_dir: Option<PathBuf>,
     seen: Arc<Mutex<Option<String>>>,
@@ -124,7 +143,9 @@ struct Callback {
 
 impl Callback {
     /// D3: the member record write first; only when it gave a state, the results link (AU16), the saved overrides
-    /// (W§8.2 step 4, AU11). The errors of the later steps are joined with `; `.
+    /// (W§8.2 step 4, AU11). The errors of the later steps are joined with `; `. For a hand start the write is
+    /// [`Callback::hand_write`]; when it refuses or fails, the callback prints the not-saved line and returns
+    /// `NotMember`, so the launch goes on as a v1 launch (W§8.4, AU34).
     fn run(self, sd: &SessionDir, session: &str, program: &Path) -> anyhow::Result<()> {
         // D8: the saved path, not the link of the OpenCode program folder.
         let folder = self.paths.workspace_cache_dir().join(&self.ws_id).join("program");
@@ -139,11 +160,20 @@ impl Callback {
         };
         let pane = self.pane.clone();
         let launch = self.launch.clone();
-        let written = self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
-            let Some(rec) = ws.members.get_mut(&pane) else { anyhow::bail!("no member record for pane {pane}") };
-            record_start(rec, &launch, &start);
-            Ok(())
-        });
+        let written = match &self.hand {
+            None => self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
+                let Some(rec) = ws.members.get_mut(&pane) else { anyhow::bail!("no member record for pane {pane}") };
+                record_start(rec, &launch, &start);
+                Ok(())
+            }),
+            Some(h) => match self.hand_write(&start, h) {
+                Ok(ws) => Ok(Some(ws)),
+                Err(reason) => {
+                    print_err(&format!("{NOT_SAVED}{reason}\n"));
+                    return Err(anyhow::Error::new(NotMember(reason)));
+                }
+            },
+        };
         let ws = match written {
             Ok(Some(ws)) => ws,
             Ok(None) => anyhow::bail!("no workspace state for {}; no member record written", self.ws_id),
@@ -186,6 +216,27 @@ impl Callback {
         gate("callback");
         agent_snapshot(&self.paths, &ws, &self.ws_id);
         if errors.is_empty() { Ok(()) } else { Err(anyhow::anyhow!(errors.join("; "))) }
+    }
+
+    /// The start write of a hand start (W§8.4, M3 D2): [`join`] under `lock` with the 5 s bound of launchers, so the
+    /// phase, AU94 and W-C9 are checked again in the same lock. `Err` holds the reason of the not-saved line: the
+    /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`.
+    fn hand_write(&self, start: &Start, h: &HandJoin) -> Result<Workspace, String> {
+        let sessions = self.paths.sessions_dir.clone();
+        let live = |r: &MemberRecord| live_session(&sessions, r);
+        let mut refused: Option<String> = None;
+        let written = self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
+            join(ws, &self.pane, &self.launch, start, h.own_session.as_deref(), &live).map_err(|reason| {
+                refused = Some(reason.clone());
+                anyhow::anyhow!(reason)
+            })
+        });
+        match written {
+            Ok(Some(ws)) => Ok(ws),
+            Ok(None) => Err(format!("no workspace state for {}", self.ws_id)),
+            Err(StateError::Refused(_)) if refused.is_some() => Err(refused.unwrap_or_default()),
+            Err(e) => Err(format!("could not write the member record: {}", zygo_core::esc(&e.to_string()))),
+        }
     }
 }
 
@@ -580,6 +631,119 @@ pub(crate) fn join(
     rec.state = MemberState::Running;
     record_start(rec, launch, start);
     Ok(())
+}
+
+/// The outcome of the W§8.4 checks of a hand start.
+pub(crate) enum HandStart {
+    /// Not a member: a v1 launch.
+    V1,
+    /// A member with its pane key.
+    Member(MemberCtx),
+    /// AU94 or W-C9 refuses: print the line, exit 1, start nothing.
+    Refused(String),
+}
+
+/// The not-saved line of W§8.4 with `reason`.
+fn not_saved(reason: &str) {
+    print_err(&format!("{NOT_SAVED}{reason}\n"));
+}
+
+/// The W§8.4 checks of a hand start, in the order of the spec. `env` reads the process environment; `tmux` gives the
+/// tmux program and is called only after the `ZYGO_SESSION`, `TMUX`, `TMUX_PANE` and `ZYGO_WORKSPACE` checks (D8). A
+/// failure before the pane is known as a workspace pane is a silent v1 launch, except a state whose `tmux_socket` is
+/// not the socket of `$TMUX` and a socket that fails AU62; later failures print the not-saved line (paths and ids
+/// escaped, C6). Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
+pub(crate) fn hand_start(
+    launch: zygo_workspace::state::Launch, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths, tmux: &dyn Fn() -> PathBuf,
+) -> HandStart {
+    if !cfg!(unix) || env("ZYGO_SESSION").is_some() {
+        return HandStart::V1;
+    }
+    let Some(tmux_env) = env("TMUX").filter(|v| !v.is_empty()) else { return HandStart::V1 };
+    let Some(pane_var) = env("TMUX_PANE") else { return HandStart::V1 };
+    let Some(pane) = pane_id(&pane_var) else { return HandStart::V1 };
+    let Some(ws_var) = env("ZYGO_WORKSPACE") else { return HandStart::V1 };
+    let Some(id) = ws_var.to_str().filter(|v| valid_ws_id(v)) else { return HandStart::V1 };
+    let tmux = tmux();
+    let Some(sock) = up::server(&tmux, None, Some(&tmux_env)).socket().map(Path::to_path_buf) else {
+        return HandStart::V1;
+    };
+    let store = Store::open(paths, id);
+    let read = store.read();
+    if let Ok(Some(ws)) = &read
+        && ws.tmux_socket.as_deref() != Some(sock.as_path())
+    {
+        let a = ws.tmux_socket.as_deref().map_or_else(|| "none".to_string(), |p| p.display().to_string());
+        not_saved(&format!(
+            "the workspace state names tmux server {}, not {}",
+            zygo_core::esc(&a),
+            zygo_core::esc(&sock.display().to_string())
+        ));
+        return HandStart::V1;
+    }
+    if let Err(t) = up::socket_is_private(&sock, false) {
+        not_saved(&zygo_core::esc(&t));
+        return HandStart::V1;
+    }
+    let mux = Tmux::new(tmux, Some(sock));
+    let Ok(answer) = mux.display(pane, "#{session_name} #{@zygo-ws}") else { return HandStart::V1 };
+    let Some((session, _)) = workspace_of(&answer, &ws_var) else { return HandStart::V1 };
+    if launch.server.as_deref().is_some_and(args::has_user_info) {
+        print_err(&format!("{AU98_LINE}\n"));
+        return HandStart::V1;
+    }
+    let ws = match read {
+        Ok(Some(ws)) => ws,
+        Ok(None) => {
+            not_saved(&format!("no workspace state for {id}"));
+            return HandStart::V1;
+        }
+        Err(e) => {
+            not_saved(&zygo_core::esc(&e.to_string()));
+            return HandStart::V1;
+        }
+    };
+    if ws.tmux_session != session {
+        not_saved(&format!(
+            "the workspace state names tmux session {}, not {}",
+            zygo_core::esc(&ws.tmux_session),
+            zygo_core::esc(&session)
+        ));
+        return HandStart::V1;
+    }
+    let key = match snapshot::assign_key(&store, &mux, pane) {
+        Ok(k) => k,
+        Err(e) => {
+            not_saved(&zygo_core::esc(&e.to_string()));
+            return HandStart::V1;
+        }
+    };
+    let own = own_session(launch.kind, &launch.args);
+    if let Some(c) = conflict(&ws, &key, own.as_deref(), &|r| live_session(&paths.sessions_dir, r)) {
+        return HandStart::Refused(c.line(&key));
+    }
+    HandStart::Member(MemberCtx { ws_id: id.to_string(), pane: key, store, launch, hand: Some(HandJoin { own_session: own }) })
+}
+
+/// `zygo claude` and `zygo opencode` (W§8.4): the hand-start checks, then a v1 launch, the member wrapper, or the
+/// refusal (exit 1). `adapter` makes the adapter for a zygo binary path: a member gets the path by the rule of `ws run`
+/// ([`zygo_binary`], M3 A1); a v1 launch gets `current_exe()` as before. The update check of these verbs runs before
+/// this and makes no check when `ZYGO_WORKSPACE` is set, so a member's binary is never replaced before the read.
+pub(crate) fn launch_hand(
+    adapter: &dyn Fn(PathBuf) -> Box<dyn AgentAdapter>, opts: LaunchOpts, launch: zygo_workspace::state::Launch,
+) -> i32 {
+    let paths = opts.paths.clone();
+    match hand_start(launch, &|k| std::env::var_os(k), &paths, &tmux_program) {
+        HandStart::V1 => Launcher::run(adapter(std::env::current_exe().unwrap_or_default()).as_ref(), opts).code,
+        HandStart::Member(m) => {
+            let zygo = zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize));
+            run_wrapped(adapter(zygo).as_ref(), opts, &m).code
+        }
+        HandStart::Refused(line) => {
+            print_err(&format!("{line}\n"));
+            1
+        }
+    }
 }
 
 #[cfg(test)]

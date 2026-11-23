@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use zygo_core::paths::Paths;
 use zygo_launch::env::Env;
 use zygo_launch::opencode::OpenCode;
-use zygo_launch::{LaunchOpts, Launcher};
+use zygo_launch::{AgentAdapter, LaunchOpts};
 
 use super::compact::{parse_window, Change};
-use super::{bad_compact, print_err, LaunchOpenCode};
+use super::{bad_compact, member, print_err, LaunchOpenCode};
 
 /// `zygo opencode`: launches OpenCode (§8.2); returns the process exit code.
 pub(crate) fn run(a: &LaunchOpenCode) -> i32 {
@@ -18,7 +18,7 @@ pub(crate) fn run(a: &LaunchOpenCode) -> i32 {
         }
     };
     match launch_opts(a, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => Launcher::run(&OpenCode::default(), opts).code,
+        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(OpenCode::new(z)) }, opts, saved_launch(a)),
         Err(m) => {
             print_err(&format!("{m}\n"));
             2

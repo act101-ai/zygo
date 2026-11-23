@@ -792,12 +792,16 @@ pub fn assign_key(store: &Store, mux: &dyn Multiplexer, pane: &str) -> anyhow::R
     if !valid_pane_id(pane) {
         bail!("invalid pane id {pane:?}");
     }
-    let Some(ws) = store.read()? else {
-        bail!("no workspace state");
+    // M3 A4: every error after the pane id check names the pane, as the locked path does.
+    let Some(ws) = store.read().map_err(|e| anyhow!("cannot assign a key to pane {pane}: {e}"))? else {
+        bail!("cannot assign a key to pane {pane}: no workspace state");
     };
     let allowed = |phase: Phase| matches!(phase, Phase::Up | Phase::Draining);
     if !allowed(ws.phase) {
-        bail!("a member starts only in phase up or draining, not {}", format!("{:?}", ws.phase).to_lowercase());
+        bail!(
+            "cannot assign a key to pane {pane}: a member starts only in phase up or draining, not {}",
+            format!("{:?}", ws.phase).to_lowercase()
+        );
     }
     #[cfg(feature = "test-hooks")]
     testing::run_before_assign(store.dir());
