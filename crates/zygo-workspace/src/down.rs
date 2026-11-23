@@ -478,6 +478,8 @@ fn pane_id(v: &OsStr) -> Option<&str> {
 /// socket's folder exists and fails the check. A folder that does not exist holds no server, so the tmux call that
 /// follows answers for itself; nothing is created here.
 fn check_socket(ws: &Workspace) -> Result<(), Exit> {
+    // FIX-29 round 3 (AU54): the saved socket before any use, in every phase; the AU54 line and exit 2.
+    check_saved_socket(ws).map_err(|e| Exit { code: 2, message: e.to_string() })?;
     let Some(sock) = ws.tmux_socket.as_deref() else {
         return Ok(());
     };
@@ -982,7 +984,7 @@ impl Run<'_> {
                 return self.fail(1);
             }
         };
-        // FIX-29 round 2: the AU54 check of a saved socket that the repair uses, before any use (as `up`).
+        // FIX-29 rounds 2-3: the AU54 check of the saved socket, in every phase, before any use (as `up`).
         if let Err(e) = check_saved_socket(&ws) {
             self.e(&e.to_string());
             return self.fail(2);

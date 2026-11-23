@@ -2489,7 +2489,45 @@ fn stopped_repair(point: &'static str) -> Vec<(String, u32)> {
 }
 
 /// FIX-29 round 2, finding 2: a state in phase `building` whose saved `tmux_socket` holds `'`.
-fn quoted_socket_state(t: &Path) -> (UpOpts, Store, PathBuf) {
+fn quoted_socket_state(t: &Path) -> (UpOpts, Store, PathBuf) { quoted_socket_state_in(t, Phase::Building) }
+
+#[test] // FIX-29 diff review round 3, findings 2-3, AU54: in phase `up`, `up` (attach) and `zygo attach` refuse the socket
+fn up_and_attach_refuse_a_saved_socket_with_a_quote_in_phase_up() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (mut o, store, sock) = quoted_socket_state_in(t, Phase::Up);
+    o.no_attach = false;
+    let before = raw(&store);
+    assert_eq!(run(&o), (2, String::new(), format!("{AU54}\n")), "up");
+    assert_eq!(tmux_log(t), ["-u -V"], "up");
+    let _ = fs::remove_file(t.join("tmux.log"));
+    assert_eq!(attach_run(&o, None, None), (2, String::new(), format!("{AU54}\n")), "zygo attach");
+    assert_eq!(tmux_log(t), ["-u -V"], "zygo attach");
+    assert_eq!(raw(&store), before);
+    assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
+}
+
+#[test] // FIX-29 diff review round 3, findings 2-3, AU54: `up --all` skips a state whose saved socket holds a quote
+fn up_all_skips_a_saved_socket_with_a_quote() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (o, store, sock) = quoted_socket_state_in(t, Phase::Up);
+    let before = raw(&store);
+    let (mut out, mut e) = (Vec::new(), Vec::new());
+    let code = up::testing::run_all_with(&o, &mut out, &mut e);
+    let (out, err) = (text(out), text(e));
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    let reason = AU54.trim_start_matches("zygo: ");
+    assert_eq!(err, format!("zygo: app skipped: {reason}\nzygo: up --all found no workspace to restore\n"));
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert_eq!(raw(&store), before);
+    assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
+}
+
+/// FIX-29 round 3: a state in `phase` whose saved `tmux_socket` holds `'`.
+fn quoted_socket_state_in(t: &Path, phase: Phase) -> (UpOpts, Store, PathBuf) {
     let r = repo(t, "app");
     let g = gone_tmux(t);
     let o = opts(t, &r, &g, &t.join("zygo"));
@@ -2497,7 +2535,7 @@ fn quoted_socket_state(t: &Path) -> (UpOpts, Store, PathBuf) {
     let sock = t.join("so'ck").join("s");
     saved(&store, &r, vec![win(0, None, "tiled", 200, 50)], vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &r)], vec![]);
     set(&store, |ws| {
-        ws.phase = Phase::Building;
+        ws.phase = phase;
         ws.tmux_socket = Some(sock.clone());
     });
     (o, store, sock)

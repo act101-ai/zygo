@@ -2250,6 +2250,29 @@ fn live_down_does_not_warn_about_a_dead_pane() {
     assert_eq!(count(&err, &format!("zygo: app pane {dead_key}: sleep is running; it stops with the session")), 0, "{err}");
 }
 
+#[test] // FIX-29 diff review round 3, findings 2-3, AU54: the detach path refuses a saved socket with `'` before any use
+fn down_detach_refuses_a_saved_socket_that_holds_a_quote() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let _g = Detached::new(t);
+    let (mut o, store) = detach_case(t);
+    o.zygo_session = Some("01JCALLER".into());
+    let sock = t.join("so'ck").join("s");
+    store
+        .update(S5, &mut |ws| {
+            ws.tmux_socket = Some(sock.clone());
+            Ok(())
+        })
+        .unwrap();
+    let before = raw(&store);
+    assert_eq!(run(&o, &hooks()), (2, String::new(), format!("{AU54}\n")));
+    assert_eq!(raw(&store), before);
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert!(!t.join("child.pid").exists(), "a detached down was started");
+    assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
+}
+
 #[test] // FIX-29 diff review round 2, finding 2, AU54: down refuses a saved socket with `'` before the repair uses it
 fn down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
     let _s = serial();

@@ -204,7 +204,8 @@ pub(crate) fn not_built_line(key: &str, member: Option<&MemberRecord>) -> String
 }
 
 /// The FIX-29 line of a pane whose command exited while `up` held it (W§8.1 step 12). `status` is
-/// `#{pane_dead_status}`, empty when a signal ended it; `socket` passed AU54, so it holds no `'` (as at AU100).
+/// `#{pane_dead_status}`, empty when a signal ended it. `socket` holds no `'`: it is the socket read in W§8.1 step 9
+/// (checked there) or a saved `tmux_socket`, which `repair::check_saved_socket` checked before any use (AU54).
 pub(crate) fn exited_line(key: &str, status: &str, socket: &Path, pane: &str) -> String {
     let how = if status.is_empty() { "no exit status".to_string() } else { format!("exit {status}") };
     format!(
@@ -965,7 +966,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     let was_building = ws.as_ref().is_some_and(|w| w.phase == Phase::Building);
     let repaired = ws.as_ref().is_some_and(|w| !matches!(w.phase, Phase::Up | Phase::Down));
     if let Some(cur) = &ws {
-        // FIX-29 round 2: the AU54 check of a saved socket that the repair uses, before any use (as step 9).
+        // FIX-29 rounds 2-3: the AU54 check of the saved socket, in every phase, before any use (as step 9).
         check_saved_socket(cur).map_err(|e| Exit { code: 2, message: e.to_string() })?;
         if let Some(sock) = &cur.tmux_socket {
             socket_is_private(sock, true).map_err(|t| fail(format!("zygo: {t}")))?;
@@ -1518,6 +1519,10 @@ fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 /// The D2 session check of one candidate: the AU62 check of its socket, then `has-session` on its server; a session
 /// that exists goes to [`clear_down_all`] (D6).
 fn session_check(opts: &UpOpts, ws: &Workspace) -> Found {
+    // FIX-29 round 3 (AU54): the saved socket before any use.
+    if let Err(e) = check_saved_socket(ws) {
+        return Found::Skip(e.to_string().trim_start_matches("zygo: ").to_string());
+    }
     if let Some(sock) = &ws.tmux_socket
         && let Err(t) = socket_is_private(sock, true)
     {
@@ -1599,6 +1604,11 @@ fn attach_to(
         say(err, &down);
         return 1;
     };
+    // FIX-29 round 3 (AU54): the saved socket before any use; the AU100 line quotes it.
+    if let Err(e) = check_saved_socket(&ws) {
+        say(err, &e.to_string());
+        return 2;
+    }
     if let Err(text) = socket_is_private(&socket, true) {
         say(err, &format!("zygo: {text}"));
         return 1;

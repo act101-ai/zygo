@@ -57,13 +57,14 @@ fn gone(store: &Store, mux: &dyn Multiplexer, ws: &Workspace) -> anyhow::Result<
     }
 }
 
-/// FIX-29 round 2 (AU54, AU67): the saved `tmux_socket` of a state that a repair would act on (any phase but `up` and
-/// `down`) must pass [`check_path`], as the read socket does in W§8.1 step 9, because the dead-pane lines quote it.
-/// The callers run it before any use of the socket (`socket_is_private`, the tmux calls); `repair` runs it again.
+/// FIX-29 rounds 2-3 (AU54): the saved `tmux_socket` of a state, in every phase, must pass [`check_path`], as the
+/// read socket does in W§8.1 step 9, because the dead-pane lines and the AU100 attach line quote it. Every caller
+/// runs it before any use of the socket (`socket_is_private`, the tmux calls, a printed line): `up` (step 5), `up
+/// --all` (its session check), `zygo attach`, `down` and `repair`.
 pub(crate) fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {
     match &ws.tmux_socket {
-        Some(s) if !matches!(ws.phase, Phase::Up | Phase::Down) => check_path(s).map(|_| ()),
-        _ => Ok(()),
+        Some(s) => check_path(s).map(|_| ()),
+        None => Ok(()),
     }
 }
 
