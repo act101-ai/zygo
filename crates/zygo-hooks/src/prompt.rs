@@ -53,10 +53,23 @@ thread_local! {
 }
 
 /// The time left before the deadline of the `run_with` call that runs the current verb; `None` on any thread that is
-/// not a verb thread of `run_with` (the CLI form). `run_with` stores the deadline (its start plus `deadline`) in a
-/// thread-local of the verb thread before it calls the dispatcher, so parallel `run_with` calls do not mix.
+/// not a verb thread of `run_with` (the CLI form). `run_with` runs the dispatcher inside `with_verb_deadline` with its
+/// start plus `deadline`, in a thread-local of the verb thread, so parallel `run_with` calls do not mix.
 pub fn verb_time_left() -> Option<Duration> {
     VERB_DEADLINE.with(Cell::get).map(|t| t.saturating_duration_since(Instant::now()))
+}
+
+/// Runs `f` with `deadline` as the verb deadline of this thread (`verb_time_left`), then puts back the value that the
+/// thread had before, also when `f` panics. `run_with` runs each verb through it.
+pub fn with_verb_deadline<R>(deadline: Instant, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Instant>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            VERB_DEADLINE.with(|d| d.set(self.0));
+        }
+    }
+    let _restore = Restore(VERB_DEADLINE.with(|d| d.replace(Some(deadline))));
+    f()
 }
 
 /// A `/zygo:<verb>` line, trailing whitespace trimmed: the line test of `run_with` (§17.1).
@@ -106,8 +119,12 @@ pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Du
     let until = start.checked_add(deadline);
     // The worker is not joined: on a timeout it ends with the process.
     std::thread::spawn(move || {
-        VERB_DEADLINE.with(|d| d.set(until));
-        let _ = tx.send(dispatch(&v, &a));
+        // `None`: the deadline is past the end of the clock, so the verb has no deadline to keep.
+        let reply = match until {
+            Some(t) => with_verb_deadline(t, || dispatch(&v, &a)),
+            None => dispatch(&v, &a),
+        };
+        let _ = tx.send(reply);
     });
     let text = match rx.recv_timeout(deadline.saturating_sub(start.elapsed())) {
         Ok(Ok(reply)) => reply,

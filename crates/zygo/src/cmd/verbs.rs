@@ -388,6 +388,70 @@ pub(crate) mod tests {
         assert_eq!(lock_bound(true, Some(ms(0))), None);
     }
 
+    /// M4 review F2a: the slash mirror takes its lock wait from the deadline of the prompt hook (`verb_time_left`),
+    /// not the 1 s `HOOK_WAIT`. The slash gate reads `ZYGO_WORKSPACE` from the process environment, so the case runs
+    /// in a child process that has it; this process changes no variable.
+    #[cfg(unix)]
+    #[test]
+    fn slash_mirror_waits_only_within_the_hook_deadline() {
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cmd::verbs::tests::slash_mirror_with_the_lock_held", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("ZYGO_WORKSPACE", "0123456789abcdef")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(o.status.success(), "{text}");
+        assert!(text.contains("test result: ok. 1 passed"), "{text}");
+    }
+
+    /// The child of `slash_mirror_waits_only_within_the_hook_deadline`: a member whose `lock` the test holds runs a
+    /// slash setting verb with 700 ms left in the hook bound. The lock wait is 700 ms less `SLASH_MARGIN`, so the verb
+    /// replies within 900 ms; with the `HOOK_WAIT` bound (1 s) it could not.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "child process of slash_mirror_waits_only_within_the_hook_deadline"]
+    fn slash_mirror_with_the_lock_held() {
+        use std::time::{Duration, Instant};
+        use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
+        use zygo_workspace::state::{MemberRecord, MemberState, Phase};
+        const WS: &str = "0123456789abcdef";
+        const PANE: &str = "kaaaaaaaa";
+        const SID: &str = "01JTESTSESSIONAAAAAAAAAAAA";
+        assert_eq!(std::env::var("ZYGO_WORKSPACE").as_deref(), Ok(WS), "run by slash_mirror_waits_only_within_the_hook_deadline");
+        let d = TempDir::new().unwrap();
+        let dir = sd(d.path());
+        let member = Member { ws_id: WS.into(), pane: PANE.into(), ..Default::default() };
+        SessionView { session: SID.into(), workspace: Some(ViewWorkspace { member, ..Default::default() }), ..Default::default() }
+            .save(&SessionDir::new(dir.clone()))
+            .unwrap();
+        let mut c = ctx(d.path(), Some(&dir));
+        c.slash = true;
+        let store = Store::open(&c.paths, WS);
+        let rec = MemberRecord { zygo_session: Some(SID.into()), state: MemberState::Running, ..MemberRecord::new(zygo_core::Agent::ClaudeCode) };
+        store
+            .update(Duration::from_secs(5), &mut |w| {
+                w.name = "app".into();
+                w.tmux_session = "zygo-app".into();
+                w.common_dir = "/srv/app/.git".into();
+                w.main_root = "/srv/app".into();
+                w.loadout = "solo".into();
+                w.phase = Phase::Up;
+                w.members = BTreeMap::from([(PANE.to_string(), rec.clone())]);
+                Ok(())
+            })
+            .unwrap();
+        let lock = std::fs::OpenOptions::new().read(true).write(true).open(store.dir().join("lock")).unwrap();
+        fs4::FileExt::try_lock(&lock).unwrap();
+        let t0 = Instant::now();
+        let reply = zygo_hooks::prompt::with_verb_deadline(t0 + Duration::from_millis(700), || set_session(&c, &m0(&c), units_off()));
+        let took = t0.elapsed();
+        drop(lock);
+        assert!(took < Duration::from_millis(900), "{took:?}");
+        assert_eq!(reply.unwrap(), "units off for this session; not saved for the workspace");
+        assert_eq!(store.read().unwrap().unwrap().members[PANE], rec);
+    }
+
     #[test]
     fn session_change_writes_overrides_only() {
         let d = TempDir::new().unwrap();
