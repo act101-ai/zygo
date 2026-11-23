@@ -362,7 +362,8 @@ fn a_session_callback_error_is_logged_and_the_launch_goes_on() { // AU34, C6
         o.env.0.push(("ZYGO_STUB_EXIT".into(), "7".into()));
         o.on_session = Some(Box::new(|_, _, _, _| Err(anyhow::anyhow!("no results link\nline two"))));
     });
-    assert_eq!(r.outcome, LaunchOutcome { code: 7, signal: None, spawned: true, received: false }, "{}", r.stderr);
+    assert_eq!(LaunchOutcome { ran: None, ..r.outcome }, LaunchOutcome { code: 7, signal: None, spawned: true, received: false, ran: None }, "{}", r.stderr);
+    assert!(r.outcome.ran.is_some());
     let log = &r.cap.session["session.log"];
     assert!(log.lines().any(|l| l == "session callback: no results link\\nline two"), "{log}");
     assert!(!r.stderr.contains("session callback"), "{}", r.stderr);
@@ -380,7 +381,8 @@ fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
     let ctl = rig.root.join("ctl-exit");
     stub_control(&ctl, "exit 137").unwrap();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, control(&ctl));
-    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: None, spawned: true, received: false }, "{}", r.stderr);
+    assert_eq!(LaunchOutcome { ran: None, ..r.outcome }, LaunchOutcome { code: 137, signal: None, spawned: true, received: false, ran: None }, "{}", r.stderr);
+    assert!(r.outcome.ran.is_some());
     // SIGKILL to the agent: the same code, and the signal.
     let ctl = rig.root.join("ctl-kill");
     let r = std::thread::scope(|s| {
@@ -393,7 +395,8 @@ fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
         assert!(pid.is_some(), "the stub did not start: {}", r.stderr);
         r
     });
-    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: Some(libc::SIGKILL), spawned: true, received: false }, "{}", r.stderr);
+    assert_eq!(LaunchOutcome { ran: None, ..r.outcome }, LaunchOutcome { code: 137, signal: Some(libc::SIGKILL), spawned: true, received: false, ran: None }, "{}", r.stderr);
+    assert!(r.outcome.ran.is_some());
 }
 
 #[test]

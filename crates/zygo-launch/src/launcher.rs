@@ -53,6 +53,8 @@ pub struct LaunchOutcome {
     pub spawned: bool,
     /// The launcher received SIGTERM or SIGHUP between the start of its signal handling and the end of its cleanup.
     pub received: bool,
+    /// The time from the agent's spawn to the end of its wait; `None` when it was not spawned.
+    pub ran: Option<Duration>,
 }
 
 /// What a launch records for its outcome besides the code.
@@ -61,6 +63,7 @@ struct Marks {
     signal: Cell<Option<i32>>,
     spawned: Cell<bool>,
     received: Cell<bool>,
+    ran: Cell<Option<Duration>>,
 }
 
 /// The signal handling of one launch. Its drop copies `signals::received()` into the marks; the handling ends after that.
@@ -197,6 +200,7 @@ impl Launcher {
             signal: marks.signal.get(),
             spawned: marks.spawned.get(),
             received: marks.received.get(),
+            ran: marks.ran.get(),
         }
     }
 
@@ -645,7 +649,10 @@ impl Session<'_> {
             }
         };
         marks.spawned.set(true);
-        match signals::wait(&mut child) {
+        let t = Instant::now();
+        let waited = signals::wait(&mut child);
+        marks.ran.set(Some(t.elapsed()));
+        match waited {
             Ok(st) => {
                 marks.signal.set(signal_of(st));
                 exit_code(st)

@@ -435,6 +435,9 @@ fn stub_child() {
         "ctrlbreak" => child_ctrlbreak(&out, &dir),
         _ => {}
     }
+    if let Some(ms) = std::env::var("ZYGO_TEST_SLEEP_MS").ok().and_then(|v| v.parse().ok()) {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
     let code = std::env::var("ZYGO_TEST_EXIT").ok().and_then(|c| c.parse().ok()).unwrap_or(0);
     std::process::exit(code);
 }
@@ -1430,13 +1433,29 @@ fn sigterm_and_sighup_are_forwarded() {
 fn exits_before_the_spawn_have_spawned_false() { // AU60
     use zygo_launch::launcher::LaunchOutcome;
     let fx = fx();
-    let no_spawn = |code| LaunchOutcome { code, signal: None, spawned: false, received: false };
+    let no_spawn = |code| LaunchOutcome { code, signal: None, spawned: false, received: false, ran: None };
     let missing = Stub { program: "zygo-test-no-such-agent".into(), ..stub() };
     assert_eq!(Launcher::run(&missing, opts(&fx, "dump", &[])), no_spawn(13)); // before the session
     let refused = Stub { preflight: Some(Preflight { file: fx.root.join("settings.json"), key: "env.ANTHROPIC_API_KEY".into() }), ..stub() };
     assert_eq!(Launcher::run(&refused, opts(&fx, "dump", &[])), no_spawn(2)); // after the session directory
     let ran = Launcher::run(&stub(), opts(&fx, "dump", &[("ZYGO_TEST_EXIT", "7")]));
-    assert_eq!(ran, LaunchOutcome { code: 7, signal: None, spawned: true, received: false });
+    assert_eq!(LaunchOutcome { ran: None, ..ran }, LaunchOutcome { code: 7, signal: None, spawned: true, received: false, ran: None });
+    assert!(ran.ran.is_some());
+}
+
+/// W§8.2 step 7, controller M2: `ran` is the agent's own run time. The stub sleeps 300 ms and exits 3, so `ran` is
+/// at least 300 ms (an implementation that gives `Some(Duration::ZERO)` fails) and at most the wall time of the
+/// whole launch (an implementation that counts from before the spawn can still pass this bound, so the
+/// slow-setup test of step 31 checks the other side).
+#[test]
+fn ran_is_the_time_from_the_spawn_to_the_exit() {
+    let fx = fx();
+    let t0 = std::time::Instant::now();
+    let o = Launcher::run(&stub(), opts(&fx, "dump", &[("ZYGO_TEST_SLEEP_MS", "300"), ("ZYGO_TEST_EXIT", "3")]));
+    let wall = t0.elapsed();
+    assert_eq!((o.code, o.spawned), (3, true));
+    let ran = o.ran.unwrap();
+    assert!(ran >= Duration::from_millis(300) && ran <= wall, "{ran:?} {wall:?}");
 }
 
 #[cfg(unix)]
