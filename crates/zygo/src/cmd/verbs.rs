@@ -277,10 +277,11 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
     };
     // F6: a file that exists but cannot be read stops the verb before any change. It is read by the session-file rule
     // (`read_session_file`): a link, a FIFO or another entry that is not a regular file is such a file, and no read
-    // waits on it (M4 review round 2). A missing file is `None`.
+    // waits on it (M4 review round 2). A missing file is `None`. The error names the file's path once:
+    // `zygo <verb>: cannot read <path>: <reason>`.
     let old = match read_session_file(&dir.overrides_json()) {
         Ok(b) => b,
-        Err(e) => return Err(anyhow!("zygo {verb}: cannot read overrides.json: {e:#}")),
+        Err(e) => return Err(anyhow!("zygo {verb}: cannot read {e:#}")),
     };
     // The client is built before any write: a session dir it cannot use changes nothing.
     let client = match setting {
@@ -291,7 +292,8 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
         ),
         _ => None,
     };
-    let mut next = Overrides::load(dir);
+    // From the bytes read above, by the parse rule of `Overrides::load`: the file is opened once (M4 review round 3).
+    let mut next = Overrides::parse(old.as_deref());
     setting.apply(&mut next);
     next.save(dir)?;
     let mut lost: Option<ClientError> = None;
@@ -635,7 +637,11 @@ pub(crate) mod tests {
         let c = VerbCtx { save: true, ..ctx(d.path(), Some(&s)) };
         for (verb, change) in [("units", units_off()), ("redaction", redaction_off())] {
             let e = err_text(set_session(&c, &m0(&c), change));
-            assert!(e.starts_with(&format!("zygo {verb}: cannot read overrides.json: ")), "{e}");
+            // A folder opens for reading on unix, so the handle check refuses it; elsewhere the open fails first.
+            #[cfg(unix)]
+            assert_eq!(e, format!("zygo {verb}: cannot read {}: is not a regular file; not read", s.join("overrides.json").display()));
+            #[cfg(not(unix))]
+            assert!(e.starts_with(&format!("zygo {verb}: cannot read {}: ", s.join("overrides.json").display())), "{e}");
             assert!(s.join("overrides.json").is_dir(), "{verb}");
             assert!(!d.path().join("config.toml").exists(), "{verb}");
         }

@@ -80,6 +80,33 @@ struct Env<'a> {
 }
 
 fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, String) {
+    let mut child = spawn(home, args, env);
+    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    let out = child.wait_with_output().unwrap();
+    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+}
+
+/// `cli` with a bound: a run that has not ended after `bound` is killed (this test's own child) and the test fails
+/// with a message, so a verb that waits forever fails the test instead of hanging it. Empty stdin.
+#[cfg(unix)]
+fn cli_bounded(home: &Path, env: &Env, line: &str, bound: std::time::Duration) -> (i32, String, String) {
+    let mut child = spawn(home, &line.split(' ').collect::<Vec<_>>(), env);
+    drop(child.stdin.take());
+    let t0 = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if t0.elapsed() > bound {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("zygo {line} did not end within {bound:?}; killed");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().unwrap();
+    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+}
+
+/// The zygo child of `zygo` and `cli_bounded`, with piped stdio.
+fn spawn(home: &Path, args: &[&str], env: &Env) -> std::process::Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
     cmd.args(args)
         .current_dir(home)
@@ -95,10 +122,7 @@ fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, St
     }
     cmd.env_remove("ZYGO_WORKSPACE");
     cmd.envs(env.vars.iter().copied());
-    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
-    let out = child.wait_with_output().unwrap();
-    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
 }
 
 /// `zygo hook prompt` with `line` as the prompt; asserts exit 0 and returns stdout.
@@ -341,9 +365,9 @@ fn mark_patched(file: &Path) {
 }
 
 /// M4 review round 2: `set_session` reads the old `overrides.json` by the session-file rule. A FIFO in its place
-/// before the verb does not make the verb wait: it stops with the one `cannot read overrides.json` line, sends no
-/// PATCH and changes nothing. A test thread opens the FIFO for writing (and closes it) only after 3 s, so a reader
-/// that waits on the FIFO ends then and the time shows it.
+/// before the verb does not make the verb wait: it stops with the one `cannot read <path>` line, sends no PATCH and
+/// changes nothing. A test thread opens the FIFO for writing (and closes it) only after 3 s, so a reader that waits
+/// on the FIFO ends then and the time shows it; a run that waits longer than 10 s is killed and fails the test.
 #[cfg(unix)]
 #[test]
 fn fifo_old_overrides_stops_the_verb_at_once() {
@@ -370,13 +394,10 @@ fn fifo_old_overrides_stops_the_verb_at_once() {
         })
     };
     let env = Env { session: Some("S7"), dir: Some(&s), ..Default::default() };
-    let got = cli(h, &env, "redaction content off");
+    let got = cli_bounded(h, &env, "redaction content off", std::time::Duration::from_secs(10));
     let took = t0.elapsed();
     unblock.join().unwrap();
-    assert_eq!(
-        got,
-        (1, String::new(), format!("zygo redaction: cannot read overrides.json: {}: is not a regular file; not read\n", fifo.display()))
-    );
+    assert_eq!(got, (1, String::new(), format!("zygo redaction: cannot read {}: is not a regular file; not read\n", fifo.display())));
     assert!(took < std::time::Duration::from_secs(2), "{took:?}");
     assert!(!s.join("patched").exists(), "a PATCH was sent");
     assert!(std::os::unix::fs::FileTypeExt::is_fifo(&std::fs::symlink_metadata(&fifo).unwrap().file_type()));
@@ -384,7 +405,7 @@ fn fifo_old_overrides_stops_the_verb_at_once() {
 }
 
 /// M4 review round 2: an old `overrides.json` that is a link is not followed: the verb stops with the one `cannot
-/// read overrides.json` line, sends no PATCH and changes neither the link nor its target.
+/// read <path>` line, sends no PATCH and changes neither the link nor its target.
 #[cfg(unix)]
 #[test]
 fn linked_old_overrides_stops_the_verb() {
@@ -398,12 +419,62 @@ fn linked_old_overrides_stops_the_verb() {
     let env = Env { session: Some("S8"), dir: Some(&s), ..Default::default() };
     assert_eq!(
         cli(h, &env, "redaction content off"),
-        (1, String::new(), format!("zygo redaction: cannot read overrides.json: {}: is a link; not read\n", link.display()))
+        (1, String::new(), format!("zygo redaction: cannot read {}: is a link; not read\n", link.display()))
     );
     assert!(!s.join("patched").exists(), "a PATCH was sent");
     assert_eq!(std::fs::read_link(&link).unwrap(), foreign);
     assert_eq!(std::fs::read(&foreign).unwrap(), br#"{"results":false}"#);
     assert_eq!(std::fs::read_to_string(h.join("config.toml")).unwrap(), "");
+}
+
+/// M4 review round 3: `set_session` opens `overrides.json` once and builds the new overrides from the bytes of that
+/// read. The swap is deterministic and uses only the real code: after the read, `redaction content` builds its client,
+/// whose first step reads the session folder's `url` file. Here `url` is a FIFO, so the verb waits there until the
+/// test thread opens it for writing. The thread then puts a link to another JSON file in place of `overrides.json`
+/// and only then writes the url and closes. A second open of `overrides.json` would follow the link and save the
+/// other file's `work_units` into the session.
+#[cfg(unix)]
+#[test]
+fn overrides_swapped_after_the_read_is_not_read_again() {
+    let d = home();
+    let h = d.path();
+    let s = mf::patching_session_at(&paths(h).sessions_dir, "S9", mark_patched);
+    std::fs::write(s.join("overrides.json"), br#"{"results":false}"#).unwrap();
+    let foreign = h.join("foreign.json");
+    std::fs::write(&foreign, br#"{"work_units":false}"#).unwrap();
+    let url = s.join("url");
+    let url_text = std::fs::read(&url).unwrap();
+    std::fs::remove_file(&url).unwrap();
+    let c = std::ffi::CString::new(url.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let swap = {
+        let (ovr, foreign) = (s.join("overrides.json"), foreign.clone());
+        std::thread::spawn(move || {
+            use std::os::unix::fs::OpenOptionsExt;
+            let t0 = std::time::Instant::now();
+            // Opens only once the verb waits on `url` for reading, so the verb has read `overrides.json` already.
+            let mut w = loop {
+                match std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(&url) {
+                    Ok(w) => break w,
+                    Err(_) if t0.elapsed() < std::time::Duration::from_secs(10) => {
+                        std::thread::sleep(std::time::Duration::from_millis(5))
+                    }
+                    Err(e) => panic!("the verb never read the url file: {e}"),
+                }
+            };
+            std::fs::remove_file(&ovr).unwrap();
+            std::os::unix::fs::symlink(&foreign, &ovr).unwrap();
+            w.write_all(&url_text).unwrap();
+        })
+    };
+    let env = Env { session: Some("S9"), dir: Some(&s), ..Default::default() };
+    let got = cli_bounded(h, &env, "redaction content off", std::time::Duration::from_secs(10));
+    swap.join().unwrap();
+    assert_eq!(got, (0, "redaction content off for this session\n".into(), String::new()));
+    assert!(s.join("patched").exists(), "no PATCH was sent");
+    assert_eq!(mf::ovr_json(&s), json!({ "results": false, "redaction_content": false, "guards": {} }));
+    assert_eq!(std::fs::read(&foreign).unwrap(), br#"{"work_units":false}"#);
 }
 
 /// M4 review F3, W§7.3: the mirror reads `overrides.json` under the state lock without waiting on a FIFO. The stand-in
