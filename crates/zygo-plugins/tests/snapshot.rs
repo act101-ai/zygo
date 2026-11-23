@@ -92,7 +92,7 @@ fn claude_snapshot_has_plugin_dirs_and_the_embedded_plugin() {
     let session = fx.path("session");
     let s = snap(&paths, &session, Agent::ClaudeCode, &selection(&cfg, None), None).unwrap();
     let mut want: std::collections::BTreeSet<String> = embedded::files().into_iter().map(|(n, _)| format!("plugins/zygo/{n}")).collect();
-    assert_eq!(want.len(), 16);
+    assert_eq!(want.len(), 19);
     want.extend(["plugins/demo/.claude-plugin/plugin.json", "plugins/demo/skills/hello/SKILL.md", "plugins/demo/commands/go.md", "plugins/demo/agents/rev.md"].map(String::from));
     assert_eq!(tree(&session), want);
     assert_eq!(s.plugins.len(), 2);
