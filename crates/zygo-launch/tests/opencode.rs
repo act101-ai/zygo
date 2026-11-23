@@ -1243,8 +1243,10 @@ fn session_args_follow_w4_and_the_pinned_help() {
     assert!(!oc.has_session_arg(&s(&["run", "--model", "zygo/lead", "--print-logs"])));
     assert!(!oc.has_session_arg(&s(&["--", "-s"])));
     assert!(oc.preassign_args("ses_1").is_empty());
-    assert_eq!(oc.resume_args("ses_1"), s(&["-s", "ses_1"]));
-    assert!(help.contains(&oc.resume_args("ses_1")[0]));
+    assert_eq!(oc.resume_args("ses_1"), s(&["--session=ses_1"]));
+    assert_eq!(oc.resume_args("-x"), s(&["--session=-x"])); // one token: an id that starts with `-` stays the value (AU3)
+    assert!(oc.has_session_arg(&oc.resume_args("-x")));
+    assert!(help.contains("--session"));
 }
 
 #[test] // W§9.1, AU104, W§15 §8.7: PW4 event names

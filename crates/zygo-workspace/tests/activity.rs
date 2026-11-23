@@ -132,13 +132,17 @@ fn update_keeps_earlier_changes() {
     assert_eq!(a.running, BTreeMap::from([("a1".into(), "t1".into())]));
 }
 
+// H1 attempt-2 review round 1, F1: the drain counts an unparsable file as busy (AU26), so a write that started from
+// the default would end an open turn. The file is kept and the update returns the read error.
 #[test]
-fn update_replaces_an_unparsable_file_with_the_default_and_the_change() {
+fn update_refuses_an_unparsable_file_and_writes_nothing() {
     let (_t, d) = dir();
-    fs::write(d.activity_json(), b"garbage").unwrap();
-    activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap();
-    let a = activity::read(&d).unwrap();
-    assert_eq!((a.version, a.busy, a.running), (1, false, BTreeMap::from([("a1".into(), "t1".into())])));
+    for text in [&b"garbage"[..], b"[]", br#"{"version":1,"busy":"yes"}"#] {
+        fs::write(d.activity_json(), text).unwrap();
+        let e = format!("{:#}", activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap_err());
+        assert!(e.starts_with(&format!("{}: ", d.activity_json().display())), "{e}");
+        assert_eq!(fs::read(d.activity_json()).unwrap(), text.to_vec());
+    }
 }
 
 #[cfg(unix)]
@@ -381,13 +385,137 @@ fn read_of_a_file_over_1_mib_is_an_error() {
     assert_eq!(e, format!("{}: activity.json larger than 1 MiB", d.activity_json().display()));
 }
 
+// H1 attempt-2 review round 1, F1: a file over the read limit is kept; starting from the default would end an open
+// turn.
 #[test]
-fn update_replaces_a_file_over_1_mib() {
+fn update_refuses_a_file_over_1_mib_and_writes_nothing() {
     let (_t, d) = dir();
     two_mib_file(&d);
-    activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap();
+    let before = fs::read(d.activity_json()).unwrap();
+    let e = format!("{:#}", activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap_err());
+    assert_eq!(e, format!("{}: activity.json larger than 1 MiB", d.activity_json().display()));
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
+}
+
+// H1 attempt-2 review round 1, F1: a result over the read limit (MAX_FILE, 1 MiB) is refused, so no reader ever
+// finds a file it cannot read.
+#[test]
+fn update_refuses_a_result_larger_than_the_read_limit() {
+    let (_t, d) = dir();
+    activity::update(&d, S10, &mut |a| {
+        a.busy = true;
+        a.tools_running = 1;
+    })
+    .unwrap();
+    let before = fs::read(d.activity_json()).unwrap();
+    let id = "x".repeat(2 << 20);
+    let r = activity::update(&d, S10, &mut |a| a.subagent_start(&id, "t1"));
+    let Err(e) = r else { panic!("an update over the read limit was written") };
+    let e = format!("{e:#}");
+    assert!(e.starts_with(&format!("{}: the new activity is ", d.activity_json().display())), "{}", &e[..200.min(e.len())]);
+    assert!(e.ends_with(" bytes, more than the 1048576 bytes that every reader accepts; not written"), "{e}");
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
     let a = activity::read(&d).unwrap();
-    assert_eq!((a.version, a.busy, a.running), (1, false, BTreeMap::from([("a1".into(), "t1".into())])));
+    assert!(a.busy && a.tools_running == 1 && a.running.is_empty());
+    // A result of exactly the limit is still written; one byte more is not. `updated_at` has 10 digits until 2286.
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let probe = Activity { busy: true, tools_running: 1, updated_at: now, running: BTreeMap::from([("a".into(), "t".into())]), ..Activity::default() };
+    let n = (1 << 20) - serde_json::to_vec(&probe).unwrap().len() + 1;
+    let over = "y".repeat(n + 1);
+    assert!(activity::update(&d, S10, &mut |a| a.subagent_start(&over, "t")).is_err());
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
+    let at_limit = "y".repeat(n);
+    activity::update(&d, S10, &mut |a| a.subagent_start(&at_limit, "t")).unwrap();
+    assert_eq!(fs::metadata(d.activity_json()).unwrap().len(), 1 << 20);
+    assert!(activity::read(&d).unwrap().running.contains_key(&at_limit));
+}
+
+// H1 attempt-2 review round 3, S2 and S4; round 4, T3: the persistent conditions of the session folder's files give an
+// error of the kind `FileCondition` (they repeat on every update): an `activity.json` that cannot be read, does not
+// parse, is over the read limit or is of a newer version; an `activity.lock` that cannot be opened (a link, not a
+// regular file); a failed write. The lock timeout and a refused over-limit result are of one call and do not.
+#[cfg(unix)]
+#[test]
+fn update_errors_of_the_files_are_file_conditions_and_the_others_are_not() {
+    let (t, d) = dir();
+    let condition = |d: &SessionDir| {
+        let e = activity::update(d, S10, &mut |a| a.busy = true).unwrap_err();
+        (e.is::<activity::FileCondition>(), format!("{e:#}"))
+    };
+    let act = d.activity_json().display().to_string();
+    let lock = d.activity_lock().display().to_string();
+    two_mib_file(&d);
+    assert_eq!(condition(&d), (true, format!("{act}: activity.json larger than 1 MiB")));
+    fs::write(d.activity_json(), "{not json").unwrap();
+    assert!(condition(&d).0);
+    fs::remove_file(d.activity_json()).unwrap();
+    fs::create_dir(d.activity_json()).unwrap();
+    assert!(condition(&d).0);
+    fs::remove_dir(d.activity_json()).unwrap();
+    fs::write(d.activity_json(), r#"{"version":2}"#).unwrap();
+    assert_eq!(condition(&d), (true, format!("{act}: written by a newer zygo (version 2)")));
+    fs::remove_file(d.activity_json()).unwrap();
+    // `activity.lock` as a link: not followed, the target is not changed.
+    let outside = t.path().join("outside.lock");
+    fs::write(&outside, "x").unwrap();
+    fs::remove_file(d.activity_lock()).unwrap();
+    std::os::unix::fs::symlink(&outside, d.activity_lock()).unwrap();
+    assert_eq!(condition(&d), (true, format!("{lock}: open lock file: {lock}: is a link; it is not followed")));
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "x");
+    assert!(!d.activity_json().exists());
+    fs::remove_file(d.activity_lock()).unwrap();
+    // `activity.lock` as a folder: the open for writing fails (EISDIR).
+    fs::create_dir(d.activity_lock()).unwrap();
+    assert_eq!(condition(&d), (true, format!("{lock}: open lock file: Is a directory (os error 21)")));
+    fs::remove_dir(d.activity_lock()).unwrap();
+    // One-off: a refused over-limit result and the lock timeout.
+    let id = "x".repeat(2 << 20);
+    let e = activity::update(&d, S10, &mut |a| a.subagent_start(&id, "t")).unwrap_err();
+    assert!(!e.is::<activity::FileCondition>(), "{e:#}");
+    let held =
+        fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(d.activity_lock()).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let e = activity::update(&d, Duration::from_millis(50), &mut |a| a.busy = true).unwrap_err();
+    assert!(!e.is::<activity::FileCondition>(), "{e:#}");
+}
+
+/// Restores the mode of a folder when the test ends, also when it fails, so the temporary folder can be removed.
+struct Mode(PathBuf, u32);
+
+impl Drop for Mode {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(self.1));
+    }
+}
+
+// Round 4, T3: in a read-only session folder the write fails (an existing `activity.lock`) or the lock file cannot be
+// made (no `activity.lock`); both are of the kind `FileCondition`, and the stored file stays as it is.
+#[cfg(unix)]
+#[test]
+fn update_in_a_read_only_folder_is_a_file_condition() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: `geteuid` takes no argument and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: the test runs as root, which writes in a read-only folder");
+        return;
+    }
+    let (_t, d) = dir();
+    activity::update(&d, S10, &mut |a| a.busy = true).unwrap();
+    let before = fs::read(d.activity_json()).unwrap();
+    let _mode = Mode(d.root.clone(), 0o700);
+    fs::set_permissions(&d.root, fs::Permissions::from_mode(0o500)).unwrap();
+    let e = activity::update(&d, S10, &mut |a| a.busy = false).unwrap_err();
+    assert!(e.is::<activity::FileCondition>(), "{e:#}");
+    assert!(format!("{e:#}").starts_with(&format!("{}: ", d.activity_json().display())), "{e:#}");
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
+    fs::set_permissions(&d.root, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::remove_file(d.activity_lock()).unwrap();
+    fs::set_permissions(&d.root, fs::Permissions::from_mode(0o500)).unwrap();
+    let e = activity::update(&d, S10, &mut |a| a.busy = false).unwrap_err();
+    assert!(e.is::<activity::FileCondition>(), "{e:#}");
+    assert!(format!("{e:#}").starts_with(&format!("{}: open lock file: ", d.activity_lock().display())), "{e:#}");
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
 }
 
 /// Child half of #57; the parent runs it with `--ignored` and sets both variables on the child only. With no

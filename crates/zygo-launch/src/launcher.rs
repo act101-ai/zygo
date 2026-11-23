@@ -403,7 +403,7 @@ impl Launcher {
         if let Some(call) = on_session
             && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref())
         {
-            session_dir::log(&sd, &format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+            sd.append_log(&format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
         }
         if let Some(t) = &team
             && let Err(e) = write_team(&sd.root, t)
@@ -412,10 +412,10 @@ impl Launcher {
             return signals::or_stopped(1);
         }
         if let Some(e) = store_err {
-            session_dir::log(&sd, &format!("act-lite store: {e}"));
+            sd.append_log(&format!("act-lite store: {e}"));
         }
         if let Some(n) = &grant.redaction_note {
-            session_dir::log(&sd, &zygo_plugins::check::esc(n));
+            sd.append_log(&zygo_plugins::check::esc(n));
         }
         let s = Session {
             opts: &opts,
@@ -497,7 +497,7 @@ impl Session<'_> {
             if let Some(v) = version_within_bound(&p, &env, &opts.cwd)
                 && v != compiled
             {
-                session_dir::log(sd, &format!("act-lite: installed {v}, language list for {compiled}"));
+                sd.append_log(&format!("act-lite: installed {v}, language list for {compiled}"));
             }
         }
 
@@ -547,7 +547,7 @@ impl Session<'_> {
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
             statusline_style: c.statusline.style.clone(),
-            workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone() }),
+            workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone(), ..Default::default() }),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {
@@ -601,7 +601,7 @@ impl Session<'_> {
             out.line(l);
         }
         for l in &spec.log {
-            session_dir::log(sd, l);
+            sd.append_log(l);
         }
 
         let mut set: Vec<(String, String)> = vec![
@@ -621,7 +621,7 @@ impl Session<'_> {
         }
         let (env, removed) = child_env(&opts.env, &self.cfg, &set);
         if !removed.is_empty() {
-            session_dir::log(sd, &format!("env: removed {}", removed.join(", ")));
+            sd.append_log(&format!("env: removed {}", removed.join(", ")));
         }
 
         if let Some(s) = signals::stopped() {

@@ -1,6 +1,6 @@
 //! The stub agent for the launch tests (N34). One executable, three roles by argv: `zygo` (`hook` or `mcp`),
 //! the version probe (`--version`), and the agent (anything else), which records what it received into `ZYGO_STUB_OUT`.
-//! `session-arg.json` names the session argument (`--session-id`, `--resume` or `-s`, split or, for the first two, as `<flag>=<id>`) when the argv has one before its first `--`.
+//! `session-arg.json` names the session argument (`--session-id`, `--resume`, `--session` or `-s`, split or, for all but `-s`, as `<flag>=<id>`) when the argv has one before its first `--`.
 //!
 //! Control mode (L3, the workspace tests): when `ZYGO_STUB_CONTROL` names a directory, the agent does not exit after the
 //! capture. It serves the lines of `<dir>/steps` in order (a test appends them with `stub_control`) and appends to
@@ -60,13 +60,14 @@ fn flag(argv: &[String], name: &str) -> Option<String> {
 }
 
 /// The session argument: the first token of `argv` before the first `--` that is `--session-id <id>`, `--resume <id>`
-/// (Claude Code) or `-s <id>` (OpenCode) with a next token that does not start with `-`, or `--session-id=<id>` or
-/// `--resume=<id>` (one token, AU3) with an id that is not empty. The id of a one-token form is the text after the
-/// first `=`. Tokens after `--` are prompt words, as in the launcher's `has_session_arg`.
+/// (Claude Code), `--session <id>` or `-s <id>` (OpenCode) with a next token that does not start with `-`, or
+/// `--session-id=<id>`, `--resume=<id>` or `--session=<id>` (one token, AU3) with an id that is not empty. The id of a
+/// one-token form is the text after the first `=`, so `--session=-x` gives `-x`. Tokens after `--` are prompt words,
+/// as in the launcher's `has_session_arg`.
 fn session_arg(argv: &[String]) -> Option<(&'static str, String)> {
     let argv = &argv[..argv.iter().position(|a| a == "--").unwrap_or(argv.len())];
     argv.iter().enumerate().find_map(|(i, a)| {
-        ["--session-id", "--resume", "-s"].into_iter().find_map(|f| {
+        ["--session-id", "--resume", "--session", "-s"].into_iter().find_map(|f| {
             if a == f {
                 return argv.get(i + 1).filter(|v| !v.starts_with('-')).map(|v| (f, v.clone()));
             }

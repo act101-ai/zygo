@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use zygo_core::session_dir::{write_atomic, SessionDir};
 
@@ -66,7 +65,7 @@ impl Activity {
     }
 }
 
-/// The most bytes of `activity.json` that are read; a larger file is not parsed.
+/// The most bytes of `activity.json` that are read; a larger file is not parsed, and `update` writes no larger file.
 const MAX_FILE: u64 = 1 << 20;
 
 /// The result of one read of `activity.json`.
@@ -162,32 +161,67 @@ pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
     }
 }
 
+/// The error kind of an `update` that failed on a condition of the session folder's files, which every later `update`
+/// meets again until the file changes (H1 attempt-2 review round 3, S2 and S4; round 4, T3): an `activity.json` that
+/// cannot be read, does not parse, is not a JSON object, is larger than 1 MiB or is of a newer version; an
+/// `activity.lock` that cannot be opened or locked (a link, not a regular file, no permission); a failed write. Its
+/// text is the error text that `update` documents. The other errors of `update`, the lock not taken within `bound`
+/// and a refused result larger than 1 MiB, are of a single call. Callers tell the two apart with
+/// `anyhow::Error::is::<FileCondition>()`.
+#[derive(Debug)]
+pub struct FileCondition(String);
+
+impl std::fmt::Display for FileCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for FileCondition {}
+
 /// Read-modify-write of `activity.json` under the fs4 lock on `activity.lock` (AU56): waits for the lock at most
 /// `bound` (hooks pass `LOCK_BOUND`), removes stale temp files, applies `f`, sets `version` and `updated_at`, and
-/// replaces the file in one rename. A missing file, an unparsable one and one larger than 1 MiB start from the
-/// default, so a hook recovers from a broken file. A file larger than 1 MiB is replaced even when it starts with a
-/// newer `version`: telling that would need a parse of a cut JSON text, and no zygo writes a file near that size
-/// (round 2, M3). These cases return an error and write nothing: the lock file cannot be opened
-/// (`<activity.lock path>: open lock file`), the lock is not taken within `bound`
-/// (`<activity.lock path>: lock not taken within <ms> ms`), the file cannot be read (`<activity.json path>: <error>`),
-/// or the file is a JSON object whose `version` is present and is not the integer 0 or 1
-/// (`<activity.json path>: written by a newer zygo (version <JSON text of version>)`).
+/// replaces the file in one rename. A missing file starts from the default. A file that `read` cannot give (AU26:
+/// the drain counts it as busy) is never replaced, because a write from the default would set `busy = false` in an
+/// open turn (H1 attempt-2 review round 1, F1). These cases return an error and write nothing: the lock file cannot
+/// be opened or locked (`<activity.lock path>: open lock file: <error>`), the lock is not taken within `bound`
+/// (`<activity.lock path>: lock not taken within <ms> ms`), the file cannot be read or parsed or is not a JSON
+/// object (`<activity.json path>: <error>`), the file is larger than 1 MiB
+/// (`<activity.json path>: activity.json larger than 1 MiB`), the file is a JSON object whose `version` is present
+/// and is not the integer 0 or 1 (`<activity.json path>: written by a newer zygo (version <JSON text of version>)`),
+/// or the result is larger than the read limit, so no reader could read it
+/// (`<activity.json path>: the new activity is <n> bytes, more than the 1048576 bytes that every reader accepts;
+/// not written`). A write that fails gives `<activity.json path>: <error>` and leaves the stored file as it is. The
+/// errors of the lock file, of the stored file and of the write are of the kind `FileCondition`; the lock not taken
+/// within `bound` and the refused result are not.
 pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity)) -> anyhow::Result<()> {
     let lock = dir.activity_lock();
-    let Some(_lock) = crate::state::lock_file(&lock, bound).with_context(|| format!("{}: open lock file", lock.display()))?
-    else {
+    let opened = crate::state::lock_file(&lock, bound)
+        .map_err(|e| FileCondition(format!("{}: open lock file: {e}", lock.display())))?;
+    let Some(_lock) = opened else {
         anyhow::bail!("{}: lock not taken within {} ms", lock.display(), bound.as_millis());
     };
     crate::state::sweep_tmp(&dir.root);
     let path = dir.activity_json();
+    let condition = |text: String| -> anyhow::Error { FileCondition(format!("{}: {text}", path.display())).into() };
     let mut a = match load(&path) {
-        Load::Missing | Load::Unparsable(_) | Load::TooLarge => Activity::default(),
-        Load::ReadFailed(e) => anyhow::bail!("{}: {e}", path.display()),
-        Load::Newer(_, version) => anyhow::bail!("{}: written by a newer zygo (version {version})", path.display()),
+        Load::Missing => Activity::default(),
+        Load::ReadFailed(e) => return Err(condition(e.to_string())),
+        Load::TooLarge => return Err(condition("activity.json larger than 1 MiB".to_string())),
+        Load::Unparsable(e) => return Err(condition(e)),
+        Load::Newer(_, version) => return Err(condition(format!("written by a newer zygo (version {version})"))),
         Load::Parsed(a) => a,
     };
     f(&mut a);
     a.version = VERSION;
     a.updated_at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    write_atomic(&path, &serde_json::to_vec(&a)?)
+    let bytes = serde_json::to_vec(&a)?;
+    if bytes.len() as u64 > MAX_FILE {
+        anyhow::bail!(
+            "{}: the new activity is {} bytes, more than the {MAX_FILE} bytes that every reader accepts; not written",
+            path.display(),
+            bytes.len()
+        );
+    }
+    write_atomic(&path, &bytes).map_err(|e| condition(format!("{e:#}")))
 }

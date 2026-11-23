@@ -35,6 +35,11 @@ pub struct SessionView {
     /// and for a `view.json` without the field.
     #[serde(default)]
     pub workspace: Option<ViewWorkspace>,
+    /// The top-level fields of `view.json` that this zygo does not know; a save puts them back, so a read, change and
+    /// save of the view (the member hooks, H1) keeps the fields of a newer zygo (the AU78 pattern of `workspace.json`).
+    /// `workspace`, its `member`, its `resume_note` and each `interrupted` entry keep theirs the same way (R5).
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 /// Each field that has a serde default holds that default; `agent` is Claude Code; every other field is empty or `false`.
@@ -61,9 +66,30 @@ impl Default for SessionView {
             tail_lines: default_tail_lines(),
             statusline_style: default_statusline_style(),
             workspace: None,
+            extra: UnknownFields::default(),
         }
     }
 }
+
+/// The fields of a `view.json` object that this zygo does not know (the AU78 pattern of `workspace.json`). Only a load
+/// fills it and a save writes it back. Its map is private and the type has no setter, and no code adds a key. The
+/// type still derives a public `Deserialize`, so code could build a value by deserializing a map whose key is a known
+/// field name; `save` would then write that key twice and `load` would refuse the file (duplicate field). A literal of
+/// another crate takes the empty value with `..Default::default()` (H1 review round 2 R6, round 3 S5).
+///
+/// Another crate cannot read the map field (E0616, private field):
+///
+/// ```compile_fail,E0616
+/// let _ = zygo_core::session_view::SessionView::default().extra.0.is_empty();
+/// ```
+///
+/// ```
+/// let v = zygo_core::session_view::SessionView { session: "s".into(), ..Default::default() };
+/// assert_eq!(v.extra, Default::default());
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UnknownFields(serde_json::Map<String, serde_json::Value>);
 
 fn default_true() -> bool {
     true
@@ -99,30 +125,41 @@ pub struct LegendEntry {
 }
 
 /// The membership marker that the launcher records (workspaces design AU58).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Member {
     pub ws_id: String,
     pub pane: String,
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SubagentRef {
     pub agent_id: String,
     pub agent_type: String,
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 /// The inputs of the resume note (W§9.4, AU72).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ResumeNote {
     pub clean_stop: bool,
     pub interrupted: Vec<SubagentRef>,
     pub closed_units: Vec<String>,
+    /// The agent session that these inputs belong to: the id that `ws run` resumes, or none for a fresh start (W§9.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<String>,
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ViewWorkspace {
     pub member: Member,
     pub resume_note: Option<ResumeNote>,
+    #[serde(flatten)]
+    pub extra: UnknownFields,
 }
 
 impl SessionView {

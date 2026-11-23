@@ -944,7 +944,7 @@ fn missing_claude_exits_13_with_the_hint() {
 fn member_ctx(fx: &Fx, work_units: bool) -> LaunchCtx {
     let mut c = ctx(fx, "");
     c.view.work_units = work_units;
-    c.view.workspace = Some(ViewWorkspace { member: Member { ws_id: "0123456789abcdef".into(), pane: "p1".into() }, resume_note: None });
+    c.view.workspace = Some(ViewWorkspace { member: Member { ws_id: "0123456789abcdef".into(), pane: "p1".into(), ..Default::default() }, resume_note: None, ..Default::default() });
     c
 }
 
@@ -966,7 +966,7 @@ fn no_workspace_hook(s: &Value) {
     for event in s["hooks"].as_object().unwrap().keys() {
         assert!(!hook_commands(s, event).iter().any(|(_, cmd)| cmd.contains("hook workspace")), "{event}");
     }
-    for e in ["Stop", "StopFailure", "SubagentStart"] {
+    for e in ["Stop", "StopFailure", "SubagentStart", "SessionEnd"] {
         assert!(s["hooks"].get(e).is_none(), "{e}");
     }
 }
@@ -974,7 +974,7 @@ fn no_workspace_hook(s: &Value) {
 #[test] // W§9.1, AU57, W§15 §8.5: every member hook, with work units on and off
 fn member_settings_hold_every_workspace_hook() {
     let schema = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/settings-schema.json")).unwrap();
-    for e in ["Stop", "StopFailure", "SubagentStart", "SubagentStop"] {
+    for e in ["Stop", "StopFailure", "SubagentStart", "SubagentStop", "PostToolUseFailure", "SessionEnd"] {
         assert!(schema.contains(&format!("\"{e}\"")), "{e} not in the pinned settings schema");
     }
     let agent: Value = serde_json::from_slice(&std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/hooks/PreToolUse-Agent-main.json")).unwrap()).unwrap();
@@ -987,7 +987,20 @@ fn member_settings_hold_every_workspace_hook() {
         let s = settings(&fx);
         let z = shell_quote(&cc.zygo);
         let ws = |e: &str| format!("{z} hook workspace --event {e}");
-        assert!(hook_commands(&s, "PreToolUse").contains(&(Some("Agent".to_string()), ws("pre-tool"))), "{work_units}");
+        // The tool count (W10 round 2): every tool call of a member, at its start and at its end.
+        assert!(hook_commands(&s, "PreToolUse").contains(&(Some("*".to_string()), ws("pre-tool"))), "{work_units}");
+        assert!(!hook_commands(&s, "PreToolUse").iter().any(|(m, c)| m.as_deref() == Some("Agent") && *c == ws("pre-tool")), "{work_units}");
+        assert!(hook_commands(&s, "PostToolUse").contains(&(Some("*".to_string()), ws("tool-end"))), "{work_units}");
+        let failure: BTreeSet<(Option<String>, String)> = hook_commands(&s, "PostToolUseFailure").into_iter().collect();
+        let mut want = BTreeSet::from([(Some("*".to_string()), ws("tool-end"))]);
+        if work_units {
+            want.insert((Some("*".to_string()), format!("{z} hook work")));
+        }
+        assert_eq!(failure, want, "{work_units}");
+        assert_eq!(hook_commands(&s, "SessionEnd"), [(None, ws("session-end"))], "{work_units}");
+        // D4: the member part of `UserPromptSubmit` is its own entry; D3: a member's `SessionStart` carries the flag.
+        assert_eq!(hook_commands(&s, "UserPromptSubmit"), [(None, format!("{z} hook prompt")), (None, ws("prompt"))], "{work_units}");
+        assert_eq!(hook_commands(&s, "SessionStart"), [(None, format!("{z} hook session-start --event member"))], "{work_units}");
         assert_eq!(hook_commands(&s, "Stop"), [(None, ws("stop"))], "{work_units}");
         assert_eq!(hook_commands(&s, "StopFailure"), [(None, ws("stop"))], "{work_units}");
         assert_eq!(hook_commands(&s, "SubagentStart"), [(None, ws("subagent-start"))], "{work_units}");
@@ -997,8 +1010,6 @@ fn member_settings_hold_every_workspace_hook() {
             want.insert((None, format!("{z} hook work")));
         }
         assert_eq!(sub, want, "{work_units}");
-        assert_eq!(hook_commands(&s, "SessionStart"), [(None, format!("{z} hook session-start"))]);
-        assert_eq!(hook_commands(&s, "UserPromptSubmit"), [(None, format!("{z} hook prompt"))]);
     }
 }
 

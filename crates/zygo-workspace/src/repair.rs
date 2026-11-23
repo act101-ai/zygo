@@ -98,6 +98,7 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
                             m.clean_stop = false;
                             m.closed_units.clear();
                             m.interrupted.clear();
+                            m.saved_for = None; // AU75: no saved values, so no session they were saved for
                         }
                     }
                 })?;

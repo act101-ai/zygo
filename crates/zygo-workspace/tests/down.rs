@@ -31,7 +31,7 @@ use zygo_workspace::down::{self, testing::{Fault, Hooks}, DownOpts, DownTarget, 
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::snapshot;
-use zygo_workspace::state::{MemberRecord, MemberState, Phase, Store};
+use zygo_workspace::state::{MemberRecord, MemberState, Pending, Phase, Store};
 use zygo_workspace::up::{self, UpOpts};
 
 const ID: &str = "0123456789abcdef";
@@ -821,6 +821,7 @@ fn idle_member_is_saved_and_stopped() {
         (m.clean_stop, m.closed_units.clone(), m.interrupted.len(), m.state),
         (true, vec!["u-1".to_string()], 0, MemberState::Resumable)
     );
+    assert_eq!(m.saved_for.as_deref(), Some(SID));
     assert_eq!(l.child.wait().unwrap().signal(), Some(libc::SIGTERM));
     assert!(tmux_log(t).iter().any(|c| c.ends_with("kill-session -t =zygo-app:")));
     assert_eq!(disps(), before); // restored once, when run returned
@@ -850,6 +851,7 @@ fn now_saves_running_subagents_and_reports_a_slow_agent() {
             [("a1", "Explore"), ("a2", "")]
         );
         assert_eq!((m.clean_stop, m.state), (true, MemberState::Running));
+        assert_eq!(m.saved_for.as_deref(), Some(SID));
         assert!(calls.lock().unwrap().is_empty()); // --now: no drain, no status call
         assert_eq!(l.child.wait().unwrap().signal(), Some(libc::SIGTERM));
     }
@@ -872,8 +874,28 @@ fn now_saves_running_subagents_and_reports_a_slow_agent() {
         let m = &store.read().unwrap().unwrap().members[KEY2];
         assert!(m.interrupted.is_empty());
         assert!(m.clean_stop);
+        assert_eq!(m.saved_for.as_deref(), Some(SID2));
         assert_eq!(l2.child.wait().unwrap().signal(), Some(libc::SIGTERM));
     }
+}
+
+#[test] // W§9.3 step 8, AU60: `saved_for` names the live zygo session, the pending start first
+fn saved_for_names_the_pending_live_session() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let mut o = opts(t, &fake_tmux(t));
+    let mut rec = member(Some(SID));
+    rec.pending = Some(Pending { zygo_session: SID2.into(), agent_session: None, started_at: 7, ..Default::default() });
+    let store = ws_state(&o, ID, "app", Phase::Up, vec![(KEY, rec)]);
+    owner(t, "zygo-app", ID);
+    let mut l = launcher(&o, SID2);
+    o.now = true;
+    let (code, _, err) = run(&o, &hooks());
+    assert_eq!(code, 0, "{err}");
+    let m = &store.read().unwrap().unwrap().members[KEY];
+    assert_eq!((m.clean_stop, m.saved_for.as_deref()), (true, Some(SID2)));
+    assert_eq!(l.child.wait().unwrap().signal(), Some(libc::SIGTERM));
 }
 
 // ---- step 7 ----

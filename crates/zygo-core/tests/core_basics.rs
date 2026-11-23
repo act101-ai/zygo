@@ -313,14 +313,17 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     old.save(&d).unwrap();
     assert_eq!(SessionView::load(&d).unwrap(), old);
     // A member with a resume note (AU58, AU72).
-    let member = Member { ws_id: "w1".into(), pane: "p1".into() };
+    let member = Member { ws_id: "w1".into(), pane: "p1".into(), ..Default::default() };
     let note = ResumeNote {
         clean_stop: true,
-        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into() }],
+        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into(), ..Default::default() }],
         closed_units: vec!["C1".into()],
+        agent_session: None,
+        ..Default::default()
     };
+    let note_clone = note.clone();
     let v = SessionView {
-        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note) }),
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note), ..Default::default() }),
         ..old.clone()
     };
     v.save(&d).unwrap();
@@ -337,7 +340,99 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
             }
         })
     );
+    // Inputs bound to an agent session (W§9.4): the id is written and read back; an older file reads as none.
+    let bound = ResumeNote { agent_session: Some("ses_R".into()), ..note_clone };
+    let vb = SessionView {
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(bound), ..Default::default() }),
+        ..old.clone()
+    };
+    vb.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), vb);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(json["workspace"]["resume_note"]["agent_session"], "ses_R");
+    assert_eq!(
+        serde_json::from_str::<ResumeNote>(r#"{"clean_stop":true,"interrupted":[],"closed_units":[]}"#).unwrap().agent_session,
+        None
+    );
     // A member with no note: `resume_note` is not in the file.
     let m: ViewWorkspace = serde_json::from_str(r#"{"member":{"ws_id":"w1","pane":"p1"}}"#).unwrap();
-    assert_eq!(m, ViewWorkspace { member, resume_note: None });
+    assert_eq!(m, ViewWorkspace { member, resume_note: None, ..Default::default() });
+}
+
+#[test]
+fn session_view_save_keeps_unknown_top_level_fields() { // H1 attempt-2 review round 1, F4 (AU78 pattern)
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    SessionView { session: "s".into(), main_role: "lead".into(), ..Default::default() }.save(&d).unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    json["future_field"] = serde_json::json!({"a": [1, "b"]});
+    json["future_flag"] = serde_json::json!(true);
+    std::fs::write(d.view_json(), serde_json::to_vec(&json).unwrap()).unwrap();
+    let mut v = SessionView::load(&d).unwrap();
+    v.main_role = "code".into();
+    v.save(&d).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(after["future_field"], serde_json::json!({"a": [1, "b"]}));
+    assert_eq!(after["future_flag"], serde_json::json!(true));
+    assert_eq!(after["main_role"], "code");
+    // A view of this zygo writes no extra field.
+    let plain = SessionView::default();
+    let keys: Vec<String> = serde_json::to_value(&plain).unwrap().as_object().unwrap().keys().cloned().collect();
+    assert!(!keys.iter().any(|k| k.starts_with("future_") || k == "extra"), "{keys:?}");
+}
+
+#[test]
+fn session_view_save_keeps_unknown_nested_fields() { // H1 attempt-2 review round 2, R5 (AU78 pattern)
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let text = r#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":false,"results":false,"navigation":false,"workspace":{"member":{"ws_id":"w","pane":"p","future_m":1},"resume_note":{"clean_stop":true,"interrupted":[{"agent_id":"a1","agent_type":"x","future_s":[2]}],"closed_units":[],"future_n":{"k":"v"}},"future_w":true},"future_top":3}"#;
+    std::fs::write(d.view_json(), text).unwrap();
+    let mut v = SessionView::load(&d).unwrap();
+    v.main_role = "code".into();
+    v.save(&d).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(after["main_role"], "code");
+    assert_eq!(after["future_top"], 3);
+    assert_eq!(after["workspace"]["future_w"], true);
+    assert_eq!(after["workspace"]["member"], serde_json::json!({"ws_id": "w", "pane": "p", "future_m": 1}));
+    assert_eq!(after["workspace"]["resume_note"]["future_n"], serde_json::json!({"k": "v"}));
+    assert_eq!(after["workspace"]["resume_note"]["interrupted"][0], serde_json::json!({"agent_id": "a1", "agent_type": "x", "future_s": [2]}));
+    assert_eq!(SessionView::load(&d).unwrap(), v);
+}
+
+#[test]
+fn session_log_appends_lines_and_refuses_links_and_fifos() { // H1 D21: the one session-log writer
+    let t = tempfile::tempdir().unwrap();
+    let sd = SessionDir::new(t.path().join("s"));
+    sd.create().unwrap();
+    sd.append_log("a");
+    sd.append_log("b\nc\rd");
+    assert_eq!(std::fs::read_to_string(sd.log()).unwrap(), "a\nb c d\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        assert_eq!(std::fs::metadata(sd.log()).unwrap().permissions().mode() & 0o777, 0o600);
+        // A link: the target is not written and the link stays a link.
+        let outside = t.path().join("outside");
+        std::fs::write(&outside, "x").unwrap();
+        std::fs::remove_file(sd.log()).unwrap();
+        std::os::unix::fs::symlink(&outside, sd.log()).unwrap();
+        sd.append_log("e");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "x");
+        assert!(std::fs::symlink_metadata(sd.log()).unwrap().file_type().is_symlink());
+        // A FIFO: the writer does not wait for a reader.
+        std::fs::remove_file(sd.log()).unwrap();
+        let c = std::ffi::CString::new(sd.log().as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sd2 = sd.clone();
+        std::thread::spawn(move || {
+            sd2.append_log("f");
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("append_log waited on a FIFO");
+        assert!(std::fs::symlink_metadata(sd.log()).unwrap().file_type().is_fifo());
+    }
 }

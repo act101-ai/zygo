@@ -246,6 +246,30 @@ fn unreadable_activity_file_reads_as_busy() {
     }
 }
 
+// H1 attempt-2 review round 1, F1: an `activity.json` over the read limit or one that does not parse is busy
+// (AU26), and an `update` keeps it, so it stays busy.
+#[test]
+fn over_limit_and_unparsable_activity_files_stay_busy() {
+    let t = TempDir::new().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let mut big = br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#.to_vec();
+    big.resize(2 << 20, b' ');
+    for text in [big, b"{not json".to_vec()] {
+        std::fs::write(d.activity_json(), &text).unwrap();
+        for _ in 0..2 {
+            let e = format!("{:#}", activity::read(&d).unwrap_err());
+            match drain::idle(Err(&e), Ok(&quiet()), now()) {
+                Idle::Busy { reason, rule_skipped: false } => {
+                    assert!(reason.starts_with("activity file unreadable: ") && reason.contains("activity.json"), "{reason}")
+                }
+                other => panic!("{other:?}"),
+            }
+            assert!(activity::update(&d, Duration::from_secs(10), &mut |a| a.tools_running += 1).is_err());
+        }
+        assert_eq!(std::fs::read(d.activity_json()).unwrap(), text);
+    }
+}
+
 // Round 2, M1: a skipped rule 3 is reported whatever decides `Busy`.
 #[test]
 fn busy_from_rule_2_reports_a_skipped_rule_3() {

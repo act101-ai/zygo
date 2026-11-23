@@ -338,27 +338,47 @@ impl ClaudeCode {
         // A workspace member is the AU58 marker in the session view; its hooks are W§9.1.
         let member = ctx.view.workspace.is_some();
         let mut subagent_stop = vec![];
+        let mut failure = vec![];
         if ctx.view.work_units {
             pre.push(entry(Some("mcp__zygo__work_begin"), "work --event begin"));
             pre.push(entry(Some("mcp__zygo__work_verdict"), "work --event verdict"));
             post.push(entry(Some("*"), "work"));
-            h.insert("PostToolUseFailure".into(), json!([entry(Some("*"), "work")]));
+            failure.push(entry(Some("*"), "work"));
             subagent_stop.push(entry(None, "work"));
         }
+        // W§9.1 and the tool count (W10 round 2, H1): a member registers every tool call at its start (`*`, the
+        // `Agent` deny of W§9.2 included) and at its end, also a failed one, and the end of the agent session.
         if member {
-            pre.push(entry(Some("Agent"), "workspace --event pre-tool"));
+            pre.push(entry(Some("*"), "workspace --event pre-tool"));
+            post.push(entry(Some("*"), "workspace --event tool-end"));
+            failure.push(entry(Some("*"), "workspace --event tool-end"));
             h.insert("Stop".into(), json!([entry(None, "workspace --event stop")]));
             h.insert("StopFailure".into(), json!([entry(None, "workspace --event stop")]));
             h.insert("SubagentStart".into(), json!([entry(None, "workspace --event subagent-start")]));
+            h.insert("SessionEnd".into(), json!([entry(None, "workspace --event session-end")]));
             subagent_stop.push(entry(None, "workspace --event subagent-stop"));
+        }
+        if !failure.is_empty() {
+            h.insert("PostToolUseFailure".into(), json!(failure));
         }
         if !subagent_stop.is_empty() {
             h.insert("SubagentStop".into(), json!(subagent_stop));
         }
         h.insert("PreToolUse".into(), json!(pre));
         h.insert("PostToolUse".into(), json!(post));
-        h.insert("SessionStart".into(), json!([entry(None, "session-start")]));
-        h.insert("UserPromptSubmit".into(), json!([entry(None, "prompt")]));
+        // W§9.1, H1 D3: a member's `SessionStart` names its membership, so the hook knows it before it reads the view.
+        h.insert(
+            "SessionStart".into(),
+            json!([entry(None, if member { "session-start --event member" } else { "session-start" })]),
+        );
+        // W§9.1, H1 D4: `zygo hook prompt` reads no session view unless `ZYGO_WORKSPACE` is set and a verb panicked
+        // (H1 round 4 T2); the member part is a second, member-only entry, so a launch that is not a member keeps its
+        // one `prompt` entry.
+        let mut prompt = vec![entry(None, "prompt")];
+        if member {
+            prompt.push(entry(None, "workspace --event prompt"));
+        }
+        h.insert("UserPromptSubmit".into(), json!(prompt));
         h.insert("PreCompact".into(), json!([entry(None, "pre-compact")]));
         Value::Object(h)
     }

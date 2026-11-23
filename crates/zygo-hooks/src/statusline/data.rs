@@ -727,11 +727,5 @@ pub fn log_width(dir: &SessionDir, source: &str, width: u16) {
         return;
     }
     write_atomic(&file, state.as_bytes());
-    let mut o = std::fs::OpenOptions::new();
-    o.append(true).create(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    if let Ok(mut f) = o.open(dir.log()) {
-        let _ = writeln!(f, "statusline: width source {source}, width {width}");
-    }
+    dir.append_log(&format!("statusline: width source {source}, width {width}"));
 }

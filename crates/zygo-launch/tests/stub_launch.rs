@@ -110,11 +110,13 @@ fn non_member_child_has_neither_workspace_name_nor_a_marker() { // AU58, AU64, W
 fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, AU72
     use zygo_core::session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace};
     let rig = rig();
-    let member = Member { ws_id: "ws-1".into(), pane: "p-1".into() };
+    let member = Member { ws_id: "ws-1".into(), pane: "p-1".into(), ..Default::default() };
     let note = ResumeNote {
         clean_stop: true,
-        interrupted: vec![SubagentRef { agent_id: "a-1".into(), agent_type: "zygo-code".into() }],
+        interrupted: vec![SubagentRef { agent_id: "a-1".into(), agent_type: "zygo-code".into(), ..Default::default() }],
         closed_units: vec!["gh:1".into()],
+        agent_session: None,
+        ..Default::default()
     };
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
         o.env.0.extend([("ZYGO_WORKSPACE".into(), "old-ws".into()), ("ZYGO_PANE".into(), "old-pane".into())]);
@@ -124,7 +126,7 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert_eq!((r.cap.env["ZYGO_WORKSPACE"].as_str(), r.cap.env["ZYGO_PANE"].as_str()), ("ws-1", "p-1"));
     let view: SessionView = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
-    assert_eq!(view.workspace, Some(ViewWorkspace { member, resume_note: Some(note) }));
+    assert_eq!(view.workspace, Some(ViewWorkspace { member, resume_note: Some(note), ..Default::default() }));
     // Set, not removed: the session log does not name them.
     assert!(!r.cap.session.get("session.log").is_some_and(|l| l.contains("ZYGO_WORKSPACE") || l.contains("ZYGO_PANE")));
 }
@@ -184,7 +186,7 @@ fn member_with_readable_user_settings_stays_a_member_and_merges() { // AU58, AU5
     for args in [vec!["--settings".to_string(), user.display().to_string()], vec![format!("--settings={}", user.display())]] {
         let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
             o.env.0.extend([("ZYGO_WORKSPACE".into(), "old-ws".into()), ("ZYGO_PANE".into(), "old-pane".into())]);
-            o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into() });
+            o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into(), ..Default::default() });
             o.args = args.clone();
         });
         assert_eq!(r.code, 0, "{}", r.stderr);
@@ -204,7 +206,7 @@ fn member_with_unreadable_user_settings_stays_a_member() { // AU58, AU59 (FIX-21
     use zygo_core::session_view::Member;
     let rig = rig();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
-        o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into() });
+        o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into(), ..Default::default() });
         o.args = vec!["--settings".into(), "missing.json".into()];
     });
     assert_eq!(r.code, 0, "{}", r.stderr);
@@ -222,7 +224,7 @@ fn member_with_settings_after_double_dash_stays_a_member() { // AU58, review min
     use zygo_core::session_view::Member;
     let rig = rig();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
-        o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into() });
+        o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into(), ..Default::default() });
         o.args = vec!["--".into(), "--settings".into(), "x.json".into()];
     });
     assert_eq!(r.code, 0, "{}", r.stderr);
@@ -236,7 +238,7 @@ fn member_with_settings_after_double_dash_stays_a_member() { // AU58, review min
 fn session_callback_gets_the_member_with_or_without_settings() { // AU34, AU59 (FIX-21 round 3)
     use std::sync::{Arc, Mutex};
     use zygo_core::session_view::Member;
-    let member = Member { ws_id: "ws-1".into(), pane: "p-1".into() };
+    let member = Member { ws_id: "ws-1".into(), pane: "p-1".into(), ..Default::default() };
     /// The member given, the arguments, the member the callback gets.
     type Case = (Option<Member>, Vec<String>, Option<Member>);
     let cases: [Case; 4] = [
@@ -281,11 +283,11 @@ fn agent_session_args_go_before_the_users_args_and_after_opencode_run() { // W§
     }
     let resume = AgentSession::Resume("ses_1".into());
     for (args, want) in [
-        (s(&["run", "hello"]), s(&["run", "-s", "ses_1", "hello"])),
-        (s(&["--model", "zygo/lead", "run", "hi"]), s(&["--model", "zygo/lead", "run", "-s", "ses_1", "hi"])),
-        (s(&["--model", "zygo/lead"]), s(&["-s", "ses_1", "--model", "zygo/lead"])),
-        (s(&["--", "run"]), s(&["-s", "ses_1", "--", "run"])),
-        (s(&[]), s(&["-s", "ses_1"])),
+        (s(&["run", "hello"]), s(&["run", "--session=ses_1", "hello"])),
+        (s(&["--model", "zygo/lead", "run", "hi"]), s(&["--model", "zygo/lead", "run", "--session=ses_1", "hi"])),
+        (s(&["--model", "zygo/lead"]), s(&["--session=ses_1", "--model", "zygo/lead"])),
+        (s(&["--", "run"]), s(&["--session=ses_1", "--", "run"])),
+        (s(&[]), s(&["--session=ses_1"])),
     ] {
         let r = launch(&rig, &opencode(&rig), OPENCODE_VERSION, |o| {
             o.agent_session = Some(resume.clone());

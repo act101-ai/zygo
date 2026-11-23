@@ -3535,6 +3535,7 @@ dependencies = [
  "zygo-results",
  "zygo-usage",
  "zygo-work",
+ "zygo-workspace",
 ]
 
 [[package]]
@@ -3566,6 +3567,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "fs4",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -3591,6 +3593,7 @@ dependencies = [
  "zygo-results",
  "zygo-usage",
  "zygo-work",
+ "zygo-workspace",
 ]
 
 [[package]]
