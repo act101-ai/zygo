@@ -207,7 +207,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
   - Add `hold: false` to each `NewWindow` literal in `crates/zygo-workspace/tests/mux.rs` (lines 264, 494, 513, 533, 761, 787, 790, 797, 870, 892, 978, 1065), in `crates/zygo-workspace/tests/snapshot.rs:933`, and for now in `up.rs:521`. Step 8 changes `up.rs:521` to `hold: self.hold`.
   - Check: `cargo test -p zygo-workspace --locked --test mux` passes (the tmux cases run or print `tmux tests skipped: …`). `cargo test -p zygo-workspace --locked --test snapshot` passes.
 
-- [ ] **3. Test: the snapshot keeps a saved cwd when tmux gives an empty path (`crates/zygo-workspace/tests/snapshot.rs`, at the end of the file).**
+- [x] **3. Test: the snapshot keeps a saved cwd when tmux gives an empty path (`crates/zygo-workspace/tests/snapshot.rs`, at the end of the file).**
   - New `#[test] // FIX-29, W§7.4 step 5: a dead pane reads an empty path; the stored cwd stays` `fn empty_pane_path_keeps_the_stored_cwd()`:
     - `let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);`. Both stored panes have cwd `/srv/app` (`state`, `tests/snapshot.rs:38-51`).
     - `let fake = Fake::new(Some(ID), vec![Ok(vec![line(0, "main", 0, "%0", 0, 1, "kaaaaaaaa", ""), line(0, "main", 0, "%1", 1, 0, "kbbbbbbbb", "/b"), line(0, "main", 0, "%2", 2, 0, "", "")])]); fake.opt("%2", "");`
@@ -215,7 +215,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
     - `let ws = store.read().unwrap().unwrap(); assert_eq!(ws.panes.iter().map(|x| x.cwd.clone()).collect::<Vec<_>>(), [PathBuf::from("/srv/app"), PathBuf::from("/b"), PathBuf::new()]);`. Kept, replaced, and a new pane with no stored entry stays empty.
   - Check: `cargo test -p zygo-workspace --locked --test snapshot empty_pane_path_keeps_the_stored_cwd` fails at the `cwd` assertion: the first cwd is `""`.
 
-- [ ] **4. Code: the empty-path rule (`crates/zygo-workspace/src/snapshot.rs`, `fn apply`, `:336-347`).**
+- [x] **4. Code: the empty-path rule (`crates/zygo-workspace/src/snapshot.rs`, `fn apply`, `:336-347`).**
   - Replace `cwd: p.cwd.clone(),` with
     ```rust
     // FIX-29: tmux gives no `#{pane_current_path}` for a dead pane (3.2a and 3.8 probe); keep the stored cwd.

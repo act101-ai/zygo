@@ -1549,3 +1549,24 @@ fn pending_functions_refuse_a_linked_state_folder() {
     assert_eq!(names, vec!["op.lock".to_string(), "snapshot.pending".to_string()]);
     assert_eq!(fs::read_to_string(target.join("snapshot.pending")).unwrap(), "force");
 }
+
+#[test] // FIX-29, W§7.4 step 5: a dead pane reads an empty path; the stored cwd stays
+fn empty_pane_path_keeps_the_stored_cwd() {
+    let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);
+    let fake = Fake::new(
+        Some(ID),
+        vec![Ok(vec![
+            line(0, "main", 0, "%0", 0, 1, "kaaaaaaaa", ""),
+            line(0, "main", 0, "%1", 1, 0, "kbbbbbbbb", "/b"),
+            line(0, "main", 0, "%2", 2, 0, "", ""),
+        ])],
+    );
+    fake.opt("%2", "");
+    assert_eq!(run(&p, &fake, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
+    let ws = store.read().unwrap().unwrap();
+    // Kept, replaced, and a new pane with no stored entry stays empty.
+    assert_eq!(
+        ws.panes.iter().map(|x| x.cwd.clone()).collect::<Vec<_>>(),
+        [PathBuf::from("/srv/app"), PathBuf::from("/b"), PathBuf::new()]
+    );
+}
