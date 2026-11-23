@@ -26,7 +26,7 @@ use crate::drain::{self, Idle};
 use crate::identity::{valid_pane_key, valid_ws_id};
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer, MIN_VERSION};
-use crate::repair::repair;
+use crate::repair::{check_saved_socket, repair};
 use crate::snapshot::{self, SkipReason, SnapshotOutcome, OP_WAIT};
 use crate::state::{list_all, MemberRecord, MemberState, OpLock, Phase, StateError, Store, Subagent, Workspace};
 use crate::up::{self, not_owned, preflight, socket_is_private, unreachable, Exit};
@@ -982,6 +982,11 @@ impl Run<'_> {
                 return self.fail(1);
             }
         };
+        // FIX-29 round 2: the AU54 check of a saved socket that the repair uses, before any use (as `up`).
+        if let Err(e) = check_saved_socket(&ws) {
+            self.e(&e.to_string());
+            return self.fail(2);
+        }
         if let Some(sock) = &ws.tmux_socket
             && let Err(t) = socket_is_private(sock, true)
         {

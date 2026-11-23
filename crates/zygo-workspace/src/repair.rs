@@ -9,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail};
 
-use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer};
+use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnswer, UnsafePath};
 use crate::snapshot::OP_WAIT;
 use crate::state::{Pane, PaneKind, Phase, StateError, Store, Workspace};
 use crate::up::{
@@ -57,9 +57,19 @@ fn gone(store: &Store, mux: &dyn Multiplexer, ws: &Workspace) -> anyhow::Result<
     }
 }
 
+/// FIX-29 round 2 (AU54, AU67): the saved `tmux_socket` of a state that a repair would act on (any phase but `up` and
+/// `down`) must pass [`check_path`], as the read socket does in W§8.1 step 9, because the dead-pane lines quote it.
+/// The callers run it before any use of the socket (`socket_is_private`, the tmux calls); `repair` runs it again.
+pub(crate) fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {
+    match &ws.tmux_socket {
+        Some(s) if !matches!(ws.phase, Phase::Up | Phase::Down) => check_path(s).map(|_| ()),
+        _ => Ok(()),
+    }
+}
+
 /// Repairs the state of a dead `up` or `down` (W§8.1 step 5, D20). The caller holds `op.lock`. No state, or phase
 /// `up` or `down`, makes no tmux call. The AU96 and layout lines go to `err`. `Err` holds the text without the
-/// `zygo: ` prefix.
+/// `zygo: ` prefix, except a saved socket that fails AU54: that `Err` is [`UnsafePath`] itself, before any tmux call.
 pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn Write, err: &mut dyn Write) -> anyhow::Result<()> {
     let Some(ws) = store.read()? else {
         return Ok(());
@@ -67,6 +77,7 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
     if matches!(ws.phase, Phase::Up | Phase::Down) {
         return Ok(());
     }
+    check_saved_socket(&ws)?;
     let answer = mux.session_exists(&ws.tmux_session);
     if let SessionAnswer::Error { message } = &answer {
         bail!("tmux: {message}");

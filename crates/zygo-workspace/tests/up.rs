@@ -26,7 +26,7 @@ use zygo_core::Agent;
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::tmux::Tmux;
-use zygo_workspace::mux::Multiplexer;
+use zygo_workspace::mux::{Multiplexer, UnsafePath};
 use zygo_workspace::repair;
 use zygo_workspace::state::{
     BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Pending, Phase, Store, Subagent, Window, Workspace,
@@ -2386,4 +2386,48 @@ fn repair_holds_the_panes_it_creates_and_reports_them() {
     for w in ids.values().map(|(w, _)| *w).collect::<BTreeSet<u32>>() {
         assert_eq!(remain(&l, w), "off", "window {w}");
     }
+}
+
+/// FIX-29 round 2, finding 2: a state in phase `building` whose saved `tmux_socket` holds `'`.
+fn quoted_socket_state(t: &Path) -> (UpOpts, Store, PathBuf) {
+    let r = repo(t, "app");
+    let g = gone_tmux(t);
+    let o = opts(t, &r, &g, &t.join("zygo"));
+    let store = state_of(&o, &r);
+    let sock = t.join("so'ck").join("s");
+    saved(&store, &r, vec![win(0, None, "tiled", 200, 50)], vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &r)], vec![]);
+    set(&store, |ws| {
+        ws.phase = Phase::Building;
+        ws.tmux_socket = Some(sock.clone());
+    });
+    (o, store, sock)
+}
+
+#[test] // FIX-29 diff review round 2, finding 2, AU54: up refuses a saved socket with `'` before any use, as at step 9
+fn up_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (o, store, sock) = quoted_socket_state(t);
+    let before = raw(&store);
+    assert_eq!(run(&o), (2, String::new(), format!("{AU54}\n")));
+    assert_eq!(raw(&store), before);
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
+}
+
+#[test] // FIX-29 diff review round 2, finding 2, AU54: repair itself refuses the saved socket before any tmux call
+fn repair_refuses_a_saved_socket_that_holds_a_quote() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (o, store, sock) = quoted_socket_state(t);
+    let before = raw(&store);
+    let mux = up::server(&o.tmux, Some(&sock), None);
+    let (r, out, err) = repair_run(&store, &mux, &o.zygo);
+    let e = r.unwrap_err();
+    assert_eq!(e.downcast_ref::<UnsafePath>(), Some(&UnsafePath), "{e:#}");
+    assert_eq!((out.as_str(), err.as_str()), ("", ""));
+    assert_eq!(raw(&store), before);
+    assert!(tmux_log(t).is_empty(), "{:?}", tmux_log(t));
 }

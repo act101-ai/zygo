@@ -26,7 +26,7 @@ use crate::mux::{
     check_path, check_window_name, hook_command, parse_pane_line, session_target, window_target, HookScope, Multiplexer,
     MuxError, NewSession, NewWindow, SessionAnswer, Split, UnsafePath, MIN_VERSION,
 };
-use crate::repair::repair;
+use crate::repair::{check_saved_socket, repair};
 use crate::snapshot;
 use crate::state::{
     list_all, read_state_capped, BuildPlan, StateBytes, MemberRecord, MemberState, Pane, PaneKind, Phase, StateError, Store, Window, Workspace,
@@ -947,6 +947,8 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     let was_building = ws.as_ref().is_some_and(|w| w.phase == Phase::Building);
     let repaired = ws.as_ref().is_some_and(|w| !matches!(w.phase, Phase::Up | Phase::Down));
     if let Some(cur) = &ws {
+        // FIX-29 round 2: the AU54 check of a saved socket that the repair uses, before any use (as step 9).
+        check_saved_socket(cur).map_err(|e| Exit { code: 2, message: e.to_string() })?;
         if let Some(sock) = &cur.tmux_socket {
             socket_is_private(sock, true).map_err(|t| fail(format!("zygo: {t}")))?;
         }
