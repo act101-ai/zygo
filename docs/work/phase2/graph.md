@@ -94,8 +94,8 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | TODO | implementation | — |
 | FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks | FIX-21, H1 | TODO | implementation | — |
-| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23 | TODO | implementation | — |
-| FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | FIX-24 | TODO | implementation | — |
+| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-25 | TODO | implementation | — |
+| FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | TODO | implementation | — |
 
 ## Log
 
