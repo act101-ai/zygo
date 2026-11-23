@@ -1171,3 +1171,208 @@ fn forget_pane_failure_vanish_and_busy() {
     );
     up::testing::hook(store.dir(), "forget_pane_before_op_lock", None);
 }
+
+// ---- Round 2 ----
+
+/// Every entry below `dir` (and `dir` itself as ""), with its mode and, for a file, its bytes; sorted.
+fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, u32, Vec<u8>)> {
+    fn walk(root: &Path, at: &Path, out: &mut Vec<(PathBuf, u32, Vec<u8>)>) {
+        let m = fs::symlink_metadata(at).unwrap();
+        let bytes = if m.is_file() { fs::read(at).unwrap() } else { Vec::new() };
+        out.push((at.strip_prefix(root).unwrap().to_path_buf(), m.permissions().mode(), bytes));
+        if m.is_dir() {
+            for e in fs::read_dir(at).unwrap().flatten() {
+                walk(root, &e.path(), out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
+
+/// A folder `target` (mode 0755) that holds a readable state of `id` named `name` with member `kaaaaaaaa`, and a file
+/// `keep`; the state is made in the scratch state folder `<t>/scratch` and copied.
+fn state_target(t: &Path, target: &Path, id: &str, name: &str) {
+    let scratch = paths(&t.join("scratch"));
+    let store = ws_state(&scratch, id, name, &t.join("r").join(name), |ws| {
+        ws.members.insert("kaaaaaaaa".into(), member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")));
+    });
+    fs::create_dir_all(target).unwrap();
+    fs::copy(store.dir().join("workspace.json"), target.join("workspace.json")).unwrap();
+    fs::write(target.join("keep"), "k").unwrap();
+    fs::set_permissions(target, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::remove_dir_all(scratch.workspaces_dir().join(id)).unwrap();
+}
+
+fn link_line(id: &str) -> String { format!("zygo: the state folder of workspace {id} is a link; it is not changed\n") }
+
+#[test] // Round 2 item 1: a state folder that is a link is never opened, locked, written or chmod-ed
+fn a_state_folder_that_is_a_link() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    let target = t.join("target");
+    state_target(t, &target, ID, "app");
+    fs::create_dir_all(p.workspaces_dir()).unwrap();
+    let link = p.workspaces_dir().join(ID);
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let before = snapshot_tree(&target);
+
+    assert_eq!(pane_run(&p, &tmux, Some(ID), &plain, "kaaaaaaaa"), (1, String::new(), link_line(ID)));
+    assert_eq!(snapshot_tree(&target), before); // forget-pane writes nothing in the target
+    assert_eq!(forget_run(&p, &tmux, None, "app"), (1, String::new(), "zygo: no workspace named app\n".to_string()));
+    assert_eq!(snapshot_tree(&target), before);
+    assert_eq!(
+        forget_run(&p, &tmux, None, ID),
+        (0, format!("zygo: {} was a link, not a state folder; removed the link\n", link.display()), String::new())
+    );
+    assert!(fs::symlink_metadata(&link).is_err());
+    assert_eq!(snapshot_tree(&target), before); // mode, contents and files unchanged
+    assert!(!target.join("op.lock").exists() && !target.join("lock").exists());
+    assert!(admin::list(&p, &tmux).is_empty());
+
+    // By the checkout: the workspace id of the cwd names a link.
+    let r = repo(t, "own");
+    let own = workspace_id(&canon(&r.join(".git")));
+    let target2 = t.join("target2");
+    state_target(t, &target2, &own, "own");
+    std::os::unix::fs::symlink(&target2, p.workspaces_dir().join(&own)).unwrap();
+    let before2 = snapshot_tree(&target2);
+    assert_eq!(pane_run(&p, &tmux, None, &r, "kaaaaaaaa"), (1, String::new(), link_line(&own)));
+    assert_eq!(snapshot_tree(&target2), before2);
+}
+
+#[test] // Round 2 items 2 and 3: `forget` takes `op.lock` and `lock` before it deletes anything; the next `forget` sweeps an orphan cache
+fn forget_takes_both_locks_first_and_sweeps_orphan_caches() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let store = ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    result(&p, ID, "kaaaaaaaa");
+    let bytes = state_bytes(&p, ID);
+    let lock = hold(store.dir().join("lock")); // held for the whole 5 s wait: a fixed hold, not a race
+    assert_eq!(forget_run(&p, &tmux, None, "app"), (1, String::new(), "zygo: workspace app is busy; try again\n".to_string()));
+    drop(lock);
+    assert_eq!(state_bytes(&p, ID), bytes);
+    assert!(cache(&p, ID).join("results/kaaaaaaaa/r1").exists()); // nothing deleted, the cache included
+    assert_eq!(forget_run(&p, &tmux, None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+
+    // A writer makes the cache again for the forgotten id; an `up` that holds `op.lock` keeps its cache.
+    result(&p, ID, "kaaaaaaaa");
+    let o2 = p.workspaces_dir().join("2222222222222222");
+    fs::create_dir_all(&o2).unwrap();
+    let _held = Store::open(&p, "2222222222222222").op_lock().unwrap();
+    result(&p, "2222222222222222", "kaaaaaaaa");
+    ws_state(&p, OTHER, "other", &t.join("r/other"), |_| {});
+    result(&p, OTHER, "kbbbbbbbb");
+    assert!(admin::list(&p, &tmux).iter().all(|r| r.name == "other"));
+    assert!(cache(&p, ID).exists()); // `ls` is read-only: it removes no cache
+    assert_eq!(forget_run(&p, &tmux, None, "nosuch"), (1, String::new(), "zygo: no workspace named nosuch\n".to_string()));
+    assert!(!cache(&p, ID).exists()); // the next `forget` sweeps it
+    assert!(cache(&p, "2222222222222222").join("results/kaaaaaaaa/r1").exists());
+    assert!(cache(&p, OTHER).join("results/kbbbbbbbb/r1").exists());
+}
+
+#[test] // Round 2 item 4: each part of the cache path is checked; a link in the middle is refused, a link at the end removed as a link
+fn forget_pane_checks_each_part_of_the_cache_path() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, r, id, store, .. } = pane_setup();
+    let t = td.path();
+    let refused = |path: &Path| {
+        (1, String::new(), format!("zygo: cannot forget pane kbbbbbbbb of app: {} is a link; it is not followed\n", path.display()))
+    };
+    // A link at <id>.
+    let outside = t.join("outside");
+    fs::create_dir_all(outside.join("results/kbbbbbbbb")).unwrap();
+    fs::write(outside.join("results/kbbbbbbbb/r1"), "r").unwrap();
+    let real = t.join("real-cache");
+    fs::rename(cache(&p, &id), &real).unwrap();
+    std::os::unix::fs::symlink(&outside, cache(&p, &id)).unwrap();
+    let before = snapshot_tree(&outside);
+    assert_eq!(pane_run(&p, &tmux, None, &r, "kbbbbbbbb"), refused(&cache(&p, &id)));
+    assert_eq!(snapshot_tree(&outside), before);
+    assert!(store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb")); // nothing written
+    fs::remove_file(cache(&p, &id)).unwrap();
+    fs::rename(&real, cache(&p, &id)).unwrap();
+
+    // A link at results.
+    let results = cache(&p, &id).join("results");
+    let real_results = t.join("real-results");
+    fs::rename(&results, &real_results).unwrap();
+    std::os::unix::fs::symlink(outside.join("results"), &results).unwrap();
+    assert_eq!(pane_run(&p, &tmux, None, &r, "kbbbbbbbb"), refused(&results));
+    assert_eq!(snapshot_tree(&outside), before);
+    assert!(store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb"));
+    fs::remove_file(&results).unwrap();
+    fs::rename(&real_results, &results).unwrap();
+
+    // A link at <key>: removed as a link.
+    fs::remove_dir_all(results.join("kbbbbbbbb")).unwrap();
+    std::os::unix::fs::symlink(outside.join("results/kbbbbbbbb"), results.join("kbbbbbbbb")).unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(results.join("kbbbbbbbb")).is_err());
+    assert_eq!(snapshot_tree(&outside), before);
+}
+
+#[test] // Round 2 item 5: with no tmux, `forget` still runs the AU62 check of the socket
+fn forget_without_tmux_checks_the_socket() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let open = t.join("open");
+    fs::create_dir_all(&open).unwrap();
+    fs::set_permissions(&open, fs::Permissions::from_mode(0o755)).unwrap();
+    let sock = open.join("s");
+    ws_state(&p, ID, "app", &t.join("r/app"), |ws| {
+        ws.phase = Phase::Up;
+        ws.tmux_socket = Some(sock.clone());
+    });
+    let bytes = state_bytes(&p, ID);
+    assert_eq!(
+        forget_run(&p, &t.join("none"), None, "app"),
+        (1, String::new(), format!(
+            "zygo: tmux socket {} is not private: the socket and its folder must be yours and the folder must have mode 0700\n",
+            sock.display()
+        ))
+    );
+    assert_eq!(state_bytes(&p, ID), bytes);
+}
+
+#[test] // Round 2 item 6: W8 reads at most 1 MiB of a state file; a larger file is invalid
+fn a_state_file_over_1_mib_is_invalid() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    let store = ws_state(&p, ID, "big", &t.join("r/big"), |ws| {
+        ws.members.insert("kaaaaaaaa".into(), member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")));
+    });
+    let file = store.dir().join("workspace.json");
+    let mut v: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    v["pad"] = json!("x".repeat(2 * 1024 * 1024));
+    fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
+    let bytes = fs::read(&file).unwrap();
+    let too_large = repair_line(ID, "state file too large");
+    assert_eq!(forget_run(&p, &tmux, None, ID), (1, String::new(), too_large.clone())); // by id
+    assert_eq!(forget_run(&p, &tmux, None, "big"), (1, String::new(), too_large)); // by name
+    assert_eq!(
+        pane_run(&p, &tmux, Some("big"), &plain, "kaaaaaaaa"),
+        (1, String::new(), format!("zygo: {}: state file too large\n", file.display()))
+    );
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+}

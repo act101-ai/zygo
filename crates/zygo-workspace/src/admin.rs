@@ -31,6 +31,51 @@ const WS_OPTION: &str = "@zygo-ws";
 const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update";
 const NO_STATUS: &str = "no workspace for this session or folder";
 const NO_FOLDER: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --name";
+/// The largest state file that W8 reads (Round 2 R6).
+const STATE_MAX: u64 = 1024 * 1024;
+const TOO_LARGE: &str = "state file too large";
+
+/// What `symlink_metadata` says of a path; a link is never followed (Round 2 R1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Real,
+    Link,
+    Missing,
+    /// A file or another entry that is not a folder, or a path that cannot be read.
+    Other,
+}
+
+fn kind(path: &Path) -> Kind {
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => Kind::Link,
+        Ok(m) if m.is_dir() => Kind::Real,
+        Ok(_) => Kind::Other,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Kind::Missing,
+        Err(_) => Kind::Other,
+    }
+}
+
+/// The kind of the state folder of `id`.
+fn state_kind(paths: &Paths, id: &str) -> Kind { kind(&paths.workspaces_dir().join(id)) }
+
+/// Whether `workspace.json` of `dir` is larger than [`STATE_MAX`].
+fn too_large(dir: &Path) -> bool { fs::metadata(dir.join("workspace.json")).is_ok_and(|m| m.len() > STATE_MAX) }
+
+/// [`Store::read`] with the cap of [`STATE_MAX`]: a larger file is `Invalid` with `state file too large` (Round 2 R6).
+fn read_capped(store: &Store) -> Result<Option<Workspace>, StateError> {
+    if too_large(store.dir()) {
+        return Err(StateError::Invalid { path: store.dir().join("workspace.json"), reason: TOO_LARGE.into() });
+    }
+    store.read()
+}
+
+/// The JSON of `workspace.json` of `dir`, read only when it is at most [`STATE_MAX`].
+fn raw_json(dir: &Path) -> Option<serde_json::Value> {
+    if too_large(dir) {
+        return None;
+    }
+    fs::read(dir.join("workspace.json")).ok().and_then(|b| serde_json::from_slice(&b).ok())
+}
 
 /// The state column of `ls` (W§12, D8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,7 +347,12 @@ pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyh
             (workspace_id(&co.common_dir), false)
         }
     };
-    let ws = match Store::open(paths, &id).read() {
+    // Round 2 R1: a state folder that is a link is no state; it is not opened.
+    let read = match state_kind(paths, &id) {
+        Kind::Real => read_capped(&Store::open(paths, &id)),
+        _ => Ok(None),
+    };
+    let ws = match read {
         Ok(Some(ws)) => ws,
         Ok(None) if by_env => bail!("no workspace with id {id}"),
         Ok(None) => bail!(NO_STATUS),
@@ -333,26 +383,67 @@ fn remove_tree(path: &Path) -> std::io::Result<()> {
 /// The folder name a state directory is renamed to before it is removed (D16, D26).
 fn tombstone(paths: &Paths, id: &str) -> PathBuf { paths.workspaces_dir().join(format!(".forget-{id}-{}", std::process::id())) }
 
-/// D26: removes the folders that an earlier `forget` left (`.forget-*`) and the state directories with no
-/// `workspace.json` whose `op.lock` and `lock` are free. Every error is ignored: the next `forget` tries again.
-fn sweep(paths: &Paths) {
-    let Ok(entries) = fs::read_dir(paths.workspaces_dir()) else {
-        return;
+/// The entries of `dir` with their names and whether each is a real folder (a link is not followed).
+fn entries_of(dir: &Path) -> Vec<(String, PathBuf, bool)> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
     };
-    let entries: Vec<(String, PathBuf, bool)> = entries
+    entries
         .flatten()
         .filter_map(|e| {
             let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
             e.file_name().into_string().ok().map(|n| (n, e.path(), is_dir))
         })
-        .collect();
-    for (name, path, is_dir) in entries {
+        .collect()
+}
+
+/// Whether `dir` holds no `workspace.json`.
+fn no_state(dir: &Path) -> bool {
+    matches!(fs::symlink_metadata(dir.join("workspace.json")), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+}
+
+/// D26 and Round 2 R2: removes the folders that an earlier `forget` left (`.forget-*`), the state directories with no
+/// `workspace.json` whose `op.lock` and `lock` are free, and the results caches of ids that have no state folder (none,
+/// or a link or file in its place) or a state folder with no `workspace.json` whose locks are free. A link is never
+/// followed, opened or locked. Every error is ignored: the next `forget` tries again.
+fn sweep(paths: &Paths) {
+    sweep_states(paths);
+    for (name, path, _) in entries_of(&paths.workspace_cache_dir()) {
+        if !valid_ws_id(&name) {
+            continue;
+        }
+        let state = paths.workspaces_dir().join(&name);
+        match kind(&state) {
+            Kind::Missing | Kind::Link => {
+                let _ = remove_tree(&path);
+            }
+            Kind::Other if fs::symlink_metadata(&state).is_ok() => {
+                let _ = remove_tree(&path);
+            }
+            Kind::Real if no_state(&state) => {
+                let Ok(_op) = Store::open(paths, &name).op_lock() else {
+                    continue;
+                };
+                let Ok(Some(_lock)) = lock_file(&state.join("lock"), Duration::ZERO) else {
+                    continue;
+                };
+                if no_state(&state) {
+                    let _ = remove_tree(&path);
+                }
+            }
+            Kind::Real | Kind::Other => {}
+        }
+    }
+}
+
+/// The state-folder part of [`sweep`] (D26).
+fn sweep_states(paths: &Paths) {
+    for (name, path, is_dir) in entries_of(&paths.workspaces_dir()) {
         if name.starts_with(".forget-") {
             let _ = remove_tree(&path);
             continue;
         }
-        let no_state = || matches!(fs::symlink_metadata(path.join("workspace.json")), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
-        if !is_dir || !valid_ws_id(&name) || !no_state() {
+        if !is_dir || !valid_ws_id(&name) || !no_state(&path) {
             continue;
         }
         let Ok(_op) = Store::open(paths, &name).op_lock() else {
@@ -361,7 +452,7 @@ fn sweep(paths: &Paths) {
         let Ok(Some(_lock)) = lock_file(&path.join("lock"), Duration::ZERO) else {
             continue;
         };
-        if !no_state() {
+        if !no_state(&path) {
             continue;
         }
         let tomb = tombstone(paths, &name);
@@ -374,27 +465,44 @@ fn sweep(paths: &Paths) {
 /// The workspace that `forget` or `forget-pane` names (D14).
 enum Found {
     Readable(Box<Workspace>),
-    /// A state that does not parse or fails AU84, by its id.
+    /// A state that does not parse, fails AU84 or is larger than 1 MiB, by its id.
     Invalid(String),
+    /// `<workspaces_dir>/<id>` is a symbolic link, not a state folder (Round 2 R1).
+    Link(String),
 }
 
 /// D14: the id first, then the readable states by name, then a newer state by its JSON `name`. `for_pane` gives the
 /// `forget-pane` form of the line for a shared name.
 fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
     let fail = |message: String| Exit { code: 1, message };
-    if valid_ws_id(arg) && paths.workspaces_dir().join(arg).is_dir() {
-        match Store::open(paths, arg).read() {
-            Ok(Some(ws)) => return Ok(Found::Readable(Box::new(ws))),
-            Ok(None) => {}
-            Err(StateError::Newer { .. }) => return Err(fail(NEWER.into())),
-            Err(_) => return Ok(Found::Invalid(arg.to_string())),
+    if valid_ws_id(arg) {
+        match state_kind(paths, arg) {
+            Kind::Link => return Ok(Found::Link(arg.to_string())),
+            Kind::Real => match read_capped(&Store::open(paths, arg)) {
+                Ok(Some(ws)) => return Ok(Found::Readable(Box::new(ws))),
+                Ok(None) => {}
+                Err(StateError::Newer { .. }) => return Err(fail(NEWER.into())),
+                Err(_) => return Ok(Found::Invalid(arg.to_string())),
+            },
+            Kind::Missing | Kind::Other => {}
         }
     }
     let all = list_all(paths);
-    let mut named: Vec<&Workspace> = all.iter().filter_map(|(_, r)| r.as_ref().ok().filter(|w| w.name == arg)).collect();
+    // Round 2 R1: only a real state folder is a candidate (as `list_all` and `sweep` count them).
+    let mut named: Vec<&Workspace> = all
+        .iter()
+        .filter_map(|(_, r)| r.as_ref().ok().filter(|w| w.name == arg))
+        .filter(|w| state_kind(paths, &w.id) == Kind::Real)
+        .collect();
     match named.len() {
         0 => {}
-        1 => return Ok(Found::Readable(Box::new(named.remove(0).clone()))),
+        1 => {
+            let ws = named.remove(0);
+            if too_large(&paths.workspaces_dir().join(&ws.id)) {
+                return Ok(Found::Invalid(ws.id.clone()));
+            }
+            return Ok(Found::Readable(Box::new(ws.clone())));
+        }
         _ => {
             let tail = if for_pane {
                 "run in its checkout".to_string()
@@ -405,12 +513,13 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
             return Err(fail(format!("zygo: more than one workspace has the name {}; {tail}", esc(arg))));
         }
     }
-    for (_, r) in &all {
-        let Err(StateError::Newer { path }) = r else { continue };
-        let name = fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string));
+    for (id, r) in &all {
+        let Err(StateError::Newer { .. }) = r else { continue };
+        let dir = paths.workspaces_dir().join(id);
+        if kind(&dir) != Kind::Real {
+            continue;
+        }
+        let name = raw_json(&dir).and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string));
         if name.as_deref() == Some(arg) {
             return Err(fail(NEWER.into()));
         }
@@ -439,16 +548,23 @@ fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -
     let (id, first_label) = match &found {
         Found::Readable(ws) => (ws.id.clone(), ws.name.clone()),
         Found::Invalid(id) => (id.clone(), id.clone()),
+        Found::Link(id) => return forget_link(paths, id),
     };
     let store = Store::open(paths, &id);
     fire(store.dir(), "forget_before_op_lock").map_err(|e| format!("zygo: cannot forget {first_label}: {e}"))?;
+    // Round 2 R1: `op_lock` creates and chmods its folder, so the folder is checked again right before it.
+    match state_kind(paths, &id) {
+        Kind::Real => {}
+        Kind::Link => return forget_link(paths, &id),
+        Kind::Missing | Kind::Other => return Err(format!("zygo: no workspace named {}", esc(arg))),
+    }
     let op = match store.op_lock() {
         Ok(l) => l,
         Err(StateError::OpHeld) => return Err(format!("zygo: up or down is in progress for {first_label}")),
         Err(e) => return Err(format!("zygo: {e}")),
     };
     // D15: the state again under `op.lock`.
-    let label = match store.read() {
+    let label = match read_capped(&store) {
         Ok(None) => return Err(format!("zygo: no workspace named {}", esc(arg))),
         Err(StateError::Newer { .. }) => return Err(NEWER.into()),
         Ok(Some(ws)) => {
@@ -463,6 +579,20 @@ fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -
     remove(paths, &store, &id, &label, op)
 }
 
+/// Round 2 R1: `<workspaces_dir>/<id>` is a link: it is removed as a link (an unlink of the link itself, after one more
+/// `symlink_metadata` right before), and nothing it points to is opened, locked, written or changed.
+fn forget_link(paths: &Paths, id: &str) -> Result<String, String> {
+    let link = paths.workspaces_dir().join(id);
+    match kind(&link) {
+        Kind::Link => fs::remove_file(&link).map_err(|e| format!("zygo: cannot forget {id}: {e}"))?,
+        Kind::Missing => return Err(format!("zygo: no workspace named {id}")),
+        Kind::Real | Kind::Other => {
+            return Err(format!("zygo: cannot forget {id}: {} changed during the check; try again", link.display()));
+        }
+    }
+    Ok(format!("zygo: {} was a link, not a state folder; removed the link", link.display()))
+}
+
 /// Whether no tmux can run here: then no session exists, and the session check is skipped (D15, D17).
 fn no_tmux(tmux: &Path) -> bool { matches!(Tmux::new(tmux.to_path_buf(), None).version(), Err(MuxError::Spawn { .. })) }
 
@@ -471,14 +601,15 @@ fn check_readable(store: &Store, ws: &Workspace, tmux: &Path, tmux_env: Option<&
     if let Some(key) = store.live_launcher(ws) {
         return Err(format!("zygo: {} has a live agent launcher (pane {key}); it is not forgotten", ws.name));
     }
-    if no_tmux(tmux) {
-        return Ok(());
-    }
+    // Round 2 R5: the AU62 check runs also when no tmux can run, as in `check_invalid`.
     if let Some(sock) = &ws.tmux_socket {
         if parent_missing(sock) {
             return Ok(());
         }
         socket_is_private(sock, false).map_err(|t| format!("zygo: {t}"))?;
+    }
+    if no_tmux(tmux) {
+        return Ok(());
     }
     let mux = server(tmux, ws.tmux_socket.as_deref(), tmux_env);
     match mux.session_exists(&ws.tmux_session) {
@@ -499,10 +630,11 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
             "zygo: workspace {id} not forgotten: {reason}; its state cannot be read, so repair it with zygo up --reset in its checkout"
         )
     };
-    let v: serde_json::Value = fs::read(store.dir().join("workspace.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or(serde_json::Value::Null);
+    // Round 2 R6: a file over 1 MiB is not read, so no check can run on it.
+    if too_large(store.dir()) {
+        return Err(refuse(TOO_LARGE));
+    }
+    let v = raw_json(store.dir()).unwrap_or(serde_json::Value::Null);
     let Some(name) = v.get("name").and_then(|n| n.as_str()).filter(|n| valid_name(n)) else {
         return Err(refuse("it has no valid name"));
     };
@@ -532,18 +664,18 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
     }
 }
 
-/// D16: the results cache, then the state directory, renamed out of the workspace list under `op.lock` and `lock`,
-/// then removed.
+/// D16 and Round 2 R2: `lock` is taken (with `op.lock` held) before anything is deleted; then, under both locks, the
+/// results cache, then the state directory, renamed out of the workspace list, then removed.
 fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Result<String, String> {
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget {label}: {e}");
-    let cache = paths.workspace_cache_dir().join(id);
-    remove_tree(&cache).map_err(|e| cannot(&format!("{}: {e}", cache.display())))?;
-    fire(store.dir(), "forget_before_state").map_err(|e| cannot(&e))?;
     let lock = match lock_file(&store.dir().join("lock"), snapshot::OP_WAIT) {
         Ok(Some(f)) => f,
         Ok(None) => return Err(format!("zygo: workspace {label} is busy; try again")),
         Err(e) => return Err(cannot(&e)),
     };
+    let cache = paths.workspace_cache_dir().join(id);
+    remove_tree(&cache).map_err(|e| cannot(&format!("{}: {e}", cache.display())))?;
+    fire(store.dir(), "forget_before_state").map_err(|e| cannot(&e))?;
     let tomb = tombstone(paths, id);
     fs::rename(store.dir(), &tomb).map_err(|e| cannot(&e))?;
     drop(lock);
@@ -576,18 +708,26 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         return Err(format!("zygo: invalid pane key {}", esc(key)));
     }
     let not_found = || name.map_or_else(|| NO_FOLDER.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
+    let link = |id: &str| format!("zygo: the state folder of workspace {id} is a link; it is not changed");
     let ws = match name {
         Some(n) => match find(paths, n, true).map_err(|e| e.message)? {
             Found::Readable(ws) => *ws,
-            Found::Invalid(id) => match Store::open(paths, &id).read() {
+            Found::Invalid(id) => match read_capped(&Store::open(paths, &id)) {
                 Ok(Some(ws)) => ws,
                 Ok(None) => return Err(not_found()),
                 Err(e) => return Err(format!("zygo: {e}")),
             },
+            Found::Link(id) => return Err(link(&id)),
         },
         None => {
             let (co, _, _) = find_checkout(cwd, GIT_BOUND).map_err(|_| NO_FOLDER.to_string())?;
-            match Store::open(paths, &workspace_id(&co.common_dir)).read() {
+            let id = workspace_id(&co.common_dir);
+            match state_kind(paths, &id) {
+                Kind::Real => {}
+                Kind::Link => return Err(link(&id)),
+                Kind::Missing | Kind::Other => return Err(NO_FOLDER.into()),
+            }
+            match read_capped(&Store::open(paths, &id)) {
                 Ok(Some(ws)) => ws,
                 Ok(None) => return Err(NO_FOLDER.into()),
                 Err(StateError::Newer { .. }) => return Err(NEWER.into()),
@@ -599,19 +739,25 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget pane {key} of {label}: {e}");
     let store = Store::open(paths, &id);
     fire(store.dir(), "forget_pane_before_op_lock").map_err(|e| cannot(&e))?;
+    // Round 2 R1: `op_lock` creates and chmods its folder, so the folder is checked again right before it.
+    match state_kind(paths, &id) {
+        Kind::Real => {}
+        Kind::Link => return Err(link(&id)),
+        Kind::Missing | Kind::Other => return Err(not_found()),
+    }
     let _op = match store.op_lock() {
         Ok(l) => l,
         Err(StateError::OpHeld) => return Err(format!("zygo: up or down is in progress for {label}")),
         Err(e) => return Err(format!("zygo: {e}")),
     };
-    let cur = match store.read() {
+    let cur = match read_capped(&store) {
         Ok(Some(ws)) => ws,
         Ok(None) => return Err(not_found()),
         Err(StateError::Newer { .. }) => return Err(NEWER.into()),
         Err(e) => return Err(format!("zygo: {e}")),
     };
-    let results = paths.workspace_cache_dir().join(&id).join("results").join(key);
-    let has_cache = fs::symlink_metadata(&results).is_ok();
+    // Round 2 R4: a link in the middle of the cache path refuses before anything is written.
+    let has_cache = pane_cache(paths, &id, key).map_err(|r| cannot(&r))?.is_some();
     if cur.members.contains_key(key) {
         // D18-D20: the live check under `lock`, on the record as read there; the record and `panes[].kind` in one write.
         let mut live = false;
@@ -648,6 +794,32 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         return Err(format!("zygo: {label} has no member record for pane {key}"));
     }
     fire(store.dir(), "forget_pane_before_cache").map_err(|e| cannot(&e))?;
-    remove_tree(&results).map_err(|e| cannot(&format!("{}: {e}", results.display())))?;
+    if let Some(results) = pane_cache(paths, &id, key).map_err(|r| cannot(&r))? {
+        remove_tree(&results).map_err(|e| cannot(&format!("{}: {e}", results.display())))?;
+    }
     Ok(format!("zygo: forgot pane {key} of {label}"))
+}
+
+/// Round 2 R4: the results cache `<workspace_cache_dir>/<id>/results/<key>` of one pane, each part below
+/// `workspace_cache_dir()` checked with `symlink_metadata`. `Ok(Some(path))` when `<key>` exists (a link there is
+/// removed as a link); `Ok(None)` when a part is missing or is not a folder; `Err(reason)` for a link at `<id>` or
+/// `results` (it is not followed) or a part that cannot be read.
+fn pane_cache(paths: &Paths, id: &str, key: &str) -> Result<Option<PathBuf>, String> {
+    let mut at = paths.workspace_cache_dir();
+    for part in [id, "results"] {
+        at = at.join(part);
+        match fs::symlink_metadata(&at) {
+            Ok(m) if m.file_type().is_symlink() => return Err(format!("{} is a link; it is not followed", at.display())),
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("{}: {e}", at.display())),
+        }
+    }
+    let entry = at.join(key);
+    match fs::symlink_metadata(&entry) {
+        Ok(_) => Ok(Some(entry)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", entry.display())),
+    }
 }
