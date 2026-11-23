@@ -891,3 +891,24 @@ fn valid_session_ids() {
         assert!(!valid_session_id(bad), "{bad}");
     }
 }
+
+#[test] // FIX-24 D1, W§7.2 member.launch.events_off: absent when false, an old file reads false, never in `extra`
+fn launch_events_off_defaults_to_false_and_is_left_out_when_false() {
+    let on: Launch = serde_json::from_value(json!({"kind": "opencode", "events_off": true})).unwrap();
+    assert!(on.events_off);
+    assert!(on.extra.is_empty(), "the key must not land in extra: {:?}", on.extra);
+    let old: Launch = serde_json::from_value(json!({"kind": "opencode"})).unwrap();
+    assert!(!old.events_off, "an old file reads false");
+    assert!(serde_json::to_value(Launch::new(Agent::OpenCode)).unwrap().get("events_off").is_none());
+    let mut l = Launch::new(Agent::OpenCode);
+    l.events_off = true;
+    assert_eq!(serde_json::to_value(&l).unwrap()["events_off"], json!(true));
+    let t = TempDir::new().unwrap();
+    let paths = paths(t.path());
+    let store = Store::open(&paths, ID);
+    store.update(S5, &mut identity).unwrap();
+    let mut m = MemberRecord::new(Agent::OpenCode);
+    m.launch.events_off = true;
+    store.update(S5, &mut |ws| { ws.members.insert(KEY.into(), m.clone()); Ok(()) }).unwrap();
+    assert!(store.read().unwrap().unwrap().members[KEY].launch.events_off);
+}

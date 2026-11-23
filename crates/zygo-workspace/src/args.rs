@@ -145,6 +145,10 @@ struct Walk {
     occurrences: Vec<Occurrence>,
     /// One label per removal, in token order (FIX-27 D8): a table flag name, `<positional>`, `--` or `<after -->`.
     labels: Vec<String>,
+    /// The first positional token before --, as typed (FIX-24).
+    first_positional: Option<String>,
+    /// The name (before any =) of each long flag before -- that is not in the table, in order (FIX-24).
+    unlisted: Vec<String>,
 }
 
 /// One table flag that the walk met before `--`. No `Debug`: `values` can hold prompt text.
@@ -270,6 +274,9 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
         if token == "-" || !token.starts_with('-') {
             out.removed.push(token.clone());
             out.labels.push("<positional>".to_string());
+            if out.first_positional.is_none() {
+                out.first_positional = Some(token.clone());
+            }
             continue;
         }
         let token_at = next - 1;
@@ -281,6 +288,7 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
             };
             let Some(flag) = lookup(table, name) else {
                 out.kept.push(token.clone());
+                out.unlisted.push(name.to_string());
                 continue;
             };
             let start = next;
@@ -379,6 +387,25 @@ pub fn removed_labels(agent: Agent, args: &[String], base: &Path) -> Vec<String>
 /// flag values and `--` count as they do there.
 pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
     walk(agent, args, None).session
+}
+
+/// W§7.2 member.launch.events_off (FIX-24, AU26): the agent of a start with `args` sends no member events, by the same
+/// walk as [filter]: Claude Code `--bare`; OpenCode `--pure`, the subcommand `attach`, or the subcommand `run` with
+/// `--attach`. A flag value and a token after `--` count as nothing.
+pub fn events_off(agent: Agent, args: &[String]) -> bool {
+    let w = walk(agent, args, None);
+    match agent {
+        Agent::ClaudeCode => w.occurrences.iter().any(|o| o.name == "--bare"),
+        Agent::OpenCode => {
+            let has = |n: &str| w.unlisted.iter().any(|u| u == n);
+            has("--pure")
+                || match w.first_positional.as_deref() {
+                    Some("attach") => true,
+                    Some("run") => has("--attach"),
+                    _ => false,
+                }
+        }
+    }
 }
 
 /// Whether `token` (its text before any `=`) is a flag of the table of `agent` (FIX-27 review round 3: the flag after a

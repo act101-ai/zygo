@@ -381,13 +381,15 @@ pub(crate) struct Start {
     pub program: PathBuf,
 }
 
-/// The start write (AU92): the AU30-filtered `launch`, `dropped_flags` (D4: the stored list stays when the filtered
-/// launch equals the stored one, else the filter's list replaces it), `pending`, `config_dir` and `program`. Nothing
-/// else changes.
+/// The start write (AU92): the AU30-filtered launch with events_off computed from the arguments of this start (W§7.2),
+/// `dropped_flags` (D4: the stored list stays when the filtered launch equals the stored one, else the filter's list
+/// replaces it), `pending`, `config_dir` and `program`. Nothing else changes.
 pub(crate) fn record_start(rec: &mut MemberRecord, launch: &zygo_workspace::state::Launch, s: &Start) {
     let f = args::filter(launch.kind, &launch.args);
     let mut kept = launch.clone();
     kept.args = f.kept;
+    // FIX-24 D1: from the arguments of this start, before the filter; always computed, so no stale value stays.
+    kept.events_off = args::events_off(launch.kind, &launch.args);
     if kept != rec.launch {
         rec.dropped_flags = f.dropped_flags;
     }
@@ -756,7 +758,8 @@ pub(crate) fn conflict(
 /// The one start write of a hand start (D2, W§8.4), in the closure of the callback's locked write: the phase must be
 /// `up` or `draining`; then [`conflict`]; then the record of `key` is kept for the accepted resume (`own` is its
 /// `agent_session` and its kind is the launch's kind) and replaced by a new one otherwise; then state `running`, and
-/// [`record_start_fields`] for a kept record (its saved launch stays) or [`record_start`] for a new one; then `own`
+/// [`record_start_fields`] for a kept record (its saved launch stays, except launch.events_off, which the typed
+/// arguments of this start give, W§7.2) or [`record_start`] for a new one; then `own`
 /// becomes `pending.agent_session` when the start has no pre-assign (W-C9). An `Err` holds the reason, with `ws`
 /// unchanged.
 pub(crate) fn join(
@@ -779,6 +782,8 @@ pub(crate) fn join(
     if keep {
         // The accepted resume keeps the saved launch (review round 2, finding 6(b)).
         record_start_fields(rec, start);
+        // FIX-24 D1: the saved launch stays; events_off describes the arguments typed for this start.
+        rec.launch.events_off = args::events_off(launch.kind, &launch.args);
     } else {
         record_start(rec, launch, start);
     }
@@ -1425,6 +1430,69 @@ mod tests {
         join(&mut w, k, &hand, &Start { agent_session: None, ..start() }, Some("abc"), &none).unwrap();
         let m = &w.members[k];
         assert_eq!((m.launch.kind, m.agent_session.clone(), m.overrides.clone()), (Agent::ClaudeCode, None, None));
+    }
+
+    #[test] // FIX-24 D1, W§7.2: events_off comes from the arguments of the start that runs, before the AU30 filter
+    fn record_start_sets_events_off_from_the_arguments_of_this_start() {
+        use Agent::{ClaudeCode, OpenCode};
+        let cases: [(Agent, &[&str], bool, &[&str]); 6] = [
+            (OpenCode, &["attach", "http://h"], true, &[]),
+            (OpenCode, &["run", "--attach", "http://h"], true, &["--attach"]),
+            (OpenCode, &["--pure"], true, &["--pure"]),
+            (OpenCode, &["--prompt", "attach"], false, &[]),
+            (ClaudeCode, &["--bare"], true, &["--bare"]),
+            (ClaudeCode, &["attach"], false, &[]),
+        ];
+        for (kind, a, want_off, want_args) in cases {
+            let mut r = MemberRecord::new(kind);
+            let mut l = Launch::new(kind);
+            l.args = a.iter().map(|s| s.to_string()).collect();
+            record_start(&mut r, &l, &start());
+            assert_eq!((r.launch.events_off, r.launch.args.clone()), (want_off, want_args.iter().map(|s| s.to_string()).collect::<Vec<_>>()), "{kind:?} {a:?}");
+            // The `ws run` start of the saved launch: the TUI runs for a saved `attach` or `run --attach` (P12).
+            let saved = r.launch.clone();
+            record_start(&mut r, &saved, &start());
+            assert_eq!(r.launch.events_off, args::events_off(kind, &saved.args), "ws run start of {kind:?} {a:?}");
+            let want_restart = matches!(a.first().copied(), Some("--pure") | Some("--bare"));
+            assert_eq!(r.launch.events_off, want_restart, "ws run start of {kind:?} {a:?}");
+        }
+    }
+
+    #[test] // FIX-24 D1, D5: a value that another zygo left is computed again at the start
+    fn record_start_computes_events_off_again_over_a_stale_value() {
+        let l: Launch = serde_json::from_value(serde_json::json!({"kind": "opencode", "events_off": true})).unwrap();
+        let mut r = MemberRecord::new(Agent::OpenCode);
+        record_start(&mut r, &l, &start());
+        assert!(!r.launch.events_off);
+        assert!(serde_json::to_value(&r.launch).unwrap().get("events_off").is_none());
+    }
+
+    #[test] // FIX-24 D1, AU94, W§8.4: the accepted resume keeps the saved launch; events_off follows the typed arguments
+    fn join_sets_events_off_from_the_typed_arguments_of_an_accepted_resume() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        fn oc_saved(args: &[&str], off: bool) -> MemberRecord {
+            let mut r = MemberRecord::new(Agent::OpenCode);
+            r.state = MemberState::Resumable;
+            r.agent_session = Some("ses_1".into());
+            r.zygo_session = Some("01JZZZZZZZZZZZZZZZZZZZZZZZ".into());
+            r.launch.args = args.iter().map(|s| s.to_string()).collect();
+            r.launch.events_off = off;
+            r
+        }
+        let mut hand = Launch::new(Agent::OpenCode);
+        // Typed --pure at the resume of a member saved without it.
+        let mut w = ws_with(&[(k, oc_saved(&["--model", "m"], false))]);
+        hand.args = vec!["--pure".into(), "--session".into(), "ses_1".into()];
+        join(&mut w, k, &hand, &Start { agent_session: None, ..start() }, Some("ses_1"), &none).unwrap();
+        assert!(w.members[k].launch.events_off, "typed --pure");
+        assert_eq!(w.members[k].launch.args, ["--model", "m"], "the saved launch stays");
+        // The reverse: a member saved with --pure, resumed by hand without it.
+        let mut w = ws_with(&[(k, oc_saved(&["--pure"], true))]);
+        hand.args = vec!["--session".into(), "ses_1".into()];
+        join(&mut w, k, &hand, &Start { agent_session: None, ..start() }, Some("ses_1"), &none).unwrap();
+        assert!(!w.members[k].launch.events_off, "no typed --pure");
+        assert_eq!(w.members[k].launch.args, ["--pure"], "the saved launch stays; a later ws run start computes true from it");
     }
 
     /// A saved launch with every value that changes a launch (AU45, AU61).

@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, removable, removed_labels, session_flags, Filtered};
+use zygo_workspace::args::{bypass_flags, events_off, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, removable, removed_labels, session_flags, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -517,5 +517,44 @@ fn removed_labels_are_empty_only_when_nothing_is_removed() {
         for label in &labels {
             assert!(label_shape(label, a), "{label} for {a:?}");
         }
+    }
+}
+
+#[test] // FIX-24 D2, W§7.2 member.launch.events_off: by the walk of `filter`; a flag value and a token after `--` count as nothing
+fn events_off_follows_the_walk_of_filter() {
+    let on: &[(Agent, &[&str])] = &[
+        (Agent::OpenCode, &["--pure"]),
+        (Agent::OpenCode, &["--pure=true"]),
+        (Agent::OpenCode, &["--model", "m", "--pure"]),
+        (Agent::OpenCode, &["attach", "http://h"]),
+        (Agent::OpenCode, &["--log-level", "DEBUG", "attach", "http://h"]),
+        (Agent::OpenCode, &["attach", "--pure", "http://h"]),
+        (Agent::OpenCode, &["run", "--attach", "http://h"]),
+        (Agent::OpenCode, &["run", "--attach=http://h"]),
+        (Agent::OpenCode, &["run", "x", "--attach", "http://h"]),
+        (Agent::ClaudeCode, &["--bare"]),
+        (Agent::ClaudeCode, &["--model", "m", "--bare"]),
+    ];
+    for &(agent, a) in on {
+        assert!(events_off(agent, &s(a)), "events off: {agent:?} {a:?}");
+    }
+    let off: &[(Agent, &[&str])] = &[
+        (Agent::OpenCode, &[]),
+        (Agent::OpenCode, &["--attach"]), // a saved `run --attach`: the TUI ignores it (P12)
+        (Agent::OpenCode, &["--attach=http://h"]),
+        (Agent::OpenCode, &["--pure-x"]),
+        (Agent::OpenCode, &["--attachx"]),
+        (Agent::OpenCode, &["--prompt", "attach"]),
+        (Agent::OpenCode, &["--", "attach"]),
+        (Agent::OpenCode, &["--", "--pure"]),
+        (Agent::OpenCode, &["run", "x"]),
+        (Agent::OpenCode, &["-s", "x", "run"]),
+        (Agent::ClaudeCode, &["attach"]),
+        (Agent::ClaudeCode, &["--pure"]),
+        (Agent::ClaudeCode, &["--", "--bare"]),
+        (Agent::ClaudeCode, &["--model", "--bare"]), // the value of --model (a required value takes the next token)
+    ];
+    for &(agent, a) in off {
+        assert!(!events_off(agent, &s(a)), "not events off: {agent:?} {a:?}");
     }
 }

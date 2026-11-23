@@ -1146,7 +1146,19 @@ impl Run<'_> {
         let mut busy: Vec<String> = Vec::new();
         for (key, m) in members {
             let who = label(&name, &key);
-            let read = live_session(&self.opts.paths, &m).map(|dir| self.read_member(&dir));
+            // AU26 events off and hooks off (FIX-24): a member whose agent sends no member events is busy until its agent
+            // exits, the drain timeout or `down --now`; the running set of `read_member` stays for the timeout report.
+            let read = live_session(&self.opts.paths, &m).map(|dir| {
+                let (r, running) = self.read_member(&dir);
+                let off = if m.launch.events_off {
+                    Some(drain::EVENTS_OFF)
+                } else if drain::hooks_off(&SessionDir::new(dir.clone())) {
+                    Some(drain::HOOKS_OFF)
+                } else {
+                    None
+                };
+                (off.map_or(r, |reason| Idle::Busy { reason: reason.to_string(), rule_skipped: false }), running)
+            });
             let track = self.jobs[i].track.entry(key.clone()).or_default();
             let idle = match read {
                 None => {

@@ -483,6 +483,29 @@ fn au30_an_own_session_argument_is_not_preassigned_or_saved() { // W§8.3, AU30
     }
 }
 
+#[test] // FIX-24 D1, AU26: the real hand-start path writes events_off from the typed arguments
+fn a_hand_start_whose_agent_sends_no_member_events_is_saved_with_events_off() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[], &mut |_| {});
+    let cases: [(Agent, &[&str], &[&str]); 3] = [
+        (Agent::OpenCode, &["opencode", "--", "attach", "http://127.0.0.1:1"], &[]),
+        (Agent::OpenCode, &["opencode", "--", "run", "--attach", "http://127.0.0.1:1"], &["--attach"]),
+        (Agent::ClaudeCode, &["claude", "--", "--bare"], &["--bare"]),
+    ];
+    for (i, (kind, args, want_args)) in cases.into_iter().enumerate() {
+        let pane = split(&h, "=zygo-app:", "cat");
+        let (_out, env) = h.stub(kind, &format!("e{i}"));
+        let o = Guarded::spawn(hand(&h, &pane, args, &pairs(&env))).output("hand start");
+        assert_eq!(o.status.code(), Some(0), "{args:?}: {}", text(&o.stderr));
+        let key = pane_key(&h, &pane);
+        let m = member(&h, &key).unwrap();
+        let want: Vec<String> = want_args.iter().map(|a| a.to_string()).collect();
+        assert_eq!((m.launch.kind, m.launch.events_off, m.launch.args.clone()), (kind, true, want), "{args:?}");
+        assert_eq!(raw_member(&h, &key)["launch"]["events_off"], json!(true), "{args:?}");
+    }
+}
+
 // ---- AU94, W-C9 ----
 
 #[test]

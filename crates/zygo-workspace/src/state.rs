@@ -161,6 +161,11 @@ pub struct Launch {
     pub config_dir: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    /// W§7.2 member.launch.events_off (FIX-24): the agent of this start sends no member events (Claude Code --bare;
+    /// OpenCode --pure, attach <url>, run --attach), so the drain counts the member as busy (AU26). Every start write
+    /// sets it from the arguments of that start; absent when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub events_off: bool,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -279,6 +284,7 @@ impl Launch {
             yolo: false,
             config_dir: None,
             args: Vec::new(),
+            events_off: false,
             extra: Extra::new(),
         }
     }
@@ -650,7 +656,7 @@ pub fn valid_session_id(id: &str) -> bool {
 }
 
 /// What [`open_nofollow`] found at a path.
-enum Opened {
+pub(crate) enum Opened {
     File(File),
     /// A symbolic link; it was not followed.
     Link,
@@ -662,7 +668,7 @@ enum Opened {
 /// O_NONBLOCK`, so a FIFO opens at once), and checks the opened handle, not the path, so no other entry can take its
 /// place after the check (as `zygo-hooks/src/statusline/phase.rs` does). On other systems `o` opens as before, with
 /// no check (FIX-17 Round 2 F3, F4).
-fn open_nofollow(o: &mut fs::OpenOptions, path: &Path) -> std::io::Result<Opened> {
+pub(crate) fn open_nofollow(o: &mut fs::OpenOptions, path: &Path) -> std::io::Result<Opened> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

@@ -2295,3 +2295,170 @@ fn down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
     assert_eq!(raw(&store), before);
     assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
 }
+
+// ---- FIX-24: a member whose hooks or member events are off counts as busy (AU26) ----
+
+const HOOKS_OFF_LINE: &str = "zygo: app pane kaaaaaaaa: busy: hooks off: its --settings sets disableAllHooks";
+const EVENTS_OFF_LINE: &str = "zygo: app pane kaaaaaaaa: busy: member events off: launched with --bare, --pure or attach";
+
+/// A running member of `kind` whose saved launch has `args` and `launch.events_off = true`.
+fn off_member(kind: Agent, sid: Option<&str>, args: &[&str]) -> MemberRecord {
+    let mut m = MemberRecord::new(kind);
+    m.state = MemberState::Running;
+    m.zygo_session = sid.map(String::from);
+    m.launch.args = args.iter().map(|a| a.to_string()).collect();
+    m.launch.events_off = true;
+    m
+}
+
+/// [`one_member`] with the member record `m`.
+fn one_member_with(t: &Path, m: MemberRecord) -> (DownOpts, Store, Launcher) {
+    let o = opts(t, &fake_tmux(t));
+    let store = ws_state(&o, ID, "app", Phase::Up, vec![(KEY, m)]);
+    owner(t, "zygo-app", ID);
+    let l = launcher(&o, SID);
+    (o, store, l)
+}
+
+/// The merged settings file of `sid` with `disableAllHooks: true`, as zygo writes it for such a user `--settings`.
+fn hooks_off_settings(o: &DownOpts, sid: &str) {
+    fs::write(session_dir(o, sid).settings_json(), r#"{"disableAllHooks": true, "hooks": {}}"#).unwrap();
+}
+
+/// The timeout case of a member that the drain must count as busy: reverted, reported with `line`, nothing stopped.
+fn assert_busy_until_timeout(t: &Path, o: &DownOpts, store: &Store, l: &mut Launcher, line: &str, case: &str) {
+    let mut h = hooks();
+    statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
+    release_on_sigterm(&mut h, o, vec![l.lock.clone()], &[(ID, KEY)]);
+    let (code, out, err) = run(o, &h);
+    assert_eq!((code, out.as_str()), (1, ""), "{case}: {err}");
+    assert_eq!(count(&err, "zygo: app: drain timed out after 120 s; phase is up again"), 1, "{case}: {err}");
+    assert_eq!(count(&err, line), 1, "{case}: {err}");
+    assert_eq!(count(&err, IDLE), 0, "{case}: {err}");
+    assert_eq!(count(&err, SKIP), 0, "{case}: {err}");
+    assert_eq!(count(&err, NOW_LINE), 1, "{case}: {err}");
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!((ws.phase, ws.members[KEY].clean_stop), (Phase::Up, false), "{case}");
+    assert!(!tmux_log(t).iter().any(|c| c.contains("kill-session")), "{case}");
+    assert!(l.child.try_wait().unwrap().is_none(), "{case}: the agent got a signal");
+    l.child.kill().unwrap();
+}
+
+/// The `--now` case: the member is stopped and saved.
+fn assert_stopped_with_now(o: &mut DownOpts, store: &Store, l: &mut Launcher, case: &str) {
+    let mut h = hooks();
+    statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
+    release_on_sigterm(&mut h, o, vec![l.lock.clone()], &[(ID, KEY)]);
+    o.now = true;
+    let (code, out, err) = run(o, &h);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is down (1 agents saved)\n"), "{case}: {err}");
+    let m = &store.read().unwrap().unwrap().members[KEY];
+    assert!(m.clean_stop, "{case}");
+    assert_eq!(m.saved_for.as_deref(), Some(SID), "{case}");
+    assert_eq!(m.state, MemberState::Resumable, "{case}");
+    assert_eq!(l.child.wait().unwrap().signal(), Some(libc::SIGTERM), "{case}");
+}
+
+/// The gone-launcher case: the member counts as idle and the drain ends without a timeout.
+fn assert_gone_is_idle(t: &Path, m: MemberRecord, settings: bool) {
+    let mut o = opts(t, &fake_tmux(t));
+    ws_state(&o, ID, "app", Phase::Up, vec![(KEY, m)]);
+    owner(t, "zygo-app", ID);
+    let mut dead = dead_launcher(&o, SID);
+    if settings {
+        hooks_off_settings(&o, SID);
+    }
+    o.timeout = Some(Duration::from_secs(120));
+    let mut h = hooks();
+    statuses(&mut h, status_map(vec![]));
+    let (code, out, err) = run(&o, &h);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is down (0 agents saved)\n"), "{err}");
+    assert!(!err.contains("drain timed out"), "{err}");
+    assert_eq!(count(&err, IDLE), 1, "{err}");
+    assert_eq!(phase(&o, ID), Phase::Down);
+    assert!(dead.try_wait().unwrap().is_none()); // no signal to the unrelated process
+    dead.kill().unwrap();
+    dead.wait().unwrap();
+}
+
+#[test] // FIX-24, AU26 hooks off, W§9.3 step 6: busy at every poll, reported with its reason at the timeout
+fn hooks_off_member_is_busy_until_the_drain_timeout() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let (mut o, store, mut l) = one_member(t);
+    hooks_off_settings(&o, SID);
+    o.timeout = Some(Duration::from_secs(120));
+    assert_busy_until_timeout(t, &o, &store, &mut l, HOOKS_OFF_LINE, "hooks off");
+}
+
+#[test] // FIX-24, AU26: `down --now` stops and saves a hooks-off member
+fn hooks_off_member_stops_with_now() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let (mut o, store, mut l) = one_member(t);
+    hooks_off_settings(&o, SID);
+    assert_stopped_with_now(&mut o, &store, &mut l, "hooks off");
+}
+
+#[test] // FIX-24, W§9.3 step 5: a hooks-off member whose launcher is not live counts as idle
+fn hooks_off_member_whose_launcher_is_gone_is_idle() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    assert_gone_is_idle(t.path(), member(Some(SID)), true);
+}
+
+/// The events-off cases: `--pure`, the saved form of `attach <url>` (no args) and Claude Code `--bare`.
+const EVENTS_OFF_CASES: [(Agent, &[&str]); 3] = [(Agent::OpenCode, &["--pure"]), (Agent::OpenCode, &[]), (Agent::ClaudeCode, &["--bare"])];
+
+#[test] // FIX-24, AU26 events off, W§9.3 step 6: busy at every poll, reported with its reason at the timeout
+fn events_off_member_is_busy_until_the_drain_timeout() {
+    let _s = serial();
+    for (kind, args) in EVENTS_OFF_CASES {
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store, mut l) = one_member_with(t, off_member(kind, Some(SID), args));
+        o.timeout = Some(Duration::from_secs(120));
+        assert_busy_until_timeout(t, &o, &store, &mut l, EVENTS_OFF_LINE, &format!("{kind:?} {args:?}"));
+    }
+}
+
+#[test] // FIX-24, AU26: `down --now` stops and saves an events-off member
+fn events_off_member_stops_with_now() {
+    let _s = serial();
+    for (kind, args) in EVENTS_OFF_CASES {
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store, mut l) = one_member_with(t, off_member(kind, Some(SID), args));
+        assert_stopped_with_now(&mut o, &store, &mut l, &format!("{kind:?} {args:?}"));
+    }
+}
+
+#[test] // FIX-24, W§9.3 step 5: an events-off member whose launcher is not live counts as idle
+fn events_off_member_whose_launcher_is_gone_is_idle() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    assert_gone_is_idle(t.path(), off_member(Agent::OpenCode, Some(SID), &["--pure"]), false);
+}
+
+#[test] // FIX-24 P12, AU27 known limit 8: a restored `run --attach` member runs the TUI and sends member events
+fn a_saved_attach_flag_without_run_is_not_events_off() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let mut oc = MemberRecord::new(Agent::OpenCode);
+    oc.state = MemberState::Running;
+    oc.zygo_session = Some(SID.into());
+    oc.launch.args = vec!["--attach".into()];
+    oc.launch.events_off = false;
+    let (o, _store, mut l) = one_member_with(t, oc);
+    set_activity(&o, SID, false, &[]);
+    let mut h = hooks();
+    statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
+    release_on_sigterm(&mut h, &o, vec![l.lock.clone()], &[(ID, KEY)]);
+    let (code, out, err) = run(&o, &h);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is down (1 agents saved)\n"), "{err}");
+    assert_eq!(count(&err, IDLE), 1, "{err}");
+    l.child.wait().unwrap();
+}
