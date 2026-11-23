@@ -934,4 +934,76 @@ mod workspace_check {
         assert_eq!(names.lines().count(), 2, "{names}");
         assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
     }
+
+    #[test] // auto-update #5, the `ZYGO_WORKSPACE` bullet: the opt-out is removed, so only `ZYGO_WORKSPACE` stops it
+    fn ws_run_with_zygo_workspace_makes_no_request() {
+        let h = locked(Harness::no_tmux);
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let c = h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", "kaaaaaaaa"], &[("ZYGO_WORKSPACE", OsStr::new(WS_ID))]);
+        let c = checked(c, &base);
+        let o = locked(|| Guarded::spawn(c)).output("ws run");
+        assert_eq!((o.status.code(), err(&o)), (Some(0), format!("zygo: no workspace with id {WS_ID}\n")));
+        assert!(f.requests().is_empty(), "{:?}", f.requests());
+        assert!(!update_json(&h).exists());
+    }
+
+    #[test] // the same run: the skip is what stops it; AU93 still holds after the check
+    fn ws_run_without_zygo_workspace_makes_the_request() {
+        let h = locked(Harness::no_tmux);
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let base = OsString::from(f.base());
+        let c = checked(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", "kaaaaaaaa"], &[]), &base);
+        let o = locked(|| Guarded::spawn(c)).output("ws run");
+        // stdin is null: the prompt reads "" and the run continues (D6).
+        assert_eq!((o.status.code(), err(&o)), (Some(0), format!("{} zygo: no workspace with id {WS_ID}\n", prompt(NEW))));
+        assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+        assert!(update_json(&h).is_file());
+        let env = std::fs::read_to_string(h.root().join("shell/env")).unwrap();
+        assert!(env.lines().any(|l| l == format!("ZYGO_WORKSPACE={WS_ID}")), "{env}"); // AU93
+    }
+
+    #[test] // D4
+    fn ws_run_yes_installs_and_relaunches_into_the_member() {
+        let h = locked(Harness::no_tmux);
+        let key = "kaaaaaaaa";
+        h.seed(WS_ID, &mut |w| {
+            w.panes = vec![Pane { key: key.into(), cwd: h.repo(), kind: PaneKind::ClaudeCode, ..Default::default() }];
+            w.members.clear();
+            w.members.insert(key.into(), loadout_member());
+        });
+        // The release is a real zygo, so the relaunched process runs; the copy gets a new inode on the install.
+        let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, &zygo));
+        let f = Fixture::start(files);
+        let base = OsString::from(f.base());
+        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
+        let s = setup();
+        let ino = std::fs::metadata(&s.copy).unwrap().ino();
+        let mut c = Command::new(&s.copy);
+        c.args(["ws", "run", "--ws-id", WS_ID, "--pane", key]).env_clear().envs(h.env()).envs(stub);
+        let mut c = checked(c, &base);
+        c.current_dir(h.root()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = locked(|| Guarded::spawn(c));
+        child.stdin().unwrap().write_all(b"y\n").unwrap();
+        let o = child.output("ws run");
+        let e = err(&o);
+        assert_eq!(o.status.code(), Some(0), "{e}"); // the exit of the test shell after the member
+        assert!(e.starts_with(&format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW))), "{e}");
+        assert_eq!(e.matches(&prompt(NEW)).count(), 1, "{e}");
+        assert!(!e.contains("cannot relaunch"), "{e}");
+        // Installed in the copy.
+        assert_ne!(std::fs::metadata(&s.copy).unwrap().ino(), ino);
+        assert_eq!(std::fs::read(&s.copy).unwrap(), zygo);
+        // The relaunch ran: the member started, and its record does not stay `Running` without a launcher.
+        assert!(out.join("argv.json").exists(), "{e}");
+        assert_ne!(h.store(WS_ID).read().unwrap().unwrap().members[key].state, MemberState::Running);
+        // One check and one install; the relaunched process made no request (no loop).
+        assert_eq!(f.requests(), vec![
+            "/latest/download/VERSION".to_string(),
+            format!("/download/v{NEW}/SHA256SUMS"),
+            format!("/download/v{NEW}/{}", asset()),
+        ]);
+    }
 }
