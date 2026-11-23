@@ -63,7 +63,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | DONE | judgment | a75e36f; acceptance exit 0, zygo-hooks 197 + 1 ignored, zygo-core 28, zygo-workspace 316 + 2 ignored, zygo-launch 244 + 6 ignored, zygo 387, clippy -D warnings clean (merged tree) |
 | H3 | OpenCode plugin: session classification, main session and turn set | H1 | DONE | judgment | dd25ae1; acceptance opencode 77 + 1 ignored, zygo-launch all pass, zygo-hooks workspace 22 + 1 ignored, clippy -D warnings clean, check --workspace --tests clean (merged tree) |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
-| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | TODO | judgment | — |
+| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | PLANNED | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
@@ -237,3 +237,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | H1 DONE (a75e36f): merged after attempt 2 and an operator-authorized fourth fix round. Acceptance exit 0; zygo-hooks, zygo-core, zygo-workspace, zygo-launch, zygo pass; clippy clean. FIX-25 added (flaky up test, Text file busy). |
 | 2026-11-23 | FIX-22 and FIX-23 planned after plan review; FIX-25 dropped (tmux upgraded by pacman mid-run, not a code race); FIX-24 now after FIX-22 and owns AU59, W§16 and W§18 #89 text. |
 | 2026-11-23 | H3 DONE (dd25ae1): merged after 2 diff-review fix rounds. OpenCode plugin session classification and turn set. Merged tree: Acceptance opencode 77 passed + 1 ignored; zygo-launch passes; zygo-hooks workspace 22; clippy clean. |
+| 2026-11-23 | M1 planned after plan review (19 findings): AU69 (b) dropped (no automatic deletion of workspace results, operator rule); AU69 (a) keeps the 24 h age rule and re-checks live(); config check and loadout show print no secret. |
