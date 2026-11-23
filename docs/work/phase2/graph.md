@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W10, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-17
+**Next:** W10, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-17, FIX-18
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -93,6 +93,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-17 |
+| FIX-18 | Local sessions do not expire by idle time; the idle TTL applies to team sessions only | — | PLANNED | implementation | — |
 
 ## Log
 
@@ -217,3 +218,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | W10 planned: 30 steps, test first. C1-C4, C6-C18 applied: W2, W7, W9 Produces; M1 Spec, Consumes; spec AU18, AU97, W§9.3, W§11, W§12, W§18 #80, W§19. C5 as FIX-16 (FIX-15 taken), depends W10, W11, M1 (author's call). |
 | 2026-11-22 | W8 DONE (0921fb6): up --all, ls, status, forget, forget-pane. Merged tree: admin 21, up 45, up_all 7, zygo-workspace 267 pass. I1, I2, I4, R2 spec rows applied. FIX-17 added: store refuses a linked state folder, caps reads at 1 MiB; H1, M1 depend on it. |
 | 2026-11-22 | FIX-17 planned: 9 steps, test first. One variant StateError::NotADirectory { path, link }; read refuses a linked folder too; cap 1 MiB, exactly 1 MiB reads; session_dir.rs unchanged; up.rs:370 uncapped read reported, not changed (author's call). |
+| 2026-11-22 | FIX-18 added and planned (operator question): a local session expired after 24 h idle while its launcher ran. 8 steps, test first; spec §7.2, §12.5. Rule keys on team_label; serve sessions always have one; local expires_at empty (author's call). |

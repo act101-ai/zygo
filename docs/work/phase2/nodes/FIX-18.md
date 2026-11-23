@@ -1,0 +1,44 @@
+# FIX-18 — Local sessions do not expire by idle time
+
+**Spec:** `docs/specs/2026-11-18-zygo-design.md` §7.2 (Session state) and §12.5, as amended 2026-11-22 (author's call, this node). Defect from an operator question 2026-11-22: `IDLE_TTL` (`crates/zygo-proxy/src/session.rs:25`) is applied to every session by `liveness` (`session.rs:402`), and only `Sessions::accept` (`:606`) and the team `Sessions::heartbeat` (`:620`) refresh `last_seen`. Serve mode has a 60 s launcher heartbeat (`crates/zygo-launch/src/launcher.rs:401-411`), so a live serve launcher never expires; local mode (`End::Local`, the proxy runs inside the launcher process) has no heartbeat, so an agent pane idle 24 h, a workspace pane over a weekend, gets `401 zygo_session_unknown` and must be relaunched. The TTL protects nothing there: the local session's proxy dies with its launcher. Fix: a session with no team label never becomes Gone by idle time and is never removed by the sweep; its `expires_at` is empty. A team session keeps the 24 h idle TTL, refreshed by accepted requests and heartbeats, and the 5 min suspend rule
+**Files:** `crates/zygo-proxy/src/session.rs`, `crates/zygo-proxy/tests/session_api.rs`, `crates/zygo-proxy/tests/passthrough.rs`, `crates/zygo-proxy/tests/request_path.rs`
+**Consumes:** —
+**Produces:** local sessions do not expire by idle time
+**Acceptance:** `cargo test -p zygo-proxy --locked --test session_api` → all pass, including `local_session_has_no_idle_ttl` (a local session idle 25 h on the test clock still accepts a status request, a second local session idle 25 h is not removed by the sweep, both stay after 30 days, and `expires_at` is empty in the grant and the status reply), `idle_ttl_24h` on a team session (idle 25 h after its last heartbeat → `401 zygo_session_unknown` and removed), and `heartbeats_keep_session_past_idle_ttl` unchanged
+
+## Plan
+
+The fix is one function, `liveness` in `crates/zygo-proxy/src/session.rs`, and the two `expires_at` writers in the same file: `SessionState::status` and `Sessions::create`. Tests that used a local session to test the idle TTL move to a team session, or change their expectation to the new rule.
+
+Builds on: (signatures in the code now)
+- `fn liveness(last_seen: Instant, last_heartbeat: Instant, team: bool, now: Instant) -> Liveness` (`session.rs:402`); callers `by_token` (`:596`), `accept` (`:608`), `heartbeat` (`:624`, team), `delete` (`:643`, team), `retain_live` (`:682`, the sweep and `create`).
+- `SessionState::status(&self) -> SessionStatus` (`session.rs:310`), `expires_at: rfc3339(l.last_seen_utc + IDLE_TTL)` at `:340`; `Sessions::create(...) -> Result<SessionGrant, ZygoError>` (`:464`), `expires_at: rfc3339(utc + IDLE_TTL)` at `:576`.
+- `SessionGrant.expires_at: String` (`session.rs:171`), `SessionStatus.expires_at: String` (`crates/zygo-proxy/src/client.rs:48`).
+
+Plan produces:
+- `liveness` gives `Active` for a session with `team == false`, at any idle time; for a team session it is unchanged: Gone after `IDLE_TTL` without a refresh, else Suspended after `SUSPEND_AFTER` without a heartbeat.
+- `expires_at` is `""` for a local session in the grant and in the status reply; for a team session it is the last refresh + 24 h, as before.
+
+Evidence, local against team, from the code:
+- E1. A session's kind is its `team_label`. `Sessions::create` has two callers. `ProxyHandle::create_session` (`crates/zygo-proxy/src/server.rs:303`) passes `None`: the in-process local-mode call. The HTTP route `create` (`crates/zygo-proxy/src/routes.rs:126-143`) passes `Some(label)` and first calls `identity::team_label` (`crates/zygo-proxy/src/identity.rs:54`), which returns `token_invalid` when the server has no `TeamAuth`, no bearer or no label. So no HTTP-created session has `team_label == None`.
+- E2. `zygo serve` always has a `TeamAuth`: `serve::served` (`crates/zygo-proxy/src/serve.rs:113-116`) sets `team: Some(Tokens::new(..))`, and `ServeHandle` (`serve.rs:349-420`) has no in-process session creation. So every serve-mode session is a team session; a serve mode with no team label, whose sessions could outlive their launcher, does not exist in the code.
+- E3. A local session lives in a `ProxyHandle` that only the launcher holds: `Proxy::start_local_with` then `create_session` in `crates/zygo-launch/src/launcher.rs:339-355`, kept as `End::Local(proxy)` and stopped by `finish` (`launcher.rs:741`) or the early-exit paths (`:350`, `:391`). When the launcher process ends, the proxy and its sessions end with it, so an idle TTL on a local session guards no token that outlives its owner. The other caller, `crates/zygo/src/cmd/compact.rs:143`, is a test helper.
+- E4. Passthrough sessions are local only: the HTTP route refuses `passthrough: true` with `403 zygo_passthrough_local_only` (`routes.rs:136-138`). So the passthrough TTL tests change with the rule.
+
+Decisions (author's call):
+- D1. The rule keys on `team_label`, not on the server mode: a test proxy started with `start_local_with` and a `TeamAuth` creates team sessions over HTTP, and they keep the TTL and the suspend rule, as in serve mode. `liveness` returns `Active` first when `team` is false; the team branch is unchanged.
+- D2. `expires_at` stays a `String` and is `""` for a local session: no wire change, an older client parses it, and no code reads the field (only tests; the status and HUD fixtures already use `""`). An `Option` would change `SessionGrant`, `SessionStatus` and their fixtures in three crates for no reader.
+- D3. Tests that tested the idle TTL on a local session move to a team session where the rule is still tested (`idle_ttl_24h`, `refused_requests_do_not_refresh_ttl`, `expired_sessions_swept_on_any_request`), or change their expectation where the rule changed (`create_session_grant_shape`, `client_status_fields`; in `passthrough.rs` `e2e_token_invalid_cases` loses its expired case and `e2e_accepted_request_refreshes_ttl` becomes `e2e_local_session_has_no_idle_ttl`; in `request_path.rs` `route_accept_refreshes_ttl_and_sweeps` becomes `route_local_session_has_no_idle_ttl`). A team session is refreshed by a heartbeat and suspended after 5 min without one, so a team TTL test refreshes it by a heartbeat and sees the refused-request rule through `expires_at` and the 24 h deadline from the last heartbeat.
+- D4. The model-route refresh of a team session is not given its own test in `request_path.rs`: `accept` is the one refresh for all session-token routes, and `session_api.rs` tests it on a team session. `request_path.rs` has no team harness.
+- D5. Acceptance stays `--test session_api`, as the brief sets; `passthrough.rs` and `request_path.rs` are run by the full `cargo test -p zygo-proxy --locked --no-fail-fast` step.
+
+Steps:
+
+- [ ] Write the failing test `local_session_has_no_idle_ttl` in `crates/zygo-proxy/tests/session_api.rs`: local sessions `a` and `b`; advance 25 h; status on `a` → 200; `h.session(&b.session)` is some; the status reply and both grants have `expires_at` `""`; advance 30 days, a team session created and a heartbeat on it, then `a` and `b` are still mapped and status on `b` → 200.
+- [ ] Change the tests of D3 in `session_api.rs`: `idle_ttl_24h` on a team session (24 h − 1 s idle → suspended, heartbeat 204 refreshes, status 200 with `expires_at` = clock + 24 h; 24 h − 1 s again, heartbeat 204; 25 h → `401 zygo_session_unknown`, removed); `create_session_grant_shape` local `expires_at` `""` and a team grant at clock + 24 h; `client_status_fields` `expires_at` `""` before and after 1 h; `refused_requests_do_not_refresh_ttl` on a team session refreshed by a heartbeat 60 s before the refused request: `expires_at` stays the heartbeat time + 24 h, and at that time + 24 h + 1 s the session is unknown; `expired_sessions_swept_on_any_request` with team sessions swept by a status request on a local session and by a heartbeat, and the local session kept.
+- [ ] Run them and see them fail: `cargo test -p zygo-proxy --locked --test session_api` → `local_session_has_no_idle_ttl`, `create_session_grant_shape`, `client_status_fields` and `expired_sessions_swept_on_any_request` fail on the current code. Record the red lines.
+- [ ] Change the tests of D3 in `passthrough.rs` and `request_path.rs`; run `cargo test -p zygo-proxy --locked --test passthrough --test request_path` and see the two renamed tests fail. Record the red lines.
+- [ ] Implement D1 in `liveness` and D2 in `status` and `create`; update the doc comments on `IDLE_TTL`, `accept`, `sweep` and `retain_live`.
+- [ ] Run the Acceptance: `cargo test -p zygo-proxy --locked --test session_api` → all pass.
+- [ ] Run `cargo test -p zygo-proxy --locked --no-fail-fast`, `cargo test -p zygo-launch --locked --no-fail-fast`, `cargo clippy -p zygo-proxy --locked --tests -- -D warnings` → all clean.
+- [ ] Tick the steps, commit the four files of Files and this file: "fix(proxy): FIX-18 local sessions do not expire by idle time".
