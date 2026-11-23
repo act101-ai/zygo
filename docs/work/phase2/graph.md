@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-22, FIX-23, FIX-24
+**Next:** M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-23, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | DONE | judgment | cc56f8d; acceptance down 26, drain 31, activity 34, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1-B3 and minor |
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
@@ -90,7 +89,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | PLANNED | mechanical | — |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
-| FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-22 |
+| FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | DONE | implementation | 40aec7c; acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored (merged tree) |
 | FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks | FIX-21, H1 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-23 |
 | FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
@@ -239,3 +238,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | H3 DONE (dd25ae1): merged after 2 diff-review fix rounds. OpenCode plugin session classification and turn set. Merged tree: Acceptance opencode 77 passed + 1 ignored; zygo-launch passes; zygo-hooks workspace 22; clippy clean. |
 | 2026-11-23 | M1 planned after plan review (19 findings): AU69 (b) dropped (no automatic deletion of workspace results, operator rule); AU69 (a) keeps the 24 h age rule and re-checks live(); config check and loadout show print no secret. |
 | 2026-11-23 | FIX-19 planned; plan review F1-F7 applied (concurrent calls test, counted Set keyed by session+callID cleared on every prompt/stop, OpenCode 1.19.6 source cites no after on throw); edges FIX-19→M1, FIX-24→FIX-19. |
+| 2026-11-23 | FIX-22 DONE (40aec7c): merged after 2 review rounds. Merged tree: Acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored; zygo-workspace, zygo-hooks, zygo-core pass; clippy clean. |

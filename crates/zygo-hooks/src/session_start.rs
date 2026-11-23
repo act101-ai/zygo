@@ -53,12 +53,14 @@ fn output(agent: Agent, text: String) -> HookOutput {
 /// `session-start --event member` (`input.cli_event == Some("member")`): the session folder is checked first, and a
 /// folder that `workspace::check_folder` refuses gives one stderr line (the D2 text), the session text of `run_in`'s
 /// read with no note (nothing when that read fails) and no write (attempt-2 review round 1, F3); after the check a
-/// load error writes one session-log line and prints nothing, and a `view.json` that is a link or not a regular file writes one session-log line and
-/// gives the session text with no note and no other change. Without the flag (a launch that is not a member, or the
-/// OpenCode per-request call) a load error is `run_in`'s error and that check does not run. A session folder that
-/// `workspace::check_folder` refuses skips the member part. Else `workspace::session_start` runs; a Claude Code
-/// member's output is printed to `out` there, so the result is `HookOutput::None`. A `view.json` that is a FIFO still
-/// waits in `SessionView::load`, as in `run_in`, until FIX-22.
+/// load error writes one session-log line and prints nothing (a `view.json` that is a FIFO, a folder or not JSON is a
+/// load error); a `view.json` that is a link to a regular view loads, then writes one session-log line and gives the
+/// session text with no note and no other change, as does an entry that is no longer a regular file after the load.
+/// Without the flag (a launch that is not a member, or the OpenCode per-request call) a load error is `run_in`'s
+/// error and that check does not run. A session folder that `workspace::check_folder` refuses skips the member part.
+/// Else `workspace::session_start` runs; a Claude Code member's output is printed to `out` there, so the result is
+/// `HookOutput::None`. A `view.json` that is a FIFO is a load error of `SessionView::load` (`<path>: is a FIFO`), with
+/// no wait, for every launch (FIX-22).
 pub fn run_member(
     input: &HookInput, dir: &SessionDir, paths: &Paths, zygo: &Path, out: &mut dyn Write,
 ) -> anyhow::Result<HookOutput> {

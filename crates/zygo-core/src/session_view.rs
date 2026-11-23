@@ -163,8 +163,43 @@ pub struct ViewWorkspace {
 }
 
 impl SessionView {
+    /// Reads `view.json`. A FIFO does not make the read wait: on unix the open is `O_NONBLOCK`, and a FIFO is the
+    /// error `<path>: is a FIFO`; every other entry gives the result of a plain read (`O_NONBLOCK` is cleared before
+    /// it). A link is followed. The whole file is read; there is no size cap (FIX-22). Because of the `O_NONBLOCK`
+    /// open, for a device that waits at open, such as a tty with no carrier, the wait moves from the open to the
+    /// read; the read result is unchanged.
     pub fn load(dir: &SessionDir) -> anyhow::Result<Self> {
-        Ok(serde_json::from_slice(&std::fs::read(dir.view_json())?)?)
+        use std::io::Read;
+        let path = dir.view_json();
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC);
+        }
+        let mut f = options.open(&path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt;
+            use std::os::unix::io::AsRawFd;
+            if f.metadata()?.file_type().is_fifo() {
+                anyhow::bail!("{}: is a FIFO", path.display());
+            }
+            let fd = f.as_raw_fd();
+            // SAFETY: `fd` is the open descriptor of `f`, which lives for the call.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags == -1 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            // SAFETY: `fd` is the open descriptor of `f`, which lives for the call.
+            if unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } == -1 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
+        let mut bytes = Vec::new();
+        f.read_to_end(&mut bytes)?;
+        Ok(serde_json::from_slice(&bytes)?)
     }
 
     /// Unique temp file, then rename.

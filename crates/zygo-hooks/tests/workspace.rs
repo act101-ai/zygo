@@ -710,6 +710,23 @@ fn session_start_read_errors_member_and_not() {
     assert_eq!(slog(&f), [format!("workspace hook session-start: {view}: is a link; not read")]);
     assert_eq!(member(&f), rec_pending());
     assert_eq!(view_note(&f), Some(note_iu())); // the copy still holds the note
+    // A member SessionStart whose view.json is a FIFO (FIX-22): no wait, one line, no output, no change.
+    let f = fx_note();
+    let missing = f.t.path().join("missing");
+    ws_state(&f, Phase::Up, rec_pending());
+    fs::remove_file(f.dir.view_json()).unwrap();
+    mkfifo(&f.dir.view_json());
+    let (dir, paths, miss) = (f.dir.clone(), f.paths.clone(), missing.clone());
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let r = session_start::run_member(&ssm(AS1), &dir, &paths, &miss, &mut out);
+        let _ = tx.send((matches!(r, Ok(HookOutput::None)), out.is_empty()));
+    });
+    assert_eq!(rx.recv_timeout(S5).expect("the hook waited"), (true, true));
+    assert_eq!(slog(&f), [format!("workspace hook session-start: {}: is a FIFO", f.dir.view_json().display())]);
+    assert_eq!(member(&f), rec_pending());
+    assert!(is_fifo(&f.dir.view_json()));
     // A launch that is not a member: the output or the error of `run_in`, and no line.
     for linked in [false, true] {
         let g = fx_with(Agent::ClaudeCode, None);
@@ -1387,7 +1404,7 @@ fn hostile_inputs_change_nothing() {
     assert!(slog(&f).is_empty(), "{:?}", slog(&f));
     assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(fs::read_to_string(f.t.path().join("outside.json")).unwrap(), "{}");
-    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is a link; not changed")]);
+    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is a link")]);
     let f = fx(Agent::ClaudeCode);
     let act_path = f.dir.activity_json().display().to_string();
     mkfifo(&f.dir.activity_json());
@@ -1397,7 +1414,7 @@ fn hostile_inputs_change_nothing() {
     assert!(slog(&f).is_empty(), "{:?}", slog(&f));
     assert_eq!(ws_bg(&f, "prompt", ups("hello")).unwrap(), None);
     assert!(is_fifo(&f.dir.activity_json()));
-    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is not a regular file; not changed")]);
+    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is not a regular file")]);
     let f = fx(Agent::ClaudeCode);
     mkfifo(&f.dir.activity_json());
     mkfifo(&f.dir.log());
@@ -1580,6 +1597,40 @@ fn hostile_inputs_change_nothing() {
     assert!(!f.dir.activity_json().exists(), "no id wrote activity.json");
 }
 
+#[test] // FIX-22 review round 1, F4: a link or a FIFO at activity.json is refused before activity.lock
+fn a_link_or_fifo_activity_file_is_refused_before_the_lock() {
+    let _s = serial();
+    for case in ["link", "fifo"] {
+        let f = fx(Agent::ClaudeCode);
+        let act_path = f.dir.activity_json().display().to_string();
+        let outside = f.t.path().join("outside.json");
+        fs::write(&outside, "{}").unwrap();
+        // The lock is held first; then the entry is put in place, so the holder's own update is not refused.
+        let held = hold_activity(&f.dir);
+        match case {
+            "link" => std::os::unix::fs::symlink(&outside, f.dir.activity_json()).unwrap(),
+            _ => mkfifo(&f.dir.activity_json()),
+        }
+        // A persistent condition, not a missed lock: the lock stays held for the whole case, and a lock not taken
+        // within LOCK_BOUND is a one-off failure that `change` logs on every event (`<activity.lock>: lock not taken
+        // within 1000 ms`), while a persistent condition logs only on `prompt`, with the refusal text. So no line for
+        // these events, and the one line of `prompt`, show that the refusal came before the lock (review round 2).
+        for (ev, payload) in [
+            ("pre-tool", fixture("PreToolUse-Bash-main")),
+            ("tool-end", fixture("PostToolUse-Bash-main")),
+            ("stop", fixture("Stop-main")),
+        ] {
+            assert_eq!(ws_bg(&f, ev, payload).unwrap(), None, "{case} {ev}");
+            assert!(slog(&f).is_empty(), "{case} {ev}: {:?}", slog(&f));
+        }
+        assert_eq!(ws_bg(&f, "prompt", ups("hello")).unwrap(), None, "{case}");
+        let why = if case == "link" { "is a link" } else { "is not a regular file" };
+        assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: {why}")], "{case}");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "{}", "{case}");
+        drop(held);
+    }
+}
+
 #[test] // W-C6, OP9, D3; H1 attempt 1 round 3 F1
 fn non_member_session_start_is_unchanged() {
     let _s = serial();
@@ -1607,29 +1658,30 @@ fn non_member_session_start_is_unchanged() {
         assert!(!g.dir.activity_json().exists(), "{case}");
         assert!(!g.paths.state_dir().exists(), "{case}");
     }
-    // A FIFO view.json: the read waits for a writer as today; the test is that writer.
+    // A FIFO view.json (FIX-22, controller 2026-11-23): the read does not wait; run_member gives run_in's error and writes nothing.
     let g = fx_with(Agent::ClaudeCode, None);
-    let plain = fs::read(g.dir.view_json()).unwrap();
     fs::remove_file(g.dir.view_json()).unwrap();
     mkfifo(&g.dir.view_json());
     let (dir, paths, zygo) = (g.dir.clone(), g.paths.clone(), g.zygo.clone());
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut out = Vec::new();
-        let r = session_start::run_member(&ss(AS1), &dir, &paths, &zygo, &mut out).map(|o| o.to_stdout());
-        let _ = tx.send((r.map_err(|e| format!("{e:#}")), out.is_empty()));
+        let a = session_start::run_member(&ss(AS1), &dir, &paths, &zygo, &mut out);
+        let b = session_start::run_in(&ss(AS1), &dir);
+        let _ = tx.send((
+            a.map(|o| o.to_stdout()).map_err(|e| format!("{e:#}")),
+            b.map(|o| o.to_stdout()).map_err(|e| format!("{e:#}")),
+            out.is_empty(),
+        ));
     });
-    {
-        use std::io::Write;
-        let mut w = fs::OpenOptions::new().write(true).open(g.dir.view_json()).unwrap();
-        w.write_all(&plain).unwrap();
-    }
-    let (got, quiet) = rx.recv_timeout(S5).expect("the hook did not answer");
-    let h = fx_with(Agent::ClaudeCode, None);
-    assert_eq!(got.unwrap(), session_start::run_in(&ss(AS1), &h.dir).unwrap().to_stdout());
+    let (a, b, quiet) = rx.recv_timeout(S5).expect("the hook waited");
+    assert_eq!(a, Err(format!("{}: is a FIFO", g.dir.view_json().display())));
+    assert_eq!(a, b);
     assert!(quiet);
     assert!(is_fifo(&g.dir.view_json()));
     assert!(!g.dir.log().exists());
+    assert!(!g.dir.activity_json().exists());
+    assert!(!g.paths.state_dir().exists());
 }
 
 /// A `/zygo:` dispatcher whose verb panics (round 4 T2).

@@ -567,3 +567,190 @@ fn two_hook_processes_writing_100_times_each_lose_no_ok_update() {
     assert!(total > 0);
     assert_eq!(activity::read(&d).unwrap().running.len(), total);
 }
+
+#[cfg(unix)]
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+}
+
+// FIX-22: W-C1 (C6), AU26, AU56. No reader waits on a FIFO or writes through a link.
+#[cfg(unix)]
+#[test]
+fn activity_fifo_and_link_are_errors_without_a_wait() {
+    use std::os::unix::fs::FileTypeExt;
+    // Both calls in one thread; the answer must come within 5 s.
+    let both = |d: &SessionDir| {
+        let d = d.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = activity::read(&d).map_err(|e| format!("{e:#}"));
+            let u = activity::update(&d, LOCK_BOUND, &mut |a| a.busy = true)
+                .map_err(|e| (e.is::<activity::FileCondition>(), format!("{e:#}")));
+            let _ = tx.send((r, u));
+        });
+        rx.recv_timeout(Duration::from_secs(5)).expect("read or update waited")
+    };
+    let (t, d) = dir();
+    let act = d.activity_json().display().to_string();
+    let not_file = format!("{act}: is not a regular file");
+    let link = format!("{act}: is a link");
+    // A FIFO: an error at once; the FIFO stays.
+    mkfifo(&d.activity_json());
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), not_file);
+    assert_eq!(u.unwrap_err(), (true, not_file.clone()));
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_fifo());
+    fs::remove_file(d.activity_json()).unwrap();
+    // A link to a regular file: an error; the target and the link are not changed.
+    let outside = t.path().join("outside.json");
+    let body = br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#;
+    fs::write(&outside, body).unwrap();
+    std::os::unix::fs::symlink(&outside, d.activity_json()).unwrap();
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), link);
+    assert_eq!(u.unwrap_err(), (true, link.clone()));
+    assert_eq!(fs::read(&outside).unwrap(), body.to_vec());
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_symlink());
+    fs::remove_file(d.activity_json()).unwrap();
+    // A dangling link: an error, not the default; no target is made and the link stays.
+    let missing = t.path().join("missing.json");
+    std::os::unix::fs::symlink(&missing, d.activity_json()).unwrap();
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), link);
+    assert_eq!(u.unwrap_err(), (true, link.clone()));
+    assert!(!missing.exists());
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_symlink());
+    fs::remove_file(d.activity_json()).unwrap();
+    // A folder: not a regular file.
+    fs::create_dir(d.activity_json()).unwrap();
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), not_file);
+    assert_eq!(u.unwrap_err(), (true, not_file));
+}
+
+// FIX-22 review round 1, F1: a socket fails the open (ENXIO) before the handle check; it is still "not a regular file".
+#[cfg(unix)]
+#[test]
+fn activity_socket_is_not_a_regular_file() {
+    use std::os::unix::fs::FileTypeExt;
+    // Under /tmp, not TMPDIR: a long TMPDIR makes the socket path longer than `sun_path` (review round 2).
+    let t = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let _sock = std::os::unix::net::UnixListener::bind(d.activity_json()).unwrap();
+    let not_file = format!("{}: is not a regular file", d.activity_json().display());
+    assert_eq!(format!("{:#}", activity::read(&d).unwrap_err()), not_file);
+    let e = activity::update(&d, LOCK_BOUND, &mut |a| a.busy = true).unwrap_err();
+    assert!(e.is::<activity::FileCondition>(), "{e:#}");
+    assert_eq!(format!("{e:#}"), not_file);
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_socket());
+}
+
+// FIX-22 review round 1, F4: a link, a FIFO or a folder at activity.json is refused before `update` takes or waits for
+// activity.lock, with the error of the load and well under the bound.
+#[cfg(unix)]
+#[test]
+fn update_refuses_a_link_or_fifo_before_the_lock() {
+    let (t, d) = dir();
+    let held =
+        fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(d.activity_lock()).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let act = d.activity_json().display().to_string();
+    let outside = t.path().join("outside.json");
+    fs::write(&outside, b"{}").unwrap();
+    for case in ["fifo", "link", "dangling link", "folder"] {
+        match case {
+            "fifo" => mkfifo(&d.activity_json()),
+            "link" => std::os::unix::fs::symlink(&outside, d.activity_json()).unwrap(),
+            "dangling link" => std::os::unix::fs::symlink(t.path().join("missing.json"), d.activity_json()).unwrap(),
+            _ => fs::create_dir(d.activity_json()).unwrap(),
+        }
+        let d2 = d.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            let e = activity::update(&d2, Duration::from_secs(3), &mut |a| a.busy = true).unwrap_err();
+            let _ = tx.send((start.elapsed(), e.is::<activity::FileCondition>(), format!("{e:#}")));
+        });
+        let (took, cond, text) = rx.recv_timeout(S10).expect("update waited");
+        let why = if case.ends_with("link") { "is a link" } else { "is not a regular file" };
+        assert_eq!((cond, text), (true, format!("{act}: {why}")), "{case}");
+        assert!(took < Duration::from_millis(500), "{case}: {took:?}");
+        if case == "folder" {
+            fs::remove_dir(d.activity_json()).unwrap();
+        } else {
+            fs::remove_file(d.activity_json()).unwrap();
+        }
+    }
+    assert_eq!(fs::read(&outside).unwrap(), b"{}".to_vec());
+    assert!(!t.path().join("missing.json").exists());
+}
+
+/// The number of this process's open handles on `path`, read from `/proc/self/fd`.
+#[cfg(target_os = "linux")]
+fn handles_on(path: &Path) -> usize {
+    fs::read_dir("/proc/self/fd").unwrap().flatten().filter(|e| fs::read_link(e.path()).is_ok_and(|p| p == path)).count()
+}
+
+// FIX-22 review round 2, finding 1: an entry that becomes a FIFO or a link while `update` waits for activity.lock
+// passed the check before the lock; the check of the opened handle under the lock refuses it, writes nothing and
+// does not call `f`. Linux only: the test knows that `update` waits for the lock when a second handle on
+// activity.lock is open in this process (`/proc/self/fd`), which no other system gives.
+#[cfg(target_os = "linux")]
+#[test]
+fn update_refuses_a_fifo_or_link_that_appears_while_it_waits_for_the_lock() {
+    use std::os::unix::fs::FileTypeExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let (t, d) = dir();
+    let act = d.activity_json().display().to_string();
+    let body = br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#;
+    let outside = t.path().join("outside.json");
+    fs::write(&outside, body).unwrap();
+    let lock = fs::canonicalize(t.path()).unwrap().join(d.activity_lock().file_name().unwrap());
+    for case in ["fifo", "link"] {
+        // A regular file at activity.json, so the check before the lock passes.
+        fs::write(d.activity_json(), body).unwrap();
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(d.activity_lock())
+            .unwrap();
+        fs4::FileExt::try_lock(&held).unwrap();
+        let called = Arc::new(AtomicBool::new(false));
+        let (d2, called2) = (d.clone(), called.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let e = activity::update(&d2, Duration::from_secs(30), &mut |a| {
+                called2.store(true, Ordering::SeqCst);
+                a.busy = true;
+            });
+            let _ = tx.send(e.map_err(|e| (e.is::<activity::FileCondition>(), format!("{e:#}"))));
+        });
+        // `update` opens activity.lock only after the check before the lock: wait for its handle.
+        let start = Instant::now();
+        while handles_on(&lock) < 2 {
+            assert!(start.elapsed() < S10, "{case}: update did not open activity.lock");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        fs::remove_file(d.activity_json()).unwrap();
+        match case {
+            "fifo" => mkfifo(&d.activity_json()),
+            _ => std::os::unix::fs::symlink(&outside, d.activity_json()).unwrap(),
+        }
+        assert!(rx.try_recv().is_err(), "{case}: update returned before the lock was released");
+        drop(held);
+        let r = rx.recv_timeout(S10).expect("update waited after the lock was released");
+        let why = if case == "link" { "is a link" } else { "is not a regular file" };
+        assert_eq!(r, Err((true, format!("{act}: {why}"))), "{case}");
+        assert!(!called.load(Ordering::SeqCst), "{case}: f was called");
+        let kind = fs::symlink_metadata(d.activity_json()).unwrap().file_type();
+        assert!(if case == "link" { kind.is_symlink() } else { kind.is_fifo() }, "{case}: the entry was replaced");
+        assert_eq!(fs::read(&outside).unwrap(), body.to_vec(), "{case}: the link target changed");
+        fs::remove_file(d.activity_json()).unwrap();
+    }
+}
