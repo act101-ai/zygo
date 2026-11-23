@@ -83,6 +83,20 @@ impl Drop for Handling<'_> {
 /// with or without a user `--settings` (AU59).
 pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path, Option<&Member>) -> anyhow::Result<()> + Send>;
 
+/// The error a session callback returns to make the launch a v1 launch (workspaces design AU34, W§8.4): the launcher
+/// logs it as any callback error, then sets `member` and `resume_note` to none before it builds the view, the settings
+/// and the agent environment.
+#[derive(Debug)]
+pub struct NotMember(pub String);
+
+impl std::fmt::Display for NotMember {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotMember {}
+
 /// The agent session that the launcher starts or resumes (W§8.3, AU3). The launcher puts the adapter's
 /// `preassign_args` or `resume_args` before the user's arguments, so before any `--`; for OpenCode, right after a
 /// `run` subcommand.
@@ -408,6 +422,11 @@ impl Launcher {
             && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref())
         {
             sd.append_log(&format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+            // AU34: a `NotMember` callback makes this launch a v1 launch.
+            if e.downcast_ref::<NotMember>().is_some() {
+                opts.member = None;
+                opts.resume_note = None;
+            }
         }
         if let Some(t) = &team
             && let Err(e) = write_team(&sd.root, t)
@@ -527,6 +546,7 @@ impl Session<'_> {
             .collect();
         let c = &self.cfg.config;
         // A user `--settings` does not change the member (AU59): its settings are merged into zygo's file (§8.5 Flags).
+        // The member is none after a `NotMember` callback (AU34).
         let member = opts.member.clone();
         // The base stays although every field is named today: a later field then needs no change here
         // until the launcher sets it (statusline HUD design H§17 note 1).
