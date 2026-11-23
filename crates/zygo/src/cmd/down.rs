@@ -113,7 +113,7 @@ fn cli_opts(
 pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
     op5()?;
     if ctx.save || args.iter().any(|a| a != "--now") {
-        return Err(UsageError("usage: /zygo:down [--now]".into()).into());
+        return Err(UsageError(format!("usage: /zygo:down {}", zygo_core::verbs::DOWN_SLASH_ARGS)).into());
     }
     let now = args.iter().any(|a| a == "--now");
     let zygo = std::env::current_exe().map_err(|e| anyhow!(exe_error(&e)))?;

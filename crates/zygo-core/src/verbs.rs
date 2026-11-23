@@ -42,3 +42,6 @@ static SPECS: [VerbSpec; 17] = [
 ];
 
 pub static VERB_SPECS: &[VerbSpec] = &SPECS;
+
+/// The arguments of `/zygo:down` (W§12, OP11): only `--now`. The `down` spec's `args` are those of `zygo down`.
+pub const DOWN_SLASH_ARGS: &str = "[--now]";

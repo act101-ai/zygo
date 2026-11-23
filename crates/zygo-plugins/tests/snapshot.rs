@@ -38,7 +38,9 @@ fn embedded_has_one_command_per_verb() {
     assert!(file("commands/statusline.md").contains("argument-hint: \"[compact|verbose]\""));
     assert!(!file("commands/status.md").contains("argument-hint"));
     let down = file("commands/down.md");
-    assert!(down.contains("argument-hint: \"[--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]\""), "{down}");
+    // W§12, OP11: `/zygo:down` takes only `--now`; the CLI flags of `VerbSpec.args` are not slash arguments.
+    assert!(down.contains("argument-hint: \"[--now]\"\n"), "{down}");
+    assert!(!down.contains("--timeout"), "{down}");
     assert!(down.contains("disable-model-invocation: true"), "{down}");
     assert!(down.contains("If this text reaches you, /zygo:down did not run: tell the user that it failed. Do not run zygo down in a shell: it stops the workspace of the current folder, not the workspace of this session."), "{down}");
     assert!(!down.contains("$ARGUMENTS"), "{down}");

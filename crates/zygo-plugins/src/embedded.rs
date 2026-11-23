@@ -1,7 +1,7 @@
 //! The embedded `zygo` plugin (spec §15.5): commands generated from `VERB_SPECS` plus the `zygo-cli` skill.
 //! It holds no code, so it needs no approval (§15.7).
 
-use zygo_core::verbs::VERB_SPECS;
+use zygo_core::verbs::{DOWN_SLASH_ARGS, VERB_SPECS};
 
 pub const NAME: &str = "zygo";
 
@@ -28,7 +28,9 @@ pub fn files() -> Vec<(String, Vec<u8>)> {
     ];
     for v in VERB_SPECS {
         let mut t = format!("---\ndescription: {}\n", quoted(v.summary));
-        if !v.args.is_empty() { t.push_str(&format!("argument-hint: {}\n", quoted(v.args))); }
+        // The hint shows the slash arguments: `/zygo:down` takes only `--now` (W§12, OP11).
+        let hint = if v.name == "down" { DOWN_SLASH_ARGS } else { v.args };
+        if !hint.is_empty() { t.push_str(&format!("argument-hint: {}\n", quoted(hint))); }
         t.push_str("disable-model-invocation: true\n---\n");
         if v.name == "down" {
             t.push_str(DOWN_BODY);
