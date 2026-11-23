@@ -85,7 +85,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
 | FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | DONE | judgment | bd55c63; acceptance args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26, workspace --no-run ok; workspace 2757 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | DROPPED(folded into M5, diff review round 2; see nodes/M5.md) | implementation | — |
-| FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | PLANNED | judgment | — |
+| FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | IN-PROGRESS | judgment | .worktrees/phase2/FIX-29 |
 
 ## Log
 
