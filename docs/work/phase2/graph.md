@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1
+**Next:** W8, W10, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -65,7 +65,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | DONE | judgment | 3d51ad4; acceptance up 45, mux 46, snapshot 33, state 23, args 13, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M5, R3-1..R3-8 |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | IN-PROGRESS | judgment | .worktrees/phase2/W8 |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
-| W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
+| W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | PLANNED | judgment | — |
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
@@ -92,6 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
+| FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
 
 ## Log
 
@@ -213,3 +214,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-15 added and planned (operator defect): short renders 1000m for 1e9. 6 steps, test first; spec H§6.6 gains 1b, 1.2b. status and help reuse short; no other formatter of the kind; no unit above b (author's call). |
 | 2026-11-22 | FIX-15 DONE (79a70fc): short rolls over to b after 999m. Merged tree: statusline lib 4, statusline_render 25, zygo-hooks 173, zygo 378 pass. R2 added b tenths, b-range tokens and ctx tests; no compact 1b test, window cap 10m. |
 | 2026-11-22 | W8 planned: 35 steps, test first. C1-C8 applied: W7 Produces (member_live, socket_is_private, fire), W3 Produces (mux::BOUND), M1 Spec; spec W§8.1 up --all, W§12 rows workspace, ls, ws forget, ws forget-pane. |
+| 2026-11-22 | W10 planned: 30 steps, test first. C1-C4, C6-C18 applied: W2, W7, W9 Produces; M1 Spec, Consumes; spec AU18, AU97, W§9.3, W§11, W§12, W§18 #80, W§19. C5 as FIX-16 (FIX-15 taken), depends W10, W11, M1 (author's call). |
