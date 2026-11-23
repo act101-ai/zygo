@@ -1221,16 +1221,6 @@ fn held_panes_stay_dead_and_an_unheld_window_closes() {
     let dir = tempfile::tempdir().unwrap();
     let srv = PrivateServer::start();
     let t = srv.tmux();
-    fn until(f: impl Fn() -> bool) -> bool {
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(5) {
-            if f() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        f()
-    }
     srv.run(&["new-session", "-d", "-s", "base", "sleep", "600"]).unwrap();
     assert_eq!(
         t.new_session(&NewSession {
@@ -1273,9 +1263,9 @@ fn held_panes_stay_dead_and_an_unheld_window_closes() {
     assert!(until(|| srv.run(&["list-windows", "-t", "=zygo-t:", "-F", "#{window_index}"]).unwrap() == "0\n1"));
 }
 
-/// FIX-29 round 2: polls `f` every 10 ms for at most 5 s.
+/// FIX-29: polls `f` every 10 ms for at most 5 s; the one wait helper of the hold tests.
 #[cfg(unix)]
-fn until5(f: impl Fn() -> bool) -> bool {
+fn until(f: impl Fn() -> bool) -> bool {
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(5) {
         if f() {
@@ -1302,7 +1292,7 @@ fn held_session(t: &Tmux, dir: &Path) -> u32 {
 }
 
 #[cfg(unix)]
-#[test] // FIX-29 diff review round 2, finding 6: `{end}` with `base-index 1`
+#[test] // FIX-29 diff review round 3, finding 8: `{end}` with `base-index 1` after window 1 is gone
 fn held_window_with_base_index_1_is_made_after_the_last_and_held() {
     let _g = forks();
     let Some(_) = require_tmux() else { return };
@@ -1312,11 +1302,15 @@ fn held_window_with_base_index_1_is_made_after_the_last_and_held() {
     srv.run(&["new-session", "-d", "-s", "base", "sleep", "600"]).unwrap();
     srv.run(&["set-option", "-g", "base-index", "1"]).unwrap();
     assert_eq!(held_session(&t, dir.path()), 1);
+    let live = NewWindow { session: "zygo-t", name: None, start_dir: dir.path(), argv: &argv(), hold: true };
+    assert_eq!(t.new_window(&live), Ok(2));
+    srv.run(&["kill-window", "-t", "=zygo-t:1"]).unwrap();
+    // Window 1 is free now; a plain `-t =zygo-t:` would make the window there.
     let nw = NewWindow { session: "zygo-t", name: None, start_dir: dir.path(), argv: &os(&["sh", "-c", "exit 4"]), hold: true };
-    assert_eq!(t.new_window(&nw), Ok(2));
-    assert!(until5(|| t.display("=zygo-t:2", "#{pane_dead}|#{pane_dead_status}") == Ok("1|4".into())));
-    assert_eq!(srv.run(&["show-options", "-wv", "-t", "=zygo-t:2", "remain-on-exit"]).unwrap(), "on");
-    assert_eq!(srv.run(&["list-windows", "-t", "=zygo-t:", "-F", "#{window_index}"]).unwrap(), "1\n2");
+    assert_eq!(t.new_window(&nw), Ok(3));
+    assert!(until(|| t.display("=zygo-t:3", "#{pane_dead}|#{pane_dead_status}") == Ok("1|4".into())));
+    assert_eq!(srv.run(&["show-options", "-wv", "-t", "=zygo-t:3", "remain-on-exit"]).unwrap(), "on");
+    assert_eq!(srv.run(&["list-windows", "-t", "=zygo-t:", "-F", "#{window_index}"]).unwrap(), "2\n3");
 }
 
 #[cfg(unix)]
@@ -1335,7 +1329,7 @@ fn held_window_after_a_gap_is_made_after_the_last_and_held() {
     srv.run(&["kill-window", "-t", "=zygo-t:1"]).unwrap();
     let nw = NewWindow { session: "zygo-t", name: None, start_dir: dir.path(), argv: &os(&["sh", "-c", "exit 5"]), hold: true };
     assert_eq!(t.new_window(&nw), Ok(3));
-    assert!(until5(|| t.display("=zygo-t:3", "#{pane_dead}|#{pane_dead_status}") == Ok("1|5".into())));
+    assert!(until(|| t.display("=zygo-t:3", "#{pane_dead}|#{pane_dead_status}") == Ok("1|5".into())));
     assert_eq!(srv.run(&["show-options", "-wv", "-t", "=zygo-t:3", "remain-on-exit"]).unwrap(), "on");
     assert_eq!(srv.run(&["list-windows", "-t", "=zygo-t:", "-F", "#{window_index}"]).unwrap(), "0\n2\n3");
 }

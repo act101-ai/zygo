@@ -2288,8 +2288,10 @@ fn down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
         })
         .unwrap();
     let before = raw(&store);
-    assert_eq!(run(&o, &hooks()), (2, String::new(), format!("{AU54}\n")));
+    let got = run(&o, &hooks());
+    // Only the version probe: no tmux call reaches the saved socket, and no repair runs.
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert_eq!(got, (2, String::new(), format!("{AU54}\n")));
     assert_eq!(raw(&store), before);
-    assert!(tmux_log(t).iter().all(|l| !l.contains("so'ck")), "{:?}", tmux_log(t));
     assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
 }
