@@ -16,7 +16,7 @@ use zygo_core::Agent;
 use zygo_workspace::args::{has_user_info, removed_labels};
 
 use super::compact::{parse_window, Change};
-use super::loadout::{hide_secrets, print_folder_warning, PaneBase};
+use super::loadout::{hide_secrets, print_folder_warning, shown_field, PaneBase};
 use super::verbs::VerbCtx;
 
 #[derive(Parser)]
@@ -88,7 +88,8 @@ fn loadout_checks(cfg: &Config, base: &PaneBase) -> Vec<Violation> {
                 if let Some(v) = p.compact.as_deref()
                     && !matches!(parse_window(v), Some(Change::Set(_)))
                 {
-                    let full = super::bad_compact(word, v);
+                    // review round 2, finding 3: the value as `config show` prints it
+                    let full = super::bad_compact(word, &shown_field(v));
                     let prefix = format!("zygo {word}: ");
                     let message = full.strip_prefix(&prefix).unwrap_or(&full).to_string();
                     out.push(Violation { severity: Severity::Error, path: format!("{path}.compact"), message });
@@ -166,8 +167,14 @@ fn run_in(tokens: &[String], ctx: &LoadContext, s: &dyn SecretStore, team: &dyn 
     for w in &merged.warnings {
         super::print_err(&format!("{w}\n"));
     }
-    // D6: the pane folders by `zygo up`'s own lookup, only when there is a loadout (no git run otherwise)
-    let base = if merged.config.loadout.is_empty() {
+    // D6: the pane folders by `zygo up`'s own lookup, only when there is a loadout (no git run otherwise) and the output
+    // can show one: only the user layer holds `[loadout]` (the team layer drops it, `layers.rs:86`; the repository file
+    // may not set it, `layers.rs:499`), so `show --layer <other>` needs no lookup (review round 2, finding 6)
+    let shows_loadouts = match &args.sub {
+        Sub::Show { .. } => layer.is_none_or(|l| l == Layer::User),
+        Sub::Check => true,
+    };
+    let base = if merged.config.loadout.is_empty() || !shows_loadouts {
         PaneBase { main_root: PathBuf::new(), worktrees: vec![] }
     } else {
         let (base, warning) = PaneBase::from_folder(ctx.repo.as_deref().unwrap_or(Path::new("")));

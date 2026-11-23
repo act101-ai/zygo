@@ -191,6 +191,7 @@ fn one_pane(args: &[&str]) -> String {
 }
 
 /// `zygo <args>` with `<home>/config.toml` = `config`, run in `cwd` (the form of `with_config` in `cli_surface.rs`).
+/// No git variable of the caller reaches `zygo`, and git looks for no repository above `home` (review round 2, 7).
 fn zygo_at(home: &Path, cwd: &Path, config: &str, args: &[&str]) -> Output {
     std::fs::write(home.join("config.toml"), config).unwrap();
     Command::new(env!("CARGO_BIN_EXE_zygo"))
@@ -203,6 +204,10 @@ fn zygo_at(home: &Path, cwd: &Path, config: &str, args: &[&str]) -> Output {
         .env_remove("ZYGO_AGENT")
         .env_remove("XDG_DATA_HOME")
         .env_remove("XDG_CACHE_HOME")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env("GIT_CEILING_DIRECTORIES", home)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .output()
@@ -213,6 +218,9 @@ fn git(dir: &Path, args: &[&str]) {
     let o = Command::new("git")
         .args(["-c", "user.name=zygo-test", "-c", "user.email=zygo-test@example.invalid", "-c", "init.defaultBranch=main"])
         .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .current_dir(dir)
         .stdin(Stdio::null())
         .output()
@@ -477,12 +485,88 @@ fn config_check_takes_a_relative_content_file_from_the_pane_cwd() {
     assert!(!out(&o).contains("SECRET"));
 }
 
-#[test] // W§18 #63, AU59
+/// W§18 #63 in full: a `vim` pane and an OpenCode pane with `passthrough = true` are reported; the pane with
+/// `args = ["--settings", "x"]` is not.
+const W18_63_CFG: &str = r#"
+[loadout.pair]
+[[loadout.pair.window]]
+[[loadout.pair.window.pane]]
+kind = "vim"
+[[loadout.pair.window.pane]]
+kind = "opencode"
+passthrough = true
+[[loadout.pair.window.pane]]
+kind = "claude-code"
+args = ["--settings", "x"]
+"#;
+
+#[test] // W§18 #63, AU59; kills: `--settings` reported by the AU30 warning (round 2 finding 8: the whole #63)
 fn w18_63_config_check_does_not_report_settings() {
     let t = tempfile::tempdir().unwrap();
     let home = t.path();
+    let o = zygo_at(home, home, W18_63_CFG, &["config", "check"]);
+    assert_eq!(
+        (o.status.code(), out(&o).as_str()),
+        (
+            Some(11),
+            "error: loadout.pair.window[0].pane[0].kind: must be \"claude-code\", \"opencode\" or \"shell\"\n\
+             error: loadout.pair.window[0].pane[1].passthrough: only with kind = \"claude-code\"\n"
+        )
+    );
     let o = zygo_at(home, home, &one_pane(&["--settings", "x"]), &["config", "check"]);
     assert_eq!((o.status.code(), out(&o).as_str()), (Some(0), "config ok\n"));
+}
+
+#[test] // round 2 finding 3; kills: the `compact` value printed as typed in the error line
+fn config_check_hides_user_info_in_a_bad_compact_value() {
+    let t = tempfile::tempdir().unwrap();
+    let home = t.path();
+    let cfg = "[loadout.pair]\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\nkind = \"claude-code\"\n\
+               compact = \"https://u:SECRET1@h.example.invalid/x\"\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\n\
+               compact = \"u:SECRET2@h.example.invalid\"\n";
+    let o = zygo_at(home, home, cfg, &["config", "check"]);
+    assert_eq!(
+        (o.status.code(), out(&o).as_str()),
+        (
+            Some(11),
+            "error: loadout.pair.window[0].pane[0].compact: bad --compact value `https://h.example.invalid/x`: use <tokens>, <n>k or <n>m from 100k to 10m, or off\n\
+             error: loadout.pair.window[0].pane[1].compact: bad --compact value `<user info removed>`: use <tokens>, <n>k or <n>m from 100k to 10m, or off\n"
+        )
+    );
+    assert!(!err(&o).contains("SECRET"));
+}
+
+#[test] // round 2 finding 6; kills: a folder lookup for a shown layer that cannot hold a loadout
+fn config_show_of_a_layer_without_loadouts_runs_no_folder_lookup() {
+    let t = tempfile::tempdir().unwrap();
+    let home = t.path();
+    let cfg = one_pane(&["--mcp-config", "m.json"]);
+    for layer in ["team", "builtin", "repository"] {
+        let o = zygo_at(home, home, &cfg, &["config", "show", "--layer", layer]);
+        assert_eq!((o.status.code(), err(&o).as_str()), (Some(0), ""), "{layer}");
+    }
+    let o = zygo_at(home, home, &cfg, &["config", "show", "--layer", "user"]);
+    assert_eq!((o.status.code(), err(&o).as_str()), (Some(0), NO_FOLDER));
+}
+
+#[cfg(unix)]
+#[test] // round 2 finding 2; kills: `loadout show` that prints bidi or C1 characters raw while `config show` escapes them
+fn loadout_show_and_config_show_escape_the_same_way() {
+    let t = tempfile::tempdir().unwrap();
+    let home = t.path();
+    let cfg = one_pane(&["a\u{202e}b", "c\u{9b}d", "e\u{200f}f"]);
+    let shown = zygo_at(home, home, &cfg, &["loadout", "show", "pair"]);
+    assert_eq!(shown.status.code(), Some(0), "{}", err(&shown));
+    let config = zygo_at(home, home, &cfg, &["config", "show"]);
+    assert_eq!(config.status.code(), Some(0), "{}", err(&config));
+    let (shown, config) = (out(&shown), out(&config));
+    for c in ['\u{202e}', '\u{9b}', '\u{200f}'] {
+        assert!(!shown.contains(c) && !config.contains(c), "{c:?}");
+    }
+    let args: Vec<&str> = shown.lines().filter(|l| l.starts_with("args = ")).collect();
+    assert_eq!(args.len(), 1, "{shown}");
+    // byte for byte: the `args = [...]` text of `loadout show` is in the `config show` line
+    assert!(args_line(&config).as_bytes().windows(args[0].len()).any(|w| w == args[0].as_bytes()), "{}\n{}", args[0], args_line(&config));
 }
 
 // ---- the pane folder (D6) ----
