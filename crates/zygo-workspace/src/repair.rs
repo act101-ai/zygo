@@ -127,10 +127,11 @@ pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn 
 }
 
 /// AU67 on a session that exists and is ours: the session setup again, then each missing pane as in W§8.1 step 11,
-/// then `phase = up` with the panes that did not fit removed (M1), then one line per dead pane (FIX-29).
+/// with the build hold on every window (FIX-29 round 2); then, as `up` does in step 12, the release of the hold and
+/// the read of the dead panes, `phase = up` with the panes that did not fit removed (M1), and one line per dead pane.
 fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, err: &mut dyn Write) -> anyhow::Result<()> {
     let b =
-        Builder { mux, session: &ws.tmux_session, zygo, id: &ws.id, main_root: &ws.main_root, dir: store.dir(), hold: false };
+        Builder { mux, session: &ws.tmux_session, zygo, id: &ws.id, main_root: &ws.main_root, dir: store.dir(), hold: true };
     b.session_setup(true).map_err(tmux)?;
     let mut present: BTreeMap<String, u32> = BTreeMap::new();
     let mut windows: BTreeSet<u32> = BTreeSet::new();
@@ -166,6 +167,7 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
                     panes: vec![bp(group[0])],
                 };
                 let (index, _) = b.add_window(&w).map_err(tmux)?;
+                windows.insert(index);
                 (index, &group[1..])
             }
         };
@@ -187,12 +189,14 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
             Some(s)
         }
     };
-    // FIX-29: the dead panes of the stopped build (W§8.1 step 12 lines); window_setup above released the hold.
-    if let Some(sock) = socket.clone().or_else(|| ws.tmux_socket.clone()) {
-        for line in b.dead_lines(&sock, &ws.name, err) {
-            let _ = writeln!(err, "{line}");
-        }
-    }
+    // FIX-29 round 2: as `up` in W§8.1 step 12: end the build hold on every window of the session (best effort), read
+    // the dead panes (of the stopped build and of this repair), write `phase = up`, then print one line per dead pane.
+    let windows: Vec<u32> = windows.into_iter().collect();
+    b.release(&windows, &ws.name, err);
+    let exited = match socket.clone().or_else(|| ws.tmux_socket.clone()) {
+        Some(sock) => b.dead_lines(&sock, &ws.name, err),
+        None => Vec::new(),
+    };
     write(store, &ws.name, &mut |c| {
         set_up(c);
         if let Some(s) = &socket {
@@ -203,5 +207,8 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
             c.snapshot_seq += 1;
         }
     })?;
+    for line in &exited {
+        let _ = writeln!(err, "{line}");
+    }
     Ok(())
 }

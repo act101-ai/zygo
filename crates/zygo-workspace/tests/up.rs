@@ -2326,3 +2326,64 @@ fn repair_reports_a_pane_that_died_during_the_hold() {
     assert_eq!(remain(&l, 0), "off");
     assert_eq!(read(&store).phase, Phase::Up);
 }
+
+/// FIX-29 round 2: the number of dead panes of `zygo-app`; 0 when the session or its server is gone.
+fn dead_count(wrapper: &Path) -> usize {
+    let out = Command::new(wrapper).args(["list-panes", "-s", "-t", "=zygo-app:", "-F", "#{pane_dead}"]).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).lines().filter(|x| *x == "1").count()
+}
+
+#[test] // FIX-29 diff review round 2, finding 1, AU67: a repair builds with the hold; a pane it creates may exit at once
+fn repair_holds_the_panes_it_creates_and_reports_them() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo.clone(),
+        vec![win(0, Some("one"), "tiled", 120, 40), win(1, Some("two"), "tiled", 120, 40)],
+        vec![
+            pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo),
+            pane("kbbbbbbbb", 0, 1, PaneKind::Shell, &l.wt),
+            pane("kcccccccc", 1, 0, PaneKind::Shell, &l.wt),
+        ],
+        vec![],
+    );
+    // The first `up` stops after `new-session`: only `kaaaaaaaa` exists, alive.
+    up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+    let r1 = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!((r1.0, r1.2.as_str()), (1, "zygo: tmux: injected\n"));
+    assert_eq!(read(&store).phase, Phase::Building);
+    // The repair creates `kbbbbbbbb` (a split) and `kcccccccc` (a new window); both exit at once.
+    let exits = ws_run_does(&l, "zygo-exits", "exit 3");
+    let w = l.srv.wrapper().to_path_buf();
+    up::testing::hook(
+        store.dir(),
+        "release",
+        Some(Box::new(move || {
+            assert!(wait_for(S5, || dead_count(&w) == 2), "the two repaired panes did not die within 5 s");
+            Ok(())
+        })),
+    );
+    let mux = up::server(&l.o.tmux, Some(l.srv.socket()), None);
+    let (r, _, err) = repair_run(&store, &mux, &exits);
+    up::testing::hook(store.dir(), "release", None);
+    assert!(r.is_ok(), "repair failed: {r:?} {err}");
+    assert!(!err.contains("tmux:"), "{err}");
+    let ids = by_key(&l.srv);
+    assert_eq!(
+        ids.iter().map(|(k, (w, _))| (k.clone(), *w)).collect::<Vec<_>>(),
+        [("kaaaaaaaa".to_string(), 0), ("kbbbbbbbb".to_string(), 0), ("kcccccccc".to_string(), 1)]
+    );
+    let sock = l.srv.socket().to_path_buf();
+    for k in ["kbbbbbbbb", "kcccccccc"] {
+        assert_eq!(err.matches(&exited(k, "exit 3", &sock, &ids[k].1)).count(), 1, "{err}");
+    }
+    assert_eq!(err.matches("exited during up").count(), 2, "{err}");
+    assert_eq!(read(&store).phase, Phase::Up);
+    for w in ids.values().map(|(w, _)| *w).collect::<BTreeSet<u32>>() {
+        assert_eq!(remain(&l, w), "off", "window {w}");
+    }
+}
