@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19
+**Next:** FIX-20, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -65,9 +65,9 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
-| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17 | TODO | judgment | — |
+| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20 | TODO | judgment | — |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
-| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17 | TODO | judgment | — |
+| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
@@ -92,6 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1 | TODO | mechanical | — |
+| FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | PLANNED | implementation | — |
 
 ## Log
 
@@ -220,3 +221,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-17 DONE (70043bb): store refuses a linked state folder, no link followed in it, TooLarge over 1 MiB never changed. Merged tree: state 29, snapshot 34, admin 22, up 47, zygo-core ok, zygo-workspace 277. Spec AU29, AU84, W§7.3, W§8.1, W§10, W§12 applied. |
 | 2026-11-22 | W10 DONE (cc56f8d): zygo down. Merged tree: down 26, drain 31, activity 34 + 1 ignored, zygo-workspace 308, check --tests clean. C19, C23, C26, C28-C37 applied: spec AU18, AU26, AU97, W§9.1, W§9.3, W§14; W9, W10, H1 contracts. FIX-19 added (C24, C33): OpenCode plugin tool events. |
 | 2026-11-22 | FIX-18 DONE (fbbfb74). Operator decision: no idle expiry for any session, local or team; a session ends with its launcher or a server restart. Merged tree: session_api 52, zygo-proxy 391, zygo-launch 0 failed, check --tests clean. Graph title applied. |
+| 2026-11-22 | FIX-20 added and planned (operator: no invented requirement may end user work): AU26 60 s interrupted-turn idle and AU69 30-day results deletion removed; last_run_at goes (no reader). 8 steps, test first. M1, H1 depend on it. |
