@@ -1,6 +1,6 @@
-# zygo phase 3 roadmap: distributed workloads
+# zygo phase 3 roadmap
 
-**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet.
+**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet.
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`).
 
 ## Intent
@@ -15,6 +15,10 @@ The gap today: the trim hook (`crates/zygo-hooks/src/trim.rs`, §10.1) acts on o
 
 The direction: zygo shapes output in the `PostToolUse` trim hook, after the tool has run. It does not rewrite commands. It keeps the raw output in the result store for each shaped view.
 
+Phase 3 has a third track (operator, 2026-11-23): delegated decision records. The agents that author work (the `zygo-<role>` subagents) make decisions and assumptions that the operator did not make. A review gate runs 3 rounds at most. Today, a finding that is open after round 3 needs the operator. The direction: each such decision gets a record in the same way as an ADR, but after the fact. Then the work can pass the 3-round gate and continue with no operator action. The operator audits the records at the end of a phase and makes categorical changes when an assumption was incorrect. No finding stays without a record and a disposition.
+
+P3-8 comes first in the order of work, because each node that runs without it makes decisions that are not recorded.
+
 ## Items
 
 | Id | Item | Depends | Spec |
@@ -26,6 +30,9 @@ The direction: zygo shapes output in the `PostToolUse` trim hook, after the tool
 | P3-5 | Saving accounting with a carry factor: two figures ("tokens kept out of context", "estimated spend avoided"), net of read-backs, counted per context; per-tool and per-command breakdown in `zygo usage`; view to read-back ratio | none | to write |
 | P3-6 | Command-aware output shaping in the trim hook: ANSI and progress removal, repeated-line dedup with counts, failures-only views for test runners, kind-aware views (diff, json, log), Bash stderr measured and stored | P3-5 | to write |
 | P3-7 | Shaping tests: fixtures from real command output, a minimum saving for each filter, a never-worse check, a measured hook latency budget | P3-6 | to write |
+| P3-8 | Delegated decision record (DDR): record format, kinds, statuses, the disposition rule for review findings, the classes that stop for the operator | none | to write |
+| P3-9 | DDR enforcement in zygo: the verdict step refuses a pass while a finding has no disposition; `zygo work report` counts open records; a `Zygo-Decision:` commit trailer | P3-8 | to write |
+| P3-10 | Phase-end ratification: the operator gets each open record to ratify, overturn or promote | P3-8 | to write |
 
 ## P3-2 design notes (input for its spec)
 
@@ -53,6 +60,26 @@ The direction: zygo shapes output in the `PostToolUse` trim hook, after the tool
 - **Order of work.** First the low-risk steps (ANSI and progress removal, repeated-line dedup). Then kind-aware views. Then command-specific views (test runners first).
 - **Fail open.** A shaper that cannot parse its input returns the plain size-based view (C6).
 - **Rejected for now:** a `PreToolUse` command rewrite to a wrapper binary (changes what permission rules see; makes output unfit for scripts); user-defined filter files (needs a trust gate; decide after the built-in shapers are measured).
+
+## P3-8 design notes (input for its spec)
+
+- **Name.** Delegated decision record, DDR. The agent decided under delegated authority and the operator has not ratified the decision. "PDR" is not used, because it is a known term (preliminary design review).
+- **One record type, with a kind.** The kinds are `assumption`, `decision`, `accepted-limit`, `compromise` and `open-finding`.
+- **Fields.** Id; work unit; role and model; commit; date; the choice; the alternatives rejected; the evidence; the assumptions it depends on, by id; the cost to reverse; the later records that build on it; status.
+- **Statuses.** `open`, `ratified`, `overturned`, `fixed`, `superseded`.
+- **Assumptions are first-class.** A decision cites an assumption by id. When an assumption is found incorrect, one query lists each record that depends on it. This is the base for a categorical change.
+- **Disposition rule.** Each review finding ends in exactly one disposition: fixed (commit), rejected (reason), or recorded (DDR id). After round 3 the gate lets the work continue only when no finding is without a disposition.
+- **Classes that stop for the operator.** An agent cannot record these and continue: a failed acceptance check; a security finding; data loss or an action that cannot be reversed; a change to a public contract (CLI, config schema, MCP tool shape, stored format); a deviation from a constraint in an approved spec; a new rule or a permission change.
+- **Who signs.** The author does not accept its own compromise. The reviewer or the lead signs the disposition.
+- **Storage.** One file per record in the repository, under `docs/decisions/`, in the pull request that caused it.
+- **No numeric limit on open records at first.** Phase 3 measures the count and the dependency depth; the first phase-end review decides if a limit is necessary.
+- **Outside this repository.** The plan, execute and deliver skills are in the act101 plugin. They need these changes: the plan step states what an author can decide alone; the execute step writes records at the verification stage; the deliver step lists the records in the pull request body. P3-8 names these changes; the plugin makes them.
+
+## P3-10 design notes (input for its spec)
+
+- **Outcomes per record.** Ratify; overturn (this makes a work node); promote to an ADR, a spec change or a rule.
+- **Order.** Records are shown sorted by the number of records that build on them, largest first.
+- **Rules need the operator.** A record never becomes a rule without this review.
 
 ## Not in phase 3 unless the operator adds them
 
