@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** H3, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-22, FIX-23, FIX-24, FIX-25
+**Next:** H3, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-22, FIX-23, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | DONE | judgment | 0921fb6; acceptance admin 21, up 45, up_all 7, workspace --no-run ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | DONE | judgment | cc56f8d; acceptance down 26, drain 31, activity 34, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1-B3 and minor |
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
@@ -92,10 +91,10 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3 | TODO | mechanical | — |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
-| FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | TODO | implementation | — |
-| FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks | FIX-21, H1 | TODO | implementation | — |
-| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-25 | TODO | implementation | — |
-| FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | TODO | implementation | — |
+| FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | PLANNED | implementation | — |
+| FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks | FIX-21, H1 | PLANNED | implementation | — |
+| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22 | TODO | implementation | — |
+| FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
 
 ## Log
 
@@ -237,3 +236,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | H1 attempt 2 BLOCKED after 3 diff-review fix rounds. Open: a panicking verb must let its line pass (base C6, §17.1) yet the turn must be busy; newer-version, lock-open and write errors misclassed. Attempt saved outside the repo; re-plan builds on it. |
 | 2026-11-22 | H1 back IN-PROGRESS on its attempt-2 branch (af74fb6): operator authorized a 4th fix round instead of a re-plan (2026-11-22). Open: keep C6 for a panicking verb with member busy, activity error classes, acceptance adds lib and doc tests. |
 | 2026-11-23 | H1 DONE (a75e36f): merged after attempt 2 and an operator-authorized fourth fix round. Acceptance exit 0; zygo-hooks, zygo-core, zygo-workspace, zygo-launch, zygo pass; clippy clean. FIX-25 added (flaky up test, Text file busy). |
+| 2026-11-23 | FIX-22 and FIX-23 planned after plan review; FIX-25 dropped (tmux upgraded by pacman mid-run, not a code race); FIX-24 now after FIX-22 and owns AU59, W§16 and W§18 #89 text. |
