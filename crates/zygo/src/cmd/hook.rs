@@ -29,6 +29,7 @@ pub static TABLE: &[Hook] = &[
     Hook { name: "pre-compact", run: zygo_hooks::pre_compact::run, reads_stdin: true },
     Hook { name: "work", run: zygo_work::hooks::run, reads_stdin: true },
     Hook { name: "guard", run: zygo_work::guards::run, reads_stdin: true },
+    Hook { name: "workspace", run: workspace_hook, reads_stdin: true },
 ];
 
 pub use zygo_core::hook::error_line;
@@ -58,6 +59,23 @@ fn statusline_hud(_input: &HookInput) -> anyhow::Result<HookOutput> {
         start + statusline::BOUND,
     );
     Ok(HookOutput::Text(statusline::render::render(&data, &render_env)))
+}
+
+/// `zygo hook workspace --event <event>` (workspaces design W§9.1, H1 D18): the one place that reads the real
+/// environment, the zygo path and the paths for the member hooks; `workspace::run` takes them as inputs.
+fn workspace_hook(input: &HookInput) -> anyhow::Result<HookOutput> {
+    let Some(event) = input.cli_event.as_deref() else { anyhow::bail!("workspace: --event is required") };
+    let out = zygo_hooks::workspace::run(
+        event,
+        &serde_json::to_vec(&input.raw)?,
+        &Paths::from_env(),
+        &|k| std::env::var_os(k),
+        &std::env::current_exe().unwrap_or_default(),
+    )?;
+    Ok(match out {
+        Some(text) => HookOutput::Text(text),
+        None => HookOutput::None,
+    })
 }
 
 /// `zygo hook <name>`: always exit 0 (C6).
