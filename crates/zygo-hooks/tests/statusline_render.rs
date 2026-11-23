@@ -372,6 +372,11 @@ fn h14_08_ctx_numbers_bar_and_threshold_mark() {
     // A threshold that is not below the window.
     let at = with(|s| (s.threshold, s.effective_window) = (Some(1_000_000), Some(1_000_000)));
     assert!(!compact_text(&at).contains('⇣') && compact_text(&at).contains("ctx 196k/1m ▰▱▱▱▱"));
+    // H§6.6, FIX-15: ctx numbers in the `b` range.
+    let big = with(|s| {
+        (s.context_window, s.effective_window, s.threshold, s.used_context) = (Some(2_000_000_000), Some(2_000_000_000), None, Some(1_250_000_000));
+    });
+    assert!(compact_text(&big).contains("ctx 1.2b/2b ") && verbose_text(&big).contains("ctx 1.2b/2b "), "{}", compact_text(&big));
 
     // Safety only: window 200,000, `effective_window` 180,000, no `threshold`, used 90,000 → no mark, fraction 0.5.
     let safety = with(|s| {
@@ -944,6 +949,9 @@ fn tokens_spend_cache_trimmed() {
     // A team session has no `spend_usd` yet: no spend segment.
     let team = with(|s| (s.spend_usd, s.requests_priced, s.spend_notional) = (None, None, Some(true)));
     assert!(compact_text(&team).contains(&format!("↑1.2m ↓48k  {DB} 92%")), "{}", compact_text(&team));
+    // H§6.6, FIX-15: token counts in the `b` range.
+    let big = with(|s| (s.tokens_in, s.tokens_out) = (Some(1_250_000_000), Some(1_000_000_000)));
+    assert!(compact_text(&big).contains("↑1.2b ↓1b  ") && verbose_text(&big).contains("↑ 1.2b in  ↓ 1b out"), "{}", compact_text(&big));
 
     // Cache: red below 50 %.
     let low = with(|s| s.cache_read_share = Some(0.49));

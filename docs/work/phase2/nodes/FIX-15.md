@@ -49,3 +49,13 @@ Steps:
 - [x] Run them and see them pass: the two commands of step 2 → 1 passed each.
 - [x] Run the Acceptance: `cargo test -p zygo-hooks --locked --lib statusline && cargo test -p zygo-hooks --locked --test statusline_render` → all pass. Seen: lib statusline 4 passed, statusline_render 25 passed. Then `cargo clippy -p zygo-hooks --locked --tests -- -D warnings` → exit 0.
 - [x] Commit, in the FIX-15 checkout: `git add crates/zygo-hooks/src/statusline/mod.rs crates/zygo-hooks/tests/statusline_render.rs docs/work/phase2/nodes/FIX-15.md`, with the identity env and the message `fix(hud): short rolls over to b after 999m`, one blank line, `Zygo-Session: 01M80K6VKVFKHN736B0QCWTTKZ` and `Zygo-Work: FIX-15`.
+
+## Round 2
+
+Diff review round 2: no blocking defect, 3 minor test gaps (the coordinator's decisions, the author's call).
+
+- R1. `short_forms` gains 1,099,999,999 → `1.0b`, 1,100,000,000 → `1.1b` and 999,999,999,999 → `999.9b`. They pass on the fix. Mutation check: with the condition changed to `n.is_multiple_of(unit) || n % unit / (unit / 10) == 0`, so a tenth of 0 drops the `.0`, the test failed at `mod.rs:89:13` with `left: "1b"`, `right: "1.0b"` for 1099999999; the mutation was reverted.
+- R2. `statusline_render.rs` gains one ctx case in `h14_08_ctx_numbers_bar_and_threshold_mark`: window 2,000,000,000, used 1,250,000,000 → `ctx 1.2b/2b` in compact and verbose; and one tokens case in `tokens_spend_cache_trimmed`: in 1,250,000,000 and out 1,000,000,000 → compact `↑1.2b ↓1b`, verbose `↑ 1.2b in  ↓ 1b out`.
+- R3. No `compact: 1b` test: `parse_window` accepts only `WINDOW_MIN..=WINDOW_MAX` (`crates/zygo/src/cmd/compact.rs:48`), with `WINDOW_MAX = 10_000_000` (`crates/zygo-proxy/src/session.rs:28`), and the session route refuses a larger window (`crates/zygo-proxy/src/routes.rs:217`), so `WindowArg::Tokens` cannot reach 1,000,000,000.
+
+Acceptance after round 2: lib statusline 4 passed, statusline_render 25 passed.
