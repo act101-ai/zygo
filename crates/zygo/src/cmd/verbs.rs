@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use zygo_config::keys::default_store;
@@ -9,6 +11,10 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::verbs::{VerbSpec, VERB_SPECS};
 use zygo_hooks::statusline::render::Style;
+use zygo_hooks::workspace::{record_of, start_snapshot_child, verb_member};
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::snapshot;
+use zygo_workspace::state::{CompactOverride, Store};
 use zygo_plugins::check::esc;
 use zygo_plugins::select::set_user_key;
 use zygo_proxy::client::{ClientError, SessionClient};
@@ -175,8 +181,84 @@ fn restore(dir: &SessionDir, old: Option<Vec<u8>>) -> std::io::Result<()> {
     res
 }
 
+/// The value that `mirror` writes into the member record (AU105).
+pub(crate) enum Mirror {
+    /// `member.overrides`: the whole `overrides.json`, read under the state lock.
+    Overrides,
+    /// `member.compact`.
+    Compact(CompactOverride),
+}
+
+/// The text added at the end of a reply or error text when the mirror did not write (AU105).
+pub(crate) const NOT_SAVED: &str = "; not saved for the workspace";
+
+/// The time the slash form keeps for its reply and the process exit after the mirror (inside the 4.5 s bound).
+pub(crate) const SLASH_MARGIN: Duration = Duration::from_millis(500);
+
+/// The lock wait of the mirror: `HOOK_WAIT` for the CLI form, and for the slash form also at most the time left less
+/// `SLASH_MARGIN`; `None` when no time is left (the mirror is skipped).
+pub(crate) fn lock_bound(slash: bool, left: Option<Duration>) -> Option<Duration> {
+    match (slash, left) {
+        (false, _) | (true, None) => Some(snapshot::HOOK_WAIT),
+        (true, Some(left)) => {
+            let b = left.saturating_sub(SLASH_MARGIN).min(snapshot::HOOK_WAIT);
+            (!b.is_zero()).then_some(b)
+        }
+    }
+}
+
+/// The override mirror (OP12, AU105): writes `value` into the member record of the session folder `dir` when that
+/// session is a workspace member. The marker is read by the hook rule (`verb_member`; the slash form first needs
+/// `ZYGO_WORKSPACE`); a session that is not a member gets `Ok(())` with nothing read or written (W-C6, W§18 #89). The
+/// write waits for the state lock at most `lock_bound`, changes only a state that exists (`update_existing`) and only
+/// a record of this zygo session (`record_of`). After a write, and only then, the `snapshot.pending` check of W§7.3
+/// runs: inline for the CLI form; for the slash form, which runs inside `zygo hook prompt`, as the detached `zygo ws
+/// snapshot` child, as the hooks do. An `Err` means the record was not written.
+pub(crate) fn mirror(ctx: &VerbCtx, dir: &SessionDir, value: Mirror) -> anyhow::Result<()> {
+    let env = |k: &str| std::env::var_os(k);
+    let gate = ctx.slash.then_some(&env as &dyn Fn(&str) -> Option<OsString>);
+    let Some(m) = verb_member(dir, &ctx.paths, gate) else { return Ok(()) };
+    let Some(bound) = lock_bound(ctx.slash, zygo_hooks::prompt::verb_time_left()) else {
+        return Err(anyhow!("no time left in the hook bound"));
+    };
+    let store = Store::open(&ctx.paths, &m.ws_id);
+    let written = store.update_existing(bound, &mut |ws| {
+        let Some(rec) = ws.members.get_mut(&m.pane) else {
+            return Err(anyhow!("no member record for pane {}", m.pane));
+        };
+        if !record_of(rec, &m.session) {
+            return Err(anyhow!("member record of pane {} belongs to another session", m.pane));
+        }
+        match &value {
+            Mirror::Overrides => {
+                let bytes = std::fs::read(dir.overrides_json())?;
+                rec.overrides = Some(serde_json::from_slice(&bytes)?);
+            }
+            Mirror::Compact(c) => rec.compact = Some(c.clone()),
+        }
+        Ok(())
+    });
+    let written = match written {
+        Ok(Some(ws)) => ws,
+        Ok(None) => return Err(anyhow!("no workspace with id {}", m.ws_id)),
+        Err(e) => return Err(anyhow!("{e}")),
+    };
+    if ctx.slash {
+        if let Ok(zygo) = std::env::current_exe()
+            && let Some(force) = snapshot::take_pending(&ctx.paths, &m.ws_id)
+        {
+            start_snapshot_child(&ctx.paths, &m.ws_id, &zygo, force, &|t| store.log_error(&format!("verb mirror: {t}")));
+        }
+    } else {
+        let mux = Tmux::new(super::tmux_program(), written.tmux_socket.clone());
+        let _ = snapshot::after_write(&ctx.paths, &mux, &m.ws_id, snapshot::HOOK_WAIT);
+    }
+    Ok(())
+}
+
 /// D1: the one change path of the session setting verbs; `m` is the config without session overrides.
-/// Order: O2, the limits of the new setting, `overrides.json` (and the PATCH for `redaction content`), user config.
+/// Order: O2, the limits of the new setting, `overrides.json` (and the PATCH for `redaction content`), the mirror of
+/// `overrides.json` into the member record once the outcome is final (AU105), user config.
 pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Result<String> {
     let SessionChange { verb, words, setting } = c;
     if ctx.session_dir.is_none() && !ctx.save {
@@ -207,6 +289,7 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
     let mut next = Overrides::load(dir);
     setting.apply(&mut next);
     next.save(dir)?;
+    let mut lost: Option<ClientError> = None;
     if let (Some(client), Setting::RedactionContent(b)) = (client, &setting) {
         match client.set_settings(&SessionSettings { redaction_content: Some(*b) }) {
             Ok(_) => {}
@@ -217,15 +300,20 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
                     Err(r) => anyhow!("redaction failed: {e}; restoring overrides.json failed: {r}"),
                 });
             }
-            Err(e) => return Err(anyhow!("redaction failed: {e}; the session may already use the new setting")),
+            // A lost PATCH keeps the new `overrides.json`, so it is mirrored (AU105).
+            Err(e) => lost = Some(e),
         }
+    }
+    let note = if mirror(ctx, dir, Mirror::Overrides).is_err() { NOT_SAVED } else { "" };
+    if let Some(e) = lost {
+        return Err(anyhow!("redaction failed: {e}; the session may already use the new setting{note}"));
     }
     let done = format!("{verb} {words} for this session");
     if !ctx.save {
-        return Ok(done);
+        return Ok(format!("{done}{note}"));
     }
-    setting.save(&ctx.paths.config_file).map_err(|e| anyhow!("{done}; saving to user config failed: {e}"))?;
-    Ok(format!("{done}; saved to user config"))
+    setting.save(&ctx.paths.config_file).map_err(|e| anyhow!("{done}; saving to user config failed: {e}{note}"))?;
+    Ok(format!("{done}; saved to user config{note}"))
 }
 
 #[cfg(test)]
@@ -284,6 +372,20 @@ pub(crate) mod tests {
 
     fn m0(c: &VerbCtx) -> Merged {
         base(c, "x", None, None).unwrap()
+    }
+
+    /// M4, decision 2026-11-23: the slash form's lock wait fits inside the hook bound; no time left skips the mirror.
+    #[test]
+    fn lock_bound_fits_the_hook_bound() {
+        use std::time::Duration;
+        let ms = Duration::from_millis;
+        assert_eq!(lock_bound(false, None), Some(ms(1000)));
+        assert_eq!(lock_bound(false, Some(ms(0))), Some(ms(1000)));
+        assert_eq!(lock_bound(true, None), Some(ms(1000)));
+        assert_eq!(lock_bound(true, Some(ms(4000))), Some(ms(1000)));
+        assert_eq!(lock_bound(true, Some(ms(1200))), Some(ms(700)));
+        assert_eq!(lock_bound(true, Some(ms(500))), None);
+        assert_eq!(lock_bound(true, Some(ms(0))), None);
     }
 
     #[test]

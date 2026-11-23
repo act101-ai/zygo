@@ -1,5 +1,6 @@
 //! `zygo hook prompt` (`UserPromptSubmit`): the `/zygo:<verb>` dispatcher (§17.1, §10.2.4).
 
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::LazyLock;
@@ -46,6 +47,18 @@ pub fn run_in_env(
     }
 }
 
+thread_local! {
+    /// The deadline of the `run_with` call whose verb runs on this thread; `None` on every other thread.
+    static VERB_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// The time left before the deadline of the `run_with` call that runs the current verb; `None` on any thread that is
+/// not a verb thread of `run_with` (the CLI form). `run_with` stores the deadline (its start plus `deadline`) in a
+/// thread-local of the verb thread before it calls the dispatcher, so parallel `run_with` calls do not mix.
+pub fn verb_time_left() -> Option<Duration> {
+    VERB_DEADLINE.with(Cell::get).map(|t| t.saturating_duration_since(Instant::now()))
+}
+
 /// A `/zygo:<verb>` line, trailing whitespace trimmed: the line test of `run_with` (§17.1).
 pub fn is_slash(prompt: &str) -> bool {
     RE.is_match(prompt.trim_end())
@@ -90,8 +103,10 @@ pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Du
     };
     let (tx, rx) = mpsc::channel();
     let (v, a) = (verb.clone(), args.clone());
+    let until = start.checked_add(deadline);
     // The worker is not joined: on a timeout it ends with the process.
     std::thread::spawn(move || {
+        VERB_DEADLINE.with(|d| d.set(until));
         let _ = tx.send(dispatch(&v, &a));
     });
     let text = match rx.recv_timeout(deadline.saturating_sub(start.elapsed())) {
@@ -288,6 +303,19 @@ mod tests {
         *GATE.0.lock().unwrap() = true;
         GATE.1.notify_all();
         assert_eq!(json_of(out), block("run in your shell: zygo compact 600k"));
+    }
+
+    /// M4: the verb thread sees the time left of the `run_with` call that runs it.
+    #[test]
+    fn verb_sees_the_time_left() {
+        static LEFT: Mutex<Option<Duration>> = Mutex::new(None);
+        fn d(_: &str, _: &str) -> anyhow::Result<String> {
+            *LEFT.lock().unwrap() = verb_time_left();
+            Ok("x".into())
+        }
+        run_with(&input(Some("/zygo:status")), Some(d), HOOK_DEADLINE).unwrap();
+        let left = LEFT.lock().unwrap().expect("a deadline");
+        assert!(left <= HOOK_DEADLINE && left > HOOK_DEADLINE - Duration::from_millis(1000), "{left:?}");
     }
 
     /// Decision 2026-11-23: `down` and `workspace` have a shell form that can name another workspace, so a slow slash

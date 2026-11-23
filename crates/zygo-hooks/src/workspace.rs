@@ -30,7 +30,7 @@ use zygo_core::Agent;
 use zygo_workspace::activity::{self, Activity};
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
 use zygo_workspace::snapshot;
-use zygo_workspace::state::{MemberState, Phase, StateError, Store};
+use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
 /// The `--event` values of `zygo hook workspace`.
 pub const EVENTS: [&str; 8] =
@@ -408,7 +408,7 @@ fn record_session(c: &Ctx, id: Option<&str>, zygo: &Path) {
                     m.saved_for = None;
                 }
             }
-            _ if m.zygo_session.as_deref() != Some(session.as_str()) => {
+            _ if !record_of(m, &session) => {
                 bail!("member record of pane {} belongs to another session; not changed", c.pane);
             }
             _ => {}
@@ -434,15 +434,53 @@ fn record_session(c: &Ctx, id: Option<&str>, zygo: &Path) {
     }
 }
 
-/// Starts `<zygo> ws snapshot --ws-id <id> [--force]` as a detached child and does not wait for it (W§7.3, D15):
-/// stdin, stdout and stderr to `/dev/null`, on unix in `/` and in a new session (`setsid`). A child that cannot start
-/// queues the flag again and writes one `errors.log` line.
-// The hook does not wait for the child: it ends soon after, and `init` reaps the child (W§7.3: the hook does not wait
-// for the 2 s check of AU89).
-#[allow(clippy::zombie_processes)]
+/// Starts the snapshot child of the member `c` (W§7.3, D15); a failure writes one `errors.log` line.
 fn start_snapshot(c: &Ctx, zygo: &Path, force: bool) {
+    start_snapshot_child(c.paths, &c.ws_id, zygo, force, &|t| elog(c, t));
+}
+
+/// The member that a session verb mirrors to (AU105): the workspace id, the pane key and the zygo session of the
+/// view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerbMember {
+    pub ws_id: String,
+    pub pane: String,
+    pub session: String,
+}
+
+/// The marker of `dir` by the hook rule. With `gate` (the slash form, which runs in the prompt hook), `None` unless
+/// `gate("ZYGO_WORKSPACE")` is set and not empty, before any read (the gate of `prompt::run_in_env`; W§18 #89). Then
+/// `check_folder`, `read_view` and `ctx_of` with `log = false`: `None` (not a member) for a refused folder, a
+/// `view.json` that is missing, a link, a FIFO, empty, not JSON or unreadable, no marker, or a workspace id or pane
+/// key that fails AU84. It writes no line and no file.
+pub fn verb_member(
+    dir: &SessionDir, paths: &Paths, gate: Option<&dyn Fn(&str) -> Option<OsString>>,
+) -> Option<VerbMember> {
+    if let Some(gate) = gate
+        && !gate("ZYGO_WORKSPACE").is_some_and(|v| !v.is_empty())
+    {
+        return None;
+    }
+    check_folder(dir).ok()?;
+    let view = read_view(dir).ok()??;
+    let c = ctx_of("verb", dir, view, paths, false)?;
+    Some(VerbMember { ws_id: c.ws_id, pane: c.pane, session: c.view.session })
+}
+
+/// `true` when `m` belongs to zygo session `session`: its `pending` names it, or its `zygo_session` is it.
+pub fn record_of(m: &MemberRecord, session: &str) -> bool {
+    m.pending.as_ref().is_some_and(|p| p.zygo_session == session) || m.zygo_session.as_deref() == Some(session)
+}
+
+/// Starts `<zygo> ws snapshot --ws-id <ws_id> [--force]` as a detached child and does not wait for it (W§7.3, D15):
+/// stdin, stdout and stderr to `/dev/null`, on unix in `/` and in a new session (`setsid`). A child that cannot start
+/// queues the flag again and gives one line to `log`.
+// The caller does not wait for the child: it ends soon after, and `init` reaps the child (W§7.3: the hook does not
+// wait for the 2 s check of AU89).
+#[allow(clippy::zombie_processes)]
+pub fn start_snapshot_child(paths: &Paths, ws_id: &str, zygo: &Path, force: bool, log: &dyn Fn(&str)) {
     let mut cmd = Command::new(zygo);
-    cmd.args(["ws", "snapshot", "--ws-id", &c.ws_id]);
+    cmd.args(["ws", "snapshot", "--ws-id", ws_id]);
     if force {
         cmd.arg("--force");
     }
@@ -458,9 +496,9 @@ fn start_snapshot(c: &Ctx, zygo: &Path, force: bool) {
         }
     }
     if let Err(e) = cmd.spawn() {
-        match snapshot::queue_pending(c.paths, &c.ws_id, force) {
-            Ok(()) => elog(c, &format!("cannot start the snapshot: {e}; snapshot.pending set again")),
-            Err(q) => elog(c, &format!("cannot start the snapshot: {e}; snapshot.pending not set: {q:#}")),
+        match snapshot::queue_pending(paths, ws_id, force) {
+            Ok(()) => log(&format!("cannot start the snapshot: {e}; snapshot.pending set again")),
+            Err(q) => log(&format!("cannot start the snapshot: {e}; snapshot.pending not set: {q:#}")),
         }
     }
 }
