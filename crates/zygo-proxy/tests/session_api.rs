@@ -18,7 +18,7 @@ use zygo_proxy::client::{ClientError, SessionClient, SessionStatus};
 use zygo_proxy::errors::ZygoError;
 use zygo_proxy::server::StartOpts;
 use zygo_proxy::session::{
-    Clock, ManualClock, PromptUsage, SessionGrant, SessionRequest, SessionSettings, TeamAuth, WindowArg, IDLE_TTL,
+    Clock, ManualClock, PromptUsage, SessionGrant, SessionRequest, SessionSettings, TeamAuth, WindowArg,
     REDACTION_NOTE, SUSPEND_AFTER, WINDOW_MAX, WINDOW_MIN,
 };
 use zygo_proxy::tee::{CacheSplit, Tee, Usage};
@@ -215,7 +215,7 @@ fn healthz_on_loopback_and_shutdown() {
 #[test]
 fn create_session_grant_shape() {
     let d = TempDir::new().unwrap();
-    let (h, c, _, _) = start(cfg(&d));
+    let (h, _c, ta, _) = start(cfg(&d));
     let g = h.create_session(req()).unwrap();
     let g2 = h.create_session(req()).unwrap();
     assert_eq!(g.session.len(), 26);
@@ -223,7 +223,10 @@ fn create_session_grant_shape() {
     assert!(g.token.starts_with("zyg_s_"));
     assert_eq!(g.token.len(), 49);
     assert!(g.token[6..].bytes().all(|b| b.is_ascii_alphanumeric()));
-    assert_eq!(OffsetDateTime::parse(&g.expires_at, &Rfc3339).unwrap(), c.utc() + time::Duration::hours(24));
+    // §7.2 (FIX-18): no session has an idle expiry; `expires_at` is empty for a local and a team session.
+    assert_eq!(g.expires_at, "");
+    let t = team_session(&Raw::new(), &h.url(), &format!("Bearer {ta}"));
+    assert_eq!(t.expires_at, "");
     assert!(g.config.roles.contains_key("lead"));
     assert_eq!(g.config.main_role, "lead");
     assert_eq!((g.profile_warning.as_deref(), g.redaction_note.as_deref()), (None, None));
@@ -400,21 +403,28 @@ fn restart_loses_sessions() {
     assert_eq!(st(raw.call(&u2, "GET", &sp(&a), &sess(&a), None)), (401, json!("zygo_session_unknown")));
 }
 
+/// §7.2 (FIX-18): no idle expiry: a local session idle 25 h still accepts a request, no request removes an idle
+/// local session, and its `expires_at` is empty.
 #[test]
-fn idle_ttl_24h() {
+fn local_session_has_no_idle_expiry() {
     let d = TempDir::new().unwrap();
-    let (h, c, _, _) = start(cfg(&d));
+    let (h, c, ta, _) = start(cfg(&d));
     let raw = Raw::new();
     let u = h.url();
     let a = h.create_session(req()).unwrap();
-    let p = sp(&a);
-    assert_eq!(IDLE_TTL, Duration::from_secs(86_400));
-    c.advance(IDLE_TTL - Duration::from_secs(1));
-    assert_eq!(raw.call(&u, "GET", &p, &sess(&a), None).0, 200);
-    c.advance(IDLE_TTL - Duration::from_secs(1));
-    assert_eq!(raw.call(&u, "GET", &p, &sess(&a), None).0, 200); // refreshed
-    c.advance(IDLE_TTL + Duration::from_secs(1));
-    assert_eq!(st(raw.call(&u, "GET", &p, &sess(&a), None)), (401, json!("zygo_session_unknown")));
+    let b = h.create_session(req()).unwrap();
+    c.advance(Duration::from_secs(25 * 3600));
+    let r = raw.call(&u, "GET", &sp(&a), &sess(&a), None);
+    assert_eq!(r.0, 200, "{}", r.1);
+    assert!(h.session(&b.session).is_some(), "a request on another session removed an idle local session");
+    assert_eq!(r.1["expires_at"], "");
+    assert_eq!((a.expires_at.as_str(), b.expires_at.as_str()), ("", ""));
+    c.advance(Duration::from_secs(30 * 24 * 3600));
+    let bearer = format!("Bearer {ta}");
+    let t = team_session(&raw, &u, &bearer);
+    assert_eq!(raw.call(&u, "POST", &hb(&t), &[("authorization", &bearer)], None).0, 204);
+    assert!(h.session(&a.session).is_some() && h.session(&b.session).is_some());
+    assert_eq!(raw.call(&u, "GET", &sp(&b), &sess(&b), None).0, 200);
 }
 
 #[test]
@@ -462,33 +472,45 @@ fn heartbeat_resets_suspend_clock() {
     assert_eq!(raw.call(&u, "GET", &sp(&t), &sess(&t), None).0, 200);
 }
 
+/// §7.2 (FIX-18): a team session with heartbeats and no request for 25 h still accepts a request.
 #[test]
-fn heartbeats_keep_session_past_idle_ttl() {
+fn team_session_with_heartbeats_idle_25h_accepts_a_request() {
     let d = TempDir::new().unwrap();
     let (h, c, ta, _) = start(cfg(&d));
     let raw = Raw::new();
     let u = h.url();
     let bearer_a = format!("Bearer {ta}");
     let t = team_session(&raw, &u, &bearer_a);
-    for _ in 0..1441 {
+    for _ in 0..1500 {
         c.advance(Duration::from_secs(60));
         assert_eq!(raw.call(&u, "POST", &hb(&t), &[("authorization", &bearer_a)], None).0, 204);
     }
     assert!(h.session(&t.session).is_some());
-    assert_eq!(raw.call(&u, "GET", &sp(&t), &sess(&t), None).0, 200); // 24 h 1 min after creation
+    let r = raw.call(&u, "GET", &sp(&t), &sess(&t), None); // 25 h after creation, no request before
+    assert_eq!(r.0, 200, "{}", r.1);
+    assert_eq!(r.1["expires_at"], "");
 }
 
+/// §7.2 (FIX-18): a suspended team session is not deleted by time; the next heartbeat resumes it with its state.
 #[test]
-fn suspended_session_deleted_after_idle_ttl() {
+fn suspended_team_session_is_not_deleted_by_time() {
     let d = TempDir::new().unwrap();
     let (h, c, ta, _) = start(cfg(&d));
     let raw = Raw::new();
     let u = h.url();
     let bearer_a = format!("Bearer {ta}");
     let t = team_session(&raw, &u, &bearer_a);
-    c.advance(IDLE_TTL + Duration::from_secs(1));
-    assert_eq!(st(raw.call(&u, "POST", &hb(&t), &[("authorization", &bearer_a)], None)), (401, json!("zygo_session_unknown")));
-    assert!(h.session(&t.session).is_none());
+    assert_eq!(raw.call(&u, "POST", &cp(&t), &sess(&t), j(json!({"window": 600000}))).0, 200);
+    c.advance(Duration::from_secs(25 * 3600));
+    assert_eq!(st(raw.call(&u, "GET", &sp(&t), &sess(&t), None)), (401, json!("zygo_session_suspended")));
+    c.advance(Duration::from_secs(30 * 24 * 3600));
+    let other = team_session(&raw, &u, &bearer_a);
+    assert_eq!(raw.call(&u, "POST", &hb(&other), &[("authorization", &bearer_a)], None).0, 204);
+    assert!(h.session(&t.session).is_some(), "a request on another session removed a suspended session");
+    assert_eq!(raw.call(&u, "POST", &hb(&t), &[("authorization", &bearer_a)], None).0, 204);
+    let r = raw.call(&u, "GET", &sp(&t), &sess(&t), None);
+    assert_eq!(r.0, 200, "{}", r.1);
+    assert_eq!(r.1["compact"], 600000);
 }
 
 #[test]
@@ -599,10 +621,7 @@ fn client_status_fields() {
     let s = k.status().unwrap();
     assert_eq!(s.used_context, Some(500));
     assert_eq!(s.cache_read_share, Some(0.6));
-    assert_eq!(
-        OffsetDateTime::parse(&s.expires_at, &Rfc3339).unwrap(),
-        OffsetDateTime::parse(&g.expires_at, &Rfc3339).unwrap() + time::Duration::hours(1)
-    );
+    assert_eq!((s.expires_at.as_str(), g.expires_at.as_str()), ("", "")); // §7.2 (FIX-18): local, no idle TTL
 }
 
 #[test]
@@ -703,9 +722,10 @@ fn raw_first_line(h: &ProxyHandle, head: &[u8], wait: Duration) -> String {
     }
 }
 
-/// §7.2 note: a request refused after authentication does not refresh the idle TTL or `expires_at`.
+/// A request refused after authentication keeps the session: with no idle expiry (§7.2, FIX-18), the session
+/// idle 25 h gets the refusal and then accepts a request.
 #[test]
-fn refused_requests_do_not_refresh_ttl() {
+fn refused_requests_leave_the_session_usable() {
     for case in ["bad_body", "bad_window", "too_large", "refused_setting"] {
         let d = TempDir::new().unwrap();
         let m = if case == "refused_setting" { team_cfg(&d) } else { cfg(&d) };
@@ -713,7 +733,7 @@ fn refused_requests_do_not_refresh_ttl() {
         let raw = Raw::new();
         let u = h.url();
         let g = h.create_session(req()).unwrap();
-        c.advance(Duration::from_secs(23 * 3600));
+        c.advance(Duration::from_secs(25 * 3600));
         let r = match case {
             "bad_body" => raw.call(&u, "PATCH", &sp_set(&g), &sess(&g), j(json!({"redaction_content": "no"}))),
             "bad_window" => raw.call(&u, "POST", &cp(&g), &sess(&g), j(json!({"window": 5}))),
@@ -726,9 +746,8 @@ fn refused_requests_do_not_refresh_ttl() {
             _ => 400,
         };
         assert_eq!(r.0, want, "{case}: {}", r.1);
-        assert_eq!(h.session(&g.session).unwrap().status().expires_at, g.expires_at, "{case}");
-        c.advance(Duration::from_secs(2 * 3600)); // 25 h after creation
-        assert_eq!(st(raw.call(&u, "GET", &sp(&g), &sess(&g), None)), (401, json!("zygo_session_unknown")), "{case}");
+        assert_eq!(h.session(&g.session).unwrap().status().expires_at, "", "{case}");
+        assert_eq!(raw.call(&u, "GET", &sp(&g), &sess(&g), None).0, 200, "{case}");
     }
 }
 
@@ -858,31 +877,6 @@ fn client_does_not_follow_redirects() {
     let k = SessionClient::from_session_dir(&write_session_dir(&root, &g.session, &url, &g.token)).unwrap();
     let r = k.status();
     assert!(matches!(r, Err(ClientError::Reply { status: 307, .. })), "{r:?}");
-}
-
-/// §7.2 note (N10 review): expired sessions are removed on any session-API request.
-#[test]
-fn expired_sessions_swept_on_any_request() {
-    let d = TempDir::new().unwrap();
-    let (h, c, ta, _) = start(cfg(&d));
-    let raw = Raw::new();
-    let u = h.url();
-    let old = h.create_session(req()).unwrap();
-    let keep = h.create_session(req()).unwrap();
-    c.advance(Duration::from_secs(23 * 3600));
-    assert_eq!(raw.call(&u, "GET", &sp(&keep), &sess(&keep), None).0, 200);
-    assert!(h.session(&old.session).is_some());
-    c.advance(Duration::from_secs(2 * 3600));
-    assert_eq!(raw.call(&u, "GET", &sp(&keep), &sess(&keep), None).0, 200);
-    assert!(h.session(&old.session).is_none(), "status on another session");
-
-    let bearer = format!("Bearer {ta}");
-    let t_old = team_session(&raw, &u, &bearer);
-    let t_keep = team_session(&raw, &u, &bearer);
-    c.advance(Duration::from_secs(30 * 24 * 3600));
-    let _ = raw.call(&u, "POST", &hb(&t_keep), &[("authorization", &bearer)], None);
-    assert!(h.session(&t_old.session).is_none(), "heartbeat on another session");
-    assert!(h.session(&keep.session).is_none());
 }
 
 /// Stage 1 runs before the body is read: an unauthenticated part-sent body gets its 401 at once.

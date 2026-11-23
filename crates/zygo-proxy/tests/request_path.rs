@@ -1029,20 +1029,16 @@ fn route_bad_requests_and_identity() {
     assert_eq!(r.iter().map(|r| r.status).collect::<Vec<_>>(), [400, 400, 400]);
 }
 
-#[test]
-fn route_accept_refreshes_ttl_and_sweeps() {
+#[test] // §7.2 (FIX-18): no idle expiry on the model route; no request removes an idle session
+fn route_session_has_no_idle_expiry() {
     let t = setup(none);
     let (old, g) = (session(&t.h, Agent::ClaudeCode, None), session(&t.h, Agent::ClaudeCode, None));
     t.c.advance(23 * HOUR);
     assert_eq!(st(post(&t.h, &g, M, msg("nope"), &[])), (400, "zygo_unknown_model".into()));
     t.c.advance(2 * HOUR);
-    assert_eq!(st(post(&t.h, &g, M, msg("code"), &[])), (401, "zygo_session_unknown".into()));
-    assert!(t.h.session(&old.session).is_none());
-    let g2 = session(&t.h, Agent::ClaudeCode, None);
-    t.c.advance(23 * HOUR);
-    assert_eq!(post(&t.h, &g2, M, msg("code"), &[]).0, 200);
-    t.c.advance(2 * HOUR);
-    assert_eq!(post(&t.h, &g2, M, msg("code"), &[]).0, 200);
+    assert_eq!(post(&t.h, &g, M, msg("code"), &[]).0, 200);
+    assert!(t.h.session(&old.session).is_some());
+    assert_eq!(post(&t.h, &old, M, msg("code"), &[]).0, 200); // idle 25 h
 }
 
 // ---- fallback and pinning (§20 #11, §7.3, §10.4) ----

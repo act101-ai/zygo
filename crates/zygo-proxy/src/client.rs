@@ -45,6 +45,9 @@ pub struct SessionStatus {
     pub effective_window: Option<u64>,
     pub compact: Option<WindowArg>,
     pub cache_read_share: Option<f64>,
+    /// Always empty: no session expires by idle time (§7.2, FIX-18). Kept on the wire because a client that requires
+    /// the field parses this reply; read as empty when absent.
+    #[serde(default)]
     pub expires_at: String,
     /// `USAGE_OFF_NOTE` when the usage database did not open.
     #[serde(default)]
