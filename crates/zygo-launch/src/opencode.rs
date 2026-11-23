@@ -481,10 +481,10 @@ impl AgentAdapter for OpenCode {
     fn has_session_arg(&self, args: &[String]) -> bool {
         zygo_workspace::args::has_session_arg(Agent::OpenCode, args)
     }
-    /// `-s <id>`, the split form: the pinned help (`fixtures/opencode/help.txt`) shows no `=` form, and PW4 verified
-    /// `opencode run -s <id>`.
+    /// `--session=<id>`: one token, so an id that starts with `-` stays the value; OpenCode 1.19.6 binds the `=` form
+    /// to the session option (probe 2026-11-22, AU3).
     fn resume_args(&self, id: &str) -> Vec<String> {
-        vec!["-s".into(), id.into()]
+        vec![format!("--session={id}")]
     }
 }
 

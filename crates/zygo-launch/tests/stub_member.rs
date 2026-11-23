@@ -117,7 +117,7 @@ fn a_step_that_cannot_run_exits_2() {
 
 #[test]
 fn session_argument_is_recorded() {
-    for flag in ["--session-id", "--resume", "-s"] {
+    for flag in ["--session-id", "--resume", "-s", "--session"] {
         let mut s = spawn_in(tempfile::tempdir().unwrap(), &["--model", "x", flag, ID], false, "");
         assert_eq!(wait_exit(&mut s.child).code(), Some(0));
         let v: Value = serde_json::from_slice(&std::fs::read(s.out.join("session-arg.json")).unwrap()).unwrap();
@@ -166,6 +166,9 @@ fn one_token_session_argument_filters() { // FIX-13 D1, D2; round 2 R3
     assert_eq!(recorded(&["-s=x"]), None); // -s has no = form
     assert_eq!(recorded(&["--resume=a=b"]), pair("--resume", "a=b")); // the id is the text after the first =
     assert_eq!(recorded(&["--model", "x", "--resume"]), None); // a trailing split flag has no next token
+    assert_eq!(recorded(&["--session=ses_1"]), pair("--session", "ses_1")); // OpenCode's one-token resume (AU3)
+    assert_eq!(recorded(&["--session=-x"]), pair("--session", "-x"));
+    assert_eq!(recorded(&["--session="]), None);
 }
 
 /// `cat` prints the hook's stdin, so `out` in `hooks.jsonl` is what the hook process received.

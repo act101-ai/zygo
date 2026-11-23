@@ -281,11 +281,11 @@ fn agent_session_args_go_before_the_users_args_and_after_opencode_run() { // W§
     }
     let resume = AgentSession::Resume("ses_1".into());
     for (args, want) in [
-        (s(&["run", "hello"]), s(&["run", "-s", "ses_1", "hello"])),
-        (s(&["--model", "zygo/lead", "run", "hi"]), s(&["--model", "zygo/lead", "run", "-s", "ses_1", "hi"])),
-        (s(&["--model", "zygo/lead"]), s(&["-s", "ses_1", "--model", "zygo/lead"])),
-        (s(&["--", "run"]), s(&["-s", "ses_1", "--", "run"])),
-        (s(&[]), s(&["-s", "ses_1"])),
+        (s(&["run", "hello"]), s(&["run", "--session=ses_1", "hello"])),
+        (s(&["--model", "zygo/lead", "run", "hi"]), s(&["--model", "zygo/lead", "run", "--session=ses_1", "hi"])),
+        (s(&["--model", "zygo/lead"]), s(&["--session=ses_1", "--model", "zygo/lead"])),
+        (s(&["--", "run"]), s(&["--session=ses_1", "--", "run"])),
+        (s(&[]), s(&["--session=ses_1"])),
     ] {
         let r = launch(&rig, &opencode(&rig), OPENCODE_VERSION, |o| {
             o.agent_session = Some(resume.clone());
