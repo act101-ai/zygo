@@ -258,7 +258,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
   - Doc of `busy_shells`: ``… and runs something other than a shell; a dead pane (`#{pane_dead}` = 1) is skipped (FIX-29).``
   - Check: `cargo test -p zygo-workspace --locked --test down` passes.
 
-- [ ] **7. Test: `up` and repair with panes that exit at once (`crates/zygo-workspace/tests/up.rs`).** Put the new helpers and the five new tests at the END of `tests/up.rs`, after `first_pane_of_a_new_session_gets_zygo_workspace_in_session_scope_only`. FIX-24 adds its test after `loadout_argument_paths_use_the_pane_folder`, so the two nodes do not change the same lines.
+- [x] **7. Test: `up` and repair with panes that exit at once (`crates/zygo-workspace/tests/up.rs`).** Put the new helpers and the five new tests at the END of `tests/up.rs`, after `first_pane_of_a_new_session_gets_zygo_workspace_in_session_scope_only`. FIX-24 adds its test after `loadout_argument_paths_use_the_pane_folder`, so the two nodes do not change the same lines.
   - Helpers:
     ```rust
     /// FIX-29: a zygo stand-in whose `ws run` runs `body` at once; every other call exits 0.
@@ -370,7 +370,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
     - `repair_reports_a_pane_that_died_during_the_hold` fails at the `exited(…)` count.
     - The extended `repair_after_a_failure_after_new_session` passes. It is a guard.
 
-- [ ] **8. Code: hold, release, report in `crates/zygo-workspace/src/up.rs`; `hold: false` and the report in `crates/zygo-workspace/src/repair.rs`.**
+- [x] **8. Code: hold, release, report in `crates/zygo-workspace/src/up.rs`; `hold: false` and the report in `crates/zygo-workspace/src/repair.rs`.**
   - `up.rs` imports: add `valid_pane_key` to the `crate::identity::{…}` use (`up.rs:20`). `parse_pane_line` is already imported (`up.rs:24`).
   - `testing::hook` doc (`up.rs:116-125`): add the point ``release (before each window of `Builder::release`; an error there is that window's error)``.
   - After `not_built_line` (`up.rs:192-197`):
@@ -547,3 +547,15 @@ Every cited path, symbol and line of the plan was read in the live code at `881f
 ### Premise adaptations
 
 - Step 5 (drift in the test detail only). The plan's last assertion counts the line `zygo: app pane <pane id>: sleep is running; …` for the dead pane. Live run: the step 8 snapshot of `down` gives the dead pane a pane key, and `busy_shells` names a pane by its key when the key is valid (`down.rs:1331`), so before the fix the line was `zygo: app pane k6f5eo374: sleep is running; it stops with the session`. The assertion on the pane id was green before step 6 (false green). Adapted: the test keeps the pane-id assertion and adds one on the saved key of the dead pane (window 0, index 1, read from the state after `down`). Red before step 6 at that assertion (count 1), green after it.
+
+### Author's calls
+
+- Commits: the plan names no commit points; one commit per green test/code pair (steps 1-2, 3-4, 5-6, 7-8), one for the spec (step 9), one for the result.
+- Step 7: `wait_for_dead_panes` names the boxed hook type with a local alias `type Hook = Box<dyn Fn() -> Result<(), String> + Send + Sync>;` (same type as the plan's text, one name for the two boxes).
+
+### Red and green points
+
+- Step 1: `tests/mux.rs` did not compile: `struct NewWindow<'_> has no field named hold` (4 errors). Step 2: mux 48 passed, 1 ignored; snapshot 36 passed.
+- Step 3: failed at the `cwd` assertion, left `["", "/b", ""]`. Step 4: snapshot 37 passed.
+- Step 5: see the adaptation above. Step 6: down 29 passed.
+- Step 7: `a_failed_release_is_reported_and_up_goes_on` at `calls` (0, not 2); `a_pane_ended_by_a_signal_is_reported_with_no_exit_status` and `repair_reports_a_pane_that_died_during_the_hold` at the `exited(…)` count (0); `restored_panes_that_exit_at_once_stay_dead_and_are_reported` at code/out (`zygo: tmux: no such window: =zygo-app:1`); `up_all_after_a_server_death_reports_panes_that_exit_at_once` at code/out (`zygo: tmux: no such pane: %1`, `zygo: app skipped`). The extended `repair_after_a_failure_after_new_session` passed (guard). 49 passed, 5 failed. Step 8: up 54 passed.

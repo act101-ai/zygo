@@ -17,7 +17,9 @@ use zygo_work::repo::{checkout, Checkout};
 
 use crate::args::{bypass_flags, filter_from, has_user_info};
 use crate::env::{cleaned, REMOVE_ALWAYS, REMOVE_INSIDE_AGENT};
-use crate::identity::{main_worktree, new_pane_key, slug, unique_name, valid_name, workspace_id, worktrees, Worktree};
+use crate::identity::{
+    main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees, Worktree,
+};
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
 use crate::mux::tmux::Tmux;
 use crate::mux::{
@@ -115,7 +117,8 @@ pub mod testing {
 
     /// Sets (`Some`) or clears (`None`) the hook of `point` for the state folder `dir`. Points: `before_op_lock`,
     /// `before_plan_write` (before the step 8 write), `after_new_session`, `split` (before each `split_window`),
-    /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`; the admin
+    /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`, `release`
+    /// (before each window of `Builder::release`; an error there is that window's error, FIX-29); the admin
     /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (under both locks, before anything is
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
     /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
@@ -194,6 +197,16 @@ pub(crate) fn not_built_line(key: &str, member: Option<&MemberRecord>) -> String
         Some(s) => format!("zygo: pane {key} not built (no space); agent session {} is detached", esc(s)),
         None => format!("zygo: pane {key} not built (no space)"),
     }
+}
+
+/// The FIX-29 line of a pane whose command exited while `up` held it (W§8.1 step 12). `status` is
+/// `#{pane_dead_status}`, empty when a signal ended it; `socket` passed AU54, so it holds no `'` (as at AU100).
+pub(crate) fn exited_line(key: &str, status: &str, socket: &Path, pane: &str) -> String {
+    let how = if status.is_empty() { "no exit status".to_string() } else { format!("exit {status}") };
+    format!(
+        "zygo: pane {key} exited during up ({how}); its dead pane stays: tmux -S '{}' respawn-pane -t {pane} starts it again",
+        socket.display()
+    )
 }
 
 /// Whether the launcher of the member `key` alone is live (D15, AU75 per member).
@@ -464,6 +477,8 @@ pub(crate) struct Builder<'a> {
     pub main_root: &'a Path,
     /// The state folder, for the test hooks.
     pub dir: &'a Path,
+    /// FIX-29: the build holds each window (`remain-on-exit on`) until [`Builder::release`]; `repair` passes `false`.
+    pub hold: bool,
 }
 
 impl Builder<'_> {
@@ -474,9 +489,11 @@ impl Builder<'_> {
         hook_command(self.zygo, self.id, event).map_err(|e: UnsafePath| MuxError::Failed { message: e.to_string() })
     }
 
-    /// `remain-on-exit off` and the window hooks of W§7.4 on one window (AU68, fixtures 6.22n, 6.42).
+    /// The build hold (`on`, FIX-29) or `remain-on-exit off` (AU68), and the window hooks of W§7.4 on one window
+    /// (fixtures 6.22n, 6.42).
     pub fn window_setup(&self, window: u32) -> Result<(), MuxError> {
-        self.mux.set_window_option(&window_target(self.session, window), "remain-on-exit", "off")?;
+        let remain = if self.hold { "on" } else { "off" };
+        self.mux.set_window_option(&window_target(self.session, window), "remain-on-exit", remain)?;
         for event in WINDOW_HOOKS {
             self.mux.set_hook(self.session, HookScope::Window(window), event, &self.hook(event)?)?;
         }
@@ -502,6 +519,49 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// FIX-29, W§8.1 step 12: ends the build hold: `remain-on-exit off` on each window, best effort. A window that is
+    /// gone prints nothing; any other error prints one line and the next window is tried. A dead pane stays dead.
+    pub fn release(&self, windows: &[u32], name: &str, err: &mut dyn Write) {
+        for &w in windows {
+            let r = fire(self.dir, "release")
+                .and_then(|()| self.mux.set_window_option(&window_target(self.session, w), "remain-on-exit", "off"));
+            match r {
+                Ok(()) | Err(MuxError::NoTarget { .. } | MuxError::Gone { .. }) => {}
+                Err(e) => say(err, &format!("zygo: {}: could not release the build hold of window {w}: {e}", esc(name))),
+            }
+        }
+    }
+
+    /// FIX-29: one [`exited_line`] for each dead pane of the session that has a valid pane key, in `list-panes` order,
+    /// best effort. A gone session or pane gives no line; any other error prints one line and goes on.
+    pub fn dead_lines(&self, socket: &Path, name: &str, err: &mut dyn Write) -> Vec<String> {
+        let rows = match self.mux.list_panes(self.session) {
+            Ok(rows) => rows,
+            Err(MuxError::NoTarget { .. } | MuxError::Gone { .. }) => return Vec::new(),
+            Err(e) => {
+                say(err, &format!("zygo: {}: could not read the dead panes: {e}", esc(name)));
+                return Vec::new();
+            }
+        };
+        let mut lines = Vec::new();
+        for row in rows {
+            let Ok((_, p)) = parse_pane_line(&row) else { continue };
+            if !valid_pane_key(&p.key) {
+                continue;
+            }
+            match self.mux.display(&p.id, "#{pane_dead}|#{pane_dead_status}") {
+                Ok(v) => {
+                    if let Some(status) = v.strip_prefix("1|") {
+                        lines.push(exited_line(&p.key, status, socket, &p.id));
+                    }
+                }
+                Err(MuxError::NoTarget { .. } | MuxError::Gone { .. }) => {}
+                Err(e) => say(err, &format!("zygo: {}: could not read pane {}: {e}", esc(name), p.key)),
+            }
+        }
+        lines
+    }
+
     /// Sets the key of the only pane of a new window; returns the pane id.
     pub fn key_first(&self, window: u32, key: &str) -> Result<String, MuxError> {
         let id = self.mux.display(&window_target(self.session, window), "#{pane_id}")?;
@@ -518,7 +578,8 @@ impl Builder<'_> {
         let first = w.panes.first().ok_or_else(|| MuxError::Failed { message: "window with no pane".into() })?;
         self.mux.set_session_option(self.session, "default-size", &format!("{}x{}", w.width, w.height))?;
         let argv = self.argv(&first.key, first.shell);
-        let spec = NewWindow { session: self.session, name: w.name.as_deref(), start_dir: self.main_root, argv: &argv, hold: false };
+        let spec =
+            NewWindow { session: self.session, name: w.name.as_deref(), start_dir: self.main_root, argv: &argv, hold: self.hold };
         let index = self.mux.new_window(&spec)?;
         let id = self.key_first(index, &first.key)?;
         self.window_setup(index)?;
@@ -1104,7 +1165,15 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         vars.push(("ZYGO_SESSION".into(), z.clone()));
     }
     let env = cleaned(vars);
-    let b9 = Builder { mux: &mux9, session: &session, zygo: &opts.zygo, id: &id, main_root: &target.main_root, dir: store.dir() };
+    let b9 = Builder {
+        mux: &mux9,
+        session: &session,
+        zygo: &opts.zygo,
+        id: &id,
+        main_root: &target.main_root,
+        dir: store.dir(),
+        hold: true,
+    };
     let argv = b9.argv(&first_pane.key, first_pane.shell);
     let spec = NewSession {
         name: &session,
@@ -1164,7 +1233,15 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     let mux = Tmux::new(opts.tmux.clone(), last.tmux_socket.clone());
     let _ = snapshot::after_write(&opts.paths, &mux, &id, snapshot::OP_WAIT);
     // Steps 10-11.
-    let b = Builder { mux: &mux, session: &session, zygo: &opts.zygo, id: &id, main_root: &target.main_root, dir: store.dir() };
+    let b = Builder {
+        mux: &mux,
+        session: &session,
+        zygo: &opts.zygo,
+        id: &id,
+        main_root: &target.main_root,
+        dir: store.dir(),
+        hold: true,
+    };
     b.session_setup(inside_agent).map_err(tmux_err)?;
     b.window_setup(first_index).map_err(tmux_err)?;
     let mut real: Vec<u32> = Vec::with_capacity(plan.windows.len());
@@ -1257,6 +1334,10 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         say(err, &format!("zygo: final snapshot not saved: {e:#}"));
     }
     fire(store.dir(), "after_final_snapshot").map_err(tmux_err)?;
+    // FIX-29: end the build hold before `phase = up`, so a stop during the hold leaves `building` (AU67); then one
+    // line per pane that exited while held (W§8.1 step 12).
+    b.release(&real, &name, err);
+    let exited = b.dead_lines(&socket, &name, err);
     let done = store
         .update(LOCK_WAIT, &mut |c| {
             c.phase = Phase::Up;
@@ -1285,7 +1366,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             })
         })
         .collect();
-    for line in report.au98.iter().chain(&report.au70).chain(&report.au30).chain(&report.no_id).chain(&detached).chain(&au96) {
+    for line in report.au98.iter().chain(&report.au70).chain(&report.au30).chain(&report.no_id).chain(&detached).chain(&au96).chain(&exited) {
         say(err, line);
     }
     drop(op);
