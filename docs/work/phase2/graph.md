@@ -92,7 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
-| FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | PLANNED | mechanical | — |
+| FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-15 |
 
 ## Log
 
