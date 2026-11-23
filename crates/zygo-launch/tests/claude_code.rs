@@ -621,31 +621,65 @@ fn defeating_flags_are_logged_and_settings_warns() {
     c.effective_role = None;
     let spec = cc(&fx).build(&c).unwrap();
     assert_eq!(spec.log, ["degraded: --settings", "degraded: --bare", "degraded: --model claude-opus-5-5"]);
-    assert_eq!(spec.lines, ["zygo: your --settings replaces zygo's settings file; the lead guard is off"]);
+    assert_eq!(spec.lines, [unreadable("x.json")]);
     let c = ctx(&fx, "");
     let spec = cc(&fx).build(&c).unwrap();
     assert!(spec.log.is_empty());
     assert!(spec.lines.is_empty());
 }
 
-#[test] // FIX-21 round 2 F1: a user `--settings` value zygo cannot read as a JSON object keeps the replace path: every
-        // user `--settings` passes unchanged after zygo's, with the replace line
-fn unreadable_user_settings_pass_unchanged() {
+/// §8.5 Flags: the line for a user `--settings` value that zygo cannot read as a JSON object (FIX-21 round 3).
+fn unreadable(value: &str) -> String {
+    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", json!(value))
+}
+
+#[test] // FIX-21 round 3, §8.5 Flags: kills: an unreadable user `--settings` value passed on after zygo's file (Claude
+        // Code then exits 1 or runs with neither file), the attribution keys or the guard hook lost, no line or a line
+        // that does not name the value, a readable value next to it not merged
+fn unreadable_user_settings_keep_only_zygos_file() {
     let fx = fx();
     std::fs::write(fx.cwd.join("bad.json"), "not json").unwrap();
     std::fs::write(fx.cwd.join("list.json"), "[1]").unwrap();
-    std::fs::write(fx.cwd.join("good.json"), "{}").unwrap();
-    for args in [vec!["--settings", "missing.json"], vec!["--settings", "bad.json"], vec!["--settings", "list.json"],
-                 vec!["--settings", "{bad"], vec!["--settings=[1]"], vec!["--settings", "good.json", "--settings", "missing.json"]] {
+    std::fs::write(fx.cwd.join("good.json"), r#"{"outputStyle": "x"}"#).unwrap();
+    let cases: [(Vec<&str>, Vec<String>); 7] = [
+        (vec!["--settings", "missing.json", "-p", "hi"], vec![unreadable("missing.json")]),
+        (vec!["--settings", "bad.json", "-p", "hi"], vec![unreadable("bad.json")]),
+        (vec!["--settings", "list.json", "-p", "hi"], vec![unreadable("list.json")]),
+        (vec!["--settings", "{bad", "-p", "hi"], vec![unreadable("{bad")]),
+        (vec!["--settings=[1]", "-p", "hi"], vec![unreadable("[1]")]),
+        (vec!["--settings", "\"two\nlines\"", "-p", "hi"], vec![unreadable("\"two\nlines\"")]),
+        (vec!["--settings", "good.json", "--settings", "missing.json", "-p", "hi"], vec![MERGE_WARN.to_string(), unreadable("missing.json")]),
+    ];
+    for (args, lines) in cases {
         let mut c = ctx(&fx, "");
         c.args = strings(&args);
-        let spec = cc(&fx).build(&c).unwrap();
-        assert_eq!(spec.args[2..4], ["--settings".to_string(), fx.sd.settings_json().to_string_lossy().into_owned()], "{args:?}");
-        assert!(spec.args.ends_with(&c.args), "{args:?}: {:?}", spec.args);
-        assert_eq!(spec.lines, ["zygo: your --settings replaces zygo's settings file; the lead guard is off"], "{args:?}");
+        let cc = cc(&fx);
+        let spec = cc.build(&c).unwrap();
+        assert_eq!(flag(&spec.args, "--settings"), [fx.sd.settings_json().to_string_lossy().into_owned()], "{args:?}");
+        assert!(!spec.args.iter().any(|a| a.starts_with("--settings=")), "{args:?}");
+        assert!(spec.args.ends_with(&strings(&["-p", "hi"])), "{args:?}: {:?}", spec.args);
+        assert_eq!(spec.lines, lines, "{args:?}");
+        assert!(spec.lines.iter().all(|l| !l.contains('\n')), "{args:?}");
         assert_eq!(spec.log, ["degraded: --settings"], "{args:?}");
-        assert_eq!(settings(&fx)["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{args:?}");
+        let s = settings(&fx);
+        assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{args:?}");
+        assert_eq!(s["includeCoAuthoredBy"], json!(false), "{args:?}");
+        let guard = (Some("Edit|Write|NotebookEdit|Read|Bash".to_string()), format!("{} hook guard", shell_quote(&cc.zygo)));
+        assert!(hook_commands(&s, "PreToolUse").contains(&guard), "{args:?}");
+        assert_eq!(s.get("outputStyle").is_some(), args.contains(&"good.json"), "{args:?}");
     }
+}
+
+#[test] // FIX-21 round 3, §8.5 Flags: `disableAllHooks` is not one of the keys zygo keeps; a user value wins
+fn user_disable_all_hooks_wins_and_attribution_keys_stay() {
+    let fx = fx();
+    let mut c = ctx(&fx, "");
+    c.args = strings(&[r#"--settings={"disableAllHooks": true, "attribution": {"commit": "x"}, "includeCoAuthoredBy": true}"#]);
+    cc(&fx).build(&c).unwrap();
+    let s = settings(&fx);
+    assert_eq!(s["disableAllHooks"], json!(true));
+    assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}));
+    assert_eq!(s["includeCoAuthoredBy"], json!(false));
 }
 
 fn pf(file: PathBuf, key: &str) -> Result<(), Preflight> {

@@ -18,12 +18,8 @@ const PT_MODEL: &str = "--passthrough sends model names to the vendor; use a ven
 const PT_BARE: &str = "--passthrough does not work with --bare: bare mode reads only API keys";
 const PT_MANAGED: &str = "passthrough needs your claude.ai login; a managed setting replaces it";
 const BAD_AGENTS: &str = "--agents: not a JSON object (or, with --print, a file that holds one)";
-/// §8.5 Flags: a user `--settings` value zygo cannot read as a JSON object passes unchanged and replaces zygo's file.
-const SETTINGS_WARN: &str = "zygo: your --settings replaces zygo's settings file; the lead guard is off";
 /// §8.5 Flags (FIX-21 round 2 F1): the user's `--settings` values are merged into zygo's file.
 const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
-/// The AU59 line: a member launch with `--settings` runs as a plain launch.
-pub const MEMBER_SETTINGS_WARN: &str = "zygo: --settings replaces zygo's hooks; this agent is not saved by the workspace";
 const NO_EDIT: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
 #[cfg(target_os = "macos")]
@@ -69,8 +65,7 @@ fn has_flag(args: &[String], name: &str) -> bool {
     zygo_workspace::args::flags(Agent::ClaudeCode, args).contains(&name)
 }
 
-/// Whether the user's arguments hold `--settings` before any `--`, by W4's walk (AU59, D5). The launcher and the cmd
-/// layer (AU102) use this one rule.
+/// Whether the user's arguments hold `--settings` before any `--`, by W4's walk (D5): the §8.5 Flags rule.
 pub fn has_user_settings(args: &[String]) -> bool {
     has_flag(args, "--settings")
 }
@@ -151,24 +146,45 @@ fn env_rows(ctx: &LaunchCtx) -> Vec<(String, String)> {
     rows.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
-/// FIX-21 round 2 F1, §8.5 Flags: the user's `--settings` values (before any `--`), each read as Claude Code takes it
-/// (`--settings <file-or-json>`; observed on 2.1.330: a value that parses as a JSON object is inline settings, any other
-/// value is a file path, relative to the working directory), merged in order, a later key winning. `None` when one value
-/// is not a readable JSON object.
-fn user_settings(ctx: &LaunchCtx) -> Option<Map<String, Value>> {
-    let mut out = Map::new();
+/// The user's `--settings` values, read (FIX-21 rounds 2 and 3, §8.5 Flags).
+struct UserSettings {
+    /// The readable values merged in order, a later key winning.
+    merged: Map<String, Value>,
+    /// How many values were merged.
+    read: usize,
+    /// The values that are not a readable JSON object, as typed; zygo does not use them.
+    unreadable: Vec<String>,
+}
+
+/// FIX-21 rounds 2 and 3, §8.5 Flags: the user's `--settings` values (before any `--`), each read as Claude Code takes
+/// it (`--settings <file-or-json>`; observed on 2.1.330: a value that parses as a JSON object is inline settings, any
+/// other value is a file path, relative to the working directory).
+fn user_settings(ctx: &LaunchCtx) -> UserSettings {
+    let mut out = UserSettings { merged: Map::new(), read: 0, unreadable: vec![] };
     for v in flag_values(&ctx.args, "--settings") {
         let m = match serde_json::from_str::<Value>(&v) {
-            Ok(Value::Object(m)) => m,
-            _ => read_object(&ctx.cwd.join(&v))?,
+            Ok(Value::Object(m)) => Some(m),
+            _ => read_object(&ctx.cwd.join(&v)),
         };
-        out.extend(m);
+        match m {
+            Some(m) => {
+                out.merged.extend(m);
+                out.read += 1;
+            }
+            None => out.unreadable.push(v),
+        }
     }
-    Some(out)
+    out
+}
+
+/// §8.5 Flags (FIX-21 round 3): the line for a user `--settings` value that zygo cannot read as a JSON object. The value
+/// is written as a JSON string, so the line is one line.
+fn unreadable_line(value: &str) -> String {
+    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", Value::from(value))
 }
 
 /// FIX-21 round 2 F1, §8.5 Flags: zygo's settings `zygo` with the user's settings `user` merged in. `attribution` and
-/// `includeCoAuthoredBy` stay zygo's. `hooks`: per event, the user's entries, then zygo's; a user `hooks` value or event
+/// `includeCoAuthoredBy` stay zygo's (a user `disableAllHooks` is an ordinary key and wins). `hooks`: per event, the user's entries, then zygo's; a user `hooks` value or event
 /// that is not an object or a list leaves zygo's in place. `env`: per name, a user name wins; a user `env` that is not an
 /// object leaves zygo's in place. Every other user key is kept and wins over zygo's key of the same name, as a user
 /// `--agents` key does (§8.5 Subagents).
@@ -425,12 +441,12 @@ impl AgentAdapter for ClaudeCode {
         let sd = &ctx.session_dir;
         let env = env_rows(ctx);
         let settings = sd.settings_json();
-        // FIX-21 round 2 F1: user `--settings` values zygo can read are merged into its file and not passed on.
-        let user_settings = if has_user_settings(&ctx.args) { user_settings(ctx) } else { None };
-        let merged = user_settings.is_some();
+        // FIX-21 rounds 2 and 3: user `--settings` values zygo can read are merged into its file; no user value is
+        // passed on, so the agent gets only zygo's file.
+        let user = has_user_settings(&ctx.args).then(|| user_settings(ctx));
         let mut file = self.settings(ctx, &env);
-        if let Some(u) = user_settings {
-            file = merge_settings(file, u);
+        if let Some(u) = &user {
+            file = merge_settings(file, u.merged.clone());
         }
         write_private(&settings, file.to_string().as_bytes())?;
         let mcp = sd.root.join("mcp.json");
@@ -453,11 +469,13 @@ impl AgentAdapter for ClaudeCode {
         if ctx.yolo {
             args.push("--dangerously-skip-permissions".into());
         }
-        let user_args = without_flag(&ctx.args, "--agents");
-        args.extend(if merged { without_flag(&user_args, "--settings") } else { user_args });
+        args.extend(without_flag(&without_flag(&ctx.args, "--agents"), "--settings"));
         let (mut lines, mut log) = (vec![], vec![]);
-        if has_user_settings(&ctx.args) {
-            lines.push(if merged { MERGE_WARN } else { SETTINGS_WARN }.to_string());
+        if let Some(u) = &user {
+            if u.read > 0 {
+                lines.push(MERGE_WARN.to_string());
+            }
+            lines.extend(u.unreadable.iter().map(|v| unreadable_line(v)));
             log.push("degraded: --settings".to_string());
         }
         if has_flag(&ctx.args, "--bare") {
