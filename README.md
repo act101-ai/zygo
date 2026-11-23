@@ -48,8 +48,8 @@ zygo is one native binary that wraps Claude Code and OpenCode (and other coding 
 
 ### Skills for Autonomous Delivery
 - Anti-pattern: Coding agent fails to deliver software in cohesive, testable units.
-- Anti-pattern: Coding agent drifts in long-running projects.
-* Solution: Plan and build software using a persistent graph methodology for autonomous agentic execution.
+- Anti-pattern: Coding agent drifts from plan/design across long-running sessions.
+* Solution: Plan and build software using a proven graph methodology for autonomous agentic execution.
 
 ### Native Terminal Multiplexing
 
