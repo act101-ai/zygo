@@ -7,14 +7,20 @@ use std::path::{Path, PathBuf};
 use zygo_core::paths::Paths;
 use zygo_core::session_view::{ResumeNote, SubagentRef};
 use zygo_hooks::workspace::snapshot_child;
+use zygo_core::Agent;
+use zygo_launch::claude_code::ClaudeCode;
 use zygo_launch::env::Env;
+use zygo_launch::launcher::AgentSession;
+use zygo_launch::opencode::OpenCode;
+use zygo_launch::AgentAdapter;
 use zygo_workspace::admin;
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::snapshot::{self, SkipReason, SnapshotOutcome, HOOK_WAIT, OP_WAIT};
 use zygo_workspace::state::{CompactOverride, MemberRecord, Store};
 
-use super::{cwd_or_exit, member, op5_exit, print_err, tmux_program, Launch, LaunchOpenCode};
+use super::member::{self, MemberCtx};
+use super::{cwd_or_exit, op5_exit, print_err, tmux_program, Launch, LaunchOpenCode};
 
 #[derive(clap::Args)]
 pub struct WsArgs {
@@ -162,11 +168,75 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
     if shell {
         return exec_shell(env, ws_id, &cwd);
     }
-    let Some(_rec) = rec else {
+    let Some(rec) = rec else {
         print_err(&format!("zygo: pane {pane} has no member record; started a shell\n"));
         return exec_shell(env, ws_id, &cwd);
     };
+    launch_member(paths, store, ws_id, pane, &rec, &env, &cwd);
     exec_shell(env, ws_id, &cwd)
+}
+
+/// W§8.2 steps 2-7: the saved launch of `rec` (AU45, AU32), the resume of its agent session (W§8.3, AU3, AU61, D8),
+/// the resume note inputs (W§9.4), then the member wrapper.
+fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &MemberRecord, env: &[(OsString, OsString)], cwd: &Path) {
+    let kind = rec.launch.kind;
+    let resumed = if zygo_workspace::args::has_session_arg(kind, &rec.launch.args) { None } else { rec.agent_session.clone() };
+    let built = match kind {
+        Agent::ClaudeCode => super::claude::launch_opts(&launch_of(rec, resumed.is_some()), Env(env.to_vec()), cwd.to_path_buf(), paths.clone()),
+        Agent::OpenCode => super::opencode::launch_opts(&launch_open_code_of(rec), Env(env.to_vec()), cwd.to_path_buf(), paths.clone()),
+    };
+    let mut opts = match built {
+        Ok(o) => o,
+        Err(text) => {
+            print_err(&format!("{text}\n"));
+            return;
+        }
+    };
+    let adapter: Box<dyn AgentAdapter> = match kind {
+        Agent::ClaudeCode => {
+            let d = ClaudeCode::default();
+            if resumed.is_some() {
+                saved_config_dir(&mut opts.env, rec.config_dir.as_deref());
+            }
+            let saved = if resumed.is_some() { saved_program(&opts.env, &d.program, rec.program.as_deref(), cwd) } else { None };
+            match saved.as_deref().and_then(Path::to_str) {
+                Some(p) => Box::new(ClaudeCode::new(p, d.managed_settings, d.zygo)),
+                None => Box::new(d),
+            }
+        }
+        Agent::OpenCode => {
+            let d = OpenCode::default();
+            let saved = if resumed.is_some() { saved_program(&opts.env, d.program(), rec.program.as_deref(), cwd) } else { None };
+            if let Some(saved) = saved {
+                match program_folder_on_path(&mut opts.env, &paths.workspace_cache_dir(), ws_id, pane, &saved) {
+                    Ok(()) => {}
+                    Err(e) => print_err(&format!("zygo: {}\n", zygo_core::esc(&e.to_string()))),
+                }
+            }
+            Box::new(d)
+        }
+    };
+    opts.agent_session = resumed.clone().map(AgentSession::Resume);
+    opts.resume_note = resume_note(rec, resumed.as_deref());
+    let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone() };
+    member::run_wrapped(adapter.as_ref(), opts, &ctx);
+}
+
+/// D8 (OpenCode): the program folder of `saved` at the end of the launch `PATH`.
+#[cfg(unix)]
+fn program_folder_on_path(env: &mut Env, cache: &Path, ws_id: &str, pane: &str, saved: &Path) -> std::io::Result<()> {
+    let dir = program_folder(cache, ws_id, pane, saved)?;
+    let old = env.get("PATH").map(OsStr::to_os_string).unwrap_or_default();
+    let joined = std::env::join_paths(std::env::split_paths(&old).chain([dir])).map_err(std::io::Error::other)?;
+    env.0.retain(|(k, _)| k != OsStr::new("PATH"));
+    env.0.push(("PATH".into(), joined));
+    Ok(())
+}
+
+/// D11: the program folder is unix only.
+#[cfg(not(unix))]
+fn program_folder_on_path(_env: &mut Env, _cache: &Path, _ws_id: &str, _pane: &str, _saved: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::other("needs unix"))
 }
 
 /// W§8.2 step 8: the default handling of SIGHUP, SIGTERM, SIGINT and SIGQUIT (AU88, D13), then `exec` of `$SHELL`

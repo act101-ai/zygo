@@ -2,16 +2,182 @@
 //! the agent, the pre-assigned session id, the exit classification and the exit lines.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use zygo_core::paths::Paths;
+use zygo_core::session_dir::{write_atomic, SessionDir};
+use zygo_core::session_view::Member;
 use zygo_core::Agent;
 use zygo_launch::env::Env;
-use zygo_launch::launcher::LaunchOutcome;
+use zygo_launch::launcher::{AgentSession, LaunchOutcome};
+use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
+use zygo_proxy::client::{SessionClient, SessionSettings};
 use zygo_workspace::args;
-use zygo_workspace::state::{MemberRecord, MemberState, Pending};
+use zygo_workspace::state::{MemberRecord, MemberState, Pending, StateError, Store};
+
+use super::print_err;
 
 /// A resume that fails with a non-zero code in less than this time from the agent's spawn failed fast (W§8.2 step 7).
 const FAST_FAIL: Duration = Duration::from_secs(10);
+
+/// The `lock` wait of the member wrapper's writes (W§7.3: launchers and the member wrapper 5 s).
+const WRAPPER_WAIT: Duration = Duration::from_secs(5);
+
+/// The member of one wrapped launch: its workspace, its pane key, its state and its saved launch as typed (D1).
+pub struct MemberCtx {
+    pub ws_id: String,
+    pub pane: String,
+    pub store: Store,
+    pub launch: zygo_workspace::state::Launch,
+}
+
+/// The member wrapper (W§8.2 steps 4, 5 and 7): marks the launch as a member (AU102), pre-assigns a Claude Code
+/// session id (W§8.3, D2), writes the member record from the session callback (AU92, D3), runs the launch, then
+/// writes the exit record (D5) and prints the exit lines (D7). It does not touch any signal handling (D13). The
+/// outcome is returned unchanged, so the agent's exit code stays.
+pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberCtx) -> LaunchOutcome {
+    let kind = adapter.agent();
+    opts.member = Some(Member { ws_id: m.ws_id.clone(), pane: m.pane.clone(), ..Default::default() });
+    if opts.agent_session.is_none() && kind == Agent::ClaudeCode && !adapter.has_session_arg(&opts.args) {
+        opts.agent_session = Some(AgentSession::Preassign(new_session_uuid()));
+    }
+    let pre = match &opts.agent_session {
+        Some(AgentSession::Preassign(id)) => Some(id.clone()),
+        _ => None,
+    };
+    let resumed = match &opts.agent_session {
+        Some(AgentSession::Resume(id)) => Some(id.clone()),
+        _ => None,
+    };
+    let config_dir = match kind {
+        Agent::ClaudeCode => effective_config_dir(&opts.env, &opts.cwd),
+        Agent::OpenCode => None,
+    };
+    // The zygo session of this start, set only when the callback's record write gave a state (D3, D5).
+    let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let cb = Callback {
+        paths: opts.paths.clone(),
+        ws_id: m.ws_id.clone(),
+        pane: m.pane.clone(),
+        store: m.store.clone(),
+        launch: m.launch.clone(),
+        pre,
+        config_dir,
+        seen: seen.clone(),
+    };
+    opts.on_session = Some(Box::new(move |sd, session, program, _member| cb.run(sd, session, program)));
+    let o = Launcher::run(adapter, opts);
+    let exit = classify(&o, resumed.is_some());
+    let session = seen.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let mut kept = None;
+    if let Some(session) = session {
+        let pane = m.pane.clone();
+        let r = m.store.update_existing(WRAPPER_WAIT, &mut |ws| {
+            let Some(rec) = ws.members.get_mut(&pane) else { anyhow::bail!("no member record for pane {pane}") };
+            if !record_exit(rec, &session, exit) {
+                anyhow::bail!("unchanged");
+            }
+            Ok(())
+        });
+        match r {
+            Ok(Some(ws)) => {
+                kept = ws.members.get(&m.pane).and_then(|r| r.agent_session.clone());
+            }
+            Ok(None) | Err(StateError::Refused(_)) => {}
+            Err(e) => print_err(&format!(
+                "zygo: could not save the exit record of pane {}: {}\n",
+                m.pane,
+                zygo_core::esc(&e.to_string())
+            )),
+        }
+    }
+    for l in exit_lines(kind, &o, exit, resumed.as_deref(), kept.as_deref()) {
+        print_err(&format!("{l}\n"));
+    }
+    o
+}
+
+/// What the session callback of one wrapped launch needs (D3).
+struct Callback {
+    paths: Paths,
+    ws_id: String,
+    pane: String,
+    store: Store,
+    launch: zygo_workspace::state::Launch,
+    pre: Option<String>,
+    config_dir: Option<PathBuf>,
+    seen: Arc<Mutex<Option<String>>>,
+}
+
+impl Callback {
+    /// D3: the member record write first; only when it gave a state, the results link (AU16), the saved overrides
+    /// (W§8.2 step 4, AU11). The errors of the later steps are joined with `; `.
+    fn run(self, sd: &SessionDir, session: &str, program: &Path) -> anyhow::Result<()> {
+        // D8: the saved path, not the link of the OpenCode program folder.
+        let folder = self.paths.workspace_cache_dir().join(&self.ws_id).join("program");
+        let recorded =
+            if program.starts_with(&folder) { std::fs::read_link(program).unwrap_or_else(|_| program.to_path_buf()) } else { program.to_path_buf() };
+        let start = Start {
+            zygo_session: session.to_string(),
+            agent_session: self.pre.clone(),
+            started_at: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()),
+            config_dir: self.config_dir.clone(),
+            program: recorded,
+        };
+        let pane = self.pane.clone();
+        let launch = self.launch.clone();
+        let written = self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
+            let Some(rec) = ws.members.get_mut(&pane) else { anyhow::bail!("no member record for pane {pane}") };
+            record_start(rec, &launch, &start);
+            Ok(())
+        });
+        let ws = match written {
+            Ok(Some(ws)) => ws,
+            Ok(None) => anyhow::bail!("no workspace state for {}; no member record written", self.ws_id),
+            Err(e) => anyhow::bail!("{e}"),
+        };
+        *self.seen.lock().unwrap_or_else(|e| e.into_inner()) = Some(session.to_string());
+        let mut errors = Vec::new();
+        if let Err(e) = results_link(&self.paths, &self.ws_id, &self.pane, sd) {
+            errors.push(format!("results link: {e}"));
+        }
+        if let Some(ov) = ws.members.get(&self.pane).and_then(|r| r.overrides.clone()) {
+            match serde_json::to_vec(&ov) {
+                Ok(bytes) => {
+                    if let Err(e) = write_atomic(&sd.overrides_json(), &bytes) {
+                        errors.push(format!("overrides.json: {e}"));
+                    }
+                }
+                Err(e) => errors.push(format!("overrides.json: {e}")),
+            }
+            if let Some(b) = ov.get("redaction_content").and_then(serde_json::Value::as_bool) {
+                let sent = SessionClient::from_session_dir(&sd.root)
+                    .and_then(|c| c.set_settings(&SessionSettings { redaction_content: Some(b) }));
+                if let Err(e) = sent {
+                    errors.push(format!("session settings: {e}"));
+                }
+            }
+        }
+        if errors.is_empty() { Ok(()) } else { Err(anyhow::anyhow!(errors.join("; "))) }
+    }
+}
+
+/// AU16: the folder `<workspace cache>/<ws_id>/results/<pane>` (mode 0700) and the absolute link `results` of the
+/// session folder to it.
+#[cfg(unix)]
+fn results_link(paths: &Paths, ws_id: &str, pane: &str, sd: &SessionDir) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    let dir = paths.workspace_cache_dir().join(ws_id).join("results").join(pane);
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
+    std::os::unix::fs::symlink(&dir, sd.results())
+}
+
+/// D11: the results link is unix only.
+#[cfg(not(unix))]
+fn results_link(_paths: &Paths, _ws_id: &str, _pane: &str, _sd: &SessionDir) -> std::io::Result<()> {
+    Err(std::io::Error::other("needs unix"))
+}
 
 /// The 16 bytes `b` as a UUID version 4 (RFC 9562): the version 4 in byte 6, the variant `0b10` in byte 8; lowercase
 /// hex in groups 8-4-4-4-12.
