@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
-use zygo_core::hook::{HookInput, HookOutput};
+use zygo_core::hook::{HookInput, HookOutput, SlashDispatch};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace};
@@ -93,14 +93,31 @@ fn ws(f: &Fx, event: &str, payload: Value) -> anyhow::Result<Option<String>> {
     ws_with(f, &f.zygo, event, payload)
 }
 
+/// A registered `/zygo:` dispatcher, as the `zygo` binary registers one before any hook runs. The test process
+/// registers none, so `ws` and `ws_bg` run with no dispatcher (R1).
+fn dispatcher(_: &str, _: &str) -> anyhow::Result<String> {
+    Ok(String::new())
+}
+
+/// `ws` with the dispatcher `d` (R1).
+fn ws_d(f: &Fx, event: &str, payload: Value, d: Option<SlashDispatch>) -> anyhow::Result<Option<String>> {
+    let sd = Some(f.dir.root.clone().into_os_string());
+    workspace::run_with(event, &serde_json::to_vec(&payload).unwrap(), &f.paths, &|k| if k == "ZYGO_SESSION_DIR" { sd.clone() } else { None }, &f.zygo, d)
+}
+
 /// `ws` in a thread: the answer must come within `S5`, so a hook that waits fails the test instead of hanging it.
 fn ws_bg(f: &Fx, event: &str, payload: Value) -> anyhow::Result<Option<String>> {
+    ws_bg_d(f, event, payload, None)
+}
+
+/// `ws_bg` with the dispatcher `d` (R1).
+fn ws_bg_d(f: &Fx, event: &str, payload: Value, d: Option<SlashDispatch>) -> anyhow::Result<Option<String>> {
     let (paths, root, zygo, event) = (f.paths.clone(), f.dir.root.clone(), f.zygo.clone(), event.to_string());
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let sd = Some(root.into_os_string());
         let env = move |k: &str| if k == "ZYGO_SESSION_DIR" { sd.clone() } else { None };
-        let _ = tx.send(workspace::run(&event, &serde_json::to_vec(&payload).unwrap(), &paths, &env, &zygo));
+        let _ = tx.send(workspace::run_with(&event, &serde_json::to_vec(&payload).unwrap(), &paths, &env, &zygo, d));
     });
     rx.recv_timeout(S5).unwrap_or_else(|_| panic!("the hook waited"))
 }
@@ -487,9 +504,6 @@ fn opencode_turn_signals() {
 fn claude_code_prompt_entry_sets_busy_and_blocks_while_stopping() {
     let _s = serial();
     let f = fx(Agent::ClaudeCode);
-    set_act(&f, false, 2);
-    assert_eq!(ws(&f, "prompt", ups("/zygo:status")).unwrap(), None);
-    assert_eq!(bt(&f), (false, 2)); // a slash line sets nothing
     assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(bt(&f), (true, 0));
     let store = ws_state(&f, Phase::Stopping, MemberRecord::new(Agent::ClaudeCode));
@@ -506,18 +520,47 @@ fn claude_code_prompt_entry_sets_busy_and_blocks_while_stopping() {
     let _op = store.op_lock().unwrap();
     assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(bt(&f), (true, 0)); // draining blocks no prompt
-    assert!(prompt::is_slash("/zygo:status") && prompt::is_slash("/zygo:status  \n") && prompt::is_slash("/zygo:compact 120k"));
-    assert!(!prompt::is_slash("hello") && !prompt::is_slash(" /zygo:status") && !prompt::is_slash("/zygo:"));
     let o = fx(Agent::OpenCode);
     let st = ws_state(&o, Phase::Stopping, MemberRecord::new(Agent::OpenCode));
     let _op2 = st.op_lock().unwrap();
     assert_eq!(ws(&o, "prompt", oc("ses_A")).unwrap(), None); // AU86: an OpenCode prompt is never blocked
     assert_eq!(bt(&o), (true, 0));
+}
+
+#[test] // W§9.1 `UserPromptSubmit`, D4; H1 attempt-2 review round 2 R1
+fn slash_line_sets_busy_unless_the_dispatcher_consumes_it() {
+    let _s = serial();
+    let d = Some(dispatcher as SlashDispatch);
+    // The one rule of both hooks: a `/zygo:` line (trailing whitespace trimmed) with a registered dispatcher.
+    for p in ["/zygo:status", "/zygo:status  \n", "/zygo:compact 120k", "/zygo:down", "/zygo:frob"] {
+        assert!(prompt::consumes(p, d), "{p:?}");
+        assert!(!prompt::consumes(p, None), "{p:?}");
+    }
+    for p in ["hello", " /zygo:status", "/zygo:", "/zygo:Status"] {
+        assert!(!prompt::consumes(p, d), "{p:?}");
+    }
+    // A line that `zygo hook prompt` consumes runs as a verb: no change, and `/zygo:down` from a member does not
+    // mark that member busy.
+    let f = fx(Agent::ClaudeCode);
+    set_act(&f, false, 2);
+    for p in ["/zygo:status", "/zygo:down", "/zygo:down --now\n"] {
+        assert_eq!(ws_d(&f, "prompt", ups(p), d).unwrap(), None, "{p:?}");
+        assert_eq!(bt(&f), (false, 2), "{p:?}");
+    }
+    // A `/zygo:` line with no dispatcher registered reaches the model: its turn is busy until its stop.
+    assert_eq!(ws_d(&f, "prompt", ups("/zygo:status"), None).unwrap(), None);
+    assert_eq!(bt(&f), (true, 0));
+    set_act(&f, false, 2);
+    assert_eq!(ws(&f, "prompt", ups("/zygo:down")).unwrap(), None);
+    assert_eq!(bt(&f), (true, 0));
+    // A consumed line reads no view; one that passes reads it like any prompt.
     let s = fx(Agent::ClaudeCode);
     fs::remove_file(s.dir.view_json()).unwrap();
     mkfifo(&s.dir.view_json());
-    assert_eq!(ws_bg(&s, "prompt", ups("/zygo:status")).unwrap(), None); // a slash line reads no view
+    assert_eq!(ws_bg_d(&s, "prompt", ups("/zygo:status"), d).unwrap(), None);
     assert!(slog(&s).is_empty() && is_fifo(&s.dir.view_json()));
+    assert_eq!(ws_bg_d(&s, "prompt", ups("/zygo:status"), None).unwrap(), None);
+    assert_eq!(slog(&s), [format!("workspace hook prompt: {}: is not a regular file; not read", s.dir.view_json().display())]);
 }
 
 /// The `view.json` and marker variants of `view_and_marker_lines_once_per_turn`.

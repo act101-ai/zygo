@@ -20,7 +20,7 @@ use std::process::{Command, Stdio};
 use anyhow::{anyhow, bail};
 use serde_json::{json, Value};
 use zygo_core::esc;
-use zygo_core::hook::HookOutput;
+use zygo_core::hook::{slash_dispatch, HookOutput, SlashDispatch};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{ResumeNote, SessionView};
@@ -189,11 +189,20 @@ fn main_loop(p: &Value) -> bool {
 }
 
 /// `zygo hook workspace --event <event>` (W§9.1, D4, D5). It checks the event, then reads `ZYGO_SESSION_DIR`
-/// through `env` (none or empty: nothing), then parses the input; a `/zygo:` prompt line ends here (D4); then the
-/// session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2 and a Claude Code `prompt` the
-/// block JSON of AU86; every other call gives `None`.
+/// through `env` (none or empty: nothing), then parses the input; a prompt line that `zygo hook prompt` consumes ends
+/// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2 and a
+/// Claude Code `prompt` the block JSON of AU86; every other call gives `None`. The dispatcher is the one that the
+/// `zygo` binary registers (`slash_dispatch`).
 pub fn run(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
+) -> anyhow::Result<Option<String>> {
+    run_with(event, stdin, paths, env, zygo, slash_dispatch())
+}
+
+/// `run` with the `/zygo:` dispatcher `dispatch`.
+pub fn run_with(
+    event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
+    dispatch: Option<SlashDispatch>,
 ) -> anyhow::Result<Option<String>> {
     if !EVENTS.contains(&event) {
         bail!("workspace: unknown event \"{}\"", esc(event));
@@ -203,8 +212,12 @@ pub fn run(
     if !payload.is_object() {
         bail!("hook input is not a JSON object");
     }
-    // D4: the verb of a slash line runs in `zygo hook prompt`; the line sets no `busy` and reads no view.
-    if event == "prompt" && payload.get("prompt").and_then(Value::as_str).is_some_and(crate::prompt::is_slash) {
+    // D4, R1: a line that `zygo hook prompt` consumes runs there as a verb and never reaches the model, so it sets
+    // no `busy` and reads no view. The rule is the dispatcher's own (`prompt::consumes`): a `/zygo:` line that the
+    // dispatcher passes through starts a turn like any other line.
+    if event == "prompt"
+        && payload.get("prompt").and_then(Value::as_str).is_some_and(|p| crate::prompt::consumes(p, dispatch))
+    {
         return Ok(None);
     }
     let dir = SessionDir::new(PathBuf::from(sd));

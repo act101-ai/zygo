@@ -18,17 +18,25 @@ pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
     run_with(input, slash_dispatch(), HOOK_DEADLINE)
 }
 
-/// A `/zygo:<verb>` line, trailing whitespace trimmed: the test of `run_with` (§17.1).
+/// A `/zygo:<verb>` line, trailing whitespace trimmed: the line test of `run_with` (§17.1).
 pub fn is_slash(prompt: &str) -> bool {
     RE.is_match(prompt.trim_end())
 }
 
-/// A matched line (trailing whitespace trimmed) blocks with the verb's reply or error text; an unknown verb runs `help`. A verb that does not reply
-/// within `deadline` blocks with the shell command; one that panics is an error, so the prompt passes (C6).
+/// `run_with` takes the prompt `line` as a verb and blocks it from the model: a `/zygo:<verb>` line (`is_slash`) with
+/// a registered `dispatch`. Every other line passes to the model. The member prompt hook uses this rule too, so a line
+/// that reaches the model starts a busy turn (W§9.1; H1 review round 2 R1).
+pub fn consumes(line: &str, dispatch: Option<SlashDispatch>) -> bool {
+    dispatch.is_some() && is_slash(line)
+}
+
+/// A line that `consumes` takes blocks with the verb's reply or error text; an unknown verb runs `help`. A verb that
+/// does not reply within `deadline` blocks with the shell command; one that panics is an error, so the prompt passes
+/// (C6).
 pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Duration) -> anyhow::Result<HookOutput> {
     let start = Instant::now();
-    let Some(dispatch) = dispatch else { return Ok(HookOutput::None) };
     let Some(prompt) = input.raw.get("prompt").and_then(Value::as_str) else { return Ok(HookOutput::None) };
+    let Some(dispatch) = dispatch.filter(|_| consumes(prompt, dispatch)) else { return Ok(HookOutput::None) };
     // Trailing whitespace (a final newline) is not part of the line (§17.1).
     let Some(c) = RE.captures(prompt.trim_end()) else { return Ok(HookOutput::None) };
     let name = c.get(1).map_or("", |m| m.as_str());
@@ -178,6 +186,22 @@ mod tests {
         assert!(matches!(run_with(&input(None), Some(d), HOOK_DEADLINE).unwrap(), HookOutput::None));
         assert!(matches!(run_with(&input(Some("/zygo:status")), None, HOOK_DEADLINE).unwrap(), HookOutput::None));
         assert!(taken(&CALLS).is_empty());
+    }
+
+    /// R1: `consumes` is the rule of `run_with`: it blocks exactly the lines that `consumes` takes.
+    #[test]
+    fn consumes_is_the_rule_of_run_with() {
+        fn d(_: &str, _: &str) -> anyhow::Result<String> {
+            Ok("x".into())
+        }
+        let lines = ["hello", " /zygo:compact", "/zygo:Compact", "/zygo:", "/zygo:compact 600k\nmore", "/zygo:status", "/zygo:status \n", "/zygo:frob a", "/zygo:compact\nmore"];
+        for dispatch in [Some(d as SlashDispatch), None] {
+            for p in lines {
+                let blocked = matches!(run_with(&input(Some(p)), dispatch, HOOK_DEADLINE).unwrap(), HookOutput::Json(_));
+                assert_eq!(blocked, consumes(p, dispatch), "{p:?} {}", dispatch.is_some());
+            }
+        }
+        assert!(consumes("/zygo:status", Some(d)) && !consumes("/zygo:status", None) && !consumes("hello", Some(d)));
     }
 
     #[test]
