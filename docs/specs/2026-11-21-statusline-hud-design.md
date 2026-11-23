@@ -321,7 +321,7 @@ Rule for the plain set (author): each plain glyph is in WGL4, the character set 
 
 ### 6.6 Formats and limits
 
-- Token counts and trimmed tokens use `short` (`statusline.rs:143-154`): `999`, `412k`, `1m`, `1.2m`.
+- Token counts and trimmed tokens use `short` (`zygo_hooks::statusline::short`): `999`, `412k`, `1m`, `1.2m`, `1b`, `1.2b`. Below 1,000 the number as is; below 1,000,000 whole thousands with `k` (floor); below 1,000,000,000 millions with `m`; from 1,000,000,000 billions with `b`. An exact multiple of the unit has no decimal (`1m`, `12b`); else one decimal of tenths, floor (1,250,000 → `1.2m`, 999,999,999 → `999.9m`, 1,250,000,000 → `1.2b`). Every `u64` has a form, `u64::MAX` too.
 - Trimmed tokens = `ceil(trimmed_bytes ÷ BYTES_PER_TOKEN)`, with `BYTES_PER_TOKEN = 4`, one constant in `zygo-core` (`zygo_core::tokens`) that both estimates in `run` (`forward.rs`) also use (OP1). 92,160 bytes → 23,040 → `23k`.
 - Spend: round to whole cents first (half up), then choose the form from the rounded value: 0 cents with spend > 0 → `<$0.01`; below $100.00 → two decimals (`$3.41`); $100.00 and above → whole dollars, half up (`$123`). Example: $99.996 → $100.00 → `$100`. Suffix `+` or the form `$?` per AU15. Notional: prefix `≈`.
 - Percent (verbose ctx, cache): `round(x × 100)` then `%`, as `pct` (`statusline.rs:156-158`).
@@ -734,3 +734,4 @@ Author's calls for the planner. WS node ids and HUD node ids refer to `docs/work
 | 2026-11-22 | H-C4, AU30, H§12 row PH8 | LIV-2 (citation fix) | The citations of `docs/live-checks.md` named lines 93 and 104, which moved when rows were added; they now name the Results rows P-N28-1 and W-SHELL. |
 | 2026-11-22 | H§12 row PH10 (fallback cell); H§12 LIV-1 notes of rows PH1, PH2, PH3, PH4, PH5, PH9 and the LIV-1 note below the P-HUD-1 paragraph | LIV-2 round 2 (diff review) | The PH10 fallback cell states the rule that LIV-2 built: on Windows the plain set unless `ZYGO_NERD_FONT=1`. The LIV-1 notes hold no parenthesis inside the note body; the words keep their meaning. |
 | 2026-11-22 | H§3 (OpenCode bullet), H§8, H§14 #33 | operator, 2026-11-21 ("same as Claude Code"); built by HUD-11 | The `statusline` verb works the same in an OpenCode session as in a Claude Code session and does not read `ZYGO_AGENT`; the text that the session form exits 2 there is replaced. zygo still sets no OpenCode status surface. |
+| 2026-11-22 | H§6.6 (token counts and trimmed tokens) | operator | HUD numbers roll over to b after 999m |
