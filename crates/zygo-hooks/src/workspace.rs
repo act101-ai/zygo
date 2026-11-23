@@ -3,7 +3,8 @@
 //! `docs/work/phase2/nodes/H1.md`).
 //!
 //! Membership comes only from the session view marker in `ZYGO_SESSION_DIR`, never from `ZYGO_WORKSPACE` or
-//! `ZYGO_PANE` (AU58, D2). The library reads no process environment: the session folder variable comes through `env`,
+//! `ZYGO_PANE` (AU58, D2); `zygo hook prompt` reads `ZYGO_WORKSPACE` only as a gate before `mark_busy` looks for the
+//! marker, as the OpenCode plugin does. The library reads no process environment: the session folder variable comes through `env`,
 //! the state folder through `paths` and the zygo program through `zygo`. A hook never breaks the agent (C6): a failure
 //! writes one line, to the session log for the session folder's files and to `errors.log` for the state folder's,
 //! and the hook exits 0 (AU56, D14). The `session` event never changes `activity.json`: an open turn stays busy until
@@ -16,6 +17,7 @@ use std::io::{Read, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use serde_json::{json, Value};
@@ -174,6 +176,14 @@ fn member<'a>(event: &'a str, dir: &'a SessionDir, paths: &'a Paths) -> anyhow::
 /// newer version; the lock file cannot be opened; the write failed). A one-off failure writes its line on every event
 /// where it happens: the lock not taken within the AU56 bound, and a refused over-limit result.
 fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
+    if let Err(e) = change_within(c, activity::LOCK_BOUND, f) {
+        slog(c.dir, c.event, &format!("{e:#}"));
+    }
+}
+
+/// `change` with the lock wait `bound`: it writes the line of a persistent condition by the rule of `change` and
+/// returns the one-off failure (the lock not taken within `bound`, a refused over-limit result) to the caller.
+fn change_within(c: &Ctx, bound: Duration, f: &mut dyn FnMut(&mut Activity)) -> anyhow::Result<()> {
     let path = c.dir.activity_json();
     let persistent = |text: String| {
         if MARKER_LOG_EVENTS.contains(&c.event) {
@@ -181,16 +191,22 @@ fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
         }
     };
     match fs::symlink_metadata(&path) {
-        Ok(m) if m.file_type().is_symlink() => return persistent(format!("{}: is a link; not changed", path.display())),
+        Ok(m) if m.file_type().is_symlink() => {
+            persistent(format!("{}: is a link; not changed", path.display()));
+            return Ok(());
+        }
         Ok(m) if !m.is_file() => {
-            return persistent(format!("{}: is not a regular file; not changed", path.display()));
+            persistent(format!("{}: is not a regular file; not changed", path.display()));
+            return Ok(());
         }
         _ => {}
     }
-    match activity::update(c.dir, activity::LOCK_BOUND, f) {
-        Ok(()) => {}
-        Err(e) if e.is::<activity::FileCondition>() => persistent(format!("{e:#}")),
-        Err(e) => slog(c.dir, c.event, &format!("{e:#}")),
+    match activity::update(c.dir, bound, f) {
+        Err(e) if e.is::<activity::FileCondition>() => {
+            persistent(format!("{e:#}"));
+            Ok(())
+        }
+        r => r,
     }
 }
 
@@ -203,17 +219,20 @@ fn start_turn(a: &mut Activity) {
 /// The busy mark of a member whose `/zygo:` verb panicked (W§9.1 `UserPromptSubmit` row; H1 attempt-2 review
 /// round 4, T2). `zygo hook prompt` then lets the line reach the model (C6), while `workspace --event prompt` skipped
 /// that line as consumed (`prompt::consumes`), so the prompt hook calls this when `ZYGO_WORKSPACE` is set. It is the
-/// `prompt` change of `run_with` (`start_turn`) through `member` and `change`, with the log rules of the `prompt` event;
-/// membership still comes only from the view marker (AU58), and the AU86 block does not apply, since the line has
-/// already passed. No or an empty `ZYGO_SESSION_DIR` in `env`, no `view.json` or no marker: nothing. A refused session
-/// folder is an error (D2).
-pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>) -> anyhow::Result<()> {
+/// `prompt` change of `run_with` (`start_turn`) through `member` and `change_within`; membership still comes only from
+/// the view marker (AU58), and the AU86 block does not apply, since the line has already passed. It waits for
+/// `activity.lock` at most `bound`, which the prompt hook gives as the smaller of `activity::LOCK_BOUND` and the time
+/// left of its verb wait, so the hook keeps its 5 s bound (§17.1; round 4 follow-up F1); a zero `bound` tries the lock
+/// once and does not wait. A persistent condition of the files writes the session-log line of the `prompt` event; a
+/// one-off failure (the lock not taken within `bound`) is returned, so it goes into the one stderr line of C6. No or an
+/// empty `ZYGO_SESSION_DIR` in `env`, no `view.json` or no marker: nothing. A refused session folder is an error (D2).
+pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, bound: Duration) -> anyhow::Result<()> {
     let Some(sd) = env("ZYGO_SESSION_DIR").filter(|v| !v.is_empty()) else { return Ok(()) };
     let dir = SessionDir::new(PathBuf::from(sd));
-    if let Some(c) = member("prompt", &dir, paths)? {
-        change(&c, &mut start_turn);
+    match member("prompt", &dir, paths)? {
+        Some(c) => change_within(&c, bound, &mut start_turn),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).

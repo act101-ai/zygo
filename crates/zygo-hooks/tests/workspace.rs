@@ -1727,3 +1727,113 @@ fn panicking_verb_lets_the_line_pass_and_marks_only_a_member_busy() {
     })
     .contains(&"view.json".to_string()));
 }
+
+/// The deadline of the round 4 follow-up F1 tests, and the time its dispatcher waits before it panics: a panic seen
+/// just before the deadline.
+const F1_DEADLINE: Duration = Duration::from_millis(600);
+const F1_PANIC_AT: Duration = Duration::from_millis(550);
+
+/// A `/zygo:` dispatcher whose verb panics just before `F1_DEADLINE` (round 4 follow-up F1).
+fn late_panic(_: &str, _: &str) -> anyhow::Result<String> {
+    std::thread::sleep(F1_PANIC_AT);
+    panic!("verb panicked")
+}
+
+#[test] // base spec §17.1 (the hook ends within 5 s), C6; H1 attempt-2 review round 4 follow-up F1
+fn busy_mark_after_a_late_panic_keeps_the_hook_bound() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    let sd = f.dir.root.clone().into_os_string();
+    let env = |k: &str| match k {
+        "ZYGO_SESSION_DIR" => Some(sd.clone()),
+        "ZYGO_WORKSPACE" => Some(OsString::from(ID)),
+        _ => None,
+    };
+    set_act(&f, false, 2);
+    let input = hook(Agent::ClaudeCode, &ups("/zygo:status"));
+    let held = hold_activity(&f.dir);
+    let start = Instant::now();
+    let r = prompt::run_in_env(&input, Some(late_panic), F1_DEADLINE, &f.paths, &env);
+    let took = start.elapsed();
+    drop(held);
+    // `HOOK_DEADLINE` (4.5 s) leaves 500 ms of the 5 s bound of §17.1 after the verb wait; the busy mark waits for
+    // `activity.lock` only for the time left of the verb wait, so the hook ends within that margin of its deadline.
+    assert!(took < F1_DEADLINE + Duration::from_millis(500), "the hook took {took:?}");
+    let Err(e) = r else { panic!("not an error") };
+    let text = format!("{e:#}");
+    let head = format!(
+        "prompt: verb `status` ended without a reply; busy mark: {}: lock not taken within ",
+        f.dir.activity_lock().display()
+    );
+    assert!(text.starts_with(&head) && text.ends_with(" ms") && !text.contains('\n'), "{text}");
+    // The lock miss is in the one stderr line of C6, not in the session log; nothing changed.
+    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
+    assert_eq!(bt(&f), (false, 2));
+    // No time left: the mark tries the lock once, does not wait, and returns the miss for the C6 line.
+    let held = hold_activity(&f.dir);
+    let start = Instant::now();
+    let e = workspace::mark_busy(&f.paths, &env, Duration::ZERO).unwrap_err();
+    assert!(start.elapsed() < Duration::from_millis(100), "{:?}", start.elapsed());
+    drop(held);
+    assert_eq!(format!("{e:#}"), format!("{}: lock not taken within 0 ms", f.dir.activity_lock().display()));
+    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
+    assert_eq!(bt(&f), (false, 2));
+    // With the lock free, a zero bound still takes it and marks the member busy.
+    workspace::mark_busy(&f.paths, &env, Duration::ZERO).unwrap();
+    assert_eq!(bt(&f), (true, 0));
+}
+
+#[test] // W§9.1 `UserPromptSubmit` row, AU58, C6; H1 attempt-2 review round 4 follow-up F6
+fn busy_mark_needs_the_view_marker_and_keeps_one_stderr_line() {
+    let _s = serial();
+    // `ZYGO_WORKSPACE` set, but the view has no marker: no write, no `activity.json`, no session-log line.
+    let f = fx_with(Agent::ClaudeCode, None);
+    let sd = f.dir.root.clone().into_os_string();
+    let env = |k: &str| match k {
+        "ZYGO_SESSION_DIR" => Some(sd.clone()),
+        "ZYGO_WORKSPACE" => Some(OsString::from(ID)),
+        _ => None,
+    };
+    let before = entries(&f.dir.root);
+    let input = hook(Agent::ClaudeCode, &ups("/zygo:status"));
+    let Err(e) = prompt::run_in_env(&input, Some(panicking), prompt::HOOK_DEADLINE, &f.paths, &env) else {
+        panic!("not an error")
+    };
+    assert_eq!(format!("{e:#}"), "prompt: verb `status` ended without a reply");
+    assert_eq!(entries(&f.dir.root), before);
+    assert!(!f.dir.activity_json().exists() && !f.dir.log().exists() && !f.paths.state_dir().exists());
+    // A refused session folder (a relative `ZYGO_SESSION_DIR`): the mark's error joins the one stderr line that
+    // `guarded` writes. `guarded` writes to the process stderr, so the test binary runs `prompt_hook_child` in a child
+    // and reads its stderr.
+    let out = Command::new(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", "prompt_hook_child", "--nocapture", "--test-threads=1"])
+        .env("ZYGO_H1_PROMPT_CHILD", f.t.path())
+        .env("ZYGO_SESSION_DIR", "s")
+        .env("ZYGO_WORKSPACE", ID)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "zygo hook: prompt: verb `status` ended without a reply; busy mark: ZYGO_SESSION_DIR is not an absolute path: s\n"
+    );
+    assert!(String::from_utf8(out.stdout).unwrap().contains("prompt_hook_child ... ok"));
+}
+
+/// Child half of `busy_mark_needs_the_view_marker_and_keeps_one_stderr_line`: `zygo hook prompt` as the binary runs
+/// it (`guarded`, the process environment) with a panicking verb; the parent reads its stderr and sets
+/// `ZYGO_H1_PROMPT_CHILD` (a test-owned folder for the paths) on the child only. Without it the test returns at once.
+#[test]
+#[ignore]
+fn prompt_hook_child() {
+    let Some(root) = std::env::var_os("ZYGO_H1_PROMPT_CHILD") else { return };
+    let paths = paths(Path::new(&root));
+    let bytes = serde_json::to_vec(&ups("/zygo:status")).unwrap();
+    let env = |k: &str| std::env::var_os(k);
+    let out = guarded(
+        &|b| prompt::run_in_env(&HookInput::parse(Agent::ClaudeCode, b)?, Some(panicking), prompt::HOOK_DEADLINE, &paths, &env),
+        &bytes,
+    );
+    assert_eq!(out, (String::new(), 0));
+}

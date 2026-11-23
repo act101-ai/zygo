@@ -21,14 +21,19 @@ static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/zygo:([a-z][a-z0-9-
 /// panicked (`VerbPanicked`) and `ZYGO_WORKSPACE` is set and not empty in `env` (the launcher sets it for members only,
 /// AU58), the line reaches the model, so `workspace::mark_busy` marks the member busy (H1 attempt-2 review round 4,
 /// T2); the error is still returned, so `guarded` writes its one stderr line (C6). A failed mark adds its text to that
-/// line. Without `ZYGO_WORKSPACE` nothing else is read: a launch that is not a member keeps its v1 behaviour.
+/// line. The mark waits for `activity.lock` at most the smaller of `activity::LOCK_BOUND` and the time left of
+/// `deadline`, measured from the hook start as in `run_with`, so after a panic seen near the deadline the hook still
+/// ends within its 5 s bound (§17.1; round 4 follow-up F1). Without `ZYGO_WORKSPACE` nothing else is read: a launch
+/// that is not a member keeps its v1 behaviour.
 pub fn run_in_env(
     input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Duration, paths: &Paths,
     env: &dyn Fn(&str) -> Option<OsString>,
 ) -> anyhow::Result<HookOutput> {
+    let start = Instant::now();
     match run_with(input, dispatch, deadline) {
         Err(e) if e.is::<VerbPanicked>() && env("ZYGO_WORKSPACE").is_some_and(|v| !v.is_empty()) => {
-            match crate::workspace::mark_busy(paths, env) {
+            let bound = deadline.saturating_sub(start.elapsed()).min(zygo_workspace::activity::LOCK_BOUND);
+            match crate::workspace::mark_busy(paths, env, bound) {
                 Ok(()) => Err(e),
                 Err(m) => Err(anyhow::anyhow!("{e:#}; busy mark: {m:#}")),
             }

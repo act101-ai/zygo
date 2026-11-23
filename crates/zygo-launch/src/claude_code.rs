@@ -371,8 +371,9 @@ impl ClaudeCode {
             "SessionStart".into(),
             json!([entry(None, if member { "session-start --event member" } else { "session-start" })]),
         );
-        // W§9.1, H1 D4: `zygo hook prompt` reads no session view; the member part is a second, member-only entry, so a
-        // launch that is not a member keeps its one `prompt` entry.
+        // W§9.1, H1 D4: `zygo hook prompt` reads no session view unless `ZYGO_WORKSPACE` is set and a verb panicked
+        // (H1 round 4 T2); the member part is a second, member-only entry, so a launch that is not a member keeps its
+        // one `prompt` entry.
         let mut prompt = vec![entry(None, "prompt")];
         if member {
             prompt.push(entry(None, "workspace --event prompt"));
