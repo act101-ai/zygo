@@ -12,8 +12,8 @@ zygo is one native binary that wraps Claude Code and OpenCode (and other coding 
 
 ## Role-based model routing
 
-- Follows [elephants-and-goldfish](https://research.google/pubs/elephants-goldfish-and-the-new-golden-age-of-software-engineering/) model for improved generation and token efficiency.
-
+- Implements [elephants-and-goldfish](https://research.google/pubs/elephants-goldfish-and-the-new-golden-age-of-software-engineering/) model for improved generation and token efficiency in your coding agent.
+- Execute tasks with the most capability-appropriate model for the task.
 - Create your own model profiles to use any model natively for a chosen role
 
 ### AST-based Code Navigation
