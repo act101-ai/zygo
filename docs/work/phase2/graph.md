@@ -80,7 +80,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
-| FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
+| FIX-16 | workspace_down passes the name after -- | W10, W11, M1, FIX-19 | PLANNED | mechanical | — |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-19; — |
@@ -91,7 +91,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
 | FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
-| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19 | PLANNED | judgment | — |
+| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16 | PLANNED | judgment | — |
 
 ## Log
 
@@ -245,3 +245,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-23 DONE (f052dd4): merged after re-plan; review found no defect. Merged tree: Acceptance zygo-core lib 2, zygo-launch lib 3, claude_code 44; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
 | 2026-11-23 | FIX-26 DONE (25194af): merged after 1 review round (visible skip notes, Windows type-check risk stated). Merged tree: Acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
 | 2026-11-23 | M1 DONE (09ed93b): merged after re-plan; 1 review round (stub-agent built on demand, marker target test, tmux lookup tests, exact detach condition, cwd read only when needed). Merged tree: workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172. |
+| 2026-11-23 | FIX-16 planned (18 steps): MCP workspace_down passes the name after --; up/admin/attach/ws-forget hints use -- <name>; real-parser tests; AU37/AU63/AU65/W§12/#78 rewritten. Edges FIX-19→FIX-16→FIX-27 for the shared spec and up.rs. |
