@@ -1486,7 +1486,7 @@ fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             say(err, &format!("zygo: {name} skipped: {reason}"));
             skipped = true;
         };
-        match session_check(opts, &ws) {
+        match session_check(opts, &ws, err) {
             Found::Chosen => {}
             Found::Running => continue,
             Found::Skip(reason) => {
@@ -1527,7 +1527,7 @@ fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 
 /// The D2 session check of one candidate: the AU62 check of its socket, then `has-session` on its server; a session
 /// that exists goes to [`clear_down_all`] (D6).
-fn session_check(opts: &UpOpts, ws: &Workspace) -> Found {
+fn session_check(opts: &UpOpts, ws: &Workspace, err: &mut dyn Write) -> Found {
     // FIX-29 round 3 (AU54): the saved socket before any use.
     if let Err(e) = check_saved_socket(ws) {
         return Found::Skip(e.to_string().trim_start_matches("zygo: ").to_string());
@@ -1541,31 +1541,47 @@ fn session_check(opts: &UpOpts, ws: &Workspace) -> Found {
     match mux.session_exists(&ws.tmux_session) {
         SessionAnswer::Gone => Found::Chosen,
         SessionAnswer::Error { message } => Found::Skip(format!("tmux: {message}")),
-        SessionAnswer::Exists => match clear_down_all(opts, ws, &mux) {
+        SessionAnswer::Exists => match clear_down_all(opts, ws, &mux, err) {
             Ok(()) => Found::Running,
             Err(reason) => Found::Skip(reason),
         },
     }
 }
 
-/// D6: a session that exists is not restored. When it holds this workspace's `@zygo-ws` and `down_all = true`, the
-/// workspace is up: `down_all` is cleared under `op.lock` after a second session and owner check, in one write under
-/// `lock`; then the W§7.3 `snapshot.pending` check. A held `op.lock` changes nothing. `Err` holds the skip reason.
-fn clear_down_all(opts: &UpOpts, ws: &Workspace, mux: &dyn Multiplexer) -> Result<(), String> {
+/// D6: a session that exists is not restored. When it holds this workspace's `@zygo-ws`, under `op.lock` and after a
+/// second session and owner check, the build hold that a failed release left ends ([`Builder::release_all`], AU68,
+/// FIX-29 round 3); then, with `down_all = true`, the workspace is up: `down_all` is cleared in one write under
+/// `lock`, then the W§7.3 `snapshot.pending` check. A held `op.lock` changes nothing; an `op.lock` that cannot be taken
+/// for another reason is a skip only with `down_all = true`. `Err` holds the skip reason.
+fn clear_down_all(opts: &UpOpts, ws: &Workspace, mux: &dyn Multiplexer, err: &mut dyn Write) -> Result<(), String> {
     let ours = |mux: &dyn Multiplexer| match mux.show_session_option(&ws.tmux_session, WS_OPTION) {
         Ok(v) => Ok(v.as_deref() == Some(ws.id.as_str())),
         Err(e) => Err(format!("tmux: {e}")),
     };
-    if !ours(mux)? || !ws.down_all {
+    if !ours(mux)? {
         return Ok(());
     }
     let store = Store::open(&opts.paths, &ws.id);
     let _op = match store.op_lock() {
         Ok(l) => l,
         Err(StateError::OpHeld) => return Ok(()),
-        Err(e) => return Err(e.to_string()),
+        Err(e) if ws.down_all => return Err(e.to_string()),
+        Err(_) => return Ok(()),
     };
     if mux.session_exists(&ws.tmux_session) != SessionAnswer::Exists || !ours(mux)? {
+        return Ok(());
+    }
+    let b = Builder {
+        mux,
+        session: &ws.tmux_session,
+        zygo: &opts.zygo,
+        id: &ws.id,
+        main_root: &ws.main_root,
+        dir: store.dir(),
+        hold: false,
+    };
+    b.release_all(&ws.name, err);
+    if !ws.down_all {
         return Ok(());
     }
     let written = store

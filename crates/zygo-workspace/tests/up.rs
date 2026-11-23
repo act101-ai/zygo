@@ -2463,6 +2463,19 @@ fn an_attaching_up_leaves_a_user_window_alone() {
     assert_eq!((remain(&l, 0), remain(&l, 1), remain(&l, user)), ("off".to_string(), "off".to_string(), "on".to_string()));
 }
 
+#[test] // FIX-29 diff review round 3, finding 6, AU68: `up --all` ends a left hold of a live session, zygo windows only
+fn up_all_ends_a_left_hold_of_a_live_session() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let user = user_window_and_left_hold(&mut l);
+    let (mut o, mut e) = (Vec::new(), Vec::new());
+    let code = up::testing::run_all_with(&l.o, &mut o, &mut e);
+    let (out, err) = (text(o), text(e));
+    assert_eq!((code, out.as_str(), err.as_str()), (0, "", "zygo: up --all found no workspace to restore\n"));
+    assert_eq!((remain(&l, 0), remain(&l, 1), remain(&l, user)), ("off".to_string(), "off".to_string(), "on".to_string()));
+}
+
 #[test] // FIX-29 diff review round 3, finding 1, AU67: a repair whose split fails ends the hold of every window
 fn a_repair_that_stops_in_the_middle_releases_every_window() {
     let _g = serial();
