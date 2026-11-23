@@ -2128,11 +2128,11 @@ fn wait_for_dead_panes(dir: &Path, wrapper: Option<&Path>, n: usize) {
         Some(w) => {
             let (w1, w2) = (w.to_path_buf(), w.to_path_buf());
             let a: Hook = Box::new(move || {
-                wait_for(S5, || all_dead(&w1, 1));
+                assert!(wait_for(S5, || all_dead(&w1, 1)), "after_new_session: the first pane did not die within 5 s");
                 Ok(())
             });
             let b: Hook = Box::new(move || {
-                wait_for(S5, || all_dead(&w2, n));
+                assert!(wait_for(S5, || all_dead(&w2, n)), "before_final_snapshot: the {n} panes did not all die within 5 s");
                 Ok(())
             });
             (Some(a), Some(b))
@@ -2313,7 +2313,7 @@ fn repair_reports_a_pane_that_died_during_the_hold() {
         store.dir(),
         "after_new_session",
         Some(Box::new(move || {
-            wait_for(S5, || all_dead(&w, 1));
+            assert!(wait_for(S5, || all_dead(&w, 1)), "after_new_session: the first pane did not die within 5 s");
             Err("injected".into())
         })),
     );
