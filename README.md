@@ -4,6 +4,14 @@ zygo is one native binary that wraps Claude Code and OpenCode: it routes each ag
 
 Version 0.1.0.
 
+---
+
+## Agentic Coding like you've never experienced before
+
+<img width="1072" height="93" alt="image" src="https://github.com/user-attachments/assets/6365701c-305f-418b-a85d-6f00fb35b464" />
+
+---
+
 ## Install
 
 macOS and Linux:
