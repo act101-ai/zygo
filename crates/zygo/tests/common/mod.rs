@@ -58,3 +58,7 @@ pub fn stub_control(dir: &Path, step: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     std::fs::OpenOptions::new().create(true).append(true).open(dir.join("steps"))?.write_all(format!("{step}\n").as_bytes())
 }
+
+/// The workspace test harness (M2, W§18 preamble).
+#[cfg(unix)]
+pub mod workspace;

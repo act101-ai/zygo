@@ -23,6 +23,7 @@ pub mod loadout;
 pub mod ls;
 pub mod marketplace;
 pub mod mcp;
+pub mod member;
 pub mod opencode;
 pub mod plugin;
 pub mod plugins;
@@ -204,28 +205,28 @@ struct VerbArgs {
 }
 
 #[derive(Args)]
-struct Launch {
+pub(crate) struct Launch {
     /// Model profile
     #[arg(long)]
-    profile: Option<String>,
+    pub(crate) profile: Option<String>,
     /// Use the passthrough credential
     #[arg(long, hide = false)]
-    passthrough: bool,
+    pub(crate) passthrough: bool,
     /// Server URL
     #[arg(long)]
-    server: Option<String>,
+    pub(crate) server: Option<String>,
     /// Compaction window in tokens, or off
     #[arg(long)]
-    compact: Option<String>,
+    pub(crate) compact: Option<String>,
     /// Skip permission prompts
     #[arg(long)]
-    yolo: bool,
+    pub(crate) yolo: bool,
     /// Claude Code config directory (sets CLAUDE_CONFIG_DIR)
     #[arg(long)]
-    config_dir: Option<String>,
+    pub(crate) config_dir: Option<String>,
     /// Arguments passed to the agent
     #[arg(last = true)]
-    rest: Vec<String>,
+    pub(crate) rest: Vec<String>,
 }
 
 #[derive(Args)]

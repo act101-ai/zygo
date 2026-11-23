@@ -26,7 +26,7 @@ pub(super) fn run(l: &Launch) -> i32 {
     }
 }
 
-fn launch_opts(l: &Launch, mut env: Env, cwd: PathBuf, paths: Paths) -> Result<LaunchOpts, String> {
+pub(crate) fn launch_opts(l: &Launch, mut env: Env, cwd: PathBuf, paths: Paths) -> Result<LaunchOpts, String> {
     let compact = match l.compact.as_deref() {
         None => None,
         Some(v) => match parse_window(v) {

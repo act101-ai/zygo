@@ -3510,6 +3510,7 @@ dependencies = [
  "fs4",
  "hex",
  "libc",
+ "rand",
  "regex",
  "reqwest",
  "rpassword",

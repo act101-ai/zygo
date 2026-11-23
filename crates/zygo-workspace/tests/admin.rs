@@ -941,7 +941,7 @@ fn forget_matches_an_id_first() {
 
 // ---- step 20 ----
 
-#[test] // D16, D21: a failure after the cache keeps the state, and the same `forget` runs again
+#[test] // D16, D21: a failure before the state rename keeps the state and the cache, and the same `forget` runs again
 fn forget_failure_keeps_the_state() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -964,7 +964,7 @@ fn forget_failure_keeps_the_state() {
     );
     assert_eq!(forget_run(&p, &tmux, None, "app"), (1, String::new(), "zygo: cannot forget app: injected\n".to_string()));
     assert!(!free.load(Ordering::SeqCst)); // op.lock held during the removal
-    assert!(!cache(&p, ID).exists());
+    assert!(cache(&p, ID).join("results/kaaaaaaaa/r1").exists()); // M2 round 3: the cache goes after the state
     assert_eq!(Store::open(&p, ID).read().unwrap().unwrap().name, "app");
     up::testing::hook(&p.workspaces_dir().join(ID), "forget_before_state", None);
     assert_eq!(forget_run(&p, &tmux, None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
@@ -1338,6 +1338,180 @@ fn forget_pane_checks_each_part_of_the_cache_path() {
     );
     assert!(fs::symlink_metadata(results.join("kbbbbbbbb")).is_err());
     assert_eq!(snapshot_tree(&outside), before);
+}
+
+/// Makes `<cache>/program/<key>/opencode` as a link to `target`; returns `<cache>/program/<key>`.
+fn program(p: &Paths, id: &str, key: &str, target: &Path) -> PathBuf {
+    let d = cache(p, id).join("program").join(key);
+    fs::create_dir_all(&d).unwrap();
+    std::os::unix::fs::symlink(target, d.join("opencode")).unwrap();
+    d
+}
+
+#[test] // M2 review round 2 finding 4: W§12 `ws forget-pane` also deletes `program/<key>` (AU61), with the rules of `results/<key>`
+fn forget_pane_removes_the_program_folder() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, r, id, .. } = pane_setup();
+    let t = td.path();
+    let saved = t.join("saved/opencode");
+    fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    fs::write(&saved, "bin").unwrap();
+    let b = program(&p, &id, "kbbbbbbbb", &saved);
+    let a = program(&p, &id, "kaaaaaaaa", &saved);
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(&b).is_err() && a.join("opencode").exists());
+    assert_eq!(fs::read(&saved).unwrap(), b"bin"); // the link target stays
+    // A key with no member record and only a program folder: the folder goes.
+    let orphan = program(&p, &id, "kyyyyyyyy", &saved);
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kyyyyyyyy"),
+        (0, "zygo: forgot pane kyyyyyyyy of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(&orphan).is_err());
+    // A link at `program` refuses before anything is written.
+    let outside = t.join("outside-program");
+    fs::create_dir_all(outside.join("kaaaaaaaa")).unwrap();
+    fs::write(outside.join("kaaaaaaaa/opencode"), "keep").unwrap();
+    let prog = cache(&p, &id).join("program");
+    fs::remove_dir_all(&prog).unwrap();
+    std::os::unix::fs::symlink(&outside, &prog).unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kaaaaaaaa"),
+        (1, String::new(), format!("zygo: cannot forget pane kaaaaaaaa of app: {} is a link; it is not followed\n", prog.display()))
+    );
+    assert_eq!(fs::read(outside.join("kaaaaaaaa/opencode")).unwrap(), b"keep");
+}
+
+#[test] // M2 review round 3 finding 4: `ws forget` removes the state before the cache, so no later writer of the cache finds the state
+fn forget_removes_the_state_before_the_cache() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    result(&p, ID, "kaaaaaaaa");
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    up::testing::hook(
+        &p.workspaces_dir().join(ID),
+        "forget_before_cache",
+        Some(Box::new({
+            let (seen, state, cache) = (seen.clone(), p.workspaces_dir().join(ID).join("workspace.json"), cache(&p, ID));
+            move || {
+                *seen.lock().unwrap() = Some((state.exists(), cache.exists()));
+                Ok(())
+            }
+        })),
+    );
+    assert_eq!(forget_run(&p, &tmux, None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    up::testing::hook(&p.workspaces_dir().join(ID), "forget_before_cache", None);
+    assert_eq!(*seen.lock().unwrap(), Some((false, true))); // the state is gone, the cache is still there
+    assert!(!cache(&p, ID).exists() && !p.workspaces_dir().join(ID).exists());
+}
+
+#[test] // M2 review round 3 finding 4: a cache that cannot be removed after the state is gone is swept by the next `forget`
+fn forget_reports_a_cache_left_after_the_state_and_the_next_forget_sweeps_it() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    result(&p, ID, "kaaaaaaaa");
+    up::testing::hook(&p.workspaces_dir().join(ID), "forget_before_cache", Some(Box::new(|| Err("injected".into()))));
+    assert_eq!(
+        forget_run(&p, &tmux, None, "app"),
+        (1, String::new(), format!("zygo: app forgotten, but {} was not removed: injected\n", cache(&p, ID).display()))
+    );
+    up::testing::hook(&p.workspaces_dir().join(ID), "forget_before_cache", None);
+    assert!(!p.workspaces_dir().join(ID).exists() && cache(&p, ID).join("results/kaaaaaaaa/r1").exists());
+    assert_eq!(forget_run(&p, &tmux, None, "app"), (1, String::new(), "zygo: no workspace named app\n".to_string()));
+    assert!(!cache(&p, ID).exists()); // D26 sweep: a cache with no state folder
+}
+
+#[test] // M2 review round 3 finding 9: the second pass tries every cache, then reports the first error; a second run recovers
+fn forget_pane_tries_every_cache_and_a_second_run_recovers() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, r, id, store, .. } = pane_setup();
+    let saved = td.path().join("saved/opencode");
+    fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    fs::write(&saved, "bin").unwrap();
+    let prog = program(&p, &id, "kbbbbbbbb", &saved);
+    let results = cache(&p, &id).join("results/kbbbbbbbb");
+    assert!(results.join("r1").exists());
+    up::testing::hook(store.dir(), "forget_pane_remove_results", Some(Box::new(|| Err("injected".into()))));
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kbbbbbbbb"),
+        (1, String::new(), "zygo: cannot forget pane kbbbbbbbb of app: injected\n".to_string())
+    );
+    up::testing::hook(store.dir(), "forget_pane_remove_results", None);
+    assert!(!store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb")); // the record went first
+    assert!(fs::symlink_metadata(&prog).is_err()); // the program folder went after the failed results
+    assert!(results.join("r1").exists());
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(&results).is_err());
+}
+
+#[test] // M2 review round 3 finding 10: each part that `pane_cache_create` opens or makes gets mode 0700 through its fd
+fn pane_cache_create_sets_mode_0700_on_each_part() {
+    use std::os::unix::fs::PermissionsExt;
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let mode = |q: &Path| fs::metadata(q).unwrap().permissions().mode() & 0o777;
+    for sub in ["results", "program"] {
+        let parts = [cache(&p, ID), cache(&p, ID).join(sub), cache(&p, ID).join(sub).join("kaaaaaaaa")];
+        // Made here: 0700.
+        assert_eq!(admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"), Ok(parts[2].clone()));
+        for q in &parts {
+            assert_eq!(mode(q), 0o700, "{}", q.display());
+        }
+        // Already there with mode 0777: 0700 again.
+        for q in &parts {
+            fs::set_permissions(q, fs::Permissions::from_mode(0o777)).unwrap();
+        }
+        assert_eq!(admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"), Ok(parts[2].clone()));
+        for q in &parts {
+            assert_eq!(mode(q), 0o700, "{}", q.display());
+        }
+        fs::remove_dir_all(cache(&p, ID)).unwrap();
+    }
+}
+
+#[test] // M2 review round 2 finding 3: the create check of `results/<key>` and `program/<key>` refuses every link
+fn pane_cache_create_refuses_a_link_at_each_part() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let outside = t.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    for sub in ["results", "program"] {
+        let want = cache(&p, ID).join(sub).join("kaaaaaaaa");
+        assert_eq!(admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"), Ok(want.clone())); // nothing there yet: made
+        for at in [cache(&p, ID), cache(&p, ID).join(sub), want.clone()] {
+            let _ = fs::remove_dir_all(cache(&p, ID));
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&outside, &at).unwrap();
+            assert_eq!(
+                admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"),
+                Err(format!("{} is a link; it is not followed", at.display())),
+                "{sub}: {}",
+                at.display()
+            );
+            fs::remove_file(&at).unwrap();
+        }
+        fs::create_dir_all(&want).unwrap();
+        assert_eq!(admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"), Ok(want)); // an existing folder is used
+        fs::remove_dir_all(cache(&p, ID)).unwrap();
+    }
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0); // nothing made through a link
 }
 
 #[test] // Round 2 item 5: with no tmux, `forget` still runs the AU62 check of the socket

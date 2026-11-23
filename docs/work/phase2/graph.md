@@ -56,8 +56,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| M1 | CLI verbs, /zygo:down detached, doctor tmux line, results sweep AU69 (a) | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | DONE | judgment | 09ed93b; acceptance workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172 (merged tree) |
-| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13, M4 | IN-PROGRESS | judgment | .worktrees/phase2/M2 |
+| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13, M4 | DONE | judgment | 5673089; acceptance stub-agent build ok, workspace_run 52, workspace --no-run ok; workspace 2700 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1, FIX-16 | DONE | judgment | f9f3328; acceptance compact_cmd 23, session_verbs 28, slash_parity 8, lib cmd:: 174 + 2 ignored, plugins snapshot 31, cli_surface 23, hooks workspace 23 + 1 ignored, lib prompt 16, state 34 (merged tree) |
 | M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | TODO | implementation | — |
@@ -250,3 +249,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | M2 planned (39 steps) after two plan reviews; consumes Store::update_existing from M4; L1 and L2 Produces corrected to the live contracts (4-parameter callback, LaunchOutcome fields, AgentSession; member_dropped removed). |
 | 2026-11-23 | M4 merged after 3 review rounds; findings F1-F5 and the two set_session overrides reads fixed; base §17.1 note rewritten (author's call); for E2: AU105 cites compact.rs:13-109, but run is :60-111. |
 | 2026-11-23 | M2 started in .worktrees/phase2/M2 on branch worktree-zygo-phase-2--M2. |
+| 2026-11-23 | M2 DONE, merged. Also fixed in M2 (5673089): the M4 fixture hold race; a child spawned by a parallel test kept the flock until its exec, so hold now retries WouldBlock every 1 ms for at most 2 s. session_verbs 10 of 10 runs, 28 each. |

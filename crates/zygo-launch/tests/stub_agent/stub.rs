@@ -254,7 +254,19 @@ fn control(ctl: &Path, out: &Path, settings: &Value, argv: &[String]) -> ! {
     }
 }
 
+/// `ZYGO_TEST_SIGDUMP=<path>` (M2, D13): the `SigIgn:` line of `/proc/self/status`, written to `<path>` before anything
+/// else, so a test reads the signal handling this process got at `exec` with no shell in between (bash ignores
+/// SIGQUIT by itself: bash manual, SIGNALS). Without `/proc` nothing is written.
+fn sigdump() {
+    let Some(path) = std::env::var_os("ZYGO_TEST_SIGDUMP") else { return };
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else { return };
+    if let Some(line) = status.lines().find(|l| l.starts_with("SigIgn:")) {
+        std::fs::write(path, format!("{line}\n")).unwrap();
+    }
+}
+
 fn main() {
+    sigdump();
     let argv: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
     if argv == ["--version"] {
         println!("{}", var("ZYGO_STUB_VERSION").unwrap_or_default());

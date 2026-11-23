@@ -93,14 +93,21 @@ pub mod testing {
         /// Makes the folder and the wrapper; starts no server (the first call that needs one starts it through the
         /// wrapper). Panics when [`require_tmux`] gives none: a test calls it first.
         pub fn start() -> PrivateServer {
+            let Some(program) = require_tmux() else {
+                panic!("PrivateServer::start: no tmux 3.2 or later on PATH; call require_tmux first");
+            };
+            PrivateServer::start_with(&program)
+        }
+
+        /// [`PrivateServer::start`] with the tmux `program` given, not the one on `PATH`. The caller checks it first
+        /// (`require_tmux_at`).
+        pub fn start_with(program: &Path) -> PrivateServer {
             use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
             use std::sync::atomic::{AtomicU64, Ordering};
             use std::time::{Duration, Instant};
             static NEXT: AtomicU64 = AtomicU64::new(0);
 
-            let Some(program) = require_tmux() else {
-                panic!("PrivateServer::start: no tmux 3.2 or later on PATH; call require_tmux first");
-            };
+            let program = program.to_path_buf();
             assert!(
                 !program.as_os_str().as_encoded_bytes().contains(&b'\''),
                 "PrivateServer::start: the tmux path {} holds a quote",
