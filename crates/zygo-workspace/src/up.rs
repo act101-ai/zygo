@@ -115,8 +115,11 @@ pub mod testing {
     /// Sets (`Some`) or clears (`None`) the hook of `point` for the state folder `dir`. Points: `before_op_lock`,
     /// `before_plan_write` (before the step 8 write), `after_new_session`, `split` (before each `split_window`),
     /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`; the admin
-    /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (after the results cache is removed),
-    /// `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`, `forget_pane_before_cache`.
+    /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (under both locks, before anything is
+    /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
+    /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
+    /// `forget_pane_before_cache`, `forget_pane_remove_results` and `forget_pane_remove_program` (right before the
+    /// removal of that cache; an error there is that cache's error).
     /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
     /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {

@@ -673,8 +673,11 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
     }
 }
 
-/// D16 and Round 2 R2: `lock` is taken (with `op.lock` held) before anything is deleted; then, under both locks, the
-/// results cache, then the state directory, renamed out of the workspace list, then removed.
+/// D16, Round 2 R2 and M2 review round 3 finding 4: `lock` is taken (with `op.lock` held) before anything is deleted;
+/// then, under both locks, the state directory is renamed out of the workspace list first, then the workspace cache is
+/// removed, then the renamed folder. A writer of the cache (`ws run`) that reads the state after it made a folder
+/// finds the state gone whenever the cache removal could have run before its folder, so it removes that folder
+/// itself (W§12). A cache that cannot be removed is reported after the rest; the next `forget` sweeps it (D26).
 fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Result<String, String> {
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget {label}: {e}");
     let lock = match lock_file(&store.dir().join("lock"), snapshot::OP_WAIT) {
@@ -682,16 +685,22 @@ fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Re
         Ok(None) => return Err(format!("zygo: workspace {label} is busy; try again")),
         Err(e) => return Err(cannot(&e)),
     };
-    let cache = paths.workspace_cache_dir().join(id);
-    remove_tree(&cache).map_err(|e| cannot(&format!("{}: {e}", cache.display())))?;
     fire(store.dir(), "forget_before_state").map_err(|e| cannot(&e))?;
     let tomb = tombstone(paths, id);
     fs::rename(store.dir(), &tomb).map_err(|e| cannot(&e))?;
+    let cache = paths.workspace_cache_dir().join(id);
+    let cache_left = fire(store.dir(), "forget_before_cache")
+        .map_err(|e| e.to_string())
+        .and_then(|()| remove_tree(&cache).map_err(|e| e.to_string()))
+        .err();
     drop(lock);
     drop(op);
     let gone = |e: &dyn fmt::Display| format!("zygo: {label} forgotten, but {} was not removed: {e}", tomb.display());
     fire(store.dir(), "forget_before_tombstone_remove").map_err(|e| gone(&e))?;
     remove_tree(&tomb).map_err(|e| gone(&e))?;
+    if let Some(e) = cache_left {
+        return Err(format!("zygo: {label} forgotten, but {} was not removed: {e}", cache.display()));
+    }
     Ok(format!("zygo: forgot {label}"))
 }
 
@@ -768,7 +777,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     // Round 2 R4: a link in the middle of a cache path refuses before anything is written. The pane caches are
     // `results/<key>` (AU16) and `program/<key>` (AU61).
     let mut has_cache = false;
-    for sub in PANE_CACHES {
+    for (sub, _) in PANE_CACHES {
         has_cache |= pane_cache(paths, &id, sub, key).map_err(|r| cannot(&r))?.is_some();
     }
     if cur.members.contains_key(key) {
@@ -807,16 +816,27 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         return Err(format!("zygo: {label} has no member record for pane {key}"));
     }
     fire(store.dir(), "forget_pane_before_cache").map_err(|e| cannot(&e))?;
-    for sub in PANE_CACHES {
-        if let Some(entry) = pane_cache(paths, &id, sub, key).map_err(|r| cannot(&r))? {
-            remove_tree(&entry).map_err(|e| cannot(&format!("{}: {e}", entry.display())))?;
+    // M2 review round 3 finding 9: every cache is tried, also after an error; the first error is reported (exit 1),
+    // and a second run removes what is left (the record is gone, so only the caches remain).
+    let mut first = None;
+    for (sub, point) in PANE_CACHES {
+        let removed = fire(store.dir(), point).map_err(|e| e.to_string()).and_then(|()| match pane_cache(paths, &id, sub, key)? {
+            Some(entry) => remove_tree(&entry).map_err(|e| format!("{}: {e}", entry.display())),
+            None => Ok(()),
+        });
+        if let Err(e) = removed {
+            first.get_or_insert(cannot(&e));
         }
     }
-    Ok(format!("zygo: forgot pane {key} of {label}"))
+    match first {
+        Some(e) => Err(e),
+        None => Ok(format!("zygo: forgot pane {key} of {label}")),
+    }
 }
 
-/// The pane caches under `<workspace_cache_dir>/<id>/`: `results/<key>` (AU16) and `program/<key>` (AU61).
-const PANE_CACHES: [&str; 2] = ["results", "program"];
+/// The pane caches under `<workspace_cache_dir>/<id>/`, `results/<key>` (AU16) and `program/<key>` (AU61), each with
+/// the test hook point that runs right before its removal.
+const PANE_CACHES: [(&str, &str); 2] = [("results", "forget_pane_remove_results"), ("program", "forget_pane_remove_program")];
 
 /// Round 2 R4: the pane cache `<workspace_cache_dir>/<id>/<sub>/<key>` of one pane, `sub` = `results` (AU16) or
 /// `program` (AU61), each part below `workspace_cache_dir()` checked with `symlink_metadata`. `Ok(Some(path))` when
@@ -842,13 +862,61 @@ pub fn pane_cache(paths: &Paths, id: &str, sub: &str, key: &str) -> Result<Optio
     }
 }
 
-/// The check of [`pane_cache`] before the member wrapper makes `<workspace_cache_dir>/<id>/<sub>/<key>` (M2 review
-/// round 2 finding 3): the same refusals, and a link at `<key>` is refused too, because a writer would follow it.
-/// `Ok(path)` is the folder to make or use; nothing is made or deleted here.
+/// Makes or opens `<workspace_cache_dir>/<id>/<sub>/<key>` for the member wrapper (M2 review rounds 2 and 3, findings 3
+/// and 10): first the check of [`pane_cache`]; then, from an fd of `workspace_cache_dir()` (made when missing), each
+/// part is made with mode 0700 when missing (`mkdirat`), opened with `O_NOFOLLOW | O_DIRECTORY` relative to the fd of
+/// its parent, and set to mode 0700 through its own fd (`fchmod`), so a part that already exists with another mode
+/// gets 0700 too and no link is followed at any part. A link at `<id>`, `<sub>` or `<key>` refuses with
+/// `<path> is a link; it is not followed`. `Ok(path)` is the folder; nothing is deleted.
+#[cfg(unix)]
 pub fn pane_cache_create(paths: &Paths, id: &str, sub: &str, key: &str) -> Result<PathBuf, String> {
-    let entry = paths.workspace_cache_dir().join(id).join(sub).join(key);
-    if pane_cache(paths, id, sub, key)?.is_some() && fs::symlink_metadata(&entry).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(format!("{} is a link; it is not followed", entry.display()));
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::DirBuilderExt;
+    pane_cache(paths, id, sub, key)?;
+    let base = paths.workspace_cache_dir();
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+    let name = |s: &OsStr, at: &Path| CString::new(s.as_bytes()).map_err(|e| format!("{}: {e}", at.display()));
+    let last = |at: &Path| {
+        let e = std::io::Error::last_os_error();
+        if fs::symlink_metadata(at).is_ok_and(|m| m.file_type().is_symlink()) {
+            format!("{} is a link; it is not followed", at.display())
+        } else {
+            format!("{}: {e}", at.display())
+        }
+    };
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
+    let c = name(base.as_os_str(), &base)?;
+    // SAFETY: `c` is a NUL-terminated path; the new descriptor is owned by `dir` at once.
+    let fd = unsafe { libc::open(c.as_ptr(), flags) };
+    if fd < 0 {
+        return Err(last(&base));
     }
-    Ok(entry)
+    // SAFETY: `fd` is a new descriptor that nothing else owns.
+    let mut dir = unsafe { OwnedFd::from_raw_fd(fd) };
+    let mut at = base;
+    for part in [id, sub, key] {
+        at = at.join(part);
+        let c = name(OsStr::new(part), &at)?;
+        // SAFETY: `dir` is an open folder descriptor and `c` a NUL-terminated name in it.
+        if unsafe { libc::mkdirat(dir.as_raw_fd(), c.as_ptr(), 0o700) } != 0
+            && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST)
+        {
+            return Err(last(&at));
+        }
+        // SAFETY: as above; `O_NOFOLLOW` refuses a link at `part`.
+        let fd = unsafe { libc::openat(dir.as_raw_fd(), c.as_ptr(), flags | libc::O_NOFOLLOW) };
+        if fd < 0 {
+            return Err(last(&at));
+        }
+        // SAFETY: `fd` is a new descriptor that nothing else owns.
+        let next = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: `next` is an open descriptor of the folder `at`.
+        if unsafe { libc::fchmod(next.as_raw_fd(), 0o700) } != 0 {
+            return Err(format!("{}: {}", at.display(), std::io::Error::last_os_error()));
+        }
+        dir = next;
+    }
+    Ok(at)
 }
