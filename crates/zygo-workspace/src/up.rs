@@ -120,7 +120,9 @@ pub mod testing {
     /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`, `release`
     /// (before each window of `Builder::release`; an error there is that window's error, FIX-29), `dead_lines` (before
     /// the pane read of `Builder::dead_lines`; an error there is that read's error), `dead_pane` (before the read of
-    /// each pane of `Builder::dead_lines`; an error there is that pane's error; FIX-29 round 2); the admin
+    /// each pane of `Builder::dead_lines`; an error there is that pane's error; FIX-29 round 2), `add_window` (after
+    /// the `new-window` of `Builder::add_window`, before the key; an error there is that window's error; FIX-29 round
+    /// 3); the admin
     /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (under both locks, before anything is
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
     /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
@@ -596,6 +598,7 @@ impl Builder<'_> {
         let spec =
             NewWindow { session: self.session, name: w.name.as_deref(), start_dir: self.main_root, argv: &argv, hold: self.hold };
         let index = self.mux.new_window(&spec)?;
+        fire(self.dir, "add_window")?;
         let id = self.key_first(index, &first.key)?;
         self.window_setup(index)?;
         Ok((index, id))

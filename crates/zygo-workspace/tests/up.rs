@@ -2439,6 +2439,55 @@ fn a_failed_read_of_one_pane_is_one_line_and_up_goes_on() {
     assert_eq!(ws.phase, Phase::Up);
 }
 
+#[test] // FIX-29 diff review round 3, finding 1, AU67: a repair whose split fails ends the hold of every window
+fn a_repair_that_stops_in_the_middle_releases_every_window() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let ids = stopped_repair("split");
+    assert_eq!(ids, [("kaaaaaaaa".to_string(), 0), ("kbbbbbbbb".to_string(), 1)]);
+}
+
+#[test] // FIX-29 diff review round 3, finding 1, AU67: a window that a failed `add_window` made is released too
+fn a_repair_whose_new_window_fails_releases_that_window() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    // The window was made (held) but got no key before the error.
+    let ids = stopped_repair("add_window");
+    assert_eq!(ids, [("kaaaaaaaa".to_string(), 0)]);
+}
+
+/// FIX-29 round 3, finding 1: an `up` stops after `new-session` (window 0, `kaaaaaaaa`); the repair of the next `up`
+/// sets the hold on window 0, makes window 1 (`kbbbbbbbb`, `kcccccccc`) with the hold, and fails at the test point
+/// `point`. Asserts the one error line, `phase = building`, and windows 0 and 1 `off`; returns key → window.
+fn stopped_repair(point: &'static str) -> Vec<(String, u32)> {
+    let l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo.clone(),
+        vec![win(0, Some("one"), "tiled", 120, 40), win(1, Some("two"), "tiled", 120, 40)],
+        vec![
+            pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo),
+            pane("kbbbbbbbb", 1, 0, PaneKind::Shell, &l.wt),
+            pane("kcccccccc", 1, 1, PaneKind::Shell, &l.wt),
+        ],
+        vec![],
+    );
+    up::testing::hook(store.dir(), "after_new_session", Some(Box::new(|| Err("injected".into()))));
+    let r1 = run(&l.o);
+    up::testing::hook(store.dir(), "after_new_session", None);
+    assert_eq!((r1.0, r1.2.as_str()), (1, "zygo: tmux: injected\n"));
+    up::testing::hook(store.dir(), point, Some(Box::new(|| Err("injected".into()))));
+    let r2 = run(&l.o);
+    up::testing::hook(store.dir(), point, None);
+    assert_eq!(r2, (1, String::new(), "zygo: tmux: injected\n".to_string()), "{point}");
+    let windows = l.srv.run(&["list-windows", "-t", "=zygo-app:", "-F", "#{window_index}"]).unwrap();
+    assert_eq!(windows, "0\n1", "{point}");
+    assert_eq!((remain(&l, 0), remain(&l, 1)), ("off".to_string(), "off".to_string()), "{point}");
+    assert_eq!(read(&store).phase, Phase::Building, "{point}");
+    by_key(&l.srv).into_iter().map(|(k, (w, _))| (k, w)).collect()
+}
+
 /// FIX-29 round 2, finding 2: a state in phase `building` whose saved `tmux_socket` holds `'`.
 fn quoted_socket_state(t: &Path) -> (UpOpts, Store, PathBuf) {
     let r = repo(t, "app");

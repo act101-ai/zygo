@@ -153,7 +153,31 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
             present.insert(p.key, w.index);
         }
     }
+    // FIX-29 round 3: from the first `window_setup` on, every exit path ends the hold. On an error, release (best
+    // effort) each window that the hold may cover: the windows set so far, and each window of the session that was
+    // not there before the repair (a window that `add_window` made before it failed); then return the error.
+    let before = windows.clone();
+    let mut held: BTreeSet<u32> = BTreeSet::new();
+    match held_build(&b, store, mux, ws, &present, windows, &mut held, err) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if let Ok(lines) = mux.list_panes(&ws.tmux_session) {
+                held.extend(lines.iter().filter_map(|l| parse_pane_line(l).ok()).map(|(w, _)| w.index).filter(|w| !before.contains(w)));
+            }
+            b.release(&held.into_iter().collect::<Vec<_>>(), &ws.name, err);
+            Err(e)
+        }
+    }
+}
+
+/// The part of [`building`] under the build hold. `held` gets each window before its hold is set.
+#[allow(clippy::too_many_arguments)]
+fn held_build(
+    b: &Builder<'_>, store: &Store, mux: &dyn Multiplexer, ws: &Workspace, present: &BTreeMap<String, u32>,
+    mut windows: BTreeSet<u32>, held: &mut BTreeSet<u32>, err: &mut dyn Write,
+) -> anyhow::Result<()> {
     for w in &windows {
+        held.insert(*w);
         b.window_setup(*w).map_err(tmux)?;
     }
     let mut groups: BTreeMap<u32, Vec<&Pane>> = BTreeMap::new();
@@ -178,6 +202,7 @@ fn building(store: &Store, mux: &dyn Multiplexer, zygo: &Path, ws: &Workspace, e
                     panes: vec![bp(group[0])],
                 };
                 let (index, _) = b.add_window(&w).map_err(tmux)?;
+                held.insert(index);
                 windows.insert(index);
                 (index, &group[1..])
             }
