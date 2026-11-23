@@ -66,9 +66,17 @@ export const ZygoPlugin = async ({ directory }) => {
   let sent = null;
   const deleted = new Set();
   const inTurn = new Set();
+  // AU27 tool count: the counted tool calls, each one `+1` in zygo's count, keyed by session id and `callID`
+  // together. A call leaves at its `tool.execute.after`, or when the plugin sends `prompt` or `stop`, since zygo
+  // then sets the one member count to 0.
+  const counted = new Set();
+  const callKey = (sessionID, callID) => `${sessionID}\u0000${callID}`;
   const isId = (s) => typeof s === "string" && s !== "";
   const leave = (id) => {
-    if (inTurn.delete(id) && inTurn.size === 0) ws("stop", { sessionID: id });
+    if (inTurn.delete(id) && inTurn.size === 0) {
+      ws("stop", { sessionID: id });
+      counted.clear();
+    }
   };
   const take = (id, a) => {
     main = id;
@@ -127,7 +135,10 @@ export const ZygoPlugin = async ({ directory }) => {
     if (busy && isId(id)) act.set(id, ++n);
     if (busy && isId(id) && kind.get(id) !== "child" && !inTurn.has(id)) {
       inTurn.add(id);
-      if (inTurn.size === 1) ws("prompt", { sessionID: id });
+      if (inTurn.size === 1) {
+        ws("prompt", { sessionID: id });
+        counted.clear();
+      }
     } else if (idle && isId(id)) {
       leave(id);
     }
@@ -138,15 +149,27 @@ export const ZygoPlugin = async ({ directory }) => {
     event: async ({ event }) => {
       if (member && event) step(event);
     },
+    // AU27 tool count: `task` waits for its `Agent` call in every session (a deny throws); every other tool of a
+    // session that is not a known child queues its `pre-tool` and does not wait. A call is counted by session id
+    // and `callID` when both are non-empty strings.
     "tool.execute.before": async (input, output) => {
       if (member && input && input.tool === "task") {
         const w = hookOutput(await ws("pre-tool", { sessionID: input.sessionID, tool_name: "Agent" }));
         if (w && w.permissionDecision === "deny") throw new Error(w.permissionDecisionReason);
+        if (isId(input.sessionID) && isId(input.callID)) counted.add(callKey(input.sessionID, input.callID));
+      } else if (member && input && isId(input.sessionID) && kind.get(input.sessionID) !== "child") {
+        ws("pre-tool", { sessionID: input.sessionID, tool_name: input.tool });
+        if (isId(input.callID)) counted.add(callKey(input.sessionID, input.callID));
       }
       const h = hookOutput(await run("guard", { input, output }));
       if (h && h.permissionDecision === "deny") throw new Error(h.permissionDecisionReason);
     },
+    // A counted call queues its one `tool-end` first, before any wait; no kind check here (AU27 tool count).
     "tool.execute.after": async (input, output) => {
+      if (member && input && isId(input.sessionID) && isId(input.callID)) {
+        const key = callKey(input.sessionID, input.callID);
+        if (counted.delete(key)) ws("tool-end", { sessionID: input.sessionID });
+      }
       const h = hookOutput(await run("trim", { input, output }));
       if (h && h.updatedToolOutput && typeof h.updatedToolOutput.stdout === "string") {
         output.output = h.updatedToolOutput.stdout;
