@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, removable, session_flags, Filtered};
+use zygo_workspace::args::{bypass_flags, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, removable, removed_labels, session_flags, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -412,4 +412,110 @@ fn occurrences_give_flag_values_before_double_dash() {
     assert_eq!(cc(&["--bare", "--bare=x", "--model", "m"]).kept, s(&["--bare", "--bare=x", "--model", "m"]));
     let got: Vec<(&str, Vec<String>)> = occurrences(Agent::OpenCode, &s(&["-m", "zygo/lead", "-sses_1", "--", "-s"])).into_iter().map(|o| (o.name, o.values)).collect();
     assert_eq!(got, vec![("--model", s(&["zygo/lead"])), ("--session", s(&["ses_1"]))]);
+}
+
+// ---- removed_labels (FIX-27 D8) ----
+
+fn l(agent: Agent, a: &[&str]) -> Vec<String> {
+    removed_labels(agent, &s(a), Path::new(""))
+}
+
+/// Every `(agent, args)` of the `l(..)` calls of the tests below.
+const LABEL_CASES: &[(Agent, &[&str])] = &[
+    (Agent::ClaudeCode, &["--system-prompt", "S1", "--append-system-prompt=S2", "-p", "S3", "pos", "--", "S4"]),
+    (Agent::ClaudeCode, &["-pX", "-p", "-pX"]),
+    (Agent::ClaudeCode, &["--system-prompt", "--api-token-is-SECRETVALUE=x", "--append-system-prompt", "-SECRET2", "-p", "pos"]),
+    (Agent::OpenCode, &["--prompt", "--SECRET3=y", "-s", "-SECRET4", "--prompt", "-"]),
+    (Agent::ClaudeCode, &["--model", "-p", "-p"]),
+    (Agent::ClaudeCode, &["--system-prompt", "--", "-p", "SECRET"]),
+    (Agent::ClaudeCode, &["--model", "--", "pos"]),
+    (Agent::ClaudeCode, &["--model", "-p", "--", "x"]),
+    (Agent::OpenCode, &["-m", "--prompt", "--prompt", "-m"]),
+    (Agent::ClaudeCode, &["-cr"]),
+    (Agent::ClaudeCode, &["-cr", "abc"]),
+    (Agent::ClaudeCode, &["-p", "hi"]),
+];
+
+#[test] // attempt 1 round 1; F17: every positional is labelled
+fn removed_labels_name_flags_never_values() {
+    assert_eq!(l(Agent::ClaudeCode, &["--system-prompt", "S1", "--append-system-prompt=S2", "-p", "S3", "pos", "--", "S4"]),
+        s(&["--system-prompt", "--append-system-prompt", "-p", "<positional>", "<positional>", "--", "<after -->"]));
+    assert_eq!(l(Agent::ClaudeCode, &["-pX", "-p", "-pX"]), s(&["-p", "-p", "-p"]));
+}
+
+#[test] // round 1 B1; kills: labelling by token text
+fn removed_labels_never_label_a_value_that_starts_with_a_dash() {
+    assert_eq!(l(Agent::ClaudeCode, &["--system-prompt", "--api-token-is-SECRETVALUE=x", "--append-system-prompt", "-SECRET2", "-p", "pos"]),
+        s(&["--system-prompt", "--append-system-prompt", "-p", "<positional>"]));
+    assert_eq!(l(Agent::OpenCode, &["--prompt", "--SECRET3=y", "-s", "-SECRET4", "--prompt", "-"]), s(&["--prompt", "-s", "--prompt"]));
+}
+
+#[test] // round 3 F5; kills: finding a removed token by its text; `--` as a value
+fn removed_labels_go_by_index_never_by_text() {
+    assert_eq!(l(Agent::ClaudeCode, &["--model", "-p", "-p"]), s(&["-p"]));
+    assert_eq!(l(Agent::ClaudeCode, &["--system-prompt", "--", "-p", "SECRET"]), s(&["--system-prompt", "-p", "<positional>"]));
+    assert_eq!(l(Agent::ClaudeCode, &["--model", "--", "pos"]), s(&["<positional>"]));
+    assert_eq!(l(Agent::ClaudeCode, &["--model", "-p", "--", "x"]), s(&["--", "<after -->"]));
+    assert_eq!(l(Agent::OpenCode, &["-m", "--prompt", "--prompt", "-m"]), s(&["--prompt"]));
+}
+
+#[test] // kills: one label per token
+fn removed_labels_name_each_flag_of_a_short_group() {
+    assert_eq!(l(Agent::ClaudeCode, &["-cr"]), s(&["-c", "-r"]));
+    assert_eq!(l(Agent::ClaudeCode, &["-cr", "abc"]), s(&["-c", "-r"]));
+}
+
+#[test] // F17; kills: the old "no label right after a labelled flag" exception
+fn removed_labels_label_every_positional() {
+    assert_eq!(l(Agent::ClaudeCode, &["-p", "hi"]), s(&["-p", "<positional>"]));
+}
+
+#[test] // kills: labelling only removed flag tokens, which gives an empty line
+fn removed_labels_name_a_flag_that_loses_only_a_value() {
+    let t = tempfile::TempDir::new().unwrap();
+    std::fs::write(t.path().join("a.json"), "{}").unwrap();
+    assert_eq!(removed_labels(Agent::ClaudeCode, &s(&["--mcp-config", "a.json", "{\"k\":\"SECRET\"}"]), t.path()), s(&["--mcp-config"]));
+}
+
+#[test] // kills: the process folder in place of `base`
+fn removed_labels_take_content_files_from_the_base() {
+    let t = tempfile::TempDir::new().unwrap();
+    std::fs::write(t.path().join("m.json"), "{}").unwrap();
+    assert_eq!(removed_labels(Agent::ClaudeCode, &s(&["--mcp-config", "m.json"]), t.path()), Vec::<String>::new());
+    let empty = tempfile::TempDir::new().unwrap();
+    assert_eq!(removed_labels(Agent::ClaudeCode, &s(&["--mcp-config", "m.json"]), empty.path()), s(&["--mcp-config"]));
+}
+
+/// True when `label` is the name before `=` of a long-flag token of `args`, `-<letter>` of a short-flag token of
+/// `args`, or one of the three fixed texts (D8: a table name or a fixed text, never a value).
+fn label_shape(label: &str, args: &[&str]) -> bool {
+    if matches!(label, "--" | "<positional>" | "<after -->") {
+        return true;
+    }
+    args.iter().any(|t| {
+        if t.starts_with("--") {
+            t.split('=').next() == Some(label)
+        } else if let Some(body) = t.strip_prefix('-') {
+            let mut c = label.chars();
+            c.next() == Some('-') && c.clone().count() == 1 && c.next().is_some_and(|x| body.contains(x))
+        } else {
+            false
+        }
+    })
+}
+
+#[test] // kills: a removal with no label
+fn removed_labels_are_empty_only_when_nothing_is_removed() {
+    let extra: &[(Agent, &[&str])] = &[
+        (Agent::ClaudeCode, &["--model", "m"]),
+        (Agent::ClaudeCode, &["--settings", "x"]),
+        (Agent::ClaudeCode, &["--add-dir", "a", "b"]),
+    ];
+    for &(agent, a) in LABEL_CASES.iter().chain(extra) {
+        let labels = l(agent, a);
+        assert_eq!(labels.is_empty(), removable(agent, &s(a)).is_empty(), "{a:?}");
+        for label in &labels {
+            assert!(label_shape(label, a), "{label} for {a:?}");
+        }
+    }
 }

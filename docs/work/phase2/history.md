@@ -46,6 +46,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | H3 | OpenCode plugin: session classification, main session and turn set | H1 | DONE | judgment | dd25ae1; acceptance opencode 77 + 1 ignored, zygo-launch all pass, zygo-hooks workspace 22 + 1 ignored, clippy -D warnings clean, check --workspace --tests clean (merged tree) |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
 | M1 | CLI verbs, /zygo:down detached, doctor tmux line, results sweep AU69 (a) | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | DONE | judgment | 09ed93b; acceptance workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172 (merged tree) |
+| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13, M4 | DONE | judgment | 5673089; acceptance stub-agent build ok, workspace_run 52, workspace --no-run ok; workspace 2700 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 
 ## Log
 

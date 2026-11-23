@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13, M4 | DONE | judgment | 5673089; acceptance stub-agent build ok, workspace_run 52, workspace --no-run ok; workspace 2700 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6, FIX-27, M5 | PLANNED | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1, FIX-16 | DONE | judgment | f9f3328; acceptance compact_cmd 23, session_verbs 28, slash_parity 8, lib cmd:: 174 + 2 ignored, plugins snapshot 31, cli_surface 23, hooks workspace 23 + 1 ignored, lib prompt 16, state 34 (merged tree) |
 | M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | IN-PROGRESS | implementation | `.worktrees/phase2/M5` |
@@ -87,7 +86,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27, FIX-28 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
 | FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
-| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | IN-PROGRESS | judgment | `.worktrees/phase2/FIX-27` |
+| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | DONE | judgment | bd55c63; acceptance args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26, workspace --no-run ok; workspace 2757 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | TODO | implementation | — |
 
 ## Log
@@ -252,3 +251,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | M2 started in .worktrees/phase2/M2 on branch worktree-zygo-phase-2--M2. |
 | 2026-11-23 | M2 DONE, merged. Also fixed in M2 (5673089): the M4 fixture hold race; a child spawned by a parallel test kept the flock until its exec, so hold now retries WouldBlock every 1 ms for at most 2 s. session_verbs 10 of 10 runs, 28 each. |
 | 2026-11-23 | M3 and M5 planned and reviewed. FIX-28 added from M5 premise P2: up starts the first pane of a new session without ZYGO_WORKSPACE, so its ws run does not skip the update check. Edges FIX-27, M5 → M3 → FIX-28 → FIX-24 (shared ws.rs, up.rs, specs). |
+| 2026-11-23 | FIX-27 DONE (bd55c63): merged after 3 review rounds. Known limit accepted (W§12): `--secret --x S` hides `--x` as the value and shows S. Merged tree: args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26; workspace 2757 + 14 ignored; test-install ok; clippy clean. |

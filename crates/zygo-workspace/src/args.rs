@@ -1,5 +1,6 @@
 //! Argument filter, bypass detection and user-info check. Owner: node W4 (AU30, AU70, AU98).
-//! A relative path is resolved against the current directory of the process, or against the base of `filter_from`.
+//! A relative path is resolved against the current directory of the process, or against the base of `filter_from` and
+//! `removed_labels`.
 //! The functions write no log and no output (W-C7).
 use std::path::{Path, PathBuf};
 
@@ -142,6 +143,8 @@ struct Walk {
     session: bool,
     /// Each table flag met before `--`, in order.
     occurrences: Vec<Occurrence>,
+    /// One label per removal, in token order (FIX-27 D8): a table flag name, `<positional>`, `--` or `<after -->`.
+    labels: Vec<String>,
 }
 
 /// One table flag that the walk met before `--`. No `Debug`: `values` can hold prompt text.
@@ -260,10 +263,13 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
         if token == "--" {
             // `--` ends the flags: it and every later token are positionals
             out.removed.extend(args[next - 1..].iter().cloned());
+            out.labels.push("--".to_string());
+            out.labels.extend(args[next..].iter().map(|_| "<after -->".to_string()));
             break;
         }
         if token == "-" || !token.starts_with('-') {
             out.removed.push(token.clone());
+            out.labels.push("<positional>".to_string());
             continue;
         }
         let token_at = next - 1;
@@ -284,6 +290,9 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
                 (true, Some(value)) => out.kept.push(format!("{name}={value}")),
                 (true, None) => out.kept.push(token.clone()),
                 (false, _) => out.removed.push(token.clone()),
+            }
+            if !outcome.flag_kept || !outcome.removed.is_empty() {
+                out.labels.push(name.to_string());
             }
             outcomes.push((flag, outcome));
         } else {
@@ -306,6 +315,9 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
                     kept_letters.push_str(outcome.attached.as_deref().unwrap_or(""));
                 } else {
                     letter_removed = true;
+                }
+                if !outcome.flag_kept || !outcome.removed.is_empty() {
+                    out.labels.push(format!("-{letter}"));
                 }
                 outcomes.push((flag, outcome));
                 if flag.arity != Arity::None {
@@ -354,10 +366,25 @@ pub fn removable(agent: Agent, args: &[String]) -> Vec<String> {
     walk(agent, args, None).removed
 }
 
+/// One label for each removal that [`filter_from`] makes with `base`, in token order, by the same walk (FIX-27 D8): a
+/// table flag whose token or any value is removed gives its typed name (before `=`; `-<letter>` for each letter of a
+/// short-flag token); a removed positional (also `-`) gives `<positional>`; the `--` that ends the flags gives `--`,
+/// then `<after -->` for each later token. A flag value is never labelled, so no label holds a value. The list is
+/// empty only when the walk removes nothing.
+pub fn removed_labels(agent: Agent, args: &[String], base: &Path) -> Vec<String> {
+    walk(agent, args, Some(base)).labels
+}
+
 /// Whether `args` hold a session argument of `agent` (W§8.3, AU30), by the same walk as [`filter`]: short clusters,
 /// flag values and `--` count as they do there.
 pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
     walk(agent, args, None).session
+}
+
+/// Whether `token` (its text before any `=`) is a flag of the table of `agent` (FIX-27 review round 3: the flag after a
+/// secret-named flag is shown as a flag when it is a known one).
+pub fn is_flag(agent: Agent, token: &str) -> bool {
+    lookup(table(agent), token.split('=').next().unwrap_or(token)).is_some()
 }
 
 /// Every name of the session flags of `agent`, in table order.

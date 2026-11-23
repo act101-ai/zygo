@@ -116,3 +116,16 @@ fn list_gives_each_name_with_its_source_in_name_order() {
         [s("alpha", Source::User), s("pair", Source::User), s("solo", Source::Builtin), s("zed", Source::User)]);
     assert_eq!(list(&cfg("solo", vec![("solo", w())])), [s("solo", Source::User)]);
 }
+
+#[test] // FIX-27 D6; kills: a `pane_cwd` that differs from `resolve`
+fn pane_cwd_is_the_folder_rule_of_resolve() {
+    assert_eq!(pane_cwd(None, &root(), &trees()), (root(), None));
+    for t in trees() {
+        let Some(b) = t.branch.as_deref() else { continue };
+        assert_eq!(pane_cwd(Some(&format!("branch:{b}")), &root(), &trees()), (t.path.clone(), None));
+    }
+    assert_eq!(pane_cwd(Some("branch:nope"), &root(), &trees()), (root(), Some("nope".to_string())));
+    let tmp = std::env::temp_dir();
+    assert_eq!(pane_cwd(Some(tmp.to_str().unwrap()), &root(), &trees()), (tmp.clone(), None));
+    assert_eq!(pane_cwd(Some("sub/dir"), &root(), &trees()), (root().join("sub/dir"), None));
+}

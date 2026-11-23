@@ -33,7 +33,8 @@ use crate::state::{
 /// The lock wait of every write of `up` (W§7.3).
 const LOCK_WAIT: Duration = snapshot::OP_WAIT;
 /// The bound of the git calls of `preflight` (finding 9) and of `ws forget-pane` (W8 D23).
-pub(crate) const GIT_BOUND: Duration = Duration::from_secs(5);
+/// Also used by zygo config check and show, and zygo loadout show (FIX-27).
+pub const GIT_BOUND: Duration = Duration::from_secs(5);
 /// The size of a loadout window and of a window with no saved entry (D7, D15).
 pub(crate) const LOADOUT_SIZE: (u32, u32) = (200, 50);
 /// tmux's window maximum (D31).
@@ -302,7 +303,8 @@ pub(crate) fn socket_is_private(_path: &Path, _create_parent: bool) -> Result<()
 
 /// The checkout of `cwd`, the worktree list and the main worktree (AU25, AU77, D4). Every git call ends by
 /// `Instant::now() + bound` (W8 D23).
-pub(crate) fn find_checkout(cwd: &Path, bound: Duration) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
+/// Also used by zygo config check and show, and zygo loadout show (FIX-27).
+pub fn find_checkout(cwd: &Path, bound: Duration) -> Result<(Checkout, Vec<Worktree>, PathBuf), Exit> {
     let usage = |m: &str| Exit { code: 2, message: m.to_string() };
     let deadline = Instant::now() + bound;
     let co = match checkout(cwd, deadline) {

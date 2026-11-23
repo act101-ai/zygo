@@ -110,6 +110,23 @@ pub fn list(cfg: &Config) -> Vec<(String, Source)> {
     all
 }
 
+/// The folder of a pane whose `cwd` is `cwd` (W§11; FIX-27 D6): `None` gives `main_root`; `branch:<b>` gives the path of
+/// the worktree that has `<b>` checked out, else `main_root` and `Some(<b>)`; an absolute text gives itself; a relative
+/// text gives `main_root.join(text)`. `~` is not expanded and no folder is checked: the function does no I/O.
+pub fn pane_cwd(cwd: Option<&str>, main_root: &Path, worktrees: &[Worktree]) -> (PathBuf, Option<String>) {
+    match cwd {
+        None => (main_root.to_path_buf(), None),
+        Some(text) => match text.strip_prefix("branch:") {
+            Some(branch) => match worktrees.iter().find(|t| t.branch.as_deref() == Some(branch)) {
+                Some(tree) => (tree.path.clone(), None),
+                None => (main_root.to_path_buf(), Some(branch.to_string())),
+            },
+            None if Path::new(text).is_absolute() => (PathBuf::from(text), None),
+            None => (main_root.join(text), None),
+        },
+    }
+}
+
 /// The plan of loadout `name`, or of `workspace.default_loadout` when `name` is `None` (W§11, AU10).
 ///
 /// `main_root` is the main worktree; `worktrees` is the repository's worktree list, for `cwd = "branch:<name>"`. A
@@ -144,27 +161,17 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
                     Err(_) => return Err(LoadoutError::Kind { name: name.to_string(), window: wi, pane: pi }),
                 },
             };
-            let cwd = match p.cwd.as_deref() {
-                None => main_root.to_path_buf(),
-                Some(text) => match text.strip_prefix("branch:") {
-                    Some(branch) => match worktrees.iter().find(|t| t.branch.as_deref() == Some(branch)) {
-                        Some(tree) => tree.path.clone(),
-                        None => {
-                            let warning = format!(
-                                "loadout {}: no worktree has branch `{}` checked out; using the main worktree",
-                                esc(name),
-                                esc(branch)
-                            );
-                            if !warnings.contains(&warning) {
-                                warnings.push(warning);
-                            }
-                            main_root.to_path_buf()
-                        }
-                    },
-                    None if Path::new(text).is_absolute() => PathBuf::from(text),
-                    None => main_root.join(text),
-                },
-            };
+            let (cwd, missing) = pane_cwd(p.cwd.as_deref(), main_root, worktrees);
+            if let Some(branch) = missing {
+                let warning = format!(
+                    "loadout {}: no worktree has branch `{}` checked out; using the main worktree",
+                    esc(name),
+                    esc(&branch)
+                );
+                if !warnings.contains(&warning) {
+                    warnings.push(warning);
+                }
+            }
             panes.push(PlanPane {
                 kind,
                 cwd,
