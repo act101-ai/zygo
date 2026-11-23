@@ -151,15 +151,16 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
         let _ = std::env::set_current_dir(&main_root);
         let resumable = if shell { None } else { rec.as_ref().and_then(|r| r.agent_session.as_deref().map(|id| (r.launch.kind, id))) };
         match resumable {
-            // AU61: zygo does not resume the conversation in another folder. The command quotes its paths.
+            // AU61: zygo does not resume the conversation in another folder. The command names each path and the id
+            // as one shell word; the text before it escapes them (C6).
             Some((kind, id)) => {
-                let id = zygo_core::esc(id);
                 let config_dir = rec.as_ref().and_then(|r| r.config_dir.as_deref());
+                let cmd = member::resume_command(kind, id, config_dir);
                 print_err(&format!(
-                    "zygo: {} is gone; agent session {id} not resumed; to resume it: cd {} && {}\n",
+                    "zygo: {} is gone; agent session {} not resumed; to resume it: cd {} && {cmd}\n",
                     shown(&cwd),
+                    zygo_core::esc(id),
                     member::quoted(&cwd),
-                    member::resume_command(kind, &id, config_dir)
                 ));
             }
             None => print_err(&format!("zygo: {} is gone\n", shown(&cwd))),
@@ -209,8 +210,19 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
             let d = OpenCode::default();
             let saved = if resumed.is_some() { saved_program(&opts.env, d.program(), rec.program.as_deref(), cwd) } else { None };
             if let Some(saved) = saved {
+                member::gate("program");
                 match program_folder_on_path(&mut opts.env, paths, ws_id, pane, &saved) {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        // W§12 (M2 review round 3 finding 4): a `ws forget` or `ws forget-pane` that ran after the
+                        // read of step 1 may have removed the cache before the folder was made. The state is read
+                        // again; when the state or the record is gone, the folder made here goes, and `ws run` ends
+                        // as at step 1, with the shell and no launch.
+                        if let Some((line, state_gone)) = forgotten(&store, ws_id, pane) {
+                            remove_program_folder(paths, ws_id, pane, state_gone);
+                            print_err(&line);
+                            return;
+                        }
+                    }
                     Err(e) => print_err(&format!("zygo: {}\n", zygo_core::esc(&e.to_string()))),
                 }
             }
@@ -221,6 +233,36 @@ fn launch_member(paths: &Paths, store: Store, ws_id: &str, pane: &str, rec: &Mem
     opts.resume_note = resume_note(rec, resumed.as_deref());
     let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone() };
     member::run_wrapped(adapter.as_ref(), opts, &ctx);
+}
+
+/// W§12: the line of step 1 when the state of `ws_id` is gone (with `true`) or has no record for `pane`; `None` when
+/// both are there or the state cannot be read (that is no forget; the callback reports it, W§8.2 step 4).
+fn forgotten(store: &Store, ws_id: &str, pane: &str) -> Option<(String, bool)> {
+    match store.read() {
+        Ok(None) => Some((format!("zygo: no workspace with id {ws_id}\n"), true)),
+        Ok(Some(ws)) if !ws.members.contains_key(pane) => {
+            Some((format!("zygo: pane {pane} has no member record; started a shell\n"), false))
+        }
+        Ok(Some(_)) | Err(_) => None,
+    }
+}
+
+/// W§12: removes the program folder of `pane` that this `ws run` made: its link `opencode`, then the folder; when the
+/// state is gone, also `program` and `<ws_id>` when they are empty (they were made for it). A link is removed as a
+/// link and never followed; an error other than a missing entry is one line.
+fn remove_program_folder(paths: &Paths, ws_id: &str, pane: &str, state_gone: bool) {
+    let top = paths.workspace_cache_dir().join(ws_id);
+    let dir = top.join("program").join(pane);
+    let report = |p: &Path, r: std::io::Result<()>| match r {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => print_err(&format!("zygo: {}: {}\n", shown(p), zygo_core::esc(&e.to_string()))),
+        _ => {}
+    };
+    report(&dir.join("opencode"), std::fs::remove_file(dir.join("opencode")));
+    report(&dir, std::fs::remove_dir(&dir));
+    if state_gone {
+        let _ = std::fs::remove_dir(top.join("program"));
+        let _ = std::fs::remove_dir(&top);
+    }
 }
 
 /// D8 (OpenCode): the program folder of `saved` at the end of the launch `PATH`.
@@ -367,14 +409,12 @@ pub(crate) fn saved_program(env: &Env, program: &str, saved: Option<&Path>, cwd:
     saved.filter(|p| p.is_file()).map(Path::to_path_buf)
 }
 
-/// AU61 (D8, OpenCode): the folder `<workspace cache>/<ws_id>/program/<pane>` (mode 0700) that holds only the link
-/// `opencode` to `saved`; an old entry of that name is replaced. A link at `<ws_id>`, `program` or `<pane>` refuses
-/// before anything is made or deleted (`admin::pane_cache_create`, the rule of `ws forget-pane`).
+/// AU61 (D8, OpenCode): the folder `<workspace cache>/<ws_id>/program/<pane>` that holds only the link `opencode` to
+/// `saved`; an old entry of that name is replaced. `admin::pane_cache_create` makes or opens each part with mode 0700
+/// and follows no link (the rule of `ws forget-pane`); a refusal makes and deletes nothing.
 #[cfg(unix)]
 pub(crate) fn program_folder(paths: &Paths, ws_id: &str, pane: &str, saved: &Path) -> std::io::Result<PathBuf> {
-    use std::os::unix::fs::DirBuilderExt;
     let dir = admin::pane_cache_create(paths, ws_id, "program", pane).map_err(std::io::Error::other)?;
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
     let link = dir.join("opencode");
     match std::fs::remove_file(&link) {
         Ok(()) => {}

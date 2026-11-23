@@ -85,6 +85,39 @@ fn harness_new_at_starts_the_server_with_that_tmux() {
     assert_eq!(std::fs::read_link(h.bin.join("tmux")).unwrap(), rec);
 }
 
+/// Whether the process `pid` is gone within 10 s (it was killed and its new parent reaped it).
+fn gone_within(pid: libc::pid_t) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    until(Duration::from_secs(10), || unsafe { libc::kill(pid, 0) } != 0)
+}
+
+/// Round 3 finding 8: `Guarded` sends SIGKILL to the process group before it reaps the leader, on a normal exit too,
+/// so a process that the child left behind in its group is gone.
+#[test]
+fn guarded_kills_the_group_before_the_reap_on_every_path() {
+    let d = tempfile::tempdir().unwrap();
+    for wait in [true, false] {
+        let pid_file = d.path().join(format!("bg-{wait}"));
+        let script = format!("sleep 600 & echo $! > '{}'; {}", pid_file.display(), if wait { "exit 0" } else { "sleep 600" });
+        let mut c = std::process::Command::new("/bin/sh");
+        c.args(["-c", &script]).stdin(std::process::Stdio::null());
+        let mut g = Guarded::spawn(c);
+        assert!(until(Duration::from_secs(10), || std::fs::read_to_string(&pid_file).is_ok_and(|s| s.ends_with('\n'))));
+        let bg: libc::pid_t = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        if wait {
+            assert!(g.wait("sh").success()); // the normal path
+        } else {
+            drop(g); // the drop path
+        }
+        let ok = gone_within(bg);
+        if !ok {
+            // SAFETY: `bg` is the background child of this test's own shell.
+            unsafe { libc::kill(bg, libc::SIGKILL) };
+        }
+        assert!(ok, "wait {wait}: the background process {bg} outlived the guard");
+    }
+}
+
 // ---- `ws run` without the agent (W§8.2 steps 1, 8; AU15, AU46, AU48, AU61 missing cwd, AU64, AU84, AU88, AU93) ----
 
 fn fresh(kind: Agent, args: &[&str]) -> MemberRecord {
@@ -230,9 +263,14 @@ fn au88_the_shell_after_exec_has_no_ignored_signal() {
 /// `'\''`), and a Claude Code member with a saved config dir gets `CLAUDE_CONFIG_DIR=<dir>` in front.
 #[test]
 fn w18_28_a_missing_cwd_opens_a_shell_in_the_main_worktree() {
-    for (kind, id, config) in [(Agent::ClaudeCode, "abc", false), (Agent::OpenCode, "ses_1", false), (Agent::ClaudeCode, "abc", true)] {
+    for (kind, id, config, name) in [
+        (Agent::ClaudeCode, "abc", false, "it's gone"),
+        (Agent::OpenCode, "ses_1", false, "it's gone"),
+        (Agent::ClaudeCode, "abc", true, "it's gone"),
+        (Agent::OpenCode, "ses_1", false, "a\nb"), // round 3 finding 3: a control byte gives `$'…'`
+    ] {
         let h = Harness::no_tmux();
-        let gone = h.repo().join("it's gone");
+        let gone = h.repo().join(name);
         let mut m = resumable(kind, id);
         let dir = h.root().join("c c'd");
         if config {
@@ -242,12 +280,16 @@ fn w18_28_a_missing_cwd_opens_a_shell_in_the_main_worktree() {
         let (out, env) = h.stub(kind, "a");
         let o = ws_run(&h, &pairs(&env), false);
         let cmd = match (kind, config) {
-            (Agent::OpenCode, _) => "zygo opencode -- --session=ses_1".to_string(),
-            (_, false) => "zygo claude -- --resume abc".to_string(),
-            (_, true) => format!("CLAUDE_CONFIG_DIR='{}/c c'\\''d' zygo claude -- --resume abc", h.root().display()),
+            (Agent::OpenCode, _) => "zygo opencode -- --session='ses_1'".to_string(),
+            (_, false) => "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'".to_string(),
+            (_, true) => format!("CLAUDE_CONFIG_DIR='{}/c c'\\''d' zygo claude -- --resume 'abc'", h.root().display()),
         };
-        let g = gone.display();
-        let cd = format!("cd '{}/it'\\''s gone'", h.repo().display());
+        let g = zygo_core::esc(&gone.display().to_string());
+        let cd = if name == "it's gone" {
+            format!("cd '{}/it'\\''s gone'", h.repo().display())
+        } else {
+            format!("cd $'{}/a\\x0ab'", h.repo().display())
+        };
         assert!(
             text(&o.stderr).contains(&format!("zygo: {g} is gone; agent session {id} not resumed; to resume it: {cd} && {cmd}\n")),
             "{}",
@@ -550,7 +592,7 @@ fn pw16_au12_a_failed_resume_runs_once_and_stays_resumable() {
     let o = ws_run(&h, &extra, false);
     assert_eq!(std::fs::read_to_string(h.root().join("launches")).unwrap(), "none\n");
     assert!(
-        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: zygo claude -- --resume abc\n"),
+        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'\n"),
         "{}",
         text(&o.stderr)
     );
@@ -610,7 +652,7 @@ fn au73_an_ended_member_with_a_non_zero_exit_prints_the_resume_command() {
     assert_eq!(m.state, MemberState::Ended);
     assert!(
         text(&o.stderr).contains(&format!(
-            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: zygo claude -- --resume {id}\n"
+            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume '{id}'\n"
         )),
         "{}",
         text(&o.stderr)
@@ -633,7 +675,7 @@ fn au61_the_exit_line_names_the_config_dir_quoted() { // review round 2 finding 
     let q = format!("'{}/c c'\\''d'", h.root().display());
     assert!(
         text(&o.stderr).contains(&format!(
-            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: CLAUDE_CONFIG_DIR={q} zygo claude -- --resume {id}\n"
+            "zygo: claude exited 3; agent session {id} is kept by the agent; to resume it: CLAUDE_CONFIG_DIR={q} zygo claude -- --resume '{id}'\n"
         )),
         "{}",
         text(&o.stderr)
@@ -1028,64 +1070,128 @@ fn m2_a_slow_setup_then_a_fast_exit_is_still_a_failed_fast_resume() { // control
     drop(hold);
     let o = child.output("ws run");
     assert!(
-        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: zygo claude -- --resume abc\n"),
+        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'\n"),
         "{}",
         text(&o.stderr)
     );
     assert_eq!(member(&h).state, MemberState::Resumable);
 }
 
-#[test]
-fn race_ws_forget_before_the_callback_makes_nothing() { // second review finding 1
-    let h = Harness::no_tmux();
-    let (child, hold, out) = at_gate(&h, "launch");
-    let o = verb(&h, &["ws", "forget", "app"]);
-    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    drop(hold);
-    assert!(child.output("ws run").status.success());
-    assert!(out.join("argv.json").exists()); // the launch went on
-    assert!(!h.store(WS_ID).dir().exists());
-    assert!(!results_dir(&h).exists());
-    assert!(!program_dir(&h).exists());
-}
-
-#[test]
-fn race_ws_forget_pane_before_the_callback_makes_no_record_and_no_results() { // second review finding 1
-    let h = Harness::no_tmux();
-    let (child, hold, out) = at_gate(&h, "launch");
-    let o = verb(&h, &["ws", "forget-pane", KEY, "--name", "app"]);
-    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    drop(hold);
-    assert!(child.output("ws run").status.success());
-    assert!(out.join("argv.json").exists()); // the launch went on
-    assert!(!h.store(WS_ID).read().unwrap().unwrap().members.contains_key(KEY));
-    assert!(!results_dir(&h).exists());
-    assert!(!program_dir(&h).exists());
-}
-
-/// Review round 2 finding 4: the program folder is made before `Launcher::run`, because the launcher finds the
-/// program on `PATH` before the callback (`launcher.rs:274`, `:407`). A `ws forget-pane` before the callback deletes
-/// it with the record, so the launch finds no `opencode` and makes nothing.
-#[test]
-fn race_ws_forget_pane_before_the_callback_deletes_the_program_folder() {
-    let h = Harness::no_tmux();
-    let (_, empty) = opencode_saved_program(&h);
+/// Starts `ws run` with the gate held at `point`, for a fresh OpenCode member (`opencode` on `PATH`) or, with `saved`,
+/// for an OpenCode member that resumes with its saved program and no `opencode` on `PATH`, so `program/<key>` is made
+/// before the gate (round 3 finding 5). Returns after the wrapper reached the gate.
+fn race_at(h: &Harness, point: &str, saved: bool) -> (Guarded, Hold, PathBuf) {
+    if !saved {
+        return at_gate(h, point);
+    }
+    let (_, empty) = opencode_saved_program(h);
     let gate = h.root().join("gate");
-    let hold = Hold::new(&gate, "launch");
+    let hold = Hold::new(&gate, point);
     let (out, mut env) = h.stub(Agent::OpenCode, "o");
     env.extend([("ZYGO_TEST_MEMBER_GATE", gate.clone().into()), ("PATH", empty.into())]);
-    let child = spawn_ws_run(&h, &pairs(&env));
-    assert!(until(Duration::from_secs(20), || gate.join("launch").exists()));
-    assert!(program_dir(&h).join("opencode").exists());
-    let o = verb(&h, &["ws", "forget-pane", KEY, "--name", "app"]);
-    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
-    assert!(std::fs::symlink_metadata(program_dir(&h)).is_err());
+    let child = spawn_ws_run(h, &pairs(&env));
+    assert!(until(Duration::from_secs(20), || gate.join(point).exists()));
+    (child, hold, out)
+}
+
+/// The line of a failed start write (W§8.2 step 4); never printed when the state or the record is gone (round 3
+/// finding 6).
+const NOT_RECORDED: &str = "zygo: could not record the launch of pane";
+
+/// Second review finding 1; round 3 findings 5 and 6: a `ws forget` at the `launch` gate. A fresh member's launch goes
+/// on and the callback makes nothing; a resumed member's program folder was made and is gone with the cache, so the
+/// launch finds no program (exit 13).
+#[test]
+fn race_ws_forget_before_the_callback_makes_nothing() {
+    for saved in [false, true] {
+        let h = Harness::no_tmux();
+        let (child, hold, out) = race_at(&h, "launch", saved);
+        assert_eq!(program_dir(&h).join("opencode").exists(), saved);
+        let o = verb(&h, &["ws", "forget", "app"]);
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+        drop(hold);
+        let o = child.output("ws run");
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        assert!(std::fs::symlink_metadata(program_dir(&h)).is_err(), "saved {saved}");
+        assert_eq!(out.join("argv.json").exists(), !saved, "{err}"); // the launch went on, or found no program
+        if saved {
+            assert!(err.contains("zygo: the opencode launch failed before the agent started (exit 13)\n"), "{err}");
+        }
+        assert!(!err.contains(NOT_RECORDED), "{err}"); // Ok(None): no line
+        assert!(!h.store(WS_ID).dir().exists());
+        assert!(!results_dir(&h).exists());
+    }
+}
+
+/// Second review finding 1; round 2 finding 4; round 3 findings 5 and 6: a `ws forget-pane` at the `launch` gate, as
+/// above; the program folder goes with the record.
+#[test]
+fn race_ws_forget_pane_before_the_callback_makes_no_record_and_no_results() {
+    for saved in [false, true] {
+        let h = Harness::no_tmux();
+        let (child, hold, out) = race_at(&h, "launch", saved);
+        assert_eq!(program_dir(&h).join("opencode").exists(), saved);
+        let o = verb(&h, &["ws", "forget-pane", KEY, "--name", "app"]);
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+        drop(hold);
+        let o = child.output("ws run");
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        assert!(std::fs::symlink_metadata(program_dir(&h)).is_err(), "saved {saved}");
+        assert_eq!(out.join("argv.json").exists(), !saved, "{err}");
+        if saved {
+            assert!(err.contains("zygo: the opencode launch failed before the agent started (exit 13)\n"), "{err}");
+        }
+        assert!(!err.contains(NOT_RECORDED), "{err}"); // Refused (no record): no line
+        assert!(!h.store(WS_ID).read().unwrap().unwrap().members.contains_key(KEY));
+        assert!(!results_dir(&h).exists());
+    }
+}
+
+/// Round 3 finding 4: a forget between the `ws run` read and the program folder. `ws run` reads the state again after
+/// it made the folder; the state or the record is gone, so it deletes the folder it made, prints the line of that
+/// case and opens the shell, with no launch.
+#[test]
+fn race_a_forget_before_the_program_folder_leaves_no_folder() {
+    for (verb_args, line) in [
+        (&["ws", "forget-pane", KEY, "--name", "app"][..], format!("zygo: pane {KEY} has no member record; started a shell\n")),
+        (&["ws", "forget", "app"][..], format!("zygo: no workspace with id {WS_ID}\n")),
+    ] {
+        let h = Harness::no_tmux();
+        let (child, hold, out) = race_at(&h, "program", true);
+        assert!(std::fs::symlink_metadata(program_dir(&h)).is_err()); // not made yet
+        let o = verb(&h, verb_args);
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+        drop(hold);
+        let o = child.output("ws run");
+        let err = text(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        assert!(err.contains(&line), "{verb_args:?}: {err}");
+        assert!(!out.join("argv.json").exists(), "{err}");
+        assert!(std::fs::symlink_metadata(program_dir(&h)).is_err(), "{verb_args:?}");
+        if verb_args[1] == "forget" {
+            let cache = h.root().join(".cache/zygo/workspaces").join(WS_ID);
+            assert!(std::fs::symlink_metadata(&cache).is_err(), "{verb_args:?}: the parts made for the folder go too");
+        }
+        assert_eq!(shell_file(&h, "cwd").trim_end(), h.repo().to_str().unwrap());
+    }
+}
+
+/// Round 3 finding 6: a start write that finds a state that cannot be read (corrupted after the `ws run` read) prints
+/// the line of W§8.2 step 4, and the agent starts.
+#[test]
+fn f6_a_start_write_on_an_invalid_state_prints_one_line_and_the_agent_starts() {
+    let h = Harness::no_tmux();
+    let (child, hold, out) = at_gate(&h, "launch");
+    std::fs::write(h.store(WS_ID).dir().join("workspace.json"), "{ not json").unwrap();
     drop(hold);
     let o = child.output("ws run");
-    assert!(text(&o.stderr).contains("zygo: the opencode launch failed before the agent started (exit 13)\n"), "{}", text(&o.stderr));
-    assert!(!out.join("argv.json").exists());
-    assert!(!h.store(WS_ID).read().unwrap().unwrap().members.contains_key(KEY));
-    assert!(!results_dir(&h).exists() && std::fs::symlink_metadata(program_dir(&h)).is_err());
+    let err = text(&o.stderr);
+    let head = format!("{NOT_RECORDED} {KEY}: ");
+    let line = err.lines().find(|l| l.starts_with(&head)).unwrap_or_else(|| panic!("{err}"));
+    assert!(line.ends_with("; zygo cannot see this agent as live") && line.contains("workspace.json"), "{err}");
+    assert!(out.join("argv.json").exists()); // the agent started
 }
 
 #[test]
@@ -1218,11 +1324,29 @@ fn au61_the_opencode_program_folder_holds_only_the_link() {
     assert_eq!(std::fs::metadata(&last).unwrap().permissions().mode() & 0o777, 0o700);
 }
 
-/// Review round 2 finding 8: an exit write that fails with an I/O error (the state folder cannot be written) prints
-/// the D5 line and no line that needs the record; the shell of step 8 still runs.
+/// Puts a folder in place of the state `lock` file while it lives; `Drop` puts the file back (round 3 finding 7).
+struct LockIsAFolder(PathBuf);
+
+impl LockIsAFolder {
+    fn new(lock: PathBuf) -> LockIsAFolder {
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::create_dir(&lock).unwrap();
+        LockIsAFolder(lock)
+    }
+}
+
+impl Drop for LockIsAFolder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir(&self.0);
+        let _ = std::fs::write(&self.0, "");
+    }
+}
+
+/// Review round 2 finding 8, round 3 finding 7: an exit write that fails with an I/O error prints the D5 line and no
+/// line that needs the record; the shell of step 8 still runs. The fault is a folder at the state `lock`: the lock
+/// open fails for every user, root included (`open_regular`, `state.rs:689-693`), unlike a folder mode.
 #[test]
 fn d5_an_exit_write_that_fails_with_an_io_error_prints_one_line() {
-    use std::os::unix::fs::PermissionsExt;
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
     let gate = h.root().join("gate");
@@ -1231,15 +1355,13 @@ fn d5_an_exit_write_that_fails_with_an_io_error_prints_one_line() {
     env.extend([("ZYGO_TEST_MEMBER_GATE", gate.clone().into()), ("ZYGO_STUB_EXIT", "3".into())]);
     let child = spawn_ws_run(&h, &pairs(&env));
     assert!(until(Duration::from_secs(20), || gate.join("returned").exists()));
-    let dir = h.store(WS_ID).dir().to_path_buf();
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let lock = LockIsAFolder::new(h.store(WS_ID).dir().join("lock"));
     drop(hold);
     let o = child.output("ws run");
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    drop(lock);
     let err = text(&o.stderr);
     let head = format!("zygo: could not save the exit record of pane {KEY}: ");
-    let line = err.lines().find(|l| l.starts_with(&head)).unwrap_or_else(|| panic!("{err}"));
-    assert!(line.contains("Permission denied"), "{err}");
+    assert!(err.contains(&format!("{head}{}\n", std::io::Error::from_raw_os_error(libc::EISDIR))), "{err}");
     assert!(!err.contains("exited 3"), "{err}"); // D7: no record, so no resume line
     assert!(member(&h).pending.is_some()); // nothing written
     assert_eq!(o.status.code(), Some(0)); // the shell of step 8

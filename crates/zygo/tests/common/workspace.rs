@@ -65,11 +65,33 @@ pub fn output_child(mut child: Child, what: &str) -> Output {
     Output { status, stdout: joined(out), stderr: joined(err) }
 }
 
-/// A child that leads its own process group, held until the test reaps it (M2 review round 2 finding 6). When the
-/// value drops with the child not reaped (a failed assert), `Drop` sends SIGKILL to the whole group, so the agent
-/// that the child started goes too, then reaps the child. The group id is the child's pid, which stays unused by
-/// any other process until the child is reaped.
+/// A child that leads its own process group, held until the test reaps it (M2 review rounds 2 and 3, findings 6 and
+/// 8). On every path (a normal exit, the [`CHILD_BOUND`] timeout, and `Drop` when a failed assert left the child) the
+/// whole group gets SIGKILL first, so a process that the child left in its group (the agent) goes too, and only then
+/// is the leader reaped. Until that reap the leader's pid, which is the group id, cannot name another process; no
+/// signal is sent after it.
 pub struct Guarded(Option<Child>);
+
+/// SIGKILL to the process group `leader` leads. The caller has not reaped `leader`.
+fn kill_group(leader: &Child) {
+    // SAFETY: `kill` takes plain integers. `leader` is a child of this process that is not reaped yet (running or a
+    // zombie), so its pid, the id of the group it leads, names no other process or group.
+    unsafe {
+        libc::kill(-(leader.id() as libc::pid_t), libc::SIGKILL);
+    }
+}
+
+/// Whether `child` has exited, read without reaping it (`waitid` with `WNOWAIT`), so it stays a zombie whose pid
+/// still names its group.
+fn exited(child: &Child, what: &str) -> bool {
+    // SAFETY: `info` is zeroed plain data that `waitid` fills; `WNOWAIT` leaves the child unreaped.
+    unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        let r = libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT);
+        assert_eq!(r, 0, "{what}: waitid: {}", std::io::Error::last_os_error());
+        info.si_pid() != 0
+    }
+}
 
 impl Guarded {
     /// Spawns `c` as the leader of a new process group.
@@ -93,14 +115,32 @@ impl Guarded {
         self.0.as_mut().and_then(|c| c.stdin.take())
     }
 
-    /// [`wait_child`]; the child counts as reaped after it.
+    /// Waits for the child (every 20 ms, at most [`CHILD_BOUND`]) without reaping it; then SIGKILL to its group; then
+    /// the reap. After the bound the test fails with `<what> did not exit within 60s; killed`. The child counts as
+    /// reaped after it.
     pub fn wait(&mut self, what: &str) -> ExitStatus {
-        let st = wait_child(self.0.as_mut().expect("the child is reaped"), what);
+        let c = self.0.as_mut().expect("the child is reaped");
+        let t0 = Instant::now();
+        let timed_out = loop {
+            if exited(c, what) {
+                break false;
+            }
+            if t0.elapsed() >= CHILD_BOUND {
+                break true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        kill_group(c);
+        let st = c.wait();
         self.0 = None;
+        let st = st.unwrap_or_else(|e| panic!("{what}: wait failed: {e}"));
+        if timed_out {
+            panic!("{what} did not exit within {}s; killed", CHILD_BOUND.as_secs());
+        }
         st
     }
 
-    /// [`output_child`] on the guarded child.
+    /// [`output_child`] on the guarded child, with [`Guarded::wait`].
     pub fn output(mut self, what: &str) -> Output {
         let c = self.0.as_mut().expect("the child is reaped");
         let out = reader(c.stdout.take());
@@ -113,12 +153,7 @@ impl Guarded {
 impl Drop for Guarded {
     fn drop(&mut self) {
         if let Some(mut c) = self.0.take() {
-            // SAFETY: `kill` takes plain integers; the group is the one this child leads, and the child is not
-            // reaped yet, so its pid is not reused.
-            unsafe {
-                libc::kill(-(c.id() as libc::pid_t), libc::SIGKILL);
-            }
-            let _ = c.kill();
+            kill_group(&c);
             let _ = c.wait();
         }
     }

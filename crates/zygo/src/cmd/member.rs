@@ -1,6 +1,7 @@
 //! The member wrapper of `zygo ws run` (W§8.2 steps 4, 5 and 7): the member record at the start and at the exit of
 //! the agent, the pre-assigned session id, the exit classification and the exit lines.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -205,9 +206,10 @@ fn agent_snapshot(paths: &Paths, ws: &Workspace, ws_id: &str) {
 }
 
 /// The test gate (D9, feature `test-hooks` only): with `ZYGO_TEST_MEMBER_GATE=<dir>` and `<dir>/<point>.hold`, the
-/// wrapper writes `<dir>/<point>` and waits, polling every 10 ms, until the test removes `<point>.hold`.
+/// wrapper writes `<dir>/<point>` and waits, polling every 10 ms, until the test removes `<point>.hold`. Points:
+/// `program` (`ws run`, before the OpenCode program folder), `launch`, `callback`, `returned`.
 #[cfg(feature = "test-hooks")]
-fn gate(point: &str) {
+pub(crate) fn gate(point: &str) {
     let Some(dir) = std::env::var_os("ZYGO_TEST_MEMBER_GATE").map(PathBuf::from) else { return };
     let hold = dir.join(format!("{point}.hold"));
     if !hold.exists() {
@@ -221,16 +223,14 @@ fn gate(point: &str) {
 
 /// D9: a build without `test-hooks` has no gate.
 #[cfg(not(feature = "test-hooks"))]
-fn gate(_point: &str) {}
+pub(crate) fn gate(_point: &str) {}
 
-/// AU16: the folder `<workspace cache>/<ws_id>/results/<pane>` (mode 0700) and the absolute link `results` of the
-/// session folder to it. A link at `<ws_id>`, `results` or `<pane>` refuses before anything is made
-/// (`admin::pane_cache_create`, the rule of `ws forget-pane`).
+/// AU16: the folder `<workspace cache>/<ws_id>/results/<pane>` and the absolute link `results` of the session folder
+/// to it. `admin::pane_cache_create` makes or opens each part with mode 0700 and follows no link (the rule of
+/// `ws forget-pane`); a refusal makes nothing.
 #[cfg(unix)]
 fn results_link(paths: &Paths, ws_id: &str, pane: &str, sd: &SessionDir) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
     let dir = admin::pane_cache_create(paths, ws_id, "results", pane).map_err(std::io::Error::other)?;
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir)?;
     std::os::unix::fs::symlink(&dir, sd.results())
 }
 
@@ -356,19 +356,58 @@ pub(crate) fn verb(kind: Agent) -> &'static str {
     }
 }
 
-/// `p` as one shell word for a printed command: single-quoted (`'` written as `'\''`, `shell_quote`), then escaped
-/// (C6).
-pub(crate) fn quoted(p: &Path) -> String {
-    zygo_core::esc(&zygo_launch::claude_code::shell_quote(p))
+/// The raw bytes of `s` as one shell word for a printed command (M2 review round 3 finding 3; C6). Bytes that are
+/// UTF-8 with no character that `zygo_core::esc` changes (control characters, bidi controls) give single quotes, a
+/// `'` written as `'\''`. Otherwise the word is `$'…'`: each such character and each byte that is not UTF-8 as
+/// `\xHH` per byte, `\` as `\\`, `'` as `\'`, the rest as it is. So the line stays one line, a terminal shows no
+/// control text, and the word names the true bytes.
+pub(crate) fn shell_word(s: &OsStr) -> String {
+    let b = s.as_encoded_bytes();
+    let escaped = |c: char| {
+        let t = c.to_string();
+        zygo_core::esc(&t) != t
+    };
+    if let Ok(t) = std::str::from_utf8(b)
+        && !t.chars().any(escaped)
+    {
+        return format!("'{}'", t.replace('\'', r"'\''"));
+    }
+    let mut o = String::from("$'");
+    for chunk in b.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            match c {
+                '\\' => o.push_str(r"\\"),
+                '\'' => o.push_str(r"\'"),
+                c if escaped(c) => {
+                    for x in c.to_string().bytes() {
+                        o.push_str(&format!("\\x{x:02x}"));
+                    }
+                }
+                c => o.push(c),
+            }
+        }
+        for x in chunk.invalid() {
+            o.push_str(&format!("\\x{x:02x}"));
+        }
+    }
+    o.push('\'');
+    o
 }
 
-/// The command that resumes the agent session `id` (D7, AU3): `zygo claude -- --resume <id>`, with
-/// `CLAUDE_CONFIG_DIR=<dir>` in front when the member has a config dir (AU61, PW16), or
-/// `zygo opencode -- --session=<id>`. `<dir>` is [`quoted`]; `id` is printed as given and a caller escapes it.
+/// A path as one shell word ([`shell_word`]).
+pub(crate) fn quoted(p: &Path) -> String {
+    shell_word(p.as_os_str())
+}
+
+/// The command that resumes the agent session `id` (D7, AU3, AU61, PW16), each path and the id as one shell word
+/// ([`shell_word`] of the raw value): for Claude Code `CLAUDE_CONFIG_DIR=<dir> zygo claude -- --resume <id>` when the
+/// member has a config dir, else `env -u CLAUDE_CONFIG_DIR zygo claude -- --resume <id>`, as `ws run` removes the
+/// variable at a resume (AU61); for OpenCode `zygo opencode -- --session=<id>`.
 pub(crate) fn resume_command(kind: Agent, id: &str, config_dir: Option<&Path>) -> String {
+    let id = shell_word(OsStr::new(id));
     match (kind, config_dir) {
         (Agent::ClaudeCode, Some(d)) => format!("CLAUDE_CONFIG_DIR={} zygo claude -- --resume {id}", quoted(d)),
-        (Agent::ClaudeCode, None) => format!("zygo claude -- --resume {id}"),
+        (Agent::ClaudeCode, None) => format!("env -u CLAUDE_CONFIG_DIR zygo claude -- --resume {id}"),
         (Agent::OpenCode, _) => format!("zygo opencode -- --session={id}"),
     }
 }
@@ -385,18 +424,17 @@ pub(crate) fn exit_lines(
         Exit::NotStarted => vec![format!("zygo: the {k} launch failed before the agent started (exit {n})")],
         Exit::Resumable { failed_fast: true } => match resumed {
             Some(id) => {
+                let cmd = resume_command(kind, id, config_dir);
                 let id = zygo_core::esc(id);
-                vec![format!("zygo: resume of {k} session {id} failed (exit {n}); try: {}", resume_command(kind, &id, config_dir))]
+                vec![format!("zygo: resume of {k} session {id} failed (exit {n}); try: {cmd}")]
             }
             None => vec![],
         },
         Exit::Ended if n != 0 => match kept {
             Some(id) => {
+                let cmd = resume_command(kind, id, config_dir);
                 let id = zygo_core::esc(id);
-                vec![format!(
-                    "zygo: {k} exited {n}; agent session {id} is kept by the agent; to resume it: {}",
-                    resume_command(kind, &id, config_dir)
-                )]
+                vec![format!("zygo: {k} exited {n}; agent session {id} is kept by the agent; to resume it: {cmd}")]
             }
             None => vec![],
         },
@@ -552,22 +590,22 @@ mod tests {
     }
 
     #[test]
-    fn exit_lines_are_the_spec_texts() { // D7
+    fn exit_lines_are_the_spec_texts() { // D7; review round 3 findings 1 and 2
         assert_eq!(
             exit_lines(Agent::ClaudeCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, None),
-            ["zygo: resume of claude session abc failed (exit 1); try: zygo claude -- --resume abc"]
+            ["zygo: resume of claude session abc failed (exit 1); try: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'"]
         );
         assert_eq!(
             exit_lines(Agent::OpenCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("ses_1"), Some("ses_1"), None),
-            ["zygo: resume of opencode session ses_1 failed (exit 1); try: zygo opencode -- --session=ses_1"]
+            ["zygo: resume of opencode session ses_1 failed (exit 1); try: zygo opencode -- --session='ses_1'"]
         );
         assert_eq!(
             exit_lines(Agent::OpenCode, &out(3, None, false, 60), Exit::Ended, None, Some("ses_1"), None),
-            ["zygo: opencode exited 3; agent session ses_1 is kept by the agent; to resume it: zygo opencode -- --session=ses_1"]
+            ["zygo: opencode exited 3; agent session ses_1 is kept by the agent; to resume it: zygo opencode -- --session='ses_1'"]
         );
         assert_eq!(
             exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, Some("abc"), None),
-            ["zygo: claude exited 3; agent session abc is kept by the agent; to resume it: zygo claude -- --resume abc"]
+            ["zygo: claude exited 3; agent session abc is kept by the agent; to resume it: env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'"]
         );
         for code in [12, 13] {
             assert_eq!(
@@ -581,30 +619,56 @@ mod tests {
                 .is_empty()
         );
         assert!(exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, None, None).is_empty()); // no saved record (D5)
+        // The prose names the id escaped (C6); the command names it as one shell word.
+        assert_eq!(
+            exit_lines(Agent::OpenCode, &out(3, None, false, 60), Exit::Ended, None, Some("s'\n1"), None),
+            [r"zygo: opencode exited 3; agent session s'\n1 is kept by the agent; to resume it: zygo opencode -- --session=$'s\'\x0a1'"]
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn the_resume_command_names_the_config_dir_quoted() { // AU61, PW16; review round 2 finding 2
+    fn the_resume_command_names_the_config_dir_quoted() { // AU61, PW16; review round 2 finding 2, round 3 findings 1-3
         let dir = Path::new("/c c/it's");
         assert_eq!(
             resume_command(Agent::ClaudeCode, "abc", Some(dir)),
-            r"CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume abc"
+            r"CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume 'abc'"
         );
-        assert_eq!(resume_command(Agent::ClaudeCode, "abc", None), "zygo claude -- --resume abc");
-        assert_eq!(resume_command(Agent::OpenCode, "ses_1", Some(dir)), "zygo opencode -- --session=ses_1");
+        assert_eq!(resume_command(Agent::ClaudeCode, "abc", None), "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'");
+        assert_eq!(resume_command(Agent::OpenCode, "ses_1", Some(dir)), "zygo opencode -- --session='ses_1'");
         assert_eq!(
             exit_lines(Agent::ClaudeCode, &out(1, None, false, 1), Exit::Resumable { failed_fast: true }, Some("abc"), None, Some(dir)),
-            [r"zygo: resume of claude session abc failed (exit 1); try: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume abc"]
+            [r"zygo: resume of claude session abc failed (exit 1); try: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume 'abc'"]
         );
         assert_eq!(
             exit_lines(Agent::ClaudeCode, &out(3, None, false, 60), Exit::Ended, None, Some("abc"), Some(dir)),
-            [r"zygo: claude exited 3; agent session abc is kept by the agent; to resume it: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume abc"]
+            [r"zygo: claude exited 3; agent session abc is kept by the agent; to resume it: CLAUDE_CONFIG_DIR='/c c/it'\''s' zygo claude -- --resume 'abc'"]
         );
-        // C6: a control character in the path is escaped after the quoting.
+        // A control byte: `$'…'` with `\xHH`, so the line stays one line and names the true path.
         assert_eq!(
             resume_command(Agent::ClaudeCode, "abc", Some(Path::new("/a\nb"))),
-            r"CLAUDE_CONFIG_DIR='/a\nb' zygo claude -- --resume abc"
+            r"CLAUDE_CONFIG_DIR=$'/a\x0ab' zygo claude -- --resume 'abc'"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_word_quotes_the_raw_bytes() { // review round 3 finding 3
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let w = |b: &[u8]| shell_word(OsStr::from_bytes(b));
+        assert_eq!(w(b"/a b"), "'/a b'");
+        assert_eq!(w(b"it's"), r"'it'\''s'");
+        assert_eq!(w(b""), "''");
+        assert_eq!(w(b"a\\b"), r"'a\b'"); // no control byte: a backslash stays as it is in single quotes
+        assert_eq!(w(b"/a\nb"), r"$'/a\x0ab'");
+        assert_eq!(w(b"\t\x1b"), r"$'\x09\x1b'");
+        assert_eq!(w(b"/a\xffb"), r"$'/a\xffb'"); // not UTF-8: the byte as it is
+        assert_eq!(w(b"it's\n\\"), r"$'it\'s\x0a\\'"); // in `$'…'`, `'` and `\` are escaped
+        assert_eq!(w("a\u{202e}b".as_bytes()), r"$'a\xe2\x80\xaeb'"); // a bidi control (C6) too
+        assert_eq!(w("é".as_bytes()), "'é'"); // other UTF-8 as it is
+        for b in [&b"/a\nb"[..], b"it's\n\\", b"/a\xffb", b"x\x7fy"] {
+            assert!(!w(b).contains(['\n', '\r', '\x7f']), "{:?}", w(b));
+        }
     }
 }
