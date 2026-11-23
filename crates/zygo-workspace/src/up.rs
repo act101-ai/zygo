@@ -537,16 +537,22 @@ impl Builder<'_> {
         }
     }
 
-    /// FIX-29 round 2, W§8.1 step 6: [`Builder::release`] on every window of the session, so a hold that a failed
-    /// release left ends at the next `up` (AU68). A gone session gives no line; any other error of the window read
-    /// prints `zygo: <name>: could not release the build hold: <error>`.
+    /// FIX-29 rounds 2-3, W§8.1 step 6: [`Builder::release`] on each window of the session that holds at least one
+    /// pane with a valid `@zygo-pane` (read in the same `list-panes` call), so a hold that a failed release left ends
+    /// at the next `up` (AU68); a window with no zygo pane (the user's) is never changed. A gone session gives no line;
+    /// any other error of the window read prints `zygo: <name>: could not release the build hold: <error>`.
     pub fn release_all(&self, name: &str, err: &mut dyn Write) {
         let rows = match self.mux.list_panes(self.session) {
             Ok(rows) => rows,
             Err(MuxError::NoTarget { .. } | MuxError::Gone { .. }) => return,
             Err(e) => return say(err, &format!("zygo: {}: could not release the build hold: {e}", esc(name))),
         };
-        let windows: BTreeSet<u32> = rows.iter().filter_map(|r| parse_pane_line(r).ok()).map(|(w, _)| w.index).collect();
+        let windows: BTreeSet<u32> = rows
+            .iter()
+            .filter_map(|r| parse_pane_line(r).ok())
+            .filter(|(_, p)| valid_pane_key(&p.key))
+            .map(|(w, _)| w.index)
+            .collect();
         self.release(&windows.into_iter().collect::<Vec<_>>(), name, err);
     }
 

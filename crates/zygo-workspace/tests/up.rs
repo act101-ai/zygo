@@ -2439,6 +2439,30 @@ fn a_failed_read_of_one_pane_is_one_line_and_up_goes_on() {
     assert_eq!(ws.phase, Phase::Up);
 }
 
+/// FIX-29 round 3: after `up` with `pair`, a user window with no zygo pane and `remain-on-exit on`, and window 0
+/// left `on` (a hold that a failed release left); returns the user window index.
+fn user_window_and_left_hold(l: &mut Live) -> u32 {
+    up_pair(l);
+    let w = l.srv.run(&["new-window", "-d", "-P", "-F", "#{window_index}", "-t", "=zygo-app:", "--", "sleep", "600"]).unwrap();
+    let w: u32 = w.parse().unwrap();
+    l.srv.run(&["set-option", "-w", "-t", &format!("=zygo-app:{w}"), "remain-on-exit", "on"]).unwrap();
+    l.srv.run(&["set-option", "-w", "-t", "=zygo-app:0", "remain-on-exit", "on"]).unwrap();
+    assert_eq!(l.srv.run(&["display-message", "-p", "-t", &format!("=zygo-app:{w}"), "#{@zygo-pane}"]).unwrap(), "");
+    w
+}
+
+#[test] // FIX-29 diff review round 3, finding 5, AU68: the step 6 release changes only windows with a zygo pane
+fn an_attaching_up_leaves_a_user_window_alone() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let user = user_window_and_left_hold(&mut l);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(!err.contains("could not release"), "{err}");
+    assert_eq!((remain(&l, 0), remain(&l, 1), remain(&l, user)), ("off".to_string(), "off".to_string(), "on".to_string()));
+}
+
 #[test] // FIX-29 diff review round 3, finding 1, AU67: a repair whose split fails ends the hold of every window
 fn a_repair_that_stops_in_the_middle_releases_every_window() {
     let _g = serial();
