@@ -93,7 +93,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-17 |
-| FIX-18 | Local sessions do not expire by idle time; the idle TTL applies to team sessions only | — | PLANNED | implementation | — |
+| FIX-18 | Local sessions do not expire by idle time; the idle TTL applies to team sessions only | — | IN-PROGRESS | implementation | .worktrees/phase2/FIX-18 |
 
 ## Log
 
