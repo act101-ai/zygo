@@ -29,7 +29,9 @@ rustls.workspace = true
 serde.workspace = true
 
 [features]
-test-hooks = []
+# `zygo-workspace/test-hooks`: `tests/stub_member.rs` compiles `crates/zygo/tests/common`, whose workspace harness
+# uses `zygo_workspace::mux::testing` (M2).
+test-hooks = ["zygo-workspace/test-hooks"]
 
 [dev-dependencies]
 zygo-launch = { path = ".", features = ["test-hooks"] }
