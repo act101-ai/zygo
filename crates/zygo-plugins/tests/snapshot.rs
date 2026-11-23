@@ -24,17 +24,26 @@ fn file(name: &str) -> String {
 
 #[test]
 fn embedded_has_one_command_per_verb() {
-    assert_eq!(VERB_SPECS.len(), 14);
+    assert_eq!(VERB_SPECS.len(), 17);
     for v in VERB_SPECS {
         let t = file(&format!("commands/{}.md", v.name));
         assert!(t.contains("disable-model-invocation: true"), "{}", v.name);
         assert!(t.contains("description: \""), "{}", v.name);
-        assert!(t.contains(&format!("zygo {} $ARGUMENTS", v.name)), "{}", v.name);
+        if v.name != "down" {
+            assert!(t.contains(&format!("zygo {} $ARGUMENTS", v.name)), "{}", v.name);
+        }
     }
-    assert_eq!(embedded::files().iter().filter(|(n, _)| n.starts_with("commands/")).count(), 14);
+    assert_eq!(embedded::files().iter().filter(|(n, _)| n.starts_with("commands/")).count(), 17);
     assert!(file("commands/compact.md").contains("argument-hint: \"<tokens|on|off>\""));
     assert!(file("commands/statusline.md").contains("argument-hint: \"[compact|verbose]\""));
     assert!(!file("commands/status.md").contains("argument-hint"));
+    let down = file("commands/down.md");
+    assert!(down.contains("argument-hint: \"[--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]\""), "{down}");
+    assert!(down.contains("disable-model-invocation: true"), "{down}");
+    assert!(down.contains("If this text reaches you, /zygo:down did not run: tell the user that it failed. Do not run zygo down in a shell: it stops the workspace of the current folder, not the workspace of this session."), "{down}");
+    assert!(!down.contains("$ARGUMENTS"), "{down}");
+    assert!(!file("commands/ls.md").contains("argument-hint"));
+    assert!(!file("commands/workspace.md").contains("argument-hint"));
 }
 
 #[test]

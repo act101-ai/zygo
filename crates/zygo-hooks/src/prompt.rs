@@ -14,6 +14,10 @@ use zygo_core::verbs::VERB_SPECS;
 /// The wait for the verb; the hook itself ends within 5 s (§17.1).
 pub const HOOK_DEADLINE: Duration = Duration::from_millis(4500);
 
+/// Verbs whose shell form can name another workspace than the slash form (OP11): a slow slash form of one of them does
+/// not send the user to the shell (decision 2026-11-23).
+const NO_SHELL_FORM: [&str; 2] = ["down", "workspace"];
+
 static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/zygo:([a-z][a-z0-9-]*)(?:\s+(.*))?$").expect("valid regex"));
 
 /// `zygo hook prompt` (§17.1, W§9.1 `UserPromptSubmit` row): `run_with` with `dispatch` and `deadline`. The `zygo`
@@ -93,6 +97,9 @@ pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Du
     let text = match rx.recv_timeout(deadline.saturating_sub(start.elapsed())) {
         Ok(Ok(reply)) => reply,
         Ok(Err(e)) => zygo_config::display::error_text(&e),
+        Err(RecvTimeoutError::Timeout) if NO_SHELL_FORM.contains(&verb.as_str()) => format!(
+            "{verb} did not finish within the hook bound and may still complete; do not run zygo {verb} in a shell, where it can name another workspace"
+        ),
         Err(RecvTimeoutError::Timeout) if args.is_empty() => format!("run in your shell: zygo {verb}"),
         Err(RecvTimeoutError::Timeout) => format!("run in your shell: zygo {verb} {}", zygo_core::esc(&args)),
         // The verb thread died (a panic): an internal error, so the prompt passes (C6; H1 round 4 T1).
@@ -281,6 +288,29 @@ mod tests {
         *GATE.0.lock().unwrap() = true;
         GATE.1.notify_all();
         assert_eq!(json_of(out), block("run in your shell: zygo compact 600k"));
+    }
+
+    /// Decision 2026-11-23: `down` and `workspace` have a shell form that can name another workspace, so a slow slash
+    /// form does not send the user to the shell; `ls` lists every workspace in both forms and keeps the shell reply.
+    #[test]
+    fn slow_workspace_verb_does_not_send_the_user_to_the_shell() {
+        static GATE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+        fn d(_: &str, _: &str) -> anyhow::Result<String> {
+            let mut open = GATE.0.lock().unwrap();
+            while !*open {
+                open = GATE.1.wait(open).unwrap();
+            }
+            Ok("late".into())
+        }
+        let mut outs = Vec::new();
+        for line in ["/zygo:down --now", "/zygo:workspace", "/zygo:ls"] {
+            outs.push(json_of(run_with(&input(Some(line)), Some(d), Duration::from_millis(100)).unwrap()));
+        }
+        *GATE.0.lock().unwrap() = true;
+        GATE.1.notify_all();
+        assert_eq!(outs[0], block("down did not finish within the hook bound and may still complete; do not run zygo down in a shell, where it can name another workspace"));
+        assert_eq!(outs[1], block("workspace did not finish within the hook bound and may still complete; do not run zygo workspace in a shell, where it can name another workspace"));
+        assert_eq!(outs[2], block("run in your shell: zygo ls"));
     }
 
     /// Round 2 F4: the typed words in the timeout reply are escaped.

@@ -348,7 +348,7 @@ enum Cmd {
     Statusline(VerbArgs),
     /// Start or restore the workspace of this repository
     Up(up::UpArgs),
-    /// Stop a workspace: drain, snapshot, stop
+    /// Stop the workspace of this folder or of <name>: drain, snapshot, stop; in the foreground, detached when run from an agent or from a pane of that workspace
     Down(down::DownArgs),
     /// List workspaces
     Ls,
