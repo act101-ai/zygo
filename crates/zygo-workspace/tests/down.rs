@@ -207,10 +207,13 @@ fn run(o: &DownOpts, h: &Hooks) -> (i32, String, String) {
 
 fn count(text: &str, line: &str) -> usize { text.lines().filter(|l| *l == line).count() }
 
+/// The fs4 lock on a launcher's `pid` file, held by a test until it takes it out.
+type HeldLock = Arc<Mutex<Option<File>>>;
+
 /// A live launcher: its session folder with `token` and `url`, a `sleep 600` child whose pid is in `pid`, and the
 /// fs4 lock on `pid` held by this test (an in-process lock makes `session_dir::live` true).
 struct Launcher {
-    lock: Arc<Mutex<Option<File>>>,
+    lock: HeldLock,
     child: Child,
 }
 
@@ -278,9 +281,9 @@ fn statuses(h: &mut Hooks, map: StatusMap) -> Arc<Mutex<Vec<String>>> {
 /// workspace is in `stopping` (the point runs after the step 10 of every workspace, so with `--all` another
 /// workspace's stop must not release this member): drops the lock and sets the member to `resumable`, as a launcher
 /// and its wrapper do after SIGTERM.
-fn release_on_sigterm(h: &mut Hooks, o: &DownOpts, locks: Vec<Arc<Mutex<Option<File>>>>, keys: &[(&str, &str)]) {
+fn release_on_sigterm(h: &mut Hooks, o: &DownOpts, locks: Vec<HeldLock>, keys: &[(&str, &str)]) {
     assert_eq!(locks.len(), keys.len());
-    let pairs: Vec<(Arc<Mutex<Option<File>>>, String, String)> =
+    let pairs: Vec<(HeldLock, String, String)> =
         locks.into_iter().zip(keys).map(|(l, (a, b))| (l, a.to_string(), b.to_string())).collect();
     let p = o.paths.clone();
     h.points.insert(
