@@ -639,7 +639,7 @@ fn activity_socket_is_not_a_regular_file() {
     // Under /tmp, not TMPDIR: a long TMPDIR makes the socket path longer than `sun_path` (review round 2).
     let t = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
     let d = SessionDir::new(t.path().to_path_buf());
-    let _sock =std::os::unix::net::UnixListener::bind(d.activity_json()).unwrap();
+    let _sock = std::os::unix::net::UnixListener::bind(d.activity_json()).unwrap();
     let not_file = format!("{}: is not a regular file", d.activity_json().display());
     assert_eq!(format!("{:#}", activity::read(&d).unwrap_err()), not_file);
     let e = activity::update(&d, LOCK_BOUND, &mut |a| a.busy = true).unwrap_err();
