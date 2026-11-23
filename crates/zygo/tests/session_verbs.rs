@@ -334,6 +334,78 @@ fn au105_refused_patch_is_not_mirrored() {
     assert_eq!(mf::record(&store, mf::WS_KEY).overrides, None);
 }
 
+/// The stand-in proxy's PATCH handler of the tests below: it leaves the file `patched` next to `overrides.json`.
+#[cfg(unix)]
+fn mark_patched(file: &Path) {
+    std::fs::write(file.with_file_name("patched"), b"").unwrap();
+}
+
+/// M4 review round 2: `set_session` reads the old `overrides.json` by the session-file rule. A FIFO in its place
+/// before the verb does not make the verb wait: it stops with the one `cannot read overrides.json` line, sends no
+/// PATCH and changes nothing. A test thread opens the FIFO for writing (and closes it) only after 3 s, so a reader
+/// that waits on the FIFO ends then and the time shows it.
+#[cfg(unix)]
+#[test]
+fn fifo_old_overrides_stops_the_verb_at_once() {
+    let d = home();
+    let h = d.path();
+    let s = mf::patching_session_at(&paths(h).sessions_dir, "S7", mark_patched);
+    let fifo = s.join("overrides.json");
+    let c = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let t0 = std::time::Instant::now();
+    let unblock = {
+        let fifo = fifo.clone();
+        std::thread::spawn(move || {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            // A writer that does not wait: it opens only while a reader waits on the FIFO, then closes it (EOF).
+            while t0.elapsed() < std::time::Duration::from_secs(6) {
+                if std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(&fifo).is_ok() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        })
+    };
+    let env = Env { session: Some("S7"), dir: Some(&s), ..Default::default() };
+    let got = cli(h, &env, "redaction content off");
+    let took = t0.elapsed();
+    unblock.join().unwrap();
+    assert_eq!(
+        got,
+        (1, String::new(), format!("zygo redaction: cannot read overrides.json: {}: is not a regular file; not read\n", fifo.display()))
+    );
+    assert!(took < std::time::Duration::from_secs(2), "{took:?}");
+    assert!(!s.join("patched").exists(), "a PATCH was sent");
+    assert!(std::os::unix::fs::FileTypeExt::is_fifo(&std::fs::symlink_metadata(&fifo).unwrap().file_type()));
+    assert_eq!(std::fs::read_to_string(h.join("config.toml")).unwrap(), "");
+}
+
+/// M4 review round 2: an old `overrides.json` that is a link is not followed: the verb stops with the one `cannot
+/// read overrides.json` line, sends no PATCH and changes neither the link nor its target.
+#[cfg(unix)]
+#[test]
+fn linked_old_overrides_stops_the_verb() {
+    let d = home();
+    let h = d.path();
+    let s = mf::patching_session_at(&paths(h).sessions_dir, "S8", mark_patched);
+    let foreign = h.join("foreign.json");
+    std::fs::write(&foreign, br#"{"results":false}"#).unwrap();
+    let link = s.join("overrides.json");
+    std::os::unix::fs::symlink(&foreign, &link).unwrap();
+    let env = Env { session: Some("S8"), dir: Some(&s), ..Default::default() };
+    assert_eq!(
+        cli(h, &env, "redaction content off"),
+        (1, String::new(), format!("zygo redaction: cannot read overrides.json: {}: is a link; not read\n", link.display()))
+    );
+    assert!(!s.join("patched").exists(), "a PATCH was sent");
+    assert_eq!(std::fs::read_link(&link).unwrap(), foreign);
+    assert_eq!(std::fs::read(&foreign).unwrap(), br#"{"results":false}"#);
+    assert_eq!(std::fs::read_to_string(h.join("config.toml")).unwrap(), "");
+}
+
 /// M4 review F3, W§7.3: the mirror reads `overrides.json` under the state lock without waiting on a FIFO. The stand-in
 /// proxy puts a FIFO in its place after the save; the reply comes at once with `; not saved for the workspace` and the
 /// record does not change. A test thread opens the FIFO for writing (and closes it) only after 3 s, so a reader that

@@ -275,11 +275,12 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
         setting.save(&ctx.paths.config_file).map_err(|e| anyhow!("zygo {verb}: saving to user config failed: {e}"))?;
         return Ok(format!("{verb} {words} saved to user config"));
     };
-    // F6: a file that exists but cannot be read stops the verb before any change.
-    let old = match std::fs::read(dir.overrides_json()) {
-        Ok(b) => Some(b),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(anyhow!("zygo {verb}: cannot read overrides.json: {e}")),
+    // F6: a file that exists but cannot be read stops the verb before any change. It is read by the session-file rule
+    // (`read_session_file`): a link, a FIFO or another entry that is not a regular file is such a file, and no read
+    // waits on it (M4 review round 2). A missing file is `None`.
+    let old = match read_session_file(&dir.overrides_json()) {
+        Ok(b) => b,
+        Err(e) => return Err(anyhow!("zygo {verb}: cannot read overrides.json: {e:#}")),
     };
     // The client is built before any write: a session dir it cannot use changes nothing.
     let client = match setting {
