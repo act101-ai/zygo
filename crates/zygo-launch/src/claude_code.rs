@@ -18,8 +18,10 @@ const PT_MODEL: &str = "--passthrough sends model names to the vendor; use a ven
 const PT_BARE: &str = "--passthrough does not work with --bare: bare mode reads only API keys";
 const PT_MANAGED: &str = "passthrough needs your claude.ai login; a managed setting replaces it";
 const BAD_AGENTS: &str = "--agents: not a JSON object (or, with --print, a file that holds one)";
-/// §8.5 Flags (FIX-21 round 2 F1): the user's `--settings` values are merged into zygo's file.
+/// §8.5 Flags (FIX-21 round 2 F1): the user's `--settings` values are merged into zygo's file; the line when the merged settings do not set `disableAllHooks: true`.
 const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
+/// §8.5 Flags (FIX-23): the merge line when the merged settings set `disableAllHooks: true`, which stops every hook and the status line, zygo's included.
+const MERGE_HOOKS_OFF: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys stay in force; your disableAllHooks stops every hook and the status line, zygo's included";
 const NO_EDIT: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
 #[cfg(target_os = "macos")]
@@ -154,20 +156,28 @@ struct UserSettings {
     read: usize,
     /// The values that are not a readable JSON object, as typed; zygo does not use them.
     unreadable: Vec<String>,
+    /// The user `disableAllHooks` values that are not `true` or `false`, in value order; zygo does not use them.
+    bad_hooks: Vec<Value>,
 }
 
 /// FIX-21 rounds 2 and 3, §8.5 Flags: the user's `--settings` values (before any `--`), each read as Claude Code takes
 /// it (`--settings <file-or-json>`; observed on 2.1.330: a value that parses as a JSON object is inline settings, any
 /// other value is a file path, relative to the working directory).
 fn user_settings(ctx: &LaunchCtx) -> UserSettings {
-    let mut out = UserSettings { merged: Map::new(), read: 0, unreadable: vec![] };
+    let mut out = UserSettings { merged: Map::new(), read: 0, unreadable: vec![], bad_hooks: vec![] };
     for v in flag_values(&ctx.args, "--settings") {
         let m = match serde_json::from_str::<Value>(&v) {
             Ok(Value::Object(m)) => Some(m),
             _ => read_object(&ctx.cwd.join(&v)),
         };
         match m {
-            Some(m) => {
+            Some(mut m) => {
+                // FIX-23 D4: a `disableAllHooks` that is not a JSON boolean is not used.
+                if m.get("disableAllHooks").is_some_and(|h| !h.is_boolean())
+                    && let Some(h) = m.remove("disableAllHooks")
+                {
+                    out.bad_hooks.push(h);
+                }
                 out.merged.extend(m);
                 out.read += 1;
             }
@@ -177,14 +187,26 @@ fn user_settings(ctx: &LaunchCtx) -> UserSettings {
     out
 }
 
-/// §8.5 Flags (FIX-21 round 3): the line for a user `--settings` value that zygo cannot read as a JSON object. The value
-/// is written as a JSON string, so the line is one line.
+/// §8.5 Flags (FIX-21 round 3, FIX-23 D6): the line for a user `--settings` value that zygo cannot read as a JSON object. The value is written as a JSON string, then through `zygo_core::esc`, so the line is one line.
 fn unreadable_line(value: &str) -> String {
-    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", Value::from(value))
+    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", zygo_core::esc(&Value::from(value).to_string()))
+}
+
+/// §8.5 Flags (FIX-23 D4): the line for a user `disableAllHooks` value that is not `true` or `false`. It names only the JSON type: the value can hold any text, for example a token.
+fn bad_hooks_line(value: &Value) -> String {
+    let kind = match value {
+        Value::String(_) => "a string",
+        Value::Number(_) => "a number",
+        Value::Object(_) => "an object",
+        Value::Array(_) => "an array",
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+    };
+    format!("zygo: your --settings disableAllHooks value is {kind}, not true or false; it was removed")
 }
 
 /// FIX-21 round 2 F1, §8.5 Flags: zygo's settings `zygo` with the user's settings `user` merged in. `attribution` and
-/// `includeCoAuthoredBy` stay zygo's (a user `disableAllHooks` is an ordinary key and wins). `hooks`: per event, the user's entries, then zygo's; a user `hooks` value or event
+/// `includeCoAuthoredBy` stay zygo's (a user boolean `disableAllHooks` is an ordinary key and wins; `user_settings` has already removed a non-boolean one). `hooks`: per event, the user's entries, then zygo's; a user `hooks` value or event
 /// that is not an object or a list leaves zygo's in place. `env`: per name, a user name wins; a user `env` that is not an
 /// object leaves zygo's in place. Every other user key is kept and wins over zygo's key of the same name, as a user
 /// `--agents` key does (§8.5 Subagents).
@@ -468,6 +490,7 @@ impl AgentAdapter for ClaudeCode {
         if let Some(u) = &user {
             file = merge_settings(file, u.merged.clone());
         }
+        let hooks_off = file.get("disableAllHooks") == Some(&Value::Bool(true));
         write_private(&settings, file.to_string().as_bytes())?;
         let mcp = sd.root.join("mcp.json");
         let servers = json!({ "mcpServers": { "zygo": { "command": zygo, "args": ["mcp", "--agent", "claude-code"] } } });
@@ -493,8 +516,9 @@ impl AgentAdapter for ClaudeCode {
         let (mut lines, mut log) = (vec![], vec![]);
         if let Some(u) = &user {
             if u.read > 0 {
-                lines.push(MERGE_WARN.to_string());
+                lines.push(if hooks_off { MERGE_HOOKS_OFF } else { MERGE_WARN }.to_string());
             }
+            lines.extend(u.bad_hooks.iter().map(bad_hooks_line));
             lines.extend(u.unreadable.iter().map(|v| unreadable_line(v)));
             log.push("degraded: --settings".to_string());
         }

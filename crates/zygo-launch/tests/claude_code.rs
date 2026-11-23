@@ -444,6 +444,18 @@ const USER_SETTINGS: &str = r#"{"attribution": {"commit": "Co-Authored-By: Claud
               "Stop": [{"hooks": [{"type": "command", "command": "user-stop"}]}]}}"#;
 /// §8.5 Flags: the line for a user `--settings` value that zygo merges.
 const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
+/// §8.5 Flags (FIX-23): the merge line when the merged settings set `disableAllHooks: true`.
+const MERGE_HOOKS_OFF: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys stay in force; your disableAllHooks stops every hook and the status line, zygo's included";
+
+/// §8.5 Flags (FIX-23 D4): the line for a user `disableAllHooks` value that is not `true` or `false`; `kind` is its JSON
+/// type with its article (`a string`, `a number`, `an object`, `an array`, `null`).
+fn bad_hooks(kind: &str) -> String {
+    format!("zygo: your --settings disableAllHooks value is {kind}, not true or false; it was removed")
+}
+
+/// Characters that `serde_json` leaves raw in a JSON string and that `zygo_core::esc` escapes (FIX-23 D6): the C1
+/// controls CSI and NEL, DEL, the line separator and the Arabic letter mark.
+const RAW: [char; 5] = ['\u{9b}', '\u{85}', '\u{7f}', '\u{2028}', '\u{61c}'];
 
 #[test] // FIX-21, §8.5: kills: the attribution keys written only outside passthrough, only for members or only with work units;
         // a user `--settings` file or inline value that replaces zygo's file, drops the guard hook or the user's hooks and
@@ -670,16 +682,173 @@ fn unreadable_user_settings_keep_only_zygos_file() {
     }
 }
 
-#[test] // FIX-21 round 3, §8.5 Flags: `disableAllHooks` is not one of the keys zygo keeps; a user value wins
+#[test] // FIX-21 round 3, FIX-23, §8.5 Flags: kills: a user disableAllHooks that does not win; an attribution key lost; the "hooks stay in force" line for settings that stop every hook
 fn user_disable_all_hooks_wins_and_attribution_keys_stay() {
     let fx = fx();
     let mut c = ctx(&fx, "");
     c.args = strings(&[r#"--settings={"disableAllHooks": true, "attribution": {"commit": "x"}, "includeCoAuthoredBy": true}"#]);
-    cc(&fx).build(&c).unwrap();
+    let spec = cc(&fx).build(&c).unwrap();
     let s = settings(&fx);
     assert_eq!(s["disableAllHooks"], json!(true));
     assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}));
     assert_eq!(s["includeCoAuthoredBy"], json!(false));
+    assert_eq!(spec.lines, [MERGE_HOOKS_OFF]);
+    assert!(!spec.lines.iter().any(|l| l.contains("hooks stay in force")), "{:?}", spec.lines);
+}
+
+#[test] // FIX-23 (D1, D3, D4), §8.5 Flags: kills: the "hooks stay in force" line for merged settings that stop every hook; the new line for a user value that a later false overrides; the line for other user settings changed; a non-boolean disableAllHooks passed on, not named by its type, or printed with its value; a lost unreadable-value line
+fn merge_line_is_true_when_disable_all_hooks_is_set() {
+    let fx = fx();
+    std::fs::write(fx.cwd.join("off.json"), r#"{"disableAllHooks": true}"#).unwrap();
+    type Row<'a> = (&'a str, bool, &'a [&'a str], Vec<String>, bool, &'a str);
+    let rows: [Row; 14] = [
+        ("inline true", false, &[r#"--settings={"disableAllHooks": true}"#], vec![MERGE_HOOKS_OFF.to_string()], true, ""),
+        ("file true", false, &["--settings", "off.json", "-p", "hi"], vec![MERGE_HOOKS_OFF.to_string()], true, ""),
+        ("inline false", false, &["--settings", r#"{"disableAllHooks": false}"#], vec![MERGE_WARN.to_string()], false, ""),
+        (
+            "true then false",
+            false,
+            &["--settings", r#"{"disableAllHooks": true}"#, "--settings", r#"{"disableAllHooks": false}"#],
+            vec![MERGE_WARN.to_string()],
+            false,
+            "",
+        ),
+        ("true then other", false, &["--settings", "off.json", "--settings", r#"{"outputStyle": "x"}"#], vec![MERGE_HOOKS_OFF.to_string()], true, ""),
+        ("other only", false, &["--settings", r#"{"outputStyle": "x"}"#], vec![MERGE_WARN.to_string()], false, ""),
+        (
+            "true and unreadable",
+            false,
+            &["--settings", "off.json", "--settings", "missing.json"],
+            vec![MERGE_HOOKS_OFF.to_string(), unreadable("missing.json")],
+            true,
+            "",
+        ),
+        ("member true", true, &["--settings", "off.json"], vec![MERGE_HOOKS_OFF.to_string()], true, ""),
+        ("string true", false, &["--settings", r#"{"disableAllHooks": "true"}"#], vec![MERGE_WARN.to_string(), bad_hooks("a string")], false, r#""true""#),
+        ("number", false, &["--settings", r#"{"disableAllHooks": 17}"#], vec![MERGE_WARN.to_string(), bad_hooks("a number")], false, "17"),
+        ("null", false, &["--settings", r#"{"disableAllHooks": null}"#], vec![MERGE_WARN.to_string(), bad_hooks("null")], false, ""),
+        (
+            "object",
+            false,
+            &["--settings", "{\"disableAllHooks\": {\"token\": \"s3cret\\ny\"}}"],
+            vec![MERGE_WARN.to_string(), bad_hooks("an object")],
+            false,
+            "s3cret",
+        ),
+        (
+            "true then string",
+            false,
+            &["--settings", "off.json", "--settings", r#"{"disableAllHooks": "s3cret"}"#],
+            vec![MERGE_HOOKS_OFF.to_string(), bad_hooks("a string")],
+            true,
+            "s3cret",
+        ),
+        (
+            "number and unreadable",
+            false,
+            &["--settings", r#"{"disableAllHooks": 17}"#, "--settings", "missing.json"],
+            vec![MERGE_WARN.to_string(), bad_hooks("a number"), unreadable("missing.json")],
+            false,
+            "17",
+        ),
+    ];
+    for (name, member, args, lines, off, hidden) in rows {
+        let mut c = if member { member_ctx(&fx, true) } else { ctx(&fx, "") };
+        c.args = strings(args);
+        let spec = cc(&fx).build(&c).unwrap();
+        let s = settings(&fx);
+        assert_eq!(spec.lines, lines, "{name}");
+        assert!(spec.lines.iter().all(|l| !l.contains('\n')), "{name}");
+        assert!(hidden.is_empty() || !spec.lines.iter().any(|l| l.contains(hidden)), "{name}: {:?}", spec.lines);
+        assert_eq!(s["disableAllHooks"], json!(off), "{name}");
+        assert_eq!(spec.lines.iter().any(|l| l.contains("hooks stay in force")), !off, "{name}");
+        assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{name}");
+        assert_eq!(s["includeCoAuthoredBy"], json!(false), "{name}");
+        assert_eq!(spec.log, ["degraded: --settings"], "{name}");
+    }
+}
+
+#[test] // FIX-23 (D3, D4), §8.5 Flags: kills: a non-boolean value from a file, an array or a long string passed on, not named by its type, or printed with its value; a non-boolean value that hides a later boolean; two values out of order or merged into one line; a member launch that passes a non-boolean value on
+fn non_boolean_disable_all_hooks_edges() {
+    let fx = fx();
+    std::fs::write(fx.cwd.join("off.json"), r#"{"disableAllHooks": true}"#).unwrap();
+    std::fs::write(fx.cwd.join("yes.json"), r#"{"disableAllHooks": "s3cret-yes"}"#).unwrap();
+    let big = "x".repeat(1 << 20);
+    let big_inline = format!("{{\"disableAllHooks\": \"{big}\"}}");
+    type Row<'a> = (&'a str, bool, Vec<&'a str>, Vec<String>, bool, &'a str);
+    let rows: [Row; 8] = [
+        ("file string", false, vec!["--settings", "yes.json"], vec![MERGE_WARN.to_string(), bad_hooks("a string")], false, "s3cret"),
+        ("array", false, vec!["--settings", r#"{"disableAllHooks": [true, "s3cret"]}"#], vec![MERGE_WARN.to_string(), bad_hooks("an array")], false, "s3cret"),
+        ("1 MB string", false, vec!["--settings", &big_inline], vec![MERGE_WARN.to_string(), bad_hooks("a string")], false, "xxxx"),
+        (
+            "number then true",
+            false,
+            vec!["--settings", r#"{"disableAllHooks": 17}"#, "--settings", "off.json"],
+            vec![MERGE_HOOKS_OFF.to_string(), bad_hooks("a number")],
+            true,
+            "17",
+        ),
+        (
+            "number then false",
+            false,
+            vec!["--settings", r#"{"disableAllHooks": 17}"#, "--settings", r#"{"disableAllHooks": false}"#],
+            vec![MERGE_WARN.to_string(), bad_hooks("a number")],
+            false,
+            "17",
+        ),
+        (
+            "true, number, false",
+            false,
+            vec!["--settings", "off.json", "--settings", r#"{"disableAllHooks": 17}"#, "--settings", r#"{"disableAllHooks": false}"#],
+            vec![MERGE_WARN.to_string(), bad_hooks("a number")],
+            false,
+            "17",
+        ),
+        (
+            "two non-boolean",
+            false,
+            vec!["--settings", r#"{"disableAllHooks": 17}"#, "--settings", r#"{"disableAllHooks": "s3cret-two"}"#],
+            vec![MERGE_WARN.to_string(), bad_hooks("a number"), bad_hooks("a string")],
+            false,
+            "s3cret",
+        ),
+        ("member number", true, vec!["--settings", r#"{"disableAllHooks": 17}"#], vec![MERGE_WARN.to_string(), bad_hooks("a number")], false, "17"),
+    ];
+    for (name, member, args, lines, off, hidden) in rows {
+        let mut c = if member { member_ctx(&fx, true) } else { ctx(&fx, "") };
+        c.args = strings(&args);
+        let spec = cc(&fx).build(&c).unwrap();
+        let s = settings(&fx);
+        assert!(spec.lines == lines, "{name}: {} lines", spec.lines.len());
+        assert!(spec.lines.iter().all(|l| !l.contains('\n')), "{name}");
+        assert!(!spec.lines.iter().any(|l| l.contains(hidden)), "{name}: a line holds the value");
+        assert_eq!(spec.lines.iter().filter(|l| l.contains("disableAllHooks value")).count(), lines.len() - 1, "{name}");
+        assert_eq!(s["disableAllHooks"], json!(off), "{name}");
+        assert_eq!(spec.lines[0] == MERGE_HOOKS_OFF, off, "{name}: the merge line and the merged file disagree");
+        assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{name}");
+    }
+}
+
+#[test] // FIX-23 (D4, D6), §8.5 Flags: kills: an unreadable value printed with a raw DEL, C1 control, line separator or bidi control, so one line can look like two or move the cursor; a non-boolean disableAllHooks printed with its value
+fn settings_lines_escape_every_control_character() {
+    let fx = fx();
+    let hooks = format!("{{\"disableAllHooks\": \"a{}b{}c{}d{}e{}f\"}}", RAW[0], RAW[1], RAW[2], RAW[3], RAW[4]);
+    let path = format!("m{}i{}s{}s{}x{}.json", RAW[0], RAW[1], RAW[2], RAW[3], RAW[4]);
+    std::fs::write(fx.cwd.join(&path), "not json").unwrap();
+    let mut c = ctx(&fx, "");
+    c.args = strings(&["--settings", &hooks, "--settings", &path]);
+    let spec = cc(&fx).build(&c).unwrap();
+    assert_eq!(
+        spec.lines,
+        [
+            MERGE_WARN.to_string(),
+            bad_hooks("a string"),
+            r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used"#.to_string(),
+        ]
+    );
+    for l in &spec.lines {
+        assert!(!l.contains('\n') && !l.contains(RAW), "{l:?}");
+    }
 }
 
 fn pf(file: PathBuf, key: &str) -> Result<(), Preflight> {
@@ -870,6 +1039,48 @@ fn passthrough_alias_turns_the_role_off() {
         let rg = hook_commands(&s, "PreToolUse").iter().any(|(_, c)| c.ends_with("hook role-guard"));
         assert_eq!(rg, guarded, "passthrough {passthrough}");
     }
+}
+
+#[cfg(unix)]
+#[test] // FIX-23 (D1, D2, D4), §8.5 Flags: kills: the merge line or the disableAllHooks line lost or changed between build and stderr
+fn disable_all_hooks_merge_line_reaches_stderr() {
+    for (user, want, not) in [
+        (r#"{"disableAllHooks": true}"#, MERGE_HOOKS_OFF.to_string(), "hooks stay in force"),
+        (r#"{"outputStyle": "x"}"#, MERGE_WARN.to_string(), "disableAllHooks"),
+        (r#"{"disableAllHooks": "s3cret"}"#, bad_hooks("a string"), "s3cret"),
+    ] {
+        let fx = fx();
+        script(&fx, "claude", "[ \"$1\" = --version ] && exit 0\nexit 0");
+        let o = launch_opts(&fx, &["--settings", user], false);
+        let err = stderr_of(&o);
+        assert_eq!(Launcher::run(&cc(&fx), o).code, 0, "{}", text_of(&err));
+        assert_eq!(text_of(&err).lines().filter(|l| *l == want).count(), 1, "{}", text_of(&err));
+        assert!(!text_of(&err).contains(not), "{}", text_of(&err));
+    }
+}
+
+#[cfg(unix)]
+#[test] // FIX-23 (D3, D6), §8.5 Flags: kills: settings lines on stderr in value order and not grouped as merge line, disableAllHooks lines, unreadable lines; a raw control or bidi character on stderr
+fn settings_lines_on_stderr_are_safe_and_in_order() {
+    let fx = fx();
+    script(&fx, "claude", "[ \"$1\" = --version ] && exit 0\nexit 0");
+    let hooks = format!("{{\"disableAllHooks\": \"a{}b{}c{}d{}e{}f\"}}", RAW[0], RAW[1], RAW[2], RAW[3], RAW[4]);
+    let path = format!("m{}i{}s{}s{}x{}.json", RAW[0], RAW[1], RAW[2], RAW[3], RAW[4]);
+    std::fs::write(fx.cwd.join(&path), "not json").unwrap();
+    let args = ["--settings", &path, "--settings", &hooks, "--settings", "missing.json", "--settings", r#"{"disableAllHooks": 2}"#, "--settings", r#"{"outputStyle": "x"}"#];
+    let o = launch_opts(&fx, &args, false);
+    let err = stderr_of(&o);
+    assert_eq!(Launcher::run(&cc(&fx), o).code, 0, "{}", text_of(&err));
+    let text = text_of(&err);
+    assert!(!text.contains(RAW), "{text:?}");
+    let lines: Vec<&str> = text.lines().collect();
+    let at = |want: &str| lines.iter().position(|l| *l == want).unwrap_or_else(|| panic!("{want:?} not in {text:?}"));
+    let merge = at(MERGE_WARN);
+    let bad1 = at(&bad_hooks("a string"));
+    let bad2 = at(&bad_hooks("a number"));
+    let path_line = at(r#"zygo: your --settings value "m\u{9b}i\u{85}s\u{7f}s\u{2028}x\u{61c}.json" could not be read as a JSON object and was not used"#);
+    let missing = at(&unreadable("missing.json"));
+    assert_eq!([merge + 1, merge + 2, merge + 3, merge + 4], [bad1, bad2, path_line, missing], "{text:?}");
 }
 
 #[cfg(unix)]

@@ -39,6 +39,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | DONE | judgment | 0921fb6; acceptance admin 21, up 45, up_all 7, workspace --no-run ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
 | W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | DONE | judgment | cc56f8d; acceptance down 26, drain 31, activity 34, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1-B3 and minor |
+| W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 
 ## Log
 
