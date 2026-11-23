@@ -110,6 +110,21 @@ CLI (W§12 additions):
 
 Slash forms: `/zygo:mail` (list) only, per O14; send and read stay tools, because their text is content.
 
+`mail_list` also returns the current member names, so an agent can find a member that joined after its session started.
+
+### 8a. Instructions to the agent
+
+**(author)** An agent uses mail with no prompt from a person. Three places carry the instructions:
+
+1. **Session text.** For a member with `[features] mail` on, the session text (§8.6) gains item 8, after the mechanics text, built at each main-loop `SessionStart` (so a resume gets the current names):
+   > Workspace mail: you are `<name>` in workspace `<workspace name>`. Members: `<name>, <name>, …`. Send with mail_send (to a name, or `all`); read with mail_read; mail_list shows unread mail and the current members. zygo tells you when mail arrives: before your turn ends, at your next prompt, or with a wake line. Do not poll or wait for mail: end your turn, and you will be woken.
+
+   A member with no name gets `you have no mail name; others reach you by pane <key>` in place of the first clause. The item is not appended to subagent prompts (unlike item 7): mail is between members, and a subagent reports to its member through its result.
+2. **Tool descriptions.** `mail_send`, `mail_read` and `mail_list` each end with the same rule: "Do not poll; zygo wakes you when mail arrives."
+3. **Delivery lines** (M§7.1-7.3) name the tool to call: `read them with mail_read`.
+
+The text holds names and tool names only, no message text (M-C2), and nothing about a context window (C7).
+
 ## 9. Interplay with phase 2
 
 - `down` does not wait for unread mail (it is durable). During `stopping`, `mail_send` returns `zygo: workspace is stopping` (AU86).
@@ -180,6 +195,7 @@ name = "elena"          # M§6
 9. A hook with an unreadable `mail/` exits 0 and changes no decision.
 10. The HUD shows `✉ 3` for a member with three unread messages, nothing at zero, and `99+` above 99; no message file is opened (M§9a).
 11. The HUD shows the member name for a named member outside a worktree, and shows it once when it equals the worktree name.
+12. With no prompt about mail, a member started from a loadout sends a message to another member by name when its task needs one, and ends its turn without a poll; the session text of a resumed member lists a member that joined while it was down (M§8a).
 
 ## 14. Premises the first build verifies
 
