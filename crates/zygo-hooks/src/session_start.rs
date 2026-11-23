@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use serde_json::json;
-use zygo_core::hook::{HookInput, HookOutput};
+use zygo_core::hook::{error_line, HookInput, HookOutput};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -50,8 +50,10 @@ fn output(agent: Agent, text: String) -> HookOutput {
 
 /// `run_in` with the member part (H1 D3, D11). The view is loaded as `run_in` loads it. A launch that is not a member
 /// gets the output or the error of `run_in` and no other effect. The Claude Code `SessionStart` entry of a member is
-/// `session-start --event member` (`input.cli_event == Some("member")`): a load error then writes one session-log
-/// line and prints nothing, and a `view.json` that is a link or not a regular file writes one session-log line and
+/// `session-start --event member` (`input.cli_event == Some("member")`): the session folder is checked first, and a
+/// folder that `workspace::check_folder` refuses gives one stderr line (the D2 text), the session text of `run_in`'s
+/// read with no note (nothing when that read fails) and no write (attempt-2 review round 1, F3); after the check a
+/// load error writes one session-log line and prints nothing, and a `view.json` that is a link or not a regular file writes one session-log line and
 /// gives the session text with no note and no other change. Without the flag (a launch that is not a member, or the
 /// OpenCode per-request call) a load error is `run_in`'s error and that check does not run. A session folder that
 /// `workspace::check_folder` refuses skips the member part. Else `workspace::session_start` runs; a Claude Code
@@ -64,6 +66,17 @@ pub fn run_member(
         return Ok(HookOutput::None);
     }
     let member = input.cli_event.as_deref() == Some("member");
+    if member {
+        if let Err(e) = workspace::check_folder(dir) {
+            // D2 (attempt-2 review round 1, F3): nothing is written into a refused folder; the session text of
+            // today's read is printed with no note, and the refusal is the one stderr line.
+            error_line(&format!("{e:#}"));
+            return Ok(match SessionView::load(dir) {
+                Ok(v) => output(v.agent, text_of(dir, &v)),
+                Err(_) => HookOutput::None,
+            });
+        }
+    }
     let v = match SessionView::load(dir) {
         Ok(v) => v,
         Err(e) if member => {

@@ -414,6 +414,58 @@ fn opencode_workspace_hook_through_the_binary() {
     assert_eq!(m.agent_session.as_deref(), Some("ses_A"));
 }
 
+/// D2, D3 (H1 attempt-2 review round 1, F3): a member `SessionStart` (`--event member`) whose session folder is a link
+/// or a relative path checks the folder first: one stderr line in the D2 form, the session text of today's read with
+/// no note, and nothing written into the folder, also when the view does not load.
+#[cfg(unix)]
+#[test]
+fn member_session_start_refuses_a_linked_or_relative_session_folder() {
+    use zygo_core::session_view::{ResumeNote, SessionView};
+    for case in ["link", "relative"] {
+        for view_ok in [true, false] {
+            let h = tempfile::tempdir().unwrap();
+            let (sd, _paths) = member_home(h.path(), zygo_core::Agent::ClaudeCode);
+            let mut v = SessionView::load(&sd).unwrap();
+            v.workspace.as_mut().unwrap().resume_note =
+                Some(ResumeNote { clean_stop: false, interrupted: vec![], closed_units: vec!["gh:7".into()], agent_session: None });
+            v.save(&sd).unwrap();
+            if !view_ok {
+                std::fs::write(sd.view_json(), "{").unwrap();
+            }
+            let view_before = std::fs::read(sd.view_json()).unwrap();
+            std::os::unix::fs::symlink(&sd.root, h.path().join("l")).unwrap();
+            let (var, line) = match case {
+                "link" => (h.path().join("l"), format!("zygo hook: {}: session folder is a link\n", h.path().join("l").display())),
+                _ => (std::path::PathBuf::from("s"), "zygo hook: ZYGO_SESSION_DIR is not an absolute path: s\n".to_string()),
+            };
+            let input = hook_fixture("SessionStart-main");
+            let want = if view_ok {
+                let i = zygo_core::hook::HookInput::parse(zygo_core::Agent::ClaudeCode, &input).unwrap();
+                zygo_hooks::session_start::run_in(&i, &sd).unwrap().to_stdout()
+            } else {
+                String::new()
+            };
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+            common::scratch_home(&mut cmd, h.path());
+            cmd.args(["hook", "session-start", "--event", "member"])
+                .current_dir(h.path())
+                .env("ZYGO_SESSION_DIR", &var)
+                .env_remove("ZYGO_AGENT");
+            let o = run_bounded(&mut cmd, &input);
+            let tag = format!("{case}, view ok {view_ok}");
+            assert_eq!(o.status.code(), Some(0), "{tag}");
+            assert_eq!(String::from_utf8_lossy(&o.stderr), line, "{tag}");
+            assert_eq!(String::from_utf8_lossy(&o.stdout), want, "{tag}");
+            if view_ok {
+                assert!(!want.contains("gh:7"), "{tag}: the note was printed");
+            }
+            assert_eq!(std::fs::read(sd.view_json()).unwrap(), view_before, "{tag}");
+            assert!(!sd.log().exists(), "{tag}");
+            assert!(!sd.activity_json().exists(), "{tag}");
+        }
+    }
+}
+
 /// `cmd` with `stdin` under a 5 s bound: a hook that waits fails the test instead of hanging it.
 #[cfg(unix)]
 fn run_bounded(cmd: &mut Command, stdin: &[u8]) -> std::process::Output {
