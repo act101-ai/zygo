@@ -56,6 +56,7 @@ zygo <new> is available (you have <old>). Update now? [y/N/s]
 ```
 
 - **y:** Run the existing `zygo update` path (checksum, atomic replace). Print `updated to <new>; relaunch zygo`. Exit 0. Do not start the agent. Reason: hooks run the absolute binary path (crates/zygo-launch/src/claude_code.rs:38), so a running session would mix versions.
+- In `zygo ws run` (a workspace pane), `y` does not exit: after the relaunch line, `ws run` relaunches itself from the updated binary with the same arguments, so the pane starts its member as before (W§8.2 step 1a).
 - **N (default):** The launch continues. Ask again after 24 h.
 - **s:** Skip this version. Do not ask again until a newer release exists.
 
@@ -124,3 +125,4 @@ All cited line numbers were verified against the repo on 2026-11-21 (branch feat
 | 2026-11-21 | When the check is skipped | author's call | The intent "workspace panes never ask" was false for a member started by hand in a pane: `up` and `ws run` remove `ZYGO_SESSION` from the pane environment (W§18 #17), but the pane keeps `ZYGO_WORKSPACE` (AU93). |
 | 2026-11-21 | Acceptance #5 | author's call | Matches the `ZYGO_WORKSPACE` skip added to "When the check is skipped". |
 | 2026-11-21 | When the check is skipped (`ZYGO_WORKSPACE` bullet) | author's call | `ws run` now passes through the start check, so a test can prove that the `ZYGO_WORKSPACE` skip is what keeps panes from asking. |
+| 2026-11-23 | Prompt (`ws run` bullet after **y**) | author's call (M5 plan, controller decision 2) | In a workspace pane an exit after the install would leave the pane without its member; `ws run` relaunches itself instead (W§8.2 step 1a). |
