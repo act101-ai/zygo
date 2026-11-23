@@ -16,7 +16,7 @@ pub struct VerbSpec {
     pub scope: Scope,
 }
 
-static SPECS: [VerbSpec; 14] = [
+static SPECS: [VerbSpec; 17] = [
     VerbSpec { name: "help", args: "[<verb>]", summary: "Every verb with its arguments and current value; with a verb, its details", scope: Scope::None },
     VerbSpec { name: "status", args: "", summary: "As `zygo status`", scope: Scope::None },
     VerbSpec { name: "usage", args: "", summary: "The session's savings", scope: Scope::None },
@@ -31,6 +31,17 @@ static SPECS: [VerbSpec; 14] = [
     VerbSpec { name: "profile", args: "[<name>|none]", summary: "Default profile", scope: Scope::NextLaunch },
     VerbSpec { name: "compact-tool", args: "on|off", summary: "The `compact` MCP tool", scope: Scope::NextLaunch },
     VerbSpec { name: "statusline", args: "[compact|verbose]", summary: "Status line style", scope: Scope::SessionSave },
+    VerbSpec {
+        name: "down",
+        args: "[--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]",
+        summary: "zygo down: stop the workspace of this folder or of <name>, in the foreground (detached from an agent or from a pane of that workspace). /zygo:down takes only --now and stops the workspace of this session, detached",
+        scope: Scope::None,
+    },
+    VerbSpec { name: "ls", args: "", summary: "One line per workspace with its state", scope: Scope::None },
+    VerbSpec { name: "workspace", args: "", summary: "Status of this session's or this folder's workspace", scope: Scope::None },
 ];
 
 pub static VERB_SPECS: &[VerbSpec] = &SPECS;
+
+/// The arguments of `/zygo:down` (W§12, OP11): only `--now`. The `down` spec's `args` are those of `zygo down`.
+pub const DOWN_SLASH_ARGS: &str = "[--now]";

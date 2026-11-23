@@ -1,14 +1,18 @@
-//! `zygo compact <tokens|on|off>` and `/zygo:compact` (§10.2.4, §10.2.5): one handler for both.
+//! `zygo compact <tokens|on|off>` and `/zygo:compact` (§10.2.4, §10.2.5): one handler for both. After the proxy took
+//! the change, the compaction override is mirrored into the member record of the session folder of the id, when that
+//! session is a workspace member (AU32, AU105).
 
 use std::str::FromStr;
 use std::time::Duration;
 
+use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
 use zygo_plugins::check::esc;
 use zygo_proxy::client::{ClientError, SessionClient, WindowArg};
 use zygo_proxy::session::{WINDOW_MAX, WINDOW_MIN};
+use zygo_workspace::state::{valid_session_id, CompactOverride};
 
-use super::verbs::VerbCtx;
+use super::verbs::{mirror, Mirror, VerbCtx, NOT_SAVED};
 use super::UsageError;
 
 /// A session-API failure; `Unreachable` exits 12, any other 1. `{e}` holds the whole reason (no `source()`).
@@ -84,15 +88,34 @@ pub fn run(ctx: &VerbCtx, args: &[String], env_session: Option<&str>, agent: Opt
     let Some(id) = session else {
         return Err(UsageError("compact failed: no session; pass --session <id> or run it inside a zygo session".into()).into());
     };
-    let client = SessionClient::from_session_dir(&ctx.paths.sessions_dir.join(id))
+    // Before any read: an id that is not a folder name inside the sessions folder names no session (AU105).
+    if !valid_session_id(id) {
+        return Err(UsageError(format!("compact failed: invalid session id {}", esc(id))).into());
+    }
+    let dir = SessionDir::new(ctx.paths.sessions_dir.join(id));
+    let client = SessionClient::from_session_dir(&dir.root)
         .map_err(CompactFailed)?
         .timeout(client_timeout(ctx.slash));
+    let value = match &change {
+        Change::Set(w) => CompactOverride::Set(window_text(*w)),
+        Change::Clear => CompactOverride::Cleared,
+    };
     match change {
         Change::Set(w) => client.set_compact(w),
         Change::Clear => client.clear_compact(),
     }
     .map_err(CompactFailed)?;
-    Ok(format!("compact {arg} for this session"))
+    // The record of `<sessions dir>/<id>`, the folder the client used, never `ctx.session_dir` (AU105).
+    let note = if mirror(ctx, &dir, Mirror::Compact(value)).is_err() { NOT_SAVED } else { "" };
+    Ok(format!("compact {arg} for this session{note}"))
+}
+
+/// The window of a `set` in `member.compact` (AU105): the token count as digits, or `off`.
+fn window_text(w: WindowArg) -> String {
+    match w {
+        WindowArg::Tokens(n) => n.to_string(),
+        WindowArg::Off => "off".to_string(),
+    }
 }
 
 /// Reads `ZYGO_SESSION` and `ZYGO_AGENT`.

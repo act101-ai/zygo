@@ -23,6 +23,9 @@ mod common;
 
 const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 const SECRET: &str = "refused: secret redaction cannot be turned off in a session";
+const OP5: &str = "workspaces need tmux; run zygo in WSL";
+/// W§9.3 step 1, OP11: /zygo:down names the marker's workspace and zygo down the cwd's; down has no SAME row.
+const NOT_IN_SAME: &[&str] = &["down"];
 
 /// The `Paths` that `Paths::from_env` gives for `HOME=LOCALAPPDATA=APPDATA=home`, `ZYGO_CONFIG=home/config.toml`.
 fn paths(home: &Path) -> Paths {
@@ -305,6 +308,8 @@ const SAME: &[(&str, &str, bool, i32, &str, bool)] = &[
     ("statusline", "verbose", false, 2, "zygo statusline: not in a zygo session; add --save to change user config", false),
     ("statusline", "verbose --save", false, 0, "statusline verbose saved to user config", true),
     ("statusline", "wide", true, 2, "zygo statusline: usage: statusline [compact|verbose]", false),
+    ("ls", "", false, if cfg!(windows) { 2 } else { 0 }, if cfg!(windows) { OP5 } else { "no workspaces" }, false),
+    ("workspace", "", false, if cfg!(windows) { 2 } else { 1 }, if cfg!(windows) { OP5 } else { "no workspace for this session or folder" }, false),
 ];
 
 /// The work value of a reply: the `work:` line of `status`, else the whole reply (a `work` row).
@@ -329,9 +334,10 @@ fn without_work(verb: &str, reply: &str) -> String {
 
 #[test]
 fn every_verb_has_a_row_and_a_cli_command() {
-    let rows: BTreeSet<&str> = SAME.iter().map(|r| r.0).collect();
+    let rows: BTreeSet<&str> = SAME.iter().map(|r| r.0).chain(NOT_IN_SAME.iter().copied()).collect();
     let verbs: BTreeSet<&str> = VERBS.iter().map(|v| v.spec.name).collect();
     assert_eq!(rows, verbs, "SAME and VERBS name different verbs");
+    assert!(SAME.iter().all(|r| !NOT_IN_SAME.contains(&r.0)), "a verb of NOT_IN_SAME has a SAME row");
     for name in &verbs {
         let h = tempfile::tempdir().unwrap();
         let mut c = child(env!("CARGO_BIN_EXE_zygo"));
@@ -492,16 +498,47 @@ fn help_lists_every_embedded_command_and_each_works() {
     for line in ["frob", "frob x y", "nonesuch"] {
         assert_eq!(a.slash(line), help, "{line}");
     }
-    for verb in &verbs {
-        let &(_, args, ..) = SAME.iter().find(|r| r.0 == verb && r.3 == 0).unwrap_or_else(|| panic!("{verb}: no working row"));
+    for verb in verbs.iter().filter(|v| !NOT_IN_SAME.contains(&v.as_str())) {
+        let row = SAME.iter().find(|r| r.0 == verb && r.3 == 0).or_else(|| SAME.iter().find(|r| r.0 == verb)).unwrap();
+        let args = row.1;
         let line = format!("{verb} {args}");
         let line = line.trim_end();
         let slash = a.slash(line);
         let (code, _, err) = b.cli(line);
-        assert_eq!(code, 0, "{line}: {err}");
+        assert_eq!(code, row.3, "{line}: {err}");
         // `help` is the one verb whose own reply is the help text; any other verb that answers with it was not dispatched.
         assert_eq!(slash.starts_with("zygo verbs: "), verb == "help", "{line}: {slash:?}");
     }
+}
+
+/// OP11, W§12: `down`, `ls`, `workspace` are slash verbs; `up`, `attach`, `loadout`, `ws` are not, so their lines
+/// block with the `help` text (base §20 #17c). `/zygo:down` with no marker replies `this session is not in a
+/// workspace` (W§9.3 step 1) and changes nothing. `/zygo:help down` gives the text of `zygo help down`.
+#[test]
+fn workspace_slash_verbs_are_down_ls_and_workspace() {
+    let names: BTreeSet<&str> = VERBS.iter().map(|v| v.spec.name).collect();
+    for n in ["down", "ls", "workspace"] {
+        assert!(names.contains(n), "{n} is not a slash verb");
+    }
+    for n in ["up", "attach", "loadout", "ws"] {
+        assert!(!names.contains(n), "{n} is a slash verb");
+    }
+    let a = Arm::new(true, "", None);
+    let before = a.effect();
+    let none = if cfg!(windows) { OP5 } else { "this session is not in a workspace" };
+    assert_eq!(a.slash("down"), none);
+    assert_eq!(a.slash("down --now"), none);
+    assert_eq!(a.slash("down --bogus"), if cfg!(windows) { OP5 } else { "usage: /zygo:down [--now]" });
+    let (code, cli_help, _) = a.cli("help down");
+    assert_eq!(code, 0);
+    assert_eq!(a.slash("help down"), cli_help.trim_end());
+    assert!(cli_help.starts_with("down [--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]\n"), "{cli_help}");
+    let help = a.slash("help");
+    assert!(help.lines().any(|l| l.starts_with("down [--now] [--timeout <dur>] [--wait] [--all] [--] [<name>] — zygo down: ")), "{help}");
+    for line in ["up", "up --no-attach", "attach", "loadout list", "ws forget x"] {
+        assert_eq!(a.slash(line), help, "{line}");
+    }
+    assert_eq!(a.effect(), before);
 }
 
 /// §17.1 N30 and N50 notes: `plugins sync` is not a slash verb, and `marketplace add|update` fetch, so slash replies with the shell command

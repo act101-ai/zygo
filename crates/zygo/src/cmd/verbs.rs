@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use zygo_config::keys::default_store;
@@ -9,6 +11,10 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::verbs::{VerbSpec, VERB_SPECS};
 use zygo_hooks::statusline::render::Style;
+use zygo_hooks::workspace::{read_session_file, record_of, start_snapshot_child, verb_member};
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::snapshot;
+use zygo_workspace::state::{CompactOverride, Store};
 use zygo_plugins::check::esc;
 use zygo_plugins::select::set_user_key;
 use zygo_proxy::client::{ClientError, SessionClient};
@@ -48,6 +54,9 @@ pub static VERBS: &[Verb] = &[
     Verb { spec: &VERB_SPECS[11], handler: super::profile::verb },
     Verb { spec: &VERB_SPECS[12], handler: super::compact_tool::verb },
     Verb { spec: &VERB_SPECS[13], handler: super::statusline::verb },
+    Verb { spec: &VERB_SPECS[14], handler: super::down::verb },
+    Verb { spec: &VERB_SPECS[15], handler: super::ls::verb },
+    Verb { spec: &VERB_SPECS[16], handler: super::workspace::verb },
 ];
 
 /// One session setting (§17.1, §6.1 layer 7).
@@ -172,8 +181,88 @@ fn restore(dir: &SessionDir, old: Option<Vec<u8>>) -> std::io::Result<()> {
     res
 }
 
+/// The value that `mirror` writes into the member record (AU105).
+pub(crate) enum Mirror {
+    /// `member.overrides`: the whole `overrides.json`, read under the state lock.
+    Overrides,
+    /// `member.compact`.
+    Compact(CompactOverride),
+}
+
+/// The text added at the end of a reply or error text when the mirror did not write (AU105).
+pub(crate) const NOT_SAVED: &str = "; not saved for the workspace";
+
+/// The time the slash form keeps for its reply and the process exit after the mirror (inside the 4.5 s bound).
+pub(crate) const SLASH_MARGIN: Duration = Duration::from_millis(500);
+
+/// The lock wait of the mirror: `HOOK_WAIT` for the CLI form, and for the slash form also at most the time left less
+/// `SLASH_MARGIN`; `None` when no time is left (the mirror is skipped).
+pub(crate) fn lock_bound(slash: bool, left: Option<Duration>) -> Option<Duration> {
+    match (slash, left) {
+        (false, _) | (true, None) => Some(snapshot::HOOK_WAIT),
+        (true, Some(left)) => {
+            let b = left.saturating_sub(SLASH_MARGIN).min(snapshot::HOOK_WAIT);
+            (!b.is_zero()).then_some(b)
+        }
+    }
+}
+
+/// The override mirror (OP12, AU105): writes `value` into the member record of the session folder `dir` when that
+/// session is a workspace member. The marker is read by the hook rule (`verb_member`; the slash form first needs
+/// `ZYGO_WORKSPACE`); a session that is not a member gets `Ok(())` with nothing read or written (W-C6, W§18 #89). The
+/// write waits for the state lock at most `lock_bound`, changes only a state that exists (`update_existing`) and only
+/// a record of this zygo session (`record_of`). After a write, and only then, the `snapshot.pending` check of W§7.3
+/// runs: inline for the CLI form; for the slash form, which runs inside `zygo hook prompt`, as the detached `zygo ws
+/// snapshot` child, as the hooks do. An `Err` means the record was not written.
+pub(crate) fn mirror(ctx: &VerbCtx, dir: &SessionDir, value: Mirror) -> anyhow::Result<()> {
+    let env = |k: &str| std::env::var_os(k);
+    let gate = ctx.slash.then_some(&env as &dyn Fn(&str) -> Option<OsString>);
+    let Some(m) = verb_member(dir, &ctx.paths, gate) else { return Ok(()) };
+    let Some(bound) = lock_bound(ctx.slash, zygo_hooks::prompt::verb_time_left()) else {
+        return Err(anyhow!("no time left in the hook bound"));
+    };
+    let store = Store::open(&ctx.paths, &m.ws_id);
+    let written = store.update_existing(bound, &mut |ws| {
+        let Some(rec) = ws.members.get_mut(&m.pane) else {
+            return Err(anyhow!("no member record for pane {}", m.pane));
+        };
+        if !record_of(rec, &m.session) {
+            return Err(anyhow!("member record of pane {} belongs to another session", m.pane));
+        }
+        match &value {
+            Mirror::Overrides => {
+                // Under the state lock: no link is followed and no FIFO is waited on (W§7.3, W-C7; FIX-22 rule).
+                let path = dir.overrides_json();
+                let Some(bytes) = read_session_file(&path)? else {
+                    return Err(anyhow!("{}: missing", path.display()));
+                };
+                rec.overrides = Some(serde_json::from_slice(&bytes)?);
+            }
+            Mirror::Compact(c) => rec.compact = Some(c.clone()),
+        }
+        Ok(())
+    });
+    let written = match written {
+        Ok(Some(ws)) => ws,
+        Ok(None) => return Err(anyhow!("no workspace with id {}", m.ws_id)),
+        Err(e) => return Err(anyhow!("{e}")),
+    };
+    if ctx.slash {
+        if let Ok(zygo) = std::env::current_exe()
+            && let Some(force) = snapshot::take_pending(&ctx.paths, &m.ws_id)
+        {
+            start_snapshot_child(&ctx.paths, &m.ws_id, &zygo, force, &|t| store.log_error(&format!("verb mirror: {t}")));
+        }
+    } else {
+        let mux = Tmux::new(super::tmux_program(), written.tmux_socket.clone());
+        let _ = snapshot::after_write(&ctx.paths, &mux, &m.ws_id, snapshot::HOOK_WAIT);
+    }
+    Ok(())
+}
+
 /// D1: the one change path of the session setting verbs; `m` is the config without session overrides.
-/// Order: O2, the limits of the new setting, `overrides.json` (and the PATCH for `redaction content`), user config.
+/// Order: O2, the limits of the new setting, `overrides.json` (and the PATCH for `redaction content`), the mirror of
+/// `overrides.json` into the member record once the outcome is final (AU105), user config.
 pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Result<String> {
     let SessionChange { verb, words, setting } = c;
     if ctx.session_dir.is_none() && !ctx.save {
@@ -186,11 +275,13 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
         setting.save(&ctx.paths.config_file).map_err(|e| anyhow!("zygo {verb}: saving to user config failed: {e}"))?;
         return Ok(format!("{verb} {words} saved to user config"));
     };
-    // F6: a file that exists but cannot be read stops the verb before any change.
-    let old = match std::fs::read(dir.overrides_json()) {
-        Ok(b) => Some(b),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(anyhow!("zygo {verb}: cannot read overrides.json: {e}")),
+    // F6: a file that exists but cannot be read stops the verb before any change. It is read by the session-file rule
+    // (`read_session_file`): a link, a FIFO or another entry that is not a regular file is such a file, and no read
+    // waits on it (M4 review round 2). A missing file is `None`. The error names the file's path once:
+    // `zygo <verb>: cannot read <path>: <reason>`.
+    let old = match read_session_file(&dir.overrides_json()) {
+        Ok(b) => b,
+        Err(e) => return Err(anyhow!("zygo {verb}: cannot read {e:#}")),
     };
     // The client is built before any write: a session dir it cannot use changes nothing.
     let client = match setting {
@@ -201,9 +292,11 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
         ),
         _ => None,
     };
-    let mut next = Overrides::load(dir);
+    // From the bytes read above, by the parse rule of `Overrides::load`: the file is opened once (M4 review round 3).
+    let mut next = Overrides::parse(old.as_deref());
     setting.apply(&mut next);
     next.save(dir)?;
+    let mut lost: Option<ClientError> = None;
     if let (Some(client), Setting::RedactionContent(b)) = (client, &setting) {
         match client.set_settings(&SessionSettings { redaction_content: Some(*b) }) {
             Ok(_) => {}
@@ -214,15 +307,20 @@ pub fn set_session(ctx: &VerbCtx, m: &Merged, c: SessionChange) -> anyhow::Resul
                     Err(r) => anyhow!("redaction failed: {e}; restoring overrides.json failed: {r}"),
                 });
             }
-            Err(e) => return Err(anyhow!("redaction failed: {e}; the session may already use the new setting")),
+            // A lost PATCH keeps the new `overrides.json`, so it is mirrored (AU105).
+            Err(e) => lost = Some(e),
         }
+    }
+    let note = if mirror(ctx, dir, Mirror::Overrides).is_err() { NOT_SAVED } else { "" };
+    if let Some(e) = lost {
+        return Err(anyhow!("redaction failed: {e}; the session may already use the new setting{note}"));
     }
     let done = format!("{verb} {words} for this session");
     if !ctx.save {
-        return Ok(done);
+        return Ok(format!("{done}{note}"));
     }
-    setting.save(&ctx.paths.config_file).map_err(|e| anyhow!("{done}; saving to user config failed: {e}"))?;
-    Ok(format!("{done}; saved to user config"))
+    setting.save(&ctx.paths.config_file).map_err(|e| anyhow!("{done}; saving to user config failed: {e}{note}"))?;
+    Ok(format!("{done}; saved to user config{note}"))
 }
 
 #[cfg(test)]
@@ -281,6 +379,84 @@ pub(crate) mod tests {
 
     fn m0(c: &VerbCtx) -> Merged {
         base(c, "x", None, None).unwrap()
+    }
+
+    /// M4, decision 2026-11-23: the slash form's lock wait fits inside the hook bound; no time left skips the mirror.
+    #[test]
+    fn lock_bound_fits_the_hook_bound() {
+        use std::time::Duration;
+        let ms = Duration::from_millis;
+        assert_eq!(lock_bound(false, None), Some(ms(1000)));
+        assert_eq!(lock_bound(false, Some(ms(0))), Some(ms(1000)));
+        assert_eq!(lock_bound(true, None), Some(ms(1000)));
+        assert_eq!(lock_bound(true, Some(ms(4000))), Some(ms(1000)));
+        assert_eq!(lock_bound(true, Some(ms(1200))), Some(ms(700)));
+        assert_eq!(lock_bound(true, Some(ms(500))), None);
+        assert_eq!(lock_bound(true, Some(ms(0))), None);
+    }
+
+    /// M4 review F2a: the slash mirror takes its lock wait from the deadline of the prompt hook (`verb_time_left`),
+    /// not the 1 s `HOOK_WAIT`. The slash gate reads `ZYGO_WORKSPACE` from the process environment, so the case runs
+    /// in a child process that has it; this process changes no variable.
+    #[cfg(unix)]
+    #[test]
+    fn slash_mirror_waits_only_within_the_hook_deadline() {
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cmd::verbs::tests::slash_mirror_with_the_lock_held", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("ZYGO_WORKSPACE", "0123456789abcdef")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(o.status.success(), "{text}");
+        assert!(text.contains("test result: ok. 1 passed"), "{text}");
+    }
+
+    /// The child of `slash_mirror_waits_only_within_the_hook_deadline`: a member whose `lock` the test holds runs a
+    /// slash setting verb with 700 ms left in the hook bound. The lock wait is 700 ms less `SLASH_MARGIN`, so the verb
+    /// replies within 900 ms; with the `HOOK_WAIT` bound (1 s) it could not.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "child process of slash_mirror_waits_only_within_the_hook_deadline"]
+    fn slash_mirror_with_the_lock_held() {
+        use std::time::{Duration, Instant};
+        use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
+        use zygo_workspace::state::{MemberRecord, MemberState, Phase};
+        const WS: &str = "0123456789abcdef";
+        const PANE: &str = "kaaaaaaaa";
+        const SID: &str = "01JTESTSESSIONAAAAAAAAAAAA";
+        assert_eq!(std::env::var("ZYGO_WORKSPACE").as_deref(), Ok(WS), "run by slash_mirror_waits_only_within_the_hook_deadline");
+        let d = TempDir::new().unwrap();
+        let dir = sd(d.path());
+        let member = Member { ws_id: WS.into(), pane: PANE.into(), ..Default::default() };
+        SessionView { session: SID.into(), workspace: Some(ViewWorkspace { member, ..Default::default() }), ..Default::default() }
+            .save(&SessionDir::new(dir.clone()))
+            .unwrap();
+        let mut c = ctx(d.path(), Some(&dir));
+        c.slash = true;
+        let store = Store::open(&c.paths, WS);
+        let rec = MemberRecord { zygo_session: Some(SID.into()), state: MemberState::Running, ..MemberRecord::new(zygo_core::Agent::ClaudeCode) };
+        store
+            .update(Duration::from_secs(5), &mut |w| {
+                w.name = "app".into();
+                w.tmux_session = "zygo-app".into();
+                w.common_dir = "/srv/app/.git".into();
+                w.main_root = "/srv/app".into();
+                w.loadout = "solo".into();
+                w.phase = Phase::Up;
+                w.members = BTreeMap::from([(PANE.to_string(), rec.clone())]);
+                Ok(())
+            })
+            .unwrap();
+        let lock = std::fs::OpenOptions::new().read(true).write(true).open(store.dir().join("lock")).unwrap();
+        fs4::FileExt::try_lock(&lock).unwrap();
+        let t0 = Instant::now();
+        let reply = zygo_hooks::prompt::with_verb_deadline(t0 + Duration::from_millis(700), || set_session(&c, &m0(&c), units_off()));
+        let took = t0.elapsed();
+        drop(lock);
+        assert!(took < Duration::from_millis(900), "{took:?}");
+        assert_eq!(reply.unwrap(), "units off for this session; not saved for the workspace");
+        assert_eq!(store.read().unwrap().unwrap().members[PANE], rec);
     }
 
     #[test]
@@ -461,7 +637,11 @@ pub(crate) mod tests {
         let c = VerbCtx { save: true, ..ctx(d.path(), Some(&s)) };
         for (verb, change) in [("units", units_off()), ("redaction", redaction_off())] {
             let e = err_text(set_session(&c, &m0(&c), change));
-            assert!(e.starts_with(&format!("zygo {verb}: cannot read overrides.json: ")), "{e}");
+            // A folder opens for reading on unix, so the handle check refuses it; elsewhere the open fails first.
+            #[cfg(unix)]
+            assert_eq!(e, format!("zygo {verb}: cannot read {}: is not a regular file; not read", s.join("overrides.json").display()));
+            #[cfg(not(unix))]
+            assert!(e.starts_with(&format!("zygo {verb}: cannot read {}: ", s.join("overrides.json").display())), "{e}");
             assert!(s.join("overrides.json").is_dir(), "{verb}");
             assert!(!d.path().join("config.toml").exists(), "{verb}");
         }

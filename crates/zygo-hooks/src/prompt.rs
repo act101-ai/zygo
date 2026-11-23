@@ -1,5 +1,6 @@
 //! `zygo hook prompt` (`UserPromptSubmit`): the `/zygo:<verb>` dispatcher (§17.1, §10.2.4).
 
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::LazyLock;
@@ -13,6 +14,10 @@ use zygo_core::verbs::VERB_SPECS;
 
 /// The wait for the verb; the hook itself ends within 5 s (§17.1).
 pub const HOOK_DEADLINE: Duration = Duration::from_millis(4500);
+
+/// Verbs whose shell form can name another workspace than the slash form (OP11): a slow slash form of one of them does
+/// not send the user to the shell (decision 2026-11-23).
+const NO_SHELL_FORM: [&str; 2] = ["down", "workspace"];
 
 static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/zygo:([a-z][a-z0-9-]*)(?:\s+(.*))?$").expect("valid regex"));
 
@@ -40,6 +45,31 @@ pub fn run_in_env(
         }
         r => r,
     }
+}
+
+thread_local! {
+    /// The deadline of the `run_with` call whose verb runs on this thread; `None` on every other thread.
+    static VERB_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// The time left before the deadline of the `run_with` call that runs the current verb; `None` on any thread that is
+/// not a verb thread of `run_with` (the CLI form). `run_with` runs the dispatcher inside `with_verb_deadline` with its
+/// start plus `deadline`, in a thread-local of the verb thread, so parallel `run_with` calls do not mix.
+pub fn verb_time_left() -> Option<Duration> {
+    VERB_DEADLINE.with(Cell::get).map(|t| t.saturating_duration_since(Instant::now()))
+}
+
+/// Runs `f` with `deadline` as the verb deadline of this thread (`verb_time_left`), then puts back the value that the
+/// thread had before, also when `f` panics. `run_with` runs each verb through it.
+pub fn with_verb_deadline<R>(deadline: Instant, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Instant>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            VERB_DEADLINE.with(|d| d.set(self.0));
+        }
+    }
+    let _restore = Restore(VERB_DEADLINE.with(|d| d.replace(Some(deadline))));
+    f()
 }
 
 /// A `/zygo:<verb>` line, trailing whitespace trimmed: the line test of `run_with` (§17.1).
@@ -86,13 +116,22 @@ pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Du
     };
     let (tx, rx) = mpsc::channel();
     let (v, a) = (verb.clone(), args.clone());
+    let until = start.checked_add(deadline);
     // The worker is not joined: on a timeout it ends with the process.
     std::thread::spawn(move || {
-        let _ = tx.send(dispatch(&v, &a));
+        // `None`: the deadline is past the end of the clock, so the verb has no deadline to keep.
+        let reply = match until {
+            Some(t) => with_verb_deadline(t, || dispatch(&v, &a)),
+            None => dispatch(&v, &a),
+        };
+        let _ = tx.send(reply);
     });
     let text = match rx.recv_timeout(deadline.saturating_sub(start.elapsed())) {
         Ok(Ok(reply)) => reply,
         Ok(Err(e)) => zygo_config::display::error_text(&e),
+        Err(RecvTimeoutError::Timeout) if NO_SHELL_FORM.contains(&verb.as_str()) => format!(
+            "{verb} did not finish within the hook bound and may still complete; do not run zygo {verb} in a shell, where it can name another workspace"
+        ),
         Err(RecvTimeoutError::Timeout) if args.is_empty() => format!("run in your shell: zygo {verb}"),
         Err(RecvTimeoutError::Timeout) => format!("run in your shell: zygo {verb} {}", zygo_core::esc(&args)),
         // The verb thread died (a panic): an internal error, so the prompt passes (C6; H1 round 4 T1).
@@ -281,6 +320,96 @@ mod tests {
         *GATE.0.lock().unwrap() = true;
         GATE.1.notify_all();
         assert_eq!(json_of(out), block("run in your shell: zygo compact 600k"));
+    }
+
+    /// M4: the verb thread sees the time left of the `run_with` call that runs it.
+    #[test]
+    fn verb_sees_the_time_left() {
+        static LEFT: Mutex<Option<Duration>> = Mutex::new(None);
+        fn d(_: &str, _: &str) -> anyhow::Result<String> {
+            *LEFT.lock().unwrap() = verb_time_left();
+            Ok("x".into())
+        }
+        run_with(&input(Some("/zygo:status")), Some(d), HOOK_DEADLINE).unwrap();
+        let left = LEFT.lock().unwrap().expect("a deadline");
+        assert!(left <= HOOK_DEADLINE && left > HOOK_DEADLINE - Duration::from_millis(1000), "{left:?}");
+    }
+
+    /// The verb deadline of this thread as `with_verb_deadline` left it.
+    fn deadline() -> Option<Instant> {
+        VERB_DEADLINE.with(Cell::get)
+    }
+
+    /// M4 review round 3: after `with_verb_deadline` returns, the thread has its earlier value back: no deadline after
+    /// the outer call, and the outer deadline after a nested call.
+    #[test]
+    fn with_verb_deadline_restores_the_earlier_value() {
+        let (a, b) = (Instant::now() + Duration::from_secs(60), Instant::now() + Duration::from_secs(30));
+        assert_eq!(deadline(), None);
+        with_verb_deadline(a, || {
+            assert_eq!(deadline(), Some(a));
+            with_verb_deadline(b, || assert_eq!(deadline(), Some(b)));
+            assert_eq!(deadline(), Some(a), "the nested call did not restore the outer deadline");
+        });
+        assert_eq!(deadline(), None);
+    }
+
+    /// M4 review round 3: a panic in `f` still restores the earlier value.
+    #[test]
+    fn with_verb_deadline_restores_after_a_panic() {
+        let (a, b) = (Instant::now() + Duration::from_secs(60), Instant::now() + Duration::from_secs(30));
+        with_verb_deadline(a, || {
+            let r = std::panic::catch_unwind(|| with_verb_deadline(b, || panic!("verb panicked")));
+            assert!(r.is_err());
+            assert_eq!(deadline(), Some(a), "the panic left the inner deadline or none");
+        });
+        assert_eq!(deadline(), None);
+    }
+
+    /// M4 review round 3: the deadline belongs to one thread: another thread sees none, and its own nested calls
+    /// restore its own values.
+    #[test]
+    fn with_verb_deadline_is_per_thread() {
+        let (a, b, c) = (
+            Instant::now() + Duration::from_secs(60),
+            Instant::now() + Duration::from_secs(30),
+            Instant::now() + Duration::from_secs(10),
+        );
+        with_verb_deadline(a, || {
+            std::thread::spawn(move || {
+                assert_eq!(verb_time_left(), None, "another thread sees this thread's deadline");
+                with_verb_deadline(b, || {
+                    with_verb_deadline(c, || assert_eq!(deadline(), Some(c)));
+                    assert_eq!(deadline(), Some(b), "the other thread lost its own deadline");
+                });
+            })
+            .join()
+            .unwrap();
+            assert_eq!(deadline(), Some(a));
+        });
+    }
+
+    /// Decision 2026-11-23: `down` and `workspace` have a shell form that can name another workspace, so a slow slash
+    /// form does not send the user to the shell; `ls` lists every workspace in both forms and keeps the shell reply.
+    #[test]
+    fn slow_workspace_verb_does_not_send_the_user_to_the_shell() {
+        static GATE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+        fn d(_: &str, _: &str) -> anyhow::Result<String> {
+            let mut open = GATE.0.lock().unwrap();
+            while !*open {
+                open = GATE.1.wait(open).unwrap();
+            }
+            Ok("late".into())
+        }
+        let mut outs = Vec::new();
+        for line in ["/zygo:down --now", "/zygo:workspace", "/zygo:ls"] {
+            outs.push(json_of(run_with(&input(Some(line)), Some(d), Duration::from_millis(100)).unwrap()));
+        }
+        *GATE.0.lock().unwrap() = true;
+        GATE.1.notify_all();
+        assert_eq!(outs[0], block("down did not finish within the hook bound and may still complete; do not run zygo down in a shell, where it can name another workspace"));
+        assert_eq!(outs[1], block("workspace did not finish within the hook bound and may still complete; do not run zygo workspace in a shell, where it can name another workspace"));
+        assert_eq!(outs[2], block("run in your shell: zygo ls"));
     }
 
     /// Round 2 F4: the typed words in the timeout reply are escaped.

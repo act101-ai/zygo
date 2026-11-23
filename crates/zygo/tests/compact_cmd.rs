@@ -17,6 +17,11 @@ use zygo_proxy::client::{SessionClient, WindowArg};
 use zygo_proxy::session::SessionRequest;
 use zygo_proxy::{Proxy, ProxyHandle};
 
+#[cfg(unix)]
+mod member_fixture;
+#[cfg(unix)]
+use member_fixture as mf;
+
 fn home() -> TempDir {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("config.toml"), "").unwrap();
@@ -142,6 +147,7 @@ fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, St
             }
         }
     }
+    cmd.env_remove("ZYGO_WORKSPACE");
     cmd.envs(env.vars.iter().copied());
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     child.stdin.take().unwrap().write_all(stdin).unwrap();
@@ -504,5 +510,122 @@ fn trailing_newline_after_args_dispatches() {
     let env = Env { session: Some(&id), dir: Some(&dir), agent: None, ..Default::default() };
     assert_eq!(parsed(&hook_prompt(d.path(), &env, "/zygo:compact 600k\n")), block("compact 600k for this session"));
     assert_eq!(compact_of(&h, &id), Some(WindowArg::Tokens(600_000)));
+}
+
+/// AU32, AU105 (b): `zygo compact` and `/zygo:compact` write `member.compact`: `set <tokens>`, `set off` for `off`,
+/// `cleared` for `on`.
+#[cfg(unix)]
+#[test]
+fn au105_compact_mirrors_set_and_cleared() {
+    let d = home();
+    let h = d.path();
+    let (_p, id, dir) = proxy(h);
+    mf::view(&dir, &id, mf::WS_ID, mf::WS_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running(&id))], None);
+    let env = Env { session: Some(&id), dir: Some(&dir), agent: None, vars: &[("ZYGO_WORKSPACE", "0123456789abcdef")], ..Default::default() };
+    for (a, want) in [("600k", json!("set 600000")), ("off", json!("set off")), ("on", json!("cleared"))] {
+        assert_eq!(zygo(h, &["compact", a], &env, b""), (0, format!("compact {a} for this session\n"), String::new()), "{a}");
+        assert_eq!(serde_json::to_value(mf::record(&store, mf::WS_KEY).compact).unwrap(), want, "{a}");
+    }
+    assert_eq!(parsed(&hook_prompt(h, &env, "/zygo:compact 300k")), block("compact 300k for this session"));
+    assert_eq!(mf::record(&store, mf::WS_KEY).compact, Some(zygo_workspace::state::CompactOverride::Set("300000".into())));
+    assert_eq!(mf::record(&store, mf::WS_KEY).overrides, None);
+}
+
+/// AU105 (b): `zygo compact --session <id>` outside a session writes the record of that session.
+#[cfg(unix)]
+#[test]
+fn au105_compact_session_flag_writes_that_sessions_record() {
+    let d = home();
+    let h = d.path();
+    let (_p, id, dir) = proxy(h);
+    mf::view(&dir, &id, mf::WS_ID, mf::WS_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running(&id))], None);
+    assert_eq!(zygo(h, &["compact", "600k", "--session", &id], &Env::default(), b""), (0, "compact 600k for this session\n".into(), String::new()));
+    assert_eq!(mf::record(&store, mf::WS_KEY).compact, Some(zygo_workspace::state::CompactOverride::Set("600000".into())));
+}
+
+/// AU105 (b): the record is the one of `<sessions dir>/<id>`, not of `ZYGO_SESSION_DIR`, when the two differ.
+#[cfg(unix)]
+#[test]
+fn au105_compact_uses_the_session_folder_of_its_id() {
+    let d = home();
+    let h = d.path();
+    let (_p, id, dir) = proxy(h);
+    mf::view(&dir, &id, mf::WS_ID, mf::WS_KEY);
+    let other = h.join("other");
+    mf::view(&other, mf::OTHER, mf::WS_ID, mf::OTHER_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running(&id)), (mf::OTHER_KEY, mf::running(mf::OTHER))], None);
+    let env = Env { session: Some(&id), dir: Some(&other), agent: None, ..Default::default() };
+    assert_eq!(zygo(h, &["compact", "600k"], &env, b""), (0, "compact 600k for this session\n".into(), String::new()));
+    assert_eq!(mf::record(&store, mf::WS_KEY).compact, Some(zygo_workspace::state::CompactOverride::Set("600000".into())));
+    assert_eq!(mf::record(&store, mf::OTHER_KEY).compact, None);
+}
+
+/// Decision 2026-11-23: a session id that fails the rule of `live_launcher` is refused before any read: `..` and an
+/// absolute path, also one that names a reachable-looking session folder.
+#[cfg(unix)]
+#[test]
+fn au105_compact_refuses_an_id_outside_the_sessions_folder() {
+    let d = home();
+    let h = d.path();
+    let elsewhere = mf::dead_session_at(h, "elsewhere");
+    mf::view(&elsewhere, "elsewhere", mf::WS_ID, mf::WS_KEY);
+    let abs = elsewhere.display().to_string();
+    for id in ["..", "../x", abs.as_str()] {
+        assert_eq!(
+            zygo(h, &["compact", "600k", "--session", id], &Env::default(), b""),
+            (2, String::new(), format!("compact failed: invalid session id {id}\n")),
+            "{id}"
+        );
+    }
+    assert!(!h.join(".local/state").exists());
+}
+
+/// AU105: a compact that the proxy did not take changes no override, so nothing is mirrored.
+#[cfg(unix)]
+#[test]
+fn au105_failed_compact_is_not_mirrored() {
+    let d = home();
+    let h = d.path();
+    let dir = dead_session(h, "S1");
+    mf::view(&dir, "S1", mf::WS_ID, mf::WS_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running("S1"))], None);
+    let env = Env { session: Some("S1"), dir: Some(&dir), agent: None, ..Default::default() };
+    let (code, _, err) = zygo(h, &["compact", "600k"], &env, b"");
+    assert_eq!(code, 12);
+    assert!(err.starts_with("compact failed: zygo proxy unreachable"), "{err}");
+    assert_eq!(mf::record(&store, mf::WS_KEY).compact, None);
+}
+
+/// AU105: with `workspace.json` locked by the test for 2 s, the compact still changes the session and the reply adds
+/// `; not saved for the workspace`; exit 0.
+#[cfg(unix)]
+#[test]
+fn au105_compact_with_locked_state_replies_not_saved() {
+    let d = home();
+    let h = d.path();
+    let (p, id, dir) = proxy(h);
+    mf::view(&dir, &id, mf::WS_ID, mf::WS_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running(&id))], None);
+    let t0 = std::time::Instant::now();
+    let held = mf::hold(store.dir().join("lock"));
+    let env = Env { session: Some(&id), dir: Some(&dir), agent: None, ..Default::default() };
+    assert_eq!(zygo(h, &["compact", "600k"], &env, b""), (0, "compact 600k for this session; not saved for the workspace\n".into(), String::new()));
+    mf::release_after(held, t0, std::time::Duration::from_secs(2));
+    assert_eq!(compact_of(&p, &id), Some(WindowArg::Tokens(600_000)));
+    assert_eq!(mf::record(&store, mf::WS_KEY).compact, None);
+}
+
+/// W-C6: a session with no marker keeps today's reply and makes no workspace state folder.
+#[cfg(unix)]
+#[test]
+fn au105_compact_outside_a_workspace_keeps_todays_reply() {
+    let d = home();
+    let h = d.path();
+    let (_p, id, dir) = proxy(h);
+    let env = Env { session: Some(&id), dir: Some(&dir), agent: None, ..Default::default() };
+    assert_eq!(zygo(h, &["compact", "600k"], &env, b""), (0, "compact 600k for this session\n".into(), String::new()));
+    assert!(!h.join(".local/state").exists());
 }
 

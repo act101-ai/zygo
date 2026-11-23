@@ -495,10 +495,45 @@ impl Store {
         let Some(_lock) = lock_file(&self.dir.join(LOCK_FILE), bound)? else {
             return Err(StateError::Busy);
         };
-        let mut ws = match self.read()? {
+        let ws = match self.read()? {
             Some(ws) => ws,
             None => Workspace::new(&self.id),
         };
+        self.apply_and_write(ws, f)
+    }
+
+    /// `update` for a state that must already exist: it makes no folder and no `Workspace::new`. `Ok(None)` when the
+    /// state folder, its lock file's folder or `workspace.json` is gone (a `ws forget` that ran first), with no
+    /// closure run and no `workspace.json` written. With no state folder it creates nothing. When the state folder
+    /// exists without `workspace.json`, taking the lock creates the `lock` file in it (`lock_file`), and that file
+    /// stays. A write after the folder went away fails and makes no folder again.
+    pub fn update_existing(
+        &self, bound: Duration, f: &mut dyn FnMut(&mut Workspace) -> anyhow::Result<()>,
+    ) -> Result<Option<Workspace>, StateError> {
+        if !valid_ws_id(&self.id) {
+            return Err(self.invalid_id());
+        }
+        self.check_dir()?;
+        match fs::symlink_metadata(&self.dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(StateError::Io(e)),
+            Ok(_) => {}
+        }
+        let _lock = match lock_file(&self.dir.join(LOCK_FILE), bound) {
+            Ok(Some(l)) => l,
+            Ok(None) => return Err(StateError::Busy),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(StateError::Io(e)),
+        };
+        let Some(ws) = self.read()? else { return Ok(None) };
+        self.apply_and_write(ws, f).map(Some)
+    }
+
+    /// The common end of `update` and `update_existing`, under `lock`: applies `f`, checks the result (AU84), refuses
+    /// a result larger than `STATE_FILE_MAX` and replaces the file in one rename (W-C4).
+    fn apply_and_write(
+        &self, mut ws: Workspace, f: &mut dyn FnMut(&mut Workspace) -> anyhow::Result<()>,
+    ) -> Result<Workspace, StateError> {
         f(&mut ws).map_err(StateError::Refused)?;
         let path = self.state_file();
         if let Err(reason) = validate(&ws, &self.id) {
@@ -550,9 +585,7 @@ impl Store {
         if !valid_ws_id(&self.id) {
             return None;
         }
-        let live = |id: &str| {
-            !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()) && session_dir::live(&self.sessions_dir.join(id))
-        };
+        let live = |id: &str| valid_session_id(id) && session_dir::live(&self.sessions_dir.join(id));
         ws.members.iter().find_map(|(key, m)| {
             let committed = m.zygo_session.as_deref();
             let pending = m.pending.as_ref().map(|p| p.zygo_session.as_str());
@@ -604,6 +637,12 @@ impl Store {
         let from = (0..all.len()).find(|&o| all.len() - o <= keep && (o == 0 || all[o - 1] == b'\n')).unwrap_or(all.len());
         let _ = write_atomic(&path, &all[from..]);
     }
+}
+
+/// A zygo session id that names a folder inside the sessions folder: not empty, ASCII letters and digits only (the
+/// rule of `live_launcher`, which calls this).
+pub fn valid_session_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
 /// What [`open_nofollow`] found at a path.

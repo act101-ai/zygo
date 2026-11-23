@@ -62,6 +62,7 @@ fn workspace_verb_flags() {
     for f in ["--now", "--timeout", "--wait", "--all"] {
         assert!(down.contains(f), "down lacks {f}: {down}");
     }
+    assert!(down.contains("Stop the workspace of this folder or of <name>: drain, snapshot, stop; in the foreground, detached when run from an agent or from a pane of that workspace"), "{down}");
     let pane = help_of(&["ws", "forget-pane"]);
     assert!(pane.contains("--name"), "{pane}");
     let ws = help_of(&["ws"]);
@@ -74,6 +75,17 @@ fn workspace_verb_flags() {
         .collect();
     assert!(listed.contains("forget") && listed.contains("forget-pane"), "{ws}");
     assert!(!listed.contains("snapshot"), "{ws}");
+}
+
+/// OP11, decision 2026-11-23: `zygo help down` describes both forms.
+#[test]
+fn help_down_describes_both_forms() {
+    let out = zygo(&["help", "down"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "down [--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]\nzygo down: stop the workspace of this folder or of <name>, in the foreground (detached from an agent or from a pane of that workspace). /zygo:down takes only --now and stops the workspace of this session, detached\nscope: none\n"
+    );
 }
 
 #[test]
@@ -102,7 +114,7 @@ fn flags() {
 
 #[test]
 fn verbs_match_spec() {
-    let want: [(&str, &str); 14] = [
+    let want: [(&str, &str); 17] = [
         ("help", "[<verb>]"),
         ("status", ""),
         ("usage", ""),
@@ -117,6 +129,9 @@ fn verbs_match_spec() {
         ("profile", "[<name>|none]"),
         ("compact-tool", "on|off"),
         ("statusline", "[compact|verbose]"),
+        ("down", "[--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]"),
+        ("ls", ""),
+        ("workspace", ""),
     ];
     let specs = zygo_core::verbs::VERB_SPECS;
     assert_eq!(specs.len(), want.len());
@@ -126,7 +141,7 @@ fn verbs_match_spec() {
     let names: Vec<&str> = specs.iter().map(|s| s.name).collect();
     assert_eq!(
         names,
-        ["help", "status", "usage", "compact", "results", "redaction", "guards", "units", "work", "plugins", "marketplace", "profile", "compact-tool", "statusline"]
+        ["help", "status", "usage", "compact", "results", "redaction", "guards", "units", "work", "plugins", "marketplace", "profile", "compact-tool", "statusline", "down", "ls", "workspace"]
     );
     let verbs = zygo::cmd::verbs::VERBS;
     assert_eq!(verbs.len(), specs.len());

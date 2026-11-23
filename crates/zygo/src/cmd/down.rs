@@ -9,7 +9,6 @@ use zygo_config::display::EscapedLines;
 use zygo_config::Config;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
-use zygo_core::session_view::SessionView;
 use zygo_workspace::down::{self, DownOpts, DownTarget};
 
 use super::verbs::VerbCtx;
@@ -114,7 +113,7 @@ fn cli_opts(
 pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
     op5()?;
     if ctx.save || args.iter().any(|a| a != "--now") {
-        return Err(UsageError("usage: /zygo:down [--now]".into()).into());
+        return Err(UsageError(format!("usage: /zygo:down {}", zygo_core::verbs::DOWN_SLASH_ARGS)).into());
     }
     let now = args.iter().any(|a| a == "--now");
     let zygo = std::env::current_exe().map_err(|e| anyhow!(exe_error(&e)))?;
@@ -128,12 +127,13 @@ pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
     if code == 0 { Ok(text) } else { Err(EscapedLines::new(text.lines()).into()) }
 }
 
-/// The `DownOpts` of the slash form (D5); `env` gives `TMUX`, `TMUX_PANE` and `ZYGO_SESSION` (`std::env::var_os`
-/// outside tests). The target is the marker of the session folder (`None` without one), never the cwd; `wait` is
-/// always `false` and `timeout` is `None`.
+/// The `DownOpts` of the slash form (D5); `env` gives `TMUX`, `TMUX_PANE`, `ZYGO_SESSION` and `ZYGO_WORKSPACE`
+/// (`std::env::var_os` outside tests). The target is the marker of the session folder read by the hook rule of the
+/// mirror (`verb_member`, AU105: no `ZYGO_WORKSPACE`, or a view that is a link, is no marker; `None` without one),
+/// never the cwd; `wait` is always `false` and `timeout` is `None`.
 fn slash_opts(ctx: &VerbCtx, now: bool, cwd: PathBuf, zygo: PathBuf, config: Config, env: &dyn Fn(&str) -> Option<OsString>) -> DownOpts {
     let sd = ctx.session_dir.as_ref();
-    let target = DownTarget::Session(sd.and_then(|d| SessionView::load(d).ok()).and_then(|v| v.workspace).map(|w| w.member.ws_id));
+    let target = DownTarget::Session(sd.and_then(|d| zygo_hooks::workspace::verb_member(d, &ctx.paths, Some(env))).map(|m| m.ws_id));
     DownOpts {
         target,
         now,
@@ -207,6 +207,11 @@ mod tests {
         None
     }
 
+    /// `env` with the slash gate of a member (`ZYGO_WORKSPACE`) set and no other variable.
+    fn member_env(k: &str) -> Option<OsString> {
+        (k == "ZYGO_WORKSPACE").then(|| OsString::from("0123456789abcdef"))
+    }
+
     /// D5, D8 (F18): an empty `ZYGO_SESSION` counts as unset, so the session folder gives the id; an empty
     /// `session_id(sd)` also counts as no id. Kills: `session_of` passing `Some("")`.
     #[test]
@@ -253,10 +258,31 @@ mod tests {
         let mut ctx = crate::cmd::compact::tests::ctx(t.path(), None);
         ctx.slash = true;
         ctx.session_dir = Some(view_dir(t.path(), "s01", "s01", Some("0123456789abcdef")));
-        let o = slash_opts(&ctx, false, t.path().into(), t.path().join("zygo"), zygo_config::Config::default(), &unset);
+        let o = slash_opts(&ctx, false, t.path().into(), t.path().join("zygo"), zygo_config::Config::default(), &member_env);
         assert_eq!(o.target, DownTarget::Session(Some("0123456789abcdef".into())));
         assert!(!o.wait);
         assert_eq!(o.zygo_session, Some("s01".into()));
+    }
+
+    /// M4, decision 2026-11-23: `/zygo:down` reads its marker by the rule of the mirror (`verb_member`): no
+    /// `ZYGO_WORKSPACE`, or a `view.json` that is a link, is no marker.
+    #[cfg(unix)]
+    #[test]
+    fn slash_down_reads_the_marker_by_the_hook_rule() {
+        let t = tempfile::tempdir().unwrap();
+        let mut ctx = crate::cmd::compact::tests::ctx(t.path(), None);
+        ctx.slash = true;
+        ctx.session_dir = Some(view_dir(t.path(), "s01", "s01", Some("0123456789abcdef")));
+        let make = |ctx: &crate::cmd::verbs::VerbCtx, env: &dyn Fn(&str) -> Option<OsString>| {
+            slash_opts(ctx, false, t.path().into(), t.path().join("zygo"), zygo_config::Config::default(), env)
+        };
+        assert_eq!(make(&ctx, &unset).target, DownTarget::Session(None), "no gate");
+        let real = view_dir(t.path(), "real", "s02", Some("0123456789abcdef"));
+        let linked = SessionDir::new(t.path().join("s02"));
+        std::fs::create_dir_all(&linked.root).unwrap();
+        std::os::unix::fs::symlink(real.view_json(), linked.view_json()).unwrap();
+        ctx.session_dir = Some(linked);
+        assert_eq!(make(&ctx, &member_env).target, DownTarget::Session(None), "linked view");
     }
 
     /// D5 (review round 1, fix 5): a `view.json` whose `session` is empty gives the session folder's name, so the
