@@ -710,3 +710,310 @@ fn h14_an_early_exit_keeps_the_id_that_the_hook_recorded() {
     let m = member(&h);
     assert_eq!((m.agent_session.as_deref(), m.pending.is_none()), (Some("ses_A"), true));
 }
+
+// ---- Test gate, wrapper snapshots, forget races, exit-write failure (W§7.3, W§7.4; W§18 #27 exit 12, #73) ----
+
+/// A gate hold (D9): `<gate>/<point>.hold` exists while this value lives; `Drop` removes it, so a failed test releases the gate.
+struct Hold(PathBuf);
+
+impl Hold {
+    fn new(gate: &Path, point: &str) -> Hold {
+        std::fs::create_dir_all(gate).unwrap();
+        let p = gate.join(format!("{point}.hold"));
+        std::fs::write(&p, "").unwrap();
+        Hold(p)
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A team server on 127.0.0.1:0 with one token, as `tests/serve_cli.rs:57-87` builds it; returns its folder, handle and token.
+fn team_server() -> (tempfile::TempDir, zygo_proxy::serve::ServeHandle, String) {
+    use std::sync::Arc;
+    let d = tempfile::tempdir().unwrap();
+    let root = d.path().to_path_buf();
+    let (token, sha) = zygo_proxy::team::new_token();
+    let config_file = root.join("config.toml");
+    std::fs::write(&config_file, format!("[serve]\ntokens = [{{ label = \"m2\", sha256 = \"{sha}\" }}]\n")).unwrap();
+    let paths = zygo_core::paths::Paths {
+        config_file: config_file.clone(),
+        cache_dir: root.join("cache"),
+        data_dir: root.join("data"),
+        sessions_dir: root.join("cache/sessions"),
+        marketplaces_dir: root.join("cache/marketplaces"),
+        plugin_store: root.join("data/plugins"),
+        approvals_file: root.join("data/approvals.toml"),
+        usage_db: root.join("data/usage.db"),
+    };
+    let ctx = zygo_config::LoadContext { paths, repo: None, team: None };
+    let mut builtin = toml::Table::try_from(zygo_config::builtin::defaults()).unwrap();
+    builtin.remove("marketplace");
+    let h = zygo_proxy::serve::start(zygo_proxy::serve::ServeOpts {
+        listen: "127.0.0.1:0".into(),
+        tls: None,
+        config_file,
+        load: Arc::new(move || Ok(zygo_config::load_with_builtin(&ctx, builtin.clone())?)),
+        report: Arc::new(|_: &str| {}),
+        pid_file: None,
+        signals: false,
+        start: zygo_proxy::server::StartOpts { usage_db: Some(root.join("data/usage.db")), ..Default::default() },
+    })
+    .unwrap();
+    (d, h, token)
+}
+
+fn seq(h: &Harness) -> u64 {
+    h.store(WS_ID).read().unwrap().unwrap().snapshot_seq
+}
+
+fn results_dir(h: &Harness) -> PathBuf {
+    h.root().join(".cache/zygo/workspaces").join(WS_ID).join("results").join(KEY)
+}
+
+/// A workspace verb with an empty `PATH` (no tmux found; the seed has no `tmux_socket`), read through `output_child`.
+fn verb(h: &Harness, args: &[&str]) -> std::process::Output {
+    let empty = h.root().join("empty-path");
+    std::fs::create_dir_all(&empty).unwrap();
+    output_child(h.zygo(args, &[("PATH", empty.as_os_str())]).spawn().unwrap(), args[1])
+}
+
+/// Starts `ws run` for a fresh OpenCode member with the gate held at `point`; returns after the wrapper reached it.
+fn at_gate(h: &Harness, point: &str) -> (std::process::Child, Hold, PathBuf) {
+    one_pane(h, &h.repo(), Some(fresh(Agent::OpenCode, &[])));
+    h.seed(WS_ID, &mut |w| w.tmux_socket = None);
+    let gate = h.root().join("gate");
+    let hold = Hold::new(&gate, point);
+    let (out, mut env) = h.stub(Agent::OpenCode, "o");
+    env.push(("ZYGO_TEST_MEMBER_GATE", gate.clone().into()));
+    let child = spawn_ws_run(h, &pairs(&env));
+    assert!(until(Duration::from_secs(20), || gate.join(point).exists()));
+    (child, hold, out)
+}
+
+#[test]
+fn w18_73_launch_and_pending_are_one_write_and_program_is_refreshed() {
+    let h = Harness::no_tmux();
+    let dir = h.root().join("cc");
+    std::fs::create_dir(&dir).unwrap();
+    let mut m = fresh(Agent::ClaudeCode, &["--agents", r#"{"r":{"description":"d","prompt":"p"}}"#, "--model", "lead"]);
+    m.launch.config_dir = Some(dir.to_str().unwrap().into());
+    one_pane(&h, &h.repo(), Some(m));
+    let gate = h.root().join("gate");
+    let hold = Hold::new(&gate, "callback");
+    let (_, mut env) = h.stub(Agent::ClaudeCode, "a");
+    env.push(("ZYGO_TEST_MEMBER_GATE", gate.clone().into()));
+    let mut child = spawn_ws_run(&h, &pairs(&env));
+    assert!(until(Duration::from_secs(20), || gate.join("callback").exists()));
+    let a = member(&h);
+    assert!(a.pending.as_ref().unwrap().agent_session.is_some());
+    assert_eq!(
+        (a.launch.args.clone(), a.dropped_flags.clone()),
+        (vec!["--model".to_string(), "lead".to_string()], vec!["--agents".to_string()])
+    );
+    assert_eq!((a.config_dir.clone(), a.program.clone()), (Some(dir.clone()), Some(h.bin.join("claude"))));
+    drop(hold);
+    assert!(wait_child(&mut child, "ws run").success());
+    let bin2 = h.root().join("bin2");
+    std::fs::create_dir(&bin2).unwrap();
+    std::fs::copy(common::stub_agent(), bin2.join("claude")).unwrap();
+    ready_exe(&bin2.join("claude"));
+    let (_, env) = h.stub(Agent::ClaudeCode, "b");
+    let mut extra = pairs(&env);
+    extra.push(("PATH", bin2.as_os_str()));
+    ws_run(&h, &extra, false);
+    assert_eq!(member(&h).program, Some(bin2.join("claude")));
+}
+
+#[test]
+fn w18_27_an_exit_after_the_callback_removes_only_pending() { // exit 12: the --compact call finds no server
+    let h = Harness::no_tmux();
+    let (_d, srv, token) = team_server();
+    let mut m = resumable(Agent::ClaudeCode, "abc");
+    m.launch.server = Some(srv.url().to_string());
+    m.launch.compact = Some("600000".into());
+    one_pane(&h, &h.repo(), Some(m));
+    let gate = h.root().join("gate");
+    let hold = Hold::new(&gate, "callback");
+    let (out, mut env) = h.stub(Agent::ClaudeCode, "a");
+    env.extend([("ZYGO_TEST_MEMBER_GATE", gate.clone().into()), ("ZYGO_TEAM_TOKEN", token.into())]);
+    // Serve mode takes the team token from `[server] token` of the user config (`serve_client.rs:309-313`).
+    std::fs::write(h.root().join("config.toml"), "[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n").unwrap();
+    let child = spawn_ws_run(&h, &pairs(&env));
+    assert!(until(Duration::from_secs(20), || gate.join("callback").exists()));
+    assert!(member(&h).pending.is_some());
+    srv.shutdown();
+    drop(hold);
+    let o = output_child(child, "ws run");
+    assert!(text(&o.stderr).contains("zygo: the claude launch failed before the agent started (exit 12)\n"), "{}", text(&o.stderr));
+    assert!(!out.join("argv.json").exists());
+    let a = member(&h);
+    assert_eq!(
+        (a.zygo_session.as_deref(), a.agent_session.as_deref(), a.state, a.pending.is_none()),
+        (Some(OLD_ZS), Some("abc"), MemberState::Resumable, true)
+    );
+}
+
+#[test]
+fn m2_a_slow_setup_then_a_fast_exit_is_still_a_failed_fast_resume() { // controller M2: "ran" counts from the spawn
+    let h = Harness::no_tmux();
+    one_pane(&h, &h.repo(), Some(resumable(Agent::ClaudeCode, "abc")));
+    let gate = h.root().join("gate");
+    let hold = Hold::new(&gate, "callback");
+    let (_, mut env) = h.stub(Agent::ClaudeCode, "a");
+    env.extend([("ZYGO_TEST_MEMBER_GATE", gate.clone().into()), ("ZYGO_STUB_EXIT", "1".into())]);
+    let child = spawn_ws_run(&h, &pairs(&env));
+    assert!(until(Duration::from_secs(20), || gate.join("callback").exists()));
+    std::thread::sleep(Duration::from_secs(11)); // the setup before the spawn takes more than 10 s
+    drop(hold);
+    let o = output_child(child, "ws run");
+    assert!(
+        text(&o.stderr).contains("zygo: resume of claude session abc failed (exit 1); try: zygo claude -- --resume abc\n"),
+        "{}",
+        text(&o.stderr)
+    );
+    assert_eq!(member(&h).state, MemberState::Resumable);
+}
+
+#[test]
+fn race_ws_forget_before_the_callback_makes_nothing() { // second review finding 1
+    let h = Harness::no_tmux();
+    let (child, hold, out) = at_gate(&h, "launch");
+    let o = verb(&h, &["ws", "forget", "app"]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    drop(hold);
+    assert!(output_child(child, "ws run").status.success());
+    assert!(out.join("argv.json").exists()); // the launch went on
+    assert!(!h.store(WS_ID).dir().exists());
+    assert!(!results_dir(&h).exists());
+}
+
+#[test]
+fn race_ws_forget_pane_before_the_callback_makes_no_record_and_no_results() { // second review finding 1
+    let h = Harness::no_tmux();
+    let (child, hold, out) = at_gate(&h, "launch");
+    let o = verb(&h, &["ws", "forget-pane", KEY, "--name", "app"]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    drop(hold);
+    assert!(output_child(child, "ws run").status.success());
+    assert!(out.join("argv.json").exists()); // the launch went on
+    assert!(!h.store(WS_ID).read().unwrap().unwrap().members.contains_key(KEY));
+    assert!(!results_dir(&h).exists());
+}
+
+#[test]
+fn minor2_the_exit_write_after_ws_forget_makes_no_state() {
+    let h = Harness::no_tmux();
+    let (child, hold, _) = at_gate(&h, "returned");
+    let o = verb(&h, &["ws", "forget", "app"]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(!h.store(WS_ID).dir().exists());
+    drop(hold);
+    assert!(output_child(child, "ws run").status.success());
+    assert!(!h.store(WS_ID).dir().exists());
+}
+
+#[test]
+fn minor2_the_exit_write_after_ws_forget_pane_makes_no_record() {
+    let h = Harness::no_tmux();
+    let (child, hold, _) = at_gate(&h, "returned");
+    let o = verb(&h, &["ws", "forget-pane", KEY, "--name", "app"]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    drop(hold);
+    assert!(output_child(child, "ws run").status.success());
+    assert!(!h.store(WS_ID).read().unwrap().unwrap().members.contains_key(KEY));
+}
+
+#[test]
+fn d5_an_exit_write_that_cannot_take_the_lock_prints_one_line() { // second review finding 8
+    let h = Harness::no_tmux();
+    one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
+    let gate = h.root().join("gate");
+    let hold = Hold::new(&gate, "returned");
+    let (_, mut env) = h.stub(Agent::ClaudeCode, "a");
+    env.extend([("ZYGO_TEST_MEMBER_GATE", gate.clone().into()), ("ZYGO_STUB_EXIT", "3".into())]);
+    let child = spawn_ws_run(&h, &pairs(&env));
+    assert!(until(Duration::from_secs(20), || gate.join("returned").exists()));
+    let lock = std::fs::File::options().read(true).write(true).open(h.store(WS_ID).dir().join("lock")).unwrap();
+    assert!(fs4::FileExt::try_lock(&lock).is_ok());
+    drop(hold);
+    let o = output_child(child, "ws run");
+    drop(lock);
+    let err = text(&o.stderr);
+    assert!(err.contains(&format!("zygo: could not save the exit record of pane {KEY}: workspace state is locked\n")), "{err}");
+    assert!(!err.contains("exited 3"), "{err}"); // D7: no record, so no resume line
+    assert!(member(&h).pending.is_some()); // the stub sent no SessionStart; nothing committed
+    assert_eq!(shell_file(&h, "cwd").trim_end(), h.repo().to_str().unwrap());
+}
+
+/// Session zygo-app on the private server, first pane `cmd` with `@zygo-pane` = `key`, tagged with WS_ID.
+fn tmux_session(h: &Harness, key: &str, cmd: &str) {
+    h.tmux(&["new-session", "-d", "-s", "zygo-app", "-x", "120", "-y", "40", cmd]);
+    h.tmux(&["set-option", "-t", "=zygo-app:", "@zygo-ws", WS_ID]);
+    h.tmux(&["set-option", "-p", "-t", "=zygo-app:", "@zygo-pane", key]);
+}
+
+#[test]
+fn w74_the_wrapper_snapshots_at_agent_start_and_at_agent_exit() {
+    let Some(h) = Harness::new() else { return };
+    tmux_session(&h, KEY, "cat");
+    one_pane(&h, &h.repo(), Some(fresh(Agent::OpenCode, &[])));
+    let (_, mut env) = h.stub(Agent::OpenCode, "o");
+    let c = ctl(&h, "o");
+    env.push(("ZYGO_STUB_CONTROL", c.clone().into()));
+    let mut child = spawn_ws_run(&h, &pairs(&env));
+    assert!(started(&c));
+    assert_eq!(seq(&h), 1);
+    common::stub_control(&c, "exit 0").unwrap();
+    assert!(wait_child(&mut child, "ws run").success());
+    assert_eq!(seq(&h), 2);
+}
+
+#[test]
+fn w74_an_agent_pane_killed_by_hand_is_recorded_at_agent_exit() {
+    let Some(h) = Harness::new() else { return };
+    tmux_session(&h, KEY2, "cat");
+    h.seed(WS_ID, &mut |w| {
+        w.panes = vec![
+            Pane { key: KEY2.into(), cwd: h.repo(), kind: PaneKind::Shell, ..Default::default() },
+            Pane { key: KEY.into(), index: 1, cwd: h.repo(), kind: PaneKind::OpenCode, ..Default::default() },
+        ];
+        w.members.insert(KEY.into(), fresh(Agent::OpenCode, &[]));
+    });
+    let (_, mut env) = h.stub(Agent::OpenCode, "o");
+    let c = ctl(&h, "o");
+    env.push(("ZYGO_STUB_CONTROL", c.clone().into()));
+    let run = h.script("run", &["ws", "run", "--ws-id", WS_ID, "--pane", KEY], &pairs(&env));
+    let id = h.tmux(&["split-window", "-P", "-F", "#{pane_id}", "-t", "=zygo-app:", &run]);
+    h.tmux(&["set-option", "-p", "-t", &id, "@zygo-pane", KEY]);
+    std::fs::write(h.root().join("run.go"), "").unwrap();
+    assert!(started(&c));
+    assert_eq!(seq(&h), 1);
+    h.tmux(&["kill-pane", "-t", &id]); // SIGHUP; the launcher's handlers catch it (B1)
+    assert!(until(Duration::from_secs(20), || member(&h).state == MemberState::Resumable && seq(&h) == 2));
+    let keys: Vec<String> = h.store(WS_ID).read().unwrap().unwrap().panes.into_iter().map(|p| p.key).collect();
+    assert_eq!(keys, [KEY2]);
+}
+
+#[test]
+fn w73_a_member_write_runs_the_pending_snapshot() {
+    let Some(h) = Harness::new() else { return };
+    tmux_session(&h, KEY, "cat");
+    one_pane(&h, &h.repo(), Some(fresh(Agent::OpenCode, &[])));
+    let pending = h.store(WS_ID).dir().join("snapshot.pending");
+    std::fs::write(&pending, "").unwrap();
+    let gate = h.root().join("gate");
+    let hold = Hold::new(&gate, "callback");
+    let (_, mut env) = h.stub(Agent::OpenCode, "o");
+    env.push(("ZYGO_TEST_MEMBER_GATE", gate.clone().into()));
+    let mut child = spawn_ws_run(&h, &pairs(&env));
+    assert!(until(Duration::from_secs(20), || gate.join("callback").exists()));
+    assert!(!pending.exists());
+    assert_eq!(seq(&h), 1); // the pending snapshot of the callback write, before the start snapshot
+    drop(hold);
+    assert!(wait_child(&mut child, "ws run").success());
+    assert_eq!(seq(&h), 3); // start and exit
+}

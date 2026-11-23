@@ -14,9 +14,11 @@ use zygo_launch::launcher::{AgentSession, LaunchOutcome};
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 use zygo_proxy::client::{SessionClient, SessionSettings};
 use zygo_workspace::args;
-use zygo_workspace::state::{MemberRecord, MemberState, Pending, StateError, Store};
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::snapshot;
+use zygo_workspace::state::{MemberRecord, MemberState, Pending, StateError, Store, Workspace};
 
-use super::print_err;
+use super::{print_err, tmux_program};
 
 /// A resume that fails with a non-zero code in less than this time from the agent's spawn failed fast (W§8.2 step 7).
 const FAST_FAIL: Duration = Duration::from_secs(10);
@@ -56,6 +58,7 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
     };
     // The zygo session of this start, set only when the callback's record write gave a state (D3, D5).
     let seen: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let paths = opts.paths.clone();
     let cb = Callback {
         paths: opts.paths.clone(),
         ws_id: m.ws_id.clone(),
@@ -67,7 +70,9 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         seen: seen.clone(),
     };
     opts.on_session = Some(Box::new(move |sd, session, program, _member| cb.run(sd, session, program)));
+    gate("launch");
     let o = Launcher::run(adapter, opts);
+    gate("returned");
     let exit = classify(&o, resumed.is_some());
     let session = seen.lock().unwrap_or_else(|e| e.into_inner()).take();
     let mut kept = None;
@@ -83,6 +88,9 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         match r {
             Ok(Some(ws)) => {
                 kept = ws.members.get(&m.pane).and_then(|r| r.agent_session.clone());
+                // W§7.3 writer check, then the snapshot at agent exit (W§7.4, PW6 option A).
+                after_write(&paths, &ws, &m.ws_id);
+                agent_snapshot(&paths, &ws, &m.ws_id);
             }
             Ok(None) | Err(StateError::Refused(_)) => {}
             Err(e) => print_err(&format!(
@@ -159,9 +167,49 @@ impl Callback {
                 }
             }
         }
+        // W§7.3 writer check, the test gate (D9), then the snapshot at agent start (W§7.4).
+        after_write(&self.paths, &ws, &self.ws_id);
+        gate("callback");
+        agent_snapshot(&self.paths, &ws, &self.ws_id);
         if errors.is_empty() { Ok(()) } else { Err(anyhow::anyhow!(errors.join("; "))) }
     }
 }
+
+/// The multiplexer of the state `ws` (AU62).
+fn mux_of(ws: &Workspace) -> Tmux {
+    Tmux::new(tmux_program(), ws.tmux_socket.clone())
+}
+
+/// The `snapshot.pending` check after a member write (W§7.3). The outcome and the error are ignored: the snapshot
+/// writes its own `errors.log` line.
+fn after_write(paths: &Paths, ws: &Workspace, ws_id: &str) {
+    let _ = snapshot::after_write(paths, &mux_of(ws), ws_id, snapshot::HOOK_WAIT);
+}
+
+/// The snapshot at agent start or at agent exit (W§7.4, PW6 option A); outcome and error ignored as in
+/// [`after_write`].
+fn agent_snapshot(paths: &Paths, ws: &Workspace, ws_id: &str) {
+    let _ = snapshot::run(paths, &mux_of(ws), ws_id, None, false, snapshot::HOOK_WAIT);
+}
+
+/// The test gate (D9, feature `test-hooks` only): with `ZYGO_TEST_MEMBER_GATE=<dir>` and `<dir>/<point>.hold`, the
+/// wrapper writes `<dir>/<point>` and waits, polling every 10 ms, until the test removes `<point>.hold`.
+#[cfg(feature = "test-hooks")]
+fn gate(point: &str) {
+    let Some(dir) = std::env::var_os("ZYGO_TEST_MEMBER_GATE").map(PathBuf::from) else { return };
+    let hold = dir.join(format!("{point}.hold"));
+    if !hold.exists() {
+        return;
+    }
+    let _ = std::fs::write(dir.join(point), "");
+    while hold.exists() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// D9: a build without `test-hooks` has no gate.
+#[cfg(not(feature = "test-hooks"))]
+fn gate(_point: &str) {}
 
 /// AU16: the folder `<workspace cache>/<ws_id>/results/<pane>` (mode 0700) and the absolute link `results` of the
 /// session folder to it.
