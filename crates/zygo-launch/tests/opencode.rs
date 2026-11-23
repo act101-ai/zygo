@@ -1952,11 +1952,87 @@ fn plugin_child_by_present_parent_id() {
         return;
     }
     let fx = fx();
-    for (name, parent) in [("child-empty", json!("")), ("child-zero", json!(0))] {
+    for (name, parent) in
+        [("child-empty", json!("")), ("child-zero", json!(0)), ("child-false", json!(false)), ("child-object", json!({}))]
+    {
         let ev = json!([["session.created", {"info": {"id": "K", "parentID": parent}}], busy("K"), idle("K")]);
         assert_eq!(order(&fx, name, Some(M), ev), ["session{}", "pre-tool A"], "{name}");
     }
-    // a null `parentID` is a top session
+    // a null or a missing `parentID` is a top session
     let ev = json!([["session.created", {"info": {"id": "K", "parentID": null}}]]);
     assert_eq!(order(&fx, "child-null", Some(M), ev), ["session{}", "session K", "pre-tool A"]);
+    assert_eq!(order(&fx, "child-missing", Some(M), json!([created("K")])), ["session{}", "session K", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 2, F-e): the delete of an older top session that is not the main session sends nothing
+fn plugin_deleted_older_top_session_sends_nothing() {
+    if no_node("plugin_deleted_older_top_session_sends_nothing") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![created("B"), busy("B"), idle("B"), deleted("A")]);
+    assert_eq!(order(&fx, "del-older", Some(M), ev), after_p1(&["session B", "prompt B", "stop B"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 2, F-e): the delete of a known child sends nothing
+fn plugin_deleted_child_sends_nothing() {
+    if no_node("plugin_deleted_child_sends_nothing") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("A"), created_child("K", "A"), busy("K"), idle("K"), deleted("K"), idle("A")]);
+    assert_eq!(order(&fx, "del-child", Some(M), ev), ["session{}", "session A", "prompt A", "stop A", "pre-tool A"]);
+    // a deleted child stays a child: a later `busy` of it is not a turn
+    let ev = p1_then(vec![created_child("K", "A"), deleted("K"), busy("K"), idle("K")]);
+    assert_eq!(order(&fx, "del-child-busy", Some(M), ev), after_p1(&[]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 2, F-e): a second `session.deleted` of the same session sends nothing more
+fn plugin_deleted_twice_sends_once() {
+    if no_node("plugin_deleted_twice_sends_once") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![created("B"), busy("B"), idle("B"), deleted("B"), deleted("B")]);
+    assert_eq!(order(&fx, "del-twice", Some(M), ev), after_p1(&["session B", "prompt B", "stop B", "session A"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 2, F-e): a session deleted before any other event is never sent; its turn signals work
+fn plugin_deleted_before_any_event_is_never_sent() {
+    if no_node("plugin_deleted_before_any_event_is_never_sent") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([deleted("A"), created("A"), busy("A"), idle("A")]);
+    assert_eq!(order(&fx, "del-first", Some(M), ev), ["session{}", "prompt A", "stop A", "pre-tool A"]);
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 2, F-e): `busy` and idle after the delete send `prompt` and `stop`, never `session`
+fn plugin_turn_signals_of_a_deleted_session_still_work() {
+    if no_node("plugin_turn_signals_of_a_deleted_session_still_work") {
+        return;
+    }
+    let fx = fx();
+    let ev = p1_then(vec![deleted("A"), busy("A"), idle("A")]);
+    assert_eq!(order(&fx, "del-busy", Some(M), ev), after_p1(&["prompt A", "stop A"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 (H3 review round 2, F-e): a deleted main session falls back past a session with no kind yet; that
+// session becomes the main session when its `info` comes
+fn plugin_deleted_main_skips_an_unclassified_session() {
+    if no_node("plugin_deleted_main_skips_an_unclassified_session") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), busy("X"), created("B"), deleted("B"), updated("X")]);
+    assert_eq!(
+        order(&fx, "del-unclassified", Some(M), ev),
+        ["session{}", "session A", "prompt X", "session B", "session A", "session X", "pre-tool A"]
+    );
 }
