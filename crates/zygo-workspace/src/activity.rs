@@ -71,7 +71,8 @@ const MAX_FILE: u64 = 1 << 20;
 /// The result of one read of `activity.json`.
 enum Load {
     Missing,
-    /// A symbolic link; it was not followed (unix).
+    /// A symbolic link; it was not followed. Unix only: on other systems a link is followed (D3).
+    #[cfg(unix)]
     Link,
     /// An entry that is not a regular file: a FIFO, a folder, a socket, a device.
     NotRegular,
@@ -82,6 +83,21 @@ enum Load {
     /// the known fields, taken leniently, and the JSON text of `version`.
     Newer(Activity, String),
     Parsed(Activity),
+}
+
+/// `Load::Link` or `Load::NotRegular` when the metadata of `path` shows a link (unix) or an entry that is not a
+/// regular file; `None` for a regular file or an entry whose metadata cannot be read. On unix a link is not followed;
+/// on other systems it is (D3), so there a link to a regular file is `None`.
+fn refused_entry(path: &Path) -> Option<Load> {
+    #[cfg(unix)]
+    let m = std::fs::symlink_metadata(path).ok()?;
+    #[cfg(not(unix))]
+    let m = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    if m.file_type().is_symlink() {
+        return Some(Load::Link);
+    }
+    (!m.is_file()).then_some(Load::NotRegular)
 }
 
 fn load(path: &Path) -> Load {
@@ -96,14 +112,17 @@ fn load(path: &Path) -> Load {
     }
     let file = match options.open(path) {
         #[cfg(unix)]
-        Err(e)
-            if e.raw_os_error() == Some(libc::ELOOP)
-                || std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) =>
-        {
-            return Load::Link
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => return Load::Link,
+        // An entry that fails the open before the handle check (a socket gives ENXIO on unix) is examined by its
+        // metadata: a link stays `Link`, any other entry that is not a regular file is `NotRegular` (review round 1,
+        // F1).
+        Err(e) => {
+            return match refused_entry(path) {
+                Some(l) => l,
+                None if e.kind() == std::io::ErrorKind::NotFound => Load::Missing,
+                None => Load::ReadFailed(e),
+            }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Load::Missing,
-        Err(e) => return Load::ReadFailed(e),
         Ok(f) => f,
     };
     match file.metadata() {
@@ -172,13 +191,15 @@ fn lenient(fields: &serde_json::Map<String, serde_json::Value>) -> Activity {
 /// Reads `activity.json` with no lock: every write is one rename, so the file is always whole (W§7.3). A missing
 /// file is the default (W§9.1). These are errors, and the drain counts the member as busy (AU26): a file that
 /// cannot be read or parsed or is not a JSON object (`<activity.json path>: <error>`), and a file larger than 1 MiB
-/// (`<activity.json path>: activity.json larger than 1 MiB`), a link (`<activity.json path>: is a link`) and an entry
-/// that is not a regular file (`<activity.json path>: is not a regular file`). A FIFO does not make the read wait; on
-/// unix a link is not followed. A file of a newer zygo gives its known fields, taken leniently (see `lenient`).
+/// (`<activity.json path>: activity.json larger than 1 MiB`), on unix a link (`<activity.json path>: is a link`; it is
+/// not followed), and an entry that is not a regular file, such as a FIFO, a folder or a socket
+/// (`<activity.json path>: is not a regular file`). A FIFO does not make the read wait. On other systems a link is
+/// followed (D3). A file of a newer zygo gives its known fields, taken leniently (see `lenient`).
 pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
     let path = dir.activity_json();
     match load(&path) {
         Load::Missing => Ok(Activity::default()),
+        #[cfg(unix)]
         Load::Link => Err(anyhow::anyhow!("{}: is a link", path.display())),
         Load::NotRegular => Err(anyhow::anyhow!("{}: is not a regular file", path.display())),
         Load::ReadFailed(e) => Err(anyhow::anyhow!("{}: {e}", path.display())),
@@ -211,11 +232,12 @@ impl std::error::Error for FileCondition {}
 /// `bound` (hooks pass `LOCK_BOUND`), removes stale temp files, applies `f`, sets `version` and `updated_at`, and
 /// replaces the file in one rename. A missing file starts from the default. A file that `read` cannot give (AU26:
 /// the drain counts it as busy) is never replaced, because a write from the default would set `busy = false` in an
-/// open turn (H1 attempt-2 review round 1, F1). These cases return an error and write nothing: the lock file cannot
-/// be opened or locked (`<activity.lock path>: open lock file: <error>`), the lock is not taken within `bound`
-/// (`<activity.lock path>: lock not taken within <ms> ms`), the entry is a link (`<activity.json path>: is a link`;
-/// on unix it is not followed, so nothing is written through it) or is not a regular file
-/// (`<activity.json path>: is not a regular file`; a FIFO does not make the call wait), the file cannot be read or
+/// open turn (H1 attempt-2 review round 1, F1). These cases return an error and write nothing: on unix the entry is
+/// a link (`<activity.json path>: is a link`; it is not followed, so nothing is written through it), or the entry is
+/// not a regular file (`<activity.json path>: is not a regular file`; a FIFO does not make the call wait) — both
+/// are refused before the lock is taken or waited for, and again by the check of the opened handle under the lock;
+/// the lock file cannot be opened or locked (`<activity.lock path>: open lock file: <error>`), the lock is not taken
+/// within `bound` (`<activity.lock path>: lock not taken within <ms> ms`), the file cannot be read or
 /// parsed or is not a JSON object (`<activity.json path>: <error>`), the file is larger than 1 MiB
 /// (`<activity.json path>: activity.json larger than 1 MiB`), the file is a JSON object whose `version` is present
 /// and is not the integer 0 or 1 (`<activity.json path>: written by a newer zygo (version <JSON text of version>)`),
@@ -225,6 +247,16 @@ impl std::error::Error for FileCondition {}
 /// errors of the lock file, of the stored file and of the write are of the kind `FileCondition`; the lock not taken
 /// within `bound` and the refused result are not.
 pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity)) -> anyhow::Result<()> {
+    let path = dir.activity_json();
+    let condition = |text: String| -> anyhow::Error { FileCondition(format!("{}: {text}", path.display())).into() };
+    // A link or an entry that is not a regular file is refused before the lock is taken or waited for (review round
+    // 1, F4); the handle check of `load` under the lock stays the one that decides.
+    match refused_entry(&path) {
+        #[cfg(unix)]
+        Some(Load::Link) => return Err(condition("is a link".to_string())),
+        Some(_) => return Err(condition("is not a regular file".to_string())),
+        None => {}
+    }
     let lock = dir.activity_lock();
     let opened = crate::state::lock_file(&lock, bound)
         .map_err(|e| FileCondition(format!("{}: open lock file: {e}", lock.display())))?;
@@ -232,10 +264,9 @@ pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity
         anyhow::bail!("{}: lock not taken within {} ms", lock.display(), bound.as_millis());
     };
     crate::state::sweep_tmp(&dir.root);
-    let path = dir.activity_json();
-    let condition = |text: String| -> anyhow::Error { FileCondition(format!("{}: {text}", path.display())).into() };
     let mut a = match load(&path) {
         Load::Missing => Activity::default(),
+        #[cfg(unix)]
         Load::Link => return Err(condition("is a link".to_string())),
         Load::NotRegular => return Err(condition("is not a regular file".to_string())),
         Load::ReadFailed(e) => return Err(condition(e.to_string())),

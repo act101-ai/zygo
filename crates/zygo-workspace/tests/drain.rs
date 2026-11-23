@@ -254,7 +254,9 @@ fn fifo_and_linked_activity_files_are_busy_without_a_wait() {
     use std::os::unix::ffi::OsStrExt;
     let t = TempDir::new().unwrap();
     std::fs::write(t.path().join("outside.json"), br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#).unwrap();
-    for case in ["fifo", "link", "dangling link"] {
+    // The bound sockets stay open until the end of the test (FIX-22 review round 1, F1).
+    let mut sockets = Vec::new();
+    for case in ["fifo", "link", "dangling link", "socket"] {
         let d = SessionDir::new(t.path().join(case.replace(' ', "-")));
         std::fs::create_dir(&d.root).unwrap();
         let act = d.activity_json();
@@ -265,6 +267,7 @@ fn fifo_and_linked_activity_files_are_busy_without_a_wait() {
                 assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
             }
             "link" => std::os::unix::fs::symlink(t.path().join("outside.json"), &act).unwrap(),
+            "socket" => sockets.push(std::os::unix::net::UnixListener::bind(&act).unwrap()),
             _ => std::os::unix::fs::symlink(t.path().join("missing.json"), &act).unwrap(),
         }
         let (tx, rx) = std::sync::mpsc::channel();
@@ -274,7 +277,7 @@ fn fifo_and_linked_activity_files_are_busy_without_a_wait() {
             let _ = tx.send(drain::idle(read.as_ref().map_err(String::as_str), Ok(&quiet()), now()));
         });
         let got = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| panic!("{case}: the drain read waited"));
-        let why = if case == "fifo" { "is not a regular file" } else { "is a link" };
+        let why = if case.ends_with("link") { "is a link" } else { "is not a regular file" };
         assert_eq!(
             got,
             Idle::Busy { reason: format!("activity file unreadable: {}: {why}", act.display()), rule_skipped: false },

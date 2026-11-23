@@ -165,7 +165,9 @@ pub struct ViewWorkspace {
 impl SessionView {
     /// Reads `view.json`. A FIFO does not make the read wait: on unix the open is `O_NONBLOCK`, and a FIFO is the
     /// error `<path>: is a FIFO`; every other entry gives the result of a plain read (`O_NONBLOCK` is cleared before
-    /// it). A link is followed. The whole file is read; there is no size cap (FIX-22).
+    /// it). A link is followed. The whole file is read; there is no size cap (FIX-22). Because of the `O_NONBLOCK`
+    /// open, a device that waits at open (for example a serial line with no carrier) no longer makes the open wait;
+    /// the read result of every entry that is not a FIFO is unchanged.
     pub fn load(dir: &SessionDir) -> anyhow::Result<Self> {
         use std::io::Read;
         let path = dir.view_json();

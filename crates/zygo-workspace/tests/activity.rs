@@ -630,3 +630,58 @@ fn activity_fifo_and_link_are_errors_without_a_wait() {
     assert_eq!(r.unwrap_err(), not_file);
     assert_eq!(u.unwrap_err(), (true, not_file));
 }
+
+// FIX-22 review round 1, F1: a socket fails the open (ENXIO) before the handle check; it is still "not a regular file".
+#[cfg(unix)]
+#[test]
+fn activity_socket_is_not_a_regular_file() {
+    use std::os::unix::fs::FileTypeExt;
+    let (_t, d) = dir();
+    let _sock = std::os::unix::net::UnixListener::bind(d.activity_json()).unwrap();
+    let not_file = format!("{}: is not a regular file", d.activity_json().display());
+    assert_eq!(format!("{:#}", activity::read(&d).unwrap_err()), not_file);
+    let e = activity::update(&d, LOCK_BOUND, &mut |a| a.busy = true).unwrap_err();
+    assert!(e.is::<activity::FileCondition>(), "{e:#}");
+    assert_eq!(format!("{e:#}"), not_file);
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_socket());
+}
+
+// FIX-22 review round 1, F4: a link, a FIFO or a folder at activity.json is refused before `update` takes or waits for
+// activity.lock, with the error of the load and well under the bound.
+#[cfg(unix)]
+#[test]
+fn update_refuses_a_link_or_fifo_before_the_lock() {
+    let (t, d) = dir();
+    let held =
+        fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(d.activity_lock()).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let act = d.activity_json().display().to_string();
+    let outside = t.path().join("outside.json");
+    fs::write(&outside, b"{}").unwrap();
+    for case in ["fifo", "link", "dangling link", "folder"] {
+        match case {
+            "fifo" => mkfifo(&d.activity_json()),
+            "link" => std::os::unix::fs::symlink(&outside, d.activity_json()).unwrap(),
+            "dangling link" => std::os::unix::fs::symlink(t.path().join("missing.json"), d.activity_json()).unwrap(),
+            _ => fs::create_dir(d.activity_json()).unwrap(),
+        }
+        let d2 = d.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            let e = activity::update(&d2, Duration::from_secs(3), &mut |a| a.busy = true).unwrap_err();
+            let _ = tx.send((start.elapsed(), e.is::<activity::FileCondition>(), format!("{e:#}")));
+        });
+        let (took, cond, text) = rx.recv_timeout(S10).expect("update waited");
+        let why = if case.ends_with("link") { "is a link" } else { "is not a regular file" };
+        assert_eq!((cond, text), (true, format!("{act}: {why}")), "{case}");
+        assert!(took < Duration::from_millis(500), "{case}: {took:?}");
+        if case == "folder" {
+            fs::remove_dir(d.activity_json()).unwrap();
+        } else {
+            fs::remove_file(d.activity_json()).unwrap();
+        }
+    }
+    assert_eq!(fs::read(&outside).unwrap(), b"{}".to_vec());
+    assert!(!t.path().join("missing.json").exists());
+}

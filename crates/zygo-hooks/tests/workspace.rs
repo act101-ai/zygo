@@ -1597,6 +1597,41 @@ fn hostile_inputs_change_nothing() {
     assert!(!f.dir.activity_json().exists(), "no id wrote activity.json");
 }
 
+#[test] // FIX-22 review round 1, F4: a link or a FIFO at activity.json is refused before activity.lock
+fn a_link_or_fifo_activity_file_is_refused_before_the_lock() {
+    let _s = serial();
+    for case in ["link", "fifo"] {
+        let f = fx(Agent::ClaudeCode);
+        let act_path = f.dir.activity_json().display().to_string();
+        let outside = f.t.path().join("outside.json");
+        fs::write(&outside, "{}").unwrap();
+        // The lock is held first; then the entry is put in place, so the holder's own update is not refused.
+        let held = hold_activity(&f.dir);
+        match case {
+            "link" => std::os::unix::fs::symlink(&outside, f.dir.activity_json()).unwrap(),
+            _ => mkfifo(&f.dir.activity_json()),
+        }
+        // A persistent condition, not a missed lock: no wait for the lock and no line for these events.
+        for (ev, payload) in [
+            ("pre-tool", fixture("PreToolUse-Bash-main")),
+            ("tool-end", fixture("PostToolUse-Bash-main")),
+            ("stop", fixture("Stop-main")),
+        ] {
+            let start = Instant::now();
+            assert_eq!(ws_bg(&f, ev, payload).unwrap(), None, "{case} {ev}");
+            assert!(start.elapsed() < Duration::from_millis(500), "{case} {ev}: {:?}", start.elapsed());
+        }
+        assert!(slog(&f).is_empty(), "{case}: {:?}", slog(&f));
+        let start = Instant::now();
+        assert_eq!(ws_bg(&f, "prompt", ups("hello")).unwrap(), None, "{case}");
+        assert!(start.elapsed() < Duration::from_millis(500), "{case} prompt: {:?}", start.elapsed());
+        let why = if case == "link" { "is a link" } else { "is not a regular file" };
+        assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: {why}")], "{case}");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "{}", "{case}");
+        drop(held);
+    }
+}
+
 #[test] // W-C6, OP9, D3; H1 attempt 1 round 3 F1
 fn non_member_session_start_is_unchanged() {
     let _s = serial();

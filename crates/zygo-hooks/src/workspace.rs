@@ -169,12 +169,13 @@ fn member<'a>(event: &'a str, dir: &'a SessionDir, paths: &'a Paths) -> anyhow::
 }
 
 /// One change of `activity.json` under `activity.lock` with the hook bound (AU56, D14). An `activity.json` that is a
-/// link or not a regular file is not changed: `activity::update` refuses it with a `FileCondition` (FIX-22). Each
-/// failure writes one session-log line by its class (round 3, S2 and S4; round 4, T3). A persistent condition repeats
-/// on every event, so its line is written only for the events of `MARKER_LOG_EVENTS`, a line per turn and not per
-/// tool call: the update gives `activity::FileCondition` (the file cannot be read, is over the read limit, does not
-/// parse or is of a newer version; the lock file cannot be opened; the write failed). A one-off failure writes its line on every event
-/// where it happens: the lock not taken within the AU56 bound, and a refused over-limit result.
+/// link or not a regular file is not changed: `activity::update` refuses it with a `FileCondition` before it takes
+/// or waits for the lock (FIX-22). Each failure writes one session-log line by its class (round 3, S2 and S4; round
+/// 4, T3). A persistent condition repeats on every event, so its line is written only for the events of
+/// `MARKER_LOG_EVENTS`, a line per turn and not per tool call: the update gives `activity::FileCondition` (the file
+/// is a link or is not a regular file, cannot be read, is over the read limit, does not parse or is of a newer
+/// version; the lock file cannot be opened; the write failed). A one-off failure writes its line on every event where
+/// it happens: the lock not taken within the AU56 bound, and a refused over-limit result.
 fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
     if let Err(e) = change_within(c, activity::LOCK_BOUND, f) {
         slog(c.dir, c.event, &format!("{e:#}"));

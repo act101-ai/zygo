@@ -491,3 +491,55 @@ fn session_view_load_does_not_wait_on_a_fifo() {
         assert_eq!(SessionView::load(&d).unwrap(), v);
     }
 }
+
+#[cfg(unix)]
+#[test] // FIX-22 review round 1, F3: every entry but a FIFO gives today's result; a link to a FIFO is a FIFO
+fn session_view_load_keeps_todays_result_for_other_entries() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().join("s"));
+    d.create().unwrap();
+    // Today's read of the same path: `std::fs::read`, then serde.
+    let today = |p: &std::path::Path| -> Result<SessionView, String> {
+        let b = std::fs::read(p).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&b).map_err(|e| e.to_string())
+    };
+    let now = |d: &SessionDir| SessionView::load(d).map_err(|e| format!("{e:#}"));
+    // A link to /dev/null: the serde error of an empty read.
+    std::os::unix::fs::symlink("/dev/null", d.view_json()).unwrap();
+    let want = today(&d.view_json());
+    assert!(want.as_ref().is_err_and(|e| e.starts_with("EOF while parsing")), "{want:?}");
+    assert_eq!(now(&d), want);
+    std::fs::remove_file(d.view_json()).unwrap();
+    // A bound socket: today's open error (ENXIO on Linux).
+    let sock = std::os::unix::net::UnixListener::bind(d.view_json()).unwrap();
+    let want = today(&d.view_json());
+    #[cfg(target_os = "linux")]
+    assert_eq!(want.clone().unwrap_err(), "No such device or address (os error 6)");
+    assert_eq!(now(&d), want);
+    drop(sock);
+    std::fs::remove_file(d.view_json()).unwrap();
+    // A mode-0 regular file: today's permission error (when the test runs as root both reads succeed).
+    let v = SessionView { session: "s".into(), main_role: "main".into(), ..Default::default() };
+    v.save(&d).unwrap();
+    std::fs::set_permissions(d.view_json(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let want = today(&d.view_json());
+    assert_eq!(now(&d), want);
+    std::fs::set_permissions(d.view_json(), std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::remove_file(d.view_json()).unwrap();
+    // A link to a FIFO: `<view.json path>: is a FIFO` within 5 s.
+    let fifo = t.path().join("fifo");
+    let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    std::os::unix::fs::symlink(&fifo, d.view_json()).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(SessionView::load(&d2).map_err(|e| format!("{e:#}")));
+    });
+    let r = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("SessionView::load waited on a linked FIFO");
+    assert_eq!(r.unwrap_err(), format!("{}: is a FIFO", d.view_json().display()));
+}
