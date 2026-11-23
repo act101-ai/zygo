@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** FIX-21, FIX-20, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19
+**Next:** FIX-21, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | DONE | judgment | 8978541; acceptance snapshot 33, state 22, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M7, D1-D6 |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | DONE | judgment | 3d51ad4; acceptance up 45, mux 46, snapshot 33, state 23, args 13, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M5, R3-1..R3-8 |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | DONE | judgment | 0921fb6; acceptance admin 21, up 45, up_all 7, workspace --no-run ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
@@ -92,7 +91,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1 | TODO | mechanical | — |
-| FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-20 |
+| FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | IN-PROGRESS | judgment | .worktrees/phase2/FIX-21 |
 
 ## Log
@@ -224,3 +223,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-18 DONE (fbbfb74). Operator decision: no idle expiry for any session, local or team; a session ends with its launcher or a server restart. Merged tree: session_api 52, zygo-proxy 391, zygo-launch 0 failed, check --tests clean. Graph title applied. |
 | 2026-11-22 | FIX-20 added and planned (operator: no invented requirement may end user work): AU26 60 s interrupted-turn idle and AU69 30-day results deletion removed; last_run_at goes (no reader). 8 steps, test first. M1, H1 depend on it. |
 | 2026-11-22 | FIX-21 added and planned (operator: there is never Claude attribution; zygo did not force it). Spec §8.5, §8.6, §13.4 rewritten. 11 steps, test first. Edge FIX-21 → H1: both change claude_code.rs and its tests. |
+| 2026-11-22 | FIX-20 DONE (862148f): merged. AU26 60 s interrupted-turn rule and AU69(b) 30-day results deletion removed; last_run_at removed. Operator decision 2026-11-22. Merged tree: down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean. |

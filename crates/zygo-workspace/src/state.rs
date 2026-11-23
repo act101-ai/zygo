@@ -107,8 +107,6 @@ pub struct MemberRecord {
     pub config_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_run_at: Option<u64>,
     /// The whole content of the member's `overrides.json`, so a key this zygo does not know is kept (AU78).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overrides: Option<serde_json::Value>,
@@ -290,7 +288,6 @@ impl MemberRecord {
             launch: Launch::new(kind),
             config_dir: None,
             program: None,
-            last_run_at: None,
             overrides: None,
             compact: None,
             interrupted: Vec::new(),
