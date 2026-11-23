@@ -71,6 +71,10 @@ const MAX_FILE: u64 = 1 << 20;
 /// The result of one read of `activity.json`.
 enum Load {
     Missing,
+    /// A symbolic link; it was not followed (unix).
+    Link,
+    /// An entry that is not a regular file: a FIFO, a folder, a socket, a device.
+    NotRegular,
     ReadFailed(std::io::Error),
     TooLarge,
     Unparsable(String),
@@ -82,11 +86,31 @@ enum Load {
 
 fn load(path: &Path) -> Load {
     use std::io::Read;
-    let file = match std::fs::File::open(path) {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    // On unix a link is not followed and a FIFO does not make the open wait (FIX-22); the handle is checked below.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let file = match options.open(path) {
+        #[cfg(unix)]
+        Err(e)
+            if e.raw_os_error() == Some(libc::ELOOP)
+                || std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) =>
+        {
+            return Load::Link
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Load::Missing,
         Err(e) => return Load::ReadFailed(e),
         Ok(f) => f,
     };
+    match file.metadata() {
+        Err(e) => return Load::ReadFailed(e),
+        Ok(m) if !m.is_file() => return Load::NotRegular,
+        Ok(_) => {}
+    }
     let mut bytes = Vec::new();
     if let Err(e) = file.take(MAX_FILE + 1).read_to_end(&mut bytes) {
         return Load::ReadFailed(e);
@@ -148,12 +172,15 @@ fn lenient(fields: &serde_json::Map<String, serde_json::Value>) -> Activity {
 /// Reads `activity.json` with no lock: every write is one rename, so the file is always whole (W§7.3). A missing
 /// file is the default (W§9.1). These are errors, and the drain counts the member as busy (AU26): a file that
 /// cannot be read or parsed or is not a JSON object (`<activity.json path>: <error>`), and a file larger than 1 MiB
-/// (`<activity.json path>: activity.json larger than 1 MiB`). A file of a newer zygo gives its known fields, taken
-/// leniently (see `lenient`).
+/// (`<activity.json path>: activity.json larger than 1 MiB`), a link (`<activity.json path>: is a link`) and an entry
+/// that is not a regular file (`<activity.json path>: is not a regular file`). A FIFO does not make the read wait; on
+/// unix a link is not followed. A file of a newer zygo gives its known fields, taken leniently (see `lenient`).
 pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
     let path = dir.activity_json();
     match load(&path) {
         Load::Missing => Ok(Activity::default()),
+        Load::Link => Err(anyhow::anyhow!("{}: is a link", path.display())),
+        Load::NotRegular => Err(anyhow::anyhow!("{}: is not a regular file", path.display())),
         Load::ReadFailed(e) => Err(anyhow::anyhow!("{}: {e}", path.display())),
         Load::TooLarge => Err(anyhow::anyhow!("{}: activity.json larger than 1 MiB", path.display())),
         Load::Unparsable(e) => Err(anyhow::anyhow!("{}: {e}", path.display())),
@@ -163,7 +190,8 @@ pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
 
 /// The error kind of an `update` that failed on a condition of the session folder's files, which every later `update`
 /// meets again until the file changes (H1 attempt-2 review round 3, S2 and S4; round 4, T3): an `activity.json` that
-/// cannot be read, does not parse, is not a JSON object, is larger than 1 MiB or is of a newer version; an
+/// cannot be read, does not parse, is not a JSON object, is larger than 1 MiB, is of a newer version, is a link or is
+/// not a regular file; an
 /// `activity.lock` that cannot be opened or locked (a link, not a regular file, no permission); a failed write. Its
 /// text is the error text that `update` documents. The other errors of `update`, the lock not taken within `bound`
 /// and a refused result larger than 1 MiB, are of a single call. Callers tell the two apart with
@@ -185,8 +213,10 @@ impl std::error::Error for FileCondition {}
 /// the drain counts it as busy) is never replaced, because a write from the default would set `busy = false` in an
 /// open turn (H1 attempt-2 review round 1, F1). These cases return an error and write nothing: the lock file cannot
 /// be opened or locked (`<activity.lock path>: open lock file: <error>`), the lock is not taken within `bound`
-/// (`<activity.lock path>: lock not taken within <ms> ms`), the file cannot be read or parsed or is not a JSON
-/// object (`<activity.json path>: <error>`), the file is larger than 1 MiB
+/// (`<activity.lock path>: lock not taken within <ms> ms`), the entry is a link (`<activity.json path>: is a link`;
+/// on unix it is not followed, so nothing is written through it) or is not a regular file
+/// (`<activity.json path>: is not a regular file`; a FIFO does not make the call wait), the file cannot be read or
+/// parsed or is not a JSON object (`<activity.json path>: <error>`), the file is larger than 1 MiB
 /// (`<activity.json path>: activity.json larger than 1 MiB`), the file is a JSON object whose `version` is present
 /// and is not the integer 0 or 1 (`<activity.json path>: written by a newer zygo (version <JSON text of version>)`),
 /// or the result is larger than the read limit, so no reader could read it
@@ -206,6 +236,8 @@ pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity
     let condition = |text: String| -> anyhow::Error { FileCondition(format!("{}: {text}", path.display())).into() };
     let mut a = match load(&path) {
         Load::Missing => Activity::default(),
+        Load::Link => return Err(condition("is a link".to_string())),
+        Load::NotRegular => return Err(condition("is not a regular file".to_string())),
         Load::ReadFailed(e) => return Err(condition(e.to_string())),
         Load::TooLarge => return Err(condition("activity.json larger than 1 MiB".to_string())),
         Load::Unparsable(e) => return Err(condition(e)),

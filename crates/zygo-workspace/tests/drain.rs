@@ -246,6 +246,43 @@ fn unreadable_activity_file_reads_as_busy() {
     }
 }
 
+// FIX-22: W-C1 (C6), AU26. A FIFO, a link and a dangling link at activity.json make the member busy, and the read
+// that the drain poll makes returns at once.
+#[cfg(unix)]
+#[test]
+fn fifo_and_linked_activity_files_are_busy_without_a_wait() {
+    use std::os::unix::ffi::OsStrExt;
+    let t = TempDir::new().unwrap();
+    std::fs::write(t.path().join("outside.json"), br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#).unwrap();
+    for case in ["fifo", "link", "dangling link"] {
+        let d = SessionDir::new(t.path().join(case.replace(' ', "-")));
+        std::fs::create_dir(&d.root).unwrap();
+        let act = d.activity_json();
+        match case {
+            "fifo" => {
+                let c = std::ffi::CString::new(act.as_os_str().as_bytes()).unwrap();
+                // SAFETY: `c` is a valid NUL-terminated path.
+                assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            }
+            "link" => std::os::unix::fs::symlink(t.path().join("outside.json"), &act).unwrap(),
+            _ => std::os::unix::fs::symlink(t.path().join("missing.json"), &act).unwrap(),
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let d2 = d.clone();
+        std::thread::spawn(move || {
+            let read = activity::read(&d2).map_err(|e| format!("{e:#}"));
+            let _ = tx.send(drain::idle(read.as_ref().map_err(String::as_str), Ok(&quiet()), now()));
+        });
+        let got = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| panic!("{case}: the drain read waited"));
+        let why = if case == "fifo" { "is not a regular file" } else { "is a link" };
+        assert_eq!(
+            got,
+            Idle::Busy { reason: format!("activity file unreadable: {}: {why}", act.display()), rule_skipped: false },
+            "{case}"
+        );
+    }
+}
+
 // H1 attempt-2 review round 1, F1: an `activity.json` over the read limit or one that does not parse is busy
 // (AU26), and an `update` keeps it, so it stays busy.
 #[test]

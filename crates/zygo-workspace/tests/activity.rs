@@ -567,3 +567,66 @@ fn two_hook_processes_writing_100_times_each_lose_no_ok_update() {
     assert!(total > 0);
     assert_eq!(activity::read(&d).unwrap().running.len(), total);
 }
+
+#[cfg(unix)]
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+}
+
+// FIX-22: W-C1 (C6), AU26, AU56. No reader waits on a FIFO or writes through a link.
+#[cfg(unix)]
+#[test]
+fn activity_fifo_and_link_are_errors_without_a_wait() {
+    use std::os::unix::fs::FileTypeExt;
+    // Both calls in one thread; the answer must come within 5 s.
+    let both = |d: &SessionDir| {
+        let d = d.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = activity::read(&d).map_err(|e| format!("{e:#}"));
+            let u = activity::update(&d, LOCK_BOUND, &mut |a| a.busy = true)
+                .map_err(|e| (e.is::<activity::FileCondition>(), format!("{e:#}")));
+            let _ = tx.send((r, u));
+        });
+        rx.recv_timeout(Duration::from_secs(5)).expect("read or update waited")
+    };
+    let (t, d) = dir();
+    let act = d.activity_json().display().to_string();
+    let not_file = format!("{act}: is not a regular file");
+    let link = format!("{act}: is a link");
+    // A FIFO: an error at once; the FIFO stays.
+    mkfifo(&d.activity_json());
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), not_file);
+    assert_eq!(u.unwrap_err(), (true, not_file.clone()));
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_fifo());
+    fs::remove_file(d.activity_json()).unwrap();
+    // A link to a regular file: an error; the target and the link are not changed.
+    let outside = t.path().join("outside.json");
+    let body = br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#;
+    fs::write(&outside, body).unwrap();
+    std::os::unix::fs::symlink(&outside, d.activity_json()).unwrap();
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), link);
+    assert_eq!(u.unwrap_err(), (true, link.clone()));
+    assert_eq!(fs::read(&outside).unwrap(), body.to_vec());
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_symlink());
+    fs::remove_file(d.activity_json()).unwrap();
+    // A dangling link: an error, not the default; no target is made and the link stays.
+    let missing = t.path().join("missing.json");
+    std::os::unix::fs::symlink(&missing, d.activity_json()).unwrap();
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), link);
+    assert_eq!(u.unwrap_err(), (true, link.clone()));
+    assert!(!missing.exists());
+    assert!(fs::symlink_metadata(d.activity_json()).unwrap().file_type().is_symlink());
+    fs::remove_file(d.activity_json()).unwrap();
+    // A folder: not a regular file.
+    fs::create_dir(d.activity_json()).unwrap();
+    let (r, u) = both(&d);
+    assert_eq!(r.unwrap_err(), not_file);
+    assert_eq!(u.unwrap_err(), (true, not_file));
+}
