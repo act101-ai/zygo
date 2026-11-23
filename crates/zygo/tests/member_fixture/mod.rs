@@ -68,10 +68,26 @@ pub fn record(store: &Store, key: &str) -> MemberRecord {
 }
 
 /// Opens `path` (read, write, create, no truncate) and takes its fs4 lock until the file is dropped.
+///
+/// The lock can be busy for a short time although no test holds it: `Store::update` (in `state`) opens the same
+/// `lock` file with O_CLOEXEC and takes a flock, and a child that another test spawns on a parallel thread while that
+/// fd is open shares the open file description, so the child keeps the flock until its exec. Thus a `WouldBlock`
+/// is tried again every 1 ms for at most 2 s; after 2 s, or on any other error, the call panics.
 pub fn hold(path: PathBuf) -> std::fs::File {
-    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path).unwrap();
-    fs4::FileExt::try_lock(&f).unwrap();
-    f
+    const LIMIT: Duration = Duration::from_secs(2);
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path).unwrap();
+    let t0 = Instant::now();
+    loop {
+        match fs4::FileExt::try_lock(&f) {
+            Ok(()) => return f,
+            Err(fs4::TryLockError::WouldBlock) => {
+                let waited = t0.elapsed();
+                assert!(waited < LIMIT, "lock {} still busy after {waited:?}", path.display());
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(fs4::TryLockError::Error(e)) => panic!("lock {}: {e}", path.display()),
+        }
+    }
 }
 
 /// Drops `held` when `d` has passed since `t0`: held for the whole verb run and for `d` at least.
