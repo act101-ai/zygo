@@ -1,6 +1,6 @@
 # zygo phase 3 roadmap: distributed workloads
 
-**Status:** started 2026-11-22 by the operator's direction; items are not designed yet unless a spec is named.
+**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet.
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`).
 
 ## Intent

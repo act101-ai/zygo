@@ -1,6 +1,6 @@
 # zygo: workspace mail — design
 
-**Status:** draft for the operator's approval
+**Status:** approved by the operator 2026-11-22
 **Date:** 2026-11-22
 **Release:** after phase 2 (needs the workspace of `docs/specs/2026-11-20-workspaces-design.md`)
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`) and `docs/specs/2026-11-20-workspaces-design.md` (`W§n`, decisions `OPn`/`AUn`). `M§n` is a section of this document.
