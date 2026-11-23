@@ -31,6 +31,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
 | W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
 | W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
+| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | DONE | judgment | f945872; mux 42 on 3.7c and 3.2a; review round 2 fixed B1 (3.2a window names) and M1-M7 |
 
 ## Log
 

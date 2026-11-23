@@ -60,6 +60,42 @@ fn rule_1_alone_is_a_turn_open() {
     assert_eq!(idle(&act(true, &[]), &quiet()), Idle::TurnOpen { rule_skipped: false });
 }
 
+fn tools(busy: bool, n: u32) -> Activity { Activity { tools_running: n, ..act(busy, &[]) } }
+
+#[test] // W10 round 2 item 1: a long tool call (70 s and more, no model request) is never a turn open
+fn a_running_tool_is_busy_not_a_turn_open() {
+    assert_eq!(idle(&tools(true, 1), &quiet()), busy("tool running"));
+    assert_eq!(idle(&tools(true, 2), &st(Some(0), None)), busy("tool running"));
+    // A skipped rule 3 is still reported, and a request in flight comes first.
+    assert_eq!(idle(&tools(true, 1), &st(None, None)), busy_skipped("tool running"));
+    assert_eq!(idle(&tools(true, 1), &st(Some(1), None)), busy("model requests in flight: 1"));
+    // Running subagents come before a running tool.
+    let mut a = tools(true, 1);
+    a.running.insert("a1".into(), "Plan".into());
+    assert_eq!(idle(&a, &quiet()), busy("subagents running: \"a1\""));
+}
+
+#[test] // W10 round 3 B1: busy over idle: a running tool is busy whatever `busy` holds (never lose work)
+fn busy_false_with_a_running_tool_is_busy() {
+    assert_eq!(idle(&tools(false, 1), &quiet()), busy("tool running"));
+    assert_eq!(idle(&tools(false, 1), &SessionStatus::default()), busy_skipped("tool running"));
+    assert_eq!(idle(&tools(false, 0), &quiet()), Idle::Idle);
+}
+
+#[test] // W10 round 3 B1: an Esc during a tool fires no hook (P-N24-1); the count holds at every poll time
+fn an_escaped_tool_is_busy_at_every_poll() {
+    let a = tools(true, 1);
+    for secs in [0, 61, 600, 86_400] {
+        assert_eq!(drain::idle(Ok(&a), Ok(&quiet()), now() + Duration::from_secs(secs)), busy("tool running"));
+    }
+}
+
+#[test] // W10 round 2 item 1: an Esc-interrupted turn with no running tool keeps the 60 s rule of `down`
+fn an_interrupted_turn_with_no_running_tool_is_a_turn_open() {
+    assert_eq!(idle(&tools(true, 0), &quiet()), Idle::TurnOpen { rule_skipped: false });
+    assert_eq!(idle(&tools(true, 0), &st(None, None)), Idle::TurnOpen { rule_skipped: true });
+}
+
 #[test]
 fn rule_2_alone_is_busy_with_the_running_ids() {
     assert_eq!(idle(&act(false, &[("b2", "pw-sub"), ("a1", "")]), &quiet()), busy(r#"subagents running: "a1", "b2""#));

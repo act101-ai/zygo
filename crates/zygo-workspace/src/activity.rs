@@ -27,12 +27,20 @@ pub struct Activity {
     pub running: BTreeMap<String, String>,
     /// Unix seconds of the last write (W§9.1).
     pub updated_at: u64,
+    /// Tool calls of the main loop that started and did not end yet (W10 rounds 2 and 3): `PreToolUse` adds 1,
+    /// `PostToolUse` and `PostToolUseFailure` take 1 away (never below 0), `UserPromptSubmit`, `Stop` and `SessionEnd`
+    /// set 0 (H1). Above 0 the drain counts the member as busy whatever `busy` holds. Absent in the file when 0, so a
+    /// file of an older zygo reads 0.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub tools_running: u32,
 }
+
+fn is_zero(n: &u32) -> bool { *n == 0 }
 
 impl Default for Activity {
     /// The state of a member with no `activity.json` (W§9.1): not busy, nothing running.
     fn default() -> Self {
-        Activity { version: VERSION, busy: false, running: BTreeMap::new(), updated_at: 0 }
+        Activity { version: VERSION, busy: false, running: BTreeMap::new(), updated_at: 0, tools_running: 0 }
     }
 }
 
@@ -109,6 +117,8 @@ fn load(path: &Path) -> Load {
 /// string `type` member when the value is an object, else empty; `updated_at` when it is a number, else 0. A
 /// `running` that is present but not an object gives an empty set and `busy = true`, so the drain never counts the
 /// member as idle on subagents it cannot read; a missing `running` gives an empty set and leaves `busy` as read.
+/// `tools_running` (W10 round 2) is the number when it is a u32 (larger numbers give `u32::MAX`), 0 when it is
+/// absent, and 1 for any other value, so the drain never counts a running tool it cannot read as none.
 fn lenient(fields: &serde_json::Map<String, serde_json::Value>) -> Activity {
     use serde_json::Value;
     let agent_type = |v: &Value| match v {
@@ -129,6 +139,10 @@ fn lenient(fields: &serde_json::Map<String, serde_json::Value>) -> Activity {
             .get("updated_at")
             .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
             .unwrap_or(0),
+        tools_running: match fields.get("tools_running") {
+            None => 0,
+            Some(v) => v.as_u64().map_or(1, |n| u32::try_from(n).unwrap_or(u32::MAX)),
+        },
     }
 }
 
