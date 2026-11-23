@@ -1278,6 +1278,41 @@ fn hostile_inputs_change_nothing() {
     assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
     assert_eq!(fs::read_to_string(f.dir.activity_json()).unwrap(), r#"{"version": 2, "busy": true}"#);
     assert_eq!(slog(&f), [format!("workspace hook stop: {act_path}: written by a newer zygo (version 2)")]);
+    // A 2 MiB agent_id in an open turn (attempt-2 review round 1, F1): the result would pass the read limit, so
+    // nothing is written, one session-log line, and the turn stays busy through the next tool events.
+    let f = fx(Agent::ClaudeCode);
+    let act_path = f.dir.activity_json().display().to_string();
+    set_act(&f, true, 0);
+    let before = fs::read(f.dir.activity_json()).unwrap();
+    let mut big = fixture("SubagentStart-sub");
+    big["agent_id"] = json!("x".repeat(2 << 20));
+    assert_eq!(ws(&f, "subagent-start", big).unwrap(), None);
+    assert!(fs::read(f.dir.activity_json()).unwrap() == before, "activity.json changed");
+    let l = slog(&f);
+    assert_eq!(l.len(), 1);
+    assert!(
+        l[0].starts_with(&format!("workspace hook subagent-start: {act_path}: the new activity is "))
+            && l[0].ends_with(" bytes, more than the 1048576 bytes that every reader accepts; not written"),
+        "{}",
+        &l[0][..300.min(l[0].len())]
+    );
+    assert_eq!(bt(&f), (true, 0));
+    assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+    assert_eq!(bt(&f), (true, 1));
+    assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
+    assert_eq!(bt(&f), (true, 0));
+    assert_eq!(slog(&f).len(), 1);
+    // An activity.json over the read limit or one that does not parse is kept (F1): the drain counts it busy, and
+    // a write from the default would end the open turn. Each event logs its error once.
+    for (i, text) in [{ let mut b = br#"{"version":1,"busy":true,"running":{},"updated_at":1}"#.to_vec(); b.resize(2 << 20, b' '); b }, b"{not json".to_vec()].into_iter().enumerate() {
+        let f = fx(Agent::ClaudeCode);
+        fs::write(f.dir.activity_json(), &text).unwrap();
+        assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+        assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
+        assert!(fs::read(f.dir.activity_json()).unwrap() == text, "activity.json {i} changed");
+        assert_eq!(slog(&f).len(), 2, "{i}");
+        assert!(slog(&f).iter().all(|l| l.starts_with("workspace hook ")), "{i}");
+    }
     // Marker values that fail their check: one line per turn, from `prompt`, `session`, `session-end` and the Claude
     // Code `SessionStart` only; the per-tool and per-request events write none (F3).
     let quiet = [

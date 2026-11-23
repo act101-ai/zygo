@@ -132,13 +132,17 @@ fn update_keeps_earlier_changes() {
     assert_eq!(a.running, BTreeMap::from([("a1".into(), "t1".into())]));
 }
 
+// H1 attempt-2 review round 1, F1: the drain counts an unparsable file as busy (AU26), so a write that started from
+// the default would end an open turn. The file is kept and the update returns the read error.
 #[test]
-fn update_replaces_an_unparsable_file_with_the_default_and_the_change() {
+fn update_refuses_an_unparsable_file_and_writes_nothing() {
     let (_t, d) = dir();
-    fs::write(d.activity_json(), b"garbage").unwrap();
-    activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap();
-    let a = activity::read(&d).unwrap();
-    assert_eq!((a.version, a.busy, a.running), (1, false, BTreeMap::from([("a1".into(), "t1".into())])));
+    for text in [&b"garbage"[..], b"[]", br#"{"version":1,"busy":"yes"}"#] {
+        fs::write(d.activity_json(), text).unwrap();
+        let e = format!("{:#}", activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap_err());
+        assert!(e.starts_with(&format!("{}: ", d.activity_json().display())), "{e}");
+        assert_eq!(fs::read(d.activity_json()).unwrap(), text.to_vec());
+    }
 }
 
 #[cfg(unix)]
@@ -381,13 +385,49 @@ fn read_of_a_file_over_1_mib_is_an_error() {
     assert_eq!(e, format!("{}: activity.json larger than 1 MiB", d.activity_json().display()));
 }
 
+// H1 attempt-2 review round 1, F1: a file over the read limit is kept; starting from the default would end an open
+// turn.
 #[test]
-fn update_replaces_a_file_over_1_mib() {
+fn update_refuses_a_file_over_1_mib_and_writes_nothing() {
     let (_t, d) = dir();
     two_mib_file(&d);
-    activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap();
+    let before = fs::read(d.activity_json()).unwrap();
+    let e = format!("{:#}", activity::update(&d, S10, &mut |a| a.subagent_start("a1", "t1")).unwrap_err());
+    assert_eq!(e, format!("{}: activity.json larger than 1 MiB", d.activity_json().display()));
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
+}
+
+// H1 attempt-2 review round 1, F1: a result over the read limit (MAX_FILE, 1 MiB) is refused, so no reader ever
+// finds a file it cannot read.
+#[test]
+fn update_refuses_a_result_larger_than_the_read_limit() {
+    let (_t, d) = dir();
+    activity::update(&d, S10, &mut |a| {
+        a.busy = true;
+        a.tools_running = 1;
+    })
+    .unwrap();
+    let before = fs::read(d.activity_json()).unwrap();
+    let id = "x".repeat(2 << 20);
+    let r = activity::update(&d, S10, &mut |a| a.subagent_start(&id, "t1"));
+    let Err(e) = r else { panic!("an update over the read limit was written") };
+    let e = format!("{e:#}");
+    assert!(e.starts_with(&format!("{}: the new activity is ", d.activity_json().display())), "{}", &e[..200.min(e.len())]);
+    assert!(e.ends_with(" bytes, more than the 1048576 bytes that every reader accepts; not written"), "{e}");
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
     let a = activity::read(&d).unwrap();
-    assert_eq!((a.version, a.busy, a.running), (1, false, BTreeMap::from([("a1".into(), "t1".into())])));
+    assert!(a.busy && a.tools_running == 1 && a.running.is_empty());
+    // A result of exactly the limit is still written; one byte more is not. `updated_at` has 10 digits until 2286.
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let probe = Activity { busy: true, tools_running: 1, updated_at: now, running: BTreeMap::from([("a".into(), "t".into())]), ..Activity::default() };
+    let n = (1 << 20) - serde_json::to_vec(&probe).unwrap().len() + 1;
+    let over = "y".repeat(n + 1);
+    assert!(activity::update(&d, S10, &mut |a| a.subagent_start(&over, "t")).is_err());
+    assert_eq!(fs::read(d.activity_json()).unwrap(), before);
+    let at_limit = "y".repeat(n);
+    activity::update(&d, S10, &mut |a| a.subagent_start(&at_limit, "t")).unwrap();
+    assert_eq!(fs::metadata(d.activity_json()).unwrap().len(), 1 << 20);
+    assert!(activity::read(&d).unwrap().running.contains_key(&at_limit));
 }
 
 /// Child half of #57; the parent runs it with `--ignored` and sets both variables on the child only. With no
