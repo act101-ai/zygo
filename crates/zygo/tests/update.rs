@@ -1178,24 +1178,31 @@ mod workspace_check {
         }
     }
 
-    #[test] // M5 round 2 finding 4: a cache that cannot be written does not give a second check after the relaunch
-    fn ws_run_yes_with_a_read_only_cache_checks_once() {
-        use std::os::unix::fs::PermissionsExt;
+    /// Removes the directory at its path when dropped, also when an assertion failed.
+    struct RemoveDir(PathBuf);
+
+    impl Drop for RemoveDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test] // M5 round 2 finding 4, round 3 finding 4: a cache that cannot be written gives no second check
+    fn ws_run_yes_with_an_unwritable_cache_checks_once() {
         let h = locked(Harness::no_tmux);
         let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
         let mut files = vec![version_file(NEW)];
         files.extend(release(NEW, &zygo));
         let f = Fixture::start(files);
         let s = setup();
-        // The folders that the launch writes in exist; `update.json` cannot be written next to them.
-        let cache = &h.paths.cache_dir;
-        std::fs::create_dir_all(&h.paths.sessions_dir).unwrap();
-        std::fs::create_dir_all(h.paths.workspace_cache_dir()).unwrap();
-        std::fs::set_permissions(cache, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // A directory at the `update.json` path: the cache write (a rename onto it) fails for every uid, also root,
+        // and a read finds no cache.
+        let blocked = update_json(&h);
+        std::fs::create_dir_all(blocked.join("keep")).unwrap();
+        let _guard = RemoveDir(blocked.clone());
         let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, b"y\n", &[]);
-        std::fs::set_permissions(cache, std::fs::Permissions::from_mode(0o700)).unwrap();
         let e = err(&r.o);
-        assert!(!update_json(&h).exists());
+        assert!(blocked.join("keep").is_dir(), "the cache write replaced the directory");
         assert_eq!(e.matches(&prompt(NEW)).count(), 1, "{e}");
         assert_member_ran(&h, &r);
         assert_eq!(f.requests(), check_and_install());
@@ -1237,23 +1244,27 @@ mod workspace_check {
         failed_install_starts_the_member(&f, &line);
     }
 
-    #[test] // M5 round 2 finding 5: a refused connection is silent and adds no wait beyond the 2 s bound
-    fn ws_run_with_a_network_error_starts_the_member_without_a_prompt() {
-        // The same run with the check off gives the time of the run itself.
-        let plain = locked(Harness::no_tmux);
-        let none = ws_run_member(&plain, Path::new(env!("CARGO_BIN_EXE_zygo")), OsStr::new(""), false, b"", &[]);
-        assert_member_ran(&plain, &none);
-        let port = {
-            let l = TcpListener::bind("127.0.0.1:0").unwrap();
-            l.local_addr().unwrap().port()
-        }; // closed: nothing listens on it now
+    #[test] // M5 round 2 finding 5, round 3 finding 3: a server that accepts and never answers ends at the 2 s bound
+    fn ws_run_with_a_stalled_server_starts_the_member_at_the_bound() {
+        // The total time limit of the check (auto-update design, "Check").
+        const BOUND: Duration = Duration::from_secs(2);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        // Each connection is accepted and kept open with no answer.
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for c in l.incoming().flatten() {
+                held.push(c);
+            }
+        });
         let h = locked(Harness::no_tmux);
         let base = OsString::from(format!("http://127.0.0.1:{port}"));
         let r = ws_run_member(&h, Path::new(env!("CARGO_BIN_EXE_zygo")), &base, true, b"", &[]);
         let e = err(&r.o);
         assert!(!e.contains("is available") && !e.contains("zygo update"), "{e}");
         assert_member_ran(&h, &r);
-        assert!(r.took < none.took + Duration::from_secs(2), "{:?} against {:?}", r.took, none.took);
+        assert!(r.took >= BOUND - Duration::from_millis(200), "{:?}: the run did not wait for the bound", r.took);
+        assert!(r.took < BOUND + Duration::from_secs(3), "{:?}", r.took);
     }
 
     #[test] // M5 round 2 finding 5: `n`, `s` and `skip` start the member and install nothing; `s` and `skip` keep the skip
