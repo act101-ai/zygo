@@ -56,21 +56,21 @@ export const ZygoPlugin = async ({ directory }) => {
   };
   // Session kinds (`top` or `child`, only from the `info` of a `session.*` event, first value final), activation
   // numbers from one counter, the main session (the known top session activated last), the id of the last
-  // `session` call with an id, and the turn set (sessions in a turn that are not known children).
+  // `session` call with an id, the deleted sessions (never the main session), and the turn set (sessions in a turn
+  // that are not known children).
   const kind = new Map();
   const act = new Map();
   let n = 0;
   let main = null;
   let mainAct = 0;
   let sent = null;
+  const deleted = new Set();
   const inTurn = new Set();
   const isId = (s) => typeof s === "string" && s !== "";
   const leave = (id) => {
     if (inTurn.delete(id) && inTurn.size === 0) ws("stop", { sessionID: id });
   };
-  const consider = (id) => {
-    const a = act.get(id);
-    if (kind.get(id) !== "top" || a === undefined || (main !== null && a <= mainAct)) return;
+  const take = (id, a) => {
     main = id;
     mainAct = a;
     if (id !== sent) {
@@ -78,18 +78,48 @@ export const ZygoPlugin = async ({ directory }) => {
       ws("session", { sessionID: id });
     }
   };
-  // AU27, W§9.1. Decides and queues before any wait (D11): (1) classify from `info`; a new child leaves the turn
-  // set; (2) `session.created` or a `busy` status activates; (3) the turn set sends `prompt` when it becomes
-  // non-empty and `stop` when it becomes empty; (4) a known top session activated later than the main session
-  // becomes the main session and is sent once.
+  const consider = (id) => {
+    const a = act.get(id);
+    if (kind.get(id) !== "top" || deleted.has(id) || a === undefined || (main !== null && a <= mainAct)) return;
+    take(id, a);
+  };
+  // The main session was deleted: the known, not deleted top session with the highest activation, or none.
+  const reselect = () => {
+    let best = null;
+    let bestAct = 0;
+    for (const [id, a] of act) {
+      if (kind.get(id) === "top" && !deleted.has(id) && a > bestAct) {
+        best = id;
+        bestAct = a;
+      }
+    }
+    if (best === null) {
+      main = null;
+      mainAct = 0;
+    } else {
+      take(best, bestAct);
+    }
+  };
+  // AU27, W§9.1. Decides and queues before any wait (D11): (1) classify from `info` (a present, non-null
+  // `parentID` makes a child); a new child leaves the turn set; a `session.deleted` marks its session deleted and
+  // it leaves the turn set; a deleted main session gives the main session to the newest known top session;
+  // (2) `session.created` or a `busy` status activates; (3) the turn set sends `prompt` when it becomes non-empty
+  // and `stop` when it becomes empty; (4) a known top session that is not deleted and was activated later than the
+  // main session becomes the main session and is sent once.
   const step = (e) => {
     const id = sessionOf(e);
     const p = e.properties || {};
     const info = p.info && typeof p.info === "object" ? p.info : null;
     const infoId = String(e.type).startsWith("session.") && info && isId(info.id) ? info.id : null;
     if (infoId !== null && !kind.has(infoId)) {
-      kind.set(infoId, info.parentID ? "child" : "top");
-      if (info.parentID) leave(infoId);
+      const child = info.parentID !== undefined && info.parentID !== null;
+      kind.set(infoId, child ? "child" : "top");
+      if (child) leave(infoId);
+    }
+    if (e.type === "session.deleted" && infoId !== null) {
+      deleted.add(infoId);
+      leave(infoId);
+      if (infoId === main) reselect();
     }
     const busy = e.type === "session.status" && statusOf(e) === "busy";
     const idle = e.type === "session.idle" || (e.type === "session.status" && statusOf(e) === "idle");
