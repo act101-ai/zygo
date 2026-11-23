@@ -1279,12 +1279,15 @@ struct Ws<'a> {
     member: Option<&'a str>,
     /// The stub mode: `ok`, `deny` (pre-tool denies), `slow` (session sleeps 0.3 s), `fail` (every call prints a
     /// deny and exits 1), `hang` (every workspace call sleeps 12 s, more than the 10 s timeout of the plugin),
-    /// `hangpre` (only workspace `pre-tool` calls sleep 12 s).
+    /// `hangpre` (only workspace `pre-tool` calls sleep 12 s), `slowpre` (only workspace `pre-tool` calls sleep
+    /// 0.3 s), `guarddeny` (each `guard` call sleeps 0.3 s before it writes its line to `calls.txt`, then denies
+    /// with the reason `R4` and exits 0).
     mode: &'a str,
     /// The session id of the `task` dispatch.
     main: &'a str,
-    /// `[type, properties]` of each event, or `["tool.execute.before", input]` / `["tool.execute.after", input]` of
-    /// a tool-hook step.
+    /// `[type, properties]` of each event, `["tool.execute.before", input]` / `["tool.execute.after", input]` of
+    /// a tool-hook step, `["start", step]` (starts `step` and does not wait for it) or `["join", null]` (waits for
+    /// every started step).
     events: Value,
     /// All events at once, without waiting.
     parallel: bool,
@@ -1303,9 +1306,10 @@ fn ws_opts<'a>(name: &'a str, member: Option<&'a str>, mode: &'a str, main: &'a 
 
 /// Runs the generated plugin under node: each step of `w.events` (in order, or all at once when `w.parallel`) goes
 /// to the `event` hook, except a tool-hook step (`["tool.execute.before", input]` or `["tool.execute.after", input]`),
-/// which calls that hook with `input` and an output; then, with `w.tool`, `tool.execute.before` runs for the PW4
-/// `task` fixture in session `w.main`. The result holds `threw` (the thrown message of the closing call or null),
-/// `stepThrew` (for each tool-hook step, the thrown message or null), `eventMs` and `toolMs`.
+/// which calls that hook with `input` and an output; a `start` step runs its step without waiting, and a `join` step
+/// waits for every started step; then, with `w.tool`, `tool.execute.before` runs for the PW4 `task` fixture in
+/// session `w.main`. The result holds `threw` (the thrown message of the closing call or null), `stepThrew` (for each
+/// tool-hook step, the thrown message or null, in the order the steps end), `eventMs` and `toolMs`.
 #[cfg(unix)]
 fn ws_node(fx: &Fx, w: Ws) -> NodeRun {
     use std::os::unix::fs::PermissionsExt;
@@ -1314,6 +1318,9 @@ fn ws_node(fx: &Fx, w: Ws) -> NodeRun {
     let stub = dir.join("zygo-stub");
     let script = r#"#!/bin/sh
 d=$(dirname "$0")
+case "$2:$STUB_MODE" in
+  guard:guarddeny) sleep 0.3 ;;
+esac
 echo "$*" >> "$d/calls.txt"
 in=$(cat)
 printf '%s' "$in" > "$d/stdin-$2-$6.json"
@@ -1323,6 +1330,8 @@ case "$2:$6:$STUB_MODE" in
   workspace:pre-tool:deny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R2"}}' ;;
   *:*:fail) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R3"}}'; exit 1 ;;
   workspace:pre-tool:hangpre) exec sleep 12 ;;
+  workspace:pre-tool:slowpre) sleep 0.3 ;;
+  guard::guarddeny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R4"}}' ;;
   workspace:*:hang) exec sleep 12 ;;
 esac
 "#;
@@ -1338,8 +1347,13 @@ const h = await ZygoPlugin({ directory: process.env.DIR });
 const task = JSON.parse(readFileSync(process.env.TASK_FX, "utf8"));
 const steps = JSON.parse(process.env.EVENTS);
 const res = { threw: null, stepThrew: [] };
+const started = [];
 const one = async ([type, properties]) => {
-  if (type === "tool.execute.before" || type === "tool.execute.after") {
+  if (type === "start") {
+    started.push(one(properties));
+  } else if (type === "join") {
+    await Promise.all(started.splice(0));
+  } else if (type === "tool.execute.before" || type === "tool.execute.after") {
     const output = type === "tool.execute.before" ? { args: {} } : { title: "", output: "o", metadata: {} };
     try {
       await h[type](properties, output);
@@ -1463,6 +1477,18 @@ fn tool_before(tool: &str, s: &str, call: &str) -> Value {
 #[cfg(unix)]
 fn tool_after(tool: &str, s: &str, call: &str) -> Value {
     json!(["tool.execute.after", {"tool": tool, "sessionID": s, "callID": call, "args": {}}])
+}
+
+/// A step that starts `step` and does not wait for it.
+#[cfg(unix)]
+fn start(step: Value) -> Value {
+    json!(["start", step])
+}
+
+/// A step that waits for every started step.
+#[cfg(unix)]
+fn join() -> Value {
+    json!(["join", null])
 }
 
 /// The `zygo hook workspace` calls of a run as `ws_seq` gives them, with the `tool_name` of each `pre-tool`.
@@ -2343,4 +2369,88 @@ fn plugin_tool_same_call_id_in_two_sessions() {
         tool_order(&fx, "t12", Some(M), "ok", ev),
         ["session{}", "pre-tool A bash", "pre-tool B bash", "tool-end B", "tool-end A", "pre-tool A Agent"]
     );
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count: a `task` call is counted when its `pre-tool` is queued, before the wait
+fn plugin_tool_task_counted_before_its_wait() {
+    if no_node("plugin_tool_task_counted_before_its_wait") {
+        return;
+    }
+    let fx = fx();
+    // The `stop` is queued while the `task` waits for its `pre-tool` answer; it forgets the `task` call.
+    let ev = json!([
+        busy("A"),
+        tool_before("bash", "A", "x1"),
+        start(tool_before("task", "A", "t1")),
+        idle("A"),
+        join(),
+        tool_after("task", "A", "t1")
+    ]);
+    let r = ws_node(&fx, ws_opts("t13", Some(M), "slowpre", "A", ev));
+    assert_eq!(
+        tool_seq(&r),
+        ["session{}", "prompt A", "pre-tool A bash", "pre-tool A Agent", "stop A", "pre-tool A Agent"]
+    );
+    assert_eq!(r.result.unwrap()["stepThrew"], json!([null, null, null]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count: a `stop` forgets the counted calls with no `prompt` after it
+fn plugin_tool_stop_forgets_the_calls() {
+    if no_node("plugin_tool_stop_forgets_the_calls") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([busy("A"), tool_before("bash", "A", "a1"), idle("A"), tool_after("bash", "A", "a1")]);
+    assert_eq!(
+        tool_order(&fx, "t14", Some(M), "ok", ev),
+        ["session{}", "prompt A", "pre-tool A bash", "stop A", "pre-tool A Agent"]
+    );
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count, W§9.1: the `pre-tool` of a tool is queued before the guard runs
+fn plugin_tool_pre_tool_queued_before_the_guard() {
+    if no_node("plugin_tool_pre_tool_queued_before_the_guard") {
+        return;
+    }
+    let fx = fx();
+    // The guard of `guarddeny` writes its line 0.3 s after it starts, so a `pre-tool` queued before the guard runs
+    // writes its line first; a `pre-tool` queued after the guard answers writes its line after the guard line.
+    let r = ws_node(&fx, ws_opts("t15", Some(M), "guarddeny", "A", json!([tool_before("bash", "A", "b1")])));
+    assert_eq!(
+        r.calls.lines().collect::<Vec<_>>(),
+        [ws("session"), ws("pre-tool"), "hook guard --agent opencode".to_string(), ws("pre-tool"), "hook guard --agent opencode".to_string()]
+    );
+    let res = r.result.unwrap();
+    assert_eq!(res["stepThrew"], json!(["R4"]));
+    assert_eq!(res["threw"], "R4");
+}
+
+#[cfg(unix)]
+#[test] // AU27 known limit (6): a call that the guard denies sends no `tool-end`; the count stays until the `stop`
+fn plugin_tool_guard_deny_sends_no_tool_end() {
+    if no_node("plugin_tool_guard_deny_sends_no_tool_end") {
+        return;
+    }
+    let fx = fx();
+    let r = ws_node(&fx, ws_opts("t16", Some(M), "guarddeny", "A", json!([busy("A"), tool_before("bash", "A", "b1"), idle("A")])));
+    assert_eq!(tool_seq(&r), ["session{}", "prompt A", "pre-tool A bash", "stop A", "pre-tool A Agent"]);
+    assert_eq!(r.result.unwrap()["stepThrew"], json!(["R4"]));
+}
+
+#[cfg(unix)]
+#[test] // AU27 tool count: a denied `task` of a known child is not counted
+fn plugin_tool_denied_task_of_a_child_is_not_counted() {
+    if no_node("plugin_tool_denied_task_of_a_child_is_not_counted") {
+        return;
+    }
+    let fx = fx();
+    let ev = json!([created("A"), created_child("K", "A"), tool_before("task", "K", "t2"), tool_after("task", "K", "t2")]);
+    let r = ws_node(&fx, ws_opts("t17", Some(M), "deny", "A", ev));
+    assert_eq!(tool_seq(&r), ["session{}", "session A", "pre-tool K Agent", "pre-tool A Agent"]);
+    let res = r.result.unwrap();
+    assert_eq!(res["stepThrew"], json!(["R2", null]));
+    assert_eq!(res["threw"], "R2");
 }

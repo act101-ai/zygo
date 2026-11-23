@@ -151,12 +151,18 @@ export const ZygoPlugin = async ({ directory }) => {
     },
     // AU27 tool count: `task` waits for its `Agent` call in every session (a deny throws); every other tool of a
     // session that is not a known child queues its `pre-tool` and does not wait. A call is counted by session id
-    // and `callID` when both are non-empty strings.
+    // and `callID` when both are non-empty strings, when its `pre-tool` is queued, before any wait; a deny answer
+    // to the `task` call forgets it (a `prompt` or `stop` queued during the wait has already forgotten it).
     "tool.execute.before": async (input, output) => {
       if (member && input && input.tool === "task") {
-        const w = hookOutput(await ws("pre-tool", { sessionID: input.sessionID, tool_name: "Agent" }));
-        if (w && w.permissionDecision === "deny") throw new Error(w.permissionDecisionReason);
-        if (isId(input.sessionID) && isId(input.callID)) counted.add(callKey(input.sessionID, input.callID));
+        const key = isId(input.sessionID) && isId(input.callID) ? callKey(input.sessionID, input.callID) : null;
+        const answer = ws("pre-tool", { sessionID: input.sessionID, tool_name: "Agent" });
+        if (key !== null) counted.add(key);
+        const w = hookOutput(await answer);
+        if (w && w.permissionDecision === "deny") {
+          if (key !== null) counted.delete(key);
+          throw new Error(w.permissionDecisionReason);
+        }
       } else if (member && input && isId(input.sessionID) && kind.get(input.sessionID) !== "child") {
         ws("pre-tool", { sessionID: input.sessionID, tool_name: input.tool });
         if (isId(input.callID)) counted.add(callKey(input.sessionID, input.callID));
