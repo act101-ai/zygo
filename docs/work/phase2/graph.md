@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-18, FIX-19
+**Next:** H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
 | W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
 | W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | DONE | judgment | 8978541; acceptance snapshot 33, state 22, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M7, D1-D6 |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | DONE | judgment | 3d51ad4; acceptance up 45, mux 46, snapshot 33, state 23, args 13, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M5, R3-1..R3-8 |
@@ -91,7 +90,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
-| FIX-18 | Local sessions do not expire by idle time; the idle TTL applies to team sessions only | — | IN-PROGRESS | implementation | .worktrees/phase2/FIX-18 |
+| FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1 | TODO | mechanical | — |
 
 ## Log
@@ -220,3 +219,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | FIX-18 added and planned (operator question): a local session expired after 24 h idle while its launcher ran. 8 steps, test first; spec §7.2, §12.5. Rule keys on team_label; serve sessions always have one; local expires_at empty (author's call). |
 | 2026-11-22 | FIX-17 DONE (70043bb): store refuses a linked state folder, no link followed in it, TooLarge over 1 MiB never changed. Merged tree: state 29, snapshot 34, admin 22, up 47, zygo-core ok, zygo-workspace 277. Spec AU29, AU84, W§7.3, W§8.1, W§10, W§12 applied. |
 | 2026-11-22 | W10 DONE (cc56f8d): zygo down. Merged tree: down 26, drain 31, activity 34 + 1 ignored, zygo-workspace 308, check --tests clean. C19, C23, C26, C28-C37 applied: spec AU18, AU26, AU97, W§9.1, W§9.3, W§14; W9, W10, H1 contracts. FIX-19 added (C24, C33): OpenCode plugin tool events. |
+| 2026-11-22 | FIX-18 DONE (fbbfb74). Operator decision: no idle expiry for any session, local or team; a session ends with its launcher or a server restart. Merged tree: session_api 52, zygo-proxy 391, zygo-launch 0 failed, check --tests clean. Graph title applied. |

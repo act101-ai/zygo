@@ -1178,7 +1178,7 @@ fn failed_or_incomplete_rows_keep_the_session_pending() { // §14, B2, S5
 } // mutations: cleared on a failed fetch; cleared or not inserted when incomplete
 
 #[test]
-fn a_server_that_stalls_after_creation_costs_one_call_bound_at_exit() { // S3 (round 2), §7.2 idle TTL, §7 note
+fn a_server_that_stalls_after_creation_costs_one_call_bound_at_exit() { // S3 (round 2), §7.2 suspend, §7 note
     let fx = fx();
     let (sid, grant) = grant_json(&fx);
     let launch = launch_routes(&fx, grant, (200, String::new()));

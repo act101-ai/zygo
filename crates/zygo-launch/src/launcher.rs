@@ -752,7 +752,7 @@ fn finish(sd: &SessionDir, end: End, paths: &Paths) {
                 Err(e) => out.line(&format!("zygo: usage rows not fetched ({e}); zygo usage --sync retries")),
             }
             // S3: after an unreachable fetch DELETE would cost a second call bound; the server suspends the session
-            // after 5 min without a heartbeat and deletes it after the 24 h idle TTL (§7.2).
+            // after 5 min without a heartbeat and keeps it until a server restart (§7.2: no idle expiry, FIX-18).
             if !unreachable {
                 let _ = client.delete_session(&session);
             }

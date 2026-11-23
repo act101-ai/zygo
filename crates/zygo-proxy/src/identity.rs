@@ -24,8 +24,8 @@ pub fn session_token(h: &HeaderMap) -> Option<&str> {
     header(h, "x-api-key").or_else(|| bearer(h))
 }
 
-/// Stage 1: `x-zygo-session` id + session token → live session. N11 calls it on model routes. It does not refresh
-/// the idle TTL: call `Sessions::accept` once the request is accepted (§7.2 note).
+/// Stage 1: `x-zygo-session` id + session token → live session. N11 calls it on model routes. Call
+/// `Sessions::accept` once the request is accepted (§7.2).
 pub(crate) fn authenticate(h: &HeaderMap, sessions: &Sessions) -> Result<Arc<SessionState>, ZygoError> {
     let token = session_token(h).ok_or_else(ZygoError::token_invalid)?;
     let id = header(h, "x-zygo-session").ok_or_else(ZygoError::token_invalid)?;
@@ -34,7 +34,7 @@ pub(crate) fn authenticate(h: &HeaderMap, sessions: &Sessions) -> Result<Arc<Ses
 
 /// Stage 1 on the `/anthropic/*` routes (§12.4): with `x-zygo-token` present (even empty or not UTF-8), that token and
 /// `x-zygo-session` name a live passthrough session, else `zygo_passthrough_token_invalid`; without it, `authenticate`.
-/// A passthrough session then needs the client's login on its type's allowlist, else `zygo_passthrough_no_login`. No idle TTL refresh.
+/// A passthrough session then needs the client's login on its type's allowlist, else `zygo_passthrough_no_login`.
 pub(crate) fn model_identity(h: &HeaderMap, sessions: &Sessions) -> Result<Arc<SessionState>, ZygoError> {
     let s = match h.get("x-zygo-token") {
         Some(t) => {

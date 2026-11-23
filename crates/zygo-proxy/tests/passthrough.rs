@@ -23,7 +23,7 @@ use zygo_proxy::pipeline::{ModelRoute, Pipeline, RequestCtx, Stage};
 use zygo_proxy::provider::KeyResolver;
 use zygo_proxy::redact_stage::RedactLimits;
 use zygo_proxy::server::StartOpts;
-use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest, IDLE_TTL};
+use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::{Proxy, ProxyHandle, Url};
 use zygo_proxy::tee::UsageHold;
 use zygo_redact::DeadlinePolicy;
@@ -898,7 +898,7 @@ fn e2e_no_login_refused_nothing_upstream() {
     final_rows(&t, &g, 1, &[200]);
 }
 
-#[test] // §12.4 stage 1: invalid or expired → token_invalid
+#[test] // §12.4 stage 1: invalid → token_invalid; no session expires by idle time (§7.2, FIX-18)
 fn e2e_token_invalid_cases() {
     let t = setup("");
     let g = grant(&t, Agent::ClaudeCode, true);
@@ -914,24 +914,19 @@ fn e2e_token_invalid_cases() {
     token_invalid_r(&post(&[("x-zygo-token", &n.token), ("x-zygo-session", &n.session)]));
     token_invalid_r(&post(&[("x-zygo-token", &g.token), ("x-zygo-session", &other)]));
     token_invalid_r(&post(&[("x-zygo-token", &g.token)]));
-    t.c.advance(IDLE_TTL + Duration::from_secs(1));
-    token_invalid_r(&post(&pt(&g)));
     assert!(t.up.got().is_empty() && t.anth.got().is_empty());
 }
 
-#[test] // §12.5, §7.2 note: an accepted request refreshes the idle TTL, a refused one does not
-fn e2e_accepted_request_refreshes_ttl() {
+#[test] // §12.5, §7.2 (FIX-18): a passthrough session has no idle expiry, after an accepted or a refused request
+fn e2e_session_has_no_idle_expiry() {
     let t = setup("");
     let g = grant(&t, Agent::ClaudeCode, true);
-    t.c.advance(IDLE_TTL - Duration::from_secs(1));
-    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
-    t.c.advance(Duration::from_secs(2));
+    t.c.advance(Duration::from_secs(25 * 3600));
     assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
     let g2 = grant(&t, Agent::ClaudeCode, true);
-    t.c.advance(IDLE_TTL - Duration::from_secs(1));
     no_login_r(&send(&t, "POST", M, &pt(&g2), Some(mb("claude-test-1"))));
-    t.c.advance(Duration::from_secs(2));
-    token_invalid_r(&post_pt(&t, &g2, M, mb("claude-test-1"), &[]));
+    t.c.advance(Duration::from_secs(25 * 3600));
+    assert_eq!(post_pt(&t, &g2, M, mb("claude-test-1"), &[]).0, 200);
 }
 
 #[test] // reading 4: an agent with no type row matches no login
@@ -1222,7 +1217,7 @@ fn docs_readme_and_passthrough_md() {
     }
     let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/passthrough.md")).unwrap();
     for s in ["claude-ai", "api.anthropic.com", "sk-ant-oat", "X-Zygo-Token", "zygo_passthrough_token_invalid", "zygo_passthrough_no_login",
-              "zygo_passthrough_local_only", "24 h", "/model", "consumer terms"] {
+              "zygo_passthrough_local_only", "no idle expiry", "/model", "consumer terms"] {
         assert!(doc.contains(s), "docs/passthrough.md: {s}");
     }
 }
