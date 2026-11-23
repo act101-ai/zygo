@@ -55,9 +55,15 @@ pub fn dispatch(args: WsArgs) -> i32 {
             &mut std::io::stderr().lock(),
         ),
         WsCmd::ForgetPane { key, name } => {
-            let cwd = match cwd_or_exit() {
-                Ok(d) => d,
-                Err(code) => return code,
+            // D10: the folder names the workspace only when there is no `--name`; `forget_pane` does not read `cwd`
+            // when it has a name, so a folder that cannot be read does not fail that form.
+            let cwd = if name.is_some() {
+                std::path::PathBuf::new()
+            } else {
+                match cwd_or_exit() {
+                    Ok(d) => d,
+                    Err(code) => return code,
+                }
             };
             admin::forget_pane(
                 &paths,

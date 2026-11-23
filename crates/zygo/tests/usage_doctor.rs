@@ -883,6 +883,43 @@ fn doctor_tmux_is_found_only_in_absolute_path_entries() {
     assert!(!used.exists(), "the relative fake ran");
 }
 
+/// The `tmux` lines of `zygo doctor` with `PATH` = the one absolute folder `dir` (D2, D9).
+#[cfg(unix)]
+fn doctor_tmux_lines(d: &Path, dir: &Path) -> Vec<String> {
+    let o = doctor_cmd(d, "").env("PATH", dir).output().unwrap();
+    String::from_utf8_lossy(&o.stdout).lines().filter(|x| x.starts_with("tmux: ")).map(str::to_string).collect()
+}
+
+/// D2: a file named `tmux` that is not executable, in an absolute `PATH` entry, is not tmux. Kills: a `find_tmux` that
+/// takes the first entry named `tmux` that exists, with no executable check (`dir.join("tmux").exists()`): the doctor
+/// would then spawn it and print `tmux: cannot run: Permission denied (os error 13)`.
+#[cfg(unix)]
+#[test]
+fn doctor_tmux_skips_a_file_that_is_not_executable() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = TempDir::new().unwrap();
+    let _g = forks();
+    let dir = d.path().join("abs");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tmux"), "#!/bin/sh\necho \"tmux 3.7\"\n").unwrap();
+    std::fs::set_permissions(dir.join("tmux"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(doctor_tmux_lines(d.path(), &dir), ["tmux: not found"]);
+}
+
+/// D2: a directory named `tmux`, in an absolute `PATH` entry, is not tmux. Kills: a `find_tmux` that takes the first
+/// entry named `tmux` that exists (`dir.join("tmux").exists()`), or one that checks only the execute bits of the mode
+/// (a directory has them): the doctor would then spawn the directory and print `tmux: cannot run: Permission denied
+/// (os error 13)`.
+#[cfg(unix)]
+#[test]
+fn doctor_tmux_skips_a_directory() {
+    let d = TempDir::new().unwrap();
+    let _g = forks();
+    let dir = d.path().join("abs");
+    std::fs::create_dir_all(dir.join("tmux")).unwrap();
+    assert_eq!(doctor_tmux_lines(d.path(), &dir), ["tmux: not found"]);
+}
+
 #[test]
 fn doctor_cli_toml_syntax_error_is_not_echoed() {
     let d = TempDir::new().unwrap();

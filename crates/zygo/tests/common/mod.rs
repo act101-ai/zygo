@@ -3,6 +3,7 @@
 use std::env::consts::EXE_SUFFIX;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// Points every per-user location of `zygo` at `home` (see `Paths::from_env`; the unix and the Windows cache), so a
 /// test never reads or sweeps the real cache.
@@ -21,12 +22,33 @@ pub fn stub_agent_in(dir: &Path) -> Result<PathBuf, String> {
 }
 
 /// The built stub agent of `zygo-launch` (`crates/zygo-launch/tests/stub_agent/stub.rs`). A test binary is
-/// `<target>/<profile>/deps/<name>-<hash>` and cargo puts `stub-agent` in `<target>/<profile>/`. Panics with the build
-/// command when the file is missing: `cargo test -p zygo` alone does not build it.
+/// `<target>/<profile>/deps/<name>-<hash>` and cargo puts `stub-agent` in `<target>/<profile>/`. `cargo test -p zygo`
+/// alone does not build it, so when the file is missing this builds it once per test process: `cargo build -p
+/// zygo-launch --bin stub-agent --locked` with the `cargo` that runs the tests (`CARGO`) in this workspace, and the
+/// inherited environment, so the build uses the same target dir (`CARGO_TARGET_DIR`, else the workspace `target`).
+/// Panics with the cargo output when the build fails or the file is still missing; it never skips.
 pub fn stub_agent() -> PathBuf {
-    let exe = std::env::current_exe().expect("the path of the test binary");
-    let dir = exe.parent().and_then(Path::parent).expect("a test binary is in <target>/<profile>/deps");
-    stub_agent_in(dir).unwrap_or_else(|e| panic!("{e}"))
+    static BUILT: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+    let built = BUILT.get_or_init(|| {
+        let exe = std::env::current_exe().map_err(|e| format!("the path of the test binary: {e}"))?;
+        let dir = exe.parent().and_then(Path::parent).ok_or("a test binary is in <target>/<profile>/deps")?;
+        if let Ok(p) = stub_agent_in(dir) {
+            return Ok(p);
+        }
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let args = ["build", "-p", "zygo-launch", "--bin", "stub-agent", "--locked"];
+        let o = Command::new(&cargo)
+            .args(args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run {} to build stub-agent: {e}", Path::new(&cargo).display()))?;
+        if !o.status.success() {
+            return Err(format!("`cargo {}` failed ({}):\n{}", args.join(" "), o.status, String::from_utf8_lossy(&o.stderr)));
+        }
+        stub_agent_in(dir)
+    });
+    built.clone().unwrap_or_else(|e| panic!("{e}"))
 }
 
 /// Appends one step line to `dir/steps`, the control file of a stub agent started with `ZYGO_STUB_CONTROL=dir`

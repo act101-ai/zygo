@@ -105,16 +105,21 @@ fn cli_opts(
 }
 
 /// `/zygo:down [--now]` (D5, OP11, AU18): the workspace of this session's membership marker, never the cwd. The down
-/// runs as a detached child, so the prompt hook's bound never ends it partway. `down::run` writes to two buffers,
-/// never to the hook's stdout; the reply is their text without the `zygo: ` prefix of each line.
+/// runs as a detached child when it has a session id (`session_of`: a `ZYGO_SESSION` that is not empty, else the
+/// view's `session` when it is not empty, else the session folder's name when it is not empty), or when `$TMUX_PANE`
+/// is a pane of the target workspace session; then the prompt hook's bound never ends it partway. With neither, it
+/// runs in the foreground. `down::run` writes to two buffers, never to the hook's stdout; the reply is their text
+/// without the `zygo: ` prefix of each line. The current folder is read only when `current_exe()` is relative: the
+/// target never comes from it, and the library uses it only to make a relative zygo path absolute (D10).
 pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
     op5()?;
     if ctx.save || args.iter().any(|a| a != "--now") {
         return Err(UsageError("usage: /zygo:down [--now]".into()).into());
     }
     let now = args.iter().any(|a| a == "--now");
-    let cwd = std::env::current_dir().map_err(|e| anyhow!(cwd_error(&e)))?;
     let zygo = std::env::current_exe().map_err(|e| anyhow!(exe_error(&e)))?;
+    // An absolute zygo path needs no folder; the library reads `cwd` for nothing else on a `Session` target.
+    let cwd = if zygo.is_absolute() { PathBuf::new() } else { std::env::current_dir().map_err(|e| anyhow!(cwd_error(&e)))? };
     let config = user_config(&ctx.paths).map_err(|e| anyhow!("down: {}", zygo_core::esc(&e.to_string())))?;
     let opts = slash_opts(ctx, now, cwd, zygo, config, &|k| std::env::var_os(k));
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -146,10 +151,17 @@ fn slash_opts(ctx: &VerbCtx, now: bool, cwd: PathBuf, zygo: PathBuf, config: Con
     }
 }
 
-/// The `zygo_session` of the slash form (D5, D8): `ZYGO_SESSION` when it is not empty, else the session id of the
-/// session folder when that is not empty, else `None`.
+/// The `zygo_session` of the slash form (D5, D8): `ZYGO_SESSION` when it is not empty, else `session_id(sd)` (the
+/// view's `session`, or the folder name when `view.json` does not load) when that is not empty, else the session
+/// folder's name when that is not empty (a view whose `session` is `""`), else `None`.
 fn session_of(env: &dyn Fn(&str) -> Option<OsString>, sd: Option<&SessionDir>) -> Option<OsString> {
-    usable_session_id(env).or_else(|| sd.map(zygo_work::hooks::session_id).filter(|id| !id.is_empty()).map(OsString::from))
+    let folder_name = |d: &SessionDir| d.root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    usable_session_id(env).or_else(|| {
+        let d = sd?;
+        let id = zygo_work::hooks::session_id(d);
+        let id = if id.is_empty() { folder_name(d) } else { id };
+        (!id.is_empty()).then(|| OsString::from(id))
+    })
 }
 
 /// The D5 reply: `out`, then `err` (a `\n` between them when `out` does not end in one), trailing white space removed,
@@ -166,11 +178,25 @@ fn reply(out: &str, err: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::{cli_opts, reply, session_of, slash_opts, DownArgs};
     use zygo_core::session_dir::SessionDir;
+    use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
     use zygo_workspace::down::DownTarget;
+
+    /// The session folder `<t>/<name>` with a `view.json` whose `session` is `session` and, for `Some(id)`, a
+    /// membership marker of the workspace `id`.
+    fn view_dir(t: &Path, name: &str, session: &str, ws_id: Option<&str>) -> SessionDir {
+        let sd = SessionDir::new(t.join(name));
+        std::fs::create_dir_all(&sd.root).unwrap();
+        let workspace = ws_id.map(|id| ViewWorkspace {
+            member: Member { ws_id: id.into(), pane: "kaaaaaaaa".into(), ..Default::default() },
+            ..Default::default()
+        });
+        SessionView { session: session.into(), workspace, ..Default::default() }.save(&sd).unwrap();
+        sd
+    }
 
     /// `env` with `ZYGO_SESSION` set to `v` and no other variable.
     fn with(v: &'static str) -> impl Fn(&str) -> Option<OsString> {
@@ -217,6 +243,68 @@ mod tests {
         assert!(matches!(o.target, DownTarget::Session(None)), "no view file: no marker");
         let o = make(&ctx, true);
         assert!(o.now && !o.wait);
+    }
+
+    /// D5 (review round 1, fix 2): the target is the `ws_id` of the membership marker in `view.json`, and the slash
+    /// form does not wait. Kills: a `target` that is always `Session(None)`.
+    #[test]
+    fn slash_down_targets_the_workspace_of_the_marker() {
+        let t = tempfile::tempdir().unwrap();
+        let mut ctx = crate::cmd::compact::tests::ctx(t.path(), None);
+        ctx.slash = true;
+        ctx.session_dir = Some(view_dir(t.path(), "s01", "s01", Some("0123456789abcdef")));
+        let o = slash_opts(&ctx, false, t.path().into(), t.path().join("zygo"), zygo_config::Config::default(), &unset);
+        assert_eq!(o.target, DownTarget::Session(Some("0123456789abcdef".into())));
+        assert!(!o.wait);
+        assert_eq!(o.zygo_session, Some("s01".into()));
+    }
+
+    /// D5 (review round 1, fix 5): a `view.json` whose `session` is empty gives the session folder's name, so the
+    /// library still detaches; a `session` that is not empty wins over the folder name. Kills: a `session_of` that
+    /// gives `None` for an empty view `session` (the down then runs in the foreground of the prompt hook when no pane
+    /// matches).
+    #[test]
+    fn slash_down_takes_the_folder_name_when_the_view_session_is_empty() {
+        let t = tempfile::tempdir().unwrap();
+        let sd = view_dir(t.path(), "s02", "", Some("0123456789abcdef"));
+        assert_eq!(session_of(&unset, Some(&sd)), Some("s02".into()));
+        assert_eq!(session_of(&with(""), Some(&sd)), Some("s02".into()));
+        assert_eq!(session_of(&with("x"), Some(&sd)), Some("x".into()));
+        let sd = view_dir(t.path(), "s03", "v03", None);
+        assert_eq!(session_of(&unset, Some(&sd)), Some("v03".into()));
+    }
+
+    /// D10 (review round 1, fix 6): `/zygo:down` reads the current folder only to make a relative zygo path absolute,
+    /// and `current_exe()` is absolute, so a removed current folder does not fail it. The child test changes the cwd,
+    /// so it runs in its own process. Kills: a `verb` that reads `current_dir()` on every path.
+    #[cfg(unix)]
+    #[test]
+    fn slash_down_does_not_need_the_current_folder() {
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cmd::down::tests::slash_down_in_a_removed_folder", "--ignored", "--nocapture", "--test-threads=1"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(o.status.success(), "{text}");
+        assert!(text.contains("test result: ok. 1 passed"), "{text}");
+    }
+
+    /// The child of `slash_down_does_not_need_the_current_folder`: its cwd is a folder that it removed.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "child process of slash_down_does_not_need_the_current_folder"]
+    fn slash_down_in_a_removed_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let gone = t.path().join("gone");
+        std::fs::create_dir(&gone).unwrap();
+        std::env::set_current_dir(&gone).unwrap();
+        std::fs::remove_dir(&gone).unwrap();
+        assert!(std::env::current_dir().is_err(), "the current folder is still readable");
+        let mut ctx = crate::cmd::compact::tests::ctx(t.path(), None);
+        ctx.slash = true;
+        let e = super::verb(&ctx, &[]).unwrap_err();
+        assert_eq!(zygo_config::display::error_text(&e), "this session is not in a workspace");
     }
 
     /// D8: an empty `ZYGO_SESSION` counts as unset in the CLI form too. Kills: the CLI form passing `Some("")`.

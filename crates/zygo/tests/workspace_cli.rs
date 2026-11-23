@@ -29,6 +29,11 @@ fn paths(root: &Path) -> zygo_core::paths::Paths {
 /// and `TMUX_PANE` variable of the test process removed, `TMUX_TMPDIR` = `<home>/tmux`, cwd = home, stdin null,
 /// then `extra` set.
 fn zygo_in(home: &Path, config: &str, path: &OsStr, args: &[&str], extra: &[(&str, &OsStr)]) -> Output {
+    zygo_cmd(home, config, path, args, extra).output().unwrap()
+}
+
+/// The command of `zygo_in`, not yet run.
+fn zygo_cmd(home: &Path, config: &str, path: &OsStr, args: &[&str], extra: &[(&str, &OsStr)]) -> Command {
     std::fs::write(home.join("config.toml"), config).unwrap();
     let tmux_tmp = home.join("tmux");
     std::fs::create_dir_all(&tmux_tmp).unwrap();
@@ -51,7 +56,7 @@ fn zygo_in(home: &Path, config: &str, path: &OsStr, args: &[&str], extra: &[(&st
     for (k, v) in extra {
         cmd.env(k, v);
     }
-    cmd.output().unwrap()
+    cmd
 }
 
 fn text(b: &[u8]) -> String {
@@ -223,6 +228,40 @@ fn ws_snapshot_with_an_invalid_id_prints_one_line_and_exits_0() {
         (o.status.code(), text(&o.stdout), text(&o.stderr)),
         (Some(0), String::new(), "zygo: invalid workspace id ../x\\u{1b}\n".to_string())
     );
+}
+
+/// `zygo ws forget-pane <key> [--name <n>]` run in a folder that the child removes after its `chdir`, so
+/// `current_dir()` fails in `zygo`.
+#[cfg(unix)]
+fn forget_pane_in_a_removed_folder(h: &Path, args: &[&str]) -> Output {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::process::CommandExt;
+    let path = empty_path(h);
+    let gone = h.join("gone");
+    std::fs::create_dir(&gone).unwrap();
+    let c = std::ffi::CString::new(gone.as_os_str().as_bytes()).unwrap();
+    let mut cmd = zygo_cmd(h, "", path.as_os_str(), args, &[]);
+    cmd.current_dir(&gone);
+    // SAFETY: the closure runs in the child after its `chdir` and before `exec`; it only calls `rmdir`, which is
+    // async-signal-safe, on a NUL-terminated path that was made before the fork.
+    unsafe {
+        cmd.pre_exec(move || if libc::rmdir(c.as_ptr()) == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) });
+    }
+    cmd.output().unwrap()
+}
+
+/// D10 (M1 review round 1, fix 6): `zygo ws forget-pane <key> --name <n>` does not need the current folder, so a
+/// removed one does not fail it; without `--name` the folder names the workspace, and its error stays. Kills: a
+/// `forget-pane` that reads `current_dir()` on every path.
+#[cfg(unix)]
+#[test]
+fn ws_forget_pane_with_a_name_does_not_need_the_current_folder() {
+    let h = tempfile::tempdir().unwrap();
+    let o = forget_pane_in_a_removed_folder(h.path(), &["ws", "forget-pane", "kaaaaaaaa", "--name", "app"]);
+    assert_eq!((o.status.code(), text(&o.stdout), text(&o.stderr)), (Some(1), String::new(), "zygo: no workspace named app\n".to_string()));
+    let o = forget_pane_in_a_removed_folder(h.path(), &["ws", "forget-pane", "kaaaaaaaa"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(text(&o.stderr).starts_with("zygo: cannot read the current folder: "), "{}", text(&o.stderr));
 }
 
 #[cfg(unix)]
