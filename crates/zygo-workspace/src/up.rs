@@ -175,7 +175,7 @@ fn tmux_err(e: MuxError) -> Exit { fail(format!("zygo: tmux: {e}")) }
 
 /// The AU63 text, without the `zygo: ` prefix.
 pub(crate) fn not_owned(session: &str, name: &str) -> String {
-    format!("tmux session {session} does not belong to this workspace; rename it or run zygo ws forget {}", esc(name))
+    format!("tmux session {session} does not belong to this workspace; rename it or run zygo ws forget -- {}", esc(name))
 }
 
 /// The AU87 "unreachable" text, without the `zygo: ` prefix.
@@ -898,7 +898,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         SessionAnswer::Exists => {
             owner_check(&mux6, &session, &id, &name)?;
             if opts.reset || opts.loadout.is_some() {
-                return Err(fail(format!("zygo: {name} is running; run zygo down {name} first")));
+                return Err(fail(format!("zygo: {name} is running; run zygo down -- {name} first")));
             }
             let socket = match saved_socket {
                 Some(s) => s,
@@ -1466,7 +1466,7 @@ fn attach_to(
             return e.code;
         }
     };
-    let down = format!("zygo: {} is down; run zygo up {}", t.name, t.name);
+    let down = format!("zygo: {} is down; run zygo up -- {}", t.name, t.name);
     let ws = match t.state {
         Err(text) => {
             say(err, &format!("zygo: {text}"));

@@ -581,6 +581,8 @@ fn workspace_down_definition() {
     assert_eq!(def.input_schema, json!({"type":"object","properties":{"now":{"type":"boolean"}},"additionalProperties":false}));
 }
 
+/// W§18 #78 (AU65): `down -- <name>`, and `down --now -- <name>` with `now = true`; `ZYGO_SESSION` is set and
+/// stdin is `/dev/null`.
 #[cfg(unix)]
 #[test]
 fn workspace_down_runs_down_with_the_name_and_zygo_session() {
@@ -596,13 +598,13 @@ echo 'zygo: down started; end your turn'"#);
     let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
     let read = |f: &str| std::fs::read_to_string(d.path().join(f)).unwrap();
     assert_eq!(t.call(json!({})), Ok(json!("zygo: down started; end your turn")));
-    assert_eq!(read("argv"), "down\napp\n");
+    assert_eq!(read("argv"), "down\n--\napp\n");
     assert_eq!(read("session"), "s");
     assert_eq!(read("stdin"), "");                                   // stdin is /dev/null
     assert_eq!(t.call(json!({"now": true})), Ok(json!("zygo: down started; end your turn")));
-    assert_eq!(read("argv"), "down\napp\n--now\n");
+    assert_eq!(read("argv"), "down\n--now\n--\napp\n");
     assert_eq!(t.call(json!({"now": false})), Ok(json!("zygo: down started; end your turn")));
-    assert_eq!(read("argv"), "down\napp\n");
+    assert_eq!(read("argv"), "down\n--\napp\n");
 }
 
 #[cfg(unix)]
@@ -773,20 +775,25 @@ fn workspace_down_with_sigchld_ignored_returns_the_output() {
     assert_eq!(o.status.code(), Some(0), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
 }
 
-/// F5: `zygo down` has no `--` handling (crates/zygo/src/cmd has no `down` subcommand yet), so a name that starts
-/// with `-` is refused before anything runs.
+/// FIX-16 (AU65, AU84): a name that starts with `-` is passed after `--`, so `zygo down` reads it as the name.
+/// Nothing is refused.
 #[cfg(unix)]
 #[test]
-fn workspace_down_refuses_a_name_that_starts_with_a_dash() {
+fn workspace_down_passes_a_name_that_starts_with_a_dash_after_double_dash() {
     let _forks = forks();
     let d = tempfile::tempdir().unwrap();
     let p = paths(d.path(), "");
-    workspace_named(&p, "--all");
-    let prog = stub(d.path(), "touch \"$(dirname \"$0\")/ran\"\necho ran");
-    let t = WorkspaceDown::new(prog, p, WS_ID.into(), "s".into());
-    assert_eq!(t.call(json!({})),
-        Err(ToolError::Failed("zygo: workspace name `--all` starts with `-`; zygo down would read it as a flag".into())));
-    assert!(!d.path().join("ran").exists());                         // nothing ran
+    let prog = stub(d.path(), r#"printf '%s\n' "$@" > "$(dirname "$0")/argv"
+echo 'zygo: down started; end your turn'"#);
+    let t = WorkspaceDown::new(prog, p.clone(), WS_ID.into(), "s".into());
+    let read = || std::fs::read_to_string(d.path().join("argv")).unwrap();
+    for name in ["-x", "--all", "-", "--"] {
+        workspace_named(&p, name);
+        assert_eq!(t.call(json!({})), Ok(json!("zygo: down started; end your turn")), "{name}");
+        assert_eq!(read(), format!("down\n--\n{name}\n"));
+        assert_eq!(t.call(json!({"now": true})), Ok(json!("zygo: down started; end your turn")), "{name}");
+        assert_eq!(read(), format!("down\n--now\n--\n{name}\n"));
+    }
 }
 
 /// F7: stdout and stderr are each cut at 64 KiB; the rest is drained, so the stub is not blocked.
@@ -861,5 +868,5 @@ echo 'zygo: down started; end your turn'"#);
     assert_eq!(r["id"], 1);
     assert_eq!(r["result"]["isError"], false);
     assert_eq!(r["result"]["content"], json!([{"type":"text","text":"zygo: down started; end your turn"}]));
-    assert_eq!(std::fs::read_to_string(d.path().join("argv")).unwrap(), "down app --now ");
+    assert_eq!(std::fs::read_to_string(d.path().join("argv")).unwrap(), "down --now -- app ");
 }
