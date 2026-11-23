@@ -6,9 +6,44 @@ Version 0.1.0.
 
 ---
 
-## Agentic Coding like you've never experienced before
+## Agentic coding like you've never experienced before
+
+### A status line that tells you want you want to know
 
 <img width="1072" height="93" alt="image" src="https://github.com/user-attachments/assets/6365701c-305f-418b-a85d-6f00fb35b464" />
+
+## Role-based model routing
+
+### Follows [https://research.google/pubs/elephants-goldfish-and-the-new-golden-age-of-software-engineering/|elephants-and-goldfish] model for improved generation and token efficiency.
+
+### Create your own model profiles to use any model natively for a chosen role
+
+### AST-based Code Navigation
+
+Anti-pattern: Full file reads to find one method pollutes the context window with irrelevant code
+Anti-pattern: Random file chunk reads pollute the context window less, but repeated misses cause repeated LLM submissions, wasting tokens
+
+Solution: Navigate your codebase and documentation following the structural tree.
+
+### Tool Results Store
+
+Anti-pattern: Agent context gets polluted with long tool results (eg build output)
+Anti-pattern: Agent runs tools with `| tail` and misses key results requiring re-running
+
+Solution: Save the full results from tool calls and provide recall and navigation tools
+
+### Inline DLP
+
+Anti-pattern: Agent reads secrets into context but doesn't realize until inference time, when it's too late
+
+Solution: DLP always redacts secrets from LLM calls
+
+### Soft Context Management
+
+Anti-pattern: Auto-compacting in the middle of tasks resulting in information loss and poor results
+Anti-pattern: Context quality degradation as context window grows resulting in poor results
+
+Solution: Lifecycle hooks allow auto-compacting between tasks in a long-running plan
 
 ---
 
