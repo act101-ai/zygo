@@ -93,7 +93,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1 | TODO | mechanical | — |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-20 |
-| FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | PLANNED | judgment | — |
+| FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | IN-PROGRESS | judgment | .worktrees/phase2/FIX-21 |
 
 ## Log
 
