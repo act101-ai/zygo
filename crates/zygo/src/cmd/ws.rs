@@ -1,7 +1,7 @@
 //! `zygo ws forget <name>`, `zygo ws forget-pane <key> [--name <name>]` and the hidden `zygo ws snapshot` (W§12,
 //! AU44). `zygo ws` does not sweep (AU71).
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use zygo_core::paths::Paths;
@@ -9,11 +9,12 @@ use zygo_core::session_view::{ResumeNote, SubagentRef};
 use zygo_hooks::workspace::snapshot_child;
 use zygo_launch::env::Env;
 use zygo_workspace::admin;
+use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::snapshot::{self, SkipReason, SnapshotOutcome, HOOK_WAIT, OP_WAIT};
 use zygo_workspace::state::{CompactOverride, MemberRecord, Store};
 
-use super::{cwd_or_exit, op5_exit, print_err, tmux_program, Launch, LaunchOpenCode};
+use super::{cwd_or_exit, member, op5_exit, print_err, tmux_program, Launch, LaunchOpenCode};
 
 #[derive(clap::Args)]
 pub struct WsArgs {
@@ -32,6 +33,16 @@ pub enum WsCmd {
         event: Option<String>,
         #[arg(long)]
         force: bool,
+    },
+    /// Internal: one pane of a workspace
+    #[command(hide = true)]
+    Run {
+        #[arg(long = "ws-id")]
+        ws_id: String,
+        #[arg(long)]
+        pane: String,
+        #[arg(long)]
+        shell: bool,
     },
     /// Delete a workspace that is not up: its state and its results
     Forget { name: String },
@@ -84,7 +95,107 @@ pub fn dispatch(args: WsArgs) -> i32 {
             snapshot_cmd(&paths, &ws_id, event.as_deref(), force);
             0
         }
+        WsCmd::Run { ws_id, pane, shell } => run_cmd(&paths, &ws_id, &pane, shell),
     }
+}
+
+/// A path for a stderr line, escaped (C6).
+fn shown(p: &Path) -> String {
+    zygo_core::esc(&p.display().to_string())
+}
+
+/// `zygo ws run` (W§8.2): one pane of a workspace. The ids are checked first (AU84, exit 1); every other path ends in
+/// the shell of step 8.
+fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
+    if !valid_ws_id(ws_id) {
+        print_err(&format!("zygo: invalid workspace id {}\n", zygo_core::esc(ws_id)));
+        return 1;
+    }
+    if !valid_pane_key(pane) {
+        print_err(&format!("zygo: invalid pane key {}\n", zygo_core::esc(pane)));
+        return 1;
+    }
+    // AU64: the environment of the pane; the process environment itself is not changed.
+    let env = zygo_workspace::env::cleaned(std::env::vars_os().collect());
+    let here = || std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let store = Store::open(paths, ws_id);
+    let ws = match store.read() {
+        Ok(Some(ws)) => ws,
+        Ok(None) => {
+            print_err(&format!("zygo: no workspace with id {ws_id}\n"));
+            return exec_shell(env, ws_id, &here());
+        }
+        Err(e) => {
+            print_err(&format!("zygo: {}\n", zygo_core::esc(&e.to_string())));
+            return exec_shell(env, ws_id, &here());
+        }
+    };
+    let main_root = ws.main_root.clone();
+    let Some(entry) = ws.panes.iter().find(|p| p.key == pane) else {
+        print_err(&format!("zygo: pane {pane} is not in the workspace layout\n"));
+        let _ = std::env::set_current_dir(&main_root);
+        return exec_shell(env, ws_id, &main_root);
+    };
+    let cwd = entry.cwd.clone();
+    let rec = ws.members.get(pane).cloned();
+    if cwd.is_dir() {
+        // AU55: the process cwd is the pane folder.
+        let _ = std::env::set_current_dir(&cwd);
+    } else {
+        let _ = std::env::set_current_dir(&main_root);
+        let resumable = if shell { None } else { rec.as_ref().and_then(|r| r.agent_session.as_deref().map(|id| (r.launch.kind, id))) };
+        match resumable {
+            // AU61: zygo does not resume the conversation in another folder.
+            Some((kind, id)) => {
+                let id = zygo_core::esc(id);
+                print_err(&format!(
+                    "zygo: {} is gone; agent session {id} not resumed; to resume it: cd {} && {}\n",
+                    shown(&cwd),
+                    shown(&cwd),
+                    member::resume_command(kind, &id)
+                ));
+            }
+            None => print_err(&format!("zygo: {} is gone\n", shown(&cwd))),
+        }
+        return exec_shell(env, ws_id, &main_root);
+    }
+    if shell {
+        return exec_shell(env, ws_id, &cwd);
+    }
+    let Some(_rec) = rec else {
+        print_err(&format!("zygo: pane {pane} has no member record; started a shell\n"));
+        return exec_shell(env, ws_id, &cwd);
+    };
+    exec_shell(env, ws_id, &cwd)
+}
+
+/// W§8.2 step 8: the default handling of SIGHUP, SIGTERM, SIGINT and SIGQUIT (AU88, D13), then `exec` of `$SHELL`
+/// from `env` (else `/bin/sh`) in `cwd` with `env` and `ZYGO_WORKSPACE` (AU15, AU93; no `ZYGO_PANE`). Returns only
+/// when the `exec` fails: one line and exit 1.
+#[cfg(unix)]
+fn exec_shell(env: Vec<(OsString, OsString)>, ws_id: &str, cwd: &Path) -> i32 {
+    use std::os::unix::process::CommandExt;
+    for s in [libc::SIGHUP, libc::SIGTERM, libc::SIGINT, libc::SIGQUIT] {
+        // SAFETY: `signal` with `SIG_DFL` changes only this process's disposition of `s`.
+        unsafe {
+            libc::signal(s, libc::SIG_DFL);
+        }
+    }
+    let shell = env
+        .iter()
+        .find(|(k, _)| k == OsStr::new("SHELL"))
+        .map(|(_, v)| v.clone())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| OsString::from("/bin/sh"));
+    let e = std::process::Command::new(&shell).env_clear().envs(env).env("ZYGO_WORKSPACE", ws_id).current_dir(cwd).exec();
+    print_err(&format!("zygo: cannot start the shell {}: {}\n", shown(Path::new(&shell)), zygo_core::esc(&e.to_string())));
+    1
+}
+
+/// Not reached: OP5 ends every workspace verb on Windows first.
+#[cfg(not(unix))]
+fn exec_shell(_env: Vec<(OsString, OsString)>, _ws_id: &str, _cwd: &Path) -> i32 {
+    2
 }
 
 /// The whole snapshot body runs through `snapshot_child` (H1 D15), so a body that fails queues `snapshot.pending`
