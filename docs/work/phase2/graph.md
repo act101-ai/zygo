@@ -92,7 +92,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
-| FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | PLANNED | implementation | — |
+| FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-17 |
 
 ## Log
 
