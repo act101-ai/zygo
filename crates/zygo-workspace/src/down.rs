@@ -79,10 +79,6 @@ pub struct DownOpts {
     pub config: Config,
 }
 
-/// How long an unbroken run of `TurnOpen { rule_skipped: false }` polls lasts before the member counts as idle
-/// (AU26, PW7 7.2).
-pub const INTERRUPTED_TURN_AFTER: Duration = Duration::from_secs(60);
-
 /// The drain poll (W§9.3 step 5).
 const POLL: Duration = Duration::from_millis(500);
 /// The time between two progress lines of one workspace (W§9.3 step 5).
@@ -754,9 +750,7 @@ enum State {
 /// The drain record of one member (D15).
 #[derive(Debug, Default)]
 struct Track {
-    open_since: Option<Duration>,
     said_skip: bool,
-    said_turn: bool,
     said_idle: bool,
     /// The result and the running set of the last poll that read the member.
     last: Option<(Idle, BTreeMap<String, String>)>,
@@ -1148,16 +1142,10 @@ impl Run<'_> {
             let track = self.jobs[i].track.entry(key.clone()).or_default();
             let idle = match read {
                 None => {
-                    track.open_since = None;
                     track.last = None;
                     true
                 }
                 Some((r, running)) => {
-                    if r == (Idle::TurnOpen { rule_skipped: false }) {
-                        track.open_since.get_or_insert(drain_time);
-                    } else {
-                        track.open_since = None;
-                    }
                     let skipped = matches!(
                         r,
                         Idle::IdleRuleSkipped | Idle::TurnOpen { rule_skipped: true } | Idle::Busy { rule_skipped: true, .. }
@@ -1166,12 +1154,7 @@ impl Run<'_> {
                         track.said_skip = true;
                         lines.push(format!("zygo: {who}: proxy request state not usable; idle rule 3 skipped"));
                     }
-                    let turn_ended = track.open_since.is_some_and(|s| drain_time.saturating_sub(s) >= INTERRUPTED_TURN_AFTER);
-                    if turn_ended && !track.said_turn {
-                        track.said_turn = true;
-                        lines.push(format!("zygo: {who}: no Stop since its last prompt (interrupted turn); treated as idle"));
-                    }
-                    let idle = matches!(r, Idle::Idle | Idle::IdleRuleSkipped) || turn_ended;
+                    let idle = matches!(r, Idle::Idle | Idle::IdleRuleSkipped);
                     track.last = Some((r, running));
                     idle
                 }

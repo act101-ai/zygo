@@ -57,7 +57,6 @@ fn full() -> Workspace {
     m.launch.args = vec!["--model".into(), "opus".into()];
     m.config_dir = Some("/home/u/work".into());
     m.program = Some("/usr/bin/claude".into());
-    m.last_run_at = Some(1_700_000_000);
     m.overrides = Some(json!({"results": false, "guards": {}}));
     m.compact = Some(CompactOverride::Set("120000".into()));
     m.interrupted = vec![Subagent { agent_id: "a1".into(), agent_type: "Explore".into(), ..Default::default() }];
@@ -83,7 +82,7 @@ fn json_has_the_fields_of_w7_2() {
             "agent_session": "a-1", "state": "running",
             "launch": {"kind": "claude-code", "profile": "fast", "passthrough": false, "server": "https://zygo.example",
                 "compact": "120k", "yolo": true, "config_dir": "work", "args": ["--model", "opus"]},
-            "config_dir": "/home/u/work", "program": "/usr/bin/claude", "last_run_at": 1700000000u64,
+            "config_dir": "/home/u/work", "program": "/usr/bin/claude",
             "overrides": {"results": false, "guards": {}}, "compact": "set 120000",
             "interrupted": [{"agent_id": "a1", "agent_type": "Explore"}],
             "closed_units": ["W2"], "dropped_flags": ["--agents"], "clean_stop": true, "note_pending": true}}

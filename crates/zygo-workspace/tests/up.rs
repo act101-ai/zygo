@@ -1849,7 +1849,6 @@ fn restore_forgets_only_bare_members_and_undo_puts_them_back() {
     let mut bare = member(Agent::ClaudeCode, MemberState::Running, None);
     bare.launch.profile = Some("fast".into());
     bare.dropped_flags = vec!["--agents".into()];
-    bare.last_run_at = Some(9);
     saved(
         &store,
         &l.repo,

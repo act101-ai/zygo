@@ -518,7 +518,6 @@ fn errors_lines(store: &Store) -> usize {
 #[test]
 fn constants_and_mount_namespace() {
     let _s = serial();
-    assert_eq!(down::INTERRUPTED_TURN_AFTER, Duration::from_secs(60));
     for bad in ["", "../1", "1/ns", "12345678901", "-1", "self/.."] {
         assert_eq!(down::proc_identity(bad), None, "{bad:?}");
     }
@@ -880,35 +879,30 @@ fn now_saves_running_subagents_and_reports_a_slow_agent() {
 // ---- step 7 ----
 
 #[test]
-fn interrupted_turn_counts_after_60s() {
+fn open_turn_is_busy_until_the_drain_timeout() {
+    // FIX-20 (#81): an open turn (`busy` true, no running tool, a quiet proxy) is busy at every poll; no quiet time
+    // counts it as idle.
     let _s = serial();
     {
+        // (a) No Stop comes: at the drain timeout `down` exits 1, `phase` is up, and the launcher gets no SIGTERM.
         let t = TempDir::new().unwrap();
         let t = t.path();
         let (mut o, store, mut l) = one_member(t);
         set_activity(&o, SID, true, &[]);
         let mut h = hooks();
-        let status = Arc::new(Mutex::new(quiet()));
-        let s = status.clone();
-        h.status = Some(Box::new(move |_: &str| Ok(s.lock().unwrap().clone())));
-        let last = Arc::new(Mutex::new(Duration::ZERO));
-        let lp = last.clone();
-        h.on_poll = Some(Box::new(move |_, t| {
-            *lp.lock().unwrap() = t;
-            *status.lock().unwrap() = if t == Duration::from_secs(30) { in_flight() } else { quiet() };
-            false
-        }));
-        release_on_sigterm(&mut h, &o, vec![l.lock.clone()], &[(ID, KEY)]);
-        o.timeout = Some(Duration::from_secs(600));
+        h.status = Some(Box::new(|_: &str| Ok(quiet())));
+        o.timeout = Some(Duration::from_secs(120));
         let (code, out, err) = run(&o, &h);
-        assert_eq!((code, out.as_str()), (0, "zygo: app is down (1 agents saved)\n"), "{err}");
-        assert_eq!(count(&err, TURN), 1);
-        assert_eq!(*last.lock().unwrap(), Duration::from_millis(90_500)); // the run starts again at 30.5 s
+        assert_eq!((code, out.as_str()), (1, ""), "{err}");
+        assert_eq!(count(&err, TURN), 0);
+        assert_eq!(count(&err, "zygo: app pane kaaaaaaaa: busy: no Stop since its last prompt"), 1, "{err}");
         assert_eq!(count(&err, SKIP), 0);
-        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Down);
-        l.child.wait().unwrap();
+        assert_eq!(store.read().unwrap().unwrap().phase, Phase::Up);
+        assert!(l.child.try_wait().unwrap().is_none()); // no SIGTERM
+        l.child.kill().unwrap();
     }
     {
+        // (b) A Stop written during the drain lets `down` go on and stop the workspace.
         let t = TempDir::new().unwrap();
         let t = t.path();
         let (mut o, store, mut l) = one_member(t);
@@ -920,19 +914,17 @@ fn interrupted_turn_counts_after_60s() {
         let o2 = o.clone();
         h.on_poll = Some(Box::new(move |_, t| {
             *lp.lock().unwrap() = t;
-            if t == Duration::from_secs(20) {
-                set_activity(&o2, SID, true, &[("r1", "Plan")]);
-            } else if t == Duration::from_millis(20_500) {
-                set_activity(&o2, SID, true, &[]);
+            if t == Duration::from_secs(90) {
+                set_activity(&o2, SID, false, &[]);
             }
             false
         }));
         release_on_sigterm(&mut h, &o, vec![l.lock.clone()], &[(ID, KEY)]);
         o.timeout = Some(Duration::from_secs(600));
-        let (code, _, err) = run(&o, &h);
-        assert_eq!(code, 0, "{err}");
-        assert_eq!(count(&err, TURN), 1);
-        assert_eq!(*last.lock().unwrap(), Duration::from_millis(80_500));
+        let (code, out, err) = run(&o, &h);
+        assert_eq!((code, out.as_str()), (0, "zygo: app is down (1 agents saved)\n"), "{err}");
+        assert_eq!(count(&err, TURN), 0);
+        assert!(*last.lock().unwrap() >= Duration::from_secs(90), "{:?}", *last.lock().unwrap());
         assert_eq!(store.read().unwrap().unwrap().phase, Phase::Down);
         l.child.wait().unwrap();
     }

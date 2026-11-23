@@ -90,10 +90,19 @@ fn an_escaped_tool_is_busy_at_every_poll() {
     }
 }
 
-#[test] // W10 round 2 item 1: an Esc-interrupted turn with no running tool keeps the 60 s rule of `down`
+#[test] // FIX-20: an Esc-interrupted turn with no running tool is a turn open; down keeps it busy until a Stop or the drain timeout
 fn an_interrupted_turn_with_no_running_tool_is_a_turn_open() {
     assert_eq!(idle(&tools(true, 0), &quiet()), Idle::TurnOpen { rule_skipped: false });
     assert_eq!(idle(&tools(true, 0), &st(None, None)), Idle::TurnOpen { rule_skipped: true });
+}
+
+#[test] // FIX-20: no quiet time makes an open turn idle; `drain::idle` holds no clock state
+fn an_open_turn_is_a_turn_open_at_every_poll() {
+    let (a, s) = (tools(true, 0), quiet());
+    for secs in [0, 61, 600, 86_400] {
+        let at = now() + Duration::from_secs(secs);
+        assert_eq!(drain::idle(Ok(&a), Ok(&s), at), Idle::TurnOpen { rule_skipped: false }, "{secs} s");
+    }
 }
 
 #[test]

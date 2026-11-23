@@ -32,8 +32,9 @@ pub enum Idle {
     IdleRuleSkipped,
     /// `busy` is `true` while rules 2 and 3 hold and no tool runs (`tools_running == 0`): a turn with no `Stop` or
     /// `StopFailure`, as after Esc (PW7 7.2). A long tool call sends no model request, so it is `Busy`, never this.
-    /// `rule_skipped` is `true` when rule 3 is skipped. Only `TurnOpen { rule_skipped: false }` counts toward the
-    /// interrupted-turn 60 s of `down`; with `rule_skipped: true` the member waits until the drain timeout (AU26).
+    /// `down` counts the member as busy at every poll, until a `Stop` or `StopFailure`, the agent's exit or the drain
+    /// timeout (AU26, FIX-20). `rule_skipped` is `true` when rule 3 is skipped; it only drives the AU26 rule-skipped
+    /// line of `down`.
     TurnOpen { rule_skipped: bool },
 }
 
@@ -76,8 +77,7 @@ fn rule3(status: Result<&SessionStatus, &str>, now: SystemTime) -> Rule3 {
 
 /// The idle rule of the drain (AU26, W§9.3 step 5) for one member at the poll time `now`. `activity` is the result
 /// of `activity::read` and `status` the result of the proxy status call; each `Err` is the text of the failed read.
-/// It holds no state and reads no clock or file: the same inputs give the same result. The 60 s count of an
-/// interrupted turn (PW7 7.2) belongs to `down`. OpenCode needs no branch here (AU27): its idle event acts as `Stop`
+/// It holds no state and reads no clock or file: the same inputs give the same result. OpenCode needs no branch here (AU27): its idle event acts as `Stop`
 /// through the member hooks, and without it `busy` stays as the hooks wrote it, so `down` passes the activity as it
 /// is.
 pub fn idle(activity: Result<&Activity, &str>, status: Result<&SessionStatus, &str>, now: SystemTime) -> Idle {
