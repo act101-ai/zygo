@@ -63,7 +63,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | W11 | MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback) | P1, C1, W2 | DONE | judgment | 0799b7d; mcp_server 50 ok, config_layers 96 ok; review round 2 fixed F1-F7 |
 | L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
 | L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2, W4 | DONE | judgment | c5a1569; acceptance args 12, claude_code 36, opencode 51, stub_launch 16, check-conformance ok, test-check-conformance ok, workspace --no-run ok (merged tree); review round 2 fixed 9 minor |
-| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | PLANNED | judgment | — |
+| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10, W11, FIX-17, FIX-20, FIX-21 | IN-PROGRESS | judgment | .worktrees/phase2/H1 |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
 | M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20 | TODO | judgment | — |
 | M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
