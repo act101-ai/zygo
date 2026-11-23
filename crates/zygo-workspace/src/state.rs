@@ -417,17 +417,12 @@ impl Store {
         }
         self.check_dir()?;
         let path = self.state_file();
-        let file = match File::open(&path) {
-            Ok(f) => f,
+        let bytes = match read_state_capped(&path) {
+            Ok(Some(b)) => b,
+            Ok(None) => return Err(StateError::Invalid { path, reason: "state file too large".to_string() }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(StateError::Io(e)),
         };
-        // At most one byte past the cap: a larger file allocates no more (AU84).
-        let mut bytes = Vec::new();
-        file.take(STATE_FILE_MAX + 1).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > STATE_FILE_MAX {
-            return Err(StateError::Invalid { path, reason: "state file too large".to_string() });
-        }
         let value: serde_json::Value = match serde_json::from_slice(&bytes) {
             Ok(v) => v,
             Err(e) => return Err(StateError::Invalid { path, reason: e.to_string() }),
@@ -569,6 +564,15 @@ impl Store {
         let from = (0..all.len()).find(|&o| all.len() - o <= keep && (o == 0 || all[o - 1] == b'\n')).unwrap_or(all.len());
         let _ = write_atomic(&path, &all[from..]);
     }
+}
+
+/// The bytes of the state file `path`, read with the one cap of AU84: at most 1 MiB + 1 byte are read, so a larger
+/// file allocates no more. `Ok(None)` when the file is larger than 1 MiB (`state file too large`). Every reader of
+/// `workspace.json` in this crate uses it (FIX-17).
+pub(crate) fn read_state_capped(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::new();
+    File::open(path)?.take(STATE_FILE_MAX + 1).read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= STATE_FILE_MAX).then_some(bytes))
 }
 
 /// `op.lock` held by this process; the lock ends when the value is dropped.
