@@ -169,11 +169,11 @@ fn member<'a>(event: &'a str, dir: &'a SessionDir, paths: &'a Paths) -> anyhow::
 }
 
 /// One change of `activity.json` under `activity.lock` with the hook bound (AU56, D14). An `activity.json` that is a
-/// link or not a regular file is not changed. Each failure writes one session-log line by its class (round 3, S2 and
-/// S4; round 4, T3). A persistent condition repeats on every event, so its line is written only for the events of
-/// `MARKER_LOG_EVENTS`, a line per turn and not per tool call: `activity.json` is a link or not a regular file, or the
-/// update gives `activity::FileCondition` (the file cannot be read, is over the read limit, does not parse or is of a
-/// newer version; the lock file cannot be opened; the write failed). A one-off failure writes its line on every event
+/// link or not a regular file is not changed: `activity::update` refuses it with a `FileCondition` (FIX-22). Each
+/// failure writes one session-log line by its class (round 3, S2 and S4; round 4, T3). A persistent condition repeats
+/// on every event, so its line is written only for the events of `MARKER_LOG_EVENTS`, a line per turn and not per
+/// tool call: the update gives `activity::FileCondition` (the file cannot be read, is over the read limit, does not
+/// parse or is of a newer version; the lock file cannot be opened; the write failed). A one-off failure writes its line on every event
 /// where it happens: the lock not taken within the AU56 bound, and a refused over-limit result.
 fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
     if let Err(e) = change_within(c, activity::LOCK_BOUND, f) {
@@ -184,23 +184,11 @@ fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
 /// `change` with the lock wait `bound`: it writes the line of a persistent condition by the rule of `change` and
 /// returns the one-off failure (the lock not taken within `bound`, a refused over-limit result) to the caller.
 fn change_within(c: &Ctx, bound: Duration, f: &mut dyn FnMut(&mut Activity)) -> anyhow::Result<()> {
-    let path = c.dir.activity_json();
     let persistent = |text: String| {
         if MARKER_LOG_EVENTS.contains(&c.event) {
             slog(c.dir, c.event, &text);
         }
     };
-    match fs::symlink_metadata(&path) {
-        Ok(m) if m.file_type().is_symlink() => {
-            persistent(format!("{}: is a link; not changed", path.display()));
-            return Ok(());
-        }
-        Ok(m) if !m.is_file() => {
-            persistent(format!("{}: is not a regular file; not changed", path.display()));
-            return Ok(());
-        }
-        _ => {}
-    }
     match activity::update(c.dir, bound, f) {
         Err(e) if e.is::<activity::FileCondition>() => {
             persistent(format!("{e:#}"));

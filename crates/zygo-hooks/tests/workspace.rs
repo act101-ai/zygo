@@ -1404,7 +1404,7 @@ fn hostile_inputs_change_nothing() {
     assert!(slog(&f).is_empty(), "{:?}", slog(&f));
     assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(fs::read_to_string(f.t.path().join("outside.json")).unwrap(), "{}");
-    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is a link; not changed")]);
+    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is a link")]);
     let f = fx(Agent::ClaudeCode);
     let act_path = f.dir.activity_json().display().to_string();
     mkfifo(&f.dir.activity_json());
@@ -1414,7 +1414,7 @@ fn hostile_inputs_change_nothing() {
     assert!(slog(&f).is_empty(), "{:?}", slog(&f));
     assert_eq!(ws_bg(&f, "prompt", ups("hello")).unwrap(), None);
     assert!(is_fifo(&f.dir.activity_json()));
-    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is not a regular file; not changed")]);
+    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is not a regular file")]);
     let f = fx(Agent::ClaudeCode);
     mkfifo(&f.dir.activity_json());
     mkfifo(&f.dir.log());
