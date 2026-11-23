@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
+mod common;
+
 /// Held while a copy of the binary is written and while a child is spawned, so no other test's `fork` holds a write
 /// descriptor of an executable that is being exec'd (ETXTBSY).
 static COPY_LOCK: Mutex<()> = Mutex::new(());
@@ -750,5 +752,94 @@ mod start {
     #[test]
     fn zygo_opencode_runs_the_check_before_the_launch() {
         dispatch_installs_and_does_not_launch("opencode");
+    }
+}
+
+// ---- the update check of `zygo up` and `zygo ws run` (M5; auto-update design, "Where") ----
+
+#[cfg(unix)]
+mod workspace_check {
+    use super::*;
+    use common::workspace::{Guarded, Harness, WS_ID};
+    use std::ffi::{OsStr, OsString};
+    use std::os::unix::fs::MetadataExt;
+    use std::time::Duration;
+    use zygo_core::Agent;
+    use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind};
+
+    /// `f` while `COPY_LOCK` is held: every spawn and fork of this module runs under it (D8).
+    fn locked<R>(f: impl FnOnce() -> R) -> R {
+        let _g = COPY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        f()
+    }
+
+    /// The prompt of the auto-update design.
+    fn prompt(new: &str) -> String {
+        format!("zygo {new} is available (you have {CUR}). Update now? [y/N/s]")
+    }
+
+    /// Polls `f` every 20 ms until it is true or `bound` is over; the last result.
+    fn until(bound: Duration, mut f: impl FnMut() -> bool) -> bool {
+        let t0 = std::time::Instant::now();
+        loop {
+            if f() {
+                return true;
+            }
+            if t0.elapsed() >= bound {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A git repository in `dir` with one empty commit and no user or system git config; `git` linked into `h.bin`.
+    fn git_repo(h: &Harness, dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        for args in [&["init", "-q", "-b", "main"][..], &["commit", "-q", "--allow-empty", "-m", "a"][..]] {
+            let mut c = Command::new("git");
+            c.args(["-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+                .args(args)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .current_dir(dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let child = locked(|| c.spawn().unwrap());
+            let o = child.wait_with_output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", err(&o));
+        }
+        let link = h.bin.join("git");
+        if !link.exists() {
+            std::os::unix::fs::symlink(which::which("git").unwrap(), link).unwrap();
+        }
+    }
+
+    /// `c` with the update check on: the harness opt-out removed, the fixture release base, and a TTY assumed (D7).
+    fn checked(mut c: Command, base: &OsStr) -> Command {
+        c.env_remove("ZYGO_NO_UPDATE_CHECK").env("ZYGO_RELEASE_BASE", base).env("ZYGO_TEST_ASSUME_TTY", "1");
+        c
+    }
+
+    fn update_json(h: &Harness) -> PathBuf {
+        h.paths.cache_dir.join("update.json")
+    }
+
+    /// The number of entries of the state folder of workspaces; 0 when it does not exist.
+    fn state_entries(h: &Harness) -> usize {
+        std::fs::read_dir(h.paths.data_dir.join("state/workspaces")).map(|d| d.count()).unwrap_or(0)
+    }
+
+    /// The record that `up` writes for a new loadout member (`zygo-workspace/src/up.rs:565-568`).
+    fn loadout_member() -> MemberRecord {
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        r.state = MemberState::Running;
+        r
+    }
+
+    #[test]
+    fn harness_env_opts_out_of_the_update_check() {
+        let h = locked(Harness::no_tmux);
+        assert!(h.env().iter().any(|(k, v)| k == "ZYGO_NO_UPDATE_CHECK" && v == "1"), "{:?}", h.env());
     }
 }
