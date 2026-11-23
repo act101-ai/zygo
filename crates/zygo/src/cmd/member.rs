@@ -638,7 +638,7 @@ pub(crate) enum HandStart {
     /// Not a member: a v1 launch.
     V1,
     /// A member with its pane key.
-    Member(MemberCtx),
+    Member(Box<MemberCtx>),
     /// AU94 or W-C9 refuses: print the line, exit 1, start nothing.
     Refused(String),
 }
@@ -722,7 +722,7 @@ pub(crate) fn hand_start(
     if let Some(c) = conflict(&ws, &key, own.as_deref(), &|r| live_session(&paths.sessions_dir, r)) {
         return HandStart::Refused(c.line(&key));
     }
-    HandStart::Member(MemberCtx { ws_id: id.to_string(), pane: key, store, launch, hand: Some(HandJoin { own_session: own }) })
+    HandStart::Member(Box::new(MemberCtx { ws_id: id.to_string(), pane: key, store, launch, hand: Some(HandJoin { own_session: own }) }))
 }
 
 /// `zygo claude` and `zygo opencode` (W§8.4): the hand-start checks, then a v1 launch, the member wrapper, or the
