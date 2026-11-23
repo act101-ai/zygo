@@ -72,13 +72,14 @@ impl Default for SessionView {
 }
 
 /// The fields of a `view.json` object that this zygo does not know (the AU78 pattern of `workspace.json`). Only a load
-/// fills it and a save writes it back. Its map is private, so no other crate can add a key: a key equal to a known
-/// field name would make the saved file unreadable (duplicate field). A literal of another crate takes the empty value
-/// with `..Default::default()` (H1 review round 2 R6).
+/// fills it and a save writes it back. Its map is private and the type has no setter, and no code adds a key. The
+/// type still derives a public `Deserialize`, so code could build a value by deserializing a map whose key is a known
+/// field name; `save` would then write that key twice and `load` would refuse the file (duplicate field). A literal of
+/// another crate takes the empty value with `..Default::default()` (H1 review round 2 R6, round 3 S5).
 ///
-/// Another crate cannot reach the map:
+/// Another crate cannot read the map field (E0616, private field):
 ///
-/// ```compile_fail
+/// ```compile_fail,E0616
 /// let _ = zygo_core::session_view::SessionView::default().extra.0.is_empty();
 /// ```
 ///
