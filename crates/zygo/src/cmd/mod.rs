@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
 use std::time::SystemTime;
 use zygo_core::exit::ExitCode;
 use zygo_core::hook::set_slash_dispatch;
@@ -7,15 +8,19 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
 use zygo_proxy::client::ClientError;
 
+pub mod attach;
 pub mod claude;
 pub mod compact;
 pub mod compact_tool;
 pub mod config;
 pub mod doctor;
+pub mod down;
 pub mod guards;
 pub mod help;
 pub mod hook;
 pub mod keys;
+pub mod loadout;
+pub mod ls;
 pub mod marketplace;
 pub mod mcp;
 pub mod opencode;
@@ -28,10 +33,13 @@ pub mod serve;
 pub mod status;
 pub mod statusline;
 pub mod units;
+pub mod up;
 pub mod update;
 pub mod usage;
 pub mod verbs;
 pub mod work;
+pub mod workspace;
+pub mod ws;
 
 pub use zygo_config::display::EscapedLines;
 use verbs::{VerbCtx, VERBS};
@@ -66,6 +74,117 @@ impl std::fmt::Display for UsageError {
 }
 
 impl std::error::Error for UsageError {}
+
+/// The OP5 text: native Windows has no workspace features (W§8.1 step 1).
+pub(crate) const OP5: &str = "workspaces need tmux; run zygo in WSL";
+
+/// `Err(UsageError(OP5))` on Windows, else `Ok`. The first call of every workspace verb, before any library call.
+pub(crate) fn op5() -> Result<(), UsageError> {
+    if cfg!(windows) { Err(UsageError(OP5.to_string())) } else { Ok(()) }
+}
+
+/// `op5` for a CLI arm: on `Err`, prints `<OP5>\n` on stderr and gives `Some(2)`.
+pub(crate) fn op5_exit() -> Option<i32> {
+    match op5() {
+        Ok(()) => None,
+        Err(e) => {
+            print_err(&format!("{e}\n"));
+            Some(ExitCode::Usage as i32)
+        }
+    }
+}
+
+/// The first `tmux` in the absolute entries of `PATH` (D2): the rule of the doctor probes.
+pub(crate) fn find_tmux() -> Option<PathBuf> {
+    let entries = doctor::absolute_entries(std::env::var_os("PATH").as_deref())?;
+    which::which_in("tmux", Some(entries), std::env::current_dir().unwrap_or_default()).ok()
+}
+
+/// An absolute path that cannot exist (`/dev/null` is not a folder): the `tmux` when `find_tmux` finds none (D2).
+pub(crate) const NO_TMUX_PATH: &str = "/dev/null/tmux";
+
+/// `find_tmux()`, else `PathBuf::from(NO_TMUX_PATH)` (D2). Every workspace verb uses it; never a bare `tmux`.
+pub(crate) fn tmux_program() -> PathBuf {
+    find_tmux().unwrap_or_else(|| PathBuf::from(NO_TMUX_PATH))
+}
+
+/// A usable session id (D8): `ZYGO_SESSION` as `env` gives it (`std::env::var_os` outside tests), `None` when it is
+/// unset or empty. Its users are the two reads that need a session id: `/zygo:down` (`down::session_of`) and the
+/// `zygo down` CLI form (`down::cli_opts`). It does not decide "inside an agent": that rule counts an empty value as
+/// set (AU64, AU95; `zygo-workspace/src/env.rs:52-55`, `up.rs:894`, `up.rs:1091`), so `zygo up` passes
+/// `ZYGO_SESSION` as it is.
+pub(crate) fn usable_session_id(env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+    env("ZYGO_SESSION").filter(|v| !v.is_empty())
+}
+
+/// The user config only (D3, AU10, AU22): no repository and no team layer.
+pub(crate) fn user_config(paths: &Paths) -> Result<zygo_config::Config, zygo_config::ConfigError> {
+    zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None }).map(|m| m.config)
+}
+
+/// `user_config` for a CLI arm (D3): a load error prints `zygo <verb>: <error escaped>` and gives exit 11.
+pub(crate) fn user_config_or_exit(paths: &Paths, verb: &str) -> Result<zygo_config::Config, i32> {
+    user_config(paths).map_err(|e| {
+        print_err(&format!("zygo {verb}: {}\n", zygo_core::esc(&e.to_string())));
+        ExitCode::ConfigInvalid as i32
+    })
+}
+
+/// The D10 text of a failed `std::env::current_dir()`, without the `zygo: ` prefix.
+pub(crate) fn cwd_error(e: &std::io::Error) -> String {
+    format!("cannot read the current folder: {}", zygo_core::esc(&e.to_string()))
+}
+
+/// The D10 text of a failed `std::env::current_exe()`, without the `zygo: ` prefix.
+pub(crate) fn exe_error(e: &std::io::Error) -> String {
+    format!("cannot find the zygo binary: {}", zygo_core::esc(&e.to_string()))
+}
+
+/// `std::env::current_dir()` for a CLI arm (D10): on error, prints `zygo: <cwd_error>` and gives exit 1.
+pub(crate) fn cwd_or_exit() -> Result<PathBuf, i32> {
+    std::env::current_dir().map_err(|e| {
+        print_err(&format!("zygo: {}\n", cwd_error(&e)));
+        1
+    })
+}
+
+/// `std::env::current_exe()` for a CLI arm (D10): on error, prints `zygo: <exe_error>` and gives exit 1.
+pub(crate) fn exe_or_exit() -> Result<PathBuf, i32> {
+    std::env::current_exe().map_err(|e| {
+        print_err(&format!("zygo: {}\n", exe_error(&e)));
+        1
+    })
+}
+
+/// The `VerbCtx` of a CLI form.
+pub(crate) fn cli_ctx() -> VerbCtx {
+    VerbCtx { slash: false, save: false, session_dir: SessionDir::from_env(), paths: Paths::from_env() }
+}
+
+/// The exit of a verb result: its text on stdout, or its error on stderr with exit 2 for a `UsageError`, the server
+/// code for an unreachable server, else 1.
+pub(crate) fn finish(r: anyhow::Result<String>) -> i32 {
+    match r {
+        Ok(out) => {
+            if !out.is_empty() {
+                print_out(&format!("{out}\n"));
+            }
+            0
+        }
+        Err(e) => {
+            print_err(&format!("{}\n", zygo_config::display::error_text(&e)));
+            if e.downcast_ref::<compact::CompactFailed>().is_some_and(|c| matches!(c.0, ClientError::Unreachable(_)))
+                || e.downcast_ref::<zygo_launch::serve_client::Unreachable>().is_some()
+            {
+                ExitCode::ServerUnreachable as i32
+            } else if e.downcast_ref::<UsageError>().is_some() {
+                2
+            } else {
+                1
+            }
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "zygo", version, about = "Wraps Claude Code and OpenCode", disable_help_subcommand = true)]
@@ -227,6 +346,20 @@ enum Cmd {
     CompactTool(VerbArgs),
     /// Status line style: [compact|verbose]
     Statusline(VerbArgs),
+    /// Start or restore the workspace of this repository
+    Up(up::UpArgs),
+    /// Stop a workspace: drain, snapshot, stop
+    Down(down::DownArgs),
+    /// List workspaces
+    Ls,
+    /// Attach to a running workspace
+    Attach(attach::AttachArgs),
+    /// Loadouts and their source
+    Loadout(loadout::LoadoutArgs),
+    /// Status of this session's or this folder's workspace
+    Workspace,
+    /// Workspace tools: forget, forget-pane
+    Ws(ws::WsArgs),
     /// Internal: MCP server started by the agents
     Mcp {
         #[arg(long)]
@@ -410,12 +543,17 @@ pub fn run() -> i32 {
             e.exit()
         }
     };
-    // §10.1 and its N71 note: results of ended sessions are swept at the next `zygo` command, except hooks and
-    // `zygo mcp` (time-bounded; C6). I/O errors are ignored.
-    if !matches!(cli.command, Cmd::Hook { .. } | Cmd::Mcp { .. }) {
-        zygo_results::sweep(&Paths::from_env().cache_dir, SystemTime::now());
+    // §10.1 and its N71 note: results of ended sessions are swept at the next `zygo` command, except hooks,
+    // `zygo mcp` (time-bounded; C6) and `zygo ws` (AU71). I/O errors are ignored.
+    if !matches!(cli.command, Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_)) {
+        let p = Paths::from_env();
+        zygo_results::sweep(&p.cache_dir, &p.workspace_cache_dir(), SystemTime::now());
     }
-    let verb = match &cli.command {
+    let command = match cli.command {
+        Cmd::Ws(a) => return ws::dispatch(a),
+        c => c,
+    };
+    let verb = match &command {
         Cmd::Claude(l) => return start_check(&l.rest).unwrap_or_else(|| claude::run(l)),
         Cmd::Opencode(a) => return start_check(&a.rest).unwrap_or_else(|| opencode::run(a)),
         Cmd::Serve { .. } => return serve::run(),
@@ -426,6 +564,13 @@ pub fn run() -> i32 {
         Cmd::Update { version, check } => return update::run(version.as_deref(), *check),
         Cmd::Mcp { agent } => return mcp::run(*agent),
         Cmd::Hook { name, agent, event } => return hook::run(name, agent.as_deref(), event.clone()),
+        Cmd::Up(a) => return up::run(a),
+        Cmd::Down(a) => return down::run(a),
+        Cmd::Ls => return finish(ls::verb(&cli_ctx(), &[])),
+        Cmd::Attach(a) => return attach::run(a),
+        Cmd::Loadout(a) => return loadout::run(a),
+        Cmd::Workspace => return finish(workspace::verb(&cli_ctx(), &[])),
+        Cmd::Ws(_) => unreachable!("taken above"),
         Cmd::Status => "status",
         Cmd::Compact { .. } => "compact",
         Cmd::Profile { .. } => "profile",
@@ -442,26 +587,7 @@ pub fn run() -> i32 {
         Cmd::Statusline(_) => "statusline",
     };
     let raw: Vec<String> = std::env::args().skip(2).collect();
-    match run_verb(verb, raw, false) {
-        Ok(out) => {
-            if !out.is_empty() {
-                print_out(&format!("{out}\n"));
-            }
-            0
-        }
-        Err(e) => {
-            print_err(&format!("{}\n", zygo_config::display::error_text(&e)));
-            if e.downcast_ref::<compact::CompactFailed>().is_some_and(|c| matches!(c.0, ClientError::Unreachable(_)))
-                || e.downcast_ref::<zygo_launch::serve_client::Unreachable>().is_some()
-            {
-                ExitCode::ServerUnreachable as i32
-            } else if e.downcast_ref::<UsageError>().is_some() {
-                2
-            } else {
-                1
-            }
-        }
-    }
+    finish(run_verb(verb, raw, false))
 }
 
 #[cfg(test)]

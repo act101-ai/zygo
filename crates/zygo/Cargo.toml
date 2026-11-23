@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-hooks = ["zygo-hooks/test-hooks", "zygo-launch/test-hooks"]
+test-hooks = ["zygo-hooks/test-hooks", "zygo-launch/test-hooks", "zygo-workspace/test-hooks"]
 
 [dependencies]
 zygo-core.workspace = true
@@ -19,6 +19,7 @@ zygo-work.workspace = true
 zygo-hooks.workspace = true
 zygo-plugins.workspace = true
 zygo-launch.workspace = true
+zygo-workspace.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
@@ -39,7 +40,6 @@ walkdir.workspace = true
 tempfile.workspace = true
 fs4.workspace = true
 ulid.workspace = true
-zygo-workspace.workspace = true
 zygo = { path = ".", features = ["test-hooks"] }
 
 [[test]]
