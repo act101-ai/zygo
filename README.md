@@ -51,6 +51,10 @@ Version 0.1.0.
 
 * Solution: Lifecycle hooks allow auto-compacting between tasks in a long-running plan
 
+### Skills for Autonomous Delivery
+
+- Plan and build software using a graph methodology for autonomous agentic execution.
+
 ---
 
 ## Install
