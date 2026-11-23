@@ -118,7 +118,9 @@ pub mod testing {
     /// Sets (`Some`) or clears (`None`) the hook of `point` for the state folder `dir`. Points: `before_op_lock`,
     /// `before_plan_write` (before the step 8 write), `after_new_session`, `split` (before each `split_window`),
     /// `before_undo` (before the write of the B1 undo), `before_final_snapshot`, `after_final_snapshot`, `release`
-    /// (before each window of `Builder::release`; an error there is that window's error, FIX-29); the admin
+    /// (before each window of `Builder::release`; an error there is that window's error, FIX-29), `dead_lines` (before
+    /// the pane read of `Builder::dead_lines`; an error there is that read's error), `dead_pane` (before the read of
+    /// each pane of `Builder::dead_lines`; an error there is that pane's error; FIX-29 round 2); the admin
     /// points of W8 D21: `forget_before_op_lock`, `forget_before_state` (under both locks, before anything is
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
     /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
@@ -548,7 +550,7 @@ impl Builder<'_> {
     /// FIX-29: one [`exited_line`] for each dead pane of the session that has a valid pane key, in `list-panes` order,
     /// best effort. A gone session or pane gives no line; any other error prints one line and goes on.
     pub fn dead_lines(&self, socket: &Path, name: &str, err: &mut dyn Write) -> Vec<String> {
-        let rows = match self.mux.list_panes(self.session) {
+        let rows = match fire(self.dir, "dead_lines").and_then(|()| self.mux.list_panes(self.session)) {
             Ok(rows) => rows,
             Err(MuxError::NoTarget { .. } | MuxError::Gone { .. }) => return Vec::new(),
             Err(e) => {
@@ -562,7 +564,7 @@ impl Builder<'_> {
             if !valid_pane_key(&p.key) {
                 continue;
             }
-            match self.mux.display(&p.id, "#{pane_dead}|#{pane_dead_status}") {
+            match fire(self.dir, "dead_pane").and_then(|()| self.mux.display(&p.id, "#{pane_dead}|#{pane_dead_status}")) {
                 Ok(v) => {
                     if let Some(status) = v.strip_prefix("1|") {
                         lines.push(exited_line(&p.key, status, socket, &p.id));

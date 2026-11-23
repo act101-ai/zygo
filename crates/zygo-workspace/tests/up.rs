@@ -2395,6 +2395,50 @@ fn repair_holds_the_panes_it_creates_and_reports_them() {
     }
 }
 
+#[test] // FIX-29 diff review round 2, finding 4, W§8.1 step 12: a failed read of the panes is one line; up goes on
+fn a_failed_dead_pane_read_is_one_line_and_up_goes_on() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    fs::create_dir_all(store.dir()).unwrap();
+    up::testing::hook(store.dir(), "dead_lines", Some(Box::new(|| Err("injected".into()))));
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "dead_lines", None);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    assert_eq!(err.matches("zygo: app: could not read the dead panes: injected\n").count(), 1, "{err}");
+    assert_eq!(read(&store).phase, Phase::Up);
+}
+
+#[test] // FIX-29 diff review round 2, finding 4, W§8.1 step 12: a failed read of one pane is one line; the rest are read
+fn a_failed_read_of_one_pane_is_one_line_and_up_goes_on() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    fs::create_dir_all(store.dir()).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let c = calls.clone();
+    up::testing::hook(
+        store.dir(),
+        "dead_pane",
+        Some(Box::new(move || if c.fetch_add(1, Ordering::SeqCst) == 0 { Err("injected".into()) } else { Ok(()) })),
+    );
+    l.o.config = pair();
+    l.o.loadout = Some("pair".into());
+    let (code, out, err) = run(&l.o);
+    up::testing::hook(store.dir(), "dead_pane", None);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    let ws = read(&store);
+    // Each of the three panes was read: there was no early return.
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(err.matches(&format!("zygo: app: could not read pane {}: injected\n", ws.panes[0].key)).count(), 1, "{err}");
+    assert_eq!(err.matches("could not read pane").count(), 1, "{err}");
+    assert_eq!(ws.phase, Phase::Up);
+}
+
 /// FIX-29 round 2, finding 2: a state in phase `building` whose saved `tmux_socket` holds `'`.
 fn quoted_socket_state(t: &Path) -> (UpOpts, Store, PathBuf) {
     let r = repo(t, "app");
