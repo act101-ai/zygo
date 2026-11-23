@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M3, E1, E2, D1, FIX-24, FIX-29
+**Next:** FIX-29, FIX-24, E1, E2, D1
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -80,12 +80,12 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | DONE | implementation | 40aec7c; acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored (merged tree) |
 | FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks; a non-boolean disableAllHooks is removed and named; settings lines escaped through esc (U+061C added) | FIX-21, H1 | DONE | judgment | f052dd4; acceptance core lib 2, launch lib 3, claude_code 44 (merged tree) |
-| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27, FIX-29 | TODO | implementation | — |
+| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27, FIX-29 | PLANNED | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
 | FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
 | FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | DONE | judgment | bd55c63; acceptance args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26, workspace --no-run ok; workspace 2757 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | DROPPED(folded into M5, diff review round 2; see nodes/M5.md) | implementation | — |
-| FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | TODO | judgment | — |
+| FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | PLANNED | judgment | — |
 
 ## Log
 
@@ -252,3 +252,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-27 DONE (bd55c63): merged after 3 review rounds. Known limit accepted (W§12): `--secret --x S` hides `--x` as the value and shows S. Merged tree: args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26; workspace 2757 + 14 ignored; test-install ok; clippy clean. |
 | 2026-11-23 | M5 DONE (f8c00c4): merged after 3 review rounds, FIX-28 folded in (first pane gets ZYGO_WORKSPACE by new-session -e). FIX-29 added: W7 up build fails with a raw tmux error when a restored pane exits at once. |
 | 2026-11-23 | M3 DONE (1eb6e3a): merged after 3 review rounds. The resume command reproduces the ws run launch; Pending.own_session added. |
+| 2026-11-23 | FIX-29 and FIX-24 planned and reviewed. FIX-29 holds each window with remain-on-exit during the up build (tmux 3.2a verified). FIX-24 uses one launch.events_off flag, set by every start write. |
