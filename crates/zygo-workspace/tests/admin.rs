@@ -1340,6 +1340,81 @@ fn forget_pane_checks_each_part_of_the_cache_path() {
     assert_eq!(snapshot_tree(&outside), before);
 }
 
+/// Makes `<cache>/program/<key>/opencode` as a link to `target`; returns `<cache>/program/<key>`.
+fn program(p: &Paths, id: &str, key: &str, target: &Path) -> PathBuf {
+    let d = cache(p, id).join("program").join(key);
+    fs::create_dir_all(&d).unwrap();
+    std::os::unix::fs::symlink(target, d.join("opencode")).unwrap();
+    d
+}
+
+#[test] // M2 review round 2 finding 4: W§12 `ws forget-pane` also deletes `program/<key>` (AU61), with the rules of `results/<key>`
+fn forget_pane_removes_the_program_folder() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, r, id, .. } = pane_setup();
+    let t = td.path();
+    let saved = t.join("saved/opencode");
+    fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    fs::write(&saved, "bin").unwrap();
+    let b = program(&p, &id, "kbbbbbbbb", &saved);
+    let a = program(&p, &id, "kaaaaaaaa", &saved);
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(&b).is_err() && a.join("opencode").exists());
+    assert_eq!(fs::read(&saved).unwrap(), b"bin"); // the link target stays
+    // A key with no member record and only a program folder: the folder goes.
+    let orphan = program(&p, &id, "kyyyyyyyy", &saved);
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kyyyyyyyy"),
+        (0, "zygo: forgot pane kyyyyyyyy of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(&orphan).is_err());
+    // A link at `program` refuses before anything is written.
+    let outside = t.join("outside-program");
+    fs::create_dir_all(outside.join("kaaaaaaaa")).unwrap();
+    fs::write(outside.join("kaaaaaaaa/opencode"), "keep").unwrap();
+    let prog = cache(&p, &id).join("program");
+    fs::remove_dir_all(&prog).unwrap();
+    std::os::unix::fs::symlink(&outside, &prog).unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, None, &r, "kaaaaaaaa"),
+        (1, String::new(), format!("zygo: cannot forget pane kaaaaaaaa of app: {} is a link; it is not followed\n", prog.display()))
+    );
+    assert_eq!(fs::read(outside.join("kaaaaaaaa/opencode")).unwrap(), b"keep");
+}
+
+#[test] // M2 review round 2 finding 3: the create check of `results/<key>` and `program/<key>` refuses every link
+fn pane_cache_create_refuses_a_link_at_each_part() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let outside = t.join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    for sub in ["results", "program"] {
+        let want = cache(&p, ID).join(sub).join("kaaaaaaaa");
+        assert_eq!(admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"), Ok(want.clone())); // nothing there yet
+        for at in [cache(&p, ID), cache(&p, ID).join(sub), want.clone()] {
+            let _ = fs::remove_dir_all(cache(&p, ID));
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&outside, &at).unwrap();
+            assert_eq!(
+                admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"),
+                Err(format!("{} is a link; it is not followed", at.display())),
+                "{sub}: {}",
+                at.display()
+            );
+            fs::remove_file(&at).unwrap();
+        }
+        fs::create_dir_all(&want).unwrap();
+        assert_eq!(admin::pane_cache_create(&p, ID, sub, "kaaaaaaaa"), Ok(want)); // an existing folder is used
+        fs::remove_dir_all(cache(&p, ID)).unwrap();
+    }
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0); // nothing made through a link
+}
+
 #[test] // Round 2 item 5: with no tmux, `forget` still runs the AU62 check of the socket
 fn forget_without_tmux_checks_the_socket() {
     let _s = serial();

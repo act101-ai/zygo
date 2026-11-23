@@ -765,8 +765,12 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         Err(StateError::Newer { .. }) => return Err(NEWER.into()),
         Err(e) => return Err(format!("zygo: {e}")),
     };
-    // Round 2 R4: a link in the middle of the cache path refuses before anything is written.
-    let has_cache = pane_cache(paths, &id, key).map_err(|r| cannot(&r))?.is_some();
+    // Round 2 R4: a link in the middle of a cache path refuses before anything is written. The pane caches are
+    // `results/<key>` (AU16) and `program/<key>` (AU61).
+    let mut has_cache = false;
+    for sub in PANE_CACHES {
+        has_cache |= pane_cache(paths, &id, sub, key).map_err(|r| cannot(&r))?.is_some();
+    }
     if cur.members.contains_key(key) {
         // D18-D20: the live check under `lock`, on the record as read there; the record and `panes[].kind` in one write.
         let mut live = false;
@@ -803,19 +807,24 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         return Err(format!("zygo: {label} has no member record for pane {key}"));
     }
     fire(store.dir(), "forget_pane_before_cache").map_err(|e| cannot(&e))?;
-    if let Some(results) = pane_cache(paths, &id, key).map_err(|r| cannot(&r))? {
-        remove_tree(&results).map_err(|e| cannot(&format!("{}: {e}", results.display())))?;
+    for sub in PANE_CACHES {
+        if let Some(entry) = pane_cache(paths, &id, sub, key).map_err(|r| cannot(&r))? {
+            remove_tree(&entry).map_err(|e| cannot(&format!("{}: {e}", entry.display())))?;
+        }
     }
     Ok(format!("zygo: forgot pane {key} of {label}"))
 }
 
-/// Round 2 R4: the results cache `<workspace_cache_dir>/<id>/results/<key>` of one pane, each part below
-/// `workspace_cache_dir()` checked with `symlink_metadata`. `Ok(Some(path))` when `<key>` exists (a link there is
-/// removed as a link); `Ok(None)` when a part is missing or is not a folder; `Err(reason)` for a link at `<id>` or
-/// `results` (it is not followed) or a part that cannot be read.
-fn pane_cache(paths: &Paths, id: &str, key: &str) -> Result<Option<PathBuf>, String> {
+/// The pane caches under `<workspace_cache_dir>/<id>/`: `results/<key>` (AU16) and `program/<key>` (AU61).
+const PANE_CACHES: [&str; 2] = ["results", "program"];
+
+/// Round 2 R4: the pane cache `<workspace_cache_dir>/<id>/<sub>/<key>` of one pane, `sub` = `results` (AU16) or
+/// `program` (AU61), each part below `workspace_cache_dir()` checked with `symlink_metadata`. `Ok(Some(path))` when
+/// `<key>` exists (a link there is removed as a link); `Ok(None)` when a part is missing or is not a folder;
+/// `Err(reason)` for a link at `<id>` or `<sub>` (it is not followed) or a part that cannot be read.
+pub fn pane_cache(paths: &Paths, id: &str, sub: &str, key: &str) -> Result<Option<PathBuf>, String> {
     let mut at = paths.workspace_cache_dir();
-    for part in [id, "results"] {
+    for part in [id, sub] {
         at = at.join(part);
         match fs::symlink_metadata(&at) {
             Ok(m) if m.file_type().is_symlink() => return Err(format!("{} is a link; it is not followed", at.display())),
@@ -831,4 +840,15 @@ fn pane_cache(paths: &Paths, id: &str, key: &str) -> Result<Option<PathBuf>, Str
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("{}: {e}", entry.display())),
     }
+}
+
+/// The check of [`pane_cache`] before the member wrapper makes `<workspace_cache_dir>/<id>/<sub>/<key>` (M2 review
+/// round 2 finding 3): the same refusals, and a link at `<key>` is refused too, because a writer would follow it.
+/// `Ok(path)` is the folder to make or use; nothing is made or deleted here.
+pub fn pane_cache_create(paths: &Paths, id: &str, sub: &str, key: &str) -> Result<PathBuf, String> {
+    let entry = paths.workspace_cache_dir().join(id).join(sub).join(key);
+    if pane_cache(paths, id, sub, key)?.is_some() && fs::symlink_metadata(&entry).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!("{} is a link; it is not followed", entry.display()));
+    }
+    Ok(entry)
 }
