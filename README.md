@@ -20,30 +20,30 @@ Version 0.1.0.
 
 ### AST-based Code Navigation
 
-Anti-pattern: Full file reads to find one method pollutes the context window with irrelevant code
-Anti-pattern: Random file chunk reads pollute the context window less, but repeated misses cause repeated LLM submissions, wasting tokens
+- Anti-pattern: Full file reads to find one method pollutes the context window with irrelevant code
+- Anti-pattern: Random file chunk reads pollute the context window less, but repeated misses cause repeated LLM submissions, wasting tokens
 
-Solution: Navigate your codebase and documentation following the structural tree.
+* Solution: Navigate your codebase and documentation following the structural tree.
 
 ### Tool Results Store
 
-Anti-pattern: Agent context gets polluted with long tool results (eg build output)
-Anti-pattern: Agent runs tools with `| tail` and misses key results requiring re-running
+- Anti-pattern: Agent context gets polluted with long tool results (eg build output)
+- Anti-pattern: Agent runs tools with `| tail` and misses key results requiring re-running
 
-Solution: Save the full results from tool calls and provide recall and navigation tools
+* Solution: Save the full results from tool calls and provide recall and navigation tools
 
 ### Inline DLP
 
-Anti-pattern: Agent reads secrets into context but doesn't realize until inference time, when it's too late
+- Anti-pattern: Agent reads secrets into context but doesn't realize until inference time, when it's too late
 
-Solution: DLP always redacts secrets from LLM calls
+* Solution: DLP always redacts secrets from LLM calls
 
 ### Soft Context Management
 
-Anti-pattern: Auto-compacting in the middle of tasks resulting in information loss and poor results
-Anti-pattern: Context quality degradation as context window grows resulting in poor results
+- Anti-pattern: Auto-compacting in the middle of tasks resulting in information loss and poor results
+- Anti-pattern: Context quality degradation as context window grows resulting in poor results
 
-Solution: Lifecycle hooks allow auto-compacting between tasks in a long-running plan
+* Solution: Lifecycle hooks allow auto-compacting between tasks in a long-running plan
 
 ---
 
