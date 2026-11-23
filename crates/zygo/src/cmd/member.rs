@@ -17,7 +17,8 @@ use zygo_proxy::client::{SessionClient, SessionSettings};
 use zygo_workspace::{admin, args};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::snapshot;
-use zygo_workspace::state::{MemberRecord, MemberState, Pending, StateError, Store, Workspace};
+use zygo_workspace::identity::{valid_name, valid_ws_id};
+use zygo_workspace::state::{valid_session_id, MemberRecord, MemberState, Pending, Phase, StateError, Store, Workspace};
 
 use super::{print_err, tmux_program};
 
@@ -442,6 +443,145 @@ pub(crate) fn exit_lines(
     }
 }
 
+/// The zygo binary that the hooks and the plugin of a member run (M5 round 3, the rule of `ws run`): `exe` is
+/// `current_exe()` then `canonicalize`, read before any update check, so a hook never names the deleted file after an
+/// install; only when that read failed, the path of `current_exe()`.
+pub(crate) fn zygo_binary(exe: &std::io::Result<PathBuf>) -> PathBuf {
+    match exe {
+        Ok(p) => p.clone(),
+        Err(_) => std::env::current_exe().unwrap_or_default(),
+    }
+}
+
+/// `%` and 1 to 10 ASCII digits (W§8.4): the tmux pane id of `$TMUX_PANE`; any other value is not a pane id and is
+/// never looked up.
+pub(crate) fn pane_id(v: &OsStr) -> Option<&str> {
+    let s = v.to_str()?;
+    let digits = s.strip_prefix('%')?;
+    ((1..=10).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())).then_some(s)
+}
+
+/// The workspace pane check of W§8.4 on the answer of `display -p '#{session_name} #{@zygo-ws}'`: the session is
+/// `zygo-<name>` with a valid name, and the id is valid (AU84) and equal to `zygo_workspace`. Gives (session, id).
+pub(crate) fn workspace_of(display: &str, zygo_workspace: &OsStr) -> Option<(String, String)> {
+    let (session, id) = display.split_once(' ')?;
+    let name = session.strip_prefix("zygo-")?;
+    (valid_name(name) && valid_ws_id(id) && OsStr::new(id) == zygo_workspace).then(|| (session.to_string(), id.to_string()))
+}
+
+/// The launch's own session argument (AU94): the value of Claude Code `--resume`/`-r` or `--session-id`, or OpenCode
+/// `--session`/`-s`, by AU30's walk (a flag value or a token after `--` is not a flag); only a flag with exactly one
+/// value names a session, so `--resume` with no id (the picker) gives none.
+pub(crate) fn own_session(kind: Agent, args: &[String]) -> Option<String> {
+    let names: &[&str] = match kind {
+        Agent::ClaudeCode => &["--resume", "--session-id"],
+        Agent::OpenCode => &["--session"],
+    };
+    args::occurrences(kind, args)
+        .into_iter()
+        .find(|o| names.contains(&o.name) && o.values.len() == 1)
+        .and_then(|o| o.values.into_iter().next())
+}
+
+/// The zygo session of a live launcher of `rec` (S9, the rule of `Store::live_launcher`): the first of its
+/// `zygo_session` and its `pending.zygo_session` that is a valid session id and names a live session folder.
+pub(crate) fn live_session(sessions_dir: &Path, rec: &MemberRecord) -> Option<String> {
+    let committed = rec.zygo_session.as_deref();
+    let pending = rec.pending.as_ref().map(|p| p.zygo_session.as_str());
+    committed
+        .into_iter()
+        .chain(pending)
+        .find(|id| valid_session_id(id) && zygo_core::session_dir::live(&sessions_dir.join(id)))
+        .map(String::from)
+}
+
+/// Why a hand start may not use a pane key (AU94, W-C9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Conflict {
+    /// The record is `running` or `resumable` with this agent session; `command` resumes it (AU61).
+    Resumable { id: String, command: String },
+    /// The record has a live launcher; `id` is its agent session, else the zygo session of that launcher.
+    Live { id: String },
+    /// The agent session `id` belongs to the record of the pane key `other`.
+    OtherKey { id: String, other: String },
+}
+
+impl Conflict {
+    /// The reason in `zygo: this agent is not saved by the workspace: <reason>` (W§8.4); ids escaped (C6).
+    pub(crate) fn reason(&self, key: &str) -> String {
+        match self {
+            Conflict::Resumable { id, .. } => format!("pane {key} holds resumable session {}", zygo_core::esc(id)),
+            Conflict::Live { id } => format!("pane {key} holds session {}, whose launcher is still running", zygo_core::esc(id)),
+            Conflict::OtherKey { id, other } => format!("agent session {} belongs to pane {other}", zygo_core::esc(id)),
+        }
+    }
+
+    /// The refusal line of a hand start (AU94, W-C9), without the line end.
+    pub(crate) fn line(&self, key: &str) -> String {
+        let reason = self.reason(key);
+        match self {
+            Conflict::Resumable { command, .. } => {
+                format!("zygo: {reason}; to resume it: {command}; or run zygo ws forget-pane {key}")
+            }
+            Conflict::Live { .. } => format!("zygo: {reason}; zygo starts no second agent on it"),
+            Conflict::OtherKey { other, .. } => {
+                format!("zygo: {reason}; resume it in that pane, or run zygo ws forget-pane {other}")
+            }
+        }
+    }
+}
+
+/// The AU94 and W-C9 checks of a hand start on the pane key `key` (D3): first a record under another key, not
+/// `ended`, whose `agent_session` is the launch's own session argument `own`; then a live launcher on `key` (`live`
+/// gives its zygo session); then a `running` or `resumable` record of `key` with an `agent_session` that is not
+/// `own`. Any other record, or none, gives none.
+pub(crate) fn conflict(
+    ws: &Workspace, key: &str, own: Option<&str>, live: &dyn Fn(&MemberRecord) -> Option<String>,
+) -> Option<Conflict> {
+    if let Some(own) = own
+        && let Some((other, _)) = ws
+            .members
+            .iter()
+            .find(|(k, r)| k.as_str() != key && r.state != MemberState::Ended && r.agent_session.as_deref() == Some(own))
+    {
+        return Some(Conflict::OtherKey { id: own.to_string(), other: other.clone() });
+    }
+    let rec = ws.members.get(key)?;
+    if let Some(z) = live(rec) {
+        return Some(Conflict::Live { id: rec.agent_session.clone().unwrap_or(z) });
+    }
+    match &rec.agent_session {
+        Some(a) if matches!(rec.state, MemberState::Running | MemberState::Resumable) && own != Some(a.as_str()) => {
+            Some(Conflict::Resumable { id: a.clone(), command: resume_command(rec.launch.kind, a, rec.config_dir.as_deref()) })
+        }
+        _ => None,
+    }
+}
+
+/// The one start write of a hand start (D2, W§8.4), in the closure of the callback's locked write: the phase must be
+/// `up` or `draining`; then [`conflict`]; then the record of `key` is kept for the accepted resume (`own` is its
+/// `agent_session`) and replaced by a new one otherwise; then state `running` and [`record_start`]. An `Err` holds the
+/// reason, with `ws` unchanged.
+pub(crate) fn join(
+    ws: &mut Workspace, key: &str, launch: &zygo_workspace::state::Launch, start: &Start, own: Option<&str>,
+    live: &dyn Fn(&MemberRecord) -> Option<String>,
+) -> Result<(), String> {
+    if !matches!(ws.phase, Phase::Up | Phase::Draining) {
+        return Err(format!("a member starts only in phase up or draining, not {}", format!("{:?}", ws.phase).to_lowercase()));
+    }
+    if let Some(c) = conflict(ws, key, own, live) {
+        return Err(c.reason(key));
+    }
+    let keep = own.is_some() && ws.members.get(key).is_some_and(|r| r.agent_session.as_deref() == own);
+    if !keep {
+        ws.members.remove(key);
+    }
+    let rec = ws.members.entry(key.to_string()).or_insert_with(|| MemberRecord::new(launch.kind));
+    rec.state = MemberState::Running;
+    record_start(rec, launch, start);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,7 +590,7 @@ mod tests {
     use zygo_core::Agent;
     use zygo_launch::env::Env;
     use zygo_launch::launcher::LaunchOutcome;
-    use zygo_workspace::state::{Launch, MemberRecord, MemberState, Pending, Subagent};
+    use zygo_workspace::state::{Launch, MemberRecord, MemberState, Pending, Phase, Subagent};
 
     fn out(code: i32, signal: Option<i32>, received: bool, ran: u64) -> LaunchOutcome {
         LaunchOutcome { code, signal, spawned: true, received, ran: Some(Duration::from_secs(ran)) }
@@ -670,5 +810,205 @@ mod tests {
         for b in [&b"/a\nb"[..], b"it's\n\\", b"/a\xffb", b"x\x7fy"] {
             assert!(!w(b).contains(['\n', '\r', '\x7f']), "{:?}", w(b));
         }
+    }
+
+    #[test]
+    fn pane_id_takes_only_a_tmux_pane_id() {
+        let p = |s: &str| pane_id(std::ffi::OsStr::new(s)).map(String::from);
+        assert_eq!(p("%0"), Some("%0".into()));
+        assert_eq!(p("%1234567890"), Some("%1234567890".into()));
+        for bad in ["", "%", "%1x", "1", "%-1", "%12345678901", " %1", "=zygo-app:"] {
+            assert_eq!(p(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn workspace_of_needs_a_zygo_session_and_the_same_id() {
+        let id = "0123456789abcdef";
+        let w = |out: &str, env: &str| workspace_of(out, std::ffi::OsStr::new(env));
+        assert_eq!(w("zygo-app 0123456789abcdef", id), Some(("zygo-app".into(), id.into())));
+        assert_eq!(w("zygo-my-app-2 0123456789abcdef", id), Some(("zygo-my-app-2".into(), id.into())));
+        for (out, env) in [
+            ("zygo-app ", id),
+            ("plain 0123456789abcdef", id),
+            ("zygo-App 0123456789abcdef", id),
+            ("zygo- 0123456789abcdef", id),
+            ("zygo-app 0123456789abcdef", "fedcba9876543210"),
+            ("zygo-app 0123456789ABCDEF", "0123456789ABCDEF"),
+            ("zygo-app 0123456789abcdef x", id),
+            ("zygo-app 0123456789abcdef", ""),
+        ] {
+            assert_eq!(w(out, env), None, "{out:?} {env:?}");
+        }
+    }
+
+    #[test]
+    fn own_session_reads_the_session_argument_by_au30() {
+        let s = |kind, a: &[&str]| own_session(kind, &a.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        assert_eq!(s(Agent::ClaudeCode, &["--resume", "abc"]), Some("abc".into())); // the printed command, unquoted by the shell
+        assert_eq!(s(Agent::ClaudeCode, &["-r", "abc", "--model", "m"]), Some("abc".into()));
+        assert_eq!(s(Agent::ClaudeCode, &["--resume=abc"]), Some("abc".into()));
+        assert_eq!(s(Agent::ClaudeCode, &["--session-id", "u-1"]), Some("u-1".into()));
+        assert_eq!(s(Agent::ClaudeCode, &["--resume"]), None); // the picker: no id
+        assert_eq!(s(Agent::ClaudeCode, &["--model", "--resume"]), None); // a flag value is not a flag
+        assert_eq!(s(Agent::ClaudeCode, &["--", "--resume", "abc"]), None);
+        assert_eq!(s(Agent::OpenCode, &["--session=ses_1"]), Some("ses_1".into()));
+        assert_eq!(s(Agent::OpenCode, &["-s", "ses_1"]), Some("ses_1".into()));
+        assert_eq!(s(Agent::OpenCode, &["--resume", "abc"]), None);
+    }
+
+    fn ws_with(members: &[(&str, MemberRecord)]) -> Workspace {
+        let mut w = Workspace::new("0123456789abcdef");
+        w.phase = Phase::Up;
+        for (k, r) in members {
+            w.members.insert((*k).into(), r.clone());
+        }
+        w
+    }
+
+    fn rec(state: MemberState, agent: Option<&str>) -> MemberRecord {
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        r.state = state;
+        r.agent_session = agent.map(String::from);
+        r.zygo_session = Some("01JZZZZZZZZZZZZZZZZZZZZZZZ".into());
+        r
+    }
+
+    #[test]
+    fn conflict_follows_au94_and_w_c9() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let live = |_: &MemberRecord| Some("01JLLLLLLLLLLLLLLLLLLLLLLL".to_string());
+        let cmd = "env -u CLAUDE_CONFIG_DIR zygo claude -- --resume 'abc'";
+        let res = Some(Conflict::Resumable { id: "abc".into(), command: cmd.into() });
+        assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Resumable, Some("abc")))]), k, None, &none), res);
+        assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Running, Some("abc")))]), k, None, &none), res);
+        assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Resumable, Some("abc")))]), k, Some("abc"), &none), None); // the printed resume
+        assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Resumable, Some("abc")))]), k, Some("xyz"), &none), res);
+        assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Ended, Some("abc")))]), k, None, &none), None);
+        assert_eq!(conflict(&ws_with(&[(k, rec(MemberState::Resumable, None))]), k, None, &none), None);
+        assert_eq!(conflict(&ws_with(&[]), k, None, &none), None);
+        assert_eq!(
+            conflict(&ws_with(&[(k, rec(MemberState::Ended, Some("abc")))]), k, Some("abc"), &live),
+            Some(Conflict::Live { id: "abc".into() })
+        );
+        assert_eq!(
+            conflict(&ws_with(&[(k, rec(MemberState::Ended, None))]), k, None, &live),
+            Some(Conflict::Live { id: "01JLLLLLLLLLLLLLLLLLLLLLLL".into() })
+        );
+        let other = ws_with(&[("kbbbbbbbb", rec(MemberState::Resumable, Some("abc")))]);
+        assert_eq!(conflict(&other, k, Some("abc"), &none), Some(Conflict::OtherKey { id: "abc".into(), other: "kbbbbbbbb".into() }));
+        let ended = ws_with(&[("kbbbbbbbb", rec(MemberState::Ended, Some("abc")))]);
+        assert_eq!(conflict(&ended, k, Some("abc"), &none), None);
+        let mut c = rec(MemberState::Resumable, Some("abc"));
+        c.config_dir = Some("/c c".into());
+        assert_eq!(
+            conflict(&ws_with(&[(k, c)]), k, None, &none),
+            Some(Conflict::Resumable { id: "abc".into(), command: "CLAUDE_CONFIG_DIR='/c c' zygo claude -- --resume 'abc'".into() })
+        );
+    }
+
+    #[test]
+    fn conflict_lines_and_reasons_are_the_spec_texts() {
+        let k = "kaaaaaaaa";
+        let r = Conflict::Resumable { id: "a\nb".into(), command: "zygo opencode -- --session='x'".into() };
+        assert_eq!(
+            r.line(k),
+            r"zygo: pane kaaaaaaaa holds resumable session a\nb; to resume it: zygo opencode -- --session='x'; or run zygo ws forget-pane kaaaaaaaa"
+        );
+        assert_eq!(r.reason(k), r"pane kaaaaaaaa holds resumable session a\nb");
+        let l = Conflict::Live { id: "abc".into() };
+        assert_eq!(l.line(k), "zygo: pane kaaaaaaaa holds session abc, whose launcher is still running; zygo starts no second agent on it");
+        assert_eq!(l.reason(k), "pane kaaaaaaaa holds session abc, whose launcher is still running");
+        let o = Conflict::OtherKey { id: "abc".into(), other: "kbbbbbbbb".into() };
+        assert_eq!(o.line(k), "zygo: agent session abc belongs to pane kbbbbbbbb; resume it in that pane, or run zygo ws forget-pane kbbbbbbbb");
+        assert_eq!(o.reason(k), "agent session abc belongs to pane kbbbbbbbb");
+    }
+
+    fn start() -> Start {
+        Start { zygo_session: "S1".into(), agent_session: Some("U1".into()), started_at: 7, config_dir: None, program: "/b/claude".into() }
+    }
+
+    #[test]
+    fn join_writes_one_record_with_every_start_field() { // decision 3
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let mut l = Launch::new(Agent::ClaudeCode);
+        l.args = vec!["--model".into(), "m".into(), "--resume".into(), "x".into()];
+        let mut ended = rec(MemberState::Ended, Some("old"));
+        ended.overrides = Some(serde_json::json!({"results": false}));
+        for w in [ws_with(&[]), ws_with(&[(k, ended)])] {
+            let mut w = w;
+            join(&mut w, k, &l, &start(), None, &none).unwrap();
+            let m = &w.members[k];
+            assert_eq!(
+                (m.state, m.launch.kind, m.launch.args.clone()),
+                (MemberState::Running, Agent::ClaudeCode, vec!["--model".to_string(), "m".to_string()])
+            );
+            assert_eq!(
+                m.pending,
+                Some(Pending { zygo_session: "S1".into(), agent_session: Some("U1".into()), started_at: 7, ..Default::default() })
+            );
+            assert_eq!(
+                (m.program.clone(), m.zygo_session.clone(), m.agent_session.clone(), m.overrides.clone()),
+                (Some("/b/claude".into()), None, None, None)
+            );
+        }
+        // the accepted resume keeps the record's fields
+        let mut keep = rec(MemberState::Resumable, Some("abc"));
+        keep.overrides = Some(serde_json::json!({"results": false}));
+        let mut w = ws_with(&[(k, keep)]);
+        join(&mut w, k, &l, &Start { agent_session: None, ..start() }, Some("abc"), &none).unwrap();
+        let m = &w.members[k];
+        assert_eq!(
+            (m.state, m.agent_session.as_deref(), m.overrides.clone()),
+            (MemberState::Running, Some("abc"), Some(serde_json::json!({"results": false})))
+        );
+        assert_eq!(m.pending.as_ref().map(|p| p.zygo_session.as_str()), Some("S1"));
+    }
+
+    #[test]
+    fn join_refuses_with_the_reason_and_changes_nothing() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let l = Launch::new(Agent::ClaudeCode);
+        let mut w = ws_with(&[(k, rec(MemberState::Resumable, Some("abc")))]);
+        let before = w.clone();
+        assert_eq!(join(&mut w, k, &l, &start(), None, &none), Err("pane kaaaaaaaa holds resumable session abc".into()));
+        assert_eq!(w, before);
+        for (ph, word) in [(Phase::Down, "down"), (Phase::Building, "building"), (Phase::Stopping, "stopping")] {
+            let mut w = ws_with(&[]);
+            w.phase = ph;
+            assert_eq!(join(&mut w, k, &l, &start(), None, &none), Err(format!("a member starts only in phase up or draining, not {word}")));
+            assert!(w.members.is_empty());
+        }
+        let mut w = ws_with(&[]);
+        w.phase = Phase::Draining;
+        assert!(join(&mut w, k, &l, &start(), None, &none).is_ok());
+    }
+
+    #[test]
+    fn live_session_names_the_live_zygo_session() { // S9: the rule of Store::live_launcher, state.rs:588-592
+        let t = tempfile::tempdir().unwrap();
+        let id = "01JLLLLLLLLLLLLLLLLLLLLLLL";
+        let d = t.path().join(id);
+        std::fs::create_dir(&d).unwrap();
+        std::fs::write(d.join("token"), "t").unwrap();
+        std::fs::write(d.join("pid"), "1").unwrap();
+        let f = std::fs::File::options().read(true).write(true).open(d.join("pid")).unwrap();
+        assert!(fs4::FileExt::try_lock(&f).is_ok());
+        let mut r = rec(MemberState::Ended, None);
+        assert_eq!(live_session(t.path(), &r), None); // zygo_session 01JZZZ… is not live
+        r.pending = Some(Pending { zygo_session: id.into(), ..Default::default() });
+        assert_eq!(live_session(t.path(), &r), Some(id.into()));
+        r.pending = Some(Pending { zygo_session: "../x".into(), ..Default::default() });
+        assert_eq!(live_session(t.path(), &r), None);
+    }
+
+    #[test]
+    fn zygo_binary_is_the_canonical_path_read_before_else_current_exe() { // A1: the rule of ws run (M5)
+        assert_eq!(zygo_binary(&Ok(PathBuf::from("/opt/zygo/bin/zygo"))), PathBuf::from("/opt/zygo/bin/zygo"));
+        let failed: std::io::Result<PathBuf> = Err(std::io::Error::other("gone"));
+        assert_eq!(zygo_binary(&failed), std::env::current_exe().unwrap());
     }
 }

@@ -130,10 +130,7 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
     let exe = std::env::current_exe().and_then(std::fs::canonicalize);
     // The zygo binary of every launch in this `ws run` (M5 round 3): the path read before the check, so hook commands
     // never name the deleted file after an install. Only when that read failed, the path of `current_exe`.
-    let zygo = match &exe {
-        Ok(p) => p.clone(),
-        Err(_) => std::env::current_exe().unwrap_or_default(),
-    };
+    let zygo = member::zygo_binary(&exe);
     if std::env::var_os(zygo_workspace::env::RELAUNCHED).is_none() && super::start_check(&[]) == Some(0) {
         let args: Vec<OsString> = std::env::args_os().skip(1).collect();
         let e = match &exe {
