@@ -57,7 +57,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | PLANNED | implementation | — |
-| E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | TODO | implementation | — |
+| E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | PLANNED | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30 | TODO | implementation | — |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
@@ -255,3 +255,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-29 and FIX-24 planned and reviewed. FIX-29 holds each window with remain-on-exit during the up build (tmux 3.2a verified). FIX-24 uses one launch.events_off flag, set by every start write. |
 | 2026-11-23 | E1 planned and reviewed (28 steps, 17 W§18 items + PW11, live check with passthrough); E1 now depends on FIX-24 (spec overlap). |
 | 2026-11-23 | FIX-29 DONE (7db2fac): merged after 3 review rounds (build hold, repair hold, one AU54 rule). FIX-30 added for the saved-socket uses in admin.rs and member.rs that have no AU54 check. |
+| 2026-11-23 | E2 planned and reviewed (34 steps, 17 W§18 items, PW15 live re-check with a slash-premise sub-step); E1 helpers go to tests/common/e2e.rs (E1 Files and Produces; E2 Files, Consumes and Acceptance from C-1 to C-5). |
