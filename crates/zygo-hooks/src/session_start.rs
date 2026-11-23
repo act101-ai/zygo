@@ -66,16 +66,14 @@ pub fn run_member(
         return Ok(HookOutput::None);
     }
     let member = input.cli_event.as_deref() == Some("member");
-    if member {
-        if let Err(e) = workspace::check_folder(dir) {
-            // D2 (attempt-2 review round 1, F3): nothing is written into a refused folder; the session text of
-            // today's read is printed with no note, and the refusal is the one stderr line.
-            error_line(&format!("{e:#}"));
-            return Ok(match SessionView::load(dir) {
-                Ok(v) => output(v.agent, text_of(dir, &v)),
-                Err(_) => HookOutput::None,
-            });
-        }
+    if member && let Err(e) = workspace::check_folder(dir) {
+        // D2 (attempt-2 review round 1, F3): nothing is written into a refused folder; the session text of today's
+        // read is printed with no note, and the refusal is the one stderr line.
+        error_line(&format!("{e:#}"));
+        return Ok(match SessionView::load(dir) {
+            Ok(v) => output(v.agent, text_of(dir, &v)),
+            Err(_) => HookOutput::None,
+        });
     }
     let v = match SessionView::load(dir) {
         Ok(v) => v,
