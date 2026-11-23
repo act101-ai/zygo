@@ -1611,20 +1611,19 @@ fn a_link_or_fifo_activity_file_is_refused_before_the_lock() {
             "link" => std::os::unix::fs::symlink(&outside, f.dir.activity_json()).unwrap(),
             _ => mkfifo(&f.dir.activity_json()),
         }
-        // A persistent condition, not a missed lock: no wait for the lock and no line for these events.
+        // A persistent condition, not a missed lock: the lock stays held for the whole case, and a lock not taken
+        // within LOCK_BOUND is a one-off failure that `change` logs on every event (`<activity.lock>: lock not taken
+        // within 1000 ms`), while a persistent condition logs only on `prompt`, with the refusal text. So no line for
+        // these events, and the one line of `prompt`, show that the refusal came before the lock (review round 2).
         for (ev, payload) in [
             ("pre-tool", fixture("PreToolUse-Bash-main")),
             ("tool-end", fixture("PostToolUse-Bash-main")),
             ("stop", fixture("Stop-main")),
         ] {
-            let start = Instant::now();
             assert_eq!(ws_bg(&f, ev, payload).unwrap(), None, "{case} {ev}");
-            assert!(start.elapsed() < Duration::from_millis(500), "{case} {ev}: {:?}", start.elapsed());
+            assert!(slog(&f).is_empty(), "{case} {ev}: {:?}", slog(&f));
         }
-        assert!(slog(&f).is_empty(), "{case}: {:?}", slog(&f));
-        let start = Instant::now();
         assert_eq!(ws_bg(&f, "prompt", ups("hello")).unwrap(), None, "{case}");
-        assert!(start.elapsed() < Duration::from_millis(500), "{case} prompt: {:?}", start.elapsed());
         let why = if case == "link" { "is a link" } else { "is not a regular file" };
         assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: {why}")], "{case}");
         assert_eq!(fs::read_to_string(&outside).unwrap(), "{}", "{case}");

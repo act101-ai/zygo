@@ -252,7 +252,8 @@ fn unreadable_activity_file_reads_as_busy() {
 #[test]
 fn fifo_and_linked_activity_files_are_busy_without_a_wait() {
     use std::os::unix::ffi::OsStrExt;
-    let t = TempDir::new().unwrap();
+    // Under /tmp, not TMPDIR: a long TMPDIR makes the socket path longer than `sun_path` (review round 2).
+    let t = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
     std::fs::write(t.path().join("outside.json"), br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#).unwrap();
     // The bound sockets stay open until the end of the test (FIX-22 review round 1, F1).
     let mut sockets = Vec::new();

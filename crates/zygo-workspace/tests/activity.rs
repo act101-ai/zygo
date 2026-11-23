@@ -636,8 +636,10 @@ fn activity_fifo_and_link_are_errors_without_a_wait() {
 #[test]
 fn activity_socket_is_not_a_regular_file() {
     use std::os::unix::fs::FileTypeExt;
-    let (_t, d) = dir();
-    let _sock = std::os::unix::net::UnixListener::bind(d.activity_json()).unwrap();
+    // Under /tmp, not TMPDIR: a long TMPDIR makes the socket path longer than `sun_path` (review round 2).
+    let t = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let _sock =std::os::unix::net::UnixListener::bind(d.activity_json()).unwrap();
     let not_file = format!("{}: is not a regular file", d.activity_json().display());
     assert_eq!(format!("{:#}", activity::read(&d).unwrap_err()), not_file);
     let e = activity::update(&d, LOCK_BOUND, &mut |a| a.busy = true).unwrap_err();
@@ -684,4 +686,71 @@ fn update_refuses_a_link_or_fifo_before_the_lock() {
     }
     assert_eq!(fs::read(&outside).unwrap(), b"{}".to_vec());
     assert!(!t.path().join("missing.json").exists());
+}
+
+/// The number of this process's open handles on `path`, read from `/proc/self/fd`.
+#[cfg(target_os = "linux")]
+fn handles_on(path: &Path) -> usize {
+    fs::read_dir("/proc/self/fd").unwrap().flatten().filter(|e| fs::read_link(e.path()).is_ok_and(|p| p == path)).count()
+}
+
+// FIX-22 review round 2, finding 1: an entry that becomes a FIFO or a link while `update` waits for activity.lock
+// passed the check before the lock; the check of the opened handle under the lock refuses it, writes nothing and
+// does not call `f`. Linux only: the test knows that `update` waits for the lock when a second handle on
+// activity.lock is open in this process (`/proc/self/fd`), which no other system gives.
+#[cfg(target_os = "linux")]
+#[test]
+fn update_refuses_a_fifo_or_link_that_appears_while_it_waits_for_the_lock() {
+    use std::os::unix::fs::FileTypeExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let (t, d) = dir();
+    let act = d.activity_json().display().to_string();
+    let body = br#"{"version":1,"busy":false,"running":{},"updated_at":1}"#;
+    let outside = t.path().join("outside.json");
+    fs::write(&outside, body).unwrap();
+    let lock = fs::canonicalize(t.path()).unwrap().join(d.activity_lock().file_name().unwrap());
+    for case in ["fifo", "link"] {
+        // A regular file at activity.json, so the check before the lock passes.
+        fs::write(d.activity_json(), body).unwrap();
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(d.activity_lock())
+            .unwrap();
+        fs4::FileExt::try_lock(&held).unwrap();
+        let called = Arc::new(AtomicBool::new(false));
+        let (d2, called2) = (d.clone(), called.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let e = activity::update(&d2, Duration::from_secs(30), &mut |a| {
+                called2.store(true, Ordering::SeqCst);
+                a.busy = true;
+            });
+            let _ = tx.send(e.map_err(|e| (e.is::<activity::FileCondition>(), format!("{e:#}"))));
+        });
+        // `update` opens activity.lock only after the check before the lock: wait for its handle.
+        let start = Instant::now();
+        while handles_on(&lock) < 2 {
+            assert!(start.elapsed() < S10, "{case}: update did not open activity.lock");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        fs::remove_file(d.activity_json()).unwrap();
+        match case {
+            "fifo" => mkfifo(&d.activity_json()),
+            _ => std::os::unix::fs::symlink(&outside, d.activity_json()).unwrap(),
+        }
+        assert!(rx.try_recv().is_err(), "{case}: update returned before the lock was released");
+        drop(held);
+        let r = rx.recv_timeout(S10).expect("update waited after the lock was released");
+        let why = if case == "link" { "is a link" } else { "is not a regular file" };
+        assert_eq!(r, Err((true, format!("{act}: {why}"))), "{case}");
+        assert!(!called.load(Ordering::SeqCst), "{case}: f was called");
+        let kind = fs::symlink_metadata(d.activity_json()).unwrap().file_type();
+        assert!(if case == "link" { kind.is_symlink() } else { kind.is_fifo() }, "{case}: the entry was replaced");
+        assert_eq!(fs::read(&outside).unwrap(), body.to_vec(), "{case}: the link target changed");
+        fs::remove_file(d.activity_json()).unwrap();
+    }
 }

@@ -498,7 +498,8 @@ fn session_view_load_keeps_todays_result_for_other_entries() {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
     use zygo_core::session_view::SessionView;
-    let t = tempfile::tempdir().unwrap();
+    // Under /tmp, not TMPDIR: a long TMPDIR makes the socket path longer than `sun_path` (review round 2).
+    let t = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
     let d = SessionDir::new(t.path().join("s"));
     d.create().unwrap();
     // Today's read of the same path: `std::fs::read`, then serde.

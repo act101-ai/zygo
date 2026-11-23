@@ -211,12 +211,11 @@ pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
 
 /// The error kind of an `update` that failed on a condition of the session folder's files, which every later `update`
 /// meets again until the file changes (H1 attempt-2 review round 3, S2 and S4; round 4, T3): an `activity.json` that
-/// cannot be read, does not parse, is not a JSON object, is larger than 1 MiB, is of a newer version, is a link or is
-/// not a regular file; an
-/// `activity.lock` that cannot be opened or locked (a link, not a regular file, no permission); a failed write. Its
-/// text is the error text that `update` documents. The other errors of `update`, the lock not taken within `bound`
-/// and a refused result larger than 1 MiB, are of a single call. Callers tell the two apart with
-/// `anyhow::Error::is::<FileCondition>()`.
+/// cannot be read, does not parse, is not a JSON object, is larger than 1 MiB, is of a newer version, is a link (on
+/// unix) or is not a regular file; an `activity.lock` that cannot be opened or locked (a link, not a regular file, no
+/// permission); a failed write. Its text is the error text that `update` documents. The other errors of `update`, the
+/// lock not taken within `bound` and a refused result larger than 1 MiB, are of a single call. Callers tell the two
+/// apart with `anyhow::Error::is::<FileCondition>()`.
 #[derive(Debug)]
 pub struct FileCondition(String);
 
