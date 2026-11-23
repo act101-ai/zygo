@@ -31,8 +31,8 @@ pub fn consumes(line: &str, dispatch: Option<SlashDispatch>) -> bool {
 }
 
 /// A line that `consumes` takes blocks with the verb's reply or error text; an unknown verb runs `help`. A verb that
-/// does not reply within `deadline` blocks with the shell command; one that panics is an error, so the prompt passes
-/// (C6).
+/// does not reply within `deadline` blocks with the shell command; one that panics blocks with an error text, so a
+/// consumed line never reaches the model and the hook does not fail (C6; H1 round 3 S1).
 pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Duration) -> anyhow::Result<HookOutput> {
     let start = Instant::now();
     let Some(prompt) = input.raw.get("prompt").and_then(Value::as_str) else { return Ok(HookOutput::None) };
@@ -56,7 +56,10 @@ pub fn run_with(input: &HookInput, dispatch: Option<SlashDispatch>, deadline: Du
         Ok(Err(e)) => zygo_config::display::error_text(&e),
         Err(RecvTimeoutError::Timeout) if args.is_empty() => format!("run in your shell: zygo {verb}"),
         Err(RecvTimeoutError::Timeout) => format!("run in your shell: zygo {verb} {}", zygo_core::esc(&args)),
-        Err(RecvTimeoutError::Disconnected) => anyhow::bail!("prompt: verb `{verb}` ended without a reply"),
+        // The verb thread died (a panic): the line is still consumed, so it blocks with an error text (H1 round 3 S1).
+        Err(RecvTimeoutError::Disconnected) => {
+            zygo_config::display::error_text(&anyhow::anyhow!("prompt: verb `{verb}` ended without a reply"))
+        }
     };
     Ok(HookOutput::Json(json!({
         "decision": "block",
@@ -188,20 +191,28 @@ mod tests {
         assert!(taken(&CALLS).is_empty());
     }
 
-    /// R1: `consumes` is the rule of `run_with`: it blocks exactly the lines that `consumes` takes.
+    /// R1, round 3 S1: `consumes` is the rule of `run_with` for every dispatcher outcome (a reply, an error, a panic):
+    /// it blocks exactly the lines that `consumes` takes.
     #[test]
     fn consumes_is_the_rule_of_run_with() {
         fn d(_: &str, _: &str) -> anyhow::Result<String> {
             Ok("x".into())
         }
+        fn e(_: &str, _: &str) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!("failed"))
+        }
+        fn p(_: &str, _: &str) -> anyhow::Result<String> {
+            panic!("verb panicked")
+        }
         let lines = ["hello", " /zygo:compact", "/zygo:Compact", "/zygo:", "/zygo:compact 600k\nmore", "/zygo:status", "/zygo:status \n", "/zygo:frob a", "/zygo:compact\nmore"];
-        for dispatch in [Some(d as SlashDispatch), None] {
-            for p in lines {
-                let blocked = matches!(run_with(&input(Some(p)), dispatch, HOOK_DEADLINE).unwrap(), HookOutput::Json(_));
-                assert_eq!(blocked, consumes(p, dispatch), "{p:?} {}", dispatch.is_some());
+        for dispatch in [Some(d as SlashDispatch), Some(e as SlashDispatch), Some(p as SlashDispatch), None] {
+            for line in lines {
+                let blocked = matches!(run_with(&input(Some(line)), dispatch, HOOK_DEADLINE).unwrap(), HookOutput::Json(_));
+                assert_eq!(blocked, consumes(line, dispatch), "{line:?} {}", dispatch.is_some());
             }
         }
         assert!(consumes("/zygo:status", Some(d)) && !consumes("/zygo:status", None) && !consumes("hello", Some(d)));
+        assert!(consumes("/zygo:status", Some(p)));
     }
 
     #[test]
@@ -238,18 +249,21 @@ mod tests {
         assert_eq!(json_of(out), block("run in your shell: zygo compact 600k\\u{1b}[2K\\u{202e}"));
     }
 
+    /// Round 3 S1: a verb that panics blocks the line with an error text, as a verb error does, so the line never
+    /// reaches the model; the hook does not fail (C6).
     #[test]
-    fn panicking_verb_is_an_error() {
+    fn panicking_verb_blocks_with_an_error_text() {
         fn d(_: &str, _: &str) -> anyhow::Result<String> {
             panic!("verb panicked")
         }
-        assert!(run_with(&input(Some("/zygo:status")), Some(d), HOOK_DEADLINE).is_err());
+        let out = run_with(&input(Some("/zygo:status")), Some(d), HOOK_DEADLINE).unwrap();
+        assert_eq!(json_of(out), block("prompt: verb `status` ended without a reply"));
         let bytes = json!({ "hook_event_name": "UserPromptSubmit", "prompt": "/zygo:status" }).to_string();
         let out = guarded(
             &|b| run_with(&HookInput::parse(Agent::ClaudeCode, b)?, Some(d), HOOK_DEADLINE),
             bytes.as_bytes(),
         );
-        assert_eq!(out, (String::new(), 0));
+        assert_eq!(out, (block("prompt: verb `status` ended without a reply").to_string(), 0));
     }
 
 
