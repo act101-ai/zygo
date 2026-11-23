@@ -115,6 +115,7 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
         clean_stop: true,
         interrupted: vec![SubagentRef { agent_id: "a-1".into(), agent_type: "zygo-code".into() }],
         closed_units: vec!["gh:1".into()],
+        agent_session: None,
     };
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
         o.env.0.extend([("ZYGO_WORKSPACE".into(), "old-ws".into()), ("ZYGO_PANE".into(), "old-pane".into())]);

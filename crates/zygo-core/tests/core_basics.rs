@@ -318,7 +318,9 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
         clean_stop: true,
         interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into() }],
         closed_units: vec!["C1".into()],
+        agent_session: None,
     };
+    let note_clone = note.clone();
     let v = SessionView {
         workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note) }),
         ..old.clone()
@@ -336,6 +338,20 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
                 "closed_units": ["C1"]
             }
         })
+    );
+    // Inputs bound to an agent session (W§9.4): the id is written and read back; an older file reads as none.
+    let bound = ResumeNote { agent_session: Some("ses_R".into()), ..note_clone };
+    let vb = SessionView {
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(bound) }),
+        ..old.clone()
+    };
+    vb.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), vb);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(json["workspace"]["resume_note"]["agent_session"], "ses_R");
+    assert_eq!(
+        serde_json::from_str::<ResumeNote>(r#"{"clean_stop":true,"interrupted":[],"closed_units":[]}"#).unwrap().agent_session,
+        None
     );
     // A member with no note: `resume_note` is not in the file.
     let m: ViewWorkspace = serde_json::from_str(r#"{"member":{"ws_id":"w1","pane":"p1"}}"#).unwrap();

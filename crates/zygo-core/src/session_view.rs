@@ -117,6 +117,9 @@ pub struct ResumeNote {
     pub clean_stop: bool,
     pub interrupted: Vec<SubagentRef>,
     pub closed_units: Vec<String>,
+    /// The agent session that these inputs belong to: the id that `ws run` resumes, or none for a fresh start (W§9.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
