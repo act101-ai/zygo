@@ -2,7 +2,12 @@
 //! The functions compare names only. They read no value and write no log and no output (W-C7).
 use std::ffi::{OsStr, OsString};
 
-/// Removed in every case: the per-session zygo values (AU39) and the Claude Code markers (AU64).
+/// The internal mark of a `ws run` that relaunched itself after an installed update (W§8.2 step 1a): that `ws run`
+/// does not run the update check again.
+pub const RELAUNCHED: &str = "ZYGO_RELAUNCHED";
+
+/// Removed in every case: the per-session zygo values (AU39), the relaunch mark (W§8.2 step 1a) and the Claude Code
+/// markers (AU64).
 pub const REMOVE_ALWAYS: &[&str] = &[
     "ZYGO_SESSION",
     "ZYGO_SESSION_DIR",
@@ -13,6 +18,7 @@ pub const REMOVE_ALWAYS: &[&str] = &[
     "ZYGO_MAIN_ROLE",
     "ZYGO_PANE",
     "ZYGO_WORKSPACE",
+    RELAUNCHED,
     "CLAUDECODE",
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_SESSION_ID",

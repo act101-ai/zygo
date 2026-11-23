@@ -123,17 +123,18 @@ fn run_cmd(paths: &Paths, ws_id: &str, pane: &str, shell: bool) -> i32 {
         return 1;
     }
     // The update check (auto-update design; W§8.2 step 1a), before the environment cleaning (AU64), so it sees
-    // `ZYGO_WORKSPACE`. The binary path is read first: after an install, `/proc/self/exe` names a deleted file.
+    // `ZYGO_WORKSPACE`. A relaunched `ws run` (`ZYGO_RELAUNCHED` set) does not check again, also when the cache was
+    // not written. The binary path is read first: after an install, `/proc/self/exe` names a deleted file. When the
+    // relaunch fails, `ws run` continues as a normal `ws run`, so the member starts and its record is not left
+    // `running` without a launcher.
     let exe = std::env::current_exe().and_then(std::fs::canonicalize);
-    let mut shell = shell;
-    if super::start_check(&[]) == Some(0) {
+    if std::env::var_os(zygo_workspace::env::RELAUNCHED).is_none() && super::start_check(&[]) == Some(0) {
         let args: Vec<OsString> = std::env::args_os().skip(1).collect();
         let e = match &exe {
             Ok(p) => relaunch(p, &args),
             Err(e) => std::io::Error::new(e.kind(), e.to_string()),
         };
         print_err(&format!("zygo: cannot relaunch zygo ws run: {}\n", zygo_core::esc(&e.to_string())));
-        shell = true;
     }
     // AU64: the environment of the pane; the process environment itself is not changed.
     let env = zygo_workspace::env::cleaned(std::env::vars_os().collect());
@@ -325,12 +326,28 @@ fn exec_shell(_env: Vec<(OsString, OsString)>, _ws_id: &str, _cwd: &Path) -> i32
     2
 }
 
-/// D4: `exec` of the updated binary `exe` with the `ws run` arguments `args` and the uncleaned environment. Returns
-/// only when the `exec` fails.
+/// D4: `exec` of the updated binary `exe` with the `ws run` arguments `args`, the uncleaned environment and
+/// `ZYGO_RELAUNCHED=1` (W§8.2 step 1a). Returns only when the `exec` fails.
 #[cfg(unix)]
 fn relaunch(exe: &Path, args: &[OsString]) -> std::io::Error {
     use std::os::unix::process::CommandExt;
-    std::process::Command::new(exe).args(args).exec()
+    std::process::Command::new(relaunch_target(exe)).args(args).env(zygo_workspace::env::RELAUNCHED, "1").exec()
+}
+
+/// The test seam (feature `test-hooks` only, as the member gate of D9): with `ZYGO_TEST_RELAUNCH_FAIL` set, the
+/// relaunch executes a path that does not exist, so a test sees the `exec` failure.
+#[cfg(all(unix, feature = "test-hooks"))]
+fn relaunch_target(exe: &Path) -> PathBuf {
+    if std::env::var_os("ZYGO_TEST_RELAUNCH_FAIL").is_some() {
+        return PathBuf::from("/nonexistent/zygo-test-relaunch");
+    }
+    exe.to_path_buf()
+}
+
+/// A build without `test-hooks` has no seam.
+#[cfg(all(unix, not(feature = "test-hooks")))]
+fn relaunch_target(exe: &Path) -> PathBuf {
+    exe.to_path_buf()
 }
 
 /// Not reached: OP5 ends every workspace verb on Windows first.

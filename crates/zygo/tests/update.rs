@@ -37,6 +37,11 @@ struct Fixture {
 
 impl Fixture {
     fn start(files: Vec<(String, Vec<u8>)>) -> Fixture {
+        Fixture::start_failing(files, Vec::new())
+    }
+
+    /// [`Fixture::start`], and each path of `failing` answers `500 Internal Server Error`.
+    fn start_failing(files: Vec<(String, Vec<u8>)>, failing: Vec<String>) -> Fixture {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -57,6 +62,7 @@ impl Fixture {
                 log2.lock().unwrap().push(path.clone());
                 let hit = files.iter().find(|(p, _)| *p == path);
                 let (status, body): (&str, &[u8]) = match hit {
+                    _ if failing.contains(&path) => ("500 Internal Server Error", b"failed"),
                     Some((_, b)) => ("200 OK", b),
                     None => ("404 Not Found", b"not found"),
                 };
@@ -1001,47 +1007,204 @@ mod workspace_check {
         assert!(env.lines().any(|l| l == format!("ZYGO_WORKSPACE={WS_ID}")), "{env}"); // AU93
     }
 
-    #[test] // D4
-    fn ws_run_yes_installs_and_relaunches_into_the_member() {
-        let h = locked(Harness::no_tmux);
-        let key = "kaaaaaaaa";
+    /// The pane key of the `ws run` tests.
+    const KEY: &str = "kaaaaaaaa";
+
+    /// What one `ws run` of the member pane gave.
+    struct Run {
+        o: Output,
+        out: PathBuf,
+        took: Duration,
+    }
+
+    /// `exe ws run` of a loadout member pane (the record that `up` writes, W§8.1 step 8), with `answer` on stdin and
+    /// `extra` in the environment. With `check`, the update check is on (fixture `base`); else the harness opt-out
+    /// stays. `exe` is a `setup()` copy for each answer that can install.
+    fn ws_run_member(h: &Harness, exe: &Path, base: &OsStr, check: bool, answer: &[u8], extra: &[(&str, &OsStr)]) -> Run {
         h.seed(WS_ID, &mut |w| {
-            w.panes = vec![Pane { key: key.into(), cwd: h.repo(), kind: PaneKind::ClaudeCode, ..Default::default() }];
+            w.panes = vec![Pane { key: KEY.into(), cwd: h.repo(), kind: PaneKind::ClaudeCode, ..Default::default() }];
             w.members.clear();
-            w.members.insert(key.into(), loadout_member());
+            w.members.insert(KEY.into(), loadout_member());
         });
-        // The release is a real zygo, so the relaunched process runs; the copy gets a new inode on the install.
+        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
+        let mut c = Command::new(exe);
+        c.args(["ws", "run", "--ws-id", WS_ID, "--pane", KEY]).env_clear().envs(h.env()).envs(stub);
+        if check {
+            c = checked(c, base);
+        }
+        for (k, v) in extra {
+            c.env(k, v);
+        }
+        c.current_dir(h.root()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let t0 = std::time::Instant::now();
+        let mut child = locked(|| Guarded::spawn(c));
+        child.stdin().unwrap().write_all(answer).unwrap();
+        let o = child.output("ws run");
+        Run { o, out, took: t0.elapsed() }
+    }
+
+    /// The member started and ended as a normal `ws run`: exit 0 (the test shell after the member), the agent ran, its
+    /// record does not stay `running` without a launcher, and `ZYGO_RELAUNCHED` reached neither the agent nor the
+    /// shell (AU64).
+    fn assert_member_ran(h: &Harness, r: &Run) {
+        let e = err(&r.o);
+        assert_eq!(r.o.status.code(), Some(0), "{e}");
+        assert!(r.out.join("argv.json").exists(), "the agent did not start: {e}");
+        assert_ne!(h.store(WS_ID).read().unwrap().unwrap().members[KEY].state, MemberState::Running);
+        let agent = std::fs::read_to_string(r.out.join("env.json")).unwrap();
+        assert!(!agent.contains("ZYGO_RELAUNCHED"), "{agent}");
+        let shell = std::fs::read_to_string(h.root().join("shell/env")).unwrap();
+        assert!(!shell.lines().any(|l| l.starts_with("ZYGO_RELAUNCHED=")), "{shell}");
+    }
+
+    /// The requests of one check and one install of `NEW`.
+    fn check_and_install() -> Vec<String> {
+        vec!["/latest/download/VERSION".to_string(), format!("/download/v{NEW}/SHA256SUMS"), format!("/download/v{NEW}/{}", asset())]
+    }
+
+    /// `answer` installs a release that is a real zygo, so the relaunched process runs (D4; W§8.2 step 1a).
+    fn yes_relaunches_into_the_member(answer: &[u8]) {
+        let h = locked(Harness::no_tmux);
         let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
         let mut files = vec![version_file(NEW)];
         files.extend(release(NEW, &zygo));
         let f = Fixture::start(files);
-        let base = OsString::from(f.base());
-        let (out, stub) = h.stub(Agent::ClaudeCode, "a");
         let s = setup();
         let ino = std::fs::metadata(&s.copy).unwrap().ino();
-        let mut c = Command::new(&s.copy);
-        c.args(["ws", "run", "--ws-id", WS_ID, "--pane", key]).env_clear().envs(h.env()).envs(stub);
-        let mut c = checked(c, &base);
-        c.current_dir(h.root()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = locked(|| Guarded::spawn(c));
-        child.stdin().unwrap().write_all(b"y\n").unwrap();
-        let o = child.output("ws run");
-        let e = err(&o);
-        assert_eq!(o.status.code(), Some(0), "{e}"); // the exit of the test shell after the member
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, answer, &[]);
+        let e = err(&r.o);
         assert!(e.starts_with(&format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW))), "{e}");
         assert_eq!(e.matches(&prompt(NEW)).count(), 1, "{e}");
         assert!(!e.contains("cannot relaunch"), "{e}");
-        // Installed in the copy.
+        // Installed in the copy: a new inode with the release bytes.
         assert_ne!(std::fs::metadata(&s.copy).unwrap().ino(), ino);
         assert_eq!(std::fs::read(&s.copy).unwrap(), zygo);
-        // The relaunch ran: the member started, and its record does not stay `Running` without a launcher.
-        assert!(out.join("argv.json").exists(), "{e}");
-        assert_ne!(h.store(WS_ID).read().unwrap().unwrap().members[key].state, MemberState::Running);
-        // One check and one install; the relaunched process made no request (no loop).
-        assert_eq!(f.requests(), vec![
-            "/latest/download/VERSION".to_string(),
-            format!("/download/v{NEW}/SHA256SUMS"),
-            format!("/download/v{NEW}/{}", asset()),
-        ]);
+        assert_member_ran(&h, &r);
+        // The relaunched process made no request (ZYGO_RELAUNCHED).
+        assert_eq!(f.requests(), check_and_install());
+    }
+
+    #[test] // D4
+    fn ws_run_yes_installs_and_relaunches_into_the_member() {
+        yes_relaunches_into_the_member(b"y\n");
+    }
+
+    #[test] // M5 round 2 finding 5: `yes` is the long form of `y`
+    fn ws_run_yes_in_full_installs_and_relaunches_into_the_member() {
+        yes_relaunches_into_the_member(b"yes\n");
+    }
+
+    #[test] // M5 round 2 finding 3: a failed relaunch continues as a normal `ws run`, so the member starts
+    fn ws_run_relaunch_failure_starts_the_member() {
+        let h = locked(Harness::no_tmux);
+        let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, &zygo));
+        let f = Fixture::start(files);
+        let s = setup();
+        // The `test-hooks` seam: the relaunch execs a path that does not exist.
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, b"y\n", &[("ZYGO_TEST_RELAUNCH_FAIL", OsStr::new("1"))]);
+        let e = err(&r.o);
+        let head = format!(
+            "{} updated to {NEW}; relaunch zygo\nzygo: cannot relaunch zygo ws run: No such file or directory (os error 2)\n",
+            prompt(NEW)
+        );
+        assert!(e.starts_with(&head), "{e}");
+        assert_member_ran(&h, &r);
+        assert_eq!(f.requests(), check_and_install());
+    }
+
+    #[test] // M5 round 2 finding 4: a cache that cannot be written does not give a second check after the relaunch
+    fn ws_run_yes_with_a_read_only_cache_checks_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let h = locked(Harness::no_tmux);
+        let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, &zygo));
+        let f = Fixture::start(files);
+        let s = setup();
+        // The folders that the launch writes in exist; `update.json` cannot be written next to them.
+        let cache = &h.paths.cache_dir;
+        std::fs::create_dir_all(&h.paths.sessions_dir).unwrap();
+        std::fs::create_dir_all(h.paths.workspace_cache_dir()).unwrap();
+        std::fs::set_permissions(cache, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, b"y\n", &[]);
+        std::fs::set_permissions(cache, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let e = err(&r.o);
+        assert!(!update_json(&h).exists());
+        assert_eq!(e.matches(&prompt(NEW)).count(), 1, "{e}");
+        assert_member_ran(&h, &r);
+        assert_eq!(f.requests(), check_and_install());
+    }
+
+    /// `y` with an install that fails: the update line names the failure as UPD-1 prints it (`zygo update: <msg>`),
+    /// the binary is unchanged, and `ws run` continues as a normal `ws run` with no relaunch (D4). The `test-hooks`
+    /// seam makes any relaunch fail with a line, so a relaunch that is tried shows.
+    fn failed_install_starts_the_member(f: &Fixture, line: &str) {
+        let h = locked(Harness::no_tmux);
+        let s = setup();
+        let before = std::fs::read(&s.copy).unwrap();
+        let seam = [("ZYGO_TEST_RELAUNCH_FAIL", OsStr::new("1"))];
+        let r = ws_run_member(&h, &s.copy, OsStr::new(&f.base()), true, b"y\n", &seam);
+        let e = err(&r.o);
+        assert!(e.starts_with(&format!("{} {line}\n", prompt(NEW))), "{e}");
+        assert!(!e.contains("relaunch"), "{e}");
+        assert_eq!(std::fs::read(&s.copy).unwrap(), before);
+        assert_member_ran(&h, &r);
+        assert_eq!(f.requests(), check_and_install());
+    }
+
+    #[test] // M5 round 2 finding 5
+    fn ws_run_install_with_a_bad_checksum_starts_the_member() {
+        let mut files = vec![version_file(NEW)];
+        files.push((format!("/download/v{NEW}/SHA256SUMS"), sums(&asset(), b"other-bytes").into_bytes()));
+        files.push((format!("/download/v{NEW}/{}", asset()), b"fixture-binary".to_vec()));
+        let f = Fixture::start(files);
+        failed_install_starts_the_member(&f, &format!("zygo update: checksum mismatch for {}", asset()));
+    }
+
+    #[test] // M5 round 2 finding 5
+    fn ws_run_install_with_http_500_starts_the_member() {
+        let mut files = vec![version_file(NEW)];
+        files.extend(release(NEW, b"fixture-binary"));
+        let failing = format!("/download/v{NEW}/{}", asset());
+        let f = Fixture::start_failing(files, vec![failing.clone()]);
+        let line = format!("zygo update: cannot download {}{failing}: HTTP 500 Internal Server Error", f.base());
+        failed_install_starts_the_member(&f, &line);
+    }
+
+    #[test] // M5 round 2 finding 5: a refused connection is silent and adds no wait beyond the 2 s bound
+    fn ws_run_with_a_network_error_starts_the_member_without_a_prompt() {
+        // The same run with the check off gives the time of the run itself.
+        let plain = locked(Harness::no_tmux);
+        let none = ws_run_member(&plain, Path::new(env!("CARGO_BIN_EXE_zygo")), OsStr::new(""), false, b"", &[]);
+        assert_member_ran(&plain, &none);
+        let port = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        }; // closed: nothing listens on it now
+        let h = locked(Harness::no_tmux);
+        let base = OsString::from(format!("http://127.0.0.1:{port}"));
+        let r = ws_run_member(&h, Path::new(env!("CARGO_BIN_EXE_zygo")), &base, true, b"", &[]);
+        let e = err(&r.o);
+        assert!(!e.contains("is available") && !e.contains("zygo update"), "{e}");
+        assert_member_ran(&h, &r);
+        assert!(r.took < none.took + Duration::from_secs(2), "{:?} against {:?}", r.took, none.took);
+    }
+
+    #[test] // M5 round 2 finding 5: `n`, `s` and `skip` start the member and install nothing; `s` and `skip` keep the skip
+    fn ws_run_other_answers_start_the_member() {
+        for (answer, skip) in [(&b"n\n"[..], None), (b"s\n", Some(NEW)), (b"skip\n", Some(NEW))] {
+            let h = locked(Harness::no_tmux);
+            let f = Fixture::start(vec![version_file(NEW)]);
+            let r = ws_run_member(&h, Path::new(env!("CARGO_BIN_EXE_zygo")), OsStr::new(&f.base()), true, answer, &[]);
+            let e = err(&r.o);
+            assert!(e.starts_with(&format!("{} ", prompt(NEW))), "{e}");
+            assert!(!e.contains("zygo update") && !e.contains("updated to"), "{e}");
+            assert_member_ran(&h, &r);
+            assert_eq!(f.requests(), vec!["/latest/download/VERSION"]);
+            let v: serde_json::Value = serde_json::from_slice(&std::fs::read(update_json(&h)).unwrap()).unwrap();
+            assert_eq!(v["skip"].as_str(), skip, "{answer:?}: {v}");
+        }
     }
 }
