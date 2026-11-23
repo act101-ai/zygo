@@ -1367,12 +1367,56 @@ fn a_state_file_over_1_mib_is_invalid() {
     v["pad"] = json!("x".repeat(2 * 1024 * 1024));
     fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
     let bytes = fs::read(&file).unwrap();
-    let too_large = repair_line(ID, "state file too large");
-    assert_eq!(forget_run(&p, &tmux, None, ID), (1, String::new(), too_large.clone())); // by id
-    assert_eq!(forget_run(&p, &tmux, None, "big"), (1, String::new(), too_large)); // by name
-    assert_eq!(
-        pane_run(&p, &tmux, Some("big"), &plain, "kaaaaaaaa"),
-        (1, String::new(), format!("zygo: {}: state file too large\n", file.display()))
-    );
+    // FIX-17 Round 2 F1 (AU29, AU84): the file may be from a newer zygo, so every writer refuses it before `op.lock`.
+    let too_large = (1, String::new(), too_large_line(&file));
+    assert_eq!(forget_run(&p, &tmux, None, ID), too_large); // by id
+    assert!(!store.dir().join("op.lock").exists());
+    // FIX-17 D7: the store reads at most 1 MiB + 1 byte (AU84), so the name in a larger file is never read and the
+    // state is found by its id only (D14).
+    let no_name = (1, String::new(), "zygo: no workspace named big\n".to_string());
+    assert_eq!(forget_run(&p, &tmux, None, "big"), no_name); // by name
+    assert_eq!(pane_run(&p, &tmux, Some("big"), &plain, "kaaaaaaaa"), no_name);
+    assert_eq!(pane_run(&p, &tmux, Some(ID), &plain, "kaaaaaaaa"), too_large);
+    // Readers: `zygo workspace` gives the reason; `ls` shows the row by its id as unreadable.
+    let e = admin::status(&p, &plain, Some(OsStr::new(ID))).unwrap_err();
+    assert_eq!(format!("zygo: {e}\n"), too_large.2);
+    let rows = admin::list(&p, &tmux);
+    let row = rows.iter().find(|r| r.id == ID).unwrap();
+    assert_eq!((row.name.as_str(), row.state), (ID, ListState::Unreadable));
+    assert!(!store.dir().join("op.lock").exists());
     assert_eq!(fs::read(&file).unwrap(), bytes);
+}
+
+/// The `TooLarge` line of FIX-17 Round 2 F1 for the state file `file`.
+fn too_large_line(file: &Path) -> String {
+    format!("zygo: {}: state file too large; it may be from a newer zygo, so zygo does not change it\n", file.display())
+}
+
+#[test] // FIX-17 Round 2 F2: the raw read of an invalid state is capped by the read itself; a file that grows after
+        // the size check is not read past 1 MiB + 1 byte, and the state is not forgotten
+fn raw_read_of_an_invalid_state_is_capped_when_the_file_grows() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let id = "e100000000000001";
+    let dir = p.workspaces_dir().join(id);
+    // A socket whose folder is missing: no tmux check runs, so a full read of the grown file would forget the state.
+    put_raw(&dir, &invalid_doc(id, json!("app"), Some(&t.join("gone/s"))));
+    let file = dir.join("workspace.json");
+    let mut grown = fs::read(&file).unwrap();
+    grown.resize(2 * 1024 * 1024, b' ');
+    up::testing::hook(
+        &dir,
+        "raw_json_before_read",
+        Some(Box::new({
+            let (file, grown) = (file.clone(), grown.clone());
+            move || fs::write(&file, &grown).map_err(|e| e.to_string())
+        })),
+    );
+    let r = forget_run(&p, &tmux, None, id);
+    up::testing::hook(&dir, "raw_json_before_read", None);
+    assert_eq!(r, (1, String::new(), too_large_line(&file)));
+    assert_eq!(fs::read(&file).unwrap(), grown);
 }

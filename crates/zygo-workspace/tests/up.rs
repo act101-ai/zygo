@@ -1571,6 +1571,68 @@ fn preflight_by_name_refuses_a_newer_or_invalid_state() {
     assert!(err.ends_with("zygo: tmux: no server running on /tmp/zygo-none/s\n"), "{err}");
 }
 
+#[test] // FIX-17 D8, AU84: the name claim reads at most 1 MiB + 1 byte; a larger invalid state does not match by name
+fn preflight_by_name_skips_an_invalid_state_over_1_mib() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let p = paths(t);
+    let ok = version_tmux(t, "tmux34", "tmux 3.4");
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    let r = repo(t, "app");
+    let store = Store::open(&p, &workspace_id(&canon(&r.join(".git"))));
+    // An invalid state that claims the name `app` by the rules of Round 3 R3-5, padded with spaces to `len` bytes.
+    let put_padded = |len: usize| {
+        let mut v = doc(&store, &r);
+        v["tmux_session"] = json!("zygo-other");
+        let mut b = serde_json::to_vec_pretty(&v).unwrap();
+        b.resize(len, b' ');
+        fs::create_dir_all(store.dir()).unwrap();
+        fs::write(state_file(&store), &b).unwrap();
+        b
+    };
+    // Exactly 1 MiB: still read, so it claims the name (the boundary).
+    put_padded(1024 * 1024);
+    let tg = preflight(&p, &ok, Some("app"), &plain).unwrap();
+    assert!(matches!(&tg.state, Err(text) if text.contains("invalid tmux_session")), "{:?}", tg.state);
+    // 2 MiB: its name is never read, so `up app` finds no workspace and changes nothing.
+    let before = put_padded(2 * 1024 * 1024);
+    assert_eq!(preflight(&p, &ok, Some("app"), &plain), Err(Exit { code: 1, message: "zygo: no workspace named app".into() }));
+    let g = gone_tmux(t);
+    let mut o = opts(t, &plain, &g, &t.join("zygo"));
+    o.name = Some("app".into());
+    assert_eq!(run(&o), (1, String::new(), "zygo: no workspace named app\n".to_string()));
+    assert!(raw(&store) == before, "up changed the state file");
+}
+
+#[test] // FIX-17 Round 2 F1, AU29, AU84: a state file over 1 MiB may be from a newer zygo: `up` and `up --reset` refuse
+        // it with exit 1 and leave it in place (no `.bad` rename)
+fn up_reset_refuses_a_state_file_over_1_mib() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let r = repo(t, "app");
+    let store = Store::open(&paths(t), &workspace_id(&canon(&r.join(".git"))));
+    let mut bytes = serde_json::to_vec_pretty(&doc(&store, &r)).unwrap();
+    bytes.resize(2 * 1024 * 1024, b' ');
+    fs::create_dir_all(store.dir()).unwrap();
+    fs::write(state_file(&store), &bytes).unwrap();
+    let line = format!(
+        "zygo: {}: state file too large; it may be from a newer zygo, so zygo does not change it\n",
+        state_file(&store).display()
+    );
+    let g = gone_tmux(t);
+    let mut o = opts(t, &r, &g, &t.join("zygo"));
+    o.reset = true;
+    assert_eq!(run(&o), (1, String::new(), line.clone()));
+    assert!(raw(&store) == bytes, "up --reset changed the state file");
+    assert!(!store.dir().join("workspace.json.bad").exists());
+    o.reset = false;
+    assert_eq!(run(&o), (1, String::new(), line));
+    assert!(raw(&store) == bytes, "up changed the state file");
+}
+
 // ---- Round 3 ----
 
 /// A tmux wrapper as `socket_only_tmux` whose `new-session` exits 1 with `injected`: `fail` makes no session, `make`

@@ -383,8 +383,10 @@ fn under_lock(cur: &mut Workspace, mux: &dyn Multiplexer, rows: &Rows, session: 
 }
 
 /// Sets `snapshot.pending` (W§7.3, D14): `force` replaces any file with `force` in one rename; else an empty file is
-/// made only when none exists.
+/// made only when none exists. A state folder that is a link or not a folder is refused with nothing written (FIX-17
+/// Round 2 F5).
 fn queue(store: &Store, force: bool) -> anyhow::Result<()> {
+    store.check_dir().map_err(|e| anyhow!("{e}"))?;
     let path = store.dir().join(PENDING_FILE);
     if force {
         return write_atomic(&path, b"force").map_err(|e| anyhow!("{}: {e:#}", path.display()));
@@ -509,8 +511,12 @@ fn recover_taken(store: &Store) {
 /// sets the time of `snapshot.pending` to now, renames it to a name that only this caller has, reads it
 /// ([`read_flag`]) and removes it, all before the caller runs a snapshot (round 3 D1). `Some(true)` when it held
 /// `force`; `Some(false)` when it was empty, or was not a regular file or could not be read (one log line); `None`
-/// when there was no file to take.
+/// when there was no file to take, or when the state folder is a link or not a folder (nothing is taken, renamed or
+/// logged; FIX-17 Round 2 F5).
 fn take(store: &Store) -> Option<bool> {
+    if store.check_dir().is_err() {
+        return None;
+    }
     recover_taken(store);
     let from = store.dir().join(PENDING_FILE);
     let to = taken_path(store);
@@ -732,7 +738,8 @@ pub fn run(
 }
 
 /// Takes `snapshot.pending` (W§7.3): `Some(true)` when it held `force`, `Some(false)` when it was empty or could not be
-/// read (one log line), `None` when there was none or `ws_id` is not valid.
+/// read (one log line), `None` when there was none or `ws_id` is not valid, and `None` with nothing taken when the
+/// state folder is a link or not a folder: the signature has no error (FIX-17 Round 2 F5).
 pub fn take_pending(paths: &Paths, ws_id: &str) -> Option<bool> {
     if !valid_ws_id(ws_id) {
         return None;
@@ -741,7 +748,8 @@ pub fn take_pending(paths: &Paths, ws_id: &str) -> Option<bool> {
 }
 
 /// Sets `snapshot.pending` (W§7.3): with `force`, `force` replaces any file in one rename; without, an empty file is
-/// made only when none exists, so no order of writers removes a `force`.
+/// made only when none exists, so no order of writers removes a `force`. A state folder that is a link or not a folder
+/// gives `Err` with the store's refusal and nothing written (FIX-17 Round 2 F5).
 pub fn queue_pending(paths: &Paths, ws_id: &str, force: bool) -> anyhow::Result<()> {
     if !valid_ws_id(ws_id) {
         bail!("invalid workspace id {ws_id:?}");
@@ -750,12 +758,16 @@ pub fn queue_pending(paths: &Paths, ws_id: &str, force: bool) -> anyhow::Result<
 }
 
 /// The `snapshot.pending` check of W§7.3 that each writer runs after it releases `lock`: no file gives
-/// `Skipped(NoPending)` with no tmux call; else one snapshot with `--force` when the file held `force`.
+/// `Skipped(NoPending)` with no tmux call; else one snapshot with `--force` when the file held `force`. A state folder
+/// that is a link or not a folder gives `Err` with the store's refusal, with no file written and no tmux call
+/// (FIX-17 Round 2 F5).
 pub fn after_write(paths: &Paths, mux: &dyn Multiplexer, ws_id: &str, wait: Duration) -> anyhow::Result<SnapshotOutcome> {
     if !valid_ws_id(ws_id) {
         return Ok(SnapshotOutcome::Skipped(SkipReason::InvalidId));
     }
-    pending_check(&Store::open(paths, ws_id), mux, wait)
+    let store = Store::open(paths, ws_id);
+    store.check_dir().map_err(|e| anyhow!("{e}"))?;
+    pending_check(&store, mux, wait)
 }
 
 /// The pane key of a hand-started member (W§7.4 step 4, AU41, AU79, D12): the pane id must be `%N`, the state must

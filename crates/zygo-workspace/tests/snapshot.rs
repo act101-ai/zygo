@@ -1488,3 +1488,32 @@ fn take_refuses_a_file_that_is_not_regular() {
     assert_eq!(left(&store), 0);
     assert_eq!(fs::read_to_string(&target).unwrap(), "force");
 }
+
+#[cfg(unix)]
+#[test] // FIX-17 Round 2 F5: on a linked state folder the pending functions write nothing and refuse
+fn pending_functions_refuse_a_linked_state_folder() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let target = d.path().join("target");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("snapshot.pending"), "force").unwrap();
+    fs::create_dir_all(p.workspaces_dir()).unwrap();
+    std::os::unix::fs::symlink(&target, p.workspaces_dir().join(ID)).unwrap();
+    let link = format!("{}: state folder is a link", p.workspaces_dir().join(ID).display());
+    // queue_pending: `Err` with the store's refusal, with and without force.
+    assert_eq!(queue_pending(&p, ID, false).unwrap_err().to_string(), link);
+    assert_eq!(queue_pending(&p, ID, true).unwrap_err().to_string(), link);
+    // take_pending: its signature has no error, so `None` (nothing taken).
+    assert_eq!(take_pending(&p, ID), None);
+    // after_write: `Err` with the refusal, and no tmux call.
+    let fake = Fake::new(Some(ID), vec![]);
+    assert_eq!(after_write(&p, &fake, ID, HOOK_WAIT).unwrap_err().to_string(), link);
+    assert_eq!(fake.calls(""), 0);
+    // op_lock_free: `true` with nothing opened through the link, though the target's `op.lock` is held.
+    let _held = hold(target.join("op.lock"));
+    assert!(Store::open(&p, ID).op_lock_free());
+    let mut names: Vec<String> = fs::read_dir(&target).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    names.sort();
+    assert_eq!(names, vec!["op.lock".to_string(), "snapshot.pending".to_string()]);
+    assert_eq!(fs::read_to_string(target.join("snapshot.pending")).unwrap(), "force");
+}
