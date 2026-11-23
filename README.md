@@ -54,6 +54,13 @@ zygo is one native binary that wraps Claude Code and OpenCode: it routes each ag
 
 - Plan and build software using a graph methodology for autonomous agentic execution.
 
+### Native Terminal Multiplexing
+
+- All coding agents in a workspace are automatically enlisted in a tmux session.
+- Workspace loadouts save layout and agent configuration.
+- Workspaces have shared mailboxes for inter-agent communication.
+- Gracefully pause and restart your workspaces.
+
 ---
 
 ## Install
