@@ -381,6 +381,12 @@ pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
     walk(agent, args, None).session
 }
 
+/// Whether `token` (its text before any `=`) is a flag of the table of `agent` (FIX-27 review round 3: the flag after a
+/// secret-named flag is shown as a flag when it is a known one).
+pub fn is_flag(agent: Agent, token: &str) -> bool {
+    lookup(table(agent), token.split('=').next().unwrap_or(token)).is_some()
+}
+
 /// Every name of the session flags of `agent`, in table order.
 pub fn session_flags(agent: Agent) -> Vec<&'static str> {
     table(agent).iter().filter(|f| f.class == Class::Session).flat_map(|f| f.names.iter().copied()).collect()

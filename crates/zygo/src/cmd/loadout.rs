@@ -4,11 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
-use zygo_config::display::scrub_userinfo;
 use zygo_config::{Loadout, LoadoutPane, BUILTIN_LOADOUT};
 use zygo_core::paths::Paths;
 use zygo_core::{esc, Agent};
-use zygo_workspace::args::{has_user_info, occurrences};
+use zygo_workspace::args::{has_user_info, is_flag, occurrences};
 use zygo_workspace::identity::Worktree;
 use zygo_workspace::loadout::{self, pane_cwd, LoadoutError, Source};
 use zygo_workspace::up::{find_checkout, GIT_BOUND};
@@ -20,31 +19,31 @@ const INLINE_JSON_HIDDEN: &str = "<inline JSON not shown>";
 const VALUE_HIDDEN: &str = "<value not shown>";
 /// The AU30 content flags and `--settings`: a value is shown only when it names a regular file (D4).
 const CONTENT_FLAGS: [&str; 5] = ["--agents", "--mcp-config", "--json-schema", "--plugin-url", "--settings"];
-/// A flag, a `NAME=value` part or a URL query parameter whose name (lower-cased) holds one of these has its value
-/// hidden (D3; review round 2, findings 4, 5(c), 5(d)).
-const SECRET_NAMES: [&str; 6] = ["key", "token", "secret", "password", "auth", "bearer"];
+/// A flag name, a name inside a text or a query parameter name whose lower-cased text holds one of these hides its value
+/// (D3; review round 2, findings 4, 5(c), 5(d); round 3, finding 6 adds `cookie`; `session` is not one, because
+/// `--session-id` and `--resume` values are no secrets).
+const SECRET_NAMES: [&str; 7] = ["key", "token", "secret", "password", "auth", "bearer", "cookie"];
 
-/// A scheme of 2 or more characters followed by `:/` or `:\` (D1 (a)); `C:\` is a drive letter, not a scheme.
-static SCHEME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z][A-Za-z0-9+.-]+:[/\\]").expect("static pattern"));
-/// A URL: a scheme and `://` (review round 2, 5(c)).
-static URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z][A-Za-z0-9+.-]*://").expect("static pattern"));
+/// D1 (a): a scheme of 2 or more characters followed by `:/` or `:\`, or a one-letter scheme followed by `://` (round 3,
+/// finding 1); `C:\` and `C:/x` are drive letters, not schemes.
+static SCHEME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[A-Za-z][A-Za-z0-9+.-]+:[/\\]|[A-Za-z]://").expect("static pattern"));
 /// `user:pass@host` at the start of a text (review round 2, 5(a)): no `/` or blank before the first `:`, then an `@`,
 /// with no blank between the `:` and that `@`.
 static START_USER_PASS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[^/\s:]*:[^\s@]*@").expect("static pattern"));
-/// A drive letter: one letter, `:`, then `\` or `/` (`C:\Users\…` is a path, not `user:pass@host`).
-static DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[/\\]").expect("static pattern"));
+/// A drive letter: one letter, `:`, then `\`, or `/` that is not followed by a second `/` (round 3, finding 1: `x://` is a
+/// scheme, not a drive).
+static DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:(\\|/([^/]|$))").expect("static pattern"));
 
 /// Review round 2, 5(a): the text starts with `user:pass@host` and is not a drive-letter path.
 fn starts_with_user_pass(text: &str) -> bool {
     START_USER_PASS.is_match(text) && !DRIVE.is_match(text)
 }
 
-/// The text of a loadout field other than `args` as `loadout show`, `config show` and `config check` print it (D7;
-/// review round 2, 3 and 5(f)): URL user info removed, then `<user info removed>` for a text that starts with
-/// `user:pass@host`.
+/// The text of a loadout field other than `args`, as `loadout show`, `config show` and the `config check` `compact` line
+/// print it: the rule of one plain argument (review round 3, finding 5).
 pub(crate) fn shown_field(text: &str) -> String {
-    let t = scrub_userinfo(text);
-    if starts_with_user_pass(&t) { USER_INFO_REMOVED.to_string() } else { t }
+    shown_text(text, true)
 }
 
 /// `lower` holds a [`SECRET_NAMES`] entry.
@@ -52,49 +51,122 @@ fn has_secret_word(lower: &str) -> bool {
     SECRET_NAMES.iter().any(|s| lower.contains(s))
 }
 
-/// A name of a `NAME=value` part: one or more of ASCII letters, digits, `_`, `-` and `.`.
-fn is_name(text: &str) -> bool {
-    !text.is_empty() && text.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+/// A byte of a name: an ASCII letter or digit, `_`, `-` or `.`.
+fn is_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')
 }
 
-/// Review round 2, finding 4 (and the D3 `=` form): the text is read as `p0=p1=…`; at the first part that is a name
-/// with a secret word and has an `=` after it, the rest is `<value not shown>` (`--env=API_KEY=<value not shown>`).
-fn hide_named_value(text: &str) -> Option<String> {
-    let mut start = 0;
-    for (at, _) in text.match_indices('=') {
-        let name = &text[start..at];
-        if is_name(name) && has_secret_word(&name.to_lowercase()) {
-            return Some(format!("{}{VALUE_HIDDEN}", &text[..=at]));
+/// A name: one or more name bytes.
+fn is_name(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(is_name_byte)
+}
+
+/// Review round 3, finding 6 (it holds the round 2 `NAME=value` rule and the D3 `=` form): the first run of name bytes
+/// that holds a secret word and is followed by `=` or `:` (blanks may come before and after it), or by one or more
+/// blanks and more text, hides the rest of the text: `API_KEY = <value not shown>`, `X-Api-Key: <value not shown>`,
+/// `GITHUB_TOKEN <value not shown>`, `--env=PATH=/usr/bin:AUTH_TOKEN=<value not shown>`.
+fn hide_after_name(text: &str) -> Option<String> {
+    let b = text.as_bytes();
+    let blank = |i: usize| i < b.len() && matches!(b[i], b' ' | b'\t');
+    let mut i = 0;
+    while i < b.len() {
+        if !is_name_byte(b[i]) {
+            i += 1;
+            continue;
         }
-        start = at + 1;
+        let start = i;
+        while i < b.len() && is_name_byte(b[i]) {
+            i += 1;
+        }
+        if !has_secret_word(&text[start..i].to_ascii_lowercase()) {
+            continue;
+        }
+        let mut j = i;
+        while blank(j) {
+            j += 1;
+        }
+        let cut = if j < b.len() && matches!(b[j], b'=' | b':') {
+            let mut k = j + 1;
+            while blank(k) {
+                k += 1;
+            }
+            k
+        } else if j > i && j < b.len() {
+            j
+        } else {
+            continue;
+        };
+        return Some(format!("{}{VALUE_HIDDEN}", &text[..cut]));
     }
     None
 }
 
-/// Review round 2, 5(c): in each URL of the text, each query parameter whose name has a secret word shows as
-/// `name=<value not shown>`. The query runs from the first `?` after the scheme to `#`, a blank or the end.
-fn hide_query_secrets(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut done = 0;
-    let mut from = 0;
-    while let Some(m) = URL.find_at(text, from) {
-        let url_end = text[m.end()..].find(char::is_whitespace).map_or(text.len(), |i| m.end() + i);
-        from = url_end.max(m.end());
-        let Some(q) = text[m.end()..url_end].find('?').map(|i| m.end() + i + 1) else { continue };
-        let q_end = text[q..url_end].find('#').map_or(url_end, |i| q + i);
-        let params: Vec<String> = text[q..q_end]
-            .split('&')
-            .map(|p| match p.split_once('=') {
-                Some((name, _)) if has_secret_word(&name.to_lowercase()) => format!("{name}={VALUE_HIDDEN}"),
-                _ => p.to_string(),
-            })
-            .collect();
-        out.push_str(&text[done..q]);
-        out.push_str(&params.join("&"));
-        done = q_end;
+/// `%XX` sequences decoded (round 3, finding 4); other bytes as they are.
+fn percent_decoded(text: &str) -> String {
+    let b = text.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |k: usize| b.get(k).and_then(|c| (*c as char).to_digit(16));
+        if b[i] == b'%'
+            && let (Some(hi), Some(lo)) = (hex(i + 1), hex(i + 2))
+        {
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
     }
-    out.push_str(&text[done..]);
-    out
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Review round 2, 5(c), round 3, findings 3 and 4: the text from the first `?` or `#` of a token is a list of
+/// parameters split on `&`, `;`, `?` and `#`. A parameter `name=value` whose percent-decoded name holds a secret word
+/// is `name=<value not shown>` (the name as typed); any other value goes through the whole argument rule again.
+fn hide_parameters(tail: &str) -> String {
+    tail.split_inclusive(['&', ';', '?', '#'])
+        .map(|piece| {
+            let (param, sep) = match piece.char_indices().last() {
+                Some((at, '&' | ';' | '?' | '#')) => piece.split_at(at),
+                _ => (piece, ""),
+            };
+            let param = match param.split_once('=') {
+                Some((name, _)) if has_secret_word(&percent_decoded(name).to_lowercase()) => format!("{name}={VALUE_HIDDEN}"),
+                Some((name, value)) => format!("{name}={}", shown_text(value, true)),
+                None => param.to_string(),
+            };
+            format!("{param}{sep}")
+        })
+        .collect()
+}
+
+/// The one rule for a plain argument and for a field (round 3, findings 1 and 5): user info (D1) gives
+/// `<user info removed>`; with `json`, inline JSON (D2) gives `<inline JSON not shown>`; then the text before the first
+/// `?` or `#` hides what follows a secret name ([`hide_after_name`]) and the rest hides secret parameters
+/// ([`hide_parameters`]).
+fn shown_text(text: &str, json: bool) -> String {
+    if user_info(text) {
+        return USER_INFO_REMOVED.to_string();
+    }
+    if json {
+        if json_like(text) {
+            return INLINE_JSON_HIDDEN.to_string();
+        }
+        if let Some((name, value)) = text.split_once('=')
+            && json_like(value)
+        {
+            return format!("{name}={INLINE_JSON_HIDDEN}");
+        }
+        if let Some(value) = attached_short(text).filter(|v| json_like(v)) {
+            return format!("{}{INLINE_JSON_HIDDEN}", &text[..text.len() - value.len()]);
+        }
+    }
+    let (head, tail) = text.find(['?', '#']).map_or((text, ""), |at| text.split_at(at));
+    if let Some(cut) = hide_after_name(head) {
+        return cut;
+    }
+    format!("{head}{}", hide_parameters(tail))
 }
 
 /// The `user:pass@host` form (D1 (b)): an `@`, and the text before the last `@` holds a `:` and no `/` and no `\`.
@@ -151,39 +223,21 @@ enum Role {
     Plain,
 }
 
-/// One token as `loadout show` and `config show` print it (D1-D5): D1 for any role, then the rule of the role. A shown
-/// token then loses secret query values (5(c)) and secret `NAME=value` values (finding 4); a plain token then loses
-/// inline JSON (D2).
+/// One token as `loadout show` and `config show` print it (D1-D5): D1 for any role, then the rule of the role. A plain
+/// token goes through [`shown_text`]; a content value that names a file goes through it without the JSON rule.
 fn shown_token(token: &str, role: Role) -> String {
     if user_info(token) {
         return USER_INFO_REMOVED.to_string();
     }
-    let text = match role {
+    match role {
         Role::Content { attached: true, shown: false } => {
-            return format!("{}={INLINE_JSON_HIDDEN}", token.split('=').next().unwrap_or(token));
+            format!("{}={INLINE_JSON_HIDDEN}", token.split('=').next().unwrap_or(token))
         }
-        Role::Content { attached: false, shown: false } => return INLINE_JSON_HIDDEN.to_string(),
-        Role::SecretValue => return VALUE_HIDDEN.to_string(),
-        Role::Content { shown: true, .. } | Role::Plain => hide_query_secrets(token),
-    };
-    if let Some(hidden) = hide_named_value(&text) {
-        return hidden;
+        Role::Content { attached: false, shown: false } => INLINE_JSON_HIDDEN.to_string(),
+        Role::SecretValue => VALUE_HIDDEN.to_string(),
+        Role::Content { shown: true, .. } => shown_text(token, false),
+        Role::Plain => shown_text(token, true),
     }
-    if role != Role::Plain {
-        return text;
-    }
-    if json_like(&text) {
-        return INLINE_JSON_HIDDEN.to_string();
-    }
-    if let Some((name, value)) = text.split_once('=')
-        && json_like(value)
-    {
-        return format!("{name}={INLINE_JSON_HIDDEN}");
-    }
-    if let Some(value) = attached_short(&text).filter(|v| json_like(v)) {
-        return format!("{}{INLINE_JSON_HIDDEN}", &text[..text.len() - value.len()]);
-    }
-    text
 }
 
 /// A content value is shown only when it names a regular file relative to `base` (the AU30 rule; an absolute value
@@ -207,16 +261,20 @@ pub(crate) fn shown_args(agent: Agent, args: &[String], base: &Path) -> Vec<Stri
             }
         }
     }
-    // D3, review round 2 5(b): the next token after a secret-named flag without `=` is its value, also when it starts
-    // with `-`; `--` is never a value here
+    // D3, round 2 5(b), round 3 finding 2: the next token after a secret-named flag with no `=` value (no `=`, or an
+    // empty value after it) is its value, also when it starts with `-`, except: `--`; (a) a secret-named flag, which is
+    // shown and hides its own next token (a chain); (b) a `--` flag of the agent's table, which is shown and walked as
+    // that flag
+    let secret_flag = |t: &str| t.starts_with('-') && secret_named(t);
     for i in 0..args.len().saturating_sub(1) {
-        let token = &args[i];
+        let (token, next) = (&args[i], &args[i + 1]);
         if roles[i] == Role::Plain
-            && token.starts_with('-')
-            && !token.contains('=')
-            && secret_named(token)
+            && secret_flag(token)
+            && token.split_once('=').is_none_or(|(_, v)| v.is_empty())
             && roles[i + 1] == Role::Plain
-            && args[i + 1] != "--"
+            && next != "--"
+            && !secret_flag(next)
+            && !(next.starts_with("--") && is_flag(agent, next))
         {
             roles[i + 1] = Role::SecretValue;
         }
@@ -254,8 +312,10 @@ pub(crate) fn print_folder_warning(reason: &str) {
     ));
 }
 
-/// D7: each pane's `args` through [`shown_args`] (with the pane's own folder, found before any scrub), a `server` with
-/// user info (AU98) replaced, and every other text field through [`shown_field`] (review round 2, 5(f)).
+/// D7: each pane's `args` through [`shown_args`] (with the pane's own folder, found before any change), a `server` with
+/// user info (AU98) replaced, and every other text field through [`shown_field`] (review round 2, 5(f); round 3,
+/// finding 5). A `cwd` of the form `branch:<name>` is `branch:` and `<name>` through [`shown_field`], so the `branch:`
+/// prefix is never read as user info (round 3, finding 7).
 pub(crate) fn hide_secrets(l: &mut Loadout, base: &PaneBase) {
     let scrub = |f: &mut Option<String>| {
         if let Some(t) = f.as_mut() {
@@ -269,13 +329,19 @@ pub(crate) fn hide_secrets(l: &mut Loadout, base: &PaneBase) {
             p.args = shown_args(agent, &p.args, &dir);
             if p.server.as_deref().is_some_and(has_user_info) {
                 p.server = Some(USER_INFO_REMOVED.to_string());
+            } else {
+                scrub(&mut p.server);
             }
             p.kind = shown_field(&p.kind);
             scrub(&mut p.profile);
-            scrub(&mut p.server);
             scrub(&mut p.compact);
             scrub(&mut p.config_dir);
-            scrub(&mut p.cwd);
+            if let Some(t) = p.cwd.as_mut() {
+                *t = match t.strip_prefix("branch:") {
+                    Some(branch) => format!("branch:{}", shown_field(branch)),
+                    None => shown_field(t),
+                };
+            }
         }
         scrub(&mut w.name);
         scrub(&mut w.layout);
@@ -283,14 +349,15 @@ pub(crate) fn hide_secrets(l: &mut Loadout, base: &PaneBase) {
 }
 
 /// The text of `zygo loadout show <name>`: `[loadout.<name>]` as TOML after [`hide_secrets`] (D7), each line through
-/// `zygo_core::esc` as `zygo config show` prints each line (review round 2, finding 2).
+/// `zygo_core::esc` as `zygo config show` prints each line (review round 2, finding 2). No other step: `config show`
+/// runs the same [`hide_secrets`], so both print the same text for each argument and field (round 3, finding 1).
 fn show(name: &str, mut l: Loadout, base: &PaneBase) -> Result<String, toml::ser::Error> {
     hide_secrets(&mut l, base);
     let mut named = toml::Table::new();
     named.insert(name.to_string(), toml::Value::Table(toml::Table::try_from(&l)?));
     let mut top = toml::Table::new();
     top.insert("loadout".to_string(), toml::Value::Table(named));
-    Ok(scrub_userinfo(&toml::to_string(&top)?).lines().map(|line| format!("{}\n", esc(line))).collect())
+    Ok(toml::to_string(&top)?.lines().map(|line| format!("{}\n", esc(line))).collect())
 }
 
 #[derive(clap::Args)]
@@ -415,7 +482,7 @@ mod tests {
         ("--model=claude-sonnet-4@20250514", "--model=claude-sonnet-4@20250514"),
         (r"C:\Users\first.last@corp\x.json", r"C:\Users\first.last@corp\x.json"),
         ("me@h.example.invalid:8080", "me@h.example.invalid:8080"),
-        ("Authorization: Bearer tok-visible", "Authorization: Bearer tok-visible"),
+        ("Authorization: Bearer tok-visible", "Authorization: <value not shown>"),
     ];
 
     /// Attempt 1 round 3 F2: AU30 content flags and `--settings` with no file behind them, and JSON after any `=`.
@@ -583,14 +650,15 @@ mod tests {
         assert!(!text.contains("SECRET"), "{text}");
     }
 
-    #[test] // F15; kills: a field left out of the scrub
+    #[test] // F15; kills: a field left out of the scrub (round 3, finding 5: a field is one token of the argument rule,
+    // so a URL with user info is `<user info removed>` as an argument is)
     fn hide_secrets_scrubs_every_other_text_field() {
         let t = tempfile::tempdir().unwrap();
         let u = |n: u32| Some(format!("https://u:SECRET{n}@h.example.invalid/x"));
         let p = LoadoutPane { profile: u(3), compact: u(4), config_dir: u(5), cwd: u(6), ..pane(&[]) };
         let mut l = Loadout { window: vec![LoadoutWindow { name: u(1), layout: u(2), pane: vec![p] }] };
         hide_secrets(&mut l, &base(t.path()));
-        let clean = Some("https://h.example.invalid/x".to_string());
+        let clean = Some(G.to_string());
         let w = &l.window[0];
         let p = &w.pane[0];
         assert_eq!([&w.name, &w.layout, &p.profile, &p.compact, &p.config_dir, &p.cwd], [&clean; 6]);
@@ -633,10 +701,11 @@ mod tests {
         }
     }
 
-    #[test] // round 2 finding 5(b); kills: `!starts_with('-')` kept on the next token; `--` hidden as a value
+    #[test] // round 2 finding 5(b); kills: `!starts_with('-')` kept on the next token; `--` hidden as a value (round 3:
+    // a secret-named next token is a flag, so the value is `-hunter6`, which is no secret-named flag)
     fn shown_args_hide_the_value_after_a_secret_flag_even_with_a_dash() {
         assert_eq!(
-            shown(&["--api-token", "-SECRET1", "--auth", "--", "plain"]),
+            shown(&["--api-token", "-hunter6", "--auth", "--", "plain"]),
             strings(&["--api-token", "<value not shown>", "--auth", "--", "plain"])
         );
     }
@@ -693,5 +762,175 @@ mod tests {
     #[test] // round 2 finding 8; kills: a removed `!token.contains('=')` guard (the `=` form hides its own value only)
     fn shown_args_keep_the_token_after_an_equals_secret_flag() {
         assert_eq!(shown(&["--x-key=SECRET1", "shown"]), strings(&["--x-key=<value not shown>", "shown"]));
+    }
+
+    // ---- diff review round 3 ----
+
+    #[test] // round 3 finding 1; kills: a drive letter that matches `x://`; no one-letter scheme with `://` in the middle
+    fn user_info_reads_a_one_letter_scheme_with_two_slashes() {
+        assert!(starts_with_user_pass("x://u:p@h"));
+        for t in ["x://u:SECRET1@h", "s://u:SECRET2@h/p", "--x=s://u:SECRET3@h", "see x://u:SECRET4@h"] {
+            assert!(user_info(t), "{t}");
+        }
+        for t in ["c:/x@y", r"C:\Users\a:b@c", "x:/u:p@h", "C:/Users/a@b"] {
+            assert!(!user_info(t), "{t}");
+        }
+    }
+
+    #[test] // round 3 finding 2; kills: a secret-named next token hidden (no chain); a known flag after a secret flag
+    // hidden; a flag value `-hunter6` shown; a secret flag with an empty `=` value whose next token is shown
+    fn shown_args_chain_secret_flags_and_keep_known_flags() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("m.json"), "{}").unwrap();
+        let s = |a: &[&str]| shown_args(Agent::ClaudeCode, &strings(a), t.path());
+        assert_eq!(s(&["--auth", "--api-key", "SECRET1"]), strings(&["--auth", "--api-key", V]));
+        assert_eq!(s(&["--api-key", "--mcp-config", "m.json"]), strings(&["--api-key", "--mcp-config", "m.json"]));
+        assert_eq!(s(&["--api-key", "--mcp-config", "SECRET2.json"]), strings(&["--api-key", "--mcp-config", H]));
+        assert_eq!(s(&["--api-key", "-hunter6", "--model", "m"]), strings(&["--api-key", V, "--model", "m"]));
+        assert_eq!(s(&["--token=", "SECRET3"]), strings(&["--token=<value not shown>", V]));
+        assert_eq!(s(&["--auth", "--token", "--secret", "SECRET4"]), strings(&["--auth", "--token", "--secret", V]));
+    }
+
+    #[test] // round 3 finding 3; kills: a query rule that stops at `#`
+    fn shown_args_hide_secret_fragment_parameters() {
+        assert_eq!(
+            shown(&["https://h.example.invalid/cb#access_token=SECRET1&x=1", "https://h/x?a=1#y=2;Token=SECRET2"]),
+            strings(&["https://h.example.invalid/cb#access_token=<value not shown>&x=1", "https://h/x?a=1#y=2;Token=<value not shown>"])
+        );
+    }
+
+    #[test] // round 3 finding 4; kills: no `;` separator; no later `?` separator; no percent-decoding of names; no rule on a
+    // parameter value; a query rule only with a scheme
+    fn shown_args_read_query_parameters_precisely() {
+        assert_eq!(
+            shown(&[
+                "https://h.example.invalid/x?a=1;token=SECRET1;b=2", "https://a.example/p?a=1?token=SECRET2",
+                "https://h.example.invalid/x?to%6Ben=SECRET3", "https://a.example/?r=s://h/API_KEY:SECRET4",
+                "h.example.invalid/x?token=SECRET5&b=2", "https://h/x?&&token", "https://h/x?token?x=1", "https://é.example/?tökén=1&token=SECRET6",
+            ]),
+            strings(&[
+                "https://h.example.invalid/x?a=1;token=<value not shown>;b=2", "https://a.example/p?a=1?token=<value not shown>",
+                "https://h.example.invalid/x?to%6Ben=<value not shown>", "https://a.example/?r=s://h/API_KEY:<value not shown>",
+                "h.example.invalid/x?token=<value not shown>&b=2", "https://h/x?&&token", "https://h/x?token?x=1", "https://é.example/?tökén=1&token=<value not shown>",
+            ])
+        );
+    }
+
+    #[test] // round 3 finding 5; kills: a field through the old URL scrub (which stops at a blank), not the argument rule
+    fn hide_secrets_reads_each_field_as_one_argument() {
+        let t = tempfile::tempdir().unwrap();
+        let p = LoadoutPane {
+            cwd: Some("https://u:pa SECRET1@h.example.invalid".into()), profile: Some("x https://u:SECRET2@h".into()),
+            compact: Some("https://u:pa SECRET3@h".into()), config_dir: Some("API_KEY=SECRET4".into()), ..pane(&[])
+        };
+        let mut l = Loadout { window: vec![LoadoutWindow { name: Some("u:pa SECRET5@h".into()), layout: Some("{\"k\":\"SECRET6\"}".into()), pane: vec![p] }] };
+        hide_secrets(&mut l, &base(t.path()));
+        let w = &l.window[0];
+        let p = &w.pane[0];
+        let g = Some(G.to_string());
+        assert_eq!([&w.name, &p.cwd, &p.profile, &p.compact], [&g; 4]);
+        assert_eq!(p.config_dir.as_deref(), Some("API_KEY=<value not shown>"));
+        assert_eq!(w.layout.as_deref(), Some(H));
+        // the same function for an argument and a field
+        for a in ["https://u:pa SECRET7@h", "API_KEY = SECRET8", "x?token=SECRET9", "plain"] {
+            assert_eq!(shown_field(a), shown(&[a])[0], "{a}");
+        }
+    }
+
+    #[test] // round 3 finding 6; kills: `:` not a separator; blanks not a separator; no blanks around `=`; no `cookie`
+    fn shown_args_hide_secret_names_inside_a_token() {
+        assert_eq!(
+            shown(&[
+                "--env=PATH=/usr/bin:AUTH_TOKEN=SECRET1", "export GITHUB_TOKEN=SECRET2", "API_KEY = SECRET3", "X-Api-Key: SECRET4",
+                "--password:SECRET5", "GITHUB_TOKEN SECRET6", "Cookie: session=SECRET7", "x-api-key:SECRET8",
+                "--header=X-Api-Key: SECRET9", "PATH=/usr/bin:/bin", "a: b", "--name=a=b", "keyboard.json", "--session-id",
+            ]),
+            strings(&[
+                "--env=PATH=/usr/bin:AUTH_TOKEN=<value not shown>", "export GITHUB_TOKEN=<value not shown>", "API_KEY = <value not shown>",
+                "X-Api-Key: <value not shown>", "--password:<value not shown>", "GITHUB_TOKEN <value not shown>",
+                "Cookie: <value not shown>", "x-api-key:<value not shown>", "--header=X-Api-Key: <value not shown>",
+                "PATH=/usr/bin:/bin", "a: b", "--name=a=b", "keyboard.json", "--session-id",
+            ])
+        );
+        assert_eq!(shown(&["--session-id", "abc", "--resume", "abc"]), strings(&["--session-id", "abc", "--resume", "abc"]));
+    }
+
+    #[test] // round 3 finding 7; kills: a `branch:` cwd read by the user-info rule
+    fn hide_secrets_keeps_a_branch_cwd() {
+        let t = tempfile::tempdir().unwrap();
+        let mut l = Loadout {
+            window: vec![LoadoutWindow {
+                name: None,
+                layout: None,
+                pane: vec![
+                    LoadoutPane { cwd: Some("branch:alice@fix-1".into()), ..pane(&[]) },
+                    LoadoutPane { cwd: Some("u:SECRET1@h".into()), ..pane(&[]) },
+                    LoadoutPane { cwd: Some("branch:x?token=SECRET2".into()), ..pane(&[]) },
+                ],
+            }],
+        };
+        hide_secrets(&mut l, &base(t.path()));
+        let cwd: Vec<Option<&str>> = l.window[0].pane.iter().map(|p| p.cwd.as_deref()).collect();
+        assert_eq!(cwd, [Some("branch:alice@fix-1"), Some(G), Some("branch:x?token=<value not shown>")]);
+    }
+
+    #[test] // round 3: the known limits of the W§12 row, as stated there
+    fn known_limits_are_as_the_spec_states() {
+        assert_eq!(shown(&["-t", "x"]), strings(&["-t", "x"]));
+        assert_eq!(shown(&["--secret", "--x", "S"]), strings(&["--secret", V, "S"]));
+        assert_eq!(
+            shown(&["node:20@sha256:0", "openai:gpt@v1", "ssh://git@host/x", "monkey=x", "https://keyvault.example:443"]),
+            strings(&[G, G, G, "monkey=<value not shown>", "https://keyvault.example:<value not shown>"])
+        );
+        assert_eq!(
+            shown(&["--author", "me", "--max-tokens", "9", "--keybindings", "vim", "--session-id", "abc"]),
+            strings(&["--author", V, "--max-tokens", V, "--keybindings", V, "--session-id", "abc"])
+        );
+    }
+
+    /// Each whitespace word of a pinned `--help` fixture that the argument rule changes, as `(word, shown)`; and each
+    /// `--flag` of it whose next value the rule hides, as `(flag, "<next value hidden>")`.
+    fn help_words_changed(rel: &str) -> Vec<(String, String)> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures").join(rel);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut out = vec![];
+        for word in text.split_whitespace() {
+            let got = shown(&[word]).remove(0);
+            if got != word {
+                out.push((word.to_string(), got));
+            }
+            let flag = word.trim_end_matches([',', ']', ')']);
+            if flag.starts_with("--") && shown(&[flag, "value"])[1] != "value" {
+                out.push((flag.to_string(), "<next value hidden>".to_string()));
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    #[test] // round 3 finding 6: the rules against every word and flag of the pinned help (the list is the report)
+    fn help_fixture_words_that_the_rules_change() {
+        let pairs = |a: &[(&str, &str)]| a.iter().map(|(w, s)| (w.to_string(), s.to_string())).collect::<Vec<_>>();
+        // D4: a content flag's value that names no file; D2: usage words that start with `[` or `{`. No word is changed by a
+        // rule of round 3 (names inside a token, parameters, `cookie`, the flag chain).
+        let next = "<next value hidden>";
+        assert_eq!(
+            help_words_changed("claude-code/help.txt"),
+            pairs(&[
+                ("--agents", next), ("--json-schema", next), ("--mcp-config", next), ("--plugin-url", next), ("--settings", next),
+                ("[])", H), ("[command]", H), ("[description|session_id|url]", H), ("[filter]", H), ("[id]", H), ("[name]", H),
+                ("[options]", H), ("[path]", H), ("[prompt]", H), ("[session]", H), ("[source]", H), ("[target]", H), ("[value]", H),
+                ("{\"description\":", H), ("{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}", H),
+            ])
+        );
+        assert_eq!(
+            help_words_changed("opencode/help.txt"),
+            pairs(&[
+                ("[]]", H), ("[aliases:", H), ("[array]", H), ("[boolean]", H), ("[choices:", H), ("[default:", H), ("[default]", H),
+                ("[message..]", H), ("[number]", H), ("[project]", H), ("[provider]", H), ("[sessionID]", H), ("[string]", H),
+                ("[target]", H),
+            ])
+        );
     }
 }

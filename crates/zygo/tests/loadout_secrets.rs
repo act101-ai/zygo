@@ -45,7 +45,7 @@ const FORMS: &[(&str, &str)] = &[
     ("--model=claude-sonnet-4@20250514", "--model=claude-sonnet-4@20250514"),
     (r"C:\Users\first.last@corp\x.json", r"C:\Users\first.last@corp\x.json"),
     ("me@h.example.invalid:8080", "me@h.example.invalid:8080"),
-    ("Authorization: Bearer tok-visible", "Authorization: Bearer tok-visible"),
+    ("Authorization: Bearer tok-visible", "Authorization: <value not shown>"),
 ];
 
 /// Attempt 1 round 3 F2: AU30 content flags and `--settings` with no file behind them, and JSON after any `=`.
@@ -529,7 +529,7 @@ fn config_check_hides_user_info_in_a_bad_compact_value() {
         (o.status.code(), out(&o).as_str()),
         (
             Some(11),
-            "error: loadout.pair.window[0].pane[0].compact: bad --compact value `https://h.example.invalid/x`: use <tokens>, <n>k or <n>m from 100k to 10m, or off\n\
+            "error: loadout.pair.window[0].pane[0].compact: bad --compact value `<user info removed>`: use <tokens>, <n>k or <n>m from 100k to 10m, or off\n\
              error: loadout.pair.window[0].pane[1].compact: bad --compact value `<user info removed>`: use <tokens>, <n>k or <n>m from 100k to 10m, or off\n"
         )
     );
@@ -547,6 +547,62 @@ fn config_show_of_a_layer_without_loadouts_runs_no_folder_lookup() {
     }
     let o = zygo_at(home, home, &cfg, &["config", "show", "--layer", "user"]);
     assert_eq!((o.status.code(), err(&o).as_str()), (Some(0), NO_FOLDER));
+}
+
+/// Round 3 finding 1: secret forms in arguments and fields, and a control character.
+const PARITY_CFG: &str = r#"
+[loadout.pair]
+[[loadout.pair.window]]
+name = "x://u:SECRET6@h"
+layout = "u:pa SECRET7@h"
+[[loadout.pair.window.pane]]
+kind = "claude-code"
+profile = "s://u:SECRET5@h/p"
+compact = "API_KEY = SECRET8"
+args = ["x://u:SECRET1@h", "s://u:SECRET2@h/p", '{"k":"SECRET3"}', "TOKEN=SECRET4", "a\u202Eb", "https://h/x#token=SECRET9"]
+"#;
+
+/// The one line of `text` that starts with `<key> = `.
+fn key_line<'a>(text: &'a str, key: &str) -> &'a str {
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with(&format!("{key} = "))).collect();
+    assert_eq!(lines.len(), 1, "{key}: {text}");
+    lines[0]
+}
+
+#[cfg(unix)]
+#[test] // round 3 finding 1; kills: `loadout show` with a step that `config show` has not (the round 2 whole-text scrub
+// with the round 2 drive-letter rule), or without the line escape
+fn loadout_show_and_config_show_print_the_same_secret_forms() {
+    let t = tempfile::tempdir().unwrap();
+    let home = t.path();
+    let shown = zygo_at(home, home, PARITY_CFG, &["loadout", "show", "pair"]);
+    assert_eq!(shown.status.code(), Some(0), "{}", err(&shown));
+    let config = zygo_at(home, home, PARITY_CFG, &["config", "show"]);
+    assert_eq!(config.status.code(), Some(0), "{}", err(&config));
+    let (shown, config) = (out(&shown), out(&config));
+    assert!(!shown.contains("SECRET") && !config.contains("SECRET"), "{shown}\n{config}");
+    let line = args_line(&config);
+    for key in ["args", "name", "layout", "profile", "compact"] {
+        let want = key_line(&shown, key);
+        assert!(line.as_bytes().windows(want.len()).any(|w| w == want.as_bytes()), "{want}\n{line}");
+    }
+    assert!(key_line(&shown, "args").contains(r#""<user info removed>", "<user info removed>", "<inline JSON not shown>", "TOKEN=<value not shown>", "a\u{202e}b""#), "{shown}");
+}
+
+#[test] // round 3 finding 5; kills: the `compact` check line through the old field scrub, which stops at a blank
+fn config_check_reads_a_compact_value_as_one_argument() {
+    let t = tempfile::tempdir().unwrap();
+    let home = t.path();
+    let cfg = "[loadout.pair]\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\nkind = \"claude-code\"\n\
+               compact = \"https://u:pa SECRET1@h\"\n";
+    let o = zygo_at(home, home, cfg, &["config", "check"]);
+    assert_eq!(
+        (o.status.code(), out(&o).as_str()),
+        (
+            Some(11),
+            "error: loadout.pair.window[0].pane[0].compact: bad --compact value `<user info removed>`: use <tokens>, <n>k or <n>m from 100k to 10m, or off\n"
+        )
+    );
 }
 
 #[cfg(unix)]
