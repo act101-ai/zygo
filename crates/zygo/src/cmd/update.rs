@@ -286,9 +286,9 @@ fn live_sessions(sessions_dir: &Path) -> usize {
 /// The update check before an agent launch (auto-update design). `args` are the arguments passed to the agent, `env`
 /// reads the environment, `exe` is the binary an install replaces.
 ///
-/// No request and no prompt when: `io` is not a terminal; `-p` or `--print` is in `args`; `ZYGO_SESSION`,
-/// `ZYGO_WORKSPACE` or `ZYGO_NO_UPDATE_CHECK` is set (not empty); `[update] check = false`; or the last check is less
-/// than 24 h old. Else one GET for the release's public VERSION file, bounded by 2 s, the system proxy not used; a
+/// No request and no prompt when: `io` is not a terminal; `-p` or `--print` is in `args`; `ZYGO_SESSION` or
+/// `ZYGO_WORKSPACE` is set, an empty value too (the AU64 and AU95 meaning, `cmd/mod.rs:112-116`);
+/// `ZYGO_NO_UPDATE_CHECK` is set and not empty; `[update] check = false`; or the last check is less than 24 h old. Else one GET for the release's public VERSION file, bounded by 2 s, the system proxy not used; a
 /// failure is silent. A newer version that was not skipped is asked about: `y` installs it and returns `Exit`, `s`
 /// records the skip, any other answer continues.
 pub fn start_check(
@@ -299,12 +299,15 @@ pub fn start_check(
     exe: &Path,
     io: &mut dyn PromptIo,
 ) -> StartOutcome {
-    let set = |k: &str| env(k).is_some_and(|v| !v.is_empty());
+    // A marker of a zygo session or a workspace pane counts as set with any value, an empty one too; the opt-out
+    // needs a value.
+    let marked = |k: &str| env(k).is_some();
+    let opted_out = env("ZYGO_NO_UPDATE_CHECK").is_some_and(|v| !v.is_empty());
     if !io.is_tty()
         || args.iter().any(|a| a.as_os_str() == "-p" || a.as_os_str() == "--print")
-        || set("ZYGO_SESSION")
-        || set("ZYGO_WORKSPACE")
-        || set("ZYGO_NO_UPDATE_CHECK")
+        || marked("ZYGO_SESSION")
+        || marked("ZYGO_WORKSPACE")
+        || opted_out
         || !cfg.update.check
     {
         return StartOutcome::Continue;

@@ -614,12 +614,15 @@ mod start {
         };
         let on = Config::default();
         type Case<'a> = (&'a str, bool, &'a Config, &'a [&'a str], &'a [(&'a str, &'a str)]);
-        let cases: [Case; 8] = [
+        let cases: [Case; 10] = [
             ("non-TTY", false, &on, &[], &[]),
             ("-p", true, &on, &["-p", "hi"], &[]),
             ("--print", true, &on, &["--model", "x", "--print"], &[]),
             ("ZYGO_SESSION", true, &on, &[], &[("ZYGO_SESSION", "01ABC")]),
+            // M5 round 2 finding 6: an empty marker counts as set, as AU64 and AU95 count it (`cmd/mod.rs:112-116`).
+            ("empty ZYGO_SESSION", true, &on, &[], &[("ZYGO_SESSION", "")]),
             ("ZYGO_WORKSPACE", true, &on, &[], &[("ZYGO_WORKSPACE", "w1")]),
+            ("empty ZYGO_WORKSPACE", true, &on, &[], &[("ZYGO_WORKSPACE", "")]),
             ("[update] check = false", true, &off, &[], &[]),
             ("ZYGO_NO_UPDATE_CHECK=1", true, &on, &[], &[("ZYGO_NO_UPDATE_CHECK", "1")]),
             ("both opt-outs", true, &off, &[], &[("ZYGO_NO_UPDATE_CHECK", "1")]),
@@ -748,6 +751,47 @@ mod start {
         assert_eq!(err(&o), format!("{} updated to {NEW}; relaunch zygo\n", prompt(NEW)));
         assert_eq!(out(&o), "");
         assert_eq!(std::fs::read(&s.copy).unwrap(), b"fixture-binary");
+    }
+
+    /// `zygo <agent>` with an empty `ZYGO_SESSION`, on a TTY (`ZYGO_TEST_ASSUME_TTY=1`): the check skips (M5 round 2
+    /// finding 6). No answer is given and no agent is on `PATH`, so the real test binary is never replaced.
+    fn dispatch_with_an_empty_session_skips(agent: &str) {
+        let f = Fixture::start(vec![version_file(NEW)]);
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("no-agents");
+        std::fs::create_dir(&empty).unwrap();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+        cmd.arg(agent)
+            .env("ZYGO_RELEASE_BASE", f.base())
+            .env("ZYGO_TEST_ASSUME_TTY", "1")
+            .env("ZYGO_SESSION", "")
+            .env("HOME", dir.path())
+            .env("LOCALAPPDATA", dir.path())
+            .env("APPDATA", dir.path())
+            .env("PATH", &empty)
+            .env_remove("ZYGO_WORKSPACE")
+            .env_remove("ZYGO_NO_UPDATE_CHECK")
+            .env_remove("ZYGO_CONFIG")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let g = COPY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let child = cmd.spawn().unwrap();
+        drop(g);
+        let o = child.wait_with_output().unwrap();
+        assert!(!err(&o).contains("is available"), "{}", err(&o));
+        assert!(f.requests().is_empty(), "{:?}", f.requests());
+        assert!(!dir.path().join(".cache/zygo/update.json").exists());
+    }
+
+    #[test]
+    fn zygo_claude_with_an_empty_zygo_session_skips_the_check() {
+        dispatch_with_an_empty_session_skips("claude");
+    }
+
+    #[test]
+    fn zygo_opencode_with_an_empty_zygo_session_skips_the_check() {
+        dispatch_with_an_empty_session_skips("opencode");
     }
 
     #[test]
