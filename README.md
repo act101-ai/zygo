@@ -4,7 +4,7 @@ zygo is one native binary that wraps Claude Code and OpenCode (and other coding 
 
 ---
 
-### A status line that tells you want you want to know
+## A status line that tells you want you want to know
 
 <img width="1091" height="140" alt="image" src="https://github.com/user-attachments/assets/c8d3dc64-27cd-45c2-9f2d-4e641cfcb0dc" />
 
