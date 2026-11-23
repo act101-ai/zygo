@@ -11,7 +11,7 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::verbs::{VerbSpec, VERB_SPECS};
 use zygo_hooks::statusline::render::Style;
-use zygo_hooks::workspace::{record_of, start_snapshot_child, verb_member};
+use zygo_hooks::workspace::{read_session_file, record_of, start_snapshot_child, verb_member};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{CompactOverride, Store};
@@ -231,7 +231,11 @@ pub(crate) fn mirror(ctx: &VerbCtx, dir: &SessionDir, value: Mirror) -> anyhow::
         }
         match &value {
             Mirror::Overrides => {
-                let bytes = std::fs::read(dir.overrides_json())?;
+                // Under the state lock: no link is followed and no FIFO is waited on (W§7.3, W-C7; FIX-22 rule).
+                let path = dir.overrides_json();
+                let Some(bytes) = read_session_file(&path)? else {
+                    return Err(anyhow!("{}: missing", path.display()));
+                };
                 rec.overrides = Some(serde_json::from_slice(&bytes)?);
             }
             Mirror::Compact(c) => rec.compact = Some(c.clone()),

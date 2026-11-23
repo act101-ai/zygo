@@ -334,6 +334,71 @@ fn au105_refused_patch_is_not_mirrored() {
     assert_eq!(mf::record(&store, mf::WS_KEY).overrides, None);
 }
 
+/// M4 review F3, W§7.3: the mirror reads `overrides.json` under the state lock without waiting on a FIFO. The stand-in
+/// proxy puts a FIFO in its place after the save; the reply comes at once with `; not saved for the workspace` and the
+/// record does not change. A test thread opens the FIFO for writing (and closes it) only after 3 s, so a reader that
+/// waits on the FIFO ends then and the time shows it.
+#[cfg(unix)]
+#[test]
+fn au105_fifo_overrides_is_not_mirrored_and_does_not_wait() {
+    fn to_fifo(file: &Path) {
+        std::fs::remove_file(file).unwrap();
+        let c = std::ffi::CString::new(file.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    }
+    let d = home();
+    let h = d.path();
+    let s = mf::patching_session_at(&paths(h).sessions_dir, "S5", to_fifo);
+    mf::view(&s, "S5", mf::WS_ID, mf::WS_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running("S5"))], None);
+    let fifo = s.join("overrides.json");
+    let t0 = std::time::Instant::now();
+    let unblock = std::thread::spawn(move || {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        // A writer that does not wait: it opens only while a reader waits on the FIFO, then closes it (EOF).
+        while t0.elapsed() < std::time::Duration::from_secs(6) {
+            if std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK).open(&fifo).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+    let env = Env { session: Some("S5"), dir: Some(&s), ..Default::default() };
+    let got = cli(h, &env, "redaction content off");
+    let took = t0.elapsed();
+    unblock.join().unwrap();
+    assert_eq!(got, (0, "redaction content off for this session; not saved for the workspace\n".into(), String::new()));
+    assert!(took < std::time::Duration::from_secs(2), "{took:?}");
+    assert_eq!(mf::record(&store, mf::WS_KEY), mf::running("S5"));
+}
+
+/// M4 review F3, W-C7: an `overrides.json` that is a link is not followed, so no other file's JSON reaches
+/// `workspace.json`. The stand-in proxy puts a link to another JSON file in its place after the save.
+#[cfg(unix)]
+#[test]
+fn au105_linked_overrides_is_not_mirrored() {
+    fn to_link(file: &Path) {
+        let foreign = file.with_file_name("foreign.json");
+        std::fs::write(&foreign, br#"{"results":false,"foreign":true}"#).unwrap();
+        std::fs::remove_file(file).unwrap();
+        std::os::unix::fs::symlink(&foreign, file).unwrap();
+    }
+    let d = home();
+    let h = d.path();
+    let s = mf::patching_session_at(&paths(h).sessions_dir, "S6", to_link);
+    mf::view(&s, "S6", mf::WS_ID, mf::WS_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running("S6"))], None);
+    let env = Env { session: Some("S6"), dir: Some(&s), ..Default::default() };
+    assert_eq!(
+        cli(h, &env, "redaction content off"),
+        (0, "redaction content off for this session; not saved for the workspace\n".into(), String::new())
+    );
+    assert!(std::fs::symlink_metadata(s.join("overrides.json")).unwrap().file_type().is_symlink());
+    assert_eq!(mf::record(&store, mf::WS_KEY), mf::running("S6"));
+}
+
 /// AU105: a PATCH lost to a transport error keeps the new `overrides.json`, so it is mirrored; text and exit as today.
 #[cfg(unix)]
 #[test]

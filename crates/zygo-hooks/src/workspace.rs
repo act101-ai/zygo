@@ -79,11 +79,18 @@ fn open_met_link(e: &std::io::Error, path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
 
-/// The member's session view (D2): no `view.json` gives `None`. On unix the file is opened with
-/// `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, so a link is refused and a FIFO does not make the hook wait; the opened
-/// handle must be a regular file. The whole file is read; there is no size cap.
+/// The member's session view (D2): no `view.json` gives `None`. The file is read by the rule of `read_session_file`.
 pub fn read_view(dir: &SessionDir) -> anyhow::Result<Option<SessionView>> {
     let path = dir.view_json();
+    let Some(bytes) = read_session_file(&path)? else { return Ok(None) };
+    serde_json::from_slice(&bytes).map(Some).map_err(|e| anyhow!("{}: {e}", path.display()))
+}
+
+/// The bytes of a file of the session folder (D2; FIX-22): a missing file gives `None`. On unix the file is opened
+/// with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, so a link is refused and a FIFO does not make the reader wait; the
+/// opened handle must be a regular file. The whole file is read; there is no size cap. `read_view` and the verb
+/// mirror's read of `overrides.json` (AU105) use it.
+pub fn read_session_file(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     let mut o = fs::OpenOptions::new();
     o.read(true);
     #[cfg(unix)]
@@ -91,10 +98,10 @@ pub fn read_view(dir: &SessionDir) -> anyhow::Result<Option<SessionView>> {
         use std::os::unix::fs::OpenOptionsExt;
         o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     }
-    let mut f = match o.open(&path) {
+    let mut f = match o.open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) if open_met_link(&e, &path) => bail!("{}: is a link; not read", path.display()),
+        Err(e) if open_met_link(&e, path) => bail!("{}: is a link; not read", path.display()),
         Err(e) => bail!("{}: {e}", path.display()),
     };
     match f.metadata() {
@@ -104,7 +111,7 @@ pub fn read_view(dir: &SessionDir) -> anyhow::Result<Option<SessionView>> {
     }
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes).map_err(|e| anyhow!("{}: {e}", path.display()))?;
-    serde_json::from_slice(&bytes).map(Some).map_err(|e| anyhow!("{}: {e}", path.display()))
+    Ok(Some(bytes))
 }
 
 /// One session-log line `workspace hook <event>: <text>` (D14).

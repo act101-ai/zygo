@@ -107,6 +107,29 @@ pub fn dead_session_at(sessions: &Path, id: &str) -> PathBuf {
 /// writes that text to the folder's `overrides.json` and replies `200 {"redaction_content":false}`; without, it
 /// replies `409 {"error":{"type":"zygo_refused","message":"no"}}`.
 pub fn scripted_session_at(sessions: &Path, id: &str, rewrite: Option<&'static str>) -> PathBuf {
+    serving_session_at(sessions, id, move |file| match rewrite {
+        Some(text) => {
+            std::fs::write(file, text).unwrap();
+            ("200 OK", r#"{"redaction_content":false}"#)
+        }
+        None => ("409 Conflict", r#"{"error":{"type":"zygo_refused","message":"no"}}"#),
+    })
+}
+
+/// A session folder whose proxy reads each request, runs `on_patch` with the folder's `overrides.json` path (after
+/// the verb saved it, before the mirror reads it) and replies `200 {"redaction_content":false}`.
+pub fn patching_session_at(sessions: &Path, id: &str, on_patch: fn(&Path)) -> PathBuf {
+    serving_session_at(sessions, id, move |file| {
+        on_patch(file);
+        ("200 OK", r#"{"redaction_content":false}"#)
+    })
+}
+
+/// A session folder whose proxy reads each request (head and `content-length` body), then replies with the status
+/// and body that `respond` gives for the folder's `overrides.json` path.
+fn serving_session_at(
+    sessions: &Path, id: &str, respond: impl Fn(&Path) -> (&'static str, &'static str) + Send + 'static,
+) -> PathBuf {
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let dir = session_at(sessions, id, &format!("http://{}/", l.local_addr().unwrap()));
     let file = dir.join("overrides.json");
@@ -125,13 +148,7 @@ pub fn scripted_session_at(sessions: &Path, id: &str, rewrite: Option<&'static s
                 }
             }
             let _ = r.read_exact(&mut vec![0; len]);
-            let (status, body) = match rewrite {
-                Some(text) => {
-                    std::fs::write(&file, text).unwrap();
-                    ("200 OK", r#"{"redaction_content":false}"#)
-                }
-                None => ("409 Conflict", r#"{"error":{"type":"zygo_refused","message":"no"}}"#),
-            };
+            let (status, body) = respond(&file);
             let reply = format!(
                 "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
