@@ -571,3 +571,49 @@ Every cited path, symbol and line of the plan was read in the live code at `881f
 - `cargo check --workspace --all-targets --locked`: exit 0, no warning.
 - tmux 3.2a (`…/tmux32a/prefix/bin` first on `PATH`, `tmux -V` → `tmux 3.2a`): mux 4 passed, up 7 passed, down 1 passed; 12 of 12, no skip line.
 - tmux 3.8 (`/usr/bin/tmux`): mux 4, up 7, down 1; 12 of 12, no skip line.
+
+## Diff review round 2
+
+Review of `39979fc..57156ff` by a fresh reviewer (coordinator message, 2026-11-23). The round 1 adaptations (step 5 key assertion, step 10 command form) stand. Each finding was reproduced by a failing test before the fix; each new test also has a mutation run after the fix (the code changed back for one run, then restored).
+
+### Findings and changes
+
+1. **Blocking: repair built without the hold** (`repair.rs:133` `hold: false`). Commit `1d34877`.
+   - Change: `building` uses `hold: true` (the existing windows get `remain-on-exit on` from `window_setup`, a window it creates gets the `-a -t =<s>:{end}` form with the chained item). Then, in the order of `up` step 12: `release` on every window of the session (existing and created), `dead_lines`, the `phase = up` write, then the dead-pane lines.
+   - Test `repair_holds_the_panes_it_creates_and_reports_them` (`tests/up.rs`): an `up` stops after `new-session` (only `kaaaaaaaa`, alive); `repair` is called directly with a zygo whose `ws run` exits 3, so it creates `kbbbbbbbb` (split) and `kcccccccc` (new window), both dead. Direct call, so the step 6 release of a later `up` cannot hide a missing repair release. The `release` hook waits (asserted, 5 s) until both are dead.
+   - Red: `repair failed: Err(tmux: no such pane: %1)`.
+   - Mutations: `hold: false` → the same red; `release` call removed → `window 0: left "on", right "off"`.
+2. **The repair hint socket.** Commit `47e0e4c`.
+   - Change: `repair::check_saved_socket(ws)` runs `check_path` on the saved `tmux_socket` of a state in any phase but `up` and `down`. `up` (step 5) and `down` (`prepare`) call it before `socket_is_private` (which can create the socket folder), so before any use, and refuse as `up` does at step 9: the AU54 line and exit 2. `repair` calls it again before any tmux call and returns `UnsafePath` itself.
+   - Tests: `up_refuses_a_saved_socket_that_holds_a_quote_before_the_repair` (exit 2 with the AU54 line, state unchanged, only `-u -V` in the tmux log, the folder `so'ck` not made), `repair_refuses_a_saved_socket_that_holds_a_quote` (`Err` downcasts to `UnsafePath`, no output, no tmux call), `down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair` (exit 2 with the AU54 line, no tmux call names the socket, no folder).
+   - Red: `up` gave `(1, "", "zygo: app: the state has no build plan …\nzygo: tmux: no server running on …")`; `repair` gave `Ok(())`; `down` gave `(1, "", "zygo: tmux session zygo-app does not belong to this workspace; …")`.
+   - Mutation: `check_saved_socket` always `Ok` → all three fail.
+3. **A failed release.** Commit `2da37f7`.
+   - Change: `Builder::release_all` (reads the windows of the session, then `release` on each). W§8.1 step 6 calls it after the AU63 check and the `--reset`/`--loadout` refusal, before the snapshot and the attach. Best effort: a gone session or window prints nothing; a failed window read prints `zygo: <name>: could not release the build hold: <error>`; a failed window prints the `release` line and the next window is tried.
+   - Test: the follow-up step added to `a_failed_release_is_reported_and_up_goes_on`: after the release failure leaves window 0 `on`, a second `up` (no loadout) exits 0, prints no release line, and both windows are `off`.
+   - Red: `left ("on", "off"), right ("off", "off")`. Mutation: the step 6 call removed → the same red.
+4. **The `dead_lines` error lines.** Commit `10116e2`.
+   - Change: test points `dead_lines` (before the pane read) and `dead_pane` (before each pane read) in `Builder::dead_lines`, named in the `testing::hook` doc.
+   - Tests: `a_failed_dead_pane_read_is_one_line_and_up_goes_on` (one line `zygo: app: could not read the dead panes: injected`, exit 0, `phase = up`), `a_failed_read_of_one_pane_is_one_line_and_up_goes_on` (one line `zygo: app: could not read pane <first key>: injected`, all 3 panes read, exit 0).
+   - Red: line count 0 and call count 0 (the points did not exist). Mutations: each `say` line removed → each test fails at its line count (0, not 1).
+5. **A user hook window.** Spec only (W§8.1 step 11 known limit). No code change.
+6. **Tests.** Commit `56ce3a4`.
+   - `held_window_with_base_index_1_is_made_after_the_last_and_held` (`tests/mux.rs`): with `base-index 1` the session is window 1, a held window is window 2, dead and `on`; windows `1`, `2`.
+   - `held_window_after_a_gap_is_made_after_the_last_and_held`: windows 0, 1, 2, window 1 killed, a held window is window 3, dead and `on`; windows `0`, `2`, `3` (the gap stays).
+   - Both pass at once (the code exists). Mutation 6a (`-a` removed, `-t =<s>:{end}` kept): both fail (`create window failed: index 1 in use` / `index 0 in use`). Mutation 6b (plain `-t =<s>:` with the chained item on `{end}`): only the gap test fails (`Ok(1)`, not `Ok(3)`); the `base-index` test cannot see this form.
+   - `wait_for_dead_panes` and `repair_reports_a_pane_that_died_during_the_hold` assert the result of `wait_for(S5, …)` with a message naming the hook point.
+   - Test set-up fix during the work: the first `base-index` run failed with `error connecting to …`, because `set-option -g` ran before the `base` session started a server; the test now starts `base` first.
+
+### Spec (final text; commit with this section)
+
+AU54 (saved socket checked before any use by `up` and `down`, refused by `repair`), AU67 (repair builds with the hold, then release, dead-pane read, `phase = up`, lines, as step 12), AU68 (repair `on` then `off`; step 6 ends a left hold; known limit `pane-died`, not `pane-exited`), W§8.1 step 5 (AU54 on the saved socket before any use, exit 2), step 6 (the best-effort release with its two lines), step 11 (the user hook window can get `remain-on-exit on`; step 12 does not set it back; step 6 does when it is in `zygo-<name>`), step 12 (`could not read the dead panes` and `could not read pane <key>` as exact text). One change-log row for each of findings 1-5.
+
+Author's call (finding 5): the coordinator's text says "zygo does not change it back". After finding 3, step 6 sets `off` on every window of the session `zygo-<name>`, so the spec text says that the step 12 release does not change it back, and that the next `up` that attaches does when the window is in `zygo-<name>`.
+
+### Measurements (2026-11-23, at `56ce3a4` plus the spec text)
+
+- Acceptance `cargo test -p zygo-workspace --locked`: exit 0; 362 passed, 0 failed, 2 ignored (activity 41 + 1 ignored, admin 29, args 21, down 30, drain 34, env 4, identity 9, loadout 7, mux 50 + 1 ignored, snapshot 37, state 34, up 59, up_all 7). The only skip lines come from the two gate tests that test the skip.
+- Floor `cargo test -p zygo-workspace -p zygo --locked --no-fail-fast`: exit 0; 997 passed, 0 failed, 4 ignored.
+- `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings`: exit 0, no warning.
+- tmux 3.2a first on `PATH` (`tmux -V` → `tmux 3.2a`): mux 6, up 12, down 2; 20 of 20, no skip line.
+- tmux 3.8 (`/usr/bin/tmux`): mux 6, up 12, down 2; 20 of 20, no skip line.
