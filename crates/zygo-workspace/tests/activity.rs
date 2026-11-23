@@ -430,6 +430,34 @@ fn update_refuses_a_result_larger_than_the_read_limit() {
     assert!(activity::read(&d).unwrap().running.contains_key(&at_limit));
 }
 
+// H1 attempt-2 review round 3, S2 and S4: a file that cannot be read, does not parse or is over the read limit gives
+// an error of the kind `Unreadable` (it repeats on every update); a missed lock, a newer zygo and a refused result
+// do not.
+#[cfg(unix)]
+#[test]
+fn update_errors_of_the_file_are_unreadable_and_the_others_are_not() {
+    let (_t, d) = dir();
+    let unreadable = |d: &SessionDir| activity::update(d, S10, &mut |a| a.busy = true).unwrap_err().is::<activity::Unreadable>();
+    two_mib_file(&d);
+    assert!(unreadable(&d));
+    fs::write(d.activity_json(), "{not json").unwrap();
+    assert!(unreadable(&d));
+    fs::remove_file(d.activity_json()).unwrap();
+    fs::create_dir(d.activity_json()).unwrap();
+    assert!(unreadable(&d));
+    fs::remove_dir(d.activity_json()).unwrap();
+    fs::write(d.activity_json(), r#"{"version":2}"#).unwrap();
+    assert!(!unreadable(&d));
+    fs::remove_file(d.activity_json()).unwrap();
+    let id = "x".repeat(2 << 20);
+    assert!(!activity::update(&d, S10, &mut |a| a.subagent_start(&id, "t")).unwrap_err().is::<activity::Unreadable>());
+    let held =
+        fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(d.activity_lock()).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let e = activity::update(&d, Duration::from_millis(50), &mut |a| a.busy = true).unwrap_err();
+    assert!(!e.is::<activity::Unreadable>(), "{e:#}");
+}
+
 /// Child half of #57; the parent runs it with `--ignored` and sets both variables on the child only. With no
 /// variables (`--include-ignored` in the parent) it returns at once.
 #[test]

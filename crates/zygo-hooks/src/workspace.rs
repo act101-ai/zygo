@@ -116,8 +116,8 @@ fn elog(c: &Ctx, text: &str) {
 }
 
 /// The events of `zygo hook workspace` that write the line of a view that cannot be read, of a marker value that
-/// fails its check (AU84, D6) or of an `activity.json` update that fails (AU56, R3): a few calls per turn, so the `*`
-/// tool matchers do not write a line per tool call.
+/// fails its check (AU84, D6) or of a persistent `activity.json` condition (AU56; round 3, S2 and S4; see `change`):
+/// a few calls per turn, so the `*` tool matchers do not write a line per tool call.
 const MARKER_LOG_EVENTS: [&str; 3] = ["prompt", "session", "session-end"];
 
 /// The member context of `view` (D2, D6): `None` for a view with no marker. With `log`, a workspace id that fails its
@@ -167,24 +167,30 @@ fn member<'a>(event: &'a str, dir: &'a SessionDir, paths: &'a Paths) -> anyhow::
 }
 
 /// One change of `activity.json` under `activity.lock` with the hook bound (AU56, D14). An `activity.json` that is a
-/// link or not a regular file is not changed and writes one session-log line. An error of the update writes one
-/// session-log line only for the events of `MARKER_LOG_EVENTS` (R3), so a file that every update refuses (one that
-/// does not parse, is over the read limit or is of a newer zygo) writes a line per turn, not per tool call.
+/// link or not a regular file is not changed. Each failure writes one session-log line by its class (round 3, S2 and
+/// S4). A persistent condition of the file repeats on every event, so its line is written only for the events of
+/// `MARKER_LOG_EVENTS`, a line per turn and not per tool call: the file is a link, is not a regular file, or the
+/// update gives `activity::Unreadable` (the file cannot be read, does not parse or is over the read limit). A one-off
+/// failure writes its line on every event where it happens: a missed lock (the AU56 bound), a file of a newer zygo,
+/// a refused over-limit result, and each other update error.
 fn change(c: &Ctx, f: &mut dyn FnMut(&mut Activity)) {
     let path = c.dir.activity_json();
-    match fs::symlink_metadata(&path) {
-        Ok(m) if m.file_type().is_symlink() => {
-            return slog(c.dir, c.event, &format!("{}: is a link; not changed", path.display()));
+    let persistent = |text: String| {
+        if MARKER_LOG_EVENTS.contains(&c.event) {
+            slog(c.dir, c.event, &text);
         }
+    };
+    match fs::symlink_metadata(&path) {
+        Ok(m) if m.file_type().is_symlink() => return persistent(format!("{}: is a link; not changed", path.display())),
         Ok(m) if !m.is_file() => {
-            return slog(c.dir, c.event, &format!("{}: is not a regular file; not changed", path.display()));
+            return persistent(format!("{}: is not a regular file; not changed", path.display()));
         }
         _ => {}
     }
-    if let Err(e) = activity::update(c.dir, activity::LOCK_BOUND, f)
-        && MARKER_LOG_EVENTS.contains(&c.event)
-    {
-        slog(c.dir, c.event, &format!("{e:#}"));
+    match activity::update(c.dir, activity::LOCK_BOUND, f) {
+        Ok(()) => {}
+        Err(e) if e.is::<activity::Unreadable>() => persistent(format!("{e:#}")),
+        Err(e) => slog(c.dir, c.event, &format!("{e:#}")),
     }
 }
 

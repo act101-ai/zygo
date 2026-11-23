@@ -553,6 +553,31 @@ fn claude_code_workspace_prompt_blocks_on_stdout() {
     assert!(!sd.activity_json().exists());
 }
 
+/// W§9.1 `UserPromptSubmit`, D4; H1 attempt-2 review round 3 S8: the binary registers the `/zygo:` dispatcher, so a
+/// member prompt with a verb line of `VERB_SPECS` that `zygo hook prompt` consumes leaves `activity.json` unchanged,
+/// and a plain line starts a busy turn.
+#[cfg(unix)]
+#[test]
+fn member_prompt_hook_skips_a_consumed_verb_line() {
+    let h = tempfile::tempdir().unwrap();
+    let (sd, _paths) = member_home(h.path(), zygo_core::Agent::ClaudeCode);
+    zygo_workspace::activity::update(&sd, Duration::from_secs(5), &mut |a| a.tools_running = 2).unwrap();
+    let before = std::fs::read(sd.activity_json()).unwrap();
+    let line = |p: &str| {
+        let mut v: serde_json::Value = serde_json::from_slice(&hook_fixture("UserPromptSubmit-main")).unwrap();
+        v["prompt"] = serde_json::json!(p);
+        v.to_string().into_bytes()
+    };
+    assert!(zygo_core::verbs::VERB_SPECS.iter().any(|s| s.name == "status"));
+    let o = run_ws(h.path(), &sd, &["--event", "prompt"], &line("/zygo:status"));
+    assert_eq!((o.status.code(), o.stdout.as_slice(), o.stderr.as_slice()), (Some(0), &b""[..], &b""[..]));
+    assert_eq!(std::fs::read(sd.activity_json()).unwrap(), before);
+    let o = run_ws(h.path(), &sd, &["--event", "prompt"], &line("hello"));
+    assert_eq!((o.status.code(), o.stdout.as_slice(), o.stderr.as_slice()), (Some(0), &b""[..], &b""[..]));
+    let a = zygo_workspace::activity::read(&sd).unwrap();
+    assert_eq!((a.busy, a.tools_running), (true, 0));
+}
+
 /// `--config-dir` is checked before any agent launch: exit 2, one stderr line.
 #[test]
 fn claude_config_dir_missing_exits_2() {

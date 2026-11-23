@@ -162,6 +162,22 @@ pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
     }
 }
 
+/// The error kind of an `update` that met an existing `activity.json` it cannot read, parse or take as a JSON object,
+/// or one larger than 1 MiB: a condition of the file, so every later `update` meets it again until the file changes
+/// (H1 attempt-2 review round 3, S2 and S4). Its text is the error text that `update` documents. Each other error of
+/// `update` (the lock, a newer zygo, a refused result, the write) is of a single call. Callers tell the two apart with
+/// `anyhow::Error::is::<Unreadable>()`.
+#[derive(Debug)]
+pub struct Unreadable(String);
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unreadable {}
+
 /// Read-modify-write of `activity.json` under the fs4 lock on `activity.lock` (AU56): waits for the lock at most
 /// `bound` (hooks pass `LOCK_BOUND`), removes stale temp files, applies `f`, sets `version` and `updated_at`, and
 /// replaces the file in one rename. A missing file starts from the default. A file that `read` cannot give (AU26:
@@ -174,7 +190,8 @@ pub fn read(dir: &SessionDir) -> anyhow::Result<Activity> {
 /// and is not the integer 0 or 1 (`<activity.json path>: written by a newer zygo (version <JSON text of version>)`),
 /// or the result is larger than the read limit, so no reader could read it
 /// (`<activity.json path>: the new activity is <n> bytes, more than the 1048576 bytes that every reader accepts;
-/// not written`).
+/// not written`). The errors of a file that cannot be read or parsed, is not a JSON object or is larger than 1 MiB
+/// are of the kind `Unreadable`.
 pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity)) -> anyhow::Result<()> {
     let lock = dir.activity_lock();
     let Some(_lock) = crate::state::lock_file(&lock, bound).with_context(|| format!("{}: open lock file", lock.display()))?
@@ -185,9 +202,9 @@ pub fn update(dir: &SessionDir, bound: Duration, f: &mut dyn FnMut(&mut Activity
     let path = dir.activity_json();
     let mut a = match load(&path) {
         Load::Missing => Activity::default(),
-        Load::ReadFailed(e) => anyhow::bail!("{}: {e}", path.display()),
-        Load::TooLarge => anyhow::bail!("{}: activity.json larger than 1 MiB", path.display()),
-        Load::Unparsable(e) => anyhow::bail!("{}: {e}", path.display()),
+        Load::ReadFailed(e) => return Err(Unreadable(format!("{}: {e}", path.display())).into()),
+        Load::TooLarge => return Err(Unreadable(format!("{}: activity.json larger than 1 MiB", path.display())).into()),
+        Load::Unparsable(e) => return Err(Unreadable(format!("{}: {e}", path.display())).into()),
         Load::Newer(_, version) => anyhow::bail!("{}: written by a newer zygo (version {version})", path.display()),
         Load::Parsed(a) => a,
     };

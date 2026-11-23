@@ -532,18 +532,18 @@ fn slash_line_sets_busy_unless_the_dispatcher_consumes_it() {
     let _s = serial();
     let d = Some(dispatcher as SlashDispatch);
     // The one rule of both hooks: a `/zygo:` line (trailing whitespace trimmed) with a registered dispatcher.
-    for p in ["/zygo:status", "/zygo:status  \n", "/zygo:compact 120k", "/zygo:down", "/zygo:frob"] {
+    for p in ["/zygo:status", "/zygo:status  \n", "/zygo:compact 120k", "/zygo:usage", "/zygo:frob"] {
         assert!(prompt::consumes(p, d), "{p:?}");
         assert!(!prompt::consumes(p, None), "{p:?}");
     }
     for p in ["hello", " /zygo:status", "/zygo:", "/zygo:Status"] {
         assert!(!prompt::consumes(p, d), "{p:?}");
     }
-    // A line that `zygo hook prompt` consumes runs as a verb: no change, and `/zygo:down` from a member does not
-    // mark that member busy.
+    // A line that `zygo hook prompt` consumes runs as a verb (a verb of `VERB_SPECS`, or `help` for an unknown name):
+    // no change, so a verb line from a member does not mark that member busy.
     let f = fx(Agent::ClaudeCode);
     set_act(&f, false, 2);
-    for p in ["/zygo:status", "/zygo:down", "/zygo:down --now\n"] {
+    for p in ["/zygo:status", "/zygo:usage", "/zygo:units on\n", "/zygo:frob"] {
         assert_eq!(ws_d(&f, "prompt", ups(p), d).unwrap(), None, "{p:?}");
         assert_eq!(bt(&f), (false, 2), "{p:?}");
     }
@@ -551,7 +551,7 @@ fn slash_line_sets_busy_unless_the_dispatcher_consumes_it() {
     assert_eq!(ws_d(&f, "prompt", ups("/zygo:status"), None).unwrap(), None);
     assert_eq!(bt(&f), (true, 0));
     set_act(&f, false, 2);
-    assert_eq!(ws(&f, "prompt", ups("/zygo:down")).unwrap(), None);
+    assert_eq!(ws(&f, "prompt", ups("/zygo:usage")).unwrap(), None);
     assert_eq!(bt(&f), (true, 0));
     // A consumed line reads no view; one that passes reads it like any prompt.
     let s = fx(Agent::ClaudeCode);
@@ -1217,32 +1217,31 @@ fn lock_bounds_write_one_line_and_change_nothing() {
     let _s = serial();
     let f = fx(Agent::ClaudeCode);
     set_act(&f, true, 2);
-    {
-        let _h = hold_activity(&f.dir);
-        assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
-    }
-    assert_eq!(bt(&f), (true, 2)); // the change was lost
     let lock_line = |ev: &str| format!("workspace hook {ev}: {}: lock not taken within 1000 ms", f.dir.activity_lock().display());
-    {
-        let _h = hold_activity(&f.dir);
-        assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+    // A missed lock is a one-off failure (round 3 S2, S4): every event where it happens writes its line.
+    let mut lines = Vec::new();
+    for (ev, payload) in [
+        ("stop", fixture("Stop-main")),
+        ("pre-tool", fixture("PreToolUse-Bash-main")),
+        ("tool-end", fixture("PostToolUse-Bash-main")),
+        ("prompt", ups("hello")),
+        ("session-end", json!({"session_id": AS1, "hook_event_name": "SessionEnd", "reason": "other"})),
+    ] {
+        {
+            let _h = hold_activity(&f.dir);
+            assert_eq!(ws(&f, ev, payload).unwrap(), None, "{ev}");
+        }
+        assert_eq!(bt(&f), (true, 2), "{ev}"); // the change was lost
+        lines.push(lock_line(ev));
+        assert_eq!(slog(&f), lines, "{ev}");
     }
-    assert_eq!(bt(&f), (true, 2));
-    // An update error writes its line only for the events of a few calls per turn (R3): `stop` and `pre-tool` none.
-    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
-    {
-        let _h = hold_activity(&f.dir);
-        assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
-    }
-    assert_eq!(bt(&f), (true, 2));
-    assert_eq!(slog(&f), [lock_line("prompt")]);
     let store = ws_state(&f, Phase::Draining, MemberRecord::new(Agent::ClaudeCode));
     let op = store.op_lock().unwrap();
     {
         let _h = hold_activity(&f.dir);
         assert_eq!(parsed(ws(&f, "pre-tool", fixture("PreToolUse-Agent-main"))), deny(workspace::DRAINING));
     }
-    assert_eq!(slog(&f).len(), 1); // a deny needs no activity change
+    assert_eq!(slog(&f), lines); // a deny needs no activity change
     drop(op);
     let g = fx(Agent::OpenCode);
     let store = ws_state(&g, Phase::Up, rec_pending());
@@ -1354,19 +1353,30 @@ fn hostile_inputs_change_nothing() {
     std::os::unix::fs::symlink(f.t.path().join("v.json"), f.dir.view_json()).unwrap();
     assert_eq!(ss_text(&f, &ss(AS1), &f.zygo), context(&serde_json::from_str(&session_start::run_in(&ss(AS1), &f.dir).unwrap().to_stdout()).unwrap()));
     assert!(!f.dir.log().exists());
-    // An activity.json that is a link, a FIFO, both it and session.log FIFOs, or of a newer zygo.
+    // An activity.json that is a link, a FIFO, both it and session.log FIFOs, or of a newer zygo. A link and a FIFO
+    // are persistent file conditions (round 3 S2, S4): `pre-tool`, `tool-end` and `stop` write no line, a `prompt`
+    // writes one.
     let f = fx(Agent::ClaudeCode);
     let act_path = f.dir.activity_json().display().to_string();
     fs::write(f.t.path().join("outside.json"), "{}").unwrap();
     std::os::unix::fs::symlink(f.t.path().join("outside.json"), f.dir.activity_json()).unwrap();
+    assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+    assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
     assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
+    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
+    assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(fs::read_to_string(f.t.path().join("outside.json")).unwrap(), "{}");
-    assert_eq!(slog(&f), [format!("workspace hook stop: {act_path}: is a link; not changed")]);
+    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is a link; not changed")]);
     let f = fx(Agent::ClaudeCode);
     let act_path = f.dir.activity_json().display().to_string();
     mkfifo(&f.dir.activity_json());
+    assert_eq!(ws_bg(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
+    assert_eq!(ws_bg(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
     assert_eq!(ws_bg(&f, "stop", fixture("Stop-main")).unwrap(), None);
-    assert_eq!(slog(&f), [format!("workspace hook stop: {act_path}: is not a regular file; not changed")]);
+    assert!(slog(&f).is_empty(), "{:?}", slog(&f));
+    assert_eq!(ws_bg(&f, "prompt", ups("hello")).unwrap(), None);
+    assert!(is_fifo(&f.dir.activity_json()));
+    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: is not a regular file; not changed")]);
     let f = fx(Agent::ClaudeCode);
     mkfifo(&f.dir.activity_json());
     mkfifo(&f.dir.log());
@@ -1377,12 +1387,15 @@ fn hostile_inputs_change_nothing() {
     fs::write(f.dir.activity_json(), r#"{"version": 2, "busy": true}"#).unwrap();
     assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
     assert_eq!(fs::read_to_string(f.dir.activity_json()).unwrap(), r#"{"version": 2, "busy": true}"#);
-    assert!(slog(&f).is_empty()); // R3: an update error of `stop` writes no line
+    // The newer-zygo error is a one-off failure (round 3 S2, S4): every event writes its line.
+    let newer = |ev: &str| format!("workspace hook {ev}: {act_path}: written by a newer zygo (version 2)");
+    assert_eq!(slog(&f), [newer("stop")]);
     assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
     assert_eq!(fs::read_to_string(f.dir.activity_json()).unwrap(), r#"{"version": 2, "busy": true}"#);
-    assert_eq!(slog(&f), [format!("workspace hook prompt: {act_path}: written by a newer zygo (version 2)")]);
+    assert_eq!(slog(&f), [newer("stop"), newer("prompt")]);
     // A 2 MiB agent_id in an open turn (attempt-2 review round 1, F1): the result would pass the read limit, so
-    // nothing is written, and the turn stays busy through the next tool events. `subagent-start` writes no line (R3).
+    // nothing is written, and the turn stays busy through the next tool events. The refused result is a one-off
+    // failure (round 3 S2, S4): `subagent-start` writes one line; the next tool events succeed and write none.
     let f = fx(Agent::ClaudeCode);
     set_act(&f, true, 0);
     let before = fs::read(f.dir.activity_json()).unwrap();
@@ -1390,13 +1403,20 @@ fn hostile_inputs_change_nothing() {
     big["agent_id"] = json!("x".repeat(2 << 20));
     assert_eq!(ws(&f, "subagent-start", big).unwrap(), None);
     assert!(fs::read(f.dir.activity_json()).unwrap() == before, "activity.json changed");
-    assert!(slog(&f).is_empty());
+    let refused = slog(&f);
+    assert_eq!(refused.len(), 1);
+    assert!(
+        refused[0].starts_with(&format!("workspace hook subagent-start: {}: the new activity is ", f.dir.activity_json().display()))
+            && refused[0].ends_with(" bytes, more than the 1048576 bytes that every reader accepts; not written"),
+        "{}",
+        refused[0].chars().take(300).collect::<String>()
+    );
     assert_eq!(bt(&f), (true, 0));
     assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
     assert_eq!(bt(&f), (true, 1));
     assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
     assert_eq!(bt(&f), (true, 0));
-    assert!(slog(&f).is_empty());
+    assert_eq!(slog(&f), refused);
     // An activity.json over the read limit or one that does not parse is kept (F1): the drain counts it busy, and
     // a write from the default would end the open turn. The update error writes one line per turn (R3): the tool
     // events write none, a `prompt` writes one.
@@ -1405,11 +1425,18 @@ fn hostile_inputs_change_nothing() {
         fs::write(f.dir.activity_json(), &text).unwrap();
         assert_eq!(ws(&f, "pre-tool", fixture("PreToolUse-Bash-main")).unwrap(), None);
         assert_eq!(ws(&f, "tool-end", fixture("PostToolUse-Bash-main")).unwrap(), None);
+        assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None);
         assert!(slog(&f).is_empty(), "{i}: {:?}", slog(&f));
         assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None);
         assert!(fs::read(f.dir.activity_json()).unwrap() == text, "activity.json {i} changed");
         assert_eq!(slog(&f).len(), 1, "{i}");
         assert!(slog(&f)[0].starts_with(&format!("workspace hook prompt: {}: ", f.dir.activity_json().display())), "{i}");
+        // `session-end` is one of the few calls per turn: it writes one more line.
+        let end = json!({"session_id": AS1, "hook_event_name": "SessionEnd", "reason": "other"});
+        assert_eq!(ws(&f, "session-end", end).unwrap(), None);
+        assert!(fs::read(f.dir.activity_json()).unwrap() == text, "activity.json {i} changed");
+        assert_eq!(slog(&f).len(), 2, "{i}");
+        assert!(slog(&f)[1].starts_with(&format!("workspace hook session-end: {}: ", f.dir.activity_json().display())), "{i}");
     }
     // Marker values that fail their check: one line per turn, from `prompt`, `session`, `session-end` and the Claude
     // Code `SessionStart` only; the per-tool and per-request events write none (F3).
