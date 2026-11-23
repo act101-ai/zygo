@@ -44,6 +44,12 @@ const AU18: &str =
     "zygo: down cannot run detached from a sandboxed shell; use the workspace_down tool ([features] workspace_tool) or /zygo:down";
 const AU54: &str =
     "zygo: the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it";
+/// The M2 line of round 3 for workspace `name` and the tmux error `e`.
+fn unreachable_line(name: &str, e: &str) -> String {
+    format!(
+        "zygo: cannot reach the tmux server of {name} ({e}); in a sandboxed shell, run zygo down outside it; if that server is gone, run zygo down --wait -- {name} from a shell outside the workspace\n"
+    )
+}
 const AU63: &str ="zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget app";
 const IDLE: &str = "zygo: app pane kaaaaaaaa is idle";
 const TURN: &str = "zygo: app pane kaaaaaaaa: no Stop since its last prompt (interrupted turn); treated as idle";
@@ -91,13 +97,15 @@ fn repo(parent: &Path, name: &str) -> PathBuf {
 /// The tmux stand-in `<dir>/tmux` that needs no tmux (step 1). `list-panes` answers "can't find session", so the
 /// snapshot gives `Skipped(Gone)` and step 9 warns about nothing; `<dir>/nosrv` makes every call but `-V` answer as a
 /// server that does not exist. `list-sessions` prints the server pid (`<dir>/server.pid`, else 4242) twice, one line
-/// per session; a `display-message` of `#{pid}` on a gone session fails (round 2 item 7).
+/// per session; a `display-message` of `#{pid}` on a gone session fails (round 2 item 7). `<dir>/dead-<name>` makes
+/// every call on the socket `.../<name>` answer as a server that does not exist (round 3, M2).
 fn fake_tmux(dir: &Path) -> PathBuf {
     let d = dir.display();
     let body = format!(
         "printf '%s\\036' \"$*\" >> '{d}/tmux.log'\n\
-         s=; for a in \"$@\"; do case \"$a\" in -V) echo 'tmux 3.4'; exit 0;; =zygo-*) s=${{a#=}}; s=${{s%%:*}};; esac; done\n\
+         s=; sp=; prev=; for a in \"$@\"; do case \"$a\" in -V) echo 'tmux 3.4'; exit 0;; =zygo-*) s=${{a#=}}; s=${{s%%:*}};; esac; [ \"$prev\" = -S ] && sp=$a; prev=$a; done\n\
          if [ -e '{d}/nosrv' ]; then echo \"error connecting to {d}/sock/s (No such file or directory)\" >&2; exit 1; fi\n\
+         if [ -n \"$sp\" ] && [ -e '{d}/dead-'\"${{sp##*/}}\" ]; then echo \"no server running on $sp\" >&2; exit 1; fi\n\
          pid=$(cat '{d}/server.pid' 2>/dev/null || echo 4242)\n\
          case \" $* \" in\n\
          \x20 *\" has-session \"*) if [ -e '{d}/gone-'\"$s\" ]; then echo \"can't find session: $s\" >&2; exit 1; fi; exit 0;;\n\
@@ -1372,7 +1380,7 @@ fn detach_rule_guard_and_log() {
         assert_eq!(raw(&store), before);
     }
     {
-        // R1: no server is an unreadable pid.
+        // R1, round 3 M2: a server that cannot be reached refuses with the M2 line.
         let t = TempDir::new().unwrap();
         let t = t.path();
         let _g = Detached::new(t);
@@ -1380,7 +1388,8 @@ fn detach_rule_guard_and_log() {
         fs::write(t.join("nosrv"), "").unwrap();
         o.zygo_session = Some("01JCALLER".into());
         let before = raw(&store);
-        assert_eq!(run(&o, &h), (1, String::new(), format!("{AU18}\n")));
+        let e = format!("error connecting to {}/sock/s (No such file or directory)", t.display());
+        assert_eq!(run(&o, &h), (1, String::new(), unreachable_line("app", &e)));
         assert_eq!(store.read().unwrap().unwrap().phase, Phase::Up);
         assert_eq!(raw(&store), before);
         assert!(!store.dir().join("down.log").exists());
@@ -1519,6 +1528,26 @@ fn detach_helper() {
 struct Helper {
     child: Child,
     stdin: Option<std::process::ChildStdin>,
+    /// The folder where the detached stand-in reports its pid (`child.pid`).
+    dir: PathBuf,
+}
+
+/// Round 3 M5: `pid` is the detached stand-in of the helper `parent`: on Linux, `/proc/<pid>/stat` names `parent` as
+/// its parent and `pid` itself as its session leader (`setsid`). `false` when that cannot be read (other systems too).
+fn own_grandchild(pid: u32, parent: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+        let Some((_, rest)) = stat.rsplit_once(") ") else { return false };
+        let f: Vec<&str> = rest.split(' ').collect();
+        // After the command name: state, ppid, pgrp, session.
+        f.len() > 3 && f[1] == parent.to_string() && f[3] == pid.to_string()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (pid, parent);
+        false
+    }
 }
 
 impl Helper {
@@ -1540,6 +1569,16 @@ impl Helper {
 
 impl Drop for Helper {
     fn drop(&mut self) {
+        // Round 3 M5: while the helper runs and holds its stdin open, it reaps nothing, so a stand-in that it started
+        // keeps its pid (also as a zombie) and still names the helper as its parent; only then is it signalled. When
+        // the check cannot be made, nothing is signalled and the stand-in ends by itself (`sleep 30`).
+        if let Some(pid) = fs::read_to_string(self.dir.join("child.pid")).ok().and_then(|s| s.trim().parse::<u32>().ok())
+            && self.stdin.is_some()
+            && own_grandchild(pid, self.child.id())
+        {
+            // SAFETY: a plain `kill` of a process checked above as the stand-in of our own child.
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+        }
         if self.finish().is_none() {
             // SAFETY: the group of our own child, which it leads (`process_group(0)`).
             unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) };
@@ -1568,7 +1607,8 @@ fn detached_child_holds_no_caller_descriptor() {
         .unwrap();
     let (out, err) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
     let stdin = child.stdin.take();
-    let mut helper = Helper { child, stdin };
+    let helper_pid = child.id();
+    let mut helper = Helper { child, stdin, dir: d.to_path_buf() };
     let (tx, rx) = mpsc::channel::<String>();
     for mut pipe in [Box::new(out) as Box<dyn Read + Send>, Box::new(err)] {
         let tx = tx.clone();
@@ -1588,6 +1628,11 @@ fn detached_child_holds_no_caller_descriptor() {
         let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
         let f: Vec<&str> = stat.rsplit_once(") ").unwrap().1.split(' ').collect();
         assert_eq!(f[3], pid.to_string()); // the session id field: setsid
+        // Round 3 M5: the Drop check names the stand-in, and never this process or a child that is no session leader.
+        assert!(own_grandchild(pid, helper_pid));
+        assert!(!own_grandchild(std::process::id(), helper_pid));
+        let sleeper = Sleeper(Command::new("sleep").arg("30").spawn().unwrap());
+        assert!(!own_grandchild(sleeper.0.id(), std::process::id()));
         let fds: BTreeMap<String, PathBuf> = fs::read_dir(format!("/proc/{pid}/fd"))
             .unwrap()
             .map(|e| {
@@ -1678,7 +1723,12 @@ fn live_guard_reads_the_server_pid() {
     started(l.t.path());
     assert_eq!(args(l.t.path()), "down --wait -- app\n");
     l.srv.kill_server();
-    assert_eq!(run(&o, &hooks()), (1, String::new(), format!("{AU18}\n")));
+    // Round 3 M2: a server that is gone cannot be reached; the tmux error text depends on the tmux version.
+    let (code, out, err) = run(&o, &hooks());
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    let tail = unreachable_line("app", "\u{0}");
+    let (head, tail) = tail.split_once('\u{0}').unwrap();
+    assert!(err.starts_with(head) && err.ends_with(tail) && err.lines().count() == 1, "{err}");
     assert_eq!(l.store().read().unwrap().unwrap().phase, Phase::Up);
 }
 
@@ -2037,4 +2087,89 @@ fn detach_round_2() {
         assert!(err.starts_with("zygo: cannot start the detached down: ") && err.lines().count() == 1, "{err}");
         assert_eq!(raw(&store), before);
     }
+}
+
+#[test] // round 3 B1: a tool that Esc ended fires no hook (P-N24-1): busy until the drain timeout, reverted, nothing stopped
+fn an_escaped_tool_stays_busy_until_the_timeout() {
+    let _s = serial();
+    for busy in [true, false] {
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store, mut l) = one_member(t);
+        set_activity(&o, SID, busy, &[]);
+        set_tools(&o, SID, 1);
+        let mut h = hooks();
+        statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
+        o.timeout = Some(Duration::from_secs(120));
+        let (code, out, err) = run(&o, &h);
+        assert_eq!((code, out.as_str()), (1, ""), "busy {busy}: {err}");
+        assert_eq!(count(&err, TURN), 0, "{err}");
+        assert_eq!(count(&err, IDLE), 0, "{err}");
+        assert_eq!(count(&err, "zygo: app: drain timed out after 120 s; phase is up again"), 1, "{err}");
+        assert_eq!(count(&err, "zygo: app pane kaaaaaaaa: busy: tool running"), 1, "{err}");
+        assert_eq!(count(&err, NOW_LINE), 1, "{err}");
+        let ws = store.read().unwrap().unwrap();
+        assert_eq!((ws.phase, ws.members[KEY].clean_stop), (Phase::Up, false));
+        assert!(!tmux_log(t).iter().any(|c| c.contains("kill-session")));
+        assert!(l.child.try_wait().unwrap().is_none()); // no signal
+        l.child.kill().unwrap();
+    }
+}
+
+#[test] // round 3 M2: a server that cannot be reached; with --all that target is skipped and the others go on
+fn unreachable_server_refuses_or_is_skipped() {
+    let _s = serial();
+    let h = hooks();
+    {
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let (mut o, store) = detach_case(t);
+        o.zygo_session = Some("01JCALLER".into());
+        fs::write(t.join("dead-s"), "").unwrap();
+        let before = raw(&store);
+        let e = format!("no server running on {}/sock/s", t.display());
+        assert_eq!(run(&o, &h), (1, String::new(), unreachable_line("app", &e)));
+        assert_eq!(raw(&store), before);
+        assert!(!store.dir().join("down.log").exists() && !t.join("child.pid").exists());
+        assert!(store.op_lock_free());
+    }
+    {
+        let t = TempDir::new().unwrap();
+        let t = t.path();
+        let _g = Detached::new(t);
+        let mut o = opts(t, &fake_tmux(t));
+        o.zygo = rec(t);
+        o.target = DownTarget::All;
+        o.zygo_session = Some("01JCALLER".into());
+        two(&o, vec![]);
+        let bpp = Store::open(&o.paths, B);
+        bpp.update(S5, &mut |ws| {
+            ws.tmux_socket = Some(t.join("sock/s2"));
+            Ok(())
+        })
+        .unwrap();
+        fs::write(t.join("dead-s2"), "").unwrap();
+        let before = raw(&bpp);
+        let e = format!("no server running on {}/sock/s2", t.display());
+        assert_eq!(run(&o, &h), (1, STARTED.into(), unreachable_line("bpp", &e)));
+        started(t);
+        assert_eq!(args(t), "down --wait --all\n");
+        assert_eq!(raw(&bpp), before);
+    }
+}
+
+#[test] // round 3: AU54 checks the zygo path after it is joined to the cwd
+fn relative_zygo_path_in_an_unsafe_cwd_is_refused() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let (mut o, store) = detach_case(t);
+    o.zygo_session = Some("01JCALLER".into());
+    let cwd = t.join("we'ird");
+    fs::create_dir(&cwd).unwrap();
+    fs::copy(t.join("rec"), cwd.join("rec")).unwrap();
+    o.cwd = cwd;
+    o.zygo = PathBuf::from("./rec");
+    assert_eq!(run(&o, &hooks()), (2, String::new(), format!("{AU54}\n")));
+    assert!(!store.dir().join("down.log").exists() && !t.join("child.pid").exists());
 }

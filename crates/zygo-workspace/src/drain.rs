@@ -20,8 +20,8 @@ pub enum Idle {
     /// (`activity file unreadable: <error>`), running subagents (`subagents running: "<id>", "<id>"`, each id with
     /// Debug quoting, so an id that holds `, ` stays one id), then rule 3
     /// (`proxy status not read: <error>`, `model requests in flight: <n>`, `last model request ended <s> s ago`,
-    /// `last model request ended after the poll time`), then an open turn with a running tool (`tool running`:
-    /// `busy` is `true` and `tools_running > 0`, W10 round 2). `down` prints it in its timeout report (W§9.3 step 6).
+    /// `last model request ended after the poll time`), then a running tool (`tool running`: `tools_running > 0`
+    /// whatever `busy` holds, W10 round 3: busy over idle). `down` prints it in its timeout report (W§9.3 step 6).
     /// `rule_skipped` is `true` when the status meets a skip case of rule 3, whatever decided `Busy` (an
     /// `activity.json` error or running subagents), so `down` prints the AU26 rule-skipped line also for a busy
     /// member (round 2, M1). A rule 3 failure, a status read error among them, gives `false`.
@@ -94,7 +94,7 @@ pub fn idle(activity: Result<&Activity, &str>, status: Result<&SessionStatus, &s
     if let Rule3::Failed(reason) = rule3 {
         return Idle::Busy { reason, rule_skipped: false };
     }
-    if activity.busy && activity.tools_running > 0 {
+    if activity.tools_running > 0 {
         return Idle::Busy { reason: "tool running".to_string(), rule_skipped };
     }
     match (activity.busy, rule_skipped) {

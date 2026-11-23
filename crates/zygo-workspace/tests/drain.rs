@@ -73,8 +73,21 @@ fn a_running_tool_is_busy_not_a_turn_open() {
     let mut a = tools(true, 1);
     a.running.insert("a1".into(), "Plan".into());
     assert_eq!(idle(&a, &quiet()), busy("subagents running: \"a1\""));
-    // The count applies to an open turn only: `Stop` and `SessionEnd` set it to 0 (H1).
-    assert_eq!(idle(&tools(false, 1), &quiet()), Idle::Idle);
+}
+
+#[test] // W10 round 3 B1: busy over idle: a running tool is busy whatever `busy` holds (never lose work)
+fn busy_false_with_a_running_tool_is_busy() {
+    assert_eq!(idle(&tools(false, 1), &quiet()), busy("tool running"));
+    assert_eq!(idle(&tools(false, 1), &SessionStatus::default()), busy_skipped("tool running"));
+    assert_eq!(idle(&tools(false, 0), &quiet()), Idle::Idle);
+}
+
+#[test] // W10 round 3 B1: an Esc during a tool fires no hook (P-N24-1); the count holds at every poll time
+fn an_escaped_tool_is_busy_at_every_poll() {
+    let a = tools(true, 1);
+    for secs in [0, 61, 600, 86_400] {
+        assert_eq!(drain::idle(Ok(&a), Ok(&quiet()), now() + Duration::from_secs(secs)), busy("tool running"));
+    }
 }
 
 #[test] // W10 round 2 item 1: an Esc-interrupted turn with no running tool keeps the 60 s rule of `down`

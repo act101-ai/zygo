@@ -27,9 +27,10 @@ pub struct Activity {
     pub running: BTreeMap<String, String>,
     /// Unix seconds of the last write (W§9.1).
     pub updated_at: u64,
-    /// Tool calls of the main loop that started and did not end yet (W10 round 2): `PreToolUse` adds 1,
-    /// `PostToolUse` and `PostToolUseFailure` take 1 away (never below 0), `Stop` and `SessionEnd` set 0 (H1). Absent
-    /// in the file when 0, so a file of an older zygo reads 0.
+    /// Tool calls of the main loop that started and did not end yet (W10 rounds 2 and 3): `PreToolUse` adds 1,
+    /// `PostToolUse` and `PostToolUseFailure` take 1 away (never below 0), `UserPromptSubmit`, `Stop` and `SessionEnd`
+    /// set 0 (H1). Above 0 the drain counts the member as busy whatever `busy` holds. Absent in the file when 0, so a
+    /// file of an older zygo reads 0.
     #[serde(skip_serializing_if = "is_zero")]
     pub tools_running: u32,
 }

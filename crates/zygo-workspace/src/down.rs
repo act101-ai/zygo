@@ -526,47 +526,74 @@ fn detach_wanted(opts: &DownOpts, targets: &[Workspace]) -> Result<bool, Exit> {
 }
 
 /// The pid of the server of `mux` (round 2 item 7): the first line of `list-sessions -F '#{pid}'` (one line per
-/// session, each the server pid, on tmux 3.2a and 3.7c), so no one target session decides it. `None` on any error.
-fn server_pid(opts: &DownOpts, mux: &Tmux) -> Option<String> {
+/// session, each the server pid, on tmux 3.2a and 3.7c), so no one target session decides it (empty when there is
+/// no line). `Err` holds the tmux error: the server cannot be reached (round 3, M2).
+fn server_pid(opts: &DownOpts, mux: &Tmux) -> Result<String, String> {
     let mut c = Command::new(&opts.tmux);
     if let Some(sock) = mux.socket() {
         c.arg("-S").arg(sock);
     }
     c.arg("-u").args(["list-sessions", "-F", "#{pid}"]).env("LC_ALL", "C");
-    let out = crate::mux::tmux::finish(crate::mux::tmux::run_bounded(c, crate::mux::BOUND).ok()?).ok()?;
-    out.lines().next().map(str::to_string)
+    let ran = crate::mux::tmux::run_bounded(c, crate::mux::BOUND).map_err(|e| e.to_string())?;
+    let out = crate::mux::tmux::finish(ran).map_err(|e| e.to_string())?;
+    Ok(out.lines().next().unwrap_or_default().to_string())
 }
 
-/// D7, AU18 (round 2 items 6-8): for each distinct server, the AU62 check of its saved socket, then its pid; then
-/// each server must share the mount and the pid namespace of this process, and its command name must start with
-/// `tmux` when it is read. Anything unreadable refuses with exit 1.
-fn guard(opts: &DownOpts, targets: &[Workspace]) -> Result<(), Exit> {
+/// The line of a target whose tmux server cannot be reached (round 3, M2).
+fn unreachable_server(name: &str, error: &str) -> String {
+    format!(
+        "zygo: cannot reach the tmux server of {name} ({error}); in a sandboxed shell, run zygo down outside it; if that server is gone, run zygo down --wait -- {name} from a shell outside the workspace"
+    )
+}
+
+/// D7, AU18 (round 2 items 6-8, round 3 M2): for each distinct server, the AU62 check of its saved socket, then its
+/// pid. A server that cannot be reached refuses a single target with the M2 line (exit 1); with `--all`, each of its
+/// targets gets that line and is left out. Each server reached must share the mount and the pid namespace of this
+/// process, and its command name must start with `tmux` when it is read; a pid that is not a number, or an identity
+/// that cannot be read or differs, refuses with the AU18 line (exit 1). `Ok` holds the targets on servers reached
+/// and the lines of the targets left out.
+fn guard(opts: &DownOpts, targets: &[Workspace]) -> Result<(Vec<Workspace>, Vec<String>), Exit> {
     let refuse = || Exit { code: 1, message: AU18.into() };
-    let mut seen: Vec<Option<&Path>> = Vec::new();
+    let mut seen: Vec<(Option<&Path>, Result<(), String>)> = Vec::new();
     let mut pids: Vec<String> = Vec::new();
     for ws in targets {
         let socket = ws.tmux_socket.as_deref();
-        if seen.contains(&socket) {
+        if seen.iter().any(|(s, _)| *s == socket) {
             continue;
         }
-        seen.push(socket);
         check_socket(ws)?;
         let mux = up::server(&opts.tmux, socket, opts.tmux_env.as_deref());
-        let pid = server_pid(opts, &mux).ok_or_else(refuse)?;
-        if pid == "self" || !valid_pid_text(&pid) {
-            return Err(refuse());
-        }
-        pids.push(pid);
-    }
-    let own = (opts.proc_probe)("self").ok_or_else(refuse)?;
-    for pid in &pids {
-        let server = (opts.proc_probe)(pid).ok_or_else(refuse)?;
-        let not_tmux = server.comm.as_deref().is_some_and(|c| !c.starts_with("tmux"));
-        if server.mnt_ns != own.mnt_ns || server.pid_ns != own.pid_ns || not_tmux {
-            return Err(refuse());
+        match server_pid(opts, &mux) {
+            Ok(pid) if pid == "self" || !valid_pid_text(&pid) => return Err(refuse()),
+            Ok(pid) => {
+                pids.push(pid);
+                seen.push((socket, Ok(())));
+            }
+            Err(e) if opts.target != DownTarget::All => {
+                return Err(Exit { code: 1, message: unreachable_server(&ws.name, &e) });
+            }
+            Err(e) => seen.push((socket, Err(e))),
         }
     }
-    Ok(())
+    if !pids.is_empty() {
+        let own = (opts.proc_probe)("self").ok_or_else(refuse)?;
+        for pid in &pids {
+            let server = (opts.proc_probe)(pid).ok_or_else(refuse)?;
+            let not_tmux = server.comm.as_deref().is_some_and(|c| !c.starts_with("tmux"));
+            if server.mnt_ns != own.mnt_ns || server.pid_ns != own.pid_ns || not_tmux {
+                return Err(refuse());
+            }
+        }
+    }
+    let mut reached = Vec::new();
+    let mut lines = Vec::new();
+    for ws in targets {
+        match seen.iter().find(|(s, _)| *s == ws.tmux_socket.as_deref()).map(|(_, r)| r) {
+            Some(Err(e)) => lines.push(unreachable_server(&ws.name, e)),
+            _ => reached.push(ws.clone()),
+        }
+    }
+    Ok((reached, lines))
 }
 
 /// D6: whether any target session exists (no lock), each saved socket checked first (AU62, round 2 item 8); a tmux
@@ -671,14 +698,14 @@ fn spawn_detached(opts: &DownOpts, zygo: &Path, name: Option<&str>, log: File) -
     c.spawn().map(drop)
 }
 
-/// W§9.3 step 2 after the guard: the AU54 check of the zygo path and the path made absolute against the cwd (round 2
-/// item 11; the child runs in `/`), cut the log, start the detached `down`, print the line.
+/// W§9.3 step 2 after the guard: the zygo path made absolute against the cwd (the child runs in `/`) and the AU54
+/// check of that joined path (round 2 item 11, round 3), cut the log, start the detached `down`, print the line.
 fn detach(opts: &DownOpts, targets: &[Workspace], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    if let Err(e) = check_path(&opts.zygo) {
+    let zygo = if opts.zygo.is_absolute() { opts.zygo.clone() } else { opts.cwd.join(&opts.zygo) };
+    if let Err(e) = check_path(&zygo) {
         say(err, &e.to_string());
         return 2;
     }
-    let zygo = if opts.zygo.is_absolute() { opts.zygo.clone() } else { opts.cwd.join(&opts.zygo) };
     let all = opts.target == DownTarget::All;
     let log = if all {
         opts.paths.state_dir().join("down-all.log")
@@ -1420,7 +1447,7 @@ impl Run<'_> {
 
 /// W§9.3 with the given probe (D23 exit codes).
 fn run_inner(opts: &DownOpts, probe: &dyn Probe, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let (targets, base) = match resolve(opts, out, err) {
+    let (mut targets, mut base) = match resolve(opts, out, err) {
         Ok(t) => t,
         Err(code) => return code,
     };
@@ -1432,17 +1459,30 @@ fn run_inner(opts: &DownOpts, probe: &dyn Probe, out: &mut dyn Write, err: &mut 
         }
     };
     if wanted {
-        if let Err(e) = guard(opts, &targets) {
-            say(err, &e.message);
-            return e.code;
-        }
-        match any_session(opts, &targets) {
+        let (reached, skipped) = match guard(opts, &targets) {
+            Ok(r) => r,
             Err(e) => {
                 say(err, &e.message);
                 return e.code;
             }
-            Ok(true) => return detach(opts, &targets, out, err),
-            Ok(false) => {}
+        };
+        for line in &skipped {
+            say(err, line);
+        }
+        // Round 3 M2: with `--all`, a target whose server cannot be reached is left out and the exit code is 1.
+        if !skipped.is_empty() {
+            base = base.max(1);
+        }
+        if reached.is_empty() {
+            return base;
+        }
+        match any_session(opts, &reached) {
+            Err(e) => {
+                say(err, &e.message);
+                return e.code;
+            }
+            Ok(true) => return detach(opts, &reached, out, err).max(base),
+            Ok(false) => targets = reached,
         }
     }
     let timeout = if opts.now { Duration::MAX } else { timeout(opts, err) };
