@@ -232,3 +232,10 @@ Part D: the spec, the floor, the commit.
   Zygo-Work: FIX-16
   ```
   The message has no other trailer and no attribution line.
+
+### Review round 1 fixes (2026-11-23)
+
+- [x] 1. Spec change-log row of FIX-16: the false sentence "The W§12 `zygo down` synopsis now has the form of `zygo down --help`" is replaced. clap prints `zygo down [OPTIONS] [NAME]`; the synopsis follows the module doc of `crates/zygo/src/cmd/down.rs:1` (`[--] [<name>]`).
+- [x] 2. W§12 rows `zygo up`, `zygo attach` and `zygo ws forget` show `[--]` before the name, in the style of the `zygo down` row: `zygo up [--loadout <n>] [--reset] [--no-attach] [--all] [--] [<name>]`, `zygo attach [--] [<name>]`, `zygo ws forget [--] <name>`. Parser evidence: each name is a plain clap positional with no `last`, `allow_hyphen_values` or `trailing_var_arg` (`crates/zygo/src/cmd/up.rs:15`, `crates/zygo/src/cmd/attach.rs:11`, `crates/zygo/src/cmd/ws.rs:32`), so clap reads a name after `--`. `fix16_double_dash_names_reach_the_library` proves it for `up` and `ws forget`; for `attach`, `zygo attach -- -x` with an empty HOME gives `zygo: no workspace named -x`, exit 1. The same change-log row names the four rows and this round; no new row.
+- [x] 3. The doc comment of `fix16_double_dash_names_reach_the_library` (`crates/zygo/tests/workspace_cli.rs:154`) says only what the test checks: the parsers of `zygo down`, `zygo up` and `zygo ws forget` read a name after `--`, and that name reaches the library. It does not claim to check the environment of the `workspace_down` tool.
+- [x] 4. `cargo test -p zygo --locked --test workspace_cli` and the work-graph check pass, each run alone.

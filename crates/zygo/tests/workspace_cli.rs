@@ -151,8 +151,8 @@ fn w12_names_reach_the_library_also_after_double_dash() {
     }
 }
 
-/// FIX-16: the argument list of the `workspace_down` tool and the forms that the hints print (`zygo down -- <name>`,
-/// `zygo up -- <name>`, `zygo ws forget -- <name>`) reach the library also for the names `--` and `-x`.
+/// FIX-16: the parsers of `zygo down`, `zygo up` and `zygo ws forget` read a name after `--`, and that name reaches
+/// the library, also for the names `--` and `-x`.
 #[cfg(unix)]
 #[test]
 fn fix16_double_dash_names_reach_the_library() {
