@@ -20,39 +20,36 @@ zygo is one native binary that wraps Claude Code and OpenCode: it routes each ag
 
 - Anti-pattern: Full file reads to find one method pollutes the context window with irrelevant code
 - Anti-pattern: Random file chunk reads pollute the context window less, but repeated misses cause repeated LLM submissions, wasting tokens
-
 * Solution: Navigate your codebase and documentation following the structural tree.
 
 ### Tool Results Store
 
 - Anti-pattern: Agent context gets polluted with long tool results (eg build output)
 - Anti-pattern: Agent runs tools with `| tail` and misses key results requiring re-running
-
 * Solution: Save the full results from tool calls and provide recall and navigation tools
 
 ### Cache Annotation
 
 - Anti-pattern: Coding agent doesn't mark all segments for caching resulting in higher inference costs.
 - Anti-pattern: Coding agent sets cache expiry too short resulting in cache misses and higher costs.
-
-- Solution: zygo ensures that all context segments are marked for caching, resulting in higher cache hit rates and lower token costs.
+* Solution: zygo ensures that all context segments are marked for caching, resulting in higher cache hit rates and lower token costs.
 
 ### Inline DLP
 
 - Anti-pattern: Agent reads secrets into context but doesn't realize until inference time, when it's too late
-
+- Anti-pattern: A file containing secrets is read by a tool and exposed to the inference endpoint.
 * Solution: DLP always redacts secrets from LLM calls
 
 ### Soft Context Management
 
 - Anti-pattern: Auto-compacting in the middle of tasks resulting in information loss and poor results
 - Anti-pattern: Context quality degradation as context window grows resulting in poor results
-
 * Solution: Lifecycle hooks allow auto-compacting between tasks in a long-running plan
 
 ### Skills for Autonomous Delivery
-
-- Plan and build software using a graph methodology for autonomous agentic execution.
+- Anti-pattern: Coding agent fails to deliver software in cohesive, testable units.
+- Anti-pattern: Coding agent drifts in long-running projects.
+* Solution: Plan and build software using a persistent graph methodology for autonomous agentic execution.
 
 ### Native Terminal Multiplexing
 
