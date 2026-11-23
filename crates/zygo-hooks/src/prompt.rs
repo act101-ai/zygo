@@ -335,6 +335,60 @@ mod tests {
         assert!(left <= HOOK_DEADLINE && left > HOOK_DEADLINE - Duration::from_millis(1000), "{left:?}");
     }
 
+    /// The verb deadline of this thread as `with_verb_deadline` left it.
+    fn deadline() -> Option<Instant> {
+        VERB_DEADLINE.with(Cell::get)
+    }
+
+    /// M4 review round 3: after `with_verb_deadline` returns, the thread has its earlier value back: no deadline after
+    /// the outer call, and the outer deadline after a nested call.
+    #[test]
+    fn with_verb_deadline_restores_the_earlier_value() {
+        let (a, b) = (Instant::now() + Duration::from_secs(60), Instant::now() + Duration::from_secs(30));
+        assert_eq!(deadline(), None);
+        with_verb_deadline(a, || {
+            assert_eq!(deadline(), Some(a));
+            with_verb_deadline(b, || assert_eq!(deadline(), Some(b)));
+            assert_eq!(deadline(), Some(a), "the nested call did not restore the outer deadline");
+        });
+        assert_eq!(deadline(), None);
+    }
+
+    /// M4 review round 3: a panic in `f` still restores the earlier value.
+    #[test]
+    fn with_verb_deadline_restores_after_a_panic() {
+        let (a, b) = (Instant::now() + Duration::from_secs(60), Instant::now() + Duration::from_secs(30));
+        with_verb_deadline(a, || {
+            let r = std::panic::catch_unwind(|| with_verb_deadline(b, || panic!("verb panicked")));
+            assert!(r.is_err());
+            assert_eq!(deadline(), Some(a), "the panic left the inner deadline or none");
+        });
+        assert_eq!(deadline(), None);
+    }
+
+    /// M4 review round 3: the deadline belongs to one thread: another thread sees none, and its own nested calls
+    /// restore its own values.
+    #[test]
+    fn with_verb_deadline_is_per_thread() {
+        let (a, b, c) = (
+            Instant::now() + Duration::from_secs(60),
+            Instant::now() + Duration::from_secs(30),
+            Instant::now() + Duration::from_secs(10),
+        );
+        with_verb_deadline(a, || {
+            std::thread::spawn(move || {
+                assert_eq!(verb_time_left(), None, "another thread sees this thread's deadline");
+                with_verb_deadline(b, || {
+                    with_verb_deadline(c, || assert_eq!(deadline(), Some(c)));
+                    assert_eq!(deadline(), Some(b), "the other thread lost its own deadline");
+                });
+            })
+            .join()
+            .unwrap();
+            assert_eq!(deadline(), Some(a));
+        });
+    }
+
     /// Decision 2026-11-23: `down` and `workspace` have a shell form that can name another workspace, so a slow slash
     /// form does not send the user to the shell; `ls` lists every workspace in both forms and keeps the shell reply.
     #[test]

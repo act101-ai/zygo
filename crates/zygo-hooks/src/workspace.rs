@@ -88,8 +88,9 @@ pub fn read_view(dir: &SessionDir) -> anyhow::Result<Option<SessionView>> {
 
 /// The bytes of a file of the session folder (D2; FIX-22): a missing file gives `None`. On unix the file is opened
 /// with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, so a link is refused and a FIFO does not make the reader wait; the
-/// opened handle must be a regular file. The whole file is read; there is no size cap. `read_view` and the verb
-/// mirror's read of `overrides.json` (AU105) use it.
+/// opened handle must be a regular file. The whole file is read; there is no size cap. Its callers: `read_view`
+/// (`view.json`), and in `zygo::cmd::verbs` the setting verbs' `set_session` (its one read of the old `overrides.json`,
+/// base spec §17.1) and `mirror` (its read of `overrides.json` for the member record, AU105).
 pub fn read_session_file(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     let mut o = fs::OpenOptions::new();
     o.read(true);
