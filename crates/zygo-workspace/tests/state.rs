@@ -590,3 +590,109 @@ fn build_plan_and_fresh_members() {
     put(&store, &v);
     assert!(matches!(store.read(), Err(StateError::Invalid { reason, .. }) if reason == "invalid pane key"));
 }
+
+/// 1 MiB, the largest `workspace.json` that reads (AU84, FIX-17).
+const MIB: usize = 1024 * 1024;
+/// A valid document padded with spaces to exactly `len` bytes.
+fn padded(len: usize) -> Vec<u8> {
+    let mut b = serde_json::to_vec(&doc()).unwrap();
+    assert!(b.len() <= len);
+    b.resize(len, b' ');
+    b
+}
+/// The names in `dir`, sorted.
+fn names(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    v.sort();
+    v
+}
+
+#[cfg(unix)]
+#[test] // FIX-17 (a): a linked state folder is refused before any create, chmod, lock or write
+fn linked_state_folder_is_refused_and_not_changed() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let target = t.path().join("target");
+    fs::create_dir(&target).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    let body = serde_json::to_vec(&doc()).unwrap();
+    fs::write(target.join("workspace.json"), &body).unwrap();
+    fs::create_dir_all(p.workspaces_dir()).unwrap();
+    std::os::unix::fs::symlink(&target, p.workspaces_dir().join(ID)).unwrap();
+    let store = Store::open(&p, ID);
+    let link_err = |e: &StateError| {
+        matches!(e, StateError::NotADirectory { path, link: true } if path == store.dir())
+            && e.to_string() == format!("{}: state folder is a link", store.dir().display())
+    };
+    let e = store.op_lock().unwrap_err();
+    assert!(link_err(&e), "op_lock: {e}");
+    let mut ran = false;
+    let e = store.update(S5, &mut |_| { ran = true; Ok(()) }).unwrap_err();
+    assert!(link_err(&e) && !ran, "update: {e}");
+    let e = store.read().unwrap_err();
+    assert!(link_err(&e), "read: {e}");
+    store.log_error("must not be written");
+    assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o755);
+    assert_eq!(names(&target), vec!["workspace.json".to_string()]);
+    assert_eq!(fs::read(target.join("workspace.json")).unwrap(), body);
+}
+
+#[test] // FIX-17 (a): a state folder that is a file is refused; the file is not changed
+fn state_folder_that_is_a_file_is_refused() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    fs::create_dir_all(p.workspaces_dir()).unwrap();
+    let file = p.workspaces_dir().join(ID);
+    fs::write(&file, "a file").unwrap();
+    let store = Store::open(&p, ID);
+    let file_err = |e: &StateError| {
+        matches!(e, StateError::NotADirectory { path, link: false } if path == store.dir())
+            && e.to_string() == format!("{}: state folder is not a folder", store.dir().display())
+    };
+    let e = store.op_lock().unwrap_err();
+    assert!(file_err(&e), "op_lock: {e}");
+    let e = store.update(S5, &mut identity).unwrap_err();
+    assert!(file_err(&e), "update: {e}");
+    let e = store.read().unwrap_err();
+    assert!(file_err(&e), "read: {e}");
+    store.log_error("must not be written");
+    assert_eq!(fs::read(&file).unwrap(), b"a file");
+    assert_eq!(names(&p.workspaces_dir()), vec![ID.to_string()]);
+}
+
+#[test] // FIX-17 (b), AU84: a `workspace.json` larger than 1 MiB is `state file too large` for read, list_all, update
+fn state_file_over_1_mib_is_too_large() {
+    for len in [MIB + 1, MIB + 2, 2 * MIB] {
+        let t = TempDir::new().unwrap();
+        let p = paths(t.path());
+        let store = Store::open(&p, ID);
+        fs::create_dir_all(store.dir()).unwrap();
+        let body = padded(len);
+        fs::write(store.dir().join("workspace.json"), &body).unwrap();
+        let too_large = |r: &Result<Workspace, StateError>| {
+            matches!(r, Err(StateError::Invalid { path, reason })
+                if reason == "state file too large" && path == &store.dir().join("workspace.json"))
+        };
+        let r = store.read().map(|w| w.unwrap());
+        assert!(too_large(&r), "{len}: read {r:?}");
+        let all = list_all(&p);
+        assert_eq!(all.len(), 1, "{len}");
+        assert!(too_large(&all[0].1), "{len}: list_all {:?}", all[0].1);
+        let r = store.update(S5, &mut identity);
+        assert!(too_large(&r), "{len}: update {r:?}");
+        assert!(raw(&store) == body, "{len}: update changed the file");
+    }
+}
+
+#[test] // FIX-17 (b): a `workspace.json` of exactly 1 MiB reads and updates
+fn state_file_of_1_mib_reads() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    fs::create_dir_all(store.dir()).unwrap();
+    fs::write(store.dir().join("workspace.json"), padded(MIB)).unwrap();
+    assert_eq!(store.read().unwrap().unwrap().name, "app");
+    let ws = store.update(S5, &mut |w| { w.loadout = "pair".into(); Ok(()) }).unwrap();
+    assert_eq!(ws.loadout, "pair");
+    assert_eq!(store.read().unwrap().unwrap().loadout, "pair");
+}

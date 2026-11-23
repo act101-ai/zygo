@@ -1,7 +1,7 @@
 //! `workspace.json` types, atomic write, locks, live check. Owner: node W2 (W§7.1-W§7.3).
 use std::collections::BTreeMap;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -316,6 +316,9 @@ pub enum StateError {
     Io(std::io::Error),
     /// The closure given to `update` returned an error; nothing was written.
     Refused(anyhow::Error),
+    /// The state folder `path` is a symbolic link (`link`) or an entry that is not a folder; nothing in it or
+    /// through it was opened, created, changed or written (FIX-17).
+    NotADirectory { path: PathBuf, link: bool },
 }
 
 impl std::fmt::Display for StateError {
@@ -327,6 +330,10 @@ impl std::fmt::Display for StateError {
             StateError::OpHeld => f.write_str("up or down is in progress"),
             StateError::Io(e) => write!(f, "{e}"),
             StateError::Refused(e) => write!(f, "{e:#}"),
+            StateError::NotADirectory { path, link: true } => write!(f, "{}: state folder is a link", path.display()),
+            StateError::NotADirectory { path, link: false } => {
+                write!(f, "{}: state folder is not a folder", path.display())
+            }
         }
     }
 }
@@ -361,6 +368,8 @@ fn validate(ws: &Workspace, id: &str) -> Result<(), String> {
 }
 
 const STATE_FILE: &str = "workspace.json";
+/// The largest `workspace.json` that reads; a larger one is `state file too large` (AU84).
+const STATE_FILE_MAX: u64 = 1024 * 1024;
 const LOCK_FILE: &str = "lock";
 const OP_LOCK_FILE: &str = "op.lock";
 const ERRORS_FILE: &str = "errors.log";
@@ -400,17 +409,25 @@ impl Store {
     }
 
     /// Reads `workspace.json` with no lock: a write replaces the file in one rename, so a reader gets a whole
-    /// file (W§7.3). `Ok(None)` when no state exists.
+    /// file (W§7.3). `Ok(None)` when no state exists. It reads at most 1 MiB + 1 byte; a larger file is invalid
+    /// (AU84). A state directory that is a link or not a folder is `NotADirectory`; the link is not followed.
     pub fn read(&self) -> Result<Option<Workspace>, StateError> {
         if !valid_ws_id(&self.id) {
             return Err(self.invalid_id());
         }
+        self.check_dir()?;
         let path = self.state_file();
-        let bytes = match fs::read(&path) {
-            Ok(b) => b,
+        let file = match File::open(&path) {
+            Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(StateError::Io(e)),
         };
+        // At most one byte past the cap: a larger file allocates no more (AU84).
+        let mut bytes = Vec::new();
+        file.take(STATE_FILE_MAX + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > STATE_FILE_MAX {
+            return Err(StateError::Invalid { path, reason: "state file too large".to_string() });
+        }
         let value: serde_json::Value = match serde_json::from_slice(&bytes) {
             Ok(v) => v,
             Err(e) => return Err(StateError::Invalid { path, reason: e.to_string() }),
@@ -434,12 +451,25 @@ impl Store {
         self.read().ok().flatten().map(|ws| ws.phase)
     }
 
+    /// The state directory as `symlink_metadata` sees it, so a link is never followed: a symbolic link or an entry
+    /// that is not a folder is `NotADirectory`; a folder, or no entry, is `Ok` (FIX-17).
+    fn check_dir(&self) -> Result<(), StateError> {
+        match fs::symlink_metadata(&self.dir) {
+            Ok(m) if m.file_type().is_symlink() => Err(StateError::NotADirectory { path: self.dir.clone(), link: true }),
+            Ok(m) if !m.is_dir() => Err(StateError::NotADirectory { path: self.dir.clone(), link: false }),
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(StateError::Io(e)),
+        }
+    }
+
     /// Makes the state directory (mode 0700 on unix) after the id check: no path is made from an id that is not
-    /// valid.
+    /// valid. A state directory that is a link or not a folder is refused before any create or mode change.
     fn ensure_dir(&self) -> Result<(), StateError> {
         if !valid_ws_id(&self.id) {
             return Err(self.invalid_id());
         }
+        self.check_dir()?;
         SessionDir::new(self.dir.clone()).create().map_err(|e| StateError::Io(std::io::Error::other(e)))
     }
 

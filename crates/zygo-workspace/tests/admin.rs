@@ -1368,10 +1368,14 @@ fn a_state_file_over_1_mib_is_invalid() {
     fs::write(&file, serde_json::to_vec(&v).unwrap()).unwrap();
     let bytes = fs::read(&file).unwrap();
     let too_large = repair_line(ID, "state file too large");
-    assert_eq!(forget_run(&p, &tmux, None, ID), (1, String::new(), too_large.clone())); // by id
-    assert_eq!(forget_run(&p, &tmux, None, "big"), (1, String::new(), too_large)); // by name
+    assert_eq!(forget_run(&p, &tmux, None, ID), (1, String::new(), too_large)); // by id
+    // FIX-17: the store reads at most 1 MiB + 1 byte (AU84), so the name in a larger file is never read and the state
+    // is found by its id only, like any other state that cannot be read (D14).
+    let no_name = (1, String::new(), "zygo: no workspace named big\n".to_string());
+    assert_eq!(forget_run(&p, &tmux, None, "big"), no_name); // by name
+    assert_eq!(pane_run(&p, &tmux, Some("big"), &plain, "kaaaaaaaa"), no_name);
     assert_eq!(
-        pane_run(&p, &tmux, Some("big"), &plain, "kaaaaaaaa"),
+        pane_run(&p, &tmux, Some(ID), &plain, "kaaaaaaaa"),
         (1, String::new(), format!("zygo: {}: state file too large\n", file.display()))
     );
     assert_eq!(fs::read(&file).unwrap(), bytes);
