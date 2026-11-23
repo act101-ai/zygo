@@ -147,7 +147,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
 
 ### Steps
 
-- [ ] **1. Test: tmux command forms and the live hold (`crates/zygo-workspace/tests/mux.rs`).**
+- [x] **1. Test: tmux command forms and the live hold (`crates/zygo-workspace/tests/mux.rs`).**
   - In `new_session_sets_the_owner_in_the_same_call` (`tests/mux.rs:1157-1173`), the expected line `want` ends with `… ; set-option -t =zygo-t: -- destroy-unattached off ; set-option -w -t =zygo-t: -- remain-on-exit on`. Change only that string.
   - In `every_call_passes_the_socket_the_c_locale_and_u`, the `NewWindow` literal gets `hold: false`. Its expected line `new-window -d -P -F #{window_index} -t =zygo-t: -c /w/d##x -- sleep 600` does not change.
   - New `#[cfg(unix)] #[test] fn new_window_with_hold_targets_the_end_in_the_same_call()`:
@@ -168,7 +168,7 @@ In tmux the dead pane shows `Pane is dead (status <n>, <time>)`. When every pane
     - `assert!(until(|| srv.run(&["list-windows", "-t", "=zygo-t:", "-F", "#{window_index}"]).unwrap() == "0\n1"));`. This is the control: without a hold the window closes.
   - Check: `cargo test -p zygo-workspace --locked --test mux` fails to compile: `NewWindow` has no field `hold`.
 
-- [ ] **2. Code: `NewWindow.hold`, the new_session hold item, the hold form of new_window.**
+- [x] **2. Code: `NewWindow.hold`, the new_session hold item, the hold form of new_window.**
   - `crates/zygo-workspace/src/mux/mod.rs`, `pub struct NewWindow<'a>` (`:232-238`): add the last field
     ```rust
     /// FIX-29 (W§8.1 step 11): with `true`, the window is made after the highest index (`-a -t =<s>:{end}`) and the

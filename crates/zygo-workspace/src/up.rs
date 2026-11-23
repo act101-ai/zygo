@@ -518,7 +518,7 @@ impl Builder<'_> {
         let first = w.panes.first().ok_or_else(|| MuxError::Failed { message: "window with no pane".into() })?;
         self.mux.set_session_option(self.session, "default-size", &format!("{}x{}", w.width, w.height))?;
         let argv = self.argv(&first.key, first.shell);
-        let spec = NewWindow { session: self.session, name: w.name.as_deref(), start_dir: self.main_root, argv: &argv };
+        let spec = NewWindow { session: self.session, name: w.name.as_deref(), start_dir: self.main_root, argv: &argv, hold: false };
         let index = self.mux.new_window(&spec)?;
         let id = self.key_first(index, &first.key)?;
         self.window_setup(index)?;

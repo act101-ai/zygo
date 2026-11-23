@@ -222,7 +222,8 @@ pub struct NewSession<'a> {
     /// so no session of a workspace exists without its owner, and a global `destroy-unattached on` does not end it.
     /// With `Some`, `new-session -e ZYGO_WORKSPACE=<id>` also gives the first pane the id, in session scope only
     /// (W§8.1 step 9). An id that fails `identity::valid_ws_id` or a key that fails `identity::valid_pane_key` gives
-    /// `Failed` before any spawn.
+    /// `Failed` before any spawn. With `Some`, the same invocation also sets `remain-on-exit on` on the first window
+    /// (FIX-29).
     pub owner: Option<(&'a str, &'a str)>,
 }
 
@@ -235,6 +236,10 @@ pub struct NewWindow<'a> {
     pub start_dir: &'a Path,
     /// The new pane's command, 2 or more items.
     pub argv: &'a [OsString],
+    /// FIX-29 (W§8.1 step 11): with `true`, the window is made after the highest index (`-a -t =<s>:{end}`) and the
+    /// same invocation goes on with `; set-option -w -t =<s>:{end} -- remain-on-exit on`, so a first pane that exits
+    /// at once stays as a dead pane and the window stays (the build hold). `false`: the plain form.
+    pub hold: bool,
 }
 
 /// The arguments of `split_window`. `target` is a pane id `%N` or a window target; `start_dir` is raw (W3 D6).
@@ -315,7 +320,8 @@ pub trait Multiplexer {
     /// returns the first window index. With `spec.owner`, the same invocation goes on with
     /// `; set-option -t =<s>: -- @zygo-ws <id> ; set-option -p -t =<s>: -- @zygo-pane <key>` (W7 D27) and
     /// `; set-option -t =<s>: -- destroy-unattached off` (AU68, W7 I2: a global `on` would destroy the detached
-    /// session when the command list ends).
+    /// session when the command list ends); then `; set-option -w -t =<s>: -- remain-on-exit on` (FIX-29, the build
+    /// hold of the first window).
     fn new_session(&self, spec: &NewSession<'_>) -> Result<u32, MuxError>;
     /// `resize-window -t =<s>:<w> -x <width> -y <height>`. A missing window: `NoTarget`, or `Gone` with the session.
     fn resize_window(&self, session: &str, window: u32, width: u32, height: u32) -> Result<(), MuxError>;
@@ -339,7 +345,8 @@ pub trait Multiplexer {
     /// `new-window -d -P -F #{window_index} -t =<s>: -c <dir> -- <argv>`, then, with a name,
     /// `rename-window -t =<s>:<index> -- <name>`; returns the new window index. tmux stores a renamed window's name
     /// vis-encoded on 3.2a and 3.7c, so [`parse_pane_line`] reads it back exactly. A failed rename returns its error
-    /// and leaves the window with tmux's own name.
+    /// and leaves the window with tmux's own name. With `spec.hold`: `new-window -d -P -F #{window_index} -a -t
+    /// =<s>:{end} -c <dir> -- <argv> ; set-option -w -t =<s>:{end} -- remain-on-exit on`, then the rename.
     fn new_window(&self, spec: &NewWindow<'_>) -> Result<u32, MuxError>;
     /// `rename-window -t =<s>:<w> -- <name>`, with each `#` of the name doubled (AU55, W7 D6). A name with a control
     /// character or a refused session name gives `Failed` before any spawn; a missing window gives `NoTarget`, or

@@ -261,7 +261,7 @@ fn every_call_passes_the_socket_the_c_locale_and_u() {
     let _ = t.show_session_option("zygo-t", "@zygo-ws");
     let _ = t.set_hook("zygo-t", HookScope::Session, "after-new-window", "run-shell -b \"true\"");
     let _ = t.set_hook("zygo-t", HookScope::Window(3), "window-unlinked", "run-shell -b \"true\"");
-    let _ = t.new_window(&NewWindow { session: "zygo-t", name: Some("a#b"), start_dir: d, argv: &argv });
+    let _ = t.new_window(&NewWindow { session: "zygo-t", name: Some("a#b"), start_dir: d, argv: &argv, hold: false });
     let _ = t.split_window(&Split { target: "%1", start_dir: Some(d), argv: &argv });
     let _ = t.select_layout("zygo-t", 1, "tiled");
     let _ = t.select_window("zygo-t", 1);
@@ -491,7 +491,7 @@ fn short_argument_lists_are_refused_before_any_spawn() {
     let d = Path::new("/w");
     for argv in [os(&["zygo"]), Vec::new()] {
         assert_eq!(t.new_session(&NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner: None }), refused);
-        assert_eq!(t.new_window(&NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv }), refused);
+        assert_eq!(t.new_window(&NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv, hold: false }), refused);
         assert_eq!(
             t.split_window(&Split { target: "%1", start_dir: None, argv: &argv }),
             Err(MuxError::Failed { message: "tmux needs an argument list of 2 or more items".into() })
@@ -510,7 +510,7 @@ fn control_characters_in_window_names_are_refused_before_any_spawn() {
     let argv = os(&["sleep", "600"]);
     for name in ["a\nb", "a\tb", "\u{1b}[31m", "del\u{7f}", "nul\u{0}"] {
         assert_eq!(
-            t.new_window(&NewWindow { session: "zygo-t", name: Some(name), start_dir: Path::new("/w"), argv: &argv }),
+            t.new_window(&NewWindow { session: "zygo-t", name: Some(name), start_dir: Path::new("/w"), argv: &argv, hold: false }),
             Err(MuxError::Failed { message: "window name holds a control character".into() }),
             "{name:?}"
         );
@@ -530,7 +530,7 @@ fn created_indexes_and_ids_are_read() {
     let argv = os(&["sleep", "600"]);
     let d = Path::new("/w");
     let ns = NewSession { name: "zygo-t", start_dir: d, width: 80, height: 24, env: &[], argv: &argv, owner: None };
-    let nw =NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv };
+    let nw =NewWindow { session: "zygo-t", name: None, start_dir: d, argv: &argv, hold: false };
     let sp = Split { target: "%1", start_dir: None, argv: &argv };
 
     let t = at("four", "printf '4\\n'");
@@ -758,7 +758,7 @@ fn hash_in_names_and_start_dirs_stays_literal() {
     fs::create_dir(&d).unwrap();
     let d = fs::canonicalize(&d).unwrap();
     let w0 = session(&t, &d, 120, 40);
-    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w#(touch pwned)"), start_dir: &d, argv: &argv() }).unwrap();
+    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w#(touch pwned)"), start_dir: &d, argv: &argv(), hold: false }).unwrap();
     let p = t.split_window(&Split { target: &window_target("zygo-t", w1), start_dir: Some(&d), argv: &argv() }).unwrap();
     assert_eq!(t.display(&window_target("zygo-t", w1), "#{window_name}").unwrap(), "w#(touch pwned)");
     for target in [window_target("zygo-t", w0), window_target("zygo-t", w1), p.clone()] {
@@ -784,17 +784,17 @@ fn window_names_and_paths_round_trip() {
     session(&t, &d, 120, 40);
     // Round 2 B1: names that hold vis escapes (a literal backslash) round-trip on 3.2a and 3.7c.
     for name in [r"x\y", r"a\tb", r"x\\y\101", "a|b c#d", "w#(touch pwned)", "-dash", "u€v"] {
-        let w = t.new_window(&NewWindow { session: "zygo-t", name: Some(name), start_dir: &d, argv: &argv() }).unwrap();
+        let w = t.new_window(&NewWindow { session: "zygo-t", name: Some(name), start_dir: &d, argv: &argv(), hold: false }).unwrap();
         let read = names(&t).into_iter().find(|(i, _)| *i == w).unwrap().1;
         assert_eq!(read, name);
-        let w2 = t.new_window(&NewWindow { session: "zygo-t", name: Some(&read), start_dir: &d, argv: &argv() }).unwrap();
+        let w2 = t.new_window(&NewWindow { session: "zygo-t", name: Some(&read), start_dir: &d, argv: &argv(), hold: false }).unwrap();
         assert_eq!(names(&t).into_iter().find(|(i, _)| *i == w2).unwrap().1, read);
         assert_eq!(t.display(&window_target("zygo-t", w2), "#{automatic-rename}").unwrap(), "0");
     }
     let before = names(&t).len();
     for name in ["c\u{1}d", "a\nb", "a\tb", "a\rb", "del\u{7f}"] {
         assert_eq!(
-            t.new_window(&NewWindow { session: "zygo-t", name: Some(name), start_dir: &d, argv: &argv() }),
+            t.new_window(&NewWindow { session: "zygo-t", name: Some(name), start_dir: &d, argv: &argv(), hold: false }),
             Err(MuxError::Failed { message: "window name holds a control character".into() }),
             "{name:?}"
         );
@@ -867,7 +867,7 @@ fn global_options_and_hooks_stay_unchanged() {
         t.set_hook("zygo-t", HookScope::Session, e, &cmd(e)).unwrap();
     }
     t.set_hook("zygo-t", HookScope::Window(w), "window-unlinked", &cmd("window-unlinked")).unwrap();
-    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w1"), start_dir: dir.path(), argv: &argv() }).unwrap();
+    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w1"), start_dir: dir.path(), argv: &argv(), hold: false }).unwrap();
     let p = t.split_window(&Split { target: &wt, start_dir: Some(dir.path()), argv: &argv() }).unwrap();
     t.select_layout("zygo-t", w, "tiled").unwrap();
     t.set_pane_option(&p, "@zygo-pane", "kabcdefgh").unwrap();
@@ -889,7 +889,7 @@ fn options_environment_and_panes() {
     let t = srv.tmux();
     let w0 = session(&t, dir.path(), 120, 40);
     let p = t.split_window(&Split { target: &window_target("zygo-t", w0), start_dir: Some(dir.path()), argv: &argv() }).unwrap();
-    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w1"), start_dir: dir.path(), argv: &argv() }).unwrap();
+    let w1 = t.new_window(&NewWindow { session: "zygo-t", name: Some("w1"), start_dir: dir.path(), argv: &argv(), hold: false }).unwrap();
     assert_eq!(t.show_session_option("zygo-t", "@zygo-ws").unwrap(), None); // B1: unset is not an error
     t.set_session_option("zygo-t", "@zygo-ws", "0123456789abcdef").unwrap();
     assert_eq!(t.show_session_option("zygo-t", "@zygo-ws").unwrap(), Some("0123456789abcdef".into()));
@@ -975,7 +975,7 @@ fn operations_on_a_gone_session_give_gone() {
         t.set_session_option("zygo-t", "@x", "1"),
         t.set_hook("zygo-t", HookScope::Session, "after-new-window", "run-shell -b true"),
         t.set_hook("zygo-t", HookScope::Window(0), "window-unlinked", "run-shell -b true"),
-        t.new_window(&NewWindow { session: "zygo-t", name: Some("w"), start_dir: dir.path(), argv: &argv }).map(|_| ()),
+        t.new_window(&NewWindow { session: "zygo-t", name: Some("w"), start_dir: dir.path(), argv: &argv, hold: false }).map(|_| ()),
         t.split_window(&Split { target: "=zygo-t:0", start_dir: None, argv: &argv }).map(|_| ()),
         t.select_layout("zygo-t", 0, "tiled"),
         t.select_window("zygo-t", 0),
@@ -1062,7 +1062,7 @@ fn au54_hook_runs_with_a_space_and_a_hash_in_the_zygo_path() {
     session(&t, dir.path(), 100, 30);
     let cmd = hook_command(&zdir.join("zygo"), "0123456789abcdef", "after-new-window").unwrap();
     t.set_hook("zygo-t", HookScope::Session, "after-new-window", &cmd).unwrap();
-    t.new_window(&NewWindow { session: "zygo-t", name: None, start_dir: dir.path(), argv: &argv() }).unwrap();
+    t.new_window(&NewWindow { session: "zygo-t", name: None, start_dir: dir.path(), argv: &argv(), hold: false }).unwrap();
     let t0 = Instant::now();
     while !log.exists() && t0.elapsed() < Duration::from_secs(5) {
         std::thread::sleep(Duration::from_millis(20));
@@ -1164,7 +1164,7 @@ fn new_session_sets_the_owner_in_the_same_call() {
     let _ = t.new_session(&ns(Some(("0123456789abcdef", "kaaaaaaaa"))));
     let want = "LC_ALL=unset -u new-session -d -P -F #{window_index} -s zygo-t -c /w -e ZYGO_WORKSPACE=0123456789abcdef -x 80 -y 24 -- sleep 600 ; \
                 set-option -t =zygo-t: -- @zygo-ws 0123456789abcdef ; set-option -p -t =zygo-t: -- @zygo-pane kaaaaaaaa ; \
-                set-option -t =zygo-t: -- destroy-unattached off";
+                set-option -t =zygo-t: -- destroy-unattached off ; set-option -w -t =zygo-t: -- remain-on-exit on";
     assert_eq!(log_lines(dir.path()), [want]);
     assert!(matches!(t.new_session(&ns(Some(("x", "kaaaaaaaa")))), Err(MuxError::Failed { .. })));
     assert!(matches!(t.new_session(&ns(Some(("0123456789abcdef", "k$")))), Err(MuxError::Failed { .. })));
@@ -1197,4 +1197,78 @@ fn new_session_sets_the_owner_live() {
     assert_eq!(t.display("=zygo-t:", "#{@zygo-pane}"), Ok("kaaaaaaaa".into()));
     assert_eq!(t.show_session_option("zygo-t", "destroy-unattached"), Ok(Some("off".into())));
     assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Exists);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_window_with_hold_targets_the_end_in_the_same_call() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), None);
+    let argv = os(&["sleep", "600"]);
+    let _ = t.new_window(&NewWindow { session: "zygo-t", name: None, start_dir: Path::new("/w"), argv: &argv, hold: true });
+    assert_eq!(
+        log_lines(dir.path()),
+        ["LC_ALL=C -u new-window -d -P -F #{window_index} -a -t =zygo-t:{end} -c /w -- sleep 600 ; set-option -w -t =zygo-t:{end} -- remain-on-exit on"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn held_panes_stay_dead_and_an_unheld_window_closes() {
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    fn until(f: impl Fn() -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        f()
+    }
+    srv.run(&["new-session", "-d", "-s", "base", "sleep", "600"]).unwrap();
+    assert_eq!(
+        t.new_session(&NewSession {
+            name: "zygo-t",
+            start_dir: dir.path(),
+            width: 80,
+            height: 24,
+            env: &env(),
+            argv: &os(&["sh", "-c", "exit 3"]),
+            owner: Some(("0123456789abcdef", "kaaaaaaaa")),
+        }),
+        Ok(0)
+    );
+    assert!(until(|| t.display("=zygo-t:0", "#{pane_dead}|#{pane_dead_status}") == Ok("1|3".into())));
+    assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Exists);
+    assert_eq!(srv.run(&["show-options", "-wv", "-t", "=zygo-t:0", "remain-on-exit"]).unwrap(), "on");
+    assert_eq!(srv.run(&["show-options", "-gwv", "remain-on-exit"]).unwrap(), "off");
+    assert_eq!(
+        t.new_window(&NewWindow {
+            session: "zygo-t",
+            name: Some("w"),
+            start_dir: dir.path(),
+            argv: &os(&["sh", "-c", "exit 4"]),
+            hold: true,
+        }),
+        Ok(1)
+    );
+    assert!(until(|| t.display("=zygo-t:1", "#{pane_dead}|#{pane_dead_status}|#{window_name}") == Ok("1|4|w".into())));
+    assert_eq!(
+        t.new_window(&NewWindow {
+            session: "zygo-t",
+            name: None,
+            start_dir: dir.path(),
+            argv: &os(&["sh", "-c", "exit 5"]),
+            hold: false,
+        }),
+        Ok(2)
+    );
+    // The control: without a hold the window closes.
+    assert!(until(|| srv.run(&["list-windows", "-t", "=zygo-t:", "-F", "#{window_index}"]).unwrap() == "0\n1"));
 }

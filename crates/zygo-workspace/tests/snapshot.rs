@@ -930,7 +930,7 @@ fn live_keys_layout_and_flags() {
     let Some(_) = require_tmux() else { return };
     let l = live(2, None);
     let argv = os(&["sleep", "600"]);
-    l.tmux.new_window(&NewWindow { session: "zygo-app", name: Some("logs"), start_dir: l._dir.path(), argv: &argv }).unwrap();
+    l.tmux.new_window(&NewWindow { session: "zygo-app", name: Some("logs"), start_dir: l._dir.path(), argv: &argv, hold: false }).unwrap();
     l.srv.run(&["resize-pane", "-Z", "-t", &l.panes[1]]).unwrap();
     assert_eq!(run(&l.paths, &l.tmux, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
     let ws = l.store.read().unwrap().unwrap();
