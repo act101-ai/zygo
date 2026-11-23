@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** FIX-21, H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-22
+**Next:** H1, M1, M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-19, FIX-22, FIX-23
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | DONE | judgment | 8978541; acceptance snapshot 33, state 22, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M7, D1-D6 |
 | W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | DONE | judgment | 3d51ad4; acceptance up 45, mux 46, snapshot 33, state 23, args 13, workspace --no-run ok (merged tree); review rounds 2-3 fixed B1, M1-M5, R3-1..R3-8 |
 | W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | DONE | judgment | 0921fb6; acceptance admin 21, up 45, up_all 7, workspace --no-run ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | DONE | judgment | e167624; activity 33 + 1 ignored, drain 27, workspace 111; review round 2 fixed B1 (newer-version files) and 5 minor |
@@ -73,7 +72,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | TODO | implementation | — |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9 | TODO | implementation | — |
-| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10 | TODO | implementation | — |
+| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23 | TODO | implementation | — |
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
@@ -92,8 +91,9 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1 | TODO | mechanical | — |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
-| FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | IN-PROGRESS | judgment | .worktrees/phase2/FIX-21 |
+| FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | TODO | implementation | — |
+| FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks | FIX-21, H1 | TODO | implementation | — |
 
 ## Log
 
@@ -229,3 +229,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-22 | H1 C1-C13 applied: W2 Produces (state::Pending), M1 Spec (dev-dependency, snapshot_child); spec AU3, AU56, AU60, AU84, AU104, W§7.2, W§7.4, W§8.2 step 3, W§9.1, W§9.4. FIX-22 added (C9): session-folder readers do not wait on a FIFO; no cap. |
 | 2026-11-22 | H1 evidence: OpenCode 1.19.6 binds --session=<value> (an id starting with - reaches its id check), -s -x is a usage error; H1 step 3 resumes with --session=<id>. The probe made one real request to OpenCode's default provider from a scratch home. |
 | 2026-11-22 | H1 stays PLANNED with no worktree: it depends on FIX-21, which is in progress. |
+| 2026-11-22 | FIX-21 DONE (311c429): merged. zygo forces no Claude attribution (settings keys, session text, always-on guard); operator decision 2026-11-22. M2 brief and a config_layers comment follow AU59; FIX-23 added (merge line, disableAllHooks; after H1, before D1). |

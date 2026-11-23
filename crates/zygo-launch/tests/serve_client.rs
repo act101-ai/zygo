@@ -999,7 +999,7 @@ fn an_unreachable_server_has_spawned_false() { // AU60
     serve_config(&fx, &Url::parse(&closed_url()).unwrap(), true);
     let t = new_token().0;
     let o = Launcher::run(&stub(), opts(&fx, "dump", None, &[("ZYGO_TEAM_TOKEN", &t)]));
-    assert_eq!(o, zygo_launch::launcher::LaunchOutcome { code: 12, signal: None, spawned: false, received: false, member_dropped: false });
+    assert_eq!(o, zygo_launch::launcher::LaunchOutcome { code: 12, signal: None, spawned: false, received: false });
 }
 
 #[test]

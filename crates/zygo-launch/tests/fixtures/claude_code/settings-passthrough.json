@@ -1,5 +1,11 @@
 {
  "disableAllHooks": false,
+ "attribution": {
+  "commit": "",
+  "pr": "",
+  "sessionUrl": false
+ },
+ "includeCoAuthoredBy": false,
  "statusLine": {
   "type": "command",
   "command": "<ZYGO> hook statusline",

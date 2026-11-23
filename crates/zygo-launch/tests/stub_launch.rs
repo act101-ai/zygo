@@ -129,14 +129,58 @@ fn member_launch_saves_the_member_and_the_note_and_sets_both_names() { // AU58, 
     assert!(!r.cap.session.get("session.log").is_some_and(|l| l.contains("ZYGO_WORKSPACE") || l.contains("ZYGO_PANE")));
 }
 
+/// §8.5 Flags: the line for a user `--settings` value that zygo merges.
+const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
+
+/// §8.5 Flags: the line for a user `--settings` value that zygo cannot read as a JSON object (FIX-21 round 3).
+fn unreadable(value: &str) -> String {
+    format!("zygo: your --settings value {} could not be read as a JSON object and was not used", json!(value))
+}
+
+/// The commands of the hooks of `event` in the settings file the stub read.
+fn hook_commands(settings: &Value, event: &str) -> Vec<String> {
+    settings["hooks"][event]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|e| e["hooks"].as_array().into_iter().flatten().filter_map(|h| h["command"].as_str().map(str::to_string)))
+        .collect()
+}
+
+/// The checks that hold for every launch with a user `--settings` (FIX-21 rounds 2 and 3): the agent gets exactly one
+/// `--settings`, zygo's file, with the attribution keys and the guard hook.
+fn assert_only_zygos_settings(r: &Run, rig: &Rig) {
+    let given: Vec<&String> = r.cap.argv.iter().filter(|a| a.starts_with("--settings")).collect();
+    assert_eq!(given, ["--settings"], "{:?}", r.cap.argv);
+    assert_eq!(r.cap.settings["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}), "{}", r.stderr);
+    assert_eq!(r.cap.settings["includeCoAuthoredBy"], false);
+    let guard = format!("{} hook guard", spec_quote(&rig.zygo));
+    assert!(hook_commands(&r.cap.settings, "PreToolUse").contains(&guard), "{}", r.cap.settings);
+}
+
+#[test] // FIX-21 round 3, §8.5 Flags: kills: an unreadable value passed on to the agent, the attribution keys or the guard
+        // hook lost, the line missing from stderr
+fn unreadable_user_settings_launch_with_only_zygos_file() {
+    let rig = rig();
+    let bad = rig.cwd.join("bad.json");
+    std::fs::write(&bad, "not json").unwrap();
+    let missing = rig.cwd.join("missing.json").display().to_string();
+    let bad = bad.display().to_string();
+    for value in [missing.as_str(), bad.as_str(), "[1]"] {
+        let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| o.args = vec!["--settings".into(), value.into()]);
+        assert_eq!(r.code, 0, "{value}: {}", r.stderr);
+        assert!(r.stderr.lines().any(|l| l == unreadable(value)), "{value}: {}", r.stderr);
+        assert!(!r.stderr.contains(MERGE_WARN), "{value}: {}", r.stderr);
+        assert_only_zygos_settings(&r, &rig);
+    }
+}
+
 #[test]
-fn member_with_user_settings_launches_as_a_plain_launch() { // AU58, AU59
+fn member_with_readable_user_settings_stays_a_member_and_merges() { // AU58, AU59 (FIX-21 round 3)
     use zygo_core::session_view::Member;
-    const WARN: &str = "zygo: your --settings replaces zygo's settings file; the lead guard is off";
-    const AU59: &str = "zygo: --settings replaces zygo's hooks; this agent is not saved by the workspace";
     let rig = rig();
     let user = rig.cwd.join("user-settings.json");
-    std::fs::write(&user, "{}").unwrap();
+    std::fs::write(&user, r#"{"outputStyle": "x"}"#).unwrap();
     for args in [vec!["--settings".to_string(), user.display().to_string()], vec![format!("--settings={}", user.display())]] {
         let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
             o.env.0.extend([("ZYGO_WORKSPACE".into(), "old-ws".into()), ("ZYGO_PANE".into(), "old-pane".into())]);
@@ -144,15 +188,33 @@ fn member_with_user_settings_launches_as_a_plain_launch() { // AU58, AU59
             o.args = args.clone();
         });
         assert_eq!(r.code, 0, "{}", r.stderr);
-        let lines: Vec<&str> = r.stderr.lines().collect();
-        let at = lines.iter().position(|l| *l == WARN).unwrap_or_else(|| panic!("{}", r.stderr));
-        assert_eq!(lines.get(at + 1), Some(&AU59), "{}", r.stderr);
-        assert_eq!(zygo_launch::claude_code::MEMBER_SETTINGS_WARN, AU59);
-        assert!(!r.cap.env.contains_key("ZYGO_WORKSPACE") && !r.cap.env.contains_key("ZYGO_PANE"), "{:?}", r.cap.env.keys());
+        assert!(r.stderr.lines().any(|l| l == MERGE_WARN), "{}", r.stderr);
+        assert!(!r.stderr.contains("not saved by the workspace"), "{}", r.stderr);
+        assert_eq!((r.cap.env["ZYGO_WORKSPACE"].as_str(), r.cap.env["ZYGO_PANE"].as_str()), ("ws-1", "p-1"));
         let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
-        assert!(view["workspace"].is_null(), "{view}");
-        assert!(r.cap.session.values().all(|t| !t.contains("hook workspace")));
+        assert_eq!(view["workspace"]["member"]["pane"], "p-1", "{view}");
+        assert!(hook_commands(&r.cap.settings, "Stop").iter().any(|c| c.ends_with("hook workspace --event stop")), "{}", r.cap.settings);
+        assert_eq!(r.cap.settings["outputStyle"], "x");
+        assert_only_zygos_settings(&r, &rig);
     }
+}
+
+#[test]
+fn member_with_unreadable_user_settings_stays_a_member() { // AU58, AU59 (FIX-21 round 3)
+    use zygo_core::session_view::Member;
+    let rig = rig();
+    let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
+        o.member = Some(Member { ws_id: "ws-1".into(), pane: "p-1".into() });
+        o.args = vec!["--settings".into(), "missing.json".into()];
+    });
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(r.stderr.lines().any(|l| l == unreadable("missing.json")), "{}", r.stderr);
+    assert!(!r.stderr.contains("not saved by the workspace"), "{}", r.stderr);
+    assert_eq!((r.cap.env["ZYGO_WORKSPACE"].as_str(), r.cap.env["ZYGO_PANE"].as_str()), ("ws-1", "p-1"));
+    let view: Value = serde_json::from_str(&r.cap.session["view.json"]).unwrap();
+    assert_eq!(view["workspace"]["member"]["pane"], "p-1", "{view}");
+    assert!(hook_commands(&r.cap.settings, "Stop").iter().any(|c| c.ends_with("hook workspace --event stop")), "{}", r.cap.settings);
+    assert_only_zygos_settings(&r, &rig);
 }
 
 #[test]
@@ -171,19 +233,19 @@ fn member_with_settings_after_double_dash_stays_a_member() { // AU58, review min
 }
 
 #[test]
-fn session_callback_of_a_member_with_settings_gets_no_member() { // AU34, AU59, L2 round 2 item 1
+fn session_callback_gets_the_member_with_or_without_settings() { // AU34, AU59 (FIX-21 round 3)
     use std::sync::{Arc, Mutex};
     use zygo_core::session_view::Member;
     let member = Member { ws_id: "ws-1".into(), pane: "p-1".into() };
-    /// The member given, the arguments, the member the callback gets, `member_dropped`.
-    type Case = (Option<Member>, Vec<String>, Option<Member>, bool);
+    /// The member given, the arguments, the member the callback gets.
+    type Case = (Option<Member>, Vec<String>, Option<Member>);
     let cases: [Case; 4] = [
-        (Some(member.clone()), vec!["--settings".into(), "x.json".into()], None, true),
-        (Some(member.clone()), vec!["--".into(), "--settings".into(), "x.json".into()], Some(member.clone()), false),
-        (Some(member.clone()), vec![], Some(member.clone()), false),
-        (None, vec!["--settings".into(), "x.json".into()], None, false),
+        (Some(member.clone()), vec!["--settings".into(), "x.json".into()], Some(member.clone())),
+        (Some(member.clone()), vec!["--".into(), "--settings".into(), "x.json".into()], Some(member.clone())),
+        (Some(member.clone()), vec![], Some(member.clone())),
+        (None, vec!["--settings".into(), "x.json".into()], None),
     ];
-    for (given, args, want, dropped) in cases {
+    for (given, args, want) in cases {
         let rig = rig();
         let seen: Arc<Mutex<Option<Option<Member>>>> = Arc::default();
         let s2 = seen.clone();
@@ -197,7 +259,6 @@ fn session_callback_of_a_member_with_settings_gets_no_member() { // AU34, AU59, 
         });
         assert_eq!(r.code, 0, "{args:?}: {}", r.stderr);
         assert_eq!(seen.lock().unwrap().take(), Some(want), "{args:?}");
-        assert_eq!(r.outcome.member_dropped, dropped, "{args:?}");
     }
 }
 
@@ -294,7 +355,7 @@ fn a_session_callback_error_is_logged_and_the_launch_goes_on() { // AU34, C6
         o.env.0.push(("ZYGO_STUB_EXIT".into(), "7".into()));
         o.on_session = Some(Box::new(|_, _, _, _| Err(anyhow::anyhow!("no results link\nline two"))));
     });
-    assert_eq!(r.outcome, LaunchOutcome { code: 7, signal: None, spawned: true, received: false, member_dropped: false }, "{}", r.stderr);
+    assert_eq!(r.outcome, LaunchOutcome { code: 7, signal: None, spawned: true, received: false }, "{}", r.stderr);
     let log = &r.cap.session["session.log"];
     assert!(log.lines().any(|l| l == "session callback: no results link\\nline two"), "{log}");
     assert!(!r.stderr.contains("session callback"), "{}", r.stderr);
@@ -312,7 +373,7 @@ fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
     let ctl = rig.root.join("ctl-exit");
     stub_control(&ctl, "exit 137").unwrap();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, control(&ctl));
-    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: None, spawned: true, received: false, member_dropped: false }, "{}", r.stderr);
+    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: None, spawned: true, received: false }, "{}", r.stderr);
     // SIGKILL to the agent: the same code, and the signal.
     let ctl = rig.root.join("ctl-kill");
     let r = std::thread::scope(|s| {
@@ -325,7 +386,7 @@ fn death_by_signal_sets_signal_and_an_exit_code_does_not() { // AU73
         assert!(pid.is_some(), "the stub did not start: {}", r.stderr);
         r
     });
-    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: Some(libc::SIGKILL), spawned: true, received: false, member_dropped: false }, "{}", r.stderr);
+    assert_eq!(r.outcome, LaunchOutcome { code: 137, signal: Some(libc::SIGKILL), spawned: true, received: false }, "{}", r.stderr);
 }
 
 #[test]
@@ -351,6 +412,8 @@ fn claude_code_flags_settings_agents_and_mcp_match_the_spec() {
     let roles = zygo_config::builtin::defaults().role; // BTreeMap, sorted by name
     let s = &r.cap.settings;
     assert_eq!(s["disableAllHooks"], false);
+    assert_eq!(s["attribution"], json!({"commit": "", "pr": "", "sessionUrl": false}));
+    assert_eq!(s["includeCoAuthoredBy"], false);
     assert_eq!(s["apiKeyHelper"], format!("{q} hook token"));
     assert_eq!(s["model"], "lead");
     assert_eq!(s["availableModels"], json!(roles.keys().collect::<Vec<_>>()));

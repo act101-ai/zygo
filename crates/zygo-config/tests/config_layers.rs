@@ -1689,7 +1689,7 @@ fn check_loadout_missing_profile_is_a_warning() {
 }
 
 #[test]
-fn w18_63_config_check_reports_kind_and_passthrough() { // W§18 #63; the `--settings` warning of pane[2] is M1's (AU103)
+fn w18_63_config_check_reports_kind_and_passthrough() { // W§18 #63; pane[2]'s `--settings` is not reported (W§11, AU59)
     let panes = "kind = \"vim\"\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\npassthrough = true\n[[loadout.pair.window.pane]]\nkind = \"claude-code\"\nargs = [\"--settings\", \"x\"]\n";
     let found: Vec<String> = check(&loaded(&(base() + LO + panes)).config).iter().map(|v| format!("{:?} {v}", v.severity)).collect();
     assert_eq!(found, [

@@ -32,7 +32,6 @@ use zygo_work::repo::{checkout, repository_id};
 use zygo_work::WorkItem;
 
 use crate::adapter::{AgentAdapter, LaunchCtx, Plugins};
-use crate::claude_code;
 use crate::env::{child_env, Env};
 use crate::serve_client::{self, end_rows, write_team, Bounds, Heartbeat, Refused, ServeClient, HEARTBEAT_EVERY};
 use crate::{session_dir, signals};
@@ -54,9 +53,6 @@ pub struct LaunchOutcome {
     pub spawned: bool,
     /// The launcher received SIGTERM or SIGHUP between the start of its signal handling and the end of its cleanup.
     pub received: bool,
-    /// `LaunchOpts.member` was set and the launcher used no member, because the Claude Code arguments hold
-    /// `--settings` before any `--` (AU58, AU59). Set before the session callback runs.
-    pub member_dropped: bool,
 }
 
 /// What a launch records for its outcome besides the code.
@@ -65,7 +61,6 @@ struct Marks {
     signal: Cell<Option<i32>>,
     spawned: Cell<bool>,
     received: Cell<bool>,
-    member_dropped: Cell<bool>,
 }
 
 /// The signal handling of one launch. Its drop copies `signals::received()` into the marks; the handling ends after that.
@@ -81,8 +76,8 @@ impl Drop for Handling<'_> {
 }
 
 /// Called once, after the session directory exists and before the agent starts, with the session directory, the
-/// session id, the resolved agent program and the member of this launch (workspaces design AU34). The member is
-/// `None` for a launch with no member and for a member that the launcher dropped (`LaunchOutcome.member_dropped`).
+/// session id, the resolved agent program and the member of this launch (workspaces design AU34): `LaunchOpts.member`,
+/// with or without a user `--settings` (AU59).
 pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path, Option<&Member>) -> anyhow::Result<()> + Send>;
 
 /// The agent session that the launcher starts or resumes (W§8.3, AU3). The launcher puts the adapter's
@@ -202,7 +197,6 @@ impl Launcher {
             signal: marks.signal.get(),
             spawned: marks.spawned.get(),
             received: marks.received.get(),
-            member_dropped: marks.member_dropped.get(),
         }
     }
 
@@ -215,12 +209,6 @@ impl Launcher {
                 AgentSession::Resume(id) => adapter.resume_args(id),
             };
             insert_session_args(adapter.agent(), &mut opts.args, extra);
-        }
-        // AU58, AU59: a member whose Claude Code arguments hold `--settings` before any `--` runs as a plain launch.
-        // Decided before the session callback and the session view.
-        if opts.member.is_some() && adapter.agent() == Agent::ClaudeCode && claude_code::has_user_settings(&opts.args) {
-            opts.member = None;
-            marks.member_dropped.set(true);
         }
         let out = Out {
             #[cfg(feature = "test-hooks")]
@@ -534,7 +522,7 @@ impl Session<'_> {
             }))
             .collect();
         let c = &self.cfg.config;
-        // `None` when the launcher dropped the member (AU59; `Launcher::launch`).
+        // A user `--settings` does not change the member (AU59): its settings are merged into zygo's file (§8.5 Flags).
         let member = opts.member.clone();
         // The base stays although every field is named today: a later field then needs no change here
         // until the launcher sets it (statusline HUD design H§17 note 1).
@@ -611,9 +599,6 @@ impl Session<'_> {
         drop(ctx);
         for l in &spec.lines {
             out.line(l);
-        }
-        if marks.member_dropped.get() {
-            out.line(claude_code::MEMBER_SETTINGS_WARN);
         }
         for l in &spec.log {
             session_dir::log(sd, l);
