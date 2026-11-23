@@ -87,12 +87,12 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-16 | workspace_down passes the name after -- | W10, W11, M1 | TODO | mechanical | — |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
-| FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3 | TODO | mechanical | — |
+| FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | PLANNED | mechanical | — |
 | FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
 | FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
 | FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-22 |
 | FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks | FIX-21, H1 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-23 |
-| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1 | TODO | implementation | — |
+| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
 
 ## Log
@@ -238,3 +238,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-22 and FIX-23 planned after plan review; FIX-25 dropped (tmux upgraded by pacman mid-run, not a code race); FIX-24 now after FIX-22 and owns AU59, W§16 and W§18 #89 text. |
 | 2026-11-23 | H3 DONE (dd25ae1): merged after 2 diff-review fix rounds. OpenCode plugin session classification and turn set. Merged tree: Acceptance opencode 77 passed + 1 ignored; zygo-launch passes; zygo-hooks workspace 22; clippy clean. |
 | 2026-11-23 | M1 planned after plan review (19 findings): AU69 (b) dropped (no automatic deletion of workspace results, operator rule); AU69 (a) keeps the 24 h age rule and re-checks live(); config check and loadout show print no secret. |
+| 2026-11-23 | FIX-19 planned; plan review F1-F7 applied (concurrent calls test, counted Set keyed by session+callID cleared on every prompt/stop, OpenCode 1.19.6 source cites no after on throw); edges FIX-19→M1, FIX-24→FIX-19. |
