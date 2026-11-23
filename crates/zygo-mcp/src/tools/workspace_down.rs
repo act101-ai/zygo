@@ -95,18 +95,13 @@ impl Tool for WorkspaceDown {
     fn call(&self, args: Value) -> Result<Value, ToolError> {
         let now = parse_now(&args)?;
         let name = self.name()?;
-        // This tool passes the name to `zygo down` with no `--` before it, so the clap parser of `zygo down`
-        // (`crates/zygo/src/cmd/down.rs`) reads a name that starts with `-` as a flag. AU84 allows `-` anywhere in a
-        // name (`valid_name`, `crates/zygo-workspace/src/identity.rs:69`, which `validate` in `state.rs` calls), so
-        // `Store::read` gives such a name; this check is the only guard, so refuse it here.
-        if name.starts_with('-') {
-            return Err(ToolError::Failed(format!("zygo: workspace name `{name}` starts with `-`; zygo down would read it as a flag")));
-        }
+        // `--` ends the options of `zygo down` (W§12, M1), so a name that starts with `-` (AU84) is read as the name.
         let mut cmd = Command::new(&self.program);
-        cmd.arg("down").arg(&name);
+        cmd.arg("down");
         if now {
             cmd.arg("--now");
         }
+        cmd.arg("--").arg(&name);
         cmd.env("ZYGO_SESSION", &self.session_id);
         let ran = run_bounded(cmd, LIMIT)?;
         match ran.status {

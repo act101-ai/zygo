@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** M2, M3, M4, M5, E1, E2, D1, FIX-16, FIX-27, FIX-24
+**Next:** M2, M3, M4, M5, E1, E2, D1, FIX-27, FIX-24
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -56,10 +56,9 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| H3 | OpenCode plugin: session classification, main session and turn set | H1 | DONE | judgment | dd25ae1; acceptance opencode 77 + 1 ignored, zygo-launch all pass, zygo-hooks workspace 22 + 1 ignored, clippy -D warnings clean, check --workspace --tests clean (merged tree) |
 | H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
 | M1 | CLI verbs, /zygo:down detached, doctor tmux line, results sweep AU69 (a) | W8, W10, W5, W6, W4, H1, HUD-12, LIV-2, FIX-17, FIX-20, H3 | DONE | judgment | 09ed93b; acceptance workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172 (merged tree) |
-| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13 | TODO | judgment | — |
+| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2, FIX-13, M4 | TODO | judgment | — |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
 | M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1, FIX-16 | TODO | judgment | — |
 | M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | TODO | implementation | — |
@@ -79,7 +78,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
 | FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
 | FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
-| FIX-16 | workspace_down passes the name after -- | W10, W11, M1, FIX-19 | IN-PROGRESS | mechanical | .worktrees/phase2/FIX-16; — |
+| FIX-16 | workspace_down passes the name after -- | W10, W11, M1, FIX-19 | DONE | mechanical | 806fbcf; acceptance mcp_server 50, up 48, admin 23, down 28, workspace_cli 11 (merged tree) |
 | FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
 | FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
 | FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | DONE | mechanical | 6b35869; acceptance opencode 94 + 1 ignored (merged tree) |
@@ -90,7 +89,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27 | TODO | implementation | — |
 | FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
 | FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
-| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4 | PLANNED | judgment | — |
+| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | PLANNED | judgment | — |
 
 ## Log
 
@@ -246,3 +245,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | M1 DONE (09ed93b): merged after re-plan; 1 review round (stub-agent built on demand, marker target test, tmux lookup tests, exact detach condition, cwd read only when needed). Merged tree: workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172. |
 | 2026-11-23 | FIX-16 planned (18 steps): MCP workspace_down passes the name after --; up/admin/attach/ws-forget hints use -- <name>; real-parser tests; AU37/AU63/AU65/W§12/#78 rewritten. Edges FIX-19→FIX-16→FIX-27 for the shared spec and up.rs. |
 | 2026-11-23 | FIX-19 DONE (6b35869): merged after 1 review round (task counted before its wait; tests for stop reset, pre-tool before guard, guard deny, denied child task). Merged tree: Acceptance opencode 94 + 1 ignored; zygo-launch pass; hooks workspace 23 + 1 ignored; clippy, check clean. |
+| 2026-11-23 | FIX-16 merged; 1 review round (change-log text, W§12 up/attach/ws forget rows show [--]); acceptance counts. Edges M4→M2→FIX-27 for shared cmd/mod.rs and workspaces spec. |

@@ -628,7 +628,7 @@ fn check_readable(store: &Store, ws: &Workspace, tmux: &Path, tmux_env: Option<&
         SessionAnswer::Gone => Ok(()),
         SessionAnswer::Error { message } => Err(format!("zygo: tmux: {message}")),
         SessionAnswer::Exists => match mux.show_session_option(&ws.tmux_session, WS_OPTION) {
-            Ok(Some(v)) if v == ws.id => Err(format!("zygo: {} is running; run zygo down {} first", ws.name, ws.name)),
+            Ok(Some(v)) if v == ws.id => Err(format!("zygo: {} is running; run zygo down -- {} first", ws.name, ws.name)),
             Ok(_) => Ok(()),
             Err(e) => Err(format!("zygo: tmux: {e}")),
         },

@@ -50,7 +50,7 @@ fn unreachable_line(name: &str, e: &str) -> String {
         "zygo: cannot reach the tmux server of {name} ({e}); in a sandboxed shell, run zygo down outside it; if that server is gone, run zygo down --wait -- {name} from a shell outside the workspace\n"
     )
 }
-const AU63: &str ="zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget app";
+const AU63: &str ="zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget -- app";
 const IDLE: &str = "zygo: app pane kaaaaaaaa is idle";
 const TURN: &str = "zygo: app pane kaaaaaaaa: no Stop since its last prompt (interrupted turn); treated as idle";
 const SKIP: &str = "zygo: app pane kaaaaaaaa: proxy request state not usable; idle rule 3 skipped";

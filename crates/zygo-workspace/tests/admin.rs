@@ -720,7 +720,7 @@ fn forget_refusals() {
 
     fs::write(t.join("exists-zygo-app"), "").unwrap();
     fs::write(t.join("ws-zygo-app"), ID).unwrap();
-    assert_eq!(run("app"), refused("zygo: app is running; run zygo down app first"));
+    assert_eq!(run("app"), refused("zygo: app is running; run zygo down -- app first"));
     fs::remove_file(t.join("exists-zygo-app")).unwrap();
     fs::remove_file(t.join("ws-zygo-app")).unwrap();
 
@@ -783,6 +783,21 @@ fn forget_refusals() {
 
     assert_eq!(state_bytes(&p, ID), bytes);
     assert!(res.join("r1").exists());
+}
+
+#[test] // W§12 `ws forget`, FIX-16: the running hint gives the name after `--`
+fn forget_running_hint_passes_a_dash_name_after_double_dash() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    ws_state(&p, ID, "-x", &t.join("r/x"), |ws| ws.phase = Phase::Up);
+    let bytes = state_bytes(&p, ID);
+    fs::write(t.join("exists-zygo--x"), "").unwrap();
+    fs::write(t.join("ws-zygo--x"), ID).unwrap();
+    assert_eq!(forget_run(&p, &tmux, None, "-x"), (1, String::new(), "zygo: -x is running; run zygo down -- -x first\n".to_string()));
+    assert_eq!(state_bytes(&p, ID), bytes);                          // nothing removed
 }
 
 // ---- step 17 ----
@@ -1016,7 +1031,7 @@ fn forget_refused_while_the_session_runs() {
     });
     assert_eq!(
         forget_run(&p, srv.wrapper(), None, "app"),
-        (1, String::new(), "zygo: app is running; run zygo down app first\n".to_string())
+        (1, String::new(), "zygo: app is running; run zygo down -- app first\n".to_string())
     );
     srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
     assert_eq!(forget_run(&p, srv.wrapper(), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));

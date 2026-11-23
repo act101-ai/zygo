@@ -41,16 +41,16 @@ Produces:
 
 Part A: the `workspace_down` tool (`zygo-mcp`).
 
-- [ ] 1. Test, W§18 #78 argument list. In `crates/zygo-mcp/tests/mcp_server.rs`, in `workspace_down_runs_down_with_the_name_and_zygo_session` (the stub writes one argument per line), change only the three `read("argv")` assertions: line 599 to `assert_eq!(read("argv"), "down\n--\napp\n");`, line 603 to `assert_eq!(read("argv"), "down\n--now\n--\napp\n");`, line 605 to `assert_eq!(read("argv"), "down\n--\napp\n");`. Put this doc comment above `#[cfg(unix)]` of the test:
+- [x] 1. Test, W§18 #78 argument list. In `crates/zygo-mcp/tests/mcp_server.rs`, in `workspace_down_runs_down_with_the_name_and_zygo_session` (the stub writes one argument per line), change only the three `read("argv")` assertions: line 599 to `assert_eq!(read("argv"), "down\n--\napp\n");`, line 603 to `assert_eq!(read("argv"), "down\n--now\n--\napp\n");`, line 605 to `assert_eq!(read("argv"), "down\n--\napp\n");`. Put this doc comment above `#[cfg(unix)]` of the test:
   ```rust
   /// W§18 #78 (AU65): `down -- <name>`, and `down --now -- <name>` with `now = true`; `ZYGO_SESSION` is set and
   /// stdin is `/dev/null`.
   ```
-- [ ] 2. Test, the JSON-RPC path. In `workspace_down_tools_call_success_is_not_an_error`, change the last assertion (the stub writes the arguments separated by a space) to:
+- [x] 2. Test, the JSON-RPC path. In `workspace_down_tools_call_success_is_not_an_error`, change the last assertion (the stub writes the arguments separated by a space) to:
   ```rust
   assert_eq!(std::fs::read_to_string(d.path().join("argv")).unwrap(), "down --now -- app ");
   ```
-- [ ] 3. Test, a name that starts with `-`. Delete `workspace_down_refuses_a_name_that_starts_with_a_dash` and its doc comment (`/// F5: …`, lines 776-777). In its place add:
+- [x] 3. Test, a name that starts with `-`. Delete `workspace_down_refuses_a_name_that_starts_with_a_dash` and its doc comment (`/// F5: …`, lines 776-777). In its place add:
   ```rust
   /// FIX-16 (AU65, AU84): a name that starts with `-` is passed after `--`, so `zygo down` reads it as the name.
   /// Nothing is refused.
@@ -73,8 +73,8 @@ Part A: the `workspace_down` tool (`zygo-mcp`).
       }
   }
   ```
-- [ ] 4. Run `cargo test -p zygo-mcp --locked --test mcp_server workspace_down` alone. Result that means pass for this step: exactly three tests fail, `workspace_down_runs_down_with_the_name_and_zygo_session` (left `"down\napp\n"`, right `"down\n--\napp\n"`), `workspace_down_tools_call_success_is_not_an_error` (left `"down app --now "`) and `workspace_down_passes_a_name_that_starts_with_a_dash_after_double_dash` (left `Err(Failed("zygo: workspace name `-x` starts with `-`; zygo down would read it as a flag"))`). All other `workspace_down` tests pass.
-- [ ] 5. Code. In `crates/zygo-mcp/src/tools/workspace_down.rs`, in `fn call(&self, args: Value) -> Result<Value, ToolError>`: delete the comment and the `if name.starts_with('-') { … }` refusal (lines 98-104). Build the argument list in this order: `down`, then `--now` when `now` is true, then `--`, then the name:
+- [x] 4. Run `cargo test -p zygo-mcp --locked --test mcp_server workspace_down` alone. Result that means pass for this step: exactly three tests fail, `workspace_down_runs_down_with_the_name_and_zygo_session` (left `"down\napp\n"`, right `"down\n--\napp\n"`), `workspace_down_tools_call_success_is_not_an_error` (left `"down app --now "`) and `workspace_down_passes_a_name_that_starts_with_a_dash_after_double_dash` (left `Err(Failed("zygo: workspace name `-x` starts with `-`; zygo down would read it as a flag"))`). All other `workspace_down` tests pass.
+- [x] 5. Code. In `crates/zygo-mcp/src/tools/workspace_down.rs`, in `fn call(&self, args: Value) -> Result<Value, ToolError>`: delete the comment and the `if name.starts_with('-') { … }` refusal (lines 98-104). Build the argument list in this order: `down`, then `--now` when `now` is true, then `--`, then the name:
   ```rust
   // `--` ends the options of `zygo down` (W§12, M1), so a name that starts with `-` (AU84) is read as the name.
   let mut cmd = Command::new(&self.program);
@@ -85,11 +85,11 @@ Part A: the `workspace_down` tool (`zygo-mcp`).
   cmd.arg("--").arg(&name);
   ```
   The `ZYGO_SESSION` line, `run_bounded` and the result mapping do not change.
-- [ ] 6. Run `cargo test -p zygo-mcp --locked --test mcp_server` alone. Result that means pass: `test result: ok`, 0 failed, and the three tests of step 4 are in the passed list.
+- [x] 6. Run `cargo test -p zygo-mcp --locked --test mcp_server` alone. Result that means pass: `test result: ok`, 0 failed, and the three tests of step 4 are in the passed list.
 
 Part B: the hints (`zygo-workspace`).
 
-- [ ] 7. Tests in `crates/zygo-workspace/tests/up.rs`. Change three existing assertions:
+- [x] 7. Tests in `crates/zygo-workspace/tests/up.rs`. Change three existing assertions:
   - line 730 (`reset_and_running`): `let running = (1, String::new(), "zygo: app is running; run zygo down -- app first\n".to_string());`
   - line 753 (`session_of_another_workspace_is_not_touched`): `let msg = (1, String::new(), "zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget -- app\n".to_string());`
   - line 1045 (`attach_paths`): `assert_eq!(attach_run(&l.o, None, None), (1, String::new(), "zygo: app is down; run zygo up -- app\n".to_string()));`
@@ -136,11 +136,11 @@ Part B: the hints (`zygo-workspace`).
       assert_eq!(attach_run(&l.o, None, None), (1, String::new(), "zygo: -x is down; run zygo up -- -x\n".to_string()));
   }
   ```
-- [ ] 8. Test in `crates/zygo-workspace/tests/down.rs`: change line 53 to
+- [x] 8. Test in `crates/zygo-workspace/tests/down.rs`: change line 53 to
   ```rust
   const AU63: &str ="zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget -- app";
   ```
-- [ ] 9. Tests in `crates/zygo-workspace/tests/admin.rs`: in `forget_refusals` change line 723 to `assert_eq!(run("app"), refused("zygo: app is running; run zygo down -- app first"));`; in `forget_refused_while_the_session_runs` change line 1019 to `(1, String::new(), "zygo: app is running; run zygo down -- app first\n".to_string())`. After `forget_refusals`, add (the stand-in tmux `answer_tmux` answers from the files `exists-<session>` and `ws-<session>`):
+- [x] 9. Tests in `crates/zygo-workspace/tests/admin.rs`: in `forget_refusals` change line 723 to `assert_eq!(run("app"), refused("zygo: app is running; run zygo down -- app first"));`; in `forget_refused_while_the_session_runs` change line 1019 to `(1, String::new(), "zygo: app is running; run zygo down -- app first\n".to_string())`. After `forget_refusals`, add (the stand-in tmux `answer_tmux` answers from the files `exists-<session>` and `ws-<session>`):
   ```rust
   #[test] // W§12 `ws forget`, FIX-16: the running hint gives the name after `--`
   fn forget_running_hint_passes_a_dash_name_after_double_dash() {
@@ -157,17 +157,17 @@ Part B: the hints (`zygo-workspace`).
       assert_eq!(state_bytes(&p, ID), bytes);                          // nothing removed
   }
   ```
-- [ ] 10. Run `cargo test -p zygo-workspace --locked --test up --test admin --test down` alone. Result that means pass for this step: exactly these tests fail, each with an old hint (no `--` before the name) on the left: in `up`, `reset_and_running`, `session_of_another_workspace_is_not_touched`, `attach_paths`, `dash_name_hints_pass_the_name_after_double_dash`; in `admin`, `forget_refusals`, `forget_refused_while_the_session_runs`, `forget_running_hint_passes_a_dash_name_after_double_dash`; in `down`, `refusals_change_nothing`, `gone_repair_already_down_and_session_target`, `owner_changed_before_the_kill`. On a machine with no tmux 3.2 or later, the four `up` tests and `forget_refused_while_the_session_runs` print the skip reason and pass; the other five still fail.
-- [ ] 11. Code. Only the hint texts change; no other line changes:
+- [x] 10. Run `cargo test -p zygo-workspace --locked --test up --test admin --test down` alone. Result that means pass for this step: exactly these tests fail, each with an old hint (no `--` before the name) on the left: in `up`, `reset_and_running`, `session_of_another_workspace_is_not_touched`, `attach_paths`, `dash_name_hints_pass_the_name_after_double_dash`; in `admin`, `forget_refusals`, `forget_refused_while_the_session_runs`, `forget_running_hint_passes_a_dash_name_after_double_dash`; in `down`, `refusals_change_nothing`, `gone_repair_already_down_and_session_target`, `owner_changed_before_the_kill`. On a machine with no tmux 3.2 or later, the four `up` tests and `forget_refused_while_the_session_runs` print the skip reason and pass; the other five still fail.
+- [x] 11. Code. Only the hint texts change; no other line changes:
   - `crates/zygo-workspace/src/up.rs:178` (`not_owned`): `format!("tmux session {session} does not belong to this workspace; rename it or run zygo ws forget -- {}", esc(name))`
   - `crates/zygo-workspace/src/up.rs:901`: `format!("zygo: {name} is running; run zygo down -- {name} first")`
   - `crates/zygo-workspace/src/up.rs:1469`: `format!("zygo: {} is down; run zygo up -- {}", t.name, t.name)`
   - `crates/zygo-workspace/src/admin.rs:631`: `format!("zygo: {} is running; run zygo down -- {} first", ws.name, ws.name)`
-- [ ] 12. Run `cargo test -p zygo-workspace --locked --test up --test admin --test down` alone. Result that means pass: `test result: ok` for the three binaries, 0 failed.
+- [x] 12. Run `cargo test -p zygo-workspace --locked --test up --test admin --test down` alone. Result that means pass: `test result: ok` for the three binaries, 0 failed.
 
 Part C: the real parsers (`zygo`).
 
-- [ ] 13. Test. In `crates/zygo/tests/workspace_cli.rs`, after `w12_names_reach_the_library_also_after_double_dash`, add:
+- [x] 13. Test. In `crates/zygo/tests/workspace_cli.rs`, after `w12_names_reach_the_library_also_after_double_dash`, add:
   ```rust
   /// FIX-16: the argument list of the `workspace_down` tool and the forms that the hints print (`zygo down -- <name>`,
   /// `zygo up -- <name>`, `zygo ws forget -- <name>`) reach the library also for the names `--` and `-x`.
@@ -190,11 +190,11 @@ Part C: the real parsers (`zygo`).
       }
   }
   ```
-- [ ] 14. Run `cargo test -p zygo --locked --test workspace_cli` alone. Result that means pass: `test result: ok`, 0 failed, and `fix16_double_dash_names_reach_the_library` is in the passed list. This test checks M1's parsers, which need no change, so it passes at once. If it fails because a parser does not read the name after `--`, stop and report the clap output to the controller as an M1 parser defect; do not change `crates/zygo/src/cmd/`.
+- [x] 14. Run `cargo test -p zygo --locked --test workspace_cli` alone. Result that means pass: `test result: ok`, 0 failed, and `fix16_double_dash_names_reach_the_library` is in the passed list. This test checks M1's parsers, which need no change, so it passes at once. If it fails because a parser does not read the name after `--`, stop and report the clap output to the controller as an M1 parser defect; do not change `crates/zygo/src/cmd/`.
 
 Part D: the spec, the floor, the commit.
 
-- [ ] 15. Spec. In `docs/specs/2026-11-20-workspaces-design.md`:
+- [x] 15. Spec. In `docs/specs/2026-11-20-workspaces-design.md`:
   - AU37: replace `zygo: <name> is running; run zygo down <name> first` with `zygo: <name> is running; run zygo down -- <name> first`.
   - AU63: replace `rename it or run zygo ws forget <name>` with `rename it or run zygo ws forget -- <name>`.
   - AU65: replace "It runs `<zygo> down <name>` (with `--now`) with `ZYGO_SESSION` set, so the AU18 detach applies." with "It runs `<zygo> down -- <name>` (`<zygo> down --now -- <name>` with `now`) with `ZYGO_SESSION` set, so the AU18 detach applies; the name comes after `--`, so a name that starts with `-` (AU84) is read as the name and no name is refused."
@@ -214,9 +214,9 @@ Part D: the spec, the floor, the commit.
   - `rg -n -F 'is down; run zygo up -- <name>' docs/specs/2026-11-20-workspaces-design.md` → the `zygo attach` row (559 at planning);
   - `rg -n -F '| `zygo down [--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]` | W§9.' docs/specs/2026-11-20-workspaces-design.md` → one line (556 at planning);
   - `rg -n -F '`zygo down [<name>]' docs/specs/2026-11-20-workspaces-design.md` → no line.
-- [ ] 16. Run `cargo clippy -p zygo-mcp -p zygo-workspace -p zygo --locked --tests -- -D warnings` alone. Result that means pass: exit 0, no warning.
-- [ ] 17. Run each alone (the floor, scoped to the changed packages): `cargo test -p zygo-mcp --locked`, `cargo test -p zygo-workspace --locked`, `cargo test -p zygo --locked --test workspace_cli`. Result that means pass: every test binary reports `test result: ok`, 0 failed.
-- [ ] 18. Tick steps 1-17 in this file. Commit the nine files of Files and `docs/work/phase2/nodes/FIX-16.md` in one commit with this message:
+- [x] 16. Run `cargo clippy -p zygo-mcp -p zygo-workspace -p zygo --locked --tests -- -D warnings` alone. Result that means pass: exit 0, no warning.
+- [x] 17. Run each alone (the floor, scoped to the changed packages): `cargo test -p zygo-mcp --locked`, `cargo test -p zygo-workspace --locked`, `cargo test -p zygo --locked --test workspace_cli`. Result that means pass: every test binary reports `test result: ok`, 0 failed.
+- [x] 18. Tick steps 1-17 in this file. Commit the nine files of Files and `docs/work/phase2/nodes/FIX-16.md` in one commit with this message:
   ```
   fix(workspace): pass the workspace name to zygo commands after --
 
@@ -232,3 +232,10 @@ Part D: the spec, the floor, the commit.
   Zygo-Work: FIX-16
   ```
   The message has no other trailer and no attribution line.
+
+### Review round 1 fixes (2026-11-23)
+
+- [x] 1. Spec change-log row of FIX-16: the false sentence "The W§12 `zygo down` synopsis now has the form of `zygo down --help`" is replaced. clap prints `zygo down [OPTIONS] [NAME]`; the synopsis follows the module doc of `crates/zygo/src/cmd/down.rs:1` (`[--] [<name>]`).
+- [x] 2. W§12 rows `zygo up`, `zygo attach` and `zygo ws forget` show `[--]` before the name, in the style of the `zygo down` row: `zygo up [--loadout <n>] [--reset] [--no-attach] [--all] [--] [<name>]`, `zygo attach [--] [<name>]`, `zygo ws forget [--] <name>`. Parser evidence: each name is a plain clap positional with no `last`, `allow_hyphen_values` or `trailing_var_arg` (`crates/zygo/src/cmd/up.rs:15`, `crates/zygo/src/cmd/attach.rs:11`, `crates/zygo/src/cmd/ws.rs:32`), so clap reads a name after `--`. `fix16_double_dash_names_reach_the_library` proves it for `up` and `ws forget`; for `attach`, `zygo attach -- -x` with an empty HOME gives `zygo: no workspace named -x`, exit 1. The same change-log row names the four rows and this round; no new row.
+- [x] 3. The doc comment of `fix16_double_dash_names_reach_the_library` (`crates/zygo/tests/workspace_cli.rs:154`) says only what the test checks: the parsers of `zygo down`, `zygo up` and `zygo ws forget` read a name after `--`, and that name reaches the library. It does not claim to check the environment of the `workspace_down` tool.
+- [x] 4. `cargo test -p zygo --locked --test workspace_cli` and the work-graph check pass, each run alone.

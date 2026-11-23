@@ -151,6 +151,27 @@ fn w12_names_reach_the_library_also_after_double_dash() {
     }
 }
 
+/// FIX-16: the parsers of `zygo down`, `zygo up` and `zygo ws forget` read a name after `--`, and that name reaches
+/// the library, also for the names `--` and `-x`.
+#[cfg(unix)]
+#[test]
+fn fix16_double_dash_names_reach_the_library() {
+    let Some(tmux) = zygo_workspace::mux::testing::require_tmux() else { return };
+    let h = tempfile::tempdir().unwrap();
+    let path = tmux.parent().unwrap().as_os_str().to_owned();
+    for name in ["--", "-x"] {
+        for args in [&["down", "--now", "--", name][..], &["up", "--no-attach", "--", name], &["ws", "forget", "--", name]] {
+            let o = zygo_in(h.path(), "", &path, args, &[]);
+            assert_eq!(
+                (o.status.code(), text(&o.stderr)),
+                (Some(1), format!("zygo: no workspace named {name}\n")),
+                "zygo {}",
+                args.join(" ")
+            );
+        }
+    }
+}
+
 /// W§18 #59 (AU71): `zygo ws snapshot` does not sweep; the next other command does.
 #[cfg(unix)]
 #[test]

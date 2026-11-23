@@ -727,7 +727,7 @@ fn reset_and_running() {
     assert_eq!((ws.loadout.as_str(), ws.panes.len(), ws.members.len()), ("solo", 1, 1));
     assert!(["kaaaaaaaa", "kbbbbbbbb", "kcccccccc"].iter().all(|k| !ws.members.contains_key(*k)));
     let before = raw(&store);
-    let running = (1, String::new(), "zygo: app is running; run zygo down app first\n".to_string());
+    let running = (1, String::new(), "zygo: app is running; run zygo down -- app first\n".to_string());
     assert_eq!(run(&l.o), running);
     l.o.reset = false;
     l.o.loadout = Some("solo".into());
@@ -750,7 +750,7 @@ fn session_of_another_workspace_is_not_touched() {
     l.srv.run(&["new-session", "-d", "-s", "zygo-app", "sleep", "600"]).unwrap();
     l.srv.run(&["set-option", "-t", "=zygo-app:", "@zygo-ws", OTHER_ID]).unwrap();
     let before = raw(&store);
-    let msg = (1, String::new(), "zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget app\n".to_string());
+    let msg = (1, String::new(), "zygo: tmux session zygo-app does not belong to this workspace; rename it or run zygo ws forget -- app\n".to_string());
     assert_eq!(run(&l.o), msg);
     assert_eq!(attach_run(&l.o, None, None), msg);
     assert_eq!(l.srv.run(&["show-options", "-qv", "-t", "=zygo-app:", "@zygo-ws"]).unwrap(), OTHER_ID);
@@ -759,6 +759,46 @@ fn session_of_another_workspace_is_not_touched() {
     l.srv.run(&["set-option", "-u", "-t", "=zygo-app:", "@zygo-ws"]).unwrap();
     assert_eq!(run(&l.o), msg);
     assert_eq!(raw(&store), before);
+}
+
+#[test] // AU37, AU63, W§12 `zygo attach`, FIX-16: each hint gives the name after `--`, so a name that starts with `-` works
+fn dash_name_hints_pass_the_name_after_double_dash() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let store = l.store();
+    saved(&store, &l.repo, vec![win(0, None, "tiled", 200, 50)], vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo)], vec![]);
+    let sock = l.srv.socket().to_path_buf();
+    set(&store, |ws| {
+        ws.name = "-x".into();
+        ws.tmux_session = "zygo--x".into();
+        ws.tmux_socket = Some(sock.clone());
+        ws.phase = Phase::Up;
+    });
+    l.srv.run(&["new-session", "-d", "-s", "zygo--x", "sleep", "600"]).unwrap();
+    let before = raw(&store);
+    // AU63: a session of another workspace.
+    l.srv.run(&["set-option", "-t", "=zygo--x:", "@zygo-ws", OTHER_ID]).unwrap();
+    let owner = (1, String::new(), "zygo: tmux session zygo--x does not belong to this workspace; rename it or run zygo ws forget -- -x\n".to_string());
+    assert_eq!(run(&l.o), owner);
+    assert_eq!(attach_run(&l.o, None, None), owner);
+    assert_eq!(raw(&store), before);
+    // AU37: the workspace's own session runs.
+    l.srv.run(&["set-option", "-t", "=zygo--x:", "@zygo-ws", l.id.as_str()]).unwrap();
+    let running = (1, String::new(), "zygo: -x is running; run zygo down -- -x first\n".to_string());
+    l.o.reset = true;
+    assert_eq!(run(&l.o), running);
+    l.o.reset = false;
+    l.o.loadout = Some("solo".into());
+    assert_eq!(run(&l.o), running);
+    assert_eq!(raw(&store), before);
+    // W§12 `zygo attach`: a stopped workspace with no saved socket.
+    l.srv.run(&["kill-session", "-t", "=zygo--x:"]).unwrap();
+    set(&store, |ws| {
+        ws.phase = Phase::Down;
+        ws.tmux_socket = None;
+    });
+    assert_eq!(attach_run(&l.o, None, None), (1, String::new(), "zygo: -x is down; run zygo up -- -x\n".to_string()));
 }
 
 #[test] // W§10, D28, W§18 #11 part 2, AU78
@@ -1042,7 +1082,7 @@ fn attach_paths() {
     assert!(err.starts_with("zygo: tmux: "), "{err}");
     assert!(fs::read_to_string(&calls).unwrap().contains("switch-client -t =zygo-app:"));
     l.srv.run(&["kill-session", "-t", "=zygo-app:"]).unwrap();
-    assert_eq!(attach_run(&l.o, None, None), (1, String::new(), "zygo: app is down; run zygo up app\n".to_string()));
+    assert_eq!(attach_run(&l.o, None, None), (1, String::new(), "zygo: app is down; run zygo up -- app\n".to_string()));
 }
 
 #[test] // W§18 #46, AU83, D33
