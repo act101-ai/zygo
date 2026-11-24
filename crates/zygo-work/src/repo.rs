@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -72,21 +72,9 @@ struct Ran {
 /// `Some(n)`: stdout keeps `n` bytes (the rest is drained) and `Ran.cut` tells whether there were more. The child is
 /// also killed with its descendants: on unix it runs in its own process group, and the group is killed at the deadline
 /// and once the child has exited, before it is reaped. On Windows the process tree is killed at the deadline.
-fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Result<Ran, RunError> {
-    if Instant::now() >= deadline {
-        return Err(RunError::TimedOut);
-    }
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(unix)]
-    if cut.is_some() {
-        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    }
-    let mut child = cmd.spawn().map_err(|_| RunError::NotRun)?;
-    let (Some(mut out), Some(mut err)) = (child.stdout.take(), child.stderr.take()) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(RunError::Failed);
-    };
+fn run_bounded_out(cmd: Command, deadline: Instant, cut: Option<u64>) -> Result<Ran, RunError> {
+    let group = cut.is_some();
+    let (mut child, mut out, err) = spawn_piped(cmd, deadline, group)?;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let limit = cut.map_or(u64::MAX, |n| n.saturating_add(1));
@@ -102,6 +90,40 @@ fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Res
         let _ = std::io::copy(&mut out, &mut std::io::sink());
         let _ = tx.send((buf, over));
     });
+    let erx = drain_err(err);
+    let status = wait_bounded(&mut child, deadline, group)?;
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let (out, over) = rx.recv_timeout(left()).map_err(|_| RunError::TimedOut)?;
+    // An unknown status counts as success: the caller's checks of the output decide.
+    let ok = status.is_none_or(|s| s.success());
+    let err = if ok { Vec::new() } else { erx.recv_timeout(left()).unwrap_or_default() };
+    Ok(Ran { ok, out, cut: over, err })
+}
+
+/// Spawns `cmd` with stdin null and stdout and stderr piped, in its own process group on unix when `group`.
+/// `TimedOut` before any spawn when `deadline` is past; `NotRun` when the spawn fails.
+fn spawn_piped(mut cmd: Command, deadline: Instant, group: bool) -> Result<(Child, ChildStdout, ChildStderr), RunError> {
+    if Instant::now() >= deadline {
+        return Err(RunError::TimedOut);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    if group {
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    }
+    #[cfg(not(unix))]
+    let _ = group;
+    let mut child = cmd.spawn().map_err(|_| RunError::NotRun)?;
+    let (Some(out), Some(err)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(RunError::Failed);
+    };
+    Ok((child, out, err))
+}
+
+/// Reads up to 64 KiB of `err` on a thread, drains the rest, and sends the kept bytes.
+fn drain_err(mut err: ChildStderr) -> mpsc::Receiver<Vec<u8>> {
     let (etx, erx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -109,57 +131,54 @@ fn run_bounded_out(mut cmd: Command, deadline: Instant, cut: Option<u64>) -> Res
         let _ = std::io::copy(&mut err, &mut std::io::sink());
         let _ = etx.send(buf);
     });
-    // `None`: the kernel reaped the child (unix cut mode, SIGCHLD ignored), so it has exited with an unknown status.
-    #[cfg_attr(not(unix), allow(unused_labels))] // the label is used by the unix block only
-    let status: Option<std::process::ExitStatus> = 'wait: {
-        // Unix cut mode: kill the group before the leader is reaped (author's call 4). The first `waitid` error
-        // (e.g. ECHILD under an ignored SIGCHLD) falls through to the plain loop, with no group kill after it.
-        #[cfg(unix)]
-        if cut.is_some() {
-            loop {
-                match zygo_config::repo_file::exited_unreaped(&child) {
-                    Ok(true) => {
-                        zygo_config::repo_file::kill_group(&child);
-                        match child.wait() {
-                            Ok(s) => break 'wait Some(s),
-                            Err(_) => return Err(RunError::Failed),
-                        }
-                    }
-                    Ok(false) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-                    Ok(false) => {
-                        zygo_config::repo_file::kill_tree(&mut child);
-                        return Err(RunError::TimedOut);
-                    }
-                    Err(_) => break,
-                }
-            }
-        }
+    erx
+}
+
+/// Waits for `child` until it exits or `deadline` (then it is killed and reaped, `TimedOut`). `group`: the unix
+/// process-group mode of [`run_bounded_out`]. `Ok(None)`: the kernel reaped the child (unix group mode, SIGCHLD
+/// ignored), so it has exited with an unknown status.
+fn wait_bounded(child: &mut Child, deadline: Instant, group: bool) -> Result<Option<ExitStatus>, RunError> {
+    // Unix group mode: kill the group before the leader is reaped (author's call 4). The first `waitid` error
+    // (e.g. ECHILD under an ignored SIGCHLD) falls through to the plain loop, with no group kill after it.
+    #[cfg(unix)]
+    if group {
         loop {
-            match child.try_wait() {
-                Ok(Some(s)) => break Some(s),
-                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-                // Unix cut mode with SIGCHLD ignored: the kernel reaped the child, so it has exited. No kill, because
-                // its PID may already be reused; stdout is read as usual.
-                #[cfg(unix)]
-                Err(e) if cut.is_some() && e.raw_os_error() == Some(libc::ECHILD) => break None,
-                _ => {
-                    if cfg!(windows) && cut.is_some() {
-                        zygo_config::repo_file::kill_tree(&mut child);
-                    } else {
-                        let _ = child.kill();
-                        let _ = child.wait();
+            match zygo_config::repo_file::exited_unreaped(child) {
+                Ok(true) => {
+                    zygo_config::repo_file::kill_group(child);
+                    match child.wait() {
+                        Ok(s) => return Ok(Some(s)),
+                        Err(_) => return Err(RunError::Failed),
                     }
+                }
+                Ok(false) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                Ok(false) => {
+                    zygo_config::repo_file::kill_tree(child);
                     return Err(RunError::TimedOut);
                 }
+                Err(_) => break,
             }
         }
-    };
-    let left = || deadline.saturating_duration_since(Instant::now());
-    let (out, over) = rx.recv_timeout(left()).map_err(|_| RunError::TimedOut)?;
-    // An unknown status counts as success: the caller's checks of the output decide.
-    let ok = status.is_none_or(|s| s.success());
-    let err = if ok { Vec::new() } else { erx.recv_timeout(left()).unwrap_or_default() };
-    Ok(Ran { ok, out, cut: over, err })
+    }
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => return Ok(Some(s)),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            // Unix group mode with SIGCHLD ignored: the kernel reaped the child, so it has exited. No kill, because
+            // its PID may already be reused; stdout is read as usual.
+            #[cfg(unix)]
+            Err(e) if group && e.raw_os_error() == Some(libc::ECHILD) => return Ok(None),
+            _ => {
+                if cfg!(windows) && group {
+                    zygo_config::repo_file::kill_tree(child);
+                } else {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                return Err(RunError::TimedOut);
+            }
+        }
+    }
 }
 
 /// `<program> -c core.fsmonitor=false -C <cwd> <args>` on `git_command_for`, with `GIT_OPTIONAL_LOCKS=0` and

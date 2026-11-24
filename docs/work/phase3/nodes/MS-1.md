@@ -54,14 +54,14 @@ All commands run in `/Users/kagemartin/Work/zygo/.worktrees/phase3/MS-1`. Each c
 
 **Part A — move the shared parts of the runner (no behaviour change).**
 
-- [ ] **Step 1 — baseline.** Run `cargo test -p zygo-work`. Result: all pass. Write down the pass count.
-- [ ] **Step 2 — extract three private functions in `crates/zygo-work/src/repo.rs`.** Move code out of `run_bounded_out` (`repo.rs:75-163`) into these, and make `run_bounded_out` call them; its signature and results do not change. Add `use std::process::{Child, ChildStderr, ChildStdout, ExitStatus};` to the `std::process` import.
+- [x] **Step 1 — baseline.** Run `cargo test -p zygo-work`. Result: all pass. Write down the pass count.
+- [x] **Step 2 — extract three private functions in `crates/zygo-work/src/repo.rs`.** Move code out of `run_bounded_out` (`repo.rs:75-163`) into these, and make `run_bounded_out` call them; its signature and results do not change. Add `use std::process::{Child, ChildStderr, ChildStdout, ExitStatus};` to the `std::process` import.
   - `fn spawn_piped(mut cmd: Command, deadline: Instant, group: bool) -> Result<(Child, ChildStdout, ChildStderr), RunError>`: the body of `repo.rs:76-89` (deadline check before spawn → `TimedOut`; stdin null, stdout and stderr piped; `#[cfg(unix)] if group { process_group(0) }`; spawn error → `NotRun`; missing pipe → kill, wait, `Failed`). Add `#[cfg(not(unix))] let _ = group;` so Windows builds with no unused-variable warning. `run_bounded_out` calls it with `group = cut.is_some()`.
   - `fn drain_err(mut err: ChildStderr) -> mpsc::Receiver<Vec<u8>>`: the thread of `repo.rs:105-111` (keeps `64 * 1024` bytes, drains the rest, sends the buffer).
   - `fn wait_bounded(child: &mut Child, deadline: Instant, group: bool) -> Result<Option<ExitStatus>, RunError>`: the `'wait` block of `repo.rs:112-156`, with `cut.is_some()` replaced by `group`, `break 'wait Some(s)` replaced by `return Ok(Some(s))`, the plain loop's `break Some(s)` / `break None` replaced by `return Ok(Some(s))` / `return Ok(None)`, and `kill_tree(&mut child)` replaced by `kill_tree(child)`. The `'wait` label and its `#[cfg_attr(not(unix), allow(unused_labels))]` go away; the `Err(_) => break` of the unix loop still leaves that inner loop for the plain loop. Keep the comments of the moved lines.
   - Check: `cargo build -p zygo-work` has no warning that names `repo.rs`.
-- [ ] **Step 3 — run the guard.** Run `cargo test -p zygo-work`. Result: all pass, same count as step 1.
-- [ ] **Step 4 — commit.** `git add crates/zygo-work/src/repo.rs && git commit -m "MS-1: move spawn, stderr drain and wait out of run_bounded_out"` (plus trailers).
+- [x] **Step 3 — run the guard.** Run `cargo test -p zygo-work`. Result: all pass, same count as step 1.
+- [x] **Step 4 — commit.** `git add crates/zygo-work/src/repo.rs && git commit -m "MS-1: move spawn, stderr drain and wait out of run_bounded_out"` (plus trailers).
 
 **Part B — whole mode.**
 
