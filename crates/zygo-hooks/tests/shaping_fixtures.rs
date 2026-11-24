@@ -284,3 +284,42 @@ fn size_problems(root: &Path) -> Vec<String> {
     }
     p
 }
+
+#[test]
+fn fixtures_have_no_secrets() {
+    let p = secret_problems(&shaping::root());
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+#[test]
+fn secret_check_finds_a_builtin_pattern() {
+    let t = tempfile::tempdir().unwrap();
+    let token = format!("zyg_s_{}", "A".repeat(43)); // built at run time: no key-shaped literal in the source
+    write_case(t.path(), "log", "leak", &meta(0), format!("line\n{token}\n").as_bytes(), b"", b"");
+    write_case(t.path(), "log", "clean", &meta(0), b"line\n", b"", b"");
+    let p = secret_problems(t.path());
+    assert_eq!(p.len(), 1, "{p:?}");
+    assert!(p[0].contains("leak") && p[0].contains("stdout"), "{p:?}");
+}
+
+/// One `<file>: <pattern id>` per §16.1 built-in pattern that matches a file under `root`
+/// (O§16 item 16). Names the file and the id only, never the matched text.
+fn secret_problems(root: &Path) -> Vec<String> {
+    let patterns: Vec<(String, regex::bytes::Regex)> = zygo_config::builtin_patterns()
+        .into_iter()
+        .map(|p| {
+            let re = regex::bytes::Regex::new(&p.pattern).unwrap_or_else(|e| panic!("pattern {}: {e}", p.id));
+            (p.id, re)
+        })
+        .collect();
+    let mut out = vec![];
+    for f in files_under(root) {
+        let bytes = std::fs::read(&f).unwrap();
+        for (id, re) in &patterns {
+            if re.is_match(&bytes) {
+                out.push(format!("{}: {id}", f.display()));
+            }
+        }
+    }
+    out
+}
