@@ -276,6 +276,12 @@ pub fn server(tmux: &Path, tmux_socket: Option<&Path>, tmux_env: Option<&OsStr>)
     Tmux::new(tmux.to_path_buf(), socket)
 }
 
+/// FIX-30 (AU54): the socket that `mux` passes to tmux with `-S`, saved or from `$TMUX` (D18), must pass
+/// [`check_path`] before the first tmux call on it; no socket (tmux's own choice) passes.
+pub(crate) fn check_server(mux: &dyn Multiplexer) -> Result<(), UnsafePath> {
+    mux.socket().map_or(Ok(()), |s| check_path(s).map(|_| ()))
+}
+
 /// The AU62 check (D17): the parent folder of `path` is a folder owned by the current uid with mode 0700, and the
 /// socket, when it exists, is owned by the current uid. A missing parent is created with mode 0700 only when
 /// `create_parent`. `Err` holds the line without the `zygo: ` prefix.
@@ -979,6 +985,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             socket_is_private(sock, true).map_err(|t| fail(format!("zygo: {t}")))?;
         }
         let mux = server(&opts.tmux, cur.tmux_socket.as_deref(), opts.tmux_env.as_deref());
+        check_server(&mux).map_err(|e| Exit { code: 2, message: e.to_string() })?;
         repair(&store, &mux, &opts.zygo, out, err).map_err(|e| {
             let (code, message) = repair_failure(&e);
             Exit { code, message }
@@ -991,6 +998,8 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     let quiet = opts.no_attach || opts.zygo_session.is_some();
     let saved_socket = ws.as_ref().and_then(|w| w.tmux_socket.clone());
     let mux6 = server(&opts.tmux, saved_socket.as_deref(), opts.tmux_env.as_deref());
+    // FIX-30 (AU54): with no saved socket this is the socket of `$TMUX`, before its first tmux call.
+    check_server(&mux6).map_err(|e| Exit { code: 2, message: e.to_string() })?;
     match mux6.session_exists(&session) {
         SessionAnswer::Exists => {
             owner_check(&mux6, &session, &id, &name)?;
@@ -1063,7 +1072,8 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
         }
     }
     // Step 8. The server that step 9 uses (D18) goes into `tmux_socket` in this write, so the next `up` and its repair
-    // ask the same server (Round 2 M3); a `$TMUX` socket gets the AU62 check before it is written.
+    // ask the same server (Round 2 M3); a `$TMUX` socket gets the AU62 check before it is written. Its AU54 check ran
+    // at step 6 (FIX-30).
     let saved_before = ws.as_ref().and_then(|w| w.tmux_socket.clone());
     if saved_before.is_none()
         && let Some(s) = opts.tmux_env.as_deref().and_then(env_socket)
@@ -1539,6 +1549,10 @@ fn session_check(opts: &UpOpts, ws: &Workspace, err: &mut dyn Write) -> Found {
         return Found::Skip(t);
     }
     let mux = server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
+    // FIX-30 (AU54): with no saved socket this is the socket of `$TMUX`, before its first tmux call.
+    if let Err(e) = check_server(&mux) {
+        return Found::Skip(e.to_string().trim_start_matches("zygo: ").to_string());
+    }
     match mux.session_exists(&ws.tmux_session) {
         SessionAnswer::Gone => Found::Chosen,
         SessionAnswer::Error { message } => Found::Skip(format!("tmux: {message}")),

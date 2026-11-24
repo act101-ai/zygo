@@ -2661,3 +2661,39 @@ fn repair_refuses_a_saved_socket_that_holds_a_quote() {
     assert_eq!(raw(&store), before);
     assert!(tmux_log(t).is_empty(), "{:?}", tmux_log(t));
 }
+
+#[test] // FIX-30, AU54, W§8.1 steps 5-6: no saved socket; the `$TMUX` socket with a quote is refused before its first tmux call
+fn au54_up_refuses_a_tmux_env_socket_with_a_quote_before_its_first_use() {
+    let _g = serial();
+    // `building`: the first call on the `$TMUX` socket is the repair's session check (step 5); `down`: step 6
+    for phase in [Phase::Building, Phase::Down] {
+        let td = TempDir::new().unwrap();
+        let t = &canon(td.path());
+        let (mut o, store, sock) = quoted_socket_state_in(t, phase);
+        set(&store, |ws| ws.tmux_socket = None);
+        o.tmux_env = Some(OsString::from(format!("{},1,0", sock.display())));
+        let before = raw(&store);
+        assert_eq!(run(&o), (2, String::new(), format!("{AU54}\n")), "{phase:?}");
+        assert_eq!(raw(&store), before, "{phase:?}");
+        assert_eq!(tmux_log(t), ["-u -V"], "{phase:?}");
+    }
+}
+
+#[test] // FIX-30, AU54: `up --all` skips a workspace whose server is the `$TMUX` socket with a quote
+fn au54_up_all_skips_a_tmux_env_socket_with_a_quote() {
+    let _g = serial();
+    let td = TempDir::new().unwrap();
+    let t = &canon(td.path());
+    let (mut o, store, sock) = quoted_socket_state_in(t, Phase::Up);
+    set(&store, |ws| ws.tmux_socket = None);
+    o.tmux_env = Some(OsString::from(format!("{},1,0", sock.display())));
+    let before = raw(&store);
+    let (mut out, mut e) = (Vec::new(), Vec::new());
+    let code = up::testing::run_all_with(&o, &mut out, &mut e);
+    let (out, err) = (text(out), text(e));
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    let reason = AU54.trim_start_matches("zygo: ");
+    assert_eq!(err, format!("zygo: app skipped: {reason}\nzygo: up --all found no workspace to restore\n"));
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert_eq!(raw(&store), before);
+}

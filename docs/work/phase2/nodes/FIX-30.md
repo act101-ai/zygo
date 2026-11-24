@@ -252,7 +252,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   - In the doc comment of `attempt` (`:565-568`), after "gives `Skipped(Changed)` before any tmux call (round 2 M4, round 3 D3).", add: "A saved socket that fails AU54 gives one log line and `Skipped(Logged)` before any tmux call (FIX-30)."
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test snapshot` passes (the step 1 test and every earlier test); `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member au54_` passes both step 2 tests; `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test session_verbs` passes.
 
-- [ ] **4. Test (red): `up` and `up --all` refuse a `$TMUX` socket that fails AU54 before its first tmux call.** In `crates/zygo-workspace/tests/up.rs`, after `repair_refuses_a_saved_socket_that_holds_a_quote` (`:2649-2663`), add:
+- [x] **4. Test (red): `up` and `up --all` refuse a `$TMUX` socket that fails AU54 before its first tmux call.** In `crates/zygo-workspace/tests/up.rs`, after `repair_refuses_a_saved_socket_that_holds_a_quote` (`:2649-2663`), add:
   ```rust
   #[test] // FIX-30, AU54, W§8.1 steps 5-6: no saved socket; the `$TMUX` socket with a quote is refused before its first tmux call
   fn au54_up_refuses_a_tmux_env_socket_with_a_quote_before_its_first_use() {
@@ -292,7 +292,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test up au54_` fails in both tests: the tmux log holds a `has-session` call on the `$TMUX` socket (step 5 `repair.rs:92`, step 6 `up.rs:994`, `up --all` `up.rs:1542`).
 
-- [ ] **5. Code (green): `check_server` in `up.rs`; steps 5 and 6 and `session_check` call it.** In `crates/zygo-workspace/src/up.rs`:
+- [x] **5. Code (green): `check_server` in `up.rs`; steps 5 and 6 and `session_check` call it.** In `crates/zygo-workspace/src/up.rs`:
   - After `pub fn server` (`:274-277`), add:
     ```rust
     /// FIX-30 (AU54): the socket that `mux` passes to tmux with `-S`, saved or from `$TMUX` (D18), must pass
