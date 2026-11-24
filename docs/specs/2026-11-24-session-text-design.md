@@ -1,6 +1,6 @@
 # zygo: session text for each subagent and after a compaction — design
 
-**Status:** proposed 2026-11-24 (audit round 1 closed 2026-11-24)
+**Status:** approved by the operator 2026-11-24 (audit round 1 closed 2026-11-24)
 **Date:** 2026-11-24
 **Release:** phase 3, track E (roadmap items P3-14 and P3-15, `docs/roadmap/phase-3.md`)
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`; constraint `C6`). Also cited: `docs/specs/2026-11-20-workspaces-design.md` (`W§n`). The build is governed by `docs/specs/2026-11-24-decision-records-design.md`. `T§n` is a section of this document.
