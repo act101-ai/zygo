@@ -51,6 +51,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | DONE | implementation | f8c00c4; acceptance update 44, workspace_cli 11, workspace_run 52, workspace --no-run ok; workspace 2779 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6, FIX-27, M5 | DONE | judgment | 1eb6e3a; acceptance workspace_member 35, workspace --no-run ok; workspace 2833 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
+| FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 
 ## Log
 

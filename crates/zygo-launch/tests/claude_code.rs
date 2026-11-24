@@ -14,7 +14,7 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
 use zygo_core::Agent;
 use zygo_hooks::session_text::mechanics;
-use zygo_launch::claude_code::{shell_quote, ClaudeCode};
+use zygo_launch::claude_code::{shell_quote, simple_mode, ClaudeCode};
 use zygo_launch::env::{child_env, Env};
 use zygo_launch::{AgentAdapter, LaunchCtx, LaunchOpts, Launcher, Plugins, Preflight};
 use zygo_plugins::snapshot::{Snapshot, SnapshotPlugin};
@@ -1296,6 +1296,58 @@ fn passthrough_refusals() {
     assert_eq!(refusal(&["--model", "lead"], false), None);
     assert_eq!(refusal(&["--bare"], false), None);
 }
+
+/// FIX-24 diff review round 3, finding 1: Claude Code 2.1.331's own rule for `CLAUDE_CODE_SIMPLE`
+/// (`De(process.env.CLAUDE_CODE_SIMPLE)`: lower case, trim, one of 1, true, yes, on).
+#[test]
+fn simple_mode_is_claude_codes_rule() {
+    for v in ["1", "TRUE", " yes ", "on", "True", "\tON\n"] {
+        assert!(simple_mode(Some(OsStr::new(v))), "{v:?}");
+    }
+    for v in ["false", "no", "off", "2", " 0", "0", "", " ", "y", "1 1"] {
+        assert!(!simple_mode(Some(OsStr::new(v))), "{v:?}");
+    }
+    assert!(!simple_mode(None), "unset");
+}
+
+/// A catalog provider whose key variable is `CLAUDE_CODE_SIMPLE`: the deny list removes that name from the agent.
+const SIMPLE_AS_KEY: &str = concat!(
+    "[[model]]\nid = \"test-env\"\n[[model.provider]]\nname = \"p-env\"\nbase_url = \"https://example.invalid\"\n",
+    "dialects = [\"anthropic\"]\nupstream_model = \"up-env\"\nkey = \"env:CLAUDE_CODE_SIMPLE\"\n"
+);
+
+/// FIX-24 diff review round 3, finding 4: bare mode from the environment that the agent gets is refused with
+/// passthrough and logged as degraded, as `--bare` is.
+#[test]
+fn bare_mode_from_the_environment_is_refused_with_passthrough_and_logged() {
+    let fx = fx();
+    let run = |cfg: &str, value: Option<&str>, passthrough: bool| {
+        let mut c = ctx(&fx, cfg);
+        if let Some(v) = value {
+            c.env.0.push(("CLAUDE_CODE_SIMPLE".into(), v.into()));
+        }
+        c.passthrough = passthrough;
+        let refused = cc(&fx).refusal(&c);
+        c.passthrough = false;
+        (refused, cc(&fx).build(&c).unwrap().log)
+    };
+    for v in ["1", " yes ", "TRUE", "on"] {
+        let (refused, log) = run("", Some(v), true);
+        assert_eq!(refused.as_deref(), Some(PT_BARE_ENV), "{v:?}");
+        assert!(log.contains(&"degraded: CLAUDE_CODE_SIMPLE".to_string()), "{v:?}: {log:?}");
+    }
+    for v in [Some("0"), Some("false"), Some(""), None] {
+        let (refused, log) = run("", v, true);
+        assert_eq!(refused, None, "{v:?}");
+        assert!(!log.iter().any(|l| l.contains("CLAUDE_CODE_SIMPLE")), "{v:?}: {log:?}");
+    }
+    // The deny list removes a provider key variable, so the agent gets no CLAUDE_CODE_SIMPLE.
+    let (refused, log) = run(SIMPLE_AS_KEY, Some("1"), true);
+    assert_eq!(refused, None);
+    assert!(!log.iter().any(|l| l.contains("CLAUDE_CODE_SIMPLE")), "{log:?}");
+}
+
+const PT_BARE_ENV: &str = "--passthrough does not work with CLAUDE_CODE_SIMPLE: bare mode reads only API keys";
 
 #[cfg(unix)]
 #[test]

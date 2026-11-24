@@ -1,14 +1,41 @@
 //! Drain idle rule. Owner: node W9 (W§9.3 step 5, AU26).
+use std::io::Read;
 use std::time::{Duration, SystemTime};
 
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use zygo_core::session_dir::SessionDir;
 use zygo_proxy::client::SessionStatus;
 
 use crate::activity::Activity;
+use crate::state::{open_nofollow, Opened};
 
 /// How long after the end of the last model request a member still counts as busy (AU26 rule 3).
 pub const REQUEST_QUIET: Duration = Duration::from_secs(10);
+
+/// The busy reason of a member whose merged settings set `disableAllHooks: true` (AU26 hooks off, FIX-24).
+pub const HOOKS_OFF: &str = "hooks off: its --settings sets disableAllHooks";
+
+/// The busy reason of a member whose start sends no member events, `launch.events_off` (AU26 events off, FIX-24).
+pub const EVENTS_OFF: &str = "member events off: launched with --bare, --pure or attach";
+
+/// AU26 hooks off (FIX-24): `true` only when the session folder's `settings.json` is a JSON object whose top-level
+/// `disableAllHooks` is `true`. It reads the merged settings file that zygo wrote and the agent runs with (the only
+/// source a launch can turn hooks off from, AU26). It never waits on a FIFO; on unix it never follows a link (on
+/// other systems a link is followed, as `activity::read`). No size or time limit. Every other outcome is `false`.
+pub fn hooks_off(dir: &SessionDir) -> bool {
+    let Ok(Opened::File(mut f)) = open_nofollow(std::fs::OpenOptions::new().read(true), &dir.settings_json()) else {
+        return false;
+    };
+    let mut bytes = Vec::new();
+    if f.read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    v.get("disableAllHooks") == Some(&serde_json::Value::Bool(true))
+}
 
 /// The result of the idle rule for one member at one poll (AU26).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +51,8 @@ pub enum Idle {
     /// whatever `busy` holds, W10 round 3: busy over idle). `down` prints it in its timeout report (W§9.3 step 6).
     /// `rule_skipped` is `true` when the status meets a skip case of rule 3, whatever decided `Busy` (an
     /// `activity.json` error or running subagents), so `down` prints the AU26 rule-skipped line also for a busy
-    /// member (round 2, M1). A rule 3 failure, a status read error among them, gives `false`.
+    /// member (round 2, M1). A rule 3 failure, a status read error among them, gives `false`. `down` also gives `Busy`
+    /// with [EVENTS_OFF] or [HOOKS_OFF] for a member whose agent sends no member events (FIX-24).
     Busy { reason: String, rule_skipped: bool },
     /// Rules 1 and 2 hold and rule 3 is skipped: the proxy status has no `requests_in_flight`, or no request is in
     /// flight and `last_request_end` is not RFC 3339 or is more than `REQUEST_QUIET` after the poll time. `down`

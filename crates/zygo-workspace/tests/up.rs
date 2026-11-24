@@ -1056,6 +1056,25 @@ fn loadout_argument_paths_use_the_pane_folder() {
     assert!(m.dropped_flags.is_empty());
 }
 
+#[test] // FIX-24 D1, AU30: up writes no events_off; the ws run start of the pane sets it
+fn loadout_attach_pane_is_saved_without_the_subcommand() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let mut l = live("0");
+    let oc = LoadoutPane { args: vec!["attach".into(), "http://h".into()], ..lp("opencode") };
+    let cc = LoadoutPane { args: vec!["attach".into()], ..lp("claude-code") };
+    l.o.config = with_loadout("a", vec![lw(None, None, vec![oc, cc])]);
+    l.o.loadout = Some("a".into());
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&l.store());
+    for kind in [Agent::OpenCode, Agent::ClaudeCode] {
+        let m = ws.members.values().find(|m| m.launch.kind == kind).unwrap_or_else(|| panic!("no {kind:?} member"));
+        assert!(!m.launch.events_off, "{kind:?}");
+        assert!(m.launch.args.is_empty(), "{kind:?}: {:?}", m.launch.args);
+    }
+}
+
 #[test] // W§18 #39, AU95, AU100, AU64 (D19), W§12
 fn attach_paths() {
     let _g = serial();

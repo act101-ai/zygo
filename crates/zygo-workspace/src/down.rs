@@ -771,6 +771,11 @@ struct Job {
     next_progress: Duration,
 }
 
+/// True when the AU26 rule 3 skip applies to a drain result: the rule-skipped line prints for it.
+fn rule_skipped(r: &Idle) -> bool {
+    matches!(r, Idle::IdleRuleSkipped | Idle::TurnOpen { rule_skipped: true } | Idle::Busy { rule_skipped: true, .. })
+}
+
 /// The live session folder of a member (D14): `sessions/<pending.zygo_session>` when live, else
 /// `sessions/<zygo_session>` when live; an id that is empty or not ASCII alphanumeric is not looked up.
 fn live_session(paths: &Paths, m: &MemberRecord) -> Option<PathBuf> {
@@ -1146,7 +1151,22 @@ impl Run<'_> {
         let mut busy: Vec<String> = Vec::new();
         for (key, m) in members {
             let who = label(&name, &key);
-            let read = live_session(&self.opts.paths, &m).map(|dir| self.read_member(&dir));
+            // AU26 events off and hooks off (FIX-24): a member whose agent sends no member events is busy until its agent
+            // exits, the drain timeout or `down --now`; the running set of `read_member` stays for the timeout report.
+            let read = live_session(&self.opts.paths, &m).map(|dir| {
+                let (r, running) = self.read_member(&dir);
+                let off = if m.launch.events_off {
+                    Some(drain::EVENTS_OFF)
+                } else if drain::hooks_off(&SessionDir::new(dir.clone())) {
+                    Some(drain::HOOKS_OFF)
+                } else {
+                    None
+                };
+                // Diff review round 2, finding 3: the override keeps the rule 3 skip of `read_member`, so the AU26
+                // rule-skipped line still prints.
+                let skip = rule_skipped(&r);
+                (off.map_or(r, |reason| Idle::Busy { reason: reason.to_string(), rule_skipped: skip }), running)
+            });
             let track = self.jobs[i].track.entry(key.clone()).or_default();
             let idle = match read {
                 None => {
@@ -1154,11 +1174,7 @@ impl Run<'_> {
                     true
                 }
                 Some((r, running)) => {
-                    let skipped = matches!(
-                        r,
-                        Idle::IdleRuleSkipped | Idle::TurnOpen { rule_skipped: true } | Idle::Busy { rule_skipped: true, .. }
-                    );
-                    if skipped && !track.said_skip {
+                    if rule_skipped(&r) && !track.said_skip {
                         track.said_skip = true;
                         lines.push(format!("zygo: {who}: proxy request state not usable; idle rule 3 skipped"));
                     }

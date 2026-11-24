@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, removable, removed_labels, session_flags, Filtered};
+use zygo_workspace::args::{bypass_flags, events_off, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, opencode_subcommand, removable, removed_labels, session_flags, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -517,5 +517,123 @@ fn removed_labels_are_empty_only_when_nothing_is_removed() {
         for label in &labels {
             assert!(label_shape(label, a), "{label} for {a:?}");
         }
+    }
+}
+
+#[test] // FIX-24 D2, W§7.2 member.launch.events_off: Claude Code by the walk of `filter`, OpenCode by `opencode_subcommand`; a flag value and a token after `--` count as nothing
+fn events_off_follows_the_walk_of_filter() {
+    let on: &[(Agent, &[&str])] = &[
+        (Agent::OpenCode, &["--pure"]),
+        (Agent::OpenCode, &["--pure=true"]),
+        (Agent::OpenCode, &["--model", "m", "--pure"]),
+        (Agent::OpenCode, &["attach", "http://h"]),
+        (Agent::OpenCode, &["--log-level", "DEBUG", "attach", "http://h"]),
+        (Agent::OpenCode, &["attach", "--pure", "http://h"]),
+        (Agent::OpenCode, &["run", "--attach", "http://h"]),
+        (Agent::OpenCode, &["run", "--attach=http://h"]),
+        (Agent::OpenCode, &["run", "x", "--attach", "http://h"]),
+        (Agent::ClaudeCode, &["--bare"]),
+        (Agent::ClaudeCode, &["--model", "m", "--bare"]),
+    ];
+    for &(agent, a) in on {
+        assert!(events_off(agent, &s(a)), "events off: {agent:?} {a:?}");
+    }
+    let off: &[(Agent, &[&str])] = &[
+        (Agent::OpenCode, &[]),
+        (Agent::OpenCode, &["--attach"]), // a saved `run --attach`: the TUI ignores it (P12)
+        (Agent::OpenCode, &["--attach=http://h"]),
+        (Agent::OpenCode, &["--pure-x"]),
+        (Agent::OpenCode, &["--attachx"]),
+        (Agent::OpenCode, &["--prompt", "attach"]),
+        (Agent::OpenCode, &["--", "attach"]),
+        (Agent::OpenCode, &["--", "--pure"]),
+        (Agent::OpenCode, &["run", "x"]),
+        (Agent::OpenCode, &["-s", "x", "run"]),
+        (Agent::ClaudeCode, &["attach"]),
+        (Agent::ClaudeCode, &["--pure"]),
+        (Agent::ClaudeCode, &["--", "--bare"]),
+        (Agent::ClaudeCode, &["--model", "--bare"]), // the value of --model (a required value takes the next token)
+    ];
+    for &(agent, a) in off {
+        assert!(!events_off(agent, &s(a)), "not events off: {agent:?} {a:?}");
+    }
+}
+
+#[test] // FIX-24 diff review round 2, finding 1: OpenCode 1.19.6 gives an unlisted long flag without `=` the next token
+fn events_off_takes_the_value_of_an_unlisted_opencode_flag() {
+    let on: &[&[&str]] = &[
+        &["--attach", "http://h", "run", "msg"],
+        &["--zzunknown", "X", "attach", "http://h"],
+        &["--zzunknown", "--pure"], // a token that starts with `-` is not the value
+        &["--zzunknown=X", "attach", "http://h"], // `=` carries the value, so `attach` is the subcommand
+    ];
+    for a in on {
+        assert!(events_off(Agent::OpenCode, &s(a)), "events off: {a:?}");
+    }
+    let off: &[&[&str]] = &[
+        &["--zzunknown", "attach"], // `attach` is the value of --zzunknown, not the subcommand
+        &["--zzunknown", "run", "--attach", "http://h"], // `run` is the value; no subcommand
+    ];
+    for a in off {
+        assert!(!events_off(Agent::OpenCode, &s(a)), "not events off: {a:?}");
+    }
+}
+
+#[test] // FIX-24 diff review round 3, finding 2: one case per row of the OpenCode 1.19.6 matrix (`<flags> attach --help`
+        // and `<flags> run --help`, compared with `cmp` to `attach --help` and `run --help`; nodes/FIX-24.md)
+fn opencode_subcommand_follows_the_opencode_1_19_6_parser() {
+    // Rows "F S": F takes no value, so S stays the subcommand. Rows "F X S": X is the subcommand, not S.
+    for f in ["--print-logs", "--no-replay", "--no-zz", "--pure"] {
+        for sub in ["attach", "run"] {
+            assert_eq!(opencode_subcommand(&s(&[f, sub])), Some((1, sub)), "{f} {sub}");
+            assert_eq!(opencode_subcommand(&s(&[f, "X", sub])), Some((1, "X")), "{f} X {sub}");
+        }
+    }
+    // Rows "F X S": F takes X, so S is the subcommand. Rows "F S": F takes S, so there is no subcommand.
+    for f in ["--mini", "--mdns", "--auto", "--zzunknown", "-x"] {
+        for sub in ["attach", "run"] {
+            assert_eq!(opencode_subcommand(&s(&[f, "X", sub])), Some((2, sub)), "{f} X {sub}");
+            assert_eq!(opencode_subcommand(&s(&[f, sub])), None, "{f} {sub}");
+        }
+    }
+    for f in ["-c", "--continue", "--fork", "-xy"] {
+        assert_eq!(opencode_subcommand(&s(&[f, "X", "attach"])), Some((2, "attach")), "{f} X attach");
+        assert_eq!(opencode_subcommand(&s(&[f, "attach"])), None, "{f} attach");
+    }
+    type Row<'a> = (&'a [&'a str], Option<(usize, &'a str)>);
+    let rows: &[Row] = &[
+        // the global booleans of help.txt that the matrix could see (`-v` and `--version` print and stop)
+        (&["-v", "attach"], Some((1, "attach"))),
+        (&["-v", "X", "attach"], Some((1, "X"))),
+        (&["--version", "attach"], Some((1, "attach"))),
+        (&["-h", "attach"], Some((1, "attach"))),
+        (&["-h", "X", "attach"], Some((1, "X"))),
+        (&["--help", "X", "attach"], Some((1, "X"))),
+        // a table flag with a value
+        (&["--model", "X", "attach"], Some((2, "attach"))),
+        // a flag takes `true` or `false`: an unknown flag and a default-command flag as a value, a global boolean too
+        (&["--zzunknown", "true", "attach"], Some((2, "attach"))),
+        (&["--zzunknown", "false", "attach"], Some((2, "attach"))),
+        (&["--mini", "true", "attach"], Some((2, "attach"))),
+        (&["--mini", "false", "attach"], Some((2, "attach"))),
+        (&["--pure", "true", "attach"], Some((2, "attach"))),
+        (&["--pure", "false", "attach"], Some((2, "attach"))),
+        (&["--print-logs", "true", "attach"], Some((2, "attach"))),
+        (&["--print-logs", "false", "attach"], Some((2, "attach"))),
+        // a `--no-` flag does not take `true`
+        (&["--no-zz", "true", "attach"], Some((1, "true"))),
+        // a token that starts with `-` is not a value
+        (&["--zzunknown", "--print-logs", "attach"], Some((2, "attach"))),
+        (&["--zzunknown", "-x", "attach"], None),
+        // `=` carries the value
+        (&["-x=X", "attach"], Some((1, "attach"))),
+        (&["--zzunknown=X", "attach"], Some((1, "attach"))),
+        // a flag takes one token only
+        (&["--cors", "a", "b", "attach"], Some((2, "b"))),
+        // `--` ends the flags: no subcommand after it
+        (&["--", "attach"], None),
+    ];
+    for (a, want) in rows {
+        assert_eq!(opencode_subcommand(&s(a)), *want, "{a:?}");
     }
 }

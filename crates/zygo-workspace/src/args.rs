@@ -381,6 +381,64 @@ pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
     walk(agent, args, None).session
 }
 
+/// W§7.2 member.launch.events_off (FIX-24, AU26): the agent of a start with `args` sends no member events. Claude
+/// Code: `--bare`, by the walk of [filter] (a flag value and a token after `--` count as nothing). OpenCode: a flag
+/// `--pure` or `--attach` is a token before `--` with that name before any `=` (a value never starts with `-`, so such
+/// a token is always a flag); the subcommand comes from [`opencode_subcommand`]. Events are off with `--pure`, the
+/// subcommand `attach`, or the subcommand `run` with `--attach`.
+pub fn events_off(agent: Agent, args: &[String]) -> bool {
+    match agent {
+        Agent::ClaudeCode => walk(agent, args, None).occurrences.iter().any(|o| o.name == "--bare"),
+        Agent::OpenCode => {
+            let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+            let has = |n: &str| args[..end].iter().any(|t| t.starts_with('-') && t.split('=').next() == Some(n));
+            has("--pure")
+                || match opencode_subcommand(args).map(|(_, s)| s) {
+                    Some("attach") => true,
+                    Some("run") => has("--attach"),
+                    _ => false,
+                }
+        }
+    }
+}
+
+/// The global boolean options of OpenCode 1.19.6 (`fixtures/opencode/help.txt`, the first block of `Options:`, which
+/// also opens `attach --help` and `run --help`). Each takes no value, but a next token `true` or `false` is its value.
+const OPENCODE_GLOBAL_BOOLEANS: &[&str] = &["-h", "--help", "-v", "--version", "--print-logs", "--pure"];
+
+/// The OpenCode subcommand in `args` and its index, as OpenCode 1.19.6 reads the tokens before its subcommand (W§7.2;
+/// FIX-24 diff review round 3, findings 2 and 5): the first token that does not start with `-` (or is `-`) and is not
+/// the value of a flag. A flag that holds `=` takes no next token. A `--no-<x>` flag takes no next token. A global
+/// boolean of [`OPENCODE_GLOBAL_BOOLEANS`] takes the next token only when it is `true` or `false`. Every other flag,
+/// long or short, listed in the table or not, takes the next token unless it starts with `-`. `--` ends the flags and
+/// there is no subcommand after it. `events_off` and the launcher (session arguments after `run`) use this one walk.
+pub fn opencode_subcommand(args: &[String]) -> Option<(usize, &str)> {
+    let mut next = 0;
+    while next < args.len() {
+        let token = args[next].as_str();
+        next += 1;
+        if token == "--" {
+            return None;
+        }
+        if token == "-" || !token.starts_with('-') {
+            return Some((next - 1, token));
+        }
+        if token.contains('=') || token.starts_with("--no-") {
+            continue;
+        }
+        let after = args.get(next).map(String::as_str);
+        let takes = if OPENCODE_GLOBAL_BOOLEANS.contains(&token) {
+            matches!(after, Some("true" | "false"))
+        } else {
+            after.is_some_and(|t| !t.starts_with('-'))
+        };
+        if takes {
+            next += 1;
+        }
+    }
+    None
+}
+
 /// Whether `token` (its text before any `=`) is a flag of the table of `agent` (FIX-27 review round 3: the flag after a
 /// secret-named flag is shown as a flag when it is a known one).
 pub fn is_flag(agent: Agent, token: &str) -> bool {

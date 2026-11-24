@@ -7,7 +7,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use zygo_core::session_dir::SessionDir;
 use zygo_proxy::client::SessionStatus;
 use zygo_workspace::activity::{self, Activity};
-use zygo_workspace::drain::{self, Idle, REQUEST_QUIET};
+use zygo_workspace::drain::{self, Idle, EVENTS_OFF, HOOKS_OFF, REQUEST_QUIET};
 
 fn now() -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(1_800_000_000)
@@ -327,4 +327,68 @@ fn busy_from_an_activity_error_reports_a_skipped_rule_3() {
 #[test]
 fn running_ids_are_quoted_in_the_reason() {
     assert_eq!(idle(&act(false, &[("b, c", "t"), ("a1", "t")]), &quiet()), busy(r#"subagents running: "a1", "b, c""#));
+}
+
+// FIX-24 D3, AU26 hooks off: only a top-level `disableAllHooks: true` in the merged settings file counts.
+#[test]
+fn hooks_off_reads_only_a_top_level_true() {
+    let t = TempDir::new().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let cases = [
+        (r#"{"disableAllHooks": true}"#, true),
+        (r#"{"disableAllHooks": false}"#, false),
+        (r#"{"hooks": {}}"#, false),
+        ("not json", false),
+        ("[true]", false),
+        (r#"{"disableAllHooks": "true"}"#, false),
+        (r#"{"env": {"disableAllHooks": true}}"#, false),
+    ];
+    for (text, want) in cases {
+        std::fs::write(d.settings_json(), text).unwrap();
+        assert_eq!(drain::hooks_off(&d), want, "{text}");
+    }
+    std::fs::remove_file(d.settings_json()).unwrap();
+    assert!(!drain::hooks_off(&d), "a missing file");
+}
+
+// FIX-24 D3: a link at settings.json is not followed, and a FIFO there gives an answer at once.
+#[cfg(unix)]
+#[test]
+fn hooks_off_never_follows_a_link_or_waits_on_a_fifo() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::FileTypeExt;
+    let t = TempDir::new().unwrap();
+    let outside = t.path().join("outside.json");
+    let body = br#"{"disableAllHooks": true}"#;
+    std::fs::write(&outside, body).unwrap();
+    for case in ["link", "fifo"] {
+        let d = SessionDir::new(t.path().join(case));
+        std::fs::create_dir(&d.root).unwrap();
+        let path = d.settings_json();
+        match case {
+            "link" => std::os::unix::fs::symlink(&outside, &path).unwrap(),
+            _ => {
+                let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+                // SAFETY: `c` is a valid NUL-terminated path.
+                assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let d2 = d.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(drain::hooks_off(&d2));
+        });
+        let got = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| panic!("{case}: the hooks_off read waited"));
+        assert!(!got, "{case}");
+        match case {
+            "link" => assert_eq!(std::fs::read(&outside).unwrap(), body, "the link target is unchanged"),
+            _ => assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_fifo(), "the FIFO stays"),
+        }
+    }
+}
+
+#[test] // FIX-24: the busy reasons are the texts of AU26 and W§9.3 step 6
+fn reason_texts_are_the_spec_texts() {
+    assert_eq!(HOOKS_OFF, "hooks off: its --settings sets disableAllHooks");
+    assert_eq!(EVENTS_OFF, "member events off: launched with --bare, --pure or attach");
 }

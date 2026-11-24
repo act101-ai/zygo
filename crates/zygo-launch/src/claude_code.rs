@@ -16,6 +16,8 @@ use crate::adapter::{AgentAdapter, ChildSpec, LaunchCtx, Plugins, Preflight};
 const HINT: &str = "zygo: claude not found on PATH; install Claude Code: https://code.claude.com/docs/en/setup";
 const PT_MODEL: &str = "--passthrough sends model names to the vendor; use a vendor model id";
 const PT_BARE: &str = "--passthrough does not work with --bare: bare mode reads only API keys";
+/// FIX-24 diff review round 3, finding 4: [PT_BARE] when the cause is `CLAUDE_CODE_SIMPLE` in the agent's environment.
+const PT_BARE_ENV: &str = "--passthrough does not work with CLAUDE_CODE_SIMPLE: bare mode reads only API keys";
 const PT_MANAGED: &str = "passthrough needs your claude.ai login; a managed setting replaces it";
 const BAD_AGENTS: &str = "--agents: not a JSON object (or, with --print, a file that holds one)";
 /// §8.5 Flags (FIX-21 round 2 F1): the user's `--settings` values are merged into zygo's file; the line when the merged settings do not set `disableAllHooks: true`.
@@ -34,6 +36,19 @@ const MANAGED: &str = "/Library/Application Support/ClaudeCode/managed-settings.
 const MANAGED: &str = r"C:\Program Files\ClaudeCode\managed-settings.json";
 #[cfg(not(any(target_os = "macos", windows)))]
 const MANAGED: &str = "/etc/claude-code/managed-settings.json";
+
+/// Claude Code's own rule for `CLAUDE_CODE_SIMPLE` (FIX-24 diff review round 3, finding 1): the installed 2.1.331
+/// binary turns bare mode on with `De(process.env.CLAUDE_CODE_SIMPLE)`, where `De` lowers the case, trims, and accepts
+/// one of `1`, `true`, `yes`, `on`. An unset variable, and a value that is not UTF-8, are not bare mode.
+pub fn simple_mode(value: Option<&std::ffi::OsStr>) -> bool {
+    value.and_then(|v| v.to_str()).is_some_and(|v| ["1", "true", "yes", "on"].contains(&v.to_lowercase().trim()))
+}
+
+/// Bare mode from the environment that the agent gets: the launch environment after the §8.4 deny list
+/// (`crate::env::child_env`); zygo sets no `CLAUDE_CODE_SIMPLE` itself.
+fn bare_env(ctx: &LaunchCtx) -> bool {
+    simple_mode(crate::env::child_env(&ctx.env, &ctx.cfg, &[]).0.get("CLAUDE_CODE_SIMPLE"))
+}
 
 pub struct ClaudeCode {
     pub program: String,
@@ -628,6 +643,9 @@ impl AgentAdapter for ClaudeCode {
         if has_flag(&ctx.args, "--bare") {
             log.push("degraded: --bare".to_string());
         }
+        if bare_env(ctx) {
+            log.push("degraded: CLAUDE_CODE_SIMPLE".to_string());
+        }
         if !ctx.passthrough
             && ctx.effective_role.is_none()
             && let Some(v) = flag_values(&ctx.args, "--model").pop()
@@ -652,6 +670,9 @@ impl AgentAdapter for ClaudeCode {
         }
         if has_flag(&ctx.args, "--bare") {
             return Some(PT_BARE.into());
+        }
+        if bare_env(ctx) {
+            return Some(PT_BARE_ENV.into());
         }
         let c = &ctx.config;
         let is_role = |m: &str| {
