@@ -1,6 +1,6 @@
 # zygo phase 3 roadmap
 
-**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write.
+**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 and P3-15 not designed yet.
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`), `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`).
 
 ## Intent
@@ -21,6 +21,10 @@ P3-8 comes first in the order of work, because each node that runs without it ma
 
 Phase 3 also has workspace-definition items (operator, 2026-11-23). A repository can define its workspace (config, model profiles and members) in files, so that each machine and each person starts the same workspace after the operator approves the files on that machine. The status line shows the session run time, because a workspace session runs for days.
 
+Phase 3 also has review-finding items (operator, 2026-11-23). They come from a comparison with ponytail (https://github.com/dietrichgebert/ponytail): one behaviour prompt, adapters that load it into many agents, and a benchmark that gates each change to the prompt. The comparison found two gaps in zygo. Each was then verified in the code and in a live Claude Code session (P3-14, P3-15).
+
+The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` agent gets the trim marker, the `[REDACTED:<id>]` marker and the guards, but not the sentences that explain them. §8.6 item 7 says that the mechanics text is appended to each subagent prompt; the code does this for the `zygo-<role>` agents only. And no premise, fixture or test records which zygo text is in the context after a compaction.
+
 ## Items
 
 | Id | Item | Depends | Spec |
@@ -38,6 +42,8 @@ Phase 3 also has workspace-definition items (operator, 2026-11-23). A repository
 | P3-11 | Workspace config and model profiles as repository files; no credentials | phase 2 (workspaces) | to write |
 | P3-12 | Workspace member definition as a repository file: default one orchestrator and four elephant workers; optional config-directory pool for the members | P3-11 | to write |
 | P3-13 | Session run time in the status line and in `zygo status`, with a format that holds for days | none | to write |
+| P3-14 | Session rules for each subagent: the mechanics text (§8.6) also reaches a subagent that is not a `zygo-<role>` agent | none | to write |
+| P3-15 | Session text after a compaction: a premise, a fixture and a test for each agent; a correction if the text is lost | none | to write |
 
 ## P3-2 design notes (input for its spec)
 
@@ -143,6 +149,40 @@ Phase 3 also has workspace-definition items (operator, 2026-11-23). A repository
   - **The run time belongs to the member.** §5 and W§5 hold: a session is one launch of one agent, and a resumed agent is a new zygo session with the same agent conversation. Thus the run time is not a property of the zygo session. The spec adds a `first_started_at` field to the member record (W§7.2). A session outside a workspace (W-C6) uses its own start.
   - **The HUD spec is amended.** H§6.2 fixes the segments and their order (H AU9), and H§6.7 fixes the order in which segments are removed at a small width. The spec amends the HUD spec to add the segment and its place in the removal order, as M§9a did for the member name and the mail count.
 - **Open point for the spec.** The row, the group and the place in the removal order that the new segment gets.
+
+## P3-14 design notes (input for its spec)
+
+- **Verified in the code (2026-11-23).** A `zygo-<role>` subagent gets the role prompt and the mechanics text through the `--agents` prompt (`crates/zygo-launch/src/claude_code.rs`). The `SessionStart` hook returns nothing for a subagent (`crates/zygo-hooks/src/session_start.rs`). zygo registers no `SubagentStart` hook. A user `--agents` entry is merged as given, and a plugin agent keeps its own prompt.
+- **Enforcement has no such limit.** The trim hook (`crates/zygo-hooks/src/trim.rs`), the guard hook (`crates/zygo-work/src/guards.rs`) and the secret pass (`crates/zygo-proxy/src/redact_stage.rs`) act on each subagent. Thus a subagent can get a trim marker or a `[REDACTED:<id>]` marker that nothing explained to it.
+- **Verified in a live session (2026-11-23, Claude Code).** The built-in Explore agent and the plugin agent `act101:code-explorer` had none of the four sentences (redaction marker, result tools, no `head` or `tail`, commit trailers). The `zygo-read` agent had all four. All three had the `mcp__zygo__*` tool names.
+- **Which agents.** The built-in Explore, Plan and general-purpose agents, plugin agents, and user `--agents` entries.
+- **No work unit.** A `work_begin` call from a subagent that is not a zygo role is ignored (`crates/zygo-work/src/hooks.rs`), so its work is not in a work unit.
+- **OpenCode has the same gap.** The built-in agents get a model and an edit permission only (`crates/zygo-launch/src/opencode.rs`). The system-prompt transform of the generated plugin does not run for subagents (§8.7).
+- **Direction, Claude Code.** A `SubagentStart` hook gives the mechanics text as additional context to a subagent that is not a zygo role. The premise comes first (§19): the pinned Claude Code version accepts additional context from `SubagentStart`. The workspaces design also plans a `SubagentStart` registration (W§9.1, member hooks); one registration serves both.
+- **The text is the mechanics text only.** Not the role prompt and not the legend. C7 holds.
+- **Base-spec text.** §8.6 item 7 and the code do not agree. The spec for this item states which one changes.
+- **Open points for the spec.**
+  - The mechanism on OpenCode, which gives no agent id.
+  - If the lead is steered away from agent types that are not zygo roles. Today only the session text does this; no `PreToolUse` hook matches the agent tool.
+  - If the work of such a subagent becomes a work unit.
+  - The `--agents` prompt is built at launch, so a `results` or `work_units` override made later does not change the mechanics text of a `zygo-<role>` agent. A `SubagentStart` hook can read the overrides at each start.
+
+## P3-15 design notes (input for its spec)
+
+- **Verified in the code (2026-11-23).** zygo registers `SessionStart` with no matcher (`crates/zygo-launch/src/claude_code.rs`), and the hook does not read the `source` field (`crates/zygo-hooks/src/session_start.rs`). Thus the hook gives the session text for each main-loop `SessionStart` event, of any source.
+- **Not recorded.** The only fixture with `source: compact` is the subagent fixture (`fixtures/claude-code/hooks/SessionStart-sub.json`); the main-loop fixture has `source: startup`. No premise in `docs/premises.md` and no test covers the main loop after a compaction. §8.6 says only that the text is injected at session start. The `PreCompact` text (§10.6) does not hold the session rules.
+- **Not known.** If Claude Code sends a main-loop `SessionStart` with `source: compact` after an automatic compaction. If the session text from the start stays in the context through a compaction. If OpenCode calls the system-prompt transform on the first request after a compaction.
+- **Work.** One premise for each agent, with a fixture (§19), and a test. If the text is lost, the hook gives it again. If the text is then in the context two times, the spec states that cost.
+- **Launch-time values.** Each run of the hook reads the `results` and `work_units` overrides. The other parts of the text (role prompt, profile prompt, legend, work item) are launch-time values. This agrees with the next-launch scope of the `profile` and `plugins` verbs (§17.1). No change is planned.
+
+## After phase 3
+
+- **README correction** (operator, 2026-11-23: after phase 3). The README states features in the present tense that the code did not have on 2026-11-23. The correction states what is true at that time. Verified on 2026-11-23:
+  - tmux workspaces, pause and restart: no `up` or `down` command; the workspace crate has stub files for them (phase 2, W3 and W6 to W10).
+  - Loadouts: the config schema and the resolution exist; nothing saves or starts a layout.
+  - Shared mailboxes: a design only (P3-1).
+  - Cache annotation: the README says more than `crates/zygo-proxy/src/cache.rs` does. The proxy marks only the last system block and the last tool, only when the body has no `cache_control` key, and the default is off for Claude Code.
+  - "act-lite ... built in" and the delivery skills: these come from the act-lite plugin of the built-in marketplace, and its binary must be on `PATH` (§10.5). The binary embeds only the `zygo-cli` skill and the slash commands.
 
 ## Not in phase 3 unless the operator adds them
 
