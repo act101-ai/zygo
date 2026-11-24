@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use zygo_core::esc;
-use zygo_work::decisions::graph::{dependent_count, dependents};
+use zygo_work::decisions::graph::{count_in, dependents, inverse_of};
 use zygo_work::decisions::history::trailer_commits;
 use zygo_work::decisions::record::{parse_record, read_bytes, Kind, Record, Status, DIR};
 use zygo_work::decisions::set::{read_dir, set_faults, DirError, RecordSet};
@@ -32,8 +32,11 @@ pub struct Repo<'a> {
     /// The repository top of the current directory; `None` outside a git repository. Called after the arguments parse.
     pub top: &'a dyn Fn() -> Option<PathBuf>,
     /// `history::trailer_commits` outside tests.
-    pub commits: &'a dyn Fn(&Path, &str, usize) -> Result<Vec<(String, String)>, String>,
+    pub commits: &'a CommitsFn,
 }
+
+/// `(top, id, limit)` to the `(full id, subject)` commits, or the stderr line; see `history::trailer_commits`.
+pub type CommitsFn = dyn Fn(&Path, &str, usize) -> Result<Vec<(String, String)>, String>;
 
 /// The `ls` filters, joined by AND.
 #[derive(Default)]
@@ -108,8 +111,12 @@ fn find<'s>(set: &'s RecordSet, id: &str, io: &mut DecisionIo) -> Option<&'s Rec
     r
 }
 
-/// One arm per subcommand; gives the exit code.
+/// One arm per subcommand; gives the exit code. `-h` or `--help` in any position prints the usage line to stdout.
 pub fn run_in(repo: &Repo, _env: &dyn Fn(&str) -> Option<OsString>, args: &[String], io: &mut DecisionIo) -> i32 {
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        line(io.out, USAGE);
+        return 0;
+    }
     let Some(sub) = parse(args) else {
         line(io.err, USAGE);
         return 2;
@@ -142,8 +149,9 @@ fn ls(set: &RecordSet, f: &Filter, io: &mut DecisionIo) -> i32 {
     for fault in set_faults(set) {
         line(io.err, &format!("zygo decision: {fault}"));
     }
+    let inv = inverse_of(&set.valid, false);
     for r in set.valid.iter().filter(|r| f.keeps(r)) {
-        let n = dependent_count(&set.valid, &r.id, false);
+        let n = count_in(&inv, &r.id);
         line(io.out, &format!("{} {} {} {} {n} {}", r.id, r.kind.name(), r.status.name(), r.class.name(), r.title));
     }
     0

@@ -50,11 +50,35 @@ fn mkfifo(path: &Path) { // as crates/zygo-work/tests/decision_set.rs:57
     assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
 }
 
-#[test] fn trailer_commits_err_is_one_stderr_line() { // D§14 "git process fails"
+#[test] fn trailer_commits_refuse_a_bad_id_before_git() { // D§14 "git process fails"
+    let t = tempfile::tempdir().unwrap();
+    assert_eq!(trailer_commits(t.path(), "nope", 50), Err("zygo decision: commits left out: bad id".to_string()));
+}
+#[test]
+#[ignore = "timing: spawns git with a deadline"]
+fn trailer_commits_err_is_one_stderr_line() { // D§14 "git process fails"
     let t = tempfile::tempdir().unwrap();
     let e = trailer_commits(&t.path().join("missing"), &id(1), 50).unwrap_err();
     assert!(e.starts_with("zygo decision: commits left out: git log "), "{e}");
-    assert_eq!(trailer_commits(t.path(), "nope", 50), Err("zygo decision: commits left out: bad id".to_string()));
+}
+#[test]
+#[ignore = "timing: spawns git with a deadline"]
+fn trailer_commits_ignore_the_user_grep_and_encoding_config() { // D§6.7: user git config does not hide the trailer
+    let t = tempfile::tempdir().unwrap();
+    let r = t.path();
+    git(r, &["init", "-q"]);
+    git(r, &["commit", "-q", "--allow-empty", "-m", "one", "-m", &format!("Zygo-Decision: {}", id(1))]);
+    let h = git(r, &["rev-parse", "HEAD"]);
+    git(r, &["config", "grep.patternType", "fixed"]);
+    git(r, &["config", "i18n.logOutputEncoding", "UTF-16"]);
+    assert_eq!(trailer_commits(r, &id(1), 50), Ok(vec![(h, "one".to_string())]));
+}
+#[test]
+#[ignore = "timing: spawns git with a deadline"]
+fn trailer_commits_of_an_unborn_head_are_none() { // D§14: no commit yet is not a git failure
+    let t = tempfile::tempdir().unwrap();
+    git(t.path(), &["init", "-q"]);
+    assert_eq!(trailer_commits(t.path(), &id(1), 50), Ok(vec![]));
 }
 #[test]
 #[ignore = "timing: git calls run under the 2 s production bound (BOUND)"]
@@ -160,6 +184,30 @@ const USAGE: &str = "zygo decision: usage: zygo decision ls [--status <s>] [--ki
     assert_eq!(ids(&["ls", "--unit", "phase-4"]), [id(4)]);
     assert_eq!(run(t.path(), &["ls", "--pending"]).out.lines().next().unwrap(), format!("{} decision ratified none 0 T", id(2)));
 }
+#[test] fn ls_counts_the_dependents_of_a_chain_and_a_diamond() { // D§5, D§10.1 `ls`
+    let t = tempfile::tempdir().unwrap();
+    put(t.path(), 1, &[]); put(t.path(), 2, &[1]); put(t.path(), 3, &[1]); put(t.path(), 4, &[2, 3]); put(t.path(), 5, &[4]);
+    put(t.path(), 6, &[]); put(t.path(), 7, &[6]); put(t.path(), 8, &[7]);
+    let r = run(t.path(), &["ls"]);
+    assert_eq!((r.code, r.err.as_str()), (0, ""));
+    let counts: Vec<(String, String)> = r.out.lines().map(|l| { let w: Vec<&str> = l.split(' ').collect(); (w[0].to_string(), w[4].to_string()) }).collect();
+    let want: Vec<(String, String)> = [(1, 4), (2, 2), (3, 2), (4, 1), (5, 0), (6, 2), (7, 1), (8, 0)].iter().map(|(n, c)| (id(*n), c.to_string())).collect();
+    assert_eq!(counts, want);
+}
+#[test] fn help_in_any_position_prints_the_usage_line() { // D§10.1; `-h`/`--help` run no git
+    for a in [&["--help"][..], &["-h"], &["ls", "--help"], &["show", "-h"], &["ls", "--status", "open", "-h"]] {
+        let r = go(&|| -> Option<PathBuf> { panic!("top() called for {a:?}") }, Ok(vec![]), a);
+        assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (0, USAGE, ""), "{a:?}");
+    }
+    let h = tempfile::tempdir().unwrap();
+    for a in [&["--help"][..], &["ls", "--help"], &["show", "-h"]] {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_zygo"));
+        common::scratch_home(&mut c, h.path());
+        let o = c.arg("decision").args(a).current_dir(h.path()).stdin(std::process::Stdio::null()).output().unwrap();
+        let (out, err) = (String::from_utf8(o.stdout).unwrap(), String::from_utf8(o.stderr).unwrap());
+        assert_eq!((o.status.code(), out.as_str(), err.as_str()), (Some(0), USAGE, ""), "{a:?}");
+    }
+}
 #[test] fn deps_prints_breadth_first_once() { // D§7, D§17 #4
     let t = tempfile::tempdir().unwrap();
     put_text(t.path(), &md(1), &text(&id(1), "assumption", "open", "T", "phase-3:N12", &[], "", BODY));
@@ -248,5 +296,21 @@ fn binary_in_and_out_of_a_git_repository() { // D§10.1 exit 2; D§10.1 `show` w
                       (&["ls", "a\u{1b}b"], "run in your shell: zygo decision ls a\\u{1b}b"), (&[], "run in your shell: zygo decision")] {
         let a: Vec<String> = a.iter().map(|s| s.to_string()).collect();
         assert_eq!((v.handler)(&ctx, &a).unwrap(), want);
+    }
+}
+#[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt)"]
+fn slash_reply_carries_the_args_as_given() { // D§10.1: `--` and `--save` are the user's args, not verb options
+    let h = tempfile::tempdir().unwrap();
+    for (a, want) in [("show -- X", "zygo: run in your shell: zygo decision show -- X"), ("ls --save", "zygo: run in your shell: zygo decision ls --save")] {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_zygo"));
+        common::scratch_home(&mut c, h.path());
+        let mut child = c.args(["hook", "prompt"]).current_dir(h.path()).env_remove("ZYGO_SESSION").env_remove("ZYGO_SESSION_DIR")
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+        let line = serde_json::json!({ "hook_event_name": "UserPromptSubmit", "prompt": format!("/zygo:decision {a}") }).to_string();
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), line.as_bytes()).unwrap();
+        let o = child.wait_with_output().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+        assert_eq!(v["reason"].as_str(), Some(want), "{a}");
     }
 }
