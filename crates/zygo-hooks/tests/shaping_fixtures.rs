@@ -323,3 +323,54 @@ fn secret_problems(root: &Path) -> Vec<String> {
     }
     out
 }
+
+#[cfg(unix)]
+#[test]
+fn capture_script_writes_four_files_and_scrubs() {
+    let t = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(t.path()).unwrap();
+    let (home, out) = (root.join("home"), root.join("out"));
+    let scratch = home.join("scratch"); // under HOME: proves the scratch rule runs first
+    std::fs::create_dir_all(&scratch).unwrap();
+    let h = String::from_utf8(Command::new("hostname").output().unwrap().stdout).unwrap();
+    let h = h.trim().split('.').next().unwrap().to_string();
+    let host = if h.len() >= 4 && h != "localhost" { h } else { "host".into() };
+    let script = shaping::repo().join("scripts/fixtures/capture-shaping.sh");
+    let st = Command::new("sh")
+        .arg(&script)
+        .args(["clean", "probe", "--", "sh", "-c", r#"printf '%s\n' "$1/a" "$2/b" "$3" "$4"; printf 'crlf\r\n'; printf '%s\n' "$1/e" >&2; exit 3"#, "x"])
+        .arg(&home)
+        .arg(&scratch)
+        .arg("capuser")
+        .arg(&host)
+        .current_dir(&scratch)
+        .env("HOME", &home)
+        .env("PWD", &scratch)
+        .env("USER", "capuser")
+        .env("ZYGO_FIXTURES_DIR", &out)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let d = out.join("clean/probe");
+    assert_eq!(std::fs::read(d.join("stdout")).unwrap(), b"/home/user/a\n/repo/b\nuser\nhost\ncrlf\r\n");
+    assert_eq!(std::fs::read(d.join("stderr")).unwrap(), b"/home/user/e\n");
+    assert_eq!(std::fs::read(d.join("must_keep")).unwrap(), b"");
+    assert!(!d.join("view").exists());
+    let m: Value = serde_json::from_slice(&std::fs::read(d.join("meta.json")).unwrap()).unwrap();
+    assert_eq!(m["exit"], 3);
+    assert_eq!(m["event"], "PostToolUse");
+    assert_eq!(m["agent"], "claude-code");
+    assert!(m["command"].as_str().unwrap().starts_with("sh -c "));
+    let mut bads = vec![root.to_str().unwrap().to_string(), "capuser".to_string()];
+    if host != "host" {
+        bads.push(host.clone());
+    }
+    for f in ["stdout", "stderr", "meta.json"] {
+        let s = String::from_utf8(std::fs::read(d.join(f)).unwrap()).unwrap();
+        for bad in &bads {
+            assert!(!s.contains(bad.as_str()), "{f} keeps {bad}");
+        }
+    }
+    std::fs::write(d.join("must_keep"), b"x\n").unwrap(); // exit 3 needs a must_keep line
+    assert!(format_problems(&d).is_empty(), "{:?}", format_problems(&d)); // meta.json has the O§8.1 keys
+}
