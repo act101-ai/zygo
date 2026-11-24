@@ -88,20 +88,32 @@ pub fn dependents(records: &[Record], id: &str) -> Dependents {
     walk(records.iter(), id)
 }
 
-/// The number of dependents of `id` (D§5). With `skip_superseded`, `superseded` records leave the graph before the
-/// walk: they are not counted and not walked through (D§11.2 step 2).
-pub fn dependent_count(records: &[Record], id: &str, skip_superseded: bool) -> usize {
-    let next = inverse(records.iter().filter(|r| !(skip_superseded && r.status == Status::Superseded)));
+/// The inverse edges of the graph, built once for many [`count_in`] calls (`zygo decision ls`).
+pub struct Inverse<'a>(HashMap<&'a str, Vec<&'a str>>);
+
+/// The inverse edges of `records`. With `skip_superseded`, `superseded` records leave the graph (D§11.2 step 2).
+pub fn inverse_of(records: &[Record], skip_superseded: bool) -> Inverse<'_> {
+    Inverse(inverse(records.iter().filter(|r| !(skip_superseded && r.status == Status::Superseded))))
+}
+
+/// The number of dependents of `id` in `inv` (D§5).
+pub fn count_in(inv: &Inverse, id: &str) -> usize {
     let mut seen: HashSet<&str> = HashSet::from([id]);
     let mut stack = vec![id];
     while let Some(node) = stack.pop() {
-        for &child in next.get(node).map(Vec::as_slice).unwrap_or_default() {
+        for &child in inv.0.get(node).map(Vec::as_slice).unwrap_or_default() {
             if seen.insert(child) {
                 stack.push(child);
             }
         }
     }
     seen.len() - 1
+}
+
+/// The number of dependents of `id` (D§5). With `skip_superseded`, `superseded` records leave the graph before the
+/// walk: they are not counted and not walked through (D§11.2 step 2).
+pub fn dependent_count(records: &[Record], id: &str, skip_superseded: bool) -> usize {
+    count_in(&inverse_of(records, skip_superseded), id)
 }
 
 /// The number of records on the longest `depends_on` path (D§9.5); 0 for no records. A missing target ends the

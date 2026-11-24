@@ -63,9 +63,10 @@ pub struct LoadContext {
 /// The warning for a user `[[model]]` in serve mode (§6.1: the server's catalog is authoritative).
 pub const MODEL_IGNORED: &str = "config: [[model]] in user config ignored; the server's catalog is authoritative";
 
-/// The tables only user config may set (statusline HUD design §8; auto-update design "Opt-out"). The team layer drops
-/// them with one warning; the repository-file filter drops them as it drops every table outside its kept list.
-pub const USER_ONLY: [&str; 2] = ["statusline", "update"];
+/// The tables only user config may set (statusline HUD design §8; auto-update design "Opt-out"; workspace mail design
+/// M§11, M-C6). The team layer drops them with one warning; the repository-file filter drops them as it drops every
+/// table outside its kept list.
+pub const USER_ONLY: [&str; 3] = ["statusline", "update", "mail"];
 
 /// The workspace tables only user config may set (workspaces design W§11, AU22, W-C5): a loadout starts programs, so
 /// a team server must not set one. The team layer drops them with [`WORKSPACE_ONLY_IGNORED`]; the repository-file

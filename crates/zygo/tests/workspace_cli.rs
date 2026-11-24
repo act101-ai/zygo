@@ -118,7 +118,7 @@ fn w12_down_refuses_a_bad_timeout_a_name_with_all_and_a_dash_name() {
     let o = zygo_in(h.path(), "", path.as_os_str(), &["down", "--timeout", "5x"], &[]);
     assert_eq!(
         (o.status.code(), text(&o.stderr)),
-        (Some(2), "zygo: bad --timeout value 5x: use <n>s, <n>m or <n>h\n".to_string())
+        (Some(2), "zygo: bad --timeout value 5x: use <n>s, <n>m, <n>h or <n>d\n".to_string())
     );
     for args in [&["down", "--all", "app"][..], &["down", "-x"]] {
         let o = zygo_in(h.path(), "", path.as_os_str(), args, &[]);

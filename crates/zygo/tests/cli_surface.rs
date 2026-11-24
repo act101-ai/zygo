@@ -34,7 +34,7 @@ fn help_lists_every_command() {
         "claude", "opencode", "serve", "status", "doctor", "compact", "profile", "work", "usage",
         "marketplace", "plugins", "plugin", "keys", "config", "update", "help", "results",
         "redaction", "guards", "units", "compact-tool", "statusline", "mcp", "hook",
-        "up", "down", "ls", "attach", "loadout", "workspace", "ws",
+        "up", "down", "ls", "attach", "loadout", "workspace", "ws", "decision",
     ] {
         assert!(listed.contains(c), "--help Commands lacks {c}: {listed:?}");
     }
@@ -42,7 +42,7 @@ fn help_lists_every_command() {
 
 #[test]
 fn every_command_exists() {
-    let cmds = "claude|opencode|serve|serve token new|serve reload|status|doctor|compact|profile list|profile show|profile use|work|work report|usage|marketplace add|marketplace list|marketplace update|marketplace remove|plugins list|plugins sync|plugins enable|plugins disable|plugins approve|plugin check|keys set|keys rm|keys list|config show|config check|update|help|results|redaction|guards|units|compact-tool|statusline|mcp|hook|up|down|ls|attach|loadout list|workspace|ws forget|ws forget-pane|ws snapshot";
+    let cmds = "claude|opencode|serve|serve token new|serve reload|status|doctor|compact|profile list|profile show|profile use|work|work report|usage|marketplace add|marketplace list|marketplace update|marketplace remove|plugins list|plugins sync|plugins enable|plugins disable|plugins approve|plugin check|keys set|keys rm|keys list|config show|config check|update|help|results|redaction|guards|units|compact-tool|statusline|mcp|hook|up|down|ls|attach|loadout list|workspace|ws forget|ws forget-pane|ws snapshot|decision";
     for c in cmds.split('|') {
         let mut argv: Vec<&str> = c.split(' ').collect();
         argv.push("--help");
@@ -114,7 +114,7 @@ fn flags() {
 
 #[test]
 fn verbs_match_spec() {
-    let want: [(&str, &str); 17] = [
+    let want: [(&str, &str); 18] = [
         ("help", "[<verb>]"),
         ("status", ""),
         ("usage", ""),
@@ -132,6 +132,7 @@ fn verbs_match_spec() {
         ("down", "[--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]"),
         ("ls", ""),
         ("workspace", ""),
+        ("decision", "ls|show|deps|check …"),
     ];
     let specs = zygo_core::verbs::VERB_SPECS;
     assert_eq!(specs.len(), want.len());
@@ -141,7 +142,7 @@ fn verbs_match_spec() {
     let names: Vec<&str> = specs.iter().map(|s| s.name).collect();
     assert_eq!(
         names,
-        ["help", "status", "usage", "compact", "results", "redaction", "guards", "units", "work", "plugins", "marketplace", "profile", "compact-tool", "statusline", "down", "ls", "workspace"]
+        ["help", "status", "usage", "compact", "results", "redaction", "guards", "units", "work", "plugins", "marketplace", "profile", "compact-tool", "statusline", "down", "ls", "workspace", "decision"]
     );
     let verbs = zygo::cmd::verbs::VERBS;
     assert_eq!(verbs.len(), specs.len());

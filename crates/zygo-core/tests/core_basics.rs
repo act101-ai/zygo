@@ -1,4 +1,4 @@
-use zygo_core::ids::ulid;
+use zygo_core::ids::{ulid, valid_member_name, RESERVED_MEMBER_NAMES};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -572,4 +572,35 @@ fn repo_root_round_trips_through_save_and_load() {
     assert_eq!(SessionView::load(&d).unwrap(), v);
     let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
     assert_eq!(raw["repo_root"], "/r/top");
+}
+
+#[test]
+fn valid_member_name_accepts_the_m6_grammar() {
+    // M§6: ^[a-z][a-z0-9-]{0,31}$
+    let max = format!("a{}", "b".repeat(31));
+    assert_eq!(max.len(), 32);
+    for ok in ["elena", "a", max.as_str(), "a-", "a--b", "x9-y", "alle", "clip"] {
+        assert!(valid_member_name(ok), "{ok:?}");
+    }
+}
+
+#[test]
+fn valid_member_name_refuses_others_and_the_reserved() {
+    assert_eq!(RESERVED_MEMBER_NAMES, ["all", "cli"]);
+    let long = format!("a{}", "b".repeat(32));
+    assert_eq!(long.len(), 33);
+    for bad in ["Elena", "1a", "-a", long.as_str(), "all", "cli", "", "a_b", "a.b", "a b", "é", "a/b"] {
+        assert!(!valid_member_name(bad), "{bad:?}");
+    }
+}
+
+#[test] // ML-1 review round 1, finding 2: a name of pane-key form (W§5 `^k[a-z2-7]{8}$`) would make mail_send's `to` ambiguous
+fn valid_member_name_refuses_the_pane_key_form() {
+    for bad in ["kabcdefgh", "k22222222", "kzzzzzzz7"] {
+        assert!(!valid_member_name(bad), "{bad:?}");
+    }
+    // near misses: 8 characters, and a `1` (not in base32 `a-z2-7`) in 9 characters
+    for ok in ["kabcdefg", "kabcdefg1"] {
+        assert!(valid_member_name(ok), "{ok:?}");
+    }
 }

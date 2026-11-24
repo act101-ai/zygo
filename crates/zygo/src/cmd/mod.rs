@@ -13,6 +13,7 @@ pub mod claude;
 pub mod compact;
 pub mod compact_tool;
 pub mod config;
+pub mod decision;
 pub mod doctor;
 pub mod down;
 pub mod guards;
@@ -357,6 +358,13 @@ enum Cmd {
     Attach(attach::AttachArgs),
     /// Loadouts and their source
     Loadout(loadout::LoadoutArgs),
+    /// Decision records: ls, show, deps, check
+    // `-h`/`--help` reach `decision::run_in` in any position, which prints the usage line.
+    #[command(disable_help_flag = true)]
+    Decision {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Status of this session's or this folder's workspace
     Workspace,
     /// Workspace tools: forget, forget-pane
@@ -492,13 +500,14 @@ fn verb_tokens(raw: Vec<String>) -> (bool, Vec<String>) {
     (save, args)
 }
 
-/// Runs a verb: `args` are the raw tokens after the verb, split by `verb_tokens`.
+/// Runs a verb: `args` are the raw tokens after the verb, split by `verb_tokens` (not for `decision`).
 fn run_verb(name: &str, raw: Vec<String>, slash: bool) -> anyhow::Result<String> {
     let verb = VERBS
         .iter()
         .find(|v| v.spec.name == name)
         .ok_or_else(|| anyhow::anyhow!("unknown verb `{name}`; try help"))?;
-    let (save, args) = verb_tokens(raw);
+    // D§10.1: the `decision` reply carries `<args>` as given, so its tokens are not split.
+    let (save, args) = if name == "decision" { (false, raw) } else { verb_tokens(raw) };
     let ctx = VerbCtx { slash, save, session_dir: SessionDir::from_env(), paths: Paths::from_env() };
     (verb.handler)(&ctx, &args)
 }
@@ -570,6 +579,7 @@ pub fn run() -> i32 {
         Cmd::Ls => return finish(ls::verb(&cli_ctx(), &[])),
         Cmd::Attach(a) => return attach::run(a),
         Cmd::Loadout(a) => return loadout::run(a),
+        Cmd::Decision { args } => return decision::run(args),
         Cmd::Workspace => return finish(workspace::verb(&cli_ctx(), &[])),
         Cmd::Ws(_) => unreachable!("taken above"),
         Cmd::Status => "status",
@@ -607,6 +617,15 @@ mod tests {
         assert_eq!(verb_tokens(v(&["on"])), (false, v(&["on"])));
         assert_eq!(verb_tokens(v(&["--", "--save"])), (false, v(&["--save"])));
         assert_eq!(verb_tokens(v(&["a", "--save", "--", "b", "--save", "--"])), (true, v(&["a", "b", "--save", "--"])));
+    }
+
+    /// D§10.1: the `/zygo:decision` reply carries `<args>` as given, `--` and `--save` included.
+    #[test]
+    fn slash_decision_keeps_its_args() {
+        let r = super::slash("decision", "show -- X").unwrap();
+        assert_eq!(r, "run in your shell: zygo decision show -- X");
+        let r = super::slash("decision", "ls --save -- --save").unwrap();
+        assert_eq!(r, "run in your shell: zygo decision ls --save -- --save");
     }
 
     #[test]
