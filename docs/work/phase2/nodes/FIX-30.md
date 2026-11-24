@@ -672,7 +672,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
      `| 2026-11-23 | AU54, W§7.4 step 1, W§8.1 step 6, W§8.4, W§12 (rows `zygo ls`, `zygo ws forget`, `zygo ws forget-pane`) | author's call (FIX-30 plan, plan review items 1-10) | Every socket that zygo passes to tmux, saved or from `$TMUX`, gets the AU54 check before its first tmux call: `up`, `down` and `ws forget` exit 2 (the `forget` line names the state folder to remove by hand for a saved socket), `up --all` skips, `ls` shows `unreachable`, a hand start goes on as a v1 launch with the not-saved line, and a snapshot logs one line with no tmux call (C6, W-C1); `ws forget-pane` is not refused. |`
   Check: `git diff -- docs/specs/2026-11-20-workspaces-design.md` shows only the nine changes above. If E2 changed one of these lines first, merge the FIX-30 words into the E2 text and record that in the results.
 
-- [ ] **13. Acceptance and gates.**
+- [x] **13. Acceptance and gates.**
   - `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked`: all pass (tmux cases run or print their skip reason), including `au54_a_saved_socket_with_a_quote_logs_one_line_and_makes_no_tmux_call`, `au54_up_refuses_a_tmux_env_socket_with_a_quote_before_its_first_use`, `au54_up_all_skips_a_tmux_env_socket_with_a_quote`, `au54_down_refuses_a_tmux_env_socket_with_a_quote`, `au54_down_detach_rule_refuses_a_tmux_env_socket_with_a_quote`, `au54_ls_shows_a_quoted_saved_socket_as_unreachable_with_no_tmux_call`, `au54_forget_refuses_a_quoted_saved_socket_and_names_the_state_folder`, `au54_forget_refuses_a_quoted_tmux_env_socket_with_exit_2`, `au54_forget_with_a_quoted_socket_whose_folder_is_gone_succeeds`, `au54_forget_pane_with_a_quoted_saved_socket_removes_the_record_and_the_snapshot_logs`.
   - `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member`: all pass, including `au54_the_member_wrapper_logs_its_snapshots_and_makes_no_tmux_call`, `au54_ws_snapshot_logs_one_line_and_makes_no_tmux_call`, `au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_saved_line`, `au54_a_hand_start_on_a_quoted_tmux_socket_is_a_v1_launch_with_the_not_saved_line`.
   - `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test session_verbs`: all pass, including `au54_cli_verb_mirror_logs_one_line_and_makes_no_tmux_call`.
@@ -724,9 +724,9 @@ Run 2026-11-23 in `.worktrees/phase2/FIX-30` (branch `worktree-zygo-phase-2--FIX
 | `cargo test --workspace --locked --no-run` | 0 | — |
 | `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` (the N2 name scan is skipped because `N2_FORBIDDEN_NAMES` is not set) |
 
-All 15 FIX-30 tests pass: 1 in `snapshot.rs`, 2 in `up.rs`, 2 in `down.rs`, 5 in `admin.rs`, 4 in `workspace_member.rs` and 1 in `session_verbs.rs`. I did not tick step 13, because Acceptance 1 does not pass (F-1).
+All 15 FIX-30 tests pass: 1 in `snapshot.rs`, 2 in `up.rs`, 2 in `down.rs`, 5 in `admin.rs`, 4 in `workspace_member.rs` and 1 in `session_verbs.rs`. At first, step 13 stayed unticked because Acceptance 1 failed (F-1). After the F-1 repair below, step 13 is ticked.
 
-**Failure F-1 (not resolved; this needs a decision from the controller).** Two earlier live-tmux tests in `crates/zygo-workspace/tests/up.rs` fail:
+**Failure F-1 (repaired; see "F-1 repair" below).** Two earlier live-tmux tests in `crates/zygo-workspace/tests/up.rs` fail:
 - `socket_with_a_dollar_kills_the_new_session` (`:668`, W§18 #15);
 - `failed_first_up_leaves_no_plan_and_the_next_up_builds_the_loadout` (`:1432`, round 2 B1).
 
@@ -735,3 +735,25 @@ Both panic at `tests/up.rs:211:61` (`read(&l.store())`, which is `store.read().u
 Diagnosis: both tests reach the step 9 AU54 check (`up.rs:1263`, the socket read from the new server) by putting a `$` socket in `$TMUX` (`:675`, `:1440`). FIX-30 step 5 checks the `$TMUX` socket at step 6, before the first tmux call. So `up` now exits 2 with the AU54 line before step 8 writes any state. The exit code and the line still match the first assertion of each test. The assertion after it (a state in phase `down` with no socket) finds no state.
 
 The product matches the new AU54 text (step 12.1: "the `$TMUX` socket before the first tmux call of step 5 or 6"). W§18 #15 names the route to the step 9 check as "through `TMUX_TMPDIR`", not `$TMUX`. So the tests use a route that FIX-30 now closes earlier. The plan's step 5 check ("every earlier test passes") did not foresee this. The brief says not to change a test to make it pass, so I did not change these two tests. A possible repair for the controller to decide: drive both tests through `TMUX_TMPDIR` (no `$TMUX`), as W§18 #15 states, so that they reach the step 9 check again.
+
+**F-1 repair (controller decision, 2026-11-23: the diagnosis is confirmed, the product is correct, make the proposed repair).**
+- The `zygo-workspace` tests have no `TMUX_TMPDIR` helper. The only uses are in the crate `zygo` (`tests/common/workspace.rs:322`, `workspace_restore.rs:897`, `workspace_cli.rs:50`), and that test harness is not shared with this crate. So I added two helpers to `crates/zygo-workspace/tests/up.rs`:
+  - `tmpdir_tmux(dir, real, folder)`: a wrapper that unsets `TMUX`, exports `TMUX_TMPDIR=<folder>` and runs `real -f /dev/null "$@"`;
+  - `tmpdir_socket(folder)`: returns `<folder>/tmux-<uid>/default`.
+- In both tests, the `$` folder (`/tmp/zygo-w7$…`, mode 0700) is now `TMUX_TMPDIR`, and `l.o.tmux_env = None`. The has-session check and the `kill-server` cleanup now use `tmpdir_socket(folder)`. Every assertion is unchanged.
+- How the test reaches step 9: with no saved socket and no `$TMUX`, `up::server` gives no `-S`. `check_server` passes (there is no socket), step 8 writes the state, and step 9 starts the server on tmux's default socket in the `$` folder. Then `socket_path` reads it, and `check_path` (now `up.rs:1273`, which was `:1263` before FIX-30 added lines) kills the session and undoes the build to phase `down`. The kept assertion `(ws.phase, ws.tmux_socket) == (Phase::Down, None)` holds only after the step 8 write and the step 9 undo. So the test proves that step 9 ran.
+- Run of the two tests: `cargo test -p zygo-workspace --locked --test up -- --exact socket_with_a_dollar_kills_the_new_session failed_first_up_leaves_no_plan_and_the_next_up_builds_the_loadout` gave 2 passed. tmux is installed here: before the repair, both tests got past `require_tmux` and failed on the state read.
+
+**Measurements after the F-1 repair:**
+
+| Command | Exit | Counts |
+|---|---|---|
+| `cargo test -p zygo-workspace --locked` (Acceptance 1) | 0 | 398 passed, 0 failed, 2 ignored (`--test up`: 70 passed) |
+| `cargo test -p zygo --locked --test workspace_member` (Acceptance 2) | 0 | 43 passed |
+| `cargo test -p zygo --locked --test session_verbs` (Acceptance 3) | 0 | 29 passed |
+| `cargo test -p zygo --locked --lib cmd::member` | 0 | 31 passed |
+| `cargo test -p zygo-workspace --locked --no-fail-fast` | 0 | 398 passed, 0 failed, 2 ignored |
+| `cargo test -p zygo --locked --no-fail-fast` | 0 | 684 passed, 0 failed, 2 ignored |
+| `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings` | 0 | no warning |
+| `cargo test --workspace --locked --no-run` | 0 | — |
+| `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` |

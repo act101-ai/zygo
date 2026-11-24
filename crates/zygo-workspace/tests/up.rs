@@ -664,6 +664,23 @@ fn hook_commands_are_literal() {
     assert_eq!(events.into_iter().collect::<Vec<_>>(), eight);
 }
 
+/// FIX-30 F-1 (W§18 #15): `real` as a tmux whose server is chosen by tmux itself, with `TMUX_TMPDIR` = `folder` and
+/// `$TMUX` unset: no `-S` is given, so the socket is `<folder>/tmux-<uid>/default`, which `up` reads at step 9.
+fn tmpdir_tmux(dir: &Path, real: &Path, folder: &Path) -> PathBuf {
+    script(
+        dir,
+        "tmuxf",
+        &format!("unset TMUX\nTMUX_TMPDIR='{}'\nexport TMUX_TMPDIR\nexec '{}' -f /dev/null \"$@\"", folder.display(), real.display()),
+    )
+}
+
+/// FIX-30 F-1: the default socket of the tmux server that [`tmpdir_tmux`] starts in `folder`.
+fn tmpdir_socket(folder: &Path) -> PathBuf {
+    // SAFETY: getuid has no precondition and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    folder.join(format!("tmux-{uid}")).join("default")
+}
+
 #[test] // W§18 #15, AU54 (the socket check after the server exists)
 fn socket_with_a_dollar_kills_the_new_session() {
     let _g = serial();
@@ -671,13 +688,14 @@ fn socket_with_a_dollar_kills_the_new_session() {
     let mut l = live("0");
     let folder = tempfile::Builder::new().prefix("zygo-w7$").tempdir_in("/tmp").unwrap();
     fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    l.o.tmux = script(l.t.path(), "tmuxf", &format!("exec '{}' -f /dev/null \"$@\"", real.display()));
-    l.o.tmux_env = Some(OsString::from(format!("{}/s,1,0", folder.path().display())));
+    // FIX-30 F-1: the `$` socket comes through `TMUX_TMPDIR` (W§18 #15); a `$TMUX` socket is refused at step 6.
+    l.o.tmux = tmpdir_tmux(l.t.path(), &real, folder.path());
+    l.o.tmux_env = None;
     let (code, out, err) = run(&l.o);
     assert_eq!((code, out.as_str(), err.as_str()), (2, "", format!("{AU54}\n").as_str()));
     let ws = read(&l.store());
     assert_eq!((ws.phase, ws.tmux_socket), (Phase::Down, None));
-    let sock = folder.path().join("s");
+    let sock = tmpdir_socket(folder.path());
     let has = Command::new(&real).arg("-S").arg(&sock).args(["has-session", "-t", "=zygo-app:"]).output().unwrap();
     assert!(!has.status.success());
     let _ = Command::new(&real).arg("-S").arg(&sock).arg("kill-server").output();
@@ -1436,12 +1454,13 @@ fn failed_first_up_leaves_no_plan_and_the_next_up_builds_the_loadout() {
     let folder = tempfile::Builder::new().prefix("zygo-w7$").tempdir_in("/tmp").unwrap();
     fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let wrapper = l.o.tmux.clone();
-    l.o.tmux = script(l.t.path(), "tmuxf", &format!("exec '{}' -f /dev/null \"$@\"", real.display()));
-    l.o.tmux_env = Some(OsString::from(format!("{}/s,1,0", folder.path().display())));
+    // FIX-30 F-1: the `$` socket comes through `TMUX_TMPDIR` (W§18 #15); a `$TMUX` socket is refused at step 6.
+    l.o.tmux = tmpdir_tmux(l.t.path(), &real, folder.path());
+    l.o.tmux_env = None;
     l.o.config = pair();
     l.o.loadout = Some("pair".into());
     let (code, _, err) = run(&l.o);
-    let _ = Command::new(&real).arg("-S").arg(folder.path().join("s")).arg("kill-server").output();
+    let _ = Command::new(&real).arg("-S").arg(tmpdir_socket(folder.path())).arg("kill-server").output();
     assert_eq!(code, 2, "{err}");
     let ws = read(&l.store());
     assert_eq!((ws.phase, ws.tmux_socket.clone()), (Phase::Down, None));
