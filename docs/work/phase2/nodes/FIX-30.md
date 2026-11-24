@@ -690,3 +690,48 @@ Path to test (acceptance "one test for each path"): contract (1) `ls` `au54_ls_.
 - Proportion: thirteen steps for six contract paths, three found snapshot callers, and the `$TMUX` fallbacks. One check in `snapshot::attempt` replaces five call-site checks; one helper `check_server` serves eight fallback places in `up.rs`, `down.rs` and `admin.rs`. `forget-pane` has no code change.
 
 ### Results
+
+Run 2026-11-23 in `.worktrees/phase2/FIX-30` (branch `worktree-zygo-phase-2--FIX-30`, from `f757926`, E1 and E2 merged).
+
+**Premise check.** I checked every path, symbol and line that the plan cites against the live code before step 1. Every code line and test helper that the plan cites is at its cited line: `repair.rs:64`, `snapshot.rs:13`, `:565-587`, `up.rs:274-277`, `:981`, `:993`, `:1065-1066`, `:1541`, `down.rs:32`, `:510-519`, `:563`, `:603`, `:1003`, `admin.rs:21`, `:24`, `:161`, `:239-264`, `:541-674`, `member.rs:22-23`, `:831-869`, `session_verbs.rs:809-828`, and the helpers in `tests/{snapshot,up,down,admin}.rs` and `workspace_member.rs`. E1 and E2 changed none of the spec sentences that step 12 replaces: all eight anchors are on their cited lines (195, 326, 362, 403, 408, 560, 563, 564).
+
+**Adaptations.**
+- A-1 (target folder): the controller brief sets `CARGO_TARGET_DIR=.../.worktrees/phase2/fix30-target`. The plan's `T` is `.../FIX-30-target`. I used the brief's folder.
+- A-2 (change log row): the plan puts the row "after `:1026`". E1 and E2 added rows, so the last row of the table is now line 1050 (`| 2026-11-23 | W§17 PW4 | live check (node E2) | …`), which is the last line of the file. I added the row after it.
+- A-3 (`au54_forget_refuses_a_quoted_tmux_env_socket_with_exit_2`): the plan calls `forget_run(&p, &tmux, Some(&env), "app")`. `env` is a `String`, and the helper takes `Option<&str>` (`tests/admin.rs:200`), so `Some(&env)` does not compile. I wrote `Some(env.as_str())`. The assertions are as planned.
+- A-4 (doc comment of `snapshot::attempt`): I added the planned sentence and wrapped the comment again to the line width. The words are as planned.
+- A-5 (commits): the plan names no commits. I made one commit for each red/green pair (steps 1-3, 4-5, 6-7, 8-9, 10-11), one for step 12, and one for these results.
+
+**Red runs (before each code step).**
+- Step 1: `au54_a_saved_socket_…` failed: `left: Written, right: Skipped(Logged)`.
+- Step 2: `au54_cli_verb_mirror_…` failed because `mf::tmux_calls` held one call. Both `workspace_member` tests failed at the `tmux-called` assertion.
+- Step 4: both tests failed, but not at the assertion that the plan predicted. In `up --all`, `session_check` called `has-session` on the `$TMUX` socket, and then the step 8 AU62 line came out (`zygo: tmux socket …/so'ck/s is not private …\nzygo: app skipped`). In `up` (`building`), the repair ran and then the step 8 AU62 line came out, exit 1.
+- Step 6: in `au54_down_refuses_…`, the tmux log held `has-session` and `show-options` on `…/so'ck/s`. In `au54_down_detach_rule_…`, the result was `(0, "zygo: down started; end your turn\n", "")`.
+- Step 8 (run after step 3): `au54_ls_…` failed because `calls` held `session_exists` and `show_session_option`. Both forget tests gave `(0, "zygo: forgot app\n", "")`. `au54_forget_pane_…` passed: step 3 was already in, as the plan's step 8 note says. `au54_forget_with_a_quoted_socket_whose_folder_is_gone_succeeds` passed, as planned (it guards behavior that does not change).
+- Step 10: both tests failed because the AU54 not-saved line came out 0 times.
+
+**Measurements** (`CARGO_TARGET_DIR=.../fix30-target`):
+
+| Command | Exit | Counts |
+|---|---|---|
+| `cargo test -p zygo-workspace --locked` (Acceptance 1) | 101 | Every target that ran passed, except `--test up`: 68 passed, 2 failed (see Failure F-1). Cargo stopped after `up`; the floor run below covers the remaining targets. |
+| `cargo test -p zygo --locked --test workspace_member` (Acceptance 2) | 0 | 43 passed |
+| `cargo test -p zygo --locked --test session_verbs` (Acceptance 3) | 0 | 29 passed |
+| `cargo test -p zygo --locked --lib cmd::member` | 0 | 31 passed |
+| `cargo test -p zygo-workspace --locked --no-fail-fast` | 101 | 396 passed, 2 failed (F-1), 2 ignored |
+| `cargo test -p zygo --locked --no-fail-fast` | 0 | 684 passed, 0 failed, 2 ignored |
+| `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings` | 0 | no warning |
+| `cargo test --workspace --locked --no-run` | 0 | — |
+| `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` (the N2 name scan is skipped because `N2_FORBIDDEN_NAMES` is not set) |
+
+All 15 FIX-30 tests pass: 1 in `snapshot.rs`, 2 in `up.rs`, 2 in `down.rs`, 5 in `admin.rs`, 4 in `workspace_member.rs` and 1 in `session_verbs.rs`. I did not tick step 13, because Acceptance 1 does not pass (F-1).
+
+**Failure F-1 (not resolved; this needs a decision from the controller).** Two earlier live-tmux tests in `crates/zygo-workspace/tests/up.rs` fail:
+- `socket_with_a_dollar_kills_the_new_session` (`:668`, W§18 #15);
+- `failed_first_up_leaves_no_plan_and_the_next_up_builds_the_loadout` (`:1432`, round 2 B1).
+
+Both panic at `tests/up.rs:211:61` (`read(&l.store())`, which is `store.read().unwrap().unwrap()`) with `called Option::unwrap() on a None value`.
+
+Diagnosis: both tests reach the step 9 AU54 check (`up.rs:1263`, the socket read from the new server) by putting a `$` socket in `$TMUX` (`:675`, `:1440`). FIX-30 step 5 checks the `$TMUX` socket at step 6, before the first tmux call. So `up` now exits 2 with the AU54 line before step 8 writes any state. The exit code and the line still match the first assertion of each test. The assertion after it (a state in phase `down` with no socket) finds no state.
+
+The product matches the new AU54 text (step 12.1: "the `$TMUX` socket before the first tmux call of step 5 or 6"). W§18 #15 names the route to the step 9 check as "through `TMUX_TMPDIR`", not `$TMUX`. So the tests use a route that FIX-30 now closes earlier. The plan's step 5 check ("every earlier test passes") did not foresee this. The brief says not to change a test to make it pass, so I did not change these two tests. A possible repair for the controller to decide: drive both tests through `TMUX_TMPDIR` (no `$TMUX`), as W§18 #15 states, so that they reach the step 9 check again.
