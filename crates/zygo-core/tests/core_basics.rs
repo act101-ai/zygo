@@ -593,3 +593,14 @@ fn valid_member_name_refuses_others_and_the_reserved() {
         assert!(!valid_member_name(bad), "{bad:?}");
     }
 }
+
+#[test] // ML-1 review round 1, finding 2: a name of pane-key form (W§5 `^k[a-z2-7]{8}$`) would make mail_send's `to` ambiguous
+fn valid_member_name_refuses_the_pane_key_form() {
+    for bad in ["kabcdefgh", "k22222222", "kzzzzzzz7"] {
+        assert!(!valid_member_name(bad), "{bad:?}");
+    }
+    // near misses: 8 characters, and a `1` (not in base32 `a-z2-7`) in 9 characters
+    for ok in ["kabcdefg", "kabcdefg1"] {
+        assert!(valid_member_name(ok), "{ok:?}");
+    }
+}

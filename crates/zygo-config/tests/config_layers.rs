@@ -1799,14 +1799,14 @@ fn mail_check_refuses_bad_pane_names() { // M§6
     let p = "loadout.pair.window[0].pane[0].name";
     none(&(base() + LO + "kind = \"claude-code\"\nname = \"elena\"\n"));
     err(&(base() + LO + "kind = \"claude-code\"\nname = \"Elena\"\n"), &format!("{p}: {NAME_GRAMMAR}"));
-    err(&(base() + LO + "kind = \"shell\"\nname = \"\"\n"), &format!("{p}: {NAME_GRAMMAR}"));
+    err(&(base() + LO + "kind = \"opencode\"\nname = \"\"\n"), &format!("{p}: {NAME_GRAMMAR}"));
     err(&(base() + LO + "kind = \"claude-code\"\nname = \"all\"\n"), &format!("{p}: is reserved"));
     err(&(base() + LO + "kind = \"opencode\"\nname = \"cli\"\n"), &format!("{p}: is reserved"));
     // unique in the loadout, across windows; the later pane is reported
     let twice = "kind = \"claude-code\"\nname = \"elena\"\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\nname = \"elena\"\n";
     err(&(base() + LO + twice), "loadout.pair.window[1].pane[0].name: is used by another pane in the loadout");
     // the same name in two loadouts is allowed
-    let other = "[loadout.solo2]\n[[loadout.solo2.window]]\n[[loadout.solo2.window.pane]]\nkind = \"shell\"\nname = \"elena\"\n";
+    let other = "[loadout.solo2]\n[[loadout.solo2.window]]\n[[loadout.solo2.window.pane]]\nkind = \"opencode\"\nname = \"elena\"\n";
     none(&(base() + LO + "kind = \"claude-code\"\nname = \"elena\"\n" + other));
 }
 
@@ -1818,4 +1818,31 @@ fn mail_check_refuses_bad_durations() { // M§11; the forms of parse_duration
     err(&(base() + "[mail]\nwake_gap = \"1w\"\n"), &format!("mail.wake_gap: {FORMS}"));
     let v: Vec<String> = check(&loaded(&(base() + "[mail]\nkeep = \"x\"\nwake_gap = \"\"\n")).config).iter().map(ToString::to_string).collect();
     assert_eq!(v, [format!("mail.keep: {FORMS}"), format!("mail.wake_gap: {FORMS}")]);
+}
+
+// ---- ML-1 review round 1 ----
+
+#[test] // finding 2; kills: a name of pane-key form (W§5) accepted, so mail_send's `to` is ambiguous
+fn mail_check_reserves_the_pane_key_form() {
+    let p = "loadout.pair.window[0].pane[0].name";
+    err(&(base() + LO + "kind = \"claude-code\"\nname = \"kabcdefgh\"\n"), &format!("{p}: is reserved"));
+    none(&(base() + LO + "kind = \"claude-code\"\nname = \"kabcdefg1\"\n"));
+}
+
+#[test] // finding 3; kills: a name on a shell pane, which has no member record (W AU53), accepted
+fn mail_check_refuses_a_name_on_a_shell_pane() {
+    let p = "loadout.pair.window[0].pane[0].name";
+    err(&(base() + LO + "kind = \"shell\"\nname = \"elena\"\n"), &format!("{p}: only with kind = \"claude-code\" or \"opencode\""));
+    // one violation only: the kind rule is reported in place of the grammar
+    err(&(base() + LO + "kind = \"shell\"\nname = \"\"\n"), &format!("{p}: only with kind = \"claude-code\" or \"opencode\""));
+}
+
+#[test] // finding 4; kills: `mail` added to the profile feature keys (only the user config sets it, M§8)
+fn mail_feature_cannot_be_set_by_a_profile() {
+    let m = loaded("[profile.p]\nfeatures = { mail = false }\n");
+    let p = zygo_config::profile::select(&m, Some("p")).unwrap();
+    let c = &m.config;
+    let v = zygo_config::profile::validate(&p, &c.role, &c.main_role, &c.catalog.view(), Dialect::Anthropic, &BTreeSet::new())
+        .unwrap_err();
+    assert_eq!(v.to_string(), "profile.p.features.mail: not a feature key");
 }

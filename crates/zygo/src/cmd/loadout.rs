@@ -336,6 +336,7 @@ pub(crate) fn hide_secrets(l: &mut Loadout, base: &PaneBase) {
             scrub(&mut p.profile);
             scrub(&mut p.compact);
             scrub(&mut p.config_dir);
+            scrub(&mut p.name);
             if let Some(t) = p.cwd.as_mut() {
                 *t = match t.strip_prefix("branch:") {
                     Some(branch) => format!("branch:{}", shown_field(branch)),
@@ -655,13 +656,13 @@ mod tests {
     fn hide_secrets_scrubs_every_other_text_field() {
         let t = tempfile::tempdir().unwrap();
         let u = |n: u32| Some(format!("https://u:SECRET{n}@h.example.invalid/x"));
-        let p = LoadoutPane { profile: u(3), compact: u(4), config_dir: u(5), cwd: u(6), ..pane(&[]) };
+        let p = LoadoutPane { profile: u(3), compact: u(4), config_dir: u(5), cwd: u(6), name: u(7), ..pane(&[]) };
         let mut l = Loadout { window: vec![LoadoutWindow { name: u(1), layout: u(2), pane: vec![p] }] };
         hide_secrets(&mut l, &base(t.path()));
         let clean = Some(G.to_string());
         let w = &l.window[0];
         let p = &w.pane[0];
-        assert_eq!([&w.name, &w.layout, &p.profile, &p.compact, &p.config_dir, &p.cwd], [&clean; 6]);
+        assert_eq!([&w.name, &w.layout, &p.profile, &p.compact, &p.config_dir, &p.cwd, &p.name], [&clean; 7]);
     }
 
     // ---- diff review round 2 ----

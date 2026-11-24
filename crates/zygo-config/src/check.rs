@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use zygo_core::ids::{valid_member_name, RESERVED_MEMBER_NAMES};
+use zygo_core::ids::{reserved_member_name, valid_member_name};
 
 use crate::layers::{join, seg};
 use crate::schema::{parse_duration, BUILTIN_LOADOUT, Config, KeyRef, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
@@ -193,7 +193,10 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
                 }
                 // M§6; the message never echoes the name (it is user text)
                 if let Some(n) = &p.name {
-                    let msg = if RESERVED_MEMBER_NAMES.contains(&n.as_str()) {
+                    // a shell pane has no member record (W AU53): its name has no effect
+                    let msg = if p.kind == "shell" {
+                        Some("only with kind = \"claude-code\" or \"opencode\"")
+                    } else if reserved_member_name(n) {
                         Some("is reserved")
                     } else if !valid_member_name(n) {
                         Some("must be 1-32 of [a-z0-9-], starting with a letter")
