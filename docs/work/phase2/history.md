@@ -58,6 +58,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30, FIX-31 | DONE | implementation | dad12c9; check-premises ok, forbidden_content 6 ok, check-conformance ok (merged tree); every W§15 row mapped |
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
+| FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 
 ## Log
 

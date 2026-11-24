@@ -55,7 +55,6 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | DONE | mechanical | 907b06d; 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39 |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
 | FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | DONE | mechanical | 7ee20d6; acceptance ok |
@@ -80,7 +79,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | DONE | implementation | 7d78063; acceptance zygo-workspace 398 + 2 ignored, workspace_member 43, session_verbs 29; zygo 684 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok (merged tree) |
 | FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | DONE | implementation | 021bcf6; acceptance zygo-workspace 407 + 2 ignored (args 33, six Acceptance cases pass); zygo-workspace + zygo + zygo-launch 1404 + 10 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, 11 mutations red (merged tree) |
 | FIX-32 | Whole-branch review fixes: OpenCode short clusters (yargs rule), inline --settings removed, ws run live-launcher refusal, attribution guard reads what the command writes, README drain line | D1 | DONE | implementation | 444a952; zygo-workspace + zygo + zygo-work + zygo-launch 1610 passed + 13 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, test-install ok (merged tree) |
-| FIX-33 | CI failures of PR #14 (run 45338846931): macOS openpty types, Windows unix-only test guard, detached down closes inherited descriptors above 2 | FIX-32 | IN-PROGRESS | implementation | — |
+| FIX-33 | CI failures of PR #14 (run 45338846931): macOS openpty types, Windows unix-only test guard, detached down closes inherited descriptors above 2 | FIX-32 | DONE | implementation | e98247d, 7584a14; CI run 45343874336 success on ubuntu, macos, windows (run 45342068421: macOS test defects, fixed in 7584a14); zygo-workspace 409 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, test-install ok, darwin and msvc cross-checks ok |
 
 ## Log
 
@@ -272,3 +271,4 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | 2026-11-23 | FIX-32 merged |
 | 2026-11-23 | FIX-33 planned from CI run 45338846931 on PR #14 (macOS and Windows test builds; ubuntu: inherited pipes in the detached down) |
 | 2026-11-23 | FIX-33 in progress |
+| 2026-11-23 | FIX-33 done; CI run 45343874336 green on ubuntu, macos and windows |

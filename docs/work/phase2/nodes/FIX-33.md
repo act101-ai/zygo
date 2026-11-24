@@ -20,7 +20,7 @@ The three failures of run 45338846931:
 - [x] In the `pre_exec` of `spawn_detached`, close every descriptor above 2: `close_range(3, u32::MAX, 0)` on Linux, with a fallback loop to `sysconf(_SC_OPEN_MAX)` (cap 65536); the loop on other Unix. Run → PASS; run the whole `down` file. (Done as close-on-exec marking; see Results, Fix 3.)
 - [x] W§9.3 step 2: one sentence; change-log row.
 - [x] Local checks and cross-checks (see Acceptance).
-- [ ] Commit, push, watch CI; record each round below.
+- [x] Commit, push, watch CI; record each round below.
 
 ## Results
 
@@ -73,4 +73,6 @@ The three failures of run 45338846931:
 - `crates/zygo/tests/session_verbs.rs:596` (`au105_not_saved_text_goes_at_the_end`): the expected text named `/var/folders/.../cfg/config.toml.lock`, but `zygo` printed `/private/var/folders/...`. On macOS, `/var` is a symlink to `/private/var`. The product is right: `resolve` in `crates/zygo-config/src/profile.rs` puts the lock beside the resolved config file (a symlinked config locks its target). Test defect. Fix: the expected lock path is `canonicalize(cfg/config.toml)` + `.lock`, which is the same path on Linux.
 - `crates/zygo-workspace/tests/mux.rs:387` (`stderr_maps_to_answers_and_errors`): the result was `Ok(())`, not `Err(Failed { "tmux exited, but a process outside its process group holds its output" })`. The stub ran `setsid sleep 30 &`, and macOS has no `setsid` command, so no process outside the group held stdout. Test defect. Fix: the stub runs `perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sleep 30 &`. Perl is in the base system of macOS and Ubuntu, and `exec` keeps the pid that `$!` names.
 - A search of `crates/` found no other use of the `setsid` command in a test script.
-- Local: `mux` 50 passed + 1 ignored, and `session_verbs` 29 passed. `cargo clippy -p zygo -p zygo-workspace --all-targets --locked -- -D warnings` exits 0, and the darwin cross-check of both packages exits 0.
+- Local: `mux` 50 passed + 1 ignored, and `session_verbs` 29 passed.
+
+**Round 2: run 45343874336 (head 7584a14).** success on ubuntu-latest, macos-latest and windows-latest. Acceptance met. `cargo clippy -p zygo -p zygo-workspace --all-targets --locked -- -D warnings` exits 0, and the darwin cross-check of both packages exits 0.
