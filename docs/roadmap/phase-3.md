@@ -50,7 +50,7 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 1. **One spec per track.** Each Phase 3 track gets one spec. The decision-record spec covers P3-8, P3-9 and P3-10 together.
 2. **One work graph.** One work graph covers all of Phase 3. It is made after all track specs are approved. A spec does not plan nodes.
 3. **A review gate per node.** Each work node gets its own review gate of up to 3 rounds (phase 2 had no per-node review). The P3-8 disposition rule applies at each gate: after round 3, a node passes only when each finding has exactly one disposition (fixed with a commit, rejected with a reason, or recorded with a DDR id), and no finding is of a class that stops for the operator.
-4. **One branch, one pull request.** Phase 3 is built on the branch `phase-3` and delivered as one pull request at the end.
+4. **A pull request after every row.** Each row of the work graph, planning included, is delivered in its own pull request to `main` (operator, 2026-11-24). The planning row is PR #16.
 
 Spec order:
 
