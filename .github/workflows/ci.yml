@@ -1,5 +1,5 @@
 name: ci
-# Docs-only changes run no CI. Branch pushes run CI through their pull request only.
+# Docs-only and README-only changes run no CI. Branch pushes run CI through their pull request only.
 on:
   push:
     branches: [main]
@@ -7,6 +7,7 @@ on:
       - '**'
       - '!docs/**'
       - '!LICENSE'
+      - '!README.md'
       # Read by the tests (cargo test), so they still run CI:
       - 'docs/passthrough.md'
       - 'docs/premises.md'
@@ -16,6 +17,7 @@ on:
       - '**'
       - '!docs/**'
       - '!LICENSE'
+      - '!README.md'
       # Read by the tests (cargo test), so they still run CI:
       - 'docs/passthrough.md'
       - 'docs/premises.md'
