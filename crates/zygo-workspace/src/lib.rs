@@ -1,4 +1,4 @@
-//! Workspaces: identity, state, locks, snapshot, loadout, drain, argument filter and mux (AU103). No launcher code.
+//! Workspaces: identity, state, locks, snapshot, loadout, drain, argument filter, mux and mail (AU103, M§5). No launcher code.
 pub mod activity;
 pub mod admin;
 pub mod args;
@@ -7,6 +7,7 @@ pub mod drain;
 pub mod env;
 pub mod identity;
 pub mod loadout;
+pub mod mail;
 pub mod mux;
 pub mod repair;
 pub mod snapshot;

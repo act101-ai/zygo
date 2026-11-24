@@ -18,6 +18,7 @@ rand.workspace = true
 fs4.workspace = true
 libc.workspace = true
 time.workspace = true
+ulid.workspace = true
 
 [features]
 # Test hooks (`mux::testing`, node W3; `snapshot::testing`, node W6). The self dev-dependency below enables it for
