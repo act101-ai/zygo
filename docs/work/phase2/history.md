@@ -52,6 +52,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6, FIX-27, M5 | DONE | judgment | 1eb6e3a; acceptance workspace_member 35, workspace --no-run ok; workspace 2833 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
+| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | DONE | judgment | acceptance workspace_restore 18 on tmux 3.8 and 3.2a, workspace --no-run ok; zygo + zygo-launch 974 + 8 ignored, clippy -D warnings clean, check-premises ok (merged tree) |
 
 ## Log
 

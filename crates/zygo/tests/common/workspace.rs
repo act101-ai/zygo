@@ -187,7 +187,7 @@ pub fn ready_exe(path: &Path) {
 /// The `zygo` binary of the package tests. `option_env!`, not `env!`: `crates/zygo-launch/tests/stub_member.rs` also
 /// compiles this module (`#[path]` to `common/mod.rs`), and cargo defines `CARGO_BIN_EXE_zygo` only for the tests of
 /// package `zygo`. The tests of `zygo-launch` never call the harness, so there the `None` arm is not reached.
-fn zygo_exe() -> &'static str {
+pub(crate) fn zygo_exe() -> &'static str {
     match option_env!("CARGO_BIN_EXE_zygo") {
         Some(exe) => exe,
         None => panic!("the workspace harness runs only in the tests of package zygo"),
@@ -195,7 +195,7 @@ fn zygo_exe() -> &'static str {
 }
 
 /// `s` as one single-quoted shell word.
-fn quote(s: &OsStr) -> String {
+pub(crate) fn quote(s: &OsStr) -> String {
     format!("'{}'", s.to_string_lossy().replace('\'', r"'\''"))
 }
 

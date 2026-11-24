@@ -56,7 +56,6 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | IN-PROGRESS | implementation | `.worktrees/phase2/E1` |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | PLANNED | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30, FIX-31 | TODO | implementation | — |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
@@ -259,3 +258,5 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-24 DONE (78435b0): merged after 3 review rounds (events_off from the real start args and env, Claude Code bare rule, OpenCode parser rule). FIX-31 added for the AU30 restore filter (an unlisted flag loses its value). |
 | 2026-11-23 | FIX-30 planned (plan review round 1 decisions applied; $TMUX fallbacks in up step 5, down guard/any_session/prepare added) |
 | 2026-11-23 | FIX-31 planned (plan review round 2 decisions applied: cluster rule, OpenCode secret options, one-launch booleans, --remote as session flag) |
+| 2026-11-23 | E1 round 3 review follow-up (remediations only): 8 of 9 closed; M7 deferred (test strength); no blocking open |
+| 2026-11-23 | E1 merged; acceptance 18/18 on tmux 3.8 and 3.2a |
