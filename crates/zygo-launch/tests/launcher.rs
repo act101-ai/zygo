@@ -203,6 +203,7 @@ struct Seen {
     agent_version: String,
     repo: Option<String>,
     work: Option<String>,
+    view: Option<SessionView>,
 }
 
 struct Stub {
@@ -262,6 +263,7 @@ impl AgentAdapter for Stub {
             agent_version: ctx.agent_version.clone(),
             repo: ctx.repo.clone(),
             work: ctx.work.as_ref().map(|w| format!("{}:{}", w.source, w.id)),
+            view: SessionView::load(&ctx.session_dir).ok(),
         });
         let args = ["--exact", "stub_child", "--ignored", "--nocapture", "--test-threads=1"];
         Ok(ChildSpec {
@@ -1532,4 +1534,48 @@ fn ctrl_break_reaches_only_the_child() {
     assert_eq!(r("launcher-exit"), "0", "{}", h.log());
     assert_eq!(r("ctrlbreak"), "1");
     assert_eq!(json(&root.join("status-after.json"))["session"], env_json_at(&root)["ZYGO_SESSION"].as_str());
+}
+
+// ---- DR-8: the launcher writes `repo_root` into view.json (decision records D§13 item 6) ----
+// The preflight refusal stops the launch after `build`: no child, no status call, no timing (as
+// `failed_preflight_exits_2_and_starts_nothing`).
+
+fn refused(fx: &Fx) -> Stub {
+    Stub { preflight: Some(Preflight { file: fx.root.join("settings.json"), key: "env.ANTHROPIC_API_KEY".into() }), ..stub() }
+}
+
+#[test]
+fn repo_root_is_the_top_the_launcher_holds() {
+    let fx = fx();
+    let st = refused(&fx);
+    let mut o = opts(&fx, "dump", &[]);
+    o.top = Some(Some(fx.cwd.clone())); // the test hook in place of the 2 s `checkout`
+    let (code, err) = run(&st, o);
+    assert_eq!(code, 2, "{err}");
+    assert_eq!(st.last().view.expect("view.json was written").repo_root.as_deref(), Some(fx.cwd.to_str().unwrap()));
+}
+
+#[test]
+fn repo_root_is_none_outside_a_repository() {
+    // The hook says "no top level" (no git, no clock): the view holds `None`.
+    let fx = fx();
+    let st = refused(&fx);
+    let mut o = opts(&fx, "dump", &[]);
+    o.top = Some(None);
+    let (code, err) = run(&st, o);
+    assert_eq!(code, 2, "{err}");
+    assert_eq!(st.last().view.expect("view.json was written").repo_root, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn repo_root_is_none_for_a_non_utf8_top() {
+    use std::os::unix::ffi::OsStringExt;
+    let fx = fx();
+    let st = refused(&fx);
+    let mut o = opts(&fx, "dump", &[]);
+    o.top = Some(Some(PathBuf::from(OsString::from_vec(b"/tmp/\xff".to_vec()))));
+    let (code, err) = run(&st, o);
+    assert_eq!(code, 2, "{err}");
+    assert_eq!(st.last().view.expect("view.json was written").repo_root, None);
 }
