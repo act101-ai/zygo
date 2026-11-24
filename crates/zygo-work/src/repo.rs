@@ -23,7 +23,7 @@ pub struct Checkout {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RunError {
+pub enum RunError {
     NotRun,
     TimedOut,
     Failed,
@@ -66,6 +66,24 @@ struct Ran {
     out: Vec<u8>,
     cut: bool,
     err: Vec<u8>,
+}
+
+/// The end of a [`run_whole`] that exited: exit success, the whole stdout, and up to 64 KiB of stderr on a
+/// non-zero exit (else empty).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Whole {
+    pub ok: bool,
+    pub out: Vec<u8>,
+    pub err: Vec<u8>,
+}
+
+/// The cut of [`run_whole`]: no byte is ever cut; the value selects the process-group mode of `run_bounded_out`.
+const WHOLE: u64 = u64::MAX;
+
+/// Runs `cmd` (S§8.7 whole mode) with stdin null, in its own process group on unix (its tree on Windows), until it
+/// exits or `deadline`: `TimedOut` before any spawn when the deadline is past, and at the deadline (group killed).
+pub fn run_whole(cmd: Command, deadline: Instant) -> Result<Whole, RunError> {
+    run_bounded_out(cmd, deadline, Some(WHOLE)).map(|Ran { ok, out, err, .. }| Whole { ok, out, err })
 }
 
 /// Runs `cmd` with stdin null until it exits or `deadline`. `cut: None` is the plain mode of [`run_bounded_err`].

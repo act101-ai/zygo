@@ -65,7 +65,7 @@ All commands run in `/Users/kagemartin/Work/zygo/.worktrees/phase3/MS-1`. Each c
 
 **Part B — whole mode.**
 
-- [ ] **Step 5 — write the failing whole-mode tests.** Create `crates/zygo-work/tests/git_runner.rs` with exactly this content:
+- [x] **Step 5 — write the failing whole-mode tests.** Create `crates/zygo-work/tests/git_runner.rs` with exactly this content:
 
 ```rust
 //! MS-1: the bounded git runner, whole mode and stream mode (S§8.7). No test waits on wall-clock time.
@@ -191,8 +191,8 @@ fn whole_runs_in_its_own_process_group() {
 }
 ```
 
-- [ ] **Step 6 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` / `private` for `run_whole`, `RunError`, `Whole`.
-- [ ] **Step 7 — implement whole mode in `crates/zygo-work/src/repo.rs`.**
+- [x] **Step 6 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` / `private` for `run_whole`, `RunError`, `Whole`.
+- [x] **Step 7 — implement whole mode in `crates/zygo-work/src/repo.rs`.**
   - `pub(crate) enum RunError` (`repo.rs:26`) → `pub enum RunError`. Leave `pub(crate) fn reason` as it is.
   - After `struct Ran` add:
     ```rust
@@ -210,8 +210,8 @@ fn whole_runs_in_its_own_process_group() {
         run_bounded_out(cmd, deadline, Some(WHOLE)).map(|Ran { ok, out, err, .. }| Whole { ok, out, err })
     }
     ```
-- [ ] **Step 8 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: 4 tests pass on any OS, 6 on unix (`whole_zero_exit_gives_stdout_and_empty_stderr`, `whole_non_zero_exit_gives_stdout_and_stderr`, `whole_non_zero_exit_keeps_64_kib_of_stderr`, `whole_past_deadline_times_out_with_no_spawn`, `whole_runs_with_stdin_null`, `whole_runs_in_its_own_process_group`). Then `cargo test -p zygo-work`: all pass.
-- [ ] **Step 9 — commit.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: pub RunError, Whole and run_whole"` (plus trailers).
+- [x] **Step 8 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: 4 tests pass on any OS, 6 on unix (`whole_zero_exit_gives_stdout_and_empty_stderr`, `whole_non_zero_exit_gives_stdout_and_stderr`, `whole_non_zero_exit_keeps_64_kib_of_stderr`, `whole_past_deadline_times_out_with_no_spawn`, `whole_runs_with_stdin_null`, `whole_runs_in_its_own_process_group`). Then `cargo test -p zygo-work`: all pass.
+- [x] **Step 9 — commit.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: pub RunError, Whole and run_whole"` (plus trailers).
 
 **Part C — stream mode.**
 
