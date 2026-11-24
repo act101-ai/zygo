@@ -84,7 +84,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | DONE | judgment | bd55c63; acceptance args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26, workspace --no-run ok; workspace 2757 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | DROPPED(folded into M5, diff review round 2; see nodes/M5.md) | implementation | — |
 | FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | DONE | judgment | 7db2fac; acceptance zygo-workspace 372 + 2 ignored; workspace 2860 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
-| FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | TODO | implementation | — |
+| FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | PLANNED | implementation | — |
 | FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | TODO | implementation | — |
 
 ## Log
@@ -257,3 +257,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | FIX-29 DONE (7db2fac): merged after 3 review rounds (build hold, repair hold, one AU54 rule). FIX-30 added for the saved-socket uses in admin.rs and member.rs that have no AU54 check. |
 | 2026-11-23 | E2 planned and reviewed (34 steps, 17 W§18 items, PW15 live re-check with a slash-premise sub-step); E1 helpers go to tests/common/e2e.rs (E1 Files and Produces; E2 Files, Consumes and Acceptance from C-1 to C-5). |
 | 2026-11-23 | FIX-24 DONE (78435b0): merged after 3 review rounds (events_off from the real start args and env, Claude Code bare rule, OpenCode parser rule). FIX-31 added for the AU30 restore filter (an unlisted flag loses its value). |
+| 2026-11-23 | FIX-30 planned (plan review round 1 decisions applied; $TMUX fallbacks in up step 5, down guard/any_session/prepare added) |
