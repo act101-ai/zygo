@@ -30,7 +30,7 @@
 
 ### Steps
 
-- [ ] **Step 1 — failing tests.** Append to `crates/zygo-results/tests/results.rs` (after `store_put_creates_the_results_directory_with_mode_0700`, before the `use zygo_config::Features;` block):
+- [x] **Step 1 — failing tests.** Append to `crates/zygo-results/tests/results.rs` (after `store_put_creates_the_results_directory_with_mode_0700`, before the `use zygo_config::Features;` block):
 
   ```rust
   #[test]
@@ -85,9 +85,9 @@
   }
   ```
 
-- [ ] **Step 2 — see them fail.** `cargo test -p zygo-results --test results -- session_ 2>&1 | tail -20` → compile error E0061 (`put` takes 3 arguments, 4 supplied) and E0609 (no field `session` on `Stored`). `cargo test -p zygo-hooks --test hooks_basic -- trim_session 2>&1 | tail -20` → compile error E0609 (no field `session` on `Stored`).
+- [x] **Step 2 — see them fail.** `cargo test -p zygo-results --test results -- session_ 2>&1 | tail -20` → compile error E0061 (`put` takes 3 arguments, 4 supplied) and E0609 (no field `session` on `Stored`). `cargo test -p zygo-hooks --test hooks_basic -- trim_session 2>&1 | tail -20` → compile error E0609 (no field `session` on `Stored`).
 
-- [ ] **Step 3 — implement the store** in `crates/zygo-results/src/store.rs`:
+- [x] **Step 3 — implement the store** in `crates/zygo-results/src/store.rs`:
   - `Meta` (`:11-18`) gains, after `created_at`:
     ```rust
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,16 +97,16 @@
   - Signature `:57`: `pub fn put(dir: &Path, tool: &str, session: Option<&str>, bytes: &[u8]) -> anyhow::Result<Stored>`; the `Meta` literal sets `session: session.map(str::to_owned)`; the `Stored` literal at `:80` adds `session: meta.session` (after `created_at: meta.created_at`).
   - `get`'s `Stored` literal at `:90` adds `session: meta.session`.
 
-- [ ] **Step 4 — update every caller.**
+- [x] **Step 4 — update every caller.**
   - `crates/zygo-results/tests/results.rs`: insert `None, ` before the bytes argument at each of `:9`, `:59`, `:86`, `:87`, `:90`, `:92`, `:99`, `:114`, `:189`, `:689`, `:701`, `:742`, `:753`, `:761` (line numbers before Step 1's append, which lies below all but `:742`, `:753`, `:761`). Check: `grep -n 'Store::put(' crates/zygo-results/tests/results.rs | grep -vc 'None, \|Some("S1")'` → `0`.
   - `crates/zygo-hooks/src/trim.rs:109-110`: the `preview` literal adds `session: None` after `created_at: 0`. Then run `cargo test -p zygo-hooks --test hooks_basic -- trim_session` with `:115` passing `None` → it compiles and fails on the `Some("sess-1")` assertion (the hook does not yet store its session).
   - `crates/zygo-hooks/src/trim.rs:115`: `Store::put(&dir.results(), &tool, Some(&sv.session), text.as_bytes())`; the `map_err` fixed text stays.
   - Check: `grep -rn 'Store::put(' crates --include='*.rs'` lists only `store.rs`'s definition and calls with 4 arguments.
 
-- [ ] **Step 5 — see them pass.**
+- [x] **Step 5 — see them pass.**
   - `cargo test -p zygo-results --test results -- --exact session_put_with_some_is_in_the_meta_and_read_back_by_get session_absent_from_an_old_meta_file_reads_as_none session_none_writes_no_session_key` → 3 passed.
   - `cargo test -p zygo-hooks --test hooks_basic -- --exact trim_session_is_stored_in_the_result_meta` → 1 passed.
   - The Acceptance command, verbatim → every count holds (`session` ≥ 2, `trim_session` ≥ 1), then both test binaries pass.
   - `cargo build --workspace --locked` → builds (no other crate constructs `Stored` or calls `put`); `cargo test -p zygo-mcp -p zygo --locked --no-run` → compiles.
 
-- [ ] **Step 6 — commit** in `/Users/kagemartin/Work/zygo/.worktrees/phase3/OS-1`: `git add crates/zygo-results/src/store.rs crates/zygo-results/tests/results.rs crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/hooks_basic.rs`, message `OS-1: result meta records the session that stored it`, trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-1`, no attribution. Check: `git show --stat HEAD` lists exactly those four files.
+- [x] **Step 6 — commit** in `/Users/kagemartin/Work/zygo/.worktrees/phase3/OS-1`: `git add crates/zygo-results/src/store.rs crates/zygo-results/tests/results.rs crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/hooks_basic.rs`, message `OS-1: result meta records the session that stored it`, trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-1`, no attribution. Check: `git show --stat HEAD` lists exactly those four files.

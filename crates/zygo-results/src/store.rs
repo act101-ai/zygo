@@ -15,6 +15,8 @@ struct Meta {
     lines: u64,
     kind: Kind,
     created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
 }
 
 fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
@@ -48,13 +50,14 @@ pub struct Stored {
     pub lines: u64,
     pub kind: Kind,
     pub created_at: u64,
+    pub session: Option<String>,
     pub data: Vec<u8>,
 }
 
 pub struct Store;
 
 impl Store {
-    pub fn put(dir: &Path, tool: &str, bytes: &[u8]) -> anyhow::Result<Stored> {
+    pub fn put(dir: &Path, tool: &str, session: Option<&str>, bytes: &[u8]) -> anyhow::Result<Stored> {
         create_private_dir(dir).with_context(|| format!("cannot create {}", dir.display()))?;
         let id = ulid::Ulid::generate().to_string();
         let meta = Meta {
@@ -63,6 +66,7 @@ impl Store {
             lines: String::from_utf8_lossy(bytes).lines().count() as u64,
             kind: kind::sniff(bytes),
             created_at: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            session: session.map(str::to_owned),
         };
         let raw = dir.join(&id);
         let tmp = dir.join(format!("{id}.tmp"));
@@ -77,7 +81,8 @@ impl Store {
             let _ = std::fs::remove_file(&raw);
             return Err(e);
         }
-        Ok(Stored { id, tool: meta.tool, bytes: meta.bytes, lines: meta.lines, kind: meta.kind, created_at: meta.created_at, data: bytes.to_vec() })
+        Ok(Stored { id, tool: meta.tool, bytes: meta.bytes, lines: meta.lines, kind: meta.kind, created_at: meta.created_at,
+            session: meta.session, data: bytes.to_vec() })
     }
 
     pub fn get(dir: &Path, id: &str) -> anyhow::Result<Stored> {
@@ -87,7 +92,8 @@ impl Store {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .ok_or_else(|| anyhow::anyhow!("no result with id {id}"))?;
         let data = std::fs::read(dir.join(id)).ok().filter(|d| d.len() as u64 == meta.bytes).ok_or_else(|| anyhow::anyhow!("no result with id {id}"))?;
-        Ok(Stored { id: id.to_string(), tool: meta.tool, bytes: meta.bytes, lines: meta.lines, kind: meta.kind, created_at: meta.created_at, data })
+        Ok(Stored { id: id.to_string(), tool: meta.tool, bytes: meta.bytes, lines: meta.lines, kind: meta.kind,
+            created_at: meta.created_at, session: meta.session, data })
     }
 }
 
