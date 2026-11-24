@@ -140,3 +140,63 @@ fn link_and_fifo_entries_are_malformed_and_not_opened() {
     assert_eq!(dependent_count(&rs, &id(0), false), 9_999);
     assert_eq!(set_faults(&set(rs)), Vec::<String>::new());
 }
+
+// Review round 1.
+#[test] fn dependent_count_with_cycle_counts_distinct_dependents() { // F1, D§5
+    let rs = vec![open(1, &[3]), open(2, &[1]), open(3, &[2]), open(4, &[3, 2])];
+    assert_eq!(dependent_count(&rs, &id(1), false), 3); // 2, 3, 4
+    assert_eq!(dependent_count(&rs, &id(4), false), 0);
+}
+#[test] fn deepest_chain_with_cycle_does_not_depend_on_order() { // F2, D§9.5
+    assert_eq!(deepest_chain(&[open(1, &[2]), open(2, &[1]), open(3, &[2])]), 3); // 3→2→1
+    assert_eq!(deepest_chain(&[open(3, &[2]), open(1, &[2]), open(2, &[1])]), 3);
+}
+#[test] fn deepest_chain_shuffled_orders_agree() { // F2
+    let base = vec![open(1, &[2]), open(2, &[3]), open(3, &[1]), open(4, &[2]), open(5, &[4, 6]), open(6, &[3]),
+                    open(7, &[5]), open(8, &[8]), open(9, &[7, 1])];
+    let want = deepest_chain(&base);
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    for _ in 0..50 {
+        let mut rs = base.clone();
+        for i in (1..rs.len()).rev() { // Fisher-Yates with a fixed LCG
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            rs.swap(i, (seed >> 33) as usize % (i + 1));
+        }
+        assert_eq!(deepest_chain(&rs), want);
+    }
+}
+#[test] fn set_faults_one_line_each() { // F3, D§17 #3
+    assert_eq!(set_faults(&set(vec![open(1, &[9, 9])])), vec![format!("{}: depends_on {} is not a record", id(1), id(9))]);
+    assert_eq!(set_faults(&set(vec![open(1, &[1, 1])])), vec![format!("depends_on cycle at {}", id(1))]);
+    assert_eq!(set_faults(&set(vec![open(1, &[2, 3]), open(2, &[1]), open(3, &[1])])), vec![format!("depends_on cycle at {}", id(1))]);
+}
+#[test] fn set_faults_fixed_order_of_kinds() { // F7 (a), D§6.8
+    let rs = vec![open(2, &[1]), open(1, &[2, 9]), rec(3, Status::Open, &[], Some(8)), open(1, &[]), rec(4, Status::Open, &[], Some(2))];
+    assert_eq!(set_faults(&set(rs)), vec![
+        format!("duplicate id {}", id(1)),
+        format!("{}: depends_on {} is not a record", id(1), id(9)),
+        format!("{}: supersedes {} is not a record", id(3), id(8)),
+        format!("{}: supersedes {}, which is open, not superseded", id(4), id(2)),
+        format!("depends_on cycle at {}", id(2)),
+    ]);
+}
+#[test] fn dependents_self_loop() { // F7 (b), D§7
+    assert_eq!(dependents(&[open(1, &[1])], &id(1)), Dependents { rows: vec![], cycle_at: Some(id(1)) });
+    assert_eq!(dependents(&[open(1, &[]), open(2, &[1, 2])], &id(1)), Dependents { rows: vec![(1, id(2))], cycle_at: Some(id(2)) });
+}
+#[cfg(target_os = "linux")]
+#[test] fn non_utf8_record_name_is_malformed_other_is_ignored() { // F5, D§6.8 (APFS refuses such names)
+    use std::os::unix::ffi::OsStrExt;
+    let t = tempfile::tempdir().unwrap(); let d = decisions(t.path());
+    fs::write(d.join(std::ffi::OsStr::from_bytes(b"DDR-\xff.md")), "x").unwrap();
+    fs::write(d.join(std::ffi::OsStr::from_bytes(b"x\xff.md")), "x").unwrap();
+    assert_eq!(read_dir(t.path()), Ok(RecordSet { valid: vec![], malformed: vec![("DDR-\u{fffd}.md".to_string(), lines(&["bad record name"]))] }));
+}
+#[cfg(unix)]
+#[test] fn linked_docs_is_not_a_directory() { // F6, review focus 42
+    let t = tempfile::tempdir().unwrap();
+    let real = t.path().join("real"); let d = real.join("decisions"); fs::create_dir_all(&d).unwrap();
+    put(&d, &md(1), &file(&id(1), &[]));
+    std::os::unix::fs::symlink(&real, t.path().join("docs")).unwrap();
+    assert_eq!(read_dir(t.path()), Err(DirError::NotDirectory));
+}

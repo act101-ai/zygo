@@ -244,3 +244,13 @@ fn link_and_fifo_entries_are_malformed_and_not_opened() {
 - [x] **12. Floor.** `cargo test --workspace --locked --no-fail-fast` → every `test result:` line `ok`, exit 0.
 
 - [x] **13. Review focus.** Line 42: `linked_directory_is_not_a_directory` and `link_and_fifo_entries_are_malformed_and_not_opened` pass (step 11). Line 75: `grep -nE 'SystemTime|Instant|time::|Command' crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/graph.rs crates/zygo-work/tests/decision_set.rs` → no output (no clock, no spawned process).
+
+### Review round 1
+
+- F1 partly fixed: `dependent_count` now does only the visited-set walk over the inverse graph, with no cycle detection; the per-record O(N+E) walk stays, because D-C3 computes each count at each use (probe of 10,000 records × 64 `depends_on`, 200 calls, `--release`: 11.47 s before, 5.98 s after on the implementer's machine).
+- F2 fixed: `deepest_chain` cuts cycles at the back edges of a DFS that starts at the records no record depends on, then at the others, each group in ascending id order, with children sorted; it then takes the memoized longest path of the acyclic graph that is left, so the result does not depend on input order.
+- F3 fixed: `set_faults` removes duplicate lines and keeps the first occurrence, so the fixed order of kinds still holds (D§17 #3: one line each).
+- F4 rejected: D§11.2 says only "cut at the first repeat"; a back edge from a fixed-order DFS is the exact, deterministic test for a cycle (a diamond is also a repeat in a BFS), and no consumer depends on which cycle id is named.
+- F5 fixed: a non-UTF-8 name whose bytes start with `DDR-` and end with `.md` is malformed (`bad record name`, under its lossy name); any other non-UTF-8 name is ignored (D§6.8).
+- F6 partly fixed: `docs` is also checked with lstat; a link there gives `NotDirectory`, and a missing `docs` still gives the empty set. Parts 2–4 rejected: the lstat/read_dir race needs a local writer who can already change any file; `docs` as a regular file gives the true `NotDirectory`; permission errors give `NotDirectory` (author's call 1).
+- F7 partly fixed: tests added for the fixed order of set fault kinds and for a self-loop in `dependents`. The other gaps (TooMany before any open, removal between listing and read, permission error) are not observable without fault injection, and the plan's ordering covers them.

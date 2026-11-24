@@ -1,5 +1,5 @@
 //! The record set: the directory reader and the set checks (D§6.8). Read at each call (D-C3).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -29,13 +29,17 @@ pub enum DirError {
 }
 
 /// Reads `top/docs/decisions` (`top` is the repository root). An absent directory is an empty set; other names and
-/// subdirectories are ignored. All names are listed before any record file is opened.
+/// subdirectories are ignored. All names are listed before any record file is opened. A link at `docs` or at
+/// `docs/decisions` is `NotDirectory`. A name that is not UTF-8 is malformed if its bytes start with `DDR-` and end
+/// with `.md`, and ignored otherwise.
 pub fn read_dir(top: &Path) -> Result<RecordSet, DirError> {
     let dir = top.join(DIR);
-    match fs::symlink_metadata(&dir) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(RecordSet::default()),
-        Ok(m) if m.file_type().is_dir() => {}
-        _ => return Err(DirError::NotDirectory),
+    for path in [dir.parent().unwrap_or(&dir), &dir] {
+        match fs::symlink_metadata(path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(RecordSet::default()),
+            Ok(m) if m.file_type().is_dir() => {}
+            _ => return Err(DirError::NotDirectory),
+        }
     }
     let mut names = Vec::new();
     for entry in fs::read_dir(&dir).map_err(|_| DirError::NotDirectory)? {
@@ -46,7 +50,15 @@ pub fn read_dir(top: &Path) -> Result<RecordSet, DirError> {
         names.push(entry.file_name());
     }
     let mut set = RecordSet::default();
-    for name in names.iter().filter_map(|n| n.to_str()) {
+    for os_name in &names {
+        let Some(name) = os_name.to_str() else {
+            // Lossy conversion keeps the valid bytes at both ends, so these tests read the raw name's ends.
+            let lossy = os_name.to_string_lossy();
+            if lossy.starts_with("DDR-") && lossy.ends_with(".md") {
+                set.malformed.push((lossy.into_owned(), vec!["bad record name".to_string()]));
+            }
+            continue;
+        };
         match name_kind(name) {
             NameKind::Record(_) => match read_record(&dir.join(name)) {
                 Ok(r) => set.valid.push(r),
@@ -63,6 +75,7 @@ pub fn read_dir(top: &Path) -> Result<RecordSet, DirError> {
 
 /// The set fault lines of D§6.8 over `set.valid`: duplicate ids, then per record the `depends_on` and `supersedes`
 /// targets that are not records (or a `supersedes` target not `superseded`), then one line per `depends_on` cycle.
+/// Each distinct line is given once, at its first place (D§17 #3).
 pub fn set_faults(set: &RecordSet) -> Vec<String> {
     let mut faults = Vec::new();
     let mut by_id: HashMap<&str, &Record> = HashMap::new();
@@ -94,5 +107,7 @@ pub fn set_faults(set: &RecordSet) -> Vec<String> {
     }
     let starts: Vec<&str> = set.valid.iter().map(|r| r.id.as_str()).collect();
     faults.extend(back_edges(&next, &starts).into_iter().map(|id| format!("depends_on cycle at {id}")));
+    let mut seen = HashSet::new();
+    faults.retain(|f| seen.insert(f.clone()));
     faults
 }

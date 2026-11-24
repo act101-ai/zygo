@@ -91,12 +91,23 @@ pub fn dependents(records: &[Record], id: &str) -> Dependents {
 /// The number of dependents of `id` (D§5). With `skip_superseded`, `superseded` records leave the graph before the
 /// walk: they are not counted and not walked through (D§11.2 step 2).
 pub fn dependent_count(records: &[Record], id: &str, skip_superseded: bool) -> usize {
-    let kept = records.iter().filter(|r| !(skip_superseded && r.status == Status::Superseded));
-    walk(kept, id).rows.len()
+    let next = inverse(records.iter().filter(|r| !(skip_superseded && r.status == Status::Superseded)));
+    let mut seen: HashSet<&str> = HashSet::from([id]);
+    let mut stack = vec![id];
+    while let Some(node) = stack.pop() {
+        for &child in next.get(node).map(Vec::as_slice).unwrap_or_default() {
+            if seen.insert(child) {
+                stack.push(child);
+            }
+        }
+    }
+    seen.len() - 1
 }
 
 /// The number of records on the longest `depends_on` path (D§9.5); 0 for no records. A missing target ends the
-/// path; an edge back to a record on the current path counts 0.
+/// path. Cycles are cut at the back edges of a depth-first search that starts at the records no record depends on,
+/// then at the others, each group in ascending id order, children in ascending id order; the result is the longest
+/// path of the acyclic graph that is left, so it does not depend on the order of `records`.
 pub fn deepest_chain(records: &[Record]) -> usize {
     let known: HashSet<&str> = records.iter().map(|r| r.id.as_str()).collect();
     let mut next: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -104,10 +115,19 @@ pub fn deepest_chain(records: &[Record]) -> usize {
         let children = next.entry(r.id.as_str()).or_default();
         children.extend(r.depends_on.iter().map(String::as_str).filter(|d| known.contains(d)));
     }
+    let mut depended: HashSet<&str> = HashSet::new();
+    for children in next.values_mut() {
+        children.sort_unstable();
+        children.dedup();
+        depended.extend(children.iter().copied());
+    }
+    let mut starts: Vec<&str> = known.iter().copied().collect();
+    starts.sort_unstable_by_key(|&s| (depended.contains(s), s));
+    // A node is on the current path while it is in `on_path`; it is finished once it is in `memo`. An edge to a node
+    // on the path is a back edge and is cut; when a node finishes, each of its other children is already finished.
     let mut memo: HashMap<&str, usize> = HashMap::new();
     let mut on_path: HashSet<&str> = HashSet::new();
-    for r in records {
-        let start = r.id.as_str();
+    for start in starts {
         if memo.contains_key(start) {
             continue;
         }
