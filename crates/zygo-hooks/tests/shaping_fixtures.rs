@@ -219,3 +219,68 @@ fn format_problems(dir: &Path) -> Vec<String> {
     }
     p
 }
+
+const CASE_MAX: u64 = 256 * 1024; // O§8.1 "Size"
+const FOLDER_MAX: u64 = 4 * 1024 * 1024;
+
+#[test]
+fn cases_fit_the_size_bounds() {
+    let p = size_problems(&shaping::root());
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+#[test]
+fn size_check_finds_a_large_case_and_folder() {
+    let t = tempfile::tempdir().unwrap();
+    let d = write_case(t.path(), "log", "edge", &meta(0), b"", b"", b"");
+    let rest: u64 = ["meta.json", "stderr", "must_keep"].iter().map(|f| std::fs::metadata(d.join(f)).unwrap().len()).sum();
+    std::fs::write(d.join("stdout"), vec![b'a'; (CASE_MAX - rest) as usize]).unwrap();
+    assert!(size_problems(t.path()).is_empty(), "exactly 256 KiB passes");
+    std::fs::write(d.join("view"), b"v").unwrap();
+    assert!(size_problems(t.path()).iter().any(|p| p.contains("edge")), "256 KiB + 1 fails");
+    let t = tempfile::tempdir().unwrap();
+    for i in 0..17 {
+        write_case(t.path(), "log", &format!("c{i}"), &meta(0), &vec![b'a'; 250 * 1024], b"", b"");
+    }
+    assert!(size_problems(t.path()).iter().any(|p| p.contains("4 MiB")));
+}
+
+/// Every regular file under `root`, recursive, sorted; none when `root` is missing.
+fn files_under(root: &Path) -> Vec<PathBuf> {
+    let mut out = vec![];
+    let mut todo = vec![root.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd {
+            let e = e.unwrap();
+            let ft = e.file_type().unwrap();
+            if ft.is_dir() {
+                todo.push(e.path());
+            } else if ft.is_file() {
+                out.push(e.path());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn total_size(root: &Path) -> u64 {
+    files_under(root).iter().map(|f| std::fs::metadata(f).unwrap().len()).sum()
+}
+
+/// A case over 256 KiB or the folder over 4 MiB (author's call 6).
+fn size_problems(root: &Path) -> Vec<String> {
+    let mut p = vec![];
+    for d in case_dirs(root) {
+        let n = total_size(&d);
+        if n > CASE_MAX {
+            p.push(format!("{}: {n} bytes, over 256 KiB", d.display()));
+        }
+    }
+    let n = total_size(root);
+    if n > FOLDER_MAX {
+        p.push(format!("{}: {n} bytes, over 4 MiB", root.display()));
+    }
+    p
+}
