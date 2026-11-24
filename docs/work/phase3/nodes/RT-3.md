@@ -1,0 +1,9 @@
+# RT-3 — Run-time HUD segment in compact and verbose, with its place in the width-removal order
+
+**Spec:** docs/specs/2026-11-24-session-runtime-design.md §2.4, §2.6, §3.1, §5 (row "Small terminal width"), §6 (rows `data.rs`, `render.rs` segment), §7 items 3, 6 and 7; base-spec amendments H§6.2, H AU9, H AU20, H§6.4, H§6.5, H§6.6, H§6.7, H§6.8, H§7.6 and the H§6.3/H§6.4 example note (docs/specs/2026-11-21-statusline-hud-design.md)
+**Files:** `crates/zygo-hooks/src/statusline/data.rs`, `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo-hooks/tests/statusline_phase.rs`, `docs/specs/2026-11-21-statusline-hud-design.md`
+**Consumes:** `member_read` (RT-2), `MemberRead` (RT-2), `run_time_text` (RT-2)
+**Produces:** `zygo_hooks::statusline::render::HudData.run_time: Option<u64>` (seconds, `now.saturating_sub(start)`; `None` with no start); the private `render::Seg::RunTime` in `COMPACT` (own group after `[Trimmed]`, before `[Marker]`), `ROW_1` (own group after `[Mode]`), `COMPACT_DROPS` (third, after `Trimmed`, `Cache`) and `ROW_1_DROPS` (second, after `Mode`); the private `Glyphs.clock` (Nerd `󰅐` U+F0150, plain `run`)
+**Acceptance:** `cargo test --locked -p zygo-hooks` → all pass on ubuntu, macOS and Windows CI, `git diff --exit-code $(git merge-base HEAD origin/phase-3) HEAD -- crates/zygo-hooks/tests/golden` → no output (reference bytes unchanged), and the tests whose names contain `run_time_segment` (T§7 items 3 and 6: OP13 compact, OP13 verbose and example 3 stale bytes with `󰅐 5h12m` at `now` = start + 18720 through `ZYGO_TEST_NOW`; plain set `run 5h12m`; `stale` leaves the run-time run unchanged; start > now gives `0m`) and `run_time_width` (T§7 item 7: compact keeps tokens at the width that fits only without trimmed, cache and run time, and keeps the run time at one cell more; verbose row 1 keeps profile at the width that fits only without mode and run time) run and pass
+
+## Plan
