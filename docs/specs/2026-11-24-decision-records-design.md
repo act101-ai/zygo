@@ -90,7 +90,7 @@ unit = "phase-3:N12"
 round = 2
 role = "code"
 model = "claude-sonnet-4-5"
-commit = "6e7fe2f0c1d2e3f4a5b6c7d8e9f00112233445566"
+commit = "6e7fe2f0c1d2e3f4a5b6c7d8e9f0011223344556"
 date = "2026-11-24"
 depends_on = ["DDR-01JDQ2W0000000000000000000"]
 reverse_cost = "low"
@@ -576,3 +576,7 @@ The verdict tests use a git fixture repository with linked checkouts. The git-fa
 - **PD1** `git cat-file --batch`, `git merge-base`, `git rev-list` and `git log` run in the main checkout read commits made in a linked checkout of the same repository, before any merge.
 - **PD2** Claude Code passes a `work_verdict` argument object of 256 KiB to the MCP server unchanged.
 - **PD3** On Claude Code 2.1.328 the `PreToolUse` input for `work_verdict` from the main loop has no `agent_id` key, so the existing lead-only hook lets the signature through (the deny branch at `crates/zygo-work/src/hooks.rs:184-185`).
+
+## Change log
+
+- 2026-11-24 — D§6.2 — author's call — the example commit had 41 hex characters; D§6.3 allows 40 or 64, so it is cut to 40 (found while planning phase3 DR-1).
