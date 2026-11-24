@@ -75,4 +75,12 @@ The three failures of run 45338846931:
 - A search of `crates/` found no other use of the `setsid` command in a test script.
 - Local: `mux` 50 passed + 1 ignored, and `session_verbs` 29 passed.
 
-**Round 2: run 45343874336 (head 7584a14).** success on ubuntu-latest, macos-latest and windows-latest. Acceptance met. `cargo clippy -p zygo -p zygo-workspace --all-targets --locked -- -D warnings` exits 0, and the darwin cross-check of both packages exits 0.
+**Round 2: run 45343874336 (head 7584a14).** success on ubuntu-latest, macos-latest and windows-latest. Acceptance met.
+
+**Round 3: run 45345736074 (head 51164be, the DONE commit, docs only).**
+- Attempt 1: ubuntu success, macos success, windows failure. `crates/zygo/tests/update.rs:669` (`start::an_unreachable_server_is_silent_and_bounded`) took `2.5526361s` against its 2.5 s bound.
+  - The same code passed on Windows in round 2.
+  - The request limit is 2 s, and on Windows a connect to a refused port is retried for about 2 s, so the case runs close to the bound on a loaded runner.
+  - It was taken as a runner timing failure, not a code defect, and the job was re-run once (`gh run rerun --failed`).
+- Attempt 2: success on ubuntu, macos and windows.
+- Open: the 500 ms margin of this test is thin on Windows runners (see the report). `cargo clippy -p zygo -p zygo-workspace --all-targets --locked -- -D warnings` exits 0, and the darwin cross-check of both packages exits 0.
