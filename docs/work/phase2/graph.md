@@ -56,7 +56,7 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | PLANNED | implementation | — |
+| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | IN-PROGRESS | implementation | `.worktrees/phase2/E1` |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | PLANNED | implementation | — |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30, FIX-31 | TODO | implementation | — |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
