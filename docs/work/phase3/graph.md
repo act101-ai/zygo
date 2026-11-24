@@ -207,7 +207,7 @@ Session text (T, SX nodes):
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | TODO | implementation | — |
-| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | PLANNED | judgment | — |
+| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | IN-PROGRESS | judgment | .worktrees/phase3/ML-2-node |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
 | OS-1 | Result meta records the session that stored it | DR-1 | TODO | implementation | — |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | TODO | judgment | — |
