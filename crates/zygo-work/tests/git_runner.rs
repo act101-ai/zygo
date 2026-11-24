@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use zygo_work::repo::{run_whole, RunError, Whole};
+use zygo_work::repo::{run_stream, run_whole, Flow, RunError, Streamed, Whole};
 
 const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 const EMPTY_BLOB: &[u8] = b"e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\n";
@@ -118,4 +118,115 @@ fn whole_runs_in_its_own_process_group() {
     assert!(r.ok);
     let (pid, pgid) = pid_and_pgid(&r.out);
     assert_eq!(pid, pgid); // the shell leads its own group
+}
+
+/// Every entry `run_stream` passes, with `Flow::Go`.
+fn stream_all(cmd: Command) -> (Result<Streamed, RunError>, Vec<Vec<u8>>) {
+    let mut seen = Vec::new();
+    let r = run_stream(cmd, far(), &mut |e| {
+        seen.push(e.to_vec());
+        Flow::Go
+    });
+    (r, seen)
+}
+
+#[test]
+fn stream_passes_each_nul_ended_entry_of_ls_tree_once() {
+    let (_t, w) = repo();
+    let (r, seen) = stream_all(git_in(&w, &["ls-tree", "-z", "HEAD"]));
+    assert_eq!(r, Ok(Streamed::Done { ok: true, err: Vec::new() }));
+    assert_eq!(seen.len(), 3);
+    let names: Vec<&[u8]> = seen.iter().map(|e| e.rsplit(|&b| b == b'\t').next().unwrap()).collect();
+    assert_eq!(names, [&b"a"[..], &b"b c"[..], &b"d"[..]]);
+    for e in &seen {
+        assert!(e.starts_with(b"100644 blob "));
+        assert!(!e.contains(&0)); // the NUL ends the entry and is not passed
+    }
+}
+
+#[test]
+fn stream_non_zero_exit_gives_stderr() {
+    let (_t, w) = repo();
+    let (r, seen) = stream_all(git_in(&w, &["ls-tree", "-z", "no-such-rev"]));
+    let Ok(Streamed::Done { ok: false, err }) = &r else { panic!("{r:?}") };
+    assert!(!err.is_empty() && err.len() <= 64 * 1024);
+    assert!(seen.is_empty());
+}
+
+#[test]
+fn stream_stop_returns_stopped_after_one_entry() {
+    let (_t, w) = repo();
+    let mut calls = 0;
+    let r = run_stream(git_in(&w, &["ls-tree", "-z", "HEAD"]), far(), &mut |_| {
+        calls += 1;
+        Flow::Stop
+    });
+    assert_eq!(r, Ok(Streamed::Stopped));
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn stream_past_deadline_times_out_with_no_spawn() {
+    let mut calls = 0;
+    let r = run_stream(Command::new("zygo-ms1-no-such-program"), Instant::now(), &mut |_| {
+        calls += 1;
+        Flow::Go
+    });
+    assert_eq!(r, Err(RunError::TimedOut)); // a spawn would give `NotRun`
+    assert_eq!(calls, 0);
+}
+
+#[test]
+fn stream_runs_with_stdin_null() {
+    let (t, w) = repo();
+    fs::write(w.join(".gitattributes"), "a foo=bar\n").unwrap();
+    let paths = t.path().join("paths");
+    fs::write(&paths, b"a\0").unwrap();
+    let mut c = git_in(&w, &["check-attr", "--stdin", "-z", "-a"]);
+    c.stdin(Stdio::from(fs::File::open(&paths).unwrap())); // if read, git would print `a`, `foo`, `bar`
+    let (r, seen) = stream_all(c);
+    assert_eq!(r, Ok(Streamed::Done { ok: true, err: Vec::new() }));
+    assert!(seen.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn stream_runs_in_its_own_process_group() {
+    let mut c = Command::new("sh");
+    c.args(["-c", PGID]);
+    let (r, seen) = stream_all(c);
+    assert_eq!(r, Ok(Streamed::Done { ok: true, err: Vec::new() }));
+    assert_eq!(seen.len(), 1);
+    let (pid, pgid) = pid_and_pgid(&seen[0]);
+    assert_eq!(pid, pgid);
+}
+
+/// After `Flow::Stop` the whole process group is gone, proven with no timer: a grandchild holds the only write end
+/// of a FIFO, and a blocking read of the FIFO ends (EOF) only when that grandchild is dead. A runner that kills only
+/// the leader makes the read hang until the CI job timeout; it cannot pass. `sleep 1000000` is the blocker that Stop
+/// must kill, not a wait of the test.
+#[cfg(unix)]
+#[test]
+fn stream_stop_kills_the_process_group() {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let t = TempDir::new().unwrap();
+    let fifo = t.path().join("f");
+    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    // Read end first and non-blocking, so the grandchild's open for writing does not wait.
+    let mut rd = fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&fifo).unwrap();
+    let mut c = Command::new("sh");
+    // The grandchild opens the FIFO, then prints `go`; then it and the leader block.
+    c.args(["-c", "( exec 3>\"$1\"; printf 'go\\000'; exec sleep 1000000 ) & exec sleep 1000000", "sh"]).arg(&fifo);
+    let mut seen = Vec::new();
+    let r = run_stream(c, far(), &mut |e| {
+        seen.push(e.to_vec());
+        Flow::Stop
+    });
+    assert_eq!(r, Ok(Streamed::Stopped));
+    assert_eq!(seen, [b"go".to_vec()]);
+    assert_eq!(unsafe { libc::fcntl(rd.as_raw_fd(), libc::F_SETFL, 0) }, 0); // now blocking
+    let mut rest = Vec::new();
+    assert_eq!(rd.read_to_end(&mut rest).unwrap(), 0);
 }

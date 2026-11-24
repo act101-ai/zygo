@@ -215,7 +215,7 @@ fn whole_runs_in_its_own_process_group() {
 
 **Part C — stream mode.**
 
-- [ ] **Step 10 — write the failing stream-mode tests.** In `crates/zygo-work/tests/git_runner.rs`, change the import line to `use zygo_work::repo::{run_stream, run_whole, Flow, RunError, Streamed, Whole};` and append:
+- [x] **Step 10 — write the failing stream-mode tests.** In `crates/zygo-work/tests/git_runner.rs`, change the import line to `use zygo_work::repo::{run_stream, run_whole, Flow, RunError, Streamed, Whole};` and append:
 
 ```rust
 /// Every entry `run_stream` passes, with `Flow::Go`.
@@ -330,8 +330,8 @@ fn stream_stop_kills_the_process_group() {
 }
 ```
 
-- [ ] **Step 11 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` for `run_stream`, `Flow`, `Streamed`.
-- [ ] **Step 12 — implement stream mode in `crates/zygo-work/src/repo.rs`.** Add `use std::io::BufRead;`. Add after `run_whole`:
+- [x] **Step 11 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` for `run_stream`, `Flow`, `Streamed`.
+- [x] **Step 12 — implement stream mode in `crates/zygo-work/src/repo.rs`.** Add `use std::io::BufRead;`. Add after `run_whole`:
   ```rust
   /// What the [`run_stream`] callback wants next.
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +358,15 @@ fn stream_stop_kills_the_process_group() {
   2. Reader thread with `let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);`: on `std::io::BufReader::new(out)`, loop `read_until(0, &mut entry)`; `Ok(0)` or `Err(_)` → end; an entry that ends in `0` → pop the NUL and `tx.send(entry)`, end when the send fails (receiver dropped after Stop); an entry with no trailing NUL → end without sending.
   3. Loop on `rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))`: `Ok(e)` → if `each(&e) == Flow::Stop` { `stop(&mut child); return Ok(Streamed::Stopped)` }; `Err(RecvTimeoutError::Timeout)` → `stop(&mut child); return Err(RunError::TimedOut)`; `Err(RecvTimeoutError::Disconnected)` → leave the loop.
   4. `let status = wait_bounded(&mut child, deadline, true)?; let ok = status.is_none_or(|s| s.success());` then `err` as `run_bounded_out` does (`erx.recv_timeout(left).unwrap_or_default()` only when `!ok`); return `Ok(Streamed::Done { ok, err })`.
-- [ ] **Step 13 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: all pass — 9 tests on any OS, 13 on unix (step 8's plus `stream_passes_each_nul_ended_entry_of_ls_tree_once`, `stream_non_zero_exit_gives_stderr`, `stream_stop_returns_stopped_after_one_entry`, `stream_past_deadline_times_out_with_no_spawn`, `stream_runs_with_stdin_null`, `stream_runs_in_its_own_process_group`, `stream_stop_kills_the_process_group`). If `stream_stop_kills_the_process_group` hangs, the group was not killed: fix `stop`, do not add a timeout. Then run `pgrep -f "sleep 1000000"`: no process.
-- [ ] **Step 14 — acceptance.** Run `cargo test -p zygo-work --test git_runner && cargo test -p zygo-work`. Result: all pass; the zygo-work pass count is step 1's plus the new tests. Run `cargo build --workspace`: no error (callers of `run_bounded`, `git_run` and `hud_git_with` still compile). For each Windows target that `rustup target list --installed` lists, also run `cargo check -p zygo-work --tests --target` with that target; with none listed, the windows-latest CI job is the check.
-- [ ] **Step 15 — commit and push.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: Flow, Streamed and run_stream"` (plus trailers), then `git push`.
+- [x] **Step 13 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: all pass — 9 tests on any OS, 13 on unix (step 8's plus `stream_passes_each_nul_ended_entry_of_ls_tree_once`, `stream_non_zero_exit_gives_stderr`, `stream_stop_returns_stopped_after_one_entry`, `stream_past_deadline_times_out_with_no_spawn`, `stream_runs_with_stdin_null`, `stream_runs_in_its_own_process_group`, `stream_stop_kills_the_process_group`). If `stream_stop_kills_the_process_group` hangs, the group was not killed: fix `stop`, do not add a timeout. Then run `pgrep -f "sleep 1000000"`: no process.
+- [x] **Step 14 — acceptance.** Run `cargo test -p zygo-work --test git_runner && cargo test -p zygo-work`. Result: all pass; the zygo-work pass count is step 1's plus the new tests. Run `cargo build --workspace`: no error (callers of `run_bounded`, `git_run` and `hud_git_with` still compile). For each Windows target that `rustup target list --installed` lists, also run `cargo check -p zygo-work --tests --target` with that target; with none listed, the windows-latest CI job is the check.
+- [x] **Step 15 — commit and push.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: Flow, Streamed and run_stream"` (plus trailers), then `git push`.
+
+### Implementation notes
+
+- Worked in the node worktree `/Users/kagemartin/Work/zygo/.worktrees/phase3/MS-1-node` (branch `phase3/MS-1--MS-1`), not the `.../phase3/MS-1` path the steps name, per the brief.
+- The plan's test code compiled as written; no change to it.
+- New `pub` structs and enums are laid out one field or variant per line, to match the existing style of `repo.rs` (`Ran`, `RunError`); the signatures are the plan's.
+- Baseline `cargo test -p zygo-work` (step 1): 287 passed, 20 ignored. After step 14: 300 passed (287 + 13 in `git_runner`), 20 ignored.
+- Mutation check of `stream_stop_kills_the_process_group`: with `stop` changed to kill only the leader, the test hung until an outer 30 s `timeout`; with the group kill it passes. `pgrep -f "sleep 1000000"` after the run: no process.
+- Windows: no Windows target is installed (`rustup target list --installed` lists only `aarch64-apple-darwin`), so `cargo check --target x86_64-pc-windows-gnu` was not run; the windows-latest CI job is the check. Cfg review: `spawn_piped` has `#[cfg(not(unix))] let _ = group;`; `stop` falls to `kill_tree` on Windows; `wait_bounded` reads `group` in `cfg!(windows) && group`; every test that uses `libc`, `sh`, `mkfifo` or `PGID`/`pid_and_pgid` is `#[cfg(unix)]`.

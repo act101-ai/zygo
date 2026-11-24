@@ -1,7 +1,7 @@
 //! Repository id (§8.2 step 1) and bounded, pinned `git` calls.
 
 use std::ffi::OsStr;
-use std::io::Read;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -84,6 +84,81 @@ const WHOLE: u64 = u64::MAX;
 /// exits or `deadline`: `TimedOut` before any spawn when the deadline is past, and at the deadline (group killed).
 pub fn run_whole(cmd: Command, deadline: Instant) -> Result<Whole, RunError> {
     run_bounded_out(cmd, deadline, Some(WHOLE)).map(|Ran { ok, out, err, .. }| Whole { ok, out, err })
+}
+
+/// What the [`run_stream`] callback wants next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flow {
+    Go,
+    Stop,
+}
+
+/// The end of a [`run_stream`]: the process exited (exit success; up to 64 KiB of stderr on a non-zero exit, else
+/// empty), or the callback said stop and the process (unix: its process group) was killed and reaped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Streamed {
+    Done { ok: bool, err: Vec<u8> },
+    Stopped,
+}
+
+/// Kills `child` with its process group (unix) or tree (Windows) and reaps it. Unix: when `waitid` fails (SIGCHLD
+/// ignored, the kernel reaps), only the child is killed, because its PID may be reused.
+fn stop(child: &mut Child) {
+    #[cfg(unix)]
+    if zygo_config::repo_file::exited_unreaped(child).is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return;
+    }
+    zygo_config::repo_file::kill_tree(child);
+}
+
+/// Runs `cmd` (S§8.7 stream mode) with stdin null, in its own process group on unix: each NUL-ended stdout entry,
+/// without its NUL, goes to `each`; a last piece with no NUL is not passed. `Flow::Stop` kills the group and gives
+/// `Stopped`. `TimedOut` before any spawn when the deadline is past, and at the deadline (group killed). Memory is
+/// bounded by a few entries.
+pub fn run_stream(cmd: Command, deadline: Instant, each: &mut dyn FnMut(&[u8]) -> Flow) -> Result<Streamed, RunError> {
+    let (mut child, out, err) = spawn_piped(cmd, deadline, true)?;
+    let erx = drain_err(err);
+    // The callback is not `Send`, so it runs on this thread; the reader hands over one entry at a time.
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
+    std::thread::spawn(move || {
+        let mut out = std::io::BufReader::new(out);
+        loop {
+            let mut entry = Vec::new();
+            match out.read_until(0, &mut entry) {
+                Ok(0) | Err(_) => return,
+                Ok(_) if entry.last() == Some(&0) => {
+                    entry.pop();
+                    if tx.send(entry).is_err() {
+                        return; // the receiver is gone: the run stopped
+                    }
+                }
+                Ok(_) => return, // a last piece with no NUL is not an entry
+            }
+        }
+    });
+    loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(e) => {
+                if each(&e) == Flow::Stop {
+                    stop(&mut child);
+                    return Ok(Streamed::Stopped);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                stop(&mut child);
+                return Err(RunError::TimedOut);
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let status = wait_bounded(&mut child, deadline, true)?;
+    // An unknown status counts as success, as in `run_bounded_out`.
+    let ok = status.is_none_or(|s| s.success());
+    let left = deadline.saturating_duration_since(Instant::now());
+    let err = if ok { Vec::new() } else { erx.recv_timeout(left).unwrap_or_default() };
+    Ok(Streamed::Done { ok, err })
 }
 
 /// Runs `cmd` with stdin null until it exits or `deadline`. `cut: None` is the plain mode of [`run_bounded_err`].
