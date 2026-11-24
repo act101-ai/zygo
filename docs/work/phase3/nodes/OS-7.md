@@ -1,0 +1,9 @@
+# OS-7 — Savings read: net figures, per-context carry, breakdown and ratio
+
+**Spec:** `docs/specs/2026-11-24-output-shaping-design.md` O§6.2, O§6.3 step 1 and rule "OpenCode", O§6.4 "Context of the carry", O§6.5 item 5, O§6.6 (keys, ratio, filter), O§10 rows "No request rows for an event" and "A model with no price row", O§16 item 13
+**Files:** `crates/zygo-usage/src/savings.rs`, `crates/zygo-usage/src/lib.rs`, `crates/zygo-usage/tests/savings.rs`
+**Consumes:** `carry::carry` (OS-6), `Rates` (OS-6), `CtxRequest` (OS-6), `ReadbackRow` (OS-2), `TrimRow.result_id` (OS-2), `TrimRow.command` (OS-2), `TrimRow.shaper` (OS-2), `Store::insert_readback` (OS-2)
+**Produces:** `Store::savings(&self, f: &Filter, rates: &dyn Fn(&str, &str, u64) -> Option<Rates>) -> anyhow::Result<Savings>`, `Savings { bytes_read_back: u64, kept_out_bytes: i64, kept_out_tokens: i64, spend_usd: f64, unpriced: u64, views: u64, readbacks: u64, by_key: Vec<SavingsKey> }`, `SavingsKey { tool: String, command: String, shaper: String, views: u64, readbacks: u64, kept_out_bytes: i64, spend_usd: f64 }` (`-` for null; sorted by `kept_out_bytes`, largest first)
+**Acceptance:** `cargo test -p zygo-usage --test savings` → all pass, one test per O§16 item 13 bullet (worked example `spend_usd` = 0.1146 within 1e-9 and `kept_out_tokens == 9000`; growing small context; cut gives 0; subagent trim carried only by its own rows; `auxiliary` row carries nothing; OpenCode session counts its first row only; S1/S2 read-back: filter S1 counts it, filter S2 shows no negative figure, the carry uses S2's main-loop rows; doubled catalog rates double `spend_usd`), plus: a database built from the `97d8767` schema (no `readbacks`, seven `trims` columns) opened with `Store::open_read_only` gives `bytes_read_back == 0` and the key `Bash - -`; `unpriced` counts distinct rowids
+
+## Plan
