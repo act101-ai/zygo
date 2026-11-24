@@ -57,7 +57,7 @@ Readings of the spec that this plan fixes:
 
 ### Steps
 
-- [ ] **1. Write the failing graph tests.** Create `crates/zygo-work/tests/decision_set.rs` with the header, helpers and four tests below.
+- [x] **1. Write the failing graph tests.** Create `crates/zygo-work/tests/decision_set.rs` with the header, helpers and four tests below.
 
 ```rust
 //! DR-2: the record set, the set checks and the dependency graph (D§6.8, D§7, D§5, D§9.5, D§11.2).
@@ -110,20 +110,20 @@ fn open(n: u32, deps: &[u32]) -> Record { rec(n, Status::Open, deps, None) }
 }
 ```
 
-- [ ] **2. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::graph` (and `set`). Comment out the `set` import line until step 6.
+- [x] **2. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::graph` (and `set`). Comment out the `set` import line until step 6.
 
-- [ ] **3. Implement the graph.** Create `crates/zygo-work/src/decisions/graph.rs` with `Dependents`, `dependents`, `dependent_count` and `deepest_chain` as in Produces, and add `pub mod graph;` to `crates/zygo-work/src/decisions/mod.rs` (before `pub mod record;`). Private helpers, also used by `set.rs`:
+- [x] **3. Implement the graph.** Create `crates/zygo-work/src/decisions/graph.rs` with `Dependents`, `dependents`, `dependent_count` and `deepest_chain` as in Produces, and add `pub mod graph;` to `crates/zygo-work/src/decisions/mod.rs` (before `pub mod record;`). Private helpers, also used by `set.rs`:
   - `pub(crate) fn back_edges(next: &HashMap<&str, Vec<&str>>, starts: &[&str]) -> Vec<String>`: iterative three-color DFS from each start in order, children in listed order; each edge to a node on the current path adds that node's id.
   - `fn inverse(records: &[Record]) -> HashMap<&str, Vec<&str>>`: for each `d` in `r.depends_on`, an edge `d → r.id`; each child list sorted by id and deduplicated.
   - `dependents`: BFS over `inverse` from `id`, seen set starts with `id`, a new child gets its parent's depth + 1; rows sorted by (depth, id); `cycle_at = back_edges(&inverse, &[id]).into_iter().next()`.
   - `dependent_count`: filter out `Status::Superseded` when `skip_superseded`, then `dependents(..).rows.len()`.
   - `deepest_chain`: forward edges `r.id → d` only where `d` is in `records`; iterative post-order DFS with a memo of the longest path from each record (counted in records); an edge to a record on the current path counts 0; result is the largest memo value, 0 for no records.
 
-- [ ] **4. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 4 passed.
+- [x] **4. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 4 passed.
 
-- [ ] **5. Commit.** `git add crates/zygo-work/src/decisions/graph.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision dependency graph (DR-2)` with the `Zygo-Session:` and `Zygo-Work:` trailers of the implementer's brief.
+- [x] **5. Commit.** `git add crates/zygo-work/src/decisions/graph.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision dependency graph (DR-2)` with the `Zygo-Session:` and `Zygo-Work:` trailers of the implementer's brief.
 
-- [ ] **6. Write the failing set tests.** Restore the `set` import and append these helpers and nine tests to `crates/zygo-work/tests/decision_set.rs`.
+- [x] **6. Write the failing set tests.** Restore the `set` import and append these helpers and nine tests to `crates/zygo-work/tests/decision_set.rs`.
 
 ```rust
 fn file(rid: &str, deps: &[String]) -> String { // a valid record whose `id` is `rid`
@@ -225,9 +225,9 @@ fn link_and_fifo_entries_are_malformed_and_not_opened() {
 }
 ```
 
-- [ ] **7. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::set`.
+- [x] **7. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::set`.
 
-- [ ] **8. Implement the set.** Create `crates/zygo-work/src/decisions/set.rs` with `RecordSet`, `DirError`, `read_dir` and `set_faults` as in Produces, `const MAX_ENTRIES: usize = 10_000;`, and add `pub mod set;` to `mod.rs` (after `pub mod record;`). `read_dir`:
+- [x] **8. Implement the set.** Create `crates/zygo-work/src/decisions/set.rs` with `RecordSet`, `DirError`, `read_dir` and `set_faults` as in Produces, `const MAX_ENTRIES: usize = 10_000;`, and add `pub mod set;` to `mod.rs` (after `pub mod record;`). `read_dir`:
   1. `dir = top.join(DIR)`; `fs::symlink_metadata(&dir)`: `NotFound` → `Ok(RecordSet::default())`; any other error, a link, or not a directory → `Err(NotDirectory)`.
   2. `fs::read_dir(&dir)`; an open error or an entry error → `Err(NotDirectory)`. Collect the file names; the 10,001st entry → `Err(TooMany)`. Do not open any file in this pass.
   3. For each name that is UTF-8 (others are ignored): `name_kind` → `Record(_)`: `read_record(&dir.join(name))` into `valid` or `(name, faults)` into `malformed`; `Malformed`: `(name, vec!["bad record name"])`; `Other`: ignore. Subdirectories are never entered (their names are `Other`, or a record name that `read_record` refuses).
@@ -235,12 +235,22 @@ fn link_and_fifo_entries_are_malformed_and_not_opened() {
 
   `set_faults`: the fixed lines above; known ids are the ids in `set.valid`; the cycle lines are `graph::back_edges` over the forward edges `r.id → d` (only `d` in the set), starts = the ids in slice order.
 
-- [ ] **9. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 13 passed on unix (11 on Windows: the two `#[cfg(unix)]` tests compile to nothing).
+- [x] **9. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 13 passed on unix (11 on Windows: the two `#[cfg(unix)]` tests compile to nothing).
 
-- [ ] **10. Commit.** `git add crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision record set and set checks (DR-2)` with the implementer's trailers.
+- [x] **10. Commit.** `git add crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision record set and set checks (DR-2)` with the implementer's trailers.
 
-- [ ] **11. Acceptance.** `cargo test -p zygo-work --locked --test decision_set` → `test result: ok. 13 passed; 0 failed`.
+- [x] **11. Acceptance.** `cargo test -p zygo-work --locked --test decision_set` → `test result: ok. 13 passed; 0 failed`.
 
-- [ ] **12. Floor.** `cargo test --workspace --locked --no-fail-fast` → every `test result:` line `ok`, exit 0.
+- [x] **12. Floor.** `cargo test --workspace --locked --no-fail-fast` → every `test result:` line `ok`, exit 0.
 
-- [ ] **13. Review focus.** Line 42: `linked_directory_is_not_a_directory` and `link_and_fifo_entries_are_malformed_and_not_opened` pass (step 11). Line 75: `grep -nE 'SystemTime|Instant|time::|Command' crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/graph.rs crates/zygo-work/tests/decision_set.rs` → no output (no clock, no spawned process).
+- [x] **13. Review focus.** Line 42: `linked_directory_is_not_a_directory` and `link_and_fifo_entries_are_malformed_and_not_opened` pass (step 11). Line 75: `grep -nE 'SystemTime|Instant|time::|Command' crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/graph.rs crates/zygo-work/tests/decision_set.rs` → no output (no clock, no spawned process).
+
+### Review round 1
+
+- F1 partly fixed: `dependent_count` now does only the visited-set walk over the inverse graph, with no cycle detection; the per-record O(N+E) walk stays, because D-C3 computes each count at each use (probe of 10,000 records × 64 `depends_on`, 200 calls, `--release`: 11.47 s before, 5.98 s after on the implementer's machine).
+- F2 fixed: `deepest_chain` cuts cycles at the back edges of a DFS that starts at the records no record depends on, then at the others, each group in ascending id order, with children sorted; it then takes the memoized longest path of the acyclic graph that is left, so the result does not depend on input order.
+- F3 fixed: `set_faults` removes duplicate lines and keeps the first occurrence, so the fixed order of kinds still holds (D§17 #3: one line each).
+- F4 rejected: D§11.2 says only "cut at the first repeat"; a back edge from a fixed-order DFS is the exact, deterministic test for a cycle (a diamond is also a repeat in a BFS), and no consumer depends on which cycle id is named.
+- F5 fixed: a non-UTF-8 name whose bytes start with `DDR-` and end with `.md` is malformed (`bad record name`, under its lossy name); any other non-UTF-8 name is ignored (D§6.8).
+- F6 partly fixed: `docs` is also checked with lstat; a link there gives `NotDirectory`, and a missing `docs` still gives the empty set. Parts 2–4 rejected: the lstat/read_dir race needs a local writer who can already change any file; `docs` as a regular file gives the true `NotDirectory`; permission errors give `NotDirectory` (author's call 1).
+- F7 partly fixed: tests added for the fixed order of set fault kinds and for a self-loop in `dependents`. The other gaps (TooMany before any open, removal between listing and read, permission error) are not observable without fault injection, and the plan's ordering covers them.
