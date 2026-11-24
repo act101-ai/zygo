@@ -57,6 +57,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
 | FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30, FIX-31 | DONE | implementation | dad12c9; check-premises ok, forbidden_content 6 ok, check-conformance ok (merged tree); every W§15 row mapped |
+| FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
 
 ## Log
 

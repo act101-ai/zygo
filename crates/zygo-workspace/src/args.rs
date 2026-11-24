@@ -32,6 +32,15 @@ enum Class {
     Path,
     /// A value is kept (absolute) only when it names an existing file.
     Content,
+    /// The class depends on the value (FIX-32 B2, W-C7): a value whose first non-space character is `{` is inline JSON
+    /// and is removed with the flag, as an inline content value is (the flag name goes to `dropped_flags`); any other
+    /// value is a file path and is kept as typed (no absolute form, no existence check). The flag with no value is kept.
+    PathOrInline,
+}
+
+/// Whether `value` is inline JSON for [`Class::PathOrInline`]: its first non-space character is `{`.
+fn inline_json(value: &str) -> bool {
+    value.trim_start().starts_with('{')
 }
 
 struct Flag {
@@ -104,7 +113,7 @@ const CLAUDE_CODE: &[Flag] = &[
     flag(&["--plugin-dir"], Arity::Required, Class::Keep),
     flag(&["--remote-control-session-name-prefix"], Arity::Required, Class::Keep),
     flag(&["--setting-sources"], Arity::Required, Class::Keep),
-    flag(&["--settings"], Arity::Required, Class::Keep),
+    flag(&["--settings"], Arity::Required, Class::PathOrInline), // inline JSON can hold a key (W-C7, FIX-32 B2)
     flag(&["--system-prompt-snapshot"], Arity::Required, Class::Keep),
     // kept, variadic value
     flag(&["--add-dir"], Arity::Variadic, Class::Keep),
@@ -283,7 +292,13 @@ fn saved_value(class: Class, value: &str, base: Option<&Path>) -> Option<String>
             Ok(path) if path.is_file() => Some(path.into_os_string().into_string().unwrap_or_else(|_| value.to_string())),
             _ => None,
         },
+        Class::PathOrInline => (!inline_json(value)).then(|| value.to_string()),
     }
+}
+
+/// Whether a removed value of a flag of `class` is a dropped inline value (`dropped_flags`).
+fn drops(class: Class) -> bool {
+    matches!(class, Class::Content | Class::PathOrInline)
 }
 
 /// Takes the values of `flag`: the attached value when there is one, else the next tokens by arity (`next` moves
@@ -293,7 +308,7 @@ fn settle(flag: &Flag, attached: Option<&str>, args: &[String], next: &mut usize
         let saved = saved_value(flag.class, value, base);
         return Outcome {
             flag_kept: saved.is_some(),
-            dropped: flag.class == Class::Content && saved.is_none(),
+            dropped: drops(flag.class) && saved.is_none(),
             attached: saved,
             kept: vec![],
             removed: vec![],
@@ -325,8 +340,9 @@ fn settle(flag: &Flag, attached: Option<&str>, args: &[String], next: &mut usize
         Class::Remove | Class::Session => false,
         Class::Keep | Class::Path => true,
         Class::Content => !kept.is_empty(),
+        Class::PathOrInline => removed.is_empty(),
     };
-    Outcome { flag_kept, attached: None, dropped: flag.class == Class::Content && !removed.is_empty(), kept, removed }
+    Outcome { flag_kept, attached: None, dropped: drops(flag.class) && !removed.is_empty(), kept, removed }
 }
 
 fn occurrence(flag: &Flag, attached: Option<&str>, after: &[String], tokens: std::ops::Range<usize>) -> Occurrence {
@@ -341,6 +357,62 @@ fn table(agent: Agent) -> &'static [Flag] {
     match agent {
         Agent::ClaudeCode => CLAUDE_CODE,
         Agent::OpenCode => OPENCODE,
+    }
+}
+
+/// Whether `s` is a number by the yargs-parser pattern `^-?\d+(\.\d*)?(e-?\d+)?$` (ASCII digits only, as in a
+/// JavaScript pattern without the `u` flag).
+fn yargs_number(s: &str) -> bool {
+    let digits = |t: &str| t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+    let s = s.strip_prefix('-').unwrap_or(s);
+    let int = digits(s);
+    if int == 0 {
+        return false;
+    }
+    let mut r = &s[int..];
+    if let Some(f) = r.strip_prefix('.') {
+        r = &f[digits(f)..];
+    }
+    match r.strip_prefix('e') {
+        Some(e) => {
+            let e = e.strip_prefix('-').unwrap_or(e);
+            !e.is_empty() && digits(e) == e.len()
+        }
+        None => r.is_empty(),
+    }
+}
+
+/// The value that the letter `letter` of a short cluster takes from `rest`, the text after it in the same token, with
+/// the separator that a kept token writes before the saved value; `None` when the letter takes no value from the
+/// token and the walk goes on to the next letter (FIX-32 B1). The last letter (`rest` empty) never has one here; it
+/// takes the next tokens.
+/// - Claude Code (Commander): a table letter that takes a value takes all of `rest`; an unlisted letter followed by
+///   `=` keeps `rest` as typed. Any other letter takes nothing.
+/// - OpenCode, by the yargs-parser short-flag loop of OpenCode 1.19.6 (binary offset 125729461, quoted in
+///   `docs/work/phase2/nodes/FIX-32.md`), for a listed or an unlisted letter alike. The loop sees the next character
+///   only when it is not the last one of the token. In this order: the next character is `=`: the text after it;
+///   `rest` is `-`: `-`; an ASCII letter and a `rest` that is a number ([`yargs_number`]): that number; the next
+///   character is not a word character (`[A-Za-z0-9_]`): all of `rest`, that character included; else nothing. (yargs
+///   also refuses the number when it is the name of a boolean option; no OpenCode option name is a number.)
+fn attached_value<'a>(agent: Agent, flag: Option<&Flag>, letter: char, rest: &'a str) -> Option<(&'static str, &'a str)> {
+    if rest.is_empty() {
+        return None;
+    }
+    match agent {
+        Agent::ClaudeCode => match flag {
+            Some(f) => (f.arity != Arity::None).then_some(("", rest)),
+            None => rest.starts_with('=').then_some(("", rest)),
+        },
+        Agent::OpenCode => {
+            let mut chars = rest.chars();
+            let next = chars.next()?;
+            let seen = chars.next().is_some();
+            if seen && next == '=' {
+                return Some(("=", &rest[1..]));
+            }
+            let word = next.is_ascii_alphanumeric() || next == '_';
+            (rest == "-" || (letter.is_ascii_alphabetic() && yargs_number(rest)) || (seen && !word)).then_some(("", rest))
+        }
     }
 }
 
@@ -391,21 +463,26 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
             }
             outcomes.push((flag, outcome));
         } else {
-            // `-x` or a cluster `-xyz` (FIX-31 B1): every letter is looked up. A table letter that takes a value takes the
-            // rest of the token, or, as the last letter, the next tokens by its arity, and ends the cluster; an unlisted
-            // letter followed by `=` keeps the rest as typed and ends it. The next token belongs to the last letter only: an
-            // unlisted last letter takes it by the rule of that letter. When any table letter is not kept, the whole cluster
-            // and its value are removed.
+            // `-x` or a cluster `-xyz` (FIX-31 B1): every letter is looked up. Whether a letter that is not the last
+            // takes the rest of the token as its value, and so ends the cluster, is the rule of the agent's parser
+            // ([`attached_value`], FIX-32 B1). The next token belongs to the last letter only: a table letter takes it by
+            // its arity, an unlisted one by the rule of that letter; a cluster that a letter ended gives it to nobody.
+            // When any table letter is not kept, the whole cluster and its value are removed.
             let body = &token[1..];
             let mut shape = String::new();
             let mut letters: Vec<char> = vec![];
             let mut last_unlisted: Option<char> = None;
+            let mut ended = false;
             for (at, letter) in body.char_indices() {
                 let rest = &body[at + letter.len_utf8()..];
-                let Some(flag) = lookup(table, &format!("-{letter}")) else {
-                    if rest.starts_with('=') {
+                let flag = lookup(table, &format!("-{letter}"));
+                let attached = attached_value(agent, flag, letter, rest);
+                let Some(flag) = flag else {
+                    if attached.is_some() {
+                        // the letter and its value, as typed
                         shape.push_str(&body[at..]);
                         last_unlisted = None;
+                        ended = true;
                         break;
                     }
                     shape.push(letter);
@@ -413,22 +490,27 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
                     continue;
                 };
                 last_unlisted = None;
-                let attached = (flag.arity != Arity::None && !rest.is_empty()).then_some(rest);
+                let value = attached.map(|(_, v)| v);
                 let start = next;
-                let outcome = settle(flag, attached, args, &mut next, base);
-                out.occurrences.push(occurrence(flag, attached, &args[start..next], token_at..next));
+                // only the last letter takes the next tokens
+                let outcome = if rest.is_empty() { settle(flag, value, args, &mut next, base) } else { settle(flag, value, &[], &mut 0, base) };
+                out.occurrences.push(occurrence(flag, value, &args[start..next], token_at..next));
                 if outcome.flag_kept {
                     shape.push(letter);
-                    shape.push_str(outcome.attached.as_deref().unwrap_or(""));
+                    if let Some(saved) = &outcome.attached {
+                        shape.push_str(attached.map_or("", |(sep, _)| sep));
+                        shape.push_str(saved);
+                    }
                 }
                 letters.push(letter);
                 outcomes.push((flag, outcome));
-                if flag.arity != Arity::None {
+                if attached.is_some() || (agent == Agent::ClaudeCode && flag.arity != Arity::None) {
+                    ended = true;
                     break;
                 }
             }
             let mut taken: Vec<String> = vec![];
-            if let Some(letter) = last_unlisted.filter(|_| !body.contains('='))
+            if let Some(letter) = last_unlisted.filter(|_| !ended)
                 && unlisted_takes_value(agent, &format!("-{letter}"), args.get(next).map(String::as_str))
             {
                 taken.push(args[next].clone());
@@ -467,9 +549,11 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
 
 /// Filters the launch arguments of `agent` by AU30. Removed: session arguments, `-p`/`--print`, prompt-text flags
 /// with their values, every positional token, and `--` with all tokens after it. A content flag keeps a value only
-/// when it names an existing file; its name goes to `dropped_flags` when a value was dropped. File paths become
-/// absolute. All other tokens are kept as typed; a flag that the table does not hold keeps the next token as its value
-/// when [`unlisted_takes_value`] says so, and a short cluster gives the next token to its last letter only (FIX-31).
+/// when it names an existing file; its name goes to `dropped_flags` when a value was dropped. Claude Code `--settings`
+/// keeps a file path as typed and loses an inline JSON value the same way ([`Class::PathOrInline`], FIX-32 B2). File
+/// paths become absolute. All other tokens are kept as typed; a flag that the table does not hold keeps the next token
+/// as its value when [`unlisted_takes_value`] says so, and a short cluster gives the next token to its last letter
+/// only (FIX-31), by the cluster rule of the agent's parser ([`attached_value`], FIX-32 B1).
 pub fn filter(agent: Agent, args: &[String]) -> Filtered {
     let walk = walk(agent, args, None);
     Filtered { kept: walk.kept, dropped_flags: walk.dropped_flags }

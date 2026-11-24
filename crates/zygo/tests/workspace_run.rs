@@ -413,6 +413,68 @@ fn w18_72_ws_run_does_no_tmux_detection() { // AU102: bin/tmux fails every call
     assert_eq!(view["workspace"]["member"], json!({"ws_id": WS_ID, "pane": KEY}));
 }
 
+/// FIX-32 B1: by the yargs-parser rule `-mc` is `-m` with no value and `-c` (`--continue`), a session argument, so `ws
+/// run` resumes no saved session on top of it (ws.rs `launch_member`: `has_session_arg` gives no resume).
+#[test]
+fn fix32_b1_a_saved_opencode_cluster_with_continue_gets_no_session_argument() {
+    let h = Harness::no_tmux();
+    let mut m = resumable(Agent::OpenCode, "ses_1");
+    m.launch.args = vec!["-mc".into()];
+    one_pane(&h, &h.repo(), Some(m));
+    let (out, env) = h.stub(Agent::OpenCode, "o");
+    let o = ws_run(&h, &pairs(&env), false);
+    let argv: Vec<String> = serde_json::from_value(json_file(&out.join("argv.json"))).unwrap_or_else(|e| panic!("{e}: {}", text(&o.stderr)));
+    assert!(argv.iter().any(|t| t == "-mc"), "{argv:?}");
+    assert!(!argv.iter().any(|t| t.starts_with("--session") || t == "-s" || t.contains("ses_1")), "{argv:?}");
+}
+
+/// The zygo session of a live launcher in the tests below (a valid session id).
+const LIVE_ZS: &str = "01JBBBBBBBBBBBBBBBBBBBBBBB";
+
+/// Makes the session folder `LIVE_ZS` live, as the member fixture does (`workspace_member.rs`
+/// `au94_a_live_launcher_on_the_key_refuses`): `token`, `pid` and a lock on `pid` that lives as long as the result.
+fn live_launcher(h: &Harness) -> std::fs::File {
+    let d = h.paths.sessions_dir.join(LIVE_ZS);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("token"), "t").unwrap();
+    std::fs::write(d.join("pid"), "1").unwrap();
+    let lock = std::fs::File::options().read(true).write(true).open(d.join("pid")).unwrap();
+    assert!(fs4::FileExt::try_lock(&lock).is_ok());
+    lock
+}
+
+/// FIX-32 B3, W-C9: `ws run` does not resume a conversation whose launcher is live. The callback refuses in its locked
+/// write, before `record_start`: the W-C9 line of the hand start, no agent, the record unchanged (`pending` included).
+#[test]
+fn fix32_b3_ws_run_refuses_a_conversation_whose_launcher_is_live() {
+    for committed in [true, false] {
+        let h = Harness::no_tmux();
+        let _lock = live_launcher(&h);
+        let mut m = resumable(Agent::ClaudeCode, "abc");
+        if committed {
+            m.zygo_session = Some(LIVE_ZS.into());
+        } else {
+            // a start of LIVE_ZS that no hook committed yet
+            m.pending = Some(zygo_workspace::state::Pending { zygo_session: LIVE_ZS.into(), started_at: 7, ..Default::default() });
+        }
+        one_pane(&h, &h.repo(), Some(m.clone()));
+        let before = std::fs::read(h.store(WS_ID).dir().join("workspace.json")).unwrap();
+        let (out, env) = h.stub(Agent::ClaudeCode, "a");
+        let o = ws_run(&h, &pairs(&env), false);
+        let err = text(&o.stderr);
+        assert!(
+            err.contains("zygo: pane kaaaaaaaa holds session abc, whose launcher is still running; zygo starts no second agent on it\n"),
+            "{committed}: {err}"
+        );
+        assert!(err.contains("zygo: the claude launch failed before the agent started (exit 1)\n"), "{committed}: {err}");
+        assert!(!out.join("argv.json").exists(), "{committed}: the agent started");
+        assert_eq!(member(&h), m, "{committed}");
+        assert_eq!(std::fs::read(h.store(WS_ID).dir().join("workspace.json")).unwrap(), before, "{committed}");
+        // W§8.2 step 8: the pane ends in its shell
+        assert_eq!(shell_file(&h, "cwd").trim_end(), h.repo().to_str().unwrap(), "{committed}");
+    }
+}
+
 #[test]
 fn au59_a_settings_argument_keeps_membership() {
     let h = Harness::no_tmux();

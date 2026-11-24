@@ -1335,7 +1335,6 @@ fn attribution_searches_only_the_message_command() {
                 "git log -5 --format=%B && rg -n \"noreply@anthropic.com\" docs",
                 "echo \"Co-Authored-By: Claude\" > /dev/null; gh pr create --title t --body ok",
                 "git commit -m fix && cat <<'EOF'\nCo-Authored-By: Claude\nEOF",
-                "cat <<'EOF' > notes.txt\nCo-Authored-By: Claude\nEOF\ngit commit -m \"docs: notes\"",
                 "git commit -m \"docs: tidy\" # Co-Authored-By: Claude"] {
         assert_eq!(out(&c, &bash(None, cmd, &e.repo)), None, "{cmd}");
     }
@@ -1347,8 +1346,50 @@ fn attribution_searches_only_the_message_command() {
         ("cat <<'EOF' | git commit -F -\nfix\n\nCo-Authored-By: Claude\nEOF", attr_heredoc(label)),
         ("rg -n x . && git commit -F co.md", attr_file(label, &e.repo.join("co.md"))),
         ("gh pr create --title t --body-file - <<'EOF'\nBody\n\nCo-Authored-By: Claude\nEOF", attr_heredoc(label)),
+        // FIX-32 B4 (b): the heredoc bodies of every earlier command are searched, not only those piped into it
+        ("cat <<'EOF' > notes.txt\nCo-Authored-By: Claude\nEOF\ngit commit -m \"docs: notes\"", attr_heredoc(label)),
     ] {
         assert_eq!(out(&c, &bash(None, cmd, &e.repo)), Some(deny(&want)), "{cmd}");
+    }
+}
+
+#[test] // FIX-32 B4; kills: a message file read from disk although an earlier command of the line writes it (a stale file
+        // refuses a clean commit, and a trailer written by the line passes); the heredoc of an earlier command left out
+fn attribution_reads_what_the_command_writes() {
+    let e = env();
+    let c = ctx(&e, &no_config);
+    let label = "Co-Authored-By: Claude";
+    let trailer = "Co-Authored-By: Claude <c@example.com>";
+    // a heredoc writes the message file, then the commit reads it, in one command
+    for cmd in [
+        format!("cat > msg.txt <<'EOF'\nfix\n\n{trailer}\nEOF\ngit commit -F msg.txt"),
+        format!("cat <<'EOF' > msg.txt && git commit -F msg.txt\nfix\n\n{trailer}\nEOF"),
+        format!("cat >>msg.txt <<'EOF'; gh pr create --title t --body-file msg.txt\n{trailer}\nEOF"),
+    ] {
+        assert_eq!(out(&c, &bash(None, &cmd, &e.repo)), Some(deny(&attr_heredoc(label))), "{cmd}");
+    }
+    // a writer's own command text is searched in place of the file
+    let wrote = attr_in(label, &format!("the command that writes `{}`", e.repo.join("msg.txt").display()));
+    for cmd in [
+        format!("echo \"{trailer}\" > msg.txt && git commit -F msg.txt"),
+        format!("printf '%s\\n' fix \"{trailer}\" | tee msg.txt; git commit --file=msg.txt"),
+        format!("printf '{trailer}' 1>msg.txt\ngh release create v1 --notes-file msg.txt"),
+    ] {
+        assert_eq!(out(&c, &bash(None, &cmd, &e.repo)), Some(deny(&wrote)), "{cmd}");
+    }
+    // the file on disk holds a trailer, but the command writes it with clean text first: the file is not read
+    std::fs::write(e.repo.join("msg.txt"), CO_TRAILER).unwrap();
+    for cmd in [
+        "cat > msg.txt <<'EOF'\nfix: clean text\nEOF\ngit commit -F msg.txt",
+        "echo fix > ./msg.txt && git commit -F msg.txt",
+        "printf fix | tee -a msg.txt && gh pr create --title t -F msg.txt",
+    ] {
+        assert_eq!(out(&c, &bash(None, cmd, &e.repo)), None, "{cmd}");
+    }
+    // no writer in the command: the file on disk is read, as before
+    let file = attr_file(label, &e.repo.join("msg.txt"));
+    for cmd in ["git commit -F msg.txt", "echo fix > other.txt && git commit -F msg.txt", "git commit -F msg.txt && echo fix > msg.txt"] {
+        assert_eq!(out(&c, &bash(None, cmd, &e.repo)), Some(deny(&file)), "{cmd}");
     }
 }
 

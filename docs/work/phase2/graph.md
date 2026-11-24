@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** FIX-32
+**Next:** —
 **Workflows:** no per-node review rounds and no separate plan review (operator: no review loops, see Log line 109); one whole-branch review at completion, triaged by the controller. At completion, after merging origin/main (keep the operator's README.md edits), check README.md against the shipped phase 2 behaviour and the specs; fix mistakes and add missing user-facing information (operator, 2026-11-23); then the whole-branch review.
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
@@ -55,7 +55,6 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | DONE | mechanical | 907b06d; 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39 |
 | FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
@@ -80,7 +79,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | DONE | judgment | 7db2fac; acceptance zygo-workspace 372 + 2 ignored; workspace 2860 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | DONE | implementation | 7d78063; acceptance zygo-workspace 398 + 2 ignored, workspace_member 43, session_verbs 29; zygo 684 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok (merged tree) |
 | FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | DONE | implementation | 021bcf6; acceptance zygo-workspace 407 + 2 ignored (args 33, six Acceptance cases pass); zygo-workspace + zygo + zygo-launch 1404 + 10 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, 11 mutations red (merged tree) |
-| FIX-32 | Whole-branch review fixes: OpenCode short clusters (yargs rule), inline --settings removed, ws run live-launcher refusal, attribution guard reads what the command writes, README drain line | D1 | IN-PROGRESS | implementation | wt .worktrees/phase2/FIX-32 (branch worktree-zygo-phase-2--FIX-32) |
+| FIX-32 | Whole-branch review fixes: OpenCode short clusters (yargs rule), inline --settings removed, ws run live-launcher refusal, attribution guard reads what the command writes, README drain line | D1 | DONE | implementation | 444a952; zygo-workspace + zygo + zygo-work + zygo-launch 1610 passed + 13 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, test-install ok (merged tree) |
 
 ## Log
 
@@ -269,3 +268,4 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | 2026-11-23 | D1 merged; all nodes DONE or DROPPED; delivery next |
 | 2026-11-23 | FIX-32 added from the whole-branch review: B1-B4 blocking, README drain line; minors deferred (see node) |
 | 2026-11-23 | FIX-32 in progress |
+| 2026-11-23 | FIX-32 merged |
