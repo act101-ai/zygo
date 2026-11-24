@@ -145,7 +145,7 @@ Worked example (test catalog row: `input` 4, `cache_read` 0.4, `cache_write_5m` 
    CREATE INDEX IF NOT EXISTS readbacks_session ON readbacks(session);
    CREATE INDEX IF NOT EXISTS readbacks_ts ON readbacks(ts);
    ```
-3. **Three nullable columns on `trims`:** `result_id TEXT`, `command TEXT`, `shaper TEXT`. They are added by the full open `Store::open` only, one time per process: it reads `PRAGMA table_info(trims)` and runs `ALTER TABLE trims ADD COLUMN` for each missing column. A "duplicate column name" error (a concurrent process added it first) is success. Processes that use the full open run one time per launch or command: the launcher, the CLI and the MCP server. The hook does not use it (O§7.11).
+3. **Three nullable columns on `trims`:** `result_id TEXT`, `command TEXT`, `shaper TEXT`. They are added by the full open `Store::open` only, one time per process: it reads `PRAGMA table_info(trims)` and runs `ALTER TABLE trims ADD COLUMN` for each missing column. A "duplicate column name" error (a concurrent process added it first) is success. Processes that use the full open run one time per launch or command: the launcher (which already opens the store at launch to prune it, §14) and the CLI. The hook and the MCP server's read-back write use the bounded open (O§7.11), which never adds a column.
 4. **Writes.** `TrimRow` gets `result_id`, `command` and `shaper` as `Option<String>`, with `#[serde(default)]`. `insert_trim` (`store.rs:232-245`) writes ten columns. When the insert fails with "no such column" (a database that no new full open has touched yet: a session launched by an older binary, whose hooks now run the new one), it inserts the seven old columns. An older binary's insert names its own seven columns, so the new columns are null in its rows.
 5. **Reads.** A reader checks `PRAGMA table_info(trims)` and `sqlite_master` first. A missing column reads as null; a missing `readbacks` table reads as no rows. So a new `zygo usage` works on a database that only an older binary has opened.
 6. `prune` (`store.rs:272-284`) also deletes `readbacks` rows older than the cutoff. `replace_requests` (`zygo usage --sync`) does not touch `trims` or `readbacks`.
@@ -339,7 +339,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 1. Registration: the launcher adds `{"matcher": "Bash", "hooks": [{"type": "command", "command": "<zygo> hook trim"}]}` to `PostToolUseFailure`, always (also when work units are off and for a non-member), before the existing entries.
 2. Input: `trim_in` accepts `hook_event_name = "PostToolUseFailure"` with `tool_name = "Bash"`. The raw text is the `error` string when it is a string; else no change.
 3. The first line of `error` that matches `^Exit code \d+$` stays the first line of the view, before the shaped marker. It is never hidden, cut or counted.
-4. The pipeline of O§7.3-7.10 runs on the rest of the text. `[results] shape = false` or a file printer: the §10.1 size view applies over the threshold, with the exit-code line first.
+4. The pipeline of O§7.3-7.10 runs on the rest of the text. A file printer: the §10.1 size view applies over the threshold, with the exit-code line first. `[results] shape = false`: no change, as at `97d8767` (O§9).
 5. Output: `{"hookSpecificOutput": {"hookEventName": "PostToolUseFailure", "<field>": <view>}}`, where `<field>` and its shape (a string, or an object like `tool_response`) are as the PO1 capture shows. The builder records the field in `docs/premises.md` and in §10.1.
 
 **If PO1 fails**: no registration on `PostToolUseFailure` for `trim`; `trim_in` ignores that event; a failed Bash call on Claude Code passes unchanged, as today. A passing run is still shaped. The build records the limit in `docs/premises.md` and in §10.1. The `PreToolUse` rewrite that would avoid it is rejected **(operator)**.
@@ -489,7 +489,7 @@ The HUD spec does not change (O§6.7).
 - **Read-backs measured by a `PostToolUse` hook on `mcp__zygo__result_*`**: gives the agent id directly, but needs a premise on MCP hook input shapes for each agent, and OpenCode MCP tool names are not in a fixture.
 - **A read-back keyed by the reading session**: a resumed member's read-back of an old result would make the new session's figure negative (O§6.4).
 - **A `SCHEMA_VERSION` bump with the new columns**: `open_read_only` refuses each other version (`store.rs:126-130`), so the status line of an older binary in a running session loses its trimmed segment during an update.
-- **`PRAGMA table_info` and `ALTER` in each hook process**: costs each Bash call a schema read and can take a write lock; the full open does it one time per launcher, CLI or MCP process.
+- **`PRAGMA table_info` and `ALTER` in each hook process**: costs each Bash call a schema read and can take a write lock; the full open does it one time per launcher or CLI process.
 - **The command text, or its first word, in the usage store**: §14 forbids tool inputs; a program name can be a path. A closed list holds no user content.
 - **Shaping `Read`, `Grep`, `Glob`, `WebFetch`**: a changed file text breaks `Edit` (O§7.1).
 - **A file-printer check on the last segment only**: `cat f && true` and `sh -c 'cat f'` would be shaped **(lead)**.
