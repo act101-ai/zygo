@@ -376,9 +376,12 @@ fn stderr_maps_to_answers_and_errors() {
     assert!(t0.elapsed() < Duration::from_secs(4), "{:?}", t0.elapsed());
     assert!(gone_within(pid_in(&bg), Duration::from_secs(3)), "the background sleep still runs");
 
-    // Round 2 M6: a process outside the group (setsid) holds stdout: the call fails within the bound.
+    // Round 2 M6: a process outside the group (setsid) holds stdout: the call fails within the bound. macOS has no
+    // `setsid` command (FIX-33, CI run 45342068421), so perl's POSIX::setsid starts the new session; `exec` keeps the
+    // pid that `$!` names.
     let out = dir.path().join("out");
-    let t = at("outside", &format!("setsid sleep 30 & echo $! > '{}'; exit 0", out.display()));
+    let outside = format!("perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sleep 30 & echo $! > '{}'; exit 0", out.display());
+    let t = at("outside", &outside);
     let t0 = Instant::now();
     let r = t.set_env("zygo-t", "A", "1");
     let took = t0.elapsed();

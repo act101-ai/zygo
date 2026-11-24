@@ -591,11 +591,14 @@ fn au105_not_saved_text_goes_at_the_end() {
         eprintln!("--save failure case skipped: this user writes into a folder of mode 0500");
     } else {
         let cfg_file = cfg.join("config.toml").display().to_string();
+        // The lock sits beside the resolved config file (`resolve` in zygo-config `profile.rs`): on macOS the temp
+        // folder `/var/...` resolves to `/private/var/...` (FIX-33, CI run 45342068421).
+        let lock = format!("{}.lock", std::fs::canonicalize(cfg.join("config.toml")).unwrap().display());
         let vars = [("ZYGO_WORKSPACE", mf::WS_ID), ("ZYGO_CONFIG", cfg_file.as_str())];
         let env = Env { session: Some("S3"), dir: Some(&s), vars: &vars, ..Default::default() };
         assert_eq!(
             cli(h, &env, "units off --save"),
-            (1, String::new(), format!("units off for this session; saving to user config failed: {cfg_file}.lock; not saved for the workspace\n"))
+            (1, String::new(), format!("units off for this session; saving to user config failed: {lock}; not saved for the workspace\n"))
         );
     }
     std::fs::set_permissions(&cfg, std::fs::Permissions::from_mode(0o700)).unwrap();

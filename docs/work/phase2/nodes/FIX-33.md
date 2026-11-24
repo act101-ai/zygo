@@ -1,7 +1,7 @@
 # FIX-33 — CI failures of PR #14 (run 45338846931): macOS and Windows test builds, inherited descriptors in the detached down
 
 **Spec:** `docs/specs/2026-11-20-workspaces-design.md` W§9.3 step 2 (the detached `down` keeps no descriptor of the caller), AU65, W§17 PW15. Created 2026-11-23 in delivery: CI run 45338846931 on PR #14 failed on all three runners.
-**Files:** `crates/zygo-workspace/tests/up.rs`, `crates/zygo-workspace/tests/activity.rs`, `crates/zygo-workspace/tests/down.rs`, `crates/zygo-workspace/src/down.rs`, `docs/specs/2026-11-20-workspaces-design.md`
+**Files:** `crates/zygo-workspace/tests/up.rs`, `crates/zygo-workspace/tests/activity.rs`, `crates/zygo-workspace/tests/down.rs`, `crates/zygo-workspace/src/down.rs`, `crates/zygo-workspace/tests/mux.rs`, `crates/zygo/tests/session_verbs.rs`, `docs/specs/2026-11-20-workspaces-design.md`
 **Consumes:** —
 **Produces:** —
 **Acceptance:** `gh pr checks 14` → CI green on PR #14 (ubuntu, macos, windows); locally `cargo test -p zygo-workspace --locked --no-fail-fast`, `cargo test --workspace --locked --no-run`, `cargo clippy --workspace --all-targets --locked -- -D warnings` and `sh scripts/test-install.sh` pass, and `cargo check -p zygo-workspace --tests --locked` passes for `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`
@@ -68,3 +68,9 @@ The three failures of run 45338846931:
 - The checks are real: with the old `up.rs`, the darwin check failed with CI's error, `E0308` at `up.rs:321:23`.
 
 ### CI rounds
+
+**Round 1: run 45342068421 (head e98247d).** ubuntu success, windows success, macos failure. The macOS test build compiled for the first time. Two test targets failed, and the old compile error had hidden both:
+- `crates/zygo/tests/session_verbs.rs:596` (`au105_not_saved_text_goes_at_the_end`): the expected text named `/var/folders/.../cfg/config.toml.lock`, but `zygo` printed `/private/var/folders/...`. On macOS, `/var` is a symlink to `/private/var`. The product is right: `resolve` in `crates/zygo-config/src/profile.rs` puts the lock beside the resolved config file (a symlinked config locks its target). Test defect. Fix: the expected lock path is `canonicalize(cfg/config.toml)` + `.lock`, which is the same path on Linux.
+- `crates/zygo-workspace/tests/mux.rs:387` (`stderr_maps_to_answers_and_errors`): the result was `Ok(())`, not `Err(Failed { "tmux exited, but a process outside its process group holds its output" })`. The stub ran `setsid sleep 30 &`, and macOS has no `setsid` command, so no process outside the group held stdout. Test defect. Fix: the stub runs `perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sleep 30 &`. Perl is in the base system of macOS and Ubuntu, and `exec` keeps the pid that `$!` names.
+- A search of `crates/` found no other use of the `setsid` command in a test script.
+- Local: `mux` 50 passed + 1 ignored, and `session_verbs` 29 passed. `cargo clippy -p zygo -p zygo-workspace --all-targets --locked -- -D warnings` exits 0, and the darwin cross-check of both packages exits 0.
