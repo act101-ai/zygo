@@ -1345,7 +1345,7 @@ fn signals_cancel_drains_and_restore_once() {
         let (code, _, err) = run(&o, &h);
         assert_eq!(disps(), before);
         assert_eq!(code, 1, "{err}");
-        assert_eq!(count(&err, "zygo: [workspace] drain_timeout \"ten\" is not <n>s, <n>m or <n>h; using 10m"), 1);
+        assert_eq!(count(&err, "zygo: [workspace] drain_timeout \"ten\" is not <n>s, <n>m, <n>h or <n>d; using 10m"), 1);
         assert_eq!(*last.lock().unwrap(), Duration::from_secs(600));
         l.child.kill().unwrap();
     }
