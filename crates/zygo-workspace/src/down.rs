@@ -693,12 +693,48 @@ fn spawn_detached(opts: &DownOpts, zygo: &Path, name: Option<&str>, log: File) -
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // SAFETY: `setsid` is async-signal-safe and touches no memory of the parent.
+        // SAFETY: `setsid` is async-signal-safe and touches no memory of the parent; `cloexec_above_stderr` makes
+        // only async-signal-safe system calls and allocates nothing.
         unsafe {
-            c.pre_exec(|| if libc::setsid() == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) });
+            c.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                cloexec_above_stderr();
+                Ok(())
+            });
         }
     }
     c.spawn().map(drop)
+}
+
+/// W§9.3 step 2, AU65, PW15: the detached `down` holds no descriptor of the caller beyond 0-2. A caller can hold
+/// descriptors without `FD_CLOEXEC` (CI run 45338846931: the runner's pipes reached the child); this marks every
+/// descriptor above 2 close-on-exec, so `exec` closes them all (test `detached_child_holds_no_caller_descriptor`).
+///
+/// They are marked, not closed here: std's spawn reports a failed `exec` through its own close-on-exec pipe, which is
+/// open in the child at this point; closing it would turn a failed start into a reported success (test
+/// `detach_round_2`, "the detached child cannot start").
+///
+/// Runs inside `pre_exec`, between `fork` and `exec`: only async-signal-safe system calls, no allocation, no `/proc`
+/// read. Linux: `close_range(3, u32::MAX, CLOSE_RANGE_CLOEXEC)`, and on an error (a kernel before 5.11) the loop.
+/// Other Unix: the loop, from 3 to `sysconf(_SC_OPEN_MAX)` capped at 65536; errors (EBADF) are ignored.
+#[cfg(unix)]
+fn cloexec_above_stderr() {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: `close_range` takes three integers and touches no memory.
+        if unsafe { libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, libc::CLOSE_RANGE_CLOEXEC) } == 0 {
+            return;
+        }
+    }
+    // SAFETY: `sysconf` takes an integer and touches no memory.
+    let max = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+    let max = if (4..=65536).contains(&max) { max as libc::c_int } else { 65536 };
+    for fd in 3..max {
+        // SAFETY: `fcntl(F_SETFD)` takes integers and touches no memory; a descriptor that is not open gives EBADF.
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
 }
 
 /// W§9.3 step 2 after the guard: the zygo path made absolute against the cwd (the child runs in `/`) and the AU54

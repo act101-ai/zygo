@@ -316,9 +316,10 @@ fn wait_for(limit: Duration, f: impl Fn() -> bool) -> bool {
 /// A tmux client of `cols`×`rows` attached to `session`, on a pseudo-terminal (D25, M5).
 fn pty_client(srv: &PrivateServer, session: &str, cols: u16, rows: u16) -> Child {
     let (mut master, mut slave) = (0, 0);
-    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
-    // SAFETY: both out pointers are valid; name and termios are null, the size is a valid struct.
-    let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), &ws) };
+    let mut ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    // SAFETY: both out pointers are valid; name and termios are null, the size is a valid struct. The `*mut` pointers
+    // fit Apple's signature and coerce to the `*const` of Linux, so one call compiles on both.
+    let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &raw mut ws) };
     assert_eq!(rc, 0, "openpty");
     // SAFETY: openpty gave two open descriptors that nothing else owns.
     let (master, slave) = unsafe { (fs::File::from_raw_fd(master), fs::File::from_raw_fd(slave)) };

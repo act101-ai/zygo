@@ -2,6 +2,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -480,8 +481,11 @@ fn update_errors_of_the_files_are_file_conditions_and_the_others_are_not() {
 }
 
 /// Restores the mode of a folder when the test ends, also when it fails, so the temporary folder can be removed.
+/// Unix only: a mode is a Unix permission (`PermissionsExt`).
+#[cfg(unix)]
 struct Mode(PathBuf, u32);
 
+#[cfg(unix)]
 impl Drop for Mode {
     fn drop(&mut self) {
         use std::os::unix::fs::PermissionsExt;

@@ -1554,6 +1554,18 @@ fn detach_helper() {
     let mut o = opts(&d, &d.join("tmux"));
     o.zygo = d.join("rec");
     o.zygo_session = Some("01JCALLER".into());
+    // FIX-33 (CI run 45338846931): the GitHub runner gave the test process pipes without `FD_CLOEXEC`, and they
+    // reached the detached child. Make the same case here: a pipe whose two ends the child would inherit. The ends
+    // stay open until this process exits.
+    let mut ends = [0; 2];
+    // SAFETY: `pipe` writes two descriptors into a valid two-element array; `fcntl(F_SETFD, 0)` only clears
+    // `FD_CLOEXEC` on those two descriptors, which this process owns.
+    unsafe {
+        assert_eq!(libc::pipe(ends.as_mut_ptr()), 0, "pipe");
+        for fd in ends {
+            assert_eq!(libc::fcntl(fd, libc::F_SETFD, 0), 0, "fcntl F_SETFD");
+        }
+    }
     let code = down::down(&o);
     let null = fs::OpenOptions::new().write(true).open("/dev/null").unwrap();
     // SAFETY: `dup2` of an open descriptor onto 1 and 2; nothing else writes to them from here on.

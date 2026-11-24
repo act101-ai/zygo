@@ -80,6 +80,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | DONE | implementation | 7d78063; acceptance zygo-workspace 398 + 2 ignored, workspace_member 43, session_verbs 29; zygo 684 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok (merged tree) |
 | FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | DONE | implementation | 021bcf6; acceptance zygo-workspace 407 + 2 ignored (args 33, six Acceptance cases pass); zygo-workspace + zygo + zygo-launch 1404 + 10 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, 11 mutations red (merged tree) |
 | FIX-32 | Whole-branch review fixes: OpenCode short clusters (yargs rule), inline --settings removed, ws run live-launcher refusal, attribution guard reads what the command writes, README drain line | D1 | DONE | implementation | 444a952; zygo-workspace + zygo + zygo-work + zygo-launch 1610 passed + 13 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, test-install ok (merged tree) |
+| FIX-33 | CI failures of PR #14 (run 45338846931): macOS openpty types, Windows unix-only test guard, detached down closes inherited descriptors above 2 | FIX-32 | IN-PROGRESS | implementation | — |
 
 ## Log
 
@@ -269,3 +270,5 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | 2026-11-23 | FIX-32 added from the whole-branch review: B1-B4 blocking, README drain line; minors deferred (see node) |
 | 2026-11-23 | FIX-32 in progress |
 | 2026-11-23 | FIX-32 merged |
+| 2026-11-23 | FIX-33 planned from CI run 45338846931 on PR #14 (macOS and Windows test builds; ubuntu: inherited pipes in the detached down) |
+| 2026-11-23 | FIX-33 in progress |
