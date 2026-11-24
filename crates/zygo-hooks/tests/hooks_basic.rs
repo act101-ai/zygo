@@ -136,6 +136,14 @@ fn dir_names(p: &Path) -> Vec<String> {
     let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
     assert_eq!(bytes_trimmed(&e), 105000 - o["stdout"].as_str().unwrap().len() as u64);
 }
+#[test] fn trim_session_is_stored_in_the_result_meta() {             // O§6.5 item 1: the session whose hook stored it
+    let e = env(true);
+    updated(&out(run_trim(&bash(&lines(5000)), &e)));
+    let ids = result_ids(&e); assert_eq!(ids.len(), 1);
+    assert_eq!(zygo_results::Store::get(&e.dir.results(), &ids[0]).unwrap().session.as_deref(), Some("sess-1"));
+    let meta: Value = serde_json::from_slice(&std::fs::read(e.dir.results().join(format!("{}.json", ids[0]))).unwrap()).unwrap();
+    assert_eq!(meta["session"], "sess-1");
+}
 #[test] fn trim_threshold_is_over_16kib_not_at() {                  // §10.1 default 16 KiB, "over"
     let e = env(true);
     assert_eq!(out(run_trim(&bash(&"a".repeat(16384)), &e)), "");
