@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** E2, FIX-30, FIX-31, D1
+**Next:** FIX-30, FIX-31, D1
 **Workflows:** no per-node review rounds and no separate plan review (operator: no review loops, see Log line 109); one whole-branch review at completion, triaged by the controller. At completion, after merging origin/main (keep the operator's README.md edits), check README.md against the shipped phase 2 behaviour and the specs; fix mistakes and add missing user-facing information (operator, 2026-11-23); then the whole-branch review.
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
@@ -55,7 +55,6 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | IN-PROGRESS | implementation | .worktrees/phase2/E2 |
 | D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30, FIX-31 | TODO | implementation | — |
 | FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
 | FIX-5 | HUD fit width: status area = terminal width − 4 (PH4 fallback; changes HUD-8) | — | DONE | implementation | 7c26d5d; hooks 173 ok, compact_cmd 16 ok, golden unchanged (merged tree) |
@@ -262,3 +261,4 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | 2026-11-23 | E2 in progress |
 | 2026-11-23 | Uncited agent rules removed from the header and the open node files (operator 2026-11-23); Workflows line records no review loops. |
 | 2026-11-23 | Operator: update README.md at delivery for mistakes and missing information. |
+| 2026-11-23 | E2 merged; acceptance cargo parts pass on tmux 3.8 and 3.2a; no review round (no review loops); D-1 deferred |

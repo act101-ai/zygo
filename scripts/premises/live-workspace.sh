@@ -84,6 +84,10 @@ gone() { ! kill -0 "$1" 2>/dev/null; }
 unpid() { LIVE_PIDS=$(printf '%s\n' $LIVE_PIDS | grep -vx "$1" | tr '\n' ' '); }
 uuid() { python3 -I -c 'import uuid; print(uuid.uuid4())'; }
 yn() { if [ "$1" -eq 0 ]; then echo yes; else echo no; fi; }
+# pnote <PW id> <sub id> <detail>: note (workspace_lib.sh), and the same as one stdout line "note <PW id> <sub id> <detail>".
+pnote() { note "$@"; printf 'note %s %s %s\n' "$1" "$2" "$(clean "$3")"; }
+# pw4_rest <reason>: the notes 4.7, 4.8 and 4.9 when part oc ends before them (node E2).
+pw4_rest() { for n in 4.7 4.8 4.9; do pnote PW4 "$n" "not run: $1"; done; }
 WA="$PREMISES_DIR/workspace_analyze.py"
 # steps <prefix> <steps json>: SSE files and mock rules of one scripted sequence (steps.py)
 steps() {
@@ -672,20 +676,46 @@ print(n)' "$RUN/rec")
   # PW9, OpenCode: the TUI in a pane, one turn, SIGTERM to the idle agent, then the session is listed and resumed.
   echo "cd '$R' && exec env -i PATH='$TOOL_PATH' TERM=xterm-256color HOME='$H' XDG_CONFIG_HOME='$H/.config' XDG_DATA_HOME='$H/.local/share' XDG_CACHE_HOME='$H/.cache' XDG_STATE_HOME='$H/.local/state' OPENCODE_DISABLE_AUTOUPDATE=1 PW_OC_LOG='$RUN/plog-t' '$OPENCODE_BIN'" >"$RUN/pane-zo9.sh"
   if ! tm new-session -d -s zo9 -x 200 -y 50 -c "$R" -- /bin/sh "$RUN/pane-zo9.sh"; then
-    rest "tmux did not start the pane" PW9:9.5 PW9:9.6 PW9:9.7; stop_mock; return
+    rest "tmux did not start the pane" PW9:9.5 PW9:9.6 PW9:9.7; pw4_rest "tmux did not start the pane"; stop_mock; return
   fi
   OCPID=$(tm display-message -p -t "=zo9:" '#{pane_pid}'); LIVE_PIDS="$LIVE_PIDS $OCPID"
   if ! wait_for 60 test -s "$RUN/plog-t/events.jsonl"; then
-    pane_end zo9 "$OCPID"; rest "timeout 60 s: the OpenCode TUI did not load the plugin" PW9:9.5 PW9:9.6 PW9:9.7; stop_mock; return
+    pane_end zo9 "$OCPID"; rest "timeout 60 s: the OpenCode TUI did not load the plugin" PW9:9.5 PW9:9.6 PW9:9.7; pw4_rest "timeout 60 s: the OpenCode TUI did not load the plugin"; stop_mock; return
   fi
   nap 5
   say zo9 "tracer-pw9-oc first turn"
   if ! wait_for 90 req_has 'tracer-pw9-oc first'; then
-    pane_end zo9 "$OCPID"; rest "timeout 90 s: no request with the prompt typed into the OpenCode TUI" PW9:9.5 PW9:9.6 PW9:9.7; stop_mock; return
+    pane_end zo9 "$OCPID"; rest "timeout 90 s: no request with the prompt typed into the OpenCode TUI" PW9:9.5 PW9:9.6 PW9:9.7; pw4_rest "timeout 90 s: no request with the prompt typed into the OpenCode TUI"; stop_mock; return
   fi
   t=1; wait_for 30 oc_idle t && t=0
   TSID=$(oc_sid t)
   note PW4 4.6 "in the TUI the plugin saw a sessionID: $(yn "$([ -n "$TSID" ]; echo $?)"); idle event within 30 s of the request: $(yn $t)"
+  # 4.7 (node E2): the TUI's typed prompt gives a session.status busy event of the main session before its first request.
+  r=$(python3 -I - "$RUN/plog-t/events.jsonl" "$RUN/rec" 'tracer-pw9-oc first' "$TSID" <<'PY'
+import json, os, sys
+log, rec, mark, sid = sys.argv[1:5]
+busy = None
+if os.path.exists(log):
+    for line in open(log):
+        e = json.loads(line)
+        if e.get("hook") == "event" and e.get("type") == "session.status" and e.get("status") == "busy" and sid and e.get("sessionID") == sid:
+            busy = e["t"]
+            break
+first = None
+for f in sorted(os.listdir(rec)):
+    if not f[0].isdigit():
+        continue
+    p = os.path.join(rec, f)
+    b = json.load(open(p)).get("body")
+    if isinstance(b, dict) and mark in json.dumps(b.get("messages", [])):
+        first = os.path.getmtime(p) * 1000
+        break
+print("yes" if busy else "no", "yes" if first else "no", "yes" if busy and first and busy <= first else "no")
+PY
+)
+  set -- ${r:-no no no}
+  if [ -z "$TSID" ]; then pnote PW4 4.7 "not run: the plugin saw no session id in the TUI"; else
+  pnote PW4 4.7 "TUI typed prompt: a session.status busy event of the main session: $1; a request with the prompt: $2; the busy event came before that request (request file time): $3"; fi
   [ "$t" -eq 0 ] || nap 5
   kill -TERM "$OCPID"
   t=1; wait_for 15 gone "$OCPID" && t=0
@@ -701,6 +731,42 @@ print(n)' "$RUN/rec")
     oc r 180 run -s "$TSID" "tracer-pw9-ocb second turn"; rc=$?
     t=1; req_both 'tracer-pw9-ocb' 'tracer-pw9-oc first' && t=0
     sub PW9 9.7 $t "OpenCode: opencode run -s <id>, exit $rc: the conversation saved at SIGTERM was resumed and continued: $(yn $t)"
+  fi
+  # 4.8 (node E2): a TUI started with --session=<id> resumes that session; the plugin's first session id is <id>.
+  if [ -z "$TSID" ]; then
+    pnote PW4 4.8 "not run: no session id of the TUI session"; pnote PW4 4.9 "not run: no session id of the TUI session"
+  else
+    tuienv="cd '$R' && exec env -i PATH='$TOOL_PATH' TERM=xterm-256color HOME='$H' XDG_CONFIG_HOME='$H/.config' XDG_DATA_HOME='$H/.local/share' XDG_CACHE_HOME='$H/.cache' XDG_STATE_HOME='$H/.local/state' OPENCODE_DISABLE_AUTOUPDATE=1"
+    echo "$tuienv PW_OC_LOG='$RUN/plog-t8' '$OPENCODE_BIN' --session=$TSID" >"$RUN/pane-zo8.sh"
+    t=1 f=no
+    if tm new-session -d -s zo8 -x 200 -y 50 -c "$R" -- /bin/sh "$RUN/pane-zo8.sh"; then
+      P8=$(tm display-message -p -t "=zo8:" '#{pane_id}'); PID8=$(tm display-message -p -t "$P8" '#{pane_pid}'); LIVE_PIDS="$LIVE_PIDS $PID8"
+      if wait_for 60 test -s "$RUN/plog-t8/events.jsonl"; then
+        nap 5
+        tm send-keys -t "$P8" -l "tracer-pw4-8 resumed turn"; sleep 0.5; tm send-keys -t "$P8" Enter
+        wait_for 90 req_both 'tracer-pw4-8' 'tracer-pw9-oc first' && t=0
+        [ "$(oc_sid t8)" = "$TSID" ] && f=yes
+      fi
+      pane_end zo8 "$PID8"
+    fi
+    pnote PW4 4.8 "TUI started with --session=<id>: the request of a new prompt holds the earlier prompt: $(yn $t); the plugin's first session id is <id>: $f"
+    # 4.9 (node E2, AU27 known limit 1): a new TUI, /sessions, Enter: a switch to the most recent session (the 4.8 one).
+    echo "$tuienv PW_OC_LOG='$RUN/plog-t9' '$OPENCODE_BIN'" >"$RUN/pane-zo9b.sh"
+    sw=no up=no types=""
+    if tm new-session -d -s zo9b -x 200 -y 50 -c "$R" -- /bin/sh "$RUN/pane-zo9b.sh"; then
+      P9=$(tm display-message -p -t "=zo9b:" '#{pane_id}'); PID9=$(tm display-message -p -t "$P9" '#{pane_pid}'); LIVE_PIDS="$LIVE_PIDS $PID9"
+      if wait_for 60 test -s "$RUN/plog-t9/events.jsonl"; then
+        nap 5
+        tm send-keys -t "$P9" -l "/sessions"; sleep 0.5; tm send-keys -t "$P9" Enter; nap 3; tm send-keys -t "$P9" Enter
+        wait_for 15 sh -c 'LC_ALL=C "$0" -S "$1" -f /dev/null capture-pane -p -t "$2" | grep -qF "tracer-pw4-8 resumed turn"' "$TMUX_BIN" "$SOCK" "$P9" && sw=yes
+        nap 3
+        up=$(ocq t9 "[.[] | select(.hook == \"event\" and .type == \"session.updated\" and .sessionID == \"$TSID\")] | length")
+        [ "${up:-0}" -gt 0 ] 2>/dev/null && up=yes || up=no
+        types=$(ocq t9 "[.[] | select(.hook == \"event\" and .sessionID == \"$TSID\") | .type] | unique | join(\",\")")
+      fi
+      pane_end zo9b "$PID9"
+    fi
+    pnote PW4 4.9 "TUI switch to an existing session (/sessions, Enter): the switch was seen in the pane: $sw; a session.updated event whose info.id is that session: $up; event types with that session id: ${types:-none}"
   fi
   stop_mock
 }
