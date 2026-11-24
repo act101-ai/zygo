@@ -112,6 +112,44 @@ fn overturn(reason: &str) -> Outcome { Outcome::Overturn { reason: reason.into()
     assert_eq!(fs::read_to_string(&p).unwrap(), plain("open", ""));
 }
 
+#[test] fn apply_with_a_stale_shown_after_a_first_apply_returns_changed_and_keeps_the_first_outcome() { // D§11.3 two reviews, review focus 39
+    let t = tempfile::tempdir().unwrap();
+    let p = put(t.path(), &plain("open", ""));
+    let shown = fs::read(&p).unwrap();                                        // both writers were shown these bytes
+    assert_eq!(apply(&p, &shown, &overturn("first"), TODAY), Ok(()));
+    let first = fs::read_to_string(&p).unwrap();
+    assert_eq!(apply(&p, &shown, &promote(), TODAY), Err(EditError::Changed)); // the writer that waited for the lock
+    assert_eq!(fs::read_to_string(&p).unwrap(), first);
+    assert_eq!(first, plain("overturned", "reviewed = \"2026-12-01\"\nreview_note = \"first\"\n"));
+}
+#[test] fn apply_refuses_a_front_matter_that_mixes_crlf_and_lf_and_changes_nothing() { // D§6.2 untouched lines byte-equal
+    let text = plain("open", "");
+    let (front, body) = text.split_at(text.len() - BODY.len());
+    let lf_then_crlf = format!("+++\n{}{body}", front["+++\n".len()..].replace('\n', "\r\n"));
+    let crlf_then_lf = format!("+++\r\n{}{body}", &front["+++\n".len()..]);
+    for text in [lf_then_crlf, crlf_then_lf] {
+        let t = tempfile::tempdir().unwrap();
+        let p = put(t.path(), &text);
+        assert!(parse_record(ID, text.as_bytes()).is_ok());
+        let want = format!("zygo decision: {ID}: the front matter mixes CRLF and LF line endings; make them one kind first");
+        for o in [promote(), overturn("x")] {
+            assert_eq!(apply(&p, text.as_bytes(), &o, TODAY), Err(EditError::Refused(want.clone())), "{text:?}");
+            assert_eq!(fs::read_to_string(&p).unwrap(), text);
+        }
+    }
+}
+#[test] fn apply_refuses_an_empty_promotion_text_or_reason_and_changes_nothing() { // D§11.3 "not empty"
+    let empty_promotion = Outcome::Ratify { note: String::new(), promote: Some((Promotion::Rule, String::new())) };
+    for (o, want) in [(empty_promotion, format!("zygo decision: {ID}: the promotion text is empty")),
+                      (overturn(""), format!("zygo decision: {ID}: the reason is empty"))] {
+        let t = tempfile::tempdir().unwrap();
+        let p = put(t.path(), &plain("open", ""));
+        assert_eq!(allowed(&parse_record(ID, plain("open", "").as_bytes()).unwrap(), &o), Err(want.clone()));
+        assert_eq!(apply(&p, &fs::read(&p).unwrap(), &o, TODAY), Err(EditError::Refused(want)));
+        assert_eq!(fs::read_to_string(&p).unwrap(), plain("open", ""));
+    }
+}
+
 const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes]\n";
 struct Ran { code: i32, out: String, err: String }
 /// `run_in` with `top`, today TODAY, stdin `input`, and `env` for ZYGO_SESSION_DIR; no git, no clock, no process env.
@@ -260,4 +298,12 @@ impl Read for EditOnRead {
     assert_eq!((r.code, r.out.as_str()), (1, ""));
     assert!(r.err.starts_with("zygo decision: cannot write ") && r.err.contains("docs/decisions"), "{}", r.err);
     assert_eq!(fs::read_to_string(&p).unwrap(), plain("open", ""));
+}
+#[test] fn the_prompt_of_a_crlf_record_holds_no_cr() { // D§11.1 the record is shown
+    let t = tempfile::tempdir().unwrap();
+    let p = put(t.path(), &plain("open", "").replace('\n', "\r\n"));
+    let r = go(t.path(), &|_| None, &mut "n\n".as_bytes(), &["ratify", ID]);
+    assert_eq!((r.code, r.out.clone()), (1, format!("{}ratify {ID}? [y/N] ", plain("open", ""))));
+    assert!(!r.out.contains('\r') && !r.out.contains("\\r"), "{:?}", r.out);
+    assert_eq!(fs::read_to_string(&p).unwrap(), plain("open", "").replace('\n', "\r\n"));
 }

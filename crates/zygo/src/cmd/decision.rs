@@ -338,24 +338,25 @@ fn show(repo: &Repo, top: &Path, set: &RecordSet, id: &str, io: &mut DecisionIo)
     0
 }
 
-/// Each line of `bytes` through `esc`.
+/// Each line of `bytes`, without one trailing CR, through `esc`.
 fn print_lines(w: &mut dyn Write, bytes: &[u8]) {
     let text = String::from_utf8_lossy(bytes);
     for l in text.strip_suffix('\n').unwrap_or(&text).split('\n') {
-        line(w, l);
+        line(w, l.strip_suffix('\r').unwrap_or(l));
     }
 }
 
-/// D§11.3 `ratify` and `overturn`: the D§6.6 check, the record and the `[y/N]` prompt unless `--yes`, then
-/// `edit::apply`, which re-reads the file and writes only when it is unchanged since it was shown; prints its path.
+/// D§11.3 `ratify` and `overturn`: the D§6.6 check on the record it shows, the record and the `[y/N]` prompt unless
+/// `--yes`, then `edit::apply`, which re-reads the file and writes only when it is unchanged since it was shown; prints
+/// its path.
 fn decide(repo: &Repo, top: &Path, set: &RecordSet, a: &DecideArgs, io: &mut DecisionIo) -> i32 {
     let Some(r) = find(set, &a.id, io) else { return 1 };
     let path = top.join(DIR).join(format!("{}.md", r.id));
-    let Some(shown) = read_bytes(&path).ok().filter(|b| parse_record(&r.id, b).is_ok()) else {
+    let Some((shown, now)) = read_bytes(&path).ok().and_then(|b| parse_record(&r.id, &b).ok().map(|now| (b, now))) else {
         line(io.err, &format!("zygo decision: {} is not a valid record", r.id));
         return 1;
     };
-    if let Err(e) = allowed(r, &a.outcome) {
+    if let Err(e) = allowed(&now, &a.outcome) {
         line(io.err, &e);
         return 1;
     }

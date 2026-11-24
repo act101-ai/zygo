@@ -460,3 +460,25 @@ No test runs the `zygo` binary. Every test calls `run_in`, which gets `ZYGO_SESS
 10. D§14 row 1 (`no open records`, exit 0) is checked before `read_dir`, with `symlink_metadata` NotFound on `docs/decisions`. An empty but present directory gives `<id> is not a valid record`, exit 1.
 11. A malformed target prints the existing `find` or `show` line `zygo decision: <id> is not a valid record`. Other malformed files are not listed.
 12. For overturn, the status test comes before the promotion test. An open record with `promoted_to` gets the promoted refusal.
+
+### Review round 1
+
+Findings:
+
+1. Re-read-then-rename race (two `apply` calls both write; one outcome is lost): confirmed and fixed. `apply` takes an exclusive `File::lock` on the record before the re-read and holds it until after the rename. The re-read goes through the path, so a writer that waited reads the renamed file and gets `Changed`. Tests: `decisions::edit::tests::the_record_is_locked_from_the_re_read_to_the_rename` (zygo-work unit test, through the seam `apply_with`), `apply_with_a_stale_shown_after_a_first_apply_returns_changed_and_keeps_the_first_outcome`.
+2. A front matter with mixed CRLF and LF lines is rewritten to the ending of line 1: confirmed and fixed. `apply` refuses it, writes nothing, and prints `zygo decision: <id>: the front matter mixes CRLF and LF line endings; make them one kind first`. Test: `apply_refuses_a_front_matter_that_mixes_crlf_and_lf_and_changes_nothing` (both repros).
+3. The non-empty promotion text and reason are checked only in the CLI: confirmed and fixed. `allowed` refuses `zygo decision: <id>: the promotion text is empty` and `zygo decision: <id>: the reason is empty`; the CLI keeps its usage line and exit 2. Test: `apply_refuses_an_empty_promotion_text_or_reason_and_changes_nothing`.
+4. A note within its limits is refused by the 8 KiB rule: refuted. D§6.8 gives this refusal, and the message names the reason.
+5. An empty `ZYGO_SESSION_DIR` is not refused: refuted. This is the existing `session_dir` rule and author's call 9: "set" means non-empty, as in DR-4.
+6. Test gaps: confirmed and fixed.
+   - (a) No test of a failed rename. Test: `decisions::edit::tests::a_failed_rename_is_io_and_changes_nothing`.
+   - (b) The prompt of a CRLF record shows a `\r` on each line. `print_lines` now strips one trailing CR per line. Test: `the_prompt_of_a_crlf_record_holds_no_cr`.
+   - (c) `decide` checks `allowed` on the `read_dir` record, but shows bytes it reads later. It now runs `allowed` on the parsed shown bytes. No deterministic test: no callback runs between `read_dir` and the read of the shown bytes inside `run_in`, so a test cannot change the file in that window without a new public `Repo` hook only for tests.
+
+Author's calls:
+
+1. The lock handle is opened as `read_bytes` opens a record (`O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` on unix, `FILE_FLAG_OPEN_REPARSE_POINT` on Windows), so a link is not followed and a FIFO does not block. A failed open or lock is `Io` with `zygo decision: cannot read <path>: <error>`.
+2. The test seam is the crate-private `apply_with(path, shown, outcome, today, before_rename)`. The hook runs after the temporary file is written and synced, before the rename. `apply` calls it with a no-op.
+3. The mixed-ending check covers `text[..front_end]`, from the opening `+++` line to the closing `+++` line and its line ending. The body is not checked: it is copied byte for byte. This replaces author's call 7.
+4. The empty checks do not trim, as the CLI does not. They come after the status and promotion checks in `allowed`, so the existing refusals keep their order.
+5. `show` strips the trailing CR too, because it shares `print_lines` with the prompt. The `decision_cli` test `record_text_and_commit_subjects_are_printed_escaped` now puts a CR in the middle of a line, which is still escaped as `\r`.

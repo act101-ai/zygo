@@ -252,7 +252,7 @@ const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title 
 #[test] fn record_text_and_commit_subjects_are_printed_escaped() { // D§10.1, review focus 41
     let t = tempfile::tempdir().unwrap();
     put(t.path(), 1, &[]);
-    let body = BODY.replace("\nC.\n", "\nC\u{1b}[31m\u{202e}x\u{2028}y\r\n");
+    let body = BODY.replace("\nC.\n", "\nC\u{1b}[31m\u{202e}x\u{2028}y\rz\r\n");
     put_text(t.path(), &md(2), &text(&id(2), "decision", "open", "A\\u001bB\\u202eC\\u2028D", "phase-3:N12", &[1], "", &body));
     let title = "A\\u{1b}B\\u{202e}C\\u{2028}D";
     let raw = |s: &str| s.contains(['\u{1b}', '\r', '\u{202e}', '\u{2028}']);
@@ -261,7 +261,7 @@ const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title 
     let r = run(t.path(), &["deps", &id(1)]);
     assert_eq!(r.out, format!("1 {} decision open {title}\n", id(2)));
     let r = go(&|| Some(t.path().to_path_buf()), Ok(vec![("b".repeat(40), "s\u{1b}]0;x\u{7}".into())]), &["show", &id(2)]);
-    assert!(r.out.contains("\nC\\u{1b}[31m\\u{202e}x\\u{2028}y\\r\n") && r.out.contains("s\\u{1b}]0;x\\u{07}\n") && !raw(&r.out), "{}", r.out);
+    assert!(r.out.contains("\nC\\u{1b}[31m\\u{202e}x\\u{2028}y\\rz\n") && r.out.contains("s\\u{1b}]0;x\\u{07}\n") && !raw(&r.out), "{}", r.out);
 }
 #[test] fn cli_arm_reaches_run_with() { // the binary's `decision` arm; argument errors run no git
     let h = tempfile::tempdir().unwrap();
