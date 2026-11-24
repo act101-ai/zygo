@@ -597,3 +597,288 @@ pub fn pwned_under(dir: &Path) -> Vec<PathBuf> {
         .map(|e| e.path().to_path_buf())
         .collect()
 }
+
+// ---- E2 helpers (node E2, plan steps 2 and 3): added items only; no E1 item above is moved or changed ----
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use serde_json::json;
+use zygo_workspace::state::Phase;
+
+/// E2 E-1: [`per_pane_agent`] for OpenCode: `bin/opencode` in the form of [`per_pane_claude`] (A-1: E1's
+/// `per_pane_agent` already writes both kinds, so this one names the kind and adds no body).
+pub fn per_pane_opencode(h: &Harness, prelude: &str) {
+    per_pane_agent(h, Agent::OpenCode, prelude)
+}
+
+/// The absolute path of `node`. A prerequisite of the OpenCode plugin test, not a skip (E2 decision 12).
+pub fn node_exe() -> PathBuf {
+    which::which("node").unwrap_or_else(|_| panic!("w18_74: node is not on PATH; it is required to run the OpenCode plugin logic"))
+}
+
+static NODE_RUNS: AtomicUsize = AtomicUsize::new(0);
+
+/// Runs the member's own generated plugin (`<OPENCODE_CONFIG_DIR>/plugins/zygo.js` of the stub of `key`) under `node`
+/// with the stub's environment, as OpenCode would load it: the factory call, then one `event` call per
+/// `[type, properties]` item of the JSON list `events`, then, when `transform`, one
+/// `experimental.chat.system.transform` call for the main role. Returns the printed JSON (`{"system": [...]}` or
+/// `{}`); exit 0 is asserted. OpenCode runs plugins in Bun; `node` runs the same file as a proxy for the plugin logic,
+/// and the live W§17 PW4 check covers the real runtime.
+pub fn node_plugin(h: &Harness, key: &str, events: &str, transform: bool) -> Value {
+    let env = stub_env(h, key);
+    let dir = env["OPENCODE_CONFIG_DIR"].as_str().unwrap_or_else(|| panic!("no OPENCODE_CONFIG_DIR in {env}"));
+    let plugin = format!("file://{}", Path::new(dir).join("plugins/zygo.js").display());
+    let repo = h.repo().display().to_string();
+    let n = NODE_RUNS.fetch_add(1, Ordering::SeqCst);
+    let drv = h.root().join(format!("drv-{n}.mjs"));
+    let body = format!(
+        "import {{ ZygoPlugin }} from {plugin};\n\
+         const h = await ZygoPlugin({{ directory: {repo} }});\n\
+         for (const [type, properties] of JSON.parse(process.env.EVENTS)) await h.event({{ event: {{ type, properties }} }});\n\
+         if (process.env.TRANSFORM === \"1\") {{\n\
+         \x20 const out = {{ system: [] }};\n\
+         \x20 await h[\"experimental.chat.system.transform\"]({{ model: {{ id: process.env.ZYGO_MAIN_ROLE, providerID: \"zygo\" }} }}, out);\n\
+         \x20 console.log(JSON.stringify({{ system: out.system }}));\n\
+         }} else console.log(\"{{}}\");\n",
+        plugin = Value::String(plugin),
+        repo = Value::String(repo),
+    );
+    std::fs::write(&drv, body).unwrap();
+    let mut c = Command::new(node_exe());
+    c.arg(&drv).env_clear();
+    for (k, v) in env.as_object().unwrap() {
+        c.env(k, v.as_str().unwrap_or_default());
+    }
+    c.env("EVENTS", events).env("TRANSFORM", if transform { "1" } else { "0" });
+    c.current_dir(h.repo()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let o = Guarded::spawn(c).output("node plugin");
+    assert_eq!(o.status.code(), Some(0), "node plugin: {}{}", text(&o.stdout), text(&o.stderr));
+    serde_json::from_str(text(&o.stdout).trim()).unwrap_or_else(|e| panic!("node plugin output: {e}: {}", text(&o.stdout)))
+}
+
+/// A caller session id for the AU18 detach rule (the form of E1 step 5).
+pub const SID: &str = "01JAAAAAAAAAAAAAAAAAAAAAAA";
+
+/// A catalog model `test-e2` on `http://127.0.0.1:<port>` whose key is `env:ZYGO_TEST_KEY`, and the role `lead` (E1
+/// step 5). Every `up` of a test that uses it passes `ZYGO_TEST_KEY=k` (E2 E-3).
+pub fn provider_config(port: u16) -> String {
+    format!(
+        "[[model]]\nid = \"test-e2\"\n[[model.provider]]\nname = \"p-e2\"\nbase_url = \"http://127.0.0.1:{port}\"\n\
+         dialects = [\"anthropic\"]\nupstream_model = \"up-e2\"\nkey = \"env:ZYGO_TEST_KEY\"\n\
+         [role.lead]\nmodel = \"test-e2\"\ndescription = \"d\"\nprompt = \"p\"\n"
+    )
+}
+
+/// One request that [`held_upstream`] took: the time it was read, and the time its reply was written.
+#[derive(Debug, Clone)]
+pub struct Held {
+    pub recv: Instant,
+    pub end: Option<Instant>,
+}
+
+/// A loopback upstream (E2 E-3): each connection on its own thread; it reads the request head and its
+/// `content-length` body, records a [`Held`], sleeps the `<ms>` of the first `stub hold <ms>` in the body (0 when
+/// none), writes a minimal Messages reply and sets `end`.
+pub fn held_upstream() -> (u16, Arc<Mutex<Vec<Held>>>) {
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = l.local_addr().unwrap().port();
+    let held: Arc<Mutex<Vec<Held>>> = Arc::default();
+    let all = held.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { return };
+            let all = all.clone();
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let (head_end, len) = loop {
+                    let n = s.read(&mut chunk).unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..i]).to_ascii_lowercase();
+                        let len = head
+                            .split("\r\n")
+                            .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .unwrap_or(0);
+                        break (i + 4, len);
+                    }
+                };
+                while buf.len() < head_end + len {
+                    let n = s.read(&mut chunk).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let at = {
+                    let mut v = all.lock().unwrap();
+                    v.push(Held { recv: Instant::now(), end: None });
+                    v.len() - 1
+                };
+                let body = String::from_utf8_lossy(&buf[head_end..]).into_owned();
+                let ms = regex::Regex::new(r"stub hold (\d+)")
+                    .unwrap()
+                    .captures(&body)
+                    .and_then(|c| c[1].parse::<u64>().ok())
+                    .unwrap_or(0);
+                std::thread::sleep(Duration::from_millis(ms));
+                let reply = r#"{"id":"msg_e2","type":"message","role":"assistant","model":"up-e2","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}"#;
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+                let _ = s.flush();
+                all.lock().unwrap()[at].end = Some(Instant::now());
+            });
+        }
+    });
+    (port, held)
+}
+
+/// A loopback server that answers every request with `200` and the status reply of a server before HUD-5 and AU91
+/// (no `requests_in_flight`) for `session` (E2 E-4).
+pub fn old_status_server(session: &str) -> u16 {
+    use std::io::{Read, Write};
+    let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = l.local_addr().unwrap().port();
+    let body = json!({
+        "session": session, "profile": null, "work": null, "used_context": null, "effective_window": null,
+        "compact": null, "cache_read_share": null, "expires_at": ""
+    })
+    .to_string();
+    std::thread::spawn(move || {
+        for s in l.incoming() {
+            let Ok(mut s) = s else { return };
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                match s.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                }
+            }
+            let _ = write!(
+                s,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    port
+}
+
+/// Points the session folder `sdir` at `http://127.0.0.1:<port>/`: `sdir/.url.tmp` (mode 0600), then a rename over
+/// `sdir/url`.
+pub fn point_url(sdir: &Path, port: u16) {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = sdir.join(".url.tmp");
+    std::fs::write(&tmp, format!("http://127.0.0.1:{port}/")).unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::rename(&tmp, sdir.join("url")).unwrap();
+}
+
+/// The lines of `out/<key>/hooks.jsonl` whose `event` is `event`, in order (`stub.rs`, `call_hooks`).
+pub fn hook_records(h: &Harness, key: &str, event: &str) -> Vec<Value> {
+    std::fs::read_to_string(out(h, key).join("hooks.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| v["event"] == event)
+        .collect()
+}
+
+/// When `rec["command"]` ends with `cmd_end`, `rec["out"]` parsed as JSON; `None` for an empty `out` or another command.
+pub fn hook_out(rec: &Value, cmd_end: &str) -> Option<Value> {
+    if !rec["command"].as_str().is_some_and(|c| c.ends_with(cmd_end)) {
+        return None;
+    }
+    let o = rec["out"].as_str().unwrap_or_default();
+    if o.is_empty() {
+        return None;
+    }
+    serde_json::from_str(o).ok()
+}
+
+/// Among `hook_records(h, key, event)[from..]`, the first record whose `command` ends with `cmd_end`, its
+/// [`hook_out`] (E2 decision 2: never the last record of the event, because a member has several hooks per event).
+pub fn hook_reply(h: &Harness, key: &str, event: &str, from: usize, cmd_end: &str) -> Option<Value> {
+    hook_records(h, key, event)
+        .iter()
+        .skip(from)
+        .find(|r| r["command"].as_str().is_some_and(|c| c.ends_with(cmd_end)))
+        .and_then(|r| hook_out(r, cmd_end))
+}
+
+/// The lines of `ctl/<key>/done` equal to `line`.
+pub fn done_count(h: &Harness, key: &str, line: &str) -> usize {
+    std::fs::read_to_string(ctl(h, key).join("done")).unwrap_or_default().lines().filter(|l| *l == line).count()
+}
+
+/// Waits ([`BOUND`]) until `ctl/<key>/done` has at least `n` lines equal to `line`.
+pub fn wait_done(h: &Harness, key: &str, line: &str, n: usize) -> bool {
+    until(BOUND, || done_count(h, key, line) >= n)
+}
+
+/// `ZYGO_SESSION`, `ZYGO_SESSION_DIR`, `ZYGO_AGENT` and `ZYGO_WORKSPACE` of the last stub of `key`.
+pub fn member_env(h: &Harness, key: &str) -> Vec<(String, OsString)> {
+    let e = stub_env(h, key);
+    ["ZYGO_SESSION", "ZYGO_SESSION_DIR", "ZYGO_AGENT", "ZYGO_WORKSPACE"]
+        .iter()
+        .map(|n| (n.to_string(), OsString::from(e[*n].as_str().unwrap_or_else(|| panic!("no {n} in {e}")))))
+        .collect()
+}
+
+/// The session folder of the last stub of `key`.
+pub fn sdir(h: &Harness, key: &str) -> PathBuf {
+    PathBuf::from(stub_env(h, key)["ZYGO_SESSION_DIR"].as_str().unwrap())
+}
+
+/// `zygo <args>` in `h.repo()` on the private server, spawned as a [`Guarded`] child.
+pub fn spawn_down(h: &Harness, args: &[&str], extra: &[(&str, &OsStr)]) -> Guarded {
+    Guarded::spawn(cmd_in(h, &h.repo(), args, extra, true))
+}
+
+/// The phase of the state `id`.
+pub fn phase(h: &Harness, id: &str) -> Phase {
+    state(h, id).phase
+}
+
+/// The tmux session `s` exists on the private server.
+pub fn session_up(h: &Harness, s: &str) -> bool {
+    h.server.as_ref().unwrap().run(&["has-session", "-t", &format!("={s}:")]).is_ok()
+}
+
+/// `sdir/activity.json`.
+pub fn activity(sdir: &Path) -> Value {
+    json_file(&sdir.join("activity.json"))
+}
+
+/// One `tools/call` of `tool` with `args` on `zygo mcp --agent claude-code` for the session folder `sdir` (after
+/// `initialize`, protocol `2025-06-18`, and `notifications/initialized`; E1 step 15). Returns the reply with id 2.
+pub fn mcp_call(h: &Harness, sdir: &Path, tool: &str, args: Value) -> Value {
+    use std::io::Write;
+    let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": tool, "arguments": args}});
+    let req = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"protocolVersion\":\"2025-06-18\"}}}}\n\
+         {{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}}\n{call}\n"
+    );
+    let mut c = h.zygo(&["mcp", "--agent", "claude-code"], &[("ZYGO_SESSION_DIR", sdir.as_os_str())]);
+    c.stdin(Stdio::piped());
+    let mut g = Guarded::spawn(c);
+    g.stdin().unwrap().write_all(req.as_bytes()).unwrap();
+    let o = g.output("mcp");
+    let replies: Vec<Value> = text(&o.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    replies.into_iter().find(|r| r["id"] == 2).unwrap_or_else(|| panic!("no reply 2: {}{}", text(&o.stdout), text(&o.stderr)))
+}
+
+/// A [`per_pane_agent`] prelude (E2 E-7) that copies `$ZYGO_SESSION_DIR/<file>` to `root/<dir>/<ZYGO_SESSION>.json`
+/// before the stub runs: after `view.save` and the agent's spawn, before the stub's `SessionStart`.
+pub fn copy_prelude(h: &Harness, file: &str, dir: &str) -> String {
+    let d = h.root().join(dir).display().to_string();
+    format!("/bin/mkdir -p '{d}'; /bin/cp \"$ZYGO_SESSION_DIR/{file}\" '{d}/'\"$ZYGO_SESSION\"'.json' 2>/dev/null")
+}
