@@ -13,6 +13,7 @@ pub mod claude;
 pub mod compact;
 pub mod compact_tool;
 pub mod config;
+pub mod decision;
 pub mod doctor;
 pub mod down;
 pub mod guards;

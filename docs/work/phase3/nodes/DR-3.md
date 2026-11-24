@@ -88,7 +88,7 @@ Readings of the spec that this plan fixes:
 
 ### Steps
 
-- [ ] **1. Write the failing history tests.** Create `crates/zygo/tests/decision_cli.rs` with this header and helpers, and the two tests.
+- [x] **1. Write the failing history tests.** Create `crates/zygo/tests/decision_cli.rs` with this header and helpers, and the two tests.
 
 ```rust
 //! DR-3: `zygo decision ls|show|deps|check` and `/zygo:decision` (D§10.1, D§7, D§6.7, D§6.8, D§14, D-C2).
@@ -160,10 +160,10 @@ fn trailer_commits_match_the_trailer_line_newest_first() { // D§6.7
 }
 ```
 
-- [ ] **2. Run it and see it fail.** `cargo test -p zygo --locked --test decision_cli` → does not compile (`decision_cli` imports `zygo::cmd::decision` and `decisions::history`, which do not exist).
-- [ ] **3. Implement `read_bytes` and `trailer_commits`.** In `crates/zygo-work/src/decisions/record.rs`, move the body of `read_record` up to `read_to_end` into `pub fn read_bytes(path: &Path) -> Result<Vec<u8>, Vec<String>>` with `read_record`'s doc comment; `read_record` becomes `read_bytes(path)?`, then `parse_record(stem, &bytes)`. Create `crates/zygo-work/src/decisions/history.rs` with `trailer_commits` as in Fixed values; add `pub mod history;` to `decisions/mod.rs`. Create `crates/zygo/src/cmd/decision.rs` with the `DecisionIo`, `Repo`, `run_in`, `run_with` signatures of Produces and `run_in` returning 2, and `pub mod decision;` in `cmd/mod.rs`, so the test file compiles.
-- [ ] **4. Run it and see it pass.** `cargo test -p zygo --locked --test decision_cli trailer_commits` → 1 passed, 1 ignored; `cargo test -p zygo --locked --test decision_cli -- --ignored trailer_commits` → 1 passed; `cargo test -p zygo-work --locked --test decision_record --test decision_set` → all pass (the split changes no behavior).
-- [ ] **5. Commit.** `git add crates/zygo-work/src/decisions/record.rs crates/zygo-work/src/decisions/history.rs crates/zygo-work/src/decisions/mod.rs crates/zygo/src/cmd/decision.rs crates/zygo/src/cmd/mod.rs crates/zygo/tests/decision_cli.rs`, message `feat(work): decision trailer commits (DR-3)` with the implementer's `Zygo-Session:` and `Zygo-Work:` trailers.
+- [x] **2. Run it and see it fail.** `cargo test -p zygo --locked --test decision_cli` → does not compile (`decision_cli` imports `zygo::cmd::decision` and `decisions::history`, which do not exist).
+- [x] **3. Implement `read_bytes` and `trailer_commits`.** In `crates/zygo-work/src/decisions/record.rs`, move the body of `read_record` up to `read_to_end` into `pub fn read_bytes(path: &Path) -> Result<Vec<u8>, Vec<String>>` with `read_record`'s doc comment; `read_record` becomes `read_bytes(path)?`, then `parse_record(stem, &bytes)`. Create `crates/zygo-work/src/decisions/history.rs` with `trailer_commits` as in Fixed values; add `pub mod history;` to `decisions/mod.rs`. Create `crates/zygo/src/cmd/decision.rs` with the `DecisionIo`, `Repo`, `run_in`, `run_with` signatures of Produces and `run_in` returning 2, and `pub mod decision;` in `cmd/mod.rs`, so the test file compiles.
+- [x] **4. Run it and see it pass.** `cargo test -p zygo --locked --test decision_cli trailer_commits` → 1 passed, 1 ignored; `cargo test -p zygo --locked --test decision_cli -- --ignored trailer_commits` → 1 passed; `cargo test -p zygo-work --locked --test decision_record --test decision_set` → all pass (the split changes no behavior).
+- [x] **5. Commit.** `git add crates/zygo-work/src/decisions/record.rs crates/zygo-work/src/decisions/history.rs crates/zygo-work/src/decisions/mod.rs crates/zygo/src/cmd/decision.rs crates/zygo/src/cmd/mod.rs crates/zygo/tests/decision_cli.rs`, message `feat(work): decision trailer commits (DR-3)` with the implementer's `Zygo-Session:` and `Zygo-Work:` trailers.
 
 - [ ] **6. Write the failing subcommand tests.** Append to `decision_cli.rs`:
 

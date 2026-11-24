@@ -356,7 +356,7 @@ fn open_met_link(e: &std::io::Error, path: &Path) -> bool {
 /// is never opened. On unix the open adds `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` (the pattern of
 /// `zygo_hooks::workspace::read_session_file`); on Windows it adds `FILE_FLAG_OPEN_REPARSE_POINT`. The opened handle
 /// must be a regular file and not a link. At most 64 KiB + 1 bytes are read.
-pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
+pub fn read_bytes(path: &Path) -> Result<Vec<u8>, Vec<String>> {
     let one = |s: String| vec![s];
     let m = fs::symlink_metadata(path).map_err(|e| one(format!("cannot read: {e}")))?;
     if m.file_type().is_symlink() {
@@ -394,6 +394,12 @@ pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
     }
     let mut bytes = Vec::new();
     f.take(MAX_FILE as u64 + 1).read_to_end(&mut bytes).map_err(|e| one(format!("cannot read: {e}")))?;
+    Ok(bytes)
+}
+
+/// Reads one record file with [`read_bytes`] and checks it with [`parse_record`] (D§6.8).
+pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
+    let bytes = read_bytes(path)?;
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     parse_record(stem, &bytes)
 }
