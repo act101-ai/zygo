@@ -18,10 +18,11 @@ use zygo_core::paths::Paths;
 
 use crate::identity::{valid_name, valid_pane_key, valid_ws_id, workspace_id};
 use crate::mux::tmux::Tmux;
-use crate::mux::{session_target, Multiplexer, MuxError, SessionAnswer, BOUND};
+use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
+use crate::repair::check_saved_socket;
 use crate::snapshot;
 use crate::state::{list_all, lock_file, read_state_capped, StateBytes, MemberRecord, MemberState, OpLock, PaneKind, Phase, StateError, Store, Workspace};
-use crate::up::{find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};
+use crate::up::{check_server, find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};
 
 /// The git bound of `status`, so `/zygo:workspace` fits the 4.5 s hook bound (D12, D23).
 const STATUS_GIT_BOUND: Duration = Duration::from_secs(2);
@@ -160,6 +161,46 @@ pub mod testing {
 
 fn say(w: &mut dyn Write, line: &str) { let _ = writeln!(w, "{line}"); }
 
+/// FIX-30: the error of `forget`: the AU54 refusal (exit 2, as `up`, `down` and `attach`) or any other line (exit 1).
+enum ForgetError {
+    Unsafe(String),
+    Line(String),
+}
+
+impl From<String> for ForgetError {
+    fn from(line: String) -> ForgetError { ForgetError::Line(line) }
+}
+
+impl ForgetError {
+    fn text(&self) -> &str {
+        match self {
+            ForgetError::Unsafe(t) | ForgetError::Line(t) => t,
+        }
+    }
+}
+
+/// FIX-30: the exit code of a `forget` error: 2 for the AU54 refusal, else 1.
+fn exit_code(e: &ForgetError) -> i32 {
+    match e {
+        ForgetError::Unsafe(_) => 2,
+        ForgetError::Line(_) => 1,
+    }
+}
+
+/// FIX-30 (AU54, W§12 `ws forget`): the refusal of a socket that fails AU54 right before the first tmux call. A saved
+/// socket also refuses `up` and `down`, so the line names the state folder to remove by hand (escaped, C6); the socket
+/// of `$TMUX` is not the state's fault, so its line is the AU54 line alone.
+fn unsafe_socket(store: &Store, saved: bool) -> ForgetError {
+    if saved {
+        ForgetError::Unsafe(format!(
+            "{UNSAFE_PATH_MESSAGE}; remove {} by hand to forget this workspace",
+            esc(&store.dir().display().to_string())
+        ))
+    } else {
+        ForgetError::Unsafe(UNSAFE_PATH_MESSAGE.to_string())
+    }
+}
+
 /// `zygo ls` (W§12, D8-D11): one row per workspace, sorted by (name, id). It never fails. The tmux version probe
 /// counts toward the 4 s deadline: the deadline runs from the start of `list`.
 pub fn list(paths: &Paths, tmux: &Path) -> Vec<ListRow> {
@@ -236,14 +277,18 @@ fn list_by(
     rows
 }
 
-/// The session check of one row (D8, D11): no call without tmux, without a known server, on a failed socket, on a
-/// socket whose folder is missing or that fails AU62, or past the deadline.
+/// The session check of one row (D8, D11): no call without tmux, without a known server, on a socket that fails AU54,
+/// on a failed socket, on a socket whose folder is missing or that fails AU62, or past the deadline.
 fn ask(
     ws: &Workspace, no_tmux: bool, failed: &mut BTreeMap<PathBuf, &'static str>, mux_of: &dyn Fn(&Path) -> Box<dyn Multiplexer>,
     may_call: &dyn Fn() -> bool,
 ) -> Seen {
     if no_tmux {
         return Seen::Unknown("no tmux");
+    }
+    // FIX-30 (AU54): the saved socket before any use; `ls` never fails, so the row is `unreachable`, with no call.
+    if check_saved_socket(ws).is_err() {
+        return Seen::Unreachable;
     }
     let Some(sock) = ws.tmux_socket.as_deref() else {
         return Seen::Unreachable;
@@ -539,7 +584,7 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
 }
 
 /// `zygo ws forget <name>` (W§12, D14-D17, D26): exit 0 with `zygo: forgot <label>` on `out`, or exit 1 with one line on
-/// `err`. `tmux_env` is `$TMUX`.
+/// `err` (exit 2 for the AU54 refusal, FIX-30). `tmux_env` is `$TMUX`.
 pub fn forget(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     sweep(paths);
     match forget_run(paths, tmux, tmux_env, name) {
@@ -547,38 +592,38 @@ pub fn forget(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: &str, 
             say(out, &line);
             0
         }
-        Err(line) => {
-            say(err, &line);
-            1
+        Err(e) => {
+            say(err, e.text());
+            exit_code(&e)
         }
     }
 }
 
-fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -> Result<String, String> {
+fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -> Result<String, ForgetError> {
     let found = find(paths, arg, false).map_err(|e| e.message)?;
     let (id, first_label) = match &found {
         Found::Readable(ws) => (ws.id.clone(), ws.name.clone()),
         Found::Invalid(id) => (id.clone(), id.clone()),
-        Found::Link(id) => return forget_link(paths, id),
+        Found::Link(id) => return forget_link(paths, id).map_err(ForgetError::Line),
     };
     let store = Store::open(paths, &id);
     fire(store.dir(), "forget_before_op_lock").map_err(|e| format!("zygo: cannot forget {first_label}: {e}"))?;
     // Round 2 R1: `op_lock` creates and chmods its folder, so the folder is checked again right before it.
     match state_kind(paths, &id) {
         Kind::Real => {}
-        Kind::Link => return forget_link(paths, &id),
-        Kind::Missing | Kind::Other => return Err(format!("zygo: no workspace named {}", esc(arg))),
+        Kind::Link => return forget_link(paths, &id).map_err(ForgetError::Line),
+        Kind::Missing | Kind::Other => return Err(ForgetError::Line(format!("zygo: no workspace named {}", esc(arg)))),
     }
     let op = match store.op_lock() {
         Ok(l) => l,
-        Err(StateError::OpHeld) => return Err(format!("zygo: up or down is in progress for {first_label}")),
-        Err(e) => return Err(format!("zygo: {e}")),
+        Err(StateError::OpHeld) => return Err(ForgetError::Line(format!("zygo: up or down is in progress for {first_label}"))),
+        Err(e) => return Err(ForgetError::Line(format!("zygo: {e}"))),
     };
     // D15: the state again under `op.lock`.
     let label = match read_capped(&store) {
-        Ok(None) => return Err(format!("zygo: no workspace named {}", esc(arg))),
-        Err(StateError::Newer { .. }) => return Err(NEWER.into()),
-        Err(e @ StateError::TooLarge { .. }) => return Err(format!("zygo: {e}")),
+        Ok(None) => return Err(ForgetError::Line(format!("zygo: no workspace named {}", esc(arg)))),
+        Err(StateError::Newer { .. }) => return Err(ForgetError::Line(NEWER.into())),
+        Err(e @ StateError::TooLarge { .. }) => return Err(ForgetError::Line(format!("zygo: {e}"))),
         Ok(Some(ws)) => {
             check_readable(&store, &ws, tmux, tmux_env)?;
             ws.name
@@ -588,7 +633,7 @@ fn forget_run(paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, arg: &str) -
             id.clone()
         }
     };
-    remove(paths, &store, &id, &label, op)
+    remove(paths, &store, &id, &label, op).map_err(ForgetError::Line)
 }
 
 /// Round 2 R1: `<workspaces_dir>/<id>` is a link: it is removed as a link (an unlink of the link itself, after one more
@@ -608,10 +653,11 @@ fn forget_link(paths: &Paths, id: &str) -> Result<String, String> {
 /// Whether no tmux can run here: then no session exists, and the session check is skipped (D15, D17).
 fn no_tmux(tmux: &Path) -> bool { matches!(Tmux::new(tmux.to_path_buf(), None).version(), Err(MuxError::Spawn { .. })) }
 
-/// D15: a live launcher, a socket that fails AU62, the workspace's own session, or a tmux error refuses.
-fn check_readable(store: &Store, ws: &Workspace, tmux: &Path, tmux_env: Option<&OsStr>) -> Result<(), String> {
+/// D15: a live launcher, a socket that fails AU62, the workspace's own session, or a tmux error refuses; FIX-30: the
+/// socket of the session check (saved or from `$TMUX`) that fails AU54 refuses with exit 2, right before that call.
+fn check_readable(store: &Store, ws: &Workspace, tmux: &Path, tmux_env: Option<&OsStr>) -> Result<(), ForgetError> {
     if let Some(key) = store.live_launcher(ws) {
-        return Err(format!("zygo: {} has a live agent launcher (pane {key}); it is not forgotten", ws.name));
+        return Err(ForgetError::Line(format!("zygo: {} has a live agent launcher (pane {key}); it is not forgotten", ws.name)));
     }
     // Round 2 R5: the AU62 check runs also when no tmux can run, as in `check_invalid`.
     if let Some(sock) = &ws.tmux_socket {
@@ -624,19 +670,25 @@ fn check_readable(store: &Store, ws: &Workspace, tmux: &Path, tmux_env: Option<&
         return Ok(());
     }
     let mux = server(tmux, ws.tmux_socket.as_deref(), tmux_env);
+    // FIX-30 (AU54): the socket of the calls below, saved or from `$TMUX`, right before the first tmux call.
+    if check_server(&mux).is_err() {
+        return Err(unsafe_socket(store, ws.tmux_socket.is_some()));
+    }
     match mux.session_exists(&ws.tmux_session) {
         SessionAnswer::Gone => Ok(()),
-        SessionAnswer::Error { message } => Err(format!("zygo: tmux: {message}")),
+        SessionAnswer::Error { message } => Err(ForgetError::Line(format!("zygo: tmux: {message}"))),
         SessionAnswer::Exists => match mux.show_session_option(&ws.tmux_session, WS_OPTION) {
-            Ok(Some(v)) if v == ws.id => Err(format!("zygo: {} is running; run zygo down -- {} first", ws.name, ws.name)),
+            Ok(Some(v)) if v == ws.id => {
+                Err(ForgetError::Line(format!("zygo: {} is running; run zygo down -- {} first", ws.name, ws.name)))
+            }
             Ok(_) => Ok(()),
-            Err(e) => Err(format!("zygo: tmux: {e}")),
+            Err(e) => Err(ForgetError::Line(format!("zygo: tmux: {e}"))),
         },
     }
 }
 
 /// D17: the checks of a state that cannot be read, from its raw JSON: name, socket, member launchers, session.
-fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>) -> Result<(), String> {
+fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>) -> Result<(), ForgetError> {
     let refuse = |reason: &str| {
         format!(
             "zygo: workspace {id} not forgotten: {reason}; its state cannot be read, so repair it with zygo up --reset in its checkout"
@@ -645,14 +697,14 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
     // Round 2 R6, FIX-17 Round 2 F1, F2: one capped read; a file over 1 MiB may be from a newer zygo and is refused.
     let v = raw_json(store.dir()).map_err(|e| format!("zygo: {e}"))?.unwrap_or(serde_json::Value::Null);
     let Some(name) = v.get("name").and_then(|n| n.as_str()).filter(|n| valid_name(n)) else {
-        return Err(refuse("it has no valid name"));
+        return Err(ForgetError::Line(refuse("it has no valid name")));
     };
     let Some(sock) = v.get("tmux_socket").and_then(|s| s.as_str()).map(PathBuf::from).filter(|s| s.is_absolute()) else {
-        return Err(refuse("it has no usable tmux socket"));
+        return Err(ForgetError::Line(refuse("it has no usable tmux socket")));
     };
     let gone = parent_missing(&sock);
     if !gone && socket_is_private(&sock, false).is_err() {
-        return Err(refuse("its socket is not private"));
+        return Err(ForgetError::Line(refuse("its socket is not private")));
     }
     let members: BTreeMap<String, MemberRecord> = match v.get("members") {
         None => BTreeMap::new(),
@@ -661,15 +713,20 @@ fn check_invalid(store: &Store, id: &str, tmux: &Path, tmux_env: Option<&OsStr>)
     let mut probe = Workspace::new(id);
     probe.members = members;
     if let Some(key) = store.live_launcher(&probe) {
-        return Err(refuse(&format!("a member launcher is live (pane {})", esc(&key))));
+        return Err(ForgetError::Line(refuse(&format!("a member launcher is live (pane {})", esc(&key)))));
     }
     if gone || no_tmux(tmux) {
         return Ok(());
     }
+    // FIX-30 (AU54): the raw socket is not a `Workspace`, so `check_path`, which `check_saved_socket` wraps; right before
+    // the first tmux call.
+    if check_path(&sock).is_err() {
+        return Err(unsafe_socket(store, true));
+    }
     match server(tmux, Some(&sock), tmux_env).session_exists(&format!("zygo-{name}")) {
         SessionAnswer::Gone => Ok(()),
-        SessionAnswer::Exists => Err(refuse("its session runs")),
-        SessionAnswer::Error { message } => Err(refuse(&format!("tmux: {message}"))),
+        SessionAnswer::Exists => Err(ForgetError::Line(refuse("its session runs"))),
+        SessionAnswer::Error { message } => Err(ForgetError::Line(refuse(&format!("tmux: {message}")))),
     }
 }
 

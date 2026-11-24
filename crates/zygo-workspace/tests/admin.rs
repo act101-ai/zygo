@@ -33,6 +33,9 @@ const OTHER: &str = "fedcba9876543210";
 const AU29: &str = "zygo: workspace state is from a newer zygo; run zygo update";
 /// The `Display` of `MuxError::TimedOut` (`mux/mod.rs:415`).
 const TIMED_OUT: &str = "tmux timed out after 2 s";
+/// The AU54 line (`mux/mod.rs:697-698`).
+const AU54: &str =
+    "zygo: the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it";
 
 // ---- helpers (step 1) ----
 
@@ -173,6 +176,14 @@ fn private_dir(p: &Path) -> PathBuf {
     fs::create_dir_all(p).unwrap();
     fs::set_permissions(p, fs::Permissions::from_mode(0o700)).unwrap();
     p.to_path_buf()
+}
+
+/// FIX-30: the socket `<t>/so'ck/s` in a 0700 folder: it passes AU62 and fails AU54.
+fn quoted_socket(t: &Path) -> PathBuf { private_dir(&t.join("so'ck")).join("s") }
+
+/// FIX-30: the line of a `forget` that a saved socket refuses by AU54 (W§12 `ws forget`).
+fn forget_au54_line(p: &Paths, id: &str) -> String {
+    format!("{AU54}; remove {} by hand to forget this workspace\n", p.workspaces_dir().join(id).display())
 }
 
 /// A live session `<sessions_dir>/<id>`: `token` and a held `pid` lock, which lasts as long as the returned file.
@@ -1608,4 +1619,109 @@ fn raw_read_of_an_invalid_state_is_capped_when_the_file_grows() {
     up::testing::hook(&dir, "raw_json_before_read", None);
     assert_eq!(r, (1, String::new(), too_large_line(&file)));
     assert_eq!(fs::read(&file).unwrap(), grown);
+}
+
+// ---- FIX-30: a tmux socket that fails AU54 ----
+
+#[test] // FIX-30, AU54, W§12 `ls`: the row is unreachable and no tmux call runs
+fn au54_ls_shows_a_quoted_saved_socket_as_unreachable_with_no_tmux_call() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let sock = quoted_socket(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |ws| {
+        ws.phase = Phase::Up;
+        ws.tmux_socket = Some(sock.clone());
+    });
+    let (rows, calls, _) = fake_list(&p, vec![ListFake::new(&sock, SessionAnswer::Exists, Duration::ZERO)], false);
+    assert_eq!(states(&rows), [("app".to_string(), ListState::Unreachable)]);
+    assert!(calls.is_empty(), "{calls:?}");
+}
+
+#[test] // FIX-30, AU54, W§12 `ws forget`, D17: exit 2, the line names the state folder, nothing deleted; other errors exit 1
+fn au54_forget_refuses_a_quoted_saved_socket_and_names_the_state_folder() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let sock = quoted_socket(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |ws| {
+        ws.phase = Phase::Up;
+        ws.tmux_socket = Some(sock.clone());
+    });
+    let bytes = state_bytes(&p, ID);
+    assert_eq!(forget_run(&p, &tmux, None, "app"), (2, String::new(), forget_au54_line(&p, ID)));
+    assert_eq!(state_bytes(&p, ID), bytes);
+    assert_eq!(tmux_log(t), ["-u -V"]); // only the `no_tmux` probe, no call on the socket
+    let _ = fs::remove_file(t.join("tmux.log"));
+    // the raw JSON socket of a state that cannot be read
+    put_raw(&p.workspaces_dir().join(OTHER), &invalid_doc(OTHER, json!("bad"), Some(&sock)));
+    assert_eq!(forget_run(&p, &tmux, None, OTHER), (2, String::new(), forget_au54_line(&p, OTHER)));
+    assert!(p.workspaces_dir().join(OTHER).join("workspace.json").exists());
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    // every other refusal still exits 1
+    assert_eq!(forget_run(&p, &tmux, None, "nosuch"), (1, String::new(), "zygo: no workspace named nosuch\n".to_string()));
+}
+
+#[test] // FIX-30, AU54, W§12 `ws forget`: no saved socket; the `$TMUX` socket with a quote: exit 2, the AU54 line
+fn au54_forget_refuses_a_quoted_tmux_env_socket_with_exit_2() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |ws| ws.phase = Phase::Up);
+    let env = format!("{},1,0", t.join("so'ck").join("s").display());
+    let bytes = state_bytes(&p, ID);
+    assert_eq!(forget_run(&p, &tmux, Some(env.as_str()), "app"), (2, String::new(), format!("{AU54}\n")));
+    assert_eq!(state_bytes(&p, ID), bytes);
+    assert_eq!(tmux_log(t), ["-u -V"]);
+}
+
+#[test] // FIX-30, AU54, W§12 `ws forget`: a quoted socket whose folder is gone gets no tmux call, so no check: forgotten
+fn au54_forget_with_a_quoted_socket_whose_folder_is_gone_succeeds() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let gone = t.join("so'ck").join("s"); // `so'ck` is not made
+    ws_state(&p, ID, "app", &t.join("r/app"), |ws| {
+        ws.phase = Phase::Up;
+        ws.tmux_socket = Some(gone.clone());
+    });
+    assert_eq!(forget_run(&p, &tmux, None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    put_raw(&p.workspaces_dir().join(OTHER), &invalid_doc(OTHER, json!("bad"), Some(&gone)));
+    assert_eq!(forget_run(&p, &tmux, None, OTHER), (0, format!("zygo: forgot {OTHER}\n"), String::new()));
+    assert!(tmux_log(t).is_empty(), "{:?}", tmux_log(t));
+}
+
+#[test] // FIX-30, AU54, W§12 `ws forget-pane`, W§7.4 step 1: the record goes; the pending snapshot logs one line, no tmux call
+fn au54_forget_pane_with_a_quoted_saved_socket_removes_the_record_and_the_snapshot_logs() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, id, store, plain, .. } = pane_setup();
+    let t = td.path();
+    let sock = quoted_socket(t);
+    store
+        .update(S5, &mut |ws| {
+            ws.phase = Phase::Up;
+            ws.tmux_socket = Some(sock.clone());
+            Ok(())
+        })
+        .unwrap();
+    fs::write(store.dir().join("snapshot.pending"), "").unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(!store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb"));
+    assert!(!cache(&p, &id).join("results/kbbbbbbbb").exists());
+    let log = fs::read_to_string(store.dir().join("errors.log")).unwrap_or_default();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].ends_with(&format!("snapshot: {}", AU54.trim_start_matches("zygo: "))), "{lines:?}");
+    assert!(!store.dir().join("snapshot.pending").exists());
+    assert!(tmux_log(t).is_empty(), "{:?}", tmux_log(t));
 }

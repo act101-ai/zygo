@@ -382,7 +382,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
     ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test down` passes (the step 6 tests and every earlier test).
 
-- [ ] **8. Test (red): `ls`, `ws forget` and `ws forget-pane`.** In `crates/zygo-workspace/tests/admin.rs`:
+- [x] **8. Test (red): `ls`, `ws forget` and `ws forget-pane`.** In `crates/zygo-workspace/tests/admin.rs`:
   - After `const TIMED_OUT` (`:35`), add:
     ```rust
     /// The AU54 line (`mux/mod.rs:697-698`).
@@ -510,7 +510,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
 
   Note: `au54_forget_pane_...` passes once step 3 is done (the snapshot check). If the implementer runs step 8 after step 3, the red check of this one test is the run before step 3; record which order ran.
 
-- [ ] **9. Code (green): the typed `forget` refusal and the `ls` check in `admin.rs`.** In `crates/zygo-workspace/src/admin.rs`:
+- [x] **9. Code (green): the typed `forget` refusal and the `ls` check in `admin.rs`.** In `crates/zygo-workspace/src/admin.rs`:
   - Line 21: `use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};`
   - After line 21, add `use crate::repair::check_saved_socket;`
   - Line 24: `use crate::up::{check_server, find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};`
