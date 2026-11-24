@@ -1550,8 +1550,8 @@ fn parse_duration_forms() { // W§11 `drain_timeout`: <n>s | <n>m | <n>h
     assert_eq!(parse_duration("007m"), Some(Duration::from_secs(420)));
     assert_eq!(parse_duration("18446744073709551615s"), Some(Duration::from_secs(u64::MAX)));
     for bad in [
-        "", "s", "10", "10d", "10ms", "10M", "-5m", "+5m", "1.5h", " 10m", "10m ", "10 m", "1h30m", "١٠m",
-        "18446744073709551616s", "18446744073709551615m", "5124095576030432h",
+        "", "s", "10", "10D", "10ms", "10M", "-5m", "+5m", "1.5h", " 10m", "10m ", "10 m", "1h30m", "١٠m",
+        "18446744073709551616s", "18446744073709551615m", "5124095576030432h", "213503982334602d",
     ] {
         assert_eq!(parse_duration(bad), None, "{bad:?}");
     }
@@ -1593,7 +1593,7 @@ fn workspace_and_loadout_defaults() {
     assert_eq!(cfg("[workspace]\ndrain_timeout = \"30s\"\n").workspace, WorkspaceConfig { drain_timeout: "30s".into(), ..c.workspace.clone() });
     assert_eq!(
         LoadoutPane::default(),
-        LoadoutPane { kind: String::new(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, cwd: None }
+        LoadoutPane { kind: String::new(), name: None, profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, cwd: None }
     );
     assert_eq!(LoadoutWindow::default(), LoadoutWindow { name: None, layout: None, pane: vec![] });
     let m = load(&ctx(None, None, None)).unwrap();
@@ -1610,7 +1610,7 @@ fn loadout_parses_as_w11_writes_it() {
     assert_eq!(m.config.workspace, WorkspaceConfig::default());
     assert_eq!(m.config.loadout.keys().collect::<Vec<_>>(), ["pair"]);
     let agent = LoadoutPane {
-        kind: "claude-code".into(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
+        kind: "claude-code".into(), name: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
         passthrough: false, server: Some("https://zygo.example".into()), compact: Some("600k".into()),
         config_dir: Some("~/.claude-work".into()), cwd: None,
     };
@@ -1711,4 +1711,138 @@ fn w18_63_config_check_reports_kind_and_passthrough() { // W§18 #63; pane[2]'s 
         format!("Error loadout.pair.window[0].pane[0].kind: {BAD_KIND}"),
         "Error loadout.pair.window[0].pane[1].passthrough: only with kind = \"claude-code\"".to_string(),
     ]);
+}
+
+// ---- ML-1: [mail], pane name, member-name grammar (M§6, M§8, M§11, M-C6) ----
+
+const M11: &str = "[mail]\nkeep = \"30d\"\nmax_unread = 500\nwake_gap = \"30s\"\n\n[[loadout.team.window]]\n[[loadout.team.window.pane]]\nkind = \"claude-code\"\nname = \"elena\"\n";
+const MAIL_TEAM: &str = "config: [mail] in team config ignored; only user config may set them";
+
+#[test]
+fn mail_defaults_match_m11() {
+    let d = MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into() };
+    assert_eq!(MailConfig::default(), d);
+    assert_eq!(Config::default().mail, d);
+    assert_eq!(cfg("").mail, d);
+    assert_eq!(cfg("[mail]\nmax_unread = 10\n").mail, MailConfig { max_unread: 10, ..d.clone() });
+    assert!(Features::default().mail && Config::default().features.mail);
+    assert!(!cfg("[features]\nmail = false\n").features.mail);
+    assert!(cfg("[features]\nresults = false\n").features.mail);
+    assert_eq!(LoadoutPane::default().name, None);
+    let m = loaded("");
+    assert_eq!((m.config.mail.clone(), m.source_of("mail.keep")), (d, Layer::Builtin));
+}
+
+#[test]
+fn mail_m11_example_parses() {
+    let m = load(&ctx(Some(M11), None, None)).unwrap();
+    assert_eq!(m.warnings, Vec::<String>::new());
+    assert_eq!(m.config.mail, MailConfig::default());
+    assert_eq!(m.source_of("mail.wake_gap"), Layer::User);
+    assert_eq!(m.config.loadout["team"].window[0].pane[0].name.as_deref(), Some("elena"));
+    none(&(base() + M11));
+}
+
+#[test]
+fn mail_parse_duration_takes_days() {
+    use std::time::Duration;
+    assert_eq!(parse_duration("30d"), Some(Duration::from_secs(2_592_000)));
+    assert_eq!(parse_duration("1d"), Some(Duration::from_secs(86_400)));
+    assert_eq!(parse_duration("0d"), Some(Duration::ZERO));
+    assert_eq!(parse_duration("213503982334601d"), Some(Duration::from_secs(213_503_982_334_601 * 86_400)));
+    for bad in ["d", "30D", "213503982334602d", "1.5d", "-1d", "30 d"] {
+        assert_eq!(parse_duration(bad), None, "{bad:?}");
+    }
+    assert_eq!(parse_duration(&MailConfig::default().keep), Some(Duration::from_secs(2_592_000)));
+    assert_eq!(parse_duration(&MailConfig::default().wake_gap), Some(Duration::from_secs(30)));
+}
+
+#[test]
+fn mail_team_layer_drops_mail_with_the_user_only_warning() { // M§11, M-C6
+    assert_eq!(layers::USER_ONLY, ["statusline", "update", "mail"]);
+    let m = load(&team_ctx("[mail]\nkeep = \"1d\"\nmax_unread = 1\n[guards]\nmin_level = \"notify\"\n", "")).unwrap();
+    assert_eq!(m.config.mail, MailConfig::default());
+    assert_eq!(m.source_of("mail.keep"), Layer::Builtin);
+    assert_eq!(m.team_keys, BTreeSet::from(["guards.min_level".to_string()]));
+    assert_eq!(m.warnings, [MAIL_TEAM]);
+    // a value of the wrong type is dropped before the layer is parsed
+    assert_eq!(load(&team_ctx("mail = 3\n", "")).unwrap().warnings, [MAIL_TEAM]);
+    let all = "[statusline]\nstyle = \"verbose\"\n[update]\ncheck = false\n[mail]\nwake_gap = \"1s\"\n";
+    assert_eq!(load(&team_ctx(all, "")).unwrap().warnings,
+        ["config: [statusline], [update], [mail] in team config ignored; only user config may set them"]);
+    // the user's [mail] holds in a team session
+    let m = load(&team_ctx("[mail]\nkeep = \"1d\"\n", "[mail]\nkeep = \"7d\"\n")).unwrap();
+    assert_eq!((m.config.mail.keep.as_str(), m.source_of("mail.keep")), ("7d", Layer::User));
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
+fn mail_repo_file_table_is_dropped() { // M-C6: a cloned repository sets no [mail]
+    let d = repo_with("ml1", "version = 1\n[mail]\nkeep = \"1d\"\n");
+    match repo_file::read_default_branch(&d) {
+        RepoFile::Found { table, ignored, .. } => {
+            assert_eq!(ignored, ["mail"]);
+            assert!(!table.contains_key("mail"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let m = load(&ctx(None, Some(d.to_path_buf()), None)).unwrap();
+    assert_eq!((m.config.mail.clone(), m.source_of("mail.keep")), (MailConfig::default(), Layer::Builtin));
+    assert_eq!(m.warnings,
+        [".zygo.toml: [mail] ignored; the repository file may set only [guards], [navigation], [limits], [work]"]);
+}
+
+const NAME_GRAMMAR: &str = "must be 1-32 of [a-z0-9-], starting with a letter";
+
+#[test]
+fn mail_check_refuses_bad_pane_names() { // M§6
+    let p = "loadout.pair.window[0].pane[0].name";
+    none(&(base() + LO + "kind = \"claude-code\"\nname = \"elena\"\n"));
+    err(&(base() + LO + "kind = \"claude-code\"\nname = \"Elena\"\n"), &format!("{p}: {NAME_GRAMMAR}"));
+    err(&(base() + LO + "kind = \"opencode\"\nname = \"\"\n"), &format!("{p}: {NAME_GRAMMAR}"));
+    err(&(base() + LO + "kind = \"claude-code\"\nname = \"all\"\n"), &format!("{p}: is reserved"));
+    err(&(base() + LO + "kind = \"opencode\"\nname = \"cli\"\n"), &format!("{p}: is reserved"));
+    // unique in the loadout, across windows; the later pane is reported
+    let twice = "kind = \"claude-code\"\nname = \"elena\"\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\nname = \"elena\"\n";
+    err(&(base() + LO + twice), "loadout.pair.window[1].pane[0].name: is used by another pane in the loadout");
+    // the same name in two loadouts is allowed
+    let other = "[loadout.solo2]\n[[loadout.solo2.window]]\n[[loadout.solo2.window.pane]]\nkind = \"opencode\"\nname = \"elena\"\n";
+    none(&(base() + LO + "kind = \"claude-code\"\nname = \"elena\"\n" + other));
+}
+
+#[test]
+fn mail_check_refuses_bad_durations() { // M§11; the forms of parse_duration
+    const FORMS: &str = "must be <n>s, <n>m, <n>h or <n>d";
+    none(&(base() + "[mail]\nkeep = \"12h\"\nwake_gap = \"0s\"\n"));
+    err(&(base() + "[mail]\nkeep = \"30\"\n"), &format!("mail.keep: {FORMS}"));
+    err(&(base() + "[mail]\nwake_gap = \"1w\"\n"), &format!("mail.wake_gap: {FORMS}"));
+    let v: Vec<String> = check(&loaded(&(base() + "[mail]\nkeep = \"x\"\nwake_gap = \"\"\n")).config).iter().map(ToString::to_string).collect();
+    assert_eq!(v, [format!("mail.keep: {FORMS}"), format!("mail.wake_gap: {FORMS}")]);
+}
+
+// ---- ML-1 review round 1 ----
+
+#[test] // finding 2; kills: a name of pane-key form (W§5) accepted, so mail_send's `to` is ambiguous
+fn mail_check_reserves_the_pane_key_form() {
+    let p = "loadout.pair.window[0].pane[0].name";
+    err(&(base() + LO + "kind = \"claude-code\"\nname = \"kabcdefgh\"\n"), &format!("{p}: is reserved"));
+    none(&(base() + LO + "kind = \"claude-code\"\nname = \"kabcdefg1\"\n"));
+}
+
+#[test] // finding 3; kills: a name on a shell pane, which has no member record (W AU53), accepted
+fn mail_check_refuses_a_name_on_a_shell_pane() {
+    let p = "loadout.pair.window[0].pane[0].name";
+    err(&(base() + LO + "kind = \"shell\"\nname = \"elena\"\n"), &format!("{p}: only with kind = \"claude-code\" or \"opencode\""));
+    // one violation only: the kind rule is reported in place of the grammar
+    err(&(base() + LO + "kind = \"shell\"\nname = \"\"\n"), &format!("{p}: only with kind = \"claude-code\" or \"opencode\""));
+}
+
+#[test] // finding 4; kills: `mail` added to the profile feature keys (only the user config sets it, M§8)
+fn mail_feature_cannot_be_set_by_a_profile() {
+    let m = loaded("[profile.p]\nfeatures = { mail = false }\n");
+    let p = zygo_config::profile::select(&m, Some("p")).unwrap();
+    let c = &m.config;
+    let v = zygo_config::profile::validate(&p, &c.role, &c.main_role, &c.catalog.view(), Dialect::Anthropic, &BTreeSet::new())
+        .unwrap_err();
+    assert_eq!(v.to_string(), "profile.p.features.mail: not a feature key");
 }
