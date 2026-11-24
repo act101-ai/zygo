@@ -358,6 +358,11 @@ enum Cmd {
     Attach(attach::AttachArgs),
     /// Loadouts and their source
     Loadout(loadout::LoadoutArgs),
+    /// Decision records: ls, show, deps, check
+    Decision {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Status of this session's or this folder's workspace
     Workspace,
     /// Workspace tools: forget, forget-pane
@@ -571,6 +576,7 @@ pub fn run() -> i32 {
         Cmd::Ls => return finish(ls::verb(&cli_ctx(), &[])),
         Cmd::Attach(a) => return attach::run(a),
         Cmd::Loadout(a) => return loadout::run(a),
+        Cmd::Decision { args } => return decision::run(args),
         Cmd::Workspace => return finish(workspace::verb(&cli_ctx(), &[])),
         Cmd::Ws(_) => unreachable!("taken above"),
         Cmd::Status => "status",

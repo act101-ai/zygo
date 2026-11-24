@@ -165,7 +165,7 @@ fn trailer_commits_match_the_trailer_line_newest_first() { // D§6.7
 - [x] **4. Run it and see it pass.** `cargo test -p zygo --locked --test decision_cli trailer_commits` → 1 passed, 1 ignored; `cargo test -p zygo --locked --test decision_cli -- --ignored trailer_commits` → 1 passed; `cargo test -p zygo-work --locked --test decision_record --test decision_set` → all pass (the split changes no behavior).
 - [x] **5. Commit.** `git add crates/zygo-work/src/decisions/record.rs crates/zygo-work/src/decisions/history.rs crates/zygo-work/src/decisions/mod.rs crates/zygo/src/cmd/decision.rs crates/zygo/src/cmd/mod.rs crates/zygo/tests/decision_cli.rs`, message `feat(work): decision trailer commits (DR-3)` with the implementer's `Zygo-Session:` and `Zygo-Work:` trailers.
 
-- [ ] **6. Write the failing subcommand tests.** Append to `decision_cli.rs`:
+- [x] **6. Write the failing subcommand tests.** Append to `decision_cli.rs`:
 
 ```rust
 const USAGE: &str = "zygo decision: usage: zygo decision ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check\n";
@@ -338,10 +338,10 @@ fn binary_in_and_out_of_a_git_repository() { // D§10.1 exit 2; D§10.1 `show` w
 }
 ```
 
-- [ ] **7. Run it and see it fail.** `cargo test -p zygo --locked --test decision_cli` → the step-6 tests fail (`run_in` returns 2 with no output; `zygo decision` is not a subcommand, so clap exits 2 with its own text).
-- [ ] **8. Implement the subcommands.** In `crates/zygo/src/cmd/decision.rs`: `run_in` parses `args` (first word `ls`, `show`, `deps`, `check`; anything else gives the usage line and 2), then calls `(repo.top)()`, then `read_dir`, and gives the lines and exits of Fixed values; `run_with` as in "Why `Repo` and `run_in`"; `run(args)` takes the cwd from `cwd_or_exit()` (its `Err(code)` is returned), locks stdin, stdout and stderr, sets `tty = std::io::IsTerminal::is_terminal(&std::io::stdin())`, and calls `run_with(&cwd, &|k| std::env::var_os(k), args, &mut io)`. In `cmd/mod.rs`: the variant `/// Decision records: ls, show, deps, check` `Decision { #[arg(trailing_var_arg = true, allow_hyphen_values = true)] args: Vec<String> }` in `Cmd`, and the arm `Cmd::Decision { args } => return decision::run(args),` beside `Cmd::Loadout`.
-- [ ] **9. Run it and see it pass.** `cargo test -p zygo --locked --test decision_cli` → all pass, 2 ignored; `cargo test -p zygo --locked --test decision_cli -- --ignored` → 2 passed.
-- [ ] **10. Commit.** `git add crates/zygo/src/cmd/decision.rs crates/zygo/src/cmd/mod.rs crates/zygo/tests/decision_cli.rs`, message `feat(work): zygo decision ls, show, deps, check (DR-3)` with the implementer's trailers.
+- [x] **7. Run it and see it fail.** `cargo test -p zygo --locked --test decision_cli` → the step-6 tests fail (`run_in` returns 2 with no output; `zygo decision` is not a subcommand, so clap exits 2 with its own text).
+- [x] **8. Implement the subcommands.** In `crates/zygo/src/cmd/decision.rs`: `run_in` parses `args` (first word `ls`, `show`, `deps`, `check`; anything else gives the usage line and 2), then calls `(repo.top)()`, then `read_dir`, and gives the lines and exits of Fixed values; `run_with` as in "Why `Repo` and `run_in`"; `run(args)` takes the cwd from `cwd_or_exit()` (its `Err(code)` is returned), locks stdin, stdout and stderr, sets `tty = std::io::IsTerminal::is_terminal(&std::io::stdin())`, and calls `run_with(&cwd, &|k| std::env::var_os(k), args, &mut io)`. In `cmd/mod.rs`: the variant `/// Decision records: ls, show, deps, check` `Decision { #[arg(trailing_var_arg = true, allow_hyphen_values = true)] args: Vec<String> }` in `Cmd`, and the arm `Cmd::Decision { args } => return decision::run(args),` beside `Cmd::Loadout`.
+- [x] **9. Run it and see it pass.** `cargo test -p zygo --locked --test decision_cli` → all pass, 2 ignored; `cargo test -p zygo --locked --test decision_cli -- --ignored` → 2 passed.
+- [x] **10. Commit.** `git add crates/zygo/src/cmd/decision.rs crates/zygo/src/cmd/mod.rs crates/zygo/tests/decision_cli.rs`, message `feat(work): zygo decision ls, show, deps, check (DR-3)` with the implementer's trailers.
 
 - [ ] **11. Write the failing slash and verb-table tests.** Append to `decision_cli.rs`:
 
