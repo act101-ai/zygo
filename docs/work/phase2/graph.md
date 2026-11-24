@@ -81,7 +81,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | DONE | judgment | bd55c63; acceptance args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26, workspace --no-run ok; workspace 2757 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | DROPPED(folded into M5, diff review round 2; see nodes/M5.md) | implementation | — |
 | FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | DONE | judgment | 7db2fac; acceptance zygo-workspace 372 + 2 ignored; workspace 2860 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
-| FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | PLANNED | implementation | — |
+| FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | IN-PROGRESS | implementation | .worktrees/phase2/FIX-30 |
 | FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | PLANNED | implementation | — |
 
 ## Log
@@ -262,3 +262,4 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | 2026-11-23 | Uncited agent rules removed from the header and the open node files (operator 2026-11-23); Workflows line records no review loops. |
 | 2026-11-23 | Operator: update README.md at delivery for mistakes and missing information. |
 | 2026-11-23 | E2 merged; acceptance cargo parts pass on tmux 3.8 and 3.2a; no review round (no review loops); D-1 deferred |
+| 2026-11-23 | FIX-30 in progress |
