@@ -823,6 +823,7 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `zygo compact <tokens\|on\|off>` | §10.2.4. |
 | `zygo profile list\|show\|use` | §11. |
 | `zygo work [<id>\|clear]`, `zygo work report` | §13. |
+| `zygo decision new\|ls\|show\|deps\|check\|ratify\|overturn\|review` | Delegated decision records in `docs/decisions/` of the current repository (decision records design D§10.1). |
 | `zygo usage` | §10.7. |
 | `zygo statusline [compact\|verbose] [--save]` | Status line style: a session change; `--save` also writes `[statusline] style` to user config; with no argument, prints the style and its source. The verb works the same in an OpenCode session (operator decision, built by HUD-11). *(2026-11-22, HUD design)* |
 | `zygo marketplace add\|list\|update\|remove` | §15.8. |
@@ -869,6 +870,7 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `down [--now]` | Drain, save and stop the workspace of this session's membership marker, never the folder's; detached, so it replies within the hook bound (§17 `zygo down`; workspaces design OP11, AU18). A session that is not a member: `zygo: this session is not in a workspace`, exit 1 | — |
 | `ls` | As `zygo ls` (workspaces design OP11) | — |
 | `workspace` | As `zygo workspace` (workspaces design OP11) | — |
+| `decision <args>` | Replies `run in your shell: zygo decision <args>` and reads no file: the slash form runs inside the hook (decision records design D§10.1, D-C2) | — |
 
 - **Code approval stays in the shell (author):** as a slash command, `marketplace add|update` and `plugins approve|enable` list the code and print the exact `zygo` command that approves it; the hook cannot ask a question. *(Note 2026-11-19, N50 planning: as a slash command, `marketplace add|update`, `plugins sync` and `plugins enable` of a plugin not in the store reply `run in your shell: zygo <verb> <args>` and change nothing; these slash forms do not list code, because listing needs a fetch that the 5 s hook bound does not allow, so the shell command lists the code and asks. `plugins enable` of a stored plugin and `plugins approve` list the code from the store and print `run: zygo plugins approve <id>`. These slash forms (`marketplace add|update`, `plugins sync|enable|approve`) start no git process; apart from the user-config write of `plugins enable|disable` (scope: next launch), they write no file. Session setting verbs write `overrides.json`, and user config with `--save`, by design (§17.1 Scope).)*
   *(Note 2026-11-18, N30 planning: approval is refused when the command runs inside an agent session (ZYGO_SESSION_DIR set); `zygo plugins sync` is not a slash verb.)*
@@ -1111,3 +1113,4 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 | 2026-11-23 | §19 | author's call (node D1) | W§15 §19: PW1-PW17 with their results from `docs/premises.md`; PW8, PW12, PW13, PW14, PW17 withdrawn. |
 | 2026-11-23 | §20 | author's call (node D1) | W§15 §20: the checks of W§18, items #1 to #91, as item 21b. |
 | 2026-11-23 | §13.4 (attribution row, known limits) | author's call (node FIX-32) | whole-branch review B4: the guard read a message file from disk although the same line wrote it first, so a trailer written by a heredoc passed and a stale file refused a clean commit; it now searches the writing command and the heredocs of every earlier command. |
+| 2026-11-24 | §17, §17.1 | decision records design D§13 item 5 (approved 2026-11-24; node DR-3) | The `zygo decision` verb and its slash form, which reads no record (D-C2). |
