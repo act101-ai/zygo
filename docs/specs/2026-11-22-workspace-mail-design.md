@@ -41,7 +41,7 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 
 - **M-C1** W-C1 to W-C9 apply. C6 applies to each new hook branch: a mail error never breaks the agent.
 - **M-C2** Mail is content. It is an exception to W-C7: it lives only under `mail/` (M§5), never in `workspace.json`, never in `activity.json`, a log or a usage row. C3 is not changed: the proxy stores no body; mail is written by the mail tool and the CLI, not by the proxy.
-- **M-C3** Every write is atomic (W-C4): write in `tmp/`, then rename into `new/`.
+- **M-C3** Every write is atomic (W-C4): write and `fsync` in `tmp/`, then hard-link into `new/` (a link refuses to replace an existing name), `fsync` `new/`, then remove the `tmp/` name.
 - **M-C4** Only the OS user that owns the workspace state can read or write mail (dir `0700`, files `0600`, as AU2).
 - **M-C5** No mail text reaches a tmux argument (W-C8). The wake text is fixed (M§7).
 - **M-C6** A cloned repository cannot send mail or name a member (W-C5): names come from user config only.
@@ -57,9 +57,9 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 ```
 
 - The folder is keyed by the pane key (W§5), which stays the same after a restore. The name (M§6) maps to the pane key.
-- A message file (version 1): `{ "version": 1, "id": <ULID>, "from": <name or "cli">, "to": <name>, "sent_at": <RFC 3339>, "subject": <text, at most 200 bytes>, "body": <text, at most 1 MiB> }`. Fields that a reader does not know are kept (AU78). The file format and the ULID names are fixed so that phase 3 can carry the same files on a side branch with no change (`docs/roadmap/phase-3.md`, P3-2): a message file is never edited after its rename into `new/`, and the move to `cur/` is local read state, not part of the message.
-- Send: write `tmp/<ULID>.json` (`0600`), `fsync`, rename to `new/<ULID>.json`. A send to `all` writes one file per member, sender excluded.
-- Read: rename `new/<ULID>.json` to `cur/<ULID>.json`, then return it. A rename that fails because the file is gone means another reader took it: skip it.
+- A message file (version 1): `{ "version": 1, "id": <ULID>, "from": <name or "cli">, "to": <name>, "sent_at": <RFC 3339>, "subject": <text, at most 200 bytes>, "body": <text, at most 1 MiB> }`. Fields that a reader does not know are kept (AU78). The file format and the ULID names are fixed so that phase 3 can carry the same files on a side branch with no change (`docs/roadmap/phase-3.md`, P3-2): a message file is never edited after its link into `new/`, and the move to `cur/` is local read state, not part of the message.
+- Send: write `tmp/<ULID>.json` (`0600`) and `fsync` it, hard-link it to `new/<ULID>.json` (a link refuses to replace an existing name), `fsync` `new/`, then remove the `tmp/` name. A send to `all` writes one file per member, sender excluded.
+- Read: move `new/<ULID>.json` to `cur/<ULID>.json` the same way (hard-link into `cur/`, then remove the `new/` name), then return it. A link that fails because the file is gone means another reader took it: skip it.
 - Retention: the sweep (AU69) deletes `cur/` files older than `[mail] keep = "30d"`. `zygo ws forget` deletes `mail/`. `zygo ws forget-pane <key>` deletes `mail/<key>/`.
 - Limits: a send that would put more than `[mail] max_unread = 500` files in the target's `new/` is refused with `zygo: <name> has 500 unread messages`.
 
@@ -208,3 +208,4 @@ name = "elena"          # M§6
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-24 | M§6 | author's call | A name of pane-key form is reserved so `mail_send`'s `to` stays unambiguous (ML-1 review). |
+| 2026-11-24 | M-C3, M§5 | author's call | link, not rename, so a delivery or read never replaces an existing message (ML-2 review) |

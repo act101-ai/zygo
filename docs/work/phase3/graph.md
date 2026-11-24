@@ -207,7 +207,7 @@ Session text (T, SX nodes):
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | DONE | implementation | c3c7337 da263a1 · config_layers 90p/0f/16i, core_basics 24p/0f/3i; floor green · PR #23 |
-| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | TODO | judgment | — |
+| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | DONE | judgment | 2550471 e7fed8c 24c9124 · mail_store 38p/0f/0i; floor green · PR #24 |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
 | OS-1 | Result meta records the session that stored it | DR-1 | TODO | implementation | — |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | TODO | judgment | — |
@@ -338,3 +338,5 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-10 done: agent_change, the D§6.6 rule for one record change. Review round 1, 8 findings, all fixed: malformed old refused, self-supersede, model/commit/date/supersedes frozen, name escaped, Writes column exhaustive, id match. Floor green. |
 | 2026-11-24 | DR-3 done: zygo decision ls\|show\|deps\|check, trailer commits, slash reply. Review 7 findings: 6 fixed (git config independence, linear ls, unborn HEAD, --help, test split, slash args), 1 refuted (D-C9). PR #22. |
 | 2026-11-24 | ML-1 done: [mail] keys, pane name, member-name grammar, d duration unit. Review 6 findings: 5 fixed (pane name scrubbed, pane-key-form names reserved (M§6 author's call), no name on shell panes, profile features.mail test, note), 1 left to ML-6/ML-12 (checked arithmetic). PR #23. |
+| 2026-11-24 | ML-2 planned (016912f); Files += zygo-workspace/Cargo.toml, Cargo.lock for the ulid dep. PR #24. |
+| 2026-11-24 | ML-2 done: maildir store, link send, link read to cur/, limits, sweep. Review 16 findings: 11 fixed (no-replace, O_NOFOLLOW, 8 MiB cap, 0700 root, cur mtime, fsync, tmp=Duplicate, sweep, unparsable, M-C3 link); 5 deferred (MS-17, ML-15, ML-14 notes; 500 race; ULID order). PR #24. |
