@@ -124,9 +124,9 @@ Error lines:
 
 ### Steps
 
-- [ ] **1. Dependency.** Add `toml_edit.workspace = true` to `[dependencies]` of `crates/zygo-work/Cargo.toml`, after `toml.workspace = true`, then run `cargo check -p zygo-work`. Check: it builds, and `git diff Cargo.lock` adds only the line `"toml_edit",` to the `zygo-work` dependency list.
+- [x] **1. Dependency.** Add `toml_edit.workspace = true` to `[dependencies]` of `crates/zygo-work/Cargo.toml`, after `toml.workspace = true`, then run `cargo check -p zygo-work`. Check: it builds, and `git diff Cargo.lock` adds only the line `"toml_edit",` to the `zygo-work` dependency list.
 
-- [ ] **2. Write the failing `apply` tests** in the new `crates/zygo/tests/decision_verbs.rs`. Header and fixtures:
+- [x] **2. Write the failing `apply` tests** in the new `crates/zygo/tests/decision_verbs.rs`. Header and fixtures:
 
 ```rust
 //! DR-5: `zygo decision ratify` and `overturn` (D§11.1, D§11.3, D§10.1, D§6.6, D§6.2, D§14, D§17 #14).
@@ -248,13 +248,13 @@ Tests (assertions as written; each ends with the file's bytes checked):
 }
 ```
 
-- [ ] **3. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: it fails to compile with `could not find edit in decisions` (or the like).
+- [x] **3. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: it fails to compile with `could not find edit in decisions` (or the like).
 
-- [ ] **4. Implement** `crates/zygo-work/src/decisions/edit.rs` with the interface above: `Promotion` (`parse`, `name`), `Outcome`, `EditError`, `allowed`, `apply`, and the private `set` and `basic`. Add `pub mod edit;` to `crates/zygo-work/src/decisions/mod.rs`, in alphabetical order. Doc comments cite D§11.3, D§6.6 and D§6.2.
+- [x] **4. Implement** `crates/zygo-work/src/decisions/edit.rs` with the interface above: `Promotion` (`parse`, `name`), `Outcome`, `EditError`, `allowed`, `apply`, and the private `set` and `basic`. Add `pub mod edit;` to `crates/zygo-work/src/decisions/mod.rs`, in alphabetical order. Doc comments cite D§11.3, D§6.6 and D§6.2.
 
-- [ ] **5. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 8 `apply_*` tests pass (on Windows 7; the write-failure test is unix only).
+- [x] **5. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 8 `apply_*` tests pass (on Windows 7; the write-failure test is unix only).
 
-- [ ] **6. Commit** `crates/zygo-work/Cargo.toml`, `Cargo.lock`, `crates/zygo-work/src/decisions/{mod.rs,edit.rs}` and `crates/zygo/tests/decision_verbs.rs` with the message `DR-5: decisions::edit::apply, byte-preserving outcome writes` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-5`. Check: `git status` is clean.
+- [x] **6. Commit** `crates/zygo-work/Cargo.toml`, `Cargo.lock`, `crates/zygo-work/src/decisions/{mod.rs,edit.rs}` and `crates/zygo/tests/decision_verbs.rs` with the message `DR-5: decisions::edit::apply, byte-preserving outcome writes` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-5`. Check: `git status` is clean.
 
 - [ ] **7. Write the failing CLI tests** in `crates/zygo/tests/decision_verbs.rs`. Also set the `USAGE` constant of `decision_cli.rs:101` and `decision_new.rs` to the new `USAGE` text, and add it here with its `\n`. Helper:
 
