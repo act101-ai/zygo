@@ -1,6 +1,6 @@
 # zygo: mail sync between machines — design
 
-**Status:** proposed 2026-11-24
+**Status:** approved by the operator 2026-11-24
 **Date:** 2026-11-24
 **Release:** phase 3, track B (roadmap items P3-2, P3-3 and P3-4, `docs/roadmap/phase-3.md`)
 **Base specs:** `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`; approved, not built yet), `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`, decisions `AUn`). The build follows `docs/specs/2026-11-24-decision-records-design.md`. `S§n` is a section of this document.

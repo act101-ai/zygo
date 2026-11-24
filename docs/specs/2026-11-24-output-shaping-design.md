@@ -1,6 +1,6 @@
 # zygo: output shaping and saving accounting — design
 
-**Status:** proposed 2026-11-24
+**Status:** approved by the operator 2026-11-24
 **Date:** 2026-11-24
 **Release:** phase 3, output track (roadmap items P3-5, P3-6 and P3-7, `docs/roadmap/phase-3.md`)
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`; C6, §10.1, §10.7, §14). Also cited: `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`). `O§n` is a section of this document. The build follows `docs/specs/2026-11-24-decision-records-design.md`; this spec does not repeat it.
