@@ -76,7 +76,8 @@ fn q(s: &str) -> String {
     toml::Value::String(s.into()).to_string()
 }
 
-/// The record text that `create` writes (D§6.2, D§10.2): every hint line holds [`FILL_MARKER`].
+/// The record text that `create` writes (D§6.2, D§10.2): every checked hint line holds [`FILL_MARKER`]; the
+/// `## Finding` hint of a `decision` of a stop class (D§6.3: written, not checked) does not.
 fn template(id: &str, a: &NewArgs, model: &str, commit: &str, date: &str) -> String {
     let deps: Vec<String> = a.depends_on.iter().map(|d| q(d)).collect();
     let mut t = format!(
@@ -91,8 +92,11 @@ fn template(id: &str, a: &NewArgs, model: &str, commit: &str, date: &str) -> Str
     }
     t.push_str("+++\n");
     let finding = matches!(a.kind, Kind::AcceptedLimit | Kind::Compromise | Kind::OpenFinding);
+    let hint = "The reviewer's finding, with its location, failure and evidence.";
     if finding {
-        t.push_str(&format!("\n## Finding\n\n{FILL_MARKER} The reviewer's finding, with its location, failure and evidence.\n"));
+        t.push_str(&format!("\n## Finding\n\n{FILL_MARKER} {hint}\n"));
+    } else if a.kind == Kind::Decision && a.class != Class::None {
+        t.push_str(&format!("\n## Finding\n\n{hint}\n"));
     }
     let (choice, alternatives) = if a.kind == Kind::OpenFinding {
         ("What stays open.", "The fixes considered, and why none was made.")

@@ -24,18 +24,28 @@ fn text(rid: &str, deps: &[u32]) -> String {
 }
 fn dir(top: &Path) -> PathBuf { let d = top.join("docs/decisions"); fs::create_dir_all(&d).unwrap(); d }
 fn put(top: &Path, n: u32, deps: &[u32]) { fs::write(dir(top).join(md(n)), text(&id(n), deps)).unwrap(); }
+/// Git in `dir` with no user or system config: `GIT_CONFIG_GLOBAL` an empty file next to `dir`, `HOME` that directory,
+/// and the identity by env.
 fn git(dir: &Path, args: &[&str]) -> String {
-    let o = Command::new("git").args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args)
-        .current_dir(dir).output().unwrap();
+    let home = dir.parent().unwrap().join("git-home");
+    fs::create_dir_all(&home).unwrap();
+    let global = home.join("gitconfig");
+    if !global.exists() { fs::write(&global, "").unwrap(); }
+    let o = Command::new("git").args(["-c", "commit.gpgsign=false"]).args(args).current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", &global).env("GIT_CONFIG_NOSYSTEM", "1").env("HOME", &home).env("XDG_CONFIG_HOME", &home)
+        .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
+        .output().unwrap();
     assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
     String::from_utf8(o.stdout).unwrap().trim_end().to_string()
 }
 
 struct Ran { code: i32, out: String, err: String }
 /// `run_in` with `top`, HEAD `C40`, today `2026-11-24`, the usage store `db`, and `env` for ZYGO_SESSION_DIR.
-fn go(top: &Path, env: &dyn Fn(&str) -> Option<OsString>, db: &Path, args: &[&str]) -> Ran {
+fn go(top: &Path, env: &dyn Fn(&str) -> Option<OsString>, db: &Path, args: &[&str]) -> Ran { go_head(top, Some(C40), env, db, args) }
+/// `go` with HEAD `head`.
+fn go_head(top: &Path, head: Option<&str>, env: &dyn Fn(&str) -> Option<OsString>, db: &Path, args: &[&str]) -> Ran {
     let list = |_: &Path, _: &str, _: usize| Ok(vec![]);
-    let head = |p: &Path| { assert_eq!(p, top); Some(C40.to_string()) };
+    let head = |p: &Path| { assert_eq!(p, top); head.map(str::to_string) };
     let today = || "2026-11-24".to_string();
     let t = || Some(top.to_path_buf());
     let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -85,7 +95,7 @@ fn name_of(p: &Path) -> String { p.file_name().unwrap().to_str().unwrap().to_str
     let name = name_of(&p);
     assert_eq!(p, top.join("docs/decisions").join(&name));
     assert!(matches!(name_kind(&name), NameKind::Record(_)), "{name}");
-    let want: String = ["missing key reverse_cost", "empty section ## Choice", "empty section ## Alternatives rejected",
+    let want: String = ["missing key reverse_cost", "unfilled hint in front matter", "empty section ## Choice", "empty section ## Alternatives rejected",
                         "empty section ## Evidence", "empty section ## Cost to reverse"]
         .iter().map(|f| format!("{name}: {f}\n")).collect();
     let c = run(top, &["check"]);
@@ -117,7 +127,9 @@ fn name_of(p: &Path) -> String { p.file_name().unwrap().to_str().unwrap().to_str
     let c = run(top, &["check"]);
     assert_eq!(c.code, 1);
     let lines: Vec<&str> = c.out.lines().collect();
-    assert_eq!(&lines[..2], &[format!("{name}: missing key reverse_cost"), format!("{name}: empty section ## Finding")]);
+    assert_eq!(&lines[..3], &[format!("{name}: missing key reverse_cost"), format!("{name}: unfilled hint in front matter"),
+                              format!("{name}: empty section ## Finding")]);
+    assert_eq!(fs::read_to_string(&p).unwrap().matches("\n## Finding\n").count(), 1);
     assert!(fs::read_to_string(&p).unwrap().contains("<!-- zygo: fill --> What stays open."));
     fill(&p);
     let stem = name.strip_suffix(".md").unwrap();
@@ -126,6 +138,68 @@ fn name_of(p: &Path) -> String { p.file_name().unwrap().to_str().unwrap().to_str
     assert_eq!(rec.depends_on, vec![i1.clone(), i2]);
     assert_eq!(rec.supersedes, Some(i1));
     assert_eq!(rec.title, "a \"b\" \\ c");
+}
+
+#[test] fn a_left_reverse_cost_hint_is_malformed() { // D§10.2, D§17 #1
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path();
+    let p = path_of(&new(top, &[]));
+    let name = name_of(&p);
+    let hint = |l: &str| l.contains(FILL_MARKER) && l.contains("reverse_cost");
+    let text = fs::read_to_string(&p).unwrap();
+    let lines: Vec<String> = text.split('\n').flat_map(|l| match l {
+        l if hint(l) => vec![l.to_string(), "reverse_cost = \"low\"".to_string()],
+        l if l.contains(FILL_MARKER) => vec!["Filled.".to_string()],
+        l => vec![l.to_string()],
+    }).collect();
+    fs::write(&p, lines.join("\n")).unwrap();
+    let c = run(top, &["check"]);
+    assert_eq!((c.code, c.out.as_str(), c.err.as_str()), (1, format!("{name}: unfilled hint in front matter\n").as_str(), ""));
+    let kept: Vec<&str> = lines.iter().map(String::as_str).filter(|l| !hint(l)).collect();
+    fs::write(&p, kept.join("\n")).unwrap();
+    let c = run(top, &["check"]);
+    assert_eq!((c.code, c.out.as_str(), c.err.as_str()), (0, "", ""));
+}
+
+#[test] fn a_stop_class_decision_gets_an_unchecked_finding_heading() { // D§6.3
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path();
+    let p = path_of(&new(top, &["--class", "security"]));
+    let text = fs::read_to_string(&p).unwrap();
+    assert_eq!(text.matches("\n## Finding\n").count(), 1);
+    let finding = text.split("\n## Finding\n").nth(1).unwrap().split("\n## ").next().unwrap().to_string();
+    assert!(!finding.contains(FILL_MARKER), "{finding}");
+    assert!(!finding.trim().is_empty());
+    fill(&p);
+    let c = run(top, &["check"]);
+    assert_eq!((c.code, c.out.as_str(), c.err.as_str()), (0, "", ""));
+    assert!(fs::read_to_string(&p).unwrap().contains(&finding));
+    let p = path_of(&new(top, &[])); // class none: no Finding heading
+    assert!(!fs::read_to_string(&p).unwrap().contains("## Finding"));
+}
+
+#[test] fn help_words_as_option_values_are_values() { // D§10.1
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path();
+    for v in ["-h", "--help"] {
+        let p = path_of(&new(top, &["--title", v]));
+        fill(&p);
+        let rec = parse_record(name_of(&p).strip_suffix(".md").unwrap(), &fs::read(&p).unwrap()).unwrap();
+        assert_eq!(rec.title, v);
+    }
+    for a in [&["new", "-h"][..], &["new", "--kind", "decision", "--help"], &["ls", "--pending", "-h"]] {
+        let r = run(top, a);
+        assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (0, USAGE, ""), "{a:?}");
+    }
+}
+
+#[test] fn an_unreadable_head_exits_1_and_writes_nothing() { // D§10.2
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path();
+    let a = with(&[]);
+    let r = go_head(top, None, &|_| None, &top.join("none.db"), &a.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (1, "", "zygo decision: cannot read HEAD\n"));
+    assert!(!top.join("docs").exists());
 }
 
 #[test] fn two_linked_checkouts_get_different_ids_and_merge_cleanly() { // D§17 #2
@@ -153,8 +227,9 @@ fn name_of(p: &Path) -> String { p.file_name().unwrap().to_str().unwrap().to_str
     let (top, sd, db) = (t.path().join("top"), t.path().join("sd"), t.path().join("usage.db"));
     fs::create_dir_all(&top).unwrap();
     fs::create_dir_all(&sd).unwrap();
-    session(&sd, &["code", "review"]);
-    rows(&db, &[(1, "s1", "code", "m-old"), (2, "s1", "code", "m-new"), (3, "s1", "review", "m-rev"), (5, "s2", "code", "m-other")]);
+    session(&sd, &["code", "review", "plan"]);
+    rows(&db, &[(1, "s1", "code", "m-old"), (2, "s1", "code", "m-new"), (3, "s1", "review", "m-rev"), (5, "s2", "code", "m-other"),
+                (6, "s1", "plan", "m-plan"), (7, "s1", "plan", "")]);
     let env = |k: &str| (k == "ZYGO_SESSION_DIR").then(|| sd.clone().into_os_string());
     let model = |env: &dyn Fn(&str) -> Option<OsString>, db: &Path, role: &str| {
         let a = ["new", "--kind", "decision", "--title", "T", "--unit", "phase-3:N12", "--round", "1", "--role", role];
@@ -165,6 +240,7 @@ fn name_of(p: &Path) -> String { p.file_name().unwrap().to_str().unwrap().to_str
     };
     assert_eq!(model(&env, &db, "code"), "m-new");
     assert_eq!(model(&env, &db, "lead"), "unknown"); // no row: also the serve-mode case
+    assert_eq!(model(&env, &db, "plan"), "unknown"); // the newest row has an empty model
     assert_eq!(model(&|_| None, &db, "code"), "unknown");
     assert_eq!(model(&env, &t.path().join("missing.db"), "code"), "unknown");
 }

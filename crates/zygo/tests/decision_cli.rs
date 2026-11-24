@@ -101,7 +101,8 @@ fn trailer_commits_match_the_trailer_line_newest_first() { // D§6.7
 const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check\n";
 
 #[test] fn outside_a_repository_exits_2() { // D§10.1
-    for a in [&["ls"][..], &["show", &id(1)], &["deps", &id(1)], &["check"]] {
+    let new = ["new", "--kind", "decision", "--title", "T", "--unit", "phase-3:N12", "--round", "1", "--role", "code"];
+    for a in [&["ls"][..], &["show", &id(1)], &["deps", &id(1)], &["check"], &new] {
         let r = go(&|| None, Ok(vec![]), a);
         assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (2, "", "zygo decision: not in a git repository\n"), "{a:?}");
     }

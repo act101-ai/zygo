@@ -279,6 +279,10 @@ pub fn parse_record(stem: &str, bytes: &[u8]) -> Result<Record, Vec<String>> {
     {
         faults.push("id does not equal the file stem".into());
     }
+    // D§10.2: a hint line left in the front matter (a TOML comment) is unfilled, as a hint left in a section.
+    if front.contains(FILL_MARKER) {
+        faults.push("unfilled hint in front matter".into());
+    }
 
     let finding = matches!(kind, Key::Valid(Kind::AcceptedLimit | Kind::Compromise | Kind::OpenFinding));
     let names = ["Finding", "Choice", "Alternatives rejected", "Evidence", "Cost to reverse"];

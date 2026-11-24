@@ -153,9 +153,26 @@ fn find<'s>(set: &'s RecordSet, id: &str, io: &mut DecisionIo) -> Option<&'s Rec
     r
 }
 
-/// One arm per subcommand; gives the exit code. `-h` or `--help` in any position prints the usage line to stdout.
+/// Whether `args` hold `-h` or `--help` in any position but the value of a flag (`--title -h` is a title).
+fn wants_help(args: &[String]) -> bool {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "-h" | "--help" => return true,
+            "--kind" | "--title" | "--unit" | "--round" | "--role" | "--class" | "--depends-on" | "--supersedes"
+            | "--status" => {
+                it.next();
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// One arm per subcommand; gives the exit code. `-h` or `--help` in any position but a flag value prints the usage line
+/// to stdout.
 pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[String], io: &mut DecisionIo) -> i32 {
-    if args.iter().any(|a| a == "-h" || a == "--help") {
+    if wants_help(args) {
         line(io.out, USAGE);
         return 0;
     }
