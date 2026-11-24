@@ -145,10 +145,18 @@ struct Walk {
     occurrences: Vec<Occurrence>,
     /// One label per removal, in token order (FIX-27 D8): a table flag name, `<positional>`, `--` or `<after -->`.
     labels: Vec<String>,
-    /// The first positional token before --, as typed (FIX-24).
-    first_positional: Option<String>,
-    /// The name (before any =) of each long flag before -- that is not in the table, in order (FIX-24).
-    unlisted: Vec<String>,
+    /// Each positional token before --, with its index in the arguments, as typed (FIX-24).
+    positionals: Vec<(usize, String)>,
+    /// Each long flag before -- that is not in the table, in order (FIX-24): its index, its name (before any `=`) and
+    /// whether the token holds `=`.
+    unlisted: Vec<Unlisted>,
+}
+
+/// A long flag that is not in the table of the agent (FIX-24).
+struct Unlisted {
+    at: usize,
+    name: String,
+    attached: bool,
 }
 
 /// One table flag that the walk met before `--`. No `Debug`: `values` can hold prompt text.
@@ -274,9 +282,7 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
         if token == "-" || !token.starts_with('-') {
             out.removed.push(token.clone());
             out.labels.push("<positional>".to_string());
-            if out.first_positional.is_none() {
-                out.first_positional = Some(token.clone());
-            }
+            out.positionals.push((next - 1, token.clone()));
             continue;
         }
         let token_at = next - 1;
@@ -288,7 +294,7 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
             };
             let Some(flag) = lookup(table, name) else {
                 out.kept.push(token.clone());
-                out.unlisted.push(name.to_string());
+                out.unlisted.push(Unlisted { at: token_at, name: name.to_string(), attached: attached.is_some() });
                 continue;
             };
             let start = next;
@@ -391,15 +397,21 @@ pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
 
 /// W§7.2 member.launch.events_off (FIX-24, AU26): the agent of a start with `args` sends no member events, by the same
 /// walk as [filter]: Claude Code `--bare`; OpenCode `--pure`, the subcommand `attach`, or the subcommand `run` with
-/// `--attach`. A flag value and a token after `--` count as nothing.
+/// `--attach`. A flag value and a token after `--` count as nothing. For OpenCode only, an unlisted long flag without
+/// `=` takes the next token as its value unless that token starts with `-`, as OpenCode 1.19.6 parses it (FIX-24 diff
+/// review round 2, finding 1); [filter] does not use this rule.
 pub fn events_off(agent: Agent, args: &[String]) -> bool {
     let w = walk(agent, args, None);
     match agent {
         Agent::ClaudeCode => w.occurrences.iter().any(|o| o.name == "--bare"),
         Agent::OpenCode => {
-            let has = |n: &str| w.unlisted.iter().any(|u| u == n);
+            let has = |n: &str| w.unlisted.iter().any(|u| u.name == n);
+            // The token right after an unlisted long flag without `=` is that flag's value (a positional here, since a
+            // token that starts with `-` is never a positional).
+            let value_at = |i: usize| w.unlisted.iter().any(|u| !u.attached && u.at + 1 == i);
+            let first = w.positionals.iter().find(|(i, _)| !value_at(*i)).map(|(_, t)| t.as_str());
             has("--pure")
-                || match w.first_positional.as_deref() {
+                || match first {
                     Some("attach") => true,
                     Some("run") => has("--attach"),
                     _ => false,

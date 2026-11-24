@@ -483,6 +483,65 @@ fn au30_an_own_session_argument_is_not_preassigned_or_saved() { // W§8.3, AU30
     }
 }
 
+/// FIX-24 P12, AU27 known limit 8; diff review round 2, finding 5: a member saved from `run --attach <url>` keeps only
+/// `["--attach"]`; its `ws run` start (the real `record_start` path) runs the TUI, computes `events_off = false` over a
+/// stale `true`, and `down` counts the quiet member as idle.
+#[test]
+fn a_saved_attach_flag_without_run_is_not_events_off() {
+    let Some(h) = Harness::new() else { return };
+    git_repo(&h);
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    let mut rec = record(Agent::OpenCode, MemberState::Ended, None, None);
+    rec.launch.args = vec!["--attach".into()];
+    rec.launch.events_off = true; // a stale value: the start write must compute it again
+    up_state(&h, &[(KEY, rec)], &mut |_| {});
+    let (_out, mut env) = h.stub(Agent::OpenCode, "o");
+    let c = ctl(&h, "o");
+    env.push(("ZYGO_STUB_CONTROL", c.clone().into_os_string()));
+    let run = h.script("run", &["ws", "run", "--ws-id", WS_ID, "--pane", KEY], &pairs(&env));
+    let pane = split(&h, "=zygo-app:", &run);
+    h.tmux(&["set-option", "-p", "-t", &pane, "@zygo-pane", KEY]);
+    std::fs::write(h.root().join("run.go"), "").unwrap();
+    assert!(started(&c), "the ws run start did not reach the agent");
+    let m = member(&h, KEY).unwrap();
+    assert_eq!((m.launch.args.clone(), m.launch.events_off), (vec!["--attach".to_string()], false));
+    // No activity.json and a quiet proxy: idle unless the record says events off.
+    let o = cli(&h, &["down", "--timeout", "5s", "--wait", "--", "app"], &[]);
+    let err = text(&o.stderr);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(err.contains(&format!("zygo: app pane {KEY} is idle\n")), "{err}");
+    assert!(!err.contains("member events off"), "{err}");
+}
+
+#[test] // FIX-24 diff review round 2, finding 4, AU26: CLAUDE_CODE_SIMPLE in the environment of the start is bare mode
+fn a_hand_start_with_claude_code_simple_is_saved_with_events_off() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[], &mut |_| {});
+    let cases: [(Agent, &str, &str, bool); 5] = [
+        (Agent::ClaudeCode, "claude", "1", true),
+        (Agent::ClaudeCode, "claude", "true", true),
+        (Agent::ClaudeCode, "claude", "0", false),
+        (Agent::ClaudeCode, "claude", "", false),
+        (Agent::OpenCode, "opencode", "1", false), // Claude Code only
+    ];
+    for (i, (kind, agent, value, want)) in cases.into_iter().enumerate() {
+        let pane = split(&h, "=zygo-app:", "cat");
+        let (out, env) = h.stub(kind, &format!("s{i}"));
+        let mut extra = pairs(&env);
+        extra.push(("CLAUDE_CODE_SIMPLE", OsStr::new(value)));
+        let o = Guarded::spawn(hand(&h, &pane, &[agent], &extra)).output("hand start");
+        assert_eq!(o.status.code(), Some(0), "{agent} {value:?}: {}", text(&o.stderr));
+        // The agent really gets the value: the launcher neither removes nor sets it.
+        assert_eq!(stub_env(&out)["CLAUDE_CODE_SIMPLE"], json!(value), "{agent} {value:?}");
+        let m = member(&h, &pane_key(&h, &pane)).unwrap();
+        assert_eq!(m.launch.events_off, want, "{agent} {value:?}");
+        assert!(m.launch.args.is_empty(), "{agent} {value:?}: {:?}", m.launch.args);
+        // Room for the next split: the window holds a few panes only.
+        h.tmux(&["kill-pane", "-t", &pane]);
+    }
+}
+
 #[test] // FIX-24 D1, AU26: the real hand-start path writes events_off from the typed arguments
 fn a_hand_start_whose_agent_sends_no_member_events_is_saved_with_events_off() {
     let Some(h) = Harness::new() else { return };
@@ -1155,7 +1214,12 @@ fn w18_56_a_settings_argument_keeps_a_hand_start_a_member_through_down_and_up() 
         let (out_b, env_b) = h.stub(Agent::ClaudeCode, "b");
         let o = cli(&h, &["up", &ws.name, "--no-attach"], &pairs(&env_b));
         assert_eq!(o.status.code(), Some(0), "{case}: {}", text(&o.stderr));
-        assert!(until(Duration::from_secs(20), || out_b.join("argv.json").exists()), "{case}");
+        // FIX-24 diff review round 2, finding 6: the stub writes argv.json before settings.json (stub.rs:282, :308), so
+        // the test waits for a settings.json that is not empty; argv.json and env.json are complete by then.
+        assert!(
+            until(Duration::from_secs(20), || std::fs::metadata(out_b.join("settings.json")).is_ok_and(|m| m.len() > 0)),
+            "{case}"
+        );
         let b = argv(&out_b);
         assert!(b.contains(&format!("--resume={agent_id}")), "{b:?}");
         assert_eq!(settings_args(&b), 1, "{b:?}");

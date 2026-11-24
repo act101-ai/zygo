@@ -2442,23 +2442,23 @@ fn events_off_member_whose_launcher_is_gone_is_idle() {
     assert_gone_is_idle(t.path(), off_member(Agent::OpenCode, Some(SID), &["--pure"]), false);
 }
 
-#[test] // FIX-24 P12, AU27 known limit 8: a restored `run --attach` member runs the TUI and sends member events
-fn a_saved_attach_flag_without_run_is_not_events_off() {
+#[test] // FIX-24 diff review round 2, finding 3: the events-off override keeps the rule-skipped line of AU26
+fn events_off_member_keeps_the_rule_skipped_line() {
     let _s = serial();
     let t = TempDir::new().unwrap();
     let t = t.path();
-    let mut oc = MemberRecord::new(Agent::OpenCode);
-    oc.state = MemberState::Running;
-    oc.zygo_session = Some(SID.into());
-    oc.launch.args = vec!["--attach".into()];
-    oc.launch.events_off = false;
-    let (o, _store, mut l) = one_member_with(t, oc);
-    set_activity(&o, SID, false, &[]);
+    let (mut o, _store, mut l) = one_member_with(t, off_member(Agent::OpenCode, Some(SID), &["--pure"]));
+    o.timeout = Some(Duration::from_secs(120));
     let mut h = hooks();
-    statuses(&mut h, status_map(vec![(SID, Ok(quiet()))]));
-    release_on_sigterm(&mut h, &o, vec![l.lock.clone()], &[(ID, KEY)]);
+    // No `requests_in_flight`: a skip case of rule 3.
+    statuses(&mut h, status_map(vec![(SID, Ok(SessionStatus::default()))]));
     let (code, out, err) = run(&o, &h);
-    assert_eq!((code, out.as_str()), (0, "zygo: app is down (1 agents saved)\n"), "{err}");
-    assert_eq!(count(&err, IDLE), 1, "{err}");
-    l.child.wait().unwrap();
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    assert_eq!(count(&err, SKIP), 1, "{err}");
+    assert_eq!(count(&err, EVENTS_OFF_LINE), 1, "{err}");
+    assert!(l.child.try_wait().unwrap().is_none(), "the agent got a signal");
+    l.child.kill().unwrap();
 }
+
+// `a_saved_attach_flag_without_run_is_not_events_off` moved to `crates/zygo/tests/workspace_member.rs` (FIX-24 diff
+// review round 2, finding 5): it computes the flag through the real `ws run` start write, which this crate cannot run.

@@ -558,3 +558,23 @@ fn events_off_follows_the_walk_of_filter() {
         assert!(!events_off(agent, &s(a)), "not events off: {agent:?} {a:?}");
     }
 }
+
+#[test] // FIX-24 diff review round 2, finding 1: OpenCode 1.19.6 gives an unlisted long flag without `=` the next token
+fn events_off_takes_the_value_of_an_unlisted_opencode_flag() {
+    let on: &[&[&str]] = &[
+        &["--attach", "http://h", "run", "msg"],
+        &["--zzunknown", "X", "attach", "http://h"],
+        &["--zzunknown", "--pure"], // a token that starts with `-` is not the value
+        &["--zzunknown=X", "attach", "http://h"], // `=` carries the value, so `attach` is the subcommand
+    ];
+    for a in on {
+        assert!(events_off(Agent::OpenCode, &s(a)), "events off: {a:?}");
+    }
+    let off: &[&[&str]] = &[
+        &["--zzunknown", "attach"], // `attach` is the value of --zzunknown, not the subcommand
+        &["--zzunknown", "run", "--attach", "http://h"], // `run` is the value; no subcommand
+    ];
+    for a in off {
+        assert!(!events_off(Agent::OpenCode, &s(a)), "not events off: {a:?}");
+    }
+}

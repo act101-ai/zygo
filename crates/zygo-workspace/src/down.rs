@@ -1157,7 +1157,13 @@ impl Run<'_> {
                 } else {
                     None
                 };
-                (off.map_or(r, |reason| Idle::Busy { reason: reason.to_string(), rule_skipped: false }), running)
+                // Diff review round 2, finding 3: the override keeps the rule 3 skip of `read_member`, so the AU26
+                // rule-skipped line still prints.
+                let rule_skipped = matches!(
+                    r,
+                    Idle::IdleRuleSkipped | Idle::TurnOpen { rule_skipped: true } | Idle::Busy { rule_skipped: true, .. }
+                );
+                (off.map_or(r, |reason| Idle::Busy { reason: reason.to_string(), rule_skipped }), running)
             });
             let track = self.jobs[i].track.entry(key.clone()).or_default();
             let idle = match read {

@@ -77,6 +77,10 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         Agent::ClaudeCode => effective_config_dir(&opts.env, &opts.cwd),
         Agent::OpenCode => None,
     };
+    // FIX-24 diff review round 2, finding 4: bare mode from the environment of this start. `opts.env` is the parent
+    // environment that `Launcher::run` filters into the agent's (`child_env`, zygo-launch launcher.rs); that filter
+    // neither removes nor sets CLAUDE_CODE_SIMPLE (env.rs denylist; the `set` list), so the agent gets this value.
+    let bare_env = kind == Agent::ClaudeCode && simple_mode(opts.env.get("CLAUDE_CODE_SIMPLE"));
     // The config dir of the printed resume command (AU61, PW16).
     let shown_dir = config_dir.clone();
     // The zygo session of this start, set only when the callback's record write gave a state (D3, D5).
@@ -95,6 +99,7 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         hand: m.hand.clone(),
         pre,
         config_dir,
+        bare_env,
         seen: seen.clone(),
         previous: previous.clone(),
         written: written.clone(),
@@ -171,6 +176,7 @@ struct Callback {
     hand: Option<HandJoin>,
     pre: Option<String>,
     config_dir: Option<PathBuf>,
+    bare_env: bool,
     seen: Arc<Mutex<Option<String>>>,
     previous: Arc<Mutex<Option<MemberRecord>>>,
     written: Arc<Mutex<Option<MemberRecord>>>,
@@ -192,6 +198,7 @@ impl Callback {
             started_at: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()),
             config_dir: self.config_dir.clone(),
             program: recorded,
+            bare_env: self.bare_env,
         };
         let pane = self.pane.clone();
         let launch = self.launch.clone();
@@ -379,6 +386,14 @@ pub(crate) struct Start {
     pub started_at: u64,
     pub config_dir: Option<PathBuf>,
     pub program: PathBuf,
+    /// A Claude Code start whose environment sets CLAUDE_CODE_SIMPLE to a value other than empty and `0`: bare mode,
+    /// as `--bare` sets it (`fixtures/claude-code/help.txt:47-48`), so no member hook runs (FIX-24, AU26).
+    pub bare_env: bool,
+}
+
+/// FIX-24 diff review round 2, finding 4: CLAUDE_CODE_SIMPLE turns bare mode on when it is set, not empty and not `0`.
+fn simple_mode(v: Option<&OsStr>) -> bool {
+    v.is_some_and(|v| !v.is_empty() && v != OsStr::new("0"))
 }
 
 /// The start write (AU92): the AU30-filtered launch with events_off computed from the arguments of this start (W§7.2),
@@ -388,9 +403,13 @@ pub(crate) fn record_start(rec: &mut MemberRecord, launch: &zygo_workspace::stat
     let f = args::filter(launch.kind, &launch.args);
     let mut kept = launch.clone();
     kept.args = f.kept;
-    // FIX-24 D1: from the arguments of this start, before the filter; always computed, so no stale value stays.
-    kept.events_off = args::events_off(launch.kind, &launch.args);
-    if kept != rec.launch {
+    // FIX-24 D1: from the arguments of this start, before the filter, and its environment (round 2, finding 4);
+    // always computed, so no stale value stays.
+    kept.events_off = args::events_off(launch.kind, &launch.args) || s.bare_env;
+    // FIX-24 diff review round 2, finding 2: the D4 compare ignores events_off, which describes the start, not the
+    // saved launch.
+    let same = zygo_workspace::state::Launch { events_off: rec.launch.events_off, ..kept.clone() } == rec.launch;
+    if !same {
         rec.dropped_flags = f.dropped_flags;
     }
     rec.launch = kept;
@@ -782,8 +801,9 @@ pub(crate) fn join(
     if keep {
         // The accepted resume keeps the saved launch (review round 2, finding 6(b)).
         record_start_fields(rec, start);
-        // FIX-24 D1: the saved launch stays; events_off describes the arguments typed for this start.
-        rec.launch.events_off = args::events_off(launch.kind, &launch.args);
+        // FIX-24 D1: the saved launch stays; events_off describes the arguments typed for this start and its
+        // environment (round 2, finding 4).
+        rec.launch.events_off = args::events_off(launch.kind, &launch.args) || start.bare_env;
     } else {
         record_start(rec, launch, start);
     }
@@ -978,6 +998,7 @@ mod tests {
             started_at: 7,
             config_dir: Some("/c".into()),
             program: "/b/claude".into(),
+            bare_env: false,
         };
         record_start(&mut r, &l, &start("S1"));
         assert_eq!(
@@ -1269,7 +1290,14 @@ mod tests {
     }
 
     fn start() -> Start {
-        Start { zygo_session: "S1".into(), agent_session: Some("U1".into()), started_at: 7, config_dir: None, program: "/b/claude".into() }
+        Start {
+            zygo_session: "S1".into(),
+            agent_session: Some("U1".into()),
+            started_at: 7,
+            config_dir: None,
+            program: "/b/claude".into(),
+            bare_env: false,
+        }
     }
 
     #[test]
@@ -1456,6 +1484,45 @@ mod tests {
             let want_restart = matches!(a.first().copied(), Some("--pure") | Some("--bare"));
             assert_eq!(r.launch.events_off, want_restart, "ws run start of {kind:?} {a:?}");
         }
+    }
+
+    #[test] // FIX-24 diff review round 2, finding 4: both start writes take bare mode from the start's environment
+    fn start_writes_take_bare_mode_from_the_environment() {
+        let bare = Start { bare_env: true, ..start() };
+        let mut r = MemberRecord::new(Agent::ClaudeCode);
+        record_start(&mut r, &Launch::new(Agent::ClaudeCode), &bare);
+        assert!(r.launch.events_off, "record_start");
+        assert!(r.launch.args.is_empty());
+        record_start(&mut r, &Launch::new(Agent::ClaudeCode), &start());
+        assert!(!r.launch.events_off, "computed again without it");
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let mut w = ws_with(&[(k, rec(MemberState::Resumable, Some("abc")))]);
+        let mut hand = Launch::new(Agent::ClaudeCode);
+        hand.args = vec!["--resume".into(), "abc".into()];
+        join(&mut w, k, &hand, &Start { agent_session: None, ..bare }, Some("abc"), &none).unwrap();
+        assert!(w.members[k].launch.events_off, "join, accepted resume");
+    }
+
+    #[test] // FIX-24 diff review round 2, finding 2: the D4 compare ignores events_off, so dropped_flags stays
+    fn dropped_flags_survive_an_events_off_change() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let mut saved = rec(MemberState::Resumable, Some("abc"));
+        saved.launch.args = vec!["--model".into(), "m".into()];
+        saved.dropped_flags = vec!["--agents".into()];
+        let mut w = ws_with(&[(k, saved)]);
+        let mut hand = Launch::new(Agent::ClaudeCode);
+        hand.args = vec!["--bare".into(), "--resume".into(), "abc".into()];
+        join(&mut w, k, &hand, &Start { agent_session: None, ..start() }, Some("abc"), &none).unwrap();
+        assert!(w.members[k].launch.events_off, "the hand resume typed --bare");
+        assert_eq!(w.members[k].dropped_flags, ["--agents"], "after the hand resume");
+        // The `ws run` start of the saved launch (no --bare in it).
+        let r = w.members.get_mut(k).unwrap();
+        let l = r.launch.clone();
+        record_start(r, &l, &start());
+        assert!(!r.launch.events_off, "the ws run start has no --bare");
+        assert_eq!(r.dropped_flags, ["--agents"], "after the ws run start");
     }
 
     #[test] // FIX-24 D1, D5: a value that another zygo left is computed again at the start
