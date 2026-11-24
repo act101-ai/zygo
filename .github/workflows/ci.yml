@@ -1,7 +1,30 @@
 name: ci
+# Docs-only and README-only changes run no CI. Branch pushes run CI through their pull request only.
 on:
   push:
+    branches: [main]
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!LICENSE'
+      - '!README.md'
+      # Read by the tests (cargo test), so they still run CI:
+      - 'docs/passthrough.md'
+      - 'docs/premises.md'
+      - 'docs/specs/2026-11-18-zygo-design.md'
   pull_request:
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!LICENSE'
+      - '!README.md'
+      # Read by the tests (cargo test), so they still run CI:
+      - 'docs/passthrough.md'
+      - 'docs/premises.md'
+      - 'docs/specs/2026-11-18-zygo-design.md'
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
