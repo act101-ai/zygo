@@ -32,7 +32,8 @@ fn go(top: &dyn Fn() -> Option<PathBuf>, commits: Commits, args: &[&str]) -> Ran
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     let mut input = std::io::empty();
     let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty: false };
-    let code = run_in(&Repo { top, commits: &list }, &|_| None, &args, &mut io);
+    let repo = Repo { top, commits: &list, head: &|_| None, today: &String::new, usage_db: Path::new("") };
+    let code = run_in(&repo, &|_| None, &args, &mut io);
     Ran { code, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
 }
 fn run(top: &Path, args: &[&str]) -> Ran { go(&|| Some(top.to_path_buf()), Ok(vec![]), args) }
@@ -97,7 +98,7 @@ fn trailer_commits_match_the_trailer_line_newest_first() { // D§6.7
     assert_eq!(trailer_commits(r, &id(2), 50), Ok(vec![pair(&h3, "three")]));
 }
 
-const USAGE: &str = "zygo decision: usage: zygo decision ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check\n";
+const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check\n";
 
 #[test] fn outside_a_repository_exits_2() { // D§10.1
     for a in [&["ls"][..], &["show", &id(1)], &["deps", &id(1)], &["check"]] {

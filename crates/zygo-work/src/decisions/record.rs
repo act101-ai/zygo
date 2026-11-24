@@ -215,7 +215,7 @@ impl Keys<'_> {
     }
 }
 
-fn valid_hex(s: &str) -> bool {
+pub(crate) fn valid_hex(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
@@ -224,7 +224,7 @@ fn valid_date(s: &str) -> bool {
 }
 
 /// D§10.2: `^[a-z][a-z0-9-]{0,31}$`.
-fn valid_role(s: &str) -> bool {
+pub(crate) fn valid_role(s: &str) -> bool {
     (1..=32).contains(&s.len())
         && s.starts_with(|c: char| c.is_ascii_lowercase())
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')

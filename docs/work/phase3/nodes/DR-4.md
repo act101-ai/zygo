@@ -129,7 +129,7 @@ fn session(sd: &Path, roles: &[&str]) // SessionView { session: "s1", legend: ro
 fn rows(db: &Path, rows: &[(i64, &str, &str, &str)]) // Store::open, insert_request(RequestRow { ts, session, role_served: Some, model, ..Default })
 ```
 
-- [ ] **1. Test: the template is malformed until filled, then valid (D§17 #1).** `new_writes_a_template_that_check_refuses_until_filled`:
+- [x] **1. Test: the template is malformed until filled, then valid (D§17 #1).** `new_writes_a_template_that_check_refuses_until_filled`:
   ```rust
   let r = new(top, &[]);                                   // tempdir with no docs/
   assert_eq!((r.code, r.err.as_str()), (0, ""));
@@ -139,13 +139,13 @@ fn rows(db: &Path, rows: &[(i64, &str, &str, &str)]) // Store::open, insert_requ
   assert!(matches!(name_kind(&name), NameKind::Record(_)));
   ```
   Assert `run(top, ["check"])` gives `(1, "<name>: missing key reverse_cost\n<name>: empty section ## Choice\n<name>: empty section ## Alternatives rejected\n<name>: empty section ## Evidence\n<name>: empty section ## Cost to reverse\n")`. Then `fill(&p)` and assert `check` gives `(0, "", "")`. `read_dir(top).unwrap().valid[0]` equals: kind `Decision`, status `Open`, class `None`, title `T`, unit `phase-3:N12`, round 1, role `code`, model `unknown`, commit `C40`, date `2026-11-24`, `depends_on` empty, `reverse_cost` `low`, `supersedes` `None`, every operator key `None`.
-- [ ] **2. Test: finding kinds get `## Finding`; `--class`, `--depends-on`, `--supersedes` and a quoted title are written.** `new_fills_finding_class_links_and_title`. Put records 1 and 2 with `put`. Run `go(top, &|_| None, &top.join("none.db"), &["new", "--kind", "open-finding", "--title", "a \"b\" \\ c", "--unit", "phase-3:N12", "--round", "1", "--role", "code", "--class", "security", "--depends-on", &id(1), "--depends-on", &id(2), "--supersedes", &id(1)])`. Assert `check` lists `<name>: missing key reverse_cost` then `<name>: empty section ## Finding` first among the sections. After `fill`, the record parsed by `parse_record` has kind `OpenFinding`, class `Security`, `depends_on == [id(1), id(2)]`, `supersedes == Some(id(1))`, title `a "b" \ c`. The record's text contains `<!-- zygo: fill --> What stays open.` before the fill.
-- [ ] **3. Test: two linked checkouts (D§17 #2).** `two_linked_checkouts_get_different_ids_and_merge_cleanly`. Steps: `git init -q` in `a`; commit `--allow-empty`; `git worktree add -q ../b -b side`; `new(a)` and `new(b)` (each `go` with its own `top`); `git add . && git commit -q -m r` in each; in `a`, `git merge -q --no-edit side` succeeds (the test `git` helper asserts the exit status). Assert the two printed file names differ and `a/docs/decisions` holds both.
-- [ ] **4. Test: `model` (D§10.2).** `model_is_unknown_outside_a_session_and_the_newest_row_inside`.
+- [x] **2. Test: finding kinds get `## Finding`; `--class`, `--depends-on`, `--supersedes` and a quoted title are written.** `new_fills_finding_class_links_and_title`. Put records 1 and 2 with `put`. Run `go(top, &|_| None, &top.join("none.db"), &["new", "--kind", "open-finding", "--title", "a \"b\" \\ c", "--unit", "phase-3:N12", "--round", "1", "--role", "code", "--class", "security", "--depends-on", &id(1), "--depends-on", &id(2), "--supersedes", &id(1)])`. Assert `check` lists `<name>: missing key reverse_cost` then `<name>: empty section ## Finding` first among the sections. After `fill`, the record parsed by `parse_record` has kind `OpenFinding`, class `Security`, `depends_on == [id(1), id(2)]`, `supersedes == Some(id(1))`, title `a "b" \ c`. The record's text contains `<!-- zygo: fill --> What stays open.` before the fill.
+- [x] **3. Test: two linked checkouts (D§17 #2).** `two_linked_checkouts_get_different_ids_and_merge_cleanly`. Steps: `git init -q` in `a`; commit `--allow-empty`; `git worktree add -q ../b -b side`; `new(a)` and `new(b)` (each `go` with its own `top`); `git add . && git commit -q -m r` in each; in `a`, `git merge -q --no-edit side` succeeds (the test `git` helper asserts the exit status). Assert the two printed file names differ and `a/docs/decisions` holds both.
+- [x] **4. Test: `model` (D§10.2).** `model_is_unknown_outside_a_session_and_the_newest_row_inside`.
   - Setup: `session(sd, &["code", "review"])`; `rows(db, &[(1,"s1","code","m-old"), (2,"s1","code","m-new"), (3,"s1","review","m-rev"), (5,"s2","code","m-other")])`; `env = |k| (k == "ZYGO_SESSION_DIR").then(|| sd.into())`.
   - Assert: `--role code` writes `model = "m-new"`; `--role lead` writes `model = "unknown"` (no row; this is also the serve-mode case); the same `--role code` with `env = |_| None` writes `model = "unknown"`; a session whose `db` path does not exist writes `unknown`.
   - Read `model` with `read_dir` after `fill`.
-- [ ] **5. Test: argument refusals (D§10.2).** `argument_refusals_exit_2_and_write_nothing`.
+- [x] **5. Test: argument refusals (D§10.2).** `argument_refusals_exit_2_and_write_nothing`.
   - Table of `(args, code, err)`:
     - `--unit nounit` → `(2, "zygo decision new: --unit nounit is not a unit id\n")`;
     - `--round 0` → `(2, "zygo decision new: --round must be 1 or more\n")`;
@@ -155,25 +155,25 @@ fn rows(db: &Path, rows: &[(i64, &str, &str, &str)]) // Store::open, insert_requ
     - in a session with legend `[code]`, `--role review` → `(2, "zygo decision new: --role review is not a role of this session\n")`, and `--role lead` → exit 0;
     - 65 × `--depends-on id(1)` → `(2, "zygo decision new: more than 64 --depends-on\n")`.
   - For each refused case, assert `out` is empty and `top.join("docs")` does not exist.
-- [ ] **6. Test: ids that are not valid records (D§10.2).** `depends_on_and_supersedes_must_name_valid_records`. Put a valid record `id(1)` and a malformed `md(2)` (`"x"`). For each of `--depends-on id(9)`, `--depends-on nope`, `--depends-on id(2)` and `--supersedes id(9)`, assert `(1, "", "zygo decision: <id> is not a valid record\n")`, where `<id>` is the argument as given. `fs::read_dir(top/docs/decisions)` still holds only `md(1)` and `md(2)`.
-- [ ] **7. Test: directory and write failures (D§6.8, D§10.2, review focus 44).**
+- [x] **6. Test: ids that are not valid records (D§10.2).** `depends_on_and_supersedes_must_name_valid_records`. Put a valid record `id(1)` and a malformed `md(2)` (`"x"`). For each of `--depends-on id(9)`, `--depends-on nope`, `--depends-on id(2)` and `--supersedes id(9)`, assert `(1, "", "zygo decision: <id> is not a valid record\n")`, where `<id>` is the argument as given. `fs::read_dir(top/docs/decisions)` still holds only `md(1)` and `md(2)`.
+- [x] **7. Test: directory and write failures (D§6.8, D§10.2, review focus 44).**
   - `docs_decisions_a_file_exits_1`: `docs/decisions` is a regular file, so `new` gives `(1, "", "zygo decision: docs/decisions is not a directory\n")`.
   - `#[cfg(unix)] a_write_failure_exits_1_and_a_left_tmp_is_ignored`: skip with `eprintln!` when `libc::geteuid() == 0`. Make `docs/decisions` with mode `0o500`. `new` exits 1, with `err` starting `zygo decision: cannot write ` and `out` empty. The directory holds no `.md` file. Restore `0o700`. Then write `format!("{}.tmp", id(3))` with text `"+++\npartial"`, as a failed rename leaves it. `check` gives `(0, "", "")` and `ls` gives `(0, "", "")`.
-- [ ] **8. Test (ignored): the binary arm with real git.** `#[ignore = "timing: git calls run under the 2 s production bound (BOUND)"] binary_new_writes_head`. In a `git init` repo with one commit, run `CARGO_BIN_EXE_zygo decision new …BASE[1..]` with `common::scratch_home`, `.env_remove("ZYGO_SESSION_DIR")` and `GIT_CEILING_DIRECTORIES`. Assert exit 0 and that stdout names a file that exists. After `fill`, the record parses with `commit == git rev-parse HEAD` and `model == "unknown"`.
-- [ ] **9. Run the tests and see them fail.** `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test decision_new` fails to compile: `zygo_work::decisions::new` and the `Repo` fields do not exist yet.
-- [ ] **10. Implement `decisions/new.rs`** with the signatures above. Add `pub mod new;` to `decisions/mod.rs`. In `record.rs`, make `valid_hex` and `valid_role` `pub(crate)`. `create` calls the private `fn template(id: &str, a: &NewArgs, model: &str, commit: &str, date: &str) -> String`, which writes the text fixed above.
-- [ ] **11. Implement the `new` arm in `cmd/decision.rs`.**
+- [x] **8. Test (ignored): the binary arm with real git.** `#[ignore = "timing: git calls run under the 2 s production bound (BOUND)"] binary_new_writes_head`. In a `git init` repo with one commit, run `CARGO_BIN_EXE_zygo decision new …BASE[1..]` with `common::scratch_home`, `.env_remove("ZYGO_SESSION_DIR")` and `GIT_CEILING_DIRECTORIES`. Assert exit 0 and that stdout names a file that exists. After `fill`, the record parses with `commit == git rev-parse HEAD` and `model == "unknown"`.
+- [x] **9. Run the tests and see them fail.** `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test decision_new` fails to compile: `zygo_work::decisions::new` and the `Repo` fields do not exist yet.
+- [x] **10. Implement `decisions/new.rs`** with the signatures above. Add `pub mod new;` to `decisions/mod.rs`. In `record.rs`, make `valid_hex` and `valid_role` `pub(crate)`. `create` calls the private `fn template(id: &str, a: &NewArgs, model: &str, commit: &str, date: &str) -> String`, which writes the text fixed above.
+- [x] **11. Implement the `new` arm in `cmd/decision.rs`.**
   - Add `Sub::New(NewArgs)` and `fn parse_new(rest: &[String]) -> Option<NewArgs>`. In `parse_new`, a later flag replaces an earlier one; `--depends-on` appends; `--class` defaults to `Class::None`.
   - Add the `Repo` fields, the `check_args` call before `top()`, `fn new(repo, env, top, set, a, io) -> i32` in the order fixed above, and the new `USAGE`.
   - Rename `_env` to `env` in `run_in`.
   - In `run_with`, pass `head: &new::head, today: &new::today_utc, usage_db: &Paths::from_env().usage_db`.
   - In `decision_cli.rs`, add `head: &|_| None, today: &String::new, usage_db: Path::new("")` to the `go` literal and replace its `USAGE` constant with the new line.
-- [ ] **12. Run the tests and see them pass.**
+- [x] **12. Run the tests and see them pass.**
   - `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test decision_new` → all pass; 1 ignored.
   - `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test decision_cli` → all pass.
   - `env -u ZYGO_SESSION_DIR cargo test -p zygo-work --locked --test decision_record --test decision_set --test decision_transition` → all pass.
   - `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test decision_new -- --ignored binary_new_writes_head` → pass. This runs on demand only; it is not part of CI.
-- [ ] **13. Commit** with the message `feat(work): decision new (DR-4)` and the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>`, each on its own line at the end.
+- [x] **13. Commit** with the message `feat(work): decision new (DR-4)` and the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>`, each on its own line at the end.
 
 ### Author's checks
 
