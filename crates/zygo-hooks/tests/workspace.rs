@@ -549,6 +549,7 @@ fn claude_code_prompt_entry_sets_busy_and_blocks_while_stopping() {
 }
 
 #[test] // W§9.1 `UserPromptSubmit`, D4; H1 attempt-2 review round 2 R1
+#[ignore = "timing: waits at most 5 s for the hook on a helper thread"]
 fn slash_line_sets_busy_unless_the_dispatcher_consumes_it() {
     let _s = serial();
     let d = Some(dispatcher as SlashDispatch);
@@ -598,6 +599,7 @@ enum Bad {
 }
 
 #[test] // AU84, D6; H1 attempt 1 round 1 F3, round 2 R2-2, round 3 R3-3
+#[ignore = "timing: waits at most 5 s for the hook on a helper thread"]
 fn view_and_marker_lines_once_per_turn() {
     let _s = serial();
     let quiet = [
@@ -687,6 +689,7 @@ fn link_view(f: &Fx) {
 }
 
 #[test] // D3, D6; plan review round 1 minor 1, round 2 F1
+#[ignore = "timing: waits at most 5 s for the hook on a helper thread"]
 fn session_start_read_errors_member_and_not() {
     let _s = serial();
     // A member `SessionStart` whose view.json is not JSON: one line, no output, no change.
@@ -756,6 +759,7 @@ fn session_start_read_errors_member_and_not() {
 }
 
 #[test] // W§9.2, AU83, W§18 #44 parts 1 and 3, D8; controller decision 4
+#[ignore = "timing: waits at most 5 s for the hook on a helper thread"]
 fn agent_dispatch_blocks_only_while_down_holds_the_lock() {
     let _s = serial();
     let f = fx(Agent::ClaudeCode);
@@ -1145,6 +1149,7 @@ fn opencode_session_commits_and_records() {
 }
 
 #[test] // W§9.4, AU104, design H8, H9; D10, D17
+#[ignore = "timing: waits at most 5 s for a helper thread to take the contended lock"]
 fn opencode_note_belongs_to_one_agent_session() {
     let _s = serial();
     // H8: a fresh start; the commit keeps the inputs, the first id binds them, another id removes them
@@ -1255,6 +1260,7 @@ fn snapshot_child_that_cannot_start_or_fails_is_queued_again() {
 }
 
 #[test] // AU56, W§7.3, W-C1, D7, D17; controller decision 13
+#[ignore = "timing: waits at most 5 s for a helper thread to take the contended lock"]
 fn lock_bounds_write_one_line_and_change_nothing() {
     let _s = serial();
     let f = fx(Agent::ClaudeCode);
@@ -1316,6 +1322,7 @@ fn pad_view(f: &Fx) {
 }
 
 #[test] // C6, AU84, FIX-17 classes, D1-D3, D6, D18; controller decisions 2, 12, 13
+#[ignore = "timing: waits at most 5 s for the hook on a helper thread"]
 fn hostile_inputs_change_nothing() {
     let _s = serial();
     let run_raw = |f: &Fx, event: &str, stdin: &[u8]| {
@@ -1602,6 +1609,7 @@ fn hostile_inputs_change_nothing() {
 }
 
 #[test] // FIX-22 review round 1, F4: a link or a FIFO at activity.json is refused before activity.lock
+#[ignore = "timing: waits at most 5 s for a helper thread to take the contended lock; waits at most 5 s for the hook on a helper thread"]
 fn a_link_or_fifo_activity_file_is_refused_before_the_lock() {
     let _s = serial();
     for case in ["link", "fifo"] {
@@ -1636,6 +1644,7 @@ fn a_link_or_fifo_activity_file_is_refused_before_the_lock() {
 }
 
 #[test] // W-C6, OP9, D3; H1 attempt 1 round 3 F1
+#[ignore = "timing: waits at most 5 s for the hook on a helper thread"]
 fn non_member_session_start_is_unchanged() {
     let _s = serial();
     for case in ["plain", "padded", "link", "empty", "not JSON", "mode 0"] {

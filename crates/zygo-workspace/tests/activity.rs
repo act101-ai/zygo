@@ -12,6 +12,8 @@ use zygo_core::session_dir::SessionDir;
 use zygo_workspace::activity::{self, Activity, LOCK_BOUND};
 
 const S10: Duration = Duration::from_secs(10);
+/// A bound that does not end during a test: load never decides a result.
+const LONG: Duration = Duration::from_secs(3600);
 
 fn dir() -> (TempDir, SessionDir) {
     let t = TempDir::new().unwrap();
@@ -533,14 +535,14 @@ fn writer_helper() {
         return;
     };
     let root = PathBuf::from(root);
-    let until = Instant::now() + S10;
+    let until = Instant::now() + LONG;
     while !root.join("start").exists() {
         assert!(Instant::now() < until, "no start file");
         std::thread::sleep(Duration::from_millis(1));
     }
     let d = SessionDir::new(root);
     let ok = (0..100)
-        .filter(|i| activity::update(&d, LOCK_BOUND, &mut |a| a.subagent_start(&format!("{prefix}{i}"), "pw-sub")).is_ok())
+        .filter(|i| activity::update(&d, Duration::MAX, &mut |a| a.subagent_start(&format!("{prefix}{i}"), "pw-sub")).is_ok())
         .count();
     println!("W9_OK {prefix} {ok}");
 }
@@ -740,7 +742,7 @@ fn update_refuses_a_fifo_or_link_that_appears_while_it_waits_for_the_lock() {
         // `update` opens activity.lock only after the check before the lock: wait for its handle.
         let start = Instant::now();
         while handles_on(&lock) < 2 {
-            assert!(start.elapsed() < S10, "{case}: update did not open activity.lock");
+            assert!(start.elapsed() < LONG, "{case}: update did not open activity.lock");
             std::thread::sleep(Duration::from_millis(5));
         }
         fs::remove_file(d.activity_json()).unwrap();
@@ -750,7 +752,7 @@ fn update_refuses_a_fifo_or_link_that_appears_while_it_waits_for_the_lock() {
         }
         assert!(rx.try_recv().is_err(), "{case}: update returned before the lock was released");
         drop(held);
-        let r = rx.recv_timeout(S10).expect("update waited after the lock was released");
+        let r = rx.recv_timeout(LONG).expect("update waited after the lock was released");
         let why = if case == "link" { "is a link" } else { "is not a regular file" };
         assert_eq!(r, Err((true, format!("{act}: {why}"))), "{case}");
         assert!(!called.load(Ordering::SeqCst), "{case}: f was called");

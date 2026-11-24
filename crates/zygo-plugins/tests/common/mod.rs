@@ -187,10 +187,10 @@ pub fn redirect_git(fx: &Fx, repo: &Path) -> PathBuf {
     script
 }
 
-pub fn far() -> std::time::Instant { std::time::Instant::now() + std::time::Duration::from_secs(60) }
+pub fn far() -> std::time::Instant { std::time::Instant::now() + std::time::Duration::from_secs(3600) }
 
 /// A budget no loaded machine reaches; for tests that do not test a deadline.
-pub const WIDE_TOTAL: Duration = Duration::from_secs(120);
+pub const WIDE_TOTAL: Duration = Duration::from_secs(3600);
 
 /// `SyncOpts` whose git calls read an empty global config file (never the developer's).
 pub fn opts(fx: &Fx) -> zygo_plugins::sync::SyncOpts {

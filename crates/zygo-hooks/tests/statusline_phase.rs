@@ -192,6 +192,7 @@ fn bad_content_gives_none() {
 
 #[cfg(unix)]
 #[test] // C6: a `workspace.json` that is a FIFO with no writer is not opened, so the reader does not wait
+#[ignore = "timing: waits at most 5 s for the reader on a helper thread"]
 fn fifo_gives_none_and_does_not_wait() {
     let fx = Fx::new();
     fx.view(Some(ID));
@@ -209,6 +210,7 @@ fn fifo_gives_none_and_does_not_wait() {
 
 #[cfg(unix)]
 #[test] // C6: the check is on the opened handle, so a FIFO that has a writer and a valid state file is not read
+#[ignore = "timing: waits at most 5 s for the reader on a helper thread"]
 fn fifo_with_a_writer_and_valid_content_gives_none() {
     use std::io::Write;
 

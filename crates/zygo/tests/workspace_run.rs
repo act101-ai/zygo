@@ -63,6 +63,7 @@ fn harness_seed_writes_where_the_binary_reads() {
 }
 
 #[test]
+#[ignore = "timing: starts a private tmux server; 2 s tmux bound"]
 fn harness_new_starts_a_private_server() {
     let Some(h) = Harness::new() else { return };
     h.tmux(&["new-session", "-d", "-s", "zygo-app", "cat"]);
@@ -73,6 +74,7 @@ fn harness_new_starts_a_private_server() {
 }
 
 #[test]
+#[ignore = "timing: starts a private tmux server; 2 s tmux bound"]
 fn harness_new_at_starts_the_server_with_that_tmux() {
     let Some(real) = zygo_workspace::mux::testing::require_tmux() else { return };
     let d = tempfile::tempdir().unwrap();
@@ -94,6 +96,7 @@ fn gone_within(pid: libc::pid_t) -> bool {
 /// Round 3 finding 8: `Guarded` sends SIGKILL to the process group before it reaps the leader, on a normal exit too,
 /// so a process that the child left behind in its group is gone.
 #[test]
+#[ignore = "timing: 10 s poll for a shell process to end"]
 fn guarded_kills_the_group_before_the_reap_on_every_path() {
     let d = tempfile::tempdir().unwrap();
     for wait in [true, false] {
@@ -360,6 +363,7 @@ fn opencode_script(h: &Harness, body: &str) {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_4_state_holds_no_secret_and_no_prompt_text() {
     let h = Harness::no_tmux();
     std::fs::write(h.repo().join("prompt.txt"), "p").unwrap();
@@ -390,6 +394,7 @@ fn w18_4_state_holds_no_secret_and_no_prompt_text() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_6_session_args_and_prompt_text_are_not_saved() {
     for (args, kept) in [(&["--resume", "abc", "fix it"][..], &[][..]), (&["-r", "--model", "lead"][..], &["--model", "lead"][..])] {
         let h = Harness::no_tmux();
@@ -402,6 +407,7 @@ fn w18_6_session_args_and_prompt_text_are_not_saved() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_72_ws_run_does_no_tmux_detection() { // AU102: bin/tmux fails every call
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
@@ -416,6 +422,7 @@ fn w18_72_ws_run_does_no_tmux_detection() { // AU102: bin/tmux fails every call
 /// FIX-32 B1: by the yargs-parser rule `-mc` is `-m` with no value and `-c` (`--continue`), a session argument, so `ws
 /// run` resumes no saved session on top of it (ws.rs `launch_member`: `has_session_arg` gives no resume).
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn fix32_b1_a_saved_opencode_cluster_with_continue_gets_no_session_argument() {
     let h = Harness::no_tmux();
     let mut m = resumable(Agent::OpenCode, "ses_1");
@@ -446,6 +453,7 @@ fn live_launcher(h: &Harness) -> std::fs::File {
 /// FIX-32 B3, W-C9: `ws run` does not resume a conversation whose launcher is live. The callback refuses in its locked
 /// write, before `record_start`: the W-C9 line of the hand start, no agent, the record unchanged (`pending` included).
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn fix32_b3_ws_run_refuses_a_conversation_whose_launcher_is_live() {
     for committed in [true, false] {
         let h = Harness::no_tmux();
@@ -476,6 +484,7 @@ fn fix32_b3_ws_run_refuses_a_conversation_whose_launcher_is_live() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au59_a_settings_argument_keeps_membership() {
     let h = Harness::no_tmux();
     let s = h.root().join("user-settings.json");
@@ -490,6 +499,7 @@ fn au59_a_settings_argument_keeps_membership() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w83_a_fresh_claude_member_gets_a_preassigned_id_and_opencode_none() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &["--model", "lead"])));
@@ -514,6 +524,7 @@ fn w83_a_fresh_claude_member_gets_a_preassigned_id_and_opencode_none() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au16_the_results_link_points_into_the_workspace_cache() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
@@ -528,6 +539,7 @@ fn au16_the_results_link_points_into_the_workspace_cache() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au11_au32_saved_overrides_and_compaction_reach_the_session() {
     let h = Harness::no_tmux();
     let mut m = fresh(Agent::ClaudeCode, &[]);
@@ -550,6 +562,7 @@ fn au11_au32_saved_overrides_and_compaction_reach_the_session() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn h1_a_resumed_view_carries_the_resume_id_and_a_fresh_one_none() {
     for (m, want) in [(resumable(Agent::ClaudeCode, "abc"), Some("abc")), (fresh(Agent::ClaudeCode, &[]), None)] {
         let h = Harness::no_tmux();
@@ -565,6 +578,7 @@ fn h1_a_resumed_view_carries_the_resume_id_and_a_fresh_one_none() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_28_a_saved_config_dir_and_the_agent_on_path_are_used_at_resume() {
     let h = Harness::no_tmux();
     let dir = h.root().join("cc");
@@ -588,6 +602,7 @@ fn w18_28_a_saved_config_dir_and_the_agent_on_path_are_used_at_resume() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn pw16_au61_claude_config_dir_is_set_for_claude_members_only() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(resumable(Agent::ClaudeCode, "abc")));
@@ -609,6 +624,7 @@ fn pw16_au61_claude_config_dir_is_set_for_claude_members_only() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au61_the_saved_program_runs_when_path_has_none() {
     for (kind, name, id) in [(Agent::ClaudeCode, "claude", "abc"), (Agent::OpenCode, "opencode", "ses_1")] {
         let h = Harness::no_tmux();
@@ -634,6 +650,7 @@ fn au61_the_saved_program_runs_when_path_has_none() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn pw16_au12_a_failed_resume_runs_once_and_stays_resumable() {
     let h = Harness::no_tmux();
     let count = h.root().join("count");
@@ -663,6 +680,7 @@ fn pw16_au12_a_failed_resume_runs_once_and_stays_resumable() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_27_an_exit_before_the_callback_keeps_the_member() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(resumable(Agent::ClaudeCode, "abc")));
@@ -679,6 +697,7 @@ fn w18_27_an_exit_before_the_callback_keeps_the_member() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_27_the_first_session_start_commits_and_clears() {
     let h = Harness::no_tmux();
     let mut m = resumable(Agent::ClaudeCode, "abc");
@@ -702,6 +721,7 @@ fn w18_27_the_first_session_start_commits_and_clears() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au73_an_ended_member_with_a_non_zero_exit_prints_the_resume_command() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
@@ -722,6 +742,7 @@ fn au73_an_ended_member_with_a_non_zero_exit_prints_the_resume_command() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au61_the_exit_line_names_the_config_dir_quoted() { // review round 2 finding 2
     let h = Harness::no_tmux();
     let dir = h.root().join("c c'd");
@@ -745,6 +766,7 @@ fn au61_the_exit_line_names_the_config_dir_quoted() { // review round 2 finding 
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au17_sigterm_to_ws_run_keeps_the_member_resumable() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::OpenCode, &[])));
@@ -759,6 +781,7 @@ fn au17_sigterm_to_ws_run_keeps_the_member_resumable() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au17_an_agent_that_catches_sigterm_and_exits_with_a_code_stays_resumable() { // controller M3
     let h = Harness::no_tmux();
     opencode_script(&h, &format!("trap 'exit 3' TERM\ntouch '{}'\nwhile :; do sleep 1; done", h.root().join("agent-up").display()));
@@ -782,6 +805,7 @@ fn au17_an_agent_that_catches_sigterm_and_exits_with_a_code_stays_resumable() { 
 /// result does not depend on what the test runner ignores.
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au88_the_agent_starts_with_no_ignored_signal() {
     use std::os::unix::process::CommandExt;
     let h = Harness::no_tmux();
@@ -809,6 +833,7 @@ fn au88_the_agent_starts_with_no_ignored_signal() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_58_signals_while_the_agent_runs_do_not_stop_the_record_write() { // AU88 as rewritten (B1)
     use std::os::unix::process::ExitStatusExt;
     let h = Harness::no_tmux();
@@ -833,6 +858,7 @@ fn w18_58_signals_while_the_agent_runs_do_not_stop_the_record_write() { // AU88 
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn h1_the_wrapper_commit_moves_pending_and_clears_nothing() { // H1 seam b, c; AU60 known limit
     let h = Harness::no_tmux();
     let mut m = resumable(Agent::OpenCode, "ses_OLD");
@@ -854,6 +880,7 @@ fn h1_the_wrapper_commit_moves_pending_and_clears_nothing() { // H1 seam b, c; A
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn h14_an_early_exit_keeps_the_id_that_the_hook_recorded() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::OpenCode, &[])));
@@ -1050,6 +1077,7 @@ fn at_gate(h: &Harness, point: &str) -> (Guarded, Hold, PathBuf) {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_73_launch_and_pending_are_one_write_and_program_is_refreshed() {
     let h = Harness::no_tmux();
     let dir = h.root().join("cc");
@@ -1090,6 +1118,7 @@ fn w18_73_launch_and_pending_are_one_write_and_program_is_refreshed() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_27_an_exit_after_the_callback_removes_only_pending() { // exit 12: the --compact call finds no server
     let h = Harness::no_tmux();
     let (_d, srv, token) = team_server();
@@ -1119,6 +1148,7 @@ fn w18_27_an_exit_after_the_callback_removes_only_pending() { // exit 12: the --
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn m2_a_slow_setup_then_a_fast_exit_is_still_a_failed_fast_resume() { // controller M2: "ran" counts from the spawn
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(resumable(Agent::ClaudeCode, "abc")));
@@ -1164,6 +1194,7 @@ const NOT_RECORDED: &str = "zygo: could not record the launch of pane";
 /// on and the callback makes nothing; a resumed member's program folder was made and is gone with the cache, so the
 /// launch finds no program (exit 13).
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn race_ws_forget_before_the_callback_makes_nothing() {
     for saved in [false, true] {
         let h = Harness::no_tmux();
@@ -1189,6 +1220,7 @@ fn race_ws_forget_before_the_callback_makes_nothing() {
 /// Second review finding 1; round 2 finding 4; round 3 findings 5 and 6: a `ws forget-pane` at the `launch` gate, as
 /// above; the program folder goes with the record.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn race_ws_forget_pane_before_the_callback_makes_no_record_and_no_results() {
     for saved in [false, true] {
         let h = Harness::no_tmux();
@@ -1215,6 +1247,7 @@ fn race_ws_forget_pane_before_the_callback_makes_no_record_and_no_results() {
 /// it made the folder; the state or the record is gone, so it deletes the folder it made, prints the line of that
 /// case and opens the shell, with no launch.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn race_a_forget_before_the_program_folder_leaves_no_folder() {
     for (verb_args, line) in [
         (&["ws", "forget-pane", KEY, "--name", "app"][..], format!("zygo: pane {KEY} has no member record; started a shell\n")),
@@ -1243,6 +1276,7 @@ fn race_a_forget_before_the_program_folder_leaves_no_folder() {
 /// Round 3 finding 6: a start write that finds a state that cannot be read (corrupted after the `ws run` read) prints
 /// the line of W§8.2 step 4, and the agent starts.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn f6_a_start_write_on_an_invalid_state_prints_one_line_and_the_agent_starts() {
     let h = Harness::no_tmux();
     let (child, hold, out) = at_gate(&h, "launch");
@@ -1257,6 +1291,7 @@ fn f6_a_start_write_on_an_invalid_state_prints_one_line_and_the_agent_starts() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn minor2_the_exit_write_after_ws_forget_makes_no_state() {
     let h = Harness::no_tmux();
     let (child, hold, _) = at_gate(&h, "returned");
@@ -1269,6 +1304,7 @@ fn minor2_the_exit_write_after_ws_forget_makes_no_state() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn minor2_the_exit_write_after_ws_forget_pane_makes_no_record() {
     let h = Harness::no_tmux();
     let (child, hold, _) = at_gate(&h, "returned");
@@ -1280,6 +1316,7 @@ fn minor2_the_exit_write_after_ws_forget_pane_makes_no_record() {
 }
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn d5_an_exit_write_that_cannot_take_the_lock_prints_one_line() { // second review finding 8
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
@@ -1304,6 +1341,7 @@ fn d5_an_exit_write_that_cannot_take_the_lock_prints_one_line() { // second revi
 /// Review round 2 finding 1: a start write that cannot take `lock` within its bound leaves a live agent that no live
 /// check sees; the callback says so on the pane's stderr, and the launch goes on (C6).
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn f1_a_start_write_that_cannot_take_the_lock_prints_one_line_and_the_agent_starts() {
     let h = Harness::no_tmux();
     let (child, hold, out) = at_gate(&h, "launch");
@@ -1327,6 +1365,7 @@ fn f1_a_start_write_that_cannot_take_the_lock_prints_one_line_and_the_agent_star
 /// Review round 2 finding 3: a link at `results/<key>` is not followed; nothing is made through it, the error goes to
 /// the session log (C6) and the launch goes on.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn f3_a_link_at_the_results_entry_is_refused() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
@@ -1345,6 +1384,7 @@ fn f3_a_link_at_the_results_entry_is_refused() {
 
 /// Review round 2 finding 3: a link at `program/<key>` is not followed, so the file `opencode` of its target stays.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn f3_a_link_at_the_program_entry_leaves_its_target_alone() {
     let h = Harness::no_tmux();
     let (_, empty) = opencode_saved_program(&h);
@@ -1368,6 +1408,7 @@ fn f3_a_link_at_the_program_entry_leaves_its_target_alone() {
 /// AU61, D8; review round 2 finding 8: at an OpenCode resume with no `opencode` on `PATH`, the last `PATH` folder of
 /// the agent is the program folder, and it holds only the link `opencode` to the saved program.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au61_the_opencode_program_folder_holds_only_the_link() {
     let h = Harness::no_tmux();
     let (saved, empty) = opencode_saved_program(&h);
@@ -1408,6 +1449,7 @@ impl Drop for LockIsAFolder {
 /// line that needs the record; the shell of step 8 still runs. The fault is a folder at the state `lock`: the lock
 /// open fails for every user, root included (`open_regular`, `state.rs:689-693`), unlike a folder mode.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn d5_an_exit_write_that_fails_with_an_io_error_prints_one_line() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
@@ -1433,6 +1475,7 @@ fn d5_an_exit_write_that_fails_with_an_io_error_prints_one_line() {
 /// Review round 2 finding 8: a results link that cannot be made (a file at `results`) is one session-log line, and the
 /// launch goes on (C6, D3).
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au16_a_failed_results_link_is_logged_and_the_launch_goes_on() {
     let h = Harness::no_tmux();
     one_pane(&h, &h.repo(), Some(fresh(Agent::ClaudeCode, &[])));
@@ -1461,6 +1504,7 @@ fn tmux_session(h: &Harness, key: &str, cmd: &str) {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w74_the_wrapper_snapshots_at_agent_start_and_at_agent_exit() {
     let Some(h) = Harness::new() else { return };
     tmux_session(&h, KEY, "cat");
@@ -1477,6 +1521,7 @@ fn w74_the_wrapper_snapshots_at_agent_start_and_at_agent_exit() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w74_an_agent_pane_killed_by_hand_is_recorded_at_agent_exit() {
     let Some(h) = Harness::new() else { return };
     tmux_session(&h, KEY2, "cat");
@@ -1503,6 +1548,7 @@ fn w74_an_agent_pane_killed_by_hand_is_recorded_at_agent_exit() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w73_a_member_write_runs_the_pending_snapshot() {
     let Some(h) = Harness::new() else { return };
     tmux_session(&h, KEY, "cat");

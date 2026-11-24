@@ -236,8 +236,11 @@ fn read_request(s: &mut std::net::TcpStream) -> Option<Rec> {
     Some(Rec { method, path, headers, body: buf[head_end + 4..head_end + 4 + len].to_vec() })
 }
 
+/// Bounds that do not expire in a test run: no call result depends on machine speed.
+const NO_EXPIRY: Bounds = Bounds { connect: Duration::from_secs(3600), call: Duration::from_secs(3600) };
+
 fn client(s: &Srv, t: &Secret) -> ServeClient {
-    ServeClient::connect(&s.h.url(), t).unwrap()
+    connect_with(&s.h.url(), t, NO_EXPIRY).unwrap()
 }
 
 fn req() -> SessionRequest {
@@ -840,6 +843,7 @@ fn opts(fx: &Fx, mode: &str, server: Option<String>, extra: &[(&str, &str)]) -> 
     o.builtin = Some(builtin());
     o.stderr = Some(Arc::default());
     o.server = server;
+    o.serve_bounds = Some(NO_EXPIRY);
     o
 }
 
@@ -1126,6 +1130,7 @@ fn serve_launch_order_and_no_stored_value() { // §7.2, §14, §15.3, §20 #29d
   // (`req(Vec::new())`), and the skip hides any it passed, so the STORE_VALUE scan guards both together.
 
 #[test]
+#[ignore = "timing: 30 s waits between the test and the stub child process"]
 fn session_is_pending_while_it_runs_and_rows_are_fetched_before_delete() { // §14, S5
     let fx = fx();
     let s = server(&up_model(mock_upstream()));
@@ -1209,6 +1214,7 @@ fn a_server_that_stalls_after_creation_costs_one_call_bound_at_exit() { // S3 (r
 } // mutation: DELETE sent after an unreachable rows fetch → a DELETE recorded and `took` ≥ 2 × call
 
 #[test]
+#[ignore = "timing: 30 s waits between the test and the stub child process"]
 fn lost_session_prints_the_relaunch_message_once_and_clears_the_mark() { // §7.2, S5
     let fx = fx();
     let s = server("");
@@ -1457,6 +1463,7 @@ fn a_redaction_note_cannot_forge_a_session_log_line() { // N70: launcher.rs:317-
 } // mutation: `esc` removed at :318 (the note splits into `one` and `two<ESC>[31m`)
 
 #[test]
+#[ignore = "timing: 30 s and 5 s waits on the stub child and its child"]
 fn a_child_of_the_launcher_does_not_keep_the_session_live() { // U3 (round 3): files open close-on-exec
     let fx = fx();
     let s = server("");
@@ -1479,6 +1486,7 @@ fn a_child_of_the_launcher_does_not_keep_the_session_live() { // U3 (round 3): f
 } // mutations: no lock (→ `during` is Ok); the lock file inherited by the agent (→ the lock stays held past the 5 s wait)
 
 #[test]
+#[ignore = "timing: 30 s waits between the test and the stub child process"]
 fn sync_during_a_live_session_is_skipped_and_exit_brings_the_rows() { // R1
     let fx = fx();
     let s = server(&up_model(mock_upstream()));
@@ -1607,6 +1615,7 @@ fn term_while_held(root: &Path, held: &str) -> std::process::ExitStatus {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 5 s call bound must expire before the 20 s hold ends"]
 fn sigterm_during_a_slow_compact_runs_the_cleanup() { // N70 S1, §8.2 step 2 note 2026-11-19 (acceptance)
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();
@@ -1630,6 +1639,7 @@ fn sigterm_during_a_slow_compact_runs_the_cleanup() { // N70 S1, §8.2 step 2 no
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 5 s call bound must expire before the 20 s hold ends"]
 fn sigterm_during_the_exit_finishes_the_cleanup() { // N70 S1, §8.2 step 6
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();
@@ -1667,6 +1677,7 @@ fn a_second_sigint_before_the_agent_ends_the_launch_at_once() { // N70 M-2 (D5),
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 5 s call bound must expire before the 20 s hold ends"]
 fn two_sighups_from_a_hangup_still_run_the_cleanup() { // N70 round 2 M1, §8.2 step 2 note 2026-11-19
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();

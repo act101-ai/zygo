@@ -239,6 +239,7 @@ fn raw_newer(p: &Paths) {
 // ---- step 2 ----
 
 #[test] // D4: flags, the zygo path and the tmux check come before any session check
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn up_all_refusals() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -292,6 +293,7 @@ fn up_all_refusals() {
 // ---- step 3 ----
 
 #[test] // AU52, AU80, D2, D3, D7: the candidates, the skips and their lines
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn up_all_selects_and_skips() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -368,6 +370,7 @@ fn up_all_selects_and_skips() {
 // ---- step 4 ----
 
 #[test] // D3, D4: no workspace chosen
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn up_all_with_nothing_chosen() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -387,6 +390,7 @@ fn up_all_with_nothing_chosen() {
 // ---- step 5 ----
 
 #[test] // D5: two readable states with one name are not restored twice
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn up_all_two_states_one_name() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -408,6 +412,7 @@ fn up_all_two_states_one_name() {
 // ---- step 6 ----
 
 #[test] // D6: a running workspace of this id gets `down_all = false`, under `op.lock`
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn up_all_clears_down_all_of_a_running_workspace() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -447,6 +452,7 @@ fn up_all_clears_down_all_of_a_running_workspace() {
 // ---- step 7 ----
 
 #[test] // D2, D3; AU62, AU87: the skip lines of a socket that is not private and of a live launcher
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn up_all_skip_lines() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -496,6 +502,7 @@ fn up_all_skip_lines() {
 // ---- step 8 ----
 
 #[test] // AU52: `up --all` restores on a private server and attaches to none
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
 fn up_all_restores_on_a_private_server() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };

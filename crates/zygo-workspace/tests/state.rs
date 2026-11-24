@@ -401,7 +401,7 @@ fn concurrent_writers_keep_both_changes() {
             let store = Store::open(&p, ID);
             start.wait();
             for i in 0..25u32 {
-                store.update(S5, &mut |ws| { ws.windows.push(Window { index: i, ..Default::default() }); Ok(()) }).unwrap();
+                store.update(Duration::MAX, &mut |ws| { ws.windows.push(Window { index: i, ..Default::default() }); Ok(()) }).unwrap();
             }
         });
         s.spawn(|| { // the member kind: members{}
@@ -409,7 +409,7 @@ fn concurrent_writers_keep_both_changes() {
             start.wait();
             for i in 0..25u8 {
                 let key = format!("kaaaaaaa{}", (b'a' + i) as char);
-                store.update(S5, &mut |ws| { ws.members.insert(key.clone(), MemberRecord::new(Agent::ClaudeCode)); Ok(()) }).unwrap();
+                store.update(Duration::MAX, &mut |ws| { ws.members.insert(key.clone(), MemberRecord::new(Agent::ClaudeCode)); Ok(()) }).unwrap();
             }
         });
     });

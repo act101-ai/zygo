@@ -62,9 +62,9 @@ fn repo_with(env: &Env, name: &str, branch: &str, remotes: &[&str]) -> PathBuf {
   git(env, &d, &["commit", "-q", "--allow-empty", "-m", "i"]);
   d
 }
-// Tests not about timing use a 30 s budget so machine load never changes their outcome;
+// Tests not about timing use a one-hour budget, which never expires, so machine load never changes their outcome;
 // only the timeout tests use the production 2 s path (`current::resolve`, `repo::repository_id`).
-const LONG: Duration = Duration::from_secs(30);
+const LONG: Duration = Duration::from_secs(3600);
 fn resolve_noted(d: &Path, c: &WorkConfig) -> (Option<WorkItem>, Vec<String>) { current::resolve_noted_with_budget(d, c, LONG) }
 fn resolve(d: &Path, c: &WorkConfig) -> Option<WorkItem> { resolve_noted(d, c).0 }
 fn set(d: &Path, c: &WorkConfig, a: &str) -> anyhow::Result<WorkItem> { current::set_with_budget(d, c, a, LONG) }

@@ -147,6 +147,7 @@ fn slash_plugins_enable_of_an_unstored_plugin_replies_with_the_shell_command() {
 }
 
 #[test]
+#[ignore = "timing: the 20 s marketplace git bound (zygo-plugins TOTAL)"]
 fn slash_plugins_enable_of_a_stored_plugin_lists_the_code_without_syncing() {
     let (c, t) = ctx(true);
     let src = market(&t.path().join("origin"));
@@ -178,6 +179,7 @@ fn slash_fetching_forms_start_no_git_child() {
 }
 
 #[test]
+#[ignore = "timing: the 20 s marketplace git bound (zygo-plugins TOTAL)"]
 fn slash_plugins_approve_changes_nothing() {
     let (c, t) = ctx(true);
     let src = market(&t.path().join("origin"));

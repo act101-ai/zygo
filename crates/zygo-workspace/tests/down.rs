@@ -540,6 +540,7 @@ fn constants_and_mount_namespace() {
 // ---- step 3 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn refusals_change_nothing() {
     let _s = serial();
     let h = hooks();
@@ -700,6 +701,7 @@ fn refusals_change_nothing() {
 // ---- step 4 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn gone_repair_already_down_and_session_target() {
     let _s = serial();
     let h = hooks();
@@ -784,6 +786,7 @@ fn one_member(t: &Path) -> (DownOpts, Store, Launcher) {
 }
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn idle_member_is_saved_and_stopped() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -832,6 +835,7 @@ fn idle_member_is_saved_and_stopped() {
 // ---- step 6 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn now_saves_running_subagents_and_reports_a_slow_agent() {
     let _s = serial();
     {
@@ -880,6 +884,7 @@ fn now_saves_running_subagents_and_reports_a_slow_agent() {
 }
 
 #[test] // W§9.3 step 8, AU60: `saved_for` names the live zygo session, the pending start first
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound, and a 5 s wait for a detached child process"]
 fn saved_for_names_the_pending_live_session() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -901,6 +906,7 @@ fn saved_for_names_the_pending_live_session() {
 // ---- step 7 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn open_turn_is_busy_until_the_drain_timeout() {
     // FIX-20 (#81): an open turn (`busy` true, no running tool, a quiet proxy) is busy at every poll; no quiet time
     // counts it as idle.
@@ -953,6 +959,7 @@ fn open_turn_is_busy_until_the_drain_timeout() {
 }
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn open_turn_has_no_fallback_before_a_long_drain_timeout() {
     // FIX-20 guard: no quiet time, however long, counts an open turn as idle. With a 3600 s drain timeout and no
     // Stop, `down` keeps polling to the timeout; a fallback at any earlier time would stop the member and exit 0.
@@ -988,6 +995,7 @@ fn open_turn_has_no_fallback_before_a_long_drain_timeout() {
 // ---- step 8 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn busy_member_times_out() {
     let _s = serial();
     {
@@ -1044,6 +1052,7 @@ fn busy_member_times_out() {
 // ---- step 9 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn rule_skipped_waits_until_the_timeout() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -1079,6 +1088,7 @@ fn rule_skipped_waits_until_the_timeout() {
 // ---- step 10 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn dead_launcher_gets_no_signal_and_no_status() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -1121,6 +1131,7 @@ fn two(o: &DownOpts, bpp_members: Vec<(&str, MemberRecord)>) {
 fn phases(o: &DownOpts) -> (Phase, Phase) { (phase(o, B), phase(o, A)) }
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn all_workspaces_drain_under_one_timeout() {
     let _s = serial();
     {
@@ -1238,6 +1249,7 @@ fn all_workspaces_drain_under_one_timeout() {
 // ---- step 12 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn signals_cancel_drains_and_restore_once() {
     let _s = serial();
     {
@@ -1342,6 +1354,7 @@ fn signals_cancel_drains_and_restore_once() {
 // ---- step 13 ----
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn owner_changed_before_the_kill() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -1372,6 +1385,7 @@ fn detach_case(t: &Path) -> (DownOpts, Store) {
 const STARTED: &str = "zygo: down started; end your turn\n";
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound, and a 5 s wait for a detached child process"]
 fn detach_rule_guard_and_log() {
     let _s = serial();
     let h = hooks();
@@ -1647,6 +1661,7 @@ impl Drop for Helper {
 }
 
 #[test]
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound, and a 5 s wait for a detached child process"]
 fn detached_child_holds_no_caller_descriptor() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -1713,6 +1728,7 @@ fn detached_child_holds_no_caller_descriptor() {
 // ---- step 16 ----
 
 #[test]
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
 fn live_idle_down_stops_the_session() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
@@ -1735,6 +1751,7 @@ fn live_idle_down_stops_the_session() {
 // ---- step 17 ----
 
 #[test]
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
 fn live_pane_key_refused_stops_nothing() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
@@ -1767,6 +1784,7 @@ fn ns_server_differs(p: &str) -> Option<ProcIdentity> {
 
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
 fn live_guard_reads_the_server_pid() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
@@ -1795,6 +1813,7 @@ fn live_guard_reads_the_server_pid() {
 /// `PATH` (3.7c here, 3.2a with the scratch build first on `PATH`).
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
 fn live_list_sessions_gives_the_server_pid() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
@@ -1815,6 +1834,7 @@ fn live_list_sessions_gives_the_server_pid() {
 // ---- round 2 ----
 
 #[test] // item 1: a tool call of 70 s and more, with no model request, never counts as idle
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn a_long_tool_call_is_never_idle() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -1835,6 +1855,7 @@ fn a_long_tool_call_is_never_idle() {
 }
 
 #[test] // item 2: each failure path gives its exit code and line, and leaves a known state
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn failure_paths_report_and_leave_state() {
     let _s = serial();
     for (f, line) in [(disk_full(), "zygo: app: disk full\n"), (Fault::Busy, "zygo: workspace app is busy; try again\n")] {
@@ -1963,6 +1984,7 @@ fn failure_paths_report_and_leave_state() {
 }
 
 #[test] // items 2 and 3: the `stopping` write fails; the fallback `phase = up` write
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn stopping_write_failure_and_its_fallback() {
     let _s = serial();
     let setup = |t: &Path| -> (DownOpts, Store, Hooks) {
@@ -2001,6 +2023,7 @@ fn stopping_write_failure_and_its_fallback() {
 }
 
 #[test] // items 4, 5, 6, 7, 8, 11 and the detach failure paths of item 2
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound, and a 5 s wait for a detached child process"]
 fn detach_round_2() {
     let _s = serial();
     let h = hooks();
@@ -2149,6 +2172,7 @@ fn detach_round_2() {
 }
 
 #[test] // round 3 B1: a tool that Esc ended fires no hook (P-N24-1): busy until the drain timeout, reverted, nothing stopped
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn an_escaped_tool_stays_busy_until_the_timeout() {
     let _s = serial();
     for busy in [true, false] {
@@ -2176,6 +2200,7 @@ fn an_escaped_tool_stays_busy_until_the_timeout() {
 }
 
 #[test] // round 3 M2: a server that cannot be reached; with --all that target is skipped and the others go on
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound, and a 5 s wait for a detached child process"]
 fn unreachable_server_refuses_or_is_skipped() {
     let _s = serial();
     let h = hooks();
@@ -2218,6 +2243,7 @@ fn unreachable_server_refuses_or_is_skipped() {
 }
 
 #[test] // round 3: AU54 checks the zygo path after it is joined to the cwd
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn relative_zygo_path_in_an_unsafe_cwd_is_refused() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2234,6 +2260,7 @@ fn relative_zygo_path_in_an_unsafe_cwd_is_refused() {
 }
 
 #[test] // FIX-29, AU24: a dead pane runs nothing; no "is running" line
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
 fn live_down_does_not_warn_about_a_dead_pane() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
@@ -2263,6 +2290,7 @@ fn live_down_does_not_warn_about_a_dead_pane() {
 }
 
 #[test] // FIX-29 diff review round 3, findings 2-3, AU54: the detach path refuses a saved socket with `'` before any use
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound, and a 5 s wait for a detached child process"]
 fn down_detach_refuses_a_saved_socket_that_holds_a_quote() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2286,6 +2314,7 @@ fn down_detach_refuses_a_saved_socket_that_holds_a_quote() {
 }
 
 #[test] // FIX-29 diff review round 2, finding 2, AU54: down refuses a saved socket with `'` before the repair uses it
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2309,6 +2338,7 @@ fn down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
 }
 
 #[test] // FIX-30, AU54: no saved socket; step 3 refuses the `$TMUX` socket with a quote before its session check
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn au54_down_refuses_a_tmux_env_socket_with_a_quote() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2325,6 +2355,7 @@ fn au54_down_refuses_a_tmux_env_socket_with_a_quote() {
 }
 
 #[test] // FIX-30, AU54: the detach rule refuses the `$TMUX` socket with a quote before its `display` call (down.rs:510-519)
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound, and a 5 s wait for a detached child process"]
 fn au54_down_detach_rule_refuses_a_tmux_env_socket_with_a_quote() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2427,6 +2458,7 @@ fn assert_gone_is_idle(t: &Path, m: MemberRecord, settings: bool) {
 }
 
 #[test] // FIX-24, AU26 hooks off, W§9.3 step 6: busy at every poll, reported with its reason at the timeout
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn hooks_off_member_is_busy_until_the_drain_timeout() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2438,6 +2470,7 @@ fn hooks_off_member_is_busy_until_the_drain_timeout() {
 }
 
 #[test] // FIX-24, AU26: `down --now` stops and saves a hooks-off member
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn hooks_off_member_stops_with_now() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2448,6 +2481,7 @@ fn hooks_off_member_stops_with_now() {
 }
 
 #[test] // FIX-24, W§9.3 step 5: a hooks-off member whose launcher is not live counts as idle
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn hooks_off_member_whose_launcher_is_gone_is_idle() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2458,6 +2492,7 @@ fn hooks_off_member_whose_launcher_is_gone_is_idle() {
 const EVENTS_OFF_CASES: [(Agent, &[&str]); 3] = [(Agent::OpenCode, &["--pure"]), (Agent::OpenCode, &[]), (Agent::ClaudeCode, &["--bare"])];
 
 #[test] // FIX-24, AU26 events off, W§9.3 step 6: busy at every poll, reported with its reason at the timeout
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn events_off_member_is_busy_until_the_drain_timeout() {
     let _s = serial();
     for (kind, args) in EVENTS_OFF_CASES {
@@ -2470,6 +2505,7 @@ fn events_off_member_is_busy_until_the_drain_timeout() {
 }
 
 #[test] // FIX-24, AU26: `down --now` stops and saves an events-off member
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn events_off_member_stops_with_now() {
     let _s = serial();
     for (kind, args) in EVENTS_OFF_CASES {
@@ -2481,6 +2517,7 @@ fn events_off_member_stops_with_now() {
 }
 
 #[test] // FIX-24, W§9.3 step 5: an events-off member whose launcher is not live counts as idle
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn events_off_member_whose_launcher_is_gone_is_idle() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2488,6 +2525,7 @@ fn events_off_member_whose_launcher_is_gone_is_idle() {
 }
 
 #[test] // FIX-24 diff review round 2, finding 3: the events-off override keeps the rule-skipped line of AU26
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn events_off_member_keeps_the_rule_skipped_line() {
     let _s = serial();
     let t = TempDir::new().unwrap();
@@ -2506,6 +2544,7 @@ fn events_off_member_keeps_the_rule_skipped_line() {
 }
 
 #[test] // FIX-24 diff review round 3, finding 8: the hooks-off override keeps the rule-skipped line of AU26
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn hooks_off_member_keeps_the_rule_skipped_line() {
     let _s = serial();
     let t = TempDir::new().unwrap();

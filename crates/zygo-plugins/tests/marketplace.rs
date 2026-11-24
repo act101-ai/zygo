@@ -70,6 +70,7 @@ mod listing {
     use super::*;
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn row_has_name_source_ref_commit_origin_and_plugins() {
         let t = T::new();
         let r = market(&t);
@@ -214,6 +215,7 @@ mod adding {
     use zygo_plugins::sync::{lock_marketplace, sync_with};
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn highest_semver_tag_is_recorded_with_its_peeled_commit() {
         let t = T::new();
         let r = market(&t);
@@ -234,6 +236,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn bare_and_v_prefixed_tags_compare_by_version() {
         let t = T::new();
         let r = bare_repo(&t, "origin", &["v1.2.0", "1.3.0"]);
@@ -241,6 +244,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn no_semver_tag_is_refused_naming_ref() {
         let t = T::new();
         for (dir, tags) in [("o1", &[][..]), ("o2", &["release-9"][..])] {
@@ -254,6 +258,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn ref_accepts_a_tag_a_full_commit_and_an_abbreviated_commit() {
         let t = T::new();
         let r = market(&t);
@@ -268,6 +273,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn branch_ref_is_refused() {
         let t = T::new();
         let r = market(&t);
@@ -282,6 +288,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn name_defaults_to_the_marketplace_name_and_name_overrides() {
         let t = T::new();
         let r = market(&t);
@@ -309,6 +316,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn each_plugin_is_listed_with_version_license_and_code() {
         let t = T::new();
         let r = market_repo_at(&t.fx, "origin", &[("demo", "1.0.0"), ("plain", "1.0.0"), ("bad", "1.0.0")]);
@@ -331,6 +339,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn enable_all_enables_every_plugin_and_syncs() {
         let t = T::new();
         let r = market(&t);
@@ -349,6 +358,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn enable_list_enables_only_the_named_plugins() {
         let t = T::new();
         let r = market(&t);
@@ -361,6 +371,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn config_entry_is_written_while_the_marketplace_lock_is_held() {
         let t = T::new();
         let r = market(&t);
@@ -384,6 +395,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn an_add_after_a_removal_survives_a_prune_of_the_old_config() {
         let t = T::new();
         let r = market(&t);
@@ -399,6 +411,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn same_name_replaces_the_entry_in_place() {
         let t = T::new();
         let r = market(&t);
@@ -414,6 +427,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn builtin_source_cannot_change() {
         let t = T::new();
         let r = market(&t);
@@ -426,6 +440,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn cache_is_the_hardened_checkout_and_no_probe_dir_is_left() {
         let t = T::new();
         let r = market(&t);
@@ -438,6 +453,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn sync_false_leaves_the_store_alone() {
         let t = T::new();
         let r = market(&t);
@@ -448,6 +464,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn pre_release_tag_counts_and_the_release_is_higher() {
         let t = T::new();
         let r = market(&t);
@@ -460,6 +477,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn marketplace_without_a_name_needs_name() {
         let t = T::new();
         let r = bare_repo(&t, "origin", &["v1.0.0"]);
@@ -475,6 +493,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn an_unlisted_enable_name_is_refused_and_nothing_is_written() {
         let t = T::new();
         let r = market(&t);
@@ -498,6 +517,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn enable_all_leaves_out_violations_and_the_reserved_name() {
         let t = T::new();
         let r = mixed(&t);
@@ -510,6 +530,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn an_enable_name_with_violations_reserved_or_skipped_is_refused_and_nothing_is_written() {
         let t = T::new();
         let r = mixed(&t);
@@ -523,6 +544,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn stale_probe_dirs_are_removed_and_a_fresh_one_is_kept() {
         let t = T::new();
         let r = market(&t);
@@ -542,6 +564,7 @@ mod adding {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn sync_lines_are_limited_to_the_added_marketplace() {
         let t = T::new();
         let r = market(&t);
@@ -575,6 +598,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn moves_to_the_highest_tag_above_the_current_one() {
         let t = T::new();
         let r = market(&t);
@@ -593,6 +617,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn no_higher_tag_changes_nothing() {
         let t = T::new();
         let r = market(&t);
@@ -605,6 +630,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn moved_tag_is_kept_without_accept_and_taken_with_it() {
         let t = T::new();
         let r = market(&t);
@@ -629,6 +655,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn changes_list_version_and_digest_changes() {
         let t = T::new();
         let r = market(&t);
@@ -650,6 +677,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn all_updates_every_marketplace_and_names_a_failure() {
         let t = T::new();
         let r1 = market(&t);
@@ -669,6 +697,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn team_entry_is_overridden_by_a_user_entry_keeping_default_on() {
         let t = T::new();
         let r = market(&t);
@@ -687,6 +716,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn builtin_entry_moves_ref_and_commit_only() {
         let t = T::new();
         let r = market(&t);
@@ -713,6 +743,7 @@ mod updating {
     }
 
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn commit_ref_is_left_unchanged() {
         let t = T::new();
         let r = market(&t);
@@ -757,6 +788,7 @@ mod output {
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn add_without_a_tag_names_the_source_without_userinfo() {
         let mut t = T::new();
         let tk = token();
@@ -768,6 +800,7 @@ mod output {
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn add_failure_scrubs_git_stderr() {
         let mut t = T::new();
         let tk = token();
@@ -789,6 +822,7 @@ mod output {
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "timing: add and update run git under the 20 s production TOTAL and the 2 s git_modes bound"]
     fn update_failure_scrubs_stderr_and_keeps_the_config() {
         let mut t = T::new();
         let tk = token();

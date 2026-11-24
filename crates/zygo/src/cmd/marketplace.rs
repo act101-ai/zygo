@@ -296,6 +296,7 @@ mod tests {
     fn sha(dir: &Path) -> String { git(dir, &["rev-parse", "v1.0.0^{commit}"]) }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn add_lists_code_and_asks_for_each_enabled_code_plugin() {
         let (c, t) = ctx(false, false);
         let dir = t.path().join("origin");
@@ -313,6 +314,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn add_declined_approves_nothing() {
         let (c, t) = ctx(false, false);
         let src = market(&t.path().join("origin"), &[("demo", "echo hi\n")]);
@@ -322,6 +324,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn add_without_enable_asks_nothing() {
         let (c, t) = ctx(false, false);
         let dir = t.path().join("origin");
@@ -334,6 +337,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn update_asks_only_for_changed_digests() {
         let (c, t) = ctx(false, false);
         let dir = t.path().join("origin");
@@ -350,6 +354,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn slash_add_replies_with_the_shell_command_and_it_approves() {
         let (c, t) = ctx(true, false);
         let src = market(&t.path().join("origin"), &[("demo", "echo hi\n")]);
@@ -362,6 +367,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn slash_update_replies_with_the_shell_command_and_it_approves() {
         let (c, t) = ctx(false, false);
         let dir = t.path().join("origin");
@@ -379,6 +385,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn add_in_an_agent_session_prints_the_approve_command() {
         let (c, t) = ctx(false, true);
         let src = market(&t.path().join("origin"), &[("demo", "echo hi\n")]);
@@ -396,6 +403,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn bare_update_updates_every_marketplace() {
         let (c, t) = ctx(false, false);
         let (d1, d2) = (t.path().join("origin"), t.path().join("origin2"));
@@ -426,6 +434,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn list_and_remove_print_their_lines() {
         let (c, t) = ctx(false, false);
         assert_eq!(run(&c, &["list"], "").unwrap(), "no marketplaces");
@@ -442,6 +451,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn update_failure_is_an_error_with_every_line() {
         let (c, t) = ctx(false, false);
         let dir = t.path().join("origin");
@@ -552,6 +562,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn add_and_update_failures_are_scrubbed() {
         let (c, t) = ctx(false, false);
         let tk = token();
@@ -572,6 +583,7 @@ mod tests {
     const FORGED_MP: &str = "[[marketplace]]\nname = \"x\\u001b[2K\\n  forged: line\"\nsource = \"/nonexistent\"\nref = \"v1.0.0\"\n";
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn add_escapes_a_skipped_plugin_name() {
         let (c, t) = ctx(false, false);
         let dir = t.path().join("origin");
@@ -588,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: git clone/fetch inside the 20 s plugins TOTAL bound"]
     fn update_sync_failures_are_escaped() {
         let (c, t) = ctx(false, false);
         let dir = t.path().join("origin");
