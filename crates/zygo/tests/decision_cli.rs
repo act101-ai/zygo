@@ -241,3 +241,12 @@ fn binary_in_and_out_of_a_git_repository() { // D§10.1 exit 2; D§10.1 `show` w
     let o = zygo(&r, &["show", &id(1)]);
     assert!(String::from_utf8(o.stdout).unwrap().ends_with(&format!("dependents: 0 direct, 0 total\ncommits: 1\n{head} add record\n")));
 }
+#[test] fn slash_form_replies_with_the_shell_command_and_reads_nothing() { // D§17 #15, D-C2
+    let v = zygo::cmd::verbs::VERBS.iter().find(|v| v.spec.name == "decision").expect("decision is a slash verb");
+    let ctx = zygo::cmd::verbs::VerbCtx { slash: true, save: false, session_dir: None, paths: zygo_core::paths::Paths::from_env() };
+    for (a, want) in [(&["ls"][..], "run in your shell: zygo decision ls"), (&["show", "DDR-X"], "run in your shell: zygo decision show DDR-X"),
+                      (&["ls", "a\u{1b}b"], "run in your shell: zygo decision ls a\\u{1b}b"), (&[], "run in your shell: zygo decision")] {
+        let a: Vec<String> = a.iter().map(|s| s.to_string()).collect();
+        assert_eq!((v.handler)(&ctx, &a).unwrap(), want);
+    }
+}

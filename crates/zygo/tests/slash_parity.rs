@@ -25,7 +25,7 @@ const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 const SECRET: &str = "refused: secret redaction cannot be turned off in a session";
 const OP5: &str = "workspaces need tmux; run zygo in WSL";
 /// W§9.3 step 1, OP11: /zygo:down names the marker's workspace and zygo down the cwd's; down has no SAME row.
-const NOT_IN_SAME: &[&str] = &["down"];
+const NOT_IN_SAME: &[&str] = &["down", "decision"];
 
 /// The `Paths` that `Paths::from_env` gives for `HOME=LOCALAPPDATA=APPDATA=home`, `ZYGO_CONFIG=home/config.toml`.
 fn paths(home: &Path) -> Paths {
@@ -565,7 +565,7 @@ fn shell_only_slash_forms_reply_with_the_command_and_change_nothing() {
     };
     let a = Arm::new(false, "", None);
     let before = tree(a.home.path());
-    for line in ["plugins sync", "marketplace add /x", "marketplace add /x --name n --ref v1.0.0", "marketplace update", "marketplace update --all --accept"] {
+    for line in ["plugins sync", "marketplace add /x", "marketplace add /x --name n --ref v1.0.0", "marketplace update", "marketplace update --all --accept", "decision ls"] {
         assert_eq!(a.slash(line), format!("run in your shell: zygo {line}"), "{line}");
         assert_eq!(tree(a.home.path()), before, "{line}: wrote a file");
     }

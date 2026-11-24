@@ -11,6 +11,8 @@ use zygo_work::decisions::record::{parse_record, read_bytes, Kind, Record, Statu
 use zygo_work::decisions::set::{read_dir, set_faults, DirError, RecordSet};
 use zygo_work::repo;
 
+use super::verbs::VerbCtx;
+
 const USAGE: &str =
     "zygo decision: usage: zygo decision ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check";
 /// The commits `show` lists at most.
@@ -224,4 +226,9 @@ pub fn run(args: &[String]) -> i32 {
     let code = run_with(&cwd, &|k| std::env::var_os(k), args, &mut io);
     let _ = io.out.flush();
     code
+}
+
+/// The slash form (D-C2): the reply names the shell command; it reads no file, since it runs inside the hook.
+pub fn verb(_ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
+    Ok(format!("run in your shell: zygo decision {}", esc(&args.join(" "))).trim_end().to_string())
 }
