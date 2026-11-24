@@ -10,6 +10,45 @@ zygo is one native binary that wraps Claude Code and OpenCode (and other coding 
 
 The status line is for Claude Code; in OpenCode, run `zygo status`.
 
+### Icons: install a Nerd Font
+
+The status line uses [Nerd Font](https://www.nerdfonts.com/) icons. Without a Nerd Font, the icons show as boxes or are missing. The examples below install JetBrainsMono Nerd Font; for other fonts, see https://www.nerdfonts.com/font-downloads.
+
+macOS (Homebrew):
+
+```sh
+brew install --cask font-jetbrains-mono-nerd-font
+```
+
+Linux:
+
+```sh
+mkdir -p ~/.local/share/fonts
+cd ~/.local/share/fonts
+curl -OL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz
+tar -xf JetBrainsMono.tar.xz
+fc-cache -f
+```
+
+Windows (Scoop):
+
+```sh
+scoop bucket add nerd-fonts
+scoop install JetBrainsMono-NF
+```
+
+Or download `JetBrainsMono.zip` from the font downloads page, extract it, select the `.ttf` files, right-click and choose Install.
+
+Then select the font in your terminal's settings: Terminal.app or iTerm2 on macOS, GNOME Terminal or Konsole on Linux, the profile's Appearance > Font face in Windows Terminal. In the VS Code terminal, set `terminal.integrated.fontFamily`. For WSL, install the font on the Windows side and set it in Windows Terminal.
+
+zygo selects the icon set from `ZYGO_NERD_FONT`:
+
+- `ZYGO_NERD_FONT=1` forces Nerd icons.
+- `ZYGO_NERD_FONT=0` forces plain icons.
+- Unset: plain icons when `TERM` is `linux` or `dumb`, and on Windows; Nerd icons otherwise.
+
+On Windows, including Git Bash, set `ZYGO_NERD_FONT=1` after you install the font. To check the result, run `zygo doctor`; it prints an icon test line.
+
 ### Role-based model routing
 
 - Implements [elephants-and-goldfish](https://research.google/pubs/elephants-goldfish-and-the-new-golden-age-of-software-engineering/) model for improved generation and token efficiency in your coding agent.
