@@ -1,6 +1,6 @@
 # zygo: workspace definition — design
 
-**Status:** proposed 2026-11-24
+**Status:** approved by the operator 2026-11-24
 **Date:** 2026-11-24
 **Release:** phase 3, track D (roadmap items P3-11 and P3-12, `docs/roadmap/phase-3.md`). P3-13 has its own spec. P3-12 needs the member `name` and the session-text item of workspace mail (P3-1, M§6, M§8a) and is built after it.
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`, constraints `Cn`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`, constraints `W-Cn`, decisions `AUn`, premises `PWn`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`, constraints `M-Cn`). `R§n` is a section of this document. The governing spec of the build is `docs/specs/2026-11-24-decision-records-design.md`.
