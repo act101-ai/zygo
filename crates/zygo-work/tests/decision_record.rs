@@ -42,6 +42,12 @@ fn padded(total: usize) -> String {
     format!("{head}#{}\n+++\n{BODY}", "x".repeat(total - head.len() - 6))
 }
 
+/// A valid CRLF record whose closing `+++` (without its `\r\n`) ends at byte `plus_end`.
+fn padded_crlf(plus_end: usize) -> String {
+    let head = text(&keys(), "").trim_end_matches("+++\n").replace('\n', "\r\n");
+    format!("{head}#{}\r\n+++\r\n{}", "x".repeat(plus_end - head.len() - 6), BODY.replace('\n', "\r\n"))
+}
+
 #[cfg(unix)]
 fn mkfifo(path: &Path) { // as crates/zygo-hooks/tests/workspace.rs:392
     use std::os::unix::ffi::OsStrExt;
@@ -115,10 +121,32 @@ fn mkfifo(path: &Path) { // as crates/zygo-hooks/tests/workspace.rs:392
 }
 
 #[test] fn front_matter_not_closed_within_8_kib() {
-    assert!(parse_record(ID, padded(8192).as_bytes()).is_ok());
-    assert_eq!(parse_record(ID, padded(8193).as_bytes()).unwrap_err(), vec!["no closing +++ line within 8 KiB"]);
+    // The limit is measured to the end of the closing `+++`, without its line ending.
+    assert!(parse_record(ID, padded(8193).as_bytes()).is_ok());
+    assert_eq!(parse_record(ID, padded(8194).as_bytes()).unwrap_err(), vec!["no closing +++ line within 8 KiB"]);
     let open_only = text(&keys(), BODY).replacen("+++\n\n## Choice", "\n## Choice", 1);
     assert_eq!(parse_record(ID, open_only.as_bytes()).unwrap_err(), vec!["no closing +++ line within 8 KiB"]);
+}
+
+#[test] fn crlf_front_matter_limit_equals_lf() {
+    assert_eq!(padded_crlf(8192).find("\r\n+++\r\n").unwrap() + 5, 8192);
+    assert!(parse_record(ID, padded_crlf(8192).as_bytes()).is_ok());
+    assert_eq!(parse_record(ID, padded_crlf(8193).as_bytes()).unwrap_err(), vec!["no closing +++ line within 8 KiB"]);
+}
+
+#[test] fn leading_bom_is_line_one_fault() {
+    let s = format!("\u{FEFF}{}", text(&keys(), BODY));
+    assert_eq!(parse_record(ID, s.as_bytes()).unwrap_err(), vec!["line 1 is not +++"]);
+}
+
+#[test] fn duplicate_key_is_not_toml() {
+    let mut ks = keys(); ks.push(("id", q(ID)));
+    assert_eq!(faults(&ks, BODY), vec!["front matter is not TOML: duplicate key"]);
+}
+
+#[test] fn plus_line_in_multiline_string_closes_early() {
+    let ks = with("title", Some("\"\"\"a\n+++\nb\"\"\""));
+    assert_eq!(faults(&ks, BODY), vec!["front matter is not TOML: invalid multi-line basic string, expected `\"`"]);
 }
 
 #[test] fn bad_toml() {
@@ -175,6 +203,7 @@ fn mkfifo(path: &Path) { // as crates/zygo-hooks/tests/workspace.rs:392
         assert_eq!(faults(&ks, BODY), vec!["missing section ## Finding"], "{k}");
         assert_eq!(ok(&ks, &format!("\n## Finding\n\nF.\n{BODY}")).kind.name(), k);
         assert_eq!(faults(&ks, &format!("\n## Finding\n\n{FILL_MARKER} The finding.\n{BODY}")), vec!["empty section ## Finding"], "{k}");
+        assert_eq!(faults(&ks, &format!("\n## Finding\n\n  \t\n\n{BODY}")), vec!["empty section ## Finding"], "{k}");
     }
     for k in ["assumption", "decision"] { assert_eq!(ok(&with("kind", Some(&q(k))), BODY).kind.name(), k); }
 }
@@ -253,6 +282,10 @@ fn fifo_is_malformed_and_not_opened() {
     use std::os::unix::fs::FileTypeExt;
     let t = tempfile::tempdir().unwrap();
     let p = t.path().join(format!("{ID}.md")); mkfifo(&p);
+    assert_eq!(read_record(&p).unwrap_err(), vec!["is not a regular file; not read"]);
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o000)).unwrap();
+    // An open would fail with "cannot read: …" (EACCES); only the lstat check gives this text.
     assert_eq!(read_record(&p).unwrap_err(), vec!["is not a regular file; not read"]);
     assert!(fs::symlink_metadata(&p).unwrap().file_type().is_fifo());
 }

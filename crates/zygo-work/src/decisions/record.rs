@@ -10,7 +10,7 @@ pub const FILL_MARKER: &str = "<!-- zygo: fill -->";
 
 /// The largest record file, in bytes (D§6.8).
 const MAX_FILE: usize = 65536;
-/// The closing `+++` line ends at or before this byte (D§6.8).
+/// The closing `+++`, without its line ending, ends at or before this byte (D§6.8).
 const MAX_FRONT: usize = 8192;
 
 /// Gives an enum `parse` (exact, case-sensitive) and `name` from its name strings.
@@ -141,7 +141,8 @@ fn bare(line: &str) -> &str {
     line.strip_suffix('\r').unwrap_or(line)
 }
 
-/// The front matter text and the body: line 1 is `+++` and a later `+++` line ends within 8 KiB (D§6.2, D§6.8).
+/// The front matter text and the body: line 1 is `+++` and the `+++` of a later `+++` line ends within 8 KiB
+/// (D§6.2, D§6.8). The line ending is not counted, so LF and CRLF records get the same limit.
 fn split(text: &str) -> Result<(&str, &str), String> {
     let mut lines = text.split_inclusive('\n');
     let first = lines.next().unwrap_or("");
@@ -150,10 +151,10 @@ fn split(text: &str) -> Result<(&str, &str), String> {
     }
     let mut at = first.len();
     for line in lines {
-        let end = at + line.len();
-        if end > MAX_FRONT {
+        if at + "+++".len() > MAX_FRONT {
             break;
         }
+        let end = at + line.len();
         if bare(line) == "+++" {
             return Ok((&text[first.len()..at], &text[end..]));
         }
@@ -335,9 +336,26 @@ pub fn parse_record(stem: &str, bytes: &[u8]) -> Result<Record, Vec<String>> {
     })
 }
 
+/// Windows `FILE_FLAG_OPEN_REPARSE_POINT`: open a link itself, not its target (the no-follow open on Windows).
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+/// `true` when the failed open of `path` met a link: `ELOOP` from `O_NOFOLLOW`, or a link seen after the failure
+/// (other BSDs give `EMLINK` or `EFTYPE`). As `zygo_hooks::workspace::open_met_link`.
+fn open_met_link(e: &std::io::Error, path: &Path) -> bool {
+    #[cfg(unix)]
+    if e.raw_os_error() == Some(libc::ELOOP) {
+        return true;
+    }
+    #[cfg(not(unix))]
+    let _ = e;
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
 /// Reads and checks one record file (D§6.8). `lstat` comes first: a link, a FIFO, a directory or a file over 64 KiB
 /// is never opened. On unix the open adds `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` (the pattern of
-/// `zygo_hooks::workspace::read_session_file`), and at most 64 KiB + 1 bytes are read.
+/// `zygo_hooks::workspace::read_session_file`); on Windows it adds `FILE_FLAG_OPEN_REPARSE_POINT`. The opened handle
+/// must be a regular file and not a link. At most 64 KiB + 1 bytes are read.
 pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
     let one = |s: String| vec![s];
     let m = fs::symlink_metadata(path).map_err(|e| one(format!("cannot read: {e}")))?;
@@ -357,14 +375,19 @@ pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
         use std::os::unix::fs::OpenOptionsExt;
         o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        o.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
     let f = o.open(path).map_err(|e| {
-        #[cfg(unix)]
-        if e.raw_os_error() == Some(libc::ELOOP) {
+        if open_met_link(&e, path) {
             return one("is a link; not read".into());
         }
         one(format!("cannot read: {e}"))
     })?;
     match f.metadata() {
+        Ok(m) if m.file_type().is_symlink() => return Err(one("is a link; not read".into())),
         Ok(m) if m.is_file() => {}
         Ok(_) => return Err(one("is not a regular file; not read".into())),
         Err(e) => return Err(one(format!("cannot read: {e}"))),
