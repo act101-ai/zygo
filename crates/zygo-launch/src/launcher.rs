@@ -155,6 +155,9 @@ pub struct LaunchOpts {
     /// `Some`: the serve client's bounds in place of the §7 values.
     #[cfg(feature = "test-hooks")]
     pub serve_bounds: Option<Bounds>,
+    /// `Some`: the repository top level in place of the `checkout` call; `Some(None)`: no repository.
+    #[cfg(feature = "test-hooks")]
+    pub top: Option<Option<PathBuf>>,
 }
 
 impl LaunchOpts {
@@ -181,6 +184,8 @@ impl LaunchOpts {
             heartbeat: None,
             #[cfg(feature = "test-hooks")]
             serve_bounds: None,
+            #[cfg(feature = "test-hooks")]
+            top: None,
         }
     }
 }
@@ -255,7 +260,7 @@ impl Launcher {
             buf: opts.stderr.clone(),
         };
         let search = opts.env.get("PATH").map(OsStr::to_os_string);
-        let top = checkout(&opts.cwd, Instant::now() + BOUND).map(|c| c.top);
+        let top = launch_top(&opts);
         let cfg = match load_cfg(&opts, LoadContext { paths: opts.paths.clone(), repo: top.clone(), team: None }) {
             Ok(c) => c,
             Err(e) => {
@@ -602,6 +607,7 @@ impl Session<'_> {
             tail_lines: c.results.tail_lines,
             statusline_style: c.statusline.style.clone(),
             workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone(), ..Default::default() }),
+            repo_root: self.top.as_deref().and_then(Path::to_str).map(String::from),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {
@@ -815,6 +821,14 @@ fn heartbeat_every(#[allow(unused_variables)] opts: &LaunchOpts) -> Duration {
         return d;
     }
     HEARTBEAT_EVERY
+}
+
+fn launch_top(#[allow(unused_variables)] opts: &LaunchOpts) -> Option<PathBuf> {
+    #[cfg(feature = "test-hooks")]
+    if let Some(t) = &opts.top {
+        return t.clone();
+    }
+    checkout(&opts.cwd, Instant::now() + BOUND).map(|c| c.top)
 }
 
 fn serve_bounds(#[allow(unused_variables)] opts: &LaunchOpts) -> Bounds {

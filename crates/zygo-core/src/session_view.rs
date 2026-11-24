@@ -35,6 +35,10 @@ pub struct SessionView {
     /// and for a `view.json` without the field.
     #[serde(default)]
     pub workspace: Option<ViewWorkspace>,
+    /// The repository top level of the launch directory, where `work_verdict` runs git (decision records D§13 item 6);
+    /// `None` outside a repository, for a non-UTF-8 path, and for a `view.json` without the field (an older launcher).
+    #[serde(default)]
+    pub repo_root: Option<String>,
     /// The top-level fields of `view.json` that this zygo does not know; a save puts them back, so a read, change and
     /// save of the view (the member hooks, H1) keeps the fields of a newer zygo (the AU78 pattern of `workspace.json`).
     /// `workspace`, its `member`, its `resume_note` and each `interrupted` entry keep theirs the same way (R5).
@@ -66,6 +70,7 @@ impl Default for SessionView {
             tail_lines: default_tail_lines(),
             statusline_style: default_statusline_style(),
             workspace: None,
+            repo_root: None,
             extra: UnknownFields::default(),
         }
     }
