@@ -321,7 +321,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   - Step 8 comment (`:1065-1066`): after "a `$TMUX` socket gets the AU62 check before it is written." add " Its AU54 check ran at step 6 (FIX-30)."
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test up --test up_all` passes (the step 4 tests and every earlier test; tmux cases run or print their skip reason).
 
-- [ ] **6. Test (red): `down` refuses a `$TMUX` socket that fails AU54.** In `crates/zygo-workspace/tests/down.rs`, after `down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair` (`:2276-2297`), add:
+- [x] **6. Test (red): `down` refuses a `$TMUX` socket that fails AU54.** In `crates/zygo-workspace/tests/down.rs`, after `down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair` (`:2276-2297`), add:
   ```rust
   #[test] // FIX-30, AU54: no saved socket; step 3 refuses the `$TMUX` socket with a quote before its session check
   fn au54_down_refuses_a_tmux_env_socket_with_a_quote() {
@@ -358,7 +358,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test down au54_` fails in both tests: the tmux log holds `has-session` (`down.rs:1019`) or `display-message` (`down.rs:519`) on the `$TMUX` socket.
 
-- [ ] **7. Code (green): `check_server` at each `$TMUX` fallback of `down.rs`.** In `crates/zygo-workspace/src/down.rs`:
+- [x] **7. Code (green): `check_server` at each `$TMUX` fallback of `down.rs`.** In `crates/zygo-workspace/src/down.rs`:
   - Line 32: `use crate::up::{self, check_server, not_owned, preflight, socket_is_private, unreachable, Exit};`
   - `detach_wanted`, after `let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());` (`:518`), add:
     ```rust

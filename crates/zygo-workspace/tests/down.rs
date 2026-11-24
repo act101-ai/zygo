@@ -2296,6 +2296,39 @@ fn down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair() {
     assert!(!sock.parent().unwrap().exists(), "the socket folder was created");
 }
 
+#[test] // FIX-30, AU54: no saved socket; step 3 refuses the `$TMUX` socket with a quote before its session check
+fn au54_down_refuses_a_tmux_env_socket_with_a_quote() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let mut o = opts(t, &fake_tmux(t));
+    let store = ws_state(&o, ID, "app", Phase::Up, vec![]);
+    no_socket(&store);
+    o.tmux_env = Some(std::ffi::OsString::from(format!("{},1,0", t.join("so'ck").join("s").display())));
+    let before = raw(&store);
+    let got = run(&o, &hooks());
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert_eq!(got, (2, String::new(), format!("{AU54}\n")));
+    assert_eq!(raw(&store), before);
+}
+
+#[test] // FIX-30, AU54: the detach rule refuses the `$TMUX` socket with a quote before its `display` call (down.rs:510-519)
+fn au54_down_detach_rule_refuses_a_tmux_env_socket_with_a_quote() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let _g = Detached::new(t);
+    let (mut o, store) = detach_case(t);
+    no_socket(&store);
+    o.tmux_pane = Some("%1".into());
+    o.tmux_env = Some(std::ffi::OsString::from(format!("{},1,0", t.join("so'ck").join("s").display())));
+    let before = raw(&store);
+    assert_eq!(run(&o, &hooks()), (2, String::new(), format!("{AU54}\n")));
+    assert_eq!(raw(&store), before);
+    assert_eq!(tmux_log(t), ["-u -V"]);
+    assert!(!t.join("child.pid").exists(), "a detached down was started");
+}
+
 // ---- FIX-24: a member whose hooks or member events are off counts as busy (AU26) ----
 
 const HOOKS_OFF_LINE: &str = "zygo: app pane kaaaaaaaa: busy: hooks off: its --settings sets disableAllHooks";
