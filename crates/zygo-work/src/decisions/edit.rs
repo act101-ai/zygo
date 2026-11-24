@@ -1,7 +1,7 @@
 //! The operator outcomes `ratify` and `overturn` (D§11.3, D§6.6): byte-preserving writes of their keys (D§6.2).
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, Value};
 
@@ -123,28 +123,32 @@ fn keys<'a>(outcome: &'a Outcome, today: &'a str) -> Vec<(&'static str, &'a str)
     }
 }
 
-/// Takes an exclusive lock on `<dir>/.lock` ([`LOCK`]), then re-reads `path` with `read_bytes`; `Changed` when the
-/// bytes differ from `shown`; else checks `parse_record` and [`allowed`], refuses a front matter that mixes CRLF and
-/// LF lines, sets the outcome keys with `toml_edit` (D§6.2: unknown keys, comments and the body stay byte-equal),
-/// checks the result with `parse_record`, writes `<dir>/<id>.<ULID>.tmp` (create_new, write_all, sync_all) and
-/// renames it to `path` (D§11.3). A failed write removes the temporary file (best effort). The lock is held until
-/// after the rename, so of two zygo processes only one writes: the other waits, re-reads the renamed file and gets
-/// `Changed`.
-pub fn apply(path: &Path, shown: &[u8], outcome: &Outcome, today: &str) -> Result<(), EditError> {
-    apply_with(path, shown, outcome, today, &mut || {})
+/// Takes an exclusive lock on `lock` (the caller gives [`lock_path`] of the repository's git common dir), then
+/// re-reads `path` with `read_bytes`; `Changed` when the bytes differ from `shown`; else checks `parse_record` and
+/// [`allowed`], refuses a front matter that mixes CRLF and LF lines, sets the outcome keys with `toml_edit` (D§6.2:
+/// unknown keys, comments and the body stay byte-equal), checks the result with `parse_record`, writes
+/// `<dir>/<id>.<ULID>.tmp` (create_new, write_all, sync_all) and renames it to `path` (D§11.3). A failed write removes
+/// the temporary file (best effort). The lock is held until after the rename, so of two zygo processes only one
+/// writes: the other waits, re-reads the renamed file and gets `Changed`.
+pub fn apply(path: &Path, lock: &Path, shown: &[u8], outcome: &Outcome, today: &str) -> Result<(), EditError> {
+    apply_with(path, lock, shown, outcome, today, &mut || {})
 }
 
-/// The lock file of `apply` in the records directory. It is never written, renamed or removed, so every `apply`
-/// locks the same file; a lock on the record itself would not do this, because the rename replaces the record. The
-/// record is not locked, because on Windows a lock blocks reads through other handles (os error 33). `set::read_dir`
-/// ignores the name: it does not end in `.md`.
-pub(crate) const LOCK: &str = ".lock";
+/// The lock file of [`apply`] for a repository: `<common_dir>/zygo/decisions.lock`, inside the git common dir, so it
+/// is outside the work tree (never untracked, never committed) and one file for all linked worktrees. It is never
+/// written, renamed or removed, so every `apply` locks the same file; a lock on the record itself would not do this,
+/// because the rename replaces the record, and on Windows a lock on the record blocks reads of it (os error 33).
+pub fn lock_path(common_dir: &Path) -> PathBuf {
+    common_dir.join("zygo").join("decisions.lock")
+}
 
-/// Opens or creates `<dir of path>/.lock` (no link followed, a FIFO does not block, never truncated) and locks it
-/// exclusively. A failed open or lock is `Io` with `zygo decision: cannot write <lock path>: <error>`.
+/// Creates the parent of `path`, opens or creates `path` (no link followed, a FIFO does not block, never truncated)
+/// and locks it exclusively. A failure is `Io` with `zygo decision: cannot write <path>: <error>`.
 fn lock(path: &Path) -> Result<fs::File, EditError> {
-    let path = &path.parent().unwrap_or(Path::new(".")).join(LOCK);
     let fail = |e: std::io::Error| EditError::Io(format!("zygo decision: cannot write {}: {e}", path.display()));
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(fail)?;
+    }
     let mut o = fs::OpenOptions::new();
     o.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -165,12 +169,13 @@ fn lock(path: &Path) -> Result<fs::File, EditError> {
 /// [`apply`] with `before_rename` called after the temporary file is written and before the rename (a test seam).
 pub(crate) fn apply_with(
     path: &Path,
+    lock_file: &Path,
     shown: &[u8],
     outcome: &Outcome,
     today: &str,
     before_rename: &mut dyn FnMut(),
 ) -> Result<(), EditError> {
-    let _lock = lock(path)?;
+    let _lock = lock(lock_file)?;
     let bytes = read_bytes(path)
         .map_err(|f| EditError::Io(format!("zygo decision: cannot read {}: {}", path.display(), f.join("; "))))?;
     if bytes != shown {
@@ -242,52 +247,55 @@ mod tests {
         commit = \"6e7fe2f0c1d2e3f4a5b6c7d8e9f0011223344556\"\ndate = \"2026-11-24\"\ndepends_on = []\nreverse_cost = \"low\"\n\
         +++\n\n## Choice\n\nC.\n\n## Alternatives rejected\n\nA.\n\n## Evidence\n\nE.\n\n## Cost to reverse\n\nR.\n";
 
-    fn put(dir: &Path) -> std::path::PathBuf {
+    /// The record in `<t>/docs/decisions` and the lock file of the git common dir `<t>/git`.
+    fn put(t: &Path) -> (PathBuf, PathBuf) {
+        let dir = t.join("docs/decisions");
+        fs::create_dir_all(&dir).unwrap();
         let p = dir.join(format!("{ID}.md"));
         fs::write(&p, OPEN).unwrap();
-        p
+        (p, lock_path(&t.join("git")))
     }
 
     fn names(dir: &Path) -> Vec<String> {
         fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect()
     }
 
-    /// D§11.3 two reviews, review focus 39: from the re-read to the rename `.lock` is locked, so a second zygo
+    /// D§11.3 two reviews, review focus 39: from the re-read to the rename the lock file is locked, so a second zygo
     /// process waits and then re-reads the renamed file (`Changed`). The record stays readable through another handle
     /// while the lock is held (on Windows a lock on the record itself failed this read with os error 33).
     #[test]
     fn the_record_is_locked_from_the_re_read_to_the_rename() {
         let t = tempfile::tempdir().unwrap();
-        let p = put(t.path());
-        let l = t.path().join(LOCK);
+        let (p, l) = put(t.path());
+        assert_eq!(l, t.path().join("git/zygo/decisions.lock"));
         let mut seen = None;
         let mut hook = || {
             let held = matches!(File::open(&l).unwrap().try_lock(), Err(TryLockError::WouldBlock));
             seen = Some((held, fs::read_to_string(&p).unwrap() == OPEN));
         };
         let o = Outcome::Overturn { reason: "x".into() };
-        assert_eq!(apply_with(&p, OPEN.as_bytes(), &o, "2026-12-01", &mut hook), Ok(()));
+        assert_eq!(apply_with(&p, &l, OPEN.as_bytes(), &o, "2026-12-01", &mut hook), Ok(()));
         assert_eq!(seen, Some((true, true)));
         assert!(File::open(&l).unwrap().try_lock().is_ok()); // released after the rename
         assert_eq!(fs::read(&l).unwrap(), b""); // never written
+        assert_eq!(names(p.parent().unwrap()), vec![format!("{ID}.md")]); // nothing else in the records directory
     }
 
     /// D§14 "the write of an outcome fails": a failed rename is `Io`, the record is unchanged and no `.tmp` is left.
     #[test]
     fn a_failed_rename_is_io_and_changes_nothing() {
         let t = tempfile::tempdir().unwrap();
-        let p = put(t.path());
+        let (p, l) = put(t.path());
+        let dir = p.parent().unwrap().to_path_buf();
         let mut hook = || {
-            for n in names(t.path()).into_iter().filter(|n| n.ends_with(".tmp")) {
-                fs::remove_file(t.path().join(n)).unwrap();
+            for n in names(&dir).into_iter().filter(|n| n.ends_with(".tmp")) {
+                fs::remove_file(dir.join(n)).unwrap();
             }
         };
         let o = Outcome::Overturn { reason: "x".into() };
-        let r = apply_with(&p, OPEN.as_bytes(), &o, "2026-12-01", &mut hook);
+        let r = apply_with(&p, &l, OPEN.as_bytes(), &o, "2026-12-01", &mut hook);
         assert!(matches!(&r, Err(EditError::Io(s)) if s.starts_with("zygo decision: cannot write ")), "{r:?}");
         assert_eq!(fs::read_to_string(&p).unwrap(), OPEN);
-        let mut n = names(t.path());
-        n.sort();
-        assert_eq!(n, vec![LOCK.to_string(), format!("{ID}.md")]);
+        assert_eq!(names(&dir), vec![format!("{ID}.md")]);
     }
 }

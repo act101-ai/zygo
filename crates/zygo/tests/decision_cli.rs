@@ -32,7 +32,8 @@ fn go(top: &dyn Fn() -> Option<PathBuf>, commits: Commits, args: &[&str]) -> Ran
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     let mut input = std::io::empty();
     let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty: false };
-    let repo = Repo { top, commits: &list, head: &|_| None, today: &String::new, usage_db: Path::new("") };
+    let checkout = || top().map(|t| { let c = t.join(".git"); (t, c) });
+    let repo = Repo { checkout: &checkout, commits: &list, head: &|_| None, today: &String::new, usage_db: Path::new("") };
     let code = run_in(&repo, &|_| None, &args, &mut io);
     Ran { code, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
 }

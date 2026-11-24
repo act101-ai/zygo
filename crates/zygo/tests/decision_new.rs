@@ -47,12 +47,12 @@ fn go_head(top: &Path, head: Option<&str>, env: &dyn Fn(&str) -> Option<OsString
     let list = |_: &Path, _: &str, _: usize| Ok(vec![]);
     let head = |p: &Path| { assert_eq!(p, top); head.map(str::to_string) };
     let today = || "2026-11-24".to_string();
-    let t = || Some(top.to_path_buf());
+    let t = || Some((top.to_path_buf(), top.join(".git")));
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     let mut input = std::io::empty();
     let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty: false };
-    let code = run_in(&Repo { top: &t, commits: &list, head: &head, today: &today, usage_db: db }, env, &args, &mut io);
+    let code = run_in(&Repo { checkout: &t, commits: &list, head: &head, today: &today, usage_db: db }, env, &args, &mut io);
     Ran { code, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
 }
 fn run(top: &Path, args: &[&str]) -> Ran { go(top, &|_| None, &top.join("none.db"), args) }

@@ -9,7 +9,7 @@ use zygo_core::esc;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;
-use zygo_work::decisions::edit::{allowed, apply, EditError, Outcome, Promotion};
+use zygo_work::decisions::edit::{allowed, apply, lock_path, EditError, Outcome, Promotion};
 use zygo_work::decisions::graph::{count_in, dependents, inverse_of};
 use zygo_work::decisions::history::trailer_commits;
 use zygo_work::decisions::new::{self as new_rec, check_args, NewArgs};
@@ -38,8 +38,9 @@ pub struct DecisionIo<'a> {
 
 /// The repository facts `run_in` reads, as values so tests run no git and read no clock.
 pub struct Repo<'a> {
-    /// The repository top of the current directory; `None` outside a git repository. Called after the arguments parse.
-    pub top: &'a dyn Fn() -> Option<PathBuf>,
+    /// The repository top of the current directory and its git common dir; `None` outside a git repository. Called
+    /// after the arguments parse. `apply` locks `edit::lock_path` of the common dir, outside the work tree.
+    pub checkout: &'a dyn Fn() -> Option<(PathBuf, PathBuf)>,
     /// `history::trailer_commits` outside tests.
     pub commits: &'a CommitsFn,
     /// `HEAD` of a top; `decisions::new::head` outside tests.
@@ -241,7 +242,7 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         line(io.err, &format!("zygo decision {}: run it in your own shell, not in an agent session", a.verb));
         return 2;
     }
-    let Some(top) = (repo.top)() else {
+    let Some((top, common_dir)) = (repo.checkout)() else {
         line(io.err, "zygo decision: not in a git repository");
         return 2;
     };
@@ -269,7 +270,7 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         Sub::Show(id) => show(repo, &top, &set, &id, io),
         Sub::Deps(id) => deps(&set, &id, io),
         Sub::Check => check(&set, io),
-        Sub::Decide(a) => decide(repo, &top, &set, &a, io),
+        Sub::Decide(a) => decide(repo, &top, &lock_path(&common_dir), &set, &a, io),
     }
 }
 
@@ -349,7 +350,7 @@ fn print_lines(w: &mut dyn Write, bytes: &[u8]) {
 /// D§11.3 `ratify` and `overturn`: the D§6.6 check on the record it shows, the record and the `[y/N]` prompt unless
 /// `--yes`, then `edit::apply`, which re-reads the file and writes only when it is unchanged since it was shown; prints
 /// its path.
-fn decide(repo: &Repo, top: &Path, set: &RecordSet, a: &DecideArgs, io: &mut DecisionIo) -> i32 {
+fn decide(repo: &Repo, top: &Path, lock: &Path, set: &RecordSet, a: &DecideArgs, io: &mut DecisionIo) -> i32 {
     let Some(r) = find(set, &a.id, io) else { return 1 };
     let path = top.join(DIR).join(format!("{}.md", r.id));
     let Some((shown, now)) = read_bytes(&path).ok().and_then(|b| parse_record(&r.id, &b).ok().map(|now| (b, now))) else {
@@ -372,7 +373,7 @@ fn decide(repo: &Repo, top: &Path, set: &RecordSet, a: &DecideArgs, io: &mut Dec
             return 1;
         }
     }
-    match apply(&path, &shown, &a.outcome, &(repo.today)()) {
+    match apply(&path, lock, &shown, &a.outcome, &(repo.today)()) {
         Ok(()) => {
             line(io.out, &path.display().to_string());
             0
@@ -420,9 +421,9 @@ fn check(set: &RecordSet, io: &mut DecisionIo) -> i32 {
 
 /// [`run_in`] with the repository of `cwd` (2 s bound), the real `git log`, `HEAD`, clock and usage store.
 pub fn run_with(cwd: &Path, env: &dyn Fn(&str) -> Option<OsString>, args: &[String], io: &mut DecisionIo) -> i32 {
-    let top = || repo::checkout(cwd, Instant::now() + Duration::from_secs(2)).map(|c| c.top);
+    let checkout = || repo::checkout(cwd, Instant::now() + Duration::from_secs(2)).map(|c| (c.top, c.common_dir));
     let usage_db = Paths::from_env().usage_db;
-    let repo = Repo { top: &top, commits: &trailer_commits, head: &new_rec::head, today: &new_rec::today_utc, usage_db: &usage_db };
+    let repo = Repo { checkout: &checkout, commits: &trailer_commits, head: &new_rec::head, today: &new_rec::today_utc, usage_db: &usage_db };
     run_in(&repo, env, args, io)
 }
 
