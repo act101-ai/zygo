@@ -200,7 +200,7 @@ Session text (T, SX nodes):
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
 | DR-8 | Session view `repo_root`, written by the launcher | DR-1 | DONE | mechanical | c806e21 88441c1 · repo_root 2/2 core, 3/3 launcher · PR #19 |
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | TODO | mechanical | — |
-| DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | TODO | judgment | — |
+| DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | PLANNED | judgment | — |
 | DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | TODO | judgment | — |
 | DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | TODO | judgment | — |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
