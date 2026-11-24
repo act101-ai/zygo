@@ -211,7 +211,7 @@ Session text (T, SX nodes):
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | DONE | implementation | a8add6a 3b33343 957db39 · live selftest ok (76); floor green · PR #26 |
 | OS-1 | Result meta records the session that stored it | DR-1 | DONE | implementation | 7d285bd f733e6c 8a21ec2 · results 50p/0f, hooks_basic 55p/0f; floor green · PR #27 |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
-| OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | TODO | mechanical | — |
+| OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
 | MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | TODO | judgment | — |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
@@ -345,4 +345,6 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-1 done: result meta records the session (`Store::put` takes `session: Option<&str>`, trim passes it). Review 4 findings: 3 fixed; 1 rejected (non-string session; no writer produces one, O-C8 fixes the type). PR #27. |
 | 2026-11-24 | OS-6 planned (9f6b378): 6 steps, 13 tests. PR #30. |
 | 2026-11-24 | OS-6 done (32286a7 2ac0b35): carry 19p/0f; review 5 confirmed, fixed; floor green. PR #30. |
+| 2026-11-24 | OS-10 planned: 5 steps, 3 tests (Step/Shaper as_str, byte bounds); no collision in zygo-results · PR #31 |
+| 2026-11-24 | OS-10 done: Step/Shaper/SHAPE_MAX_BYTES/MIN_SAVING_BYTES in zygo-results::shape; 0 confirmed findings (1 refuted); note to OS-28: cast before subtracting u64 bytes · PR #31 |
 | 2026-11-24 | ML-16 done (a8add6a 3b33343 957db39): live selftest ok (76); review 10 confirmed, fixed; floor green. PR #26. |
