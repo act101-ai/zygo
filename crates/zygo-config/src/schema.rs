@@ -31,6 +31,7 @@ pub struct Config {
     pub usage: UsageConfig,
     pub statusline: StatuslineConfig,
     pub update: UpdateConfig,
+    pub mail: MailConfig,
     pub workspace: WorkspaceConfig,
     pub loadout: BTreeMap<String, Loadout>,
     #[serde(rename = "marketplace")]
@@ -61,6 +62,7 @@ impl Default for Config {
             usage: UsageConfig::default(),
             statusline: StatuslineConfig::default(),
             update: UpdateConfig::default(),
+            mail: MailConfig::default(),
             workspace: WorkspaceConfig::default(),
             loadout: BTreeMap::new(),
             marketplaces: Vec::new(),
@@ -660,7 +662,22 @@ impl Default for UpdateConfig {
     }
 }
 
-/// A duration written as `<n>s`, `<n>m` or `<n>h` (workspaces design W§11 `drain_timeout`, W§19): ASCII digits and
+/// `[mail]` (workspace mail design M§11). User config only; `keep` and `wake_gap` in the form [`parse_duration`] reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailConfig {
+    pub keep: String,
+    pub max_unread: u32,
+    pub wake_gap: String,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into() }
+    }
+}
+
+/// A duration written as `<n>s`, `<n>m`, `<n>h` or `<n>d` (W§11 drain_timeout, M§11 keep and wake_gap; W§19): ASCII digits and
 /// one unit letter. `None` for any other text and for a value that does not fit in `u64` seconds.
 pub fn parse_duration(s: &str) -> Option<Duration> {
     let (unit, digits) = s.as_bytes().split_last()?;
@@ -668,6 +685,7 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
         b's' => 1,
         b'm' => 60,
         b'h' => 3600,
+        b'd' => 86400,
         _ => return None,
     };
     if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
@@ -726,6 +744,9 @@ pub struct LoadoutWindow {
 pub struct LoadoutPane {
     /// One of [`LOADOUT_KINDS`]; `config check` refuses any other value.
     pub kind: String,
+    /// The member name (M§6); config check applies zygo_core::ids::valid_member_name and uniqueness in the loadout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     pub args: Vec<String>,

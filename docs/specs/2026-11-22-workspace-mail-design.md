@@ -65,7 +65,7 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 
 ## 6. Names
 
-**(author)** A loadout pane gets an optional `name` (W§11 schema addition): `^[a-z][a-z0-9-]{0,31}$`, unique in the loadout. `up` copies it into the `panes[]` entry and the member record. A hand-started member (AU9) takes `--name <n>` on `zygo claude` / `zygo opencode`, else it has no name and gets mail by pane key only. `all` and `cli` are reserved. Names are checked at each read, as AU84.
+**(author)** A loadout pane gets an optional `name` (W§11 schema addition): `^[a-z][a-z0-9-]{0,31}$`, unique in the loadout. `up` copies it into the `panes[]` entry and the member record. A hand-started member (AU9) takes `--name <n>` on `zygo claude` / `zygo opencode`, else it has no name and gets mail by pane key only. `all`, `cli` and every name of pane-key form `^k[a-z2-7]{8}$` (W§5) are reserved, so `mail_send`'s `to` (a name or a pane key) is never ambiguous. Names are checked at each read, as AU84.
 
 A rename by `zygo ws name <key> <name>` changes the name; mail stays in the pane-key folder.
 
@@ -202,3 +202,9 @@ name = "elena"          # M§6
 - **PM1** A Stop block with `stop_hook_active = false` makes Claude Code 2.1.328 run one more turn that can call an MCP tool.
 - **PM2** `send-keys -l` text plus a separate `Enter` submits a prompt in an idle Claude Code and in an idle OpenCode.
 - **PM3** `UserPromptSubmit` and `SessionStart` context lines reach the model in both agents.
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-24 | M§6 | author's call | A name of pane-key form is reserved so `mail_send`'s `to` stays unambiguous (ML-1 review). |
