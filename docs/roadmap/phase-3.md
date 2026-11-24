@@ -1,6 +1,6 @@
 # zygo phase 3 roadmap
 
-**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 and P3-15 not designed yet.
+**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 to P3-17 not designed yet.
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`), `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`).
 
 ## Intent
@@ -25,6 +25,8 @@ Phase 3 also has review-finding items (operator, 2026-11-23). They come from a c
 
 The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` agent gets the trim marker, the `[REDACTED:<id>]` marker and the guards, but not the sentences that explain them. §8.6 item 7 says that the mechanics text is appended to each subagent prompt; the code does this for the `zygo-<role>` agents only. And no premise, fixture or test records which zygo text is in the context after a compaction.
 
+The comparison also showed practices that zygo does not have: a benchmark of the full agent, a test gate for prompt text, and rules for honest figures and for recorded limits (P3-16, P3-17, and notes for P3-5, P3-7, P3-8 and P3-10). The ponytail figures in these notes are its own claims; zygo did not run them.
+
 ## Items
 
 | Id | Item | Depends | Spec |
@@ -44,6 +46,8 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 | P3-13 | Session run time in the status line and in `zygo status`, with a format that holds for days | none | to write |
 | P3-14 | Session rules for each subagent: the mechanics text (§8.6) also reaches a subagent that is not a `zygo-<role>` agent | none | to write |
 | P3-15 | Session text after a compaction: a premise, a fixture and a test for each agent; a correction if the text is lost | none | to write |
+| P3-16 | Agent benchmark: the same tasks with zygo and without it; cost, turns and hidden correctness checks; each scorer proved by a self-test | none | to write |
+| P3-17 | Change gate for prompt text: a change to the session text, a role prompt, the pre-compact text or a marker text needs a benchmark run | P3-16 | to write |
 
 ## P3-2 design notes (input for its spec)
 
@@ -63,6 +67,7 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 - **Scope is the context, not the session.** A trim in a subagent is carried only for the life of that subagent. The `requests` and `trims` tables each have an `agent_id` column (`crates/zygo-usage/src/schema.rs`). Open point to verify in the spec: that the column is filled for each subagent request and trim; if it is not, the spec adds that.
 - **Two figures, kept apart.** "Tokens kept out of context" stays the one-time figure. "Estimated spend avoided" is the multiplied figure and has the `≈` mark like other notional spend. Multiplied tokens are never shown as a context-size figure.
 - **Not counted.** A smaller context reaches the soft window later and compacts less frequently. The spec states this effect and puts no number on it.
+- **Measured and modelled figures stay apart (from the ponytail comparison).** "Tokens kept out of context" and the read-back tokens are measured. "Estimated spend avoided" is a model: no run without the trim exists to compare with. `zygo usage` never adds the two and names the formula next to the modelled figure. When an input is not known (a model with no price, a multiplier that is not in the catalog), the figure is empty, not a guess.
 
 ## P3-6 design notes (input for its spec)
 
@@ -71,6 +76,11 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 - **Order of work.** First the low-risk steps (ANSI and progress removal, repeated-line dedup). Then kind-aware views. Then command-specific views (test runners first).
 - **Fail open.** A shaper that cannot parse its input returns the plain size-based view (C6).
 - **Rejected for now:** a `PreToolUse` command rewrite to a wrapper binary (changes what permission rules see; makes output unfit for scripts); user-defined filter files (needs a trust gate; decide after the built-in shapers are measured).
+
+## P3-7 design notes (input for its spec)
+
+- **Each check proves itself first (from the ponytail comparison).** Each filter has a good reference and a bad reference. The bad reference is a view that lost a line the agent needs, for example the one failed test. A self-test shows that the check accepts the good one and refuses the bad one. The self-test runs in CI and has no model cost.
+- **Limit of these tests.** They test the shapers on stored output. They do not show that an agent does its task as well with a shaped view. P3-16 shows that.
 
 ## P3-8 design notes (input for its spec)
 
@@ -85,12 +95,16 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 - **Storage.** One file per record in the repository, under `docs/decisions/`, in the pull request that caused it.
 - **No numeric limit on open records at first.** Phase 3 measures the count and the dependency depth; the first phase-end review decides if a limit is necessary.
 - **Outside this repository.** The plan, execute and deliver skills are in the act101 plugin. They need these changes: the plan step states what an author can decide alone; the execute step writes records at the verification stage; the deliver step lists the records in the pull request body. P3-8 names these changes; the plugin makes them.
+- **Limit and revisit trigger (from the ponytail comparison).** ponytail marks a known shortcut in the code as `shortcut: <the limit>, <when to upgrade>`. An `accepted-limit` or `compromise` record states the limit and the condition that makes a new look necessary. A record with no such condition gets the flag `no-trigger`. Open point for the spec: if the two fields are mandatory for these kinds.
+- **A recorded limit is not a new finding.** A review does not raise a recorded limit again, unless the evidence shows that its condition is met.
+- **Finding form.** A review finding states a concrete case: the input or state, and the incorrect result. Without a case it is not a finding. Each review and each author hand-back ends with a list of what was not checked. The `zygo-review` prompt is in `crates/zygo-config/data/roles.toml`; a change to it comes under P3-17.
 
 ## P3-10 design notes (input for its spec)
 
 - **Outcomes per record.** Ratify; overturn (this makes a work node); promote to an ADR, a spec change or a rule.
 - **Order.** Records are shown sorted by the number of records that build on them, largest first.
 - **Rules need the operator.** A record never becomes a rule without this review.
+- **Records with no trigger.** Records with the `no-trigger` flag are listed apart, because no condition brings them back to the operator.
 
 ## P3-11 design notes (input for its spec)
 
@@ -174,6 +188,28 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 - **Not known.** If Claude Code sends a main-loop `SessionStart` with `source: compact` after an automatic compaction. If the session text from the start stays in the context through a compaction. If OpenCode calls the system-prompt transform on the first request after a compaction.
 - **Work.** One premise for each agent, with a fixture (§19), and a test. If the text is lost, the hook gives it again. If the text is then in the context two times, the spec states that cost.
 - **Launch-time values.** Each run of the hook reads the `results` and `work_units` overrides. The other parts of the text (role prompt, profile prompt, legend, work item) are launch-time values. This agrees with the next-launch scope of the `profile` and `plugins` verbs (§17.1). No change is planned.
+
+## P3-16 design notes (input for its spec)
+
+- **The question.** Does an agent with zygo do the same task at a lower cost, with no loss of correctness? Today zygo has accounting only (§10.7, §14): no benchmark, no evaluation of the result.
+- **Arms.** The agent alone; the agent with zygo. Later, one arm for each feature under test (for example shaping on and off, P3-6). The arm without zygo is the control.
+- **One cell.** One headless agent session in a new temporary workspace, with no user settings, no user memory and no other plugin. The harness proves the isolation of each arm. ponytail reports one run that it made void because the baseline arm had loaded the plugin.
+- **The shell stays on.** ponytail turns Bash off in each arm. zygo cannot, because tool output is the subject of the test.
+- **Scores.** Cost, input and output tokens, turns, time, and hidden checks that the agent cannot see. The usage database gives the token and cost figures.
+- **Scorer self-test.** Each scorer has a good and a bad reference and must separate them before a run starts. CI runs the self-tests; they have no model cost.
+- **Statistics.** More than one run for each task and arm; the median for each task; an interval for the result. A difference inside the interval is reported as no difference.
+- **Results are kept.** Each run gets a results file in the repository, also when the result is negative. A second scoring of a kept run has no model cost.
+- **Not in CI.** A run costs money. The operator starts it.
+- **C3 holds.** The harness reads the usage database and the workspace. The proxy stores no request or response body.
+- **Open points for the spec.** The task set; the models; the number of runs and the budget; local mode or passthrough for the arms; where the results files go.
+
+## P3-17 design notes (input for its spec)
+
+- **Scope.** The session text (`crates/zygo-hooks/src/session_text.rs`), the role prompts (`crates/zygo-config/data/roles.toml`), the pre-compact text (`crates/zygo-hooks/src/pre_compact.rs`), the lead-guard and guard messages, and the trim marker.
+- **The gate.** A change runs three arms on P3-16: no zygo text, the current text, the changed text. It names one task that it must help and one task that it could harm. A change with no measured gain is not merged, and its result is kept.
+- **Size is a cost.** The session text is carried in each request of the context. The gate reports the size change.
+- **Input to test, not a fact.** ponytail reports that an operational rule ("grep every caller of the function you touch") did better than a general one ("trace the flow end to end"): 6 of 6 against 0 of 3 in its own run. zygo tests this on its role prompts before it adopts the practice.
+- **The gate is a rule.** The operator approves it with the spec (P3-8, classes that stop for the operator).
 
 ## After phase 3
 
