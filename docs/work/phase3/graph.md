@@ -207,7 +207,7 @@ Session text (T, SX nodes):
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | TODO | implementation | — |
-| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | TODO | judgment | — |
+| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | PLANNED | judgment | — |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
 | OS-1 | Result meta records the session that stored it | DR-1 | TODO | implementation | — |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | TODO | judgment | — |
@@ -336,3 +336,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-2 done: record set reader, set checks, dependency graph. D§17 #4 corrected to 4 dependents (depths 1, 2, 3, 3). Review round 1, 7 findings: 5 fixed (count speed, deepest_chain order, duplicate lines, non-UTF-8 names, linked docs); 2 rejected (DFS cycle_at; races). Floor green. |
 | 2026-11-24 | DR-9 done: key `dispositions`, default `enforce`. Round 1, 5 findings: 1 fixed (CI tests read no git); 3 rejected (repo-file, serve_cli: ignored timing tests, pass locally; trailer per session rule); 1 out of scope (agents, repos lower the gate; D§9.3 allows; DR-13). Floor green. |
 | 2026-11-24 | DR-10 done: agent_change, the D§6.6 rule for one record change. Review round 1, 8 findings, all fixed: malformed old refused, self-supersede, model/commit/date/supersedes frozen, name escaped, Writes column exhaustive, id match. Floor green. |
+| 2026-11-24 | ML-2 planned (016912f); Files += zygo-workspace/Cargo.toml, Cargo.lock for the ulid dep. PR #24. |
