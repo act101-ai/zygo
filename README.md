@@ -56,12 +56,25 @@ The status line is for Claude Code; in OpenCode, run `zygo status`.
 * Solution: Plan and build software using a proven graph methodology for autonomous agentic execution.
 * These skills are delivered by the act-lite plugin (on by default).
 
-### Native Terminal Multiplexing — **COMING SOON** (v0.2.1)
+### Native Terminal Multiplexing (v0.2.1)
 
 - All coding agents in a workspace are automatically enlisted in a tmux session.
-- Workspace loadouts save layout and agent configuration.
-- Workspaces have shared mailboxes for inter-agent communication.
+- Workspace loadouts set layout and agent configuration.
+- Workspaces have shared mailboxes for inter-agent communication — **COMING SOON**.
 - Gracefully pause and restart your workspaces.
+* A workspace is one git repository: the main checkout and all its worktrees. It has one tmux session, `zygo-<name>`.
+* `zygo up` starts the workspace of this repository and attaches to it (`--loadout <name>`, `--reset` to start from the loadout and not from the snapshot, `--no-attach`, `--all` to restore every workspace that was up).
+* `zygo down` waits until each agent has ended its turn and its subagents, saves the snapshot, then stops the agents (`--now` to skip the wait, `--timeout <n>s|<n>m|<n>h`, default 10m, `--wait`, `--all`). From inside Claude Code, run `/zygo:down`.
+* After `zygo down`, a reboot or a crash of the tmux server, `zygo up` brings back the layout and resumes each agent in its own conversation, with its launch flags, its session settings and its compaction window. Shell panes come back as a shell in their folder; zygo never runs a saved shell command again. Prompt text and inline flag values (for example inline JSON for `--mcp-config`) are not restored; `zygo up` names each flag that it did not restore.
+* `zygo ls` lists the workspaces, `zygo attach` attaches to a running one, `zygo workspace` shows the members of this one, `zygo ws forget <name>` deletes a workspace that is not up, and `zygo ws forget-pane <key>` deletes one pane's record.
+* Loadouts are `[loadout.<name>]` tables in the user config (`~/.config/zygo/config.toml`) only; a repository's `.zygo.toml` cannot set them. The built-in `solo` loadout is one Claude Code pane. Panes are `claude-code`, `opencode` or `shell`. `zygo loadout list` and `zygo loadout show <name>` show them.
+* Workspaces need tmux 3.2 or newer (`zygo doctor` shows the version). On Windows, run zygo in WSL.
+
+### Session Commands
+
+- Change a session's settings while it runs: compaction window (`compact`), result trimming (`results`), the content redaction pass (`redaction`), guard levels (`guards`), work units (`units`) and status line style (`statusline`). On every verb except `compact`, `--save` also writes the change to user config.
+* Run `zygo help` for every verb with its current value and scope; `zygo help <verb>` for one verb. In Claude Code the same verbs are `/zygo:<verb>`; in a shell, `zygo <verb>`.
+* In a workspace, a session setting is restored with that agent at the next `zygo up`.
 
 ---
 
@@ -80,6 +93,10 @@ irm https://raw.githubusercontent.com/act101-ai/zygo/main/scripts/install.ps1 | 
 ```
 
 No administrator rights are needed. Options, environment variables and `zygo update`: [docs/install.md](docs/install.md).
+
+Requirements: Claude Code 2.1.328 or newer, or OpenCode 1.18.16 or newer; tmux 3.2 or newer for workspaces. `zygo doctor` shows each installed version against its minimum.
+
+Update check: `zygo claude`, `zygo opencode` and `zygo up` check for a new release at most once in 24 hours and ask `Update now? [y/N/s]` (`s` skips that version). The check runs only in a terminal, and never inside a zygo session or a workspace pane. It reads the release's public `VERSION` file and sends nothing else. To turn it off, set `[update] check = false` in user config or `ZYGO_NO_UPDATE_CHECK=1`.
 
 Passthrough (`zygo claude --passthrough`) runs Claude Code on your claude.ai login, in local mode only. The vendor's consumer terms restrict routing subscription credentials through third-party software; your own account carries that risk. See [docs/passthrough.md](docs/passthrough.md).
 
