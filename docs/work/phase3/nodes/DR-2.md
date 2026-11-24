@@ -123,7 +123,7 @@ fn open(n: u32, deps: &[u32]) -> Record { rec(n, Status::Open, deps, None) }
 
 - [x] **5. Commit.** `git add crates/zygo-work/src/decisions/graph.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision dependency graph (DR-2)` with the `Zygo-Session:` and `Zygo-Work:` trailers of the implementer's brief.
 
-- [ ] **6. Write the failing set tests.** Restore the `set` import and append these helpers and nine tests to `crates/zygo-work/tests/decision_set.rs`.
+- [x] **6. Write the failing set tests.** Restore the `set` import and append these helpers and nine tests to `crates/zygo-work/tests/decision_set.rs`.
 
 ```rust
 fn file(rid: &str, deps: &[String]) -> String { // a valid record whose `id` is `rid`
@@ -225,9 +225,9 @@ fn link_and_fifo_entries_are_malformed_and_not_opened() {
 }
 ```
 
-- [ ] **7. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::set`.
+- [x] **7. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::set`.
 
-- [ ] **8. Implement the set.** Create `crates/zygo-work/src/decisions/set.rs` with `RecordSet`, `DirError`, `read_dir` and `set_faults` as in Produces, `const MAX_ENTRIES: usize = 10_000;`, and add `pub mod set;` to `mod.rs` (after `pub mod record;`). `read_dir`:
+- [x] **8. Implement the set.** Create `crates/zygo-work/src/decisions/set.rs` with `RecordSet`, `DirError`, `read_dir` and `set_faults` as in Produces, `const MAX_ENTRIES: usize = 10_000;`, and add `pub mod set;` to `mod.rs` (after `pub mod record;`). `read_dir`:
   1. `dir = top.join(DIR)`; `fs::symlink_metadata(&dir)`: `NotFound` → `Ok(RecordSet::default())`; any other error, a link, or not a directory → `Err(NotDirectory)`.
   2. `fs::read_dir(&dir)`; an open error or an entry error → `Err(NotDirectory)`. Collect the file names; the 10,001st entry → `Err(TooMany)`. Do not open any file in this pass.
   3. For each name that is UTF-8 (others are ignored): `name_kind` → `Record(_)`: `read_record(&dir.join(name))` into `valid` or `(name, faults)` into `malformed`; `Malformed`: `(name, vec!["bad record name"])`; `Other`: ignore. Subdirectories are never entered (their names are `Other`, or a record name that `read_record` refuses).
@@ -235,9 +235,9 @@ fn link_and_fifo_entries_are_malformed_and_not_opened() {
 
   `set_faults`: the fixed lines above; known ids are the ids in `set.valid`; the cycle lines are `graph::back_edges` over the forward edges `r.id → d` (only `d` in the set), starts = the ids in slice order.
 
-- [ ] **9. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 13 passed on unix (11 on Windows: the two `#[cfg(unix)]` tests compile to nothing).
+- [x] **9. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 13 passed on unix (11 on Windows: the two `#[cfg(unix)]` tests compile to nothing).
 
-- [ ] **10. Commit.** `git add crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision record set and set checks (DR-2)` with the implementer's trailers.
+- [x] **10. Commit.** `git add crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision record set and set checks (DR-2)` with the implementer's trailers.
 
 - [ ] **11. Acceptance.** `cargo test -p zygo-work --locked --test decision_set` → `test result: ok. 13 passed; 0 failed`.
 
