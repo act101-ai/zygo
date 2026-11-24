@@ -16,6 +16,7 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;
 use zygo_proxy::client::{ClientError, SessionClient, SessionStatus};
 use zygo_proxy::errors::ZygoError;
+use zygo_proxy::redact_stage::RedactLimits;
 use zygo_proxy::server::StartOpts;
 use zygo_proxy::session::{
     Clock, ManualClock, PromptUsage, SessionGrant, SessionRequest, SessionSettings, TeamAuth, WindowArg,
@@ -24,6 +25,7 @@ use zygo_proxy::session::{
 use zygo_proxy::tee::{CacheSplit, Tee, Usage};
 use zygo_proxy::{Proxy, ProxyHandle, Url};
 use zygo_redact::act_lite_store::{StoredValue, MIN_VALUE_BYTES};
+use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
 
 // ---- helpers ----
@@ -1278,8 +1280,17 @@ fn start_routed(d: &TempDir) -> (RoutedUpstream, ProxyHandle) {
     let text = [model("pa", Some(pa)), model("pb", Some(pb)), model("free", None), model("zero", Some(pa))].concat();
     std::fs::write(d.path().join("config.toml"), text).unwrap();
     let cfg = load(&ctx(d, None)).unwrap();
-    let opts = StartOpts { clock: ManualClock::new(), usage_db: Some(d.path().join("data/usage.db")), ..Default::default() };
+    let opts = StartOpts { clock: ManualClock::new(), usage_db: Some(d.path().join("data/usage.db")), redact_limits: Some(generous()), ..Default::default() };
     (up, Proxy::start_local_with(Arc::new(cfg), opts).unwrap())
+}
+
+/// A pass that must finish never hits its deadline (a debug build under load must not trip the 200 ms default).
+fn generous() -> RedactLimits {
+    RedactLimits {
+        secret: DeadlinePolicy { base: Duration::from_secs(60), per_mib: Duration::ZERO, expire_after_scans: None },
+        content_budget: Duration::from_secs(60),
+        ..Default::default()
+    }
 }
 
 /// One messages request of session `g` for catalog model `model`; the HTTP status.
@@ -1473,7 +1484,12 @@ fn start_held(d: &TempDir) -> (HeldUpstream, ProxyHandle, Arc<ManualClock>, Stri
     let cfg = load(&ctx(d, None)).unwrap();
     let c = ManualClock::new();
     let token = format!("team-{}", ulid());
-    let opts = StartOpts { team: Some(Arc::new(TestTeam(vec![(token.clone(), "alpha".into())]))), clock: c.clone(), ..Default::default() };
+    let opts = StartOpts {
+        team: Some(Arc::new(TestTeam(vec![(token.clone(), "alpha".into())]))),
+        clock: c.clone(),
+        redact_limits: Some(generous()),
+        ..Default::default()
+    };
     let h = Proxy::start_local_with(Arc::new(cfg), opts).unwrap();
     (up, h, c, token)
 }

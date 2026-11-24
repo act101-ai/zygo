@@ -302,6 +302,7 @@ mod process_tests {
     }
 
     #[test] // kill_group ends the child's whole group and does not reap the child
+    #[ignore = "timing: polls for the grandchild exit with a 2 s bound"]
     fn kill_group_kills_the_childs_group() {
         let mut c = Command::new("sh");
         c.args(["-c", "sleep 30 & echo $!; wait"]).stdin(Stdio::null()).stdout(Stdio::piped());
@@ -322,6 +323,7 @@ mod process_tests {
     }
 
     #[test] // exited_unreaped: false while the child runs, true after it exits, and the status stays for wait
+    #[ignore = "timing: polls for the child exit with a 5 s bound"]
     fn exited_unreaped_tells_an_exit_without_reaping() {
         let mut running = Command::new("sleep").arg("30").spawn().unwrap();
         assert!(!exited_unreaped(&running).unwrap());

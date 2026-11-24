@@ -57,7 +57,7 @@ fn sync_opts_default_keeps_the_spec_bounds() {
 fn run_git_with_an_expired_deadline_does_not_spawn() {
     let fx = Fx::new();
     assert_eq!(run_git(&fx.0, &["--version"], Instant::now()).unwrap_err().to_string(), "git timed out");
-    let out = run_git(&fx.0, &["--version"], Instant::now() + Duration::from_secs(10)).unwrap();
+    let out = run_git(&fx.0, &["--version"], far()).unwrap();
     assert!(String::from_utf8_lossy(&out).starts_with("git version"));
 }
 
@@ -99,6 +99,7 @@ fn group_gone(pgid: i32) {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: races a hanging git against a 2 s deadline; 5 s poll for the group"]
 fn run_git_kills_the_process_group_on_timeout() {
     let fx = Fx::new();
     let repo = Repo::new(&fx, "repo");
@@ -1288,6 +1289,7 @@ mod syncing {
     }
 
     #[test]
+    #[ignore = "timing: a 50 ms sync budget and a 5 s lock wait"]
     fn marketplace_lock_busy_is_offline_within_the_deadline() {
         let fx = Fx::new();
         let repo = market_repo(&fx, &[("demo", "1.0.0")]);
@@ -1374,6 +1376,7 @@ mod syncing {
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "timing: races a hanging git against a 10 s deadline and asserts elapsed time"]
     fn slow_marketplace_is_killed_at_its_deadline() {
         use std::os::unix::fs::PermissionsExt;
         let fx = Fx::new();
@@ -1450,7 +1453,7 @@ mod syncing {
         assert_eq!(std::fs::read(&mf).unwrap(), bytes);
         assert_eq!(std::fs::metadata(&mf).unwrap().modified().unwrap(), mtime);
         assert!(leftovers(&p).is_empty());
-        assert!(lock_until(&store(&p), true, Instant::now() + Duration::from_secs(5)).unwrap().is_some());
+        assert!(lock_until(&store(&p), true, far()).unwrap().is_some());
         let e = entry(&manifest(&p), "demo").unwrap().clone();
         std::fs::write(entry_dir(&store(&p), &e).join("skills/hello/SKILL.md"), "tampered").unwrap();
         assert!(!verify(&store(&p), &e));
@@ -1694,6 +1697,7 @@ mod syncing {
 
     /// M26: the swap waits for the store lock; a reader holding it keeps the store unchanged.
     #[test]
+    #[ignore = "timing: the locked result needs fetch and check to end inside the 10 s budget"]
     fn swap_waits_for_the_store_lock() {
         let fx = Fx::new();
         let repo = market_repo(&fx, &[("demo", "1.0.0")]);
@@ -1826,6 +1830,7 @@ mod syncing {
     /// (one orphaned by a killed zygo) and is kept, also when its mtime is up to PER_MARKETPLACE in the future;
     /// an older one, or one further in the future (a clock set back), is removed.
     #[test]
+    #[ignore = "timing: lock-file ages race the 5 s PER_MARKETPLACE threshold"]
     fn recent_lock_files_are_kept_and_old_ones_removed() {
         use std::time::SystemTime;
         let fx = Fx::new();

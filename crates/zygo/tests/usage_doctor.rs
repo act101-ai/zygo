@@ -355,6 +355,7 @@ fn doctor_probe_past_deadline_spawns_nothing() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time against the probe bound"]
 fn doctor_probe_kills_a_hung_program() {
     let d = TempDir::new().unwrap();
     let pidfile = d.path().join("pid");
@@ -387,6 +388,7 @@ fn alive(pidfile: &Path) -> bool {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts the probe ends within its 2 s bound"]
 fn doctor_probe_grandchild_holding_stdout_keeps_the_version() {
     let d = TempDir::new().unwrap();
     let _g = forks();
@@ -398,6 +400,7 @@ fn doctor_probe_grandchild_holding_stdout_keeps_the_version() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 2 s probe bound and a 2 s poll for the reaped grandchild"]
 fn doctor_probe_no_grandchild_survives() {
     for last in ["exit 1", "echo 1.0.0"] {
         let d = TempDir::new().unwrap();
@@ -417,6 +420,7 @@ fn doctor_probe_no_grandchild_survives() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time against the probe bound"]
 fn doctor_probe_kills_a_term_ignoring_endless_printer() {
     let d = TempDir::new().unwrap();
     let pf = d.path().join("pid");

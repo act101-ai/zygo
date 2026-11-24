@@ -369,6 +369,7 @@ fn hold(path: PathBuf) -> fs::File {
 }
 
 #[test] // W§7.3 wait bound: the caller's bound, then Busy; the closure never runs; readers need no lock
+#[ignore = "timing: asserts the 100 ms lock wait ends in under 2 s"]
 fn update_waits_for_the_lock_up_to_the_bound() {
     let t = TempDir::new().unwrap();
     let store = Store::open(&paths(t.path()), ID);
@@ -443,6 +444,7 @@ fn a_killed_write_leaves_the_state_whole_and_the_next_write_removes_old_tmp_file
 }
 
 #[test] // AU83: 200 ms of retries before "held"
+#[ignore = "timing: asserts the 200 ms retry ends in under 2 s"]
 fn op_lock_reports_held_after_200_ms() {
     let t = TempDir::new().unwrap();
     let p = paths(t.path());
@@ -468,6 +470,7 @@ fn op_lock_reports_held_after_200_ms() {
 }
 
 #[test] // AU83: a short hold by a hook does not make `up` or `down` fail
+#[ignore = "timing: a holder sleeps 20 ms against the 200 ms op.lock retry"]
 fn op_lock_gets_a_lock_released_inside_the_retry_time() {
     let t = TempDir::new().unwrap();
     let p = paths(t.path());

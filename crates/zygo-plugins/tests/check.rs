@@ -782,7 +782,7 @@ fn n47(rel: &str, body: &str) -> (CheckReport, Result<zygo_plugins::store::Stage
     let store = Fx::new();
     let copied = [".claude-plugin/plugin.json".to_string(), rel.to_string()];
     let s = zygo_plugins::store::stage(&store.0, "team", &fx.0, &copied, &std::collections::HashMap::new(),
-        std::time::Instant::now() + std::time::Duration::from_secs(5));
+        std::time::Instant::now() + std::time::Duration::from_secs(60)); // never reached: not a deadline test
     (r, s)
 }
 

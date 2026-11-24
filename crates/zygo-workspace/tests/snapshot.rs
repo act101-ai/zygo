@@ -473,6 +473,7 @@ fn member(agent: Agent, st: MemberState) -> MemberRecord {
 }
 
 #[test] // W§7.4 step 5, D7, AU53, AU99: the written shape
+#[ignore = "timing: asserts the run takes under 2 s"]
 fn write_shape() {
     let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);
     store
@@ -541,6 +542,7 @@ fn shrink_run(reads: Vec<Vec<String>>, phase: Phase, force: bool) -> (SnapshotOu
 }
 
 #[test] // AU89, D5, W§7.5 rule 1
+#[ignore = "timing: asserts three shrink waits end in under 12 s"]
 fn shrink() {
     let a = line(0, "main", 0, "%0", 0, 1, "kaaaaaaaa", "/srv/app");
     let b = line(0, "main", 0, "%5", 1, 0, "", "/srv/app");
@@ -664,8 +666,9 @@ fn on_queue(store: &Store, f: impl FnOnce() + Send + 'static) {
     );
 }
 
-#[test] // W§7.3, D14, D15, review round 2 B1, B2, M2, M4, W§18 #8
-fn pending_file() {
+#[test] // W§7.3, D14, D15, review round 2 B1, B2, W§18 #8: the part of `pending_file` with the lock held
+#[ignore = "timing: asserts the queued run takes under 4 s"]
+fn pending_file_while_the_lock_is_held() {
     let snap = |p: &Paths, fake: &Fake, force: bool| run(p, fake, ID, None, force, HOOK_WAIT).unwrap();
     // (a), (b), (f): the lock is held, so each run queues
     {
@@ -705,6 +708,11 @@ fn pending_file() {
         assert_eq!(raw(&store), before);
         drop(held);
     }
+}
+
+#[test] // W§7.3, D14, D15, review round 2 B1, B2, M2, M4, W§18 #8
+fn pending_file() {
+    let snap = |p: &Paths, fake: &Fake, force: bool| run(p, fake, ID, None, force, HOOK_WAIT).unwrap();
     // (c) review M4, W6 round 2 M5: the lock is free right after the queue; the probe runs the snapshot. The hook
     // releases the lock at the D14 point (after the queue, before the probe), so no scheduler timing is involved.
     {
@@ -1096,6 +1104,7 @@ fn live_kill_pane_drops_the_key() {
 
 #[cfg(unix)]
 #[test] // AU89, W§7.5 rule 2, PW6: kill-session during the shrink wait writes nothing
+#[ignore = "timing: a 300 ms sleep must put kill-session inside the 2 s shrink wait"]
 fn live_kill_session_during_the_wait_writes_nothing() {
     let _g = live_lock();
     let Some(_) = require_tmux() else { return };

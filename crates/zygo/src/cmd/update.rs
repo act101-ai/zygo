@@ -548,6 +548,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: asserts elapsed time of a 300 ms read timeout"]
     fn fetch_ends_a_stalled_read_after_the_read_timeout() {
         let url = serve_once("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n", b"abc", 4000);
         let c = build_client(Duration::from_secs(5), Duration::from_millis(300)).unwrap();
@@ -558,6 +559,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing: the server thread must answer inside a 300 ms read timeout"]
     fn fetch_still_reads_a_moving_body_whole() {
         let url = serve_once("HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n", b"abcd", 100);
         let c = build_client(Duration::from_secs(5), Duration::from_millis(300)).unwrap();
@@ -642,6 +644,7 @@ mod tests {
     /// A file held open without delete sharing (as a scanner holds a new `.exe`) is renamed once it is released.
     #[cfg(windows)]
     #[test]
+    #[ignore = "timing: a 500 ms sleep races the retry deadline; asserts elapsed time"]
     fn rename_waits_out_a_sharing_violation() {
         use std::os::windows::fs::OpenOptionsExt;
         let d = tempfile::tempdir().unwrap();

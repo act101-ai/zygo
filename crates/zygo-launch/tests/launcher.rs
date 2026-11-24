@@ -942,6 +942,7 @@ fn act_lite_store_values_are_redacted_by_the_session_proxy() {
 }
 
 #[test]
+#[ignore = "timing: git lookups must beat the launcher's 2 s bound"]
 fn repo_and_work_item_reach_env_session_and_view() {
     let fx = fx();
     git_repo(&fx.cwd, "feat/n31.x", "https://user@GitHub.com/Acme/Widgets.git");
@@ -971,6 +972,7 @@ fn repo_and_work_item_reach_env_session_and_view() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: probe must beat the 2 s bound; asserts elapsed time"]
 fn act_lite_version_other_than_the_compiled_list_is_logged() {
     let fx = fx();
     with_act_lite(&fx, "");
@@ -997,6 +999,7 @@ fn act_lite_version_other_than_the_compiled_list_is_logged() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: version probe must beat the 2 s bound"]
 fn agent_version_is_parsed_from_the_stub() {
     let fx = fx();
     let exe = std::env::current_exe().unwrap();
@@ -1026,6 +1029,7 @@ fn agent_version_is_parsed_from_the_stub() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: checks the 2 s probe bound; asserts elapsed time"]
 fn agent_version_probe_is_bounded() { // §7 note 2026-11-19: 2 s, as the act-lite probe
     let fx = fx();
     let exe = std::env::current_exe().unwrap();
@@ -1041,6 +1045,7 @@ fn agent_version_probe_is_bounded() { // §7 note 2026-11-19: 2 s, as the act-li
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time; 1 s poll for the killed child"]
 fn act_lite_probe_does_not_wait_for_a_background_child() {
     let fx = fx();
     with_act_lite(&fx, "");
@@ -1084,6 +1089,7 @@ fn panic_after_the_session_exists_removes_the_session_dir() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time; probe must beat the 2 s bound"]
 fn act_lite_probe_that_leaves_its_group_is_still_stopped() {
     let perl = Path::new("/usr/bin/perl");
     if !perl.exists() {

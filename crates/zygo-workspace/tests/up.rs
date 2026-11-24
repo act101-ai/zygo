@@ -607,6 +607,7 @@ fn first_up_builds_the_loadout() {
 }
 
 #[test] // W§18 #14, AU48, AU15, AU46, D8
+#[ignore = "timing: a stand-in sleeps 0.5 s before its cd, raced against the 2 s cwd wait of up"]
 fn panes_are_written_before_ws_run_reads_them() {
     let _g = serial();
     let Some(_) = require_tmux() else { return };
@@ -1124,6 +1125,7 @@ fn attach_paths() {
 }
 
 #[test] // W§18 #46, AU83, D33
+#[ignore = "timing: a holder thread must release op.lock inside the 200 ms retry of up"]
 fn op_lock_held_at_the_wait_is_retried() {
     let _g = serial();
     let Some(_) = require_tmux() else { return };

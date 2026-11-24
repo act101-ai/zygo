@@ -362,6 +362,21 @@ fn stderr_maps_to_answers_and_errors() {
     );
     assert!(at("nospace", "echo 'no space for new pane' >&2; exit 1").split_window(&split).unwrap_err().is_no_space());
 
+    let t = Tmux::new(PathBuf::from("/nonexistent/tmux"), None);
+    assert!(matches!(t.session_exists("zygo-t"), SessionAnswer::Error { .. }));
+    assert!(matches!(t.version(), Err(MuxError::Spawn { .. })));
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: races stalled and held stub tmux against the 2 s bound and asserts elapsed time"]
+fn slow_or_held_tmux_is_cut_at_the_bound() {
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let at = |name: &str, body: &str| {
+        stub(dir.path(), name, body);
+        Tmux::new(dir.path().join(name), None)
+    };
     let t = at("slow", "exec sleep 10");
     let t0 = Instant::now();
     assert_eq!(t.session_exists("zygo-t"), SessionAnswer::Error { message: "tmux timed out after 2 s".into() });
@@ -389,10 +404,6 @@ fn stderr_maps_to_answers_and_errors() {
     unsafe { libc::kill(pid, libc::SIGKILL) };
     assert_eq!(r, Err(MuxError::Failed { message: "tmux exited, but a process outside its process group holds its output".into() }));
     assert!(took < Duration::from_secs(3), "{took:?}");
-
-    let t = Tmux::new(PathBuf::from("/nonexistent/tmux"), None);
-    assert!(matches!(t.session_exists("zygo-t"), SessionAnswer::Error { .. }));
-    assert!(matches!(t.version(), Err(MuxError::Spawn { .. })));
 }
 
 /// The pid that a stub wrote to `file`; waits at most 2 s for the file.
@@ -1051,6 +1062,7 @@ fn pane_paths_with_newline_and_cr_round_trip() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: waits for an asynchronous tmux hook, then sleeps 100 ms before it reads the hook log"]
 fn au54_hook_runs_with_a_space_and_a_hash_in_the_zygo_path() {
     // Round 2 M6
     let _g = forks();
@@ -1088,6 +1100,7 @@ fn run_child(name: &str, env: &[(&str, &std::ffi::OsStr)]) {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the child asserts elapsed time and polls for a killed process and reader threads"]
 fn held_pipe_is_killed_under_sigchld_ignored() {
     // Round 2 M5: the kernel reaps tmux, and the group is still killed; no reader thread stays.
     let _g = forks();

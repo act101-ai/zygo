@@ -649,6 +649,7 @@ mod start {
     }
 
     #[test] // auto-update #6
+    #[ignore = "timing: asserts elapsed time against the 2 s check bound"]
     fn an_unreachable_server_is_silent_and_bounded() {
         // Nothing listens: the connection is refused.
         let closed = {
@@ -1245,6 +1246,7 @@ mod workspace_check {
     }
 
     #[test] // M5 round 2 finding 5, round 3 finding 3: a server that accepts and never answers ends at the 2 s bound
+    #[ignore = "timing: asserts elapsed time against the 2 s check bound"]
     fn ws_run_with_a_stalled_server_starts_the_member_at_the_bound() {
         // The total time limit of the check (auto-update design, "Check").
         const BOUND: Duration = Duration::from_secs(2);

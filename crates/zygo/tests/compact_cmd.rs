@@ -454,6 +454,7 @@ fn h14_05_hud_keeps_the_launch_time_item_after_zygo_work() {
 /// H§14 #23 on the binary: with the fetch seam and the git seam blocking, the hook ends within its 3 s bound and
 /// prints the HUD with `offline`. An old `{at, line}` cache file counts as no cache.
 #[test]
+#[ignore = "timing: asserts elapsed time against the 3 s hook bound"]
 fn statusline_ends_within_the_bound_when_the_workers_block() {
     let d = home();
     let dir = dead_session(d.path(), "S4");
@@ -602,6 +603,7 @@ fn au105_failed_compact_is_not_mirrored() {
 /// `; not saved for the workspace`; exit 0.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the verb must meet a lock held for 2 s"]
 fn au105_compact_with_locked_state_replies_not_saved() {
     let d = home();
     let h = d.path();

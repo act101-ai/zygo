@@ -209,7 +209,7 @@ fn manifest(t: &T) -> zygo_plugins::store::Manifest { zygo_plugins::store::read_
 
 mod adding {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
     use zygo_plugins::store::PinEntry;
     use zygo_plugins::sync::{lock_marketplace, sync_with};
 
@@ -368,8 +368,8 @@ mod adding {
         let load = || {
             calls.set(calls.get() + 1);
             // A git child forked by another test thread may hold a released lock for a moment: the free case waits.
-            let wait = if calls.get() < 3 { Duration::ZERO } else { Duration::from_secs(10) };
-            let busy = lock_marketplace(&t.paths, "team", Instant::now() + wait).unwrap().is_none();
+            let until = if calls.get() < 3 { Instant::now() } else { far() };
+            let busy = lock_marketplace(&t.paths, "team", until).unwrap().is_none();
             let written = t.config().contains("name = \"team\"");
             match calls.get() {
                 1 => assert!(busy && !written, "call 1"),

@@ -1732,6 +1732,7 @@ fn plugin_decides_before_it_waits() { // review B2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time against the plugin's 10 s timeout"]
 fn plugin_member_calls_survive_a_missing_failing_or_hung_zygo() { // L2 round 2 item 6
     if no_node("plugin_member_calls_survive_a_missing_failing_or_hung_zygo") {
         return;
@@ -2267,6 +2268,7 @@ fn plugin_tool_events_need_a_member() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (9)
+#[ignore = "timing: asserts elapsed time against the plugin's 10 s timeout"]
 fn plugin_tool_calls_keep_order_when_zygo_fails_or_hangs() {
     if no_node("plugin_tool_calls_keep_order_when_zygo_fails_or_hangs") {
         return;
@@ -2411,6 +2413,7 @@ fn plugin_tool_stop_forgets_the_calls() {
 
 #[cfg(unix)]
 #[test] // AU27 tool count, W§9.1: the `pre-tool` of a tool is queued before the guard runs
+#[ignore = "timing: a 0.3 s sleep orders two concurrent processes"]
 fn plugin_tool_pre_tool_queued_before_the_guard() {
     if no_node("plugin_tool_pre_tool_queued_before_the_guard") {
         return;

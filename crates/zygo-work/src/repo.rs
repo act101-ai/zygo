@@ -355,8 +355,10 @@ mod tests {
     #[test] // N53: a failed read is told from "not a repository"; `checkout` keeps its result
     fn find_checkout_tells_timeout_from_not_a_repository() {
         let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-        assert_eq!(find_checkout(&ws, Instant::now() + BOUND).unwrap().unwrap().top, ws);
-        assert!(find_checkout(Path::new("/"), Instant::now() + BOUND).unwrap().is_none());
+        // A one-hour deadline never expires here, so machine load cannot turn the two reads into timeouts.
+        let far = Instant::now() + Duration::from_secs(3600);
+        assert_eq!(find_checkout(&ws, far).unwrap().unwrap().top, ws);
+        assert!(find_checkout(Path::new("/"), far).unwrap().is_none());
         assert_eq!(find_checkout(&ws, Instant::now()).err(), Some(("rev-parse", RunError::TimedOut)));
         assert!(checkout(&ws, Instant::now()).is_none());
     }

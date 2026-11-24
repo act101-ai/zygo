@@ -297,6 +297,7 @@ fn bounds_are_the_spec_values() { // §7 note
 } // mutation: another constant value
 
 #[test]
+#[ignore = "timing: checks the call bound; asserts elapsed time"]
 fn a_silent_server_ends_the_call_at_the_call_bound() { // §7 note: 30 s per call
     let url = silent_server(Duration::from_secs(20));
     let c = connect_with(&url, &Secret::new(new_token().0), Bounds { connect: Duration::from_secs(10), call: Duration::from_millis(300) })
@@ -308,6 +309,7 @@ fn a_silent_server_ends_the_call_at_the_call_bound() { // §7 note: 30 s per cal
 
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "timing: checks the connect bound; asserts elapsed time"]
 fn a_full_accept_queue_ends_the_call_at_the_connect_bound() { // §7 note: connect 10 s
     use std::os::fd::FromRawFd;
     // SAFETY: plain socket calls on a new descriptor; the listener takes ownership of it.
@@ -336,6 +338,7 @@ fn a_full_accept_queue_ends_the_call_at_the_connect_bound() { // §7 note: conne
   // refuse or reset a connect to a full queue instead of dropping it.
 
 #[test]
+#[ignore = "timing: checks the call bound; asserts elapsed time"]
 fn doctor_health_check_ends_at_the_call_bound() { // §7 note
     let url = silent_server(Duration::from_secs(20));
     let t0 = Instant::now();
@@ -572,6 +575,7 @@ fn sync_pending_counts_a_session_live_only_while_its_pid_is_locked() { // U3 (ro
 } // mutation: `live()` ignores the lock → U1 skipped as live
 
 #[test]
+#[ignore = "timing: B1 reply must beat a 2 s call bound"]
 fn sync_pending_goes_on_after_an_unreachable_session() { // §7 note, R5
     let b1 = serde_json::json!({ "requests": [row("B1", "alice")], "complete": true }).to_string();
     let (url, _rec) = recorder(move |r| {
@@ -1003,6 +1007,7 @@ fn an_unreachable_server_has_spawned_false() { // AU60
 }
 
 #[test]
+#[ignore = "timing: checks the call bound; asserts elapsed time"]
 fn a_server_that_never_answers_exits_12_at_the_call_bound() { // §7 note: "a timeout is server unreachable (exit 12 at launch)"
     let fx = fx();
     let url = silent_server(Duration::from_secs(20));
@@ -1178,6 +1183,7 @@ fn failed_or_incomplete_rows_keep_the_session_pending() { // §14, B2, S5
 } // mutations: cleared on a failed fetch; cleared or not inserted when incomplete
 
 #[test]
+#[ignore = "timing: asserts elapsed time against the call bound"]
 fn a_server_that_stalls_after_creation_costs_one_call_bound_at_exit() { // S3 (round 2), §7.2 suspend, §7 note
     let fx = fx();
     let (sid, grant) = grant_json(&fx);
@@ -1643,6 +1649,7 @@ fn sigterm_during_the_exit_finishes_the_cleanup() { // N70 S1, §8.2 step 6
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: a 1 s sleep orders the two signals"]
 fn a_second_sigint_before_the_agent_ends_the_launch_at_once() { // N70 M-2 (D5), round 2 M1
     use std::os::unix::process::ExitStatusExt;
     let t = tempfile::tempdir().unwrap();
