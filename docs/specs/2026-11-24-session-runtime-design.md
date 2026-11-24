@@ -1,6 +1,6 @@
 # zygo: session run time — design
 
-**Status:** proposed 2026-11-24
+**Status:** approved by the operator 2026-11-24
 **Date:** 2026-11-24
 **Item:** P3-13 (`docs/roadmap/phase-3.md`, "P3-13 design notes", including "Resolved with the operator (2026-11-23)")
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`, decisions `W AUn`, constraints `W-Cn`), `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`, decisions `H AUn`/`H OPn`, constraints `H-Cn`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`). `T§n` is a section of this document.
