@@ -211,15 +211,6 @@ The comparison also showed practices that zygo does not have: a benchmark of the
 - **Input to test, not a fact.** ponytail reports that an operational rule ("grep every caller of the function you touch") did better than a general one ("trace the flow end to end"): 6 of 6 against 0 of 3 in its own run. zygo tests this on its role prompts before it adopts the practice.
 - **The gate is a rule.** The operator approves it with the spec (P3-8, classes that stop for the operator).
 
-## After phase 3
-
-- **README correction** (operator, 2026-11-23: after phase 3). The README states features in the present tense that the code did not have on 2026-11-23. The correction states what is true at that time. Verified on 2026-11-23:
-  - tmux workspaces, pause and restart: no `up` or `down` command; the workspace crate has stub files for them (phase 2, W3 and W6 to W10).
-  - Loadouts: the config schema and the resolution exist; nothing saves or starts a layout.
-  - Shared mailboxes: a design only (P3-1).
-  - Cache annotation: the README says more than `crates/zygo-proxy/src/cache.rs` does. The proxy marks only the last system block and the last tool, only when the body has no `cache_control` key, and the default is off for Claude Code.
-  - "act-lite ... built in" and the delivery skills: these come from the act-lite plugin of the built-in marketplace, and its binary must be on `PATH` (§10.5). The binary embeds only the `zygo-cli` skill and the slash commands.
-
 ## Not in phase 3 unless the operator adds them
 
 - Moving the work itself between machines (worktrees, builds, locks).
