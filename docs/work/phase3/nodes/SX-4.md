@@ -1,0 +1,9 @@
+# SX-4 — `zygo hook trim` gives the mechanics text once after a subagent's compaction
+
+**Spec:** docs/specs/2026-11-24-session-text-design.md §9.2 items 2-4, §14 item 2, §17 check 8; T-C1, T-C5
+**Files:** `crates/zygo-hooks/src/trim.rs`, `crates/zygo-hooks/tests/reinject.rs`
+**Consumes:** `mechanics_with_overrides` (SX-1), `flag_path` (SX-3), `SessionDir::reinject` (SX-3)
+**Produces:** `zygo hook trim` output field `hookSpecificOutput.additionalContext`
+**Acceptance:** `test "$(cargo test -q -p zygo-hooks --test reinject -- trim --list 2>/dev/null | grep -c ': test$')" -ge 10 && cargo test -p zygo-hooks --test reinject -- trim` → every count holds (at least 10 named `trim…` in zygo-hooks `reinject`; a count of 0 fails before any run), then all pass on ubuntu, macOS and Windows: the flag is taken and `additionalContext` = M given, once, for each hooked tool from a subagent input (`fixtures/claude-code/hooks/PostToolUse-Read-sub.json`, `PostToolUse-Grep-sub.json`, `PostToolUse-Glob-sub.json`, `PostToolUse-WebFetch-sub.json`, each under the threshold) and for an under-threshold Bash input with results off (`overrides.json` `results = false`), so a flag check placed after the trim's early returns fails (T§9.2 item 2); T§17 check 8 (after the flag, under-threshold `PostToolUse-Bash-sub.json` prints exactly `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":M}}`, the flag is gone, a second run prints nothing; over-threshold gives one object with both `updatedToolOutput` and `additionalContext`; `PostToolUse-Bash-main.json` reads no flag), a flag that cannot be removed gives no text and one stderr line with the trim output unchanged, and an `agent_id` that fails the name rule removes no file; then `cargo test -p zygo-hooks` → all pass with no existing trim test changed
+
+## Plan

@@ -1,6 +1,6 @@
 # zygo phase 3 roadmap
 
-**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 and P3-15 not designed yet.
+**Status:** started 2026-11-22. The operator approved all Phase 3 specs on 2026-11-24 (P3-1 on 2026-11-22). Next: one work graph for the phase (see "Plan of work").
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`), `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`).
 
 ## Intent
@@ -30,20 +30,36 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 | Id | Item | Depends | Spec |
 |---|---|---|---|
 | P3-1 | Workspace mail, local store (one machine) | phase 2 (W3-W10, H1) | `2026-11-22-workspace-mail-design.md` |
-| P3-2 | Mail sync on a side branch: carry `mail/` messages between machines through the remote | P3-1 | to write |
-| P3-3 | Member identity across machines: `<name>@<host>` addresses, a member registry on the side branch | P3-2 | to write |
-| P3-4 | Wake of a remote member: the receiving machine's hooks deliver after a fetch (M§7) | P3-2, P3-3 | to write |
-| P3-5 | Saving accounting with a carry factor: two figures ("tokens kept out of context", "estimated spend avoided"), net of read-backs, counted per context; per-tool and per-command breakdown in `zygo usage`; view to read-back ratio | none | to write |
-| P3-6 | Command-aware output shaping in the trim hook: ANSI and progress removal, repeated-line dedup with counts, failures-only views for test runners, kind-aware views (diff, json, log), Bash stderr measured and stored | P3-5 | to write |
-| P3-7 | Shaping tests: fixtures from real command output, a minimum saving for each filter, a never-worse check, a measured hook latency budget | P3-6 | to write |
-| P3-8 | Delegated decision record (DDR): record format, kinds, statuses, the disposition rule for review findings, the classes that stop for the operator | none | to write |
-| P3-9 | DDR enforcement in zygo: the verdict step refuses a pass while a finding has no disposition; `zygo work report` counts open records; a `Zygo-Decision:` commit trailer | P3-8 | to write |
-| P3-10 | Phase-end ratification: the operator gets each open record to ratify, overturn or promote | P3-8 | to write |
-| P3-11 | Workspace config and model profiles as repository files; no credentials | phase 2 (workspaces) | to write |
-| P3-12 | Workspace member definition as a repository file: default one orchestrator and four elephant workers; optional config-directory pool for the members | P3-11 | to write |
-| P3-13 | Session run time in the status line and in `zygo status`, with a format that holds for days | none | to write |
-| P3-14 | Session rules for each subagent: the mechanics text (§8.6) also reaches a subagent that is not a `zygo-<role>` agent | none | to write |
-| P3-15 | Session text after a compaction: a premise, a fixture and a test for each agent; a correction if the text is lost | none | to write |
+| P3-2 | Mail sync on a side branch: carry `mail/` messages between machines through the remote | P3-1 | `2026-11-24-mail-sync-design.md` |
+| P3-3 | Member identity across machines: `<name>@<host>` addresses, a member registry on the side branch | P3-2 | `2026-11-24-mail-sync-design.md` |
+| P3-4 | Wake of a remote member: the receiving machine's hooks deliver after a fetch (M§7) | P3-2, P3-3 | `2026-11-24-mail-sync-design.md` |
+| P3-5 | Saving accounting with a carry factor: two figures ("tokens kept out of context", "estimated spend avoided"), net of read-backs, counted per context; per-tool and per-command breakdown in `zygo usage`; view to read-back ratio | none | `2026-11-24-output-shaping-design.md` |
+| P3-6 | Command-aware output shaping in the trim hook: ANSI and progress removal, repeated-line dedup with counts, failures-only views for test runners, kind-aware views (diff, json, log), Bash stderr measured and stored | P3-5 | `2026-11-24-output-shaping-design.md` |
+| P3-7 | Shaping tests: fixtures from real command output, a minimum saving for each filter, a never-worse check, a measured hook latency budget | P3-6 | `2026-11-24-output-shaping-design.md` |
+| P3-8 | Delegated decision record (DDR): record format, kinds, statuses, the disposition rule for review findings, the classes that stop for the operator | none | `2026-11-24-decision-records-design.md` |
+| P3-9 | DDR enforcement in zygo: the verdict step refuses a pass while a finding has no disposition; `zygo work report` counts open records; a `Zygo-Decision:` commit trailer | P3-8 | `2026-11-24-decision-records-design.md` |
+| P3-10 | Phase-end ratification: the operator gets each open record to ratify, overturn or promote | P3-8 | `2026-11-24-decision-records-design.md` |
+| P3-11 | Workspace config and model profiles as repository files; no credentials | phase 2 (workspaces) | `2026-11-24-workspace-definition-design.md` |
+| P3-12 | Workspace member definition as a repository file: default one orchestrator and four elephant workers; optional config-directory pool for the members | P3-11 | `2026-11-24-workspace-definition-design.md` |
+| P3-13 | Session run time in the status line and in `zygo status`, with a format that holds for days | none | `2026-11-24-session-runtime-design.md` |
+| P3-14 | Session rules for each subagent: the mechanics text (§8.6) also reaches a subagent that is not a `zygo-<role>` agent | none | `2026-11-24-session-text-design.md` |
+| P3-15 | Session text after a compaction: a premise, a fixture and a test for each agent; a correction if the text is lost | none | `2026-11-24-session-text-design.md` |
+
+## Plan of work (operator, 2026-11-24)
+
+1. **One spec per track.** Each Phase 3 track gets one spec. The decision-record spec covers P3-8, P3-9 and P3-10 together.
+2. **One work graph.** One work graph covers all of Phase 3. It is made after all track specs are approved. A spec does not plan nodes.
+3. **A review gate per node.** Each work node gets its own review gate of up to 3 rounds (phase 2 had no per-node review). The P3-8 disposition rule applies at each gate: after round 3, a node passes only when each finding has exactly one disposition (fixed with a commit, rejected with a reason, or recorded with a DDR id), and no finding is of a class that stops for the operator.
+4. **A pull request after every row.** Each row of the work graph, planning included, is delivered in its own pull request to `main` (operator, 2026-11-24). The planning row is PR #16.
+
+Spec order:
+
+1. Decision records (P3-8 to P3-10): `docs/specs/2026-11-24-decision-records-design.md`.
+2. Mail sync (P3-2 to P3-4).
+3. Output shaping (P3-5 to P3-7).
+4. Workspace definition (P3-11, P3-12).
+5. Session run time (P3-13 alone).
+6. Session text (P3-14, P3-15).
 
 ## P3-2 design notes (input for its spec)
 
@@ -145,6 +161,7 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 - **Cost.** One read of a stored timestamp; no new process and no change to the status line time budget (H-C2, 3 s). For a member, the HUD already reads `workspace.json` on each run (H§7.6).
 - **Not shown at first.** Active time (time with a request in flight) is a different figure. The usage database can give it later; the first version shows wall-clock time only.
 - **Already in the specs.** `member.last_run_at` is the time of the member's last committed start, and `member.pending.started_at` is the time of a start that is not committed (W§7.2, W AU92). Neither is the first start. The Claude Code stdin has a `cost` key that the HUD never reads (H§3, H§7.1); the spec does not take the run time from it.
+  *(Note 2026-11-24: no such field exists; the only stored start time is `member.pending.started_at` (`crates/zygo-workspace/src/state.rs:142`). The session run time spec records this.)*
 - **Resolved with the operator (2026-11-23).**
   - **The run time belongs to the member.** §5 and W§5 hold: a session is one launch of one agent, and a resumed agent is a new zygo session with the same agent conversation. Thus the run time is not a property of the zygo session. The spec adds a `first_started_at` field to the member record (W§7.2). A session outside a workspace (W-C6) uses its own start.
   - **The HUD spec is amended.** H§6.2 fixes the segments and their order (H AU9), and H§6.7 fixes the order in which segments are removed at a small width. The spec amends the HUD spec to add the segment and its place in the removal order, as M§9a did for the member name and the mail count.

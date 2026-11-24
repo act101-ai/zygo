@@ -1,0 +1,9 @@
+# WD-5 — Config keys: pane `job` and `pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules
+
+**Spec:** `docs/specs/2026-11-24-workspace-definition-design.md` R§9.1 (pane keys and `config check` rules), R§9.3 (no job by default in a user loadout), R§9.4 (`max_members` 1-32, default 8; `.zygo.toml` cannot set it), R§9.5 (`[workspace] pool`; relative after `~` expansion is a `config check` error; no `pool` on `opencode`), R§13, R§14 rows W§11, §6.1 layer 3, §6.1 layer 4 and §13.5, R§18 item 12 (`.zygo.toml` part)
+**Files:** `crates/zygo-config/src/schema.rs`, `crates/zygo-config/src/layers.rs`, `crates/zygo-config/src/check.rs`, `crates/zygo-config/tests/definition_keys.rs` (new), `docs/specs/2026-11-20-workspaces-design.md` (W§11 amendment), `docs/specs/2026-11-18-zygo-design.md` (§6.1 layer 3, §6.1 layer 4 and §13.5 amendments)
+**Consumes:** `LoadoutPane.name` (ML-1)
+**Produces:** `LoadoutPane.job: Option<String>`, `LoadoutPane.pool: bool`, `WorkspaceConfig.pool: Option<String>`, `LimitsConfig.max_members: u32`, `schema::JOBS: [&str; 2]` (`["orchestrator", "worker"]`), `schema::MAX_MEMBERS_DEFAULT: u32` (8)
+**Acceptance:** `cargo test -p zygo-config --test definition_keys && cargo test -p zygo-config --test config_layers` → all pass. The new tests cover: a `job` other than `orchestrator` or `worker`, two orchestrators in one loadout, `pool = true` on `opencode`, `pool` with `config_dir`, `[workspace] pool` relative after `~` expansion, and `max_members` of 0 and of 33 each give one `zygo config check` violation; a user pane with no `job` has `job = None`; `.zygo.toml` with `[limits] max_members = 30` gives the warning `.zygo.toml: limits.max_members ignored; only user or team config may set it` and the merged value stays the user value; the team layer can set `max_members`; the default is 8. The spec amendments in Files are checked in review, not by this command.
+
+## Plan
