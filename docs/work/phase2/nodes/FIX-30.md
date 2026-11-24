@@ -102,7 +102,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
 
 ### Steps
 
-- [ ] **1. Test (red): the snapshot refuses a saved socket that fails AU54.** In `crates/zygo-workspace/tests/snapshot.rs`, after `a_multiplexer_bound_to_another_socket_makes_no_call`, add:
+- [x] **1. Test (red): the snapshot refuses a saved socket that fails AU54.** In `crates/zygo-workspace/tests/snapshot.rs`, after `a_multiplexer_bound_to_another_socket_makes_no_call`, add:
   ```rust
   /// The AU54 text without `zygo: ` (`mux/mod.rs:697-698`).
   const AU54_REASON: &str =
@@ -139,7 +139,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test snapshot au54_` fails: the outcome is not `Skipped(Logged)`, or `f.calls("")` is not 0 (the `owner` call `show_session_option` runs).
 
-- [ ] **2. Test (red): the member wrapper, `zygo ws snapshot` and the verb mirror make no tmux call.**
+- [x] **2. Test (red): the member wrapper, `zygo ws snapshot` and the verb mirror make no tmux call.**
   - In `crates/zygo/tests/workspace_member.rs`, add a section at the end of the file:
     ```rust
     // ---- FIX-30: a tmux socket that fails AU54 ----
@@ -239,7 +239,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
     (The reply and the `overrides` value are those of `au105_cli_verb_runs_the_pending_snapshot_inline_after_the_write`, `:820`, and `au105_slash_verb_starts_the_pending_snapshot_as_a_detached_child`, `:865`.)
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member au54_` fails in both tests: `root/tmux-called` exists (the snapshot `owner` call ran `bin/tmux`). `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test session_verbs au54_` fails: `mf::tmux_calls(h)` is not empty.
 
-- [ ] **3. Code (green): the AU54 check in `snapshot::attempt`.** In `crates/zygo-workspace/src/snapshot.rs`:
+- [x] **3. Code (green): the AU54 check in `snapshot::attempt`.** In `crates/zygo-workspace/src/snapshot.rs`:
   - Add the import `use crate::repair::check_saved_socket;` after line 13.
   - In `fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration) -> Attempt`, right after the block `if mux.socket() != Some(state_socket) { return done(SkipReason::Changed); }` (`:585-587`), add:
     ```rust

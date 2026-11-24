@@ -1337,6 +1337,39 @@ fn a_multiplexer_bound_to_another_socket_makes_no_call() {
     assert_eq!(run(&p, &f, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Skipped(SkipReason::NoSocket));
 }
 
+/// The AU54 text without `zygo: ` (`mux/mod.rs:697-698`).
+const AU54_REASON: &str =
+    "the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it";
+
+#[test] // FIX-30, AU54, W§7.4 step 1: a saved socket that fails AU54: one log line, no write, no tmux call
+fn au54_a_saved_socket_with_a_quote_logs_one_line_and_makes_no_tmux_call() {
+    let (_d, p, store) = up(&["kaaaaaaaa"]);
+    set_socket(&store, "/tmp/so'ck/s");
+    let mut f = Fake::new(Some(ID), vec![Ok(one("kaaaaaaaa"))]);
+    f.socket = Some(PathBuf::from("/tmp/so'ck/s"));
+    let before = raw(&store);
+    // as a tmux hook runs it
+    assert_eq!(
+        run(&p, &f, ID, Some("after-split-window"), false, HOOK_WAIT).unwrap(),
+        SnapshotOutcome::Skipped(SkipReason::Logged)
+    );
+    assert_eq!(f.calls(""), 0);
+    assert_eq!(raw(&store), before);
+    let lines = log_lines(&store);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].ends_with(&format!("snapshot (after-split-window): {AU54_REASON}")), "{lines:?}");
+    assert_eq!(pending(&store), None);
+    // the `snapshot.pending` check of a writer
+    fs::write(store.dir().join("snapshot.pending"), "").unwrap();
+    assert_eq!(after_write(&p, &f, ID, HOOK_WAIT).unwrap(), SnapshotOutcome::Skipped(SkipReason::Logged));
+    assert_eq!(f.calls(""), 0);
+    assert_eq!(raw(&store), before);
+    let lines = log_lines(&store);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[1].ends_with(&format!("snapshot: {AU54_REASON}")), "{lines:?}");
+    assert_eq!(pending(&store), None);
+}
+
 fn set_socket_none(store: &Store) {
     store.update(S5, &mut |ws| { ws.tmux_socket = None; Ok(()) }).unwrap();
 }
