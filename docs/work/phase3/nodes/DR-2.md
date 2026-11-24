@@ -239,8 +239,8 @@ fn link_and_fifo_entries_are_malformed_and_not_opened() {
 
 - [x] **10. Commit.** `git add crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision record set and set checks (DR-2)` with the implementer's trailers.
 
-- [ ] **11. Acceptance.** `cargo test -p zygo-work --locked --test decision_set` → `test result: ok. 13 passed; 0 failed`.
+- [x] **11. Acceptance.** `cargo test -p zygo-work --locked --test decision_set` → `test result: ok. 13 passed; 0 failed`.
 
-- [ ] **12. Floor.** `cargo test --workspace --locked --no-fail-fast` → every `test result:` line `ok`, exit 0.
+- [x] **12. Floor.** `cargo test --workspace --locked --no-fail-fast` → every `test result:` line `ok`, exit 0.
 
-- [ ] **13. Review focus.** Line 42: `linked_directory_is_not_a_directory` and `link_and_fifo_entries_are_malformed_and_not_opened` pass (step 11). Line 75: `grep -nE 'SystemTime|Instant|time::|Command' crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/graph.rs crates/zygo-work/tests/decision_set.rs` → no output (no clock, no spawned process).
+- [x] **13. Review focus.** Line 42: `linked_directory_is_not_a_directory` and `link_and_fifo_entries_are_malformed_and_not_opened` pass (step 11). Line 75: `grep -nE 'SystemTime|Instant|time::|Command' crates/zygo-work/src/decisions/set.rs crates/zygo-work/src/decisions/graph.rs crates/zygo-work/tests/decision_set.rs` → no output (no clock, no spawned process).
