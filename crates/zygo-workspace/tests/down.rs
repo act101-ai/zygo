@@ -2460,5 +2460,24 @@ fn events_off_member_keeps_the_rule_skipped_line() {
     l.child.kill().unwrap();
 }
 
+#[test] // FIX-24 diff review round 3, finding 8: the hooks-off override keeps the rule-skipped line of AU26
+fn hooks_off_member_keeps_the_rule_skipped_line() {
+    let _s = serial();
+    let t = TempDir::new().unwrap();
+    let t = t.path();
+    let (mut o, _store, mut l) = one_member(t);
+    hooks_off_settings(&o, SID);
+    o.timeout = Some(Duration::from_secs(120));
+    let mut h = hooks();
+    // No `requests_in_flight`: a skip case of rule 3.
+    statuses(&mut h, status_map(vec![(SID, Ok(SessionStatus::default()))]));
+    let (code, out, err) = run(&o, &h);
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    assert_eq!(count(&err, SKIP), 1, "{err}");
+    assert_eq!(count(&err, HOOKS_OFF_LINE), 1, "{err}");
+    assert!(l.child.try_wait().unwrap().is_none(), "the agent got a signal");
+    l.child.kill().unwrap();
+}
+
 // `a_saved_attach_flag_without_run_is_not_events_off` moved to `crates/zygo/tests/workspace_member.rs` (FIX-24 diff
 // review round 2, finding 5): it computes the flag through the real `ws run` start write, which this crate cannot run.

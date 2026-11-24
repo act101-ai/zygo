@@ -508,8 +508,8 @@ fn a_saved_attach_flag_without_run_is_not_events_off() {
     // No activity.json and a quiet proxy: idle unless the record says events off.
     let o = cli(&h, &["down", "--timeout", "5s", "--wait", "--", "app"], &[]);
     let err = text(&o.stderr);
-    assert_eq!(o.status.code(), Some(0), "{err}");
-    assert!(err.contains(&format!("zygo: app pane {KEY} is idle\n")), "{err}");
+    assert_eq!((o.status.code(), text(&o.stdout).as_str()), (Some(0), "zygo: app is down (1 agents saved)\n"), "{err}");
+    assert_eq!(err.lines().filter(|l| *l == format!("zygo: app pane {KEY} is idle")).count(), 1, "{err}");
     assert!(!err.contains("member events off"), "{err}");
 }
 
@@ -518,10 +518,17 @@ fn a_hand_start_with_claude_code_simple_is_saved_with_events_off() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
     up_state(&h, &[], &mut |_| {});
-    let cases: [(Agent, &str, &str, bool); 5] = [
+    // Round 3, finding 1: Claude Code 2.1.331's rule (lower case, trim, one of 1, true, yes, on).
+    let cases: [(Agent, &str, &str, bool); 11] = [
         (Agent::ClaudeCode, "claude", "1", true),
-        (Agent::ClaudeCode, "claude", "true", true),
-        (Agent::ClaudeCode, "claude", "0", false),
+        (Agent::ClaudeCode, "claude", "TRUE", true),
+        (Agent::ClaudeCode, "claude", " yes ", true),
+        (Agent::ClaudeCode, "claude", "on", true),
+        (Agent::ClaudeCode, "claude", "false", false),
+        (Agent::ClaudeCode, "claude", "no", false),
+        (Agent::ClaudeCode, "claude", "off", false),
+        (Agent::ClaudeCode, "claude", "2", false),
+        (Agent::ClaudeCode, "claude", " 0", false),
         (Agent::ClaudeCode, "claude", "", false),
         (Agent::OpenCode, "opencode", "1", false), // Claude Code only
     ];
@@ -540,6 +547,37 @@ fn a_hand_start_with_claude_code_simple_is_saved_with_events_off() {
         // Room for the next split: the window holds a few panes only.
         h.tmux(&["kill-pane", "-t", &pane]);
     }
+    // Unset: no bare mode.
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "unset");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "unset: {}", text(&o.stderr));
+    assert!(stub_env(&out).get("CLAUDE_CODE_SIMPLE").is_none());
+    assert!(!member(&h, &pane_key(&h, &pane)).unwrap().launch.events_off, "unset");
+}
+
+/// FIX-24 diff review round 3, finding 3: `bare_env` comes from the environment that the agent gets. A provider key
+/// variable named CLAUDE_CODE_SIMPLE is removed by the deny list, so the agent does not get it and is not events off.
+#[test]
+fn a_provider_key_named_claude_code_simple_does_not_make_a_member_events_off() {
+    let Some(h) = Harness::new() else { return };
+    std::fs::write(
+        &h.paths.config_file,
+        "[[model]]\nid = \"test-env\"\n[[model.provider]]\nname = \"p-env\"\nbase_url = \"https://example.invalid\"\n\
+         dialects = [\"anthropic\"]\nupstream_model = \"up-env\"\nkey = \"env:CLAUDE_CODE_SIMPLE\"\n",
+    )
+    .unwrap();
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[], &mut |_| {});
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "k");
+    let mut extra = pairs(&env);
+    extra.push(("CLAUDE_CODE_SIMPLE", OsStr::new("1")));
+    let o = Guarded::spawn(hand(&h, &pane, &["claude"], &extra)).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(stub_env(&out).get("CLAUDE_CODE_SIMPLE").is_none(), "the agent got the provider key variable");
+    let m = member(&h, &pane_key(&h, &pane)).unwrap();
+    assert!(!m.launch.events_off, "the agent does not get CLAUDE_CODE_SIMPLE, so it is not bare mode");
 }
 
 #[test] // FIX-24 D1, AU26: the real hand-start path writes events_off from the typed arguments

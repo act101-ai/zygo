@@ -12,7 +12,7 @@ use zygo_core::session_dir::{write_atomic, SessionDir};
 use zygo_core::session_view::Member;
 use zygo_core::Agent;
 use zygo_launch::env::Env;
-use zygo_launch::claude_code::ClaudeCode;
+use zygo_launch::claude_code::{simple_mode, ClaudeCode};
 use zygo_launch::launcher::{resume_argv, AgentSession, LaunchOutcome, NotMember};
 use zygo_launch::opencode::OpenCode;
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
@@ -77,10 +77,6 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         Agent::ClaudeCode => effective_config_dir(&opts.env, &opts.cwd),
         Agent::OpenCode => None,
     };
-    // FIX-24 diff review round 2, finding 4: bare mode from the environment of this start. `opts.env` is the parent
-    // environment that `Launcher::run` filters into the agent's (`child_env`, zygo-launch launcher.rs); that filter
-    // neither removes nor sets CLAUDE_CODE_SIMPLE (env.rs denylist; the `set` list), so the agent gets this value.
-    let bare_env = kind == Agent::ClaudeCode && simple_mode(opts.env.get("CLAUDE_CODE_SIMPLE"));
     // The config dir of the printed resume command (AU61, PW16).
     let shown_dir = config_dir.clone();
     // The zygo session of this start, set only when the callback's record write gave a state (D3, D5).
@@ -99,12 +95,11 @@ pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberC
         hand: m.hand.clone(),
         pre,
         config_dir,
-        bare_env,
         seen: seen.clone(),
         previous: previous.clone(),
         written: written.clone(),
     };
-    opts.on_session = Some(Box::new(move |sd, session, program, _member| cb.run(sd, session, program)));
+    opts.on_session = Some(Box::new(move |sd, session, program, _member, env| cb.run(sd, session, program, env)));
     gate("launch");
     let o = Launcher::run(adapter, opts);
     gate("returned");
@@ -176,7 +171,6 @@ struct Callback {
     hand: Option<HandJoin>,
     pre: Option<String>,
     config_dir: Option<PathBuf>,
-    bare_env: bool,
     seen: Arc<Mutex<Option<String>>>,
     previous: Arc<Mutex<Option<MemberRecord>>>,
     written: Arc<Mutex<Option<MemberRecord>>>,
@@ -187,7 +181,12 @@ impl Callback {
     /// (W§8.2 step 4, AU11). The errors of the later steps are joined with `; `. For a hand start the write is
     /// [`Callback::hand_write`]; when it refuses or fails, the callback prints the not-saved line and returns
     /// `NotMember`, so the launch goes on as a v1 launch (W§8.4, AU34).
-    fn run(self, sd: &SessionDir, session: &str, program: &Path) -> anyhow::Result<()> {
+    fn run(self, sd: &SessionDir, session: &str, program: &Path, env: &Env) -> anyhow::Result<()> {
+        // FIX-24 diff review round 3, finding 3: bare mode from the environment that the agent gets. `env` is the launch
+        // environment after the §8.4 deny list of crates/zygo-launch/src/env.rs (`child_env`), as the launcher passes it
+        // to the session callback; the launcher sets no CLAUDE_CODE_SIMPLE itself (crates/zygo-launch/src/launcher.rs, the
+        // `set` list). The rule is Claude Code's own (`zygo_launch::claude_code::simple_mode`, round 3, finding 1).
+        let bare_env = self.launch.kind == Agent::ClaudeCode && simple_mode(env.get("CLAUDE_CODE_SIMPLE"));
         // D8: the saved path, not the link of the OpenCode program folder.
         let folder = self.paths.workspace_cache_dir().join(&self.ws_id).join("program");
         let recorded =
@@ -198,7 +197,7 @@ impl Callback {
             started_at: SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()),
             config_dir: self.config_dir.clone(),
             program: recorded,
-            bare_env: self.bare_env,
+            bare_env,
         };
         let pane = self.pane.clone();
         let launch = self.launch.clone();
@@ -386,14 +385,9 @@ pub(crate) struct Start {
     pub started_at: u64,
     pub config_dir: Option<PathBuf>,
     pub program: PathBuf,
-    /// A Claude Code start whose environment sets CLAUDE_CODE_SIMPLE to a value other than empty and `0`: bare mode,
-    /// as `--bare` sets it (`fixtures/claude-code/help.txt:47-48`), so no member hook runs (FIX-24, AU26).
+    /// A Claude Code start whose agent gets CLAUDE_CODE_SIMPLE with a value that turns bare mode on by Claude Code's rule
+    /// (`zygo_launch::claude_code::simple_mode`), so no member hook runs (FIX-24, AU26).
     pub bare_env: bool,
-}
-
-/// FIX-24 diff review round 2, finding 4: CLAUDE_CODE_SIMPLE turns bare mode on when it is set, not empty and not `0`.
-fn simple_mode(v: Option<&OsStr>) -> bool {
-    v.is_some_and(|v| !v.is_empty() && v != OsStr::new("0"))
 }
 
 /// The start write (AU92): the AU30-filtered launch with events_off computed from the arguments of this start (W§7.2),

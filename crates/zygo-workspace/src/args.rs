@@ -145,18 +145,6 @@ struct Walk {
     occurrences: Vec<Occurrence>,
     /// One label per removal, in token order (FIX-27 D8): a table flag name, `<positional>`, `--` or `<after -->`.
     labels: Vec<String>,
-    /// Each positional token before --, with its index in the arguments, as typed (FIX-24).
-    positionals: Vec<(usize, String)>,
-    /// Each long flag before -- that is not in the table, in order (FIX-24): its index, its name (before any `=`) and
-    /// whether the token holds `=`.
-    unlisted: Vec<Unlisted>,
-}
-
-/// A long flag that is not in the table of the agent (FIX-24).
-struct Unlisted {
-    at: usize,
-    name: String,
-    attached: bool,
 }
 
 /// One table flag that the walk met before `--`. No `Debug`: `values` can hold prompt text.
@@ -282,7 +270,6 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
         if token == "-" || !token.starts_with('-') {
             out.removed.push(token.clone());
             out.labels.push("<positional>".to_string());
-            out.positionals.push((next - 1, token.clone()));
             continue;
         }
         let token_at = next - 1;
@@ -294,7 +281,6 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
             };
             let Some(flag) = lookup(table, name) else {
                 out.kept.push(token.clone());
-                out.unlisted.push(Unlisted { at: token_at, name: name.to_string(), attached: attached.is_some() });
                 continue;
             };
             let start = next;
@@ -395,29 +381,62 @@ pub fn has_session_arg(agent: Agent, args: &[String]) -> bool {
     walk(agent, args, None).session
 }
 
-/// W§7.2 member.launch.events_off (FIX-24, AU26): the agent of a start with `args` sends no member events, by the same
-/// walk as [filter]: Claude Code `--bare`; OpenCode `--pure`, the subcommand `attach`, or the subcommand `run` with
-/// `--attach`. A flag value and a token after `--` count as nothing. For OpenCode only, an unlisted long flag without
-/// `=` takes the next token as its value unless that token starts with `-`, as OpenCode 1.19.6 parses it (FIX-24 diff
-/// review round 2, finding 1); [filter] does not use this rule.
+/// W§7.2 member.launch.events_off (FIX-24, AU26): the agent of a start with `args` sends no member events. Claude
+/// Code: `--bare`, by the walk of [filter] (a flag value and a token after `--` count as nothing). OpenCode: a flag
+/// `--pure` or `--attach` is a token before `--` with that name before any `=` (a value never starts with `-`, so such
+/// a token is always a flag); the subcommand comes from [`opencode_subcommand`]. Events are off with `--pure`, the
+/// subcommand `attach`, or the subcommand `run` with `--attach`.
 pub fn events_off(agent: Agent, args: &[String]) -> bool {
-    let w = walk(agent, args, None);
     match agent {
-        Agent::ClaudeCode => w.occurrences.iter().any(|o| o.name == "--bare"),
+        Agent::ClaudeCode => walk(agent, args, None).occurrences.iter().any(|o| o.name == "--bare"),
         Agent::OpenCode => {
-            let has = |n: &str| w.unlisted.iter().any(|u| u.name == n);
-            // The token right after an unlisted long flag without `=` is that flag's value (a positional here, since a
-            // token that starts with `-` is never a positional).
-            let value_at = |i: usize| w.unlisted.iter().any(|u| !u.attached && u.at + 1 == i);
-            let first = w.positionals.iter().find(|(i, _)| !value_at(*i)).map(|(_, t)| t.as_str());
+            let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+            let has = |n: &str| args[..end].iter().any(|t| t.starts_with('-') && t.split('=').next() == Some(n));
             has("--pure")
-                || match first {
+                || match opencode_subcommand(args).map(|(_, s)| s) {
                     Some("attach") => true,
                     Some("run") => has("--attach"),
                     _ => false,
                 }
         }
     }
+}
+
+/// The global boolean options of OpenCode 1.19.6 (`fixtures/opencode/help.txt`, the first block of `Options:`, which
+/// also opens `attach --help` and `run --help`). Each takes no value, but a next token `true` or `false` is its value.
+const OPENCODE_GLOBAL_BOOLEANS: &[&str] = &["-h", "--help", "-v", "--version", "--print-logs", "--pure"];
+
+/// The OpenCode subcommand in `args` and its index, as OpenCode 1.19.6 reads the tokens before its subcommand (W§7.2;
+/// FIX-24 diff review round 3, findings 2 and 5): the first token that does not start with `-` (or is `-`) and is not
+/// the value of a flag. A flag that holds `=` takes no next token. A `--no-<x>` flag takes no next token. A global
+/// boolean of [`OPENCODE_GLOBAL_BOOLEANS`] takes the next token only when it is `true` or `false`. Every other flag,
+/// long or short, listed in the table or not, takes the next token unless it starts with `-`. `--` ends the flags and
+/// there is no subcommand after it. `events_off` and the launcher (session arguments after `run`) use this one walk.
+pub fn opencode_subcommand(args: &[String]) -> Option<(usize, &str)> {
+    let mut next = 0;
+    while next < args.len() {
+        let token = args[next].as_str();
+        next += 1;
+        if token == "--" {
+            return None;
+        }
+        if token == "-" || !token.starts_with('-') {
+            return Some((next - 1, token));
+        }
+        if token.contains('=') || token.starts_with("--no-") {
+            continue;
+        }
+        let after = args.get(next).map(String::as_str);
+        let takes = if OPENCODE_GLOBAL_BOOLEANS.contains(&token) {
+            matches!(after, Some("true" | "false"))
+        } else {
+            after.is_some_and(|t| !t.starts_with('-'))
+        };
+        if takes {
+            next += 1;
+        }
+    }
+    None
 }
 
 /// Whether `token` (its text before any `=`) is a flag of the table of `agent` (FIX-27 review round 3: the flag after a

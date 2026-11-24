@@ -771,6 +771,11 @@ struct Job {
     next_progress: Duration,
 }
 
+/// True when the AU26 rule 3 skip applies to a drain result: the rule-skipped line prints for it.
+fn rule_skipped(r: &Idle) -> bool {
+    matches!(r, Idle::IdleRuleSkipped | Idle::TurnOpen { rule_skipped: true } | Idle::Busy { rule_skipped: true, .. })
+}
+
 /// The live session folder of a member (D14): `sessions/<pending.zygo_session>` when live, else
 /// `sessions/<zygo_session>` when live; an id that is empty or not ASCII alphanumeric is not looked up.
 fn live_session(paths: &Paths, m: &MemberRecord) -> Option<PathBuf> {
@@ -1159,11 +1164,8 @@ impl Run<'_> {
                 };
                 // Diff review round 2, finding 3: the override keeps the rule 3 skip of `read_member`, so the AU26
                 // rule-skipped line still prints.
-                let rule_skipped = matches!(
-                    r,
-                    Idle::IdleRuleSkipped | Idle::TurnOpen { rule_skipped: true } | Idle::Busy { rule_skipped: true, .. }
-                );
-                (off.map_or(r, |reason| Idle::Busy { reason: reason.to_string(), rule_skipped }), running)
+                let skip = rule_skipped(&r);
+                (off.map_or(r, |reason| Idle::Busy { reason: reason.to_string(), rule_skipped: skip }), running)
             });
             let track = self.jobs[i].track.entry(key.clone()).or_default();
             let idle = match read {
@@ -1172,11 +1174,7 @@ impl Run<'_> {
                     true
                 }
                 Some((r, running)) => {
-                    let skipped = matches!(
-                        r,
-                        Idle::IdleRuleSkipped | Idle::TurnOpen { rule_skipped: true } | Idle::Busy { rule_skipped: true, .. }
-                    );
-                    if skipped && !track.said_skip {
+                    if rule_skipped(&r) && !track.said_skip {
                         track.said_skip = true;
                         lines.push(format!("zygo: {who}: proxy request state not usable; idle rule 3 skipped"));
                     }

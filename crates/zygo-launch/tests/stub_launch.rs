@@ -259,7 +259,7 @@ fn session_callback_gets_the_member_with_or_without_settings() { // AU34, AU59 (
         let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
             o.member = given.clone();
             o.args = args.clone();
-            o.on_session = Some(Box::new(move |_, _, _, m| {
+            o.on_session = Some(Box::new(move |_, _, _, m, _| {
                 *s2.lock().unwrap() = Some(m.cloned());
                 Ok(())
             }));
@@ -292,6 +292,10 @@ fn agent_session_args_go_before_the_users_args_and_after_opencode_run() { // W§
         (s(&["--model", "zygo/lead", "run", "hi"]), s(&["--model", "zygo/lead", "run", "--session=ses_1", "hi"])),
         (s(&["--model", "zygo/lead"]), s(&["--session=ses_1", "--model", "zygo/lead"])),
         (s(&["--", "run"]), s(&["--session=ses_1", "--", "run"])),
+        // FIX-24 diff review round 3, finding 5: the walk of `events_off` (OpenCode 1.19.6 gives an unlisted flag the
+        // next token)
+        (s(&["--zzunknown", "X", "run", "msg"]), s(&["--zzunknown", "X", "run", "--session=ses_1", "msg"])),
+        (s(&["--zzunknown", "run", "msg"]), s(&["--session=ses_1", "--zzunknown", "run", "msg"])),
         (s(&[]), s(&["--session=ses_1"])),
     ] {
         let r = launch(&rig, &opencode(&rig), OPENCODE_VERSION, |o| {
@@ -339,7 +343,7 @@ fn session_callback_runs_after_the_session_dir_exists_and_before_the_agent_start
     let seen: Arc<Mutex<Option<Seen>>> = Arc::default();
     let (s2, out) = (seen.clone(), rig.root.join("out"));
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
-        o.on_session = Some(Box::new(move |sd, session, program, _member| {
+        o.on_session = Some(Box::new(move |sd, session, program, _member, _env| {
             *s2.lock().unwrap() = Some((sd.root.clone(), session.to_string(), program.to_path_buf(), sd.url().is_file(), out.join("argv.json").exists()));
             std::fs::write(sd.root.join("from-callback"), "1")?;
             Ok(())
@@ -360,7 +364,7 @@ fn a_session_callback_error_is_logged_and_the_launch_goes_on() { // AU34, C6
     let rig = rig();
     let r = launch(&rig, &claude(&rig), CLAUDE_VERSION, |o| {
         o.env.0.push(("ZYGO_STUB_EXIT".into(), "7".into()));
-        o.on_session = Some(Box::new(|_, _, _, _| Err(anyhow::anyhow!("no results link\nline two"))));
+        o.on_session = Some(Box::new(|_, _, _, _, _| Err(anyhow::anyhow!("no results link\nline two"))));
     });
     assert_eq!(LaunchOutcome { ran: None, ..r.outcome }, LaunchOutcome { code: 7, signal: None, spawned: true, received: false, ran: None }, "{}", r.stderr);
     assert!(r.outcome.ran.is_some());

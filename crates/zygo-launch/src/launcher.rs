@@ -79,9 +79,11 @@ impl Drop for Handling<'_> {
 }
 
 /// Called once, after the session directory exists and before the agent starts, with the session directory, the
-/// session id, the resolved agent program and the member of this launch (workspaces design AU34): `LaunchOpts.member`,
-/// with or without a user `--settings` (AU59).
-pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path, Option<&Member>) -> anyhow::Result<()> + Send>;
+/// session id, the resolved agent program, the member of this launch (workspaces design AU34): `LaunchOpts.member`,
+/// with or without a user `--settings` (AU59), and the launch environment after the §8.4 deny list
+/// (`child_env(&opts.env, &cfg, &[])`): what the agent gets apart from the names zygo sets (FIX-24 diff review round 3,
+/// finding 3).
+pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path, Option<&Member>, &Env) -> anyhow::Result<()> + Send>;
 
 /// The error a session callback returns to make the launch a v1 launch (workspaces design AU34, W§8.4): the launcher
 /// logs it as any callback error, then sets `member` and `resume_note` to none before it builds the view, the settings
@@ -425,7 +427,7 @@ impl Launcher {
         let guard = Finish { sd: sd.clone(), end: Some(end), paths: &opts.paths, _pid: pid };
         // AU34: the session directory exists and the agent is not started; an error never stops the launch (C6).
         if let Some(call) = on_session
-            && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref())
+            && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref(), &probe_env)
         {
             sd.append_log(&format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
             // AU34: a `NotMember` callback makes this launch a v1 launch.
@@ -695,9 +697,6 @@ impl Session<'_> {
     }
 }
 
-/// Puts the agent session arguments `extra` before the user's arguments, so before any `--` (W§8.3, AU3). For
-/// OpenCode, when the first positional token before `--` (by W4's walk, so not a flag value) is the subcommand `run`,
-/// they go right after it.
 /// The agent arguments of a resume of `id`, as [`Launcher::run`] builds them from `args` and
 /// `AgentSession::Resume(id)`: the adapter's resume tokens inserted by [`insert_session_args`]. Gives the arguments and
 /// the range of the inserted tokens. The printed resume command of a member uses it (AU61), so it cannot drift from
@@ -708,18 +707,14 @@ pub fn resume_argv(adapter: &dyn AgentAdapter, args: &[String], id: &str) -> (Ve
     (a, r)
 }
 
-/// Inserts `extra` into `args` (W§8.3, AU3) and gives the range of the inserted tokens.
+/// Inserts the agent session arguments `extra` into `args` (W§8.3, AU3) and gives the range of the inserted tokens.
+/// They go before the user's arguments, so before any `--`. For OpenCode, when the subcommand is `run`, they go right
+/// after it; the subcommand comes from `zygo_workspace::args::opencode_subcommand`, the walk that `events_off` uses
+/// (FIX-24 diff review round 3, finding 5).
 fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) -> std::ops::Range<usize> {
     let at = match agent {
         Agent::ClaudeCode => 0,
-        Agent::OpenCode => {
-            let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
-            let taken: Vec<std::ops::Range<usize>> = zygo_workspace::args::occurrences(agent, args).into_iter().map(|o| o.tokens).collect();
-            (0..end)
-                .find(|i| !taken.iter().any(|r| r.contains(i)) && !args[*i].starts_with('-'))
-                .filter(|i| args[*i] == "run")
-                .map_or(0, |i| i + 1)
-        }
+        Agent::OpenCode => zygo_workspace::args::opencode_subcommand(args).filter(|(_, s)| *s == "run").map_or(0, |(i, _)| i + 1),
     };
     let n = extra.len();
     args.splice(at..at, extra);
