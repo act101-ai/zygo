@@ -36,6 +36,15 @@ fn repo(committed: Option<&str>, worktree: Option<&str>) -> TempDir {
 }
 
 fn merged(user: &str, repo: &Path) -> Merged {
+    load_merged(user, Some(repo))
+}
+
+/// `repo: None`: `load` leaves `repo_file` `Absent` and runs no git, so no `GIT_BOUND` applies.
+fn merged_no_git(user: &str) -> Merged {
+    load_merged(user, None)
+}
+
+fn load_merged(user: &str, repo: Option<&Path>) -> Merged {
     let d = tempfile::tempdir().unwrap();
     let config_file = d.path().join("config.toml");
     std::fs::write(&config_file, user).unwrap();
@@ -49,7 +58,7 @@ fn merged(user: &str, repo: &Path) -> Merged {
         approvals_file: d.path().join("data/approvals.toml"),
         usage_db: d.path().join("data/usage.db"),
     };
-    load(&LoadContext { paths, repo: Some(repo.to_path_buf()), team: None }).unwrap()
+    load(&LoadContext { paths, repo: repo.map(Path::to_path_buf), team: None }).unwrap()
 }
 
 fn policy(user: &str, repo: &Path) -> Policy {
@@ -238,33 +247,34 @@ fn invalid_reason_has_no_control_characters() {
 
 #[test]
 fn dispositions_defaults_to_enforce() {
-    let r = repo(None, None);
-    let mut m = merged("", r.path());
+    let r = tempfile::tempdir().unwrap();
+    let mut m = merged_no_git("");
     assert_eq!(Policy::resolve(&m, r.path()).level(Guard::Dispositions), Level::Enforce);
-    // describe prints levels only for a found file; set one without a git read (no timing bound)
+    // describe prints levels only for a found file; `merged_no_git` reads no `.zygo.toml`, so set an empty found file here
     m.repo_file = RepoFile::Found { branch: "main".into(), table: Default::default(), ignored: vec![] };
     assert_eq!(Policy::resolve(&m, r.path()).describe(), line(r.path(), DEFAULT_LEVELS));
 }
 
 #[test]
 fn dispositions_is_a_guards_key() {
-    let r = repo(None, None);
-    assert_eq!(policy("[guards]\ndispositions = \"notify\"\n", r.path()).level(Guard::Dispositions), Level::Notify);
+    let r = tempfile::tempdir().unwrap();
+    let m = merged_no_git("[guards]\ndispositions = \"notify\"\n");
+    assert_eq!(Policy::resolve(&m, r.path()).level(Guard::Dispositions), Level::Notify);
     let mut o = Overrides::default();
     o.guards.insert("dispositions".into(), "monitor".into());
-    let p = Policy::resolve(&merged("", r.path()).with_overrides(&o).unwrap(), r.path());
+    let p = Policy::resolve(&merged_no_git("").with_overrides(&o).unwrap(), r.path());
     assert_eq!(p.level(Guard::Dispositions), Level::Monitor);
 }
 
 #[test]
 fn dispositions_min_level_lifts_monitor() {
-    let r = repo(None, None);
+    let r = tempfile::tempdir().unwrap();
     let user = "[guards]\nmin_level = \"notify\"\ndispositions = \"monitor\"\n";
-    assert_eq!(policy(user, r.path()).level(Guard::Dispositions), Level::Notify);
+    assert_eq!(Policy::resolve(&merged_no_git(user), r.path()).level(Guard::Dispositions), Level::Notify);
     let mut o = Overrides::default();
     o.guards.insert("dispositions".into(), "monitor".into());
     assert_eq!(
-        merged(user, r.path()).with_overrides(&o).unwrap_err(),
+        merged_no_git(user).with_overrides(&o).unwrap_err(),
         Refusal::BelowFloor { guard: "dispositions".into(), min: Level::Notify }
     );
 }

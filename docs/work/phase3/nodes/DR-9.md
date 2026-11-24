@@ -78,3 +78,10 @@ Drift and author's calls:
 - The Acceptance names a test where `.zygo.toml` sets `dispositions = "notify"`. Reading `.zygo.toml` runs git under the 2 s `GIT_BOUND` (`crates/zygo-config/src/repo_file.rs:40`), and every such test here is `#[ignore = "timing: …"]` (commit `96c1cbc`; graph constraint "No wall-clock or deadline test runs in CI"). So `dispositions_from_repo_file` is ignored and runs in step 8. The CI tests prove the same `[guards]` key through the user layer and the session override, and the defaults `describe` line through a `RepoFile::Found` set on `Merged` (no git read).
 - D§13 items 2 and 3 are base-spec text (§13.4 row and defaults sentence, §13.5 key). The text goes in DR-13 (its Files list `docs/specs/2026-11-18-zygo-design.md` §13.4, §13.5). DR-9 does the code half only.
 - `GUARDS` gets `dispositions` as its last entry, so the order of `describe`, `zygo guards` and the `now:` line stays the same for the six old guards.
+
+### Review round 1
+- F1 (`.zygo.toml` case only in an ignored timing test): rejected. Reading the repo file runs git under the 2 s bound, and CI bars timing tests (graph rule; commit 96c1cbc pattern). It was run locally with `--ignored`: pass.
+- F2 (`serve_cli` edit only in an ignored test): rejected. The test was already ignored before this node. It was run locally: pass.
+- F3 (three CI tests read git under the 2 s bound; wrong comment): fixed, the tests build `Merged` without a git read.
+- F4 (trailer `phase3:DR-9`, not `phase3:DR-9:implement`): rejected. The session's trailer rule is `Zygo-Work: <unit>`, and the unit is `phase3:DR-9`.
+- F5 (a session override or repo `.zygo.toml` can set `dispositions` to `monitor`): out of scope for DR-9. D§9.3 and D-C7 allow these overrides on purpose. It is reported to the operator as a design question for DR-13.
