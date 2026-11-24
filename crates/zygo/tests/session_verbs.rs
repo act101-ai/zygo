@@ -827,6 +827,36 @@ fn au105_cli_verb_runs_the_pending_snapshot_inline_after_the_write() {
     assert!(!store.dir().join("snapshot.pending").exists());
 }
 
+/// FIX-30, AU54, AU105, C6: the CLI verb mirror (`verbs.rs:257-258`) with a saved socket that fails AU54: the verb's
+/// normal reply and record write, one `errors.log` line from the `snapshot.pending` check, no tmux call.
+#[cfg(unix)]
+#[test]
+fn au54_cli_verb_mirror_logs_one_line_and_makes_no_tmux_call() {
+    let d = home();
+    let h = d.path();
+    let s = h.join("s");
+    mf::view(&s, mf::SID, mf::WS_ID, mf::WS_KEY);
+    let store = mf::state(&paths(h), h, &[(mf::WS_KEY, mf::running(mf::SID))], Some(&h.join("so'ck").join("tmux.sock")));
+    std::fs::write(store.dir().join("snapshot.pending"), b"").unwrap();
+    std::fs::write(h.join("tmux-go"), b"").unwrap();
+    let vars = mf::fake_tmux(h, &store.dir().join("workspace.json"));
+    let vars = as_vars(&vars);
+    let env = Env { session: Some(mf::SID), dir: Some(&s), vars: &vars, ..Default::default() };
+    assert_eq!(cli(h, &env, "units off"), (0, "units off for this session\n".into(), String::new()));
+    assert!(mf::tmux_calls(h).is_empty(), "{:?}", mf::tmux_calls(h));
+    assert_eq!(mf::record(&store, mf::WS_KEY).overrides, Some(json!({ "work_units": false, "guards": {} })));
+    let log = std::fs::read_to_string(store.dir().join("errors.log")).unwrap_or_default();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].ends_with(
+            "snapshot: the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it"
+        ),
+        "{lines:?}"
+    );
+    assert!(!store.dir().join("snapshot.pending").exists());
+}
+
 /// AU105, W§7.3 hook rule, slash form: the reply comes inside the 4.5 s bound; the verb takes `snapshot.pending`
 /// after its write and starts `zygo ws snapshot` as a detached child (its own process group) that outlives the hook
 /// process and runs the snapshot. The test waits for the child to exit before the temporary folder goes away.

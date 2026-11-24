@@ -11,6 +11,7 @@ use zygo_core::session_dir::write_atomic;
 
 use crate::identity::{new_pane_key, valid_pane_key, valid_ws_id};
 use crate::mux::{parse_pane_line, Multiplexer, MuxError, PaneRow, SessionAnswer, WindowRow};
+use crate::repair::check_saved_socket;
 use crate::state::{lock_file, MemberState, Pane, PaneKind, Phase, StateError, Store, Window, Workspace};
 
 /// The result of one snapshot (W§7.4).
@@ -564,8 +565,8 @@ fn take(store: &Store) -> Option<bool> {
 
 /// One pass of W§7.4 steps 1-5 (D2-D11). Each state read, the first one and every later one (a retry, the run after
 /// the probe, a `snapshot.pending` check), must find the socket that `mux` is bound to: another `tmux_socket` gives
-/// `Skipped(Changed)` before any tmux call (round 2 M4, round 3 D3). The check under the lock does the same
-/// (round 3 D2).
+/// `Skipped(Changed)` before any tmux call (round 2 M4, round 3 D3). A saved socket that fails AU54 gives one log
+/// line and `Skipped(Logged)` before any tmux call (FIX-30). The check under the lock does the same (round 3 D2).
 fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration) -> Attempt {
     // Step 1.
     let ws = match store.read() {
@@ -584,6 +585,11 @@ fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: boo
     };
     if mux.socket() != Some(state_socket) {
         return done(SkipReason::Changed);
+    }
+    // FIX-30 (AU54): a saved socket that fails the quote rule gets no tmux call, on every read; one log line (C6).
+    if let Err(e) = check_saved_socket(&ws) {
+        log(store, event, e.to_string().trim_start_matches("zygo: "));
+        return done(SkipReason::Logged);
     }
     let session = ws.tmux_session.clone();
     let seq = ws.snapshot_seq;

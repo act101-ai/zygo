@@ -60,8 +60,9 @@ fn gone(store: &Store, mux: &dyn Multiplexer, ws: &Workspace) -> anyhow::Result<
 /// FIX-29 rounds 2-3 (AU54): the saved `tmux_socket` of a state, in every phase, must pass [`check_path`], as the
 /// read socket does in W§8.1 step 9, because the dead-pane lines and the AU100 attach line quote it. Every caller
 /// runs it before any use of the socket (`socket_is_private`, the tmux calls, a printed line): `up` (step 5), `up
-/// --all` (its session check), `zygo attach`, `down` and `repair`.
-pub(crate) fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {
+/// --all` (its session check), `zygo attach`, `down` and `repair`. FIX-30: also `zygo ls` (the row is `unreachable`),
+/// the snapshot (W§7.4 step 1) and the hand start of the crate `zygo` (W§8.4), so it is `pub`.
+pub fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {
     match &ws.tmux_socket {
         Some(s) => check_path(s).map(|_| ()),
         None => Ok(()),

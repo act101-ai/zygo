@@ -29,7 +29,7 @@ use crate::mux::{check_path, parse_pane_line, Multiplexer, MuxError, SessionAnsw
 use crate::repair::{check_saved_socket, repair, repair_failure};
 use crate::snapshot::{self, SkipReason, SnapshotOutcome, OP_WAIT};
 use crate::state::{list_all, MemberRecord, MemberState, OpLock, Phase, StateError, Store, Subagent, Workspace};
-use crate::up::{self, not_owned, preflight, socket_is_private, unreachable, Exit};
+use crate::up::{self, check_server, not_owned, preflight, socket_is_private, unreachable, Exit};
 
 /// What the AU18 guard compares for a process: its mount and pid namespaces and its command name (round 2 item 6).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -516,6 +516,8 @@ fn detach_wanted(opts: &DownOpts, targets: &[Workspace]) -> Result<bool, Exit> {
             check_socket(ws)?;
         }
         let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
+        // FIX-30 (AU54): with no saved socket this is the socket of `$TMUX` (`env_server`, `:510`), before its first call.
+        check_server(&mux).map_err(|e| Exit { code: 2, message: e.to_string() })?;
         if mux.display(pane, "#{session_name}").is_ok_and(|s| s == ws.tmux_session) {
             return Ok(true);
         }
@@ -561,6 +563,7 @@ fn guard(opts: &DownOpts, targets: &[Workspace]) -> Result<(Vec<Workspace>, Vec<
         }
         check_socket(ws)?;
         let mux = up::server(&opts.tmux, socket, opts.tmux_env.as_deref());
+        check_server(&mux).map_err(|e| Exit { code: 2, message: e.to_string() })?;
         match server_pid(opts, &mux) {
             Ok(pid) if pid == "self" || !valid_pid_text(&pid) => return Err(refuse()),
             Ok(pid) => {
@@ -600,7 +603,9 @@ fn any_session(opts: &DownOpts, targets: &[Workspace]) -> Result<bool, Exit> {
     let mut any = false;
     for ws in targets {
         check_socket(ws)?;
-        match up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref()).session_exists(&ws.tmux_session) {
+        let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
+        check_server(&mux).map_err(|e| Exit { code: 2, message: e.to_string() })?;
+        match mux.session_exists(&ws.tmux_session) {
             SessionAnswer::Exists => any = true,
             SessionAnswer::Gone => {}
             SessionAnswer::Error { message } => return Err(Exit { code: 1, message: format!("zygo: tmux: {message}") }),
@@ -1001,6 +1006,11 @@ impl Run<'_> {
             return self.fail(1);
         }
         let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());
+        // FIX-30 (AU54): with no saved socket this is the socket of `$TMUX`, before the repair and the session check use it.
+        if let Err(e) = check_server(&mux) {
+            self.e(&e.to_string());
+            return self.fail(2);
+        }
         if let Err(e) = repair(&store, &mux, &opts.zygo, &mut *self.out, &mut *self.err) {
             let (code, line) = repair_failure(&e);
             self.e(&line);

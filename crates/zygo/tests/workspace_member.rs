@@ -1656,3 +1656,100 @@ fn w_c9_the_callback_refuses_a_second_start_of_one_own_session() { // diff revie
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     assert_eq!(stub_env(&out_a)["ZYGO_PANE"].as_str(), Some(key_a.as_str()));
 }
+
+// ---- FIX-30: a tmux socket that fails AU54 ----
+
+/// The AU54 text without `zygo: ` (`crates/zygo-workspace/src/mux/mod.rs:697-698`).
+const AU54_REASON: &str =
+    "the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it";
+
+/// A harness with no tmux server whose `bin/tmux` makes `root/tmux-called` at each call (as
+/// `w18_54_outside_tmux_is_a_v1_launch_with_no_tmux_call`), and the folder `root/so'ck` with mode 0700, so the socket
+/// `root/so'ck/s` passes AU62 and fails AU54. Returns the harness and that socket.
+fn quoted_socket_harness() -> (Harness, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::no_tmux();
+    let t = h.bin.join("tmux");
+    std::fs::write(&t, "#!/bin/sh\ntouch \"$HOME/tmux-called\"\nexit 1\n").unwrap();
+    std::fs::set_permissions(&t, std::fs::Permissions::from_mode(0o755)).unwrap();
+    ready_exe(&t);
+    let _ = std::fs::remove_file(h.root().join("tmux-called")); // the probe of `ready_exe` ran it once
+    let dir = h.root().join("so'ck");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    (h, dir.join("s"))
+}
+
+/// The lines of `errors.log` of WS_ID; empty when it is missing.
+fn errors_log(h: &Harness) -> Vec<String> {
+    std::fs::read_to_string(h.store(WS_ID).dir().join("errors.log"))
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+#[test] // FIX-30, AU54, C6: the member wrapper's snapshots log the AU54 text and make no tmux call; the agent runs
+fn au54_the_member_wrapper_logs_its_snapshots_and_makes_no_tmux_call() {
+    let (h, sock) = quoted_socket_harness();
+    up_state(&h, &[(KEY, MemberRecord::new(Agent::ClaudeCode))], &mut |w| w.tmux_socket = Some(sock.clone()));
+    std::fs::write(h.store(WS_ID).dir().join("snapshot.pending"), "").unwrap();
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", KEY], &pairs(&env))).output("ws run");
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    assert_eq!(stub_env(&out).get("ZYGO_WORKSPACE").and_then(Value::as_str), Some(WS_ID));
+    assert!(!h.root().join("tmux-called").exists());
+    let lines = errors_log(&h);
+    let snaps: Vec<&String> = lines.iter().filter(|l| l.contains(" snapshot")).collect();
+    assert!(!snaps.is_empty(), "{lines:?}");
+    assert!(snaps.iter().all(|l| l.ends_with(&format!("snapshot: {AU54_REASON}"))), "{lines:?}");
+    assert!(!h.store(WS_ID).dir().join("snapshot.pending").exists());
+}
+
+#[test] // FIX-30, AU54, W§7.4 step 1, C6: `zygo ws snapshot` (the tmux hook command) logs one line, exits 0, no tmux call
+fn au54_ws_snapshot_logs_one_line_and_makes_no_tmux_call() {
+    let (h, sock) = quoted_socket_harness();
+    up_state(&h, &[], &mut |w| w.tmux_socket = Some(sock.clone()));
+    let before = state_bytes(&h);
+    let o = Guarded::spawn(h.zygo(&["ws", "snapshot", "--ws-id", WS_ID, "--event", "after-split-window"], &[]))
+        .output("ws snapshot");
+    assert_eq!((o.status.code(), text(&o.stderr).as_str()), (Some(0), ""));
+    assert!(!h.root().join("tmux-called").exists());
+    let lines = errors_log(&h);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].ends_with(&format!("snapshot (after-split-window): {AU54_REASON}")), "{lines:?}");
+    assert_eq!(state_bytes(&h), before);
+}
+
+#[test] // FIX-30, AU54, W§8.4, C6: a saved socket with a quote: the not-saved line, a v1 launch, no tmux call, no write
+fn au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_saved_line() {
+    let (h, sock) = quoted_socket_harness();
+    up_state(&h, &[], &mut |w| w.tmux_socket = Some(sock.clone()));
+    let before = state_bytes(&h);
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let t = OsString::from(format!("{},1,0", sock.display()));
+    let mut extra = pairs(&env);
+    extra.push(("TMUX", t.as_os_str()));
+    let o = Guarded::spawn(hand(&h, "%0", &["claude"], &extra)).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    let want = format!("{NOT_SAVED}{AU54_REASON}");
+    assert_eq!(err.lines().filter(|l| *l == want).count(), 1, "{want}\n{err}");
+    assert!(stub_env(&out).get("ZYGO_WORKSPACE").is_none());
+    assert!(!h.root().join("tmux-called").exists());
+    assert_eq!(state_bytes(&h), before);
+}
+
+#[test] // FIX-30, AU54, W§8.4, C6: no state and a `$TMUX` socket with a quote: the not-saved line, a v1 launch, no tmux call
+fn au54_a_hand_start_on_a_quoted_tmux_socket_is_a_v1_launch_with_the_not_saved_line() {
+    let (h, sock) = quoted_socket_harness();
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let t = OsString::from(format!("{},1,0", sock.display()));
+    let mut extra = pairs(&env);
+    extra.push(("TMUX", t.as_os_str()));
+    let o = Guarded::spawn(hand(&h, "%0", &["claude"], &extra)).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    let want = format!("{NOT_SAVED}{AU54_REASON}");
+    assert_eq!(err.lines().filter(|l| *l == want).count(), 1, "{want}\n{err}");
+    assert!(stub_env(&out).get("ZYGO_WORKSPACE").is_none());
+    assert!(!h.root().join("tmux-called").exists());
+}

@@ -102,7 +102,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
 
 ### Steps
 
-- [ ] **1. Test (red): the snapshot refuses a saved socket that fails AU54.** In `crates/zygo-workspace/tests/snapshot.rs`, after `a_multiplexer_bound_to_another_socket_makes_no_call`, add:
+- [x] **1. Test (red): the snapshot refuses a saved socket that fails AU54.** In `crates/zygo-workspace/tests/snapshot.rs`, after `a_multiplexer_bound_to_another_socket_makes_no_call`, add:
   ```rust
   /// The AU54 text without `zygo: ` (`mux/mod.rs:697-698`).
   const AU54_REASON: &str =
@@ -139,7 +139,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test snapshot au54_` fails: the outcome is not `Skipped(Logged)`, or `f.calls("")` is not 0 (the `owner` call `show_session_option` runs).
 
-- [ ] **2. Test (red): the member wrapper, `zygo ws snapshot` and the verb mirror make no tmux call.**
+- [x] **2. Test (red): the member wrapper, `zygo ws snapshot` and the verb mirror make no tmux call.**
   - In `crates/zygo/tests/workspace_member.rs`, add a section at the end of the file:
     ```rust
     // ---- FIX-30: a tmux socket that fails AU54 ----
@@ -239,7 +239,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
     (The reply and the `overrides` value are those of `au105_cli_verb_runs_the_pending_snapshot_inline_after_the_write`, `:820`, and `au105_slash_verb_starts_the_pending_snapshot_as_a_detached_child`, `:865`.)
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member au54_` fails in both tests: `root/tmux-called` exists (the snapshot `owner` call ran `bin/tmux`). `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test session_verbs au54_` fails: `mf::tmux_calls(h)` is not empty.
 
-- [ ] **3. Code (green): the AU54 check in `snapshot::attempt`.** In `crates/zygo-workspace/src/snapshot.rs`:
+- [x] **3. Code (green): the AU54 check in `snapshot::attempt`.** In `crates/zygo-workspace/src/snapshot.rs`:
   - Add the import `use crate::repair::check_saved_socket;` after line 13.
   - In `fn attempt(store: &Store, mux: &dyn Multiplexer, event: Option<&str>, force: bool, wait: Duration) -> Attempt`, right after the block `if mux.socket() != Some(state_socket) { return done(SkipReason::Changed); }` (`:585-587`), add:
     ```rust
@@ -252,7 +252,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   - In the doc comment of `attempt` (`:565-568`), after "gives `Skipped(Changed)` before any tmux call (round 2 M4, round 3 D3).", add: "A saved socket that fails AU54 gives one log line and `Skipped(Logged)` before any tmux call (FIX-30)."
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test snapshot` passes (the step 1 test and every earlier test); `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member au54_` passes both step 2 tests; `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test session_verbs` passes.
 
-- [ ] **4. Test (red): `up` and `up --all` refuse a `$TMUX` socket that fails AU54 before its first tmux call.** In `crates/zygo-workspace/tests/up.rs`, after `repair_refuses_a_saved_socket_that_holds_a_quote` (`:2649-2663`), add:
+- [x] **4. Test (red): `up` and `up --all` refuse a `$TMUX` socket that fails AU54 before its first tmux call.** In `crates/zygo-workspace/tests/up.rs`, after `repair_refuses_a_saved_socket_that_holds_a_quote` (`:2649-2663`), add:
   ```rust
   #[test] // FIX-30, AU54, W§8.1 steps 5-6: no saved socket; the `$TMUX` socket with a quote is refused before its first tmux call
   fn au54_up_refuses_a_tmux_env_socket_with_a_quote_before_its_first_use() {
@@ -292,7 +292,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test up au54_` fails in both tests: the tmux log holds a `has-session` call on the `$TMUX` socket (step 5 `repair.rs:92`, step 6 `up.rs:994`, `up --all` `up.rs:1542`).
 
-- [ ] **5. Code (green): `check_server` in `up.rs`; steps 5 and 6 and `session_check` call it.** In `crates/zygo-workspace/src/up.rs`:
+- [x] **5. Code (green): `check_server` in `up.rs`; steps 5 and 6 and `session_check` call it.** In `crates/zygo-workspace/src/up.rs`:
   - After `pub fn server` (`:274-277`), add:
     ```rust
     /// FIX-30 (AU54): the socket that `mux` passes to tmux with `-S`, saved or from `$TMUX` (D18), must pass
@@ -321,7 +321,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   - Step 8 comment (`:1065-1066`): after "a `$TMUX` socket gets the AU62 check before it is written." add " Its AU54 check ran at step 6 (FIX-30)."
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test up --test up_all` passes (the step 4 tests and every earlier test; tmux cases run or print their skip reason).
 
-- [ ] **6. Test (red): `down` refuses a `$TMUX` socket that fails AU54.** In `crates/zygo-workspace/tests/down.rs`, after `down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair` (`:2276-2297`), add:
+- [x] **6. Test (red): `down` refuses a `$TMUX` socket that fails AU54.** In `crates/zygo-workspace/tests/down.rs`, after `down_refuses_a_saved_socket_that_holds_a_quote_before_the_repair` (`:2276-2297`), add:
   ```rust
   #[test] // FIX-30, AU54: no saved socket; step 3 refuses the `$TMUX` socket with a quote before its session check
   fn au54_down_refuses_a_tmux_env_socket_with_a_quote() {
@@ -358,7 +358,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test down au54_` fails in both tests: the tmux log holds `has-session` (`down.rs:1019`) or `display-message` (`down.rs:519`) on the `$TMUX` socket.
 
-- [ ] **7. Code (green): `check_server` at each `$TMUX` fallback of `down.rs`.** In `crates/zygo-workspace/src/down.rs`:
+- [x] **7. Code (green): `check_server` at each `$TMUX` fallback of `down.rs`.** In `crates/zygo-workspace/src/down.rs`:
   - Line 32: `use crate::up::{self, check_server, not_owned, preflight, socket_is_private, unreachable, Exit};`
   - `detach_wanted`, after `let mux = up::server(&opts.tmux, ws.tmux_socket.as_deref(), opts.tmux_env.as_deref());` (`:518`), add:
     ```rust
@@ -382,7 +382,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
     ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test down` passes (the step 6 tests and every earlier test).
 
-- [ ] **8. Test (red): `ls`, `ws forget` and `ws forget-pane`.** In `crates/zygo-workspace/tests/admin.rs`:
+- [x] **8. Test (red): `ls`, `ws forget` and `ws forget-pane`.** In `crates/zygo-workspace/tests/admin.rs`:
   - After `const TIMED_OUT` (`:35`), add:
     ```rust
     /// The AU54 line (`mux/mod.rs:697-698`).
@@ -510,7 +510,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
 
   Note: `au54_forget_pane_...` passes once step 3 is done (the snapshot check). If the implementer runs step 8 after step 3, the red check of this one test is the run before step 3; record which order ran.
 
-- [ ] **9. Code (green): the typed `forget` refusal and the `ls` check in `admin.rs`.** In `crates/zygo-workspace/src/admin.rs`:
+- [x] **9. Code (green): the typed `forget` refusal and the `ls` check in `admin.rs`.** In `crates/zygo-workspace/src/admin.rs`:
   - Line 21: `use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};`
   - After line 21, add `use crate::repair::check_saved_socket;`
   - Line 24: `use crate::up::{check_server, find_checkout, fire, member_live, server, socket_is_private, Exit, GIT_BOUND};`
@@ -593,7 +593,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   - `forget_pane`, `forget_pane_run`: no change.
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test admin` passes (the five step 8 tests and every earlier test).
 
-- [ ] **10. Test (red): the hand start with a saved socket, and with a `$TMUX` socket, that fails AU54.** In `crates/zygo/tests/workspace_member.rs`, in the FIX-30 section of step 2, add:
+- [x] **10. Test (red): the hand start with a saved socket, and with a `$TMUX` socket, that fails AU54.** In `crates/zygo/tests/workspace_member.rs`, in the FIX-30 section of step 2, add:
   ```rust
   #[test] // FIX-30, AU54, W§8.4, C6: a saved socket with a quote: the not-saved line, a v1 launch, no tmux call, no write
   fn au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_saved_line() {
@@ -632,7 +632,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member au54_a_hand_start` fails in both: no AU54 line, and `root/tmux-called` exists (the `display` call at `member.rs:869` ran; `socket_is_private` passes, because `root/so'ck` has mode 0700).
 
-- [ ] **11. Code (green): `check_saved_socket` is `pub`; the hand start checks both sockets.**
+- [x] **11. Code (green): `check_saved_socket` is `pub`; the hand start checks both sockets.**
   - `crates/zygo-workspace/src/repair.rs:64`: `pub fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {` (body unchanged). Doc comment `:60-63`: after "`zygo attach`, `down` and `repair`." add " FIX-30: also `zygo ls` (the row is `unreachable`), the snapshot (W§7.4 step 1) and the hand start of the crate `zygo` (W§8.4), so it is `pub`."
   - `crates/zygo/src/cmd/member.rs:22`: `use zygo_workspace::mux::{check_path, Multiplexer, UNSAFE_PATH_MESSAGE};`
   - `member.rs:23`: `use zygo_workspace::{repair, snapshot, up};`
@@ -659,7 +659,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   - Doc comment of `hand_start` (`member.rs:833-834`): change "except a state whose `tmux_socket` is not the socket of `$TMUX` and a socket that fails AU62" to "except a state whose `tmux_socket` fails AU54 or is not the socket of `$TMUX`, and a socket of `$TMUX` that fails AU54 or AU62".
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member` passes (the five FIX-30 tests and every earlier test; tmux cases run or print their skip reason).
 
-- [ ] **12. Spec text.** In `docs/specs/2026-11-20-workspaces-design.md`, make these exact replacements:
+- [x] **12. Spec text.** In `docs/specs/2026-11-20-workspaces-design.md`, make these exact replacements:
   1. AU54 row (`:195`): replace the text from "The saved `tmux_socket` gets the same check in every phase," through "and `up` and `down` print that refusal once and exit 2." with: "Every socket that zygo passes to tmux with `-S` gets the same check before its first tmux call: the saved `tmux_socket`, in every phase and before its AU62 check, because the dead-pane lines (W§8.1 step 12) and the line of AU100 quote it; and, when no socket is saved, the socket of `$TMUX` that the call falls back to (D18). By path: `up` (W§8.1 step 5, before steps 6 and 13; the `$TMUX` socket before the first tmux call of step 5 or 6), `zygo attach` and `down` (W§9.3 steps 2 and 3; the `$TMUX` socket before each tmux call of the detach rule, the guard, the session check and step 3) exit 2 with the line below; `up --all` skips that workspace with `zygo: <name> skipped: <the line below without its "zygo: ">` (W§8.1); `repair` refuses it before any tmux call, and `up` and `down` print that refusal once and exit 2; `zygo ws forget` checks the socket of its session check right before that call and exits 2 (W§12); `zygo ls` shows the row `unreachable` with no tmux call; a hand start prints `zygo: this agent is not saved by the workspace: <the line below without its "zygo: ">` and goes on as a v1 launch (W§8.4); a snapshot writes one `errors.log` line with that text and makes no tmux call (W§7.4 step 1): `zygo ws snapshot` exits 0, and a snapshot that the member wrapper, a verb, `up`, `down` or `zygo ws forget-pane` runs returns to its caller, which goes on."
   2. W§7.4 step 1 (`:326`): replace "If `tmux_socket` is not the socket that the multiplexer of this snapshot is bound to (`Multiplexer::socket`), exit 0 with no tmux call." with "If `tmux_socket` is not the socket that the multiplexer of this snapshot is bound to (`Multiplexer::socket`), exit 0 with no tmux call. If `tmux_socket` fails AU54, write one line to `errors.log` (the AU54 text without `zygo: `) and stop with no write and no tmux call: `zygo ws snapshot` exits 0; a snapshot that the member wrapper, a verb, `up`, `down` or `zygo ws forget-pane` runs returns to its caller."
   3. W§8.1 step 6 (`:362`): replace "Check the tmux session `zygo-<name>` on `tmux_socket` (AU62), without `lock`." with "Check the tmux session `zygo-<name>` on `tmux_socket` (AU62), without `lock`; when no socket is saved, on the server of `$TMUX`, whose socket gets the AU54 check before this call (exit 2)."
@@ -672,7 +672,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
      `| 2026-11-23 | AU54, W§7.4 step 1, W§8.1 step 6, W§8.4, W§12 (rows `zygo ls`, `zygo ws forget`, `zygo ws forget-pane`) | author's call (FIX-30 plan, plan review items 1-10) | Every socket that zygo passes to tmux, saved or from `$TMUX`, gets the AU54 check before its first tmux call: `up`, `down` and `ws forget` exit 2 (the `forget` line names the state folder to remove by hand for a saved socket), `up --all` skips, `ls` shows `unreachable`, a hand start goes on as a v1 launch with the not-saved line, and a snapshot logs one line with no tmux call (C6, W-C1); `ws forget-pane` is not refused. |`
   Check: `git diff -- docs/specs/2026-11-20-workspaces-design.md` shows only the nine changes above. If E2 changed one of these lines first, merge the FIX-30 words into the E2 text and record that in the results.
 
-- [ ] **13. Acceptance and gates.**
+- [x] **13. Acceptance and gates.**
   - `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked`: all pass (tmux cases run or print their skip reason), including `au54_a_saved_socket_with_a_quote_logs_one_line_and_makes_no_tmux_call`, `au54_up_refuses_a_tmux_env_socket_with_a_quote_before_its_first_use`, `au54_up_all_skips_a_tmux_env_socket_with_a_quote`, `au54_down_refuses_a_tmux_env_socket_with_a_quote`, `au54_down_detach_rule_refuses_a_tmux_env_socket_with_a_quote`, `au54_ls_shows_a_quoted_saved_socket_as_unreachable_with_no_tmux_call`, `au54_forget_refuses_a_quoted_saved_socket_and_names_the_state_folder`, `au54_forget_refuses_a_quoted_tmux_env_socket_with_exit_2`, `au54_forget_with_a_quoted_socket_whose_folder_is_gone_succeeds`, `au54_forget_pane_with_a_quoted_saved_socket_removes_the_record_and_the_snapshot_logs`.
   - `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member`: all pass, including `au54_the_member_wrapper_logs_its_snapshots_and_makes_no_tmux_call`, `au54_ws_snapshot_logs_one_line_and_makes_no_tmux_call`, `au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_saved_line`, `au54_a_hand_start_on_a_quoted_tmux_socket_is_a_v1_launch_with_the_not_saved_line`.
   - `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test session_verbs`: all pass, including `au54_cli_verb_mirror_logs_one_line_and_makes_no_tmux_call`.
@@ -690,3 +690,82 @@ Path to test (acceptance "one test for each path"): contract (1) `ls` `au54_ls_.
 - Proportion: thirteen steps for six contract paths, three found snapshot callers, and the `$TMUX` fallbacks. One check in `snapshot::attempt` replaces five call-site checks; one helper `check_server` serves eight fallback places in `up.rs`, `down.rs` and `admin.rs`. `forget-pane` has no code change.
 
 ### Results
+
+Run 2026-11-23 in `.worktrees/phase2/FIX-30` (branch `worktree-zygo-phase-2--FIX-30`, from `f757926`, E1 and E2 merged).
+
+**Premise check.** I checked every path, symbol and line that the plan cites against the live code before step 1. Every code line and test helper that the plan cites is at its cited line: `repair.rs:64`, `snapshot.rs:13`, `:565-587`, `up.rs:274-277`, `:981`, `:993`, `:1065-1066`, `:1541`, `down.rs:32`, `:510-519`, `:563`, `:603`, `:1003`, `admin.rs:21`, `:24`, `:161`, `:239-264`, `:541-674`, `member.rs:22-23`, `:831-869`, `session_verbs.rs:809-828`, and the helpers in `tests/{snapshot,up,down,admin}.rs` and `workspace_member.rs`. E1 and E2 changed none of the spec sentences that step 12 replaces: all eight anchors are on their cited lines (195, 326, 362, 403, 408, 560, 563, 564).
+
+**Adaptations.**
+- A-1 (target folder): the controller brief sets `CARGO_TARGET_DIR=.../.worktrees/phase2/fix30-target`. The plan's `T` is `.../FIX-30-target`. I used the brief's folder.
+- A-2 (change log row): the plan puts the row "after `:1026`". E1 and E2 added rows, so the last row of the table is now line 1050 (`| 2026-11-23 | W§17 PW4 | live check (node E2) | …`), which is the last line of the file. I added the row after it.
+- A-3 (`au54_forget_refuses_a_quoted_tmux_env_socket_with_exit_2`): the plan calls `forget_run(&p, &tmux, Some(&env), "app")`. `env` is a `String`, and the helper takes `Option<&str>` (`tests/admin.rs:200`), so `Some(&env)` does not compile. I wrote `Some(env.as_str())`. The assertions are as planned.
+- A-4 (doc comment of `snapshot::attempt`): I added the planned sentence and wrapped the comment again to the line width. The words are as planned.
+- A-5 (commits): the plan names no commits. I made one commit for each red/green pair (steps 1-3, 4-5, 6-7, 8-9, 10-11), one for step 12, and one for these results.
+
+**Red runs (before each code step).**
+- Step 1: `au54_a_saved_socket_…` failed: `left: Written, right: Skipped(Logged)`.
+- Step 2: `au54_cli_verb_mirror_…` failed because `mf::tmux_calls` held one call. Both `workspace_member` tests failed at the `tmux-called` assertion.
+- Step 4: both tests failed, but not at the assertion that the plan predicted. In `up --all`, `session_check` called `has-session` on the `$TMUX` socket, and then the step 8 AU62 line came out (`zygo: tmux socket …/so'ck/s is not private …\nzygo: app skipped`). In `up` (`building`), the repair ran and then the step 8 AU62 line came out, exit 1.
+- Step 6: in `au54_down_refuses_…`, the tmux log held `has-session` and `show-options` on `…/so'ck/s`. In `au54_down_detach_rule_…`, the result was `(0, "zygo: down started; end your turn\n", "")`.
+- Step 8 (run after step 3): `au54_ls_…` failed because `calls` held `session_exists` and `show_session_option`. Both forget tests gave `(0, "zygo: forgot app\n", "")`. `au54_forget_pane_…` passed: step 3 was already in, as the plan's step 8 note says. `au54_forget_with_a_quoted_socket_whose_folder_is_gone_succeeds` passed, as planned (it guards behavior that does not change).
+- Step 10: both tests failed because the AU54 not-saved line came out 0 times.
+
+**Measurements** (`CARGO_TARGET_DIR=.../fix30-target`):
+
+| Command | Exit | Counts |
+|---|---|---|
+| `cargo test -p zygo-workspace --locked` (Acceptance 1) | 101 | Every target that ran passed, except `--test up`: 68 passed, 2 failed (see Failure F-1). Cargo stopped after `up`; the floor run below covers the remaining targets. |
+| `cargo test -p zygo --locked --test workspace_member` (Acceptance 2) | 0 | 43 passed |
+| `cargo test -p zygo --locked --test session_verbs` (Acceptance 3) | 0 | 29 passed |
+| `cargo test -p zygo --locked --lib cmd::member` | 0 | 31 passed |
+| `cargo test -p zygo-workspace --locked --no-fail-fast` | 101 | 396 passed, 2 failed (F-1), 2 ignored |
+| `cargo test -p zygo --locked --no-fail-fast` | 0 | 684 passed, 0 failed, 2 ignored |
+| `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings` | 0 | no warning |
+| `cargo test --workspace --locked --no-run` | 0 | — |
+| `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` (the N2 name scan is skipped because `N2_FORBIDDEN_NAMES` is not set) |
+
+All 15 FIX-30 tests pass: 1 in `snapshot.rs`, 2 in `up.rs`, 2 in `down.rs`, 5 in `admin.rs`, 4 in `workspace_member.rs` and 1 in `session_verbs.rs`. At first, step 13 stayed unticked because Acceptance 1 failed (F-1). After the F-1 repair below, step 13 is ticked.
+
+**Failure F-1 (repaired; see "F-1 repair" below).** Two earlier live-tmux tests in `crates/zygo-workspace/tests/up.rs` fail:
+- `socket_with_a_dollar_kills_the_new_session` (`:668`, W§18 #15);
+- `failed_first_up_leaves_no_plan_and_the_next_up_builds_the_loadout` (`:1432`, round 2 B1).
+
+Both panic at `tests/up.rs:211:61` (`read(&l.store())`, which is `store.read().unwrap().unwrap()`) with `called Option::unwrap() on a None value`.
+
+Diagnosis: both tests reach the step 9 AU54 check (`up.rs:1263`, the socket read from the new server) by putting a `$` socket in `$TMUX` (`:675`, `:1440`). FIX-30 step 5 checks the `$TMUX` socket at step 6, before the first tmux call. So `up` now exits 2 with the AU54 line before step 8 writes any state. The exit code and the line still match the first assertion of each test. The assertion after it (a state in phase `down` with no socket) finds no state.
+
+The product matches the new AU54 text (step 12.1: "the `$TMUX` socket before the first tmux call of step 5 or 6"). W§18 #15 names the route to the step 9 check as "through `TMUX_TMPDIR`", not `$TMUX`. So the tests use a route that FIX-30 now closes earlier. The plan's step 5 check ("every earlier test passes") did not foresee this. The brief says not to change a test to make it pass, so I did not change these two tests. A possible repair for the controller to decide: drive both tests through `TMUX_TMPDIR` (no `$TMUX`), as W§18 #15 states, so that they reach the step 9 check again.
+
+**F-1 repair (controller decision, 2026-11-23: the diagnosis is confirmed, the product is correct, make the proposed repair).**
+- The `zygo-workspace` tests have no `TMUX_TMPDIR` helper. The only uses are in the crate `zygo` (`tests/common/workspace.rs:322`, `workspace_restore.rs:897`, `workspace_cli.rs:50`), and that test harness is not shared with this crate. So I added two helpers to `crates/zygo-workspace/tests/up.rs`:
+  - `tmpdir_tmux(dir, real, folder)`: a wrapper that unsets `TMUX`, exports `TMUX_TMPDIR=<folder>` and runs `real -f /dev/null "$@"`;
+  - `tmpdir_socket(folder)`: returns `<folder>/tmux-<uid>/default`.
+- In both tests, the `$` folder (`/tmp/zygo-w7$…`, mode 0700) is now `TMUX_TMPDIR`, and `l.o.tmux_env = None`. The has-session check and the `kill-server` cleanup now use `tmpdir_socket(folder)`. Every assertion is unchanged.
+- How the test reaches step 9: with no saved socket and no `$TMUX`, `up::server` gives no `-S`. `check_server` passes (there is no socket), step 8 writes the state, and step 9 starts the server on tmux's default socket in the `$` folder. Then `socket_path` reads it, and `check_path` (now `up.rs:1273`, which was `:1263` before FIX-30 added lines) kills the session and undoes the build to phase `down`. The kept assertion `(ws.phase, ws.tmux_socket) == (Phase::Down, None)` holds only after the step 8 write and the step 9 undo. So the test proves that step 9 ran.
+- Run of the two tests: `cargo test -p zygo-workspace --locked --test up -- --exact socket_with_a_dollar_kills_the_new_session failed_first_up_leaves_no_plan_and_the_next_up_builds_the_loadout` gave 2 passed. tmux is installed here: before the repair, both tests got past `require_tmux` and failed on the state read.
+
+**Measurements after the F-1 repair:**
+
+| Command | Exit | Counts |
+|---|---|---|
+| `cargo test -p zygo-workspace --locked` (Acceptance 1) | 0 | 398 passed, 0 failed, 2 ignored (`--test up`: 70 passed) |
+| `cargo test -p zygo --locked --test workspace_member` (Acceptance 2) | 0 | 43 passed |
+| `cargo test -p zygo --locked --test session_verbs` (Acceptance 3) | 0 | 29 passed |
+| `cargo test -p zygo --locked --lib cmd::member` | 0 | 31 passed |
+| `cargo test -p zygo-workspace --locked --no-fail-fast` | 0 | 398 passed, 0 failed, 2 ignored |
+| `cargo test -p zygo --locked --no-fail-fast` | 0 | 684 passed, 0 failed, 2 ignored |
+| `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings` | 0 | no warning |
+| `cargo test --workspace --locked --no-run` | 0 | — |
+| `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` |
+
+## Merge
+
+Merged 2026-11-23 into `worktree-zygo-phase-2` (from `090c184`; node branch `worktree-zygo-phase-2--FIX-30` at `7d78063`) with `git merge --no-ff`. No conflict. Checks on the merged tree (`CARGO_TARGET_DIR=.../.worktrees/phase2/fix30-target`):
+
+| Command | Exit | Counts |
+|---|---|---|
+| `cargo test -p zygo-workspace --locked --no-fail-fast` | 0 | 398 passed, 0 failed, 2 ignored |
+| `cargo test -p zygo --locked --no-fail-fast` | 0 | 684 passed, 0 failed, 2 ignored |
+| `cargo clippy -p zygo-workspace -p zygo --all-targets --locked -- -D warnings` | 0 | no warning |
+| `cargo test --workspace --locked --no-run` | 0 | — |
+| `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` (the N2 name scan is skipped because `N2_FORBIDDEN_NAMES` is not set) |

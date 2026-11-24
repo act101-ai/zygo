@@ -54,6 +54,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
 | E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3, FIX-29, FIX-24 | DONE | judgment | acceptance workspace_restore 18 on tmux 3.8 and 3.2a, workspace --no-run ok; zygo + zygo-launch 974 + 8 ignored, clippy -D warnings clean, check-premises ok (merged tree) |
 | E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check (Bash, tool, slash) | E1, M4, W11, FIX-9, H3, FIX-24 | DONE | implementation | acceptance workspace_down 10, workspace_session 7, workspace_restore 18, forbidden_content 6 on tmux 3.8 and 3.2a; zygo 679 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok (merged tree) |
+| FIX-4 | live scripts state the agents they need; lib.sh checks only those | — | DROPPED(premise false: OpenCode 1.19.6 is at ~/.opencode/bin/opencode, not on the default PATH; live runs put that directory on PATH; lib.sh needs no change) | implementation | — |
 
 ## Log
 
