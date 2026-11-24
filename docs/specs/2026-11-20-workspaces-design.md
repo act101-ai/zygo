@@ -705,7 +705,7 @@ Each is checked on the pinned agent and tmux versions before the work that depen
 | PW8 | Withdrawn (AU85). | — | — |
 | PW9 | SIGTERM to the launcher ends Claude Code and OpenCode with the conversation saved. | Result 2026-11-22: verified on Claude Code 2.1.330 and OpenCode 1.19.6 (6 of 6 sub-checks passed; the signal went to the agent process; `docs/premises.md` PW9). Before the check: The launcher forwards SIGTERM (`signals.rs:105-130`). | Send `/exit` with `send-keys` to an idle member before SIGTERM. |
 | PW10 | A resumed Claude Code session fires `SessionStart` with `source: resume`, so the note and session text reach it. | Result 2026-11-22: verified on Claude Code 2.1.330 (2 of 2 sub-checks passed; `docs/premises.md` PW10). | Deliver the note through the first `UserPromptSubmit` as additional context. |
-| PW11 | A launcher started with an argument list by tmux (`split-window … -- <zygo> ws run …`) and then `exec $SHELL` leaves a working interactive shell in the pane. | Result 2026-11-22: verified on tmux 3.2a with a stand-in launcher (4 of 4 sub-checks passed); the launcher's signal setup (AU88) is not covered (`docs/premises.md` PW11). E1 checks again. | Start the pane with `$SHELL -c` and a quoted string per shell family. |
+| PW11 | A launcher started with an argument list by tmux (`split-window … -- <zygo> ws run …`) and then `exec $SHELL` leaves a working interactive shell in the pane. | Result 2026-11-22: verified on tmux 3.2a with a stand-in launcher (4 of 4 sub-checks passed); the launcher's signal setup (AU88) is not covered (`docs/premises.md` PW11). Re-checked 2026-11-23 by E1 on the real `zygo ws run`, the AU88 signal setup included (note below). | Start the pane with `$SHELL -c` and a quoted string per shell family. |
 | PW12 | Withdrawn (critic read 3, S5). | — | — |
 | PW13 | Withdrawn (critic read 3, S5). | — | — |
 | PW14 | Withdrawn (critic read 2, I11). | — | — |
@@ -722,6 +722,8 @@ Each is checked on the pinned agent and tmux versions before the work that depen
 *(Note 2026-11-22, FIX-20: the operator rule that no invented requirement may end user work removes the 60 s fallback of the note above. A turn with no Stop stays busy until a Stop or StopFailure, the agent's exit or the drain timeout; down --now is the explicit override.)*
 
 *(Note 2026-11-22, P2, PW16: failed on Claude Code 2.1.330: 16.1 passed, the resume from another cwd found the conversation; 16.2, with another `CLAUDE_CONFIG_DIR` Claude Code printed "No conversation found with session ID: <id>" and exited 1. The fallback of the PW16 row applies: none beyond AU61, which saves and reuses the cwd and the config folder.)*
+
+*(Note 2026-11-23, E1, PW11: verified on the real `zygo ws run`. Test `pw11_ws_run_leaves_a_working_interactive_shell` (stub agent; shells `/bin/sh`, `/bin/bash`, `/usr/bin/zsh`, `/usr/bin/fish`) passed on tmux 3.8 and 3.2a. Live, no prompt typed: Claude Code 2.1.331 on tmux 3.2a (sh), 3.8 (fish) and 3.8 (bash), OpenCode 1.19.6 on tmux 3.2a (sh), each ended by `/exit`: the pane kept its process id; typed commands ran on its terminal; `stty` showed `icanon` and `echo`; SIGINT was neither ignored nor blocked and `C-c` ended a `sleep`; `exit` ended the pane.)*
 
 ## 18. Acceptance
 
@@ -1027,3 +1029,4 @@ None. The operator decided OP11 (slash commands), OP12 (saved overrides) and OP1
 | 2026-11-23 | W§18 #20, #31 | author's call (node E1 plan review) | The stub receives the one-token session arguments `--session-id=<uuid>` and `--resume=<id>` (W§8.2 step 3, W§8.3, AU3); the items named split forms. |
 | 2026-11-23 | W§18 #23 | author's call (node E1 plan review) | After a hand `kill-session` the member wrapper writes each agent member's exit record (`running` to `resumable`, AU17), so the file is not byte-for-byte unchanged; the layout fields are. |
 | 2026-11-23 | W§18 #34 | author's call (node E1 plan review) | A folder or socket of another owner cannot be made by a test without root; the item states that the same check refuses it (`up.rs:308-312`), verified by code reading. |
+| 2026-11-23 | W§17 PW11 | live check (node E1) | PW11 re-checked on the real `zygo ws run` with the launcher's signal setup (AU88), which the P1 stand-in did not cover. |
