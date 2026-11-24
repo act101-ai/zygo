@@ -1,4 +1,5 @@
 pub mod kind;
+pub mod shape;
 pub mod store;
 pub mod sweep;
 pub mod view;
