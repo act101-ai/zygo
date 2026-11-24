@@ -194,3 +194,21 @@ pub fn carry(event_ts: i64, q: &[CtxRequest], first_only: bool, rates: &dyn Fn(&
 - [x] **Step 5 — no regression.** `cargo test -p zygo-usage` → all pass (the `store` tests unchanged).
 
 - [x] **Step 6 — commit.** `git add crates/zygo-usage/src/carry.rs crates/zygo-usage/src/lib.rs crates/zygo-usage/tests/carry.rs`; commit `OS-6: carry computation` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-6:implement`; `git log -1` shows the three files only.
+
+### Review round 1
+
+1. Non-finite rates not guarded (`carry.rs:45-50`): confirmed, fixed. The chosen rate is filtered with `is_finite`; a
+   non-finite one is handled as a `None` price (adds 0, rowid in `unpriced`, still counts for cut, expiry and
+   compaction); negatives pass, as in `Prices::cost`. Tests `nan_rate_is_treated_as_unpriced`,
+   `infinite_rate_is_treated_as_unpriced`.
+2. Expiry boundary (`carry.rs:48`): confirmed, fixed. Test `equal_cache_read_is_not_an_expiry`; fails with `<=`.
+3. Cut boundary (`carry.rs:44`): confirmed, fixed. Test `prompt_exactly_half_of_the_row_before_still_carries`; fails
+   with `<=`.
+4. `first_only` with the cut: confirmed, fixed. Test `first_only_with_a_cut_first_row_gives_an_empty_carry`; fails when
+   the cut is skipped under `first_only`.
+5. Equal `ts`: confirmed, fixed. Test `equal_ts_rows_start_at_the_first_in_slice_order`; fails when the start is the
+   last row of an equal-`ts` run.
+
+Author's calls: the finiteness test is on the one rate chosen for the row, not on all three fields of `Rates`, since
+`Prices::cost` checks only its result. For finding 4 the mutation used is "skip the cut when `first_only`"; moving the
+`first_only` break before the cut line alone does not change the result, because the break would still follow the cut.

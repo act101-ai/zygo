@@ -111,3 +111,56 @@ fn event_after_the_last_row_gives_an_empty_carry() {
     assert_eq!(carry(200, &example(), false, &flat), Carry::default());
     assert_eq!(carry(0, &[], false, &flat), Carry::default());
 }
+
+/// Row 42 is a carrying row priced at `cache_read`; `bad` is the rate the closure gives for it.
+fn non_finite_rate_case(bad: f64) -> Carry {
+    let mut q = vec![row(1, 10, 1_000, 1_000), row(42, 20, 2_000, 1_000), row(3, 30, 3_000, 1_000)];
+    q[1].model = "bad".into();
+    let rates = |m: &str, _: &str, _: u64| Some(if m == "bad" { Rates { cache_read: bad, ..R } } else { R });
+    carry(5, &q, false, &rates)
+}
+
+#[test]
+fn nan_rate_is_treated_as_unpriced() {     // O§6.3: rates follow `Prices::cost`, which drops a non-finite result
+    let c = non_finite_rate_case(f64::NAN);
+    assert!(near(c.usd_per_token * 1e6, 5.0 + 0.4), "{}", c.usd_per_token * 1e6);
+    assert_eq!(c.unpriced, vec![42]);
+}
+
+#[test]
+fn infinite_rate_is_treated_as_unpriced() {
+    let c = non_finite_rate_case(f64::INFINITY);
+    assert!(near(c.usd_per_token * 1e6, 5.0 + 0.4), "{}", c.usd_per_token * 1e6);
+    assert_eq!(c.unpriced, vec![42]);
+}
+
+#[test]
+fn equal_cache_read_is_not_an_expiry() {     // a context that only grows never looks like an expiry
+    let q = [row(1, 10, 1_000, 1_000), row(2, 20, 1_000, 500)];
+    assert!(near(carry(5, &q, false, &flat).usd_per_token * 1e6, 5.0 + 0.4));
+}
+
+#[test]
+fn prompt_exactly_half_of_the_row_before_still_carries() {     // "less than half": 1_000 * 2 == 2_000 is not cut
+    let q = [row(1, 10, 1_900, 0), row(2, 30, 0, 900)];
+    assert!(near(carry(20, &q, false, &flat).usd_per_token * 1e6, 5.0));
+}
+
+#[test]
+fn first_only_with_a_cut_first_row_gives_an_empty_carry() {
+    let q = [row(1, 10, 40_000, 10_000), row(2, 30, 0, 20_000), row(3, 40, 20_000, 1_000)];   // 20_100 < 50_100 / 2
+    assert_eq!(carry(20, &q, true, &flat), Carry::default());
+}
+
+#[test]
+fn equal_ts_rows_start_at_the_first_in_slice_order() {     // rows 2 and 3 share ts 20, given in rowid order
+    let q = [row(1, 10, 1_000, 1_000), row(2, 20, 2_000, 1_000), row(3, 20, 3_000, 1_000)];
+    let seen = RefCell::new(Vec::new());
+    let rates = |_: &str, _: &str, prompt: u64| {
+        seen.borrow_mut().push(prompt);
+        Some(R)
+    };
+    let c = carry(20, &q, false, &rates);
+    assert_eq!(*seen.borrow(), vec![3_100, 4_100]);
+    assert!(near(c.usd_per_token * 1e6, 5.0 + 0.4));
+}

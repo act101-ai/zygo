@@ -42,11 +42,14 @@ pub fn carry(event_ts: i64, q: &[CtxRequest], first_only: bool, rates: &dyn Fn(&
     for i in start..q.len() {
         let (r, prev) = (&q[i], i.checked_sub(1).map(|j| &q[j]));
         if prev.is_some_and(|p| prompt(r).saturating_mul(2) < prompt(p)) { break }
-        match rates(&r.model, &r.provider, prompt(r)) {
+        let rate = rates(&r.model, &r.provider, prompt(r)).map(|x| match () {
+            _ if r.cache_read_tokens == 0 && r.cache_write_tokens == 0 => x.input,
+            _ if i == start || prev.is_some_and(|p| r.cache_read_tokens < p.cache_read_tokens) => x.write,
+            _ => x.cache_read,
+        });
+        match rate.filter(|v| v.is_finite()) {     // `Prices::cost` drops a non-finite result
             None => c.unpriced.push(r.rowid),
-            Some(x) if r.cache_read_tokens == 0 && r.cache_write_tokens == 0 => sum += x.input,
-            Some(x) if i == start || prev.is_some_and(|p| r.cache_read_tokens < p.cache_read_tokens) => sum += x.write,
-            Some(x) => sum += x.cache_read,
+            Some(v) => sum += v,
         }
         if r.compaction || first_only { break }
     }
