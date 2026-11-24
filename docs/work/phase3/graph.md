@@ -198,7 +198,7 @@ Session text (T, SX nodes):
 | DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | TODO | judgment | — |
 | DR-6 | `zygo decision review`: the phase-end review | DR-5 | TODO | implementation | — |
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
-| DR-8 | Session view `repo_root`, written by the launcher | DR-1 | TODO | mechanical | — |
+| DR-8 | Session view `repo_root`, written by the launcher | DR-1 | PLANNED | mechanical | — |
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | TODO | mechanical | — |
 | DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | TODO | judgment | — |
 | DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | TODO | judgment | — |
