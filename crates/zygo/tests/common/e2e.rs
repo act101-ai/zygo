@@ -685,10 +685,12 @@ pub fn held_upstream() -> (u16, Arc<Mutex<Vec<Held>>>) {
     let port = l.local_addr().unwrap().port();
     let held: Arc<Mutex<Vec<Held>>> = Arc::default();
     let all = held.clone();
+    let hold = regex::Regex::new(r"stub hold (\d+)").unwrap();
     std::thread::spawn(move || {
         for s in l.incoming() {
             let Ok(mut s) = s else { return };
             let all = all.clone();
+            let hold = hold.clone();
             std::thread::spawn(move || {
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
@@ -720,11 +722,7 @@ pub fn held_upstream() -> (u16, Arc<Mutex<Vec<Held>>>) {
                     v.len() - 1
                 };
                 let body = String::from_utf8_lossy(&buf[head_end..]).into_owned();
-                let ms = regex::Regex::new(r"stub hold (\d+)")
-                    .unwrap()
-                    .captures(&body)
-                    .and_then(|c| c[1].parse::<u64>().ok())
-                    .unwrap_or(0);
+                let ms = hold.captures(&body).and_then(|c| c[1].parse::<u64>().ok()).unwrap_or(0);
                 std::thread::sleep(Duration::from_millis(ms));
                 let reply = r#"{"id":"msg_e2","type":"message","role":"assistant","model":"up-e2","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}"#;
                 let _ = write!(

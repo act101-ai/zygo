@@ -3,8 +3,8 @@
 # starts with `setsid` and redirected output keeps running after the tool call, after the agent's
 # exit and after the pane's end, without and with the agent's sandbox.
 # Usage: sh scripts/premises/live-detach.sh [--zygo <path>]
-#   --zygo <path>: start the agent as `<path> claude --passthrough -- <the same arguments>`; the
-#   record names the zygo version and the fixture is fixtures/tmux/pw15-zygo.txt.
+#   No argument: the stand-in run of node P1 (fixtures/tmux/pw15.txt).
+#   --zygo <path>: the real check of node E2 (W§17 PW15 re-check): the real zygo down started from the Bash tool, the workspace_down tool and /zygo:down, each with the sandbox off and on; fixture fixtures/tmux/pw15-down.txt.
 #   P15_KEEP=<dir> (environment, optional): copy each session's raw output files to <dir>/<off|on>
 #   for a diagnosis. These files are not scrubbed: never commit them.
 # Put the tmux to check first on PATH (the minimum is 3.2, AU7). Run by hand only.
@@ -26,11 +26,7 @@
 #   the default tmux server is never called.
 # - The command starts one sleeper per session with `setsid`. The script stops each sleeper by a
 #   `stop` file; a sleeper that no `stop` file reaches ends by itself after 120 s.
-# - With --zygo, zygo also writes its usage rows and its session directory under the real HOME
-#   (as live-passthrough.sh). ZYGO_CONFIG points at an empty file.
-# Limit: the sleeper is a stand-in for the detached `zygo down --wait`. It takes no op.lock, runs
-# no drain and sends no signal; print mode ends the agent right after the turn. E2 checks again on
-# the real `zygo down`.
+# - With --zygo: six agent sessions in print mode, each a member of a new workspace (one shell pane) on the private server; zygo writes its state, session folders and usage rows under the real HOME, and each workspace is forgotten at the end of its run. Bash and tool runs are one turn with one tool call; a /zygo:down run makes no model request (the hook blocks the prompt).
 ZYGO=""
 case "$#" in
   0) ;;
@@ -78,23 +74,15 @@ live_run p15
 LAUNCH=plain
 FXFILE=pw15.txt
 if [ -n "$ZYGO" ]; then
-  : >"$RUN/zygo.toml"
   ZV=$(agent_show "$("$ZYGO" --version 2>/dev/null || true)")
-  LAUNCH="zygo $ZV"
-  FXFILE=pw15-zygo.txt
 fi
 case "$HOME$PATH$CLAUDE_BIN$RUN$ZYGO" in
   *"'"*) echo "live: a path holds a single quote; this script cannot use it"; exit 1 ;;
 esac
 MNT_SELF=$(readlink /proc/self/ns/mnt 2>/dev/null || echo none)
 U=$(id -un)
-if [ -n "$ZYGO" ]; then
-  LAUNCHWORDS="'$ZYGO' claude --passthrough --"
-  EXTRA="ZYGO_CONFIG='$RUN/zygo.toml'"
-else
-  LAUNCHWORDS="'$CLAUDE_BIN'"
-  EXTRA=""
-fi
+LAUNCHWORDS="'$CLAUDE_BIN'"
+EXTRA=""
 
 # variant <off|on>: one agent session; writes one line to $RUN/pw15.txt and sets VR (ok or the reason).
 variant() {
@@ -215,6 +203,123 @@ vline() {
     "$v" "$w" "$rc" "$turns" "$den" "$ran" "$started" "$a1" "$a2" "$insb" "$ow" "$x" | sed "s#$SOCK#SOCKET#g; s#$ZP_PRIV#PRIV#g" >>"$RUN/pw15.txt"
 }
 
+# --- real mode (node E2) ---------------------------------------------------------------------
+CCD=$(printenv CLAUDE_CONFIG_DIR || true)
+renv() { env -i PATH="$PATH" HOME="$HOME" TERM=xterm-256color USER="$U" LOGNAME="$U" SHELL=/bin/sh LANG=C.UTF-8 \
+  DISABLE_AUTOUPDATER=1 ZYGO_NO_UPDATE_CHECK=1 ZYGO_CONFIG="$RUN/zygo.toml" ${CCD:+CLAUDE_CONFIG_DIR="$CCD"} "$@"; }
+wsphase() { (cd "$C" && renv "$ZYGO" workspace) 2>/dev/null | sed -n '1s/^\(zygo: \)\{0,1\}workspace [^:]*: //p'; }
+is_down() { [ "$(wsphase)" = down ]; }
+# real <bash|tool|slash> <off|on>: one workspace, one member agent in print mode; one record line; sets VR.
+real() {
+  p=$1 v=$2 name="$1-$2" C="$R/$1-$2" VR=""
+  rc="?" started=no drc="-" guard=no insb="-" ph="?" logend=no after=no gone=no prem="-" where="-"
+  if [ "$v" = on ] && [ "$MNT_SELF" != none ] && { ! command -v bwrap >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1; }; then
+    VR="sandbox not available (bwrap or socat is not on PATH)"; rline; return 0
+  fi
+  mkdir -p "$C/.claude"
+  git -C "$C" init -q && git -C "$C" -c user.name=zygo-live -c user.email=zygo-live@example.invalid commit -q --allow-empty -m init
+  case "$p" in
+    bash) allow='Bash(sh ./down.sh)'; prompt='Run this Bash command one time, exactly as written, then answer with the one word done: sh ./down.sh' ;;
+    tool) allow='mcp__zygo__workspace_down'; prompt='Call the tool mcp__zygo__workspace_down one time with no arguments, then answer with the one word done.' ;;
+    *) allow='Bash(true)'; prompt='/zygo:down' ;;
+  esac
+  sb=false; [ "$v" = on ] && sb=true
+  # P16 (slash runs only): a project hook keeps each UserPromptSubmit input, so the record shows whether the
+  # print-mode prompt reached the hooks as its raw text. It prints nothing, so it decides nothing.
+  ups=""; [ "$p" = slash ] && ups=',"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"cat >>./ups.jsonl; echo >>./ups.jsonl"}]}]}'
+  printf '{"sandbox":{"enabled":%s,"allowUnsandboxedCommands":false,"autoAllowBashIfSandboxed":false},"permissions":{"allow":["%s"]}%s}\n' "$sb" "$allow" "$ups" >"$C/.claude/settings.json"
+  cat >"$C/down.sh" <<EOF
+#!/bin/sh
+echo "mnt=\$(readlink /proc/self/ns/mnt 2>/dev/null || echo none)" >down.head
+'$ZYGO' down -- '$name' >down.out 2>&1
+echo \$? >down.rc
+cat down.out
+EOF
+  cat >"$RUN/agent-$name.sh" <<EOF
+#!/bin/sh
+cd '$C' || exit 1
+'$ZYGO' claude --passthrough -- -p '$prompt' --output-format stream-json --verbose --tools Bash --allowedTools '$allow' \\
+  --permission-prompts none --setting-sources project --strict-mcp-config --no-session-persistence \\
+  </dev/null >'$RUN/out-$name.jsonl' 2>'$RUN/err-$name.txt'
+echo \$? >'$RUN/rc-$name.tmp'; mv '$RUN/rc-$name.tmp' '$RUN/rc-$name'
+exec sleep 300
+EOF
+  renv "$TMUX_BIN" -S "$SOCK" -f /dev/null new-session -d -s hold -x 200 -y 50 /bin/sleep 3600 || { VR="tmux did not start"; rline; return 0; }
+  SP=$(tm display-message -p '#{pid}')
+  if ! (cd "$C" && renv TMUX="$SOCK,$SP,0" "$ZYGO" up --loadout pw15 --no-attach) >"$RUN/up-$name.txt" 2>&1; then
+    VR="zygo up failed: $(sed -n 1p "$RUN/up-$name.txt")"
+    renv "$ZYGO" ws forget -- "$name" >>"$RUN/clean-$name.txt" 2>&1; srv_stop; rline; return 0
+  fi
+  WS=$(tm show-environment -t "=zygo-$name:" ZYGO_WORKSPACE | sed -n 's/^ZYGO_WORKSPACE=//p')
+  LOG="$HOME/.local/state/zygo/workspaces/$WS/down.log"
+  PANE=$(tm split-window -d -P -F '#{pane_id}' -t "=zygo-$name:" -c "$C" -- /bin/sh "$RUN/agent-$name.sh")
+  if ! wait_for 180 test -s "$RUN/rc-$name"; then VR="timeout 180 s: the agent did not exit"; rclean; rline; return 0; fi
+  rc=$(cat "$RUN/rc-$name")
+  grep -qF 'down started; end your turn' "$RUN/out-$name.jsonl" "$RUN/err-$name.txt" 2>/dev/null && started=yes
+  if [ "$p" = slash ]; then
+    prem=no; jq -e -s 'any(.[]; .prompt == "/zygo:down")' "$C/ups.jsonl" >/dev/null 2>&1 && prem=yes
+    # Where the block reason shows: the stream-json line types that hold it, else the stderr file, else none.
+    where=$(jq -r -s '[.[] | select(tostring | contains("down started; end your turn")) | .type] | unique | join(",")' "$RUN/out-$name.jsonl" 2>/dev/null)
+    if [ -z "$where" ]; then where=none; grep -qF 'down started; end your turn' "$RUN/err-$name.txt" 2>/dev/null && where=stderr; fi
+  fi
+  if [ "$p" = bash ]; then
+    drc=$(cat "$C/down.rc" 2>/dev/null || echo -)
+    grep -qE 'cannot run detached from a sandboxed shell|cannot reach the tmux server of' "$C/down.out" 2>/dev/null && guard=yes
+    mnt=$(sed -n 's/^mnt=//p' "$C/down.head" 2>/dev/null); insb=no; [ "$MNT_SELF" = none ] || [ "$mnt" = "$MNT_SELF" ] || insb=yes
+  fi
+  [ "$started" = no ] || wait_for 120 is_down || true
+  ph=$(wsphase)
+  grep -q "^zygo: $name is down (" "$LOG" 2>/dev/null && logend=yes
+  [ -e "$LOG" ] && ! [ "$RUN/rc-$name" -nt "$LOG" ] && after=yes
+  tm has-session -t "=zygo-$name:" 2>/dev/null || gone=yes
+  out=no; [ "$started" = yes ] && [ "$ph" = down ] && [ "$logend" = yes ] && [ "$after" = yes ] && [ "$gone" = yes ] && out=yes
+  if [ "$p" = bash ] && [ "$v" = on ]; then
+    if [ "$out" = yes ]; then :
+    elif [ "$started" = no ] && [ "$drc" = 1 ] && [ "$guard" = yes ] && [ "$ph" = up ] && [ ! -s "$LOG" ]; then VR="guard"
+    elif [ "$started" = yes ]; then VR="down started without a running process"
+    else VR="no outlived down and no AU18 line (down exit $drc)"; fi
+  elif [ "$p" = slash ] && [ "$prem" = no ]; then VR="premise false: the print-mode prompt did not reach UserPromptSubmit as /zygo:down (out-$name.jsonl, err-$name.txt and $name/ups.jsonl kept)"
+  elif [ "$out" = no ]; then VR="down did not outlive the call (started $started, phase $ph, log end $logend)"; fi
+  [ "$p" != bash ] || [ "$v" != off ] || [ "$insb" = no ] || VR="${VR:+$VR; }the sandbox was in effect"
+  rclean; rline
+}
+# rclean: stop the workspace if it still runs, forget it, stop the private server.
+rclean() {
+  [ "$(wsphase)" = down ] || (cd "$C" && renv TMUX="$SOCK,$SP,0" "$ZYGO" down --now --wait -- "$name") >>"$RUN/clean-$name.txt" 2>&1
+  renv "$ZYGO" ws forget -- "$name" >>"$RUN/clean-$name.txt" 2>&1
+  srv_stop
+}
+rline() {
+  if [ -z "$VR" ]; then w=ok; x=""; VR=ok; elif [ "$VR" = guard ]; then w=ok; x="; AU18 guard, nothing started"; else w=FAIL; x="; $VR"; fi
+  printf '15.%s %s exit %s; started line %s; down exit %s; AU18 line %s; in sandbox %s; phase %s; log end %s; log not older than agent exit %s; session gone %s; prompt reached the hook as text %s; block reason in %s%s\n' \
+    "$name" "$w" "$rc" "$started" "$drc" "$guard" "$insb" "$ph" "$logend" "$after" "$gone" "$prem" "$where" "$x" | sed "s#$SOCK#SOCKET#g; s#$ZP_PRIV#PRIV#g" >>"$RUN/pw15.txt"
+}
+real_all() {
+  command -v jq >/dev/null 2>&1 || { echo "live-detach: --zygo needs jq on PATH" >&2; exit 2; }
+  printf '[features]\nworkspace_tool = true\n\n[loadout.pw15]\n[[loadout.pw15.window]]\n[[loadout.pw15.window.pane]]\nkind = "shell"\n' >"$RUN/zygo.toml"
+  printf '%s\n' "launch zygo $ZV, real down" "claude $LIVE_CC_VER" "tmux $TV" >"$RUN/pw15.txt"
+  # 27a: the slash premise (P16) first, with one run; then the other five.
+  for pv in "slash off" "slash on" "bash off" "bash on" "tool off" "tool on"; do
+    set -- $pv; real "$1" "$2"; eval "R_$1$2=\$VR; W_$1$2=\$where"
+  done
+  case "$R_slashoff" in
+    "premise false"*) result PW15-slash-premise failed "$R_slashoff" ;;
+    *) result PW15-slash-premise verified "print-mode /zygo:down reached UserPromptSubmit as its text; block reason in $W_slashoff" ;;
+  esac
+  scrub "$RUN/pw15.txt" >"$FX/pw15-down.txt"
+  sum="bash off: $R_bashoff; bash on: $R_bashon; tool off: $R_tooloff; tool on: $R_toolon; slash off: $R_slashoff; slash on: $R_slashon; fixtures/tmux/pw15-down.txt"
+  if [ "$R_bashoff" = ok ] && [ "$R_bashon" = ok ]; then result PW15 verified "launch zygo $ZV real down, tmux $TV; $sum"
+  else result PW15 failed "launch zygo $ZV real down, tmux $TV; $sum"; fi
+  # A slash run whose premise is false (P16) is no product failure: the fallback then rests on the other runs,
+  # and the PW15-slash-premise line above carries the slash result.
+  so=$R_slashoff sn=$R_slashon
+  case "$so" in "premise false"*) so=ok ;; esac; case "$sn" in "premise false"*) sn=ok ;; esac
+  fb=failed; case "$R_bashon" in ok | guard) [ "$R_bashoff$R_tooloff$R_toolon$so$sn" = okokokokok ] && fb=verified ;; esac
+  result PW15-fallback "$fb" "the workspace_down tool and /zygo:down outlive the call with the sandbox off and on; the Bash tool outlives it or gets the AU18 line; $sum"
+  live_done "$FX"; exit 0
+}
+
+if [ -n "$ZYGO" ]; then real_all; fi
 printf '%s\n' "launch $LAUNCH" "claude $LIVE_CC_VER" "tmux $TV" >"$RUN/pw15.txt"
 variant off; R_OFF=$VR
 variant on; R_ON=$VR
