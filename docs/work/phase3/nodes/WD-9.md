@@ -1,0 +1,9 @@
+# WD-9 — Pool directory listing, assignment and shared lines
+
+**Spec:** `docs/specs/2026-11-24-workspace-definition-design.md` R§9.5 ("Directories", "Assignment", "A pool that does not work", "Shared directories"; `~` expanded as `--config-dir` does, `crates/zygo/src/cmd/claude.rs:66-90`), R-C6, R§18 item 13 (listing and assignment; the mode-`000` case is `cfg(unix)` by R§18 item 13)
+**Files:** `crates/zygo-workspace/src/pool.rs` (new), `crates/zygo-workspace/src/lib.rs`, `crates/zygo-workspace/tests/pool.rs` (new)
+**Consumes:** `WorkspaceConfig.pool` (WD-5)
+**Produces:** `pool::expand(pool: &str, home: Option<&Path>) -> Result<PathBuf, String>`, `pool::list(dir: &Path) -> Result<Vec<PathBuf>, String>` (entries whose name does not start with `.` and that are directories, links followed, in byte order of name; the `Err` is the `<reason>` of `zygo: pool <dir>: <reason>; nothing started`), `pool::order(names: &[Option<String>]) -> Vec<usize>` (pane indices: named panes in byte order of name, then unnamed panes in pane order), `pool::assign(names: &[Option<String>], k: usize) -> Vec<usize>` (directory index per pane: the i-th pane of `order` gets `i mod k`), `pool::shared_lines(dir_of: &[(String, PathBuf)]) -> Vec<String>` (`pool: <dir> is shared by <name>, <name>`)
+**Acceptance:** `cargo test -p zygo-workspace --test pool` → all pass on ubuntu, macOS and Windows. The tests cover: directories `a` and `b`, a file `c` and a directory `.x` list as `[a, b]`; the default-set names with `[a, b]` give `orchestrator → a`, `worker-1 → b`, `worker-2 → a`, `worker-3 → b`, `worker-4 → a`; a missing path, a file and a directory with no subdirectory each give `Err`; a relative path after expansion gives `Err`; `shared_lines` gives one line for `a` and one for `b`; `#[cfg(unix)]`: a pool directory that holds mode-`000` files lists the same and opens no file in it
+
+## Plan
