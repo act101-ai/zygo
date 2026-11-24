@@ -438,7 +438,8 @@ fn begin_writes_the_levels_in_force() {
     let c = HookCtx { config: &cfg, ..ctx(&e, 1000) };
     run(&c, &begin_v(ZC, json!({"unit": U1, "round": 1})), Some("begin"));
     let want: BTreeMap<String, String> = [("claims", "enforce"), ("scope", "notify"), ("navigation", "monitor"), ("output", "monitor"),
-        ("trailers", "notify"), ("repeat", "monitor")].into_iter().map(|(g, l)| (g.to_string(), l.to_string())).collect();
+        ("trailers", "notify"), ("repeat", "monitor"), ("dispositions", "enforce")]
+        .into_iter().map(|(g, l)| (g.to_string(), l.to_string())).collect();
     assert_eq!(lines(&e, SUB)[1], LogLine { n: 2, ts: 1000, kind: Kind::Levels { levels: want.clone() } });
     assert_eq!(fold(&e.sd.work(), SUB).unwrap().levels, want);
 }

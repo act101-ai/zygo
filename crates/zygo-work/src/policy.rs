@@ -12,6 +12,8 @@ pub enum Guard {
     Output,
     Trailers,
     Repeat,
+    /// D§9.3: checked in work_verdict; default enforce.
+    Dispositions,
     Lead,
     Redaction,
     /// FIX-21: Claude attribution in a commit, tag, pull request, issue or release; fixed `enforce`, no `[guards]` key.
@@ -20,8 +22,15 @@ pub enum Guard {
 
 impl Guard {
     /// The guards set in `[guards]`, in `zygo_config::GUARDS` order.
-    pub const CONFIGURED: [Guard; 6] =
-        [Guard::Claims, Guard::Scope, Guard::Navigation, Guard::Output, Guard::Trailers, Guard::Repeat];
+    pub const CONFIGURED: [Guard; 7] = [
+        Guard::Claims,
+        Guard::Scope,
+        Guard::Navigation,
+        Guard::Output,
+        Guard::Trailers,
+        Guard::Repeat,
+        Guard::Dispositions,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -31,6 +40,7 @@ impl Guard {
             Guard::Output => "output",
             Guard::Trailers => "trailers",
             Guard::Repeat => "repeat",
+            Guard::Dispositions => "dispositions",
             Guard::Lead => "lead",
             Guard::Redaction => "redaction",
             Guard::Attribution => "attribution",
