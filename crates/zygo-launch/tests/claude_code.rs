@@ -1650,6 +1650,18 @@ fn help_names() -> BTreeSet<String> {
         .collect()
 }
 
+/// Option names of the Claude Code 2.1.331 binary (`fixtures/claude-code/options-2.1.331.txt`, FIX-31): each word that
+/// starts with `-` of the third tab-separated field of a row that is not a `#` comment, a trailing `,` cut.
+fn binary_option_names() -> BTreeSet<String> {
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude-code/options-2.1.331.txt")).unwrap();
+    text.lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .flat_map(|l| {
+            l.split('\t').nth(2).unwrap().split_whitespace().filter(|w| w.starts_with('-')).map(|w| w.trim_end_matches(',').to_string()).collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn no_workspace_hook(s: &Value) {
     for event in s["hooks"].as_object().unwrap().keys() {
         assert!(!hook_commands(s, event).iter().any(|(_, cmd)| cmd.contains("hook workspace")), "{event}");
@@ -1730,9 +1742,10 @@ fn session_args_follow_w4_and_the_pinned_help() {
     let help = help_names();
     let cc = ClaudeCode::default();
     let names = zygo_workspace::args::session_flags(Agent::ClaudeCode);
-    assert_eq!(names, ["-c", "--continue", "-r", "--resume", "--session-id", "--fork-session", "--from-pr", "--cloud", "--teleport"]);
+    assert_eq!(names, ["-c", "--continue", "-r", "--resume", "--session-id", "--fork-session", "--from-pr", "--cloud", "--teleport", "--remote"]);
+    let binary = binary_option_names();
     for f in names {
-        assert!(help.contains(f), "{f} is not in the pinned --help");
+        assert!(help.contains(f) || binary.contains(f), "{f} is in neither the pinned --help nor the 2.1.331 option list");
         assert!(cc.has_session_arg(&strings(&["--model", "opus", f, "x"])), "{f}");
     }
     assert!(cc.has_session_arg(&strings(&["-pc"])));

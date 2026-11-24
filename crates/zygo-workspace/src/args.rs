@@ -45,7 +45,7 @@ const fn flag(names: &'static [&'static str], arity: Arity, class: Class) -> Fla
     Flag { names, arity, class }
 }
 
-/// `fixtures/claude-code/help.txt`. A flag that is not here takes no value and is kept as typed.
+/// fixtures/claude-code/help.txt, and every other root option of Claude Code 2.1.331 that takes a value or must be removed (fixtures/claude-code/options-2.1.331.txt, FIX-31). The table is complete for 2.1.331; a flag that is not here is kept as typed and takes no value (unlisted_takes_value).
 const CLAUDE_CODE: &[Flag] = &[
     // removed: session, print and prompt-text arguments
     flag(&["-c", "--continue"], Arity::None, Class::Session),
@@ -55,7 +55,28 @@ const CLAUDE_CODE: &[Flag] = &[
     flag(&["--from-pr"], Arity::Optional, Class::Session),
     flag(&["--cloud"], Arity::Optional, Class::Session),
     flag(&["--teleport"], Arity::Optional, Class::Session),
+    flag(&["--remote"], Arity::Optional, Class::Session), // hidden alias of --cloud (FIX-31 minor 2)
     flag(&["-p", "--print"], Arity::None, Class::Remove),
+    // removed booleans (FIX-31 D7): one action and exit, an action that a restore would repeat, data of one launch, or the companion of a removed value flag
+    flag(&["--init-only"], Arity::None, Class::Remove), // (b) runs the Setup and SessionStart hooks, then exits
+    flag(&["--desktop"], Arity::None, Class::Remove), // (b) opens the Claude Desktop app in place of the terminal
+    flag(&["--bg", "--background"], Arity::None, Class::Remove), // (b) starts the session in the background and returns
+    flag(&["--init"], Arity::None, Class::Remove), // (b) runs the Setup hooks with the init trigger again at each restore
+    flag(&["--maintenance"], Arity::None, Class::Remove), // (b) runs the Setup hooks with the maintenance trigger again at each restore
+    flag(&["--session-mirror"], Arity::None, Class::Remove), // (a) SDK-internal, set by ProcessTransport
+    flag(&["--await-claim"], Arity::None, Class::Remove), // (a) pre-warmed spare of an SDK host
+    flag(&["--await-initialize"], Arity::None, Class::Remove), // (a) only from the process that writes the initialize request
+    flag(&["--enable-auth-status"], Arity::None, Class::Remove), // (a) auth status messages in SDK mode
+    flag(&["--deep-link-origin"], Arity::None, Class::Remove), // (a), (c) a deep-link launch; its value flags are removed
+    flag(&["--reply-on-resume"], Arity::None, Class::Remove), // (a), (b) set by /background mid-turn; queries at once on resume
+    flag(&["--allow-other-models"], Arity::None, Class::Remove), // (c) goes with --client-data-url, which is removed
+    flag(&["--managed-settings-in-initialize"], Arity::None, Class::Remove), // (a), (c) SDK only; requires --await-initialize
+    flag(&["--host-auth-is-org-sign-in"], Arity::None, Class::Remove), // (a) desktop hosts only
+    flag(&["--ignore-persisted-trust"], Arity::None, Class::Remove), // (a) set by an IDE host for one process
+    flag(&["--tmux"], Arity::None, Class::Remove), // (b), (d) creates a tmux session for the worktree; a restore would create another
+    flag(&["--agents-view-if-allowed"], Arity::None, Class::Remove), // (a), (d) opens the agents view in place of a session
+    flag(&["--plan-mode-required"], Arity::None, Class::Remove), // (a) passed by a team lead with the teammate identity
+    flag(&["--hold-repository-while-parked"], Arity::None, Class::Remove), // (a) sent by a host on a spare
     flag(&["--system-prompt"], Arity::Required, Class::Remove),
     flag(&["--append-system-prompt"], Arity::Required, Class::Remove),
     // path value
@@ -97,17 +118,87 @@ const CLAUDE_CODE: &[Flag] = &[
     flag(&["--prompt-suggestions"], Arity::Optional, Class::Keep),
     flag(&["--remote-control"], Arity::Optional, Class::Keep),
     flag(&["-w", "--worktree"], Arity::Optional, Class::Keep),
+    // hidden in 2.1.331 (fixtures/claude-code/options-2.1.331.txt), kept with the value: a plain setting (FIX-31 D4)
+    flag(&["--thinking"], Arity::Required, Class::Keep), // plain setting: enabled, adaptive or disabled
+    flag(&["--thinking-display"], Arity::Required, Class::Keep), // plain setting: a choice
+    flag(&["--max-thinking-tokens"], Arity::Required, Class::Keep), // plain setting: a number
+    flag(&["--max-turns"], Arity::Required, Class::Keep), // plain setting: a number
+    flag(&["--task-budget"], Arity::Required, Class::Keep), // plain setting: a positive integer
+    flag(&["--permission-prompt-tool"], Arity::Required, Class::Keep), // plain setting: an MCP tool name
+    flag(&["--fast-mode"], Arity::Required, Class::Keep), // plain setting
+    flag(&["--advisor"], Arity::Required, Class::Keep), // plain setting: a model name
+    flag(&["--proactivity"], Arity::Required, Class::Keep), // plain setting: a choice
+    flag(&["--channels"], Arity::Variadic, Class::Keep), // plain setting: MCP server names
+    flag(&["--teammate-mode"], Arity::Required, Class::Keep), // plain setting: a choice
+    flag(&["--pool"], Arity::Required, Class::Keep), // alias of --environment, which the table keeps
+    flag(&["--rc"], Arity::Optional, Class::Keep), // alias of --remote-control, which the table keeps
+    // hidden in 2.1.331, removed with the value: a secret, content, a prompt, a path to user content, a URL, or data of one launch (FIX-31 D4)
+    flag(&["--append-subagent-system-prompt"], Arity::Required, Class::Remove), // prompt text
+    flag(&["--append-subagent-system-prompt-file"], Arity::Required, Class::Remove), // path to user content (a prompt file)
+    flag(&["--plan-mode-instructions"], Arity::Required, Class::Remove), // prompt text
+    flag(&["--inherit-permission-mode"], Arity::Required, Class::Remove), // set by a parent session for one launch; can carry bypassPermissions past the AU70 printout
+    flag(&["--watch-artifact"], Arity::Required, Class::Remove), // id or URL; a URL can hold a token
+    flag(&["--watch-artifact-no-autoreact"], Arity::Required, Class::Remove), // same as --watch-artifact
+    flag(&["--prefill"], Arity::Required, Class::Remove), // prompt text
+    flag(&["--deep-link-repo"], Arity::Required, Class::Remove), // data of one deep-link launch
+    flag(&["--deep-link-last-fetch"], Arity::Required, Class::Remove), // data of one deep-link launch
+    flag(&["--prefill-b64"], Arity::Required, Class::Remove), // encoded prompt text
+    flag(&["--deep-link-cwd-b64"], Arity::Required, Class::Remove), // encoded path of one deep-link launch
+    flag(&["--resume-session-at"], Arity::Required, Class::Remove), // belongs to one truncating resume
+    flag(&["--resume-drops-turn"], Arity::Required, Class::Remove), // belongs to one truncating resume
+    flag(&["--rewind-files"], Arity::Required, Class::Remove), // one action: restores files and exits
+    flag(&["--workload"], Arity::Required, Class::Remove), // process-scoped billing tag set by SDK daemon callers for cron work; only with --print
+    flag(&["--client-data-url"], Arity::Required, Class::Remove), // URL of a signed document; the help says to keep it out of the process list
+    flag(&["--managed-settings"], Arity::Required, Class::Remove), // content: policy settings JSON
+    flag(&["--project-config-root"], Arity::Required, Class::Remove), // path to user content, set by a host
+    flag(&["--plugin-dir-no-mcp"], Arity::Required, Class::Remove), // path to user content; its caller owns the MCP connections
+    flag(&["--messaging-socket-path"], Arity::Required, Class::Remove), // socket of one running server
+    flag(&["--dangerously-load-development-channels"], Arity::Variadic, Class::Remove), // development only; shows a confirmation dialog at startup
+    flag(&["--agent-id"], Arity::Required, Class::Remove), // teammate identity of one launch
+    flag(&["--agent-name"], Arity::Required, Class::Remove), // teammate identity of one launch
+    flag(&["--team-name"], Arity::Required, Class::Remove), // teammate identity of one launch
+    flag(&["--agent-color"], Arity::Required, Class::Remove), // teammate identity of one launch
+    flag(&["--parent-session-id"], Arity::Required, Class::Remove), // id of another session
+    flag(&["--lead-verify-key"], Arity::Required, Class::Remove), // key material
+    flag(&["--agent-type"], Arity::Required, Class::Remove), // teammate identity of one launch
+    flag(&["--sdk-url"], Arity::Required, Class::Remove), // URL of an SDK endpoint; can hold a token or user info
+    flag(&["--runner-declares"], Arity::Required, Class::Remove), // set by a runner host for one launch
+    flag(&["--session-began-as-copy"], Arity::Required, Class::Remove), // sent by the server for one session
+    flag(&["--initialize-fields"], Arity::Required, Class::Remove), // SDK only; needs --await-initialize
+    flag(&["--forward-home-settings"], Arity::Required, Class::Remove), // data of one launch ("not saved"); requires --cloud or --environment
+    flag(&["--attach-serve"], Arity::Required, Class::Remove), // session id; started by the desktop app, not for interactive use
+    flag(&["--correlation-id"], Arity::Required, Class::Remove), // opaque id of one work order
+    flag(&["--metadata"], Arity::Required, Class::Remove), // free labels; can hold any text
+    flag(&["--ref"], Arity::Required, Class::Remove), // needs --cloud or --environment; in doubt
+    flag(&["--on-branch"], Arity::Required, Class::Remove), // needs --cloud or --environment, as --ref
     // kept, no value: listed so that `flags` and `occurrences` report it (the adapter logs it, AU30 keeps it)
     flag(&["--bare"], Arity::None, Class::Keep),
 ];
 
-/// `fixtures/opencode/help.txt`. A flag that is not here takes no value and is kept as typed.
+/// fixtures/opencode/help.txt, and the subcommand options whose value can hold a secret, a URL, user text or a path. A flag that is not here is kept as typed, with the value that unlisted_takes_value gives it.
 const OPENCODE: &[Flag] = &[
     // removed: session and prompt-text arguments
     flag(&["-c", "--continue"], Arity::None, Class::Session),
     flag(&["-s", "--session"], Arity::Required, Class::Session),
     flag(&["--fork"], Arity::None, Class::Session),
     flag(&["--prompt"], Arity::Required, Class::Remove),
+    // removed: the options of the subcommands whose value can hold a secret, a URL, user text or a path (W-C7, FIX-31 D3)
+    flag(&["-p", "--password"], Arity::Required, Class::Remove), // secret: basic-auth password
+    flag(&["-u", "--username"], Arity::Required, Class::Remove), // credential: basic-auth user name
+    flag(&["--attach"], Arity::Required, Class::Remove), // URL of a server; can hold user info
+    flag(&["--token"], Arity::Required, Class::Remove), // secret: GitHub token
+    flag(&["--url"], Arity::Required, Class::Remove), // URL; can hold user info
+    flag(&["--env"], Arity::Variadic, Class::Remove), // secret: KEY=VALUE environment of an MCP server
+    flag(&["--header"], Arity::Variadic, Class::Remove), // secret: KEY=VALUE HTTP header, often a token
+    flag(&["-f", "--file"], Arity::Variadic, Class::Remove), // path to user content attached to the message
+    flag(&["--title"], Arity::Required, Class::Remove), // user text: session title, else the truncated prompt
+    flag(&["--dir"], Arity::Required, Class::Remove), // path; on attach, a remote path of one launch (in doubt)
+    flag(&["--description"], Arity::Required, Class::Remove), // user text: what the agent should do
+    flag(&["--path"], Arity::Required, Class::Remove), // path for the agent file (in doubt)
+    flag(&["--query"], Arity::Required, Class::Remove), // user text: a file query
+    flag(&["--params"], Arity::Required, Class::Remove), // content: tool params as JSON
+    flag(&["--event"], Arity::Required, Class::Remove), // GitHub mock event of one run (in doubt)
+    flag(&["--cwd"], Arity::Required, Class::Remove), // path: working directory (in doubt)
     // kept, required value
     flag(&["--log-level"], Arity::Required, Class::Keep),
     flag(&["--port"], Arity::Required, Class::Keep),
@@ -281,6 +372,10 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
             };
             let Some(flag) = lookup(table, name) else {
                 out.kept.push(token.clone());
+                if unlisted_takes_value(agent, token, args.get(next).map(String::as_str)) {
+                    out.kept.push(args[next].clone());
+                    next += 1;
+                }
                 continue;
             };
             let start = next;
@@ -296,39 +391,65 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
             }
             outcomes.push((flag, outcome));
         } else {
-            // `-x` or a cluster `-xyz`: each letter is a flag until one takes a value or is not in the table
+            // `-x` or a cluster `-xyz` (FIX-31 B1): every letter is looked up. A table letter that takes a value takes the
+            // rest of the token, or, as the last letter, the next tokens by its arity, and ends the cluster; an unlisted
+            // letter followed by `=` keeps the rest as typed and ends it. The next token belongs to the last letter only: an
+            // unlisted last letter takes it by the rule of that letter. When any table letter is not kept, the whole cluster
+            // and its value are removed.
             let body = &token[1..];
-            let mut kept_letters = String::new();
-            let mut letter_removed = false;
+            let mut shape = String::new();
+            let mut letters: Vec<char> = vec![];
+            let mut last_unlisted: Option<char> = None;
             for (at, letter) in body.char_indices() {
-                let Some(flag) = lookup(table, &format!("-{letter}")) else {
-                    kept_letters.push_str(&body[at..]);
-                    break;
-                };
                 let rest = &body[at + letter.len_utf8()..];
+                let Some(flag) = lookup(table, &format!("-{letter}")) else {
+                    if rest.starts_with('=') {
+                        shape.push_str(&body[at..]);
+                        last_unlisted = None;
+                        break;
+                    }
+                    shape.push(letter);
+                    last_unlisted = Some(letter);
+                    continue;
+                };
+                last_unlisted = None;
                 let attached = (flag.arity != Arity::None && !rest.is_empty()).then_some(rest);
                 let start = next;
                 let outcome = settle(flag, attached, args, &mut next, base);
                 out.occurrences.push(occurrence(flag, attached, &args[start..next], token_at..next));
                 if outcome.flag_kept {
-                    kept_letters.push(letter);
-                    kept_letters.push_str(outcome.attached.as_deref().unwrap_or(""));
-                } else {
-                    letter_removed = true;
+                    shape.push(letter);
+                    shape.push_str(outcome.attached.as_deref().unwrap_or(""));
                 }
-                if !outcome.flag_kept || !outcome.removed.is_empty() {
-                    out.labels.push(format!("-{letter}"));
-                }
+                letters.push(letter);
                 outcomes.push((flag, outcome));
                 if flag.arity != Arity::None {
                     break;
                 }
             }
-            if !kept_letters.is_empty() {
-                out.kept.push(format!("-{kept_letters}"));
+            let mut taken: Vec<String> = vec![];
+            if let Some(letter) = last_unlisted.filter(|_| !body.contains('='))
+                && unlisted_takes_value(agent, &format!("-{letter}"), args.get(next).map(String::as_str))
+            {
+                taken.push(args[next].clone());
+                next += 1;
             }
-            if letter_removed {
+            let all_kept = outcomes.iter().all(|(_, o)| o.flag_kept);
+            for (letter, (_, outcome)) in letters.iter().zip(outcomes.iter_mut()) {
+                if !all_kept {
+                    let kept = std::mem::take(&mut outcome.kept);
+                    outcome.removed.extend(kept);
+                }
+                if !all_kept || !outcome.removed.is_empty() {
+                    out.labels.push(format!("-{letter}"));
+                }
+            }
+            if all_kept {
+                out.kept.push(format!("-{shape}"));
+                out.kept.extend(taken);
+            } else {
                 out.removed.push(token.clone());
+                out.removed.extend(taken);
             }
         }
         for (flag, outcome) in outcomes {
@@ -347,7 +468,8 @@ fn walk(agent: Agent, args: &[String], base: Option<&Path>) -> Walk {
 /// Filters the launch arguments of `agent` by AU30. Removed: session arguments, `-p`/`--print`, prompt-text flags
 /// with their values, every positional token, and `--` with all tokens after it. A content flag keeps a value only
 /// when it names an existing file; its name goes to `dropped_flags` when a value was dropped. File paths become
-/// absolute. All other tokens are kept as typed.
+/// absolute. All other tokens are kept as typed; a flag that the table does not hold keeps the next token as its value
+/// when [`unlisted_takes_value`] says so, and a short cluster gives the next token to its last letter only (FIX-31).
 pub fn filter(agent: Agent, args: &[String]) -> Filtered {
     let walk = walk(agent, args, None);
     Filtered { kept: walk.kept, dropped_flags: walk.dropped_flags }
@@ -406,12 +528,56 @@ pub fn events_off(agent: Agent, args: &[String]) -> bool {
 /// also opens `attach --help` and `run --help`). Each takes no value, but a next token `true` or `false` is its value.
 const OPENCODE_GLOBAL_BOOLEANS: &[&str] = &["-h", "--help", "-v", "--version", "--print-logs", "--pure"];
 
+/// The boolean options of every OpenCode 1.19.6 command that the OpenCode table does not hold (the `[boolean]` rows of
+/// `fixtures/opencode/help.txt` and the boolean options of each subcommand builder in the binary). In the restored
+/// default command these take no value; a boolean of another command, which the default command does not know, loses
+/// only a value that it ignores (AU30, FIX-31). `--no-<x>` is not listed ([`opencode_takes_value`] gives it no value),
+/// and `-f` is not (the `-f`/`--file` row decides it).
+const OPENCODE_COMMAND_BOOLEANS: &[&str] = &[
+    "-h", "--help", "-v", "--version", "--print-logs", "--pure", "--mdns", "--auto", "--mini", "--replay", "--share", "--thinking", "-i",
+    "--interactive", "--yolo", "--dangerously-skip-permissions", "--demo", "--major", "--keep-config", "--keep-data", "--dry-run",
+    "--force", "--verbose", "--refresh", "--sanitize", "-g", "--global",
+];
+
+/// Whether the OpenCode 1.19.6 flag `token` takes `after`, the next token, as its value (FIX-24 matrix; FIX-31): `=` or
+/// a `--no-` prefix: never; the name is the token for a long flag and `-<last letter>` for a short token, because the
+/// value goes to the last letter; a name in `booleans` takes only `true` or `false`; any other name takes the next token
+/// unless it starts with `-`. The one value rule of [`opencode_subcommand`] and of the AU30 walk.
+fn opencode_takes_value(token: &str, after: Option<&str>, booleans: &[&str]) -> bool {
+    if token.contains('=') || token.starts_with("--no-") {
+        return false;
+    }
+    let last;
+    let name = if token.starts_with("--") {
+        token
+    } else {
+        last = token.chars().last().map(|c| format!("-{c}")).unwrap_or_default();
+        last.as_str()
+    };
+    if booleans.contains(&name) {
+        matches!(after, Some("true" | "false"))
+    } else {
+        after.is_some_and(|t| !t.starts_with('-'))
+    }
+}
+
+/// Whether a flag (or the last letter of a cluster, as `-<letter>`) that the table of `agent` does not hold takes
+/// `after` as its value (AU30, FIX-31). Claude Code: never; the table holds every option with a value of 2.1.331, and
+/// Claude Code stops at a flag that it does not register. OpenCode: [`opencode_takes_value`] with
+/// [`OPENCODE_COMMAND_BOOLEANS`].
+fn unlisted_takes_value(agent: Agent, token: &str, after: Option<&str>) -> bool {
+    match agent {
+        Agent::ClaudeCode => false,
+        Agent::OpenCode => opencode_takes_value(token, after, OPENCODE_COMMAND_BOOLEANS),
+    }
+}
+
 /// The OpenCode subcommand in `args` and its index, as OpenCode 1.19.6 reads the tokens before its subcommand (W§7.2;
 /// FIX-24 diff review round 3, findings 2 and 5): the first token that does not start with `-` (or is `-`) and is not
-/// the value of a flag. A flag that holds `=` takes no next token. A `--no-<x>` flag takes no next token. A global
-/// boolean of [`OPENCODE_GLOBAL_BOOLEANS`] takes the next token only when it is `true` or `false`. Every other flag,
-/// long or short, listed in the table or not, takes the next token unless it starts with `-`. `--` ends the flags and
-/// there is no subcommand after it. `events_off` and the launcher (session arguments after `run`) use this one walk.
+/// the value of a flag. Whether a flag (long or short, listed in the table or not) takes the next token is
+/// [`opencode_takes_value`] with the global booleans of [`OPENCODE_GLOBAL_BOOLEANS`], the value rule that AU30's
+/// filter also uses (FIX-31). `--` ends the flags and there is no subcommand after it. `events_off` and the launcher
+/// (session arguments after `run`) use this one walk.
 pub fn opencode_subcommand(args: &[String]) -> Option<(usize, &str)> {
     let mut next = 0;
     while next < args.len() {
@@ -423,16 +589,7 @@ pub fn opencode_subcommand(args: &[String]) -> Option<(usize, &str)> {
         if token == "-" || !token.starts_with('-') {
             return Some((next - 1, token));
         }
-        if token.contains('=') || token.starts_with("--no-") {
-            continue;
-        }
-        let after = args.get(next).map(String::as_str);
-        let takes = if OPENCODE_GLOBAL_BOOLEANS.contains(&token) {
-            matches!(after, Some("true" | "false"))
-        } else {
-            after.is_some_and(|t| !t.starts_with('-'))
-        };
-        if takes {
+        if opencode_takes_value(token, args.get(next).map(String::as_str), OPENCODE_GLOBAL_BOOLEANS) {
             next += 1;
         }
     }
