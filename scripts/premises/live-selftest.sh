@@ -3,7 +3,7 @@
 # runs, no key, no login, no network beyond loopback. Every test token is built at run time from
 # two parts; every tree it changes is a copy under its own temporary dir, deleted on exit.
 # Usage: dash scripts/premises/live-selftest.sh   ->  "live selftest: ok (<n>)", exit 0
-# Needs: dash or sh, perl, python3, curl, tmux. No real agent: stub claude, opencode and zygo
+# Needs: dash or sh, perl, python3, curl, tmux, jq. No real agent: stub claude, opencode and zygo
 # programs come first on PATH (ZYGO_BIN is the stub too), MOCK_URL is a dead loopback port, and the
 # test stops before its first case unless `command -v` finds each stub (U4).
 # Run it only from the checkout whose scripts it tests. No review or test may run this self-test
@@ -29,6 +29,7 @@
 #   a host name shorter than 4 characters with a note; U5: "-" and "_" are part of a host name.
 # - T6: tmux targets are exact and sessions this script did not start are left alone (a private
 #   tmux server with no config file, through a tmux shim on PATH; only that server is killed, and its socket file is removed).
+# - ML16 (node ML-16): live-mail.sh with no argument exits 2; --pm and --m12 in a copied tree, with stubs that answer --version with the pins, a tmux shim that logs each call, MOCK_URL at a dead port and a made-up HOME: one LIVE line per id, the fixtures written in the copy, only stubs started, every tmux call on a private server (-S, -f /dev/null), no process, server or socket file left.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -316,12 +317,115 @@ else
   "$TM" kill-session -t =n38stub 2>/dev/null
 fi
 
+# --- ML16: live-mail.sh on stubs -----------------------------------------------------------------
+# A copied tree, stubs that answer --version with the pins (so pinned_agents passes), a tmux shim that
+# logs each call, MOCK_URL at a dead port, HOME made up, CLAUDE_CONFIG_DIR, TMUX and ZYGO_SESSION_DIR unset.
+MSTUB="$T/stubs-mail" MT="$T/mtree" MH="$T/mhome" TLOG="$T/mail-tmux.log"
+mkdir -p "$MSTUB" "$MT/scripts" "$MT/docs" "$MH" "$T/mtbin"
+cp -R "$HERE" "$MT/scripts/premises"
+cp "$REPO/docs/premises.md" "$MT/docs/"
+PCC=$(sed -n 's/^Claude Code: *//p' "$REPO/docs/premises.md" | head -n 1)
+POC=$(sed -n 's/^OpenCode: *//p' "$REPO/docs/premises.md" | head -n 1)
+printf '#!/bin/sh\ncase "${1:-}" in --version) echo "%s (Claude Code)"; exit 0 ;; esac\necho "$0" >"%s/claude.$$"\nexec sleep 30\n' "$PCC" "$MARK" >"$MSTUB/claude"
+printf '#!/bin/sh\ncase "${1:-}" in --version) echo "%s"; exit 0 ;; esac\necho "$0" >"%s/opencode.$$"\nexec sleep 30\n' "$POC" "$MARK" >"$MSTUB/opencode"
+printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\nexit 1\n' "$MARK" >"$MSTUB/zygo"
+: >"$TLOG"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"\n' "$TLOG" "$TMUX_REAL" >"$T/mtbin/tmux"
+chmod +x "$MSTUB/claude" "$MSTUB/opencode" "$MSTUB/zygo" "$T/mtbin/tmux"
+MPATH="$MSTUB:$T/mtbin:$PATH"
+mguard=0
+[ -n "$TMUX_REAL" ] || mguard=1
+for a in claude opencode zygo; do [ "$(PATH="$MPATH"; command -v "$a")" = "$MSTUB/$a" ] || mguard=1; done
+[ "$(PATH="$MPATH"; command -v tmux)" = "$T/mtbin/tmux" ] || mguard=1
+# mrun <tag> [<args>]: live-mail.sh on the stubs -> rc; output in $T/m-<tag>.out; marker list before in $T/m-<tag>.before
+mrun() {
+  _t=$1; shift
+  ls "$MARK" >"$T/m-$_t.before"
+  : >"$TLOG"
+  mkdir -p "$T/mscr-$_t"
+  rc=0
+  env -u CLAUDE_CONFIG_DIR -u TMUX -u ZYGO_SESSION_DIR PATH="$MPATH" HOME="$MH" MOCK_URL="http://127.0.0.1:1" ZYGO_BIN="$MSTUB/zygo" \
+    N2_SCRATCH="$T/mscr-$_t" PW_TEST=1 PW_TICKS=1 "$SH" "$MT/scripts/premises/live-mail.sh" "$@" >"$T/m-$_t.out" 2>&1 || rc=$?
+}
+# mnew <tag> <name prefix>: the markers that came after mrun <tag> started
+mnew() { ls "$MARK" | grep -vxF -f "$T/m-$1.before" | grep "^$2\\." ; }
+# mstubs <tag> <agent>: at least one new marker of <agent>, each naming a program in $MSTUB
+mstubs() {
+  _f=$(mnew "$1" "$2"); [ -n "$_f" ] || return 1
+  for _m in $_f; do case "$(cat "$MARK/$_m")" in "$MSTUB"/*) ;; *) return 1 ;; esac; done
+}
+# mtmux: every logged tmux call is -V or starts with "-S <path> -f /dev/null "; no path is in the default socket folder
+mtmux() {
+  [ -s "$TLOG" ] || return 1
+  _pre="${TMUX_TMPDIR:-/tmp}/tmux-"
+  while IFS= read -r _l; do
+    case "$_l" in
+      -V) ;;
+      "-S "*)
+        _r=${_l#-S }; _p=${_r%% *}; _r=${_r#"$_p" }
+        case "$_r" in "-f /dev/null "*) ;; *) return 1 ;; esac
+        case "$_p" in "$_pre"*) return 1 ;; esac ;;
+      *) return 1 ;;
+    esac
+  done <"$TLOG"
+}
+# mleft <tag>: one line for each thing left: a process of the run's scratch folder, a live stub, a tmux
+# server that answers (killed here) or a socket file of a logged -S path. Empty: nothing left.
+mleft() {
+  pgrep -f "$T/mscr-$1" >/dev/null 2>&1 && echo "a process of the scratch folder"
+  for _m in $(mnew "$1" '[a-z]*'); do kill -0 "${_m##*.}" 2>/dev/null && echo "stub $_m"; done
+  for _p in $(sed -n 's/^-S \([^ ]*\) .*/\1/p' "$TLOG" | sort -u); do
+    if "$TMUX_REAL" -S "$_p" -f /dev/null has-session 2>/dev/null; then echo "tmux server $_p"; "$TMUX_REAL" -S "$_p" -f /dev/null kill-server 2>/dev/null; fi
+    [ ! -e "$_p" ] || echo "socket file $_p"
+  done
+}
+# mcase <name> <0 = pass> [<output file>]: one ok or FAIL line; a FAIL shows the output
+mcase() { if [ "$2" -eq 0 ]; then ok "$1"; else no "$1"; [ -z "${3:-}" ] || sed 's/^/    /' "$3"; fi; }
+if [ "$mguard" -ne 0 ]; then
+  no "ML16: stubs or tmux shim do not resolve; live-mail.sh not run"
+else
+  mrun usage
+  t=1; [ "$rc" -eq 2 ] && grep -qF 'usage: live-mail.sh --pm | --m12' "$T/m-usage.out" && [ ! -s "$TLOG" ] && [ -z "$(mnew usage '[a-z]*')" ] && t=0
+  mcase "ML16 no argument: usage, exit 2, nothing started (exit $rc)" "$t" "$T/m-usage.out"
+  mrun pm --pm
+  o="$T/m-pm.out"
+  t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE PM[123] failed ' "$o")" -eq 3 ] &&
+    grep -q '^LIVE PM1 failed ' "$o" && grep -q '^LIVE PM2 failed ' "$o" && grep -q '^LIVE PM3 failed ' "$o" && t=0
+  mcase "ML16 --pm: exit $rc, one LIVE line for each of PM1, PM2, PM3 (failed on stubs)" "$t" "$o"
+  t=1; mstubs pm claude && mstubs pm opencode && t=0
+  mcase "ML16 --pm: the agents started were the stub claude and opencode" "$t"
+  t=1; mtmux && t=0
+  mcase "ML16 --pm: every tmux call is on a private server (-S, -f /dev/null)" "$t" "$TLOG"
+  l=$(mleft pm); t=1; [ -z "$l" ] && t=0
+  mcase "ML16 --pm: no process, tmux server or socket file left${l:+ ($(printf '%s' "$l" | tr '\n' ';'))}" "$t"
+  t=0
+  for f in claude-code/mail/pm1.txt claude-code/mail/pm2.txt claude-code/mail/pm3.txt opencode/mail/pm2.txt opencode/mail/pm3.txt; do
+    [ -s "$MT/fixtures/$f" ] || t=1
+  done
+  mcase "ML16 --pm: the five fixtures are written in the copied tree" "$t"
+  mrun m12 --m12
+  o="$T/m-m12.out"
+  t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE ' "$o")" -eq 1 ] && grep -q '^LIVE M12 failed ' "$o" && t=0
+  mcase "ML16 --m12: exit $rc, one LIVE M12 line (failed on stubs)" "$t" "$o"
+  t=1; mstubs m12 zygo && t=0
+  mcase "ML16 --m12: zygo ran as the stub" "$t"
+  t=1; mtmux && t=0
+  mcase "ML16 --m12: every tmux call is on a private server (-S, -f /dev/null)" "$t" "$TLOG"
+  l=$(mleft m12); t=1; [ -z "$l" ] && t=0
+  mcase "ML16 --m12: no process, tmux server or socket file left${l:+ ($(printf '%s' "$l" | tr '\n' ';'))}" "$t"
+  t=1; [ -s "$MT/fixtures/claude-code/mail/m12.txt" ] && t=0
+  mcase "ML16 --m12: the fixture is written in the copied tree" "$t"
+  task=$(sed -n "s/^M12_TASK='\\(.*\\)'\$/\\1/p" "$HERE/live-mail.sh" 2>/dev/null)
+  t=1; [ -n "$task" ] && ! printf '%s\n' "$task" | grep -qiE 'mail|message|send|inbox|poll|watch' && t=0
+  mcase "ML16 the M12 task names no mail" "$t"
+fi
+
 # --- U4: every agent program that ran was a stub; no wrapped sleep is left ------------------------
 nm=0 real=0
 for m in "$MARK"/*; do
   [ -f "$m" ] || continue
   nm=$((nm + 1))
-  case "$(cat "$m")" in "$STUB"/*) ;; *) real=$((real + 1)) ;; esac
+  case "$(cat "$m")" in "$STUB"/* | "$MSTUB"/*) ;; *) real=$((real + 1)) ;; esac
 done
 if [ "$real" -eq 0 ]; then ok "U4 every agent started was a stub ($nm marker(s))"; else no "U4 $real marker(s) not from a stub"; fi
 if pgrep -f "sleep 4711$$" >/dev/null 2>&1; then no "U4 a wrapped sleep is left"; pkill -KILL -f "sleep 4711$$"; else ok "U4 no wrapped sleep is left"; fi
