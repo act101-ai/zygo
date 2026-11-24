@@ -57,7 +57,7 @@ Readings of the spec that this plan fixes:
 
 ### Steps
 
-- [ ] **1. Write the failing graph tests.** Create `crates/zygo-work/tests/decision_set.rs` with the header, helpers and four tests below.
+- [x] **1. Write the failing graph tests.** Create `crates/zygo-work/tests/decision_set.rs` with the header, helpers and four tests below.
 
 ```rust
 //! DR-2: the record set, the set checks and the dependency graph (D§6.8, D§7, D§5, D§9.5, D§11.2).
@@ -110,18 +110,18 @@ fn open(n: u32, deps: &[u32]) -> Record { rec(n, Status::Open, deps, None) }
 }
 ```
 
-- [ ] **2. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::graph` (and `set`). Comment out the `set` import line until step 6.
+- [x] **2. Run and see it fail.** `cargo test -p zygo-work --locked --test decision_set` → compile error `unresolved import zygo_work::decisions::graph` (and `set`). Comment out the `set` import line until step 6.
 
-- [ ] **3. Implement the graph.** Create `crates/zygo-work/src/decisions/graph.rs` with `Dependents`, `dependents`, `dependent_count` and `deepest_chain` as in Produces, and add `pub mod graph;` to `crates/zygo-work/src/decisions/mod.rs` (before `pub mod record;`). Private helpers, also used by `set.rs`:
+- [x] **3. Implement the graph.** Create `crates/zygo-work/src/decisions/graph.rs` with `Dependents`, `dependents`, `dependent_count` and `deepest_chain` as in Produces, and add `pub mod graph;` to `crates/zygo-work/src/decisions/mod.rs` (before `pub mod record;`). Private helpers, also used by `set.rs`:
   - `pub(crate) fn back_edges(next: &HashMap<&str, Vec<&str>>, starts: &[&str]) -> Vec<String>`: iterative three-color DFS from each start in order, children in listed order; each edge to a node on the current path adds that node's id.
   - `fn inverse(records: &[Record]) -> HashMap<&str, Vec<&str>>`: for each `d` in `r.depends_on`, an edge `d → r.id`; each child list sorted by id and deduplicated.
   - `dependents`: BFS over `inverse` from `id`, seen set starts with `id`, a new child gets its parent's depth + 1; rows sorted by (depth, id); `cycle_at = back_edges(&inverse, &[id]).into_iter().next()`.
   - `dependent_count`: filter out `Status::Superseded` when `skip_superseded`, then `dependents(..).rows.len()`.
   - `deepest_chain`: forward edges `r.id → d` only where `d` is in `records`; iterative post-order DFS with a memo of the longest path from each record (counted in records); an edge to a record on the current path counts 0; result is the largest memo value, 0 for no records.
 
-- [ ] **4. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 4 passed.
+- [x] **4. Run and see it pass.** `cargo test -p zygo-work --locked --test decision_set` → 4 passed.
 
-- [ ] **5. Commit.** `git add crates/zygo-work/src/decisions/graph.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision dependency graph (DR-2)` with the `Zygo-Session:` and `Zygo-Work:` trailers of the implementer's brief.
+- [x] **5. Commit.** `git add crates/zygo-work/src/decisions/graph.rs crates/zygo-work/src/decisions/mod.rs crates/zygo-work/tests/decision_set.rs`, message `feat(work): decision dependency graph (DR-2)` with the `Zygo-Session:` and `Zygo-Work:` trailers of the implementer's brief.
 
 - [ ] **6. Write the failing set tests.** Restore the `set` import and append these helpers and nine tests to `crates/zygo-work/tests/decision_set.rs`.
 
