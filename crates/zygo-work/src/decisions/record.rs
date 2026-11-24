@@ -274,10 +274,10 @@ pub fn parse_record(stem: &str, bytes: &[u8]) -> Result<Record, Vec<String>> {
     let promotion = k.string("promotion", false, |s| s.len() <= 500);
     let mut faults = k.faults;
 
-    if let Key::Valid(id) = &id {
-        if id != stem {
-            faults.push("id does not equal the file stem".into());
-        }
+    if let Key::Valid(id) = &id
+        && id != stem
+    {
+        faults.push("id does not equal the file stem".into());
     }
 
     let finding = matches!(kind, Key::Valid(Kind::AcceptedLimit | Kind::Compromise | Kind::OpenFinding));
@@ -352,11 +352,11 @@ fn open_met_link(e: &std::io::Error, path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
 
-/// Reads and checks one record file (D§6.8). `lstat` comes first: a link, a FIFO, a directory or a file over 64 KiB
+/// Reads the bytes of one record file (D§6.8); [`parse_record`] checks them. `lstat` comes first: a link, a FIFO, a directory or a file over 64 KiB
 /// is never opened. On unix the open adds `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` (the pattern of
 /// `zygo_hooks::workspace::read_session_file`); on Windows it adds `FILE_FLAG_OPEN_REPARSE_POINT`. The opened handle
 /// must be a regular file and not a link. At most 64 KiB + 1 bytes are read.
-pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
+pub fn read_bytes(path: &Path) -> Result<Vec<u8>, Vec<String>> {
     let one = |s: String| vec![s];
     let m = fs::symlink_metadata(path).map_err(|e| one(format!("cannot read: {e}")))?;
     if m.file_type().is_symlink() {
@@ -394,6 +394,12 @@ pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
     }
     let mut bytes = Vec::new();
     f.take(MAX_FILE as u64 + 1).read_to_end(&mut bytes).map_err(|e| one(format!("cannot read: {e}")))?;
+    Ok(bytes)
+}
+
+/// Reads one record file with [`read_bytes`] and checks it with [`parse_record`] (D§6.8).
+pub fn read_record(path: &Path) -> Result<Record, Vec<String>> {
+    let bytes = read_bytes(path)?;
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     parse_record(stem, &bytes)
 }
