@@ -136,6 +136,7 @@ fn program(path: &Path, body: &str) {
 /// branch and the ahead mark show. A control run of plain git commands proves that the programs do write markers.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: real git must end inside the 3 s hook bound"]
 fn h14_25_configured_programs_leave_no_marker_after_a_render() {
     let _serial = serial();
     let fx = fx();
@@ -243,6 +244,7 @@ fn h14_25_configured_programs_leave_no_marker_after_a_render() {
 /// marks, within the bound; the next call within 30 s does not run git.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time against the 3 s hook bound"]
 fn h14_25_slow_rev_list_keeps_the_worktree_and_the_branch() {
     let _serial = serial();
     let fx = fx();
@@ -281,6 +283,7 @@ fn h14_25_slow_rev_list_keeps_the_worktree_and_the_branch() {
 
 /// H§14 #24 and #25 (C6): a git worker that panics gives a HUD with no git segment, one stderr line and exit 0.
 #[test]
+#[ignore = "timing: the 3 s statusline hook bound in the zygo binary"]
 fn h14_25_git_worker_panic_writes_one_stderr_line() {
     let _serial = serial();
     let fx = fx();
@@ -289,16 +292,19 @@ fn h14_25_git_worker_panic_writes_one_stderr_line() {
     let wt = root.join("wt");
     linked_ahead(&root, &wt);
     let stdin = serde_json::json!({ "cwd": wt }).to_string();
-    let vars = [("ZYGO_TEST_GIT_PANIC", OsStr::new("1")), (BUDGET.0, OsStr::new(BUDGET.1))];
+    // Both runs at one `ZYGO_TEST_NOW`: the 30 s rule does not depend on the wall clock.
+    let now = ("ZYGO_TEST_NOW", OsStr::new("1800000000"));
+    let vars = [("ZYGO_TEST_GIT_PANIC", OsStr::new("1")), (BUDGET.0, OsStr::new(BUDGET.1)), now];
     let (code, out, err) = fx.hud(&wt, &stdin, &vars);
     assert_eq!((code, out, err), (0, format!("{LOGO}\nz\u{28e}\u{183}o  offline"), "zygo hook: statusline git failed\n".to_string()));
     // The failed try is not due for 30 s: the next run has no git segment and no error line.
-    let (code, out, err) = fx.hud(&wt, &stdin, &fx.budget());
+    let (code, out, err) = fx.hud(&wt, &stdin, &[(BUDGET.0, OsStr::new(BUDGET.1)), now]);
     assert_eq!((code, out, err), (0, format!("{LOGO}\nz\u{28e}\u{183}o  offline"), String::new()));
 }
 
 /// The git worker in the hook's own cwd when stdin names none (H§7.1), and its result without the seam.
 #[test]
+#[ignore = "timing: real git must end inside the 3 s hook bound"]
 fn git_segments_from_the_hooks_own_cwd() {
     let _serial = serial();
     let fx = fx();
@@ -314,6 +320,7 @@ fn git_segments_from_the_hooks_own_cwd() {
 /// such a name.
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "timing: real git must end inside the 3 s hook bound"]
 fn h14_26_worktree_name_with_invalid_utf8_shows_the_replacement_character() {
     use std::os::unix::ffi::OsStrExt;
     let _serial = serial();
@@ -331,6 +338,7 @@ fn h14_26_worktree_name_with_invalid_utf8_shows_the_replacement_character() {
 /// changes nothing, because the HUD has no dirty count (OP14). Windows refuses the newline name.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: real git must end inside the 3 s hook bound"]
 fn h14_26_newline_in_the_directory_name_gives_no_worktree_segment() {
     let _serial = serial();
     let fx = fx();

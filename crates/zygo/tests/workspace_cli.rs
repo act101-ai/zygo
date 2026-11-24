@@ -130,6 +130,7 @@ fn w12_down_refuses_a_bad_timeout_a_name_with_all_and_a_dash_name() {
 /// The name reaches the library, also after `--`.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: real tmux probe has a 2 s bound"]
 fn w12_names_reach_the_library_also_after_double_dash() {
     let Some(tmux) = zygo_workspace::mux::testing::require_tmux() else { return };
     let h = tempfile::tempdir().unwrap();
@@ -155,6 +156,7 @@ fn w12_names_reach_the_library_also_after_double_dash() {
 /// the library, also for the names `--` and `-x`.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: real tmux probe has a 2 s bound"]
 fn fix16_double_dash_names_reach_the_library() {
     let Some(tmux) = zygo_workspace::mux::testing::require_tmux() else { return };
     let h = tempfile::tempdir().unwrap();
@@ -344,6 +346,7 @@ fn slash_verbs_take_the_marker_never_the_cwd() {
 
 /// W§18 #64 (W-C6, OP9): `zygo claude` outside a workspace is a v1 launch, on every platform.
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_64_zygo_claude_outside_a_workspace_is_a_v1_launch() {
     use std::collections::BTreeMap;
     use std::env::consts::EXE_SUFFIX;

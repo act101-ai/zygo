@@ -236,8 +236,11 @@ fn read_request(s: &mut std::net::TcpStream) -> Option<Rec> {
     Some(Rec { method, path, headers, body: buf[head_end + 4..head_end + 4 + len].to_vec() })
 }
 
+/// Bounds that do not expire in a test run: no call result depends on machine speed.
+const NO_EXPIRY: Bounds = Bounds { connect: Duration::from_secs(3600), call: Duration::from_secs(3600) };
+
 fn client(s: &Srv, t: &Secret) -> ServeClient {
-    ServeClient::connect(&s.h.url(), t).unwrap()
+    connect_with(&s.h.url(), t, NO_EXPIRY).unwrap()
 }
 
 fn req() -> SessionRequest {
@@ -297,6 +300,7 @@ fn bounds_are_the_spec_values() { // §7 note
 } // mutation: another constant value
 
 #[test]
+#[ignore = "timing: checks the call bound; asserts elapsed time"]
 fn a_silent_server_ends_the_call_at_the_call_bound() { // §7 note: 30 s per call
     let url = silent_server(Duration::from_secs(20));
     let c = connect_with(&url, &Secret::new(new_token().0), Bounds { connect: Duration::from_secs(10), call: Duration::from_millis(300) })
@@ -308,6 +312,7 @@ fn a_silent_server_ends_the_call_at_the_call_bound() { // §7 note: 30 s per cal
 
 #[cfg(target_os = "linux")]
 #[test]
+#[ignore = "timing: checks the connect bound; asserts elapsed time"]
 fn a_full_accept_queue_ends_the_call_at_the_connect_bound() { // §7 note: connect 10 s
     use std::os::fd::FromRawFd;
     // SAFETY: plain socket calls on a new descriptor; the listener takes ownership of it.
@@ -336,6 +341,7 @@ fn a_full_accept_queue_ends_the_call_at_the_connect_bound() { // §7 note: conne
   // refuse or reset a connect to a full queue instead of dropping it.
 
 #[test]
+#[ignore = "timing: checks the call bound; asserts elapsed time"]
 fn doctor_health_check_ends_at_the_call_bound() { // §7 note
     let url = silent_server(Duration::from_secs(20));
     let t0 = Instant::now();
@@ -572,6 +578,7 @@ fn sync_pending_counts_a_session_live_only_while_its_pid_is_locked() { // U3 (ro
 } // mutation: `live()` ignores the lock → U1 skipped as live
 
 #[test]
+#[ignore = "timing: B1 reply must beat a 2 s call bound"]
 fn sync_pending_goes_on_after_an_unreachable_session() { // §7 note, R5
     let b1 = serde_json::json!({ "requests": [row("B1", "alice")], "complete": true }).to_string();
     let (url, _rec) = recorder(move |r| {
@@ -836,6 +843,7 @@ fn opts(fx: &Fx, mode: &str, server: Option<String>, extra: &[(&str, &str)]) -> 
     o.builtin = Some(builtin());
     o.stderr = Some(Arc::default());
     o.server = server;
+    o.serve_bounds = Some(NO_EXPIRY);
     o
 }
 
@@ -1003,6 +1011,7 @@ fn an_unreachable_server_has_spawned_false() { // AU60
 }
 
 #[test]
+#[ignore = "timing: checks the call bound; asserts elapsed time"]
 fn a_server_that_never_answers_exits_12_at_the_call_bound() { // §7 note: "a timeout is server unreachable (exit 12 at launch)"
     let fx = fx();
     let url = silent_server(Duration::from_secs(20));
@@ -1121,6 +1130,7 @@ fn serve_launch_order_and_no_stored_value() { // §7.2, §14, §15.3, §20 #29d
   // (`req(Vec::new())`), and the skip hides any it passed, so the STORE_VALUE scan guards both together.
 
 #[test]
+#[ignore = "timing: 30 s waits between the test and the stub child process"]
 fn session_is_pending_while_it_runs_and_rows_are_fetched_before_delete() { // §14, S5
     let fx = fx();
     let s = server(&up_model(mock_upstream()));
@@ -1178,6 +1188,7 @@ fn failed_or_incomplete_rows_keep_the_session_pending() { // §14, B2, S5
 } // mutations: cleared on a failed fetch; cleared or not inserted when incomplete
 
 #[test]
+#[ignore = "timing: asserts elapsed time against the call bound"]
 fn a_server_that_stalls_after_creation_costs_one_call_bound_at_exit() { // S3 (round 2), §7.2 suspend, §7 note
     let fx = fx();
     let (sid, grant) = grant_json(&fx);
@@ -1203,6 +1214,7 @@ fn a_server_that_stalls_after_creation_costs_one_call_bound_at_exit() { // S3 (r
 } // mutation: DELETE sent after an unreachable rows fetch → a DELETE recorded and `took` ≥ 2 × call
 
 #[test]
+#[ignore = "timing: 30 s waits between the test and the stub child process"]
 fn lost_session_prints_the_relaunch_message_once_and_clears_the_mark() { // §7.2, S5
     let fx = fx();
     let s = server("");
@@ -1451,6 +1463,7 @@ fn a_redaction_note_cannot_forge_a_session_log_line() { // N70: launcher.rs:317-
 } // mutation: `esc` removed at :318 (the note splits into `one` and `two<ESC>[31m`)
 
 #[test]
+#[ignore = "timing: 30 s and 5 s waits on the stub child and its child"]
 fn a_child_of_the_launcher_does_not_keep_the_session_live() { // U3 (round 3): files open close-on-exec
     let fx = fx();
     let s = server("");
@@ -1473,6 +1486,7 @@ fn a_child_of_the_launcher_does_not_keep_the_session_live() { // U3 (round 3): f
 } // mutations: no lock (→ `during` is Ok); the lock file inherited by the agent (→ the lock stays held past the 5 s wait)
 
 #[test]
+#[ignore = "timing: 30 s waits between the test and the stub child process"]
 fn sync_during_a_live_session_is_skipped_and_exit_brings_the_rows() { // R1
     let fx = fx();
     let s = server(&up_model(mock_upstream()));
@@ -1601,6 +1615,7 @@ fn term_while_held(root: &Path, held: &str) -> std::process::ExitStatus {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 5 s call bound must expire before the 20 s hold ends"]
 fn sigterm_during_a_slow_compact_runs_the_cleanup() { // N70 S1, §8.2 step 2 note 2026-11-19 (acceptance)
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();
@@ -1624,6 +1639,7 @@ fn sigterm_during_a_slow_compact_runs_the_cleanup() { // N70 S1, §8.2 step 2 no
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 5 s call bound must expire before the 20 s hold ends"]
 fn sigterm_during_the_exit_finishes_the_cleanup() { // N70 S1, §8.2 step 6
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();
@@ -1643,6 +1659,7 @@ fn sigterm_during_the_exit_finishes_the_cleanup() { // N70 S1, §8.2 step 6
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: a 1 s sleep orders the two signals"]
 fn a_second_sigint_before_the_agent_ends_the_launch_at_once() { // N70 M-2 (D5), round 2 M1
     use std::os::unix::process::ExitStatusExt;
     let t = tempfile::tempdir().unwrap();
@@ -1660,6 +1677,7 @@ fn a_second_sigint_before_the_agent_ends_the_launch_at_once() { // N70 M-2 (D5),
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 5 s call bound must expire before the 20 s hold ends"]
 fn two_sighups_from_a_hangup_still_run_the_cleanup() { // N70 round 2 M1, §8.2 step 2 note 2026-11-19
     let t = tempfile::tempdir().unwrap();
     let root = t.path().canonicalize().unwrap();

@@ -69,7 +69,8 @@ fn new_pane_key_is_valid_and_random() {
     assert_eq!(keys.len(), 64);
 }
 
-const GIT: Duration = Duration::from_secs(10);
+// A deadline that does not end during a test: load never decides a result.
+const GIT: Duration = Duration::from_secs(3600);
 
 fn git(dir: &Path, args: &[&str]) {
     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };

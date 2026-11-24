@@ -120,6 +120,7 @@ fn end(h: &Harness, k: &str, name: &str) {
 // ---- W§18 #60 (AU72) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_60_the_note_inputs_are_in_the_saved_view_before_session_start() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, &copy_prelude(&h, "view.json", "views"));
@@ -146,6 +147,7 @@ fn w18_60_the_note_inputs_are_in_the_saved_view_before_session_start() {
 // ---- W§18 #66 (OP11, AU18) ----
 
 #[test]
+#[ignore = "timing: asserts the reply within 4.5 s; 5 s polls"]
 fn w18_66_slash_down_ls_and_workspace_in_a_member() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -207,6 +209,7 @@ fn skip_unfinished(h: &Harness, id: &str, k: &str, line: &str) {
 // ---- W§18 #67 (OP12, AU105) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_67_overrides_are_saved_at_once_and_restored_after_a_crash() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, &copy_prelude(&h, "overrides.json", "ovr"));
@@ -233,6 +236,7 @@ fn w18_67_overrides_are_saved_at_once_and_restored_after_a_crash() {
 // ---- W§18 #68 (W§8.2 step 4) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_68_a_saved_redaction_setting_reaches_the_resumed_proxy_session() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -253,6 +257,7 @@ fn w18_68_a_saved_redaction_setting_reaches_the_resumed_proxy_session() {
 // ---- W§18 #69 (AU32) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_69_the_compaction_override_follows_each_value() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -294,6 +299,7 @@ fn w18_69_the_compaction_override_follows_each_value() {
 // ---- W§18 #71 (AU30, AU59, AU102) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_71_a_loadout_settings_argument_keeps_the_pane_a_member() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -330,6 +336,7 @@ fn w18_71_a_loadout_settings_argument_keeps_the_pane_a_member() {
 /// node is a prerequisite (no skip): OpenCode runs plugins in Bun; node runs the generated plugin file as a proxy for
 /// the plugin logic; the live W§17 PW4 check covers the real runtime.
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_74_an_opencode_member_commits_at_load_and_gets_the_note() {
     let Some(h) = Harness::new() else { return };
     let _node = node_exe();

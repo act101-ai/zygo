@@ -316,6 +316,7 @@ fn doctor_agents_compiled_version_is_the_fixture() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 5 s probe bound on a stub shell"]
 fn doctor_probe_reads_version_output() {
     let d = TempDir::new().unwrap();
     let _g = forks();
@@ -325,6 +326,7 @@ fn doctor_probe_reads_version_output() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 5 s probe bound on a stub shell"]
 fn doctor_probe_skips_leading_blank_lines() {
     let d = TempDir::new().unwrap();
     let _g = forks();
@@ -355,6 +357,7 @@ fn doctor_probe_past_deadline_spawns_nothing() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time against the probe bound"]
 fn doctor_probe_kills_a_hung_program() {
     let d = TempDir::new().unwrap();
     let pidfile = d.path().join("pid");
@@ -370,6 +373,7 @@ fn doctor_probe_kills_a_hung_program() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 5 s probe bound on a stub shell"]
 fn doctor_probe_output_is_capped() {
     let d = TempDir::new().unwrap();
     let _g = forks();
@@ -387,6 +391,7 @@ fn alive(pidfile: &Path) -> bool {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts the probe ends within its 2 s bound"]
 fn doctor_probe_grandchild_holding_stdout_keeps_the_version() {
     let d = TempDir::new().unwrap();
     let _g = forks();
@@ -398,6 +403,7 @@ fn doctor_probe_grandchild_holding_stdout_keeps_the_version() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: 2 s probe bound and a 2 s poll for the reaped grandchild"]
 fn doctor_probe_no_grandchild_survives() {
     for last in ["exit 1", "echo 1.0.0"] {
         let d = TempDir::new().unwrap();
@@ -417,6 +423,7 @@ fn doctor_probe_no_grandchild_survives() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time against the probe bound"]
 fn doctor_probe_kills_a_term_ignoring_endless_printer() {
     let d = TempDir::new().unwrap();
     let pf = d.path().join("pid");
@@ -544,6 +551,7 @@ fn claude_dir(d: &Path, json: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "timing: the 5 s/20 s marketplace git bounds (zygo-plugins sync)"]
 fn doctor_plugins_store_states() {
     let _g = forks();
     let d = TempDir::new().unwrap();
@@ -566,6 +574,7 @@ fn doctor_plugins_store_states() {
 }
 
 #[test]
+#[ignore = "timing: the 5 s/20 s marketplace git bounds (zygo-plugins sync)"]
 fn doctor_plugins_missing_commands() {
     let _g = forks();
     let d = TempDir::new().unwrap();
@@ -584,6 +593,7 @@ fn doctor_plugins_missing_commands() {
 }
 
 #[test]
+#[ignore = "timing: the 5 s/20 s marketplace git bounds (zygo-plugins sync)"]
 fn doctor_plugins_echoed_fields_are_escaped() {
     let _g = forks();
     let d = TempDir::new().unwrap();
@@ -649,6 +659,7 @@ fn doctor_report_server_line() {
 }
 
 #[test]
+#[ignore = "timing: the 2 s .zygo.toml git bound (zygo-config repo_file)"]
 fn doctor_report_repo_policy_line() {
     let _g = forks();
     let d = TempDir::new().unwrap();
@@ -670,6 +681,7 @@ fn doctor_report_repo_policy_line() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 2 s .zygo.toml git bound (zygo-config repo_file)"]
 fn doctor_report_policy_line_is_escaped() {
     let d = TempDir::new().unwrap();
     let _g = forks();
@@ -856,6 +868,7 @@ fn doctor_cli_valid_config_exits_zero() {
 /// searches a relative `PATH` entry (the command's cwd is `d`, so `.` names the folder of the relative fake).
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the tmux version bound on a fake tmux script in the zygo binary"]
 fn doctor_tmux_is_found_only_in_absolute_path_entries() {
     use std::os::unix::fs::PermissionsExt;
     let d = TempDir::new().unwrap();

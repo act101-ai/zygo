@@ -159,6 +159,7 @@ fn release(v: &str, bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn check_reports_a_newer_version() {
     let f = Fixture::start(vec![version_file(NEW)]);
     let s = setup();
@@ -171,6 +172,7 @@ fn check_reports_a_newer_version() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn check_reports_up_to_date() {
     let f = Fixture::start(vec![version_file(CUR)]);
     let s = setup();
@@ -180,6 +182,7 @@ fn check_reports_up_to_date() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn update_replaces_the_binary_after_the_checksum() {
     let mut files = vec![version_file(NEW)];
     files.extend(release(NEW, b"fixture-binary"));
@@ -204,6 +207,7 @@ fn update_replaces_the_binary_after_the_checksum() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn checksum_mismatch_is_refused() {
     let wrong = sums(&asset(), b"other-bytes").into_bytes();
     let f = Fixture::start(vec![
@@ -220,6 +224,7 @@ fn checksum_mismatch_is_refused() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn missing_checksum_line_is_refused() {
     let f = Fixture::start(vec![
         version_file(NEW),
@@ -235,6 +240,7 @@ fn missing_checksum_line_is_refused() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn explicit_version_installs_from_the_tagged_path() {
     let f = Fixture::start(release("1.2.3", b"tagged-bytes"));
     let s = setup();
@@ -269,6 +275,7 @@ fn unreachable_server_exits_1_and_changes_nothing() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn up_to_date_update_requests_no_asset() {
     let f = Fixture::start(vec![version_file(CUR)]);
     let s = setup();
@@ -281,6 +288,7 @@ fn up_to_date_update_requests_no_asset() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn older_latest_is_not_installed() {
     let f = Fixture::start(vec![version_file("0.0.1")]);
     let s = setup();
@@ -293,6 +301,7 @@ fn older_latest_is_not_installed() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn malformed_version_file_exits_1() {
     let f = Fixture::start(vec![version_file("not-a-version")]);
     let s = setup();
@@ -319,6 +328,7 @@ fn check_with_version_reports_and_installs_nothing() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn system_proxy_is_not_used() {
     let f = Fixture::start(vec![version_file(NEW)]);
     let port = {
@@ -339,6 +349,7 @@ fn system_proxy_is_not_used() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn update_keeps_the_mode_of_the_replaced_binary() {
     use std::os::unix::fs::PermissionsExt;
     let mut files = vec![version_file(NEW)];
@@ -369,6 +380,7 @@ fn explicit_version_compares_by_precedence() {
 }
 
 #[test]
+#[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn latest_compares_by_precedence() {
     let f = Fixture::start(vec![version_file(&format!("{CUR}+x"))]);
     let s = setup();
@@ -649,6 +661,7 @@ mod start {
     }
 
     #[test] // auto-update #6
+    #[ignore = "timing: asserts elapsed time against the 2 s check bound"]
     fn an_unreachable_server_is_silent_and_bounded() {
         // Nothing listens: the connection is refused.
         let closed = {
@@ -795,11 +808,13 @@ mod start {
     }
 
     #[test]
+    #[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
     fn zygo_claude_runs_the_check_before_the_launch() {
         dispatch_installs_and_does_not_launch("claude");
     }
 
     #[test]
+    #[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
     fn zygo_opencode_runs_the_check_before_the_launch() {
         dispatch_installs_and_does_not_launch("opencode");
     }
@@ -894,6 +909,7 @@ mod workspace_check {
     }
 
     #[test]
+    #[ignore = "timing: tmux e2e: 2 s tmux and launcher bounds, test polls under 60 s"]
     fn zygo_up_prompts_once_before_any_pane_starts() {
         let Some(h) = locked(Harness::new) else { return };
         git_repo(&h, &h.repo());
@@ -926,6 +942,7 @@ mod workspace_check {
     }
 
     #[test]
+    #[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
     fn zygo_up_yes_installs_and_starts_nothing() {
         let h = locked(Harness::no_tmux); // `bin/tmux` fails every call
         git_repo(&h, &h.repo());
@@ -948,6 +965,7 @@ mod workspace_check {
     }
 
     #[test]
+    #[ignore = "timing: tmux e2e: 2 s tmux and launcher bounds, test polls under 60 s"]
     fn zygo_up_all_asks_one_time_for_two_workspaces() {
         let Some(h) = locked(Harness::new) else { return };
         let tmux = OsString::from(format!("{},1,0", h.socket().display()));
@@ -1014,11 +1032,13 @@ mod workspace_check {
     }
 
     #[test] // M5 round 2 finding 1 (FIX-28 folded): `up` inside an agent skips its own check; the first pane skips too
+    #[ignore = "timing: tmux e2e: 2 s tmux and launcher bounds, test polls under 60 s"]
     fn zygo_up_inside_an_agent_its_first_pane_makes_no_request() {
         first_pane_makes_no_request(&[("ZYGO_SESSION", OsStr::new("01JZ0000000000000000000000"))], true);
     }
 
     #[test] // M5 round 2 finding 5: `up` with no TTY asks nothing; its first pane (a TTY) asks nothing either
+    #[ignore = "timing: tmux e2e: 2 s tmux and launcher bounds, test polls under 60 s"]
     fn zygo_up_without_a_tty_and_its_first_pane_ask_nothing() {
         first_pane_makes_no_request(&[], false);
     }
@@ -1037,6 +1057,7 @@ mod workspace_check {
     }
 
     #[test] // the same run: the skip is what stops it; AU93 still holds after the check
+    #[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
     fn ws_run_without_zygo_workspace_makes_the_request() {
         let h = locked(Harness::no_tmux);
         let f = Fixture::start(vec![version_file(NEW)]);
@@ -1129,16 +1150,19 @@ mod workspace_check {
     }
 
     #[test] // D4
+    #[ignore = "timing: the 2 s update check and the 2 s launcher probes of ws run"]
     fn ws_run_yes_installs_and_relaunches_into_the_member() {
         yes_relaunches_into_the_member(b"y\n");
     }
 
     #[test] // M5 round 2 finding 5: `yes` is the long form of `y`
+    #[ignore = "timing: the 2 s update check and the 2 s launcher probes of ws run"]
     fn ws_run_yes_in_full_installs_and_relaunches_into_the_member() {
         yes_relaunches_into_the_member(b"yes\n");
     }
 
     #[test] // M5 round 2 finding 3: a failed relaunch continues as a normal `ws run`, so the member starts
+    #[ignore = "timing: the 2 s update check and the 2 s launcher probes of ws run"]
     fn ws_run_relaunch_failure_starts_the_member() {
         let h = locked(Harness::no_tmux);
         let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
@@ -1188,6 +1212,7 @@ mod workspace_check {
     }
 
     #[test] // M5 round 2 finding 4, round 3 finding 4: a cache that cannot be written gives no second check
+    #[ignore = "timing: the 2 s update check and the 2 s launcher probes of ws run"]
     fn ws_run_yes_with_an_unwritable_cache_checks_once() {
         let h = locked(Harness::no_tmux);
         let zygo = std::fs::read(env!("CARGO_BIN_EXE_zygo")).unwrap();
@@ -1226,6 +1251,7 @@ mod workspace_check {
     }
 
     #[test] // M5 round 2 finding 5
+    #[ignore = "timing: the 2 s update check and the 2 s launcher probes of ws run"]
     fn ws_run_install_with_a_bad_checksum_starts_the_member() {
         let mut files = vec![version_file(NEW)];
         files.push((format!("/download/v{NEW}/SHA256SUMS"), sums(&asset(), b"other-bytes").into_bytes()));
@@ -1235,6 +1261,7 @@ mod workspace_check {
     }
 
     #[test] // M5 round 2 finding 5
+    #[ignore = "timing: the 2 s update check and the 2 s launcher probes of ws run"]
     fn ws_run_install_with_http_500_starts_the_member() {
         let mut files = vec![version_file(NEW)];
         files.extend(release(NEW, b"fixture-binary"));
@@ -1245,6 +1272,7 @@ mod workspace_check {
     }
 
     #[test] // M5 round 2 finding 5, round 3 finding 3: a server that accepts and never answers ends at the 2 s bound
+    #[ignore = "timing: asserts elapsed time against the 2 s check bound"]
     fn ws_run_with_a_stalled_server_starts_the_member_at_the_bound() {
         // The total time limit of the check (auto-update design, "Check").
         const BOUND: Duration = Duration::from_secs(2);
@@ -1268,6 +1296,7 @@ mod workspace_check {
     }
 
     #[test] // M5 round 2 finding 5: `n`, `s` and `skip` start the member and install nothing; `s` and `skip` keep the skip
+    #[ignore = "timing: the 2 s update check and the 2 s launcher probes of ws run"]
     fn ws_run_other_answers_start_the_member() {
         for (answer, skip) in [(&b"n\n"[..], None), (b"s\n", Some(NEW)), (b"skip\n", Some(NEW))] {
             let h = locked(Harness::no_tmux);

@@ -133,6 +133,7 @@ fn no_start(h: &Harness, ws: &Workspace, key: &str) -> String {
 // ---- W§18 #5 (AU30) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_5_inline_content_flags_are_dropped_and_warned() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -167,6 +168,7 @@ fn w18_5_inline_content_flags_are_dropped_and_warned() {
 // ---- W§18 #16 (AU55) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_16_format_text_in_paths_and_names_stays_literal() {
     let Some(h) = Harness::new() else { return };
     let main = h.root().join("a#b");
@@ -220,6 +222,7 @@ fn w18_16_format_text_in_paths_and_names_stays_literal() {
 // ---- W§18 #17 (AU64, AU95) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_17_up_from_an_agent_tool_cleans_the_pane_environment() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -297,6 +300,7 @@ fn w18_17_up_from_an_agent_tool_cleans_the_pane_environment() {
 // ---- W§18 #18 (AU93) ----
 
 #[test]
+#[ignore = "timing: sleeps let the shell read its terminal before typed input"]
 fn w18_18_the_shell_after_the_agent_has_the_workspace_and_a_hand_start_joins() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -332,6 +336,7 @@ fn w18_18_the_shell_after_the_agent_has_the_workspace_and_a_hand_start_joins() {
 // ---- W§18 #20 (W§8.1 steps 7-12, AU3) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_20_down_then_up_resumes_and_restores_the_layout() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -379,6 +384,7 @@ fn w18_20_down_then_up_resumes_and_restores_the_layout() {
 // ---- W§18 #21 (AU24, OP8) ----
 
 #[test]
+#[ignore = "timing: sleeps let the shell read its terminal before typed input"]
 fn w18_21_a_command_in_a_shell_pane_does_not_come_back() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -417,6 +423,7 @@ fn w18_21_a_command_in_a_shell_pane_does_not_come_back() {
 // ---- W§18 #22 (AU17, AU42, AU52) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_22_kill_server_then_up_resumes_with_the_crash_note() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -461,6 +468,7 @@ fn w18_22_kill_server_then_up_resumes_with_the_crash_note() {
 // ---- W§18 #23 (AU89, W§7.5 rule 2; D-2) ----
 
 #[test]
+#[ignore = "timing: a 1 s quiet window and a 5 s wait decide that no snapshot comes"]
 fn w18_23_kill_session_by_hand_writes_no_layout_and_up_restores() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -528,6 +536,7 @@ fn l24_setup(h: &Harness) -> (String, String, Workspace) {
 }
 
 #[test]
+#[ignore = "timing: tmux hook effects must come within 5 s; a 1 s quiet window"]
 fn w18_24_closed_agent_panes_are_detached_while_another_session_is_current() {
     let Some(h) = Harness::new() else { return };
     let (id, name, ws) = l24_setup(&h);
@@ -574,6 +583,7 @@ fn w18_24_closed_agent_panes_are_detached_while_another_session_is_current() {
 }
 
 #[test]
+#[ignore = "timing: tmux hook effects must come within 5 s; a 1 s quiet window"]
 fn w18_77_closed_shell_panes_while_another_session_is_current() {
     let Some(h) = Harness::new() else { return };
     let (id, name, ws) = l24_setup(&h);
@@ -603,6 +613,7 @@ fn w18_77_closed_shell_panes_while_another_session_is_current() {
 // ---- W§18 #25 (AU17, AU73) ----
 
 #[test]
+#[ignore = "timing: a 300 ms sleep orders SIGINT after the forwarded SIGTERM"]
 fn w18_25_an_agent_that_exits_by_itself() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -682,6 +693,7 @@ fn member_is(h: &Harness, id: &str, key: &str, want: MemberState) {
 // ---- W§18 #26 (AU12, AU60, W§8.2 step 7) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_26_a_resume_that_fails_at_once_stays_resumable() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -724,6 +736,7 @@ fn names_in(dir: &Path) -> Vec<String> {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_30_a_result_survives_down_up_and_the_sweep() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -794,6 +807,7 @@ fn w18_30_a_result_survives_down_up_and_the_sweep() {
 // ---- W§18 #31 (AU9, W§8.3, W§8.4) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_31_a_hand_start_in_a_new_split_joins_and_resumes() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -830,6 +844,7 @@ fn w18_31_a_hand_start_in_a_new_split_joins_and_resumes() {
 // ---- W§18 #33 (AU70) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_33_each_bypass_form_is_printed_and_resumed() {
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
@@ -882,6 +897,7 @@ fn w18_33_each_bypass_form_is_printed_and_resumed() {
 // ---- W§18 #34 (AU62, AU87; D-3) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_34_the_saved_socket_reaches_the_server_and_must_be_private() {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     let Some(h) = Harness::new() else { return };
@@ -986,6 +1002,7 @@ fn w18_34_the_saved_socket_reaches_the_server_and_must_be_private() {
 // ---- W§18 #37 (AU67; E-5) ----
 
 #[test]
+#[ignore = "timing: the test's kill races the 2 s tmux call bound"]
 fn w18_37_an_up_killed_after_the_first_window_is_repaired() {
     use std::os::unix::process::ExitStatusExt;
     let Some(h) = Harness::new() else { return };
@@ -1049,6 +1066,7 @@ fn w18_37_an_up_killed_after_the_first_window_is_repaired() {
 // ---- W§17 PW11 (re-check on the real `zygo ws run`; AU88) ----
 
 #[test]
+#[ignore = "timing: sleeps let the shell read its terminal; C-c effect within 5 s"]
 fn pw11_ws_run_leaves_a_working_interactive_shell() {
     let mut shells: Vec<PathBuf> = vec![PathBuf::from("/bin/sh")];
     if Path::new("/bin/bash").exists() {

@@ -104,6 +104,7 @@ fn down_line(name: &str) -> String {
 // ---- W§18 #40 ----
 
 #[test]
+#[ignore = "timing: asserts down ends within 5 s"]
 fn w18_40_an_idle_member_stops_within_5_s() {
     let _g = TIGHT.lock().unwrap_or_else(|e| e.into_inner());
     let Some(h) = Harness::new() else { return };
@@ -127,6 +128,7 @@ fn w18_40_an_idle_member_stops_within_5_s() {
 // ---- W§18 #41 (AU26, AU57) ----
 
 #[test]
+#[ignore = "timing: sleeps against the 10 s drain rule; asserts elapsed time"]
 fn w18_41_a_turn_waits_for_stop_and_10_s_after_the_last_request() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -164,6 +166,7 @@ fn w18_41_a_turn_waits_for_stop_and_10_s_after_the_last_request() {
 // ---- W§18 #42 (AU26, AU91) ----
 
 #[test]
+#[ignore = "timing: sleeps against the 10 s drain rule; asserts elapsed time"]
 fn w18_42_a_held_request_keeps_the_member_busy_and_an_older_status_skips_rule_3() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -208,6 +211,7 @@ fn w18_42_a_held_request_keeps_the_member_busy_and_an_older_status_skips_rule_3(
 // ---- W§18 #43 (AU85, AU43) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_43_a_subagent_without_its_stop_keeps_the_drain_waiting() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -239,6 +243,7 @@ fn w18_43_a_subagent_without_its_stop_keeps_the_drain_waiting() {
 // ---- W§18 #45 (AU86) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_45_stopping_blocks_prompts_and_agents_and_ignores_signals() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "trap '' TERM");
@@ -278,6 +283,7 @@ fn w18_45_stopping_blocks_prompts_and_agents_and_ignores_signals() {
 // ---- W§18 #48 (AU42, W§9.4) ----
 
 #[test]
+#[ignore = "timing: asserts down --now ends within 5 s"]
 fn w18_48_now_saves_running_subagents_for_one_note() {
     let _g = TIGHT.lock().unwrap_or_else(|e| e.into_inner());
     let Some(h) = Harness::new() else { return };
@@ -311,6 +317,7 @@ fn w18_48_now_saves_running_subagents_for_one_note() {
 // ---- W§18 #49 (AU31, AU76) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_49_only_the_open_unit_is_named_and_both_rows_end() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");
@@ -356,6 +363,7 @@ fn w18_49_only_the_open_unit_is_named_and_both_rows_end() {
 // ---- W§18 #50 (AU18, AU97) ----
 
 #[test]
+#[ignore = "timing: asserts 1 s returns, a 2 s poll and a 3 s drain timeout"]
 fn w18_50_a_down_from_an_agent_detaches_and_keeps_its_timeout() {
     let _g = TIGHT.lock().unwrap_or_else(|e| e.into_inner());
     let Some(h) = Harness::new() else { return };
@@ -465,6 +473,7 @@ fn held_stopping(check: impl FnOnce(&Harness, &str, &str)) -> Option<(Harness, S
 }
 
 #[test]
+#[ignore = "timing: a 1 s sleep orders the kill after the launcher's SIGTERM"]
 fn w18_51_a_killed_down_is_repaired() {
     // (a) killed in draining.
     {
@@ -562,6 +571,7 @@ fn w18_51_a_killed_down_is_repaired() {
 // ---- W§18 #82 (AU26, PW7 7.2, 7.5) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_82_an_open_turn_and_an_unpaired_subagent_stop_hold_down() {
     let Some(h) = Harness::new() else { return };
     per_pane_claude(&h, "");

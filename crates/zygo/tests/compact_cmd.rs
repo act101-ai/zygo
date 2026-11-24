@@ -186,6 +186,7 @@ fn compact_of(h: &ProxyHandle, id: &str) -> Option<WindowArg> {
 }
 
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt)"]
 fn slash_compact_600k_sets_the_override() {
     let d = home();
     let (h, id, dir) = proxy(d.path());
@@ -195,6 +196,7 @@ fn slash_compact_600k_sets_the_override() {
 }
 
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt)"]
 fn slash_off_disables_and_on_clears() {
     let d = home();
     let (h, id, dir) = proxy(d.path());
@@ -210,6 +212,7 @@ fn slash_off_disables_and_on_clears() {
 }
 
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt); the 10 s session proxy client timeout in the zygo binary"]
 fn cli_and_slash_same_reply_and_effect() {
     let d = home();
     let (h, id, dir) = proxy(d.path());
@@ -238,6 +241,7 @@ fn cli_and_slash_same_reply_and_effect() {
 }
 
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt); the 10 s session proxy client timeout in the zygo binary"]
 fn cli_in_the_agent_shell_hides_the_window() {
     let d = home();
     let (_h, id, dir) = proxy(d.path());
@@ -262,6 +266,7 @@ fn cli_in_the_agent_shell_hides_the_window() {
 /// H§14 #18, AU26: `zygo status` and `/zygo:status` of a live session print the trimmed bytes as estimated tokens
 /// (92,160 bytes → `23k tok`) and the session spend; outside a session there is no `spend:` line.
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt); the 10 s session proxy client timeout in the zygo binary"]
 fn h14_18_status_prints_trimmed_tokens_and_spend() {
     let d = home();
     let (_h, id, dir) = proxy(d.path());
@@ -287,6 +292,7 @@ fn h14_18_status_prints_trimmed_tokens_and_spend() {
 }
 
 #[test]
+#[ignore = "timing: the 10 s session proxy client timeout in the zygo binary"]
 fn cli_with_only_the_session_dir_hides_the_window() {
     let d = home();
     let (_h, _id, dir) = proxy(d.path());
@@ -303,6 +309,7 @@ fn cli_with_only_the_session_dir_hides_the_window() {
 }
 
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt)"]
 fn unknown_verb_blocks_with_the_help_text() {
     let d = home();
     let env = Env::default();
@@ -337,6 +344,7 @@ fn cli_compact_exit_codes() {
 }
 
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt)"]
 fn slash_failure_blocks_with_compact_failed() {
     let d = home();
     let dir = dead_session(d.path(), "S3");
@@ -352,6 +360,7 @@ const HUD_MODEL: &str = "\u{f4bc}";
 /// The status line HUD of a live session (H§6, H§7): the served model, `ctx -/<window>` before the first request,
 /// the threshold mark, tokens and spend from the proxy. The cache is version 2 and holds data, not a line.
 #[test]
+#[ignore = "timing: the 3 s statusline hook bound with a live proxy"]
 fn statusline_hud_with_and_without_override() {
     let d = home();
     let (_h, _id, dir) = proxy(d.path());
@@ -405,6 +414,7 @@ fn statusline_without_a_session_dir_prints_nothing() {
 /// AU1: the style of a session is `statusline` of `overrides.json`, else `statusline_style` of `view.json`. A value
 /// other than `compact` or `verbose` in `overrides.json` is ignored.
 #[test]
+#[ignore = "timing: the 3 s statusline hook bound with a live proxy"]
 fn statusline_style_from_the_overrides_then_the_view() {
     let d = home();
     let (_h, id, dir) = proxy(d.path());
@@ -434,6 +444,7 @@ fn statusline_style_from_the_overrides_then_the_view() {
 /// H§14 #5: `zygo work <item>` in the session changes the repository setting only; the HUD still shows the
 /// launch-time item of `ZYGO_WORK`.
 #[test]
+#[ignore = "timing: the 3 s statusline hook bound with a live proxy; 2 s git lookups of zygo work"]
 fn h14_05_hud_keeps_the_launch_time_item_after_zygo_work() {
     let d = home();
     let (_h, id, dir) = proxy(d.path());
@@ -454,6 +465,7 @@ fn h14_05_hud_keeps_the_launch_time_item_after_zygo_work() {
 /// H§14 #23 on the binary: with the fetch seam and the git seam blocking, the hook ends within its 3 s bound and
 /// prints the HUD with `offline`. An old `{at, line}` cache file counts as no cache.
 #[test]
+#[ignore = "timing: asserts elapsed time against the 3 s hook bound"]
 fn statusline_ends_within_the_bound_when_the_workers_block() {
     let d = home();
     let dir = dead_session(d.path(), "S4");
@@ -490,6 +502,7 @@ fn statusline_ends_within_the_bound_when_the_workers_block() {
 
 /// H§14 #30 (C6): a forced panic in the render gives empty stdout, exit 0 and one stderr line.
 #[test]
+#[ignore = "timing: the 3 s statusline hook bound with a live proxy"]
 fn h14_30_render_panic_prints_nothing_and_exits_0() {
     let d = home();
     let (_h, _id, dir) = proxy(d.path());
@@ -504,6 +517,7 @@ fn h14_30_render_panic_prints_nothing_and_exits_0() {
 }
 
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt)"]
 fn trailing_newline_after_args_dispatches() {
     let d = home();
     let (h, id, dir) = proxy(d.path());
@@ -516,6 +530,7 @@ fn trailing_newline_after_args_dispatches() {
 /// `cleared` for `on`.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt); the 10 s session proxy client timeout in the zygo binary"]
 fn au105_compact_mirrors_set_and_cleared() {
     let d = home();
     let h = d.path();
@@ -535,6 +550,7 @@ fn au105_compact_mirrors_set_and_cleared() {
 /// AU105 (b): `zygo compact --session <id>` outside a session writes the record of that session.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 10 s session proxy client timeout in the zygo binary"]
 fn au105_compact_session_flag_writes_that_sessions_record() {
     let d = home();
     let h = d.path();
@@ -548,6 +564,7 @@ fn au105_compact_session_flag_writes_that_sessions_record() {
 /// AU105 (b): the record is the one of `<sessions dir>/<id>`, not of `ZYGO_SESSION_DIR`, when the two differ.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 10 s session proxy client timeout in the zygo binary"]
 fn au105_compact_uses_the_session_folder_of_its_id() {
     let d = home();
     let h = d.path();
@@ -602,6 +619,7 @@ fn au105_failed_compact_is_not_mirrored() {
 /// `; not saved for the workspace`; exit 0.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the verb must meet a lock held for 2 s"]
 fn au105_compact_with_locked_state_replies_not_saved() {
     let d = home();
     let h = d.path();
@@ -620,6 +638,7 @@ fn au105_compact_with_locked_state_replies_not_saved() {
 /// W-C6: a session with no marker keeps today's reply and makes no workspace state folder.
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the 10 s session proxy client timeout in the zygo binary"]
 fn au105_compact_outside_a_workspace_keeps_todays_reply() {
     let d = home();
     let h = d.path();

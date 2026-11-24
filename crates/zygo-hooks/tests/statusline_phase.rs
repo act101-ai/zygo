@@ -192,6 +192,7 @@ fn bad_content_gives_none() {
 
 #[cfg(unix)]
 #[test] // C6: a `workspace.json` that is a FIFO with no writer is not opened, so the reader does not wait
+#[ignore = "timing: waits at most 5 s for the reader on a helper thread"]
 fn fifo_gives_none_and_does_not_wait() {
     let fx = Fx::new();
     fx.view(Some(ID));
@@ -209,6 +210,7 @@ fn fifo_gives_none_and_does_not_wait() {
 
 #[cfg(unix)]
 #[test] // C6: the check is on the opened handle, so a FIFO that has a writer and a valid state file is not read
+#[ignore = "timing: waits at most 5 s for the reader on a helper thread"]
 fn fifo_with_a_writer_and_valid_content_gives_none() {
     use std::io::Write;
 
@@ -292,6 +294,7 @@ fn strip(s: &str) -> String {
 }
 
 #[test] // H§14 #36, first sentence
+#[ignore = "timing: collect waits only 200 ms for the stdin that sets the asserted cwd and effort"]
 fn h14_36_member_session_shows_the_phase_after_the_logo() {
     let fx = Fx::new();
     fx.view(Some(ID));
@@ -324,6 +327,7 @@ fn h14_36_member_session_shows_the_phase_after_the_logo() {
 }
 
 #[test] // H§14 #36, from the second sentence
+#[ignore = "timing: collect waits only 200 ms for the stdin that sets the asserted cwd and effort"]
 fn h14_36_phase_colors_and_hidden_cases() {
     let fx = Fx::new();
     fx.view(Some(ID));

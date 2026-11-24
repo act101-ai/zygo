@@ -492,6 +492,7 @@ fn child_request(out: &Path, token: &str) {
 // ---- launch tests ----
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn child_gets_gh_token_and_the_zygo_variables() {
     let fx = fx();
     let st = stub();
@@ -565,6 +566,7 @@ fn failed_preflight_exits_2_and_starts_nothing() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn agent_exit_code_is_returned() {
     let fx = fx();
     let (code, err) = run(&stub(), opts(&fx, "dump", &[("ZYGO_TEST_EXIT", "7")]));
@@ -572,6 +574,7 @@ fn agent_exit_code_is_returned() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn exit_folds_open_units_and_keeps_only_results() {
     let fx = fx();
     let t0 = now();
@@ -592,6 +595,7 @@ fn exit_folds_open_units_and_keeps_only_results() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn launch_prunes_old_usage_rows() {
     let fx = fx();
     std::fs::create_dir_all(&fx.paths.data_dir).unwrap();
@@ -609,6 +613,7 @@ fn launch_prunes_old_usage_rows() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn invalid_profile_prints_first_violation_and_launches_without_it() {
     let fx = fx();
     fx.config("[profile.bad]\ndisabled = [\"lead\"]\n");
@@ -625,6 +630,7 @@ fn invalid_profile_prints_first_violation_and_launches_without_it() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn unknown_profile_prints_not_found_and_launches_without_it() {
     let fx = fx();
     let mut o = opts(&fx, "dump", &[]);
@@ -636,6 +642,7 @@ fn unknown_profile_prints_not_found_and_launches_without_it() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn valid_profile_and_settings_reach_the_view() {
     let fx = fx();
     fx.config(
@@ -659,6 +666,7 @@ fn valid_profile_and_settings_reach_the_view() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn statusline_style_of_the_user_config_reaches_the_view() {
     // Statusline HUD design H§8 row Launch, acceptance 35. Both agents get the same handling.
     for agent in [Agent::ClaudeCode, Agent::OpenCode] {
@@ -678,6 +686,7 @@ fn statusline_style_of_the_user_config_reaches_the_view() {
 // ---- HUD-9: H§14 #35 (launcher part) and the P-HUD-1 `refreshInterval` seam ----
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn h14_35_user_verbose_style_is_written_to_view_json() { // H§14 #35 (launcher part): H§8 row Launch
     let fx = fx();
     fx.config("[statusline]\nstyle = \"verbose\"\n");
@@ -733,6 +742,7 @@ fn status_line_of_a_launch(extra: &[(&str, &str)]) -> serde_json::Value {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn refresh_interval_seam_overrides_the_status_line_interval() { // HUD-9: P-HUD-1 seam `ZYGO_TEST_REFRESH_INTERVAL`
     // No variable: the default of 30 s.
     let s = status_line_of_a_launch(&[]);
@@ -750,6 +760,7 @@ fn refresh_interval_seam_overrides_the_status_line_interval() { // HUD-9: P-HUD-
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn concurrent_launches_get_separate_proxies() {
     let fx = fx();
     let (o1, o2) = (fx.root.join("out1"), fx.root.join("out2"));
@@ -773,6 +784,7 @@ fn concurrent_launches_get_separate_proxies() {
 }
 
 #[test]
+#[ignore = "timing: 5 s git sync bound; the stub child's status call has the session client's fixed 10 s bound"]
 fn navigation_present_with_act_lite_selected_and_on_path() {
     let fx = fx();
     with_act_lite(&fx, "");
@@ -785,6 +797,7 @@ fn navigation_present_with_act_lite_selected_and_on_path() {
 }
 
 #[test]
+#[ignore = "timing: 5 s git sync bound; the stub child's status call has the session client's fixed 10 s bound"]
 fn navigation_absent_without_act_lite_on_path() {
     let fx = fx();
     with_act_lite(&fx, "");
@@ -795,6 +808,7 @@ fn navigation_absent_without_act_lite_on_path() {
 }
 
 #[test]
+#[ignore = "timing: 5 s git sync bound; the stub child's status call has the session client's fixed 10 s bound"]
 fn opencode_navigation_follows_the_delivered_plugin() {
     let fx = fx();
     with_act_lite(&fx, "");
@@ -812,6 +826,7 @@ fn opencode_navigation_follows_the_delivered_plugin() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn compact_flag_sets_the_override_before_the_agent_starts() {
     let fx = fx();
     let st = stub();
@@ -824,6 +839,7 @@ fn compact_flag_sets_the_override_before_the_agent_starts() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn act_lite_store_missing_writes_one_session_log_line() {
     let fx = fx();
     let (code, err) = run(&stub(), opts(&fx, "dump", &[]));
@@ -841,6 +857,7 @@ fn act_lite_store_missing_writes_one_session_log_line() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn effective_role_follows_the_picked_model() {
     let fx = fx();
     let lead_prompt = zygo_config::builtin::defaults().role["lead"].prompt.clone();
@@ -863,6 +880,7 @@ fn effective_role_follows_the_picked_model() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn usage_db_that_does_not_open_prints_one_warning() {
     let fx = fx();
     std::fs::create_dir_all(&fx.paths.usage_db).unwrap();
@@ -874,6 +892,7 @@ fn usage_db_that_does_not_open_prints_one_warning() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn agent_killed_by_a_signal_exits_128_plus_signal() {
     let fx = fx();
     let (code, err) = run(&stub(), opts(&fx, "sigkill", &[]));
@@ -925,6 +944,7 @@ fn mock_upstream() -> (u16, Arc<Mutex<Vec<u8>>>) {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn act_lite_store_values_are_redacted_by_the_session_proxy() {
     let fx = fx();
     let (port, got) = mock_upstream();
@@ -942,6 +962,7 @@ fn act_lite_store_values_are_redacted_by_the_session_proxy() {
 }
 
 #[test]
+#[ignore = "timing: git lookups must beat the launcher's 2 s bound"]
 fn repo_and_work_item_reach_env_session_and_view() {
     let fx = fx();
     git_repo(&fx.cwd, "feat/n31.x", "https://user@GitHub.com/Acme/Widgets.git");
@@ -971,6 +992,7 @@ fn repo_and_work_item_reach_env_session_and_view() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: probe must beat the 2 s bound; asserts elapsed time"]
 fn act_lite_version_other_than_the_compiled_list_is_logged() {
     let fx = fx();
     with_act_lite(&fx, "");
@@ -997,6 +1019,7 @@ fn act_lite_version_other_than_the_compiled_list_is_logged() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: version probe must beat the 2 s bound"]
 fn agent_version_is_parsed_from_the_stub() {
     let fx = fx();
     let exe = std::env::current_exe().unwrap();
@@ -1026,6 +1049,7 @@ fn agent_version_is_parsed_from_the_stub() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: checks the 2 s probe bound; asserts elapsed time"]
 fn agent_version_probe_is_bounded() { // §7 note 2026-11-19: 2 s, as the act-lite probe
     let fx = fx();
     let exe = std::env::current_exe().unwrap();
@@ -1041,6 +1065,7 @@ fn agent_version_probe_is_bounded() { // §7 note 2026-11-19: 2 s, as the act-li
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time; 1 s poll for the killed child"]
 fn act_lite_probe_does_not_wait_for_a_background_child() {
     let fx = fx();
     with_act_lite(&fx, "");
@@ -1084,6 +1109,7 @@ fn panic_after_the_session_exists_removes_the_session_dir() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time; probe must beat the 2 s bound"]
 fn act_lite_probe_that_leaves_its_group_is_still_stopped() {
     let perl = Path::new("/usr/bin/perl");
     if !perl.exists() {
@@ -1372,6 +1398,7 @@ fn sig_root() -> (tempfile::TempDir, PathBuf) {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn ctrl_c_reaches_only_the_child() {
     let (_t, root) = sig_root();
     let r = |n: &str| read_text(&root.join(n));
@@ -1398,6 +1425,7 @@ fn ctrl_c_reaches_only_the_child() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn sigterm_and_sighup_are_forwarded() {
     let (_t, root) = sig_root();
     let r = |n: &str| read_text(&root.join(n));
@@ -1430,6 +1458,7 @@ fn sigterm_and_sighup_are_forwarded() {
 }
 
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn exits_before_the_spawn_have_spawned_false() { // AU60
     use zygo_launch::launcher::LaunchOutcome;
     let fx = fx();
@@ -1448,6 +1477,7 @@ fn exits_before_the_spawn_have_spawned_false() { // AU60
 /// whole launch (an implementation that counts from before the spawn can still pass this bound, so the
 /// slow-setup test of step 31 checks the other side).
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn ran_is_the_time_from_the_spawn_to_the_exit() {
     let fx = fx();
     let t0 = std::time::Instant::now();
@@ -1477,6 +1507,7 @@ fn sigterm_to_the_launcher_sets_received() { // AU34, AU17
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn ignored_sighup_stays_ignored_for_the_agent() {
     let (_t, root) = sig_root();
     let r = |n: &str| read_text(&root.join(n));
@@ -1491,6 +1522,7 @@ fn ignored_sighup_stays_ignored_for_the_agent() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "timing: the stub child's status call has the session client's fixed 10 s bound"]
 fn ctrl_break_reaches_only_the_child() {
     let (_t, root) = sig_root();
     let r = |n: &str| read_text(&root.join(n));

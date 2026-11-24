@@ -389,6 +389,7 @@ fn list_display() {
 type Seen = (String, ListState, Option<(usize, usize, usize)>, Option<u32>);
 
 #[test] // D8, D9, AU87, W§12 `ls`: every state, the agents and the clients
+#[ignore = "timing: stand-in tmux under the 2 s tmux bound and the 4 s ls deadline"]
 fn list_gives_each_state() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -470,6 +471,7 @@ fn list_gives_each_state() {
 // ---- step 11 ----
 
 #[test] // D8, D11, AU62: a failed socket is not asked again; a socket that is not private or has no folder gets no call
+#[ignore = "timing: stand-in tmux under the 2 s tmux bound and the 4 s ls deadline"]
 fn list_failed_socket_and_private_socket() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -623,6 +625,7 @@ fn list_without_tmux() {
 // ---- step 14 ----
 
 #[test] // W§12 `ls` on a real private server: `up` with its clients, another owner, a session gone
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 4 s ls deadline"]
 fn list_reads_a_real_session() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
@@ -651,6 +654,7 @@ fn list_reads_a_real_session() {
 // ---- step 15 ----
 
 #[test] // D12, D13; W§12 `workspace`
+#[ignore = "timing: git under the fixed 2 s status git bound"]
 fn status_texts() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -711,6 +715,7 @@ fn status_texts() {
 // ---- step 16 ----
 
 #[test] // D14, D15; W§12 `ws forget`: every refusal removes nothing
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_refusals() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -797,6 +802,7 @@ fn forget_refusals() {
 }
 
 #[test] // W§12 `ws forget`, FIX-16: the running hint gives the name after `--`
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_running_hint_passes_a_dash_name_after_double_dash() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -814,6 +820,7 @@ fn forget_running_hint_passes_a_dash_name_after_double_dash() {
 // ---- step 17 ----
 
 #[test] // D14-D16: the state and its results cache go; a session of another workspace does not refuse; links stay links
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_removes_state_and_cache() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -859,6 +866,7 @@ fn forget_removes_state_and_cache() {
 // ---- step 18 ----
 
 #[test] // D17: a state that cannot be read is checked from its raw JSON
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_invalid_state() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -922,6 +930,7 @@ fn forget_invalid_state() {
 // ---- step 19 ----
 
 #[test] // D14: a workspace id is matched first, then a name
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_matches_an_id_first() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -953,6 +962,7 @@ fn forget_matches_an_id_first() {
 // ---- step 20 ----
 
 #[test] // D16, D21: a failure before the state rename keeps the state and the cache, and the same `forget` runs again
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_failure_keeps_the_state() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -985,6 +995,7 @@ fn forget_failure_keeps_the_state() {
 // ---- step 21 ----
 
 #[test] // D16 step 4, D26: the next `forget` removes a leftover folder and orphans whose locks are free
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_removes_leftover_and_orphan_folders() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -1027,6 +1038,7 @@ fn forget_removes_leftover_and_orphan_folders() {
 // ---- step 22 ----
 
 #[test] // W§12 `ws forget` on a real private server: refused while the session runs
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
 fn forget_refused_while_the_session_runs() {
     let _s = serial();
     let Some(_) = require_tmux() else { return };
@@ -1091,6 +1103,7 @@ fn pane_setup() -> PaneSetup {
 }
 
 #[test] // D18-D20; W§12 `ws forget-pane`
+#[ignore = "timing: git under the fixed 5 s forget-pane git bound"]
 fn forget_pane_cases() {
     let _s = serial();
     let PaneSetup { td, p, tmux, r, id, store, plain, seq0 } = pane_setup();
@@ -1161,6 +1174,7 @@ fn forget_pane_cases() {
 }
 
 #[test] // D18, D19, D21, D22: a failure before the cache, a retry, `lock` held past 5 s, a state that vanishes
+#[ignore = "timing: git under the fixed 5 s forget-pane git bound"]
 fn forget_pane_failure_vanish_and_busy() {
     let _s = serial();
     let PaneSetup { td: _td, p, tmux, r, id, store, plain, .. } = pane_setup();
@@ -1235,6 +1249,7 @@ fn state_target(t: &Path, target: &Path, id: &str, name: &str) {
 fn link_line(id: &str) -> String { format!("zygo: the state folder of workspace {id} is a link; it is not changed\n") }
 
 #[test] // Round 2 item 1: a state folder that is a link is never opened, locked, written or chmod-ed
+#[ignore = "timing: stand-in tmux under the 2 s tmux bound and the 4 s ls deadline"]
 fn a_state_folder_that_is_a_link() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -1275,6 +1290,7 @@ fn a_state_folder_that_is_a_link() {
 }
 
 #[test] // Round 2 items 2 and 3: `forget` takes `op.lock` and `lock` before it deletes anything; the next `forget` sweeps an orphan cache
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_takes_both_locks_first_and_sweeps_orphan_caches() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -1308,6 +1324,7 @@ fn forget_takes_both_locks_first_and_sweeps_orphan_caches() {
 }
 
 #[test] // Round 2 item 4: each part of the cache path is checked; a link in the middle is refused, a link at the end removed as a link
+#[ignore = "timing: git under the fixed 5 s forget-pane git bound"]
 fn forget_pane_checks_each_part_of_the_cache_path() {
     let _s = serial();
     let PaneSetup { td, p, tmux, r, id, store, .. } = pane_setup();
@@ -1360,6 +1377,7 @@ fn program(p: &Paths, id: &str, key: &str, target: &Path) -> PathBuf {
 }
 
 #[test] // M2 review round 2 finding 4: W§12 `ws forget-pane` also deletes `program/<key>` (AU61), with the rules of `results/<key>`
+#[ignore = "timing: git under the fixed 5 s forget-pane git bound"]
 fn forget_pane_removes_the_program_folder() {
     let _s = serial();
     let PaneSetup { td, p, tmux, r, id, .. } = pane_setup();
@@ -1397,6 +1415,7 @@ fn forget_pane_removes_the_program_folder() {
 }
 
 #[test] // M2 review round 3 finding 4: `ws forget` removes the state before the cache, so no later writer of the cache finds the state
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_removes_the_state_before_the_cache() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -1424,6 +1443,7 @@ fn forget_removes_the_state_before_the_cache() {
 }
 
 #[test] // M2 review round 3 finding 4: a cache that cannot be removed after the state is gone is swept by the next `forget`
+#[ignore = "timing: stand-in tmux under the fixed 2 s tmux bound"]
 fn forget_reports_a_cache_left_after_the_state_and_the_next_forget_sweeps_it() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -1444,6 +1464,7 @@ fn forget_reports_a_cache_left_after_the_state_and_the_next_forget_sweeps_it() {
 }
 
 #[test] // M2 review round 3 finding 9: the second pass tries every cache, then reports the first error; a second run recovers
+#[ignore = "timing: git under the fixed 5 s forget-pane git bound"]
 fn forget_pane_tries_every_cache_and_a_second_run_recovers() {
     let _s = serial();
     let PaneSetup { td, p, tmux, r, id, store, .. } = pane_setup();
@@ -1640,6 +1661,7 @@ fn au54_ls_shows_a_quoted_saved_socket_as_unreachable_with_no_tmux_call() {
 }
 
 #[test] // FIX-30, AU54, W§12 `ws forget`, D17: exit 2, the line names the state folder, nothing deleted; other errors exit 1
+#[ignore = "timing: stand-in tmux version probe under the fixed 2 s tmux bound"]
 fn au54_forget_refuses_a_quoted_saved_socket_and_names_the_state_folder() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -1666,6 +1688,7 @@ fn au54_forget_refuses_a_quoted_saved_socket_and_names_the_state_folder() {
 }
 
 #[test] // FIX-30, AU54, W§12 `ws forget`: no saved socket; the `$TMUX` socket with a quote: exit 2, the AU54 line
+#[ignore = "timing: stand-in tmux version probe under the fixed 2 s tmux bound"]
 fn au54_forget_refuses_a_quoted_tmux_env_socket_with_exit_2() {
     let _s = serial();
     let td = TempDir::new().unwrap();

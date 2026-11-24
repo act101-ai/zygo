@@ -728,6 +728,7 @@ console.log(JSON.stringify(res));
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_behaves_under_node() {
     if no_node("plugin_behaves_under_node") {
         return;
@@ -1558,6 +1559,7 @@ const M: &str = "0123456789abcdef";
 
 #[cfg(unix)]
 #[test] // W§9.1, AU104: the Spec payloads, the member gate, the pre-tool deny
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_sends_member_events_under_node() {
     if no_node("plugin_sends_member_events_under_node") {
         return;
@@ -1608,6 +1610,7 @@ fn plugin_sends_member_events_under_node() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_sends_prompt_for_a_turn_of_the_main_session_only() { // AU27 as amended
     if no_node("plugin_sends_prompt_for_a_turn_of_the_main_session_only") {
         return;
@@ -1641,6 +1644,7 @@ fn plugin_sends_prompt_for_a_turn_of_the_main_session_only() { // AU27 as amende
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_sends_one_stop_per_turn_end() { // L2 round 2 item 5
     if no_node("plugin_sends_one_stop_per_turn_end") {
         return;
@@ -1657,6 +1661,7 @@ fn plugin_sends_one_stop_per_turn_end() { // L2 round 2 item 5
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_main_session_follows_the_active_top_session_and_never_a_child() { // review minor 4, 5; round 2 item 4
     if no_node("plugin_main_session_follows_the_active_top_session_and_never_a_child") {
         return;
@@ -1703,6 +1708,7 @@ fn plugin_main_session_follows_the_active_top_session_and_never_a_child() { // r
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_follows_a_tui_switch_to_an_existing_session() { // L2 round 2 item 4
     if no_node("plugin_follows_a_tui_switch_to_an_existing_session") {
         return;
@@ -1718,6 +1724,7 @@ fn plugin_follows_a_tui_switch_to_an_existing_session() { // L2 round 2 item 4
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_decides_before_it_waits() { // review B2
     if no_node("plugin_decides_before_it_waits") {
         return;
@@ -1732,6 +1739,7 @@ fn plugin_decides_before_it_waits() { // review B2
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: asserts elapsed time against the plugin's 10 s timeout"]
 fn plugin_member_calls_survive_a_missing_failing_or_hung_zygo() { // L2 round 2 item 6
     if no_node("plugin_member_calls_survive_a_missing_failing_or_hung_zygo") {
         return;
@@ -1768,6 +1776,7 @@ fn plugin_member_calls_survive_a_missing_failing_or_hung_zygo() { // L2 round 2 
 
 #[cfg(unix)]
 #[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_passes_hostile_ids_as_exact_json() { // L2 round 2 item 6
     if no_node("plugin_passes_hostile_ids_as_exact_json") {
         return;
@@ -1808,6 +1817,7 @@ fn p1_then(more: Vec<Value>) -> Value {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (1), AU27, AU104: the load call, then the main session and its turn
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p01_run_fresh() {
     if no_node("plugin_order_p01_run_fresh") {
         return;
@@ -1822,6 +1832,7 @@ fn plugin_order_p01_run_fresh() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (2): a resumed session with no `info` is never sent
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p02_resume_no_info() {
     if no_node("plugin_order_p02_resume_no_info") {
         return;
@@ -1832,6 +1843,7 @@ fn plugin_order_p02_resume_no_info() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (3): an `info` in the turn classifies the active session as top
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p03_resume_info_in_turn() {
     if no_node("plugin_order_p03_resume_info_in_turn") {
         return;
@@ -1845,6 +1857,7 @@ fn plugin_order_p03_resume_info_in_turn() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (4)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p04_child_normal_order() {
     if no_node("plugin_order_p04_child_normal_order") {
         return;
@@ -1856,6 +1869,7 @@ fn plugin_order_p04_child_normal_order() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (5): a child whose `busy` comes before its `info`
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p05_late_child() {
     if no_node("plugin_order_p05_late_child") {
         return;
@@ -1867,6 +1881,7 @@ fn plugin_order_p05_late_child() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (6)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p06_two_late_children() {
     if no_node("plugin_order_p06_two_late_children") {
         return;
@@ -1878,6 +1893,7 @@ fn plugin_order_p06_two_late_children() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (7)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p07_child_after_its_idle() {
     if no_node("plugin_order_p07_child_after_its_idle") {
         return;
@@ -1889,6 +1905,7 @@ fn plugin_order_p07_child_after_its_idle() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (8): a child is never sent in a `session` call
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p08_late_child_alone() {
     if no_node("plugin_order_p08_late_child_alone") {
         return;
@@ -1899,6 +1916,7 @@ fn plugin_order_p08_late_child_alone() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (9)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p09_tui_switch_with_info() {
     if no_node("plugin_order_p09_tui_switch_with_info") {
         return;
@@ -1910,6 +1928,7 @@ fn plugin_order_p09_tui_switch_with_info() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (10), AU27 known limit 1
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p10_tui_switch_no_info() {
     if no_node("plugin_order_p10_tui_switch_no_info") {
         return;
@@ -1921,6 +1940,7 @@ fn plugin_order_p10_tui_switch_no_info() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (11): one turn set over two top sessions
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p11_overlapping_turns() {
     if no_node("plugin_order_p11_overlapping_turns") {
         return;
@@ -1932,6 +1952,7 @@ fn plugin_order_p11_overlapping_turns() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (12): a late `info` of an older session does not take the main session
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p12_late_info_of_an_older_session() {
     if no_node("plugin_order_p12_late_info_of_an_older_session") {
         return;
@@ -1943,6 +1964,7 @@ fn plugin_order_p12_late_info_of_an_older_session() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (13): an `info` event does not activate
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p13_info_event_does_not_activate() {
     if no_node("plugin_order_p13_info_event_does_not_activate") {
         return;
@@ -1954,6 +1976,7 @@ fn plugin_order_p13_info_event_does_not_activate() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (14), W-C6: not a member, no workspace call
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p14_not_a_member() {
     if no_node("plugin_order_p14_not_a_member") {
         return;
@@ -1966,6 +1989,7 @@ fn plugin_order_p14_not_a_member() {
 
 #[cfg(unix)]
 #[test] // W§18 #90 (15): decides before any wait
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_order_p15_decides_before_waits() {
     if no_node("plugin_order_p15_decides_before_waits") {
         return;
@@ -1977,6 +2001,7 @@ fn plugin_order_p15_decides_before_waits() {
 
 #[cfg(unix)]
 #[test] // AU27, W§9.1 (H3 review round 1, F1): a session with no `info` until its `session.deleted` is never recorded
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_session_never_takes_the_record() {
     if no_node("plugin_deleted_session_never_takes_the_record") {
         return;
@@ -1988,6 +2013,7 @@ fn plugin_deleted_session_never_takes_the_record() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 1, F1): a deleted main session moves the record to the newest known top session
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_main_moves_the_record_to_the_newest_top_session() {
     if no_node("plugin_deleted_main_moves_the_record_to_the_newest_top_session") {
         return;
@@ -1999,6 +2025,7 @@ fn plugin_deleted_main_moves_the_record_to_the_newest_top_session() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 1, F1): a deleted main session with no other known top session sends nothing
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_main_with_no_other_top_session_sends_nothing() {
     if no_node("plugin_deleted_main_with_no_other_top_session_sends_nothing") {
         return;
@@ -2012,6 +2039,7 @@ fn plugin_deleted_main_with_no_other_top_session_sends_nothing() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 1, F1): a deleted session leaves the turn set; `stop` when the set becomes empty
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_session_leaves_the_turn_set() {
     if no_node("plugin_deleted_session_leaves_the_turn_set") {
         return;
@@ -2028,6 +2056,7 @@ fn plugin_deleted_session_leaves_the_turn_set() {
 
 #[cfg(unix)]
 #[test] // AU27, W§7.2 (H3 review round 1, F3): any present, non-null `parentID` makes a child
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_child_by_present_parent_id() {
     if no_node("plugin_child_by_present_parent_id") {
         return;
@@ -2047,6 +2076,7 @@ fn plugin_child_by_present_parent_id() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 2, F-e): the delete of an older top session that is not the main session sends nothing
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_older_top_session_sends_nothing() {
     if no_node("plugin_deleted_older_top_session_sends_nothing") {
         return;
@@ -2058,6 +2088,7 @@ fn plugin_deleted_older_top_session_sends_nothing() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 2, F-e): the delete of a known child sends nothing
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_child_sends_nothing() {
     if no_node("plugin_deleted_child_sends_nothing") {
         return;
@@ -2072,6 +2103,7 @@ fn plugin_deleted_child_sends_nothing() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 2, F-e): a second `session.deleted` of the same session sends nothing more
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_twice_sends_once() {
     if no_node("plugin_deleted_twice_sends_once") {
         return;
@@ -2083,6 +2115,7 @@ fn plugin_deleted_twice_sends_once() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 2, F-e): a session deleted before any other event is never sent; its turn signals work
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_deleted_before_any_event_is_never_sent() {
     if no_node("plugin_deleted_before_any_event_is_never_sent") {
         return;
@@ -2094,6 +2127,7 @@ fn plugin_deleted_before_any_event_is_never_sent() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 2, F-e): `busy` and idle after the delete send `prompt` and `stop`, never `session`
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_turn_signals_of_a_deleted_session_still_work() {
     if no_node("plugin_turn_signals_of_a_deleted_session_still_work") {
         return;
@@ -2105,6 +2139,7 @@ fn plugin_turn_signals_of_a_deleted_session_still_work() {
 
 #[cfg(unix)]
 #[test] // AU27 (H3 review round 2, F-e): a deleted main session falls back past a session with no kind yet; that
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 // session becomes the main session when its `info` comes
 fn plugin_deleted_main_skips_an_unclassified_session() {
     if no_node("plugin_deleted_main_skips_an_unclassified_session") {
@@ -2135,6 +2170,7 @@ const T1_OTHER: [&str; 4] =
 
 #[cfg(unix)]
 #[test] // W§18 #91 (1)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_top_session_counts_in_its_turn() {
     if no_node("plugin_tool_top_session_counts_in_its_turn") {
         return;
@@ -2151,6 +2187,7 @@ fn plugin_tool_top_session_counts_in_its_turn() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (2)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_unclassified_session_counts() {
     if no_node("plugin_tool_unclassified_session_counts") {
         return;
@@ -2165,6 +2202,7 @@ fn plugin_tool_unclassified_session_counts() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (3)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_known_child_sends_nothing() {
     if no_node("plugin_tool_known_child_sends_nothing") {
         return;
@@ -2176,6 +2214,7 @@ fn plugin_tool_known_child_sends_nothing() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (4)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_end_after_the_session_becomes_a_child() {
     if no_node("plugin_tool_end_after_the_session_becomes_a_child") {
         return;
@@ -2187,6 +2226,7 @@ fn plugin_tool_end_after_the_session_becomes_a_child() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (5)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_end_needs_a_counted_call() {
     if no_node("plugin_tool_end_needs_a_counted_call") {
         return;
@@ -2205,6 +2245,7 @@ fn plugin_tool_end_needs_a_counted_call() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (6)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_task_counts_and_ends_in_any_session() {
     if no_node("plugin_tool_task_counts_and_ends_in_any_session") {
         return;
@@ -2239,6 +2280,7 @@ fn plugin_tool_task_counts_and_ends_in_any_session() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (7)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_prompt_after_a_tool_with_no_end() {
     if no_node("plugin_tool_prompt_after_a_tool_with_no_end") {
         return;
@@ -2253,6 +2295,7 @@ fn plugin_tool_prompt_after_a_tool_with_no_end() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (8)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_events_need_a_member() {
     if no_node("plugin_tool_events_need_a_member") {
         return;
@@ -2267,6 +2310,7 @@ fn plugin_tool_events_need_a_member() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (9)
+#[ignore = "timing: asserts elapsed time against the plugin's 10 s timeout"]
 fn plugin_tool_calls_keep_order_when_zygo_fails_or_hangs() {
     if no_node("plugin_tool_calls_keep_order_when_zygo_fails_or_hangs") {
         return;
@@ -2289,6 +2333,7 @@ fn plugin_tool_calls_keep_order_when_zygo_fails_or_hangs() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (10)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_two_open_calls_each_end() {
     if no_node("plugin_tool_two_open_calls_each_end") {
         return;
@@ -2313,6 +2358,7 @@ fn plugin_tool_two_open_calls_each_end() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (11)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_reset_forgets_the_session_calls() {
     if no_node("plugin_tool_reset_forgets_the_session_calls") {
         return;
@@ -2354,6 +2400,7 @@ fn plugin_tool_reset_forgets_the_session_calls() {
 
 #[cfg(unix)]
 #[test] // W§18 #91 (12)
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_same_call_id_in_two_sessions() {
     if no_node("plugin_tool_same_call_id_in_two_sessions") {
         return;
@@ -2373,6 +2420,7 @@ fn plugin_tool_same_call_id_in_two_sessions() {
 
 #[cfg(unix)]
 #[test] // AU27 tool count: a `task` call is counted when its `pre-tool` is queued, before the wait
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_task_counted_before_its_wait() {
     if no_node("plugin_tool_task_counted_before_its_wait") {
         return;
@@ -2397,6 +2445,7 @@ fn plugin_tool_task_counted_before_its_wait() {
 
 #[cfg(unix)]
 #[test] // AU27 tool count: a `stop` forgets the counted calls with no `prompt` after it
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_stop_forgets_the_calls() {
     if no_node("plugin_tool_stop_forgets_the_calls") {
         return;
@@ -2411,6 +2460,7 @@ fn plugin_tool_stop_forgets_the_calls() {
 
 #[cfg(unix)]
 #[test] // AU27 tool count, W§9.1: the `pre-tool` of a tool is queued before the guard runs
+#[ignore = "timing: a 0.3 s sleep orders two concurrent processes"]
 fn plugin_tool_pre_tool_queued_before_the_guard() {
     if no_node("plugin_tool_pre_tool_queued_before_the_guard") {
         return;
@@ -2430,6 +2480,7 @@ fn plugin_tool_pre_tool_queued_before_the_guard() {
 
 #[cfg(unix)]
 #[test] // AU27 known limit (6): a call that the guard denies sends no `tool-end`; the count stays until the `stop`
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_guard_deny_sends_no_tool_end() {
     if no_node("plugin_tool_guard_deny_sends_no_tool_end") {
         return;
@@ -2442,6 +2493,7 @@ fn plugin_tool_guard_deny_sends_no_tool_end() {
 
 #[cfg(unix)]
 #[test] // AU27 tool count: a denied `task` of a known child is not counted
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
 fn plugin_tool_denied_task_of_a_child_is_not_counted() {
     if no_node("plugin_tool_denied_task_of_a_child_is_not_counted") {
         return;

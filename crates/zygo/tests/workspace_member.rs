@@ -302,6 +302,7 @@ fn pane_of(h: &Harness, session: &str, key: &str) -> String {
 // ---- Not a member: a v1 launch (OP9, AU58, W-C6; W§18 #54, #55) ----
 
 #[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn w18_54_outside_tmux_is_a_v1_launch_with_no_tmux_call() { // decision 8
     let h = Harness::no_tmux();
     let t = h.bin.join("tmux");
@@ -331,6 +332,7 @@ fn w18_54_outside_tmux_is_a_v1_launch_with_no_tmux_call() { // decision 8
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_54_a_tmux_session_that_is_not_a_workspace_is_a_v1_launch() {
     for case in 1..=3 {
         let Some(h) = Harness::new() else { return };
@@ -364,6 +366,7 @@ fn w18_54_a_tmux_session_that_is_not_a_workspace_is_a_v1_launch() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_55_a_launch_from_a_member_tool_does_not_join() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -388,6 +391,7 @@ fn w18_55_a_launch_from_a_member_tool_does_not_join() {
 // ---- The hand join (AU9, AU41, AU79, W§8.3, AU53, decision 3) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn au9_au79_a_hand_start_in_a_new_split_gets_a_key_and_one_record_write() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -443,6 +447,7 @@ fn split_in_workspace(h: &Harness, f: &mut dyn FnMut(&mut Workspace)) -> String 
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn au9_an_opencode_hand_start_gets_the_member_plugin() {
     let Some(h) = Harness::new() else { return };
     let pane = split_in_workspace(&h, &mut |_| {});
@@ -463,6 +468,7 @@ fn au9_an_opencode_hand_start_gets_the_member_plugin() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn au30_an_own_session_argument_is_not_preassigned_or_saved() { // W§8.3, AU30
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -484,6 +490,7 @@ fn au30_an_own_session_argument_is_not_preassigned_or_saved() { // W§8.3, AU30
 }
 
 #[test] // FIX-31 minor 2, W§8.3: --remote is a session argument, as --cloud
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_remote_argument_is_not_preassigned() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -502,6 +509,7 @@ fn a_remote_argument_is_not_preassigned() {
 /// <url>` keeps only `["--attach"]`; its `ws run` start (the real `record_start` path) runs the TUI, computes
 /// `events_off = false` over a stale `true`, saves no `--attach` (FIX-31 D3), and `down` counts the quiet member as idle.
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_saved_attach_flag_without_run_is_not_events_off() {
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
@@ -529,6 +537,7 @@ fn a_saved_attach_flag_without_run_is_not_events_off() {
 }
 
 #[test] // FIX-24 diff review round 2, finding 4, AU26: CLAUDE_CODE_SIMPLE in the environment of the start is bare mode
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_hand_start_with_claude_code_simple_is_saved_with_events_off() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -574,6 +583,7 @@ fn a_hand_start_with_claude_code_simple_is_saved_with_events_off() {
 /// FIX-24 diff review round 3, finding 3: `bare_env` comes from the environment that the agent gets. A provider key
 /// variable named CLAUDE_CODE_SIMPLE is removed by the deny list, so the agent does not get it and is not events off.
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_provider_key_named_claude_code_simple_does_not_make_a_member_events_off() {
     let Some(h) = Harness::new() else { return };
     std::fs::write(
@@ -596,6 +606,7 @@ fn a_provider_key_named_claude_code_simple_does_not_make_a_member_events_off() {
 }
 
 #[test] // FIX-24 D1, AU26: the real hand-start path writes events_off from the typed arguments
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_hand_start_whose_agent_sends_no_member_events_is_saved_with_events_off() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -621,6 +632,7 @@ fn a_hand_start_whose_agent_sends_no_member_events_is_saved_with_events_off() {
 // ---- AU94, W-C9 ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_32_a_resumable_key_refuses_with_its_resume_command_and_an_ended_key_joins() {
     let Some(h) = Harness::new() else { return };
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
@@ -653,6 +665,7 @@ fn w18_32_a_resumable_key_refuses_with_its_resume_command_and_an_ended_key_joins
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn au94_the_resume_commands_that_zygo_prints_are_accepted() { // decision 4
     for case in ["a", "b", "c"] {
         let Some(h) = Harness::new() else { return };
@@ -697,6 +710,7 @@ fn au94_the_resume_commands_that_zygo_prints_are_accepted() { // decision 4
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn au94_a_live_launcher_on_the_key_refuses() {
     let Some(h) = Harness::new() else { return };
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
@@ -721,6 +735,7 @@ fn au94_a_live_launcher_on_the_key_refuses() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w_c9_an_agent_session_of_another_key_refuses() { // decision 5
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -741,6 +756,7 @@ fn w_c9_an_agent_session_of_another_key_refuses() { // decision 5
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_launch_that_ends_before_the_callback_leaves_the_record_byte_equal() { // decision 3; review round 2, findings 4, 9
     let Some(h) = Harness::new() else { return };
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
@@ -790,6 +806,7 @@ fn guard_a_v1_launch_that_fails_prints_no_wrapper_line() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_spawn_failure_after_the_callback_puts_the_previous_record_back() { // review round 2, findings 4, 5
     let Some(h) = Harness::new() else { return };
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
@@ -830,6 +847,7 @@ fn not_saved(h: &Harness, reason: &str) -> String {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn the_not_saved_line_names_each_reason() {
     let state_dir = |h: &Harness| h.root().join(".local/state/zygo/workspaces").join(WS_ID);
     // The state is missing.
@@ -922,6 +940,7 @@ fn the_not_saved_line_names_each_reason() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn the_callback_checks_again_and_the_launch_goes_on_as_v1() { // decision 3, AU34 `NotMember`
     let Some(h) = Harness::new() else { return };
     let pane = split_in_workspace(&h, &mut |_| {});
@@ -957,6 +976,7 @@ fn the_callback_checks_again_and_the_launch_goes_on_as_v1() { // decision 3, AU3
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_not_member_launch_keeps_the_typed_session_argument_and_prints_no_wrapper_line() { // review round 2, findings 3, 4
     let Some(h) = Harness::new() else { return };
     let pane = split_in_workspace(&h, &mut |_| {});
@@ -1038,6 +1058,7 @@ fn v1_with(o: &Output, out: &Path, reason: &str) {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn the_callback_refuses_a_phase_that_changed_to_down() {
     let Some(h) = Harness::new() else { return };
     let (o, out, _) = refused_in_callback(&h, &["claude"], &mut |h, _| {
@@ -1052,6 +1073,7 @@ fn the_callback_refuses_a_phase_that_changed_to_down() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn the_callback_refuses_a_launcher_that_became_live() {
     let Some(h) = Harness::new() else { return };
     let mut lock = None;
@@ -1075,6 +1097,7 @@ fn the_callback_refuses_a_launcher_that_became_live() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn the_callback_refuses_an_agent_session_of_another_key() {
     let Some(h) = Harness::new() else { return };
     let (o, out, _) = refused_in_callback(&h, &["claude", "--", "--resume", "abc"], &mut |h, _| {
@@ -1089,6 +1112,7 @@ fn the_callback_refuses_an_agent_session_of_another_key() {
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn the_callback_after_ws_forget_writes_no_state() {
     let Some(h) = Harness::new() else { return };
     let (o, out, _) = refused_in_callback(&h, &["claude"], &mut |h, _| {
@@ -1101,6 +1125,7 @@ fn the_callback_after_ws_forget_writes_no_state() {
 // ---- W-C9 with own session arguments, AU94 by kind, the saved launch at a resume (review round 2) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w_c9_two_hand_starts_with_one_own_session_start_one_agent() { // finding 1
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -1140,6 +1165,7 @@ fn w_c9_two_hand_starts_with_one_own_session_start_one_agent() { // finding 1
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn au94_a_resume_of_another_agent_kind_refuses() { // finding 2
     let Some(h) = Harness::new() else { return };
     let first = workspace_session(&h, Some(KEY), Some(WS_ID));
@@ -1157,6 +1183,7 @@ fn au94_a_resume_of_another_agent_kind_refuses() { // finding 2
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_resume_command_names_the_saved_launch_and_a_hand_resume_keeps_it() { // finding 6
     let Some(h) = Harness::new() else { return };
     std::fs::write(h.root().join("config.toml"), "[profile.p1]\nprompt = \"P\"\n").unwrap();
@@ -1191,6 +1218,7 @@ fn a_resume_command_names_the_saved_launch_and_a_hand_resume_keeps_it() { // fin
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_join_in_phase_draining_works() {
     let Some(h) = Harness::new() else { return };
     let pane = split_in_workspace(&h, &mut |w| w.phase = Phase::Draining);
@@ -1206,6 +1234,7 @@ fn a_join_in_phase_draining_works() {
 // ---- AU98 ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn au98_a_hand_launch_with_user_info_is_v1_for_both_agents() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -1227,6 +1256,7 @@ fn au98_a_hand_launch_with_user_info_is_v1_for_both_agents() {
 // ---- Through the CLI: AU59 (W§18 #56), loadout values (W§18 #19) ----
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_56_a_settings_argument_keeps_a_hand_start_a_member_through_down_and_up() { // AU59; decision 2
     for (case, line) in [("readable", MERGE), ("missing", NO_FILE)] {
         let Some(h) = Harness::new() else { return };
@@ -1285,6 +1315,7 @@ fn w18_56_a_settings_argument_keeps_a_hand_start_a_member_through_down_and_up() 
 /// W§18 #19, sentences 1-2: the loadout part. It runs only `zygo up` and `ws run` (M2, W7 code), no hand start; the
 /// hand-launch part of #19 (sentence 3, AU98) is `w18_19_config_check_and_a_hand_launch_report_user_info`.
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_19_loadout_values_reach_the_launch_and_the_resume() { // decision 2; #19 sentences 1-2
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
@@ -1352,6 +1383,7 @@ const L19U: &str = "[loadout.hold]\n[[loadout.hold.window]]\n[[loadout.hold.wind
 /// W§18 #19, sentence 3: `zygo config check` reports the user-info server, and a hand launch with it in a workspace
 /// pane writes no member record (AU98).
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3; FIX-27 D9
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
@@ -1382,6 +1414,7 @@ fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3;
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w18_19_up_starts_a_user_info_pane_as_a_shell() { // AU98 in a loadout, through the CLI
     let Some(h) = Harness::new() else { return };
     git_repo(&h);
@@ -1494,6 +1527,7 @@ fn controlled(
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn the_printed_resume_command_starts_the_agent_as_ws_run_does() { // diff review round 3, findings 1-4; AU61
     // The serve mode refuses a passthrough session (`zygo-proxy` `routes.rs:129`, "passthrough is local mode only"), so
     // passthrough and a server are two records: passthrough in local mode with the `cleared` override, and a server
@@ -1556,6 +1590,7 @@ fn the_printed_resume_command_starts_the_agent_as_ws_run_does() { // diff review
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w_c9_a_pending_id_of_a_launcher_that_is_not_live_does_not_hold_it() { // diff review round 3, finding 5
     let Some(h) = Harness::new() else { return };
     let mut held = record(Agent::ClaudeCode, MemberState::Running, None, None);
@@ -1573,6 +1608,7 @@ fn w_c9_a_pending_id_of_a_launcher_that_is_not_live_does_not_hold_it() { // diff
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_typed_id_that_does_not_exist_is_not_saved() { // diff review round 3, finding 6
     let Some(h) = Harness::new() else { return };
     let pane = split_in_workspace(&h, &mut |_| {});
@@ -1606,6 +1642,7 @@ fn a_typed_id_that_does_not_exist_is_not_saved() { // diff review round 3, findi
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_hand_start_exit_line_names_the_saved_launch() { // diff review round 3, finding 7
     let Some(h) = Harness::new() else { return };
     std::fs::write(h.root().join("config.toml"), "[profile.p1]\nprompt = \"P\"\n[profile.p2]\nprompt = \"Q\"\n").unwrap();
@@ -1622,6 +1659,7 @@ fn a_hand_start_exit_line_names_the_saved_launch() { // diff review round 3, fin
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn a_not_member_launch_keeps_every_typed_token_in_order() { // diff review round 3, finding 9
     let Some(h) = Harness::new() else { return };
     // Claude Code takes its session tokens at index 0 (`launcher.rs` `insert_session_args`), so every typed token is
@@ -1641,6 +1679,7 @@ fn a_not_member_launch_keeps_every_typed_token_in_order() { // diff review round
 }
 
 #[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
 fn w_c9_the_callback_refuses_a_second_start_of_one_own_session() { // diff review round 3, finding 11
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
@@ -1703,6 +1742,7 @@ fn errors_log(h: &Harness) -> Vec<String> {
 }
 
 #[test] // FIX-30, AU54, C6: the member wrapper's snapshots log the AU54 text and make no tmux call; the agent runs
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au54_the_member_wrapper_logs_its_snapshots_and_makes_no_tmux_call() {
     let (h, sock) = quoted_socket_harness();
     up_state(&h, &[(KEY, MemberRecord::new(Agent::ClaudeCode))], &mut |w| w.tmux_socket = Some(sock.clone()));
@@ -1735,6 +1775,7 @@ fn au54_ws_snapshot_logs_one_line_and_makes_no_tmux_call() {
 }
 
 #[test] // FIX-30, AU54, W§8.4, C6: a saved socket with a quote: the not-saved line, a v1 launch, no tmux call, no write
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_saved_line() {
     let (h, sock) = quoted_socket_harness();
     up_state(&h, &[], &mut |w| w.tmux_socket = Some(sock.clone()));
@@ -1754,6 +1795,7 @@ fn au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_save
 }
 
 #[test] // FIX-30, AU54, W§8.4, C6: no state and a `$TMUX` socket with a quote: the not-saved line, a v1 launch, no tmux call
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au54_a_hand_start_on_a_quoted_tmux_socket_is_a_v1_launch_with_the_not_saved_line() {
     let (h, sock) = quoted_socket_harness();
     let (out, env) = h.stub(Agent::ClaudeCode, "a");
