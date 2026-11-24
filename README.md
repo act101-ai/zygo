@@ -56,7 +56,7 @@ The status line is for Claude Code; in OpenCode, run `zygo status`.
 * Solution: Plan and build software using a proven graph methodology for autonomous agentic execution.
 * These skills are delivered by the act-lite plugin (on by default).
 
-### Native Terminal Multiplexing — **COMING SOON** (v0.1.3)
+### Native Terminal Multiplexing — **COMING SOON** (v0.2.1)
 
 - All coding agents in a workspace are automatically enlisted in a tmux session.
 - Workspace loadouts save layout and agent configuration.
