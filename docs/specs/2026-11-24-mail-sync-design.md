@@ -112,6 +112,8 @@ Fetch uses the refspec `+refs/heads/<branch>:refs/remotes/<remote>/<branch>`, th
 - `<name>@<host>`: with a local host, the same as `<name>`; with another host, a remote member (S§8).
 - `all`: the members of this machine, as M§5. Not sent to other hosts.
 
+A member with no name (M§6) has no address and gets no remote mail. `zygo mail read`, `zygo mail ls <name>` and `zygo mail watch <name>` take local members only; a local address works there as its bare name, and a remote address is refused.
+
 `cli` is reserved as a name (M§6). A send to `cli@<host>` is refused: `cli` has no inbox. A send to a remote address is refused when sync is off (`zygo: mail sync is off for this workspace`), when the last public check said `public` (S§8.2), or when the address is not in the member cache (S§7.3), with the list of known addresses (as M§10).
 
 ### 7.3 Registry
