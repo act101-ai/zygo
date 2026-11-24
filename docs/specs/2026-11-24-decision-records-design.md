@@ -581,4 +581,4 @@ The verdict tests use a git fixture repository with linked checkouts. The git-fa
 
 - 2026-11-24 — D§6.2 — author's call — the example commit had 41 hex characters; D§6.3 allows 40 or 64, so it is cut to 40 (found while planning phase3 DR-1).
 - 2026-11-24 — D§17 #4 — author's call — with each record printed once at its smallest depth (D§11.2), 3 dependents at depths 1, 2, 3 cannot include one reached on two paths; the case now has a fourth record at depth 3 (found while planning phase3 DR-2).
-- 2026-11-24 · D§11.3 · author's call · name the writer lock and its location (Windows mandatory locks, DR-5 review round 2)
+- 2026-11-24 — D§11.3 — author's call — name the writer lock and its location (Windows mandatory locks, DR-5 review round 2).
