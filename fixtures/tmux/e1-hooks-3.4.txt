@@ -1,0 +1,49 @@
+tmux 3.4
+script: e1-hooks.sh
+before: w2 pane 0 sleep active=0 name=sleep
+before: w2 pane 1 sleep active=1 name=sleep
+--- A other current: kill-pane on 2.0 (not active)
+after: w2 pane 0 sleep active=1 name=sleep
+log:
+window-layout-changed ws w2 name=sleep
+before: w2 pane 0 sleep active=0 name=sleep
+before: w2 pane 1 sleep active=1 name=sleep
+--- B other current: kill-pane on 2.1 (active)
+after: w2 pane 0 sleep active=1 name=sleep
+log:
+window-pane-changed ws w2 name=sleep
+before: w2 pane 0 sleep active=0 name=sleep
+before: w2 pane 1 sleep active=1 name=sleep
+--- C ws only: kill-pane on 2.1 (active)
+after: w2 pane 0 sleep active=1 name=sleep
+log:
+after-kill-pane ws w0 name=tmux
+window-layout-changed ws w0 name=tmux
+window-pane-changed ws w2 name=sleep
+before: w2 pane 0 sleep active=0 name=sleep
+before: w2 pane 1 sleep active=1 name=sleep
+--- D other current: kill-window on window 3
+after: w2 pane 0 sleep active=0 name=sleep
+after: w2 pane 1 sleep active=1 name=sleep
+log:
+before: w2 pane 0 sleep active=0 name=sleep
+before: w2 pane 1 sleep active=1 name=sleep
+--- E other current: active pane 2.1 (sleep 4) exits
+after: w2 pane 0 sleep active=1 name=sleep
+log:
+window-pane-changed ws w2 name=sleep
+before: w2 pane 0 sleep active=0 name=sleep
+before: w2 pane 1 sleep active=1 name=sleep
+--- F other current: pane 2.1 (sleep 4) exits after select-pane 2.0 (not active)
+after: w2 pane 0 sleep active=1 name=sleep
+log:
+window-pane-changed ws w2 name=sleep
+window-layout-changed ws w2 name=sleep
+before: w2 pane 0 sleep active=0 name=sleep
+before: w2 pane 1 sleep active=1 name=sleep
+--- G other current: select-pane 2.0 only (focus change)
+after: w2 pane 0 sleep active=1 name=sleep
+after: w2 pane 1 sleep active=0 name=sleep
+log:
+window-pane-changed ws w2 name=sleep
+end
