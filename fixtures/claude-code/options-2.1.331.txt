@@ -1,0 +1,144 @@
+# Every option of the root command of the Claude Code binary 2.1.331.
+# Written by fixtures/claude-code/scan/mkfixture.py from the binary (static read, no run); do not edit by hand.
+# Chain: byte offsets 348994202-349021969, from .name("claude") to us("run_main_options_built"); 139 options.
+# Columns, tab-separated: byte offset, H = hidden (.hideHelp()) or -, the flags text.
+# Value mark: <x> required, <x...> variadic, [x] optional, none = boolean.
+348994372	-	-h, --help
+348994424	-	-d, --debug [filter]
+348994578	H	-d2e, --debug-to-stderr
+348994707	-	--debug-file <path>
+348994819	-	--verbose
+348994877	-	-p, --print
+348995249	-	--bare
+348995985	-	--safe-mode
+348996471	H	--init
+348996561	H	--init-only
+348996659	H	--maintenance
+348996763	-	--output-format <format>
+348996971	-	--json-schema <schema>
+348997183	-	--include-hook-events
+348997325	-	--include-partial-messages
+348997475	-	--forward-subagent-text
+348997684	H	--session-mirror
+348997847	H	--await-claim
+348998178	-	--input-format <format>
+348998359	H	--await-initialize
+348998683	-	--dangerously-skip-permissions
+348998819	-	--allow-dangerously-skip-permissions
+348999032	H	--thinking <mode>
+348999185	H	--thinking-display <display>
+348999306	H	--max-thinking-tokens <tokens>
+348999499	H	--max-turns <turns>
+348999620	-	--max-budget-usd <amount>
+348999859	H	--task-budget <tokens>
+349000102	-	--replay-user-messages
+349000299	-	--prompt-suggestions [value]
+349000676	H	--enable-auth-status
+349000772	-	--allowedTools, --allowed-tools <tools...>
+349000906	-	--tools <tools...>
+349001053	-	--restricted
+349001649	-	--disallowedTools, --disallowed-tools <tools...>
+349001788	-	--mcp-config <configs...>
+349001899	H	--permission-prompt-tool <tool>
+349002048	-	--permission-prompts <target>
+349002347	-	--system-prompt <prompt>
+349002450	H	--system-prompt-file <file>
+349002561	-	--append-system-prompt <prompt>
+349002683	H	--append-system-prompt-file <file>
+349002841	-	--system-prompt-snapshot <on|off>
+349003578	H	--append-subagent-system-prompt <prompt>
+349003850	H	--append-subagent-system-prompt-file <file>
+349004063	H	--plan-mode-instructions <instructions>
+349004358	-	--exclude-dynamic-system-prompt-sections
+349004670	-	--permission-mode <mode>
+349004783	H	--inherit-permission-mode <mode>
+349004943	-	-c, --continue
+349005040	-	-r, --resume [value]
+349005181	-	--fork-session
+349005331	H	--watch-artifact <artifact>
+349005486	H	--watch-artifact-no-autoreact <artifact>
+349005559	H	--prefill <text>
+349005668	H	--deep-link-origin
+349005776	H	--deep-link-repo <slug>
+349005903	H	--deep-link-last-fetch <ms>
+349006104	H	--prefill-b64 <b64>
+349006288	H	--deep-link-cwd-b64 <b64>
+349006469	-	--from-pr [value]
+349006612	-	--no-session-persistence
+349006737	H	--resume-session-at <message id>
+349007005	H	--resume-drops-turn <message id>
+349007429	H	--reply-on-resume
+349007639	H	--rewind-files <user-message-id>
+349007776	-	--model <model>
+349007940	H	--include-unsupported-models
+349008084	-	--effort <level>
+349008285	H	--fast-mode <on|off>
+349008372	-	--agent <agent>
+349008462	-	--betas <betas...>
+349008554	-	--fallback-model <model>
+349008754	H	--workload <tag>
+349008960	-	--settings <file-or-json>
+349009065	H	--client-data-url <url>
+349009368	H	--allow-other-models
+349009606	H	--managed-settings <json>
+349009738	H	--managed-settings-in-initialize
+349010003	H	--host-auth-is-org-sign-in
+349010178	-	--add-dir <directories...>
+349010263	H	--project-config-root <dir>
+349010580	-	--ide
+349010683	-	--desktop
+349010822	-	--strict-mcp-config
+349010939	-	--session-id <uuid>
+349011041	-	-n, --name <name>
+349011202	-	--agents <json-or-file>
+349011416	-	--setting-sources <sources>
+349011539	H	--ignore-persisted-trust
+349011671	-	--plugin-dir <path>
+349011880	H	--plugin-dir-no-mcp <path>
+349012062	-	--plugin-url <url>
+349012241	-	--disable-slash-commands
+349012317	-	--chrome
+349012363	-	--no-chrome
+349012413	-	--file <specs...>
+349014843	-	-v, --version
+349014889	-	-w, --worktree [name]
+349014983	-	--tmux
+349015159	H	--advisor <model>
+349015273	-	--autocompact <auto|tokens>
+349015531	H	--enable-auto-mode
+349015614	H	--proactivity <level>
+349015712	H	--agents-view-if-allowed
+349015771	-	--bg, --background
+349016117	H	--messaging-socket-path <path>
+349016341	-	--brief
+349016441	-	--ax-screen-reader
+349016572	H	--channels <servers...>
+349016747	H	--dangerously-load-development-channels <servers...>
+349016964	H	--agent-id <id>
+349017034	H	--agent-name <name>
+349017112	H	--team-name <name>
+349017203	H	--agent-color <color>
+349017279	H	--plan-mode-required
+349017376	H	--parent-session-id <id>
+349017481	H	--lead-verify-key <time.key>
+349017635	H	--teammate-mode <mode>
+349017805	H	--agent-type <type>
+349017897	H	--sdk-url <url>
+349018055	H	--runner-declares <names>
+349018227	H	--hold-repository-while-parked
+349018819	H	--session-began-as-copy <value>
+349019215	H	--initialize-fields <names>
+349019515	-	--teleport [session]
+349019618	-	--cloud [description|session_id|url]
+349019796	H	--forward-home-settings <true|false>
+349020222	H	--remote [description|session_id|url]
+349020325	H	--attach-serve <session_id>
+349020496	-	--environment <environment_id>
+349020640	H	--pool <pool_id>
+349020728	H	--correlation-id <id>
+349020884	H	--metadata <key=value>
+349021104	H	--ref <ref>
+349021269	H	--on-branch <branch>
+349021602	-	--remote-control [name]
+349021749	H	--rc [name]
+349021835	-	--remote-control-session-name-prefix <prefix>
