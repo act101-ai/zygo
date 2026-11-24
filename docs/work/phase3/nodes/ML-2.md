@@ -72,9 +72,9 @@ Consumers and what they rely on: ML-4 (`Message::new`, `deliver`, `mail_dir`, `M
 
 ### Steps
 
-- [ ] **1. Add `ulid` to the crate.** In `crates/zygo-workspace/Cargo.toml` `[dependencies]`, after `time.workspace = true`, add `ulid.workspace = true`. Run `cargo build -p zygo-workspace` to update `Cargo.lock` (the `zygo-workspace` entry gains `"ulid"`). Check: `cargo build -p zygo-workspace --locked` exits 0; `cargo tree -p zygo-workspace -e normal --depth 1 | grep ' zygo-'` prints only `zygo-config`, `zygo-core`, `zygo-proxy`, `zygo-work`.
+- [x] **1. Add `ulid` to the crate.** In `crates/zygo-workspace/Cargo.toml` `[dependencies]`, after `time.workspace = true`, add `ulid.workspace = true`. Run `cargo build -p zygo-workspace` to update `Cargo.lock` (the `zygo-workspace` entry gains `"ulid"`). Check: `cargo build -p zygo-workspace --locked` exits 0; `cargo tree -p zygo-workspace -e normal --depth 1 | grep ' zygo-'` prints only `zygo-config`, `zygo-core`, `zygo-proxy`, `zygo-work`.
 
-- [ ] **2. Write the test file header and helpers** in `crates/zygo-workspace/tests/mail_store.rs`. The whole file is `cfg(unix)` (Global constraints: tests that use workspace state or file modes). No test reads a clock: times come from `at(..)` or from a file's own modification time.
+- [x] **2. Write the test file header and helpers** in `crates/zygo-workspace/tests/mail_store.rs`. The whole file is `cfg(unix)` (Global constraints: tests that use workspace state or file modes). No test reads a clock: times come from `at(..)` or from a file's own modification time.
 
 ```rust
 #![cfg(unix)]
@@ -144,7 +144,7 @@ fn stage(m: &Path, id: &str, bytes: &[u8]) -> PathBuf {
 }
 ```
 
-- [ ] **3. Add the message tests** (M§5 message file and limits):
+- [x] **3. Add the message tests** (M§5 message file and limits):
 
 ```rust
 #[test]
@@ -196,7 +196,7 @@ fn mail_dir_is_under_the_workspace_state() {
 }
 ```
 
-- [ ] **4. Add the send, read and limit tests** (M§5, M-C3, M§13 #3, graph review focus 4):
+- [x] **4. Add the send, read and limit tests** (M§5, M-C3, M§13 #3, graph review focus 4):
 
 ```rust
 #[test]
@@ -351,7 +351,9 @@ fn list_and_unread_move_nothing() {
 }
 ```
 
-- [ ] **5. Add the sweep, mode, key and removal tests** (M§5 retention, M§10, M-C4, AU84):
+
+  - *Deviation (clippy, `cloned_ref_to_slice_refs`):* in `a_partial_file_in_tmp_is_never_counted_listed_or_read` the expected value `[x.id.clone()]` is `std::slice::from_ref(&x.id)`; the check is the same.
+- [x] **5. Add the sweep, mode, key and removal tests** (M§5 retention, M§10, M-C4, AU84):
 
 ```rust
 #[test]
@@ -419,7 +421,7 @@ fn remove_pane_deletes_only_that_maildir() {
 }
 ```
 
-- [ ] **6. Add the byte-preserving delivery tests** (S§6.2, S§8.5 steps 1 and 3):
+- [x] **6. Add the byte-preserving delivery tests** (S§6.2, S§8.5 steps 1 and 3):
 
 ```rust
 #[test]
@@ -494,15 +496,17 @@ fn deliver_staged_leaves_the_staged_file_when_new_is_full() {
 }
 ```
 
-- [ ] **7. Run the tests and see them fail.** `cargo test -p zygo-workspace --test mail_store` → fails to compile with error E0432, unresolved import `zygo_workspace::mail` (the module does not exist).
 
-- [ ] **8. Write `crates/zygo-workspace/src/mail/mod.rs`** and add `pub mod mail;` to `crates/zygo-workspace/src/lib.rs` between `pub mod loadout;` and `pub mod mux;`. Add `mail` to the module list of the crate doc line (`//! Workspaces: identity, … and mux (AU103)` → `… mux and mail (AU103, M§5)`).
+  - *Lead's change (added test):* `deliver_staged_never_overwrites_an_existing_file_in_new`: a `new/<ULID>.json` with other bytes is byte-identical after `deliver_staged` of the same id, which returns `Ok(false)` and removes the staged file.
+- [x] **7. Run the tests and see them fail.** `cargo test -p zygo-workspace --test mail_store` → fails to compile with error E0432, unresolved import `zygo_workspace::mail` (the module does not exist).
+
+- [x] **8. Write `crates/zygo-workspace/src/mail/mod.rs`** and add `pub mod mail;` to `crates/zygo-workspace/src/lib.rs` between `pub mod loadout;` and `pub mod mux;`. Add `mail` to the module list of the crate doc line (`//! Workspaces: identity, … and mux (AU103)` → `… mux and mail (AU103, M§5)`).
   - Module doc: `//! Workspace mail: the message file and the maildir store (M§5). Owner: node ML-2.` Then `pub mod store;`.
   - `SUBJECT_MAX`, `BODY_MAX`, `Message` (derive and `#[serde(flatten)] pub extra` as in Interfaces; field order as in Interfaces, so the file has the M§5 key order), `MailError` with the `Display` table above, `impl std::error::Error for MailError`, `impl From<std::io::Error> for MailError` (→ `Io`).
   - `Message::new`: `subject.len() > SUBJECT_MAX` → `Err(SubjectTooLong)`; then `body.len() > BODY_MAX` → `Err(BodyTooLarge)`; `version: 1`; `id: ulid::Ulid::from_datetime(now).to_string()`; `sent_at`: `time::OffsetDateTime::from(now)` with the nanoseconds set to 0, formatted with `Rfc3339` (`2023-11-14T22:13:20Z`); `extra` empty. It checks no name: names are ML-4's.
   - `mail_dir(paths, ws_id)` = `crate::state::Store::open(paths, ws_id).dir().join("mail")`. It creates and checks nothing, as `Store::open`.
 
-- [ ] **9. Write `crates/zygo-workspace/src/mail/store.rs`** with the signatures of Interfaces and the Rules above. Module doc: `//! The maildir of each member: mail/<pane key>/{tmp,new,cur}/<ULID>.json (M§5, M-C3, M-C4).` Private items: `const TMP_MAX_AGE: Duration = Duration::from_secs(3600);` (M§10), `fn valid_id(s: &str) -> bool`, `fn maildir(mail_dir: &Path, key: &str) -> Result<PathBuf, MailError>` (the key check, then the join), `fn make_dirs(md: &Path) -> std::io::Result<()>` (`tmp`, `new`, `cur`, 0700), `fn ids(dir: &Path) -> std::io::Result<Vec<String>>` (the sorted valid ids; `NotFound` → empty), `fn sync_dir(dir: &Path) -> std::io::Result<()>` (unix: `File::open(dir)?.sync_all()`; other systems: `Ok(())`).
+- [x] **9. Write `crates/zygo-workspace/src/mail/store.rs`** with the signatures of Interfaces and the Rules above. Module doc: `//! The maildir of each member: mail/<pane key>/{tmp,new,cur}/<ULID>.json (M§5, M-C3, M-C4).` Private items: `const TMP_MAX_AGE: Duration = Duration::from_secs(3600);` (M§10), `fn valid_id(s: &str) -> bool`, `fn maildir(mail_dir: &Path, key: &str) -> Result<PathBuf, MailError>` (the key check, then the join), `fn make_dirs(md: &Path) -> std::io::Result<()>` (`tmp`, `new`, `cur`, 0700), `fn ids(dir: &Path) -> std::io::Result<Vec<String>>` (the sorted valid ids; `NotFound` → empty), `fn sync_dir(dir: &Path) -> std::io::Result<()>` (unix: `File::open(dir)?.sync_all()`; other systems: `Ok(())`).
   - `write_synced`: `OpenOptions` with `write(true).create_new(true)` and, on unix, `mode(0o600)`; `write_all(bytes)`; `sync_all()`; then `sync_dir` of the parent. It makes no folder.
   - `deliver_staged`, in this order (contract): `maildir(key)?`; `valid_id(id)` else `BadId`; `ids(new)?.len() >= max_unread as usize` → `Full { label: key.to_string(), max: max_unread }` with the staged file left in place (author's call: the signature has no label, so the line names the pane key); `new/<id>.json` or `cur/<id>.json` exists (`symlink_metadata` is `Ok`) → remove the staged file, `Ok(false)`; `make_dirs`; `fs::rename(staged, new/<id>.json)`; `sync_dir(new)`; `Ok(true)`. It never opens the staged file.
   - `deliver`: `maildir(key)?`; `valid_id(&msg.id)` else `BadId`; `msg.subject.len() > SUBJECT_MAX` → `SubjectTooLong`, `msg.body.len() > BODY_MAX` → `BodyTooLarge` (the fields are public, so `deliver` checks again); `ids(new)?.len() >= max_unread as usize` → `Full { label: label.to_string(), max: max_unread }` before any write; `make_dirs`; `serde_json::to_vec(msg)` (a serde error becomes `Io` through `std::io::Error::other`), then `write_synced(tmp/<id>.json, &bytes)?`; then `deliver_staged(mail_dir, key, &msg.id, &tmp, max_unread)?`: `true` → `Ok(())`, `false` → `Err(Duplicate { id })`.
@@ -512,15 +516,26 @@ fn deliver_staged_leaves_the_staged_file_when_new_is_full() {
   - `sweep`: every error is ignored. For each entry of `mail_dir` whose name is UTF-8, passes `valid_pane_key` and is a folder by `symlink_metadata` (no link followed; so `mail/sync/` is never entered): in `cur/`, remove each file whose modification time `m` has `now.duration_since(m)` greater than `keep`; in `tmp/`, the same with `TMP_MAX_AGE`. `new/` is never read. A `now` before `m` (`duration_since` is `Err`) removes nothing.
   - `remove_pane`: `valid_pane_key(key)` else `Err(std::io::Error::new(ErrorKind::InvalidInput, "invalid pane key"))`; `fs::remove_dir_all(mail_dir.join(key))`, `NotFound` → `Ok(())`.
 
-- [ ] **10. Run the tests and see them pass.** `cargo test -p zygo-workspace --test mail_store` → `test result: ok. 22 passed; 0 failed; 0 ignored`.
 
-- [ ] **11. Verify the crate, the clock rule and the floor.**
+  - *Lead's change (`deliver_staged`):* no check then rename into `new/`. The move is `std::fs::hard_link(staged, new/<id>.json)`, which fails with `AlreadyExists` when the target exists (then: remove the staged file, `Ok(false)`); then `sync_dir(new)`; then remove the staged file. The pre-check of `cur/<id>.json` for the duplicate rule stays; there is no pre-check of `new/`. `deliver` reaches `new/` only through `deliver_staged`, so it uses the same method.
+  - *Deviation:* after the link and the `fsync` of `new/`, a failed remove of the staged file is ignored: the message is delivered, and the name left is a `tmp/` file for the sweep or a staged file that a later `deliver_staged` removes as a duplicate. An error there would tell the sender that a delivered message failed.
+  - *Deviation:* when `deliver_staged` returns `Full` inside `deliver` (a race after the first count), `deliver` gives the line with its own `label`, not the pane key.
+- [x] **10. Run the tests and see them pass.** `cargo test -p zygo-workspace --test mail_store` → `test result: ok. 22 passed; 0 failed; 0 ignored`.
+
+
+  - *Deviation:* 23 tests, not 22 (the lead's added test).
+- [x] **11. Verify the crate, the clock rule and the floor.**
   - `grep -rn 'SystemTime::now\|Instant::now\|Ulid::generate\|ids::ulid' crates/zygo-workspace/src/mail crates/zygo-workspace/tests/mail_store.rs` → no output.
   - `grep -n 'unix' crates/zygo-workspace/src/mail/store.rs` shows every `PermissionsExt`, `OpenOptionsExt`, `DirBuilderExt` use under `#[cfg(unix)]` (the crate builds on windows-latest; CI job `test` checks it).
   - `cargo test -p zygo-workspace --locked --no-fail-fast` → every `test result:` line is `ok`.
   - `cargo build --workspace --locked` → exit 0.
 
-- [ ] **12. Commit** `crates/zygo-workspace/Cargo.toml`, `Cargo.lock`, `crates/zygo-workspace/src/lib.rs`, `crates/zygo-workspace/src/mail/mod.rs`, `crates/zygo-workspace/src/mail/store.rs` and `crates/zygo-workspace/tests/mail_store.rs` on `phase3/ML-2`, message `ML-2: maildir store`, with the `Zygo-Session` and `Zygo-Work` trailers of the implementer's brief and no Claude attribution. Check: `git show --stat HEAD` lists those six files and nothing else.
+
+  - *Note:* `cargo clippy -p zygo-workspace --all-targets -- -D warnings` fails before it reaches this node's code, on findings in files this node does not touch: `crates/zygo-work/src/decisions/record.rs:277`, `crates/zygo-work/src/gate/transition.rs:10`, `:158`, and `crates/zygo-workspace/tests/down.rs:419`, `:1670`, `:1684`, `:1699`. With `--no-deps`, `src/mail/` and `tests/mail_store.rs` have no finding.
+- [x] **12. Commit** `crates/zygo-workspace/Cargo.toml`, `Cargo.lock`, `crates/zygo-workspace/src/lib.rs`, `crates/zygo-workspace/src/mail/mod.rs`, `crates/zygo-workspace/src/mail/store.rs` and `crates/zygo-workspace/tests/mail_store.rs` on `phase3/ML-2`, message `ML-2: maildir store`, with the `Zygo-Session` and `Zygo-Work` trailers of the implementer's brief and no Claude attribution. Check: `git show --stat HEAD` lists those six files and nothing else.
+
+  - *Deviation:* the branch is `phase3/ML-2--ML-2` (the implementer's checkout). The plan ticks and these notes are a second commit, on `docs/work/phase3/nodes/ML-2.md` only.
+
 
 ### Spec coverage
 
