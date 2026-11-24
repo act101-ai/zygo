@@ -110,3 +110,18 @@
   - `cargo build --workspace --locked` → builds (no other crate constructs `Stored` or calls `put`); `cargo test -p zygo-mcp -p zygo --locked --no-run` → compiles.
 
 - [x] **Step 6 — commit** in `/Users/kagemartin/Work/zygo/.worktrees/phase3/OS-1`: `git add crates/zygo-results/src/store.rs crates/zygo-results/tests/results.rs crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/hooks_basic.rs`, message `OS-1: result meta records the session that stored it`, trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-1`, no attribution. Check: `git show --stat HEAD` lists exactly those four files.
+
+### Review round 1
+
+- 3 confirmed and fixed (commit f733e6c):
+  - Empty session stored as `Some("")`: `Store::put` now stores `Some("")` as no session (no `session` key, `Stored.session`
+    is `None`; O§6.4). Test `session_empty_is_no_session`.
+  - No test for `"session": null`: the old five-key meta plus `"session":null` reads as `None`, other fields unchanged.
+    Test `session_null_reads_as_none`.
+  - No guard for an unknown extra meta key (O-C8, an older binary reads a newer meta): the six-key meta plus
+    `"future_field":1` loads with every known field correct. Test `session_meta_with_an_unknown_extra_key_still_loads`.
+- 1 rejected: a non-string `session` value makes the result unreadable. No writer produces it, and O-C8 forbids a change
+  of the field's type.
+- Notes passed on:
+  - OS-4/OS-28 must pass `Some(&sv.session)` on the shaped path.
+  - The trims-row session equality is checked by OS-5/OS-7.
