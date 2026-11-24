@@ -593,7 +593,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   - `forget_pane`, `forget_pane_run`: no change.
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo-workspace --locked --test admin` passes (the five step 8 tests and every earlier test).
 
-- [ ] **10. Test (red): the hand start with a saved socket, and with a `$TMUX` socket, that fails AU54.** In `crates/zygo/tests/workspace_member.rs`, in the FIX-30 section of step 2, add:
+- [x] **10. Test (red): the hand start with a saved socket, and with a `$TMUX` socket, that fails AU54.** In `crates/zygo/tests/workspace_member.rs`, in the FIX-30 section of step 2, add:
   ```rust
   #[test] // FIX-30, AU54, W§8.4, C6: a saved socket with a quote: the not-saved line, a v1 launch, no tmux call, no write
   fn au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_saved_line() {
@@ -632,7 +632,7 @@ Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktr
   ```
   Check: `CARGO_TARGET_DIR=T cargo test -p zygo --locked --test workspace_member au54_a_hand_start` fails in both: no AU54 line, and `root/tmux-called` exists (the `display` call at `member.rs:869` ran; `socket_is_private` passes, because `root/so'ck` has mode 0700).
 
-- [ ] **11. Code (green): `check_saved_socket` is `pub`; the hand start checks both sockets.**
+- [x] **11. Code (green): `check_saved_socket` is `pub`; the hand start checks both sockets.**
   - `crates/zygo-workspace/src/repair.rs:64`: `pub fn check_saved_socket(ws: &Workspace) -> Result<(), UnsafePath> {` (body unchanged). Doc comment `:60-63`: after "`zygo attach`, `down` and `repair`." add " FIX-30: also `zygo ls` (the row is `unreachable`), the snapshot (W§7.4 step 1) and the hand start of the crate `zygo` (W§8.4), so it is `pub`."
   - `crates/zygo/src/cmd/member.rs:22`: `use zygo_workspace::mux::{check_path, Multiplexer, UNSAFE_PATH_MESSAGE};`
   - `member.rs:23`: `use zygo_workspace::{repair, snapshot, up};`

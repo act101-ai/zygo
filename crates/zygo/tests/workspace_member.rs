@@ -1718,3 +1718,38 @@ fn au54_ws_snapshot_logs_one_line_and_makes_no_tmux_call() {
     assert!(lines[0].ends_with(&format!("snapshot (after-split-window): {AU54_REASON}")), "{lines:?}");
     assert_eq!(state_bytes(&h), before);
 }
+
+#[test] // FIX-30, AU54, W§8.4, C6: a saved socket with a quote: the not-saved line, a v1 launch, no tmux call, no write
+fn au54_a_hand_start_with_a_quoted_saved_socket_is_a_v1_launch_with_the_not_saved_line() {
+    let (h, sock) = quoted_socket_harness();
+    up_state(&h, &[], &mut |w| w.tmux_socket = Some(sock.clone()));
+    let before = state_bytes(&h);
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let t = OsString::from(format!("{},1,0", sock.display()));
+    let mut extra = pairs(&env);
+    extra.push(("TMUX", t.as_os_str()));
+    let o = Guarded::spawn(hand(&h, "%0", &["claude"], &extra)).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    let want = format!("{NOT_SAVED}{AU54_REASON}");
+    assert_eq!(err.lines().filter(|l| *l == want).count(), 1, "{want}\n{err}");
+    assert!(stub_env(&out).get("ZYGO_WORKSPACE").is_none());
+    assert!(!h.root().join("tmux-called").exists());
+    assert_eq!(state_bytes(&h), before);
+}
+
+#[test] // FIX-30, AU54, W§8.4, C6: no state and a `$TMUX` socket with a quote: the not-saved line, a v1 launch, no tmux call
+fn au54_a_hand_start_on_a_quoted_tmux_socket_is_a_v1_launch_with_the_not_saved_line() {
+    let (h, sock) = quoted_socket_harness();
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let t = OsString::from(format!("{},1,0", sock.display()));
+    let mut extra = pairs(&env);
+    extra.push(("TMUX", t.as_os_str()));
+    let o = Guarded::spawn(hand(&h, "%0", &["claude"], &extra)).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let err = text(&o.stderr);
+    let want = format!("{NOT_SAVED}{AU54_REASON}");
+    assert_eq!(err.lines().filter(|l| *l == want).count(), 1, "{want}\n{err}");
+    assert!(stub_env(&out).get("ZYGO_WORKSPACE").is_none());
+    assert!(!h.root().join("tmux-called").exists());
+}

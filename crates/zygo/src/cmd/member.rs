@@ -19,8 +19,8 @@ use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 use zygo_proxy::client::{SessionClient, SessionSettings};
 use zygo_workspace::{admin, args};
 use zygo_workspace::mux::tmux::Tmux;
-use zygo_workspace::mux::Multiplexer;
-use zygo_workspace::{snapshot, up};
+use zygo_workspace::mux::{check_path, Multiplexer, UNSAFE_PATH_MESSAGE};
+use zygo_workspace::{repair, snapshot, up};
 use zygo_workspace::identity::{valid_name, valid_ws_id};
 use zygo_workspace::state::{valid_session_id, MemberRecord, MemberState, Pending, Phase, StateError, Store, Workspace};
 
@@ -830,9 +830,9 @@ fn not_saved(reason: &str) {
 
 /// The W§8.4 checks of a hand start, in the order of the spec. `env` reads the process environment; `tmux` gives the
 /// tmux program and is called only after the `ZYGO_SESSION`, `TMUX`, `TMUX_PANE` and `ZYGO_WORKSPACE` checks (D8). A
-/// failure before the pane is known as a workspace pane is a silent v1 launch, except a state whose `tmux_socket` is
-/// not the socket of `$TMUX` and a socket that fails AU62; later failures print the not-saved line (paths and ids
-/// escaped, C6). Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
+/// failure before the pane is known as a workspace pane is a silent v1 launch, except a state whose `tmux_socket`
+/// fails AU54 or is not the socket of `$TMUX`, and a socket of `$TMUX` that fails AU54 or AU62; later failures print
+/// the not-saved line (paths and ids escaped, C6). Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
 pub(crate) fn hand_start(
     launch: zygo_workspace::state::Launch, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths, tmux: &dyn Fn() -> PathBuf,
 ) -> HandStart {
@@ -850,6 +850,13 @@ pub(crate) fn hand_start(
     };
     let store = Store::open(paths, id);
     let read = store.read();
+    // FIX-30 (AU54): the saved socket before any use; the compare below prints it.
+    if let Ok(Some(ws)) = &read
+        && let Err(e) = repair::check_saved_socket(ws)
+    {
+        not_saved(e.to_string().trim_start_matches("zygo: "));
+        return HandStart::V1;
+    }
     if let Ok(Some(ws)) = &read
         && ws.tmux_socket.as_deref() != Some(sock.as_path())
     {
@@ -859,6 +866,13 @@ pub(crate) fn hand_start(
             zygo_core::esc(&a),
             zygo_core::esc(&sock.display().to_string())
         ));
+        return HandStart::V1;
+    }
+    // FIX-30 (AU54): the socket of `$TMUX` before its first use (AU62, then `display` at the next lines). A saved
+    // socket reaches here only when it equals `sock` and passed the check above; this one matters for a state that is
+    // missing or cannot be read.
+    if check_path(&sock).is_err() {
+        not_saved(UNSAFE_PATH_MESSAGE.trim_start_matches("zygo: "));
         return HandStart::V1;
     }
     if let Err(t) = up::socket_is_private(&sock, false) {
