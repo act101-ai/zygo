@@ -200,7 +200,7 @@ Session text (T, SX nodes):
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
 | DR-8 | Session view `repo_root`, written by the launcher | DR-1 | DONE | mechanical | c806e21 88441c1 · repo_root 2/2 core, 3/3 launcher · PR #19 |
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | DONE | mechanical | 34a088d fb104db · dispositions 4 tests · PR #18 |
-| DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | TODO | judgment | — |
+| DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | DONE | judgment | 9efee7e 281dd03 · decision_transition 45/45 · PR #21 |
 | DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | TODO | judgment | — |
 | DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | TODO | judgment | — |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
@@ -335,3 +335,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-8 done: launcher writes `SessionView.repo_root`. Review round 1, 6 findings: 4 fixed (clock-free outside-repo test, TMPDIR independence, doc comment, non-UTF-8 test); 2 rejected (in-repo git test needs the 2 s clock bound; bad field fails the load like all fields). Floor green. |
 | 2026-11-24 | DR-2 done: record set reader, set checks, dependency graph. D§17 #4 corrected to 4 dependents (depths 1, 2, 3, 3). Review round 1, 7 findings: 5 fixed (count speed, deepest_chain order, duplicate lines, non-UTF-8 names, linked docs); 2 rejected (DFS cycle_at; races). Floor green. |
 | 2026-11-24 | DR-9 done: key `dispositions`, default `enforce`. Round 1, 5 findings: 1 fixed (CI tests read no git); 3 rejected (repo-file, serve_cli: ignored timing tests, pass locally; trailer per session rule); 1 out of scope (agents, repos lower the gate; D§9.3 allows; DR-13). Floor green. |
+| 2026-11-24 | DR-10 done: agent_change, the D§6.6 rule for one record change. Review round 1, 8 findings, all fixed: malformed old refused, self-supersede, model/commit/date/supersedes frozen, name escaped, Writes column exhaustive, id match. Floor green. |
