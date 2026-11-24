@@ -22,7 +22,7 @@ pub struct DownArgs {
     /// Stop at once: no drain
     #[arg(long)]
     pub now: bool,
-    /// The drain timeout: <n>s, <n>m or <n>h
+    /// The drain timeout: <n>s, <n>m, <n>h or <n>d
     #[arg(long, value_name = "DUR")]
     pub timeout: Option<String>,
     /// Wait in the foreground until the down ends
@@ -46,7 +46,7 @@ pub fn run(a: &DownArgs) -> i32 {
         Some(v) => match zygo_config::parse_duration(v) {
             Some(d) => Some(d),
             None => {
-                print_err(&format!("zygo: bad --timeout value {}: use <n>s, <n>m or <n>h\n", zygo_core::esc(v)));
+                print_err(&format!("zygo: bad --timeout value {}: use <n>s, <n>m, <n>h or <n>d\n", zygo_core::esc(v)));
                 return 2;
             }
         },

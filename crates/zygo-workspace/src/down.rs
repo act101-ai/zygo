@@ -460,7 +460,7 @@ fn timeout(opts: &DownOpts, err: &mut dyn Write) -> Duration {
     }
     let text = &opts.config.workspace.drain_timeout;
     parse_duration(text).unwrap_or_else(|| {
-        say(err, &format!("zygo: [workspace] drain_timeout \"{}\" is not <n>s, <n>m or <n>h; using 10m", esc(text)));
+        say(err, &format!("zygo: [workspace] drain_timeout \"{}\" is not <n>s, <n>m, <n>h or <n>d; using 10m", esc(text)));
         DEFAULT_TIMEOUT
     })
 }

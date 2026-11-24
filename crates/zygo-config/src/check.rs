@@ -1,7 +1,10 @@
+use std::collections::BTreeSet;
 use std::fmt;
 
+use zygo_core::ids::{valid_member_name, RESERVED_MEMBER_NAMES};
+
 use crate::layers::{join, seg};
-use crate::schema::{BUILTIN_LOADOUT, Config, KeyRef, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
+use crate::schema::{parse_duration, BUILTIN_LOADOUT, Config, KeyRef, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -105,6 +108,11 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
         let [compact, verbose] = STATUSLINE_STYLES;
         e("statusline.style".into(), format!("must be \"{compact}\" or \"{verbose}\""));
     }
+    for (key, text) in [("keep", &cfg.mail.keep), ("wake_gap", &cfg.mail.wake_gap)] {
+        if parse_duration(text).is_none() {
+            e(format!("mail.{key}"), "must be <n>s, <n>m, <n>h or <n>d".into());
+        }
+    }
     let code_ok = regex::Regex::new("^[a-z0-9_]{1,64}$").expect("static pattern");
     for (i, r) in cfg.schema_rule.iter().enumerate() {
         let rp = format!("schema_rule[{i}]");
@@ -161,6 +169,7 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
         if l.window.is_empty() {
             v.push((Severity::Error, lp.clone(), "must have at least one window".into()));
         }
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
         for (wi, w) in l.window.iter().enumerate() {
             let wp = format!("{lp}.window[{wi}]");
             if w.pane.is_empty() {
@@ -181,6 +190,21 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
                 }
                 if p.profile.as_ref().is_some_and(|name| !cfg.profile.contains_key(name)) {
                     v.push((Severity::Warning, format!("{pp}.profile"), "unknown profile".into()));
+                }
+                // M§6; the message never echoes the name (it is user text)
+                if let Some(n) = &p.name {
+                    let msg = if RESERVED_MEMBER_NAMES.contains(&n.as_str()) {
+                        Some("is reserved")
+                    } else if !valid_member_name(n) {
+                        Some("must be 1-32 of [a-z0-9-], starting with a letter")
+                    } else if !seen.insert(n) {
+                        Some("is used by another pane in the loadout")
+                    } else {
+                        None
+                    };
+                    if let Some(msg) = msg {
+                        v.push((Severity::Error, format!("{pp}.name"), msg.into()));
+                    }
                 }
             }
         }
