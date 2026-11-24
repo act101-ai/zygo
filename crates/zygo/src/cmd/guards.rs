@@ -54,7 +54,7 @@ mod tests {
         assert_eq!(
             run(&ctx(d.path(), None), &[], None, None).unwrap(),
             "claims notify (user)\nscope monitor (builtin)\nnavigation monitor (builtin)\noutput monitor (builtin)\n\
-             trailers notify (builtin)\nrepeat monitor (builtin)\nmin_level monitor (builtin)"
+             trailers notify (builtin)\nrepeat monitor (builtin)\ndispositions enforce (builtin)\nmin_level monitor (builtin)"
         );
         let dir = sd(d.path());
         std::fs::write(dir.join("overrides.json"), r#"{"guards":{"scope":"enforce"}}"#).unwrap();
@@ -72,7 +72,7 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "claims notify (user)", "{out}");
         assert_eq!(lines[1], "scope enforce (session)", "{out}");
-        assert_eq!(lines[6], "min_level notify (user)", "{out}");
+        assert_eq!(lines[7], "min_level notify (user)", "{out}");
     }
 
     #[test]
@@ -119,7 +119,7 @@ mod tests {
         let out = run(&c, &[], team(), None).unwrap();
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "claims enforce (team)", "{out}");
-        assert_eq!(lines[6], "min_level enforce (team)", "{out}");
+        assert_eq!(lines[7], "min_level enforce (team)", "{out}");
         assert_eq!(
             err_text(run(&c, &v(&["scope", "notify"]), team(), None)),
             "refused: guard scope cannot go below min_level enforce"

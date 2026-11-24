@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
-use zygo_config::{load, Level, LoadContext, Merged, Refusal};
+use zygo_config::{load, Level, LoadContext, Merged, Refusal, RepoFile};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_work::policy::{Guard, Policy};
@@ -60,7 +60,7 @@ fn line(root: &Path, levels: &str) -> String {
     format!("repo policy: {}@main ({levels})", root.display())
 }
 const DEFAULT_LEVELS: &str =
-    "claims monitor, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor";
+    "claims monitor, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor, dispositions enforce";
 
 #[test]
 fn defaults_without_file() {
@@ -89,7 +89,7 @@ fn file_on_default_branch_sets_levels() {
     assert_eq!(p.level(Guard::Trailers), Level::Enforce);
     assert_eq!(
         p.describe(),
-        line(r.path(), "claims enforce, scope notify, navigation monitor, output notify, trailers enforce, repeat monitor")
+        line(r.path(), "claims enforce, scope notify, navigation monitor, output notify, trailers enforce, repeat monitor, dispositions enforce")
     );
 }
 
@@ -149,7 +149,7 @@ fn session_override_is_shown_and_floor_refused() {
     assert_eq!(p.level(Guard::Claims), Level::Enforce);
     assert_eq!(
         p.describe(),
-        line(r.path(), "claims enforce, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor")
+        line(r.path(), "claims enforce, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor, dispositions enforce")
     );
 
     let m2 = merged("[guards]\nmin_level = \"notify\"\n", r.path());
@@ -173,6 +173,7 @@ fn guard_names_and_fixed_levels() {
         (Guard::Output, "output"),
         (Guard::Trailers, "trailers"),
         (Guard::Repeat, "repeat"),
+        (Guard::Dispositions, "dispositions"),
         (Guard::Lead, "lead"),
         (Guard::Redaction, "redaction"),
         (Guard::Attribution, "attribution"),
@@ -182,7 +183,7 @@ fn guard_names_and_fixed_levels() {
     }
     assert_eq!(
         Guard::CONFIGURED.map(Guard::name),
-        ["claims", "scope", "navigation", "output", "trailers", "repeat"]
+        ["claims", "scope", "navigation", "output", "trailers", "repeat", "dispositions"]
     );
 
     let r = repo(Some("version = 1\n[guards]\nclaims = \"monitor\"\n"), None);
@@ -233,4 +234,52 @@ fn invalid_reason_has_no_control_characters() {
     let d = policy("", r.path()).describe();
     assert!(d.starts_with("repo policy: invalid ("), "{d}");
     assert!(!d.chars().any(char::is_control), "{d:?}");
+}
+
+#[test]
+fn dispositions_defaults_to_enforce() {
+    let r = repo(None, None);
+    let mut m = merged("", r.path());
+    assert_eq!(Policy::resolve(&m, r.path()).level(Guard::Dispositions), Level::Enforce);
+    // describe prints levels only for a found file; set one without a git read (no timing bound)
+    m.repo_file = RepoFile::Found { branch: "main".into(), table: Default::default(), ignored: vec![] };
+    assert_eq!(Policy::resolve(&m, r.path()).describe(), line(r.path(), DEFAULT_LEVELS));
+}
+
+#[test]
+fn dispositions_is_a_guards_key() {
+    let r = repo(None, None);
+    assert_eq!(policy("[guards]\ndispositions = \"notify\"\n", r.path()).level(Guard::Dispositions), Level::Notify);
+    let mut o = Overrides::default();
+    o.guards.insert("dispositions".into(), "monitor".into());
+    let p = Policy::resolve(&merged("", r.path()).with_overrides(&o).unwrap(), r.path());
+    assert_eq!(p.level(Guard::Dispositions), Level::Monitor);
+}
+
+#[test]
+fn dispositions_min_level_lifts_monitor() {
+    let r = repo(None, None);
+    let user = "[guards]\nmin_level = \"notify\"\ndispositions = \"monitor\"\n";
+    assert_eq!(policy(user, r.path()).level(Guard::Dispositions), Level::Notify);
+    let mut o = Overrides::default();
+    o.guards.insert("dispositions".into(), "monitor".into());
+    assert_eq!(
+        merged(user, r.path()).with_overrides(&o).unwrap_err(),
+        Refusal::BelowFloor { guard: "dispositions".into(), min: Level::Notify }
+    );
+}
+
+#[test]
+#[ignore = "timing: the .zygo.toml git read has the 2 s zygo-config GIT_BOUND; a timeout drops the file"]
+fn dispositions_from_repo_file() {
+    let r = repo(Some("version = 1\n[guards]\ndispositions = \"notify\"\n"), None);
+    let p = policy("", r.path());
+    assert_eq!(p.level(Guard::Dispositions), Level::Notify);
+    assert_eq!(
+        p.describe(),
+        line(
+            r.path(),
+            "claims monitor, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor, dispositions notify"
+        )
+    );
 }
