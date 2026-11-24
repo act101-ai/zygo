@@ -740,6 +740,45 @@ fn session_none_writes_no_session_key() {                           // a None pu
     assert_eq!(Store::get(&dir, &s.id).unwrap().session, None);
 }
 
+#[test]
+fn session_empty_is_no_session() {                                  // O§6.4: an empty id must not be a key
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("results");
+    let s = Store::put(&dir, "Bash", Some(""), b"x").unwrap();
+    assert_eq!(s.session, None);
+    let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(format!("{}.json", s.id))).unwrap()).unwrap();
+    assert!(meta.get("session").is_none(), "{meta}");
+    assert_eq!(meta.as_object().unwrap().len(), 5);
+    assert_eq!(Store::get(&dir, &s.id).unwrap().session, None);
+}
+
+/// Writes the raw result `x` and the meta text `meta` under a new id in `dir`, and reads them back through `get`.
+fn get_with_meta(dir: &Path, meta: &[u8]) -> Stored {
+    std::fs::create_dir_all(dir).unwrap();
+    let id = ulid::Ulid::generate().to_string();
+    std::fs::write(dir.join(&id), b"x").unwrap();
+    std::fs::write(dir.join(format!("{id}.json")), meta).unwrap();
+    Store::get(dir, &id).unwrap()
+}
+
+#[test]
+fn session_null_reads_as_none() {
+    let t = tempfile::tempdir().unwrap();
+    let s = get_with_meta(&t.path().join("results"),
+        br#"{"tool":"Bash","bytes":1,"lines":1,"kind":"text","created_at":1700000000,"session":null}"#);
+    assert_eq!(s.session, None);
+    assert_eq!((s.tool.as_str(), s.bytes, s.lines, s.kind, s.created_at, s.data.as_slice()), ("Bash", 1, 1, Kind::Text, 1700000000, &b"x"[..]));
+}
+
+#[test]
+fn session_meta_with_an_unknown_extra_key_still_loads() {           // O-C8: an older binary reads a newer meta
+    let t = tempfile::tempdir().unwrap();
+    let s = get_with_meta(&t.path().join("results"),
+        br#"{"tool":"Bash","bytes":1,"lines":1,"kind":"text","created_at":1700000000,"session":"S1","future_field":1}"#);
+    assert_eq!(s.session.as_deref(), Some("S1"));
+    assert_eq!((s.tool.as_str(), s.bytes, s.lines, s.kind, s.created_at, s.data.as_slice()), ("Bash", 1, 1, Kind::Text, 1700000000, &b"x"[..]));
+}
+
 use zygo_config::Features;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::Agent;

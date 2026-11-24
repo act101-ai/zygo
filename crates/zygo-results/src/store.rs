@@ -66,7 +66,7 @@ impl Store {
             lines: String::from_utf8_lossy(bytes).lines().count() as u64,
             kind: kind::sniff(bytes),
             created_at: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
-            session: session.map(str::to_owned),
+            session: session.filter(|s| !s.is_empty()).map(str::to_owned),     // O§6.4: an empty id is no session
         };
         let raw = dir.join(&id);
         let tmp = dir.join(format!("{id}.tmp"));
