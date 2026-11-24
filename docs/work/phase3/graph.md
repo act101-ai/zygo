@@ -210,7 +210,7 @@ Session text (T, SX nodes):
 | ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | DONE | judgment | 2550471 e7fed8c 24c9124 · mail_store 38p/0f/0i; floor green · PR #24 |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
 | OS-1 | Result meta records the session that stored it | DR-1 | DONE | implementation | 7d285bd f733e6c 8a21ec2 · results 50p/0f, hooks_basic 55p/0f; floor green · PR #27 |
-| OS-6 | Carry computation for one event over its context's requests | DR-1 | TODO | judgment | — |
+| OS-6 | Carry computation for one event over its context's requests | DR-1 | PLANNED | judgment | plan 9f6b378 · PR #30 |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | TODO | mechanical | — |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
 | MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | TODO | judgment | — |
@@ -343,3 +343,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-1 planned (149d9ed); Files += zygo-hooks/tests/hooks_basic.rs for the trim_session test. PR #27. |
 | 2026-11-24 | DR-4 done: zygo decision new. Round 1, 6 confirmed: --help as title, fill marker in TOML comment, no ## Finding for stop class, 3 test gaps, git test isolation; top-level help (cmd/mod.rs:361) omits `new`, carried to first of ML-7/ML-12/MS-17/WD-14 to edit it. 3 rejected. PR #25. |
 | 2026-11-24 | OS-1 done: result meta records the session (`Store::put` takes `session: Option<&str>`, trim passes it). Review 4 findings: 3 fixed; 1 rejected (non-string session; no writer produces one, O-C8 fixes the type). PR #27. |
+| 2026-11-24 | OS-6 planned (9f6b378): 6 steps, 13 tests. PR #30. |
