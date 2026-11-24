@@ -196,3 +196,15 @@ fn rows(db: &Path, rows: &[(i64, &str, &str, &str)]) // Store::open, insert_requ
 6. **Serve mode:** there is no serve-mode branch; no local row gives `unknown`.
 7. **Printed path:** the path printed is the absolute path that `create` returns.
 8. **Left `.tmp` file:** a failed rename leaves the `.tmp` file; D§10.2 allows it.
+
+### Review round 1
+
+1. Fixed in beeaa1d: `-h`/`--help` that is the value of a flag (`--title -h`) is that value, not a help request; the record is written.
+2. Fixed in beeaa1d: `parse_record` refuses a front matter that still holds the fill marker (`unfilled hint in front matter`).
+3. Fixed in beeaa1d: `new --kind decision` with a stop class writes `## Finding` with a hint that has no fill marker; `check` does not need it. This replaces author's call 2.
+4. Rejected for this node: the top-level help line in `cmd/mod.rs:361` is outside the node's files; carried to the next row that changes `cmd/mod.rs`.
+5. Fixed in beeaa1d (tests): unreadable HEAD exits 1 and writes nothing; `new` outside a repository exits 2; an empty session model gives `unknown`. No code change was needed. The `.tmp` left on a write failure has no injection seam and stays covered by the reader test only.
+6. Rejected: D§10.2 asks only "present as a valid record"; a spec gap, not a break.
+7. Rejected: matches spec; `new` does not commit.
+8. Rejected: the only caller passes the process env; no failure.
+9. Fixed in beeaa1d: the test git helper sets `GIT_CONFIG_GLOBAL` to an empty file, `GIT_CONFIG_NOSYSTEM=1`, `HOME` and `XDG_CONFIG_HOME` to a temp directory, and the identity by env.
