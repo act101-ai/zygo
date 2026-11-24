@@ -4,6 +4,6 @@
 **Files:** `docs/live-checks.md`
 **Consumes:** —
 **Produces:** `docs/live-checks.md#P3-15`
-**Acceptance:** `N2_FORBIDDEN_NAMES="<operator user name>" sh scripts/check-premises.sh` → exit 0 (the script scans `docs/live-checks.md` for the given names). Review: steps 1-8 and "Reading the result" of T§12.2 are in the `## P3-15` section without change in meaning (or the section points to T§12.2 for them).
+**Acceptance:** `N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh` → exit 0 (the script scans `docs/live-checks.md` for the account name read at run time; nothing personal is written in the repository). Review: steps 1-8 and "Reading the result" of T§12.2 are in the `## P3-15` section without change in meaning (or the section points to T§12.2 for them).
 
 ## Plan

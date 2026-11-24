@@ -25,8 +25,8 @@ Phase 2 constraints that still bind code Phase 3 touches:
 - State dir `0700`, files `0600` (also `mail/`, `reinject/`, the results directory) — `docs/specs/2026-11-20-workspaces-design.md` AU2; `docs/specs/2026-11-22-workspace-mail-design.md` M§4 M-C4; `docs/specs/2026-11-24-output-shaping-design.md` O§4 O-C3; `docs/specs/2026-11-24-session-text-design.md` T§9.2 item 1
 - Crate graph: `zygo-workspace` depends on `zygo-core`, `zygo-config`, `zygo-work`, `zygo-proxy` only (the mail store lives in `zygo-workspace::mail`; sync, which needs `zygo-redact` and git, lives in the new crate `zygo-mail-sync`, which `zygo-workspace` never depends on); `zygo-hooks` depends on `zygo-workspace`; the status-line module does not depend on `zygo-workspace`; `zygo-config` does not depend on `zygo-workspace` — `docs/specs/2026-11-20-workspaces-design.md` AU103, AU102, AU45; `docs/specs/2026-11-21-statusline-hud-design.md` H§7.6; `docs/specs/2026-11-22-workspace-mail-design.md` M§9a
 - No wall-clock or deadline test runs in CI; such checks are `#[ignore = "timing: …"]` and run on demand; time rules are tested with an injected clock or `now` — operator (PR #15, commits `cb7d13c`, `96c1cbc`)
-- CI and harness tests never run a real `claude` or `opencode` binary or a real agent config directory; they use the stub agents (`crates/zygo-launch/tests/stub_agent/`) and recorded fixtures; live checks run real agents only by the operator — operator (owner login risk), recorded before 2026-11-24; `docs/live-checks.md` "Method"
-- No Claude attribution in commits, pull requests, tags, release notes or files; commit trailers `Zygo-Session: <session>` and, when a unit is named, `Zygo-Work: <unit>` — operator instruction
+- CI and harness tests never run a real `claude` or `opencode` binary or a real agent config directory; they use the stub agents (`crates/zygo-launch/tests/stub_agent/`) and recorded fixtures; live checks run real agents only by the operator — operator instruction (owner login risk), held in the lead's session memory before 2026-11-24; applied in Phase 2 by the stub agent `crates/zygo-launch/tests/stub_agent/` (node L3, `docs/work/phase2/history.md:31`); `docs/live-checks.md` "Method"
+- No Claude attribution in commits, pull requests, tags, release notes or files; commit trailers `Zygo-Session: <session>` and, when a unit is named, `Zygo-Work: <unit>` — `docs/specs/2026-11-18-zygo-design.md` §8.5 ("operator, 2026-11-22: there is never Claude attribution"); the session rule of each zygo session (the mechanics text, §8.6 item 7)
 
 Decision records (D):
 
@@ -104,7 +104,7 @@ Session text (T, SX nodes):
 - Stub self-test, local: `sh scripts/premises/live-selftest.sh` stays green with the `live-mail.sh` cases (stub agents only) — ML-16
 - Premises: `sh scripts/check-premises.sh` exits 0 (with `N2_FORBIDDEN_NAMES` set at run time); after MS-25 it covers SP1-SP6 and the `git:` header; after SX-10 the ST rows — S§20; T§12.1 (SX)
 - Decision records: after DR-3, delivery of the branch runs `cargo run -p zygo --locked -- decision check` → exit 0 — D§12 item 11
-- HUD reference bytes: `git diff --exit-code $(git merge-base HEAD origin/phase-3) HEAD -- crates/zygo-hooks/tests/golden` → no output after RT-3 (the reference bytes stay those of a HUD without the run time) — `docs/specs/2026-11-24-session-runtime-design.md` T§3.1 last row
+- HUD reference bytes: `cargo test --locked -p zygo-hooks --test statusline_render -- h14_01_golden_files_hold_each_render_byte_for_byte h14_04_emission_examples_1_and_3_are_golden --exact` → both pass with the reference files in `crates/zygo-hooks/tests/golden/` unchanged by RT-3 (other nodes' new golden files, such as OS-27's `shape_off/`, are not in these tests) — `docs/specs/2026-11-24-session-runtime-design.md` T§3.1 last row; `crates/zygo-hooks/tests/statusline_render.rs:249`, `:345`
 - Fixture bless, by hand, reviewed in the diff: `ZYGO_BLESS=1 cargo test -p zygo-hooks --test shaping` (OS-35) and `ZYGO_BLESS=1 cargo test -p zygo-hooks --test shaping_off` (OS-27, before OS-28 only) — O§8.1
 - On demand, not CI, operator's machine, release build: `cargo test -p zygo-hooks --release --test shaping_latency -- --ignored` (OS-38); the numbers go in the phase 3 pull request — O§8.5, O§16 item 17
 - Live checks (manual, recorded by the operator, never in CI, never by an agent): PD2, PD3 (DR-15); PM1-PM3 (ML-17), M12 (ML-19); SP1 (MS-23), SP2 (MS-24); PO1-PO4 (OS-23 to OS-26); PR1, PR2 (WD-21, WD-22); ST1-ST4 (SX-9) — D§18; M§13 #12, M§14; S§20; O§17; R§19; T§12.2 (SX)
@@ -205,8 +205,8 @@ Session text (T, SX nodes):
 | DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | TODO | judgment | — |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
-| DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | DR-1 | TODO | lookup | — |
-| ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9 | TODO | implementation | — |
+| DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
+| ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | TODO | implementation | — |
 | ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | TODO | judgment | — |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
 | OS-1 | Result meta records the session that stored it | DR-1 | TODO | implementation | — |
@@ -223,7 +223,7 @@ Session text (T, SX nodes):
 | SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | TODO | implementation | — |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | TODO | mechanical | — |
-| ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | lookup | — |
+| ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2 | TODO | implementation | — |
 | OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
@@ -236,13 +236,13 @@ Session text (T, SX nodes):
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | TODO | implementation | — |
-| SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | lookup | — |
+| SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
 | MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
 | OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
-| OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | lookup | — |
+| OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | WD-3 | Workspace approvals in `approvals.toml` | WD-2 | TODO | judgment | — |
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | TODO | implementation | — |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | TODO | implementation | — |
@@ -253,28 +253,28 @@ Session text (T, SX nodes):
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | TODO | implementation | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
-| OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | lookup | — |
+| OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | TODO | judgment | — |
 | WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | TODO | judgment | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | mechanical | — |
+| ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | judgment | — |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | TODO | implementation | — |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | TODO | implementation | — |
 | MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | TODO | judgment | — |
 | MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | TODO | judgment | — |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
-| OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | lookup | — |
+| OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | WD-6 | The repository loadout from `[members]`, with the default set | WD-4, WD-5 | TODO | implementation | — |
 | WD-8 | Member record fields `launch.job` and `launch.definition` | WD-4, ML-3 | TODO | mechanical | — |
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | TODO | judgment | — |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
-| ML-14 | Unread counts in `zygo workspace`, `zygo ls` and `up`; `forget-pane` removes the maildir | ML-2, ML-8 | TODO | mechanical | — |
+| ML-14 | Unread counts in `zygo workspace`, `zygo ls` and `up`; `forget-pane` removes the maildir | ML-2, ML-8 | TODO | judgment | — |
 | MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | TODO | judgment | — |
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | TODO | lookup | — |
 | OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | TODO | mechanical | — |
-| OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | lookup | — |
+| OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | TODO | judgment | — |
 | WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3 | TODO | implementation | — |
@@ -294,7 +294,7 @@ Session text (T, SX nodes):
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | TODO | judgment | — |
-| ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8 | TODO | lookup | — |
+| ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
@@ -315,8 +315,8 @@ Session text (T, SX nodes):
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26 | TODO | mechanical | — |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37 | TODO | lookup | — |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | TODO | implementation | — |
-| WD-21 | PR1 live check (operator): two pool members send two logins | WD-14 | TODO | lookup | — |
-| WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14 | TODO | lookup | — |
+| WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
+| WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
 | MS-22 | No mail content in logs, state, usage rows, commits or refs | MS-18, MS-19, MS-21 | TODO | implementation | — |
 | WD-15 | `zygo workspace approve [--yes] [--digest <hex>]` | WD-14, DR-3, MS-21 | TODO | judgment | — |
 | WD-16 | `config show/check`, `profile list/show`, `loadout list/show` show the repository files | WD-15 | TODO | implementation | — |
@@ -330,3 +330,4 @@ Session text (T, SX nodes):
 | Date | Event |
 |------|-------|
 | 2026-11-24 | Graph assembled from seven track fragments (DR, ML, MS, OS, WD, RT, SX); 133 nodes; DR-1 root. |
+| 2026-11-24 | Audit round 1 remediated (9 findings): golden test target, operator nodes mechanical with Files, byte-preserving mail delivery, SX-4 tools, test counts, ML-8/ML-14 judgment, DR-11 bounds, runnable live commands, citations. |
