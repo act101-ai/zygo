@@ -123,21 +123,30 @@ fn keys<'a>(outcome: &'a Outcome, today: &'a str) -> Vec<(&'static str, &'a str)
     }
 }
 
-/// Takes an exclusive lock on `path`, then re-reads `path` with `read_bytes`; `Changed` when the bytes differ from
-/// `shown`; else checks `parse_record` and [`allowed`], refuses a front matter that mixes CRLF and LF lines, sets the
-/// outcome keys with `toml_edit` (D§6.2: unknown keys, comments and the body stay byte-equal), checks the result with
-/// `parse_record`, writes `<dir>/<id>.<ULID>.tmp` (create_new, write_all, sync_all) and renames it to `path` (D§11.3).
-/// A failed write removes the temporary file (best effort). The lock is held until after the rename, so of two zygo
-/// processes only one writes: the other waits, re-reads the renamed file through the path and gets `Changed`.
+/// Takes an exclusive lock on `<dir>/.lock` ([`LOCK`]), then re-reads `path` with `read_bytes`; `Changed` when the
+/// bytes differ from `shown`; else checks `parse_record` and [`allowed`], refuses a front matter that mixes CRLF and
+/// LF lines, sets the outcome keys with `toml_edit` (D§6.2: unknown keys, comments and the body stay byte-equal),
+/// checks the result with `parse_record`, writes `<dir>/<id>.<ULID>.tmp` (create_new, write_all, sync_all) and
+/// renames it to `path` (D§11.3). A failed write removes the temporary file (best effort). The lock is held until
+/// after the rename, so of two zygo processes only one writes: the other waits, re-reads the renamed file and gets
+/// `Changed`.
 pub fn apply(path: &Path, shown: &[u8], outcome: &Outcome, today: &str) -> Result<(), EditError> {
     apply_with(path, shown, outcome, today, &mut || {})
 }
 
-/// Opens `path` as `read_bytes` does (no link followed, a FIFO does not block) and locks it exclusively.
+/// The lock file of `apply` in the records directory. It is never written, renamed or removed, so every `apply`
+/// locks the same file; a lock on the record itself would not do this, because the rename replaces the record. The
+/// record is not locked, because on Windows a lock blocks reads through other handles (os error 33). `set::read_dir`
+/// ignores the name: it does not end in `.md`.
+pub(crate) const LOCK: &str = ".lock";
+
+/// Opens or creates `<dir of path>/.lock` (no link followed, a FIFO does not block, never truncated) and locks it
+/// exclusively. A failed open or lock is `Io` with `zygo decision: cannot write <lock path>: <error>`.
 fn lock(path: &Path) -> Result<fs::File, EditError> {
-    let fail = |e: std::io::Error| EditError::Io(format!("zygo decision: cannot read {}: {e}", path.display()));
+    let path = &path.parent().unwrap_or(Path::new(".")).join(LOCK);
+    let fail = |e: std::io::Error| EditError::Io(format!("zygo decision: cannot write {}: {e}", path.display()));
     let mut o = fs::OpenOptions::new();
-    o.read(true);
+    o.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -243,18 +252,24 @@ mod tests {
         fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect()
     }
 
-    /// D§11.3 two reviews, review focus 39: from the re-read to the rename the record is locked, so a second zygo
-    /// process waits and then re-reads the renamed file (`Changed`).
+    /// D§11.3 two reviews, review focus 39: from the re-read to the rename `.lock` is locked, so a second zygo
+    /// process waits and then re-reads the renamed file (`Changed`). The record stays readable through another handle
+    /// while the lock is held (on Windows a lock on the record itself failed this read with os error 33).
     #[test]
     fn the_record_is_locked_from_the_re_read_to_the_rename() {
         let t = tempfile::tempdir().unwrap();
         let p = put(t.path());
+        let l = t.path().join(LOCK);
         let mut seen = None;
-        let mut hook = || seen = Some(matches!(File::open(&p).unwrap().try_lock(), Err(TryLockError::WouldBlock)));
+        let mut hook = || {
+            let held = matches!(File::open(&l).unwrap().try_lock(), Err(TryLockError::WouldBlock));
+            seen = Some((held, fs::read_to_string(&p).unwrap() == OPEN));
+        };
         let o = Outcome::Overturn { reason: "x".into() };
         assert_eq!(apply_with(&p, OPEN.as_bytes(), &o, "2026-12-01", &mut hook), Ok(()));
-        assert_eq!(seen, Some(true));
-        assert!(File::open(&p).unwrap().try_lock().is_ok()); // released after the rename
+        assert_eq!(seen, Some((true, true)));
+        assert!(File::open(&l).unwrap().try_lock().is_ok()); // released after the rename
+        assert_eq!(fs::read(&l).unwrap(), b""); // never written
     }
 
     /// D§14 "the write of an outcome fails": a failed rename is `Io`, the record is unchanged and no `.tmp` is left.
@@ -271,6 +286,8 @@ mod tests {
         let r = apply_with(&p, OPEN.as_bytes(), &o, "2026-12-01", &mut hook);
         assert!(matches!(&r, Err(EditError::Io(s)) if s.starts_with("zygo decision: cannot write ")), "{r:?}");
         assert_eq!(fs::read_to_string(&p).unwrap(), OPEN);
-        assert_eq!(names(t.path()), vec![format!("{ID}.md")]);
+        let mut n = names(t.path());
+        n.sort();
+        assert_eq!(n, vec![LOCK.to_string(), format!("{ID}.md")]);
     }
 }

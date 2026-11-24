@@ -64,8 +64,13 @@ fn overturn(reason: &str) -> Outcome { Outcome::Overturn { reason: reason.into()
     assert_eq!(apply(&p, &fs::read(&p).unwrap(), &overturn("wrong"), TODAY), Ok(()));
     assert_eq!(fs::read_to_string(&old).unwrap(), plain("open", ""));          // the old inode is untouched: a rename, not a write in place
     assert_eq!(fs::read_to_string(&p).unwrap(), plain("overturned", "reviewed = \"2026-12-01\"\nreview_note = \"wrong\"\n"));
-    let names: Vec<String> = fs::read_dir(dir(t.path())).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
-    assert_eq!(names, vec![format!("{ID}.md")]);                              // no .tmp left
+    let mut names: Vec<String> = fs::read_dir(dir(t.path())).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    names.sort();
+    assert_eq!(names, vec![".lock".to_string(), format!("{ID}.md")]);         // no .tmp left; the lock file stays
+    let r = run(t.path(), &["check"]);                                         // check and the listing ignore .lock
+    assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (0, "", ""));
+    let r = run(t.path(), &["ls"]);
+    assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (0, format!("{ID} decision overturned none 0 T\n").as_str(), ""));
 }
 #[test] fn apply_overturn_of_a_ratified_record_replaces_the_operator_keys_in_place() { // D§6.6 row 3
     let t = tempfile::tempdir().unwrap();

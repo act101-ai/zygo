@@ -482,3 +482,25 @@ Author's calls:
 3. The mixed-ending check covers `text[..front_end]`, from the opening `+++` line to the closing `+++` line and its line ending. The body is not checked: it is copied byte for byte. This replaces author's call 7.
 4. The empty checks do not trim, as the CLI does not. They come after the status and promotion checks in `allowed`, so the existing refusals keep their order.
 5. `show` strips the trailing CR too, because it shares `print_lines` with the prompt. The `decision_cli` test `record_text_and_commit_subjects_are_printed_escaped` now puts a CR in the middle of a line, which is still escaped as `\r`.
+
+### Review round 2
+
+CI failure: run 45507410749 on d17b1f0 passed on macOS and Ubuntu and failed on windows-latest. 15 of 20 `decision_verbs` tests and the 2 `decisions::edit` lib tests failed with `Io("zygo decision: cannot read …\DDR-….md: cannot read: The process cannot access the file because another process has locked a portion of the file. (os error 33)")`.
+
+Root cause: `apply_with` locked the record (`lock(path)`, `File::lock`) and then re-read it by path with `read_bytes`, through a second handle. On Windows `File::lock` is `LockFileEx`, a mandatory byte-range lock, so a read through any other handle fails with `ERROR_LOCK_VIOLATION` (33), even in the same process. On unix `File::lock` is `flock`, which is advisory, so the read passed. The `cannot read: …` suffix is the open/read error text of `read_bytes`. The round 1 design had a second defect on all 3 OSes: the rename replaces the record, so two writers could lock different files. A writer that opened the old record before the rename and a writer that opened the new record after it both held "the" lock, both read the new bytes, and both could write. Then one outcome is lost.
+
+Fix: `apply` locks `docs/decisions/.lock` (`edit::LOCK`) instead of the record. It opens or creates the file (read and write, no truncation, no link followed, a FIFO does not block), takes `File::lock`, and drops the handle after the rename. The record has no open zygo handle during the re-read (`read_bytes` opens and closes its own handle) or the rename.
+- Windows: `LockFileEx` on `.lock` blocks I/O only on `.lock`, which nobody reads or writes. The re-read of the record and the `MoveFileEx`/`SetFileInformationByHandle` rename onto it do not touch a locked file. A waiting `apply` blocks in `LockFileEx` until the holder's handle closes.
+- macOS and Linux: `flock` on `.lock`. The file is never renamed or removed, so every `apply` locks the same inode. This also closes the round 1 race above.
+- On all 3 OSes the re-read, the compare, the temporary file and the rename happen while one process holds the lock. A writer that waited re-reads the renamed record and gets `Changed`.
+
+Author's calls:
+
+1. `.lock` stays in `docs/decisions/`. Removing it after the rename would bring back the two-files race: a waiter holds the removed file while a new `apply` creates and locks a new one. `set::read_dir` ignores it, because `name_kind` gives `Other` for a name that does not end in `.md` (`record.rs:130-136`), so `decision check`, `ls` and `show` do not see it. This follows the repository's `<file>.lock` sidecars (`zygo-config/src/profile.rs:269`, `zygo-plugins/src/approve.rs:44`). `git status` shows it as untracked until a `.gitignore` entry `docs/decisions/.lock` is added. That file is outside this row's files.
+2. A failed open or lock of `.lock` is `Io` with `zygo decision: cannot write <dir>/.lock: <error>`, because creating it is a write in `docs/decisions/`. The read-only directory tests (`apply_write_failure_is_io_…`, `a_write_failure_exits_1_naming_the_file`) now fail at this step, with the same message prefix and an unchanged record.
+3. One lock for the directory, not one for each record: one file is left behind, not one per record, and an `apply` holds the lock for only milliseconds.
+
+Tests:
+- `the_record_is_locked_from_the_re_read_to_the_rename` now checks, inside the `before_rename` seam, that a second handle's `try_lock` on `.lock` gets `WouldBlock` (`flock` on unix, `LockFileEx` with `LOCKFILE_FAIL_IMMEDIATELY` on Windows, both per handle, so this works in one process). It also checks that the record reads through the path while the lock is held, which is the read that failed on Windows. After `apply`, the lock is free and `.lock` is empty.
+- `a_failed_rename_is_io_and_changes_nothing` and `apply_writes_a_new_file_and_renames_it` expect `.lock` beside the record. The second also runs `check` and `ls`, and checks that neither one reports `.lock`.
+- Mutation check: with `lock` pointed back at the record, both lib tests fail.
