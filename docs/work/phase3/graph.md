@@ -195,7 +195,7 @@ Session text (T, SX nodes):
 | DR-2 | Record set: directory reader, set checks and the dependency graph | DR-1 | DONE | implementation | 7e67ae4 d4007c2 168426f · decision_set 20/20 · PR #20 |
 | DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | DONE | implementation | 683c800 46baa07 2334e49 f1ffb87 0b60e99 · decision_cli 17p/0f/6i, cli_surface 20p/0f/3i; floor green; decision check 0 · PR #22 |
 | DR-4 | `zygo decision new`: write a record template | DR-3 | DONE | implementation | f0d049d beeaa1d 3965c61 · decision_new 12p/0f/1i; floor green · PR #25 |
-| DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | IN-PROGRESS | judgment | `.worktrees/phase3/DR-5-node` |
+| DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | DONE | judgment | 397edc5 aba92f9 d3e3ff7 · decision_verbs 22p/0f; floor green · PR #29 |
 | DR-6 | `zygo decision review`: the phase-end review | DR-5 | TODO | implementation | — |
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
 | DR-8 | Session view `repo_root`, written by the launcher | DR-1 | DONE | mechanical | c806e21 88441c1 · repo_root 2/2 core, 3/3 launcher · PR #19 |
@@ -344,3 +344,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-4 done: zygo decision new. Round 1, 6 confirmed: --help as title, fill marker in TOML comment, no ## Finding for stop class, 3 test gaps, git test isolation; top-level help (cmd/mod.rs:361) omits `new`, carried to first of ML-7/ML-12/MS-17/WD-14 to edit it. 3 rejected. PR #25. |
 | 2026-11-24 | OS-1 done: result meta records the session (`Store::put` takes `session: Option<&str>`, trim passes it). Review 4 findings: 3 fixed; 1 rejected (non-string session; no writer produces one, O-C8 fixes the type). PR #27. |
 | 2026-11-24 | DR-5 planned (d6efc16): 11 steps, two test-first cycles; Files widened (zygo-work Cargo.toml, Cargo.lock, decision_cli/decision_new USAGE); MS-2 and MS-16 now depend on DR-5 (Cargo.lock overlap). PR #29. |
+| 2026-11-24 | DR-5 done (397edc5 aba92f9 d3e3ff7): ratify and overturn, byte-preserving writes; decision_verbs 22p/0f. Review round 1, 6 findings: 4 fixed (record lock, mixed line endings refused, empty texts in allowed, test gaps); 2 refuted. Floor green. PR #29. |

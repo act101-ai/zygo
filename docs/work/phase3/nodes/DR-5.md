@@ -124,9 +124,9 @@ Error lines:
 
 ### Steps
 
-- [ ] **1. Dependency.** Add `toml_edit.workspace = true` to `[dependencies]` of `crates/zygo-work/Cargo.toml`, after `toml.workspace = true`, then run `cargo check -p zygo-work`. Check: it builds, and `git diff Cargo.lock` adds only the line `"toml_edit",` to the `zygo-work` dependency list.
+- [x] **1. Dependency.** Add `toml_edit.workspace = true` to `[dependencies]` of `crates/zygo-work/Cargo.toml`, after `toml.workspace = true`, then run `cargo check -p zygo-work`. Check: it builds, and `git diff Cargo.lock` adds only the line `"toml_edit",` to the `zygo-work` dependency list.
 
-- [ ] **2. Write the failing `apply` tests** in the new `crates/zygo/tests/decision_verbs.rs`. Header and fixtures:
+- [x] **2. Write the failing `apply` tests** in the new `crates/zygo/tests/decision_verbs.rs`. Header and fixtures:
 
 ```rust
 //! DR-5: `zygo decision ratify` and `overturn` (D§11.1, D§11.3, D§10.1, D§6.6, D§6.2, D§14, D§17 #14).
@@ -248,15 +248,15 @@ Tests (assertions as written; each ends with the file's bytes checked):
 }
 ```
 
-- [ ] **3. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: it fails to compile with `could not find edit in decisions` (or the like).
+- [x] **3. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: it fails to compile with `could not find edit in decisions` (or the like).
 
-- [ ] **4. Implement** `crates/zygo-work/src/decisions/edit.rs` with the interface above: `Promotion` (`parse`, `name`), `Outcome`, `EditError`, `allowed`, `apply`, and the private `set` and `basic`. Add `pub mod edit;` to `crates/zygo-work/src/decisions/mod.rs`, in alphabetical order. Doc comments cite D§11.3, D§6.6 and D§6.2.
+- [x] **4. Implement** `crates/zygo-work/src/decisions/edit.rs` with the interface above: `Promotion` (`parse`, `name`), `Outcome`, `EditError`, `allowed`, `apply`, and the private `set` and `basic`. Add `pub mod edit;` to `crates/zygo-work/src/decisions/mod.rs`, in alphabetical order. Doc comments cite D§11.3, D§6.6 and D§6.2.
 
-- [ ] **5. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 8 `apply_*` tests pass (on Windows 7; the write-failure test is unix only).
+- [x] **5. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 8 `apply_*` tests pass (on Windows 7; the write-failure test is unix only).
 
-- [ ] **6. Commit** `crates/zygo-work/Cargo.toml`, `Cargo.lock`, `crates/zygo-work/src/decisions/{mod.rs,edit.rs}` and `crates/zygo/tests/decision_verbs.rs` with the message `DR-5: decisions::edit::apply, byte-preserving outcome writes` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-5`. Check: `git status` is clean.
+- [x] **6. Commit** `crates/zygo-work/Cargo.toml`, `Cargo.lock`, `crates/zygo-work/src/decisions/{mod.rs,edit.rs}` and `crates/zygo/tests/decision_verbs.rs` with the message `DR-5: decisions::edit::apply, byte-preserving outcome writes` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-5`. Check: `git status` is clean.
 
-- [ ] **7. Write the failing CLI tests** in `crates/zygo/tests/decision_verbs.rs`. Also set the `USAGE` constant of `decision_cli.rs:101` and `decision_new.rs` to the new `USAGE` text, and add it here with its `\n`. Helper:
+- [x] **7. Write the failing CLI tests** in `crates/zygo/tests/decision_verbs.rs`. Also set the `USAGE` constant of `decision_cli.rs:101` and `decision_new.rs` to the new `USAGE` text, and add it here with its `\n`. Helper:
 
 ```rust
 const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes]\n";
@@ -416,13 +416,13 @@ Tests:
 
 No test runs the `zygo` binary. Every test calls `run_in`, which gets `ZYGO_SESSION_DIR` only from its `env` closure (as `decision_new.rs` does), so the process environment does not matter.
 
-- [ ] **8. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 10 new CLI tests fail (`ratify` and `overturn` give `USAGE`, exit 2). The `apply_*` tests still pass.
+- [x] **8. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 10 new CLI tests fail (`ratify` and `overturn` give `USAGE`, exit 2). The `apply_*` tests still pass.
 
-- [ ] **9. Implement** the CLI in `crates/zygo/src/cmd/decision.rs` as the Interface section states: `DecideArgs`, `Sub::Decide`, `parse_decide`, `wants_help` (four more value flags), `USAGE`, the session refusal and the absent-directory line in `run_in`, `decide`, and `print_lines` (with `show` calling it). Import `zygo_work::decisions::edit::{allowed, apply, EditError, Outcome, Promotion}`.
+- [x] **9. Implement** the CLI in `crates/zygo/src/cmd/decision.rs` as the Interface section states: `DecideArgs`, `Sub::Decide`, `parse_decide`, `wants_help` (four more value flags), `USAGE`, the session refusal and the absent-directory line in `run_in`, `decide`, and `print_lines` (with `show` calling it). Import `zygo_work::decisions::edit::{allowed, apply, EditError, Outcome, Promotion}`.
 
-- [ ] **10. Run** `cargo test -p zygo --locked --test decision_verbs --test decision_cli --test decision_new`. Check: all pass, including `decision_cli`'s help and usage tests with the new `USAGE`.
+- [x] **10. Run** `cargo test -p zygo --locked --test decision_verbs --test decision_cli --test decision_new`. Check: all pass, including `decision_cli`'s help and usage tests with the new `USAGE`.
 
-- [ ] **11. Acceptance and neighbours.** Run:
+- [x] **11. Acceptance and neighbours.** Run:
   - `cargo test -p zygo --locked --test decision_verbs`: all pass.
   - `cargo test -p zygo-work --locked`: all pass.
   - `cargo test -p zygo --locked --test cli_surface`: passes, since the `decision` verb set is unchanged.
@@ -460,3 +460,25 @@ No test runs the `zygo` binary. Every test calls `run_in`, which gets `ZYGO_SESS
 10. D§14 row 1 (`no open records`, exit 0) is checked before `read_dir`, with `symlink_metadata` NotFound on `docs/decisions`. An empty but present directory gives `<id> is not a valid record`, exit 1.
 11. A malformed target prints the existing `find` or `show` line `zygo decision: <id> is not a valid record`. Other malformed files are not listed.
 12. For overturn, the status test comes before the promotion test. An open record with `promoted_to` gets the promoted refusal.
+
+### Review round 1
+
+Findings:
+
+1. Re-read-then-rename race (two `apply` calls both write; one outcome is lost): confirmed and fixed. `apply` takes an exclusive `File::lock` on the record before the re-read and holds it until after the rename. The re-read goes through the path, so a writer that waited reads the renamed file and gets `Changed`. Tests: `decisions::edit::tests::the_record_is_locked_from_the_re_read_to_the_rename` (zygo-work unit test, through the seam `apply_with`), `apply_with_a_stale_shown_after_a_first_apply_returns_changed_and_keeps_the_first_outcome`.
+2. A front matter with mixed CRLF and LF lines is rewritten to the ending of line 1: confirmed and fixed. `apply` refuses it, writes nothing, and prints `zygo decision: <id>: the front matter mixes CRLF and LF line endings; make them one kind first`. Test: `apply_refuses_a_front_matter_that_mixes_crlf_and_lf_and_changes_nothing` (both repros).
+3. The non-empty promotion text and reason are checked only in the CLI: confirmed and fixed. `allowed` refuses `zygo decision: <id>: the promotion text is empty` and `zygo decision: <id>: the reason is empty`; the CLI keeps its usage line and exit 2. Test: `apply_refuses_an_empty_promotion_text_or_reason_and_changes_nothing`.
+4. A note within its limits is refused by the 8 KiB rule: refuted. D§6.8 gives this refusal, and the message names the reason.
+5. An empty `ZYGO_SESSION_DIR` is not refused: refuted. This is the existing `session_dir` rule and author's call 9: "set" means non-empty, as in DR-4.
+6. Test gaps: confirmed and fixed.
+   - (a) No test of a failed rename. Test: `decisions::edit::tests::a_failed_rename_is_io_and_changes_nothing`.
+   - (b) The prompt of a CRLF record shows a `\r` on each line. `print_lines` now strips one trailing CR per line. Test: `the_prompt_of_a_crlf_record_holds_no_cr`.
+   - (c) `decide` checks `allowed` on the `read_dir` record, but shows bytes it reads later. It now runs `allowed` on the parsed shown bytes. No deterministic test: no callback runs between `read_dir` and the read of the shown bytes inside `run_in`, so a test cannot change the file in that window without a new public `Repo` hook only for tests.
+
+Author's calls:
+
+1. The lock handle is opened as `read_bytes` opens a record (`O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` on unix, `FILE_FLAG_OPEN_REPARSE_POINT` on Windows), so a link is not followed and a FIFO does not block. A failed open or lock is `Io` with `zygo decision: cannot read <path>: <error>`.
+2. The test seam is the crate-private `apply_with(path, shown, outcome, today, before_rename)`. The hook runs after the temporary file is written and synced, before the rename. `apply` calls it with a no-op.
+3. The mixed-ending check covers `text[..front_end]`, from the opening `+++` line to the closing `+++` line and its line ending. The body is not checked: it is copied byte for byte. This replaces author's call 7.
+4. The empty checks do not trim, as the CLI does not. They come after the status and promotion checks in `allowed`, so the existing refusals keep their order.
+5. `show` strips the trailing CR too, because it shares `print_lines` with the prompt. The `decision_cli` test `record_text_and_commit_subjects_are_printed_escaped` now puts a CR in the middle of a line, which is still escaped as `\r`.
