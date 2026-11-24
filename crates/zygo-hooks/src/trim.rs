@@ -107,12 +107,12 @@ pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::
     let cfg = ResultsConfig { trim_threshold_bytes: threshold, head_lines: sv.head_lines, tail_lines: sv.tail_lines };
     // The marker length does not depend on the id's value, so a placeholder id sizes the view.
     let preview = Stored { id: "0".repeat(26), tool: tool.clone(), bytes: text.len() as u64, lines: text.lines().count() as u64,
-        kind: Kind::Text, created_at: 0, data: text.as_bytes().to_vec() };
+        kind: Kind::Text, created_at: 0, session: None, data: text.as_bytes().to_vec() };
     if view(&preview, &cfg).len() >= text.len() {
         return Ok(HookOutput::None);
     }
     // C3: the store's own error text holds paths, so the error is a fixed text.
-    let stored = Store::put(&dir.results(), &tool, text.as_bytes()).map_err(|_| anyhow::anyhow!("cannot store the tool result"))?;
+    let stored = Store::put(&dir.results(), &tool, Some(&sv.session), text.as_bytes()).map_err(|_| anyhow::anyhow!("cannot store the tool result"))?;
     let v = view(&stored, &cfg);
     let ts = time::OffsetDateTime::now_utc().unix_timestamp();
     let row = TrimRow {
