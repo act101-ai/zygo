@@ -29,7 +29,7 @@
 #   a host name shorter than 4 characters with a note; U5: "-" and "_" are part of a host name.
 # - T6: tmux targets are exact and sessions this script did not start are left alone (a private
 #   tmux server with no config file, through a tmux shim on PATH; only that server is killed, and its socket file is removed).
-# - ML16 (node ML-16): live-mail.sh with no argument exits 2; --pm and --m12 in a copied tree, with stubs that answer --version with the pins, a tmux shim that logs each call, MOCK_URL at a dead port and a made-up HOME: one LIVE line per id, the fixtures written in the copy, only stubs started, every tmux call on a private server (-S, -f /dev/null), no process, server or socket file left.
+# - ML16 (node ML-16): live-mail.sh with no argument exits 2; --pm and --m12 in a copied tree, with stubs that answer --version with the pins, a tmux shim that logs each call, MOCK_URL at a dead port and a made-up HOME: one LIVE line per id, the fixtures written in the copy, only stubs started, every tmux call on a private server (-S, -f /dev/null), no process, server, socket file or private folder left; usage (exit 2, no stub called) for no argument, --pm --m12, --foo, -- --pm; a caller-exported PREMISES_DIR is not written; a PREMISES_DIR with a space or a double quote is refused; PM1 1.1 passes on the hook inputs of the stub claude; --m12-judge gives the 12.2/12.3 verdicts of fixed transcripts.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -326,8 +326,24 @@ cp -R "$HERE" "$MT/scripts/premises"
 cp "$REPO/docs/premises.md" "$MT/docs/"
 PCC=$(sed -n 's/^Claude Code: *//p' "$REPO/docs/premises.md" | head -n 1)
 POC=$(sed -n 's/^OpenCode: *//p' "$REPO/docs/premises.md" | head -n 1)
-printf '#!/bin/sh\ncase "${1:-}" in --version) echo "%s (Claude Code)"; exit 0 ;; esac\necho "$0" >"%s/claude.$$"\nexec sleep 30\n' "$PCC" "$MARK" >"$MSTUB/claude"
-printf '#!/bin/sh\ncase "${1:-}" in --version) echo "%s"; exit 0 ;; esac\necho "$0" >"%s/opencode.$$"\nexec sleep 30\n' "$POC" "$MARK" >"$MSTUB/opencode"
+# Each stub writes its marker on every call, --version included (so a usage exit can show that no stub ran).
+# The claude stub, started with --mcp-config and --settings (PM1 only), runs the Stop hook command of the
+# settings file with a SessionStart input and two Stop inputs (stop_hook_active false), as Claude Code would.
+cat >"$MSTUB/claude" <<EOF
+#!/bin/sh
+echo "\$0" >"$MARK/claude.\$\$"
+case "\${1:-}" in --version) echo "$PCC (Claude Code)"; exit 0 ;; esac
+st="" mc=0 pv=""
+for a; do [ "\$pv" = --settings ] && st=\$a; [ "\$a" = --mcp-config ] && mc=1; pv=\$a; done
+if [ "\$mc" = 1 ] && [ -n "\$st" ]; then
+  cmd=\$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["hooks"]["Stop"][0]["hooks"][0]["command"])' "\$st")
+  echo '{"hook_event_name": "SessionStart", "source": "startup"}' | sh -c "\$cmd" >/dev/null
+  echo '{"hook_event_name": "Stop", "stop_hook_active": false}' | sh -c "\$cmd" >/dev/null
+  echo '{"hook_event_name": "Stop", "stop_hook_active": true}' | sh -c "\$cmd" >/dev/null
+fi
+exec sleep 30
+EOF
+printf '#!/bin/sh\necho "$0" >"%s/opencode.$$"\ncase "${1:-}" in --version) echo "%s"; exit 0 ;; esac\nexec sleep 30\n' "$MARK" "$POC" >"$MSTUB/opencode"
 printf '#!/bin/sh\necho "$0" >"%s/zygo.$$"\nexit 1\n' "$MARK" >"$MSTUB/zygo"
 : >"$TLOG"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"\n' "$TLOG" "$TMUX_REAL" >"$T/mtbin/tmux"
@@ -337,7 +353,8 @@ mguard=0
 [ -n "$TMUX_REAL" ] || mguard=1
 for a in claude opencode zygo; do [ "$(PATH="$MPATH"; command -v "$a")" = "$MSTUB/$a" ] || mguard=1; done
 [ "$(PATH="$MPATH"; command -v tmux)" = "$T/mtbin/tmux" ] || mguard=1
-# mrun <tag> [<args>]: live-mail.sh on the stubs -> rc; output in $T/m-<tag>.out; marker list before in $T/m-<tag>.before
+# mrun <tag> [<args>]: live-mail.sh on the stubs -> rc; output in $T/m-<tag>.out; marker list before in $T/m-<tag>.before.
+# PREMISES_DIR is the copied tree (MPD when set), never a value the caller exported (lib.sh keeps a set one).
 mrun() {
   _t=$1; shift
   ls "$MARK" >"$T/m-$_t.before"
@@ -345,7 +362,7 @@ mrun() {
   mkdir -p "$T/mscr-$_t"
   rc=0
   env -u CLAUDE_CONFIG_DIR -u TMUX -u ZYGO_SESSION_DIR PATH="$MPATH" HOME="$MH" MOCK_URL="http://127.0.0.1:1" ZYGO_BIN="$MSTUB/zygo" \
-    N2_SCRATCH="$T/mscr-$_t" PW_TEST=1 PW_TICKS=1 "$SH" "$MT/scripts/premises/live-mail.sh" "$@" >"$T/m-$_t.out" 2>&1 || rc=$?
+    PREMISES_DIR="${MPD:-$MT/scripts/premises}" N2_SCRATCH="$T/mscr-$_t" PW_TEST=1 PW_TICKS=1 "$SH" "$MT/scripts/premises/live-mail.sh" "$@" >"$T/m-$_t.out" 2>&1 || rc=$?
 }
 # mnew <tag> <name prefix>: the markers that came after mrun <tag> started
 mnew() { ls "$MARK" | grep -vxF -f "$T/m-$1.before" | grep "^$2\\." ; }
@@ -370,13 +387,14 @@ mtmux() {
   done <"$TLOG"
 }
 # mleft <tag>: one line for each thing left: a process of the run's scratch folder, a live stub, a tmux
-# server that answers (killed here) or a socket file of a logged -S path. Empty: nothing left.
+# server that answers (killed here), a socket file of a logged -S path or its private folder. Empty: nothing left.
 mleft() {
   pgrep -f "$T/mscr-$1" >/dev/null 2>&1 && echo "a process of the scratch folder"
   for _m in $(mnew "$1" '[a-z]*'); do kill -0 "${_m##*.}" 2>/dev/null && echo "stub $_m"; done
   for _p in $(sed -n 's/^-S \([^ ]*\) .*/\1/p' "$TLOG" | sort -u); do
     if "$TMUX_REAL" -S "$_p" -f /dev/null has-session 2>/dev/null; then echo "tmux server $_p"; "$TMUX_REAL" -S "$_p" -f /dev/null kill-server 2>/dev/null; fi
     [ ! -e "$_p" ] || echo "socket file $_p"
+    [ ! -e "${_p%/*}" ] || echo "private folder ${_p%/*}"
   done
 }
 # mcase <name> <0 = pass> [<output file>]: one ok or FAIL line; a FAIL shows the output
@@ -384,9 +402,29 @@ mcase() { if [ "$2" -eq 0 ]; then ok "$1"; else no "$1"; [ -z "${3:-}" ] || sed 
 if [ "$mguard" -ne 0 ]; then
   no "ML16: stubs or tmux shim do not resolve; live-mail.sh not run"
 else
-  mrun usage
-  t=1; [ "$rc" -eq 2 ] && grep -qF 'usage: live-mail.sh --pm | --m12' "$T/m-usage.out" && [ ! -s "$TLOG" ] && [ -z "$(mnew usage '[a-z]*')" ] && t=0
-  mcase "ML16 no argument: usage, exit 2, nothing started (exit $rc)" "$t" "$T/m-usage.out"
+  # A caller-exported PREMISES_DIR names another copy of the tree; no run may write in it.
+  LK="$T/leak"; mkdir -p "$LK/scripts" "$LK/docs"; cp -R "$HERE" "$LK/scripts/premises"; cp "$REPO/docs/premises.md" "$LK/docs/"
+  find "$LK" | sort >"$T/leak.before"
+  PREMISES_DIR="$LK/scripts/premises"; export PREMISES_DIR
+  # musage <tag> <name> [<args>]: usage, exit 2, no stub called (not even --version), no tmux call, scratch folder empty
+  musage() {
+    _u=$1 _nm=$2; shift 2
+    mrun "$_u" "$@"
+    t=1; [ "$rc" -eq 2 ] && grep -qF 'usage: live-mail.sh --pm | --m12' "$T/m-$_u.out" && [ ! -s "$TLOG" ] &&
+      [ -z "$(mnew "$_u" '[a-z]*')" ] && [ -z "$(ls -A "$T/mscr-$_u")" ] && t=0
+    mcase "ML16 $_nm: usage, exit 2, nothing started (exit $rc)" "$t" "$T/m-$_u.out"
+  }
+  musage usage "no argument"
+  musage u-both "--pm --m12" --pm --m12
+  musage u-foo "--foo" --foo
+  musage u-dd "-- --pm" -- --pm
+  # PREMISES_DIR with a space or a double quote: refused with a live: line before any tmux server starts
+  for q in 'sp ace' 'q"t'; do
+    QD="$T/$q"; mkdir -p "$QD/scripts" "$QD/docs"; cp -R "$HERE" "$QD/scripts/premises"; cp "$REPO/docs/premises.md" "$QD/docs/"
+    MPD="$QD/scripts/premises"; mrun pq --m12; unset MPD
+    t=1; [ "$rc" -eq 1 ] && grep -q '^live: PREMISES_DIR ' "$T/m-pq.out" && ! grep -q '^-S ' "$TLOG" && [ ! -e "$QD/fixtures" ] && t=0
+    mcase "ML16 PREMISES_DIR holding $(printf '%s' "$q" | sed 's/[a-z]//g; s/^ $/a space/; s/^"$/a double quote/'): refused, exit 1 (exit $rc)" "$t" "$T/m-pq.out"
+  done
   mrun pm --pm
   o="$T/m-pm.out"
   t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE PM[123] failed ' "$o")" -eq 3 ] &&
@@ -403,6 +441,8 @@ else
     [ -s "$MT/fixtures/$f" ] || t=1
   done
   mcase "ML16 --pm: the five fixtures are written in the copied tree" "$t"
+  t=1; grep -q '^1[.]1 ok ' "$MT/fixtures/claude-code/mail/pm1.txt" 2>/dev/null && t=0
+  mcase "ML16 --pm: PM1 1.1 ok from the hook inputs of the stub claude (the check can pass)" "$t" "$MT/fixtures/claude-code/mail/pm1.txt"
   mrun m12 --m12
   o="$T/m-m12.out"
   t=1; [ "$rc" -eq 0 ] && [ "$(grep -c '^LIVE ' "$o")" -eq 1 ] && grep -q '^LIVE M12 failed ' "$o" && t=0
@@ -418,6 +458,32 @@ else
   task=$(sed -n "s/^M12_TASK='\\(.*\\)'\$/\\1/p" "$HERE/live-mail.sh" 2>/dev/null)
   t=1; [ -n "$task" ] && ! printf '%s\n' "$task" | grep -qiE 'mail|message|send|inbox|poll|watch' && t=0
   mcase "ML16 the M12 task names no mail" "$t"
+  find "$LK" | sort >"$T/leak.after"
+  t=1; cmp -s "$T/leak.before" "$T/leak.after" && t=0
+  mcase "ML16 an exported PREMISES_DIR: no file written in that tree" "$t"
+  unset PREMISES_DIR
+  # The 12.2/12.3 verdicts of live-mail.sh --m12-judge on fixed transcripts (no tmux, no agent).
+  JT="$T/judge"; mkdir -p "$JT"
+  tu() { printf '{"type": "user", "message": {"content": %s}}\n' "$1"; }
+  ta() { printf '{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "mcp__zygo__%s", "input": %s}]}}\n' "$1" "$2"; }
+  tr_() { printf '{"type": "user", "message": {"content": [{"type": "tool_result", "content": "x"}]}}\n'; }
+  { tu "\"$task\""; ta mail_list '{}'; tr_; ta mail_send '{"to": ["beta"], "subject": "s", "body": "b"}'; tr_; tu '"next"'; ta mail_read '{}'; } >"$JT/before.jsonl"
+  { tu "\"$task\""; ta mail_send '{"to": "beta", "subject": "s", "body": "b"}'; tr_; ta mail_read '{}'; tr_; } >"$JT/after.jsonl"
+  # mjudge <tag> <transcript>: the record lines in $JT/<tag>/M12.txt; rc
+  mjudge() {
+    mkdir -p "$JT/$1"; rc=0
+    env -u PREMISES_DIR PATH="$MPATH" "$SH" "$MT/scripts/premises/live-mail.sh" --m12-judge "$2" "$JT/$1" >"$JT/$1.out" 2>&1 || rc=$?
+    cat "$JT/$1.out" >>"$JT/$1/M12.txt" 2>/dev/null
+  }
+  mjudge before "$JT/before.jsonl"; J="$JT/before/M12.txt"
+  t=1; [ "$rc" -eq 0 ] && grep -q '^12[.]2 ok .*beta among them: yes' "$J" && grep -q '^12[.]3 ok .*after the last mail_send of the turn: 0$' "$J" && t=0
+  mcase "ML16 judge: mail_list before mail_send to beta: 12.2 ok, 12.3 ok with 0 polls" "$t" "$J"
+  mjudge after "$JT/after.jsonl"; J="$JT/after/M12.txt"
+  t=1; [ "$rc" -eq 0 ] && grep -q '^12[.]2 ok ' "$J" && grep -q '^12[.]3 FAIL .*after the last mail_send of the turn: 1$' "$J" && t=0
+  mcase "ML16 judge: mail_read after mail_send: 12.3 FAIL with 1 poll" "$t" "$J"
+  mjudge none "$JT/missing.jsonl"; J="$JT/none/M12.txt"
+  t=1; [ "$rc" -eq 0 ] && grep -q '^12[.]2 FAIL .*found in its transcript: false' "$J" && grep -q '^12[.]3 FAIL ' "$J" && t=0
+  mcase "ML16 judge: no transcript: 12.2 and 12.3 FAIL" "$t" "$J"
 fi
 
 # --- U4: every agent program that ran was a stub; no wrapped sleep is left ------------------------

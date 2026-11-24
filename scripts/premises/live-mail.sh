@@ -9,6 +9,9 @@
 #   mail); one LIVE M12 line, exit 0. Fixture fixtures/claude-code/mail/m12.txt.
 #   Fixtures are written to the scratch folder and copied file by file into the repository at the end of
 #   the run, a failed run included. N2_SCRATCH=<folder> (lib.sh): the run folders stay in <folder>/live-<pid>.
+#   --m12-judge <transcript> <record folder> (self-test only): the 12.2 and 12.3 verdicts and the 12.4 note
+#   of a Claude Code transcript, as --m12 makes them (busy waits counted as passed), in <record folder>/M12.txt;
+#   no agent, no tmux, nothing else read or written.
 # Run by hand only, by the operator, with claude and opencode on PATH (the caller adds the OpenCode
 # folder); --m12 also needs ZYGO_BIN (default target/release/zygo).
 #
@@ -23,15 +26,85 @@
 #   trust question is answered yes for one scratch folder, which writes that answer into the caller's
 #   Claude Code config. zygo writes its state, session folders and usage rows under the real HOME; the
 #   workspace is stopped and removed by zygo down and zygo ws forget at the end. The alpha transcript
-#   is read only.
+#   is read only. The Claude Code transcripts of alpha and beta stay in the projects folder of the
+#   operator's Claude Code config (CLAUDE_CONFIG_DIR, else ~/.claude); this script does not remove them.
 # - Every tmux command uses a server of its own (-S <socket in a private folder>, -f /dev/null); the
 #   default tmux server is never called. The server, every agent and helper process and the private
 #   folder are removed on every exit.
 case "$#:${1:-}" in
   1:--pm) MODE=pm ;;
   1:--m12) MODE=m12 ;;
+  3:--m12-judge) MODE=judge ;;
   *) echo "usage: live-mail.sh --pm | --m12"; exit 2 ;;
 esac
+M12_TASK='Tell beta that the build is green.'
+yn() { if [ "$1" -eq 0 ]; then echo yes; else echo no; fi; }
+# m12_judge <alpha transcript> <busy rc> <idle rc>: sub-checks 12.2 and 12.3 and note 12.4 from the task turn
+# of alpha's transcript (read only): tool names, mail_send recipients, poll calls after the last mail_send
+# (M§8: mail_list returns the members, so a call before the send is how alpha finds beta). No subject or body (M-C2).
+m12_judge() {
+  r=$(python3 -I - "$1" "$M12_TASK" <<'PY'
+import json, sys
+path, task = sys.argv[1:3]
+out = {"found": False, "tools": [], "send_to": [], "polls": 0}  # polls: after the last mail_send of the turn
+try:
+    lines = open(path).read().splitlines() if path else []
+except OSError:
+    lines = []
+
+def items(c):
+    return [i for i in c if isinstance(i, dict)] if isinstance(c, list) else []
+
+def holds_task(c):
+    if isinstance(c, str):
+        return task in c
+    return any(i.get("type") == "text" and task in (i.get("text") or "") for i in items(c))
+
+inside = False
+for line in lines:
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if not isinstance(e, dict):
+        continue
+    c = (e.get("message") or {}).get("content")
+    if e.get("type") == "user":
+        if not inside:
+            if holds_task(c):
+                inside = True
+                out["found"] = True
+        elif not any(i.get("type") == "tool_result" for i in items(c)):
+            break  # the next prompt or Stop-hook feedback ends the task turn
+        continue
+    if inside and e.get("type") == "assistant":
+        for i in items(c):
+            if i.get("type") != "tool_use":
+                continue
+            n = i.get("name") or ""
+            inp = i.get("input") or {}
+            out["tools"].append(n)
+            if n == "mcp__zygo__mail_send":
+                to = inp.get("to") if isinstance(inp, dict) else None
+                out["send_to"].extend(str(x) for x in (to if isinstance(to, list) else [to] if to is not None else []))
+                out["polls"] = 0  # a call before the send finds the members (M§8); only a later call is a poll
+            if n in ("mcp__zygo__mail_read", "mcp__zygo__mail_list") or "zygo mail watch" in json.dumps(inp):
+                out["polls"] += 1
+print(json.dumps(out))
+PY
+)
+  found=$(jv "$r" .found false); to=$(jv "$r" '.send_to | join(" ")' ""); polls=$(jv "$r" .polls "?")
+  t=1; [ "$found" = true ] && printf '%s\n' $to | grep -qx beta && t=0
+  sub M12 12.2 $t "alpha's task turn found in its transcript: $found; mail_send recipients: ${to:-none}; beta among them: $(yn $t)"
+  t=1; [ "$found" = true ] && [ "$2" -eq 0 ] && [ "$3" -eq 0 ] && [ "$polls" = 0 ] && t=0
+  sub M12 12.3 $t "alpha busy within 60 s: $(yn $2); idle again within 300 s: $(yn $3); task turn found: $found; mail_read, mail_list or zygo mail watch calls after the last mail_send of the turn: $polls"
+  note M12 12.4 "tool calls of the task turn, in order: $(jv "$r" '.tools | join(", ")' none)"
+}
+if [ "$MODE" = judge ]; then
+  . "$(dirname "$0")/workspace_lib.sh"   # sub, note, jv (function definitions only)
+  REC=$3 SOCK="" N2_SCRATCH=""
+  m12_judge "$2" 0 0; exit 0
+fi
 . "$(dirname "$0")/lib.sh"
 . "$PREMISES_DIR/live.sh"
 . "$PREMISES_DIR/workspace_lib.sh"   # clean, sub, note, rest, pw_ticks, jv, finish
@@ -62,6 +135,9 @@ pinned_agents
 case "$N2_SCRATCH$CLAUDE_BIN$OPENCODE_BIN$TOOL_PATH$HOME$ZYGO_BIN" in
   *"'"* | *" "*) echo "live: a path holds a single quote or a space; this script cannot use it"; exit 1 ;;
 esac
+case "$PREMISES_DIR" in   # unquoted in the hook command (lib.sh hook_settings), printf into mcp.json (PM1)
+  *"'"* | *" "* | *'"'* | *\\*) echo "live: PREMISES_DIR holds a single quote, a double quote, a backslash or a space; this script cannot use it"; exit 1 ;;
+esac
 if [ "$MODE" = m12 ]; then
   { [ -f "$ZYGO_BIN" ] && [ -x "$ZYGO_BIN" ]; } || { echo "live: ZYGO_BIN is not an executable file; build zygo or set ZYGO_BIN"; exit 1; }
 fi
@@ -78,7 +154,6 @@ PW_TICKS=$(pw_ticks)   # polls per second of a wait bound (workspace_lib.sh: 10 
 EXTRA_ENV="DISABLE_AUTOUPDATER=1"
 MAIN='"no_header": ["x-claude-code-agent-id"], "extra": {"body": "\"tools\": \\[\\{"}'
 WAKE="zygo: you have mail; read it with mail_read"   # M§7.3, M-C5
-M12_TASK='Tell beta that the build is green.'
 
 # --- helpers (bodies of live-workspace.sh; trust_line and cc_trust take a tmux target) ---------
 # wait_for <seconds> <command...>: poll every 0.1 s; 0 when the command succeeds in time, else 1.
@@ -86,7 +161,6 @@ wait_for() { _w=$(($1 * PW_TICKS)); shift; while ! "$@" >/dev/null 2>&1; do _w=$
 nap() { _n=$(($1 * PW_TICKS)); while [ "$_n" -gt 0 ]; do sleep 0.1; _n=$((_n - 1)); done; }
 gone() { ! kill -0 "$1" 2>/dev/null; }
 unpid() { LIVE_PIDS=$(printf '%s\n' $LIVE_PIDS | grep -vx "$1" | tr '\n' ' '); }
-yn() { if [ "$1" -eq 0 ]; then echo yes; else echo no; fi; }
 # steps <prefix> <steps json>: SSE files and mock rules of one scripted sequence (steps.py)
 steps() {
   mkdir -p "$RUN/sse"
@@ -268,11 +342,12 @@ renv() { env -i PATH="$PATH" HOME="$HOME" TERM=xterm-256color USER="$U" LOGNAME=
   DISABLE_AUTOUPDATER=1 ZYGO_NO_UPDATE_CHECK=1 ZYGO_CONFIG="$RUN/zygo.toml" ${CCD:+CLAUDE_CONFIG_DIR="$CCD"} "$@"; }
 wsphase() { (cd "$C" && renv "$ZYGO_BIN" workspace) 2>/dev/null | sed -n '1s/^\(zygo: \)\{0,1\}workspace [^:]*: //p'; }
 # rclean: stop the workspace if it still runs, forget it, stop the private server.
+# STARTED stays 1 until the steps are done, so a signal during them runs rclean again from zm_end.
 rclean() {
-  STARTED=0
   [ "$(wsphase)" = down ] || (cd "$C" && renv TMUX="$SOCK,$SP,0" "$ZYGO_BIN" down --now --wait -- "$name") >>"$RUN/clean.txt" 2>&1
   renv "$ZYGO_BIN" ws forget -- "$name" >>"$RUN/clean.txt" 2>&1
   tm kill-server 2>/dev/null
+  STARTED=0
 }
 mval() { jq -r --arg k "$1" ".members[\$k].$2 // empty" "$WJ" 2>/dev/null; }   # <pane key> <field>
 m12_ready() { [ -n "$(mval "$KA" agent_session)" ] && [ -n "$(mval "$KB" agent_session)" ]; }
@@ -329,62 +404,7 @@ T
   AS=$(mval "$KA" agent_session)
   CDIR=$(mval "$KA" config_dir); [ -n "$CDIR" ] || CDIR=${CCD:-$HOME/.claude}
   TR=$(find "$CDIR/projects" -name "$AS.jsonl" 2>/dev/null | sed -n 1p)
-  # The task turn of alpha's transcript (read only): tool names, mail_send recipients, poll calls. No subject or body (M-C2).
-  r=$(python3 -I - "$TR" "$M12_TASK" <<'PY'
-import json, sys
-path, task = sys.argv[1:3]
-out = {"found": False, "tools": [], "send_to": [], "polls": 0}
-try:
-    lines = open(path).read().splitlines() if path else []
-except OSError:
-    lines = []
-
-def items(c):
-    return [i for i in c if isinstance(i, dict)] if isinstance(c, list) else []
-
-def holds_task(c):
-    if isinstance(c, str):
-        return task in c
-    return any(i.get("type") == "text" and task in (i.get("text") or "") for i in items(c))
-
-inside = False
-for line in lines:
-    try:
-        e = json.loads(line)
-    except ValueError:
-        continue
-    if not isinstance(e, dict):
-        continue
-    c = (e.get("message") or {}).get("content")
-    if e.get("type") == "user":
-        if not inside:
-            if holds_task(c):
-                inside = True
-                out["found"] = True
-        elif not any(i.get("type") == "tool_result" for i in items(c)):
-            break  # the next prompt or Stop-hook feedback ends the task turn
-        continue
-    if inside and e.get("type") == "assistant":
-        for i in items(c):
-            if i.get("type") != "tool_use":
-                continue
-            n = i.get("name") or ""
-            inp = i.get("input") or {}
-            out["tools"].append(n)
-            if n == "mcp__zygo__mail_send":
-                to = inp.get("to") if isinstance(inp, dict) else None
-                out["send_to"].extend(str(x) for x in (to if isinstance(to, list) else [to] if to is not None else []))
-            if n in ("mcp__zygo__mail_read", "mcp__zygo__mail_list") or "zygo mail watch" in json.dumps(inp):
-                out["polls"] += 1
-print(json.dumps(out))
-PY
-)
-  found=$(jv "$r" .found false); to=$(jv "$r" '.send_to | join(" ")' ""); polls=$(jv "$r" .polls "?")
-  t=1; [ "$found" = true ] && printf '%s\n' $to | grep -qx beta && t=0
-  sub M12 12.2 $t "alpha's task turn found in its transcript: $found; mail_send recipients: ${to:-none}; beta among them: $(yn $t)"
-  t=1; [ "$b1" -eq 0 ] && [ "$b2" -eq 0 ] && [ "$polls" = 0 ] && t=0
-  sub M12 12.3 $t "alpha busy within 60 s: $(yn $b1); idle again within 300 s: $(yn $b2); mail_read, mail_list or zygo mail watch calls in the turn: $polls"
-  note M12 12.4 "tool calls of the task turn, in order: $(jv "$r" '.tools | join(", ")' none)"
+  m12_judge "$TR" "$b1" "$b2"
   rclean
 }
 
