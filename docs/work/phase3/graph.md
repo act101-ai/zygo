@@ -213,7 +213,7 @@ Session text (T, SX nodes):
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
-| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | PLANNED | judgment | plan 454e92e · PR #33 |
+| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | IN-PROGRESS | judgment | .worktrees/phase3/MS-1-node · PR #33 |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
 | WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | TODO | judgment | — |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
