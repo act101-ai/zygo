@@ -1,5 +1,6 @@
 //! `zygo decision` (decision records design D§10.1): delegated decision records in `docs/decisions/`.
 use std::ffi::OsString;
+use std::fs;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -8,6 +9,7 @@ use zygo_core::esc;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;
+use zygo_work::decisions::edit::{allowed, apply, EditError, Outcome, Promotion};
 use zygo_work::decisions::graph::{count_in, dependents, inverse_of};
 use zygo_work::decisions::history::trailer_commits;
 use zygo_work::decisions::new::{self as new_rec, check_args, NewArgs};
@@ -20,7 +22,8 @@ use super::verbs::VerbCtx;
 
 const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> \
     [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] \
-    | show <id> | deps <id> | check";
+    | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] \
+    | overturn <id> --reason <text> [--yes]";
 /// The commits `show` lists at most.
 const SHOW_COMMITS: usize = 50;
 
@@ -76,6 +79,16 @@ enum Sub {
     Show(String),
     Deps(String),
     Check,
+    Decide(DecideArgs),
+}
+
+/// The arguments of `ratify` and `overturn` (D§10.1).
+struct DecideArgs {
+    /// `ratify` or `overturn`.
+    verb: &'static str,
+    id: String,
+    outcome: Outcome,
+    yes: bool,
 }
 
 /// The subcommand of `args`; `None` for any argument error.
@@ -100,6 +113,8 @@ fn parse(args: &[String]) -> Option<Sub> {
         ("show", [id]) => Some(Sub::Show(id.clone())),
         ("deps", [id]) => Some(Sub::Deps(id.clone())),
         ("check", []) => Some(Sub::Check),
+        ("ratify", [id, rest @ ..]) => parse_decide("ratify", id, rest).map(Sub::Decide),
+        ("overturn", [id, rest @ ..]) => parse_decide("overturn", id, rest).map(Sub::Decide),
         _ => None,
     }
 }
@@ -125,6 +140,35 @@ fn parse_new(rest: &[String]) -> Option<NewArgs> {
         }
     }
     Some(NewArgs { kind: kind?, title: title?, unit: unit?, round: round?, role: role?, class, depends_on, supersedes })
+}
+
+/// The `ratify` and `overturn` flags: a later flag replaces an earlier one; `None` for an unknown flag, a missing
+/// value, a bad `--promote`, `--promote` without `--as` or the reverse, an empty `--as`, or a missing or empty
+/// `--reason`.
+fn parse_decide(verb: &'static str, id: &str, rest: &[String]) -> Option<DecideArgs> {
+    let (mut note, mut promote, mut as_text, mut reason, mut yes) = (String::new(), None, None, None, false);
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        match (verb, a.as_str()) {
+            (_, "--yes") => yes = true,
+            ("ratify", "--note") => note = it.next()?.clone(),
+            ("ratify", "--promote") => promote = Some(Promotion::parse(it.next()?)?),
+            ("ratify", "--as") => as_text = Some(it.next()?.clone()),
+            ("overturn", "--reason") => reason = Some(it.next()?.clone()),
+            _ => return None,
+        }
+    }
+    let outcome = if verb == "ratify" {
+        let promote = match (promote, as_text) {
+            (None, None) => None,
+            (Some(p), Some(t)) if !t.is_empty() => Some((p, t)),
+            _ => return None,
+        };
+        Outcome::Ratify { note, promote }
+    } else {
+        Outcome::Overturn { reason: reason.filter(|r| !r.is_empty())? }
+    };
+    Some(DecideArgs { verb, id: id.to_string(), outcome, yes })
 }
 
 /// The session directory of `ZYGO_SESSION_DIR`; `None` when unset or empty.
@@ -160,7 +204,7 @@ fn wants_help(args: &[String]) -> bool {
         match a.as_str() {
             "-h" | "--help" => return true,
             "--kind" | "--title" | "--unit" | "--round" | "--role" | "--class" | "--depends-on" | "--supersedes"
-            | "--status" => {
+            | "--status" | "--note" | "--promote" | "--as" | "--reason" => {
                 it.next();
             }
             _ => {}
@@ -190,10 +234,24 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
             return 2;
         }
     }
+    // D§11.1, D-C5: the operator verbs never run in an agent session.
+    if let Sub::Decide(a) = &sub
+        && session_dir(env).is_some()
+    {
+        line(io.err, &format!("zygo decision {}: run it in your own shell, not in an agent session", a.verb));
+        return 2;
+    }
     let Some(top) = (repo.top)() else {
         line(io.err, "zygo decision: not in a git repository");
         return 2;
     };
+    // D§14 row 1: no records directory, nothing to review.
+    if matches!(sub, Sub::Decide(_))
+        && fs::symlink_metadata(top.join(DIR)).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    {
+        line(io.out, "no open records");
+        return 0;
+    }
     let set = match read_dir(&top) {
         Ok(set) => set,
         Err(DirError::NotDirectory) => {
@@ -211,6 +269,7 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         Sub::Show(id) => show(repo, &top, &set, &id, io),
         Sub::Deps(id) => deps(&set, &id, io),
         Sub::Check => check(&set, io),
+        Sub::Decide(a) => decide(repo, &top, &set, &a, io),
     }
 }
 
@@ -263,10 +322,7 @@ fn show(repo: &Repo, top: &Path, set: &RecordSet, id: &str, io: &mut DecisionIo)
         line(io.err, &format!("zygo decision: {id} is not a valid record"));
         return 1;
     };
-    let text = String::from_utf8_lossy(&bytes);
-    for l in text.strip_suffix('\n').unwrap_or(&text).split('\n') {
-        line(io.out, l);
-    }
+    print_lines(io.out, &bytes);
     let rows = dependents(&set.valid, &r.id).rows;
     let direct = rows.iter().filter(|(d, _)| *d == 1).count();
     line(io.out, &format!("dependents: {direct} direct, {} total", rows.len()));
@@ -280,6 +336,55 @@ fn show(repo: &Repo, top: &Path, set: &RecordSet, id: &str, io: &mut DecisionIo)
         Err(e) => line(io.err, &e),
     }
     0
+}
+
+/// Each line of `bytes` through `esc`.
+fn print_lines(w: &mut dyn Write, bytes: &[u8]) {
+    let text = String::from_utf8_lossy(bytes);
+    for l in text.strip_suffix('\n').unwrap_or(&text).split('\n') {
+        line(w, l);
+    }
+}
+
+/// D§11.3 `ratify` and `overturn`: the D§6.6 check, the record and the `[y/N]` prompt unless `--yes`, then
+/// `edit::apply`, which re-reads the file and writes only when it is unchanged since it was shown; prints its path.
+fn decide(repo: &Repo, top: &Path, set: &RecordSet, a: &DecideArgs, io: &mut DecisionIo) -> i32 {
+    let Some(r) = find(set, &a.id, io) else { return 1 };
+    let path = top.join(DIR).join(format!("{}.md", r.id));
+    let Some(shown) = read_bytes(&path).ok().filter(|b| parse_record(&r.id, b).is_ok()) else {
+        line(io.err, &format!("zygo decision: {} is not a valid record", r.id));
+        return 1;
+    };
+    if let Err(e) = allowed(r, &a.outcome) {
+        line(io.err, &e);
+        return 1;
+    }
+    if !a.yes {
+        print_lines(io.out, &shown);
+        let _ = write!(io.out, "{} {}? [y/N] ", a.verb, esc(&r.id));
+        let _ = io.out.flush();
+        let mut answer = String::new();
+        let yes = io.input.read_line(&mut answer).is_ok()
+            && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+        if !yes {
+            line(io.err, &format!("zygo decision: {} not changed", r.id));
+            return 1;
+        }
+    }
+    match apply(&path, &shown, &a.outcome, &(repo.today)()) {
+        Ok(()) => {
+            line(io.out, &path.display().to_string());
+            0
+        }
+        Err(EditError::Changed) => {
+            line(io.err, &format!("{} changed since it was shown; skipped", r.id));
+            1
+        }
+        Err(EditError::Refused(e) | EditError::Io(e)) => {
+            line(io.err, &e);
+            1
+        }
+    }
 }
 
 fn deps(set: &RecordSet, id: &str, io: &mut DecisionIo) -> i32 {

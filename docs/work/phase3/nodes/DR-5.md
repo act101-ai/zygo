@@ -256,7 +256,7 @@ Tests (assertions as written; each ends with the file's bytes checked):
 
 - [x] **6. Commit** `crates/zygo-work/Cargo.toml`, `Cargo.lock`, `crates/zygo-work/src/decisions/{mod.rs,edit.rs}` and `crates/zygo/tests/decision_verbs.rs` with the message `DR-5: decisions::edit::apply, byte-preserving outcome writes` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-5`. Check: `git status` is clean.
 
-- [ ] **7. Write the failing CLI tests** in `crates/zygo/tests/decision_verbs.rs`. Also set the `USAGE` constant of `decision_cli.rs:101` and `decision_new.rs` to the new `USAGE` text, and add it here with its `\n`. Helper:
+- [x] **7. Write the failing CLI tests** in `crates/zygo/tests/decision_verbs.rs`. Also set the `USAGE` constant of `decision_cli.rs:101` and `decision_new.rs` to the new `USAGE` text, and add it here with its `\n`. Helper:
 
 ```rust
 const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes]\n";
@@ -416,13 +416,13 @@ Tests:
 
 No test runs the `zygo` binary. Every test calls `run_in`, which gets `ZYGO_SESSION_DIR` only from its `env` closure (as `decision_new.rs` does), so the process environment does not matter.
 
-- [ ] **8. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 10 new CLI tests fail (`ratify` and `overturn` give `USAGE`, exit 2). The `apply_*` tests still pass.
+- [x] **8. Run** `cargo test -p zygo --locked --test decision_verbs`. Check: the 10 new CLI tests fail (`ratify` and `overturn` give `USAGE`, exit 2). The `apply_*` tests still pass.
 
-- [ ] **9. Implement** the CLI in `crates/zygo/src/cmd/decision.rs` as the Interface section states: `DecideArgs`, `Sub::Decide`, `parse_decide`, `wants_help` (four more value flags), `USAGE`, the session refusal and the absent-directory line in `run_in`, `decide`, and `print_lines` (with `show` calling it). Import `zygo_work::decisions::edit::{allowed, apply, EditError, Outcome, Promotion}`.
+- [x] **9. Implement** the CLI in `crates/zygo/src/cmd/decision.rs` as the Interface section states: `DecideArgs`, `Sub::Decide`, `parse_decide`, `wants_help` (four more value flags), `USAGE`, the session refusal and the absent-directory line in `run_in`, `decide`, and `print_lines` (with `show` calling it). Import `zygo_work::decisions::edit::{allowed, apply, EditError, Outcome, Promotion}`.
 
-- [ ] **10. Run** `cargo test -p zygo --locked --test decision_verbs --test decision_cli --test decision_new`. Check: all pass, including `decision_cli`'s help and usage tests with the new `USAGE`.
+- [x] **10. Run** `cargo test -p zygo --locked --test decision_verbs --test decision_cli --test decision_new`. Check: all pass, including `decision_cli`'s help and usage tests with the new `USAGE`.
 
-- [ ] **11. Acceptance and neighbours.** Run:
+- [x] **11. Acceptance and neighbours.** Run:
   - `cargo test -p zygo --locked --test decision_verbs`: all pass.
   - `cargo test -p zygo-work --locked`: all pass.
   - `cargo test -p zygo --locked --test cli_surface`: passes, since the `decision` verb set is unchanged.
