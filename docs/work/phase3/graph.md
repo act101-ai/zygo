@@ -191,7 +191,7 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-1 | Record format: parse and validate one DDR file, and `docs/decisions/` in place (README with a valid example) | — | TODO | judgment | — |
+| DR-1 | Record format: parse and validate one DDR file, and `docs/decisions/` in place (README with a valid example) | — | PLANNED | judgment | — |
 | DR-2 | Record set: directory reader, set checks and the dependency graph | DR-1 | TODO | implementation | — |
 | DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | TODO | implementation | — |
 | DR-4 | `zygo decision new`: write a record template | DR-3 | TODO | implementation | — |
