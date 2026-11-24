@@ -5,7 +5,7 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** D1
+**Next:** —
 **Workflows:** no per-node review rounds and no separate plan review (operator: no review loops, see Log line 109); one whole-branch review at completion, triaged by the controller. At completion, after merging origin/main (keep the operator's README.md edits), check README.md against the shipped phase 2 behaviour and the specs; fix mistakes and add missing user-facing information (operator, 2026-11-23); then the whole-branch review.
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
@@ -55,7 +55,6 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5, FIX-10, FIX-23, FIX-24, FIX-29, FIX-30, FIX-31 | IN-PROGRESS | implementation | .worktrees/phase2/D1 |
 | FIX-7 | Live framework: selftest socket and tmux config, live_end keeps a caller-set live-<pid>, live-hud comment path | — | DONE | implementation | 5e67820; lib 28 ok, selftest 2 ok, live-hud selfcheck 17 ok, check-premises ok (merged tree) |
 | FIX-8 | Triage: one auxiliary 429 in each passthrough session (LIV-1 D8) | — | DONE | judgment | e79d418; passthrough 33 ok, root cause section present (merged tree); verdict not determined, follow-up FIX-10 |
 | FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | DONE | mechanical | 907b06d; 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39 |
@@ -266,3 +265,4 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | 2026-11-23 | FIX-31 merged; zygo-workspace, zygo and zygo-launch tests pass; 11 mutations red |
 | 2026-11-23 | D1 planned |
 | 2026-11-23 | D1 in progress |
+| 2026-11-23 | D1 merged; all nodes DONE or DROPPED; delivery next |
