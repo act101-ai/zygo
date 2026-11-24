@@ -178,7 +178,7 @@ Unknown keys are kept and ignored. Unknown sections are kept.
 | none | `open` | agent | A new file. Operator keys absent; `fixed_by` and `promoted_by` absent. |
 | `open` | `open` | agent | Agent keys and sections. Operator keys stay absent. |
 | `open` | `fixed` | agent | `status`, `fixed_by`. |
-| `open` | `superseded` | agent | `status`, in the same commit as a new record whose `supersedes` names it. |
+| `open` | `superseded` | agent | `status`. A record in the same node's head names it in `supersedes`. |
 | `overturned` | `fixed` | agent | `status`, `fixed_by` (the commit that carried out the reversal). |
 | `ratified` with `promoted_to` and no `promoted_by` | the same | agent | `promoted_by` only. |
 | `open` | `ratified` | operator verb | `status`, `reviewed`, `review_note` (may be empty); with promote also `promoted_to`, `promotion`. |
@@ -368,7 +368,7 @@ A git call that fails or passes its bound gives the problem `cannot check: <git 
 | `zygo decision overturn <id> --reason <text> [--yes]` | Operator verb (D§11.3). |
 | `zygo decision review [--kind <k>] [--unit <prefix>]` | The phase-end review (D§11). |
 
-`new`, `ls`, `show`, `deps` and `check` exit 2 outside a git repository. `show` and `deps` exit 1 when `<id>` is not a valid record. Promote is `ratify --promote`, because a promotion is a ratification with a target (D§6.5).
+`new`, `ls`, `show`, `deps` and `check` exit 2 outside a git repository. `show` and `deps` exit 1 when `<id>` is not a valid record. Promote is `ratify --promote`, because a promotion is a ratification with a target (D§6.5); `--promote` without `--as` exits 2. `ratify` of a record that is not `open`, and `overturn` of a record that is not `open` or `ratified`, exit 1 with `zygo decision: <id> is <status>`, and change nothing.
 
 Text from a record (title, body, notes) and from git (commit subjects) is printed one line at a time through `zygo_core::esc` (`crates/zygo-core/src/text.rs:4`), so an agent-written record cannot send terminal escapes to the operator's terminal. `review` uses the same rule.
 
