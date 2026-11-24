@@ -109,3 +109,11 @@ fn repo_root_is_none_outside_a_repository() {
 - [x] **9. Acceptance.** Run the node's Acceptance command (header) → exit 0; both counts are 2; both runs pass with 2 tests run each.
 - [x] **10. Floor.** `cargo test --workspace --locked --no-fail-fast` → no failure (doc tests included: `session_view.rs:86-89` still compiles). No install script changes, so `sh scripts/test-install.sh` is not run. Review the diff: no new test spawns `claude`/`opencode` or reads a clock (review focus 75; no other review-focus line names DR-8).
 - [x] **11. Commit.** Stage the four files of the header only; message `feat(work): session view repo_root, written by the launcher (DR-8)` with the trailers `Zygo-Session:` (the session id of the implementer's brief) and `Zygo-Work: phase3:DR-8:implement`, each on its own line at the end. No Claude attribution.
+
+### Review round 1
+- F1 (new test read the clock via real checkout): fixed, the test uses the `top` hook `Some(None)`.
+- F2 (test failed with TMPDIR inside a checkout): fixed by F1.
+- F3 (no real-git in-repo test): rejected. The real path needs the 2 s checkout bound, which is a clock, and graph.md:75 bars that in CI. `checkout` has its own tests in zygo-work.
+- F4 (doc comment left out git failure and timeout): fixed.
+- F5 (non-UTF-8 top untested): fixed, `repo_root_is_none_for_a_non_utf8_top` (`#[cfg(unix)]`).
+- F6 (malformed repo_root fails the whole view load): rejected. Every SessionView field behaves the same way. The spec fixes `#[serde(default)] Option<String>`, and only the launcher writes the field.

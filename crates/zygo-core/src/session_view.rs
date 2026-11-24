@@ -36,7 +36,8 @@ pub struct SessionView {
     #[serde(default)]
     pub workspace: Option<ViewWorkspace>,
     /// The repository top level of the launch directory, where `work_verdict` runs git (decision records D§13 item 6);
-    /// `None` outside a repository, for a non-UTF-8 path, and for a `view.json` without the field (an older launcher).
+    /// `None` when the launcher holds no top level: outside a repository, git failed or passed its time bound, a non-UTF-8
+    /// path, or a `view.json` without the field (an older launcher).
     #[serde(default)]
     pub repo_root: Option<String>,
     /// The top-level fields of `view.json` that this zygo does not know; a save puts them back, so a read, change and

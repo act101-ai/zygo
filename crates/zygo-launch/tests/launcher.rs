@@ -1557,10 +1557,25 @@ fn repo_root_is_the_top_the_launcher_holds() {
 
 #[test]
 fn repo_root_is_none_outside_a_repository() {
-    // The real `checkout`: the temporary directory is in no repository; a git call past the bound also gives `None`.
+    // The hook says "no top level" (no git, no clock): the view holds `None`.
     let fx = fx();
     let st = refused(&fx);
-    let (code, err) = run(&st, opts(&fx, "dump", &[]));
+    let mut o = opts(&fx, "dump", &[]);
+    o.top = Some(None);
+    let (code, err) = run(&st, o);
+    assert_eq!(code, 2, "{err}");
+    assert_eq!(st.last().view.expect("view.json was written").repo_root, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn repo_root_is_none_for_a_non_utf8_top() {
+    use std::os::unix::ffi::OsStringExt;
+    let fx = fx();
+    let st = refused(&fx);
+    let mut o = opts(&fx, "dump", &[]);
+    o.top = Some(Some(PathBuf::from(OsString::from_vec(b"/tmp/\xff".to_vec()))));
+    let (code, err) = run(&st, o);
     assert_eq!(code, 2, "{err}");
     assert_eq!(st.last().view.expect("view.json was written").repo_root, None);
 }
