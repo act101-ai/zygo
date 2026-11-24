@@ -81,7 +81,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | DROPPED(folded into M5, diff review round 2; see nodes/M5.md) | implementation | — |
 | FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | DONE | judgment | 7db2fac; acceptance zygo-workspace 372 + 2 ignored; workspace 2860 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
 | FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | DONE | implementation | 7d78063; acceptance zygo-workspace 398 + 2 ignored, workspace_member 43, session_verbs 29; zygo 684 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok (merged tree) |
-| FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | PLANNED | implementation | — |
+| FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | IN-PROGRESS | implementation | `.worktrees/phase2/FIX-31` |
 
 ## Log
 
@@ -263,3 +263,4 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 | 2026-11-23 | E2 merged; acceptance cargo parts pass on tmux 3.8 and 3.2a; no review round (no review loops); D-1 deferred |
 | 2026-11-23 | FIX-30 in progress |
 | 2026-11-23 | FIX-30 merged; zygo-workspace 398 and zygo 684 pass; F-1 (two up tests on the closed $TMUX route) fixed in the node via TMUX_TMPDIR |
+| 2026-11-23 | FIX-31 in progress |
