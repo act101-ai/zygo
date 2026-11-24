@@ -1,0 +1,9 @@
+# ML-1 — Mail config keys, the loadout pane `name` and the member-name grammar
+
+**Spec:** `docs/specs/2026-11-22-workspace-mail-design.md` M§4 M-C6, M§6, M§8 (`[features] mail`), M§11
+**Files:** `crates/zygo-config/src/schema.rs`, `crates/zygo-config/src/features.rs`, `crates/zygo-config/src/layers.rs`, `crates/zygo-config/src/check.rs`, `crates/zygo-core/src/ids.rs`, `crates/zygo-config/tests/config_layers.rs`, `crates/zygo-core/tests/core_basics.rs`
+**Consumes:** —
+**Produces:** `zygo_config::schema::MailConfig { keep: String, max_unread: u32, wake_gap: String }` (Default `"30d"`, `500`, `"30s"`), `zygo_config::schema::Config.mail: MailConfig`, `zygo_config::schema::LoadoutPane.name: Option<String>`, `zygo_config::Features.mail: bool` (default `true`), `zygo_config::schema::parse_duration(s: &str) -> Option<Duration>` (adds the unit `d`), `zygo_config::layers::USER_ONLY: [&str; 3]` (`statusline`, `update`, `mail`), `zygo_core::ids::valid_member_name(s: &str) -> bool` (`^[a-z][a-z0-9-]{0,31}$` and not reserved), `zygo_core::ids::RESERVED_MEMBER_NAMES: [&str; 2]` (`all`, `cli`)
+**Acceptance:** `cargo test -p zygo-config --test config_layers && cargo test -p zygo-core --test core_basics` → all pass, with new cases: `[mail]` defaults 30d, 500, 30s; `parse_duration("30d")` is 2592000 s; a team-layer `[mail]` is dropped with the USER_ONLY warning; a `.zygo.toml` `[mail]` is dropped; `config check` refuses a pane `name` that fails the grammar, `all`, `cli`, a name used twice in one loadout, and a `[mail]` duration that `parse_duration` refuses; `valid_member_name` accepts `elena`, `a` and a 32-byte name, and refuses `Elena`, `1a`, `-a`, a 33-byte name, `all` and `cli`
+
+## Plan
