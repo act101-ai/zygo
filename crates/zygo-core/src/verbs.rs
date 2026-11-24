@@ -16,7 +16,7 @@ pub struct VerbSpec {
     pub scope: Scope,
 }
 
-static SPECS: [VerbSpec; 17] = [
+static SPECS: [VerbSpec; 18] = [
     VerbSpec { name: "help", args: "[<verb>]", summary: "Every verb with its arguments and current value; with a verb, its details", scope: Scope::None },
     VerbSpec { name: "status", args: "", summary: "As `zygo status`", scope: Scope::None },
     VerbSpec { name: "usage", args: "", summary: "The session's savings", scope: Scope::None },
@@ -39,6 +39,7 @@ static SPECS: [VerbSpec; 17] = [
     },
     VerbSpec { name: "ls", args: "", summary: "One line per workspace with its state", scope: Scope::None },
     VerbSpec { name: "workspace", args: "", summary: "Status of this session's or this folder's workspace", scope: Scope::None },
+    VerbSpec { name: "decision", args: "ls|show|deps|check …", summary: "Decision records; /zygo:decision replies with the shell command", scope: Scope::None },
 ];
 
 pub static VERB_SPECS: &[VerbSpec] = &SPECS;
