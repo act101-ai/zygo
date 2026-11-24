@@ -1473,7 +1473,7 @@ mod tests {
         use Agent::{ClaudeCode, OpenCode};
         let cases: [(Agent, &[&str], bool, &[&str]); 6] = [
             (OpenCode, &["attach", "http://h"], true, &[]),
-            (OpenCode, &["run", "--attach", "http://h"], true, &["--attach"]),
+            (OpenCode, &["run", "--attach", "http://h"], true, &[]),
             (OpenCode, &["--pure"], true, &["--pure"]),
             (OpenCode, &["--prompt", "attach"], false, &[]),
             (ClaudeCode, &["--bare"], true, &["--bare"]),

@@ -1,6 +1,6 @@
 use std::path::Path;
 use zygo_core::Agent;
-use zygo_workspace::args::{bypass_flags, events_off, filter, filter_from, flags, has_session_arg, has_user_info, occurrences, opencode_subcommand, removable, removed_labels, session_flags, Filtered};
+use zygo_workspace::args::{bypass_flags, events_off, filter, filter_from, flags, has_session_arg, has_user_info, is_flag, occurrences, opencode_subcommand, removable, removed_labels, session_flags, Filtered};
 
 const UUID: &str = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
 const INLINE: &str = r#"{"mcpServers":{}}"#;
@@ -49,7 +49,7 @@ fn claude_removes_session_print_and_prompt_arguments() {
 fn claude_keeps_the_rest_as_typed() {
     let kept: &[&[&str]] = &[
         &["--model", "lead"], &["--model=lead"], &["--model", "-weird"], &["-n", "my name"], &["--add-dir", "a", "b", "--verbose"],
-        &["-d", "hooks"], &["--debug=hooks"], &["--debug"], &["--tmux=classic"], &["--permission-mode", "plan"],
+        &["-d", "hooks"], &["--debug=hooks"], &["--debug"], &["--permission-mode", "plan"],
         &["--dangerously-skip-permissions"], &["--allow-dangerously-skip-permissions"], &["--settings", "s.json"],
         &["--future-flag"], &["--future=1"], &["-xyz"], &["--model"],
     ];
@@ -59,11 +59,12 @@ fn claude_keeps_the_rest_as_typed() {
     }
     assert_eq!(cc(&["--add-dir", "a", "b", "--verbose", "fix it"]).kept, s(&["--add-dir", "a", "b", "--verbose"]));
     assert_eq!(cc(&["--future-flag", "x"]).kept, s(&["--future-flag"]));
-    // short clusters: a removed letter leaves the kept ones
-    assert_eq!(cc(&["-pd"]).kept, s(&["-d"]));
+    // short clusters (FIX-31 B1): a removed letter removes the whole cluster and its value
+    assert_eq!(cc(&["-pd"]).kept, s(&[]));
     assert_eq!(removable(Agent::ClaudeCode, &s(&["-pd"])), s(&["-pd"]));
-    assert_eq!(cc(&["-pdhooks"]).kept, s(&["-dhooks"]));
-    assert_eq!(cc(&["-pn", "my name"]).kept, s(&["-n", "my name"]));
+    assert_eq!(cc(&["-pdhooks"]).kept, s(&[]));
+    assert_eq!(cc(&["-pn", "my name"]).kept, s(&[]));
+    assert_eq!(cc(&["--tmux=classic"]).kept, s(&[]));
 }
 
 #[test] // AU30 OpenCode rules
@@ -84,9 +85,9 @@ fn opencode_rules() {
     for a in kept {
         assert_eq!(oc(a), Filtered { kept: s(a), dropped_flags: vec![] }, "{a:?}");
     }
-    // the Claude Code table does not apply: `-r` is an unknown flag here, `abc` a positional
-    assert_eq!(oc(&["-r", "abc"]).kept, s(&["-r"]));
-    assert_eq!(oc(&["--mcp-config", INLINE]), Filtered { kept: s(&["--mcp-config"]), dropped_flags: vec![] });
+    // the Claude Code table does not apply: -r is an unknown flag here, and OpenCode gives it the next token (FIX-31)
+    assert_eq!(oc(&["-r", "abc"]).kept, s(&["-r", "abc"]));
+    assert_eq!(oc(&["--mcp-config", INLINE]), Filtered { kept: s(&["--mcp-config", INLINE]), dropped_flags: vec![] }); // not an OpenCode flag: its value is kept as typed, as --mcp-config=<json> is
 }
 
 #[test] // AU30 content flags, W§7.2 `member.dropped_flags`, W-C7
@@ -162,21 +163,33 @@ fn fixture(rel: &str) -> String {
 fn claude_options() -> Vec<(Vec<String>, Arity)> {
     let text = fixture("claude-code/help.txt");
     let rows = text.lines().skip_while(|l| *l != "Options:").take_while(|l| *l != "Commands:").filter(|l| l.starts_with("  -"));
-    rows.map(|l| {
-        let spec = l[2..].split("  ").next().unwrap();
-        let names = spec.split_whitespace().filter(|w| w.starts_with('-')).map(|w| w.trim_end_matches(',').to_string()).collect();
-        let arity = match spec.split_whitespace().find(|w| !w.starts_with('-')) {
-            None => Arity::None,
-            Some(m) if m.starts_with('[') => Arity::Optional,
-            Some(m) if m.ends_with("...>") => Arity::Variadic,
-            Some(m) => {
-                assert!(m.starts_with('<'), "{l}");
-                Arity::Required
-            }
-        };
-        (names, arity)
-    })
-    .collect()
+    rows.map(|l| claude_spec(l[2..].split("  ").next().unwrap())).collect()
+}
+
+/// One Claude Code option text (`-n, --name <name>`): the words that start with `-` are the names (a `,` at the end is
+/// cut); the first other word is the value mark: none = boolean, `[x]` optional, `<x...>` variadic, `<x>` required.
+fn claude_spec(spec: &str) -> (Vec<String>, Arity) {
+    let names = spec.split_whitespace().filter(|w| w.starts_with('-')).map(|w| w.trim_end_matches(',').to_string()).collect();
+    let arity = match spec.split_whitespace().find(|w| !w.starts_with('-')) {
+        None => Arity::None,
+        Some(m) if m.starts_with('[') => Arity::Optional,
+        Some(m) if m.ends_with("...>") => Arity::Variadic,
+        Some(m) => {
+            assert!(m.starts_with('<'), "{spec}");
+            Arity::Required
+        }
+    };
+    (names, arity)
+}
+
+/// Every root option of the Claude Code 2.1.331 binary (`fixtures/claude-code/options-2.1.331.txt`, FIX-31): the third
+/// tab-separated field of each row that is not empty and not a `#` comment.
+fn binary_options() -> Vec<(Vec<String>, Arity)> {
+    fixture("claude-code/options-2.1.331.txt")
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| claude_spec(l.split('\t').nth(2).unwrap()))
+        .collect()
 }
 
 /// OpenCode: after `Options:`, a row is a line whose first non-space character is `-`; the names are the text up to
@@ -223,7 +236,9 @@ fn probe(agent: Agent, name: &str, arity: Arity, removed: bool) {
         (false, Arity::Variadic) => assert_eq!(f(&[name, "aa", "bb", "--model", "zz"]), s(&[name, "aa", "bb", "--model", "zz"]), "{name}"),
         (true, Arity::Required) => assert_eq!(f(&[name, "--model", "zz"]), s(&[]), "{name}"),
         (true, Arity::None | Arity::Optional) => assert_eq!(f(&[name, "zz", "--model", "m"]), s(&["--model", "m"]), "{name}"),
-        (true, Arity::Variadic) => panic!("the plan removes no variadic flag: {name}"),
+        // FIX-31 D4: --dangerously-load-development-channels is a removed variadic flag; every value up to the next
+        // flag goes with it
+        (true, Arity::Variadic) => assert_eq!(f(&[name, "aa", "bb", "--model", "zz"]), s(&["--model", "zz"]), "{name}"),
     }
 }
 
@@ -233,6 +248,26 @@ const CC_REMOVED: &[&str] = &[
 ];
 const CC_CONTENT: &[&str] = &["--agents", "--mcp-config", "--json-schema", "--plugin-url"];
 const OC_REMOVED: &[&str] = &["-c", "--continue", "-s", "--session", "--fork", "--prompt"];
+/// The hidden Claude Code 2.1.331 options that are removed with their value (FIX-31 D4 `Remove` rows), and `--remote`
+/// (a session row, as `--cloud`).
+const CC_HIDDEN_REMOVED: &[&str] = &[
+    "--append-subagent-system-prompt", "--append-subagent-system-prompt-file", "--plan-mode-instructions", "--inherit-permission-mode",
+    "--watch-artifact", "--watch-artifact-no-autoreact", "--prefill", "--deep-link-repo", "--deep-link-last-fetch", "--prefill-b64",
+    "--deep-link-cwd-b64", "--resume-session-at", "--resume-drops-turn", "--rewind-files", "--workload", "--client-data-url",
+    "--managed-settings", "--project-config-root", "--plugin-dir-no-mcp", "--messaging-socket-path",
+    "--dangerously-load-development-channels", "--agent-id", "--agent-name", "--team-name", "--agent-color", "--parent-session-id",
+    "--lead-verify-key", "--agent-type", "--sdk-url", "--runner-declares", "--session-began-as-copy", "--initialize-fields",
+    "--forward-home-settings", "--attach-serve", "--correlation-id", "--metadata", "--ref", "--on-branch", "--remote",
+];
+/// The Claude Code path flags: kept, with the value made absolute.
+const CC_PATH: &[&str] = &["--system-prompt-file", "--append-system-prompt-file"];
+/// The Claude Code 2.1.331 booleans that are removed (FIX-31 D7 table; `--bg` and `--background` are one row).
+const CC_BOOL_REMOVED: &[&str] = &[
+    "--init-only", "--desktop", "--bg", "--background", "--init", "--maintenance", "--session-mirror", "--await-claim",
+    "--await-initialize", "--enable-auth-status", "--deep-link-origin", "--reply-on-resume", "--allow-other-models",
+    "--managed-settings-in-initialize", "--host-auth-is-org-sign-in", "--ignore-persisted-trust", "--tmux",
+    "--agents-view-if-allowed", "--plan-mode-required", "--hold-repository-while-parked",
+];
 
 #[test] // AU30 "the builder classifies flags from the pinned --help"; review focus 4
 fn claude_filter_matches_pinned_help() {
@@ -244,7 +279,8 @@ fn claude_filter_matches_pinned_help() {
     // every option of the help, every name: the filter has the arity of the help
     for (names, arity) in &opts {
         for n in names.iter().filter(|n| !CC_CONTENT.contains(&n.as_str())) {
-            probe(Agent::ClaudeCode, n, *arity, CC_REMOVED.contains(&n.as_str()));
+            // --bg, --background, --desktop and --tmux are removed booleans of the pinned help (FIX-31 D7)
+            probe(Agent::ClaudeCode, n, *arity, CC_REMOVED.contains(&n.as_str()) || CC_BOOL_REMOVED.contains(&n.as_str()));
         }
     }
     // the optional-value options are these and no other; a new one in a later pin must be classified
@@ -288,39 +324,36 @@ fn short_letters(opts: &[(Vec<String>, Arity)]) -> Vec<char> {
     letters
 }
 
-/// The ASCII letters that the table of `agent` knows as a short flag, sorted. An unknown `-x` is kept and takes no
-/// value (`zz` is then a removed positional). A flag of the table is removed, or is kept with the value `zz`.
+/// The ASCII letters that the table of agent knows as a short flag, sorted: the walk reports -<letter> as a table flag.
 fn table_letters(agent: Agent) -> Vec<char> {
-    let known = |c: &char| filter(agent, &s(&[&format!("-{c}"), "zz"])).kept != s(&[&format!("-{c}")]);
+    let known = |c: &char| !occurrences(agent, &s(&[&format!("-{c}")])).is_empty();
     ('0'..='9').chain('A'..='Z').chain('a'..='z').filter(known).collect()
 }
 
 #[test] // AU30, W-C7, review focus 4: a short flag that a later pin adds must be classified before the test passes
 fn every_short_flag_in_the_pinned_help_is_classified() {
-    // An unknown letter at the start of a cluster keeps the rest of the cluster as typed, so each short flag of the
-    // help must be in the table of its agent. The exempt letters are `h` and `v` only.
+    // An unknown letter is kept as typed and takes a value only by the rule of its agent, so each short flag of the
+    // help must be in the table of its agent. The exempt letters are `h` and `v` only (FIX-31 B1).
     let claude = short_letters(&claude_options());
     assert_eq!(claude, ['c', 'd', 'h', 'n', 'p', 'r', 'v', 'w']);
     assert_eq!(table_letters(Agent::ClaudeCode), ['c', 'd', 'n', 'p', 'r', 'w']);
     let opencode = short_letters(&opencode_options());
     assert_eq!(opencode, ['c', 'h', 'm', 's', 'v']);
-    assert_eq!(table_letters(Agent::OpenCode), ['c', 'm', 's']);
-    // the help set is the table set plus the exempt letters, and nothing else
-    for (help, agent) in [(claude, Agent::ClaudeCode), (opencode, Agent::OpenCode)] {
-        let mut want = table_letters(agent);
+    assert_eq!(table_letters(Agent::OpenCode), ['c', 'f', 'm', 'p', 's', 'u']);
+    // the help set is the table set plus the exempt letters; -f, -p and -u are options of run and attach (FIX-31 D3), not of the default help
+    for (help, agent, sub) in [(claude, Agent::ClaudeCode, &[][..]), (opencode, Agent::OpenCode, &['f', 'p', 'u'][..])] {
+        let mut want: Vec<char> = table_letters(agent).into_iter().filter(|c| !sub.contains(c)).collect();
         want.extend(['h', 'v']);
         want.sort_unstable();
         assert_eq!(help, want, "{agent:?}");
     }
-    // The exempt letters: a cluster that starts with `-h` or `-v` is kept whole, with a session or print letter
-    // in it. This is safe: `-h` (help) and `-v` (version) make the agent exit before a session exists, so the saved
-    // letter after them has no effect at restore.
-    assert_eq!(cc(&["-vp"]), Filtered { kept: s(&["-vp"]), dropped_flags: vec![] });
-    assert_eq!(cc(&["-hc"]), Filtered { kept: s(&["-hc"]), dropped_flags: vec![] });
-    assert_eq!(removable(Agent::ClaudeCode, &s(&["-vp", "-hc"])), s(&[]));
-    assert_eq!(oc(&["-vc"]), Filtered { kept: s(&["-vc"]), dropped_flags: vec![] });
-    assert_eq!(oc(&["-hc"]), Filtered { kept: s(&["-hc"]), dropped_flags: vec![] });
-    assert_eq!(removable(Agent::OpenCode, &s(&["-vc", "-hc"])), s(&[]));
+    // FIX-31 B1: every letter of a cluster is looked up, so a cluster that holds a session or print letter is removed whole, also after -h or -v.
+    assert_eq!(cc(&["-vp"]), Filtered::default());
+    assert_eq!(cc(&["-hc"]), Filtered::default());
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["-vp", "-hc"])), s(&["-vp", "-hc"]));
+    assert_eq!(oc(&["-vc"]), Filtered::default());
+    assert_eq!(oc(&["-hc"]), Filtered::default());
+    assert_eq!(removable(Agent::OpenCode, &s(&["-vc", "-hc"])), s(&["-vc", "-hc"]));
 }
 
 #[test] // AU70: the four bypass forms; W§18 #33 values
@@ -376,7 +409,7 @@ fn user_info() {
 
 #[test] // W§8.3, AU30: one source for the session flags; `--` and flag values are not flags
 fn session_flags_come_from_the_table() {
-    assert_eq!(session_flags(Agent::ClaudeCode), ["-c", "--continue", "-r", "--resume", "--session-id", "--fork-session", "--from-pr", "--cloud", "--teleport"]);
+    assert_eq!(session_flags(Agent::ClaudeCode), ["-c", "--continue", "-r", "--resume", "--session-id", "--fork-session", "--from-pr", "--cloud", "--teleport", "--remote"]);
     assert_eq!(session_flags(Agent::OpenCode), ["-c", "--continue", "-s", "--session", "--fork"]);
     for a in [&["--teleport"][..], &["--resume=abc"][..], &["-pc"][..], &["--model", "opus", "-r", "x"][..], &["--session-id", "U1"][..]] {
         assert!(has_session_arg(Agent::ClaudeCode, &s(a)), "{a:?}");
@@ -635,5 +668,203 @@ fn opencode_subcommand_follows_the_opencode_1_19_6_parser() {
     ];
     for (a, want) in rows {
         assert_eq!(opencode_subcommand(&s(a)), *want, "{a:?}");
+    }
+}
+
+// ---- FIX-31: the value of a flag that the table does not hold; clusters; the complete Claude Code table ----
+
+#[test] // FIX-31, AU30: an OpenCode flag that the table does not hold takes the next token unless it starts with -
+fn an_unlisted_opencode_flag_keeps_its_value() {
+    assert_eq!(oc(&["--zzunknown", "X"]), Filtered { kept: s(&["--zzunknown", "X"]), dropped_flags: vec![] }, "--zzunknown X");
+    assert_eq!(removable(Agent::OpenCode, &s(&["--zzunknown", "X"])), s(&[]), "--zzunknown X: nothing removed");
+    assert_eq!(oc(&["--zzunknown", "X", "proj"]).kept, s(&["--zzunknown", "X"]), "--zzunknown X proj");
+    assert_eq!(removable(Agent::OpenCode, &s(&["--zzunknown", "X", "proj"])), s(&["proj"]), "--zzunknown X proj: proj removed");
+    assert_eq!(oc(&["--zzunknown", "--model", "m"]).kept, s(&["--zzunknown", "--model", "m"]), "a flag is not the value");
+    assert_eq!(oc(&["--zzunknown"]).kept, s(&["--zzunknown"]), "no next token");
+    assert_eq!(oc(&["--zzunknown=X", "proj"]).kept, s(&["--zzunknown=X"]), "= carries the value");
+    assert_eq!(oc(&["-x", "X"]).kept, s(&["-x", "X"]), "-x X");
+    assert_eq!(oc(&["-xy", "X"]).kept, s(&["-xy", "X"]), "-xy X: the last letter takes the value");
+    assert_eq!(oc(&["-r", "abc"]).kept, s(&["-r", "abc"]), "-r abc");
+    assert_eq!(oc(&["-x=X", "proj"]).kept, s(&["-x=X"]), "-x=X proj");
+    assert_eq!(oc(&["--zzunknown", "X", "--", "Y"]).kept, s(&["--zzunknown", "X"]), "--zzunknown X -- Y");
+    assert_eq!(removable(Agent::OpenCode, &s(&["--zzunknown", "X", "--", "Y"])), s(&["--", "Y"]), "--zzunknown X -- Y: removed");
+    assert_eq!(oc(&["--zzunknown", "--", "Y"]).kept, s(&["--zzunknown"]), "-- is not the value");
+    assert_eq!(removed_labels(Agent::OpenCode, &s(&["--zzunknown", "X", "proj"]), Path::new("")), s(&["<positional>"]), "labels");
+    assert_eq!(filter_from(Agent::OpenCode, &s(&["--zzunknown", "X"]), &std::env::current_dir().unwrap()), oc(&["--zzunknown", "X"]), "filter_from");
+}
+
+#[test] // FIX-31, AU30, W-C7: a boolean of an OpenCode command keeps no value; a run message is never saved
+fn an_opencode_boolean_takes_only_true_or_false() {
+    for n in [
+        "-h", "--help", "-v", "--version", "--print-logs", "--pure", "--mdns", "--auto", "--mini", "--replay", "--share", "--thinking",
+        "-i", "--interactive", "--yolo", "--dangerously-skip-permissions", "--demo", "--major", "--keep-config", "--keep-data",
+        "--dry-run", "--force", "--verbose", "--refresh", "--sanitize", "-g", "--global",
+    ] {
+        assert_eq!(oc(&[n, "msg"]).kept, s(&[n]), "{n} msg");
+        assert_eq!(removable(Agent::OpenCode, &s(&[n, "msg"])), s(&["msg"]), "{n} msg: msg removed");
+        assert_eq!(oc(&[n, "true"]).kept, s(&[n, "true"]), "{n} true");
+        assert_eq!(oc(&[n, "false"]).kept, s(&[n, "false"]), "{n} false");
+    }
+    assert_eq!(oc(&["--print-logs", "msg"]).kept, s(&["--print-logs"]), "--print-logs msg");
+    assert_eq!(oc(&["--no-x", "msg"]).kept, s(&["--no-x"]), "--no-x msg");
+    assert_eq!(removable(Agent::OpenCode, &s(&["--no-x", "msg"])), s(&["msg"]), "--no-x msg: msg removed");
+    assert_eq!(oc(&["--no-x", "true"]).kept, s(&["--no-x"]), "--no-x true");
+    assert_eq!(oc(&["--print-logs", "true", "msg"]).kept, s(&["--print-logs", "true"]), "--print-logs true msg");
+    assert_eq!(oc(&["run", "--thinking", "fix it"]).kept, s(&["--thinking"]), "run --thinking msg");
+    assert_eq!(removable(Agent::OpenCode, &s(&["run", "--thinking", "fix it"])), s(&["run", "fix it"]), "run --thinking msg: removed");
+    assert_eq!(oc(&["run", "-i", "fix it"]).kept, s(&["-i"]), "run -i msg");
+    // clusters (B1)
+    assert_eq!(oc(&["run", "-ci", "fix it"]), Filtered::default(), "run -ci msg");
+    assert_eq!(removable(Agent::OpenCode, &s(&["run", "-ci", "fix it"])), s(&["run", "-ci", "fix it"]), "run -ci msg: removed");
+    assert_eq!(oc(&["run", "-fi", "msg"]), Filtered::default(), "run -fi msg");
+    assert_eq!(removable(Agent::OpenCode, &s(&["run", "-fi", "msg"])), s(&["run", "-fi", "msg"]), "run -fi msg: removed");
+    assert_eq!(oc(&["-ih", "msg"]).kept, s(&["-ih"]), "-ih msg: a cluster of booleans only");
+    assert_eq!(removable(Agent::OpenCode, &s(&["-ih", "msg"])), s(&["msg"]), "-ih msg: msg removed");
+    assert_eq!(oc(&["-xi", "X"]).kept, s(&["-xi"]), "-xi X: the last letter is a boolean");
+    assert_eq!(removable(Agent::OpenCode, &s(&["-xi", "X"])), s(&["X"]), "-xi X: X removed");
+    assert_eq!(oc(&["-ix", "X"]).kept, s(&["-ix", "X"]), "-ix X: the last letter is not a boolean");
+}
+
+#[test] // FIX-31 D3, AU30, W-C7: no secret, URL user info or user text of an OpenCode subcommand is saved
+fn opencode_secret_options_are_removed_with_their_value() {
+    let gone: &[&[&str]] = &[
+        &["-p", "pw"], &["--password", "pw"], &["--password=pw"], &["-ppw"], &["--password", "-pw"],
+        &["-u", "me"], &["--username", "me"],
+        &["--attach", "https://u:p@h"], &["--attach=https://u:p@h"], &["--token", "ghp_x"], &["--url", "https://u:p@h"],
+        &["--env", "A=1", "B=2"], &["--env", "A=1", "--env", "B=2"], &["--env=A=1"],
+        &["--header", "Authorization: Bearer x"], &["--header", "A: 1", "--header", "B: 2"], &["--header=A: 1"],
+        &["-f", "a.txt", "b.txt"], &["--title", "fix it"], &["--dir", "/x"], &["--description", "do it"], &["--path", "p"],
+        &["--query", "q"], &["--params", "{}"], &["--event", "e"], &["--cwd", "/x"],
+    ];
+    for a in gone {
+        assert_eq!(oc(a), Filtered::default(), "{a:?}");
+        assert_eq!(removable(Agent::OpenCode, &s(a)), s(a), "{a:?}: removed");
+    }
+    assert_eq!(oc(&["attach", "http://h", "-p", "SECRET", "--mini"]).kept, s(&["--mini"]), "attach -p");
+    assert_eq!(oc(&["run", "--attach", "https://u:p@h", "msg"]), Filtered::default(), "run --attach");
+    // clusters (B1)
+    assert_eq!(oc(&["run", "-ip", "SECRET"]), Filtered::default(), "run -ip SECRET");
+    assert_eq!(removable(Agent::OpenCode, &s(&["run", "-ip", "SECRET"])), s(&["run", "-ip", "SECRET"]), "run -ip SECRET: removed");
+    assert_eq!(oc(&["-pi", "SECRET"]), Filtered::default(), "-pi SECRET");
+    assert_eq!(removable(Agent::OpenCode, &s(&["-pi", "SECRET"])), s(&["-pi", "SECRET"]), "-pi SECRET: removed");
+    assert_eq!(removed_labels(Agent::OpenCode, &s(&["-p", "SECRET"]), Path::new("")), s(&["-p"]), "label -p");
+    assert_eq!(removed_labels(Agent::OpenCode, &s(&["--attach", "https://u:p@h"]), Path::new("")), s(&["--attach"]), "label --attach");
+    assert_eq!(removed_labels(Agent::OpenCode, &s(&["-ip", "SECRET"]), Path::new("")), s(&["-p"]), "label -ip");
+}
+
+#[test] // FIX-31 D1: one value function; only the boolean set differs, by the parse context
+fn filter_and_opencode_subcommand_share_one_value_rule() {
+    for f in ["--zzunknown", "-x", "-xy", "-xh", "--zzunknown=V", "-x=V", "--no-zz", "--no-replay", "--print-logs", "--pure", "-h", "--help", "-v", "--version"] {
+        for x in ["X", "true", "false"] {
+            assert_eq!(
+                removable(Agent::OpenCode, &s(&[f, x])).is_empty(),
+                opencode_subcommand(&s(&[f, x, "attach"])) == Some((2, "attach")),
+                "{f} {x}"
+            );
+        }
+    }
+    for f in ["--mini", "--mdns", "--auto", "--thinking"] {
+        assert_eq!(removable(Agent::OpenCode, &s(&[f, "X"])), s(&["X"]), "{f} X: a command boolean takes no value in the filter");
+        assert_eq!(opencode_subcommand(&s(&[f, "X", "attach"])), Some((2, "attach")), "{f} X attach: not a global boolean");
+    }
+}
+
+#[test] // FIX-31 D2, AU30: the table is complete for 2.1.331; Claude Code stops at a flag it does not register
+fn an_unlisted_claude_code_flag_takes_no_value() {
+    assert_eq!(cc(&["--zzunknown", "X"]), Filtered { kept: s(&["--zzunknown"]), dropped_flags: vec![] }, "--zzunknown X");
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["--zzunknown", "X"])), s(&["X"]), "--zzunknown X: X removed");
+    assert_eq!(cc(&["--zzunknown", "true"]).kept, s(&["--zzunknown"]), "--zzunknown true");
+    assert_eq!(cc(&["--verbose", "fix it"]).kept, s(&["--verbose"]), "--verbose msg");
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["--verbose", "fix it"])), s(&["fix it"]), "--verbose msg: msg removed");
+    assert_eq!(cc(&["-x", "X"]).kept, s(&["-x"]), "-x X");
+    // clusters (B1)
+    assert_eq!(cc(&["-pd", "hooks"]), Filtered::default(), "-pd hooks");
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["-pd", "hooks"])), s(&["-pd", "hooks"]), "-pd hooks: removed");
+    assert_eq!(removed_labels(Agent::ClaudeCode, &s(&["-pd", "hooks"]), Path::new("")), s(&["-p", "-d"]), "-pd hooks: labels");
+    assert_eq!(cc(&["-cx", "X"]), Filtered::default(), "-cx X");
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["-cx", "X"])), s(&["-cx", "X"]), "-cx X: removed");
+    assert_eq!(cc(&["-xd", "hooks"]).kept, s(&["-xd", "hooks"]), "-xd hooks: the last letter -d takes its optional value");
+    assert_eq!(cc(&["-xyz", "X"]).kept, s(&["-xyz"]), "-xyz X");
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["-xyz", "X"])), s(&["X"]), "-xyz X: X removed");
+}
+
+#[test] // FIX-31 D4, AU30
+fn a_hidden_claude_code_setting_keeps_its_value() {
+    let a = ["--max-turns", "5", "--model", "opus"];
+    assert_eq!(cc(&a), Filtered { kept: s(&a), dropped_flags: vec![] }, "--max-turns 5 --model opus");
+    assert_eq!(removable(Agent::ClaudeCode, &s(&a)), s(&[]), "--max-turns 5 --model opus: nothing removed");
+    assert_eq!(cc(&["--max-turns", "5", "fix it"]).kept, s(&["--max-turns", "5"]), "--max-turns 5 msg");
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["--max-turns", "5", "fix it"])), s(&["fix it"]), "--max-turns 5 msg: msg removed");
+    assert_eq!(cc(&["--max-turns=5"]).kept, s(&["--max-turns=5"]), "--max-turns=5");
+    assert_eq!(cc(&["--channels", "a", "b", "--model", "m"]).kept, s(&["--channels", "a", "b", "--model", "m"]), "--channels a b");
+    assert_eq!(cc(&["--rc", "name", "fix it"]).kept, s(&["--rc", "name"]), "--rc name msg");
+    assert_eq!(cc(&["--rc", "--model", "m"]).kept, s(&["--rc", "--model", "m"]), "--rc --model m");
+}
+
+#[test] // FIX-31 D4, AU30, W-C7
+fn a_hidden_claude_code_secret_option_drops_its_value() {
+    let gone: &[&[&str]] = &[
+        &["--prefill", "fix it"], &["--prefill-b64", "Zm9v"], &["--lead-verify-key", "1.k"], &["--sdk-url", "wss://u:p@h"],
+        &["--sdk-url=wss://u:p@h"], &["--managed-settings", "{\"x\":1}"], &["--rewind-files", "m1"], &["--workload", "cron"],
+        &["--forward-home-settings", "true"], &["--dangerously-load-development-channels", "a", "b"], &["--remote", "fix it"],
+    ];
+    for a in gone {
+        assert_eq!(cc(a), Filtered::default(), "{a:?}");
+        assert_eq!(removable(Agent::ClaudeCode, &s(a)), s(a), "{a:?}: removed");
+    }
+    assert_eq!(cc(&["--prefill", "fix it", "--model", "m"]).kept, s(&["--model", "m"]), "--prefill msg --model m");
+    assert_eq!(removed_labels(Agent::ClaudeCode, &s(&["--lead-verify-key", "K"]), Path::new("")), s(&["--lead-verify-key"]), "label");
+    assert!(has_session_arg(Agent::ClaudeCode, &s(&["--remote", "X"])), "--remote is a session argument, as --cloud");
+}
+
+#[test] // FIX-31 D4, D6, D7, AU30: every root option of Claude Code 2.1.331 filters by its arity and class
+fn every_option_of_the_claude_code_binary_is_classified() {
+    let opts = binary_options();
+    assert_eq!(opts.len(), 139, "the root options of the 2.1.331 binary");
+    let mut booleans: Vec<&str> =
+        opts.iter().filter(|o| o.1 == Arity::None).flat_map(|o| o.0.iter().map(String::as_str)).filter(|n| is_flag(Agent::ClaudeCode, n)).collect();
+    booleans.sort_unstable();
+    assert_eq!(
+        booleans,
+        [
+            "--agents-view-if-allowed", "--allow-other-models", "--await-claim", "--await-initialize", "--background", "--bare", "--bg",
+            "--continue", "--deep-link-origin", "--desktop", "--enable-auth-status", "--fork-session", "--hold-repository-while-parked",
+            "--host-auth-is-org-sign-in", "--ignore-persisted-trust", "--init", "--init-only", "--maintenance",
+            "--managed-settings-in-initialize", "--plan-mode-required", "--print", "--reply-on-resume", "--session-mirror", "--tmux",
+            "-c", "-p",
+        ],
+        "the boolean table rows"
+    );
+    for (names, arity) in opts.iter().filter(|o| o.1 != Arity::None) {
+        for n in names {
+            assert!(is_flag(Agent::ClaudeCode, n), "{n} has no table row");
+            if !CC_CONTENT.contains(&n.as_str()) && !CC_PATH.contains(&n.as_str()) {
+                probe(Agent::ClaudeCode, n, *arity, CC_REMOVED.contains(&n.as_str()) || CC_HIDDEN_REMOVED.contains(&n.as_str()));
+            }
+        }
+    }
+    for (names, _) in opts.iter().filter(|o| o.1 == Arity::None) {
+        for n in names {
+            if is_flag(Agent::ClaudeCode, n) && n != "--bare" {
+                assert_eq!(cc(&[n, "zz", "--model", "m"]).kept, s(&["--model", "m"]), "{n}: a boolean in the table is removed");
+            } else {
+                assert_eq!(cc(&[n, "zz"]).kept, s(&[n]), "{n}: a boolean not in the table is kept, with no value");
+            }
+        }
+    }
+    for n in CC_PATH {
+        assert_eq!(cc(&[n, "x.md"]).kept, s(&[n, &abs("x.md")]), "{n}");
+    }
+}
+
+#[test] // FIX-31 D7, AU30: a removed boolean takes no value; the next token is its own argument
+fn a_removed_claude_code_boolean_keeps_the_next_token_apart() {
+    for n in CC_BOOL_REMOVED {
+        assert_eq!(cc(&[n, "--model", "opus"]), Filtered { kept: s(&["--model", "opus"]), dropped_flags: vec![] }, "{n} --model opus");
+        assert_eq!(removable(Agent::ClaudeCode, &s(&[n, "--model", "opus"])), s(&[n]), "{n} --model opus: removed");
+        assert_eq!(cc(&[n, "--verbose"]).kept, s(&["--verbose"]), "{n} --verbose");
+        assert_eq!(removable(Agent::ClaudeCode, &s(&[n, "fix it"])), s(&[n, "fix it"]), "{n} msg: removed");
+        assert_eq!(cc(&[&format!("{n}=x")]).kept, s(&[]), "{n}=x");
+        assert_eq!(removed_labels(Agent::ClaudeCode, &s(&[n, "--model", "m"]), Path::new("")), s(&[n]), "{n}: labels");
     }
 }

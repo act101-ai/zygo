@@ -291,8 +291,8 @@ Produces: — (no public item is added or changed). Private items added in `args
 
 ### Steps
 
-- [ ] 1. Premise re-check, no edit. Confirm P1 and P2 (`act101` `references` on `filter`, `filter_from`, `removed_labels`, `removable`, `opencode_subcommand`, `is_flag`, `session_flags`, `has_session_arg`) and PD5.
-- [ ] 2. Tests first, `crates/zygo-workspace/tests/args.rs`.
+- [x] 1. Premise re-check, no edit. Confirm P1 and P2 (`act101` `references` on `filter`, `filter_from`, `removed_labels`, `removable`, `opencode_subcommand`, `is_flag`, `session_flags`, `has_session_arg`) and PD5.
+- [x] 2. Tests first, `crates/zygo-workspace/tests/args.rs`.
   - **Imports and helpers:**
     - Add `is_flag` to the `use zygo_workspace::args::{…}` line.
     - Split the row parser of `claude_options` (`:162-179`) into `fn claude_spec(spec: &str) -> (Vec<String>, Arity)`. It takes the names (the words that start with `-`, a `,` at the end cut) and the arity (first other word: none → `None`, `[` → `Optional`, ends with `...>` → `Variadic`, else `assert!(m.starts_with('<'), "{spec}")` and `Required`).
@@ -392,7 +392,7 @@ Produces: — (no public item is added or changed). Private items added in `args
     - T8 at the exact set (left `["--bare", "--continue", "--fork-session", "--print", "-c", "-p"]`);
     - T9 at `--agents-view-if-allowed` or the first name of `CC_BOOL_REMOVED` (left kept `[n, "--model", "opus"]`).
     - Every other test passes.
-- [ ] 3. Tests first, the existing tests of `crates/zygo-workspace/tests/args.rs` that hold the old result:
+- [x] 3. Tests first, the existing tests of `crates/zygo-workspace/tests/args.rs` that hold the old result:
   - `claude_keeps_the_rest_as_typed`:
     - remove `&["--tmux=classic"], ` from the `kept` list;
     - replace `// short clusters: a removed letter leaves the kept ones` and the four assertions after it with `// short clusters (FIX-31 B1): a removed letter removes the whole cluster and its value` and `assert_eq!(cc(&["-pd"]).kept, s(&[]));`, `assert_eq!(removable(Agent::ClaudeCode, &s(&["-pd"])), s(&["-pd"]));`, `assert_eq!(cc(&["-pdhooks"]).kept, s(&[]));`, `assert_eq!(cc(&["-pn", "my name"]).kept, s(&[]));`, `assert_eq!(cc(&["--tmux=classic"]).kept, s(&[]));`.
@@ -408,7 +408,7 @@ Produces: — (no public item is added or changed). Private items added in `args
   - `claude_filter_matches_pinned_help`: `probe(Agent::ClaudeCode, n, *arity, CC_REMOVED.contains(&n.as_str()));` becomes `probe(Agent::ClaudeCode, n, *arity, CC_REMOVED.contains(&n.as_str()) || CC_BOOL_REMOVED.contains(&n.as_str()));`, with the comment `// --bg, --background, --desktop and --tmux are removed booleans of the pinned help (FIX-31 D7)`.
   - `session_flags_come_from_the_table`: the Claude Code list becomes `["-c", "--continue", "-r", "--resume", "--session-id", "--fork-session", "--from-pr", "--cloud", "--teleport", "--remote"]`.
   - Run `cargo test -p zygo-workspace --locked --test args`. Expected: these five are also red, each at its first changed assertion.
-- [ ] 4. Tests first, outside the package:
+- [x] 4. Tests first, outside the package:
   - `crates/zygo/src/cmd/member.rs`, `record_start_sets_events_off_from_the_arguments_of_this_start`: `(OpenCode, &["run", "--attach", "http://h"], true, &["--attach"])` becomes `(OpenCode, &["run", "--attach", "http://h"], true, &[])`.
   - `crates/zygo/tests/workspace_member.rs`, `a_saved_attach_flag_without_run_is_not_events_off`:
     - the doc comment becomes `/// FIX-24 P12, AU27 known limit 8; diff review round 2, finding 5: a member that an older zygo saved from run --attach <url> keeps only ["--attach"]; its ws run start (the real record_start path) runs the TUI, computes events_off = false over a stale true, saves no --attach (FIX-31 D3), and down counts the quiet member as idle.`;
@@ -428,7 +428,7 @@ Produces: — (no public item is added or changed). Private items added in `args
     - `cargo test -p zygo --locked --lib cmd::member` → red at the `record_start` test (left `["--attach"]`);
     - `cargo test -p zygo --locked --test workspace_member -- a_saved_attach_flag_without_run_is_not_events_off a_hand_start_whose_agent_sends_no_member_events_is_saved_with_events_off a_remote_argument_is_not_preassigned` → all three red with tmux (left `["--attach"]`; the third at the `--session-id=` assertion); without tmux, record the skip line;
     - `cargo test -p zygo-launch --locked --test claude_code session_args_follow_w4_and_the_pinned_help` → red at the list.
-- [ ] 5. Code, `crates/zygo-workspace/src/args.rs`:
+- [x] 5. Code, `crates/zygo-workspace/src/args.rs`:
   - a. After `OPENCODE_GLOBAL_BOOLEANS` (`:407`), add `const OPENCODE_COMMAND_BOOLEANS: &[&str] = &["-h", "--help", "-v", "--version", "--print-logs", "--pure", "--mdns", "--auto", "--mini", "--replay", "--share", "--thinking", "-i", "--interactive", "--yolo", "--dangerously-skip-permissions", "--demo", "--major", "--keep-config", "--keep-data", "--dry-run", "--force", "--verbose", "--refresh", "--sanitize", "-g", "--global"];`. Its doc: `/// The boolean options of every OpenCode 1.19.6 command that the OpenCode table does not hold (the [boolean] rows of fixtures/opencode/help.txt and the boolean options of each subcommand builder in the binary). In the restored default command these take no value; a boolean of another command, which the default command does not know, loses only a value that it ignores (AU30, FIX-31). --no-<x> is not listed (opencode_takes_value gives it no value), and -f is not (the -f/--file row decides it).`
   - b. Add `fn opencode_takes_value(token: &str, after: Option<&str>, booleans: &[&str]) -> bool` with the rule of D1 and the doc `/// Whether the OpenCode 1.19.6 flag token takes after, the next token, as its value (FIX-24 matrix; FIX-31): = or a --no- prefix: never; the name is the token for a long flag and -<last letter> for a short token, because the value goes to the last letter; a name in booleans takes only true or false; any other name takes the next token unless it starts with -. The one value rule of opencode_subcommand and of the AU30 walk.`
   - c. Add `fn unlisted_takes_value(agent: Agent, token: &str, after: Option<&str>) -> bool`. Its body is the two arms `Agent::ClaudeCode => false,` and `Agent::OpenCode => opencode_takes_value(token, after, OPENCODE_COMMAND_BOOLEANS),` (exact, for M3). Its doc: `/// Whether a flag (or the last letter of a cluster, as -<letter>) that the table of agent does not hold takes after as its value (AU30, FIX-31). Claude Code: never; the table holds every option with a value of 2.1.331, and Claude Code stops at a flag that it does not register. OpenCode: opencode_takes_value with OPENCODE_COMMAND_BOOLEANS.`
@@ -540,12 +540,12 @@ Produces: — (no public item is added or changed). Private items added in `args
     - Each row is `flag(&["<long name>"], Arity::<arity>, Class::<class>), // <reason>`, for example `flag(&["--max-turns"], Arity::Required, Class::Keep), // plain setting: a number` and `flag(&["--prefill"], Arity::Required, Class::Remove), // prompt text`.
   - j. `CLAUDE_CODE`: directly after `flag(&["-p", "--print"], Arity::None, Class::Remove),` (`:58`), add the comment `// removed booleans (FIX-31 D7): one action and exit, an action that a restore would repeat, data of one launch, or the companion of a removed value flag` and the 19 rows of the D7 table, each `flag(&[<names>], Arity::None, Class::Remove), // <rule and short reason>`. For example `flag(&["--init-only"], Arity::None, Class::Remove), // (b) runs the Setup and SessionStart hooks, then exits` and `flag(&["--bg", "--background"], Arity::None, Class::Remove), // (b) starts the session in the background and returns`.
   - Run `cargo test -p zygo-workspace --locked --test args` → all pass.
-- [ ] 6. Run the callers' tests:
+- [x] 6. Run the callers' tests:
   - `cargo test -p zygo --locked --lib cmd::member` → all pass;
   - `cargo test -p zygo --locked --test workspace_member` → all pass;
   - `cargo test -p zygo --locked --test loadout_secrets` → all pass;
   - `cargo test -p zygo-launch --locked --test opencode --test stub_launch --test claude_code` → all pass.
-- [ ] 7. Mutation proofs. A scratchpad script makes one exact edit in `crates/zygo-workspace/src/args.rs`, runs `cargo test -p zygo-workspace --locked --test args`, and restores the file. Each run must exit 101 with a test panic and no compile error.
+- [x] 7. Mutation proofs. A scratchpad script makes one exact edit in `crates/zygo-workspace/src/args.rs`, runs `cargo test -p zygo-workspace --locked --test args`, and restores the file. Each run must exit 101 with a test panic and no compile error.
 
   | # | Old text | New text | Must go red |
   |---|---|---|---|
@@ -562,13 +562,13 @@ Produces: — (no public item is added or changed). Private items added in `args
   | M11 | `flag(&["--remote"], Arity::Optional, Class::Session), // hidden alias of --cloud (FIX-31 minor 2)` | `flag(&["--remote"], Arity::Optional, Class::Remove), // hidden alias of --cloud (FIX-31 minor 2)` | T7 (`has_session_arg`), `session_flags_come_from_the_table` |
 
   (In M4, `\|` is a table escape for `|`.) Record each result in the node.
-- [ ] 8. Spec, `docs/specs/2026-11-20-workspaces-design.md` (final text under "Spec text"): AU30 edits A1, A2, A4 and A5; W§7.2 edit B1; W§8.3 edit D1; W§16 edit C1; four change-log rows at the end of the table.
-- [ ] 9. Package floor for the three packages that the node changes (`zygo-workspace`, `zygo`, `zygo-launch`; the controller runs the full workspace floor at merge):
+- [x] 8. Spec, `docs/specs/2026-11-20-workspaces-design.md` (final text under "Spec text"): AU30 edits A1, A2, A4 and A5; W§7.2 edit B1; W§8.3 edit D1; W§16 edit C1; four change-log rows at the end of the table.
+- [x] 9. Package floor for the three packages that the node changes (`zygo-workspace`, `zygo`, `zygo-launch`; the controller runs the full workspace floor at merge):
   - `cargo test -p zygo-workspace -p zygo -p zygo-launch --locked --no-fail-fast` → all pass;
   - `cargo clippy -p zygo-workspace -p zygo -p zygo-launch --all-targets --locked -- -D warnings` → clean.
 
   Record the counts.
-- [ ] 10. Write `### Results` in this node: the red runs of steps 2-4 with their messages, M1-M11, the counts of step 9, and any drift. Commit with the trailers of the implementer rules.
+- [x] 10. Write `### Results` in this node: the red runs of steps 2-4 with their messages, M1-M11, the counts of step 9, and any drift. Commit with the trailers of the implementer rules.
 
 ### Spec text
 
@@ -643,3 +643,67 @@ Change-log rows (append at the end of the table):
   - Spec text.
 
   Bodies are signatures except where a mutation needs the exact text (`unlisted_takes_value`'s two arms, the 5e branch) and the cluster branch. The step count stays 10.
+
+### Results
+
+Run 2026-11-23 in `.worktrees/phase2/FIX-31` (branch `worktree-zygo-phase-2--FIX-31`, from `1fb699a`: FIX-30, E1 and E2 merged). `CARGO_TARGET_DIR=.../.worktrees/phase2/fix31-target`.
+
+**Premise check.** `crates/zygo-workspace/src/args.rs` and `crates/zygo-workspace/tests/args.rs` did not change after `e49d5c5`: every line of P1 is at its cited line (`walk` `:256`, the branches `:270-273`, `:282-285`, `:298-333`, `:334-342`, `OPENCODE_GLOBAL_BOOLEANS` `:407`, the `opencode_subcommand` doc `:409-414` and value rule `:426-437`, `CLAUDE_CODE` `:49-102`, `OPENCODE` `:105-121`, `settle` `:213`), and `claude_options` is at `:162-179`. P2 callers: `act101` `references` on `opencode_subcommand` gives `args.rs:396` and `launcher.rs:717`; on `session_flags` gives `tests/args.rs:379`, `crates/zygo-launch/tests/claude_code.rs:1732`, `crates/zygo-launch/tests/opencode.rs:1236`. `references` on `filter` is name-level only (no rust-analyzer; 125 kB of same-name hits), so the callers of `filter`, `filter_from` and `removed_labels` were read from the `use` lines and calls: `member.rs:397`, `up.rs:670`, `config.rs:104`. The fixture `fixtures/claude-code/options-2.1.331.txt` (139 options) and both scan scripts were already on the branch. The spec anchors of step 8 are all present one time each, on lines 171, 293, 394 and 653.
+
+**Adaptations.**
+- A-1 (W§16 row line): the plan cites `:652` for the `crates/zygo-workspace/src/args.rs` row. FIX-30 added a line, so the row is at `:653` (`| \`crates/zygo-workspace/src/args.rs\` (new) | AU30 argument filter; …`). The C1 edit anchors on the quoted text, so it applies unchanged. The last change-log row is now line 1051 (the FIX-30 AU54 row); the four FIX-31 rows go after it.
+- A-2 (PD5 lines): the `record_start` case is at `crates/zygo/src/cmd/member.rs:1476` (`(OpenCode, &["run", "--attach", "http://h"], true, &["--attach"]),`), not `:1460-1462`. The `workspace_member.rs` cases are at `:486-507` and `:590`, as cited.
+- A-3 (P2 line): `fresh_member` calls `filter_from` at `crates/zygo-workspace/src/up.rs:670`, not `:664` (E1/E2/FIX-30 added lines above it).
+- A-4 (`probe` in `tests/args.rs`): T8 step 3 calls `probe(.., true)` for every option with a value in `CC_HIDDEN_REMOVED`, and the D4 table makes `--dangerously-load-development-channels` `Variadic` and `Remove`. The old arm `(true, Arity::Variadic) => panic!("the plan removes no variadic flag: {name}")` would panic for it. I replaced the panic with the assertion `f(&[name, "aa", "bb", "--model", "zz"]) == ["--model", "zz"]` (every value up to the next flag goes with the flag). No other caller reaches that arm.
+- A-5 (stale comment in `every_short_flag_in_the_pinned_help_is_classified`): the opening comment said "An unknown letter at the start of a cluster keeps the rest of the cluster as typed", which B1 makes false. I changed it to "An unknown letter is kept as typed and takes a value only by the rule of its agent, so each short flag of the help must be in the table of its agent. The exempt letters are `h` and `v` only (FIX-31 B1)." No assertion changed.
+- A-6 (clippy, step 5f): `cargo clippy … -D warnings` refused the nested `if let Some(letter) = … { if unlisted_takes_value(…) { … } }` of the planned cluster body (`clippy::collapsible_if`). I collapsed it into one `if let … && unlisted_takes_value(…)` (edition 2024 let chain), with the same behaviour. So the M2 old text became `&& unlisted_takes_value(agent, &format!("-{letter}"), args.get(next).map(String::as_str))` and the new text `&& false && unlisted_takes_value(…)`. I ran all 11 mutations again on the final code; the results below are of that run.
+- A-7 (table doc comments): the plan gives the new doc text of `CLAUDE_CODE` and `OPENCODE` without backticks; I used it as given. The other planned docs are written with backticks around code names, as the file does.
+- A-8 (commits): the plan names one commit, at step 10. I made one commit for the code, tests and spec (steps 2-9) and one for these results.
+
+**Red runs.**
+- Step 2 (`cargo test -p zygo-workspace --locked --test args`): 24 passed, 9 failed, each at the planned assertion: T1 `--zzunknown X` (left kept `["--zzunknown"]`); T2 `-h true` (left `["-h"]`); T3 `["-p", "pw"]` (left kept `["-p"]`); T4 `--zzunknown X`; T5 `-pd hooks` (left kept `["-d", "hooks"]`); T6 first assertion (left kept `["--max-turns", "--model", "opus"]`); T7 `["--prefill", "fix it"]` (left kept `["--prefill"]`); T8 the exact set (left `["--bare", "--continue", "--fork-session", "--print", "-c", "-p"]`); T9 `--init-only --model opus` (the first name of `CC_BOOL_REMOVED`; left kept `["--init-only", "--model", "opus"]`). Every other test passed.
+- Step 3: 19 passed, 14 failed. The 5 changed tests failed at their first changed assertion: `claude_keeps_the_rest_as_typed` (`-pd`: left `["-d"]`), `opencode_rules` (`-r abc`: left `["-r"]`), `claude_filter_matches_pinned_help` (`--bg`: left `["--bg", "--model", "m"]`), `session_flags_come_from_the_table` (no `--remote`), `every_short_flag_in_the_pinned_help_is_classified` (left `['c', 'm', 's']`).
+- Step 4: `cargo test -p zygo --locked --lib cmd::member` failed at the `record_start` case (left `(true, ["--attach"])`). The three `workspace_member` tests ran with tmux and failed: `a_saved_attach_flag_without_run_is_not_events_off` (left `(["--attach"], false)`), `a_hand_start_whose_agent_sends_no_member_events_is_saved_with_events_off` (left `(OpenCode, true, ["--attach"])`), `a_remote_argument_is_not_preassigned` at the `--session-id=` assertion ("zygo adds no --session-id: …"). `session_args_follow_w4_and_the_pinned_help` failed at the list (no `--remote`).
+
+**Green runs.** Step 5: `--test args` 33 passed. Step 6: `--lib cmd::member` 31 passed; `--test workspace_member` 44 passed; `--test loadout_secrets` 22 passed; `zygo-launch` `--test claude_code` 62 passed, `--test opencode` 95 passed + 1 ignored (and 1 passed in its second binary), `--test stub_launch` 19 passed.
+
+**Mutations (step 7, on the final code).** Each run exited 101 with test panics and no compile error.
+
+| # | Must go red | Failed tests (first message) |
+|---|---|---|
+| M1 | T1 | T1 (`--zzunknown X`), T2 (`--help true`), T4 (`--zzunknown X`), `opencode_rules` |
+| M2 | T1 (`-xy X`) | T1 at `-x X` (the assertion before `-xy X`; a one-letter `-x` takes the cluster branch too), T2 (`-h true`), T4 (`-x X`), `opencode_rules` |
+| M3 | T5 | T5 (`--zzunknown X`), T8 (`--debug-to-stderr: a boolean not in the table is kept, with no value`), `claude_filter_matches_pinned_help`, `claude_keeps_the_rest_as_typed` |
+| M4 | T4 (`--no-zz true`), parser test | T4 at `-xh X` (it comes before `--no-zz` in the loop; the old rule gives `-xh` the value `X`), `opencode_subcommand_follows_the_opencode_1_19_6_parser` (`--no-replay attach`) |
+| M5 | T2 | T2 (`--thinking msg`), T4 (`--thinking X`) |
+| M6 | T3 | T3 (`["-p", "pw"]`), `every_short_flag_in_the_pinned_help_is_classified` |
+| M7 | T6, T8 | T6 (`--max-turns 5 --model opus`), T8 (`--max-turns has no table row`) |
+| M8 | T7, T8 | T7 (`["--prefill", "fix it"]`), T8 (`--prefill`) |
+| M9 | T9, T8 | T9 (`--init-only --model opus`), T8 (`--init-only: a boolean in the table is removed`) |
+| M10 | T3 (`-ip SECRET`), T5 (`-pd hooks`) | T3, T5 (`-pd hooks`), T2 (`run -ci msg`), and 8 more cluster tests |
+| M11 | T7, `session_flags_come_from_the_table` | T7 (`--remote is a session argument, as --cloud`), `session_flags_come_from_the_table` |
+
+M2 and M4 go red in the planned tests, at an earlier assertion than the plan names.
+
+**Measurements.**
+
+| Command | Exit | Counts |
+|---|---|---|
+| `cargo test -p zygo-workspace --locked` (Acceptance) | 0 | 407 passed, 0 failed, 2 ignored (`--test args`: 33 passed, with the six Acceptance cases in T1, T2, T3, T5 and T6) |
+| `cargo test -p zygo-workspace -p zygo -p zygo-launch --locked --no-fail-fast` | 0 | 1404 passed, 0 failed, 10 ignored |
+| `cargo clippy -p zygo-workspace -p zygo -p zygo-launch --all-targets --locked -- -D warnings` | 0 | no warning (after A-6; the first run gave one `collapsible_if` error) |
+| `cargo test --workspace --locked --no-run` | 0 | — |
+| `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` (N2 name scan skipped: `N2_FORBIDDEN_NAMES` not set) |
+
+tmux is installed here, so the `workspace_member` tests ran, not skipped. No failure is open.
+
+## Merge
+
+Merged 2026-11-23 into `worktree-zygo-phase-2` (from `49bb90f`; node branch `worktree-zygo-phase-2--FIX-31` at `021bcf6`) with `git merge --no-ff`. No conflict. Checks on the merged tree (`CARGO_TARGET_DIR=.../.worktrees/phase2/fix31-target`):
+
+| Command | Exit | Counts |
+|---|---|---|
+| `cargo test -p zygo-workspace -p zygo -p zygo-launch --locked --no-fail-fast` | 0 | 1404 passed, 0 failed, 10 ignored |
+| `cargo clippy -p zygo-workspace -p zygo -p zygo-launch --all-targets --locked -- -D warnings` | 0 | no warning |
+| `cargo test --workspace --locked --no-run` | 0 | — |
+| `sh scripts/check-premises.sh` | 0 | `ok (P1 … PW16)` (the N2 name scan is skipped because `N2_FORBIDDEN_NAMES` is not set) |

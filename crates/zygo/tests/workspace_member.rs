@@ -483,9 +483,24 @@ fn au30_an_own_session_argument_is_not_preassigned_or_saved() { // W§8.3, AU30
     }
 }
 
-/// FIX-24 P12, AU27 known limit 8; diff review round 2, finding 5: a member saved from `run --attach <url>` keeps only
-/// `["--attach"]`; its `ws run` start (the real `record_start` path) runs the TUI, computes `events_off = false` over a
-/// stale `true`, and `down` counts the quiet member as idle.
+#[test] // FIX-31 minor 2, W§8.3: --remote is a session argument, as --cloud
+fn a_remote_argument_is_not_preassigned() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[], &mut |_| {});
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "r0");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--", "--remote", "X"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let a = argv(&out);
+    assert!(a.iter().any(|t| t == "--remote") && a.iter().any(|t| t == "X"), "{a:?}");
+    assert!(!a.iter().any(|t| t.starts_with("--session-id=")), "zygo adds no --session-id: {a:?}");
+    assert_eq!(member(&h, &pane_key(&h, &pane)).unwrap().launch.args, Vec::<String>::new());
+}
+
+/// FIX-24 P12, AU27 known limit 8; diff review round 2, finding 5: a member that an older zygo saved from `run --attach
+/// <url>` keeps only `["--attach"]`; its `ws run` start (the real `record_start` path) runs the TUI, computes
+/// `events_off = false` over a stale `true`, saves no `--attach` (FIX-31 D3), and `down` counts the quiet member as idle.
 #[test]
 fn a_saved_attach_flag_without_run_is_not_events_off() {
     let Some(h) = Harness::new() else { return };
@@ -504,7 +519,7 @@ fn a_saved_attach_flag_without_run_is_not_events_off() {
     std::fs::write(h.root().join("run.go"), "").unwrap();
     assert!(started(&c), "the ws run start did not reach the agent");
     let m = member(&h, KEY).unwrap();
-    assert_eq!((m.launch.args.clone(), m.launch.events_off), (vec!["--attach".to_string()], false));
+    assert_eq!((m.launch.args.clone(), m.launch.events_off), (Vec::<String>::new(), false));
     // No activity.json and a quiet proxy: idle unless the record says events off.
     let o = cli(&h, &["down", "--timeout", "5s", "--wait", "--", "app"], &[]);
     let err = text(&o.stderr);
@@ -587,7 +602,7 @@ fn a_hand_start_whose_agent_sends_no_member_events_is_saved_with_events_off() {
     up_state(&h, &[], &mut |_| {});
     let cases: [(Agent, &[&str], &[&str]); 3] = [
         (Agent::OpenCode, &["opencode", "--", "attach", "http://127.0.0.1:1"], &[]),
-        (Agent::OpenCode, &["opencode", "--", "run", "--attach", "http://127.0.0.1:1"], &["--attach"]),
+        (Agent::OpenCode, &["opencode", "--", "run", "--attach", "http://127.0.0.1:1"], &[]),
         (Agent::ClaudeCode, &["claude", "--", "--bare"], &["--bare"]),
     ];
     for (i, (kind, args, want_args)) in cases.into_iter().enumerate() {
