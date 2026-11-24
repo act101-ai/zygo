@@ -99,6 +99,20 @@ impl std::fmt::Display for NotMember {
 
 impl std::error::Error for NotMember {}
 
+/// The error a session callback returns to stop the launch before the agent starts (workspaces design AU34, W-C9;
+/// FIX-32 B3): the launcher logs it as any callback error, spawns no agent, and returns exit code 1 (or the code of a
+/// signal that stopped it). The callback prints its own line first.
+#[derive(Debug)]
+pub struct StopLaunch(pub String);
+
+impl std::fmt::Display for StopLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StopLaunch {}
+
 /// The agent session that the launcher starts or resumes (W§8.3, AU3). The launcher puts the adapter's
 /// `preassign_args` or `resume_args` before the user's arguments, so before any `--`; for OpenCode, right after a
 /// `run` subcommand.
@@ -425,11 +439,15 @@ impl Launcher {
                 .map(|hc| Heartbeat::start(hc, session.clone(), heartbeat_every(&opts), Box::new(move |m| beat_out.line(m))));
         }
         let guard = Finish { sd: sd.clone(), end: Some(end), paths: &opts.paths, _pid: pid };
-        // AU34: the session directory exists and the agent is not started; an error never stops the launch (C6).
+        // AU34: the session directory exists and the agent is not started; an error does not stop the launch (C6),
+        // except `StopLaunch` (W-C9, FIX-32 B3).
         if let Some(call) = on_session
             && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref(), &probe_env)
         {
             sd.append_log(&format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+            if e.downcast_ref::<StopLaunch>().is_some() {
+                return signals::or_stopped(1);
+            }
             // AU34: a `NotMember` callback makes this launch a v1 launch.
             if e.downcast_ref::<NotMember>().is_some() {
                 opts.member = None;

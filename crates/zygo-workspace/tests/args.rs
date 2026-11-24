@@ -70,6 +70,9 @@ fn claude_keeps_the_rest_as_typed() {
 #[test] // AU30 OpenCode rules
 fn opencode_rules() {
     let gone: &[&[&str]] = &[
+        // `-sses_1` is removed whole, but not because `-s` takes `ses_1`: by the yargs-parser rule (OpenCode 1.19.6
+        // @125729461) each `s` is set with no value, so the cluster holds the session flag three times (FIX-32 B1; see
+        // opencode_clusters_follow_the_yargs_rule)
         &["-c"], &["--continue"], &["-s", "ses_1"], &["--session", "ses_1"], &["--session=ses_1"], &["-sses_1"], &["-cs", "ses_1"],
         &["--fork"], &["--prompt", "do it"], &["--prompt=do it"], &["--prompt", "--fork"],
         &["proj"], &["run", "fix it"], &["attach", "https://u:p@h"], &["--", "proj"],
@@ -88,6 +91,73 @@ fn opencode_rules() {
     // the Claude Code table does not apply: -r is an unknown flag here, and OpenCode gives it the next token (FIX-31)
     assert_eq!(oc(&["-r", "abc"]).kept, s(&["-r", "abc"]));
     assert_eq!(oc(&["--mcp-config", INLINE]), Filtered { kept: s(&["--mcp-config", INLINE]), dropped_flags: vec![] }); // not an OpenCode flag: its value is kept as typed, as --mcp-config=<json> is
+}
+
+/// The long name and the values of each table flag that the walk of `agent` meets in `a`.
+fn occ(agent: Agent, a: &[&str]) -> Vec<(&'static str, Vec<String>)> {
+    occurrences(agent, &s(a)).into_iter().map(|o| (o.name, o.values)).collect()
+}
+
+#[test] // FIX-32 B1: OpenCode reads a short cluster by the yargs-parser rule (opencode 1.19.6 @125729461, quoted in
+        // docs/work/phase2/nodes/FIX-32.md); Claude Code keeps Commander's rule
+fn opencode_clusters_follow_the_yargs_rule() {
+    let none: Vec<String> = vec![];
+    // `-mc`: `m` before a word character is set with no value; the last letter `c` is --continue
+    assert_eq!(occ(Agent::OpenCode, &["-mc"]), [("--model", none.clone()), ("--continue", none.clone())]);
+    assert_eq!(oc(&["-mc"]), Filtered::default());
+    assert_eq!(removable(Agent::OpenCode, &s(&["-mc"])), s(&["-mc"]));
+    assert!(has_session_arg(Agent::OpenCode, &s(&["-mc"])), "ws run restores no --session for these args (ws.rs launch_member)");
+    // `-ms ses_1`: `m` has no value; the last letter `s` takes the next token
+    assert_eq!(occ(Agent::OpenCode, &["-ms", "ses_1"]), [("--model", none.clone()), ("--session", s(&["ses_1"]))]);
+    assert_eq!(oc(&["-ms", "ses_1"]), Filtered::default());
+    assert!(has_session_arg(Agent::OpenCode, &s(&["-ms", "ses_1"])));
+    // `-sses_1`: s, s, e, s and `_` are each followed by a word character, so each is set with no value; the last
+    // letter `1` takes the next token by its arity (there is none)
+    assert_eq!(occ(Agent::OpenCode, &["-sses_1"]), [("--session", none.clone()), ("--session", none.clone()), ("--session", none.clone())]);
+    assert_eq!(oc(&["-sses_1"]), Filtered::default());
+    assert!(has_session_arg(Agent::OpenCode, &s(&["-sses_1"])));
+    // `=`: the letter takes the rest after it
+    assert_eq!(occ(Agent::OpenCode, &["-m=zygo/lead"]), [("--model", s(&["zygo/lead"]))]);
+    assert_eq!(oc(&["-m=zygo/lead"]).kept, s(&["-m=zygo/lead"]));
+    // an alphabetic letter before a number takes the number
+    assert_eq!(occ(Agent::OpenCode, &["-m5"]), [("--model", s(&["5"]))]);
+    assert_eq!(oc(&["-m5"]).kept, s(&["-m5"]));
+    // a non-word character: the letter takes the rest of the token, that character included
+    assert_eq!(occ(Agent::OpenCode, &["-m/x"]), [("--model", s(&["/x"]))]);
+    assert_eq!(occ(Agent::OpenCode, &["-m-"]), [("--model", s(&["-"]))]);
+    // the loop does not see the last character of the token as the next character: `/` is the last letter here
+    assert_eq!(occ(Agent::OpenCode, &["-m/"]), [("--model", none.clone())]);
+    assert_eq!(oc(&["-m/", "v"]).kept, s(&["-m/", "v"]));
+    // a letter that took the rest ends the cluster: the next token is not a value
+    assert_eq!(oc(&["-m=a", "fix it"]).kept, s(&["-m=a"]));
+    assert_eq!(oc(&["-cm=a"]), Filtered::default());
+    // an unlisted letter follows the same rule: `x` takes `=1`, so no letter is left to take the next token
+    assert_eq!(oc(&["-x=1", "fix it"]).kept, s(&["-x=1"]));
+    assert_eq!(oc(&["-xy", "v"]).kept, s(&["-xy", "v"]));
+    // Claude Code keeps Commander's rule: a value letter takes the rest of the token and ends the cluster
+    assert_eq!(occ(Agent::ClaudeCode, &["-ncx"]), [("--name", s(&["cx"]))]);
+    assert_eq!(cc(&["-ncx"]).kept, s(&["-ncx"]));
+    assert!(!has_session_arg(Agent::ClaudeCode, &s(&["-ncx"])));
+    assert_eq!(occ(Agent::ClaudeCode, &["-rabc"]), [("--resume", s(&["abc"]))]);
+    assert_eq!(occ(Agent::ClaudeCode, &["-d=x"]), [("--debug", s(&["=x"]))]);
+}
+
+#[test] // FIX-32 B2, W-C7, AU30: an inline JSON value of --settings is removed with the flag; a file path is kept as typed
+fn settings_keeps_a_path_and_removes_inline_json() {
+    let json = r#"{"env":{"K":"v"}}"#;
+    assert_eq!(cc(&["--settings", json]), Filtered { kept: vec![], dropped_flags: s(&["--settings"]) });
+    assert_eq!(cc(&["--settings", json, "--model", "m"]).kept, s(&["--model", "m"]));
+    assert_eq!(removable(Agent::ClaudeCode, &s(&["--settings", json])), s(&["--settings", json]));
+    let here = std::env::current_dir().unwrap();
+    assert_eq!(removed_labels(Agent::ClaudeCode, &s(&["--settings", json]), &here), ["--settings"]);
+    assert_eq!(removed_labels(Agent::ClaudeCode, &s(&[&format!("--settings= {json}")]), &here), ["--settings"]);
+    assert_eq!(cc(&[&format!("--settings={json}")]), Filtered { kept: vec![], dropped_flags: s(&["--settings"]) });
+    assert_eq!(cc(&["--settings", &format!(" \n{json}")]).kept, s(&[]));
+    // a file path is kept as typed: not made absolute, no existence check
+    for a in [&["--settings=/abs/s.json"][..], &["--settings", "./s.json"][..], &["--settings", "s.json"][..], &["--settings"][..]] {
+        assert_eq!(cc(a), Filtered { kept: s(a), dropped_flags: vec![] }, "{a:?}");
+        assert_eq!(removed_labels(Agent::ClaudeCode, &s(a), &here), Vec::<String>::new(), "{a:?}");
+    }
 }
 
 #[test] // AU30 content flags, W§7.2 `member.dropped_flags`, W-C7
@@ -444,7 +514,12 @@ fn occurrences_give_flag_values_before_double_dash() {
     // `--bare` is in the table now; the filter keeps it as typed, as before
     assert_eq!(cc(&["--bare", "--bare=x", "--model", "m"]).kept, s(&["--bare", "--bare=x", "--model", "m"]));
     let got: Vec<(&str, Vec<String>)> = occurrences(Agent::OpenCode, &s(&["-m", "zygo/lead", "-sses_1", "--", "-s"])).into_iter().map(|o| (o.name, o.values)).collect();
-    assert_eq!(got, vec![("--model", s(&["zygo/lead"])), ("--session", s(&["ses_1"]))]);
+    // FIX-32 B1: by the yargs-parser rule (OpenCode 1.19.6 @125729461) `-sses_1` is three `-s` with no value; `-s=ses_1`
+    // gives `-s` the value
+    let none: Vec<String> = vec![];
+    assert_eq!(got, vec![("--model", s(&["zygo/lead"])), ("--session", none.clone()), ("--session", none.clone()), ("--session", none)]);
+    let got: Vec<(&str, Vec<String>)> = occurrences(Agent::OpenCode, &s(&["-s=ses_1", "--", "-s"])).into_iter().map(|o| (o.name, o.values)).collect();
+    assert_eq!(got, vec![("--session", s(&["ses_1"]))]);
 }
 
 // ---- removed_labels (FIX-27 D8) ----

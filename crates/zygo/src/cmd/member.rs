@@ -13,7 +13,7 @@ use zygo_core::session_view::Member;
 use zygo_core::Agent;
 use zygo_launch::env::Env;
 use zygo_launch::claude_code::{simple_mode, ClaudeCode};
-use zygo_launch::launcher::{resume_argv, AgentSession, LaunchOutcome, NotMember};
+use zygo_launch::launcher::{resume_argv, AgentSession, LaunchOutcome, NotMember, StopLaunch};
 use zygo_launch::opencode::OpenCode;
 use zygo_launch::{AgentAdapter, LaunchOpts, Launcher};
 use zygo_proxy::client::{SessionClient, SessionSettings};
@@ -201,9 +201,18 @@ impl Callback {
         };
         let pane = self.pane.clone();
         let launch = self.launch.clone();
+        let sessions = self.paths.sessions_dir.clone();
+        // W-C9 (FIX-32 B3): the line of a live launcher on the key, when the locked write below found one.
+        let mut refused: Option<String> = None;
         let written = match &self.hand {
             None => self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
                 let Some(rec) = ws.members.get_mut(&pane) else { anyhow::bail!("no member record for pane {pane}") };
+                // W-C9: never resume a conversation whose launcher is live; the live rule of the hand start (`conflict`).
+                if let Some(z) = live_session(&sessions, rec) {
+                    let line = Conflict::Live { id: rec.agent_session.clone().unwrap_or(z) }.line(&pane);
+                    refused = Some(line.clone());
+                    anyhow::bail!(line);
+                }
                 record_start(rec, &launch, &start);
                 Ok(())
             }),
@@ -216,6 +225,12 @@ impl Callback {
             },
         };
         let ws = match written {
+            // W-C9: the record stays as it was and the launcher spawns no agent (`StopLaunch`).
+            Err(StateError::Refused(_)) if refused.is_some() => {
+                let line = refused.unwrap_or_default();
+                print_err(&format!("{line}\n"));
+                return Err(anyhow::Error::new(StopLaunch(line)));
+            }
             Ok(Some(ws)) => ws,
             Ok(None) => anyhow::bail!("no workspace state for {}; no member record written", self.ws_id),
             // The record is gone (`ws forget-pane`): no member, so nothing to see (D3).

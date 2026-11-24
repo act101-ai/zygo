@@ -882,10 +882,12 @@ const MAX_SHELL_NEST: u32 = 4;
 
 /// FIX-21, §13.4: the first Claude attribution in a message command of `cmd` ([`message_files`]), as its label and the
 /// place it is in; `dir` is the directory `cmd` starts in (`None`: not known). For each message command, in order: its
-/// arguments, quotes removed ("a command argument"); the heredoc bodies of it and of the commands piped into it ("a
-/// heredoc"); each file it names, read whole ("the file `<path>`"; not `-` or `/dev/stdin`; a relative file only when
-/// its directory is known, [`segment_dirs`]). A shell `-c` string ([`shell_string`]) is searched as a command. The rest
-/// of `cmd` is not searched (round 2 F8).
+/// arguments, quotes removed ("a command argument"); the heredoc bodies of it and of every command before it in `cmd`
+/// ("a heredoc"; FIX-32 B4); each file it names (not `-` or `/dev/stdin`): when a command before it writes that file
+/// ([`written_files`]), the words of the last such command and of the commands piped into it ("the command that writes
+/// `<path>`"), and the file is not read; else the file read whole ("the file `<path>`"; a relative file only when its
+/// directory is known, [`segment_dirs`]). A shell `-c` string ([`shell_string`]) is searched as a command. The rest of
+/// `cmd` is not searched (round 2 F8).
 fn find_attribution(cmd: &str, dir: Option<&Path>, nest: u32) -> Option<(&'static str, String)> {
     let segs = segments(cmd);
     let dirs = segment_dirs(&segs, dir.map(Path::to_path_buf));
@@ -903,17 +905,31 @@ fn find_attribution(cmd: &str, dir: Option<&Path>, nest: u32) -> Option<(&'stati
         if let Some(label) = claude_attribution(&w.join("\n")) {
             return Some((label, "a command argument".into()));
         }
-        let mut k = i;
-        let mut bodies: Vec<&String> = s.heredocs.iter().collect();
-        while k > 0 && segs[k].join == Join::Pipe {
-            k -= 1;
-            bodies.extend(&segs[k].heredocs);
-        }
-        if let Some(label) = bodies.iter().find_map(|b| claude_attribution(b)) {
+        // FIX-32 B4 (b): the heredoc bodies of this command and of every command before it in `cmd` (any join).
+        let bodies = s.heredocs.iter().chain(segs[..i].iter().flat_map(|e| &e.heredocs));
+        if let Some(label) = bodies.into_iter().find_map(|b| claude_attribution(b)) {
             return Some((label, "a heredoc".into()));
         }
         for f in files.iter().filter(|f| *f != "-" && *f != "/dev/stdin") {
             let p = fdir.join(f);
+            // FIX-32 B4 (a): a file that a command before this one writes is what that command writes, not what is on
+            // disk now. Its heredoc bodies were searched above; its words, and those of the commands piped into it, are
+            // searched here, and the file is not read.
+            let writer = (0..i).rev().find(|&k| {
+                let base = dirs[k].as_deref().unwrap_or(Path::new(""));
+                written_files(&segs[k]).iter().any(|t| same_file(&base.join(t), &p))
+            });
+            if let Some(mut k) = writer {
+                let mut texts = vec![segs[k].words.join("\n")];
+                while k > 0 && segs[k].join == Join::Pipe {
+                    k -= 1;
+                    texts.push(segs[k].words.join("\n"));
+                }
+                if let Some(label) = texts.iter().find_map(|t| claude_attribution(t)) {
+                    return Some((label, format!("the command that writes `{}`", p.display())));
+                }
+                continue;
+            }
             if (dirs[i].is_some() || p.is_absolute())
                 && let Some(label) = file_attribution(&p)
             {
@@ -922,6 +938,70 @@ fn find_attribution(cmd: &str, dir: Option<&Path>, nest: u32) -> Option<(&'stati
         }
     }
     None
+}
+
+/// FIX-32 B4: the file that the redirection word `x` writes: `>`, `>>`, `>|`, `&>` or `&>>`, with an optional file
+/// descriptor number before it (`1>`, `2>>`). `Some("")` when the file is the next word; `None` for any other word, a
+/// read (`<`) and a duplication (`>&1`, `2>&1`).
+fn redirect_target(x: &str) -> Option<&str> {
+    let r = x.strip_prefix('&').unwrap_or_else(|| x.trim_start_matches(|c: char| c.is_ascii_digit()));
+    let r = r.strip_prefix('>')?;
+    let r = r.strip_prefix('>').unwrap_or(r);
+    let r = r.strip_prefix('|').unwrap_or(r);
+    if r.starts_with('&') { None } else { Some(r) }
+}
+
+/// FIX-32 B4: the files that segment `s` writes, as typed: each redirection target ([`redirect_target`]), and, when its
+/// program ([`program_words`]) is `tee` (which may be a path), each operand of `tee` (its options skipped; `--` ends
+/// them; a redirection word and its file are not operands).
+fn written_files(s: &Segment) -> Vec<String> {
+    let w = &s.words;
+    let mut out = Vec::new();
+    // The indices of the redirection words and of the words they take (the file of an operator that stands alone).
+    let mut redirection = HashSet::new();
+    let op = |x: &str| x.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&').to_string();
+    let mut k = 0;
+    while let Some(x) = w.get(k) {
+        if let Some(t) = redirect_target(x) {
+            redirection.insert(k);
+            if t.is_empty() {
+                k += 1;
+                redirection.insert(k);
+                out.extend(w.get(k).cloned());
+            } else {
+                out.push(t.to_string());
+            }
+        } else if op(x).starts_with(['<', '>']) {
+            // a read or a duplication, which writes no file
+            redirection.insert(k);
+            if op(x).chars().all(|c| matches!(c, '<' | '>' | '&' | '|')) {
+                k += 1;
+                redirection.insert(k);
+            }
+        }
+        k += 1;
+    }
+    let p = program_words(s);
+    if p.first().is_some_and(|x| x == "tee" || x.ends_with("/tee")) {
+        let from = w.len() - p.len() + 1;
+        let mut options = true;
+        for (at, x) in w.iter().enumerate().skip(from) {
+            if redirection.contains(&at) {
+                continue;
+            }
+            if options && x == "--" {
+                options = false;
+            } else if !(options && x.len() > 1 && x.starts_with('-')) {
+                out.push(x.clone());
+            }
+        }
+    }
+    out
+}
+
+/// FIX-32 B4: `a` and `b` name the same path, `.` parts left out (`./msg.txt` is `msg.txt`). No link is followed.
+fn same_file(a: &Path, b: &Path) -> bool {
+    a.components().filter(|c| *c != Component::CurDir).eq(b.components().filter(|c| *c != Component::CurDir))
 }
 
 /// FIX-21 round 2 F9: the first Claude attribution in the regular file `p`, read whole, one line at a time; `None` for
