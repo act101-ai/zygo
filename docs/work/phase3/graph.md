@@ -191,7 +191,7 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-1 | Record format: parse and validate one DDR file, and `docs/decisions/` in place (README with a valid example) | — | IN-PROGRESS | judgment | checkout .worktrees/phase3/DR-1 · PR #17 |
+| DR-1 | Record format: parse and validate one DDR file, and `docs/decisions/` in place (README with a valid example) | — | DONE | judgment | 26be671 9612477 85e0c43 · decision_record 30/30 · PR #17 |
 | DR-2 | Record set: directory reader, set checks and the dependency graph | DR-1 | TODO | implementation | — |
 | DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | TODO | implementation | — |
 | DR-4 | `zygo decision new`: write a record template | DR-3 | TODO | implementation | — |
@@ -331,3 +331,4 @@ Session text (T, SX nodes):
 |------|-------|
 | 2026-11-24 | Graph assembled from seven track fragments (DR, ML, MS, OS, WD, RT, SX); 133 nodes; DR-1 root. |
 | 2026-11-24 | Audit round 1 remediated (9 findings): golden test target, operator nodes mechanical with Files, byte-preserving mail delivery, SX-4 tools, test counts, ML-8/ML-14 judgment, DR-11 bounds, runnable live commands, citations. |
+| 2026-11-24 | DR-1 done. Review round 1, 7 findings: F1, F2, F3, F6, F7 fixed (9612477); F4a, F4b, F5 rejected (reasons in nodes/DR-1.md). D§6.2 example commit fixed to 40 hex (3511ad5). Windows-only code compiles only in CI. |

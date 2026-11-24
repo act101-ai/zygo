@@ -54,7 +54,7 @@ Readings of the spec that this plan fixes (each is the plain text of D§6.3/D§6
 
 ### Steps
 
-- [ ] **1. Write the failing tests.** Create `crates/zygo-work/tests/decision_record.rs` with this content (26 tests):
+- [x] **1. Write the failing tests.** Create `crates/zygo-work/tests/decision_record.rs` with this content (26 tests):
 
 ```rust
 //! DR-1: one decision record file (D§6.1–D§6.5, D§6.8).
@@ -325,17 +325,17 @@ fn fifo_is_malformed_and_not_opened() {
 }
 ```
 
-- [ ] **2. Run and see them fail.** `cargo test -p zygo-work --locked --test decision_record` fails to compile with `unresolved import zygo_work::decisions` (E0432).
+- [x] **2. Run and see them fail.** `cargo test -p zygo-work --locked --test decision_record` fails to compile with `unresolved import zygo_work::decisions` (E0432).
 
-- [ ] **3. Move `toml` to the normal dependencies.** In `crates/zygo-work/Cargo.toml` move `toml.workspace = true` from `[dev-dependencies]` to `[dependencies]` (after `ulid.workspace = true`). No new dependency: `toml` 1.2.1 is a workspace dependency (`Cargo.toml:66`) and the `zygo-work` entry of `Cargo.lock` already lists `toml` (it holds dev-dependencies too). `Cargo.lock` does not change; `--locked` proves it in step 10. `toml_edit` is not needed here (DR-5 edits).
+- [x] **3. Move `toml` to the normal dependencies.** In `crates/zygo-work/Cargo.toml` move `toml.workspace = true` from `[dev-dependencies]` to `[dependencies]` (after `ulid.workspace = true`). No new dependency: `toml` 1.2.1 is a workspace dependency (`Cargo.toml:66`) and the `zygo-work` entry of `Cargo.lock` already lists `toml` (it holds dev-dependencies too). `Cargo.lock` does not change; `--locked` proves it in step 10. `toml_edit` is not needed here (DR-5 edits).
 
-- [ ] **4. Add the modules.** `crates/zygo-work/src/lib.rs`: add `pub mod decisions;` after `pub mod current;`. Create `crates/zygo-work/src/decisions/mod.rs` with `//! Delegated decision records (spec docs/specs/2026-11-24-decision-records-design.md).` and `pub mod record;`. Create `crates/zygo-work/src/decisions/record.rs` with a `//!` line naming D§6.
+- [x] **4. Add the modules.** `crates/zygo-work/src/lib.rs`: add `pub mod decisions;` after `pub mod current;`. Create `crates/zygo-work/src/decisions/mod.rs` with `//! Delegated decision records (spec docs/specs/2026-11-24-decision-records-design.md).` and `pub mod record;`. Create `crates/zygo-work/src/decisions/record.rs` with a `//!` line naming D§6.
 
-- [ ] **5. Constants, enums, ids and names** in `record.rs`: `DIR`, `FILL_MARKER`, `Kind`, `Status`, `Class` with `parse`/`name` from the name strings above. `valid_id`: `DDR-` then exactly 26 characters of `0-9A-HJKMNP-TV-Z` (D§6.1). `name_kind`: `Record(<name without .md>)` when the name is `valid_id(stem)` plus `.md`; else `Malformed` when it starts with `DDR-` and ends with `.md`; else `Other` (D§6.8).
+- [x] **5. Constants, enums, ids and names** in `record.rs`: `DIR`, `FILL_MARKER`, `Kind`, `Status`, `Class` with `parse`/`name` from the name strings above. `valid_id`: `DDR-` then exactly 26 characters of `0-9A-HJKMNP-TV-Z` (D§6.1). `name_kind`: `Record(<name without .md>)` when the name is `valid_id(stem)` plus `.md`; else `Malformed` when it starts with `DDR-` and ends with `.md`; else `Other` (D§6.8).
 
-- [ ] **6. `Record`** as in Produces, with a `///` line per field naming its D§6.3 key. `body` is the text after the closing `+++` line and that line's `\n`.
+- [x] **6. `Record`** as in Produces, with a `///` line per field naming its D§6.3 key. `body` is the text after the closing `+++` line and that line's `\n`.
 
-- [ ] **7. `parse_record(stem, bytes)`.** Structural checks in this order; the first that fails returns `Err` with that one line:
+- [x] **7. `parse_record(stem, bytes)`.** Structural checks in this order; the first that fails returns `Err` with that one line:
   1. `bytes.len() > 65536` → `over 64 KiB`.
   2. not UTF-8 → `not UTF-8`.
   3. Line 1 (up to the first `\n`, one trailing `\r` removed) is not exactly `+++` → `line 1 is not +++`. An empty file fails here.
@@ -366,13 +366,13 @@ fn fifo_is_malformed_and_not_opened() {
   - Section faults, order `Finding`, `Choice`, `Alternatives rejected`, `Evidence`, `Cost to reverse`; `Finding` only when `kind` is `accepted-limit`, `compromise` or `open-finding`. In the body (lines split on `\n`, one trailing `\r` removed), a section starts at the first line whose `trim_end()` is `## <name>` and runs to the next line that starts with `## ` or the end. No such line → `missing section ## <name>`. Every content line blank, or any content line holds `FILL_MARKER` → `empty section ## <name>`.
   - Agreement faults, reported only when each key they read is absent or valid: `status = fixed` and no `fixed_by` → `fixed without fixed_by`; `status = overturned` and `review_note` absent or `""` → `overturned without review_note`; `promoted_to` present and `promotion` absent → `promoted_to without promotion`.
 
-- [ ] **8. `read_record(path)`**, never opening a link, FIFO, directory or a file over 64 KiB (D§6.8):
+- [x] **8. `read_record(path)`**, never opening a link, FIFO, directory or a file over 64 KiB (D§6.8):
   1. `fs::symlink_metadata(path)`; error → `cannot read: <e>`; a link → `is a link; not read`; not `is_file()` → `is not a regular file; not read`; `len() > 65536` → `over 64 KiB`.
   2. Open read-only; on unix add `custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)` (pattern of `crates/zygo-hooks/src/workspace.rs:97-101`). Open error: `ELOOP` on unix → `is a link; not read`, else `cannot read: <e>`. The opened handle's `metadata()` not `is_file()` → `is not a regular file; not read`.
   3. Read at most 65537 bytes (`Read::take(65537)`), so a file that grew after step 1 still hits the size fault.
   4. `parse_record(<path.file_stem() as UTF-8, else "">, &bytes)`.
 
-- [ ] **9. Write `docs/decisions/README.md`** with exactly this content (the D§6.2 example with `commit` cut to 40 hex characters; see the premise note):
+- [x] **9. Write `docs/decisions/README.md`** with exactly this content (the D§6.2 example; see the premise note):
 
 ~~~~markdown
 # Decision records
@@ -416,10 +416,23 @@ What a reversal changes, and which later work it touches.
 ```
 ~~~~
 
-- [ ] **10. Run and see them pass.** `cargo test -p zygo-work --locked --test decision_record` → 26 passed on unix (24 on Windows: the two `#[cfg(unix)]` tests compile out).
+- [x] **10. Run and see them pass.** `cargo test -p zygo-work --locked --test decision_record` → 26 passed on unix (24 on Windows: the two `#[cfg(unix)]` tests compile out).
 
-- [ ] **11. Verify the workspace.** `cargo test --workspace --locked --no-fail-fast` → all pass (the `test` job of `.github/workflows/ci.yml:45`). CI runs no `cargo clippy` (`.github/workflows/ci.yml`, `release.yml`), so clippy is not a gate. `git diff --stat main` names only the six files of **Files** (no `Cargo.lock`).
+- [x] **11. Verify the workspace.** `cargo test --workspace --locked --no-fail-fast` → all pass (the `test` job of `.github/workflows/ci.yml:45`). CI runs no `cargo clippy` (`.github/workflows/ci.yml`, `release.yml`), so clippy is not a gate. `git diff --stat main` names only the six files of **Files** and this node file (no `Cargo.lock`).
 
-- [ ] **12. Commit** on the node branch: message `feat(work): parse and check one decision record (DR-1)`, then the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit of your brief>`, each on its own line. No Claude attribution.
+- [x] **12. Commit** on the node branch: message `feat(work): parse and check one decision record (DR-1)`, then the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit of your brief>`, each on its own line. No Claude attribution.
 
-Premise note: the D§6.2 example in the spec has `commit = "6e7fe2f0c1d2e3f4a5b6c7d8e9f00112233445566"`, which is 41 hex characters; D§6.3 allows 40 or 64. Copied as is, it is malformed (`bad key commit`). The README uses the first 40 characters. The spec text needs the same one-character fix (operator decision; not in this node's **Files**).
+Premise note: the D§6.2 example in the spec now has a 40-character `commit` (commit 3511ad5) and matches the README.
+
+### Review round 1
+
+- **F1** FIFO test did not prove the FIFO is never opened: fixed (9612477). The test chmods the FIFO to 000 and reads again; an open would give `cannot read: …` (EACCES), so only the lstat path gives `is not a regular file; not read`. The test fails when the lstat `is_file()` check is removed. The link test stays as it is: `O_NOFOLLOW` gives `ELOOP` before the permission check.
+- **F2** Windows open followed a link swapped in after lstat: fixed (9612477). On Windows the open adds `FILE_FLAG_OPEN_REPARSE_POINT` (`0x0020_0000`), and the opened handle is refused with `is a link; not read` when `file_type().is_symlink()`, and with `is not a regular file; not read` when not `is_file()`.
+- **F3** Only `ELOOP` gave the link text: fixed (9612477). A failed open also gives `is a link; not read` when a second lstat sees a link (other BSDs give `EMLINK` or `EFTYPE`), as `open_met_link` in `crates/zygo-hooks/src/workspace.rs:72-80`. The `ELOOP` fast path stays.
+- **F4a** hex case: rejected. git writes lower-case hex, and one canonical form lets readers compare commits by string equality.
+- **F4b** TOML native dates: rejected. D§6.2 writes dates as strings, and one wire type keeps every reader in agreement.
+- **F5** code fences: rejected. D§6.8 defines a section as a `## ` heading line and does not define Markdown parsing. The first match is the conservative reading.
+- **F6** CRLF records got a smaller front matter limit: fixed (9612477). The 8 KiB limit is measured to the end of the closing `+++`, without `\r` or `\n`. New test `crlf_front_matter_limit_equals_lf`. Changed test `front_matter_not_closed_within_8_kib`: it encoded the old rule (`+++\n` ending at 8192 valid, 8193 refused); now `+++\n` ending at 8193 (`+++` at 8192) is valid and 8194 is refused.
+- **F7** missing tests: fixed (9612477). New tests `leading_bom_is_line_one_fault`, `duplicate_key_is_not_toml`, `plus_line_in_multiline_string_closes_early`, and a whitespace-only `## Finding` case in `finding_required_for_three_kinds`. Each passed when written.
+
+`cargo test -p zygo-work --locked --test decision_record` → 30 passed on unix.
