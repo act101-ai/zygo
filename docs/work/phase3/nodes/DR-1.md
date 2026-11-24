@@ -423,3 +423,16 @@ What a reversal changes, and which later work it touches.
 - [x] **12. Commit** on the node branch: message `feat(work): parse and check one decision record (DR-1)`, then the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit of your brief>`, each on its own line. No Claude attribution.
 
 Premise note: the D§6.2 example in the spec now has a 40-character `commit` (commit 3511ad5) and matches the README.
+
+### Review round 1
+
+- **F1** FIFO test did not prove the FIFO is never opened: fixed (9612477). The test chmods the FIFO to 000 and reads again; an open would give `cannot read: …` (EACCES), so only the lstat path gives `is not a regular file; not read`. The test fails when the lstat `is_file()` check is removed. The link test stays as it is: `O_NOFOLLOW` gives `ELOOP` before the permission check.
+- **F2** Windows open followed a link swapped in after lstat: fixed (9612477). On Windows the open adds `FILE_FLAG_OPEN_REPARSE_POINT` (`0x0020_0000`), and the opened handle is refused with `is a link; not read` when `file_type().is_symlink()`, and with `is not a regular file; not read` when not `is_file()`.
+- **F3** Only `ELOOP` gave the link text: fixed (9612477). A failed open also gives `is a link; not read` when a second lstat sees a link (other BSDs give `EMLINK` or `EFTYPE`), as `open_met_link` in `crates/zygo-hooks/src/workspace.rs:72-80`. The `ELOOP` fast path stays.
+- **F4a** hex case: rejected. git writes lower-case hex, and one canonical form lets readers compare commits by string equality.
+- **F4b** TOML native dates: rejected. D§6.2 writes dates as strings, and one wire type keeps every reader in agreement.
+- **F5** code fences: rejected. D§6.8 defines a section as a `## ` heading line and does not define Markdown parsing. The first match is the conservative reading.
+- **F6** CRLF records got a smaller front matter limit: fixed (9612477). The 8 KiB limit is measured to the end of the closing `+++`, without `\r` or `\n`. New test `crlf_front_matter_limit_equals_lf`. Changed test `front_matter_not_closed_within_8_kib`: it encoded the old rule (`+++\n` ending at 8192 valid, 8193 refused); now `+++\n` ending at 8193 (`+++` at 8192) is valid and 8194 is refused.
+- **F7** missing tests: fixed (9612477). New tests `leading_bom_is_line_one_fault`, `duplicate_key_is_not_toml`, `plus_line_in_multiline_string_closes_early`, and a whitespace-only `## Finding` case in `finding_required_for_three_kinds`. Each passed when written.
+
+`cargo test -p zygo-work --locked --test decision_record` → 30 passed on unix.
