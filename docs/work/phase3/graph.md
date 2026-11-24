@@ -209,7 +209,7 @@ Session text (T, SX nodes):
 | ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | DONE | implementation | c3c7337 da263a1 · config_layers 90p/0f/16i, core_basics 24p/0f/3i; floor green · PR #23 |
 | ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | DONE | judgment | 2550471 e7fed8c 24c9124 · mail_store 38p/0f/0i; floor green · PR #24 |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
-| OS-1 | Result meta records the session that stored it | DR-1 | PLANNED | implementation | plan 149d9ed · PR #27 |
+| OS-1 | Result meta records the session that stored it | DR-1 | IN-PROGRESS | implementation | .worktrees/phase3/OS-1-node · PR #27 |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | TODO | judgment | — |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | TODO | mechanical | — |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
