@@ -40,7 +40,8 @@ fn p(s: &str) -> Option<String> { Some(format!("{ID}: {s}")) }
 
 #[test] fn allow_none_to_open() { assert_eq!(chg(&Version::Absent, &open()), None); }
 #[test] fn allow_open_to_open_with_non_frozen_keys() {
-    assert_eq!(chg(&open(), &rec(&[("title", "Keep the pane name"), ("reverse_cost", "medium"), ("model", "unknown")])), None);
+    assert_eq!(chg(&open(), &rec(&[("title", "Keep the pane name"), ("reverse_cost", "medium")])), None);
+    assert_eq!(chg(&open(), &rec(&[("model", "unknown")])), p("frozen key model changed"));
 }
 #[test] fn allow_open_to_fixed_with_fixed_by_in_range() { assert_eq!(chg(&open(), &fixed()), None); }
 #[test] fn allow_open_to_superseded_named_by_an_added_record() {
@@ -110,10 +111,7 @@ fn p(s: &str) -> Option<String> { Some(format!("{ID}: {s}")) }
     assert_eq!(agent_change("DDR-bad", &open(), &open(), &ctx(&[])), Some("DDR-bad: malformed record name".into()));
     assert_eq!(agent_change("README", &Version::Absent, &Version::Malformed, &ctx(&[])), None);
 }
-#[test] fn malformed_old_version_counts_as_creation() { // D§17 #1: `new` writes a malformed file
-    assert_eq!(chg(&Version::Malformed, &open()), None);
-    assert_eq!(chg(&Version::Malformed, &rec(&PROMOTED)), p("new record with status ratified"));
-}
+
 #[test] fn unchanged_record_passes() {
     assert_eq!(chg(&fixed(), &fixed()), None);
     assert_eq!(chg(&superseded(), &superseded()), None);
@@ -136,5 +134,80 @@ fn p(s: &str) -> Option<String> { Some(format!("{ID}: {s}")) }
                p("frozen key class changed"));
     assert_eq!(chg(&open(), &rec(&[("kind", "assumption"), ("role", "lead")])), p("frozen key kind changed"));
     assert_eq!(chg(&open(), &rec(&[("reviewed", "2026-11-25"), ("fixed_by", OUT)])), p("agent writes operator key reviewed"));
-    assert_eq!(chg(&open(), &rec(&[("status", "superseded"), ("fixed_by", OUT)])), p(&format!("fixed_by {OUT} is not in the node range")));
+    assert_eq!(chg(&open(), &rec(&[("status", "fixed"), ("fixed_by", OUT)])), p(&format!("fixed_by {OUT} is not in the node range")));
+    assert_eq!(chg(&open(), &rec(&[("status", "superseded"), ("fixed_by", OUT)])), p("open to superseded writes fixed_by"));
+}
+
+// Review round 1.
+const ID2: &str = "DDR-01JDQ2Y7Z8K4M5N6P7Q8R9S0TW";
+/// `v` with its `Record` changed by `f`.
+fn with(v: Version, f: impl FnOnce(&mut zygo_work::decisions::record::Record)) -> Version {
+    match v { Version::Valid(mut r) => { f(&mut r); Version::Valid(r) } v => v }
+}
+
+#[test] fn f1_refuse_change_of_malformed_record() {
+    assert_eq!(chg(&Version::Malformed, &open()), p("changes a malformed record"));
+    assert_eq!(chg(&Version::Malformed, &rec(&PROMOTED)), p("changes a malformed record"));
+}
+#[test] fn f2_refuse_self_supersede_on_creation() {
+    assert_eq!(chg(&Version::Absent, &rec(&[("supersedes", ID)])), p("supersedes itself"));
+}
+#[test] fn f2_refuse_superseded_by_its_own_supersedes() {
+    let new = rec(&[("status", "superseded"), ("supersedes", ID)]);
+    assert_eq!(agent_change(ID, &rec(&[("supersedes", ID)]), &new, &ctx(&[ID])), p("supersedes itself"));
+}
+#[test] fn f3_refuse_open_to_open_change_of_creation_keys() {
+    assert_eq!(chg(&open(), &rec(&[("commit", OUT)])), p("frozen key commit changed"));
+    assert_eq!(chg(&open(), &rec(&[("date", "2026-11-25")])), p("frozen key date changed"));
+    assert_eq!(chg(&open(), &rec(&[("supersedes", ID2)])), p("frozen key supersedes changed"));
+    assert_eq!(chg(&rec(&[("supersedes", ID2)]), &open()), p("frozen key supersedes changed"));
+}
+#[test] fn f4_malformed_name_is_escaped() {
+    let got = agent_change("DDR-\u{1b}x\ny", &open(), &open(), &ctx(&[])).unwrap();
+    assert_eq!(got, "DDR-\\u{1b}x\\ny: malformed record name");
+    assert!(!got.contains('\n') && !got.contains('\u{1b}'));
+}
+#[test] fn f5_refuse_open_to_open_adds_fixed_by_or_promoted_by() {
+    assert_eq!(chg(&open(), &rec(&[("fixed_by", IN)])), p("open to open writes fixed_by"));
+    assert_eq!(chg(&open(), &rec(&[("promoted_by", IN)])), p("open to open writes promoted_by"));
+}
+#[test] fn f5_refuse_unpromoted_ratified_gains_promoted_by() {
+    let ratified = [("status", "ratified"), ("reviewed", "2026-11-25"), ("review_note", "")];
+    let mut set = ratified.to_vec(); set.push(("promoted_by", IN));
+    assert_eq!(chg(&rec(&ratified), &rec(&set)), p("an agent changes a ratified record only to add promoted_by"));
+}
+#[test] fn f5_refuse_promoted_by_replaced() {
+    let mut a = PROMOTED.to_vec(); a.push(("promoted_by", IN));
+    let c = agent_change(ID, &rec(&a), &with(rec(&a), |r| r.promoted_by = Some(C40.into())),
+                         &RangeCtx { range: BTreeSet::from([IN.to_string(), C40.to_string()]), superseding: BTreeSet::new() });
+    assert_eq!(c, p("an agent changes a ratified record only to add promoted_by"));
+}
+#[test] fn f6_fixed_and_superseded_rows_write_only_their_keys() {
+    assert_eq!(chg(&open(), &rec(&[("status", "fixed"), ("fixed_by", IN), ("title", "T")])), p("open to fixed writes title"));
+    assert_eq!(chg(&open(), &with(fixed(), |r| r.body.push_str("\nMore.\n"))), p("open to fixed writes sections"));
+    let new = rec(&[("status", "fixed"), ("fixed_by", IN), ("reviewed", "2026-11-25"), ("review_note", "Wrong layer."), ("reverse_cost", "high")]);
+    assert_eq!(chg(&overturned(), &new), p("overturned to fixed writes reverse_cost"));
+    assert_eq!(agent_change(ID, &open(), &rec(&[("status", "superseded"), ("title", "T")]), &ctx(&[ID])), p("open to superseded writes title"));
+    assert_eq!(agent_change(ID, &open(), &with(superseded(), |r| r.depends_on = vec![ID2.into()]), &ctx(&[ID])),
+               p("open to superseded writes depends_on"));
+}
+#[test] fn f7_refuse_record_id_that_does_not_match_its_name() {
+    let other = with(open(), |r| r.id = ID2.into());
+    assert_eq!(chg(&Version::Absent, &other), p("record id does not match its name"));
+    assert_eq!(chg(&other, &open()), p("record id does not match its name"));
+    assert_eq!(chg(&open(), &with(rec(&[("kind", "assumption")]), |r| r.id = ID2.into())), p("record id does not match its name"));
+}
+#[test] fn f8_refuse_overturned_to_fixed_outside_range() {
+    let new = rec(&[("status", "fixed"), ("fixed_by", OUT), ("reviewed", "2026-11-25"), ("review_note", "Wrong layer.")]);
+    assert_eq!(chg(&overturned(), &new), p(&format!("fixed_by {OUT} is not in the node range")));
+}
+#[test] fn f8_refuse_superseded_named_only_for_another_id() {
+    assert_eq!(agent_change(ID, &open(), &superseded(), &ctx(&[ID2])), p("superseded but no record added in the node range names it"));
+}
+#[test] fn f8_malformed_new_version_of_a_valid_name() {
+    assert_eq!(chg(&Version::Absent, &Version::Malformed), p("malformed record"));
+    assert_eq!(chg(&Version::Malformed, &Version::Malformed), p("malformed record"));
+}
+#[test] fn f8_refuse_open_to_fixed_with_kind_change() {
+    assert_eq!(chg(&open(), &rec(&[("status", "fixed"), ("fixed_by", IN), ("kind", "assumption")])), p("frozen key kind changed"));
 }
