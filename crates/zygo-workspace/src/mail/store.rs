@@ -1,6 +1,6 @@
 //! The maildir of each member: mail/<pane key>/{tmp,new,cur}/<ULID>.json (M§5, M-C3, M-C4).
 use std::fs::{self, DirBuilder, File, OpenOptions};
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -9,6 +9,9 @@ use crate::identity::valid_pane_key;
 
 /// A file in `tmp/` older than this is a failed write; the sweep deletes it (M§10 "Write fails partway").
 const TMP_MAX_AGE: Duration = Duration::from_secs(3600);
+
+/// The largest message file read, 8 MiB (S§8.5: a 1 MiB body can grow to 6 MiB with JSON escapes).
+pub const FILE_MAX: u64 = 8 * 1024 * 1024;
 
 /// A message in `new/`, as `list` shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,8 +38,9 @@ fn file_name(id: &str) -> String {
     format!("{id}.json")
 }
 
-/// Makes the missing parts of `dir` and its parents, `0700` on unix (M-C4).
-fn make_dir(dir: &Path) -> std::io::Result<()> {
+/// Makes the missing parts of `dir` and its parents, `0700` on unix, then sets `dir` itself to `0700` when it is
+/// not (M-C4). A `dir` that is a symlink or not a folder is refused.
+pub(crate) fn make_dir(dir: &Path) -> std::io::Result<()> {
     let mut b = DirBuilder::new();
     b.recursive(true);
     #[cfg(unix)]
@@ -44,17 +48,58 @@ fn make_dir(dir: &Path) -> std::io::Result<()> {
         use std::os::unix::fs::DirBuilderExt;
         b.mode(0o700);
     }
-    b.create(dir)
+    b.create(dir)?;
+    let meta = fs::symlink_metadata(dir)?;
+    if !meta.is_dir() {
+        return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", dir.display())));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o7777 != 0o700 {
+            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(())
 }
 
-fn make_dirs(md: &Path) -> std::io::Result<()> {
+/// `mail/`, `mail/<key>/` and its three folders, each `0700` (M-C4).
+fn make_dirs(mail_dir: &Path, md: &Path) -> std::io::Result<()> {
+    super::ensure_mail_root(mail_dir)?;
+    make_dir(md)?;
     for s in ["tmp", "new", "cur"] {
         make_dir(&md.join(s))?;
     }
     Ok(())
 }
 
-/// The valid message ids in `dir`, oldest first (byte order is ULID order); a missing `dir` has none.
+/// Opens `path` for reading with no link follow and no wait on a FIFO; `None` unless it is a regular file of at
+/// most `FILE_MAX` bytes.
+fn open_regular(path: &Path) -> Option<File> {
+    let mut o = OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let f = o.open(path).ok()?;
+    let meta = f.metadata().ok()?;
+    (meta.is_file() && meta.len() <= FILE_MAX).then_some(f)
+}
+
+/// The message in `f`, read to at most `FILE_MAX` bytes; `None` when it cannot be read, is larger or does not parse.
+fn parse(f: &File) -> Option<Message> {
+    let mut bytes = Vec::new();
+    f.take(FILE_MAX + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > FILE_MAX {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The valid message ids of the regular files in `dir` (no symlink, folder or FIFO), oldest first (byte order is
+/// ULID order); a missing `dir` has none.
 fn ids(dir: &Path) -> std::io::Result<Vec<String>> {
     let entries = match fs::read_dir(dir) {
         Ok(r) => r,
@@ -63,7 +108,11 @@ fn ids(dir: &Path) -> std::io::Result<Vec<String>> {
     };
     let mut v = Vec::new();
     for e in entries {
-        let name = e?.file_name();
+        let e = e?;
+        if !e.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let name = e.file_name();
         if let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".json")).filter(|id| valid_id(id)) {
             v.push(id.to_string());
         }
@@ -116,7 +165,7 @@ pub fn deliver_staged(mail_dir: &Path, key: &str, id: &str, staged: &Path, max_u
         fs::remove_file(staged)?;
         return Ok(false);
     }
-    make_dirs(&md)?;
+    make_dirs(mail_dir, &md)?;
     // A link never replaces a file: an existing new/<id>.json stays as it is (lead's change; no check then rename).
     match fs::hard_link(staged, new.join(file_name(id))) {
         Ok(()) => {}
@@ -126,8 +175,10 @@ pub fn deliver_staged(mail_dir: &Path, key: &str, id: &str, staged: &Path, max_u
         }
         Err(e) => return Err(e.into()),
     }
-    sync_dir(&new)?;
-    // The message is in new/ now; a staged name left by a failed remove is a later duplicate or a swept tmp/ file.
+    // The message is in new/ now: a failed fsync of the folder is not an error, or the sender would retry and the
+    // message would arrive twice.
+    let _ = sync_dir(&new);
+    // A staged name left by a failed remove is a later duplicate or a swept tmp/ file.
     let _ = fs::remove_file(staged);
     Ok(true)
 }
@@ -149,10 +200,13 @@ pub fn deliver(mail_dir: &Path, key: &str, label: &str, msg: &Message, max_unrea
     if ids(&md.join("new"))?.len() >= max_unread as usize {
         return Err(full());
     }
-    make_dirs(&md)?;
+    make_dirs(mail_dir, &md)?;
     let bytes = serde_json::to_vec(msg).map_err(std::io::Error::other)?;
     let tmp = md.join("tmp").join(file_name(&msg.id));
-    write_synced(&tmp, &bytes)?;
+    match write_synced(&tmp, &bytes) {
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => return Err(MailError::Duplicate { id: msg.id.clone() }),
+        r => r?,
+    }
     match deliver_staged(mail_dir, key, &msg.id, &tmp, max_unread) {
         Ok(true) => Ok(()),
         Ok(false) => Err(MailError::Duplicate { id: msg.id.clone() }),
@@ -161,25 +215,41 @@ pub fn deliver(mail_dir: &Path, key: &str, label: &str, msg: &Message, max_unrea
     }
 }
 
-/// Moves at most `max` messages from `new/` to `cur/`, oldest first, and returns those that parse (M§5). A file
-/// gone before its rename was taken by another reader.
+/// Moves messages from `new/` to `cur/`, oldest first, and returns at most `max` that parse (M§5). The move is a
+/// link that never replaces a file, then the removal of the `new/` name: a file gone before its link was taken by
+/// another reader, and an id already in `cur/` is a duplicate, removed from `new/` and not returned. A moved file
+/// gets the read time as its modification time, so the sweep ages it from its read. A moved file that cannot be
+/// read or parsed stays in `cur/` for the sweep. An error before the first move is returned; after it, `read` stops
+/// and returns what it has.
 pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, MailError> {
     let md = maildir(mail_dir, key)?;
     let (new, cur) = (md.join("new"), md.join("cur"));
     let mut out = Vec::new();
-    let mut moved = 0;
-    for id in ids(&new)? {
-        if moved >= max {
+    let mut moved = false;
+    let ids = ids(&new)?;
+    if !ids.is_empty() {
+        make_dirs(mail_dir, &md)?;
+    }
+    for id in ids {
+        if out.len() >= max {
             break;
         }
-        make_dir(&cur)?;
-        let to = cur.join(file_name(&id));
-        match fs::rename(new.join(file_name(&id)), &to) {
-            Ok(()) => moved += 1,
+        let (from, to) = (new.join(file_name(&id)), cur.join(file_name(&id)));
+        match fs::hard_link(&from, &to) {
+            Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                let _ = fs::remove_file(&from);
+                continue;
+            }
+            Err(_) if moved => break,
             Err(e) => return Err(e.into()),
         }
-        if let Ok(m) = serde_json::from_slice::<Message>(&fs::read(&to)?) {
+        moved = true;
+        let _ = fs::remove_file(&from);
+        let Some(f) = open_regular(&to) else { continue };
+        let _ = f.set_modified(SystemTime::now());
+        if let Some(m) = parse(&f) {
             out.push(m);
         }
     }
@@ -192,25 +262,22 @@ pub fn list(mail_dir: &Path, key: &str) -> Result<Vec<Summary>, MailError> {
     let new = md.join("new");
     let mut out = Vec::new();
     for id in ids(&new)? {
-        let bytes = match fs::read(new.join(file_name(&id))) {
-            Ok(b) => b,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(e.into()),
-        };
-        if let Ok(m) = serde_json::from_slice::<Message>(&bytes) {
+        let Some(f) = open_regular(&new.join(file_name(&id))) else { continue };
+        if let Some(m) = parse(&f) {
             out.push(Summary { id, from: m.from, subject: m.subject });
         }
     }
     Ok(out)
 }
 
-/// The number of message files in `new/`.
+/// The number of message files in `new/`: regular files only.
 pub fn unread(mail_dir: &Path, key: &str) -> Result<usize, MailError> {
     Ok(ids(&maildir(mail_dir, key)?.join("new"))?.len())
 }
 
 /// Deletes `cur/` files older than `keep` and `tmp/` files older than 1 h in each maildir; `new/` and folders that
-/// are not pane keys (such as `sync/`) are never touched. Every error is ignored.
+/// are not pane keys (such as `sync/`) are never touched. A `cur/` or `tmp/` that is not a real folder is skipped,
+/// and a symlink in one is deleted itself, never its target. Every error is ignored.
 pub fn sweep(mail_dir: &Path, keep: Duration, now: SystemTime) {
     let Ok(entries) = fs::read_dir(mail_dir) else { return };
     for e in entries.flatten() {
@@ -221,12 +288,16 @@ pub fn sweep(mail_dir: &Path, keep: Duration, now: SystemTime) {
             continue;
         }
         for (s, age) in [("cur", keep), ("tmp", TMP_MAX_AGE)] {
-            let Ok(files) = fs::read_dir(md.join(s)) else { continue };
+            let dir = md.join(s);
+            if !fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+                continue;
+            }
+            let Ok(files) = fs::read_dir(&dir) else { continue };
             for f in files.flatten() {
                 let p = f.path();
                 let Ok(meta) = fs::symlink_metadata(&p) else { continue };
                 let Ok(m) = meta.modified() else { continue };
-                if meta.is_file() && now.duration_since(m).is_ok_and(|d| d > age) {
+                if (meta.is_file() || meta.is_symlink()) && now.duration_since(m).is_ok_and(|d| d > age) {
                     let _ = fs::remove_file(&p);
                 }
             }

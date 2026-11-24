@@ -91,3 +91,8 @@ impl From<std::io::Error> for MailError {
 pub fn mail_dir(paths: &Paths, ws_id: &str) -> PathBuf {
     crate::state::Store::open(paths, ws_id).dir().join("mail")
 }
+
+/// Makes `mail_dir` (and its missing parents) and sets it to `0700` (M-C4).
+pub fn ensure_mail_root(mail_dir: &std::path::Path) -> std::io::Result<()> {
+    store::make_dir(mail_dir)
+}

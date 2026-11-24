@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
 use zygo_workspace::mail::store::{self, Summary};
-use zygo_workspace::mail::{mail_dir, MailError, Message, BODY_MAX, SUBJECT_MAX};
+use zygo_workspace::mail::{ensure_mail_root, mail_dir, MailError, Message, BODY_MAX, SUBJECT_MAX};
 use zygo_workspace::state::Store;
 
 const ID: &str = "0123456789abcdef";
@@ -410,4 +410,213 @@ fn deliver_staged_never_overwrites_an_existing_file_in_new() {
     assert!(!staged.exists());
     assert_eq!(fs::read(file(&m, KEY, "new", ULID)).unwrap(), old);
     assert_eq!(names(&sub(&m, KEY, "new")), [format!("{ULID}.json")]);
+}
+
+// Review round 1.
+
+/// Sets the modification time of `p` to `t`.
+fn set_mtime(p: &Path, t: SystemTime) { fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap(); }
+fn mkfifo(p: &Path) {
+    let c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+}
+/// A valid id that sorts after every id `msg` makes.
+const LATE: &str = "7ZZZZZZZZZZZZZZZZZZZZZZZZZ";
+const EARLY: &str = "00000000000000000000000000";
+
+#[test]
+fn read_keeps_moved_messages_when_a_later_entry_cannot_be_read() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    fs::create_dir(file(&m, KEY, "new", LATE)).unwrap(); // a folder named <ULID>.json
+    let unreadable = file(&m, KEY, "new", "7ZZZZZZZZZZZZZZZZZZZZZZZZY");
+    fs::write(&unreadable, b"{}").unwrap();
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+    assert_eq!(store::read(&m, KEY, 10).unwrap(), std::slice::from_ref(&a));
+    assert!(file(&m, KEY, "cur", &a.id).exists());
+    assert!(file(&m, KEY, "cur", "7ZZZZZZZZZZZZZZZZZZZZZZZZY").exists()); // moved, then skipped: left for the sweep
+    assert!(file(&m, KEY, "new", LATE).is_dir()); // not a file: not moved
+    assert!(store::read(&m, KEY, 10).unwrap().is_empty());
+}
+
+#[test]
+fn read_never_replaces_a_file_in_cur() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    fs::create_dir_all(sub(&m, KEY, "cur")).unwrap();
+    fs::write(file(&m, KEY, "cur", &a.id), b"OLD").unwrap();
+    assert!(store::read(&m, KEY, 10).unwrap().is_empty()); // a duplicate: removed from new/, not returned
+    assert_eq!(fs::read(file(&m, KEY, "cur", &a.id)).unwrap(), b"OLD");
+    assert!(names(&sub(&m, KEY, "new")).is_empty());
+}
+
+#[test]
+fn a_fifo_in_new_is_skipped_without_blocking() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    let fifo = file(&m, KEY, "new", LATE);
+    mkfifo(&fifo);
+    assert_eq!(store::unread(&m, KEY).unwrap(), 1);
+    assert_eq!(store::list(&m, KEY).unwrap().len(), 1);
+    assert_eq!(store::read(&m, KEY, 10).unwrap(), [a]);
+    assert!(fs::symlink_metadata(&fifo).unwrap().file_type().is_fifo()); // left where it is
+    assert!(!file(&m, KEY, "cur", LATE).exists());
+}
+
+#[test]
+fn a_symlink_in_new_is_not_followed_returned_or_moved() {
+    let (t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    let mut planted = msg("planted", T0 + 1);
+    planted.id = LATE.into();
+    let outside = t.path().join("outside.json");
+    fs::write(&outside, serde_json::to_vec(&planted).unwrap()).unwrap();
+    let link = file(&m, KEY, "new", LATE);
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    assert_eq!(store::unread(&m, KEY).unwrap(), 1);
+    assert_eq!(store::list(&m, KEY).unwrap().iter().map(|s| s.id.clone()).collect::<Vec<_>>(), std::slice::from_ref(&a.id));
+    assert_eq!(store::read(&m, KEY, 10).unwrap(), [a]);
+    assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(file(&m, KEY, "cur", LATE)).is_err());
+    assert!(outside.exists());
+}
+
+#[test]
+fn a_folder_named_like_a_message_does_not_break_list_or_unread() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    fs::create_dir(file(&m, KEY, "new", LATE)).unwrap();
+    assert_eq!(store::list(&m, KEY).unwrap().iter().map(|s| s.id.clone()).collect::<Vec<_>>(), [a.id]);
+    assert_eq!(store::unread(&m, KEY).unwrap(), 1);
+}
+
+#[test]
+fn a_file_over_8_mib_is_not_listed_or_returned() {
+    assert_eq!(store::FILE_MAX, 8 * 1024 * 1024);
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    let mut big = msg("big", T0 + 1);
+    big.id = LATE.into();
+    big.body = "x".repeat(store::FILE_MAX as usize);
+    fs::write(file(&m, KEY, "new", LATE), serde_json::to_vec(&big).unwrap()).unwrap();
+    assert_eq!(store::list(&m, KEY).unwrap().len(), 1);
+    assert_eq!(store::read(&m, KEY, 10).unwrap(), [a]);
+}
+
+#[test]
+fn existing_loose_folders_are_set_to_0700() {
+    let (_t, m) = setup();
+    let all = [m.clone(), m.join(KEY), sub(&m, KEY, "tmp"), sub(&m, KEY, "new"), sub(&m, KEY, "cur")];
+    for d in &all { fs::create_dir_all(d).unwrap(); fs::set_permissions(d, fs::Permissions::from_mode(0o755)).unwrap(); }
+    store::deliver(&m, KEY, "elena", &msg("a", T0), 500).unwrap();
+    for d in &all { assert_eq!(mode(d), 0o700, "{}", d.display()); }
+}
+
+#[test]
+fn ensure_mail_root_makes_and_fixes_mail_at_0700() {
+    let (_t, m) = setup();
+    ensure_mail_root(&m).unwrap();
+    assert_eq!(mode(&m), 0o700);
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o755)).unwrap();
+    ensure_mail_root(&m).unwrap();
+    assert_eq!(mode(&m), 0o700);
+}
+
+#[test]
+fn a_symlinked_maildir_folder_is_refused() {
+    let (t, m) = setup();
+    let outside = t.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::set_permissions(&outside, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::create_dir_all(m.join(KEY)).unwrap();
+    std::os::unix::fs::symlink(&outside, sub(&m, KEY, "new")).unwrap();
+    assert!(matches!(store::deliver(&m, KEY, "elena", &msg("a", T0), 500), Err(MailError::Io(_))));
+    assert_eq!(mode(&outside), 0o755);
+    assert!(names(&outside).is_empty());
+}
+
+#[test]
+fn a_read_message_is_aged_from_its_read() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    let planted = at(T0);
+    set_mtime(&file(&m, KEY, "new", &a.id), planted); // it waited in new/ since T0
+    store::read(&m, KEY, 10).unwrap();
+    assert!(mtime(&file(&m, KEY, "cur", &a.id)) > planted);
+    store::sweep(&m, KEEP, planted + KEEP + S1);
+    assert!(file(&m, KEY, "cur", &a.id).exists());
+}
+
+#[test]
+fn deliver_over_a_leftover_tmp_file_is_a_duplicate() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    fs::create_dir_all(sub(&m, KEY, "tmp")).unwrap();
+    fs::write(file(&m, KEY, "tmp", &a.id), b"{\"version\":1,").unwrap();
+    let e = store::deliver(&m, KEY, "elena", &a, 500).unwrap_err();
+    assert!(matches!(e, MailError::Duplicate { .. }), "{e}");
+    assert_eq!(fs::read(file(&m, KEY, "tmp", &a.id)).unwrap(), b"{\"version\":1,");
+}
+
+#[test]
+fn sweep_never_follows_a_symlinked_cur_or_tmp() {
+    let (t, m) = setup();
+    store::deliver(&m, KEY, "elena", &msg("a", T0), 500).unwrap();
+    let outside = t.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let old = outside.join(format!("{ULID}.json"));
+    fs::write(&old, b"x").unwrap();
+    set_mtime(&old, at(T0));
+    for s in ["cur", "tmp"] {
+        fs::remove_dir(sub(&m, KEY, s)).unwrap();
+        std::os::unix::fs::symlink(&outside, sub(&m, KEY, s)).unwrap();
+    }
+    store::sweep(&m, KEEP, at(T0) + KEEP * 100);
+    assert!(old.exists());
+}
+
+#[test]
+fn sweep_removes_an_old_symlink_in_cur_but_not_its_target() {
+    let (t, m) = setup();
+    store::deliver(&m, KEY, "elena", &msg("a", T0), 500).unwrap();
+    store::read(&m, KEY, 10).unwrap();
+    let target = t.path().join("target.json");
+    fs::write(&target, b"x").unwrap();
+    let link = file(&m, KEY, "cur", ULID);
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let lm = fs::symlink_metadata(&link).unwrap().modified().unwrap();
+    store::sweep(&m, KEEP, lm + KEEP * 100);
+    assert!(fs::symlink_metadata(&link).is_err());
+    assert!(target.exists());
+}
+
+#[test]
+fn read_counts_only_returned_messages_toward_max() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    store::deliver(&m, KEY, "elena", &a, 500).unwrap();
+    fs::write(file(&m, KEY, "new", EARLY), b"not json").unwrap();
+    assert_eq!(store::read(&m, KEY, 1).unwrap(), [a]);
+    assert!(file(&m, KEY, "cur", EARLY).exists());
+}
+
+#[test]
+fn a_failed_delivery_leaves_the_message_in_tmp_and_new_unchanged() {
+    let (_t, m) = setup();
+    let a = msg("a", T0);
+    fs::create_dir_all(sub(&m, KEY, "tmp")).unwrap();
+    fs::write(sub(&m, KEY, "new"), b"a file, not a folder").unwrap();
+    assert!(matches!(store::deliver(&m, KEY, "elena", &a, 500), Err(MailError::Io(_))));
+    let staged = file(&m, KEY, "tmp", &a.id);
+    store::write_synced(&staged, &serde_json::to_vec(&a).unwrap()).unwrap();
+    assert!(matches!(store::deliver_staged(&m, KEY, &a.id, &staged, 500), Err(MailError::Io(_))));
+    assert!(staged.exists());
+    assert_eq!(fs::read(sub(&m, KEY, "new")).unwrap(), b"a file, not a folder");
 }
