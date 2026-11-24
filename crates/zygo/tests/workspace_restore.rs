@@ -15,6 +15,7 @@ use common::stub_control;
 use common::workspace::{ready_exe, Guarded, Harness};
 use e2e::*;
 use serde_json::Value;
+use zygo_workspace::mux::Multiplexer;
 use zygo_workspace::state::{MemberState, Phase, Workspace};
 
 /// The eleven names of W§18 #17 that no pane may hold (AU64).
@@ -104,6 +105,9 @@ fn quiet(h: &Harness, id: &str) {
     }
     let _ = std::io::stderr().write_all(format!("quiet: snapshot_seq {first} -> {last}\n").as_bytes());
 }
+
+/// The tmux version of the harness server (`tmux -V`).
+fn tmux_version(h: &Harness) -> (u32, u32) { h.server.as_ref().expect("a tmux server").tmux().version().unwrap() }
 
 /// The message of a stub that did not start: the pane text of `key` when the pane exists.
 fn no_start(h: &Harness, ws: &Workspace, key: &str) -> String {
@@ -521,7 +525,7 @@ fn w18_24_closed_agent_panes_are_detached_while_another_session_is_current() {
     h.tmux(&["kill-window", "-t", &format!("={s}:{}", win(&ws, 1))]);
     assert!(until(FIVE, || !keys(&state(&h, &id)).contains(&b)), "{:?}", keys(&state(&h, &id)));
     assert!(state(&h, &id).members.contains_key(&b));
-    let s2 = key_at(&ws, 2, 0);
+    let s2 = rows(&h, &s).into_iter().find(|r| r.window == win(&ws, 2) && !r.active).expect("a pane of window 2 that is not active").key;
     h.tmux(&["kill-pane", "-t", &row(&h, &s, &s2).id]);
     assert!(until(FIVE, || !keys(&state(&h, &id)).contains(&s2)), "{:?}", keys(&state(&h, &id)));
     settle_to(&h, &id, &[&a, &b], MemberState::Resumable);
@@ -547,26 +551,29 @@ fn w18_24_closed_agent_panes_are_detached_while_another_session_is_current() {
 }
 
 #[test]
-fn w18_77_a_closed_window_of_shells_waits_for_the_next_trigger() {
+fn w18_77_closed_shell_panes_while_another_session_is_current() {
     let Some(h) = Harness::new() else { return };
     let (id, name, ws) = l24_setup(&h);
     let s = ws.tmux_session.clone();
     let s4 = key_at(&ws, 3, 0);
     let s5 = key_at(&ws, 3, 1);
+    let p = rows(&h, &s).into_iter().find(|r| r.window == win(&ws, 2) && r.active).expect("an active pane in window 2").key;
+    let gone = |ks: &[&String]| { let k = keys(&state(&h, &id)); ks.iter().all(|x| !k.contains(*x)) };
+    let new = tmux_version(&h) >= (3, 8);
     h.tmux(&["kill-window", "-t", &format!("={s}:{}", win(&ws, 3))]);
-    // W§18 #77: the keys are still there 5 s later (the item's own time).
-    std::thread::sleep(FIVE);
-    let k = keys(&state(&h, &id));
-    assert!(k.contains(&s4) && k.contains(&s5), "{k:?}");
-    h.tmux(&["split-window", "-d", "-t", &format!("={s}:{}", win(&ws, 0))]);
-    assert!(
-        until(FIVE, || {
-            let k = keys(&state(&h, &id));
-            !k.contains(&s4) && !k.contains(&s5)
-        }),
-        "{:?}",
-        keys(&state(&h, &id))
-    );
+    if new {
+        assert!(until(FIVE, || gone(&[&s4, &s5])), "{:?}", keys(&state(&h, &id)));
+    } else {
+        // W§18 #77: the keys are still there 5 s later (the item's own time).
+        std::thread::sleep(FIVE);
+        let k = keys(&state(&h, &id));
+        assert!(k.contains(&s4) && k.contains(&s5), "{k:?}");
+    }
+    h.tmux(&["kill-pane", "-t", &row(&h, &s, &p).id]);
+    if !new {
+        h.tmux(&["split-window", "-d", "-t", &format!("={s}:{}", win(&ws, 0))]);
+    }
+    assert!(until(FIVE, || gone(&[&s4, &s5, &p])), "{:?}", keys(&state(&h, &id)));
     down(&h, &name);
 }
 
