@@ -1,7 +1,7 @@
 # OS-1 — Result meta records the session that stored it
 
 **Spec:** `docs/specs/2026-11-24-output-shaping-design.md` O§6.5 item 1, O§6.4 "Key"
-**Files:** `crates/zygo-results/src/store.rs`, `crates/zygo-results/tests/results.rs`, `crates/zygo-hooks/src/trim.rs`
+**Files:** `crates/zygo-results/src/store.rs`, `crates/zygo-results/tests/results.rs`, `crates/zygo-hooks/src/trim.rs`, `crates/zygo-hooks/tests/hooks_basic.rs`
 **Consumes:** —
 **Produces:** `Store::put(dir: &Path, tool: &str, session: Option<&str>, bytes: &[u8]) -> anyhow::Result<Stored>`, `Stored.session: Option<String>` (from `Meta.session`, `#[serde(default)]`)
 **Acceptance:** `test "$(cargo test -q -p zygo-results --test results -- session --list 2>/dev/null | grep -c ': test$')" -ge 2 && test "$(cargo test -q -p zygo-hooks --test hooks_basic -- trim_session --list 2>/dev/null | grep -c ': test$')" -ge 1 && cargo test -p zygo-results --test results && cargo test -p zygo-hooks --test hooks_basic` → every count holds (at least 2 named `session…` in zygo-results `results`; at least 1 named `trim_session…` in zygo-hooks `hooks_basic`; a count of 0 fails before any run), then all pass, including new tests: a put with `Some("S1")` gives `Store::get(..).session == Some("S1")`; a meta file without `session` (the `97d8767` form) reads as `None`; the trim hook stores its session in the meta
@@ -14,7 +14,7 @@
 - `Stored` is `store.rs:43-52` (`#[derive(Debug, Clone, PartialEq)]`); `Store::put` is `store.rs:57-81` and builds `Stored` at `:80`; `Store::get` is `store.rs:83-91` and builds `Stored` at `:90`.
 - Every `Store::put` caller in the workspace (all 13 members, tests included; no other crate, bench or doc test calls it):
   - `crates/zygo-hooks/src/trim.rs:115` (the trim hook; `sv.session: String` from `SessionView`, `crates/zygo-core/src/session_view.rs:8`, is moved into `TrimRow` only at `:120`).
-  - `crates/zygo-results/tests/results.rs:9` (helper `put`), `:59`, `:86`, `:87`, `:90`, `:92`, `:99`, `:114`, `:189`, `:689`, `:701`, `:742`, `:753`, `:761` — 14 calls.
+  - `crates/zygo-results/tests/results.rs:9` (helper `put`), `:59`, `:86`, `:87`, `:90`, `:92`, `:99`, `:114`, `:189`, `:689`, `:701`, `:742`, `:753`, `:761` — 14 call lines (the helper `put` at `:9` plus 13 others; `:7` is the helper's `fn put` definition, not a call).
 - Every other site that the new `Stored` field breaks: the struct literal `crates/zygo-hooks/src/trim.rs:109-110` (`preview`). `crates/zygo-mcp/src/tools/results.rs` only reads `Stored` (`:4`, `:18`); no change.
 - `results.rs:68` asserts the meta object has exactly 5 keys after a put; `results.rs:324` defines a non-test helper `fn session(..)`, which the new test names do not clash with.
 - `crates/zygo-hooks/tests/hooks_basic.rs:17` gives the trim env the session `"sess-1"`; helpers `run_trim` (`:98`), `bash` (`:100`), `lines` (`:96`), `result_ids` (`:107-110`) exist.
@@ -110,5 +110,3 @@
   - `cargo build --workspace --locked` → builds (no other crate constructs `Stored` or calls `put`); `cargo test -p zygo-mcp -p zygo --locked --no-run` → compiles.
 
 - [ ] **Step 6 — commit** in `/Users/kagemartin/Work/zygo/.worktrees/phase3/OS-1`: `git add crates/zygo-results/src/store.rs crates/zygo-results/tests/results.rs crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/hooks_basic.rs`, message `OS-1: result meta records the session that stored it`, trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-1`, no attribution. Check: `git show --stat HEAD` lists exactly those four files.
-
-**Note for the controller:** `crates/zygo-hooks/tests/hooks_basic.rs` must change (the Acceptance's `trim_session…` test lives there) but is not in this node's **Files** line; this plan does not widen it.

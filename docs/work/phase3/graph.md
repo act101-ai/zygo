@@ -209,7 +209,7 @@ Session text (T, SX nodes):
 | ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | DONE | implementation | c3c7337 da263a1 · config_layers 90p/0f/16i, core_basics 24p/0f/3i; floor green · PR #23 |
 | ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | DONE | judgment | 2550471 e7fed8c 24c9124 · mail_store 38p/0f/0i; floor green · PR #24 |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
-| OS-1 | Result meta records the session that stored it | DR-1 | TODO | implementation | — |
+| OS-1 | Result meta records the session that stored it | DR-1 | PLANNED | implementation | plan 149d9ed · PR #27 |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | TODO | judgment | — |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | TODO | mechanical | — |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
@@ -340,3 +340,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | ML-1 done: [mail] keys, pane name, member-name grammar, d duration unit. Review 6 findings: 5 fixed (pane name scrubbed, pane-key-form names reserved (M§6 author's call), no name on shell panes, profile features.mail test, note), 1 left to ML-6/ML-12 (checked arithmetic). PR #23. |
 | 2026-11-24 | ML-2 planned (016912f); Files += zygo-workspace/Cargo.toml, Cargo.lock for the ulid dep. PR #24. |
 | 2026-11-24 | ML-2 done: maildir store, link send, link read to cur/, limits, sweep. Review 16 findings: 11 fixed (no-replace, O_NOFOLLOW, 8 MiB cap, 0700 root, cur mtime, fsync, tmp=Duplicate, sweep, unparsable, M-C3 link); 5 deferred (MS-17, ML-15, ML-14 notes; 500 race; ULID order). PR #24. |
+| 2026-11-24 | OS-1 planned (149d9ed); Files += zygo-hooks/tests/hooks_basic.rs for the trim_session test. PR #27. |
