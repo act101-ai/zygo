@@ -547,3 +547,29 @@ fn session_view_load_keeps_todays_result_for_other_entries() {
     let r = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("SessionView::load waited on a linked FIFO");
     assert_eq!(r.unwrap_err(), format!("{}: is a FIFO", d.view_json().display()));
 }
+
+// ---- DR-8: session view `repo_root` (decision records D§13 item 6) ----
+
+#[test]
+fn repo_root_absent_from_view_json_reads_as_none() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    std::fs::write(d.view_json(), br#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":true,"results":true,"navigation":false}"#).unwrap();
+    let v = SessionView::load(&d).unwrap();
+    assert_eq!(v.repo_root, None);
+    assert_eq!(v.extra, Default::default());
+    assert_eq!(SessionView::default().repo_root, None);
+}
+
+#[test]
+fn repo_root_round_trips_through_save_and_load() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let v = SessionView { session: "s".into(), repo_root: Some("/r/top".into()), ..Default::default() };
+    v.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), v);
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(raw["repo_root"], "/r/top");
+}
