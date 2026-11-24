@@ -42,7 +42,7 @@ pub fn carry(event_ts: i64, q: &[CtxRequest], first_only: bool, rates: &dyn Fn(&
 
 ### Steps
 
-- [ ] **Step 1 — failing tests.** Create `crates/zygo-usage/tests/carry.rs`:
+- [x] **Step 1 — failing tests.** Create `crates/zygo-usage/tests/carry.rs`:
 
   ```rust
   use std::cell::RefCell;
@@ -158,9 +158,9 @@ pub fn carry(event_ts: i64, q: &[CtxRequest], first_only: bool, rates: &dyn Fn(&
 
   Result: the file exists with 13 tests.
 
-- [ ] **Step 2 — see it fail.** `cargo test -p zygo-usage --test carry` → compile error `E0432` (unresolved import `zygo_usage::carry`).
+- [x] **Step 2 — see it fail.** `cargo test -p zygo-usage --test carry` → compile error `E0432` (unresolved import `zygo_usage::carry`).
 
-- [ ] **Step 3 — implement.** Create `crates/zygo-usage/src/carry.rs` with the three types of **Interfaces** and:
+- [x] **Step 3 — implement.** Create `crates/zygo-usage/src/carry.rs` with the three types of **Interfaces** and:
 
   ```rust
   fn prompt(r: &CtxRequest) -> u64 { r.input_tokens.saturating_add(r.cache_read_tokens).saturating_add(r.cache_write_tokens) }
@@ -189,8 +189,8 @@ pub fn carry(event_ts: i64, q: &[CtxRequest], first_only: bool, rates: &dyn Fn(&
 
   In `crates/zygo-usage/src/lib.rs`: add `pub mod carry;` before `pub mod query;` and `pub use carry::{Carry, CtxRequest, Rates};` after `pub use query::{Filter, RoleModel, Summary};`.
 
-- [ ] **Step 4 — see it pass.** `cargo test -p zygo-usage --test carry` → 13 passed, 0 failed.
+- [x] **Step 4 — see it pass.** `cargo test -p zygo-usage --test carry` → 13 passed, 0 failed.
 
-- [ ] **Step 5 — no regression.** `cargo test -p zygo-usage` → all pass (the `store` tests unchanged).
+- [x] **Step 5 — no regression.** `cargo test -p zygo-usage` → all pass (the `store` tests unchanged).
 
-- [ ] **Step 6 — commit.** `git add crates/zygo-usage/src/carry.rs crates/zygo-usage/src/lib.rs crates/zygo-usage/tests/carry.rs`; commit `OS-6: carry computation` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-6:implement`; `git log -1` shows the three files only.
+- [x] **Step 6 — commit.** `git add crates/zygo-usage/src/carry.rs crates/zygo-usage/src/lib.rs crates/zygo-usage/tests/carry.rs`; commit `OS-6: carry computation` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-6:implement`; `git log -1` shows the three files only.
