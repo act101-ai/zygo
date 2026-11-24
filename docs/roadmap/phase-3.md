@@ -1,6 +1,6 @@
 # zygo phase 3 roadmap
 
-**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 and P3-15 not designed yet. Plan of work set 2026-11-24 (operator): six specs in a fixed order, then one work graph for the phase (see "Plan of work").
+**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 and P3-15 not designed yet. Plan of work set 2026-11-24 (operator): six specs in a fixed order, then one work graph for the phase (see "Plan of work"). P3-8 to P3-10 approved 2026-11-24 (spec named).
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`), `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`).
 
 ## Intent
@@ -36,9 +36,9 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 | P3-5 | Saving accounting with a carry factor: two figures ("tokens kept out of context", "estimated spend avoided"), net of read-backs, counted per context; per-tool and per-command breakdown in `zygo usage`; view to read-back ratio | none | to write |
 | P3-6 | Command-aware output shaping in the trim hook: ANSI and progress removal, repeated-line dedup with counts, failures-only views for test runners, kind-aware views (diff, json, log), Bash stderr measured and stored | P3-5 | to write |
 | P3-7 | Shaping tests: fixtures from real command output, a minimum saving for each filter, a never-worse check, a measured hook latency budget | P3-6 | to write |
-| P3-8 | Delegated decision record (DDR): record format, kinds, statuses, the disposition rule for review findings, the classes that stop for the operator | none | to write |
-| P3-9 | DDR enforcement in zygo: the verdict step refuses a pass while a finding has no disposition; `zygo work report` counts open records; a `Zygo-Decision:` commit trailer | P3-8 | to write |
-| P3-10 | Phase-end ratification: the operator gets each open record to ratify, overturn or promote | P3-8 | to write |
+| P3-8 | Delegated decision record (DDR): record format, kinds, statuses, the disposition rule for review findings, the classes that stop for the operator | none | `2026-11-24-decision-records-design.md` |
+| P3-9 | DDR enforcement in zygo: the verdict step refuses a pass while a finding has no disposition; `zygo work report` counts open records; a `Zygo-Decision:` commit trailer | P3-8 | `2026-11-24-decision-records-design.md` |
+| P3-10 | Phase-end ratification: the operator gets each open record to ratify, overturn or promote | P3-8 | `2026-11-24-decision-records-design.md` |
 | P3-11 | Workspace config and model profiles as repository files; no credentials | phase 2 (workspaces) | to write |
 | P3-12 | Workspace member definition as a repository file: default one orchestrator and four elephant workers; optional config-directory pool for the members | P3-11 | to write |
 | P3-13 | Session run time in the status line and in `zygo status`, with a format that holds for days | none | to write |

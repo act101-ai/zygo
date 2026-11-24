@@ -1,6 +1,6 @@
 # zygo: delegated decision records — design
 
-**Status:** proposed 2026-11-24
+**Status:** approved by the operator 2026-11-24
 **Date:** 2026-11-24
 **Release:** phase 3, track A (roadmap items P3-8, P3-9 and P3-10, `docs/roadmap/phase-3.md`)
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`). Also cited: `docs/specs/2026-11-20-workspaces-design.md` (`W§n`, decisions `AUn`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`). `D§n` is a section of this document.
