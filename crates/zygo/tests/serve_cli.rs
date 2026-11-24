@@ -428,7 +428,7 @@ fn git(dir: &Path, args: &[&str]) {
 #[ignore = "timing: the 10/30 s team-server client timeouts in the zygo binary"]
 fn status_reads_the_team_layer() { // N66, §14 note 2026-11-19 (every config-reading verb), §13.5 (`zygo status` prints the repo policy)
     const FLOOR: &str = "[guards]\nmin_level = \"enforce\"\n";
-    let levels = "@main (claims enforce, scope enforce, navigation enforce, output enforce, trailers enforce, repeat monitor)";
+    let levels = "@main (claims enforce, scope enforce, navigation enforce, output enforce, trailers enforce, repeat monitor, dispositions enforce)";
     let h = Home::new();
     git(h.path(), &["init", "-q", "-b", "main"]);
     std::fs::write(h.path().join(".zygo.toml"), "version = 1\n").unwrap();
@@ -463,7 +463,7 @@ fn status_reads_the_team_layer() { // N66, §14 note 2026-11-19 (every config-re
     std::fs::write(dir.join("team.toml"), "[guards]\nclaims = \"notify\"\n").unwrap();
     std::fs::write(dir.join("overrides.json"), r#"{"guards": {"claims": "monitor", "scope": "enforce"}}"#).unwrap();
     let line = policy(&in_session());
-    assert!(line.ends_with("(claims notify, scope enforce, navigation monitor, output monitor, trailers notify, repeat monitor)"), "{line}");
+    assert!(line.ends_with("(claims notify, scope enforce, navigation monitor, output monitor, trailers notify, repeat monitor, dispositions enforce)"), "{line}");
     std::fs::remove_file(dir.join("team.toml")).unwrap();
     std::fs::create_dir(dir.join("team.toml")).unwrap();
     let (code, _, stderr) = out(&in_session());
