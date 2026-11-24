@@ -19,7 +19,7 @@ use zygo_core::Agent;
 use zygo_workspace::state::{MemberRecord, Workspace};
 
 use crate::common::stub_agent;
-use crate::common::workspace::{ready_exe, Guarded, Harness};
+use crate::common::workspace::{quote, ready_exe, zygo_exe, Guarded, Harness};
 
 /// The bound of every wait for a stub, a state change or a pane (a test bound).
 pub const BOUND: Duration = Duration::from_secs(20);
@@ -71,36 +71,20 @@ pub fn only_state(h: &Harness) -> (String, Workspace) {
     (id, ws.unwrap())
 }
 
-/// `s` as one single-quoted shell word.
-fn quote(s: &OsStr) -> String {
-    format!("'{}'", s.to_string_lossy().replace('\'', r"'\''"))
-}
-
-/// As `workspace_member.rs:201-225`, without `no_check` (`Harness::env` sets it): writes `root/<name>.sh` (mode 0644),
-/// which waits until `root/<name>.go` exists, then runs `zygo <args>` with only the harness environment and `extra`,
-/// and with `TMUX` and `TMUX_PANE` of the pane; its stderr goes to `root/<name>.err`. Returns the pane command.
+/// [`Harness::script`] (`root/<name>.sh`, mode 0644, waits for `root/<name>.go`, then `zygo <args>` with only the
+/// harness environment and `extra`), plus `TMUX` and `TMUX_PANE` of the pane after the other names and stderr to
+/// `root/<name>.err`. Returns the pane command of [`Harness::script`].
 pub fn hand_script(h: &Harness, name: &str, args: &[&str], extra: &[(&str, &OsStr)]) -> String {
-    use std::os::unix::fs::PermissionsExt;
-    let go = h.root().join(format!("{name}.go"));
-    let mut vars = h.env();
-    for (k, v) in extra {
-        vars.retain(|(n, _)| n != OsStr::new(k));
-        vars.push((OsString::from(k), v.to_os_string()));
-    }
-    let assigns: Vec<String> = vars.iter().map(|(k, v)| format!("{}={}", k.to_string_lossy(), quote(v))).collect();
-    let words: Vec<String> = args.iter().map(|a| quote(OsStr::new(a))).collect();
-    let body = format!(
-        "while [ ! -e {} ]; do sleep 0.05; done\nexec env -i {} TMUX=\"$TMUX\" TMUX_PANE=\"$TMUX_PANE\" {} {} 2>{}\n",
-        quote(go.as_os_str()),
-        assigns.join(" "),
-        quote(OsStr::new(env!("CARGO_BIN_EXE_zygo"))),
-        words.join(" "),
-        quote(h.root().join(format!("{name}.err")).as_os_str())
-    );
+    let cmd = h.script(name, args, extra);
     let path = h.root().join(format!("{name}.sh"));
+    let body = std::fs::read_to_string(&path).unwrap();
+    let exe = format!(" {} ", quote(OsStr::new(zygo_exe())));
+    let at = body.find(&exe).unwrap_or_else(|| panic!("no zygo word in {body}"));
+    let err = quote(h.root().join(format!("{name}.err")).as_os_str());
+    let body = format!("{} TMUX=\"$TMUX\" TMUX_PANE=\"$TMUX_PANE\"{} 2>{err}\n", &body[..at], body[at..].trim_end());
+    // The file exists, so the write keeps its mode 0644.
     std::fs::write(&path, body).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-    format!("/bin/sh {}", quote(path.as_os_str()))
+    cmd
 }
 
 /// `dir` as a git repository with one commit, and `git` on the harness `PATH` (as `workspace_member.rs:228-247`, with
@@ -520,22 +504,30 @@ pub fn up(h: &Harness, name: &str, extra: &[(&str, &OsStr)]) -> Output {
     cli(h, &["up", name, "--no-attach"], extra)
 }
 
-/// A tmux server on `socket` that a test started outside the harness: `Drop` sends SIGTERM to `pid` when set, then
-/// runs `kill-server` (result ignored).
+/// A tmux server on `socket` that a test started outside the harness. `pid` arms the helper: [`ServerAt::kill_now`]
+/// signals it once and disarms; `Drop` sends SIGTERM only while it is still armed, then runs `kill-server` (result
+/// ignored). So the pid gets at most one signal, and none after the test has killed it.
 pub struct ServerAt {
     pub tmux: PathBuf,
     pub socket: PathBuf,
     pub pid: Option<i32>,
 }
 
-impl Drop for ServerAt {
-    fn drop(&mut self) {
-        if let Some(pid) = self.pid {
-            // SAFETY: `kill` takes plain integers; `pid` is a tmux server that this test started.
+impl ServerAt {
+    /// Sends `sig` to the armed pid now and disarms the helper; no signal when it is not armed.
+    pub fn kill_now(&mut self, sig: libc::c_int) {
+        if let Some(pid) = self.pid.take() {
+            // SAFETY: `kill` takes plain integers; `pid` is a tmux server that this test started, not signalled before.
             unsafe {
-                libc::kill(pid, libc::SIGTERM);
+                libc::kill(pid, sig);
             }
         }
+    }
+}
+
+impl Drop for ServerAt {
+    fn drop(&mut self) {
+        self.kill_now(libc::SIGTERM);
         let _ = Command::new(&self.tmux)
             .arg("-S")
             .arg(&self.socket)
@@ -547,19 +539,41 @@ impl Drop for ServerAt {
     }
 }
 
-/// `Drop` sends SIGKILL to the pid written in the file, when the file exists.
-pub struct KillOnDrop(pub PathBuf);
+/// The pid that a test's child writes in a file, armed from the start. [`KillOnDrop::kill_now`] signals it once and
+/// disarms; `Drop` sends SIGKILL only while it is still armed. So the pid gets at most one signal, and none after the
+/// test has killed it.
+pub struct KillOnDrop {
+    file: PathBuf,
+    armed: bool,
+}
+
+impl KillOnDrop {
+    /// An armed helper for the pid in `file`.
+    pub fn new(file: PathBuf) -> KillOnDrop {
+        KillOnDrop { file, armed: true }
+    }
+
+    /// Sends `sig` now to the pid in the file, when the helper is armed and the file holds a pid above 0; disarms the
+    /// helper in every case.
+    pub fn kill_now(&mut self, sig: libc::c_int) {
+        if !std::mem::replace(&mut self.armed, false) {
+            return;
+        }
+        if let Some(pid) = std::fs::read_to_string(&self.file).ok().and_then(|s| s.trim().parse::<i32>().ok())
+            && pid > 0
+        {
+            // SAFETY: `kill` takes plain integers; the pid is a process that this test's child wrote, not signalled
+            // before.
+            unsafe {
+                libc::kill(pid, sig);
+            }
+        }
+    }
+}
 
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
-        if let Some(pid) = std::fs::read_to_string(&self.0).ok().and_then(|s| s.trim().parse::<i32>().ok())
-            && pid > 0
-        {
-            // SAFETY: `kill` takes plain integers; the pid is a process that this test's child wrote.
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
-        }
+        self.kill_now(libc::SIGKILL);
     }
 }
 

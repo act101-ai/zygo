@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime};
 
 use common::stub_control;
-use common::workspace::{ready_exe, Guarded, Harness};
+use common::workspace::{ready_exe, zygo_exe, Guarded, Harness};
 use e2e::*;
 use serde_json::Value;
 use zygo_workspace::mux::Multiplexer;
@@ -105,6 +105,18 @@ fn quiet(h: &Harness, id: &str) {
     }
     let _ = std::io::stderr().write_all(format!("quiet: snapshot_seq {first} -> {last}\n").as_bytes());
 }
+
+/// The lowest probed tmux version that runs the workspace's `window-unlinked` hook for a `kill-window` while another
+/// session is current (W§7.4). `fixtures/tmux/e1-hooks-3.8.txt` case D logs `window-unlinked other w0`; the same case
+/// logs no line in `e1-hooks-3.2a.txt`, `e1-hooks-3.4.txt` and `e1-hooks-3.7c.txt`. 3.8 is the release after 3.7c.
+const WINDOW_KILL_HOOK: (u32, u32) = (3, 8);
+
+/// The lowest probed tmux version that runs the workspace's `window-layout-changed` hook for a `kill-pane` on the
+/// active pane of a window that keeps other panes, while another session is current (W§7.4).
+/// `fixtures/tmux/e1-active-pane-3.8.txt` (`kill-pane on pane 0`, modes `same` and `diff`) and `e1-hooks-3.8.txt`
+/// case B log `window-layout-changed other w0`; the same cases log no `window-layout-changed` in the 3.2a, 3.4 and 3.7c
+/// files. 3.8 is the release after 3.7c.
+const ACTIVE_PANE_HOOK: (u32, u32) = (3, 8);
 
 /// The tmux version of the harness server (`tmux -V`).
 fn tmux_version(h: &Harness) -> (u32, u32) { h.server.as_ref().expect("a tmux server").tmux().version().unwrap() }
@@ -242,6 +254,10 @@ fn w18_17_up_from_an_agent_tool_cleans_the_pane_environment() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     let (id, ws) = only_state(&h);
     assert_eq!(text(&o.stdout), format!("zygo: {} is up\n", ws.name));
+    // No `attach-session` and no `switch-client` (AU95): the harness has no tmux call log, so the private server must
+    // have no client.
+    let clients = h.tmux(&["list-clients"]);
+    assert!(clients.trim().is_empty(), "{clients}");
     let s = ws.tmux_session.clone();
     let g = h.tmux(&["show-environment", "-g"]);
     let e = h.tmux(&["show-environment", "-t", &format!("={s}:")]);
@@ -296,7 +312,7 @@ fn w18_18_the_shell_after_the_agent_has_the_workspace_and_a_hand_start_joins() {
     let e18 = h.root().join("e18");
     send(&h, &p, &format!("echo \"$ZYGO_WORKSPACE|${{ZYGO_PANE-unset}}\" > '{}'", e18.display()));
     assert_eq!(wait_file(&e18, BOUND), Some(format!("{id}|unset\n")), "{}", capture(&h, &p));
-    send(&h, &p, &format!("'{}' claude", env!("CARGO_BIN_EXE_zygo")));
+    send(&h, &p, &format!("'{}' claude", zygo_exe()));
     assert!(wait_starts(&h, &k, 2), "{}", capture(&h, &p));
     let e = stub_env(&h, &k);
     assert_eq!((e["ZYGO_PANE"].as_str(), e["ZYGO_WORKSPACE"].as_str()), (Some(k.as_str()), Some(id.as_str())), "{e}");
@@ -345,6 +361,7 @@ fn w18_20_down_then_up_resumes_and_restores_the_layout() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     assert!(wait_starts(&h, &c, 2), "{}", no_start(&h, &saved, &c));
     assert_eq!(session_arg(&h, &c), ("--resume".to_string(), sid.clone()));
+    assert!(argv(&h, &c).contains(&format!("--resume={sid}")), "{:?}", argv(&h, &c));
     assert_eq!(session_args(&argv(&h, &c)), 1, "{:?}", argv(&h, &c));
     assert_held_released(&h, &s);
     for p in saved.panes.iter().filter(|p| p.key != c) {
@@ -531,6 +548,8 @@ fn w18_24_closed_agent_panes_are_detached_while_another_session_is_current() {
     settle_to(&h, &id, &[&a, &b], MemberState::Resumable);
     let cache = h.root().join(".cache/zygo/workspaces").join(&id).join("results").join(&a);
     assert!(cache.exists(), "{}", cache.display());
+    let cache_b = h.root().join(".cache/zygo/workspaces").join(&id).join("results").join(&b);
+    assert!(cache_b.exists(), "{}", cache_b.display());
     down(&h, &name);
     let o = up(&h, &name, &[]);
     let err = text(&o.stderr);
@@ -547,6 +566,10 @@ fn w18_24_closed_agent_panes_are_detached_while_another_session_is_current() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     assert!(!state(&h, &id).members.contains_key(&a));
     assert!(!cache.exists(), "{}", cache.display());
+    let o = cli(&h, &["ws", "forget-pane", &b], &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(!state(&h, &id).members.contains_key(&b));
+    assert!(!cache_b.exists(), "{}", cache_b.display());
     down(&h, &name);
 }
 
@@ -559,9 +582,9 @@ fn w18_77_closed_shell_panes_while_another_session_is_current() {
     let s5 = key_at(&ws, 3, 1);
     let p = rows(&h, &s).into_iter().find(|r| r.window == win(&ws, 2) && r.active).expect("an active pane in window 2").key;
     let gone = |ks: &[&String]| { let k = keys(&state(&h, &id)); ks.iter().all(|x| !k.contains(*x)) };
-    let new = tmux_version(&h) >= (3, 8);
+    let v = tmux_version(&h);
     h.tmux(&["kill-window", "-t", &format!("={s}:{}", win(&ws, 3))]);
-    if new {
+    if v >= WINDOW_KILL_HOOK {
         assert!(until(FIVE, || gone(&[&s4, &s5])), "{:?}", keys(&state(&h, &id)));
     } else {
         // W§18 #77: the keys are still there 5 s later (the item's own time).
@@ -570,7 +593,7 @@ fn w18_77_closed_shell_panes_while_another_session_is_current() {
         assert!(k.contains(&s4) && k.contains(&s5), "{k:?}");
     }
     h.tmux(&["kill-pane", "-t", &row(&h, &s, &p).id]);
-    if !new {
+    if v < WINDOW_KILL_HOOK || v < ACTIVE_PANE_HOOK {
         h.tmux(&["split-window", "-d", "-t", &format!("={s}:{}", win(&ws, 0))]);
     }
     assert!(until(FIVE, || gone(&[&s4, &s5, &p])), "{:?}", keys(&state(&h, &id)));
@@ -799,7 +822,8 @@ fn w18_31_a_hand_start_in_a_new_split_joins_and_resumes() {
     let o = up(&h, &ws.name, &[]);
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     assert!(wait_starts(&h, &k, 2), "{}", no_start(&h, &ws, &k));
-    assert_eq!(session_arg(&h, &k), ("--resume".to_string(), sid));
+    assert_eq!(session_arg(&h, &k), ("--resume".to_string(), sid.clone()));
+    assert!(argv(&h, &k).contains(&format!("--resume={sid}")), "{:?}", argv(&h, &k));
     down(&h, &ws.name);
 }
 
@@ -859,7 +883,7 @@ fn w18_33_each_bypass_form_is_printed_and_resumed() {
 
 #[test]
 fn w18_34_the_saved_socket_reaches_the_server_and_must_be_private() {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     let Some(h) = Harness::new() else { return };
     git_repo_at(&h, &h.repo());
     per_pane_claude(&h, "");
@@ -913,14 +937,13 @@ fn w18_34_the_saved_socket_reaches_the_server_and_must_be_private() {
     let o = run_in(&h, &repo, &["up", &ws.name, "--no-attach"], &b, true);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
     assert!(text(&o.stderr).contains(&line), "{line}\n{}", text(&o.stderr));
+    // An agent that this `up` started by mistake would start within the 5 s of W§18 (stub starts are counted).
+    std::thread::sleep(FIVE);
     assert_eq!(starts(&h, &a), 2);
     let o = run_in(&h, &repo, &["down", &ws.name, "--now", "--wait"], &b, true);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
     assert!(text(&o.stderr).contains(&line), "{line}\n{}", text(&o.stderr));
-    // SAFETY: `kill` takes plain integers; `pid` is the tmux server that this test's `up` started.
-    unsafe {
-        libc::kill(pid, libc::SIGTERM);
-    }
+    a_srv.kill_now(libc::SIGTERM);
     assert!(until(BOUND, || settled(&h, &id)), "{:?}", state(&h, &id).members);
     let open = h.root().join("open");
     std::fs::create_dir(&open).unwrap();
@@ -935,6 +958,29 @@ fn w18_34_the_saved_socket_reaches_the_server_and_must_be_private() {
     let o = run_in(&h, &repo, &["up", &ws.name, "--no-attach"], &b, true);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
     assert!(text(&o.stderr).contains(&format!("tmux socket {} is not private", open_s.display())), "{}", text(&o.stderr));
+    // A saved socket whose parent folder exists and is owned by root (`/`). Only the AU54 path check
+    // (`check_saved_socket`) runs before the AU62 check (`up.rs:977-979`); in `socket_is_private` the parent exists and
+    // is a folder, so `meta.uid() != uid` (`up.rs:308`) refuses it before its mode is read.
+    if uid == 0 {
+        let _ = std::io::stderr().write_all(b"w18_34: the root-owned parent case skipped: the test runs as root\n");
+    } else if std::fs::metadata("/").unwrap().uid() != 0 {
+        let _ = std::io::stderr().write_all(b"w18_34: the root-owned parent case skipped: / is not owned by root\n");
+    } else {
+        let root_s = PathBuf::from("/zygo-e1-w18-34-s");
+        h.store(&id)
+            .update(Duration::from_secs(5), &mut |w| {
+                w.tmux_socket = Some(root_s.clone());
+                Ok(())
+            })
+            .unwrap();
+        let o = run_in(&h, &repo, &["up", &ws.name, "--no-attach"], &b, true);
+        assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+        let refused = format!(
+            "zygo: tmux socket {} is not private: the socket and its folder must be yours and the folder must have mode 0700",
+            root_s.display()
+        );
+        assert!(text(&o.stderr).lines().any(|l| l == refused), "{refused}\n{}", text(&o.stderr));
+    }
 }
 
 // ---- W§18 #37 (AU67; E-5) ----
@@ -962,7 +1008,7 @@ fn w18_37_an_up_killed_after_the_first_window_is_repaired() {
     }
     ready_exe(&t);
     let nw_pid = h.root().join("nw-pid");
-    let _k = KillOnDrop(nw_pid.clone());
+    let mut k = KillOnDrop::new(nw_pid.clone());
     let repo = h.repo();
     let mut g = Guarded::spawn(cmd_in(&h, &repo, &["up", "--loadout", "l37", "--no-attach"], &[], true));
     let mut held = 0;
@@ -973,11 +1019,14 @@ fn w18_37_an_up_killed_after_the_first_window_is_repaired() {
         }),
         "the wrapper did not hold a new-window call"
     );
-    // SAFETY: `kill` takes plain integers; `g` leads its own group and is not reaped; `held` is its held wrapper.
+    // SAFETY: `kill` takes plain integers; `g` leads its own group and is not reaped.
     unsafe {
         libc::kill(-(g.id() as libc::pid_t), libc::SIGKILL);
-        libc::kill(held, libc::SIGKILL);
     }
+    // The wrapper is not in that group: zygo runs each tmux call in a process group of its own
+    // (`crates/zygo-workspace/src/mux/tmux.rs:64`). It still sleeps (30 s), so it gets its one signal now, and the
+    // helper is disarmed.
+    k.kill_now(libc::SIGKILL);
     let st = g.wait("up");
     assert!(st.signal() == Some(libc::SIGKILL) || st.code() == Some(1), "{st:?}");
     let (id, ws) = only_state(&h);
