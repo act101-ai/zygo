@@ -37,7 +37,7 @@ wait_body() { # <regex> <seconds>
     check_abort; sleep 0.5
   done
 }
-set_ver() { v=$(usage_version); LIVE_VER=${v:-$PIN_CC}; }
+set_ver() { v=$(usage_version); LIVE_VER=${v:-$LIVE_CC_VER}; }
 
 part_n24() {
   # (a) print mode: a Bash command with a non-zero exit.

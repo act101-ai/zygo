@@ -57,7 +57,6 @@ fn full() -> Workspace {
     m.launch.args = vec!["--model".into(), "opus".into()];
     m.config_dir = Some("/home/u/work".into());
     m.program = Some("/usr/bin/claude".into());
-    m.last_run_at = Some(1_700_000_000);
     m.overrides = Some(json!({"results": false, "guards": {}}));
     m.compact = Some(CompactOverride::Set("120000".into()));
     m.interrupted = vec![Subagent { agent_id: "a1".into(), agent_type: "Explore".into(), ..Default::default() }];
@@ -65,6 +64,7 @@ fn full() -> Workspace {
     m.dropped_flags = vec!["--agents".into()];
     m.clean_stop = true;
     m.note_pending = true;
+    m.saved_for = Some("01JD0000000000000000000000".into());
     ws.members.insert(KEY.into(), m);
     ws
 }
@@ -83,10 +83,11 @@ fn json_has_the_fields_of_w7_2() {
             "agent_session": "a-1", "state": "running",
             "launch": {"kind": "claude-code", "profile": "fast", "passthrough": false, "server": "https://zygo.example",
                 "compact": "120k", "yolo": true, "config_dir": "work", "args": ["--model", "opus"]},
-            "config_dir": "/home/u/work", "program": "/usr/bin/claude", "last_run_at": 1700000000u64,
+            "config_dir": "/home/u/work", "program": "/usr/bin/claude",
             "overrides": {"results": false, "guards": {}}, "compact": "set 120000",
             "interrupted": [{"agent_id": "a1", "agent_type": "Explore"}],
-            "closed_units": ["W2"], "dropped_flags": ["--agents"], "clean_stop": true, "note_pending": true}}
+            "closed_units": ["W2"], "dropped_flags": ["--agents"], "clean_stop": true, "note_pending": true,
+            "saved_for": "01JD0000000000000000000000"}}
     });
     assert_eq!(serde_json::to_value(full()).unwrap(), want);
     assert_eq!(serde_json::from_value::<Workspace>(want).unwrap(), full());
@@ -241,6 +242,27 @@ fn update_creates_then_reads_modifies_and_writes() {
     assert!(got.members.contains_key(KEY)); // the second writer kept the first writer's change
     assert_eq!(got.snapshot_at, Some(7));
     assert_eq!(store.read().unwrap().unwrap(), got);
+}
+
+#[test] // AU84, W§7.3: a writer refuses a result that no reader would accept, and writes nothing
+fn update_refuses_a_result_larger_than_the_read_limit() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    store.update(S5, &mut identity).unwrap();
+    store.update(S5, &mut |ws| { ws.members.insert(KEY.into(), MemberRecord::new(Agent::ClaudeCode)); Ok(()) }).unwrap();
+    let before = raw(&store);
+    let r = store.update(S5, &mut |ws| {
+        ws.members.get_mut(KEY).unwrap().zygo_session = Some("x".repeat(2 * 1024 * 1024));
+        Ok(())
+    });
+    let Err(e) = r else { panic!("a state larger than the read limit was written") };
+    assert!(
+        matches!(&e, StateError::Invalid { reason, .. } if reason.starts_with("the new state is ")
+            && reason.ends_with(" bytes, more than the 1048576 bytes that every reader accepts (AU84); not written")),
+        "{e}"
+    );
+    assert_eq!(raw(&store), before);
+    assert!(matches!(store.read(), Ok(Some(_))));
 }
 
 #[cfg(unix)]
@@ -566,4 +588,327 @@ fn list_all_gives_each_workspace_with_its_read_result() {
     assert!(matches!(all[0].1, Err(StateError::Newer { .. })));
     assert!(matches!(all[1].1, Err(StateError::Invalid { .. })));
     assert_eq!(all[2].1.as_ref().unwrap().name, "app");
+}
+
+#[test] // W7 Round 3 R3-2: `build_plan` and `fresh_members`; absent when empty, so an older file reads; AU84 on the keys
+fn build_plan_and_fresh_members() {
+    let v = serde_json::to_value(full()).unwrap();
+    assert!(v.get("build_plan").is_none() && v.get("fresh_members").is_none(), "{v}");
+    let mut ws = full();
+    ws.build_plan = Some(BuildPlan::Loadout);
+    ws.fresh_members = vec![KEY.into()];
+    let v = serde_json::to_value(&ws).unwrap();
+    assert_eq!((&v["build_plan"], &v["fresh_members"]), (&json!("loadout"), &json!([KEY])));
+    assert_eq!(serde_json::from_value::<Workspace>(v).unwrap(), ws);
+    assert_eq!(serde_json::to_value(BuildPlan::Restore).unwrap(), json!("restore"));
+    let old: Workspace = serde_json::from_value(doc()).unwrap();
+    assert_eq!((old.build_plan, old.fresh_members.len()), (None, 0));
+    let new = Workspace::new(ID);
+    assert_eq!((new.build_plan, new.fresh_members.len()), (None, 0));
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut v = doc();
+    v["fresh_members"] = json!(["../x"]);
+    put(&store, &v);
+    assert!(matches!(store.read(), Err(StateError::Invalid { reason, .. }) if reason == "invalid pane key"));
+}
+
+/// 1 MiB, the largest `workspace.json` that reads (AU84, FIX-17).
+const MIB: usize = 1024 * 1024;
+/// A valid document padded with spaces to exactly `len` bytes.
+fn padded(len: usize) -> Vec<u8> {
+    let mut b = serde_json::to_vec(&doc()).unwrap();
+    assert!(b.len() <= len);
+    b.resize(len, b' ');
+    b
+}
+/// The names in `dir`, sorted.
+fn names(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    v.sort();
+    v
+}
+
+#[cfg(unix)]
+#[test] // FIX-17 (a): a linked state folder is refused before any create, chmod, lock or write
+fn linked_state_folder_is_refused_and_not_changed() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let target = t.path().join("target");
+    fs::create_dir(&target).unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    let body = serde_json::to_vec(&doc()).unwrap();
+    fs::write(target.join("workspace.json"), &body).unwrap();
+    fs::create_dir_all(p.workspaces_dir()).unwrap();
+    std::os::unix::fs::symlink(&target, p.workspaces_dir().join(ID)).unwrap();
+    let store = Store::open(&p, ID);
+    let link_err = |e: &StateError| {
+        matches!(e, StateError::NotADirectory { path, link: true } if path == store.dir())
+            && e.to_string() == format!("{}: state folder is a link", store.dir().display())
+    };
+    let e = store.op_lock().unwrap_err();
+    assert!(link_err(&e), "op_lock: {e}");
+    let mut ran = false;
+    let e = store.update(S5, &mut |_| { ran = true; Ok(()) }).unwrap_err();
+    assert!(link_err(&e) && !ran, "update: {e}");
+    let e = store.read().unwrap_err();
+    assert!(link_err(&e), "read: {e}");
+    store.log_error("must not be written");
+    assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o755);
+    assert_eq!(names(&target), vec!["workspace.json".to_string()]);
+    assert_eq!(fs::read(target.join("workspace.json")).unwrap(), body);
+}
+
+#[test] // FIX-17 (a): a state folder that is a file is refused; the file is not changed
+fn state_folder_that_is_a_file_is_refused() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    fs::create_dir_all(p.workspaces_dir()).unwrap();
+    let file = p.workspaces_dir().join(ID);
+    fs::write(&file, "a file").unwrap();
+    let store = Store::open(&p, ID);
+    let file_err = |e: &StateError| {
+        matches!(e, StateError::NotADirectory { path, link: false } if path == store.dir())
+            && e.to_string() == format!("{}: state folder is not a folder", store.dir().display())
+    };
+    let e = store.op_lock().unwrap_err();
+    assert!(file_err(&e), "op_lock: {e}");
+    let e = store.update(S5, &mut identity).unwrap_err();
+    assert!(file_err(&e), "update: {e}");
+    let e = store.read().unwrap_err();
+    assert!(file_err(&e), "read: {e}");
+    store.log_error("must not be written");
+    assert_eq!(fs::read(&file).unwrap(), b"a file");
+    assert_eq!(names(&p.workspaces_dir()), vec![ID.to_string()]);
+}
+
+#[test] // FIX-17 (b), AU84, AU29 (Round 2 F1): a `workspace.json` larger than 1 MiB is `TooLarge` for read, list_all, update
+fn state_file_over_1_mib_is_too_large() {
+    for len in [MIB + 1, MIB + 2, 2 * MIB] {
+        let t = TempDir::new().unwrap();
+        let p = paths(t.path());
+        let store = Store::open(&p, ID);
+        fs::create_dir_all(store.dir()).unwrap();
+        let body = padded(len);
+        fs::write(store.dir().join("workspace.json"), &body).unwrap();
+        let file = store.dir().join("workspace.json");
+        let text = format!("{}: state file too large; it may be from a newer zygo, so zygo does not change it", file.display());
+        let too_large = |r: &Result<Workspace, StateError>| {
+            matches!(r, Err(e @ StateError::TooLarge { path }) if path == &file && e.to_string() == text)
+        };
+        let r = store.read().map(|w| w.unwrap());
+        assert!(too_large(&r), "{len}: read {r:?}");
+        let all = list_all(&p);
+        assert_eq!(all.len(), 1, "{len}");
+        assert!(too_large(&all[0].1), "{len}: list_all {:?}", all[0].1);
+        let r = store.update(S5, &mut identity);
+        assert!(too_large(&r), "{len}: update {r:?}");
+        assert!(raw(&store) == body, "{len}: update changed the file");
+    }
+}
+
+#[test] // FIX-17 (b): a `workspace.json` of exactly 1 MiB reads and updates
+fn state_file_of_1_mib_reads() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    fs::create_dir_all(store.dir()).unwrap();
+    fs::write(store.dir().join("workspace.json"), padded(MIB)).unwrap();
+    assert_eq!(store.read().unwrap().unwrap().name, "app");
+    let ws = store.update(S5, &mut |w| { w.loadout = "pair".into(); Ok(()) }).unwrap();
+    assert_eq!(ws.loadout, "pair");
+    assert_eq!(store.read().unwrap().unwrap().loadout, "pair");
+}
+
+/// Runs `f` in a thread and waits for it at most 10 s: a call that blocks fails the test (FIX-17 Round 2 F4).
+fn bounded<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(v) => v,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("{what} blocked"),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => panic!("{what} panicked (see the thread's message above)"),
+    }
+}
+
+#[cfg(unix)]
+fn mkfifo(path: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo {}", path.display());
+}
+
+#[cfg(unix)]
+#[test] // FIX-17 Round 2 F3, F4: a link at `lock`, `op.lock`, `errors.log` or `workspace.json` is never followed
+fn links_inside_the_state_folder_are_not_followed() {
+    use std::os::unix::fs::symlink;
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    store.update(S5, &mut identity).unwrap();
+    let dir = store.dir().to_path_buf();
+    let target = t.path().join("target");
+    fs::create_dir(&target).unwrap();
+    let is_link = |e: &StateError, name: &str| e.to_string() == format!("{}: is a link; it is not followed", dir.join(name).display());
+    // `lock` and `op.lock`: links to files that do not exist; nothing is created at the target.
+    fs::remove_file(dir.join("lock")).unwrap();
+    symlink(target.join("lock"), dir.join("lock")).unwrap();
+    symlink(target.join("op.lock"), dir.join("op.lock")).unwrap();
+    let before = raw(&store);
+    let s = store.clone();
+    let e = bounded("update", move || s.update(S5, &mut identity).unwrap_err());
+    assert!(is_link(&e, "lock"), "update: {e}");
+    let s = store.clone();
+    let e = bounded("op_lock", move || s.op_lock().unwrap_err());
+    assert!(is_link(&e, "op.lock"), "op_lock: {e}");
+    let s = store.clone();
+    assert!(bounded("op_lock_free", move || s.op_lock_free()));
+    assert_eq!(raw(&store), before);
+    // `errors.log`: a link to a file with content, below and above the log cap; the target keeps its bytes.
+    fs::write(target.join("log"), "keep").unwrap();
+    symlink(target.join("log"), dir.join("errors.log")).unwrap();
+    let s = store.clone();
+    bounded("log_error", move || s.log_error("must not be written"));
+    assert_eq!(fs::read(target.join("log")).unwrap(), b"keep");
+    let full = vec![b'x'; ERRORS_LOG_MAX as usize];
+    fs::write(target.join("log"), &full).unwrap();
+    let s = store.clone();
+    bounded("log_error", move || s.log_error("must not be written"));
+    assert!(fs::symlink_metadata(dir.join("errors.log")).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read(target.join("log")).unwrap(), full);
+    // `workspace.json`: a link to a valid state is not read.
+    fs::write(target.join("ws.json"), &before).unwrap();
+    fs::remove_file(dir.join("workspace.json")).unwrap();
+    symlink(target.join("ws.json"), dir.join("workspace.json")).unwrap();
+    let s = store.clone();
+    let r = bounded("read", move || s.read());
+    assert!(matches!(&r, Err(StateError::Invalid { reason, .. }) if reason == "state file is a link"), "{r:?}");
+    assert_eq!(names(&target), vec!["log".to_string(), "ws.json".to_string()]);
+    assert_eq!(fs::read(target.join("ws.json")).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test] // FIX-17 Round 2 F4: a FIFO at `workspace.json`, `lock`, `op.lock` or `errors.log` is refused or ignored, never waited on
+fn a_fifo_in_the_state_folder_never_blocks() {
+    use std::os::unix::fs::FileTypeExt;
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    store.update(S5, &mut identity).unwrap();
+    let dir = store.dir().to_path_buf();
+    let not_regular = |e: &StateError, name: &str| e.to_string() == format!("{}: is not a regular file", dir.join(name).display());
+    // `workspace.json`
+    fs::remove_file(dir.join("workspace.json")).unwrap();
+    mkfifo(&dir.join("workspace.json"));
+    let s = store.clone();
+    let r = bounded("read", move || s.read());
+    assert!(matches!(&r, Err(StateError::Invalid { reason, .. }) if reason == "state file is not a regular file"), "{r:?}");
+    let s = store.clone();
+    let r = bounded("update", move || s.update(S5, &mut identity));
+    assert!(matches!(&r, Err(StateError::Invalid { reason, .. }) if reason == "state file is not a regular file"), "{r:?}");
+    assert!(fs::symlink_metadata(dir.join("workspace.json")).unwrap().file_type().is_fifo());
+    // `lock`
+    fs::remove_file(dir.join("lock")).unwrap();
+    mkfifo(&dir.join("lock"));
+    let s = store.clone();
+    let e = bounded("update", move || s.update(S5, &mut identity).unwrap_err());
+    assert!(not_regular(&e, "lock"), "update: {e}");
+    // `op.lock`
+    mkfifo(&dir.join("op.lock"));
+    let s = store.clone();
+    let e = bounded("op_lock", move || s.op_lock().unwrap_err());
+    assert!(not_regular(&e, "op.lock"), "op_lock: {e}");
+    let s = store.clone();
+    assert!(bounded("op_lock_free", move || s.op_lock_free()));
+    // `errors.log`
+    mkfifo(&dir.join("errors.log"));
+    let s = store.clone();
+    bounded("log_error", move || s.log_error("must not be written"));
+    assert!(fs::symlink_metadata(dir.join("errors.log")).unwrap().file_type().is_fifo());
+}
+
+/// M4: `update_existing` makes no folder and no state when none exists. With no state folder it creates nothing,
+/// not even the folder above it. With a state folder and no `workspace.json` (the case that `update` would fill with
+/// `Workspace::new`), it gives `Ok(None)`, runs no closure and writes no `workspace.json`; the only file it leaves is
+/// the `lock` file that taking the lock creates (M4 review F2b, F4).
+#[test]
+fn update_existing_makes_nothing_when_the_state_is_gone() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut calls = 0;
+    assert!(matches!(store.update_existing(S5, &mut |_| { calls += 1; Ok(()) }), Ok(None)));
+    assert_eq!(calls, 0);
+    assert!(!store.dir().exists());
+    assert!(!store.dir().parent().unwrap().exists());
+    fs::create_dir_all(store.dir()).unwrap();
+    assert!(matches!(store.update_existing(S5, &mut |_| { calls += 1; Ok(()) }), Ok(None)));
+    assert_eq!(calls, 0);
+    assert_eq!(names(store.dir()), ["lock"]);
+}
+
+/// M4: on an existing state it is `update`; a closure error writes nothing.
+#[test]
+fn update_existing_changes_an_existing_state() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    store.update(S5, &mut identity).unwrap();
+    let before = raw(&store);
+    assert!(matches!(store.update_existing(S5, &mut |_| anyhow::bail!("no record")), Err(StateError::Refused(_))));
+    assert_eq!(raw(&store), before);
+    let got = store.update_existing(S5, &mut |w| { w.loadout = "other".into(); Ok(()) }).unwrap().unwrap();
+    assert_eq!(got.loadout, "other");
+    assert_eq!(store.read().unwrap().unwrap().loadout, "other");
+}
+
+/// M4, `ws forget` racing the mirror: the folder goes away after the read, inside the closure; the write then fails
+/// and no folder is made. It does not tell `update_existing` from `update`, which also makes no folder after its
+/// read; `update_existing_makes_nothing_when_the_state_is_gone` does.
+#[test]
+fn update_existing_does_not_make_a_forgotten_folder_again() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    store.update(S5, &mut identity).unwrap();
+    let dir = store.dir().to_path_buf();
+    let r = store.update_existing(S5, &mut |w| {
+        fs::remove_dir_all(&dir)?;
+        w.loadout = "other".into();
+        Ok(())
+    });
+    assert!(r.is_err(), "{r:?}");
+    assert!(!store.dir().exists());
+}
+
+/// M4: the session id rule of `live_launcher`.
+#[test]
+fn valid_session_ids() {
+    for ok in ["S1", "01JTESTSESSIONAAAAAAAAAAAA"] {
+        assert!(valid_session_id(ok), "{ok}");
+    }
+    for bad in ["", "..", "../x", "/tmp/x", "a/b", "a.b", "a b", "é"] {
+        assert!(!valid_session_id(bad), "{bad}");
+    }
+}
+
+#[test] // FIX-24 D1, W§7.2 member.launch.events_off: absent when false, an old file reads false, never in `extra`
+fn launch_events_off_defaults_to_false_and_is_left_out_when_false() {
+    let on: Launch = serde_json::from_value(json!({"kind": "opencode", "events_off": true})).unwrap();
+    assert!(on.events_off);
+    assert!(on.extra.is_empty(), "the key must not land in extra: {:?}", on.extra);
+    let old: Launch = serde_json::from_value(json!({"kind": "opencode"})).unwrap();
+    assert!(!old.events_off, "an old file reads false");
+    assert!(serde_json::to_value(Launch::new(Agent::OpenCode)).unwrap().get("events_off").is_none());
+    let mut l = Launch::new(Agent::OpenCode);
+    l.events_off = true;
+    assert_eq!(serde_json::to_value(&l).unwrap()["events_off"], json!(true));
+    let t = TempDir::new().unwrap();
+    let paths = paths(t.path());
+    let store = Store::open(&paths, ID);
+    store.update(S5, &mut identity).unwrap();
+    let mut m = MemberRecord::new(Agent::OpenCode);
+    m.launch.events_off = true;
+    store.update(S5, &mut |ws| { ws.members.insert(KEY.into(), m.clone()); Ok(()) }).unwrap();
+    assert!(store.read().unwrap().unwrap().members[KEY].launch.events_off);
 }

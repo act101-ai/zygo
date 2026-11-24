@@ -1,0 +1,23 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "pw2 lead done",
+  "background_tasks": [
+    {
+      "id": "agent-id-1",
+      "type": "subagent",
+      "status": "running",
+      "description": "pw2",
+      "agent_type": "pw-sub"
+    }
+  ],
+  "session_crons": []
+}

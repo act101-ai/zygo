@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, Request, State};
-use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
@@ -46,19 +45,12 @@ pub(crate) fn router(app: Arc<App>) -> Router {
         .route("/anthropic/v1/messages", post(messages))
         .route("/anthropic/v1/messages/count_tokens", post(count_tokens))
         .route("/anthropic/v1/models", get(models))
-        .route_layer(middleware::from_fn_with_state(app.clone(), sweep))
         .route("/openai/v1/responses", post(not_in_v1))
         .route("/openai/v1/chat/completions", post(not_in_v1))
         .route("/openai/v1/models", get(not_in_v1))
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(app)
-}
-
-/// §7.2 note (N10 review): every session-API request first removes the expired sessions.
-async fn sweep(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
-    app.sessions.sweep();
-    next.run(req).await
 }
 
 async fn healthz() -> &'static str {

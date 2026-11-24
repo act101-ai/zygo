@@ -11,6 +11,9 @@ cd "$(dirname "$0")/.." || exit 1
 P=docs/premises.md
 SPEC=docs/specs/2026-11-18-zygo-design.md
 IDS="P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7"
+WSPEC=docs/specs/2026-11-20-workspaces-design.md
+WIDS="PW6 PW11 PW15 PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16"
+WSKIP=""
 
 fail() { echo "check-premises: $*"; exit 1; }
 
@@ -29,15 +32,18 @@ header() { sed -n "s/^$1: *\(.*[^ ]\) *\$/\1/p" "$P" | head -n 1; }
 V_CC=$(header 'Claude Code')
 V_OC=$(header 'OpenCode')
 V_AL=$(header 'act-lite')
+V_TM=$(header 'tmux')
 [ -n "$V_CC" ] || fail "header line 'Claude Code: <version>' missing"
 [ -n "$V_OC" ] || fail "header line 'OpenCode: <version>' missing"
 [ -n "$V_AL" ] || fail "header line 'act-lite: <version>' missing"
+[ -n "$V_TM" ] || fail "header line 'tmux: <version>' missing"
 
 version_of() {
   case "$1" in
     'Claude Code') echo "$V_CC" ;;
     'OpenCode') echo "$V_OC" ;;
     'act-lite') echo "$V_AL" ;;
+    'tmux') echo "$V_TM" ;;
     *) echo "" ;;
   esac
 }
@@ -49,7 +55,7 @@ S19=$(awk '/^## 19\. /{f=1;next} /^## 19a\. /{f=0} f' "$SPEC")
 S19A=$(awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f' "$SPEC")
 S105=$(awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f' "$SPEC")
 
-for id in $IDS; do
+for id in $IDS $WIDS; do
   n=$(grep -c "^| $id |" "$P")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
   row=$(grep "^| $id |" "$P")
@@ -74,6 +80,7 @@ for id in $IDS; do
     # A pinned agent version is a minimum (operator, 2026-11-21); act-lite stays exact.
     case "$a" in
       'Claude Code' | 'OpenCode') ver_ge "$v" "$want" || fail "$id: version '$v' is below the header's '$want' for $a, or not a dotted number" ;;
+      'tmux') ver_ge "${v%[a-z]}" "$want" || fail "$id: version '$v' is below the header's '$want' for tmux, or not a dotted number with at most one letter after it" ;;
       *) [ "$v" = "$want" ] || fail "$id: version '$v' differs from the header's '$want' for $a" ;;
     esac
     i=$((i + 1))
@@ -95,6 +102,7 @@ EOF_PATHS
   if [ "$result" = failed ]; then
     pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: [^)]*\)\*"
     case "$id" in
+      PW*) ;;
       P*) echo "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
       Q*) echo "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
     esac
@@ -104,6 +112,15 @@ EOF_PATHS
       nontrivial fixtures/act-lite/languages.json || fail "P6a: failed, but fixtures/act-lite/languages.json is missing or trivial"
     fi
   fi
+  case "$id" in PW*)
+    if [ -s "$WSPEC" ]; then
+      grep -Eq "^\| $id \|.*Result $date: $result([ .;,]|\$)" "$WSPEC" || fail "$id: the W§17 row has no 'Result $date: $result'"
+      [ "$result" != failed ] || grep -Eq "\*\(Note $date, [A-Z0-9-]+, $id: [^)]*\)\*" "$WSPEC" ||
+        fail "$id: failed, but the workspaces spec has no dated note *(Note $date, <node>, $id: …)*"
+    else
+      WSKIP=1
+    fi ;;
+  esac
 done
 
 for f in fixtures/claude-code/help.txt fixtures/opencode/help.txt \
@@ -192,5 +209,6 @@ $(host_names)
 EOF_HOSTS
 [ -n "${N2_FORBIDDEN_NAMES:-}" ] || echo "check-premises: note: N2_FORBIDDEN_NAMES not set; name scan skipped"
 
-echo "check-premises: ok (${IDS})"
+[ -z "$WSKIP" ] || echo "check-premises: note: $WSPEC not found; W§17 result check skipped"
+echo "check-premises: ok (${IDS} ${WIDS})"
 exit 0

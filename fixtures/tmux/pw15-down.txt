@@ -1,0 +1,9 @@
+launch zygo zygo 0.1.1, real down
+claude 2.1.331
+tmux 3.2a
+15.slash-off ok exit 143; started line yes; down exit -; AU18 line no; in sandbox -; phase down; log end yes; log not older than agent exit yes; session gone yes; prompt reached the hook as text yes; block reason in result,system
+15.slash-on ok exit 143; started line yes; down exit -; AU18 line no; in sandbox -; phase down; log end yes; log not older than agent exit yes; session gone yes; prompt reached the hook as text yes; block reason in result,system
+15.bash-off ok exit 0; started line yes; down exit 0; AU18 line no; in sandbox no; phase down; log end yes; log not older than agent exit yes; session gone yes; prompt reached the hook as text -; block reason in -
+15.bash-on ok exit 0; started line no; down exit 1; AU18 line yes; in sandbox yes; phase up; log end no; log not older than agent exit no; session gone no; prompt reached the hook as text -; block reason in -; AU18 guard, nothing started
+15.tool-off ok exit 0; started line yes; down exit -; AU18 line no; in sandbox -; phase down; log end yes; log not older than agent exit yes; session gone yes; prompt reached the hook as text -; block reason in -
+15.tool-on ok exit 0; started line yes; down exit -; AU18 line no; in sandbox -; phase down; log end yes; log not older than agent exit yes; session gone yes; prompt reached the hook as text -; block reason in -

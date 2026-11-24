@@ -23,10 +23,12 @@ use zygo_proxy::pipeline::{ModelRoute, Pipeline, RequestCtx, Stage};
 use zygo_proxy::provider::KeyResolver;
 use zygo_proxy::redact_stage::RedactLimits;
 use zygo_proxy::server::StartOpts;
-use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest, IDLE_TTL};
+use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::{Proxy, ProxyHandle, Url};
+use zygo_proxy::tee::UsageHold;
 use zygo_redact::DeadlinePolicy;
-use zygo_usage::{RedactionCount, RequestRow, Store};
+use zygo_usage::{RedactionCount, RequestRow, Store, UpstreamErrorRow};
+use futures_util::StreamExt;
 
 const M: &str = "anthropic/v1/messages";
 const CT: &str = "anthropic/v1/messages/count_tokens";
@@ -42,13 +44,32 @@ struct Got { path: String, headers: HeaderMap, body: Vec<u8> }
 /// The reply body of a new `Upstream`.
 const REPLY: &str = r#"{"id":"m","type":"message","role":"assistant","content":[],"usage":{"input_tokens":11,"output_tokens":22}}"#;
 
-struct Upstream { addr: SocketAddr, got: Arc<Mutex<Vec<Got>>>, reply: Arc<Mutex<String>>, _stop: tokio::sync::oneshot::Sender<()> }
+struct Upstream {
+    addr: SocketAddr,
+    got: Arc<Mutex<Vec<Got>>>,
+    reply: Arc<Mutex<String>>,
+    status: Arc<Mutex<u16>>,
+    headers: Arc<Mutex<Vec<(String, String)>>>,
+    /// The reply's content type; `application/json` until `answer_raw`.
+    ctype: Arc<Mutex<String>>,
+    /// The reply body stays open after its bytes (`answer_hang`).
+    hang: Arc<Mutex<bool>>,
+    /// The reply body fails (a read error) 100 ms after its bytes (`answer_reset`).
+    reset: Arc<Mutex<bool>>,
+    _stop: tokio::sync::oneshot::Sender<()>,
+}
 impl Upstream {
-    /// 127.0.0.1:0, own runtime thread; every request is recorded and answered 200 JSON (`REPLY` until `reply`).
+    /// 127.0.0.1:0, own runtime thread; every request is recorded and answered 200 JSON (`REPLY` until `reply`;
+    /// status, extra headers and body until `answer`).
     fn start() -> Upstream {
         let got: Arc<Mutex<Vec<Got>>> = Arc::default();
         let reply = Arc::new(Mutex::new(REPLY.to_string()));
-        let r2 = reply.clone();
+        let status = Arc::new(Mutex::new(200u16));
+        let headers: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let ctype = Arc::new(Mutex::new("application/json".to_string()));
+        let hang = Arc::new(Mutex::new(false));
+        let reset = Arc::new(Mutex::new(false));
+        let (r2, s2, h2, c2, k2, e2) = (reply.clone(), status.clone(), headers.clone(), ctype.clone(), hang.clone(), reset.clone());
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
@@ -59,17 +80,32 @@ impl Upstream {
             rt.block_on(async move {
                 let l = tokio::net::TcpListener::from_std(l).unwrap();
                 let app = axum::Router::new().fallback(move |req: Request| {
-                    let (g3, r3) = (g2.clone(), r2.clone());
+                    let (g3, r3, s3, h3, c3, k3, e3) = (g2.clone(), r2.clone(), s2.clone(), h2.clone(), c2.clone(), k2.clone(), e2.clone());
                     async move {
                         let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
                         let headers = req.headers().clone();
                         let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap().to_vec();
                         g3.lock().unwrap().push(Got { path, headers, body });
-                        Response::builder()
-                            .status(200)
-                            .header("content-type", "application/json")
-                            .body(axum::body::Body::from(r3.lock().unwrap().clone()))
-                            .unwrap()
+                        let ct = c3.lock().unwrap().clone();
+                        let mut b = Response::builder().status(*s3.lock().unwrap()).header("content-type", ct);
+                        for (k, v) in h3.lock().unwrap().iter() {
+                            b = b.header(k.as_str(), v.as_str());
+                        }
+                        let body = r3.lock().unwrap().clone();
+                        let body = if *k3.lock().unwrap() {
+                            let first = futures_util::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(body)) });
+                            axum::body::Body::from_stream(first.chain(futures_util::stream::pending()))
+                        } else if *e3.lock().unwrap() {
+                            let first = futures_util::stream::once(async move { Ok::<Bytes, std::io::Error>(Bytes::from(body)) });
+                            let fail = futures_util::stream::once(async {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                Err::<Bytes, std::io::Error>(std::io::Error::other("upstream reset"))
+                            });
+                            axum::body::Body::from_stream(first.chain(fail))
+                        } else {
+                            axum::body::Body::from(body)
+                        };
+                        b.body(body).unwrap()
                     }
                 });
                 tokio::select! {
@@ -78,10 +114,35 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, reply, _stop: tx }
+        Upstream { addr, got, reply, status, headers, ctype, hang, reset, _stop: tx }
     }
     /// Every later request is answered with `body`.
     fn reply(&self, body: &Value) { *self.reply.lock().unwrap() = body.to_string(); }
+    /// Every later request is answered with `status`, `headers` (after `content-type`) and `body`.
+    fn answer(&self, status: u16, headers: &[(&str, &str)], body: &Value) {
+        *self.status.lock().unwrap() = status;
+        *self.headers.lock().unwrap() = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        self.reply(body);
+    }
+    /// Every later request is answered with `status`, no extra header, content type `ctype` and the raw `body`.
+    fn answer_raw(&self, status: u16, ctype: &str, body: &str) {
+        *self.status.lock().unwrap() = status;
+        self.headers.lock().unwrap().clear();
+        *self.ctype.lock().unwrap() = ctype.to_string();
+        *self.reply.lock().unwrap() = body.to_string();
+    }
+    /// Every later request is answered with `status` and the JSON content type; the body is `head`, then the stream
+    /// stays open (no end).
+    fn answer_hang(&self, status: u16, head: &str) {
+        self.answer_raw(status, "application/json", head);
+        *self.hang.lock().unwrap() = true;
+    }
+    /// Every later request is answered with `status` and the JSON content type; the body is `head`, then a read error
+    /// (the connection is reset, no body end).
+    fn answer_reset(&self, status: u16, head: &str) {
+        self.answer_raw(status, "application/json", head);
+        *self.reset.lock().unwrap() = true;
+    }
     fn port(&self) -> u16 { self.addr.port() }
     fn got(&self) -> Vec<Got> { self.got.lock().unwrap().clone() }
     /// The last recorded request whose path starts with `prefix`.
@@ -133,7 +194,13 @@ fn generous() -> RedactLimits {
 fn setup(extra: &str) -> T { setup_with(extra, None) }
 
 /// `setup`, with `pipeline` in place of the default stage list. `{UP}` in `extra` is the URL of `up`.
-fn setup_with(extra: &str, pipeline: Option<Pipeline>) -> T {
+fn setup_with(extra: &str, pipeline: Option<Pipeline>) -> T { setup_full(extra, pipeline, None) }
+
+/// `setup_with`, and `hold` as the usage writer's hold: no row is written until `release`.
+fn setup_full(extra: &str, pipeline: Option<Pipeline>, hold: Option<Arc<UsageHold>>) -> T { setup_limits(extra, pipeline, hold, generous()) }
+
+/// `setup_full`, with `limits` as the redaction deadlines in place of `generous()`.
+fn setup_limits(extra: &str, pipeline: Option<Pipeline>, hold: Option<Arc<UsageHold>>, limits: RedactLimits) -> T {
     let d = TempDir::new().unwrap();
     let (up, anth) = (Upstream::start(), Upstream::start());
     let p = d.path();
@@ -146,7 +213,7 @@ fn setup_with(extra: &str, pipeline: Option<Pipeline>) -> T {
     let c = ManualClock::new();
     let keys = Arc::new(CountKeys::default());
     let o = StartOpts { clock: c.clone(), keys: keys.clone(), usage_db: Some(p.join("data/usage.db")),
-                        upstream_test: Some(vec![("api.anthropic.com".into(), anth.addr)]), redact_limits: Some(generous()), pipeline, ..Default::default() };
+                        upstream_test: Some(vec![("api.anthropic.com".into(), anth.addr)]), redact_limits: Some(limits), pipeline, usage_hold: hold, ..Default::default() };
     let h = Proxy::start_local_with(Arc::new(cfg), o).unwrap();
     T { d, up, anth, c, keys, h }
 }
@@ -187,6 +254,9 @@ fn hv<'a>(h: &'a HeaderMap, n: &str) -> &'a str { h.get(n).map(|v| v.to_str().un
 fn key_sample() -> String { ["sk-", "ant-api03-", &"Ab1_".repeat(24)].concat() }
 fn rows(t: &T, g: &SessionGrant) -> Vec<RequestRow> {
     Store::open(&t.d.path().join("data/usage.db")).unwrap().requests_for_session(&g.session).unwrap()
+}
+fn errs(t: &T, g: &SessionGrant) -> Vec<UpstreamErrorRow> {
+    Store::open(&t.d.path().join("data/usage.db")).unwrap().upstream_errors(&g.session).unwrap()
 }
 fn has(hay: &[u8], needle: &[u8]) -> bool { hay.windows(needle.len()).any(|w| w == needle) }
 /// True when any recorded header value or body contains `OAT`.
@@ -382,6 +452,399 @@ fn e2e_login_reaches_upstream_unchanged() {
     assert_eq!((w.input_tokens, w.output_tokens, w.estimated_usd), (11, 22, 0.0)); // p-anth has prices: 0 is the passthrough rule
 }
 
+/// The Claude Code header set of a messages request (2.1.330), with `class` as `x-claude-code-request-class`.
+fn cc_headers(class: &str) -> Vec<(&str, &str)> {
+    vec![("anthropic-beta", "oauth-2025-04-20"), ("anthropic-version", "2023-06-01"), ("accept", "application/json"),
+         ("user-agent", "claude-cli/2.1.330 (external, cli)"), ("x-app", "cli"), ("x-stainless-lang", "js"),
+         ("anthropic-dangerous-direct-browser-access", "true"), ("x-claude-code-session-id", "s1"), ("x-claude-code-request-class", class)]
+}
+
+#[test] // FIX-8 (LIV-1 D8): stage 2 and the outbound headers have no branch on the request class (§12.4)
+fn auxiliary_request_reaches_upstream_as_main_does() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let b = mb("claude-test-1");
+    for class in ["main", "auxiliary"] {
+        assert_eq!(post_pt(&t, &g, M, b.clone(), &cc_headers(class)).0, 200, "{class}");
+    }
+    let got = t.anth.got();
+    assert_eq!(got.len(), 2);
+    assert!(got.iter().all(|x| x.body == b));
+    assert_eq!(got[0].headers, got[1].headers);
+    for x in &got {
+        let h = &x.headers;
+        for n in ["user-agent", "x-app", "x-stainless-lang", "anthropic-dangerous-direct-browser-access"] {
+            assert!(h.get(n).is_none(), "{n} sent");
+        }
+        assert!(h.keys().all(|k| !k.as_str().starts_with("x-claude-code-")));
+        assert_eq!((hv(h, "authorization"), hv(h, "anthropic-beta")), (BEARER, "oauth-2025-04-20"));
+    }
+    eprintln!("upstream header names: {:?}", sorted_names(&got[0].headers));
+    assert!(t.h.usage_written(2, Duration::from_secs(10)), "usage rows not written");
+    let r = rows(&t, &g);
+    assert_eq!(r.iter().map(|w| w.request_class.as_deref()).collect::<Vec<_>>(), [Some("main"), Some("auxiliary")]);
+    assert_eq!(r[0].model, r[1].model);
+}
+
+#[test] // FIX-8 (LIV-1 D8): a 429 is kept as the last answer and relayed once, as received (§7.3, §12.4)
+fn upstream_429_reaches_the_client_once_and_unchanged() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let e = json!({"type":"error","error":{"type":"rate_limit_error","message":"limit"}});
+    t.anth.answer(429, &[("retry-after", "7")], &e);
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("auxiliary"));
+    assert_eq!((r.0, hv(&r.1, "retry-after")), (429, "7"));
+    assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), e);
+    assert_eq!(t.anth.got().len(), 1);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = rows(&t, &g);
+    assert_eq!(w.len(), 1);
+    assert_eq!((w[0].status, w[0].request_class.as_deref()), (429, Some("auxiliary")));
+}
+
+#[test] // FIX-10 (§14): a 429 answer writes its error type and message; the client gets the answer unchanged
+fn upstream_429_error_type_and_message_recorded() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let e = json!({"type":"error","error":{"type":"rate_limit_error","message":"limit"}});
+    t.anth.answer(429, &[("retry-after", "7")], &e);
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("auxiliary"));
+    assert_eq!((r.0, hv(&r.1, "retry-after")), (429, "7"));
+    assert_eq!(r.2, e.to_string().into_bytes());
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!(w.len(), 1);
+    assert_eq!((w[0].status, w[0].request_class.as_deref(), w[0].error_type.as_str(), w[0].error_message.as_str()),
+               (429, Some("auxiliary"), "rate_limit_error", "limit"));
+    let q = &rows(&t, &g)[0];
+    assert_eq!((w[0].session.as_str(), w[0].model.as_str(), w[0].ts), (g.session.as_str(), q.model.as_str(), q.ts));
+}
+
+#[test] // FIX-10: a 2xx answer writes no upstream_errors row
+fn upstream_200_records_no_error() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 200);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    assert_eq!(rows(&t, &g).len(), 1);
+    assert!(errs(&t, &g).is_empty());
+}
+
+#[test] // FIX-10 (D8): a body that is not JSON writes the row with empty type and message; the body reaches the client
+fn upstream_500_not_json_records_empty_fields() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer_raw(500, "text/plain", "upstream connect error");
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main"));
+    assert_eq!((r.0, r.2.as_slice()), (500, &b"upstream connect error"[..]));
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!(w.len(), 1);
+    assert_eq!((w[0].status, w[0].request_class.as_deref(), w[0].error_type.as_str(), w[0].error_message.as_str()),
+               (500, Some("main"), "", ""));
+}
+
+#[test] // FIX-10 (D2): at most 300 characters, each control character a space; the client gets the whole message
+fn upstream_error_message_capped_and_without_control_characters() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let long = format!("line1\r\n\t{}", "y".repeat(992));
+    assert_eq!(long.chars().count(), 1000);
+    let e = json!({"type":"error","error":{"type":"invalid_request_error","message": long}});
+    t.anth.answer(400, &[], &e);
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main"));
+    assert_eq!((r.0, r.2.clone()), (400, e.to_string().into_bytes()));
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!(w.len(), 1);
+    let m = &w[0].error_message;
+    assert_eq!(m.chars().count(), 300);
+    assert!(!m.chars().any(char::is_control));
+    assert_eq!(m, &format!("line1   {}", "y".repeat(292)));
+    assert_eq!((w[0].status, w[0].error_type.as_str()), (400, "invalid_request_error"));
+}
+
+#[test] // FIX-10 (D5), §14 "Never": a request tracer that the upstream does not echo, the login and the zygo token are in no row field and no file
+fn upstream_error_row_and_files_hold_no_unechoed_request_tracer_login_or_zygo_token() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let tracer = format!("FIXTENTRACER{}", 424242);
+    let b = serde_json::to_vec(&json!({"model": "claude-test-1", "max_tokens": 8, "messages": [{"role":"user","content": tracer.as_str()}]})).unwrap();
+    t.anth.answer(400, &[], &json!({"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}));
+    assert_eq!(post_pt(&t, &g, M, b, &cc_headers("auxiliary")).0, 400);
+    assert!(has(&t.anth.at("/v1/messages").body, tracer.as_bytes()));
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!(w.len(), 1);
+    assert_eq!((w[0].error_type.as_str(), w[0].error_message.as_str()), ("invalid_request_error", "bad request"));
+    let text = format!("{w:?}");
+    for needle in [tracer.as_str(), OAT, g.token.as_str()] {
+        assert!(!text.contains(needle), "row holds {needle}");
+    }
+    assert!(read_all(t.d.path()).iter().all(|f| !has(f, tracer.as_bytes())), "a file holds the tracer");
+}
+
+#[test] // FIX-10 (D5): the stored message goes through the secret pass; the relayed body does not change
+fn upstream_error_message_goes_through_the_secret_pass() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let key = key_sample();
+    t.anth.answer(401, &[], &json!({"type":"error","error":{"type":"authentication_error","message": format!("bad key {key} here")}}));
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main"));
+    assert_eq!(r.0, 401);
+    assert!(has(&r.2, key.as_bytes()));
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!(w.len(), 1);
+    let placeholder = ["[REDACTED", ":anthropic_api_key]"].concat();
+    assert_eq!((w[0].error_type.as_str(), w[0].error_message.clone()), ("authentication_error", format!("bad key {placeholder} here")));
+    assert!(read_all(t.d.path()).iter().all(|f| !has(f, key.as_bytes())), "a file holds the key");
+}
+
+#[test] // FIX-10 (D3): a session that is not passthrough writes no upstream_errors row
+fn normal_session_error_records_no_row() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, false);
+    t.up.answer(429, &[], &json!({"type":"error","error":{"type":"rate_limit_error","message":"limit"}}));
+    let hd = [("x-api-key", g.token.as_str()), ("x-zygo-session", g.session.as_str())];
+    assert_eq!(send(&t, "POST", M, &hd, Some(mb("code"))).0, 429);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    assert_eq!(rows(&t, &g)[0].status, 429);
+    assert!(errs(&t, &g).is_empty());
+}
+
+#[test] // FIX-10 B1: a 4 MiB error body reaches the client whole while the usage writer is held; the row follows
+fn upstream_large_error_body_does_not_wait_for_the_writer() {
+    let hold = UsageHold::new();
+    let t = setup_full("", None, Some(hold.clone()));
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let e = json!({"type":"error","error":{"type":"invalid_request_error","message": "x".repeat(4_000_000)}});
+    t.anth.answer(400, &[], &e);
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main"));
+    assert_eq!((r.0, r.2.len()), (400, e.to_string().len()));
+    assert!(!t.h.usage_written(1, Duration::from_millis(200)), "the writer ran while held");
+    hold.release();
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!(w.len(), 1);
+    assert_eq!((w[0].status, w[0].error_type.as_str(), w[0].error_message.as_str()), (400, "", "")); // a 16 KiB head does not parse
+}
+
+#[test] // FIX-10 B2: error.type gets the scrub, the secret pass and the cap too
+fn upstream_error_type_goes_through_the_secret_pass() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let key = key_sample();
+    t.anth.answer(400, &[], &json!({"type":"error","error":{"type": format!("bad {key}"), "message":"m"}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    let placeholder = ["[REDACTED", ":anthropic_api_key]"].concat();
+    assert_eq!((w.len(), w[0].error_type.clone(), w[0].error_message.as_str()), (1, format!("bad {placeholder}"), "m"));
+    assert!(read_all(t.d.path()).iter().all(|f| !has(f, key.as_bytes())), "a file holds the key");
+}
+
+#[test] // FIX-10 M5: a message that matches a `block` pattern is stored empty (fail closed)
+fn upstream_error_message_with_a_block_match_is_stored_empty() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let blocked = format!("TRACERBLOCK_{}", 123456);
+    t.anth.answer(400, &[], &json!({"type":"error","error":{"type":"invalid_request_error","message": format!("saw {blocked}")}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].error_type.as_str(), w[0].error_message.as_str()), (1, "invalid_request_error", ""));
+    assert!(read_all(t.d.path()).iter().all(|f| !has(f, blocked.as_bytes())), "a file holds the blocked word");
+}
+
+#[test] // FIX-10 M5: with `redaction.secrets` off the pass still runs on the stored fields
+fn upstream_error_secret_pass_runs_with_secrets_off() {
+    let t = setup("\n[features.redaction]\nsecrets = false\n");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let key = key_sample();
+    t.anth.answer(401, &[], &json!({"type":"error","error":{"type":"authentication_error","message": format!("bad key {key} here")}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 401);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    let placeholder = ["[REDACTED", ":anthropic_api_key]"].concat();
+    assert_eq!((w.len(), w[0].error_message.clone()), (1, format!("bad key {placeholder} here")));
+    assert!(read_all(t.d.path()).iter().all(|f| !has(f, key.as_bytes())), "a file holds the key");
+}
+
+#[test] // FIX-10 M5 (D4): a non-2xx answer with an SSE body gives empty fields; the body reaches the client unchanged
+fn upstream_error_with_an_sse_body_records_empty_fields() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let sse = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"boom\"}}\n\n";
+    t.anth.answer_raw(500, "text/event-stream", sse);
+    let r = post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main"));
+    assert_eq!((r.0, r.2.as_slice()), (500, sse.as_bytes()));
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].status, w[0].error_type.as_str(), w[0].error_message.as_str()), (1, 500, "", ""));
+}
+
+#[test] // FIX-10 M5 (D7): a client that leaves before the body ends gives a row with empty fields
+fn client_disconnect_before_the_body_ends_records_empty_fields() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer_hang(500, r#"{"type":"error","error":{"type":"api_error""#);
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let c = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut r = c.post(t.h.url().join(M).unwrap())
+            .header("x-zygo-token", g.token.as_str()).header("x-zygo-session", g.session.as_str())
+            .header("authorization", BEARER).header("content-type", "application/json")
+            .body(mb("claude-test-1")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 500);
+        assert!(r.chunk().await.unwrap().is_some());
+        drop(r);
+    });
+    drop(rt);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].status, w[0].error_type.as_str(), w[0].error_message.as_str()), (1, 500, "", ""));
+}
+
+#[test] // FIX-10 M6 (D5): an upstream echo of the login, whole or a part of it, is never stored
+fn upstream_echo_of_a_partial_login_is_scrubbed() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let part = &OAT[3..]; // 9 characters of the login
+    t.anth.answer(401, &[], &json!({"type":"error","error":{"type":"authentication_error","message": format!("token {OAT} or {part} rejected")}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 401);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    let mark = ["[REDACTED", "]"].concat();
+    assert_eq!((w.len(), w[0].error_message.clone()), (1, format!("token {mark} or {mark} rejected")));
+    assert!(!format!("{w:?}").contains(part));
+    assert!(read_all(t.d.path()).iter().all(|f| !has(f, part.as_bytes())), "a file holds a part of the login");
+}
+
+// ---- FIX-10 round 2 ----
+
+#[test] // round 2 B1: the secret pass runs before the login scrubs, so a token that shares the login's prefix is not cut apart and stored
+fn upstream_error_tokens_that_share_the_login_prefix_are_not_stored() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let (l, b, c) = ("L".repeat(40), "B".repeat(40), "C".repeat(40));
+    let login = ["sk-ant-", "oat01-", &l].concat();
+    let other = ["sk-ant-", "oat01-", &b].concat();
+    let refresh = ["sk-ant-", "ort01-", &c].concat();
+    t.anth.answer(401, &[], &json!({"type":"error","error":{"type":"authentication_error","message": format!("bad {login} and {other} and {refresh}")}}));
+    let bearer = format!("Bearer {login}");
+    let mut hd = pt(&g);
+    hd.push(("authorization", bearer.as_str()));
+    hd.extend(cc_headers("main"));
+    assert_eq!(send(&t, "POST", M, &hd, Some(mb("claude-test-1"))).0, 401);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    assert!(t.d.path().join("data/usage.db-wal").exists(), "the WAL is read too");
+    let files = read_all(t.d.path());
+    for needle in [&b, &c, &l] {
+        assert!(files.iter().all(|f| !has(f, needle.as_bytes())), "a file holds {}", &needle[..1]);
+    }
+    let w = errs(&t, &g);
+    let placeholder = ["[REDACTED", ":anthropic_api_key]"].concat();
+    assert_eq!((w.len(), w[0].error_message.clone()), (1, format!("bad {placeholder} and {placeholder} and {placeholder}")));
+}
+
+#[test] // round 2 M2: the writer waits for the session's secret-cache lock at most the secret deadline, then stores empty fields
+fn upstream_error_fields_are_empty_when_the_secret_lock_is_held() {
+    let hold = UsageHold::new();
+    let base = Duration::from_millis(300);
+    let limits = RedactLimits { secret: DeadlinePolicy { base, per_mib: Duration::ZERO, expire_after_scans: None }, content_budget: Duration::from_secs(60), ..Default::default() };
+    let t = setup_limits("", None, Some(hold.clone()), limits);
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer(429, &[], &json!({"type":"error","error":{"type":"rate_limit_error","message":"limit"}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 429);
+    let s = t.h.session(&g.session).unwrap();
+    let guard = s.redaction.secret_cache.lock().unwrap();
+    let t0 = std::time::Instant::now();
+    hold.release();
+    let written = t.h.usage_written(1, Duration::from_secs(10));
+    let took = t0.elapsed();
+    drop(guard);
+    assert!(written, "usage row not written while the lock was held");
+    assert!(took >= base && took < Duration::from_secs(5), "{took:?}");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].status, w[0].error_type.as_str(), w[0].error_message.as_str()), (1, 429, "", ""));
+}
+
+#[test] // round 2 M3: a complete JSON head, then an upstream read error: the body did not finish, so no field is stored
+fn upstream_read_error_after_a_complete_json_head_records_empty_fields() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let e = r#"{"type":"error","error":{"type":"api_error","message":"boom"}}"#;
+    t.anth.answer_reset(500, e);
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let (got, failed) = rt.block_on(async {
+        let c = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut r = c.post(t.h.url().join(M).unwrap())
+            .header("x-zygo-token", g.token.as_str()).header("x-zygo-session", g.session.as_str())
+            .header("authorization", BEARER).header("content-type", "application/json")
+            .body(mb("claude-test-1")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 500);
+        let mut got = Vec::new();
+        loop {
+            match r.chunk().await {
+                Ok(Some(b)) => got.extend_from_slice(&b),
+                Ok(None) => break (got, false),
+                Err(_) => break (got, true),
+            }
+        }
+    });
+    drop(rt);
+    assert_eq!((got.as_slice(), failed), (e.as_bytes(), true));
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].status, w[0].error_type.as_str(), w[0].error_message.as_str()), (1, 500, "", ""));
+}
+
+#[test] // round 2 M5: format, line and paragraph separator characters and NUL become spaces
+fn upstream_error_message_format_and_separator_characters_become_spaces() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    let m = "a\u{202E}b\u{200B}c\u{2028}d\u{2029}e\u{0}f\u{FEFF}g";
+    t.anth.answer(400, &[], &json!({"type":"error","error":{"type":"invalid_request_error","message": m}}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].error_message.as_str()), (1, "a b c d e f g"));
+}
+
+#[test] // round 2 M7: at most 256 (tee::ERROR_QUEUE_MAX) captures wait for the writer; one over it keeps its request row
+        // and gets an error row with empty fields
+fn upstream_error_captures_over_the_queue_bound_record_empty_fields() {
+    let hold = UsageHold::new();
+    let t = setup_full("", None, Some(hold.clone()));
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer(400, &[], &json!({"type":"error","error":{"type":"invalid_request_error","message":"m"}}));
+    let (max, n) = (256usize, 257usize);
+    for _ in 0..n {
+        assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    }
+    hold.release();
+    assert!(t.h.usage_written(n as u64, Duration::from_secs(30)), "usage rows not written");
+    assert_eq!(rows(&t, &g).len(), n);
+    let w = errs(&t, &g);
+    let full = w.iter().filter(|r| (r.error_type.as_str(), r.error_message.as_str()) == ("invalid_request_error", "m")).count();
+    let empty = w.iter().filter(|r| r.error_type.is_empty() && r.error_message.is_empty()).count();
+    assert_eq!((w.len(), full, empty), (n, max, n - max));
+}
+
+#[test] // round 2 M9: `error` as a string: an empty type, and the string as the message
+fn upstream_error_as_a_string_is_the_message_with_an_empty_type() {
+    let t = setup("");
+    let g = grant(&t, Agent::ClaudeCode, true);
+    t.anth.answer(400, &[], &json!({"type":"error","error":"text here"}));
+    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &cc_headers("main")).0, 400);
+    assert!(t.h.usage_written(1, Duration::from_secs(10)), "usage row not written");
+    let w = errs(&t, &g);
+    assert_eq!((w.len(), w[0].error_type.as_str(), w[0].error_message.as_str()), (1, "", "text here"));
+}
+
 #[test] // §12.4 stage 2: no match → built-in provider
 fn e2e_builtin_provider_cost_0() {
     let t = setup("");
@@ -435,7 +898,7 @@ fn e2e_no_login_refused_nothing_upstream() {
     final_rows(&t, &g, 1, &[200]);
 }
 
-#[test] // §12.4 stage 1: invalid or expired → token_invalid
+#[test] // §12.4 stage 1: invalid → token_invalid; no session expires by idle time (§7.2, FIX-18)
 fn e2e_token_invalid_cases() {
     let t = setup("");
     let g = grant(&t, Agent::ClaudeCode, true);
@@ -451,24 +914,19 @@ fn e2e_token_invalid_cases() {
     token_invalid_r(&post(&[("x-zygo-token", &n.token), ("x-zygo-session", &n.session)]));
     token_invalid_r(&post(&[("x-zygo-token", &g.token), ("x-zygo-session", &other)]));
     token_invalid_r(&post(&[("x-zygo-token", &g.token)]));
-    t.c.advance(IDLE_TTL + Duration::from_secs(1));
-    token_invalid_r(&post(&pt(&g)));
     assert!(t.up.got().is_empty() && t.anth.got().is_empty());
 }
 
-#[test] // §12.5, §7.2 note: an accepted request refreshes the idle TTL, a refused one does not
-fn e2e_accepted_request_refreshes_ttl() {
+#[test] // §12.5, §7.2 (FIX-18): a passthrough session has no idle expiry, after an accepted or a refused request
+fn e2e_session_has_no_idle_expiry() {
     let t = setup("");
     let g = grant(&t, Agent::ClaudeCode, true);
-    t.c.advance(IDLE_TTL - Duration::from_secs(1));
-    assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
-    t.c.advance(Duration::from_secs(2));
+    t.c.advance(Duration::from_secs(25 * 3600));
     assert_eq!(post_pt(&t, &g, M, mb("claude-test-1"), &[]).0, 200);
     let g2 = grant(&t, Agent::ClaudeCode, true);
-    t.c.advance(IDLE_TTL - Duration::from_secs(1));
     no_login_r(&send(&t, "POST", M, &pt(&g2), Some(mb("claude-test-1"))));
-    t.c.advance(Duration::from_secs(2));
-    token_invalid_r(&post_pt(&t, &g2, M, mb("claude-test-1"), &[]));
+    t.c.advance(Duration::from_secs(25 * 3600));
+    assert_eq!(post_pt(&t, &g2, M, mb("claude-test-1"), &[]).0, 200);
 }
 
 #[test] // reading 4: an agent with no type row matches no login
@@ -759,7 +1217,7 @@ fn docs_readme_and_passthrough_md() {
     }
     let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/passthrough.md")).unwrap();
     for s in ["claude-ai", "api.anthropic.com", "sk-ant-oat", "X-Zygo-Token", "zygo_passthrough_token_invalid", "zygo_passthrough_no_login",
-              "zygo_passthrough_local_only", "24 h", "/model", "consumer terms"] {
+              "zygo_passthrough_local_only", "no idle expiry", "/model", "consumer terms"] {
         assert!(doc.contains(s), "docs/passthrough.md: {s}");
     }
 }

@@ -1,0 +1,9 @@
+{
+  "how": "claude --bare --settings <zygo's attribution keys>, --model haiku",
+  "exit": 1,
+  "commits_after_init": 0,
+  "message": null,
+  "attribution_forms": [],
+  "stdout": "Not logged in · Please run /login\n",
+  "stderr": ""
+}

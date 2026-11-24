@@ -169,6 +169,7 @@ fn guard_names_and_fixed_levels() {
         (Guard::Repeat, "repeat"),
         (Guard::Lead, "lead"),
         (Guard::Redaction, "redaction"),
+        (Guard::Attribution, "attribution"),
     ];
     for (g, n) in names {
         assert_eq!(g.name(), n);
@@ -187,6 +188,7 @@ fn guard_names_and_fixed_levels() {
     let p = policy("[guards]\nmin_level = \"monitor\"\n", r.path());
     assert_eq!(p.level(Guard::Lead), Level::Enforce);
     assert_eq!(p.level(Guard::Redaction), Level::Enforce);
+    assert_eq!(p.level(Guard::Attribution), Level::Enforce);
 }
 
 #[test]

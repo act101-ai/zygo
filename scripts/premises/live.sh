@@ -9,13 +9,13 @@ PIN_CC=$(sed -n 's/^Claude Code: *//p' "$REPO_DIR/docs/premises.md" | head -n 1)
 PIN_OC=$(sed -n 's/^OpenCode: *//p' "$REPO_DIR/docs/premises.md" | head -n 1)
 LIVE_KEYS=${LIVE_KEYS:-}
 LIVE_VARS=${LIVE_VARS:-}
-LIVE_VER=${LIVE_VER:-$PIN_CC}
+LIVE_VER=${LIVE_VER:-}   # set by pinned_agents (or a script's own check); empty prints "agent ?", never the pin
 LIVE_TIMEOUT=${LIVE_TIMEOUT:-}   # seconds; live_exec bounds its command by it when set
 LIVE_PIDS=""   # background processes a script starts itself (besides MOCK_PID and WEB_PID)
 
 # live_end <status>: kill the mock and web servers and the processes and tmux sessions this
 # script started (by saved PID and exact session name), and each running timeout wrapper's
-# process group (TERM to the group first, then the wrapper), delete its scratch tree, then n2_scratch_end (lib.sh: a scratch dir lib.sh made is removed after status 0, else kept).
+# process group (TERM to the group first, then the wrapper), delete its scratch tree live-<pid> when lib.sh made the scratch dir (a caller-set dir keeps it, without its pg-* files), then n2_scratch_end (lib.sh: a scratch dir lib.sh made is removed after status 0, else kept).
 # A recorded group is killed only when its leader still leads it (ps: pgid of the leader PID = the
 # group id) and, while the recorded wrapper is alive, is that wrapper's child (ppid = wrapper PID).
 # (A Ctrl-C reaches the wrapper too, which may exit first and orphan the leader.) A reused PID is
@@ -34,8 +34,12 @@ live_end() {
   done
   for p in ${MOCK_PID:-} ${WEB_PID:-} $LIVE_PIDS; do kill "$p" 2>/dev/null || true; done
   for s in $LIVE_TMUX; do tmux kill-session -t "=$s" 2>/dev/null || true; done
-  # A failed removal must not stop the trap under set -e: name it, keep the status, go on.
-  if [ -e "$N2_SCRATCH/live-$$" ]; then
+  # A caller-set scratch dir (lib.sh: N2_SCRATCH_OWN is empty) keeps live-<pid> with its captures; only
+  # its pg-* files go. A dir lib.sh made loses live-<pid> here. A failed removal must not stop the trap
+  # under set -e: name it, keep the status, go on.
+  if [ -z "${N2_SCRATCH_OWN:-}" ]; then
+    rm -f "$N2_SCRATCH/live-$$"/pg-* 2>/dev/null || true
+  elif [ -e "$N2_SCRATCH/live-$$" ]; then
     chmod -R u+rwx "$N2_SCRATCH/live-$$" 2>/dev/null || true
     rm -rf "$N2_SCRATCH/live-$$" 2>/dev/null || echo "premises: could not remove $N2_SCRATCH/live-$$" >&2
   fi
@@ -145,7 +149,7 @@ tmux_zygo() {
   args=""
   for a in "$@"; do args="$args '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"; done
   echo "cd '$R' && env -i PATH='$TOOL_PATH' TERM='${TERM:-xterm-256color}' HOME='$H' CLAUDE_CONFIG_DIR='$H/.claude' XDG_CONFIG_HOME='$H/.config' XDG_DATA_HOME='$H/.local/share' XDG_CACHE_HOME='$H/.cache' XDG_STATE_HOME='$H/.local/state' OPENCODE_DISABLE_AUTOUPDATE=1 DISABLE_AUTOUPDATER=1 ZYGO_CONFIG='$RUN/zygo.toml' ZYGO_LIVE_MOCK_KEY='$DUMMY_KEY' $LIVE_VARS '$ZYGO_BIN'$args; sleep 2" >"$RUN/tmux-$s.sh"
-  tmux new-session -d -s "$s" -x 200 -y 50 -c "$R" "/bin/sh $RUN/tmux-$s.sh"
+  tmux -f /dev/null new-session -d -s "$s" -x 200 -y 50 -c "$R" "/bin/sh $RUN/tmux-$s.sh"
 }
 
 # tmux_wait_text <session> <fixed text> [seconds]: poll the pane every 0.5 s.
@@ -230,5 +234,5 @@ result() {
 
 # live_done <fixture dir>: the end of every live script (captures already copied out).
 live_done() {
-  echo "live: fixtures in ${1#"$REPO_DIR"/}; scratch removed on exit"
+  echo "live: fixtures in ${1#"$REPO_DIR"/}; scratch removed on exit unless N2_SCRATCH is set"
 }

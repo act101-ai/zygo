@@ -1,0 +1,7 @@
+Claude Code 2.1.330
+7.1 ok a turn that ends by itself: Stop or StopFailure within 60 s: yes
+7.2 FAIL a turn ended by Esc: Stop or StopFailure within 15 s: no; hook inputs of the turn: UserPromptSubmit-main PreToolUse-Bash-main ; requests after the interrupted command (0 = the Esc ended the turn): 0
+7.3 FAIL main-loop turns (UserPromptSubmit inputs): 8; turns with no Stop or StopFailure before the next prompt: 1 (prompts: tracer-pw7-esc go)
+7.4 ok dispatched subagents (one foreground, one background): ids seen 2; ids without both SubagentStart and SubagentStop: 0 (none)
+7.5 FAIL internal subagents (empty agent_type): ids seen 6, of which 1 sent SubagentStop between PreCompact and PostCompact (compaction); ids without both SubagentStart and SubagentStop: 6 (stop-only)
+7.6 ok a turn ended by an API error (HTTP 400): Stop or StopFailure within 60 s: yes; event: StopFailure

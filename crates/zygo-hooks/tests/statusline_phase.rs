@@ -51,7 +51,7 @@ impl Fx {
     /// Writes `view.json`: a member of `ws_id`, or no membership marker.
     fn view(&self, ws_id: Option<&str>) {
         let workspace = ws_id
-            .map(|id| ViewWorkspace { member: Member { ws_id: id.into(), pane: "kabcd2345".into() }, resume_note: None });
+            .map(|id| ViewWorkspace { member: Member { ws_id: id.into(), pane: "kabcd2345".into(), ..Default::default() }, resume_note: None, ..Default::default() });
         SessionView { session: "S1".into(), workspace, ..Default::default() }
             .save(&SessionDir::new(self.dir.clone()))
             .unwrap();

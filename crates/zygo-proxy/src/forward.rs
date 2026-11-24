@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use bytes::{Bytes, BytesMut};
 use futures_util::{Stream, StreamExt};
-use http::header::{HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE};
+use http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use http::{HeaderMap, StatusCode};
 use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Value};
@@ -31,7 +31,7 @@ use crate::provider::{loopback, unavailable, Candidate};
 use crate::resolve::Resolved;
 use crate::server::App;
 use crate::session::{InFlight, SessionState};
-use crate::tee::{CacheSplit, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX};
+use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
     facts, is_response, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
@@ -222,6 +222,8 @@ struct Pending {
     windows: Option<window::RequestWindows>,
     /// Set when the request is accepted (AU91).
     in_flight: Option<InFlight>,
+    /// Passthrough, an upstream status that is not 2xx: the capture for the `upstream_errors` row (§14, FIX-10).
+    upstream_error: Option<ErrorCapture>,
 }
 
 impl Drop for Pending {
@@ -263,7 +265,7 @@ impl Drop for Pending {
         }
         // The request ended (AU91): before the row, so the count is final when the row is written.
         drop(self.in_flight.take());
-        self.sink.send(std::mem::take(&mut self.row), self.ticket.take());
+        self.sink.send(std::mem::take(&mut self.row), self.upstream_error.take(), self.ticket.take());
     }
 }
 
@@ -298,7 +300,7 @@ pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRout
         ..Default::default()
     };
     let ticket = Some(app.usage.begin(&s.id));
-    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, notional_prices: None, usage: Usage::default(), split: None, ticket, windows: None, in_flight: None });
+    let mut slot = Some(Pending { row, session: s.clone(), sink: app.usage.clone(), prices: None, notional_prices: None, usage: Usage::default(), split: None, ticket, windows: None, in_flight: None, upstream_error: None });
     match run(&app, &s, route, req, &mut slot, start).await {
         Ok(r) => r,
         Err(e) => {
@@ -476,6 +478,8 @@ async fn run(
     };
 
     let mut status = resp.status();
+    // The upstream `content-length`: a body that reached it is finished although the server stops polling (FIX-10).
+    let body_len = resp.content_length();
     let mut streamed = resp
         .headers()
         .get(CONTENT_TYPE)
@@ -537,6 +541,10 @@ async fn run(
     }
     drop(permit);
     let mut tee = Tee::new(streamed);
+    // Passthrough, not 2xx: the copy stays after `finish` for the upstream_errors capture (§14, FIX-10).
+    if s.passthrough && !status.is_success() {
+        tee.keep_body();
+    }
     // Only an SSE upstream body is rewritten (§10.2.6): not a whole body sent to the client as SSE.
     if ctx.line_mode && status.is_success() && sse_upstream {
         tee.arm_line_mode();
@@ -564,7 +572,7 @@ async fn run(
         usage: Usage::default(),
         compact_call: false,
     };
-    let flow = Flow { upstream, mapper, restore, tee, rctx, pipeline: app.pipeline.clone(), pending: p, done: false };
+    let flow = Flow { upstream, mapper, restore, tee, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
     let mut out = Response::new(Body::from_stream(futures_util::stream::unfold(flow, next_chunk)));
     *out.status_mut() = status;
     *out.headers_mut() = headers;
@@ -735,15 +743,7 @@ fn requested_name(ctx: &RequestCtx, r: &Result<(), ZygoError>, name: &str) -> Op
 
 /// The secret pass's output for `name`, `[1m]` stripped; `None` on a `block` match or a panic.
 fn row_name(s: &SessionState, name: &str) -> Option<String> {
-    let mut v = Value::String(name.to_string());
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut cache = s.redaction.secret_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        zygo_redact::secret::redact(&mut v, &s.redaction.compiled, &mut cache, &DeadlinePolicy::default())
-    }));
-    match (r, v) {
-        (Ok(Ok(_)), Value::String(n)) => Some(strip_1m(&n)),
-        _ => None,
-    }
+    crate::redact_stage::secret_pass(s, name, &DeadlinePolicy::default()).map(|n| strip_1m(&n))
 }
 
 /// Passthrough (§12.4) sends and serves the name stage 6 left (§7.3 note (b), C4): each candidate's `upstream_model`
@@ -1047,6 +1047,17 @@ struct Flow {
     pipeline: Arc<Pipeline>,
     pending: Pending,
     done: bool,
+    /// The upstream body ended with a read error (FIX-10 round 2 M3).
+    failed: bool,
+    /// The upstream `content-length`, when it sent one.
+    body_len: Option<u64>,
+}
+
+impl Flow {
+    /// The upstream body is whole: no read error, and it ended or reached its `content-length` (FIX-10 round 2 M3).
+    fn finished(&self) -> bool {
+        !self.failed && (self.done || self.body_len.is_some_and(|n| self.tee.body().is_some_and(|b| b.len() as u64 == n)))
+    }
 }
 
 impl Drop for Flow {
@@ -1057,6 +1068,19 @@ impl Drop for Flow {
         }
         self.pending.usage = self.tee.usage();
         self.pending.split = self.tee.cache_split();
+        // Passthrough, not 2xx: raw bytes and the login for the usage writer; no parse and no pass here (§14, FIX-10 B1).
+        // A body that did not finish is not trusted: no head, so both fields are empty (round 2 M3).
+        if self.pending.row.passthrough && !self.rctx.status.is_success() {
+            let head = match self.tee.body() {
+                Some(b) if self.finished() => b[..b.len().min(ERROR_BODY_MAX)].to_vec(),
+                _ => Vec::new(),
+            };
+            let credential = self.rctx.headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
+                .map(|v| v.split_once(' ').map_or(v, |(_, t)| t).trim())
+                .filter(|t| !t.is_empty())
+                .map(Secret::new);
+            self.pending.upstream_error = Some(ErrorCapture { head, credential, session: self.pending.session.clone() });
+        }
         // Codes a line stage added (§10.2.3) reach the row, not the headers.
         self.pending.row.adjustments = names(&self.rctx.adjustments);
     }
@@ -1091,6 +1115,7 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
             },
             Some(Err(_)) => {
                 f.done = true;
+                f.failed = true;
                 return Some((Err(std::io::Error::other("upstream response failed")), f));
             }
             None => {

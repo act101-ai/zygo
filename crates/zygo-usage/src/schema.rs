@@ -64,6 +64,17 @@ CREATE INDEX IF NOT EXISTS trims_session ON trims(session);
 CREATE INDEX IF NOT EXISTS trims_ts ON trims(ts);
 CREATE INDEX IF NOT EXISTS work_units_session ON work_units(session);
 CREATE TABLE IF NOT EXISTS sync_pending (session TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS upstream_errors (
+    ts INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    request_class TEXT,
+    model TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS upstream_errors_session_ts ON upstream_errors(session, ts);
+CREATE INDEX IF NOT EXISTS upstream_errors_ts ON upstream_errors(ts);
 ";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -137,4 +148,18 @@ pub struct WorkUnitRow {
     pub guard_events: BTreeMap<String, BTreeMap<String, u32>>,
     pub levels: BTreeMap<String, String>,
     pub verdict: Option<String>,
+}
+
+/// The upstream error of one passthrough request whose relayed upstream status is not 2xx (§14, FIX-10). No request
+/// byte: `error_type` and `error_message` come from the upstream body only, scrubbed and capped.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UpstreamErrorRow {
+    /// Unix seconds.
+    pub ts: i64,
+    pub session: String,
+    pub request_class: Option<String>,
+    pub model: String,
+    pub status: u16,
+    pub error_type: String,
+    pub error_message: String,
 }

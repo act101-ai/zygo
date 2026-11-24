@@ -27,9 +27,16 @@ pub struct OpenCode {
     pub zygo: PathBuf,
 }
 
+impl OpenCode {
+    /// An OpenCode adapter whose plugin and hooks run the zygo binary `zygo` (as `ClaudeCode::new` takes it).
+    pub fn new(zygo: PathBuf) -> OpenCode {
+        OpenCode { zygo }
+    }
+}
+
 impl Default for OpenCode {
     fn default() -> Self {
-        OpenCode { zygo: std::env::current_exe().unwrap_or_default() }
+        OpenCode::new(std::env::current_exe().unwrap_or_default())
     }
 }
 
@@ -477,6 +484,14 @@ impl AgentAdapter for OpenCode {
             }
         }
         Ok(())
+    }
+    fn has_session_arg(&self, args: &[String]) -> bool {
+        zygo_workspace::args::has_session_arg(Agent::OpenCode, args)
+    }
+    /// `--session=<id>`: one token, so an id that starts with `-` stays the value; OpenCode 1.19.6 binds the `=` form
+    /// to the session option (probe 2026-11-22, AU3).
+    fn resume_args(&self, id: &str) -> Vec<String> {
+        vec![format!("--session={id}")]
     }
 }
 

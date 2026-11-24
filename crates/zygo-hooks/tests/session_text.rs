@@ -13,6 +13,7 @@ use zygo_hooks::{
 use zygo_work::log::{lock, Begin};
 
 const REDACT: &str = "`[REDACTED:<id>]` marks a secret zygo removed; never write it into a file.";
+const ATTRIBUTION: &str = "Never add Claude attribution to commits, pull request titles or bodies, tags, release notes or comments: no `Co-Authored-By: Claude` trailer, no `noreply@anthropic.com` address, no `Generated with Claude Code` line and no Claude session link.";
 const STORE: &str = "Large tool outputs are stored by zygo; read them with result_view, result_search or result_tree using the id in the marker; do not shorten output with head or tail.";
 const NAV: &str = "Use act-lite's skeleton, symbols or repo_outline before reading a whole source file.";
 const TRAILER: &str = "Add the commit trailers `Zygo-Session: <session>` and, when your brief names a unit, `Zygo-Work: <unit>`, each on its own line at the end of the message.";
@@ -95,7 +96,7 @@ fn text(o: anyhow::Result<HookOutput>) -> String {
     o.unwrap().to_stdout()
 }
 fn m() -> String {
-    [REDACT, STORE, TRAILER].join(" ")
+    [REDACT, ATTRIBUTION, STORE, TRAILER].join(" ")
 }
 fn full_alias() -> String {
     alias(&format!("{READ}, {CODE}, {OPUS} {PTR}, {DESIGN}"))
@@ -104,7 +105,7 @@ fn full_alias() -> String {
 #[test]
 fn mechanics_exact_all_on() {
     let v = SessionView { navigation: true, ..view() };
-    assert_eq!(mechanics(&v), [REDACT, STORE, NAV, TRAILER].join(" "));
+    assert_eq!(mechanics(&v), [REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" "));
 }
 
 #[test]
@@ -117,13 +118,25 @@ fn mechanics_navigation_only_when_present() {
 
 #[test]
 fn mechanics_store_sentence_only_when_results_on() {
-    assert_eq!(mechanics(&SessionView { results: false, ..view() }), [REDACT, TRAILER].join(" "));
+    assert_eq!(mechanics(&SessionView { results: false, ..view() }), [REDACT, ATTRIBUTION, TRAILER].join(" "));
 }
 
 #[test]
 fn mechanics_trailer_only_when_work_units_on() {
-    assert_eq!(mechanics(&SessionView { work_units: false, ..view() }), [REDACT, STORE].join(" "));
-    assert_eq!(mechanics(&SessionView { work_units: false, results: false, ..view() }), REDACT);
+    assert_eq!(mechanics(&SessionView { work_units: false, ..view() }), [REDACT, ATTRIBUTION, STORE].join(" "));
+    assert_eq!(mechanics(&SessionView { work_units: false, results: false, ..view() }), [REDACT, ATTRIBUTION].join(" "));
+}
+
+#[test] // FIX-21, §8.6 item 7: kills: the attribution sentence behind a view flag, on one agent only, or out of the session text
+fn mechanics_always_forbid_claude_attribution() {
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        for bits in 0..8u8 {
+            let (results, navigation, work_units) = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0);
+            let v = SessionView { agent, results, navigation, work_units, ..view() };
+            assert!(mechanics(&v).starts_with(&format!("{REDACT} {ATTRIBUTION}")), "{agent:?} {bits}");
+            assert!(build(&v).contains(ATTRIBUTION), "{agent:?} {bits}");
+        }
+    }
 }
 
 #[test]

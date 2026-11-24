@@ -137,6 +137,24 @@ fn defaults_when_keys_omitted() {
     assert_eq!(cfg("[guards]\nclaims = \"notify\"").guards.trailers, Level::Notify);
 }
 
+#[test]
+fn workspace_tool_defaults_off_and_only_the_config_sets_it() {
+    assert!(!Features::default().workspace_tool);
+    assert!(!Config::default().features.workspace_tool);
+    assert!(!cfg("[features]\nresults = false").features.workspace_tool);
+    assert!(!loaded("").config.features.workspace_tool);
+    let m = loaded("[features]\nworkspace_tool = true\n");
+    assert!(m.config.features.workspace_tool);
+    assert_eq!(m.source_of("features.workspace_tool"), Layer::User);
+    // A profile cannot set it (AU65): profile validation refuses the key.
+    let m = loaded("[profile.p]\nfeatures = { workspace_tool = true }\n");
+    let p = zygo_config::profile::select(&m, Some("p")).unwrap();
+    let c = &m.config;
+    let v = zygo_config::profile::validate(&p, &c.role, &c.main_role, &c.catalog.view(), Dialect::Anthropic, &BTreeSet::new())
+        .unwrap_err();
+    assert_eq!(v.to_string(), "profile.p.features.workspace_tool: not a feature key");
+}
+
 const SPEC_6_3: &str = r#"
 [[model]]
 id = "claude-opus-5-5"
@@ -1671,7 +1689,7 @@ fn check_loadout_missing_profile_is_a_warning() {
 }
 
 #[test]
-fn w18_63_config_check_reports_kind_and_passthrough() { // W§18 #63; the `--settings` warning of pane[2] is M1's (AU103)
+fn w18_63_config_check_reports_kind_and_passthrough() { // W§18 #63; pane[2]'s `--settings` is not reported (W§11, AU59)
     let panes = "kind = \"vim\"\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\npassthrough = true\n[[loadout.pair.window.pane]]\nkind = \"claude-code\"\nargs = [\"--settings\", \"x\"]\n";
     let found: Vec<String> = check(&loaded(&(base() + LO + panes)).config).iter().map(|v| format!("{:?} {v}", v.severity)).collect();
     assert_eq!(found, [

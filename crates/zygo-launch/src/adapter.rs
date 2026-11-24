@@ -36,6 +36,22 @@ pub trait AgentAdapter {
     fn refusal(&self, _ctx: &LaunchCtx) -> Option<String> {
         None
     }
+    /// Whether `args` hold a session argument of the agent (W§8.3, AU30); `false` for an agent with none.
+    fn has_session_arg(&self, _args: &[String]) -> bool {
+        false
+    }
+    /// The arguments that start a fresh session with the id `id` (W§8.3); empty for an agent with no pre-assign. The
+    /// launcher inserts them before the user's arguments, so before any `--`; for `opencode run`, right after `run`
+    /// (`LaunchOpts.agent_session`).
+    fn preassign_args(&self, _id: &str) -> Vec<String> {
+        vec![]
+    }
+    /// The arguments that resume the session `id` (AU3); empty for an agent that cannot resume by id. The launcher
+    /// inserts them before the user's arguments, so before any `--`; for `opencode run`, right after `run`
+    /// (`LaunchOpts.agent_session`).
+    fn resume_args(&self, _id: &str) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// The agent's arguments, its environment rows (added after the denylist), stderr lines and session-log lines.

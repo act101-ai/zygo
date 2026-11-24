@@ -50,6 +50,14 @@ fn bind_request(stmt: &mut rusqlite::Statement<'_>, r: &RequestRow) -> Result<()
     Ok(())
 }
 
+/// One `upstream_errors` row on `conn` (a connection or an open transaction).
+fn insert_error(conn: &Connection, e: &UpstreamErrorRow) -> Result<()> {
+    conn.prepare_cached(
+        "INSERT INTO upstream_errors (ts, session, request_class, model, status, error_type, error_message) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?.execute(rusqlite::params![e.ts, e.session, e.request_class, e.model, e.status, e.error_type, e.error_message])?;
+    Ok(())
+}
+
 /// The schema version this build writes to `PRAGMA user_version`.
 pub const SCHEMA_VERSION: i64 = 1;
 
@@ -134,6 +142,32 @@ impl Store {
         bind_request(&mut *self.conn.prepare_cached(INSERT_REQUEST)?, r)
     }
 
+    /// One `upstream_errors` row (§14, FIX-10).
+    pub fn insert_upstream_error(&self, row: &UpstreamErrorRow) -> Result<()> {
+        insert_error(&self.conn, row)
+    }
+
+    /// The request row and its `upstream_errors` row in one `BEGIN IMMEDIATE` transaction: both or neither (FIX-10 M3).
+    pub fn insert_request_and_error(&self, r: &RequestRow, e: &UpstreamErrorRow) -> Result<()> {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        bind_request(&mut *tx.prepare_cached(INSERT_REQUEST)?, r)?;
+        insert_error(&tx, e)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The `upstream_errors` rows of `session`, by `ts`, then insertion order.
+    pub fn upstream_errors(&self, session: &str) -> Result<Vec<UpstreamErrorRow>> {
+        let mut q = self.conn.prepare(
+            "SELECT ts, session, request_class, model, status, error_type, error_message FROM upstream_errors WHERE session = ?1 ORDER BY ts, rowid",
+        )?;
+        let rows = q.query_map([session], |r| {
+            Ok(UpstreamErrorRow { ts: r.get(0)?, session: r.get(1)?, request_class: r.get(2)?, model: r.get(3)?, status: r.get(4)?,
+                error_type: r.get(5)?, error_message: r.get(6)? })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Serve-mode replay: inserts every row in one `BEGIN IMMEDIATE` transaction, or none
     /// when the session already has any `requests` row. All rows must share one session.
     /// Returns the number of rows inserted.
@@ -184,6 +218,7 @@ impl Store {
         }
         let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
         tx.execute("DELETE FROM requests WHERE session = ?1", [session])?;
+        tx.execute("DELETE FROM upstream_errors WHERE session = ?1", [session])?;
         {
             let mut stmt = tx.prepare_cached(INSERT_REQUEST)?;
             for r in rows {
@@ -241,6 +276,7 @@ impl Store {
         let cutoff = time::OffsetDateTime::now_utc().unix_timestamp() - i64::from(retain_days) * 86_400;
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM requests WHERE ts < ?1", [cutoff])?;
+        tx.execute("DELETE FROM upstream_errors WHERE ts < ?1", [cutoff])?;
         tx.execute("DELETE FROM trims WHERE ts < ?1", [cutoff])?;
         tx.execute("DELETE FROM work_units WHERE began_at < ?1", [cutoff])?;
         tx.commit()?;

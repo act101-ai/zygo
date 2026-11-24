@@ -1,0 +1,4 @@
+11.zsh ok zsh: argv ok; pid kept yes; command zsh; tty yes; second yes; exit yes
+11.sh ok sh: argv ok; pid kept yes; command sh; tty yes; second yes; exit yes
+11.bash ok bash: argv ok; pid kept yes; command bash; tty yes; second yes; exit yes
+11.fish ok fish: argv ok; pid kept yes; command fish; tty yes; second yes; exit yes

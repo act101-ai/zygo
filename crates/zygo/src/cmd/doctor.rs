@@ -19,6 +19,8 @@ use zygo_plugins::select::selection;
 use zygo_plugins::snapshot::missing_commands;
 use zygo_plugins::store::{state, ManifestState};
 use zygo_work::policy::Policy;
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::mux::{Multiplexer, MuxError, MIN_VERSION};
 
 use super::status::repo_top;
 use super::verbs::VerbCtx;
@@ -41,6 +43,9 @@ pub struct Env<'a> {
     pub env: &'a dyn Fn(&str) -> Option<OsString>,
     pub probe: &'a dyn Fn(&str) -> Probe,
     pub server: Option<String>,
+    /// The version of the first `tmux` in the absolute entries of `PATH` (W§12, AU7; D2, D9); `Err(Spawn)` of kind
+    /// `NotFound` when there is none.
+    pub tmux: Result<(u32, u32), MuxError>,
 }
 
 /// The `act_lite` version of the compiled language list, without the leading `v` (§10.5).
@@ -170,6 +175,18 @@ pub fn probe_version(program: &str, search_path: Option<&OsStr>, bound: Duration
     }
 }
 
+/// Whether a `MuxError::Spawn` message is the text of an `io::Error` of kind `NotFound` (the tmux runner keeps only
+/// `e.to_string()`): the text of the plain kind, or an OS error text `<detail> (os error <code>)` whose code maps to
+/// `NotFound` and whose whole text is the text of that code.
+fn spawn_not_found(message: &str) -> bool {
+    let kind = std::io::ErrorKind::NotFound;
+    if message == std::io::Error::from(kind).to_string() {
+        return true;
+    }
+    let code = message.strip_suffix(')').and_then(|m| m.rsplit_once(" (os error ")).and_then(|(_, c)| c.parse::<i32>().ok());
+    code.map(std::io::Error::from_raw_os_error).is_some_and(|e| e.kind() == kind && e.to_string() == message)
+}
+
 pub fn report(env: &Env, merged: &Merged) -> Vec<String> {
     let mut out = Vec::new();
     for (agent, program) in [(Agent::ClaudeCode, "claude"), (Agent::OpenCode, "opencode")] {
@@ -190,6 +207,14 @@ pub fn report(env: &Env, merged: &Merged) -> Vec<String> {
         (_, None) => "act-lite: unknown".to_string(),
         (_, Some(v)) if v.to_string() != compiled => format!("act-lite: {v} (list compiled for {compiled}; version mismatch)"),
         (_, Some(v)) => format!("act-lite: {v} (list compiled for {compiled})"),
+    });
+    let (min_major, min_minor) = MIN_VERSION;
+    out.push(match &env.tmux {
+        Ok(v) if *v < MIN_VERSION => format!("tmux: {}.{} (minimum {min_major}.{min_minor}; below minimum)", v.0, v.1),
+        Ok(v) => format!("tmux: {}.{} (minimum {min_major}.{min_minor})", v.0, v.1),
+        Err(MuxError::Spawn { message }) if spawn_not_found(message) => "tmux: not found".to_string(),
+        Err(MuxError::Spawn { message }) => format!("tmux: cannot run: {}", esc(message)),
+        Err(_) => format!("tmux: unknown (minimum {min_major}.{min_minor})"),
     });
     out.push(format!("secret store: {}", env.secrets.backend()));
     // The value is read to learn that it is present and is never printed.
@@ -310,6 +335,10 @@ pub fn run() -> i32 {
             env: &|n| std::env::var_os(n),
             probe: &|prog| probe_version(prog, probe_path.as_deref(), PROBE_BOUND),
             server: merged.config.server.url.as_deref().map(zygo_launch::serve_client::reachability),
+            tmux: match super::find_tmux() {
+                Some(p) => Tmux::new(p, None).version(),
+                None => Err(MuxError::Spawn { message: std::io::Error::from(std::io::ErrorKind::NotFound).to_string() }),
+            },
         },
         &merged,
     );

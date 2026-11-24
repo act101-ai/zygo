@@ -22,6 +22,7 @@ use zygo_plugins::sync::SyncOpts;
 use zygo_work::policy::Policy;
 use zygo_usage::{RedactionCount, RequestRow, Store, TrimRow, WorkUnitRow};
 use zygo_work::report::parse_since;
+use zygo_workspace::mux::MuxError;
 
 fn paths(root: &Path) -> Paths { Paths { config_file: root.join("config.toml"), cache_dir: root.join("cache"),
     data_dir: root.join("data"), sessions_dir: root.join("cache/sessions"), marketplaces_dir: root.join("cache/marketplaces"),
@@ -241,7 +242,7 @@ fn found(s: &str) -> Probe { Probe::Output(s.into()) }
 fn mn(a: Agent) -> String { zygo_config::builtin::min_agent_version(a).to_string() }
 fn lines_with(p: &Paths, secrets: &dyn SecretStore, probe: &dyn Fn(&str) -> Probe) -> Vec<String> {
     let m = load(&LoadContext { paths: p.clone(), repo: None, team: None }).unwrap();
-    doctor_report(&Env { paths: p, repo: None, search_path: None, claude_config_dir: None, secrets, env: &no_env, probe, server: None }, &m)
+    doctor_report(&Env { paths: p, repo: None, search_path: None, claude_config_dir: None, secrets, env: &no_env, probe, server: None, tmux: Err(MuxError::TimedOut) }, &m)
 }
 fn lines(p: &Paths, probe: &dyn Fn(&str) -> Probe) -> Vec<String> { lines_with(p, &MemStore::new(), probe) }
 fn has(l: &[String], t: &str) -> bool { l.iter().any(|x| x == t) }
@@ -476,7 +477,7 @@ fn doctor_keys_per_provider_and_no_value_printed() {
     let m = load(&LoadContext { paths: p.clone(), repo: None, team: None }).unwrap();
     let with_env = |value: Option<String>| {
         let env = move |n: &str| if n == "ZYGO_N35_KEY" { value.clone().map(OsString::from) } else { None };
-        doctor_report(&Env { paths: &p, repo: None, search_path: None, claude_config_dir: None, secrets: &store, env: &env, probe: &never, server: None }, &m)
+        doctor_report(&Env { paths: &p, repo: None, search_path: None, claude_config_dir: None, secrets: &store, env: &env, probe: &never, server: None, tmux: Err(MuxError::TimedOut) }, &m)
     };
     let first = with_env(None);
     assert!(has(&first, "provider acme: keychain:acme set"), "{first:?}");
@@ -534,7 +535,7 @@ fn fill(p: &Paths, src: &str, tmp: &Path) {
 fn plug_lines(p: &Paths, search: Option<&Path>, claude: Option<&Path>) -> Vec<String> {
     let m = load(&LoadContext { paths: p.clone(), repo: None, team: None }).unwrap();
     doctor_report(&Env { paths: p, repo: None, search_path: search.map(|s| s.as_os_str().to_owned()), claude_config_dir: claude.map(Path::to_path_buf),
-        secrets: &MemStore::new(), env: &no_env, probe: &never, server: None }, &m)
+        secrets: &MemStore::new(), env: &no_env, probe: &never, server: None, tmux: Err(MuxError::TimedOut) }, &m)
 }
 fn claude_dir(d: &Path, json: &str) -> PathBuf {
     let c = d.join("claude");
@@ -591,7 +592,7 @@ fn doctor_plugins_echoed_fields_are_escaped() {
     let p = paths(&d.path().join("a"));
     fill(&p, &market_with(&d.path().join("src"),
         r#"{"mcpServers":{"na\nv\u001b":{"command":"zygo-n35-absent\nforged: line\u001b[2J"}}}"#), d.path());
-    let known = ["agent ", "act-lite:", "secret store:", "provider ", "server:", "plugin store:", "plugin ", "claude config:", "icons:", "repo policy:"];
+    let known = ["agent ", "act-lite:", "tmux:", "secret store:", "provider ", "server:", "plugin store:", "plugin ", "claude config:", "icons:", "repo policy:"];
     let sane = |l: &[String]| {
         assert!(!l.iter().any(|x| x.starts_with("forged:") || x.contains('\u{1b}')), "{l:?}");
         assert!(l.iter().all(|x| known.iter().any(|k| x.starts_with(k))), "{l:?}");
@@ -633,7 +634,7 @@ fn doctor_plugins_also_in_claude_config() {
 fn with_server(p: &Paths, server: Option<&str>) -> Vec<String> {
     let m = load(&LoadContext { paths: p.clone(), repo: None, team: None }).unwrap();
     doctor_report(&Env { paths: p, repo: None, search_path: None, claude_config_dir: None, secrets: &MemStore::new(), env: &no_env, probe: &never,
-        server: server.map(str::to_string) }, &m)
+        server: server.map(str::to_string), tmux: Err(MuxError::TimedOut) }, &m)
 }
 
 #[test]
@@ -661,7 +662,7 @@ fn doctor_report_repo_policy_line() {
     git(&root, &["commit", "-q", "-m", "init"]);
     let m = load(&LoadContext { paths: p.clone(), repo: Some(root.clone()), team: None }).unwrap();
     let l = doctor_report(&Env { paths: &p, repo: Some(&root), search_path: None, claude_config_dir: None, secrets: &MemStore::new(), env: &no_env,
-        probe: &never, server: None }, &m);
+        probe: &never, server: None, tmux: Err(MuxError::TimedOut) }, &m);
     let last = l.last().unwrap();
     assert_eq!(*last, Policy::resolve(&m, &root).describe());
     assert!(last.starts_with(&format!("repo policy: {}@main (", root.display())), "{last}");
@@ -681,7 +682,7 @@ fn doctor_report_policy_line_is_escaped() {
     git(&root, &["commit", "-q", "-m", "init"]);
     let m = load(&LoadContext { paths: p.clone(), repo: Some(root.clone()), team: None }).unwrap();
     let l = doctor_report(&Env { paths: &p, repo: Some(&root), search_path: None, claude_config_dir: None, secrets: &MemStore::new(), env: &no_env,
-        probe: &never, server: None }, &m);
+        probe: &never, server: None, tmux: Err(MuxError::TimedOut) }, &m);
     assert!(!l.iter().any(|x| x.contains('\n') || x.contains('\u{202e}')), "{l:?}");
     let last = l.last().unwrap();
     assert!(last.starts_with("repo policy: ") && last.contains(r"re\npo\u{202e}x@main ("), "{last}");
@@ -691,7 +692,7 @@ fn icon_lines(p: &Paths, vars: &[(&str, &str)]) -> Vec<String> {
     let m = load(&LoadContext { paths: p.clone(), repo: None, team: None }).unwrap();
     let env = |n: &str| vars.iter().find(|(k, _)| *k == n).map(|(_, v)| OsString::from(v));
     let l = doctor_report(&Env { paths: p, repo: None, search_path: None, claude_config_dir: None, secrets: &MemStore::new(), env: &env,
-        probe: &never, server: None }, &m);
+        probe: &never, server: None, tmux: Err(MuxError::TimedOut) }, &m);
     l.into_iter().filter(|x| x.starts_with("icons: ")).collect()
 }
 
@@ -709,15 +710,19 @@ fn h14_32_doctor_icon_line_holds_the_nerd_glyphs_and_names_the_set() {
     let test = NERD_GLYPHS.join(" ");
     let nerd = format!("icons: nerd set (ZYGO_NERD_FONT=0 selects the plain set); test: {test}");
     let plain = format!("icons: plain set (ZYGO_NERD_FONT=1 selects the nerd set); test: {test}");
-    // The set is the one the status line uses (AU2). `xterm` selects no set by itself on any platform.
-    let cases: [(&[(&str, &str)], &String); 7] = [
+    // The set is the one the status line uses (AU2). `xterm` selects no set by itself on any platform. On a Windows
+    // build `WT_SESSION` and `TERM_PROGRAM` select no set either (the PH8 and PH10 fallback), so there the
+    // automatic set is plain; elsewhere it is nerd.
+    let auto = if cfg!(windows) { &plain } else { &nerd };
+    let cases: [(&[(&str, &str)], &String); 8] = [
         (&[("ZYGO_NERD_FONT", "1")], &nerd),
         (&[("ZYGO_NERD_FONT", "1"), ("TERM", "dumb")], &nerd),
         (&[("ZYGO_NERD_FONT", "0")], &plain),
         (&[("ZYGO_NERD_FONT", "0"), ("TERM", "xterm"), ("WT_SESSION", "1")], &plain),
         (&[("TERM", "linux")], &plain),
         (&[("TERM", "dumb"), ("ZYGO_NERD_FONT", "yes")], &plain),
-        (&[("TERM", "xterm"), ("TERM_PROGRAM", "x"), ("NO_COLOR", "1")], &nerd),
+        (&[("TERM", "xterm"), ("TERM_PROGRAM", "x"), ("NO_COLOR", "1")], auto),
+        (&[("TERM", "xterm"), ("WT_SESSION", "1")], auto),
     ];
     for (vars, want) in cases {
         assert_eq!(icon_lines(&p, vars), std::slice::from_ref(want), "{vars:?}");
@@ -743,6 +748,37 @@ fn h14_32_doctor_cli_prints_the_icon_line() {
     }
 }
 
+/// W§12, AU7: the tmux line after the act-lite line.
+#[test]
+fn doctor_tmux_line() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    std::fs::write(&p.config_file, "").unwrap();
+    let m = load(&LoadContext { paths: p.clone(), repo: None, team: None }).unwrap();
+    let never = |_: &str| Probe::NotFound;
+    let line = |tmux: Result<(u32, u32), MuxError>| -> Vec<String> {
+        let l = doctor_report(&Env { paths: &p, repo: None, search_path: None, claude_config_dir: None, secrets: &MemStore::new(),
+            env: &no_env, probe: &never, server: None, tmux }, &m);
+        l.into_iter().filter(|x| x.starts_with("tmux: ")).collect()
+    };
+    assert_eq!(line(Ok((3, 7))), ["tmux: 3.7 (minimum 3.2)"]);
+    assert_eq!(line(Ok((3, 2))), ["tmux: 3.2 (minimum 3.2)"]);
+    assert_eq!(line(Ok((3, 1))), ["tmux: 3.1 (minimum 3.2; below minimum)"]);
+    assert_eq!(line(Ok((2, 9))), ["tmux: 2.9 (minimum 3.2; below minimum)"]);
+    // M1 review round 1 (N2): `not found` only for a spawn error of kind `NotFound`; any other spawn error is named
+    let spawn = |e: std::io::Error| line(Err(MuxError::Spawn { message: e.to_string() }));
+    assert_eq!(spawn(std::io::Error::from(std::io::ErrorKind::NotFound)), ["tmux: not found"]);
+    assert_eq!(spawn(std::io::Error::from_raw_os_error(2)), ["tmux: not found"]); // ENOENT; ERROR_FILE_NOT_FOUND on Windows
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    assert_eq!(spawn(denied), [format!("tmux: cannot run: {}", std::io::Error::from(std::io::ErrorKind::PermissionDenied))]);
+    #[cfg(unix)]
+    assert_eq!(spawn(std::io::Error::from_raw_os_error(13)), ["tmux: cannot run: Permission denied (os error 13)"]);
+    assert_eq!(line(Err(MuxError::Spawn { message: "No such file or directory".into() })), ["tmux: cannot run: No such file or directory"]);
+    assert_eq!(line(Err(MuxError::Spawn { message: "no pipes\u{1b}[2K\nforged".into() })), ["tmux: cannot run: no pipes\\u{1b}[2K\\nforged"]);
+    assert_eq!(line(Err(MuxError::TimedOut)), ["tmux: unknown (minimum 3.2)"]);
+    assert_eq!(line(Err(MuxError::Failed { message: "unknown tmux version: tmux master".into() })), ["tmux: unknown (minimum 3.2)"]);
+}
+
 #[test]
 fn doctor_report_section_order() {
     let d = TempDir::new().unwrap();
@@ -750,7 +786,7 @@ fn doctor_report_section_order() {
     std::fs::write(&p.config_file, cfg(&[("acme", "key = \"keychain:acme\"")])).unwrap();
     let l = with_server(&p, Some("https://zygo.example.invalid"));
     let at = |pre: &str| l.iter().position(|x| x.starts_with(pre)).unwrap_or_else(|| panic!("{pre}: {l:?}"));
-    let pos: Vec<usize> = ["agent claude-code", "agent opencode", "act-lite", "secret store", "provider ", "server", "plugin store", "icons: ", "repo policy"].iter().map(|x| at(x)).collect();
+    let pos: Vec<usize> = ["agent claude-code", "agent opencode", "act-lite", "tmux: ", "secret store", "provider ", "server", "plugin store", "icons: ", "repo policy"].iter().map(|x| at(x)).collect();
     assert!(pos.windows(2).all(|w| w[0] < w[1]), "{pos:?}");
     assert_eq!(*pos.last().unwrap(), l.len() - 1);
 }
@@ -811,8 +847,77 @@ fn doctor_cli_valid_config_exits_zero() {
     assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
     let l: Vec<String> = out.lines().map(str::to_string).collect();
     assert!(has(&l, "agent claude-code: not found") && has(&l, "act-lite: not found"), "{out}");
+    assert!(has(&l, "tmux: not found"), "{out}");
     assert!(l.iter().any(|x| x.starts_with("provider acme: env:ZYGO_N35_KEY ")), "{out}");
     assert_eq!(l.last().map(String::as_str), Some("repo policy: defaults"), "{out}");
+}
+
+/// D2 (plan review F7): `zygo doctor` looks for tmux only in the absolute entries of `PATH`. Kills: a `find_tmux` that
+/// searches a relative `PATH` entry (the command's cwd is `d`, so `.` names the folder of the relative fake).
+#[cfg(unix)]
+#[test]
+fn doctor_tmux_is_found_only_in_absolute_path_entries() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = TempDir::new().unwrap();
+    let _g = forks();
+    let used = d.path().join("relative-used");
+    let write = |f: &Path, text: &str| {
+        std::fs::write(f, text).unwrap();
+        std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    write(&d.path().join("tmux"), &format!("#!/bin/sh\ntouch \"{}\"\necho \"tmux 9.9\"\n", used.display()));
+    let abs = d.path().join("abs");
+    std::fs::create_dir_all(&abs).unwrap();
+    write(&abs.join("tmux"), "#!/bin/sh\necho \"tmux 3.7\"\n");
+    let run = |path: OsString| -> Vec<String> {
+        let o = doctor_cmd(d.path(), "").env("PATH", path).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect()
+    };
+    let mut both = OsString::from(".:");
+    both.push(&abs);
+    let l = run(both);
+    assert!(has(&l, "tmux: 3.7 (minimum 3.2)"), "{l:?}");
+    assert!(!used.exists(), "the relative fake ran");
+    let l = run(OsString::from("."));
+    assert!(has(&l, "tmux: not found"), "{l:?}");
+    assert!(!used.exists(), "the relative fake ran");
+}
+
+/// The `tmux` lines of `zygo doctor` with `PATH` = the one absolute folder `dir` (D2, D9).
+#[cfg(unix)]
+fn doctor_tmux_lines(d: &Path, dir: &Path) -> Vec<String> {
+    let o = doctor_cmd(d, "").env("PATH", dir).output().unwrap();
+    String::from_utf8_lossy(&o.stdout).lines().filter(|x| x.starts_with("tmux: ")).map(str::to_string).collect()
+}
+
+/// D2: a file named `tmux` that is not executable, in an absolute `PATH` entry, is not tmux. Kills: a `find_tmux` that
+/// takes the first entry named `tmux` that exists, with no executable check (`dir.join("tmux").exists()`): the doctor
+/// would then spawn it and print `tmux: cannot run: Permission denied (os error 13)`.
+#[cfg(unix)]
+#[test]
+fn doctor_tmux_skips_a_file_that_is_not_executable() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = TempDir::new().unwrap();
+    let _g = forks();
+    let dir = d.path().join("abs");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tmux"), "#!/bin/sh\necho \"tmux 3.7\"\n").unwrap();
+    std::fs::set_permissions(dir.join("tmux"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(doctor_tmux_lines(d.path(), &dir), ["tmux: not found"]);
+}
+
+/// D2: a directory named `tmux`, in an absolute `PATH` entry, is not tmux. Kills: a `find_tmux` that takes the first
+/// entry named `tmux` that exists (`dir.join("tmux").exists()`), or one that checks only the execute bits of the mode
+/// (a directory has them): the doctor would then spawn the directory and print `tmux: cannot run: Permission denied
+/// (os error 13)`.
+#[cfg(unix)]
+#[test]
+fn doctor_tmux_skips_a_directory() {
+    let d = TempDir::new().unwrap();
+    let _g = forks();
+    let dir = d.path().join("abs");
+    std::fs::create_dir_all(dir.join("tmux")).unwrap();
+    assert_eq!(doctor_tmux_lines(d.path(), &dir), ["tmux: not found"]);
 }
 
 #[test]

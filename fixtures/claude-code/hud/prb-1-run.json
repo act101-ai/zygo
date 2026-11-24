@@ -1,0 +1,10 @@
+{
+  "date": "2026-11-22",
+  "claude_code": "2.1.330",
+  "opencode": "1.19.6",
+  "tmux": "3.7c",
+  "os": "Linux",
+  "pane": "200x50",
+  "pty": "100x50",
+  "refresh_interval": 2
+}

@@ -9,7 +9,7 @@ use serde_json::Value;
 use zygo_hooks::statusline::render::{
     color_mode, glyphs, icon_set, icon_set_on, render, spend_text, ColorMode, HudData, IconSet, Outcome, RenderEnv, Style,
 };
-use zygo_hooks::statusline::width::{cells, terminal_width, truncate};
+use zygo_hooks::statusline::width::{cells, status_width, terminal_width, truncate, STATUS_INDENT, STATUS_RIGHT_GAP};
 use zygo_proxy::client::{SessionStatus, WindowArg};
 
 // ---- the reference bytes of the spec (H§6.3 OP13 as amended by OP14; H§6.4 examples 1 and 3) ----
@@ -119,7 +119,7 @@ fn no_tty() -> Option<u16> {
 
 /// A render environment from an `env` closure, with no terminal probe (a test run can have a real `/dev/tty`).
 fn renv_from(env: &dyn Fn(&str) -> Option<OsString>, style: Style) -> RenderEnv {
-    RenderEnv { style, icons: icon_set(env), color: color_mode(env), width: terminal_width(env, &no_tty), force_panic: false }
+    RenderEnv { style, icons: icon_set(env), color: color_mode(env), width: status_width(env, &no_tty), force_panic: false }
 }
 
 fn renv(style: Style, icons: IconSet, color: ColorMode, width: u16) -> RenderEnv {
@@ -372,6 +372,11 @@ fn h14_08_ctx_numbers_bar_and_threshold_mark() {
     // A threshold that is not below the window.
     let at = with(|s| (s.threshold, s.effective_window) = (Some(1_000_000), Some(1_000_000)));
     assert!(!compact_text(&at).contains('⇣') && compact_text(&at).contains("ctx 196k/1m ▰▱▱▱▱"));
+    // H§6.6, FIX-15: ctx numbers in the `b` range.
+    let big = with(|s| {
+        (s.context_window, s.effective_window, s.threshold, s.used_context) = (Some(2_000_000_000), Some(2_000_000_000), None, Some(1_250_000_000));
+    });
+    assert!(compact_text(&big).contains("ctx 1.2b/2b ") && verbose_text(&big).contains("ctx 1.2b/2b "), "{}", compact_text(&big));
 
     // Safety only: window 200,000, `effective_window` 180,000, no `threshold`, used 90,000 → no mark, fraction 0.5.
     let safety = with(|s| {
@@ -518,13 +523,19 @@ fn h14_20_compact_drops_segments_in_order_and_width_sources() {
         ("worktree", format!("{head}{work}  {ctx}")),
         ("ctx numbers", format!("{head}{work}")),
     ];
-    let at = |columns: usize| {
-        let columns = columns.to_string();
+    // The row for `COLUMNS` = n (H§6.7: W = n - 4).
+    let cols = |n: usize| {
+        let columns = n.to_string();
         let env = env_of(&v, &[("COLUMNS", columns.as_str())]);
         strip(&render(&d, &renv_from(&env, C)))
     };
+    // The row for the fit width w.
+    let at = |w: usize| cols(w + usize::from(STATUS_INDENT + STATUS_RIGHT_GAP));
     assert_eq!(cells(&steps[0].1), 115);
-    assert_eq!(at(200), steps[0].1);
+    assert_eq!(cols(200), steps[0].1);
+    // PH4: the status area is 4 cells narrower than the terminal: the 115-cell row needs `COLUMNS` 119.
+    assert_eq!(cols(119), steps[0].1);
+    assert_eq!(cols(118), steps[1].1);
     for pair in steps.windows(2) {
         let (before, (name, after)) = (&pair[0].1, &pair[1]);
         // The row before this step still fits at its own width; one cell less drops exactly this segment.
@@ -532,8 +543,8 @@ fn h14_20_compact_drops_segments_in_order_and_width_sources() {
         assert_eq!(&at(cells(before) - 1), after, "{name}");
     }
     // `COLUMNS=20`: stripe, logo, work item; 16 cells.
-    assert_eq!(at(20), format!("▌▌▌ {LOGO} {BRANCH} main"));
-    assert_eq!(cells(&at(20)), 16);
+    assert_eq!(cols(20), format!("▌▌▌ {LOGO} {BRANCH} main"));
+    assert_eq!(cells(&cols(20)), 16);
     // Below that the work item goes last; the stripe and the logo stay, and the row is printed as it is.
     assert_eq!(strip(&render(&d, &renv(C, IconSet::Nerd, ColorMode::Ansi256, 15))), head);
     assert_eq!(strip(&render(&d, &renv(C, IconSet::Nerd, ColorMode::Ansi256, 1))), head);
@@ -544,7 +555,7 @@ fn h14_20_compact_drops_segments_in_order_and_width_sources() {
         let env = env_of(&v, &[("COLUMNS", columns.to_string().as_str())]);
         let out = strip(&render(&draining, &renv_from(&env, C)));
         assert!(out.starts_with(&format!("{head} ws draining")), "{columns}: {out}");
-        assert!(at(columns).starts_with(&head), "{columns}");
+        assert!(cols(columns).starts_with(&head), "{columns}");
     }
     let env = env_of(&v, &[("COLUMNS", "20")]);
     assert_eq!(strip(&render(&draining, &renv_from(&env, C))), format!("{head} ws draining"));
@@ -568,6 +579,22 @@ fn h14_20_compact_drops_segments_in_order_and_width_sources() {
     assert_eq!(terminal_width(&vars(&[("COLUMNS", "20")]), &tty(19)), 20);
     assert_eq!(terminal_width(&vars(&[("COLUMNS", "1001")]), &tty(1000)), 1000);
     assert_eq!(terminal_width(&vars(&[("COLUMNS", "1000")]), &tty(1001)), 1000);
+}
+
+/// H§6.7, PH4 (P-HUD-1 on Claude Code 2.1.330): the status area starts 2 cells in and ends 2 cells before the right
+/// edge, so W is the terminal width less 4. With no source, W stays 120. The terminal width does not change.
+#[test]
+fn ph4_status_width_is_the_terminal_less_the_margins() {
+    assert_eq!((STATUS_INDENT, STATUS_RIGHT_GAP), (2, 2));
+    let tty = |n: u16| move || Some(n);
+    assert_eq!(status_width(&vars(&[("COLUMNS", "110")]), &tty(90)), 86);
+    assert_eq!(status_width(&vars(&[("COLUMNS", "110")]), &no_tty), 106);
+    assert_eq!(status_width(&vars(&[]), &no_tty), 120);
+    assert_eq!(status_width(&vars(&[("COLUMNS", "5")]), &tty(5000)), 120);
+    assert_eq!(status_width(&vars(&[("COLUMNS", "abc")]), &no_tty), 120);
+    assert_eq!(status_width(&vars(&[("COLUMNS", "20")]), &tty(19)), 16);
+    assert_eq!(status_width(&vars(&[("COLUMNS", "1001")]), &tty(1000)), 996);
+    assert_eq!(terminal_width(&vars(&[("COLUMNS", "110")]), &no_tty), 110);
 }
 
 // ---- H§14 #21: verbose width fit ----
@@ -689,8 +716,19 @@ fn h14_31_icon_set_selection() {
     }
     assert_eq!(icon_set_on(&vars(&[]), true), IconSet::Plain);
     assert_eq!(icon_set_on(&vars(&[("TERM", "xterm-256color")]), true), IconSet::Plain);
-    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Nerd);
-    assert_eq!(icon_set_on(&vars(&[("TERM_PROGRAM", "vscode")]), true), IconSet::Nerd);
+    // Windows: `WT_SESSION` and `TERM_PROGRAM` select no set (the PH8 and PH10 fallback, AU2 2026-11-22).
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("TERM_PROGRAM", "vscode")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x"), ("TERM_PROGRAM", "vscode")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x"), ("TERM", "xterm-256color")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "1"), ("WT_SESSION", "x")]), true), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes"), ("TERM_PROGRAM", "vscode")]), true), IconSet::Plain);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "0"), ("WT_SESSION", "x")]), true), IconSet::Plain);
+    // Not Windows: the same variables give the old results.
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x")]), false), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("TERM_PROGRAM", "vscode")]), false), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("WT_SESSION", "x"), ("TERM_PROGRAM", "vscode")]), false), IconSet::Nerd);
+    assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes"), ("TERM_PROGRAM", "vscode")]), false), IconSet::Nerd);
     assert_eq!(icon_set_on(&vars(&[]), false), IconSet::Nerd);
     assert_eq!(icon_set_on(&vars(&[("TERM", "xterm-256color")]), false), IconSet::Nerd);
     // Any other value: the automatic rules.
@@ -698,10 +736,12 @@ fn h14_31_icon_set_selection() {
     assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes"), ("TERM", "xterm")]), false), IconSet::Nerd);
     assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "yes")]), true), IconSet::Plain);
     assert_eq!(icon_set_on(&vars(&[("ZYGO_NERD_FONT", "")]), false), IconSet::Nerd);
-    // `icon_set` is the rule for this build.
-    for env in [vars(&[]), vars(&[("TERM", "linux")]), vars(&[("WT_SESSION", "x")])] {
+    // `icon_set` is the rule for this build: on Windows the terminal variables give the plain set.
+    for env in [vars(&[]), vars(&[("TERM", "linux")]), vars(&[("WT_SESSION", "x")]), vars(&[("TERM_PROGRAM", "vscode")])] {
         assert_eq!(icon_set(&env), icon_set_on(&env, cfg!(windows)));
     }
+    let terminal = vars(&[("WT_SESSION", "x"), ("TERM_PROGRAM", "vscode")]);
+    assert_eq!(icon_set(&terminal), if cfg!(windows) { IconSet::Plain } else { IconSet::Nerd });
     // `NO_COLOR=1` alone removes color only: Nerd icons, no escapes.
     let quiet = vars(&[("NO_COLOR", "1")]);
     assert_eq!((icon_set_on(&quiet, false), color_mode(&quiet)), (IconSet::Nerd, ColorMode::Off));
@@ -738,8 +778,8 @@ fn from_env_reads_everything_through_its_closure() {
     let env = vars(&[("ZYGO_NERD_FONT", "0"), ("NO_COLOR", "1"), ("COLUMNS", "77"), ("ZYGO_TEST_RENDER_PANIC", "0")]);
     let e = RenderEnv::from_env(&env, V);
     assert_eq!((e.style, e.icons, e.color, e.force_panic), (V, IconSet::Plain, ColorMode::Off, false));
-    // The width comes from the terminal when the test run has one, else from `COLUMNS`.
-    assert!((20..=1000).contains(&e.width));
+    // The width is the terminal's (when the test run has one), else COLUMNS, less 4 (H§6.7).
+    assert!((16..=996).contains(&e.width));
     assert!(RenderEnv::from_env(&vars(&[("ZYGO_TEST_RENDER_PANIC", "1")]), C).force_panic);
     assert!(!RenderEnv::from_env(&vars(&[]), C).force_panic);
     assert!(!RenderEnv::from_env(&vars(&[("ZYGO_TEST_RENDER_PANIC", "true")]), C).force_panic);
@@ -909,6 +949,9 @@ fn tokens_spend_cache_trimmed() {
     // A team session has no `spend_usd` yet: no spend segment.
     let team = with(|s| (s.spend_usd, s.requests_priced, s.spend_notional) = (None, None, Some(true)));
     assert!(compact_text(&team).contains(&format!("↑1.2m ↓48k  {DB} 92%")), "{}", compact_text(&team));
+    // H§6.6, FIX-15: token counts in the `b` range.
+    let big = with(|s| (s.tokens_in, s.tokens_out) = (Some(1_250_000_000), Some(1_000_000_000)));
+    assert!(compact_text(&big).contains("↑1.2b ↓1b  ") && verbose_text(&big).contains("↑ 1.2b in  ↓ 1b out"), "{}", compact_text(&big));
 
     // Cache: red below 50 %.
     let low = with(|s| s.cache_read_share = Some(0.49));
@@ -944,7 +987,7 @@ fn h14_18_trimmed_bytes_show_as_estimated_tokens() {
     assert!(plain(&d, V).ends_with("   trimmed 23k tok"), "{}", plain(&d, V));
     assert!(render(&d, &nerd(C)).ends_with("  ✂ 23k\x1b[0m") && render(&d, &nerd(V)).ends_with("   trimmed 23k tok\x1b[0m"));
     assert_eq!(zygo_core::tokens::BYTES_PER_TOKEN, 4);
-    let cases = [(0, "0"), (1, "1"), (4, "1"), (5, "2"), (3_996, "999"), (3_997, "1k"), (92_157, "23k"), (4_000_000, "1m"), (4_800_001, "1.2m")];
+    let cases = [(0, "0"), (1, "1"), (4, "1"), (5, "2"), (3_996, "999"), (3_997, "1k"), (92_157, "23k"), (4_000_000, "1m"), (4_800_001, "1.2m"), (3_999_999_996, "999.9m"), (4_000_000_000, "1b"), (4_800_000_001, "1.2b")];
     for (bytes, want) in cases {
         let d = trimmed(bytes);
         assert!(compact_text(&d).ends_with(&format!("  ✂ {want}")), "{bytes}: {}", compact_text(&d));

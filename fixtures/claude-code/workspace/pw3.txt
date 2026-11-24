@@ -1,0 +1,3 @@
+Claude Code 2.1.330
+3.1 ok first launch on Claude Code 2.1.329 with --session-id: exit 0; request seen: yes; user-agent: claude-cli/2.1.329 (external, sdk-cli)
+3.2 ok resume on Claude Code 2.1.330: exit 0; conversation found: yes; user-agent: claude-cli/2.1.330 (external, sdk-cli); output: ok 

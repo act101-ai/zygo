@@ -6,3 +6,4 @@ pub mod session_text;
 pub mod statusline;
 pub mod token;
 pub mod trim;
+pub mod workspace;

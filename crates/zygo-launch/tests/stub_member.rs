@@ -117,7 +117,7 @@ fn a_step_that_cannot_run_exits_2() {
 
 #[test]
 fn session_argument_is_recorded() {
-    for flag in ["--session-id", "--resume", "-s"] {
+    for flag in ["--session-id", "--resume", "-s", "--session"] {
         let mut s = spawn_in(tempfile::tempdir().unwrap(), &["--model", "x", flag, ID], false, "");
         assert_eq!(wait_exit(&mut s.child).code(), Some(0));
         let v: Value = serde_json::from_slice(&std::fs::read(s.out.join("session-arg.json")).unwrap()).unwrap();
@@ -126,6 +126,49 @@ fn session_argument_is_recorded() {
     let mut s = spawn_in(tempfile::tempdir().unwrap(), &["--model", "x"], false, "");
     assert_eq!(wait_exit(&mut s.child).code(), Some(0));
     assert!(!s.out.join("session-arg.json").exists());
+}
+
+/// The `session-arg.json` record of a capture-mode stub started with `args`: `(flag, id)`, or `None` when it is not written.
+fn recorded(args: &[&str]) -> Option<(String, String)> {
+    let mut s = spawn_in(tempfile::tempdir().unwrap(), args, false, "");
+    assert_eq!(wait_exit(&mut s.child).code(), Some(0), "{args:?}");
+    let v: Value = serde_json::from_slice(&std::fs::read(s.out.join("session-arg.json")).ok()?).unwrap();
+    Some((v["flag"].as_str().unwrap().to_string(), v["id"].as_str().unwrap().to_string()))
+}
+fn pair(flag: &str, id: &str) -> Option<(String, String)> { Some((flag.to_string(), id.to_string())) }
+
+#[test]
+fn session_argument_after_double_dash_is_a_prompt_word() { // FIX-13 round 2 R1, as the launcher's has_session_arg
+    for args in [&["--", "--resume=x"][..], &["--", "--resume", "x"], &["--model", "x", "--", "--session-id=U1"]] {
+        assert_eq!(recorded(args), None, "{args:?}");
+    }
+    assert_eq!(recorded(&["--resume=U1", "--", "--session-id=U2"]), pair("--resume", "U1"));
+    let t = tempfile::tempdir().unwrap();
+    let set = settings(t.path());
+    let s = spawn_in(t, &["--settings", set.as_str(), "--", "--resume=x"], true, "");
+    wait_done(&s.ctl, 1);
+    let own = format!("00000000-0000-4000-8000-{:012x}", s.child.id());
+    let h = jsonl(&s.out.join("hooks.jsonl"));
+    assert_eq!(h.len(), 1);
+    assert_cat(&h[0], "SessionStart", &input(&s, "SessionStart", &own, json!({"source": "startup"})));
+}
+
+#[test]
+fn split_session_flag_followed_by_a_flag_has_no_id() { // FIX-13 round 2 R2
+    assert_eq!(recorded(&["--resume", "--model", "x"]), None);
+    assert_eq!(recorded(&["-s", "-m", "x"]), None);
+    assert_eq!(recorded(&["--resume", "--model", "x", "--session-id", "U2"]), pair("--session-id", "U2"));
+}
+
+#[test]
+fn one_token_session_argument_filters() { // FIX-13 D1, D2; round 2 R3
+    assert_eq!(recorded(&["--session-id=", "--session-id=U2"]), pair("--session-id", "U2")); // an empty = value is no id
+    assert_eq!(recorded(&["-s=x"]), None); // -s has no = form
+    assert_eq!(recorded(&["--resume=a=b"]), pair("--resume", "a=b")); // the id is the text after the first =
+    assert_eq!(recorded(&["--model", "x", "--resume"]), None); // a trailing split flag has no next token
+    assert_eq!(recorded(&["--session=ses_1"]), pair("--session", "ses_1")); // OpenCode's one-token resume (AU3)
+    assert_eq!(recorded(&["--session=-x"]), pair("--session", "-x"));
+    assert_eq!(recorded(&["--session="]), None);
 }
 
 /// `cat` prints the hook's stdin, so `out` in `hooks.jsonl` is what the hook process received.

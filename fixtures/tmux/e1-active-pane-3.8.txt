@@ -1,0 +1,57 @@
+tmux 3.8
+script: e1-active-pane.sh
+before: w2 pane 0 sh active=1 name=sh
+before: w2 pane 1 sh active=0 name=sh
+--- same: kill-pane on pane 1
+after: w2 pane 0 sh active=1 name=sh
+log:
+window-renamed ws w2 name=sh
+window-layout-changed ws w2 name=sh
+--- same: then split-window -d in window 0
+log:
+window-renamed ws w2 name=sh
+window-layout-changed ws w2 name=sh
+after-split-window ws w0 name=tmux
+window-layout-changed ws w0 name=tmux
+before: w2 pane 0 sh active=1 name=sh
+before: w2 pane 1 sh active=0 name=sh
+--- same: kill-pane on pane 0
+after: w2 pane 0 sh active=1 name=sh
+log:
+window-renamed ws w2 name=sh
+window-layout-changed other w0 name=tmux
+--- same: then split-window -d in window 0
+log:
+window-renamed ws w2 name=sh
+window-layout-changed other w0 name=tmux
+after-split-window ws w0 name=tmux
+window-layout-changed ws w0 name=tmux
+before: w2 pane 0 sleep active=1 name=sleep
+before: w2 pane 1 sh active=0 name=sleep
+--- diff: kill-pane on pane 1
+after: w2 pane 0 sleep active=1 name=sleep
+log:
+window-renamed ws w2 name=sleep
+window-layout-changed ws w2 name=sleep
+--- diff: then split-window -d in window 0
+log:
+window-renamed ws w2 name=sleep
+window-layout-changed ws w2 name=sleep
+after-split-window ws w0 name=tmux
+window-layout-changed ws w0 name=tmux
+before: w2 pane 0 sh active=1 name=sh
+before: w2 pane 1 sleep active=0 name=sh
+--- diff: kill-pane on pane 0
+after: w2 pane 0 sleep active=1 name=sleep
+log:
+window-renamed ws w2 name=sh
+window-layout-changed other w0 name=tmux
+window-renamed ws w2 name=sleep
+--- diff: then split-window -d in window 0
+log:
+window-renamed ws w2 name=sh
+window-layout-changed other w0 name=tmux
+window-renamed ws w2 name=sleep
+after-split-window ws w0 name=tmux
+window-layout-changed ws w0 name=tmux
+end

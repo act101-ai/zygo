@@ -1,0 +1,5 @@
+launch zygo zygo 0.1.1
+claude 2.1.330
+tmux 3.2a
+15.off ok exit 0; turns 2; denials 0; ran yes; sleeper started yes; alive after agent exit yes; alive after pane end yes; in sandbox no; outside write yes
+15.on FAIL exit 0; turns 2; denials 0; ran yes; sleeper started no; alive after agent exit no; alive after pane end no; in sandbox yes; outside write no; the sleeper stopped after the tool call or the agent's exit

@@ -5,7 +5,8 @@
 **Goal:** Build the zygo status line HUD and the auto-update check on start, then phase 2 workspaces (`zygo up`/`down` with drain, snapshot and resume), as the approved designs specify.
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
-**Next:** LIV-1 (manual, operator's machine), then DOC-1
+**Next:** —
+**Workflows:** no per-node review rounds and no separate plan review (operator: no review loops, see Log line 109); one whole-branch review at completion, triaged by the controller. At completion, after merging origin/main (keep the operator's README.md edits), check README.md against the shipped phase 2 behaviour and the specs; fix mistakes and add missing user-facing information (operator, 2026-11-23); then the whole-branch review.
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -22,7 +23,7 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 - Never resume a conversation whose launcher is live — `docs/specs/2026-11-20-workspaces-design.md` W§4 W-C9, AU87
 - Native Windows: every workspace verb exits 2 with `workspaces need tmux; run zygo in WSL`; the code still builds there — `docs/specs/2026-11-20-workspaces-design.md` OP5; `.github/workflows/ci.yml` (windows-latest)
 - Minimum tmux 3.2 — `docs/specs/2026-11-20-workspaces-design.md` AU7
-- State dir `0700`, files `0600`; wait bounds hooks/snapshots 1 s, launchers/wrapper 5 s, `up`/`down` 5 s — `docs/specs/2026-11-20-workspaces-design.md` AU2, W§7.3
+- State dir `0700`, files `0600`; wait bounds hooks, member events and their snapshots 1 s, snapshots run by `up`/`down` 5 s, launchers/wrapper 5 s, `up`/`down` 5 s — `docs/specs/2026-11-20-workspaces-design.md` AU2, W§7.3
 - tmux-dependent tests run when tmux 3.2 or later is on `PATH` and skip with a printed reason otherwise; on Windows they are `cfg(unix)`-gated; no CI install step; gate helper in W3, used by later nodes — operator, 2026-11-21
 - Crate graph: `zygo-workspace` depends on `zygo-core`, `zygo-config`, `zygo-work`, `zygo-proxy` only; `zygo-hooks` depends on `zygo-workspace`; `ws run`, member wrapper and membership decision in `crates/zygo/src/cmd/` — `docs/specs/2026-11-20-workspaces-design.md` AU103, AU102, AU45
 - No configured price leaves a server; a team session's spend uses built-in list prices — `docs/specs/2026-11-21-statusline-hud-design.md` AU14, H§9 row §7.2
@@ -36,8 +37,6 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 - Live checks (manual, recorded on the operator's machine): PRB-1, LIV-1, LIV-2, P1, P2, E2 — `docs/specs/2026-11-21-statusline-hud-design.md` H§12, H§14 #37, #38; `docs/specs/2026-11-20-workspaces-design.md` W§18 #76
 
 ## Review focus
-
-Convention: an acceptance item number (W§18, H§14, auto-update) appears only in its owner node's file; earlier nodes test their own contract and cite AU or section ids.
 
 1. CI runners without tmux (macos-latest has none by default) — tmux tests print a skip reason and pass — test in W3 (`require_tmux`) — operator, 2026-11-21
 2. `zygo-workspace` and `zygo-hooks` build on windows-latest with unix-only code behind `cfg` — compiles; verbs exit 2 — test in M1 (W§18 #64) — `docs/specs/2026-11-20-workspaces-design.md` OP5
@@ -56,53 +55,31 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| PRB-1 | Probe: temporary statusLine command for PH1-PH7, PH9, PH11-PH13 | PRB-2, HUD-2, LIV-1 | TODO | implementation | — |
-| PRB-2 | Premise docs: pins are minimums; live scratch dir removed on exit | — | DONE | implementation | 9d1f6c6; acceptance ver 50, lib 27, check-premises ok, live selftest 54 (merged tree) |
-| HUD-1 | Usage store: Store::bytes_trimmed | — | DONE | implementation | 0f7ec77; acceptance zygo-usage 29/29, workspace --no-run ok (merged tree) |
-| HUD-2 | zygo-work: bounded HUD git function (rev-parse, rev-list only) | — | DONE | judgment | 1454eab; acceptance hud_git 21/21 (+3 ignored), workspace --no-run ok (merged tree); CI green 3 OS (run 44964062674) |
-| HUD-3 | Config tables [statusline] and [update] on today's schema; user config only | — | DONE | implementation | 77323a8, merge 71181de; acceptance zygo-config 176/176 (merged tree) |
-| HUD-4 | Prices: long_context tier, cache_write_5m, Prices::cost, price sanity | HUD-3 | DONE | judgment | 69b5822, merge 624dcd2; acceptance prices 27, builtin 13, workspace --no-run ok (merged tree) |
-| HUD-5 | Proxy status: model, context_window, threshold (AU28, AU29); SessionStatus Default; BYTES_PER_TOKEN | HUD-2 | DONE | judgment | commits 4379678 98d9a9d c0407fa; CI 44968316690 green (ubuntu, macos, windows); acceptance on merged tree: session_api 40, window 37, zygo-hooks lib 22, workspace --no-run ok, no div_ceil(4) |
-| HUD-6 | Proxy session spend and tokens: local, passthrough notional, counts, AU33 tee | HUD-5, HUD-4 | DONE | judgment | edb0f1c, merge 2899612; acceptance zygo-proxy 350/350, workspace --no-run ok (merged tree) |
-| HUD-7 | SessionView statusline_style with Default; overrides statusline; launcher writes the style | HUD-3 | DONE | implementation | 5c180cc, merge 1f1967b; acceptance all 17 commands 0 failed (merged tree) |
-| HUD-8 | HUD render: segments, colors, icons, width sources and fit, golden files | HUD-5, HUD-6, HUD-2 | DONE | judgment | 320d2b2, merge 5d919a3; acceptance render 23, hooks lib 24, prices 28, session_api 45, passthrough 30, window 38, compact_cmd 11 (merged tree) |
-| HUD-9 | HUD data: bounded stdin, cache v2, lease, workers, deadline, failure display | HUD-8, HUD-2, HUD-1, HUD-7 | DONE | judgment | 2a5f5ff, merge e7d95d1; acceptance zygo-hooks, zygo, zygo-config, zygo-launch all targets 0 failed; session_api 47, passthrough 31 (merged tree, Linux) |
-| HUD-10 | Team-server session spend at built-in list prices (AU14) | HUD-6, HUD-8, HUD-9 | DONE | judgment | 7e76153; acceptance in the full workspace run, 0 failed (merged tree) |
-| UPD-1 | Auto-update: split check/install; start check at today's zygo claude / zygo opencode dispatch | HUD-3 | DONE | judgment | d74bd3f, merge c3f3c55; acceptance update 26/26, workspace --no-run ok (merged tree); Windows branch of #7 runs in CI only |
-| HUD-11 | statusline verb: CLI, slash command, overrides, --save, help, skill text | HUD-7, HUD-9, UPD-1 | DONE | implementation | dd5c2dd; acceptance in the full workspace run, 0 failed (merged tree) |
-| HUD-12 | zygo status and zygo usage in tokens and spend; doctor icon line | HUD-1, HUD-6, HUD-9 | DONE | implementation | 586fd49, merge 142d14f; acceptance usage_doctor 46, compact_cmd 16, zygo lib 159, statusline_render 24, statusline_data 36, store 29 (merged tree) |
-| LIV-1 | Live check P-HUD-1 on Linux or macOS | HUD-9, HUD-11, PRB-2 | TODO | implementation | — |
-| LIV-2 | Windows live part: PH8, PH10, W-SHELL part 2 (manual) | LIV-1, PRB-1 | TODO | implementation | — |
-| DOC-1 | Base-spec notes for the HUD (H§9) and auto-update | LIV-1, HUD-10, HUD-12, UPD-1 | TODO | implementation | — |
-| P1 | Live premises PW6, PW11, PW15 (tmux, pane start, detached down) | PRB-2 | TODO | implementation | — |
-| P2 | Live premises PW1-PW5, PW7, PW9, PW10, PW16 (agents) | P1 | TODO | implementation | — |
-| C1 | Core: workspace paths, session-dir accessors, session-view workspace field | HUD-7, HUD-9, HUD-10, HUD-11, HUD-12 | DONE | judgment | 4955b82; acceptance zygo-core lib 1, core_basics 17, hook_guard 5, workspace --no-run ok (merged tree) |
-| X1 | Proxy session status: requests_in_flight, last_request_end (AU91) | HUD-5, HUD-6, HUD-10, HUD-12 | DONE | judgment | b3e7031; acceptance session_api 52, workspace --no-run ok (merged tree) |
-| L3 | Stub agent behaviors for W§18 and stub helpers | — | DONE | implementation | 1bc76ba; acceptance stub_member 16, workspace --no-run ok (merged tree) |
-| W1 | zygo-workspace crate scaffold and identity | HUD-8, HUD-10 | DONE | judgment | 5f2cdae; acceptance identity 9, workspace --no-run ok (merged tree) |
-| W2 | Workspace state store: types, atomic write, locks, live check | W1, C1 | DONE | judgment | c0ea544; acceptance state 22, zygo-workspace all 51, workspace --no-run ok (merged tree) |
-| W3 | Multiplexer trait, tmux implementation, tmux test gate | W1, P1, P2 | TODO | judgment | — |
-| W4 | Argument filter, bypass and user-info checks, environment cleaning | W1 | DONE | judgment | 3b98d88; acceptance args 10, env 4, workspace --no-run ok (merged tree) |
-| W5 | Loadout config schema, team-layer drop, structural checks, resolution | W1, HUD-4, HUD-7, HUD-9 | DONE | judgment | f9a568a; acceptance zygo-config 214, loadout 6, workspace --no-run ok (merged tree) |
-| W6 | Snapshot: list-panes read, shrink rule, key assignment, pending rule | W2, W3 | TODO | judgment | — |
-| W7 | zygo up for one workspace: plan, build, repair, attach | W2, W3, W4, W5, W6 | TODO | judgment | — |
-| W8 | up --all and workspace admin: ls, status, forget, forget-pane | W7 | TODO | judgment | — |
-| W9 | activity.json under lock and the drain idle rule | W1, C1, X1, P2, HUD-5, W2 | TODO | judgment | — |
-| W10 | zygo down: detach, drain loop, timeout, stop, --now, --all | W7, W9, W5, P1, P2 | TODO | judgment | — |
-| L1 | Launcher member support: member, callback, resume note, LaunchOutcome | C1, L3, HUD-7, HUD-9 | DONE | judgment | 2d1c4cd; acceptance zygo-launch 200 passed over its test binaries (6 ignored, all older), zygo 378 passed, workspace --no-run ok (merged tree) |
-| L2 | Member events for Claude Code and OpenCode; WA-1/WA-2 conformance cells | L1, P2 | TODO | judgment | — |
-| H1 | Member hooks: workspace events, blocks, busy, session start and resume note | W2, W6, W9, C1, L2, P2, HUD-11, HUD-10, W10 | TODO | judgment | — |
-| H2 | HUD workspace phase segment (moved from the HUD graph) | C1, W2, HUD-8, HUD-9 | DONE | implementation | c10c913; acceptance statusline_phase 13, statusline_render 24, workspace --no-run ok (merged tree) |
-| M1 | CLI verbs, doctor line, loadout checks, results sweep additions | W8, W10, W5, W6, W4, H1, HUD-12 | TODO | judgment | — |
-| M2 | zygo ws run, member wrapper, workspace test harness | M1, L1, L2, L3, W4, P1, P2 | TODO | judgment | — |
-| M3 | Hand-started membership for zygo claude and zygo opencode | M2, W6 | TODO | judgment | — |
-| M4 | Override mirror into member records; /zygo:down, /zygo:ls, /zygo:workspace | M1 | TODO | judgment | — |
-| M5 | Auto-update check for zygo up (moved from the HUD graph) | W7, M1, M2, UPD-1 | TODO | implementation | — |
-| E1 | End-to-end up/restore checks and PW11 re-check | M2, M3, H1, W10, L3 | TODO | implementation | — |
-| E2 | End-to-end down, drain, slash, overrides, OpenCode checks; PW15 re-check | E1, M4 | TODO | implementation | — |
-| D1 | Base-spec amendments of W§15 | E2, DOC-1, M5 | TODO | implementation | — |
-| FIX-1 | request_path tests: a refused port that no other test can take | — | DONE | judgment | c86275b; acceptance request_path 20 runs, each 48 passed, 0 failed (merged tree) |
-| FIX-3 | stub_member test: no cloned_ref_to_slice_refs warning | — | DONE | mechanical | 6921b2f; acceptance clippy -D warnings clean, stub_member 16 (merged tree) |
+| FIX-9 | live-tmux.sh 6.30: accept window-unlinked as a session hook on tmux 3.3 and later | P1, P2 | DONE | mechanical | 907b06d; 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39 |
+| FIX-10 | Record the upstream error type and message of a non-2xx passthrough answer (FIX-8 follow-up) | FIX-8, DOC-1 | DONE | implementation | f273eed; passthrough 53, store 34, proxy 391; review round 2 fixed B1 (secret pass before login scrub) and 9 minor |
+| FIX-11 | HUD design: the statusline verb works the same in an OpenCode session | PRB-1, LIV-2 | DONE | mechanical | 7ee20d6; acceptance ok |
+| FIX-12 | Python premise tests leave scripts/premises/__pycache__ | PRB-1 | DROPPED(resolved by PRB-1 round 2 c759e25: hud_probe_test.py sets sys.dont_write_bytecode) | mechanical | — |
+| FIX-13 | Stub agent reads the one-token = session arguments --session-id=<id> and --resume=<id> | L2 | DONE | mechanical | 3be5519; acceptance stub_launch 17, stub_member 19 (merged tree); review round 2 fixed 3 minor |
+| FIX-14 | state tests: the hold helper retries the lock (single try_lock gave WouldBlock in a parallel run) | W6 | DROPPED(premise false: tests/state.rs starts no process and each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5) | mechanical | — |
+| FIX-15 | HUD number form short rolls over to b after 999m (1000m today) | — | DONE | mechanical | 79a70fc; acceptance statusline lib 4, statusline_render 25 (merged tree); review round 2 added 3 minor tests |
+| FIX-16 | workspace_down passes the name after -- | W10, W11, M1, FIX-19 | DONE | mechanical | 806fbcf; acceptance mcp_server 50, up 48, admin 23, down 28, workspace_cli 11 (merged tree) |
+| FIX-17 | W2 state store hardening: refuse a linked state folder, cap the state read at 1 MiB | W8 | DONE | implementation | 70043bb; acceptance state 29, snapshot 34, admin 22, up 47, zygo-core ok (merged tree); review round 2 fixed 1 blocking, 5 minor |
+| FIX-18 | Sessions have no idle expiry: no TTL for local or team sessions | — | DONE | implementation | fbbfb74; acceptance session_api 52, zygo-proxy 391 (merged tree); review round 2 fixed 1 blocking, 2 minor |
+| FIX-19 | OpenCode plugin sends tool start and end to the member hooks | H1, H3, M1 | DONE | mechanical | 6b35869; acceptance opencode 94 + 1 ignored (merged tree) |
+| FIX-20 | Remove invented expiries: no idle guess ends an open turn; no 30-day results deletion | W10 | DONE | implementation | 7deafc3, 862148f; acceptance down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean (merged tree) |
+| FIX-21 | zygo forces no Claude attribution: settings keys, session sentence, guard on git commit, gh pr and gh release | — | DONE | judgment | ba0d4e9, f83e465, 311c429; acceptance guard_hook 26, session_text 31, claude_code 39, opencode 51 + 1 ignored, premise 5, stub_launch 19, guards 75, policy 11 (merged tree) |
+| FIX-22 | Session-folder readers do not wait on a FIFO: activity.json and view.json | H1 | DONE | implementation | 40aec7c; acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored (merged tree) |
+| FIX-23 | zygo's settings merge line is true when the user sets disableAllHooks; a non-boolean disableAllHooks is removed and named; settings lines escaped through esc (U+061C added) | FIX-21, H1 | DONE | judgment | f052dd4; acceptance core lib 2, launch lib 3, claude_code 44 (merged tree) |
+| FIX-24 | A member whose hooks are off counts as busy | H1, H3, FIX-23, FIX-22, M1, FIX-19, FIX-26, FIX-27, FIX-29 | DONE | implementation | 78435b0; acceptance args 24, down 39, drain 37, state 35, up 68, cmd::member 31, workspace_member 39; workspace 2887 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
+| FIX-25 | up tests do not race on the tmux wrapper script (Text file busy) | — | DROPPED(not a code defect: pacman upgraded /usr/bin/tmux 3.7c→3.8 at 00:05:44 during the run; up 20/20 green) | implementation | — |
+| FIX-26 | zygo prints a --settings value only for an entry, with the reason (parse errors as category and position); reads --settings and --print --agents values as before (blocking, links followed) with the --agents file read once per launch; skips §8.4 found settings files that are not regular files (not opened, lease-safe open) | FIX-23 | DONE | judgment | 25194af; acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note (merged tree) |
+| FIX-27 | loadout show, config show and config check print no secret and name what they remove (M1 split) | M1, FIX-19, FIX-16, M4, M2 | DONE | judgment | bd55c63; acceptance args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26, workspace --no-run ok; workspace 2757 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
+| FIX-28 | The first pane of a new session gets ZYGO_WORKSPACE | W7, M5, M3 | DROPPED(folded into M5, diff review round 2; see nodes/M5.md) | implementation | — |
+| FIX-29 | up finishes or reports cleanly when a restored pane exits at once | W7, M3 | DONE | judgment | 7db2fac; acceptance zygo-workspace 372 + 2 ignored; workspace 2860 + 14 ignored, test-install ok, clippy -D warnings clean (merged tree) |
+| FIX-30 | Every use of a saved tmux_socket passes the AU54 check | FIX-29, FIX-24, E2 | DONE | implementation | 7d78063; acceptance zygo-workspace 398 + 2 ignored, workspace_member 43, session_verbs 29; zygo 684 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok (merged tree) |
+| FIX-31 | The AU30 restore filter keeps the value of an unlisted flag | FIX-24, FIX-30 | DONE | implementation | 021bcf6; acceptance zygo-workspace 407 + 2 ignored (args 33, six Acceptance cases pass); zygo-workspace + zygo + zygo-launch 1404 + 10 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, 11 mutations red (merged tree) |
+| FIX-32 | Whole-branch review fixes: OpenCode short clusters (yargs rule), inline --settings removed, ws run live-launcher refusal, attribution guard reads what the command writes, README drain line | D1 | DONE | implementation | 444a952; zygo-workspace + zygo + zygo-work + zygo-launch 1610 passed + 13 ignored, clippy -D warnings clean, workspace --no-run ok, check-premises ok, test-install ok (merged tree) |
+| FIX-33 | CI failures of PR #14 (run 45338846931): macOS openpty types, Windows unix-only test guard, detached down closes inherited descriptors above 2 | FIX-32 | DONE | implementation | e98247d, 7584a14; CI run 45343874336 success on ubuntu, macos, windows (run 45342068421: macOS test defects, fixed in 7584a14; run 45345736074 attempt 2 success after a Windows timing re-run); zygo-workspace 409 + 2 ignored, clippy -D warnings clean, workspace --no-run ok, test-install ok, darwin and msvc cross-checks ok |
 
 ## Log
 
@@ -161,3 +138,137 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-21 | Observation (no node): the repository has no rustfmt.toml and cargo fmt --check reports differences across zygo-proxy; no format gate is in the verification floor. |
 | 2026-11-21 | PR 7 opened for the branch at 45c4d96 (C1, X1, W1, W2, W4, W5, L3, L1, H2, FIX-1, FIX-3). CI green on ubuntu, macos and windows (runs 44984706007, 44984755165). Local floor on 45c4d96: workspace tests 0 failed; test-install.sh passed. |
 | 2026-11-21 | Resume point: 25 DONE, 22 TODO. Ready: LIV-1 and P1 (live, operator's machine). Not run: PRB-1, LIV-1, LIV-2, P1, P2, E2. Open operator question: who runs the live checks; P2 needs opencode on PATH. |
+| 2026-11-21 | PR 7 merged (41ede20). Operator: the live checks run from the executor's session on this machine, with passthrough and the operator's Claude Code login ("you can test with passthrough"). |
+| 2026-11-21 | FIX-4 added: scripts/premises/lib.sh exits when opencode is not on PATH, so no live script runs on this machine (no opencode). A script now states the agents it needs. LIV-1 and P1 depend on it. A placeholder opencode on PATH was refused as a fake. |
+| 2026-11-21 | Correction: this machine has OpenCode 1.19.6 at ~/.opencode/bin/opencode, not on the default PATH. The Log row above that says "no opencode" is wrong. FIX-4 DROPPED, its edges removed. Live runs put ~/.opencode/bin on PATH; P2 can run here. |
+| 2026-11-21 | LIV-1 and P1 planned. Live runs are from the executor's session with the OpenCode directory on PATH. Expected from the planners' probes: PW6 failed on tmux 3.2a (first window is 80x23 after new-session -x -y) and PH4 failed. |
+| 2026-11-22 | LIV-1 DONE: P-HUD-1 on the real Claude Code 2.1.330. PH4 failed: /dev/tty does not answer the hook; COLUMNS reaches it; the status area is 4 cells narrower than the pane (indent 2, right gap 2). Per the contract a new node changes HUD-8 before DOC-1. |
+| 2026-11-22 | LIV-1 found: killed status line runs write no cache, so the 30 s back-off never starts (HUD-9, data.rs:654-657); live-selftest.sh leaves its tmux socket file; live-hud.sh:17 comment names the wrong path; every passthrough session gets one auxiliary 429. New nodes follow. |
+| 2026-11-22 | LIV-1 cost: 4 live runs, 3 main-loop model requests with an answer. Claude Code wrote 3 trust entries in .claude.json and 6 folders under projects/ of the operator's Claude folder, for scratch paths. |
+| 2026-11-22 | P1 DONE. PW6 failed: on 3.2a the first window after new-session -x -y is 80x23 (3.7c: 173x47); after-kill-pane, pane-exited and window-unlinked do not fire when their target is gone and another session is current, on 3.2a and 3.7c. |
+| 2026-11-22 | P1: PW15 failed with the Claude Code sandbox on (the setsid sleeper dies; the command runs in its own mount namespace); with the sandbox off it passes. PW11 verified on both tmux versions. 20 main-loop requests over 5 runs of live-detach.sh. |
+| 2026-11-22 | P1 found: live.sh live_end removes a caller-set N2_SCRATCH (lib.sh:2 says it is kept); live-selftest.sh:291 starts tmux -L without -f /dev/null. A tab in a tmux -F format prints as _ (AU99 must not use a tab separator). |
+| 2026-11-22 | Hold: W3, W6, W7, W10, M1, M4, E2 wait for the PW6 and PW15 fallback decisions (W§19). The PW6 hook fallback is an operator question per the P1 contract. DOC-1 waits for FIX-5 (PH4). |
+| 2026-11-22 | FIX-5, FIX-7, FIX-8 added from the LIV-1 and P1 findings. DOC-1 now depends on FIX-5 (LIV-1 contract). PRB-1 and LIV-2 run after FIX-5 and FIX-7, so the manual checks see the fixed HUD and framework. |
+| 2026-11-22 | Not a defect (no node): a status line run killed by Claude Code writes no cache, so the next fetch comes after the 5 s lease retake, not the 30 s back-off. H§7.7 designs the retake for a dead run; at the shipped 30 s refresh the effect is small. Lead's call. |
+| 2026-11-22 | FIX-7 reverses PRB-2's live_end choice for a caller-set N2_SCRATCH: live-<pid> is kept (docs/premises.md:17); lib_test C3 changes, C6 is new. |
+| 2026-11-22 | PW6 6.11 (author's call, accepted): minimum stays tmux 3.2; up resizes the first window and unsets its window-size (AU96); W3, W7 re-planned; M1 unchanged for PW6. A 3.3 minimum was rejected: Ubuntu 22.04 LTS ships tmux 3.2a. |
+| 2026-11-22 | PW6 hooks (6.32-6.38): still an operator question (W§17 note); W7 waits for the answer; W3, W6 and W10 do not. |
+| 2026-11-22 | PW15: W11 added (AU65); edges W11 → H1 (Cargo.lock) and W11 → E2; W10 and M1 contracts gain the pipe case and the AU18 sandbox guard (mnt_ns); M4 unchanged (the slash path is a hook; E2 checks it with the sandbox on). |
+| 2026-11-22 | FIX-9 added: the live-tmux.sh 6.30 pass test is wrong for tmux 3.3 and later (window-unlinked is a session hook there; 3.7c options-table.c:1710). Edges P2 → FIX-9 and FIX-9 → E2: shared docs/premises.md and W§17. The graph has 25 open rows. |
+| 2026-11-22 | FIX-5 DONE (7c26d5d). HUD fit width is the terminal width less 4 (PH4 fallback). Acceptance on the merged tree: zygo-hooks 173 passed, compact_cmd 16 passed, golden files unchanged. |
+| 2026-11-22 | PW6 hooks: option A applied, author's call; W7, M2, E1 no longer wait. W§7.4: window-layout-changed and the member wrapper exit snapshot record pane loss; a shell-only window closed elsewhere waits for the next trigger (W§18 #24, #77). |
+| 2026-11-22 | FIX-10 added from FIX-8 (verdict not determined): a non-2xx passthrough answer writes its upstream error.type and error.message to a new usage table (base §14). Edges FIX-8, DOC-1 → FIX-10 and FIX-10 → D1: shared base spec. |
+| 2026-11-22 | PRB-1 contract drift fixed: the executor runs the live check with passthrough (operator, 2026-11-21); Files gain docs/live-checks.md and lose live.sh; a failed line re-plans LIV-2 and gives one fix node for the DONE nodes. PRB-1 PLANNED. |
+| 2026-11-22 | LIV-2 (author's call): no Windows machine; PH8 and PH10 fallback applied by default (plain icons on Windows unless ZYGO_NERD_FONT=1, AU2), W-SHELL part 2 not run. LIV-2 builds the code; edge LIV-2 → M1 (usage_doctor.rs). |
+| 2026-11-22 | E2: the executor runs the PW15 re-check itself with passthrough (operator, 2026-11-21), as P1 did. |
+| 2026-11-22 | FIX-7 DONE (5e67820). Selftest socket removed with its own tmux config; live_end keeps a caller-set live-<pid>; live-hud comment path fixed. Merged tree: lib tests 28, selftest 2, live-hud selfcheck 17, check-premises ok. |
+| 2026-11-22 | FIX-8 DONE (e79d418). Verdict not determined; zygo is not the cause: the first auxiliary request of each Claude Code start was answered 429 in 24 of 24 passthrough sessions. Follow-up node FIX-10 (record upstream error type and message). |
+| 2026-11-22 | P2 planned: 25 steps; 8 ids on the mock upstream, 5.5 on the stored login; its docs/live-checks.md entry moves to LIV-2, edge P2 → LIV-2 (author's call). |
+| 2026-11-22 | W11 planned: 9 steps; plan review B1 (fork lock) and B2 (group kill via repo_file::kill_tree) fixed. |
+| 2026-11-22 | DOC-1 planned: 19 steps (14 H§9 rows, 3 auto-update rows, change log, check); in-place rewrites marked 2026-11-22. Log findings applied: long_context.cache_write_5m, OpenCode statusline verb as Claude Code, sessions line as <n>. |
+| 2026-11-22 | DOC-1 DONE (fdcea4a). Base-spec notes for the HUD (H§9) and auto-update written; review round 2 fixed 12 findings. Acceptance on the merged tree printed nothing. |
+| 2026-11-22 | FIX-11 and FIX-12 added from DOC-1 and PRB-1 findings: HUD spec H§3, H§8, H§14 #33 still say the OpenCode statusline session form exits 2 (HUD-11 built it as Claude Code); hud_probe_test.py leaves scripts/premises/__pycache__. |
+| 2026-11-22 | W11 DONE (0799b7d). MCP tool workspace_down behind [features] workspace_tool (AU65, PW15 fallback); review round 2 fixed F1-F7. Acceptance on the merged tree: mcp_server 50 passed, config_layers 96 passed, workspace --no-run ok. |
+| 2026-11-22 | FIX-10 planned: 24 steps. Contract fixed: Files gain crates/zygo-proxy/src/tee.rs (usage writer, body copy); a 4xx other than 429 is relayed too. Any non-2xx passthrough answer gives a row; message secret-redacted, 300 chars; SSE error events not counted. |
+| 2026-11-22 | FIX-10 plan review fixes: 27 steps. Parse and secret pass move to the usage writer (16 KiB copy, 2 KiB field cap), error.type redacted too, one transaction, login scrub with partial runs, §14 Never line rewritten. Files gain redact_stage.rs, server.rs. |
+| 2026-11-22 | PRB-1 DONE (b318a6d) on Claude Code 2.1.330: PH4 failed (FIX-5 fallback), PH12 observed, 9 verified; merged-tree acceptance exit 0. Cost: 0 main-loop requests, about 8 auxiliary in all. Claude Code wrote 3 trust entries in the operator's config. |
+| 2026-11-22 | FIX-12 DROPPED: PRB-1 round 2 (c759e25) sets sys.dont_write_bytecode in hud_probe_test.py, so no scripts/premises/__pycache__ is left. |
+| 2026-11-22 | PRB-1 merge landed in c64acac by a concurrent commit; content verified, no history rewrite. |
+| 2026-11-22 | P2 DONE (7657585): PW7, PW16 failed, 7 verified. Cost: 12 real requests. Side effect: 6 empty projects/<scratch>/memory folders in the operator's Claude folder, left in place. live-checks.md side-effect note added by round 2 M2, author's call. |
+| 2026-11-22 | Author's call from P2 and the W3 probe: AU61 resume drops CLAUDE_CONFIG_DIR when the saved config dir is none (PW16); AU87 adds `no such session:`. W7, W10: read @zygo-ws only after session_exists; W7: window hooks with -w. H1 consumes the W9 subagent methods. |
+| 2026-11-22 | LIV-2 planned: 21 steps; plan review B1-B3 and M1-M10 fixed; data.rs and the HUD spec added to Files (author's call) |
+| 2026-11-22 | W3 planned: 19 steps; review B1-B4 and M1-M11 fixed; B5 found by probe: tmux -u needed under LC_ALL=C; spec AU87, W§13 updated (author's call) |
+| 2026-11-22 | FIX-10 DONE (f273eed): a non-2xx passthrough answer records its upstream error type and message. Merged tree: passthrough 53, store 34, proxy 391 ok, forbidden_content ok. Review round 2 fixed B1 (secret pass before login scrub) and 9 minor. |
+| 2026-11-22 | LIV-2 DONE (37c78eb): plain icons on a Windows build unless ZYGO_NERD_FONT=1 (PH8, PH10 fallback). PH8, PH10, W-SHELL part 2 not run: no Windows machine. Merged tree: statusline_render 25, usage_doctor 46, zygo-hooks all ok, check-premises ok. |
+| 2026-11-22 | W9 planned: 22 steps; review B1-B3, M1-M12 fixed; AU26 rule 3 order and read-error busy, skipped rule 3 gives no interrupted-turn idle (author's call) |
+| 2026-11-22 | L2 planned: 18 steps; review B1-B3, 12 minor fixed; OpenCode turn start = first session.status busy (AU27); session flags from W4 args.rs; Files add launcher.rs, args.rs, Cargo.lock (author's call) |
+| 2026-11-22 | W9 DONE (e167624): activity.json under fs4 lock, drain idle rule. Merged tree: activity 33 + 1 ignored, drain 27, workspace 111, clippy clean. Round 2: Busy gets rule_skipped; W10 Spec prints the skip line for it. |
+| 2026-11-22 | FIX-9 planned: 6 steps, test first. No offline test for live-tmux.sh, so live runs on tmux 3.7c, red then green, and 3.2a are the test; 6.30 uses ver_ge 3.3 for session 5, window 3. |
+| 2026-11-22 | W3 DONE (f945872): tmux Multiplexer layer. Merged tree: mux 42 + 1 ignored on 3.7c and 3.2a, workspace 153, clippy clean. Round 2: windows named by rename-window; 3.2 -n name with escapes is a known limit (AU99); W6, W7 Spec notes. |
+| 2026-11-22 | FIX-9 DONE (907b06d): 6.30 takes window-unlinked as a session hook on tmux 3.3+. Merged tree: 6.30 ok on 3.7c and 3.2a; PW6 3.7c 35 of 39, 3.2a 34 of 39; pw11 unchanged; check-premises ok, forbidden_content 6 ok. |
+| 2026-11-22 | FIX-11 planned: 6 steps, test first. Spec text only, so the Acceptance rg is the test: red on 2 lines, then H§3, H§8, H§14 #33 rewritten as final text and one change-log row. |
+| 2026-11-22 | FIX-11 DONE (7ee20d6): HUD spec H§3, H§8, H§14 #33 say the statusline verb works the same in an OpenCode session, as HUD-11 built it. Merged tree: acceptance ok; checkout: forbidden_content 6 ok, check-premises ok. |
+| 2026-11-22 | L2 DONE (c5a1569): member hooks, session args from W4, launcher member drop, conformance check test. Merged tree: args 12, claude_code 36, opencode 51, stub_launch 16, conformance ok. R2 spec changes applied. FIX-13 added: stub reads = session forms; M2 depends on it. |
+| 2026-11-22 | FIX-13 planned: 6 steps, test first. Acceptance adds --test stub_member, because the split-form cases are there; stub_member not changed. -s=<id> not read; empty = value is no session arg (author's call). |
+| 2026-11-22 | W6 planned: 22 steps, test first. C1-C16 applied: W2, W3 Produces; W7, W10, M1, M2, M4 Spec; H1 runs the pending snapshot in a detached child; spec W§7.1-7.4, W§10, AU38, AU84, AU89. Adds snapshot_seq to state.rs (author's call). |
+| 2026-11-22 | FIX-13 DONE (3be5519): stub reads --session-id=<id> and --resume=<id>. Merged tree: stub_launch 17, stub_member 19, zygo-launch all pass. R2: Files add stub_member.rs. Spec W§7.3 wait bounds: up/down snapshots 5 s (author's call). |
+| 2026-11-22 | W6 DONE (8978541): snapshot. Merged tree: snapshot 33, state 22, zygo-workspace all pass, check --tests clean. I1-I5, R1-R8, S1-S8 applied: spec W§7.3, W§7.4; W3 gains Multiplexer::socket. FIX-14 added: state.rs hold retries the lock. W7 ready. |
+| 2026-11-22 | FIX-14 planned: 6 steps, test first. The race is not forked in the test: a second handle holds the lock and a thread drops it after 50 ms, then hold must return (author's call). |
+| 2026-11-22 | FIX-14 DROPPED after its diff review: premise false. tests/state.rs starts no process, each test binary is its own process, each test has its own TempDir; the observed WouldBlock was in tests/snapshot.rs, fixed by W6 R3-D5. Branch discarded unmerged (author's call). |
+| 2026-11-22 | W7 planned: 39 steps, test first. C1-C15 applied: W3, W5 Produces; W8, W10 Consumes and Spec; spec AU30, AU96, AU98, W§7.4, W§8.1 steps 3, 5, 7, 9, 12, W§10, W§13. Adds Multiplexer::rename_window, NewSession.owner, args::filter_from (author's call). |
+| 2026-11-22 | W7 DONE (3d51ad4): zygo up. Merged tree: up 45, mux 46 + 1 ignored, snapshot 33, state 23, args 13, 3.2a first_window 2. S1-S5, RS1-RS7, TS1-TS9 applied. The R3-7 pending check after the undo has no test (accepted). W8, W10 ready. |
+| 2026-11-22 | FIX-15 added and planned (operator defect): short renders 1000m for 1e9. 6 steps, test first; spec H§6.6 gains 1b, 1.2b. status and help reuse short; no other formatter of the kind; no unit above b (author's call). |
+| 2026-11-22 | FIX-15 DONE (79a70fc): short rolls over to b after 999m. Merged tree: statusline lib 4, statusline_render 25, zygo-hooks 173, zygo 378 pass. R2 added b tenths, b-range tokens and ctx tests; no compact 1b test, window cap 10m. |
+| 2026-11-22 | W8 planned: 35 steps, test first. C1-C8 applied: W7 Produces (member_live, socket_is_private, fire), W3 Produces (mux::BOUND), M1 Spec; spec W§8.1 up --all, W§12 rows workspace, ls, ws forget, ws forget-pane. |
+| 2026-11-22 | W10 planned: 30 steps, test first. C1-C4, C6-C18 applied: W2, W7, W9 Produces; M1 Spec, Consumes; spec AU18, AU97, W§9.3, W§11, W§12, W§18 #80, W§19. C5 as FIX-16 (FIX-15 taken), depends W10, W11, M1 (author's call). |
+| 2026-11-22 | W8 DONE (0921fb6): up --all, ls, status, forget, forget-pane. Merged tree: admin 21, up 45, up_all 7, zygo-workspace 267 pass. I1, I2, I4, R2 spec rows applied. FIX-17 added: store refuses a linked state folder, caps reads at 1 MiB; H1, M1 depend on it. |
+| 2026-11-22 | FIX-17 planned: 9 steps, test first. One variant StateError::NotADirectory { path, link }; read refuses a linked folder too; cap 1 MiB, exactly 1 MiB reads; session_dir.rs unchanged; up.rs:370 uncapped read reported, not changed (author's call). |
+| 2026-11-22 | FIX-18 added and planned (operator question): a local session expired after 24 h idle while its launcher ran. 8 steps, test first; spec §7.2, §12.5. Rule keys on team_label; serve sessions always have one; local expires_at empty (author's call). |
+| 2026-11-22 | FIX-17 DONE (70043bb): store refuses a linked state folder, no link followed in it, TooLarge over 1 MiB never changed. Merged tree: state 29, snapshot 34, admin 22, up 47, zygo-core ok, zygo-workspace 277. Spec AU29, AU84, W§7.3, W§8.1, W§10, W§12 applied. |
+| 2026-11-22 | W10 DONE (cc56f8d): zygo down. Merged tree: down 26, drain 31, activity 34 + 1 ignored, zygo-workspace 308, check --tests clean. C19, C23, C26, C28-C37 applied: spec AU18, AU26, AU97, W§9.1, W§9.3, W§14; W9, W10, H1 contracts. FIX-19 added (C24, C33): OpenCode plugin tool events. |
+| 2026-11-22 | FIX-18 DONE (fbbfb74). Operator decision: no idle expiry for any session, local or team; a session ends with its launcher or a server restart. Merged tree: session_api 52, zygo-proxy 391, zygo-launch 0 failed, check --tests clean. Graph title applied. |
+| 2026-11-22 | FIX-20 added and planned (operator: no invented requirement may end user work): AU26 60 s interrupted-turn idle and AU69 30-day results deletion removed; last_run_at goes (no reader). 8 steps, test first. M1, H1 depend on it. |
+| 2026-11-22 | FIX-21 added and planned (operator: there is never Claude attribution; zygo did not force it). Spec §8.5, §8.6, §13.4 rewritten. 11 steps, test first. Edge FIX-21 → H1: both change claude_code.rs and its tests. |
+| 2026-11-22 | FIX-20 DONE (862148f): merged. AU26 60 s interrupted-turn rule and AU69(b) 30-day results deletion removed; last_run_at removed. Operator decision 2026-11-22. Merged tree: down 27, drain 32, zygo-workspace 310 + 2 ignored, check --tests clean. |
+| 2026-11-22 | H1 planned: 28 steps, test first, written against the code after FIX-21. Review round 1 applied 17 controller decisions: no view.json cap, non-member session-start and prompt unchanged, OpenCode note on every request, no agent session id rule. |
+| 2026-11-22 | H1 C1-C13 applied: W2 Produces (state::Pending), M1 Spec (dev-dependency, snapshot_child); spec AU3, AU56, AU60, AU84, AU104, W§7.2, W§7.4, W§8.2 step 3, W§9.1, W§9.4. FIX-22 added (C9): session-folder readers do not wait on a FIFO; no cap. |
+| 2026-11-22 | H1 evidence: OpenCode 1.19.6 binds --session=<value> (an id starting with - reaches its id check), -s -x is a usage error; H1 step 3 resumes with --session=<id>. The probe made one real request to OpenCode's default provider from a scratch home. |
+| 2026-11-22 | H1 stays PLANNED with no worktree: it depends on FIX-21, which is in progress. |
+| 2026-11-22 | FIX-21 DONE (311c429): merged. zygo forces no Claude attribution (settings keys, session text, always-on guard); operator decision 2026-11-22. M2 brief and a config_layers comment follow AU59; FIX-23 added (merge line, disableAllHooks; after H1, before D1). |
+| 2026-11-22 | H1 BLOCKED after 3 diff-review fix rounds. Open: deferred OpenCode session commit can erase down --now values; non-member prompt logs; late-child/deleted-session cases. Attempt saved outside the repo; re-plan splits OpenCode session tracking out. |
+| 2026-11-22 | H1 re-planned per the design decision: H1 (hook side, Claude Code; saved_for clear rule, note bound to one agent session, member-only prompt entry) + H3 (OpenCode plugin, the design's H1b). FIX-24 added: hooks-off member counts busy; it also depends on H3 (shared spec). |
+| 2026-11-22 | H1 attempt 2 BLOCKED after 3 diff-review fix rounds. Open: a panicking verb must let its line pass (base C6, §17.1) yet the turn must be busy; newer-version, lock-open and write errors misclassed. Attempt saved outside the repo; re-plan builds on it. |
+| 2026-11-22 | H1 back IN-PROGRESS on its attempt-2 branch (af74fb6): operator authorized a 4th fix round instead of a re-plan (2026-11-22). Open: keep C6 for a panicking verb with member busy, activity error classes, acceptance adds lib and doc tests. |
+| 2026-11-23 | H1 DONE (a75e36f): merged after attempt 2 and an operator-authorized fourth fix round. Acceptance exit 0; zygo-hooks, zygo-core, zygo-workspace, zygo-launch, zygo pass; clippy clean. FIX-25 added (flaky up test, Text file busy). |
+| 2026-11-23 | FIX-22 and FIX-23 planned after plan review; FIX-25 dropped (tmux upgraded by pacman mid-run, not a code race); FIX-24 now after FIX-22 and owns AU59, W§16 and W§18 #89 text. |
+| 2026-11-23 | H3 DONE (dd25ae1): merged after 2 diff-review fix rounds. OpenCode plugin session classification and turn set. Merged tree: Acceptance opencode 77 passed + 1 ignored; zygo-launch passes; zygo-hooks workspace 22; clippy clean. |
+| 2026-11-23 | M1 planned after plan review (19 findings): AU69 (b) dropped (no automatic deletion of workspace results, operator rule); AU69 (a) keeps the 24 h age rule and re-checks live(); config check and loadout show print no secret. |
+| 2026-11-23 | FIX-19 planned; plan review F1-F7 applied (concurrent calls test, counted Set keyed by session+callID cleared on every prompt/stop, OpenCode 1.19.6 source cites no after on throw); edges FIX-19→M1, FIX-24→FIX-19. |
+| 2026-11-23 | FIX-22 DONE (40aec7c): merged after 2 review rounds. Merged tree: Acceptance activity 41 + 1 ignored, drain 34, core_basics 22, workspace 23 + 1 ignored; zygo-workspace, zygo-hooks, zygo-core pass; clippy clean. |
+| 2026-11-23 | FIX-23 BLOCKED after 3 fix rounds; branch discarded (diff kept in scratchpad fix23-attempt1.diff); re-plan splits the --settings value-reading rules into a new node. |
+| 2026-11-23 | M1 BLOCKED after 3 fix rounds; branch discarded (diff kept in scratchpad m1-attempt1.diff); re-plan splits the show/check secret-hiding rules into a new node. |
+| 2026-11-23 | FIX-23 re-planned (split): FIX-23 keeps merge line, non-boolean disableAllHooks (type only), esc U+061C; FIX-26 added for --settings/--agents value printing and safe §8.4 reads. 2 plan reviews applied. FIX-24 depends on FIX-26. |
+| 2026-11-23 | M1 re-planned (split): M1 keeps verbs, /zygo:down, doctor tmux line, sweep AU69 (a), ZYGO_SESSION rule; FIX-27 added for loadout show/config show/config check secret hiding and labels. Plan review applied. FIX-24 depends on FIX-27. |
+| 2026-11-23 | FIX-23 DONE (f052dd4): merged after re-plan; review found no defect. Merged tree: Acceptance zygo-core lib 2, zygo-launch lib 3, claude_code 44; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
+| 2026-11-23 | FIX-26 DONE (25194af): merged after 1 review round (visible skip notes, Windows type-check risk stated). Merged tree: Acceptance claude_code 59, stub_launch 19, nocapture 4 with no skip note; zygo-launch and zygo-core pass; clippy clean; check --workspace --tests clean. |
+| 2026-11-23 | M1 DONE (09ed93b): merged after re-plan; 1 review round (stub-agent built on demand, marker target test, tmux lookup tests, exact detach condition, cwd read only when needed). Merged tree: workspace_cli 10, results 44, cli_surface 22, usage_doctor 50, lib 172. |
+| 2026-11-23 | FIX-16 planned (18 steps): MCP workspace_down passes the name after --; up/admin/attach/ws-forget hints use -- <name>; real-parser tests; AU37/AU63/AU65/W§12/#78 rewritten. Edges FIX-19→FIX-16→FIX-27 for the shared spec and up.rs. |
+| 2026-11-23 | FIX-19 DONE (6b35869): merged after 1 review round (task counted before its wait; tests for stop reset, pre-tool before guard, guard deny, denied child task). Merged tree: Acceptance opencode 94 + 1 ignored; zygo-launch pass; hooks workspace 23 + 1 ignored; clippy, check clean. |
+| 2026-11-23 | FIX-16 merged; 1 review round (change-log text, W§12 up/attach/ws forget rows show [--]); acceptance counts. Edges M4→M2→FIX-27 for shared cmd/mod.rs and workspaces spec. |
+| 2026-11-23 | M4 planned (24 steps, parts A-F) after two plan reviews; M2 consumes Store::update_existing from M4. |
+| 2026-11-23 | M4 started in .worktrees/phase2/M4 on branch worktree-zygo-phase-2--M4. |
+| 2026-11-23 | M2 planned (39 steps) after two plan reviews; consumes Store::update_existing from M4; L1 and L2 Produces corrected to the live contracts (4-parameter callback, LaunchOutcome fields, AgentSession; member_dropped removed). |
+| 2026-11-23 | M4 merged after 3 review rounds; findings F1-F5 and the two set_session overrides reads fixed; base §17.1 note rewritten (author's call); for E2: AU105 cites compact.rs:13-109, but run is :60-111. |
+| 2026-11-23 | M2 started in .worktrees/phase2/M2 on branch worktree-zygo-phase-2--M2. |
+| 2026-11-23 | M2 DONE, merged. Also fixed in M2 (5673089): the M4 fixture hold race; a child spawned by a parallel test kept the flock until its exec, so hold now retries WouldBlock every 1 ms for at most 2 s. session_verbs 10 of 10 runs, 28 each. |
+| 2026-11-23 | M3 and M5 planned and reviewed. FIX-28 added from M5 premise P2: up starts the first pane of a new session without ZYGO_WORKSPACE, so its ws run does not skip the update check. Edges FIX-27, M5 → M3 → FIX-28 → FIX-24 (shared ws.rs, up.rs, specs). |
+| 2026-11-23 | FIX-27 DONE (bd55c63): merged after 3 review rounds. Known limit accepted (W§12): `--secret --x S` hides `--x` as the value and shows S. Merged tree: args 21, loadout 7, loadout_secrets 22, lib cmd::loadout 26; workspace 2757 + 14 ignored; test-install ok; clippy clean. |
+| 2026-11-23 | M5 DONE (f8c00c4): merged after 3 review rounds, FIX-28 folded in (first pane gets ZYGO_WORKSPACE by new-session -e). FIX-29 added: W7 up build fails with a raw tmux error when a restored pane exits at once. |
+| 2026-11-23 | M3 DONE (1eb6e3a): merged after 3 review rounds. The resume command reproduces the ws run launch; Pending.own_session added. |
+| 2026-11-23 | FIX-29 and FIX-24 planned and reviewed. FIX-29 holds each window with remain-on-exit during the up build (tmux 3.2a verified). FIX-24 uses one launch.events_off flag, set by every start write. |
+| 2026-11-23 | E1 planned and reviewed (28 steps, 17 W§18 items + PW11, live check with passthrough); E1 now depends on FIX-24 (spec overlap). |
+| 2026-11-23 | FIX-29 DONE (7db2fac): merged after 3 review rounds (build hold, repair hold, one AU54 rule). FIX-30 added for the saved-socket uses in admin.rs and member.rs that have no AU54 check. |
+| 2026-11-23 | E2 planned and reviewed (34 steps, 17 W§18 items, PW15 live re-check with a slash-premise sub-step); E1 helpers go to tests/common/e2e.rs (E1 Files and Produces; E2 Files, Consumes and Acceptance from C-1 to C-5). |
+| 2026-11-23 | FIX-24 DONE (78435b0): merged after 3 review rounds (events_off from the real start args and env, Claude Code bare rule, OpenCode parser rule). FIX-31 added for the AU30 restore filter (an unlisted flag loses its value). |
+| 2026-11-23 | FIX-30 planned (plan review round 1 decisions applied; $TMUX fallbacks in up step 5, down guard/any_session/prepare added) |
+| 2026-11-23 | FIX-31 planned (plan review round 2 decisions applied: cluster rule, OpenCode secret options, one-launch booleans, --remote as session flag) |
+| 2026-11-23 | E1 round 3 review follow-up (remediations only): 8 of 9 closed; M7 deferred (test strength); no blocking open |
+| 2026-11-23 | E1 merged; acceptance 18/18 on tmux 3.8 and 3.2a |
+| 2026-11-23 | E2 in progress |
+| 2026-11-23 | Uncited agent rules removed from the header and the open node files (operator 2026-11-23); Workflows line records no review loops. |
+| 2026-11-23 | Operator: update README.md at delivery for mistakes and missing information. |
+| 2026-11-23 | E2 merged; acceptance cargo parts pass on tmux 3.8 and 3.2a; no review round (no review loops); D-1 deferred |
+| 2026-11-23 | FIX-30 in progress |
+| 2026-11-23 | FIX-30 merged; zygo-workspace 398 and zygo 684 pass; F-1 (two up tests on the closed $TMUX route) fixed in the node via TMUX_TMPDIR |
+| 2026-11-23 | FIX-31 in progress |
+| 2026-11-23 | FIX-31 merged; zygo-workspace, zygo and zygo-launch tests pass; 11 mutations red |
+| 2026-11-23 | D1 planned |
+| 2026-11-23 | D1 in progress |
+| 2026-11-23 | D1 merged; all nodes DONE or DROPPED; delivery next |
+| 2026-11-23 | FIX-32 added from the whole-branch review: B1-B4 blocking, README drain line; minors deferred (see node) |
+| 2026-11-23 | FIX-32 in progress |
+| 2026-11-23 | FIX-32 merged |
+| 2026-11-23 | FIX-33 planned from CI run 45338846931 on PR #14 (macOS and Windows test builds; ubuntu: inherited pipes in the detached down) |
+| 2026-11-23 | FIX-33 in progress |
+| 2026-11-23 | FIX-33 done; CI run 45343874336 green on ubuntu, macos and windows |

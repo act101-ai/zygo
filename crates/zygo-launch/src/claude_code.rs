@@ -9,15 +9,25 @@ use zygo_core::Agent;
 use zygo_hooks::session_text::mechanics;
 use zygo_proxy::session::SessionConfig;
 use zygo_work::policy::Policy;
+use zygo_workspace::args::occurrences;
 
 use crate::adapter::{AgentAdapter, ChildSpec, LaunchCtx, Plugins, Preflight};
 
 const HINT: &str = "zygo: claude not found on PATH; install Claude Code: https://code.claude.com/docs/en/setup";
 const PT_MODEL: &str = "--passthrough sends model names to the vendor; use a vendor model id";
 const PT_BARE: &str = "--passthrough does not work with --bare: bare mode reads only API keys";
+/// FIX-24 diff review round 3, finding 4: [PT_BARE] when the cause is `CLAUDE_CODE_SIMPLE` in the agent's environment.
+const PT_BARE_ENV: &str = "--passthrough does not work with CLAUDE_CODE_SIMPLE: bare mode reads only API keys";
 const PT_MANAGED: &str = "passthrough needs your claude.ai login; a managed setting replaces it";
 const BAD_AGENTS: &str = "--agents: not a JSON object (or, with --print, a file that holds one)";
-const SETTINGS_WARN: &str = "zygo: your --settings replaces zygo's settings file; the lead guard is off";
+/// §8.5 Flags (FIX-21 round 2 F1): the user's `--settings` values are merged into zygo's file; the line when the merged settings do not set `disableAllHooks: true`.
+const MERGE_WARN: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys and hooks stay in force";
+/// §8.5 Flags (FIX-23): the merge line when the merged settings set `disableAllHooks: true`, which stops every hook and the status line, zygo's included.
+const MERGE_HOOKS_OFF: &str = "zygo: your --settings is merged into zygo's settings file; zygo's attribution keys stay in force; your disableAllHooks stops every hook and the status line, zygo's included";
+/// §8.5 Flags (FIX-26 D2): the line for a user `--settings` value that is not a JSON object and has no entry at its path (no file found, or on Windows a name the system refuses); it does not hold the value, which can be inline settings with secrets.
+const NO_FILE: &str = "zygo: your --settings value (not shown) is not a JSON object and names no file; it was not used";
+/// §8.5 Flags (FIX-26 D7): the error for a file that holds JSON that is not an object.
+const NOT_OBJECT: &str = "the file holds JSON that is not an object";
 const NO_EDIT: [&str; 3] = ["Edit", "Write", "NotebookEdit"];
 
 #[cfg(target_os = "macos")]
@@ -27,15 +37,43 @@ const MANAGED: &str = r"C:\Program Files\ClaudeCode\managed-settings.json";
 #[cfg(not(any(target_os = "macos", windows)))]
 const MANAGED: &str = "/etc/claude-code/managed-settings.json";
 
+/// Claude Code's own rule for `CLAUDE_CODE_SIMPLE` (FIX-24 diff review round 3, finding 1): the installed 2.1.331
+/// binary turns bare mode on with `De(process.env.CLAUDE_CODE_SIMPLE)`, where `De` lowers the case, trims, and accepts
+/// one of `1`, `true`, `yes`, `on`. An unset variable, and a value that is not UTF-8, are not bare mode.
+pub fn simple_mode(value: Option<&std::ffi::OsStr>) -> bool {
+    value.and_then(|v| v.to_str()).is_some_and(|v| ["1", "true", "yes", "on"].contains(&v.to_lowercase().trim()))
+}
+
+/// Bare mode from the environment that the agent gets: the launch environment after the §8.4 deny list
+/// (`crate::env::child_env`); zygo sets no `CLAUDE_CODE_SIMPLE` itself.
+fn bare_env(ctx: &LaunchCtx) -> bool {
+    simple_mode(crate::env::child_env(&ctx.env, &ctx.cfg, &[]).0.get("CLAUDE_CODE_SIMPLE"))
+}
+
 pub struct ClaudeCode {
     pub program: String,
     pub managed_settings: PathBuf,
     pub zygo: PathBuf,
+    /// FIX-26 D12, §8.5 Subagents: the `--print` `--agents` files read in this launch, by path, so a pipe such as `<(gen)` is read once: `refusal` reads and stores, `build` uses the stored value. It holds values for one launch: one adapter serves one launch (`crates/zygo/src/cmd/claude.rs:21` makes one `ClaudeCode::default()` per `zygo claude` process).
+    agents_files: std::sync::Mutex<std::collections::HashMap<PathBuf, Option<Map<String, Value>>>>,
+}
+
+impl ClaudeCode {
+    /// A Claude Code adapter for one launch, with an empty `--agents` file memo (FIX-26 D12). Make a new one for each launch, as `crates/zygo/src/cmd/claude.rs:21` does.
+    pub fn new(program: impl Into<String>, managed_settings: PathBuf, zygo: PathBuf) -> ClaudeCode {
+        ClaudeCode { program: program.into(), managed_settings, zygo, agents_files: Default::default() }
+    }
+
+    /// [`ClaudeCode::new`] with the default program (`claude`) and managed-settings path, and the zygo binary `zygo`
+    /// that the hooks run (`zygo ws run` gives the path it read before its update check).
+    pub fn for_zygo(zygo: PathBuf) -> ClaudeCode {
+        ClaudeCode::new("claude", MANAGED.into(), zygo)
+    }
 }
 
 impl Default for ClaudeCode {
     fn default() -> Self {
-        ClaudeCode { program: "claude".into(), managed_settings: MANAGED.into(), zygo: std::env::current_exe().unwrap_or_default() }
+        ClaudeCode::for_zygo(std::env::current_exe().unwrap_or_default())
     }
 }
 
@@ -45,57 +83,31 @@ pub fn shell_quote(p: &Path) -> String {
     if cfg!(windows) { format!("\"{s}\"") } else { format!("'{}'", s.replace('\'', r"'\''")) }
 }
 
-/// The values of `name <v>` and `name=<v>`, in order.
+// Every flag check below reads the arguments by W4's walk (D5): a flag value or a token after `--` is never a flag.
+
+/// The values of the flag `name` (its long name), in order.
 fn flag_values(args: &[String], name: &str) -> Vec<String> {
-    let mut out = vec![];
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == name {
-            out.extend(it.next().cloned());
-        } else if let Some(v) = a.strip_prefix(name).and_then(|r| r.strip_prefix('=')) {
-            out.push(v.into());
-        }
-    }
-    out
+    occurrences(Agent::ClaudeCode, args).into_iter().filter(|o| o.name == name).flat_map(|o| o.values).collect()
 }
 
-/// `args` without `name <v>` and `name=<v>`.
+/// `args` without the tokens of the flag `name` (its long name) and its values.
 fn without_flag(args: &[String], name: &str) -> Vec<String> {
-    let mut out = vec![];
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == name {
-            it.next();
-        } else if !a.strip_prefix(name).is_some_and(|r| r.starts_with('=')) {
-            out.push(a.clone());
-        }
-    }
-    out
+    let gone: Vec<std::ops::Range<usize>> = occurrences(Agent::ClaudeCode, args).into_iter().filter(|o| o.name == name).map(|o| o.tokens).collect();
+    args.iter().enumerate().filter(|(i, _)| !gone.iter().any(|r| r.contains(i))).map(|(_, a)| a.clone()).collect()
 }
 
+/// Whether `args` hold the flag `name` (its long name).
 fn has_flag(args: &[String], name: &str) -> bool {
-    args.iter().any(|a| a == name || a.strip_prefix(name).is_some_and(|r| r.starts_with('=')))
+    zygo_workspace::args::flags(Agent::ClaudeCode, args).contains(&name)
+}
+
+/// Whether the user's arguments hold `--settings` before any `--`, by W4's walk (D5): the §8.5 Flags rule.
+pub fn has_user_settings(args: &[String]) -> bool {
+    has_flag(args, "--settings")
 }
 
 fn strip_1m(v: &str) -> &str {
     v.strip_suffix("[1m]").unwrap_or(v)
-}
-
-/// The user's `--agents` values merged in order; `None` when one is not a JSON object (with `-p`/`--print`, a value
-/// that is not JSON is read as a file that holds one).
-fn user_agents(ctx: &LaunchCtx) -> Option<Map<String, Value>> {
-    let print = ctx.args.iter().any(|a| a == "-p" || a == "--print");
-    let mut out = Map::new();
-    for v in flag_values(&ctx.args, "--agents") {
-        let parsed = match serde_json::from_str::<Value>(&v) {
-            Ok(x) => x,
-            Err(_) if print => serde_json::from_slice(&std::fs::read(ctx.cwd.join(&v)).ok()?).ok()?,
-            Err(_) => return None,
-        };
-        let Value::Object(m) = parsed else { return None };
-        out.extend(m);
-    }
-    Some(out)
 }
 
 /// The role a Claude Code model alias names (§8.5).
@@ -153,9 +165,188 @@ fn env_rows(ctx: &LaunchCtx) -> Vec<(String, String)> {
     rows.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
-/// A settings file as a JSON object; `None` when absent, unreadable or not an object.
+/// The user's `--settings` values, read (FIX-21 rounds 2 and 3, §8.5 Flags).
+struct UserSettings {
+    /// The readable values merged in order, a later key winning.
+    merged: Map<String, Value>,
+    /// How many values were merged.
+    read: usize,
+    /// One line per value that is not a readable JSON object, in value order; zygo does not use those values.
+    unreadable: Vec<String>,
+    /// The user `disableAllHooks` values that are not `true` or `false`, in value order; zygo does not use them.
+    bad_hooks: Vec<Value>,
+}
+
+/// FIX-21 rounds 2 and 3, §8.5 Flags: the user's `--settings` values (before any `--`), each read as Claude Code takes
+/// it (`--settings <file-or-json>`; observed on 2.1.330: a value that parses as a JSON object is inline settings, any
+/// other value is a file path, relative to the working directory).
+fn user_settings(ctx: &LaunchCtx) -> UserSettings {
+    let mut out = UserSettings { merged: Map::new(), read: 0, unreadable: vec![], bad_hooks: vec![] };
+    for v in flag_values(&ctx.args, "--settings") {
+        let m = match serde_json::from_str::<Value>(&v) {
+            Ok(Value::Object(m)) => Ok(m),
+            _ => read_settings_file(&ctx.cwd.join(&v)),
+        };
+        match m {
+            Ok(mut m) => {
+                // FIX-23 D4: a `disableAllHooks` that is not a JSON boolean is not used.
+                if m.get("disableAllHooks").is_some_and(|h| !h.is_boolean())
+                    && let Some(h) = m.remove("disableAllHooks")
+                {
+                    out.bad_hooks.push(h);
+                }
+                out.merged.extend(m);
+                out.read += 1;
+            }
+            Err(e) => out.unreadable.push(unreadable_line(&v, &e)),
+        }
+    }
+    out
+}
+
+/// §8.5 Flags (FIX-26 D2, D6): why a user value that is not a JSON object could not be used as a file.
+enum FileError {
+    /// No entry at the path, and no file was found.
+    NoFile,
+    /// No entry at the path for another reason: the system error text, which holds no path.
+    NotOpened(String),
+    /// An entry exists at the path and could not be used: the error.
+    File(String),
+}
+
+/// §8.5 Flags (FIX-26 D2, D3, D6): a file the user gave (`--settings`, `--print --agents`) as a JSON object, read as before FIX-26 (one blocking open that follows links), with the entry rule for the error.
+fn read_settings_file(p: &Path) -> Result<Map<String, Value>, FileError> {
+    if let Err(e) = std::fs::symlink_metadata(p) {
+        let no_file = e.kind() == std::io::ErrorKind::NotFound || (cfg!(windows) && e.kind() == std::io::ErrorKind::InvalidFilename);
+        return Err(if no_file { FileError::NoFile } else { FileError::NotOpened(e.to_string()) });
+    }
+    let bytes = std::fs::read(p).map_err(|e| FileError::File(e.to_string()))?;
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Object(m)) => Ok(m),
+        Ok(_) => Err(FileError::File(NOT_OBJECT.into())),
+        Err(e) => Err(FileError::File(parse_error(&e))),
+    }
+}
+
+/// §8.5 Flags (FIX-26 D4): a `serde_json` error of user input as its category and position only; its text can hold literals of the input.
+fn parse_error(e: &serde_json::Error) -> String {
+    use serde_json::error::Category;
+    let category = match e.classify() {
+        Category::Io => "io",
+        Category::Syntax => "syntax",
+        Category::Data => "data",
+        Category::Eof => "eof",
+    };
+    format!("{category} error at line {} column {}", e.line(), e.column())
+}
+
+/// §8.5 Flags (FIX-21 round 3, FIX-23 D6, FIX-26 D2): the line for a user `--settings` value that zygo cannot read as a JSON object. The value is in the line only when an entry exists at its path (`FileError::File`); it is written as a JSON string, then through `zygo_core::esc`, and the error through `zygo_core::esc`, so the line is one line.
+fn unreadable_line(value: &str, error: &FileError) -> String {
+    match error {
+        FileError::File(error) => format!(
+            "zygo: your --settings value {} could not be read as a JSON object and was not used: {}",
+            zygo_core::esc(&Value::from(value).to_string()),
+            zygo_core::esc(error)
+        ),
+        FileError::NotOpened(error) => format!(
+            "zygo: your --settings value (not shown) is not a JSON object and could not be opened as a file: {}; it was not used",
+            zygo_core::esc(error)
+        ),
+        FileError::NoFile => NO_FILE.to_string(),
+    }
+}
+
+/// §8.5 Flags (FIX-23 D4): the line for a user `disableAllHooks` value that is not `true` or `false`. It names only the JSON type: the value can hold any text, for example a token.
+fn bad_hooks_line(value: &Value) -> String {
+    let kind = match value {
+        Value::String(_) => "a string",
+        Value::Number(_) => "a number",
+        Value::Object(_) => "an object",
+        Value::Array(_) => "an array",
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+    };
+    format!("zygo: your --settings disableAllHooks value is {kind}, not true or false; it was removed")
+}
+
+/// FIX-21 round 2 F1, §8.5 Flags: zygo's settings `zygo` with the user's settings `user` merged in. `attribution` and
+/// `includeCoAuthoredBy` stay zygo's (a user boolean `disableAllHooks` is an ordinary key and wins; `user_settings` has already removed a non-boolean one). `hooks`: per event, the user's entries, then zygo's; a user `hooks` value or event
+/// that is not an object or a list leaves zygo's in place. `env`: per name, a user name wins; a user `env` that is not an
+/// object leaves zygo's in place. Every other user key is kept and wins over zygo's key of the same name, as a user
+/// `--agents` key does (§8.5 Subagents).
+fn merge_settings(mut zygo: Value, user: Map<String, Value>) -> Value {
+    let z = zygo.as_object_mut().expect("zygo's settings are a JSON object");
+    for (k, v) in user {
+        match k.as_str() {
+            "attribution" | "includeCoAuthoredBy" => {}
+            "hooks" => {
+                let (Value::Object(events), Some(Value::Object(zh))) = (v, z.get_mut("hooks")) else { continue };
+                for (event, entries) in events {
+                    match zh.get_mut(&event) {
+                        Some(Value::Array(mine)) => {
+                            if let Value::Array(mut theirs) = entries {
+                                theirs.append(mine);
+                                *mine = theirs;
+                            }
+                        }
+                        Some(_) => {}
+                        None => {
+                            zh.insert(event, entries);
+                        }
+                    }
+                }
+            }
+            "env" => {
+                if let (Value::Object(names), Some(Value::Object(ze))) = (v, z.get_mut("env")) {
+                    ze.extend(names);
+                }
+            }
+            _ => {
+                z.insert(k, v);
+            }
+        }
+    }
+    zygo
+}
+
+/// §8.4 (FIX-26 D9): a settings file that zygo found by itself, as a JSON object; `None` (the caller skips it with no line) when it is absent, is not a regular file (never opened then), cannot be read, is not JSON or is not an object.
 fn read_object(p: &Path) -> Option<Map<String, Value>> {
-    match serde_json::from_slice(&std::fs::read(p).ok()?).ok()? {
+    use std::io::Read;
+    if !std::fs::metadata(p).ok()?.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    let (mut f, nonblock) = {
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(p) {
+            Ok(f) => (f, true),
+            // A file lease: one open with no `O_NONBLOCK`, which waits for the lease break; no third open, no loop.
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => (std::fs::File::open(p).ok()?, false),
+            Err(_) => return None,
+        }
+    };
+    #[cfg(not(unix))]
+    let mut f = std::fs::File::open(p).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    if nonblock {
+        use std::os::unix::io::AsRawFd;
+        let fd = f.as_raw_fd();
+        // SAFETY: `fd` is the open descriptor of `f`, which lives for the call.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags == -1 {
+            return None;
+        }
+        // SAFETY: `fd` is the open descriptor of `f`, which lives for the call.
+        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } == -1 {
+            return None;
+        }
+    }
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).ok()?;
+    match serde_json::from_slice(&bytes).ok()? {
         Value::Object(m) => Some(m),
         _ => None,
     }
@@ -249,6 +440,25 @@ fn refresh_interval(_ctx: &LaunchCtx) -> u64 {
 }
 
 impl ClaudeCode {
+    /// The user's `--agents` values merged in order; `None` when one is not a JSON object (with `--print`, a value that is not JSON is read as a file that holds one, as a `--settings` file is read, once per launch: FIX-26 D10, D12).
+    fn user_agents(&self, ctx: &LaunchCtx) -> Option<Map<String, Value>> {
+        let print = has_flag(&ctx.args, "--print");
+        let mut out = Map::new();
+        for v in flag_values(&ctx.args, "--agents") {
+            let m = match serde_json::from_str::<Value>(&v) {
+                Ok(Value::Object(m)) => m,
+                Ok(_) => return None,
+                Err(_) if print => {
+                    let mut memo = self.agents_files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    memo.entry(ctx.cwd.join(&v)).or_insert_with_key(|p| read_settings_file(p).ok()).clone()?
+                }
+                Err(_) => return None,
+            };
+            out.extend(m);
+        }
+        Some(out)
+    }
+
     fn hooks(&self, ctx: &LaunchCtx) -> Value {
         let z = shell_quote(&self.zygo);
         let entry = |matcher: Option<&str>, name: &str| {
@@ -265,26 +475,62 @@ impl ClaudeCode {
         pre.push(entry(Some("Edit|Write|NotebookEdit|Read|Bash"), "guard"));
         let mut post = vec![entry(Some("Bash|Read|Grep|Glob|WebFetch"), "trim")];
         let mut h = Map::new();
+        // A workspace member is the AU58 marker in the session view; its hooks are W§9.1.
+        let member = ctx.view.workspace.is_some();
+        let mut subagent_stop = vec![];
+        let mut failure = vec![];
         if ctx.view.work_units {
             pre.push(entry(Some("mcp__zygo__work_begin"), "work --event begin"));
             pre.push(entry(Some("mcp__zygo__work_verdict"), "work --event verdict"));
             post.push(entry(Some("*"), "work"));
-            h.insert("PostToolUseFailure".into(), json!([entry(Some("*"), "work")]));
-            h.insert("SubagentStop".into(), json!([entry(None, "work")]));
+            failure.push(entry(Some("*"), "work"));
+            subagent_stop.push(entry(None, "work"));
+        }
+        // W§9.1 and the tool count (W10 round 2, H1): a member registers every tool call at its start (`*`, the
+        // `Agent` deny of W§9.2 included) and at its end, also a failed one, and the end of the agent session.
+        if member {
+            pre.push(entry(Some("*"), "workspace --event pre-tool"));
+            post.push(entry(Some("*"), "workspace --event tool-end"));
+            failure.push(entry(Some("*"), "workspace --event tool-end"));
+            h.insert("Stop".into(), json!([entry(None, "workspace --event stop")]));
+            h.insert("StopFailure".into(), json!([entry(None, "workspace --event stop")]));
+            h.insert("SubagentStart".into(), json!([entry(None, "workspace --event subagent-start")]));
+            h.insert("SessionEnd".into(), json!([entry(None, "workspace --event session-end")]));
+            subagent_stop.push(entry(None, "workspace --event subagent-stop"));
+        }
+        if !failure.is_empty() {
+            h.insert("PostToolUseFailure".into(), json!(failure));
+        }
+        if !subagent_stop.is_empty() {
+            h.insert("SubagentStop".into(), json!(subagent_stop));
         }
         h.insert("PreToolUse".into(), json!(pre));
         h.insert("PostToolUse".into(), json!(post));
-        h.insert("SessionStart".into(), json!([entry(None, "session-start")]));
-        h.insert("UserPromptSubmit".into(), json!([entry(None, "prompt")]));
+        // W§9.1, H1 D3: a member's `SessionStart` names its membership, so the hook knows it before it reads the view.
+        h.insert(
+            "SessionStart".into(),
+            json!([entry(None, if member { "session-start --event member" } else { "session-start" })]),
+        );
+        // W§9.1, H1 D4: `zygo hook prompt` reads no session view unless `ZYGO_WORKSPACE` is set and a verb panicked
+        // (H1 round 4 T2); the member part is a second, member-only entry, so a launch that is not a member keeps its
+        // one `prompt` entry.
+        let mut prompt = vec![entry(None, "prompt")];
+        if member {
+            prompt.push(entry(None, "workspace --event prompt"));
+        }
+        h.insert("UserPromptSubmit".into(), json!(prompt));
         h.insert("PreCompact".into(), json!([entry(None, "pre-compact")]));
         Value::Object(h)
     }
 
+    /// §8.5; `attribution` and `includeCoAuthoredBy` in every mode (operator, 2026-11-22).
     fn settings(&self, ctx: &LaunchCtx, env: &[(String, String)]) -> Value {
         let z = shell_quote(&self.zygo);
         let env: Map<String, Value> = env.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
         let mut s = json!({
             "disableAllHooks": false,
+            "attribution": { "commit": "", "pr": "", "sessionUrl": false },
+            "includeCoAuthoredBy": false,
             "statusLine": { "type": "command", "command": format!("{z} hook statusline"), "refreshInterval": refresh_interval(ctx) },
             "hooks": self.hooks(ctx),
             "env": env,
@@ -355,7 +601,15 @@ impl AgentAdapter for ClaudeCode {
         let sd = &ctx.session_dir;
         let env = env_rows(ctx);
         let settings = sd.settings_json();
-        write_private(&settings, self.settings(ctx, &env).to_string().as_bytes())?;
+        // FIX-21 rounds 2 and 3: user `--settings` values zygo can read are merged into its file; no user value is
+        // passed on, so the agent gets only zygo's file.
+        let user = has_user_settings(&ctx.args).then(|| user_settings(ctx));
+        let mut file = self.settings(ctx, &env);
+        if let Some(u) = &user {
+            file = merge_settings(file, u.merged.clone());
+        }
+        let hooks_off = file.get("disableAllHooks") == Some(&Value::Bool(true));
+        write_private(&settings, file.to_string().as_bytes())?;
         let mcp = sd.root.join("mcp.json");
         let servers = json!({ "mcpServers": { "zygo": { "command": zygo, "args": ["mcp", "--agent", "claude-code"] } } });
         std::fs::write(&mcp, servers.to_string()).with_context(|| mcp.display().to_string())?;
@@ -366,7 +620,7 @@ impl AgentAdapter for ClaudeCode {
             "--settings".into(),
             path(&settings),
             "--agents".into(),
-            agents(ctx, user_agents(ctx).unwrap_or_default()).to_string(),
+            agents(ctx, self.user_agents(ctx).unwrap_or_default()).to_string(),
         ];
         if let Plugins::Snapshot(s) = &ctx.plugins
             && !s.plugin_dirs().is_empty()
@@ -376,14 +630,21 @@ impl AgentAdapter for ClaudeCode {
         if ctx.yolo {
             args.push("--dangerously-skip-permissions".into());
         }
-        args.extend(without_flag(&ctx.args, "--agents"));
+        args.extend(without_flag(&without_flag(&ctx.args, "--agents"), "--settings"));
         let (mut lines, mut log) = (vec![], vec![]);
-        if has_flag(&ctx.args, "--settings") {
-            lines.push(SETTINGS_WARN.to_string());
+        if let Some(u) = &user {
+            if u.read > 0 {
+                lines.push(if hooks_off { MERGE_HOOKS_OFF } else { MERGE_WARN }.to_string());
+            }
+            lines.extend(u.bad_hooks.iter().map(bad_hooks_line));
+            lines.extend(u.unreadable.iter().cloned());
             log.push("degraded: --settings".to_string());
         }
         if has_flag(&ctx.args, "--bare") {
             log.push("degraded: --bare".to_string());
+        }
+        if bare_env(ctx) {
+            log.push("degraded: CLAUDE_CODE_SIMPLE".to_string());
         }
         if !ctx.passthrough
             && ctx.effective_role.is_none()
@@ -403,12 +664,15 @@ impl AgentAdapter for ClaudeCode {
         Ok(())
     }
     fn refusal(&self, ctx: &LaunchCtx) -> Option<String> {
-        let Some(user) = user_agents(ctx) else { return Some(BAD_AGENTS.into()) };
+        let Some(user) = self.user_agents(ctx) else { return Some(BAD_AGENTS.into()) };
         if !ctx.passthrough {
             return None;
         }
         if has_flag(&ctx.args, "--bare") {
             return Some(PT_BARE.into());
+        }
+        if bare_env(ctx) {
+            return Some(PT_BARE_ENV.into());
         }
         let c = &ctx.config;
         let is_role = |m: &str| {
@@ -427,5 +691,18 @@ impl AgentAdapter for ClaudeCode {
         let env = m.get("env").and_then(Value::as_object);
         let key = |k: &str| m.contains_key(k) || env.is_some_and(|e| e.keys().any(|n| if cfg!(windows) { n.eq_ignore_ascii_case(k) } else { n == k }));
         (m.contains_key("apiKeyHelper") || key("ANTHROPIC_API_KEY") || key("ANTHROPIC_AUTH_TOKEN")).then(|| PT_MANAGED.into())
+    }
+    fn has_session_arg(&self, args: &[String]) -> bool {
+        zygo_workspace::args::has_session_arg(Agent::ClaudeCode, args)
+    }
+    /// `--session-id=<id>`: one token, so the id is never read as another flag or a prompt word. The pinned help uses
+    /// the `=` form for options of the same parser (`--output-format=stream-json`).
+    fn preassign_args(&self, id: &str) -> Vec<String> {
+        vec![format!("--session-id={id}")]
+    }
+    /// `--resume=<id>`: `--resume` takes an optional value, so the `=` form keeps the id bound to it; the pinned help
+    /// uses the `=` form for optional values of the same parser (`--debug=hooks,mcp`, `--tmux=classic`).
+    fn resume_args(&self, id: &str) -> Vec<String> {
+        vec![format!("--resume={id}")]
     }
 }

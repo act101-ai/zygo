@@ -98,6 +98,12 @@ fn claude_code_setting_keys_are_in_the_pinned_schema() {
     for k in ["model", "label", "description", "behavesAs"] {
         assert!(excerpt.contains(k), "{k}");
     }
+    // FIX-21: the attribution keys zygo writes in every mode, with the types it writes
+    for k in ["commit", "pr"] {
+        assert_eq!(schema["properties"]["attribution"]["properties"][k]["type"], "string", "{k}");
+    }
+    assert_eq!(schema["properties"]["attribution"]["properties"]["sessionUrl"]["type"], "boolean");
+    assert_eq!(schema["properties"]["includeCoAuthoredBy"]["type"], "boolean");
     // keys zygo only reads (§8.4 preflight): taken from the preflight's own refusal text, schema only (spec A-21 note)
     for key in ["allowManagedHooksOnly", "disableAllHooks"] {
         let rig = harness::rig();

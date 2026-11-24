@@ -1,0 +1,570 @@
+[
+  {
+    "t": 0.0,
+    "run": 1,
+    "phase": "verbose",
+    "event": "start"
+  },
+  {
+    "t": 0.0,
+    "run": 1,
+    "phase": "verbose",
+    "event": "end"
+  },
+  {
+    "t": 2.1,
+    "run": 2,
+    "phase": "verbose",
+    "event": "start"
+  },
+  {
+    "t": 2.1,
+    "run": 2,
+    "phase": "verbose",
+    "event": "end"
+  },
+  {
+    "t": 4.08,
+    "run": 3,
+    "phase": "verbose",
+    "event": "start"
+  },
+  {
+    "t": 4.08,
+    "run": 3,
+    "phase": "verbose",
+    "event": "end"
+  },
+  {
+    "t": 6.09,
+    "run": 4,
+    "phase": "compact",
+    "event": "start"
+  },
+  {
+    "t": 6.09,
+    "run": 4,
+    "phase": "compact",
+    "event": "end"
+  },
+  {
+    "t": 8.09,
+    "run": 5,
+    "phase": "wideA",
+    "event": "start"
+  },
+  {
+    "t": 8.09,
+    "run": 5,
+    "phase": "wideA",
+    "event": "end"
+  },
+  {
+    "t": 10.09,
+    "run": 6,
+    "phase": "wideB",
+    "event": "start"
+  },
+  {
+    "t": 10.09,
+    "run": 6,
+    "phase": "wideB",
+    "event": "end"
+  },
+  {
+    "t": 12.09,
+    "run": 7,
+    "phase": "wideC",
+    "event": "start"
+  },
+  {
+    "t": 12.09,
+    "run": 7,
+    "phase": "wideC",
+    "event": "end"
+  },
+  {
+    "t": 14.09,
+    "run": 8,
+    "phase": "wideD",
+    "event": "start"
+  },
+  {
+    "t": 14.09,
+    "run": 8,
+    "phase": "wideD",
+    "event": "end"
+  },
+  {
+    "t": 16.11,
+    "run": 9,
+    "phase": "wideD",
+    "event": "start"
+  },
+  {
+    "t": 16.11,
+    "run": 9,
+    "phase": "wideD",
+    "event": "end"
+  },
+  {
+    "t": 18.1,
+    "run": 10,
+    "phase": "early",
+    "event": "start"
+  },
+  {
+    "t": 18.1,
+    "run": 10,
+    "phase": "early",
+    "event": "end"
+  },
+  {
+    "t": 20.1,
+    "run": 11,
+    "phase": "early",
+    "event": "start"
+  },
+  {
+    "t": 20.1,
+    "run": 11,
+    "phase": "early",
+    "event": "end"
+  },
+  {
+    "t": 22.1,
+    "run": 12,
+    "phase": "early",
+    "event": "start"
+  },
+  {
+    "t": 22.1,
+    "run": 12,
+    "phase": "early",
+    "event": "end"
+  },
+  {
+    "t": 24.1,
+    "run": 13,
+    "phase": "early",
+    "event": "start"
+  },
+  {
+    "t": 24.1,
+    "run": 13,
+    "phase": "early",
+    "event": "end"
+  },
+  {
+    "t": 26.1,
+    "run": 14,
+    "phase": "early",
+    "event": "start"
+  },
+  {
+    "t": 26.1,
+    "run": 14,
+    "phase": "early",
+    "event": "end"
+  },
+  {
+    "t": 28.1,
+    "run": 15,
+    "phase": "early",
+    "event": "start"
+  },
+  {
+    "t": 28.1,
+    "run": 15,
+    "phase": "early",
+    "event": "end"
+  },
+  {
+    "t": 30.1,
+    "run": 16,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 30.1,
+    "run": 16,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 30.6,
+    "run": 16,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 31.1,
+    "run": 16,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 31.6,
+    "run": 16,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 32.1,
+    "run": 16,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 32.17,
+    "run": 16,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 32.21,
+    "run": 17,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 32.21,
+    "run": 17,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 32.71,
+    "run": 17,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 33.21,
+    "run": 17,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 33.71,
+    "run": 17,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 34.07,
+    "run": 17,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 34.11,
+    "run": 18,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 34.11,
+    "run": 18,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 34.61,
+    "run": 18,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 35.11,
+    "run": 18,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 35.61,
+    "run": 18,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 36.08,
+    "run": 18,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 36.15,
+    "run": 19,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 36.15,
+    "run": 19,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 36.65,
+    "run": 19,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 37.15,
+    "run": 19,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 37.65,
+    "run": 19,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 38.07,
+    "run": 19,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 38.11,
+    "run": 20,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 38.11,
+    "run": 20,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 38.61,
+    "run": 20,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 39.11,
+    "run": 20,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 39.61,
+    "run": 20,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 40.08,
+    "run": 20,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 40.1,
+    "run": 21,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 40.1,
+    "run": 21,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 40.6,
+    "run": 21,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 41.1,
+    "run": 21,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 41.6,
+    "run": 21,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 42.08,
+    "run": 21,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 42.13,
+    "run": 22,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 42.13,
+    "run": 22,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 42.63,
+    "run": 22,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 43.13,
+    "run": 22,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 43.63,
+    "run": 22,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 44.07,
+    "run": 22,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 44.1,
+    "run": 23,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 44.1,
+    "run": 23,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 44.6,
+    "run": 23,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 45.1,
+    "run": 23,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 45.6,
+    "run": 23,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 46.08,
+    "run": 23,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 46.12,
+    "run": 24,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 46.12,
+    "run": 24,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 46.62,
+    "run": 24,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 47.12,
+    "run": 24,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 47.62,
+    "run": 24,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 48.08,
+    "run": 24,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 48.12,
+    "run": 25,
+    "phase": "slow",
+    "event": "start"
+  },
+  {
+    "t": 48.12,
+    "run": 25,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 48.62,
+    "run": 25,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 49.12,
+    "run": 25,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 49.62,
+    "run": 25,
+    "phase": "slow",
+    "event": "beat"
+  },
+  {
+    "t": 50.07,
+    "run": 25,
+    "phase": "slow",
+    "event": "signal",
+    "sig": "TERM"
+  },
+  {
+    "t": 50.1,
+    "run": 26,
+    "phase": "done",
+    "event": "start"
+  },
+  {
+    "t": 50.1,
+    "run": 26,
+    "phase": "done",
+    "event": "end"
+  }
+]

@@ -195,8 +195,8 @@ c=L11; prep $c caller; ERR=$T/$c.err; echo 'LIVE OLD' >"$T/keep-$c/results.txt"
 child $c 1 'result X1 pass one; result X2 pass two; exit 0'; run $c
 l11() {
   [ "$(cat "$T/keep-L11/results.txt")" = "LIVE OLD
-LIVE X1 pass (agent 2.1.328): one
-LIVE X2 pass (agent 2.1.328): two" ] || { why="results.txt: $(tr '\n' '|' <"$T/keep-L11/results.txt")"; return 1; }
+LIVE X1 pass (agent ?): one
+LIVE X2 pass (agent ?): two" ] || { why="results.txt: $(tr '\n' '|' <"$T/keep-L11/results.txt")"; return 1; }
   kept L11
 }
 res "L11 results.txt is not truncated by two result calls" 0 l11
@@ -245,12 +245,22 @@ c2() {
 res "C2 live_end then own dir kept after TERM" 143 c2
 
 c=C3; prep $c caller; ERR=$T/$c.err
-child $c 1 "mkdir -p \"\$N2_SCRATCH/live-\$\$\"; echo \$\$ >'$T/C3.pid'; exit 0"; run $c
+child $c 1 "mkdir -p \"\$N2_SCRATCH/live-\$\$\"; : >\"\$N2_SCRATCH/live-\$\$/capture\"; : >\"\$N2_SCRATCH/live-\$\$/pg-1\"; echo \$\$ >'$T/C3.pid'; exit 0"; run $c
 c3() {
   kept C3 || return 1
-  [ ! -e "$T/keep-C3/live-$(cat "$T/C3.pid")" ] || { why="live-<pid> is left"; return 1; }
+  L=$T/keep-C3/live-$(cat "$T/C3.pid")
+  [ -f "$L/capture" ] || { why="live-<pid>/capture is gone"; return 1; }
+  [ ! -e "$L/pg-1" ] || { why="live-<pid>/pg-1 is left"; return 1; }
 }
-res "C3 live_end removes live-<pid>, caller dir kept" 0 c3
+res "C3 live_end keeps live-<pid> in a caller dir, without its pg-* files" 0 c3
+
+c=C6; prep $c caller; ERR=$T/$c.err
+child $c 1 "mkdir -p \"\$N2_SCRATCH/live-\$\$\"; : >\"\$N2_SCRATCH/live-\$\$/capture\"; $(sigact C6)"; sigrun $c TERM
+c6() {
+  kept C6 || return 1
+  [ -f "$T/keep-C6/live-$(cat "$T/C6.pid")/capture" ] || { why="live-<pid>/capture is gone"; return 1; }
+}
+res "C6 live_end keeps live-<pid> in a caller dir after TERM" 143 c6
 
 c=C4; prep $c own; ERR=$T/$c.err; child $c 1 "$PIPE_ACT"; piperun $c
 res "C4 live_end then own dir kept after SIGPIPE" 141 kept_n $c 141
@@ -261,18 +271,21 @@ run $c
 res "C5 live_end removes a live-<pid> with a read-only subdir, then the own dir" 0 removed $c
 
 if [ "$(id -u)" = 0 ]; then
-  ok "C6 skipped (root)"
+  ok "C7 skipped (root)"
 else
-  c=C6; prep $c caller; ERR=$T/$c.err
-  child $c 1 "mkdir -p \"\$N2_SCRATCH/live-\$\$\"; echo \$\$ >'$T/C6.pid'; chmod 500 \"\$N2_SCRATCH\"; exit 0"
+  # FIX-7: a caller dir keeps live-<pid>, so the failed removal is shown in a dir lib.sh made;
+  # n2_scratch_end then makes that dir writable again and removes it.
+  c=C7; prep $c own; ERR=$T/$c.err
+  child $c 1 "mkdir -p \"\$N2_SCRATCH/live-\$\$\"; echo \$\$ >'$T/C7.pid'; chmod 500 \"\$N2_SCRATCH\"; exit 0"
   run $c
-  chmod 700 "$T/keep-C6"
-  c6() {
-    [ -f "$T/keep-C6/mine" ] || { why="$T/keep-C6/mine is gone"; return 1; }
-    l=$(cat "$ERR")
-    [ "$l" = "premises: could not remove $T/keep-C6/live-$(cat "$T/C6.pid")" ] || { why="stderr: $(tr '\n' '|' <"$ERR")"; return 1; }
+  c7() {
+    D=$(dir_of C7)
+    own_ok C7 "$D" || return 1
+    l=$(sed -n '$p' "$ERR")
+    [ "$l" = "premises: could not remove $D/live-$(cat "$T/C7.pid")" ] || { why="stderr: $(tr '\n' '|' <"$ERR")"; return 1; }
+    [ ! -e "$D" ] || { why="$D still exists"; return 1; }
   }
-  res "C6 live_end names a live-<pid> it could not remove, status kept" 0 c6
+  res "C7 live_end names a live-<pid> it could not remove in an own dir, status kept" 0 c7
 fi
 
 # --- R: run-all.sh ------------------------------------------------------------------------------

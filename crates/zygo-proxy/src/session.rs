@@ -1,4 +1,5 @@
-//! Session state (§7.2): creation, token, idle TTL, liveness, overrides (§10.2.4, §17.1).
+//! Session state (§7.2): creation, token, liveness, overrides (§10.2.4, §17.1). No session expires by idle time:
+//! a session ends when its launcher deletes it or its proxy stops.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -22,7 +23,6 @@ use crate::client::SessionStatus;
 use crate::errors::ZygoError;
 use crate::window::{self, RequestWindows};
 
-pub const IDLE_TTL: Duration = Duration::from_secs(24 * 60 * 60); // §7.2
 pub const SUSPEND_AFTER: Duration = Duration::from_secs(5 * 60); // §7.2
 pub const WINDOW_MIN: u64 = 100_000; // §10.2.4
 pub const WINDOW_MAX: u64 = 10_000_000; // §10.2.4
@@ -168,6 +168,9 @@ pub struct SessionGrant {
     pub session: String,
     pub token: String,
     pub config: SessionConfig,
+    /// Always empty: no session expires by idle time (§7.2, FIX-18). Kept on the wire because a client that requires
+    /// the field parses this reply; read as empty when absent.
+    #[serde(default)]
     pub expires_at: String,
     pub profile_warning: Option<String>,
     pub redaction_note: Option<String>,
@@ -214,8 +217,6 @@ pub struct Redaction {
 }
 
 struct Live {
-    last_seen: Instant,
-    last_seen_utc: OffsetDateTime,
     last_heartbeat: Instant,
     compact: Option<WindowArg>,
     settings: SessionSettings,
@@ -337,7 +338,7 @@ impl SessionState {
             effective_window,
             compact: l.compact,
             cache_read_share: (total > 0.0).then(|| u.cache_read as f64 / total),
-            expires_at: rfc3339(l.last_seen_utc + IDLE_TTL),
+            expires_at: String::new(),
             usage_note: self.usage_note.clone(),
             model,
             context_window,
@@ -396,13 +397,10 @@ impl Drop for InFlight {
 enum Liveness {
     Active,
     Suspended,
-    Gone,
 }
 
-fn liveness(last_seen: Instant, last_heartbeat: Instant, team: bool, now: Instant) -> Liveness {
-    if now.saturating_duration_since(last_seen) > IDLE_TTL {
-        return Liveness::Gone;
-    }
+/// §7.2: a team session is suspended after `SUSPEND_AFTER` without a heartbeat; no session expires by idle time.
+fn liveness(last_heartbeat: Instant, team: bool, now: Instant) -> Liveness {
     if team && now.saturating_duration_since(last_heartbeat) > SUSPEND_AFTER {
         return Liveness::Suspended;
     }
@@ -530,7 +528,6 @@ impl Sessions {
         let id = ulid();
         let token = random_token("zyg_s_");
         let now = self.clock.now();
-        let utc = self.clock.utc();
         let state = Arc::new(SessionState {
             id: id.clone(),
             agent: req.agent,
@@ -548,8 +545,6 @@ impl Sessions {
             token_sha256: sha256(&token),
             usage_note: self.usage_note.clone(),
             live: Mutex::new(Live {
-                last_seen: now,
-                last_seen_utc: utc,
                 last_heartbeat: now,
                 compact: None,
                 settings: SessionSettings::default(),
@@ -566,53 +561,40 @@ impl Sessions {
             if !still_valid() {
                 return Err(ZygoError::token_invalid());
             }
-            retain_live(&mut map, now);
             map.insert(id.clone(), state);
         }
         Ok(SessionGrant {
             session: id,
             token,
             config,
-            expires_at: rfc3339(utc + IDLE_TTL),
+            expires_at: String::new(),
             profile_warning,
             redaction_note,
             usage_note: self.usage_note.clone(),
         })
     }
 
-    /// Removes every expired session (§7.2 note, N10 review); runs on each session-API request.
-    pub(crate) fn sweep(&self) {
-        retain_live(&mut lock(&self.map), self.clock.now());
-    }
-
-    /// Stage 1 for session-token routes (§7.2). Does not refresh the idle TTL: call `accept` once the request is
-    /// accepted.
+    /// Stage 1 for session-token routes (§7.2). Call `accept` once the request is accepted.
     pub(crate) fn by_token(&self, id: &str, token: &str) -> Result<Arc<SessionState>, ZygoError> {
         let s = self.get(id).ok_or_else(ZygoError::session_unknown)?;
         if sha256(token) != s.token_sha256 {
             return Err(ZygoError::token_invalid());
         }
         let now = self.clock.now();
-        self.locked(&s, |l| match liveness(l.last_seen, l.last_heartbeat, s.team_label.is_some(), now) {
+        self.locked(&s, |l| match liveness(l.last_heartbeat, s.team_label.is_some(), now) {
             Liveness::Active => Ok(()),
             Liveness::Suspended => Err(ZygoError::session_suspended()),
-            Liveness::Gone => Err(ZygoError::session_unknown()),
         })?;
         Ok(s)
     }
 
-    /// The request on `s` is accepted: checks again that `s` is mapped and active, then refreshes the idle TTL
-    /// (§7.2 note: a refused request does not refresh it).
+    /// The request on `s` is accepted: checks again that `s` is mapped and active (a session deleted or suspended
+    /// since `by_token` is refused).
     pub(crate) fn accept(&self, s: &Arc<SessionState>) -> Result<(), ZygoError> {
         let now = self.clock.now();
-        self.locked(s, |l| match liveness(l.last_seen, l.last_heartbeat, s.team_label.is_some(), now) {
-            Liveness::Active => {
-                l.last_seen = now;
-                l.last_seen_utc = self.clock.utc();
-                Ok(())
-            }
+        self.locked(s, |l| match liveness(l.last_heartbeat, s.team_label.is_some(), now) {
+            Liveness::Active => Ok(()),
             Liveness::Suspended => Err(ZygoError::session_suspended()),
-            Liveness::Gone => Err(ZygoError::session_unknown()),
         })
     }
 
@@ -621,29 +603,18 @@ impl Sessions {
         let s = self.owned(id, label)?;
         let now = self.clock.now();
         self.locked(&s, |l| {
-            if matches!(liveness(l.last_seen, l.last_heartbeat, true, now), Liveness::Gone) {
-                return Err(ZygoError::session_unknown());
-            }
-            l.last_seen = now;
             l.last_heartbeat = now;
-            l.last_seen_utc = self.clock.utc();
             Ok(())
         })
     }
 
     pub(crate) fn delete(&self, id: &str, label: &str) -> Result<(), ZygoError> {
         let mut map = lock(&self.map);
-        let s = map
-            .get(id)
-            .filter(|s| s.team_label.as_deref() == Some(label))
-            .cloned()
-            .ok_or_else(ZygoError::session_unknown)?;
-        let gone = {
-            let l = lock(&s.live);
-            matches!(liveness(l.last_seen, l.last_heartbeat, true, self.clock.now()), Liveness::Gone)
-        };
+        if !map.get(id).is_some_and(|s| s.team_label.as_deref() == Some(label)) {
+            return Err(ZygoError::session_unknown());
+        }
         map.remove(id);
-        if gone { Err(ZygoError::session_unknown()) } else { Ok(()) }
+        Ok(())
     }
 
     /// Reload (§7.2 N16 note): removes each session whose team label is not in `keep`; returns how many.
@@ -673,14 +644,6 @@ impl Sessions {
         let mut l = lock(&s.live);
         f(&mut l)
     }
-}
-
-/// Keeps the sessions that are not past the idle TTL at `now`. Lock order: `map`, then `live`.
-fn retain_live(map: &mut HashMap<String, Arc<SessionState>>, now: Instant) {
-    map.retain(|_, s| {
-        let l = lock(&s.live);
-        !matches!(liveness(l.last_seen, l.last_heartbeat, s.team_label.is_some(), now), Liveness::Gone)
-    });
 }
 
 /// `[proxy] redaction_cache_mib` in bytes.

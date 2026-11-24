@@ -313,14 +313,17 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     old.save(&d).unwrap();
     assert_eq!(SessionView::load(&d).unwrap(), old);
     // A member with a resume note (AU58, AU72).
-    let member = Member { ws_id: "w1".into(), pane: "p1".into() };
+    let member = Member { ws_id: "w1".into(), pane: "p1".into(), ..Default::default() };
     let note = ResumeNote {
         clean_stop: true,
-        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into() }],
+        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "zygo-code".into(), ..Default::default() }],
         closed_units: vec!["C1".into()],
+        agent_session: None,
+        ..Default::default()
     };
+    let note_clone = note.clone();
     let v = SessionView {
-        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note) }),
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(note), ..Default::default() }),
         ..old.clone()
     };
     v.save(&d).unwrap();
@@ -337,7 +340,207 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
             }
         })
     );
+    // Inputs bound to an agent session (W§9.4): the id is written and read back; an older file reads as none.
+    let bound = ResumeNote { agent_session: Some("ses_R".into()), ..note_clone };
+    let vb = SessionView {
+        workspace: Some(ViewWorkspace { member: member.clone(), resume_note: Some(bound), ..Default::default() }),
+        ..old.clone()
+    };
+    vb.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), vb);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(json["workspace"]["resume_note"]["agent_session"], "ses_R");
+    assert_eq!(
+        serde_json::from_str::<ResumeNote>(r#"{"clean_stop":true,"interrupted":[],"closed_units":[]}"#).unwrap().agent_session,
+        None
+    );
     // A member with no note: `resume_note` is not in the file.
     let m: ViewWorkspace = serde_json::from_str(r#"{"member":{"ws_id":"w1","pane":"p1"}}"#).unwrap();
-    assert_eq!(m, ViewWorkspace { member, resume_note: None });
+    assert_eq!(m, ViewWorkspace { member, resume_note: None, ..Default::default() });
+}
+
+#[test]
+fn session_view_save_keeps_unknown_top_level_fields() { // H1 attempt-2 review round 1, F4 (AU78 pattern)
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    SessionView { session: "s".into(), main_role: "lead".into(), ..Default::default() }.save(&d).unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    json["future_field"] = serde_json::json!({"a": [1, "b"]});
+    json["future_flag"] = serde_json::json!(true);
+    std::fs::write(d.view_json(), serde_json::to_vec(&json).unwrap()).unwrap();
+    let mut v = SessionView::load(&d).unwrap();
+    v.main_role = "code".into();
+    v.save(&d).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(after["future_field"], serde_json::json!({"a": [1, "b"]}));
+    assert_eq!(after["future_flag"], serde_json::json!(true));
+    assert_eq!(after["main_role"], "code");
+    // A view of this zygo writes no extra field.
+    let plain = SessionView::default();
+    let keys: Vec<String> = serde_json::to_value(&plain).unwrap().as_object().unwrap().keys().cloned().collect();
+    assert!(!keys.iter().any(|k| k.starts_with("future_") || k == "extra"), "{keys:?}");
+}
+
+#[test]
+fn session_view_save_keeps_unknown_nested_fields() { // H1 attempt-2 review round 2, R5 (AU78 pattern)
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let text = r#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":false,"results":false,"navigation":false,"workspace":{"member":{"ws_id":"w","pane":"p","future_m":1},"resume_note":{"clean_stop":true,"interrupted":[{"agent_id":"a1","agent_type":"x","future_s":[2]}],"closed_units":[],"future_n":{"k":"v"}},"future_w":true},"future_top":3}"#;
+    std::fs::write(d.view_json(), text).unwrap();
+    let mut v = SessionView::load(&d).unwrap();
+    v.main_role = "code".into();
+    v.save(&d).unwrap();
+    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(after["main_role"], "code");
+    assert_eq!(after["future_top"], 3);
+    assert_eq!(after["workspace"]["future_w"], true);
+    assert_eq!(after["workspace"]["member"], serde_json::json!({"ws_id": "w", "pane": "p", "future_m": 1}));
+    assert_eq!(after["workspace"]["resume_note"]["future_n"], serde_json::json!({"k": "v"}));
+    assert_eq!(after["workspace"]["resume_note"]["interrupted"][0], serde_json::json!({"agent_id": "a1", "agent_type": "x", "future_s": [2]}));
+    assert_eq!(SessionView::load(&d).unwrap(), v);
+}
+
+#[test]
+fn session_log_appends_lines_and_refuses_links_and_fifos() { // H1 D21: the one session-log writer
+    let t = tempfile::tempdir().unwrap();
+    let sd = SessionDir::new(t.path().join("s"));
+    sd.create().unwrap();
+    sd.append_log("a");
+    sd.append_log("b\nc\rd");
+    assert_eq!(std::fs::read_to_string(sd.log()).unwrap(), "a\nb c d\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        assert_eq!(std::fs::metadata(sd.log()).unwrap().permissions().mode() & 0o777, 0o600);
+        // A link: the target is not written and the link stays a link.
+        let outside = t.path().join("outside");
+        std::fs::write(&outside, "x").unwrap();
+        std::fs::remove_file(sd.log()).unwrap();
+        std::os::unix::fs::symlink(&outside, sd.log()).unwrap();
+        sd.append_log("e");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "x");
+        assert!(std::fs::symlink_metadata(sd.log()).unwrap().file_type().is_symlink());
+        // A FIFO: the writer does not wait for a reader.
+        std::fs::remove_file(sd.log()).unwrap();
+        let c = std::ffi::CString::new(sd.log().as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sd2 = sd.clone();
+        std::thread::spawn(move || {
+            sd2.append_log("f");
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("append_log waited on a FIFO");
+        assert!(std::fs::symlink_metadata(sd.log()).unwrap().file_type().is_fifo());
+    }
+}
+
+#[test] // FIX-22: W-C1 (C6); only a FIFO is refused; no size cap; a link is still followed
+fn session_view_load_does_not_wait_on_a_fifo() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().join("s"));
+    d.create().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::FileTypeExt;
+        // A FIFO: the error `<path>: is a FIFO` within 5 s; the FIFO stays.
+        let c = std::ffi::CString::new(d.view_json().as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let d2 = d.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(SessionView::load(&d2).map_err(|e| format!("{e:#}")));
+        });
+        let r = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("SessionView::load waited on a FIFO");
+        assert_eq!(r.unwrap_err(), format!("{}: is a FIFO", d.view_json().display()));
+        assert!(std::fs::symlink_metadata(d.view_json()).unwrap().file_type().is_fifo());
+        std::fs::remove_file(d.view_json()).unwrap();
+        // A folder, and a link to a folder: today's error, the one of `std::fs::read`.
+        std::fs::create_dir(t.path().join("dir")).unwrap();
+        let today = std::fs::read(t.path().join("dir")).unwrap_err().to_string();
+        #[cfg(target_os = "linux")]
+        assert_eq!(today, "Is a directory (os error 21)");
+        std::fs::create_dir(d.view_json()).unwrap();
+        assert_eq!(format!("{:#}", SessionView::load(&d).unwrap_err()), today);
+        std::fs::remove_dir(d.view_json()).unwrap();
+        std::os::unix::fs::symlink(t.path().join("dir"), d.view_json()).unwrap();
+        assert_eq!(format!("{:#}", SessionView::load(&d).unwrap_err()), today);
+        std::fs::remove_file(d.view_json()).unwrap();
+    }
+    // A missing view keeps today's error: the bare io error, no path added.
+    let e = SessionView::load(&d).unwrap_err();
+    assert_eq!(e.downcast_ref::<std::io::Error>().map(|e| e.kind()), Some(std::io::ErrorKind::NotFound), "{e:#}");
+    assert!(!format!("{e:#}").contains("view.json"), "{e:#}");
+    let v = SessionView { session: "s".into(), main_role: "main".into(), ..Default::default() };
+    v.save(&d).unwrap();
+    // More than 1 MiB still loads: no cap.
+    let mut b = std::fs::read(d.view_json()).unwrap();
+    b.extend(std::iter::repeat_n(b' ', 2 << 20));
+    std::fs::write(d.view_json(), &b).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap(), v);
+    // A link to a regular view still loads.
+    #[cfg(unix)]
+    {
+        std::fs::rename(d.view_json(), t.path().join("v.json")).unwrap();
+        std::os::unix::fs::symlink(t.path().join("v.json"), d.view_json()).unwrap();
+        assert_eq!(SessionView::load(&d).unwrap(), v);
+    }
+}
+
+#[cfg(unix)]
+#[test] // FIX-22 review round 1, F3: every entry but a FIFO gives today's result; a link to a FIFO is a FIFO
+fn session_view_load_keeps_todays_result_for_other_entries() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+    use zygo_core::session_view::SessionView;
+    // Under /tmp, not TMPDIR: a long TMPDIR makes the socket path longer than `sun_path` (review round 2).
+    let t = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
+    let d = SessionDir::new(t.path().join("s"));
+    d.create().unwrap();
+    // Today's read of the same path: `std::fs::read`, then serde.
+    let today = |p: &std::path::Path| -> Result<SessionView, String> {
+        let b = std::fs::read(p).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&b).map_err(|e| e.to_string())
+    };
+    let now = |d: &SessionDir| SessionView::load(d).map_err(|e| format!("{e:#}"));
+    // A link to /dev/null: the serde error of an empty read.
+    std::os::unix::fs::symlink("/dev/null", d.view_json()).unwrap();
+    let want = today(&d.view_json());
+    assert!(want.as_ref().is_err_and(|e| e.starts_with("EOF while parsing")), "{want:?}");
+    assert_eq!(now(&d), want);
+    std::fs::remove_file(d.view_json()).unwrap();
+    // A bound socket: today's open error (ENXIO on Linux).
+    let sock = std::os::unix::net::UnixListener::bind(d.view_json()).unwrap();
+    let want = today(&d.view_json());
+    #[cfg(target_os = "linux")]
+    assert_eq!(want.clone().unwrap_err(), "No such device or address (os error 6)");
+    assert_eq!(now(&d), want);
+    drop(sock);
+    std::fs::remove_file(d.view_json()).unwrap();
+    // A mode-0 regular file: today's permission error (when the test runs as root both reads succeed).
+    let v = SessionView { session: "s".into(), main_role: "main".into(), ..Default::default() };
+    v.save(&d).unwrap();
+    std::fs::set_permissions(d.view_json(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let want = today(&d.view_json());
+    assert_eq!(now(&d), want);
+    std::fs::set_permissions(d.view_json(), std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::remove_file(d.view_json()).unwrap();
+    // A link to a FIFO: `<view.json path>: is a FIFO` within 5 s.
+    let fifo = t.path().join("fifo");
+    let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `c` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    std::os::unix::fs::symlink(&fifo, d.view_json()).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let d2 = d.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(SessionView::load(&d2).map_err(|e| format!("{e:#}")));
+    });
+    let r = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("SessionView::load waited on a linked FIFO");
+    assert_eq!(r.unwrap_err(), format!("{}: is a FIFO", d.view_json().display()));
 }

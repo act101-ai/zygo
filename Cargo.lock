@@ -3503,13 +3503,14 @@ dependencies = [
 
 [[package]]
 name = "zygo"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
  "fs4",
  "hex",
  "libc",
+ "rand",
  "regex",
  "reqwest",
  "rpassword",
@@ -3535,11 +3536,12 @@ dependencies = [
  "zygo-results",
  "zygo-usage",
  "zygo-work",
+ "zygo-workspace",
 ]
 
 [[package]]
 name = "zygo-config"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "fs4",
@@ -3562,10 +3564,11 @@ dependencies = [
 
 [[package]]
 name = "zygo-core"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "fs4",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -3574,7 +3577,7 @@ dependencies = [
 
 [[package]]
 name = "zygo-hooks"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "libc",
@@ -3591,11 +3594,12 @@ dependencies = [
  "zygo-results",
  "zygo-usage",
  "zygo-work",
+ "zygo-workspace",
 ]
 
 [[package]]
 name = "zygo-launch"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -3621,13 +3625,15 @@ dependencies = [
  "zygo-redact",
  "zygo-usage",
  "zygo-work",
+ "zygo-workspace",
 ]
 
 [[package]]
 name = "zygo-mcp"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -3637,11 +3643,12 @@ dependencies = [
  "zygo-results",
  "zygo-usage",
  "zygo-work",
+ "zygo-workspace",
 ]
 
 [[package]]
 name = "zygo-plugins"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "fs4",
@@ -3663,7 +3670,7 @@ dependencies = [
 
 [[package]]
 name = "zygo-proxy"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -3698,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "zygo-redact"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -3718,7 +3725,7 @@ dependencies = [
 
 [[package]]
 name = "zygo-results"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "fs4",
@@ -3738,7 +3745,7 @@ dependencies = [
 
 [[package]]
 name = "zygo-usage"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "rusqlite",
@@ -3750,7 +3757,7 @@ dependencies = [
 
 [[package]]
 name = "zygo-work"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "fs4",
@@ -3773,7 +3780,7 @@ dependencies = [
 
 [[package]]
 name = "zygo-workspace"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "fs4",

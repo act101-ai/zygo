@@ -1,0 +1,33 @@
+{
+  "tty": {
+    "error": "ENXIO"
+  },
+  "env": {
+    "COLUMNS": "200",
+    "LINES": "50",
+    "TERM": "xterm-256color",
+    "LANG": "C.UTF-8",
+    "CLAUDECODE": "1",
+    "CLAUDE_CODE_ENTRYPOINT": "cli"
+  },
+  "env_names": [
+    "AI_AGENT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_EFFORT",
+    "CLAUDE_PID",
+    "CLAUDE_PROJECT_DIR",
+    "COREPACK_ENABLE_AUTO_PIN",
+    "DISABLE_AUTOUPDATER",
+    "HOME",
+    "NoDefaultCurrentDirectoryInExePath",
+    "PATH",
+    "PWD",
+    "SHLVL",
+    "_"
+  ]
+}

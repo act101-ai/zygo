@@ -27,7 +27,7 @@ dl_run() { # <build: debug|release>
   sqlite3 -json "$H/.local/share/zygo/usage.db" "select request_class, status, latency_ms, input_tokens, redactions from requests order by ts, rowid" >"$RUN/rows.json" 2>/dev/null || true
   [ -s "$RUN/rows.json" ] || echo '[]' >"$RUN/rows.json"
   scrub "$RUN/rows.json" >"$FX/deadline-$1.json"
-  LIVE_VER=$(usage_version); LIVE_VER=${LIVE_VER:-$PIN_CC}
+  LIVE_VER=$(usage_version); LIVE_VER=${LIVE_VER:-$LIVE_CC_VER}
   result "DL-$1" recorded "$(jq -c '[.[] | "\(.request_class // "-")=\(.status)/\(.latency_ms)ms"]' "$RUN/rows.json"); pane shows 503: $(grep -c '503' "$RUN/pane.txt" || true)"
 }
 

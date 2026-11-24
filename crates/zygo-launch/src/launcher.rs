@@ -53,6 +53,8 @@ pub struct LaunchOutcome {
     pub spawned: bool,
     /// The launcher received SIGTERM or SIGHUP between the start of its signal handling and the end of its cleanup.
     pub received: bool,
+    /// The time from the agent's spawn to the end of its wait; `None` when it was not spawned.
+    pub ran: Option<Duration>,
 }
 
 /// What a launch records for its outcome besides the code.
@@ -61,6 +63,7 @@ struct Marks {
     signal: Cell<Option<i32>>,
     spawned: Cell<bool>,
     received: Cell<bool>,
+    ran: Cell<Option<Duration>>,
 }
 
 /// The signal handling of one launch. Its drop copies `signals::received()` into the marks; the handling ends after that.
@@ -76,8 +79,50 @@ impl Drop for Handling<'_> {
 }
 
 /// Called once, after the session directory exists and before the agent starts, with the session directory, the
-/// session id and the resolved agent program (workspaces design AU34).
-pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path) -> anyhow::Result<()> + Send>;
+/// session id, the resolved agent program, the member of this launch (workspaces design AU34): `LaunchOpts.member`,
+/// with or without a user `--settings` (AU59), and the launch environment after the §8.4 deny list
+/// (`child_env(&opts.env, &cfg, &[])`): what the agent gets apart from the names zygo sets (FIX-24 diff review round 3,
+/// finding 3).
+pub type SessionCallback = Box<dyn FnOnce(&SessionDir, &str, &Path, Option<&Member>, &Env) -> anyhow::Result<()> + Send>;
+
+/// The error a session callback returns to make the launch a v1 launch (workspaces design AU34, W§8.4): the launcher
+/// logs it as any callback error, then sets `member` and `resume_note` to none before it builds the view, the settings
+/// and the agent environment.
+#[derive(Debug)]
+pub struct NotMember(pub String);
+
+impl std::fmt::Display for NotMember {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotMember {}
+
+/// The error a session callback returns to stop the launch before the agent starts (workspaces design AU34, W-C9;
+/// FIX-32 B3): the launcher logs it as any callback error, spawns no agent, and returns exit code 1 (or the code of a
+/// signal that stopped it). The callback prints its own line first.
+#[derive(Debug)]
+pub struct StopLaunch(pub String);
+
+impl std::fmt::Display for StopLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StopLaunch {}
+
+/// The agent session that the launcher starts or resumes (W§8.3, AU3). The launcher puts the adapter's
+/// `preassign_args` or `resume_args` before the user's arguments, so before any `--`; for OpenCode, right after a
+/// `run` subcommand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentSession {
+    /// A fresh session with this id (`AgentAdapter::preassign_args`).
+    Preassign(String),
+    /// Resume the session with this id (`AgentAdapter::resume_args`).
+    Resume(String),
+}
 
 pub struct LaunchOpts {
     /// The user's arguments after `--`.
@@ -94,6 +139,8 @@ pub struct LaunchOpts {
     pub member: Option<Member>,
     /// The inputs of the resume note; written to the session view only with `member` (AU72).
     pub resume_note: Option<ResumeNote>,
+    /// `Some`: the launcher adds the session arguments of the adapter for it (W§8.3, AU3).
+    pub agent_session: Option<AgentSession>,
     /// An error is logged to the session log and the launch goes on.
     pub on_session: Option<SessionCallback>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
@@ -124,6 +171,7 @@ impl LaunchOpts {
             paths,
             member: None,
             resume_note: None,
+            agent_session: None,
             on_session: None,
             #[cfg(feature = "test-hooks")]
             builtin: None,
@@ -177,12 +225,31 @@ impl Launcher {
     pub fn run(adapter: &dyn AgentAdapter, opts: LaunchOpts) -> LaunchOutcome {
         let marks = Marks::default();
         let code = Self::launch(adapter, opts, &marks);
-        LaunchOutcome { code, signal: marks.signal.get(), spawned: marks.spawned.get(), received: marks.received.get() }
+        LaunchOutcome {
+            code,
+            signal: marks.signal.get(),
+            spawned: marks.spawned.get(),
+            received: marks.received.get(),
+            ran: marks.ran.get(),
+        }
     }
 
     /// The launch; returns the process exit code and records the rest of the outcome in `marks`.
     fn launch(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, marks: &Marks) -> i32 {
         let on_session = opts.on_session.take();
+        // The tokens of a member pre-assign that this launch added to `opts.args`; a `NotMember` callback removes them
+        // (AU34; M3 diff review round 2, finding 3). A user's own session argument is never in this range.
+        let mut preassigned: Option<std::ops::Range<usize>> = None;
+        if let Some(s) = &opts.agent_session {
+            let extra = match s {
+                AgentSession::Preassign(id) => adapter.preassign_args(id),
+                AgentSession::Resume(id) => adapter.resume_args(id),
+            };
+            let added = insert_session_args(adapter.agent(), &mut opts.args, extra);
+            if matches!(s, AgentSession::Preassign(_)) {
+                preassigned = Some(added);
+            }
+        }
         let out = Out {
             #[cfg(feature = "test-hooks")]
             buf: opts.stderr.clone(),
@@ -372,11 +439,24 @@ impl Launcher {
                 .map(|hc| Heartbeat::start(hc, session.clone(), heartbeat_every(&opts), Box::new(move |m| beat_out.line(m))));
         }
         let guard = Finish { sd: sd.clone(), end: Some(end), paths: &opts.paths, _pid: pid };
-        // AU34: the session directory exists and the agent is not started; an error never stops the launch (C6).
+        // AU34: the session directory exists and the agent is not started; an error does not stop the launch (C6),
+        // except `StopLaunch` (W-C9, FIX-32 B3).
         if let Some(call) = on_session
-            && let Err(e) = call(&sd, &grant.session, &program)
+            && let Err(e) = call(&sd, &grant.session, &program, opts.member.as_ref(), &probe_env)
         {
-            session_dir::log(&sd, &format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+            sd.append_log(&format!("session callback: {}", zygo_plugins::check::esc(&format!("{e:#}"))));
+            if e.downcast_ref::<StopLaunch>().is_some() {
+                return signals::or_stopped(1);
+            }
+            // AU34: a `NotMember` callback makes this launch a v1 launch.
+            if e.downcast_ref::<NotMember>().is_some() {
+                opts.member = None;
+                opts.resume_note = None;
+                if let Some(r) = preassigned.take() {
+                    opts.args.drain(r);
+                }
+                opts.agent_session = None;
+            }
         }
         if let Some(t) = &team
             && let Err(e) = write_team(&sd.root, t)
@@ -385,10 +465,10 @@ impl Launcher {
             return signals::or_stopped(1);
         }
         if let Some(e) = store_err {
-            session_dir::log(&sd, &format!("act-lite store: {e}"));
+            sd.append_log(&format!("act-lite store: {e}"));
         }
         if let Some(n) = &grant.redaction_note {
-            session_dir::log(&sd, &zygo_plugins::check::esc(n));
+            sd.append_log(&zygo_plugins::check::esc(n));
         }
         let s = Session {
             opts: &opts,
@@ -470,7 +550,7 @@ impl Session<'_> {
             if let Some(v) = version_within_bound(&p, &env, &opts.cwd)
                 && v != compiled
             {
-                session_dir::log(sd, &format!("act-lite: installed {v}, language list for {compiled}"));
+                sd.append_log(&format!("act-lite: installed {v}, language list for {compiled}"));
             }
         }
 
@@ -495,6 +575,9 @@ impl Session<'_> {
             }))
             .collect();
         let c = &self.cfg.config;
+        // A user `--settings` does not change the member (AU59): its settings are merged into zygo's file (§8.5 Flags).
+        // The member is none after a `NotMember` callback (AU34).
+        let member = opts.member.clone();
         // The base stays although every field is named today: a later field then needs no change here
         // until the launcher sets it (statusline HUD design H§17 note 1).
         #[allow(clippy::needless_update)]
@@ -518,7 +601,7 @@ impl Session<'_> {
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
             statusline_style: c.statusline.style.clone(),
-            workspace: opts.member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone() }),
+            workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone(), ..Default::default() }),
             ..Default::default()
         };
         if let Err(e) = view.save(sd) {
@@ -572,7 +655,7 @@ impl Session<'_> {
             out.line(l);
         }
         for l in &spec.log {
-            session_dir::log(sd, l);
+            sd.append_log(l);
         }
 
         let mut set: Vec<(String, String)> = vec![
@@ -586,13 +669,13 @@ impl Session<'_> {
         ];
         set.extend(spec.env);
         // §8.4 "Set" for a member (AU58); for every other launch the filter removes both names.
-        if let Some(m) = &opts.member {
+        if let Some(m) = &member {
             set.push(("ZYGO_WORKSPACE".into(), m.ws_id.clone()));
             set.push(("ZYGO_PANE".into(), m.pane.clone()));
         }
         let (env, removed) = child_env(&opts.env, &self.cfg, &set);
         if !removed.is_empty() {
-            session_dir::log(sd, &format!("env: removed {}", removed.join(", ")));
+            sd.append_log(&format!("env: removed {}", removed.join(", ")));
         }
 
         if let Some(s) = signals::stopped() {
@@ -616,7 +699,10 @@ impl Session<'_> {
             }
         };
         marks.spawned.set(true);
-        match signals::wait(&mut child) {
+        let t = Instant::now();
+        let waited = signals::wait(&mut child);
+        marks.ran.set(Some(t.elapsed()));
+        match waited {
             Ok(st) => {
                 marks.signal.set(signal_of(st));
                 exit_code(st)
@@ -627,6 +713,30 @@ impl Session<'_> {
             }
         }
     }
+}
+
+/// The agent arguments of a resume of `id`, as [`Launcher::run`] builds them from `args` and
+/// `AgentSession::Resume(id)`: the adapter's resume tokens inserted by [`insert_session_args`]. Gives the arguments and
+/// the range of the inserted tokens. The printed resume command of a member uses it (AU61), so it cannot drift from
+/// the launch.
+pub fn resume_argv(adapter: &dyn AgentAdapter, args: &[String], id: &str) -> (Vec<String>, std::ops::Range<usize>) {
+    let mut a = args.to_vec();
+    let r = insert_session_args(adapter.agent(), &mut a, adapter.resume_args(id));
+    (a, r)
+}
+
+/// Inserts the agent session arguments `extra` into `args` (W§8.3, AU3) and gives the range of the inserted tokens.
+/// They go before the user's arguments, so before any `--`. For OpenCode, when the subcommand is `run`, they go right
+/// after it; the subcommand comes from `zygo_workspace::args::opencode_subcommand`, the walk that `events_off` uses
+/// (FIX-24 diff review round 3, finding 5).
+fn insert_session_args(agent: Agent, args: &mut Vec<String>, extra: Vec<String>) -> std::ops::Range<usize> {
+    let at = match agent {
+        Agent::ClaudeCode => 0,
+        Agent::OpenCode => zygo_workspace::args::opencode_subcommand(args).filter(|(_, s)| *s == "run").map_or(0, |(i, _)| i + 1),
+    };
+    let n = extra.len();
+    args.splice(at..at, extra);
+    at..at + n
 }
 
 #[cfg(feature = "test-hooks")]
@@ -690,7 +800,7 @@ fn finish(sd: &SessionDir, end: End, paths: &Paths) {
                 Err(e) => out.line(&format!("zygo: usage rows not fetched ({e}); zygo usage --sync retries")),
             }
             // S3: after an unreachable fetch DELETE would cost a second call bound; the server suspends the session
-            // after 5 min without a heartbeat and deletes it after the 24 h idle TTL (§7.2).
+            // after 5 min without a heartbeat and keeps it until a server restart (§7.2: no idle expiry, FIX-18).
             if !unreachable {
                 let _ = client.delete_session(&session);
             }

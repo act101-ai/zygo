@@ -52,24 +52,10 @@ pub(crate) fn open(paths: &Paths, session: &str, token: &str, url: &Url) -> anyh
 fn lock_or_log(sd: &SessionDir, r: Result<(), fs4::TryLockError>) -> std::io::Result<()> {
     match r {
         Err(fs4::TryLockError::Error(e)) => {
-            log(sd, &format!("pid not locked ({e}); zygo usage --sync does not count this session live"));
+            sd.append_log(&format!("pid not locked ({e}); zygo usage --sync does not count this session live"));
             Ok(())
         }
         r => r.map_err(std::io::Error::from),
-    }
-}
-
-/// Appends one line to the session log (0600 on unix); errors are ignored.
-pub(crate) fn log(sd: &SessionDir, line: &str) {
-    let mut o = std::fs::OpenOptions::new();
-    o.append(true).create(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600);
-    }
-    if let Ok(mut f) = o.open(sd.log()) {
-        let _ = writeln!(f, "{line}");
     }
 }
 
