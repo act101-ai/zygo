@@ -1,6 +1,6 @@
 # zygo phase 3 roadmap
 
-**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 and P3-15 not designed yet.
+**Status:** started 2026-11-22 (operator); P3-1 approved (spec named); P3-2 to P3-4 not designed yet. Output track added 2026-11-23 (operator); P3-5 to P3-7 not designed yet. Decision-record track added 2026-11-23 (operator); P3-8 to P3-10 not designed yet. Workspace-definition items added 2026-11-23 (operator); for P3-11 to P3-13 the spec conflicts were resolved with the operator on 2026-11-23; the specs are to write. Review-finding items added 2026-11-23 (operator); P3-14 and P3-15 not designed yet. Plan of work set 2026-11-24 (operator): six specs in a fixed order, then one work graph for the phase (see "Plan of work").
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`), `docs/specs/2026-11-20-workspaces-design.md` (`W§n`), `docs/specs/2026-11-22-workspace-mail-design.md` (`M§n`), `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`).
 
 ## Intent
@@ -44,6 +44,22 @@ The gaps today (verified 2026-11-23): a subagent that is not a `zygo-<role>` age
 | P3-13 | Session run time in the status line and in `zygo status`, with a format that holds for days | none | to write |
 | P3-14 | Session rules for each subagent: the mechanics text (§8.6) also reaches a subagent that is not a `zygo-<role>` agent | none | to write |
 | P3-15 | Session text after a compaction: a premise, a fixture and a test for each agent; a correction if the text is lost | none | to write |
+
+## Plan of work (operator, 2026-11-24)
+
+1. **One spec per track.** Each Phase 3 track gets one spec. The decision-record spec covers P3-8, P3-9 and P3-10 together.
+2. **One work graph.** One work graph covers all of Phase 3. It is made after all track specs are approved. A spec does not plan nodes.
+3. **A review gate per node.** Each work node gets its own review gate of up to 3 rounds (phase 2 had no per-node review). The P3-8 disposition rule applies at each gate: after round 3, a node passes only when each finding has exactly one disposition (fixed with a commit, rejected with a reason, or recorded with a DDR id), and no finding is of a class that stops for the operator.
+4. **One branch, one pull request.** Phase 3 is built on the branch `phase-3` and delivered as one pull request at the end.
+
+Spec order:
+
+1. Decision records (P3-8 to P3-10): `docs/specs/2026-11-24-decision-records-design.md`.
+2. Mail sync (P3-2 to P3-4).
+3. Output shaping (P3-5 to P3-7).
+4. Workspace definition (P3-11, P3-12).
+5. Session run time (P3-13 alone).
+6. Session text (P3-14, P3-15).
 
 ## P3-2 design notes (input for its spec)
 
