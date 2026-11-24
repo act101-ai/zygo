@@ -409,7 +409,7 @@ const KEEP: &[(&str, &str, &str)] = &[
     ("results off", "results", "now: off, threshold 16384"),
     ("results threshold 32768", "results", "now: on, threshold 32768"),
     ("units off", "units", "now: off"),
-    ("guards claims enforce", "guards", "now: claims enforce, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor"),
+    ("guards claims enforce", "guards", "now: claims enforce, scope monitor, navigation monitor, output monitor, trailers notify, repeat monitor, dispositions enforce"),
     ("redaction content off", "redaction", "now: secrets on, content off"),
 ];
 

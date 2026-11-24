@@ -523,7 +523,7 @@ impl FromStr for Level {
     }
 }
 
-pub const GUARDS: [&str; 6] = ["claims", "scope", "navigation", "output", "trailers", "repeat"];
+pub const GUARDS: [&str; 7] = ["claims", "scope", "navigation", "output", "trailers", "repeat", "dispositions"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -535,6 +535,7 @@ pub struct GuardsConfig {
     pub output: Level,
     pub repeat: Level,
     pub trailers: Level,
+    pub dispositions: Level,
 }
 
 impl Default for GuardsConfig {
@@ -547,6 +548,7 @@ impl Default for GuardsConfig {
             output: Level::Monitor,
             repeat: Level::Monitor,
             trailers: Level::Notify,
+            dispositions: Level::Enforce,
         }
     }
 }
@@ -560,6 +562,7 @@ impl GuardsConfig {
             "output" => &mut self.output,
             "trailers" => &mut self.trailers,
             "repeat" => &mut self.repeat,
+            "dispositions" => &mut self.dispositions,
             _ => return None,
         })
     }
@@ -572,6 +575,7 @@ impl GuardsConfig {
             "output" => self.output,
             "trailers" => self.trailers,
             "repeat" => self.repeat,
+            "dispositions" => self.dispositions,
             _ => return None,
         })
     }
