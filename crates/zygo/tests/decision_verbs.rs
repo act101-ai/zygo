@@ -26,7 +26,7 @@ fn plain(status: &str, extra: &str) -> String {
 }
 const RATIFIED: &str = "reviewed = \"2026-11-30\"\nreview_note = \"\"\n";
 /// The git common dir of a test repository (no git runs) and the lock file `apply` takes in it.
-fn common(top: &Path) -> PathBuf { top.join(".git") }
+fn common(top: &Path) -> PathBuf { let c = top.join(".git"); fs::create_dir_all(&c).unwrap(); c }
 fn lock(top: &Path) -> PathBuf { lock_path(&common(top)) }
 fn dir(top: &Path) -> PathBuf { let d = top.join("docs/decisions"); fs::create_dir_all(&d).unwrap(); d }
 fn put(top: &Path, text: &str) -> PathBuf { let p = dir(top).join(format!("{ID}.md")); fs::write(&p, text).unwrap(); p }
@@ -158,6 +158,36 @@ fn overturn(reason: &str) -> Outcome { Outcome::Overturn { reason: reason.into()
         assert_eq!(fs::read_to_string(&p).unwrap(), plain("open", ""));
     }
 }
+/// `apply` with the lock file `l` fails with `Io` naming `l`, and the record and `docs/decisions` are unchanged.
+fn lock_fails(top: &Path, l: &Path) {
+    let p = put(top, &plain("open", ""));
+    let r = apply(&p, l, &fs::read(&p).unwrap(), &overturn("x"), TODAY);
+    let want = format!("zygo decision: cannot write {}: ", l.display());
+    assert!(matches!(&r, Err(EditError::Io(s)) if s.starts_with(&want)), "{r:?}");
+    assert_eq!(fs::read_to_string(&p).unwrap(), plain("open", ""));
+    let names: Vec<String> = fs::read_dir(dir(top)).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    assert_eq!(names, vec![format!("{ID}.md")]);
+}
+#[test] fn apply_with_a_lock_path_that_is_a_directory_is_io_and_changes_nothing() { // D§11.3 lock, D§14
+    let t = tempfile::tempdir().unwrap();
+    fs::create_dir_all(lock(t.path())).unwrap();
+    lock_fails(t.path(), &lock(t.path()));
+}
+#[test] fn apply_with_a_lock_parent_that_is_absent_or_a_file_is_io_and_changes_nothing() { // D§11.3 lock, D§14
+    let t = tempfile::tempdir().unwrap();
+    lock_fails(t.path(), &lock_path(&t.path().join("absent")));                // the common dir is not created
+    fs::write(t.path().join("file"), "").unwrap();
+    lock_fails(t.path(), &lock_path(&t.path().join("file")));
+}
+#[cfg(unix)]
+#[test] fn apply_with_a_lock_path_that_is_a_symlink_is_io_and_changes_nothing() { // D§11.3 lock: no link followed
+    let t = tempfile::tempdir().unwrap();
+    let target = t.path().join("target");
+    fs::write(&target, "").unwrap();
+    std::os::unix::fs::symlink(&target, lock(t.path())).unwrap();
+    lock_fails(t.path(), &lock(t.path()));
+    assert_eq!(fs::read(&target).unwrap(), b"");
+}
 
 const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes]\n";
 struct Ran { code: i32, out: String, err: String }
@@ -199,7 +229,8 @@ impl Read for EditOnRead {
     let t = tempfile::tempdir().unwrap();
     let p = put(t.path(), &plain("open", ""));
     assert_eq!(run(t.path(), &["ratify", ID, "--note", "ok", "--yes"]).code, 0);
-    assert!(lock(t.path()).is_file());                                         // the CLI locks <common>/zygo/decisions.lock
+    assert_eq!(lock(t.path()), t.path().join(".git/zygo-decisions.lock"));
+    assert!(lock(t.path()).is_file());                                         // the CLI locks <common>/zygo-decisions.lock
     assert_eq!(fs::read_dir(dir(t.path())).unwrap().count(), 1);               // and leaves only the record in docs/decisions
     assert_eq!(fs::read_to_string(&p).unwrap(), plain("ratified", "reviewed = \"2026-12-01\"\nreview_note = \"ok\"\n"));
     assert_eq!(run(t.path(), &["overturn", ID, "--reason", "wrong", "--yes"]).code, 0);   // ratified without promoted_to

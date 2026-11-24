@@ -461,7 +461,7 @@ A crash or `q` loses nothing: each outcome is in its file, and the next `review`
 
 **(operator)** A record never becomes a rule without this review. Only `ratify --promote rule` writes `promoted_to = "rule"`, and D§6.6 forbids agents to write it. The node that writes the rule cites the record and its `reviewed` date, which the rule clause of the skills accepts as the operator's approval (execute-work `SKILL.md:8-15`).
 
-**(author)** Before each write the verb reads the file again. When its bytes differ from what the verb showed, it writes nothing and prints `<id> changed since it was shown; skipped`. This covers two reviews at once and an edit during a review. The write is a temporary file in `docs/decisions/` and a rename, so a crash leaves the old file or the new one.
+**(author)** Before each write the verb reads the file again. When its bytes differ from what the verb showed, it writes nothing and prints `<id> changed since it was shown; skipped`. This covers two reviews at once and an edit during a review. The write is a temporary file in `docs/decisions/` and a rename, so a crash leaves the old file or the new one. The verb holds an exclusive lock on `<git common dir>/zygo-decisions.lock` from before the re-read until after the rename, so of two writers of one record only one writes; the other waits, reads the renamed file and skips it. The lock file is never written, renamed or removed, and it is not the record: the rename replaces the record, and on Windows a lock on the record blocks reads of it. `ratify` and `overturn` therefore need write access to the git common dir, the same as `zygo-work` in the git common dir; without it they print `zygo decision: cannot write <lock path>: <error>` and change nothing.
 
 ## 12. Changes outside this repository
 
@@ -581,3 +581,4 @@ The verdict tests use a git fixture repository with linked checkouts. The git-fa
 
 - 2026-11-24 — D§6.2 — author's call — the example commit had 41 hex characters; D§6.3 allows 40 or 64, so it is cut to 40 (found while planning phase3 DR-1).
 - 2026-11-24 — D§17 #4 — author's call — with each record printed once at its smallest depth (D§11.2), 3 dependents at depths 1, 2, 3 cannot include one reached on two paths; the case now has a fourth record at depth 3 (found while planning phase3 DR-2).
+- 2026-11-24 · D§11.3 · author's call · name the writer lock and its location (Windows mandatory locks, DR-5 review round 2)

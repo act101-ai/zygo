@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/2026-11-24-decision-records-design.md` D§11.1, D§11.3 (Ratify, Promote, Overturn; the re-read before each write; temporary file and rename), D§10.1 (rows `ratify`, `overturn`; `--promote` without `--as`; the refusal texts), D§6.6 (operator rows; overturn of a promoted record refused), D§6.2 (`toml_edit`: unknown keys, comments and body byte-equal), D-C5, D§14 (column `review, ratify, overturn`)
 **Files:** `crates/zygo-work/src/decisions/mod.rs`, `crates/zygo-work/src/decisions/edit.rs`, `crates/zygo/src/cmd/decision.rs`, `crates/zygo/tests/decision_verbs.rs`, `crates/zygo-work/Cargo.toml`, `Cargo.lock`, `crates/zygo/tests/decision_cli.rs`, `crates/zygo/tests/decision_new.rs`
 **Consumes:** `run_with` (DR-3), `DecisionIo` (DR-3), `read_dir` (DR-2), `parse_record` (DR-1), `Record` (DR-1), `Status` (DR-1)
-**Produces:** `decisions::edit::Promotion` (`Adr | Spec | Rule`); `decisions::edit::Outcome` (`Ratify { note: String, promote: Option<(Promotion, String)> } | Overturn { reason: String }`); `decisions::edit::EditError` (`Changed | Refused(String) | Io(String)`); `decisions::edit::apply(path: &Path, shown: &[u8], outcome: &Outcome, today: &str) -> Result<(), EditError>` (re-reads the file; `Changed` when its bytes differ from `shown`; writes a temporary file in `docs/decisions/` and renames it); `decisions::edit::allowed(r: &Record, outcome: &Outcome) -> Result<(), String>`; `ratify` and `overturn` (the subcommands `zygo decision ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes]` and `zygo decision overturn <id> --reason <text> [--yes]`)
+**Produces:** `decisions::edit::Promotion` (`Adr | Spec | Rule`); `decisions::edit::Outcome` (`Ratify { note: String, promote: Option<(Promotion, String)> } | Overturn { reason: String }`); `decisions::edit::EditError` (`Changed | Refused(String) | Io(String)`); `decisions::edit::apply(path: &Path, lock: &Path, shown: &[u8], outcome: &Outcome, today: &str) -> Result<(), EditError>` (locks `lock` from before the re-read until after the rename; re-reads the file; `Changed` when its bytes differ from `shown`; writes a temporary file in `docs/decisions/` and renames it); `decisions::edit::lock_path(common_dir: &Path) -> PathBuf` (`<common_dir>/zygo-decisions.lock`); `decisions::edit::allowed(r: &Record, outcome: &Outcome) -> Result<(), String>`; `ratify` and `overturn` (the subcommands `zygo decision ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes]` and `zygo decision overturn <id> --reason <text> [--yes]`)
 **Acceptance:** `cargo test -p zygo --locked --test decision_verbs` → all pass. Covers spec Acceptance #14 (`ratify --promote rule --as <text> --yes` writes `status`, `reviewed`, `promoted_to`, `promotion` and keeps unknown keys, comments and the body byte-equal; `overturn` of that record exits 1 with `zygo decision: <id> is promoted; remove the promotion by hand first` and changes nothing); `ratify` and `overturn` exit 2 with `zygo decision <verb>: run it in your own shell, not in an agent session` when `ZYGO_SESSION_DIR` is set; `ratify` of a non-`open` record exits 1 with `zygo decision: <id> is <status>`; `--promote` without `--as` exits 2; `overturn` without a non-empty `--reason` is refused; without `--yes`, `n` at the `[y/N]` prompt changes nothing; `apply` returns `Changed` and leaves the file byte-equal when the file changed after it was shown.
 
 ## Plan
@@ -62,13 +62,21 @@ pub enum EditError {
     Io(String),
 }
 /// D§6.6 operator rows. Ratify: `status` must be `open`. Overturn: `status` must be `open` or `ratified`, and
-/// `promoted_to` absent. Err lines: `zygo decision: <id> is <status>` and
-/// `zygo decision: <id> is promoted; remove the promotion by hand first` (the status test first).
+/// `promoted_to` absent. D§11.3: the promotion text and the reason are not empty (no trim, as the CLI). Err lines:
+/// `zygo decision: <id> is <status>`, `zygo decision: <id> is promoted; remove the promotion by hand first`,
+/// `zygo decision: <id>: the promotion text is empty` and `zygo decision: <id>: the reason is empty`, in this order.
 pub fn allowed(r: &Record, outcome: &Outcome) -> Result<(), String>;
-/// Re-reads `path` with `read_bytes`; `Changed` when the bytes differ from `shown`; else checks `parse_record` and
-/// `allowed`, sets the outcome keys with `toml_edit`, checks the result with `parse_record`, writes
-/// `<dir>/<id>.<ULID>.tmp` (create_new, write_all, sync_all) and renames it to `path`.
-pub fn apply(path: &Path, shown: &[u8], outcome: &Outcome, today: &str) -> Result<(), EditError>;
+/// Takes an exclusive lock on `lock` (the caller gives [`lock_path`] of the repository's git common dir), then
+/// re-reads `path` with `read_bytes`; `Changed` when the bytes differ from `shown`; else checks `parse_record` and
+/// [`allowed`], refuses a front matter that mixes CRLF and LF lines, sets the outcome keys with `toml_edit` (D§6.2:
+/// unknown keys, comments and the body stay byte-equal), checks the result with `parse_record`, writes
+/// `<dir>/<id>.<ULID>.tmp` (create_new, write_all, sync_all) and renames it to `path` (D§11.3). A failed write removes
+/// the temporary file (best effort). The lock is held until after the rename, so of two zygo processes only one
+/// writes: the other waits, re-reads the renamed file and gets `Changed`.
+pub fn apply(path: &Path, lock: &Path, shown: &[u8], outcome: &Outcome, today: &str) -> Result<(), EditError>;
+/// The lock file of [`apply`] for a repository: `<common_dir>/zygo-decisions.lock`, a flat file in the git common dir
+/// beside `zygo-work`. It is never written, renamed or removed. Its parent is not created.
+pub fn lock_path(common_dir: &Path) -> PathBuf;
 ```
 
 `allowed` is an addition to the Produces line. The CLI refuses before the prompt, and `apply` (and DR-6) refuse again after the re-read; one function owns that rule.
@@ -90,11 +98,13 @@ The algorithm of `apply` after the checks (the tests do not decide it):
 10. `parse_record(stem, new)` Err(faults) → `Refused("zygo decision: <id>: the outcome would make the record malformed: <faults joined by "; ">")`.
 
 Error lines:
+- `Io("zygo decision: cannot write <lock>: <io error>")` when the lock file cannot be opened, created or locked: its parent is absent or not a directory, it is a directory, or it is a symlink (no link is followed on unix).
 - `Io("zygo decision: cannot read <path>: <faults joined by "; ">")` for the re-read.
 - `Io("zygo decision: cannot write <path>: <io error>")` for the temporary file (its path) or for the rename (`path`). On a write failure the temporary file is removed (best effort).
 - `Refused("zygo decision: <id> is not a valid record")` when the re-read bytes do not parse.
 
 `crates/zygo/src/cmd/decision.rs`:
+- `pub struct Repo` field `top` became `pub checkout: &'a dyn Fn() -> Option<(PathBuf, PathBuf)>`: the repository top of the current directory and its git common dir; `None` outside a git repository. `run_with` gives `repo::checkout(cwd, …).map(|c| (c.top, c.common_dir))`.
 - `Sub` gains `Decide(DecideArgs)`, with `struct DecideArgs { verb: &'static str, id: String, outcome: Outcome, yes: bool }` (`verb` is `"ratify"` or `"overturn"`).
 - `parse` gains `("ratify", [id, rest @ ..])` and `("overturn", [id, rest @ ..])` through `fn parse_decide(verb: &'static str, id: &str, rest: &[String]) -> Option<DecideArgs>`. A later flag replaces an earlier one. `parse_decide` gives `None` (`USAGE`, exit 2) when:
   - there is an unknown flag or a missing value;
@@ -107,16 +117,16 @@ Error lines:
 - The order in `run_in`:
   1. help, then parse.
   2. `Decide` with `session_dir(env).is_some()` → `zygo decision <verb>: run it in your own shell, not in an agent session`, exit 2.
-  3. `top()`.
+  3. `(repo.checkout)()` gives `(top, common_dir)`; `None` → `zygo decision: not in a git repository`, exit 2.
   4. `Decide` with `fs::symlink_metadata(top.join(DIR))` giving NotFound → stdout `no open records`, exit 0 (D§14 row 1).
   5. `read_dir` (as now).
-  6. `fn decide(repo: &Repo, top: &Path, set: &RecordSet, a: &DecideArgs, io: &mut DecisionIo) -> i32`.
+  6. `fn decide(repo: &Repo, top: &Path, lock: &Path, set: &RecordSet, a: &DecideArgs, io: &mut DecisionIo) -> i32`, called with `lock = lock_path(&common_dir)`.
 - `decide`:
   1. `find` → exit 1.
   2. `shown = read_bytes(<top>/docs/decisions/<id>.md)`. When it fails, or `parse_record(id, shown)` fails → `zygo decision: <id> is not a valid record`, exit 1.
   3. `allowed(&rec, &a.outcome)` Err → that line, exit 1.
   4. Unless `--yes`: print `shown` with the `show` loop (each line through `esc`), then write `<verb> <id>? [y/N] ` (no newline) to stdout and flush. Read one line. Unless the trimmed answer is `y` or `yes` (ASCII case-insensitive) → stderr `zygo decision: <id> not changed`, exit 1. EOF counts as no.
-  5. `apply(path, &shown, &a.outcome, &(repo.today)())`:
+  5. `apply(&path, lock, &shown, &a.outcome, &(repo.today)())`:
      - Ok → stdout `esc(path)`, exit 0.
      - `Changed` → stderr `<id> changed since it was shown; skipped`, exit 1.
      - `Refused(s)` or `Io(s)` → stderr `s`, exit 1.
@@ -509,3 +519,10 @@ Tests:
 - `ratify_and_overturn_write_their_keys` checks that the CLI creates `<common>/zygo/decisions.lock` and leaves only the record in `docs/decisions/`.
 - Manual run of the built binary (not in CI, because tests that spawn real git are `#[ignore]` timing tests here): `decision ratify --yes` in a linked worktree of a scratch repository created `<main>/.git/zygo/decisions.lock`. `git status` in the worktree showed only the changed record, and the main checkout was clean.
 - Mutation check: with `apply_with` locking the record again, `the_record_is_locked_from_the_re_read_to_the_rename` fails.
+
+Fixes after the review of `d17b1f0..4f86964`:
+1. The lock span is proven. `apply_with` gained a `before_read` seam, called after the lock is taken and before the re-read. `the_lock_is_held_before_the_re_read` checks there that a second handle's `try_lock` on the lock file gets `WouldBlock`. Mutation run: with `let _lock = lock(lock_file)?;` moved to just after the `bytes != shown` compare, the test failed (`left: Some(false)`, `right: Some(true)`); with the mutation reverted, it passed.
+2. Flat lock file: `lock_path(common)` is `<common>/zygo-decisions.lock`, beside `<common>/zygo-work` (`crates/zygo-work/src/current.rs:67`). `lock` no longer calls `create_dir_all`. `the_record_is_locked_from_the_re_read_to_the_rename` and `ratify_and_overturn_write_their_keys` check the new path. The test common dirs are created by the tests.
+3. Lock failure paths, each `Io` with `zygo decision: cannot write <lock>: …`, the record byte-equal and only the record in `docs/decisions/`: `apply_with_a_lock_path_that_is_a_directory_is_io_and_changes_nothing`, `apply_with_a_lock_parent_that_is_absent_or_a_file_is_io_and_changes_nothing` (both cases, both portable), and `apply_with_a_lock_path_that_is_a_symlink_is_io_and_changes_nothing` (`#[cfg(unix)]`; the symlink target stays empty).
+4. Contract: the Produces line and "Interface (Produces, final)" now give `apply(path, lock, shown, outcome, today)`, `lock_path`, `Repo.checkout` returning `(top, common_dir)`, `decide` with `lock`, the lock error line and the current `allowed` text, as in the code.
+5. Spec: D§11.3 names the writer lock `<git common dir>/zygo-decisions.lock`, the span it covers (from the re-read to after the rename) and the write access to the git common dir that ratify and overturn need. One line added to `## Change log`.
