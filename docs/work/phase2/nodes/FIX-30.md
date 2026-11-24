@@ -93,11 +93,10 @@ Consumed (moved word for word from the header Consumes line; no node that FIX-30
 
 ### Rules for the implementer
 
-- Work in the node checkout under `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktrees/phase2/`. Every cargo command sets `CARGO_TARGET_DIR=/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktrees/phase2/FIX-30-target`. Never build under `/tmp`.
-- tmux only on private sockets (`PrivateServer`, `-S` or `-L`). The new tests use stand-in tmux scripts and start no server.
+- Work in the node checkout under `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktrees/phase2/`.
+- The new tests use stand-in tmux scripts and start no server.
 - Scoped test runs only (`-p zygo-workspace`, `-p zygo --test workspace_member`, `-p zygo --test session_verbs`, `-p zygo --lib cmd::member`).
 - No pipes and no filters (`head`, `tail`, `grep`, `sed`, `awk`, `cut`, `tee`, `rg`) on command output.
-- Do not run `cargo fmt`: the repository has no `rustfmt.toml`, and the code keeps lines longer than the rustfmt default.
 
 Below, `T` is `/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktrees/phase2/FIX-30-target`. `AU54_REASON` in the tests is the AU54 text without `zygo: `: `the zygo path or tmux socket path holds a quote, a backslash, a $ or a control character; workspaces cannot use it` (`mux/mod.rs:697-698`).
 

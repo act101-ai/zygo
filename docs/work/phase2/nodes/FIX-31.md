@@ -283,17 +283,15 @@ Produces: — (no public item is added or changed). Private items added in `args
 
 ### Implementer rules
 
-- Every cargo command sets `CARGO_TARGET_DIR=/home/kagemartin/Work/zygo/.claude/worktrees/zygo-phase-2/.worktrees/phase2/FIX-31-target`. Never build under `/tmp`.
 - Run only the scoped commands of each step. No pipe and no filter (`head`, `tail`, `grep`, `sed`, `awk`, `cut`, `tee`, `rg`) on any output.
-- Do not run Claude Code or OpenCode. No network request.
-- `fixtures/claude-code/options-2.1.331.txt` is the exact output of `python3 -I fixtures/claude-code/scan/mkfixture.py <binary> <output>`. Nobody edits it by hand; T8 checks its count.
+- `fixtures/claude-code/options-2.1.331.txt` is the exact output of `python3 -I fixtures/claude-code/scan/mkfixture.py <binary> <output>`; T8 checks its count.
 - The tmux tests of `workspace_member.rs` use the `Harness` of `crates/zygo/tests/common/workspace.rs` (private sockets). Without tmux 3.2 they print a skip reason and pass.
 - Operator rules: no TTL, expiry, limit or clean-up that ends user work. No Claude attribution. Commit trailers: `Zygo-Session: <session>` and `Zygo-Work: FIX-31`, each on its own line at the end.
-- Before step 1, if FIX-30 or E1/E2 merged after `e49d5c5`, read the AU30 row, the W§7.2 `member.launch` row and W§8.3 again. Each edit of step 8 anchors on the quoted text. If a quoted text is gone, stop and report.
+- Before step 1, if FIX-30 or E1/E2 merged after `e49d5c5`, read the AU30 row, the W§7.2 `member.launch` row and W§8.3 again. Each edit of step 8 anchors on the quoted text.
 
 ### Steps
 
-- [ ] 1. Premise re-check, no edit. Confirm P1 and P2 (`act101` `references` on `filter`, `filter_from`, `removed_labels`, `removable`, `opencode_subcommand`, `is_flag`, `session_flags`, `has_session_arg`) and PD5. If a new caller exists, stop and report.
+- [ ] 1. Premise re-check, no edit. Confirm P1 and P2 (`act101` `references` on `filter`, `filter_from`, `removed_labels`, `removable`, `opencode_subcommand`, `is_flag`, `session_flags`, `has_session_arg`) and PD5.
 - [ ] 2. Tests first, `crates/zygo-workspace/tests/args.rs`.
   - **Imports and helpers:**
     - Add `is_flag` to the `use zygo_workspace::args::{…}` line.

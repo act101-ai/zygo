@@ -6,6 +6,7 @@
 **Authority:** `docs/specs/2026-11-21-statusline-hud-design.md` (H§n), `docs/specs/2026-11-21-auto-update-design.md`, `docs/specs/2026-11-20-workspaces-design.md` (W§n), each approved by the operator 2026-11-21; `docs/specs/2026-11-18-zygo-design.md` (§n; base spec)
 **Run:** parallel=3 · worktrees=.worktrees/phase2/ · disk-per-node=—
 **Next:** E2, FIX-30, FIX-31, D1
+**Workflows:** no per-node review rounds and no separate plan review (operator: no review loops, see Log line 109); one whole-branch review at completion, triaged by the controller.
 
 To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 
@@ -36,8 +37,6 @@ To continue in any session: "resume the work in `docs/work/phase2/graph.md`".
 - Live checks (manual, recorded on the operator's machine): PRB-1, LIV-1, LIV-2, P1, P2, E2 — `docs/specs/2026-11-21-statusline-hud-design.md` H§12, H§14 #37, #38; `docs/specs/2026-11-20-workspaces-design.md` W§18 #76
 
 ## Review focus
-
-Convention: an acceptance item number (W§18, H§14, auto-update) appears only in its owner node's file; earlier nodes test their own contract and cite AU or section ids.
 
 1. CI runners without tmux (macos-latest has none by default) — tmux tests print a skip reason and pass — test in W3 (`require_tmux`) — operator, 2026-11-21
 2. `zygo-workspace` and `zygo-hooks` build on windows-latest with unix-only code behind `cfg` — compiles; verbs exit 2 — test in M1 (W§18 #64) — `docs/specs/2026-11-20-workspaces-design.md` OP5
@@ -261,3 +260,4 @@ Convention: an acceptance item number (W§18, H§14, auto-update) appears only i
 | 2026-11-23 | E1 round 3 review follow-up (remediations only): 8 of 9 closed; M7 deferred (test strength); no blocking open |
 | 2026-11-23 | E1 merged; acceptance 18/18 on tmux 3.8 and 3.2a |
 | 2026-11-23 | E2 in progress |
+| 2026-11-23 | Uncited agent rules removed from the header and the open node files (operator 2026-11-23); Workflows line records no review loops. |
