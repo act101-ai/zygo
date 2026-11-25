@@ -12,6 +12,7 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
 use zygo_hooks::statusline::data::collect;
 use zygo_hooks::statusline::phase::{read, valid_ws_id};
+use zygo_hooks::statusline::phase::{member_read, start, MemberRead};
 use zygo_hooks::statusline::render::{render, ColorMode, HudData, IconSet, RenderEnv, Style};
 
 const ID: &str = "0123456789abcdef";
@@ -378,5 +379,147 @@ fn h14_36_phase_colors_and_hidden_cases() {
         fx.state(id, DRAINING);
         fx.view(Some(id));
         assert_eq!(hidden(id), None);
+    }
+}
+
+// ---- the start-time rule (session run time design T§2.2, T§7 item 2) ----
+
+/// A ULID whose time is 1_800_000_000_000 ms: the session's own start is 1_800_000_000.
+const SID: &str = "01MCC5RM000000000000000000";
+const OWN: u64 = 1_800_000_000;
+/// Another zygo session.
+const OTHER: &str = "01MCC5RMZ70000000000000001";
+const PANE: &str = "kabcd2345";
+
+/// A member view of `ws_id`, pane `PANE`, zygo session `session` (in memory; `member_read` reads no `view.json`).
+fn member(session: &str, ws_id: &str) -> SessionView {
+    let member = Member { ws_id: ws_id.into(), pane: PANE.into(), ..Default::default() };
+    SessionView {
+        session: session.into(),
+        workspace: Some(ViewWorkspace { member, resume_note: None, ..Default::default() }),
+        ..Default::default()
+    }
+}
+
+/// A version-1 `workspace.json` in phase `up` whose `members` is `{PANE: record}`.
+fn with_record(record: serde_json::Value) -> Vec<u8> {
+    serde_json::json!({ "version": 1, "phase": "up", "members": { PANE: record } }).to_string().into_bytes()
+}
+
+/// The start for `record` in a member view of session `SID`.
+fn start_of(record: serde_json::Value) -> Option<u64> {
+    let fx = Fx::new();
+    fx.state(ID, &with_record(record));
+    start(&fx.paths(), &member(SID, ID))
+}
+
+#[test] // rule 4: `first_started_at` when the record names this session, before `pending`
+fn start_rule_first_started_at_when_the_record_names_this_session() {
+    let fx = Fx::new();
+    fx.state(ID, &with_record(serde_json::json!({ "zygo_session": SID, "first_started_at": 1_700_000_000u64 })));
+    assert_eq!(member_read(&fx.paths(), &member(SID, ID)), MemberRead { phase: Some("up".into()), start: Some(1_700_000_000) });
+    let p = serde_json::json!({ "zygo_session": SID, "started_at": 1_750_000_000u64 });
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": SID, "pending": p, "first_started_at": 1_700_000_000u64 })), Some(1_700_000_000));
+    // The record belongs through `pending` only (`record_of`, `crates/zygo-hooks/src/workspace.rs:480-482`).
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": OTHER, "pending": p, "first_started_at": 1_700_000_000u64 })), Some(1_700_000_000));
+}
+
+#[test] // rule 5: `pending.started_at` when the field is absent and `pending` names this session
+fn start_rule_pending_when_the_field_is_absent() {
+    let p = serde_json::json!({ "zygo_session": SID, "started_at": 1_750_000_000u64 });
+    assert_eq!(start_of(serde_json::json!({ "pending": p })), Some(1_750_000_000));
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": OTHER, "pending": p })), Some(1_750_000_000));
+}
+
+#[test] // rules 3 and 6: the session's own start
+fn start_rule_own_start_for_another_session_no_record_and_an_old_record() {
+    // A record of another session (graph row 61): neither `zygo_session` nor `pending.zygo_session` is `SID`.
+    let p = serde_json::json!({ "zygo_session": OTHER, "started_at": 1_750_000_000u64 });
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": OTHER, "pending": p, "first_started_at": 1_700_000_000u64 })), Some(OWN));
+    // No record: `members` without the pane, and no `members` key.
+    let fx = Fx::new();
+    fx.state(ID, br#"{"version":1,"phase":"up","members":{}}"#);
+    assert_eq!(start(&fx.paths(), &member(SID, ID)), Some(OWN));
+    fx.state(ID, br#"{"version":1,"phase":"up"}"#);
+    assert_eq!(start(&fx.paths(), &member(SID, ID)), Some(OWN));
+    // A committed old record: no field, no `pending` (T§4).
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": SID })), Some(OWN));
+}
+
+#[test] // T§2.2: a value of 0 counts as unknown
+fn start_rule_zero_counts_as_absent() {
+    let p = serde_json::json!({ "zygo_session": SID, "started_at": 1_750_000_000u64 });
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": SID, "pending": p, "first_started_at": 0 })), Some(1_750_000_000));
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": SID, "first_started_at": 0 })), Some(OWN));
+    let p0 = serde_json::json!({ "zygo_session": SID, "started_at": 0 });
+    assert_eq!(start_of(serde_json::json!({ "pending": p0 })), Some(OWN));
+    // An own start of 0 is none.
+    let fx = Fx::new();
+    assert_eq!(start(&fx.paths(), &SessionView { session: "00000000000000000000000000".into(), ..Default::default() }), None);
+}
+
+#[test] // rule 2 (graph row 62): any read failure gives no start, and no ULID fallback
+fn start_rule_no_start_when_workspace_json_fails_a_read_check() {
+    let rec = serde_json::json!({ "zygo_session": SID, "first_started_at": 1_700_000_000u64 });
+    let fx = Fx::new();
+    // A bad `ws_id`: no path is built, so no file is read.
+    fx.state(ID, &with_record(rec.clone()));
+    assert_eq!(member_read(&fx.paths(), &member(SID, "../x")), MemberRead::default());
+    // A missing file.
+    let fx = Fx::new();
+    assert_eq!(member_read(&fx.paths(), &member(SID, ID)), MemberRead::default());
+    // A file above 64 KiB, a parse error, `version` 2.
+    for body in [
+        padded(64 * 1024 + 1),
+        b"not json".to_vec(),
+        serde_json::json!({ "version": 2, "phase": "up", "members": { PANE: rec } }).to_string().into_bytes(),
+    ] {
+        fx.state(ID, &body);
+        assert_eq!(member_read(&fx.paths(), &member(SID, ID)), MemberRead::default());
+    }
+    // The pane's record does not decode: no start; the phase still shows.
+    for bad in [serde_json::json!({ "zygo_session": SID, "first_started_at": "x" }), serde_json::json!(7)] {
+        fx.state(ID, &with_record(bad));
+        assert_eq!(member_read(&fx.paths(), &member(SID, ID)), MemberRead { phase: Some("up".into()), start: None });
+    }
+    // `members` is not an object: no start; the phase still shows.
+    fx.state(ID, br#"{"version":1,"phase":"up","members":[]}"#);
+    assert_eq!(member_read(&fx.paths(), &member(SID, ID)), MemberRead { phase: Some("up".into()), start: None });
+}
+
+#[test] // rule 1: outside a workspace, the ULID time of `view.session`; no file read
+fn start_rule_outside_a_workspace() {
+    let fx = Fx::new();
+    let own = |s: &str| member_read(&fx.paths(), &SessionView { session: s.into(), ..Default::default() });
+    assert_eq!(own(SID), MemberRead { phase: None, start: Some(OWN) });
+    for bad in ["S1", "", "80000000000000000000000000"] {
+        assert_eq!(own(bad), MemberRead::default(), "{bad:?}");
+    }
+    assert!(!fx.paths().workspaces_dir().exists());
+}
+
+#[test] // rule 5 needs `pending.zygo_session == session`: a `pending` of another session gives the own start (rule 6)
+fn start_rule_pending_of_another_session_gives_the_own_start() {
+    let p = serde_json::json!({ "zygo_session": OTHER, "started_at": 1_750_000_000u64 });
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": SID, "pending": p })), Some(OWN));
+}
+
+/// `read` (H§7.6, AU25) reads only `version` and `phase`: a `members` value that the start rule cannot parse does not
+/// change the phase.
+#[test]
+fn read_keeps_the_phase_when_members_does_not_parse() {
+    let fx = Fx::new();
+    fx.view(Some(ID));
+    // A duplicate `members` key.
+    let dup = br#"{"version":1,"phase":"draining","members":{},"members":{}}"#.to_vec();
+    // `members` nested 129 levels deep (serde_json's recursion limit is 128).
+    let deep = format!(r#"{{"version":1,"phase":"draining","members":{}{}}}"#, "[".repeat(129), "]".repeat(129)).into_bytes();
+    // Bytes that are not UTF-8 in a string under `members`.
+    let mut bad_utf8 = br#"{"version":1,"phase":"draining","members":{"kabcd2345":{"zygo_session":""#.to_vec();
+    bad_utf8.extend_from_slice(&[0xff, 0xfe]);
+    bad_utf8.extend_from_slice(br#""}}}"#);
+    for (name, body) in [("duplicate", dup), ("deep", deep), ("not utf-8", bad_utf8)] {
+        fx.state(ID, &body);
+        assert_eq!(fx.read(), Some("draining".into()), "{name}");
     }
 }

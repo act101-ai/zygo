@@ -1584,7 +1584,7 @@ cwd = "branch:feature-x"
 #[test]
 fn workspace_and_loadout_defaults() {
     let c = Config::default();
-    assert_eq!(c.workspace, WorkspaceConfig { default_loadout: "solo".into(), drain_block_dispatch: true, drain_timeout: "10m".into() });
+    assert_eq!(c.workspace, WorkspaceConfig { default_loadout: "solo".into(), drain_block_dispatch: true, drain_timeout: "10m".into(), pool: None });
     assert_eq!(parse_duration(&c.workspace.drain_timeout), Some(std::time::Duration::from_secs(600)));
     assert!(c.loadout.is_empty());
     assert_eq!((BUILTIN_LOADOUT, LOADOUT_KINDS), ("solo", ["claude-code", "opencode", "shell"]));
@@ -1593,7 +1593,7 @@ fn workspace_and_loadout_defaults() {
     assert_eq!(cfg("[workspace]\ndrain_timeout = \"30s\"\n").workspace, WorkspaceConfig { drain_timeout: "30s".into(), ..c.workspace.clone() });
     assert_eq!(
         LoadoutPane::default(),
-        LoadoutPane { kind: String::new(), name: None, profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, cwd: None }
+        LoadoutPane { kind: String::new(), name: None, job: None, profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, pool: false, cwd: None }
     );
     assert_eq!(LoadoutWindow::default(), LoadoutWindow { name: None, layout: None, pane: vec![] });
     let m = load(&ctx(None, None, None)).unwrap();
@@ -1610,9 +1610,9 @@ fn loadout_parses_as_w11_writes_it() {
     assert_eq!(m.config.workspace, WorkspaceConfig::default());
     assert_eq!(m.config.loadout.keys().collect::<Vec<_>>(), ["pair"]);
     let agent = LoadoutPane {
-        kind: "claude-code".into(), name: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
+        kind: "claude-code".into(), name: None, job: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
         passthrough: false, server: Some("https://zygo.example".into()), compact: Some("600k".into()),
-        config_dir: Some("~/.claude-work".into()), cwd: None,
+        config_dir: Some("~/.claude-work".into()), pool: false, cwd: None,
     };
     let shell = LoadoutPane { kind: "shell".into(), cwd: Some("branch:feature-x".into()), ..LoadoutPane::default() };
     let window = LoadoutWindow { name: Some("agents".into()), layout: Some("main-vertical".into()), pane: vec![agent, shell] };
@@ -1720,7 +1720,7 @@ const MAIL_TEAM: &str = "config: [mail] in team config ignored; only user config
 
 #[test]
 fn mail_defaults_match_m11() {
-    let d = MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into() };
+    let d = MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into(), host: None, sync_gap: "60s".into(), workspace: BTreeMap::new() };
     assert_eq!(MailConfig::default(), d);
     assert_eq!(Config::default().mail, d);
     assert_eq!(cfg("").mail, d);
@@ -1802,6 +1802,7 @@ fn mail_check_refuses_bad_pane_names() { // M§6
     err(&(base() + LO + "kind = \"opencode\"\nname = \"\"\n"), &format!("{p}: {NAME_GRAMMAR}"));
     err(&(base() + LO + "kind = \"claude-code\"\nname = \"all\"\n"), &format!("{p}: is reserved"));
     err(&(base() + LO + "kind = \"opencode\"\nname = \"cli\"\n"), &format!("{p}: is reserved"));
+    err(&(base() + LO + "kind = \"claude-code\"\nname = \"zygo\"\n"), &format!("{p}: is reserved")); // S§7.2, M§6
     // unique in the loadout, across windows; the later pane is reported
     let twice = "kind = \"claude-code\"\nname = \"elena\"\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\nname = \"elena\"\n";
     err(&(base() + LO + twice), "loadout.pair.window[1].pane[0].name: is used by another pane in the loadout");

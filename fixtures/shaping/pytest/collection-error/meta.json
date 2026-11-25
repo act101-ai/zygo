@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "pytest -v --continue-on-collection-errors",
+   "event" : "PostToolUseFailure",
+   "exit" : 1,
+   "source" : "scratch pytest project: tests/test_calc.py (test_add and test_double, each parametrized over range(20)) and tests/test_text.py (test_upper over 8 words), plus tests/test_broken.py, which imports the missing module missingdep; COLUMNS=80, run by capture-shaping.sh in /repo",
+   "tool" : "pytest 9.0.3"
+}

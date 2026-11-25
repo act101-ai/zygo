@@ -1,11 +1,13 @@
 //! `zygo status` and `/zygo:status` (§17, §17.1).
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use zygo_config::Merged;
+use zygo_core::session_view::SessionView;
 use zygo_core::tokens::BYTES_PER_TOKEN;
-use zygo_hooks::statusline::render::spend_text;
+use zygo_hooks::statusline::phase;
+use zygo_hooks::statusline::render::{run_time_text, spend_text};
 use zygo_hooks::statusline::{pct, short, trimmed};
 use zygo_plugins::check::esc;
 use zygo_proxy::client::{ClientError, SessionClient, SessionStatus, WindowArg};
@@ -39,7 +41,7 @@ pub(crate) fn session_status(ctx: &VerbCtx) -> Option<Result<SessionStatus, Clie
     Some(SessionClient::from_session_dir(&dir.root).and_then(|c| c.timeout(client_timeout(ctx.slash)).status()))
 }
 
-pub fn run(ctx: &VerbCtx, repo: Option<&Path>, hide: bool) -> anyhow::Result<String> {
+pub fn run(ctx: &VerbCtx, repo: Option<&Path>, hide: bool, now: u64) -> anyhow::Result<String> {
     let m = merged(ctx, repo)?;
     let mut lines = vec![match &m.config.server.url {
         Some(u) => format!("mode: serve {u}"),
@@ -47,9 +49,17 @@ pub fn run(ctx: &VerbCtx, repo: Option<&Path>, hide: bool) -> anyhow::Result<Str
     }];
     let tokens = |v: Option<u64>| v.map_or_else(|| "-".to_string(), short);
     let mut session = Vec::new();
+    // T§2.5: inside a session only; the T§2.2 start is local, so it needs no proxy; no start gives no line.
+    let runtime = ctx
+        .session_dir
+        .as_ref()
+        .and_then(|d| SessionView::load(d).ok())
+        .and_then(|v| phase::start(&ctx.paths, &v))
+        .map(|start| format!("runtime: {}", run_time_text(now.saturating_sub(start))));
     let (profile, work) = match session_status(ctx) {
         Some(Ok(s)) => {
             session.push(format!("session: {}", esc(&s.session)));
+            session.extend(runtime);
             if hide {
                 session.push(format!("context: {}", tokens(s.used_context)));
                 session.push(format!("compact: {}", if s.compact.is_some() { "override set" } else { "none" }));
@@ -76,6 +86,7 @@ pub fn run(ctx: &VerbCtx, repo: Option<&Path>, hide: bool) -> anyhow::Result<Str
         outside => {
             if let Some(Err(e)) = outside {
                 session.push(format!("session: unreachable ({})", esc(&e.to_string())));
+                session.extend(runtime);
             }
             let work = repo.and_then(|r| current::resolve(r, &m.config.work)).map(|w| w.unit());
             (m.config.user.default_profile.clone(), work)
@@ -89,7 +100,7 @@ pub fn run(ctx: &VerbCtx, repo: Option<&Path>, hide: bool) -> anyhow::Result<Str
 }
 
 pub fn verb(ctx: &VerbCtx, _args: &[String]) -> anyhow::Result<String> {
-    run(ctx, repo_top().as_deref(), hide_window(ctx))
+    run(ctx, repo_top().as_deref(), hide_window(ctx), SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()))
 }
 
 #[cfg(test)]
@@ -97,19 +108,22 @@ mod tests {
     use tempfile::TempDir;
     use zygo_proxy::client::{SessionClient, WindowArg};
 
+    use zygo_core::session_dir::SessionDir;
+    use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
+
     use super::*;
     use crate::cmd::compact::tests::{canned_session, ctx, dead_session, proxy};
 
     #[test]
     fn outside_a_session() {
         let d = TempDir::new().unwrap();
-        assert_eq!(run(&ctx(d.path(), None), None, false).unwrap(), "mode: local\nprofile: none\nwork: none\nrepo policy: defaults");
+        assert_eq!(run(&ctx(d.path(), None), None, false, 0).unwrap(), "mode: local\nprofile: none\nwork: none\nrepo policy: defaults");
         std::fs::write(d.path().join("config.toml"), "[server]\nurl = \"https://zygo.example\"\n").unwrap();
-        let e = run(&ctx(d.path(), None), None, false).unwrap_err().to_string();
+        let e = run(&ctx(d.path(), None), None, false, 0).unwrap_err().to_string();
         assert_eq!(e, "zygo status: serve mode needs a team token: [server] token is not set or names an empty value");
         let dir = d.path().join("s");
         std::fs::create_dir_all(&dir).unwrap();
-        let out = run(&ctx(d.path(), Some(&dir)), None, false).unwrap();
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, 0).unwrap();
         assert_eq!(out.lines().next(), Some("mode: serve https://zygo.example"));
         assert!(!out.contains("spend:"), "{out}"); // AU26: no spend line outside a session
     }
@@ -120,14 +134,14 @@ mod tests {
         let (_h, id, dir) = proxy(d.path());
         SessionClient::from_session_dir(&dir).unwrap().set_compact(WindowArg::Tokens(600_000)).unwrap();
         let c = ctx(d.path(), Some(&dir));
-        let out = run(&c, None, false).unwrap();
+        let out = run(&c, None, false, 0).unwrap();
         let session = format!("session: {id}");
         // No usage store yet: the trimmed count is unknown. No request yet: the spend is `$0.00` (AU15).
         for l in ["profile: none", "work: ENG-42", &session, "context: -/600k", "compact: 600k", "savings: cache -, trimmed - tok", "spend: $0.00"] {
             assert!(out.lines().any(|x| x == l), "{l}: {out}");
         }
         assert!(out.ends_with("\nsavings: cache -, trimmed - tok\nspend: $0.00"), "{out}");
-        let out = run(&c, None, true).unwrap();
+        let out = run(&c, None, true, 0).unwrap();
         for l in ["context: -", "compact: override set"] {
             assert!(out.lines().any(|x| x == l), "{l}: {out}");
         }
@@ -164,14 +178,14 @@ mod tests {
         trim(d.path(), "S1", 100_000, 7_840);
         trim(d.path(), "other", 4_000, 0);
         for hide in [false, true] {
-            let out = run(&ctx(d.path(), Some(&dir)), None, hide).unwrap();
+            let out = run(&ctx(d.path(), Some(&dir)), None, hide, 0).unwrap();
             assert!(out.ends_with("\nsavings: cache 92%, trimmed 23k tok\nspend: $3.41"), "{out}");
             assert!(!out.contains("bytes"), "{out}");
         }
         // Estimated tokens are `ceil(bytes ÷ 4)`: 5 bytes are 2 tokens.
         let dir = canned_session(d.path(), "S2", 200, reply("S2", serde_json::json!({})));
         trim(d.path(), "S2", 5, 0);
-        let out = run(&ctx(d.path(), Some(&dir)), None, false).unwrap();
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, 0).unwrap();
         assert!(out.lines().any(|l| l == "savings: cache 92%, trimmed 2 tok"), "{out}");
     }
 
@@ -190,7 +204,7 @@ mod tests {
         ];
         for (id, extra, want) in cases {
             let dir = canned_session(d.path(), id, 200, reply(id, extra));
-            let out = run(&ctx(d.path(), Some(&dir)), None, false).unwrap();
+            let out = run(&ctx(d.path(), Some(&dir)), None, false, 0).unwrap();
             let spend: Vec<&str> = out.lines().filter(|l| l.starts_with("spend:")).collect();
             assert_eq!(spend, want.into_iter().collect::<Vec<_>>(), "{id}: {out}");
         }
@@ -200,7 +214,7 @@ mod tests {
     fn unreachable_session() {
         let d = TempDir::new().unwrap();
         let dir = dead_session(d.path(), "S1");
-        let out = run(&ctx(d.path(), Some(&dir)), None, false).unwrap();
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, 0).unwrap();
         assert!(out.lines().any(|l| l.starts_with("session: unreachable (zygo proxy unreachable")), "{out}");
         assert!(!out.contains("spend:") && !out.contains("savings:"), "{out}");
     }
@@ -215,15 +229,99 @@ mod tests {
         .to_string();
         let dir = canned_session(d.path(), "S1", 200, st);
         assert_eq!(
-            run(&ctx(d.path(), Some(&dir)), None, false).unwrap(),
+            run(&ctx(d.path(), Some(&dir)), None, false, 0).unwrap(),
             "mode: local\nprofile: none\nwork: one\\ntwo\\u{1b}[31m\nrepo policy: defaults\nsession: S1\\u{1b}[31m\n\
              context: -/-\ncompact: none\nsavings: cache -, trimmed - tok"
         );
         let body = serde_json::json!({ "error": { "type": "bad", "message": "one\ntwo\u{1b}[31m" } }).to_string();
         let dir = canned_session(d.path(), "S2", 400, body);
         assert_eq!(
-            run(&ctx(d.path(), Some(&dir)), None, false).unwrap(),
+            run(&ctx(d.path(), Some(&dir)), None, false, 0).unwrap(),
             "mode: local\nprofile: none\nwork: none\nrepo policy: defaults\nsession: unreachable (bad: one\\ntwo\\u{1b}[31m)"
         );
     } // mutations: `esc` removed at :50, :71 or :78
+
+    // ---- the `runtime:` line (session run time design T§2.5, T§7 items 3 and 8) ----
+
+    /// A ULID whose time is 1_800_000_000 s.
+    const SID: &str = "01MCC5RM000000000000000000";
+    const START: u64 = 1_800_000_000;
+
+    fn save_view(dir: &Path, view: SessionView) {
+        view.save(&SessionDir::new(dir.to_path_buf())).unwrap();
+    }
+
+    /// The line right after the first line that starts with `prefix`.
+    fn after<'a>(out: &'a str, prefix: &str) -> Option<&'a str> {
+        let mut it = out.lines().skip_while(|l| !l.starts_with(prefix));
+        it.next()?;
+        it.next()
+    }
+
+    #[test] // T§7 item 8: right after `session:`, with and without C7
+    fn runtime_line_follows_the_session_line() {
+        let d = TempDir::new().unwrap();
+        let dir = canned_session(d.path(), SID, 200, reply(SID, serde_json::json!({})));
+        save_view(&dir, SessionView { session: SID.into(), ..Default::default() });
+        for hide in [false, true] {
+            let out = run(&ctx(d.path(), Some(&dir)), None, hide, START + 187_200).unwrap();
+            assert_eq!(after(&out, "session: "), Some("runtime: 2d04h"), "{out}");
+            assert_eq!(out.lines().filter(|l| l.starts_with("runtime:")).count(), 1, "{out}");
+        }
+    }
+
+    #[test] // T§2.5: the start is local, so the line also follows `session: unreachable (…)`
+    fn runtime_line_follows_an_unreachable_session() {
+        let d = TempDir::new().unwrap();
+        let dir = dead_session(d.path(), SID);
+        save_view(&dir, SessionView { session: SID.into(), ..Default::default() });
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, START + 187_200).unwrap();
+        assert!(out.lines().any(|l| l.starts_with("session: unreachable (")), "{out}");
+        assert_eq!(after(&out, "session: unreachable ("), Some("runtime: 2d04h"), "{out}");
+    }
+
+    #[test] // T§7 item 3: start > now gives `0m`
+    fn runtime_line_clock_behind_start_is_0m() {
+        let d = TempDir::new().unwrap();
+        let dir = dead_session(d.path(), SID);
+        save_view(&dir, SessionView { session: SID.into(), ..Default::default() });
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, START - 1).unwrap();
+        assert_eq!(after(&out, "session: unreachable ("), Some("runtime: 0m"), "{out}");
+    }
+
+    #[test] // T§2.5: no line outside a session, and none with no start (T§2.2)
+    fn runtime_line_absent_outside_a_session_or_with_no_start() {
+        let d = TempDir::new().unwrap();
+        let out = run(&ctx(d.path(), None), None, false, START + 187_200).unwrap();
+        assert!(!out.contains("runtime:"), "{out}");
+        // No `view.json`; then a `session` that is not a ULID; then a member whose `workspace.json` is missing.
+        let dir = dead_session(d.path(), "S1");
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, START + 187_200).unwrap();
+        assert!(!out.contains("runtime:"), "{out}");
+        save_view(&dir, SessionView { session: "S1".into(), ..Default::default() });
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, START + 187_200).unwrap();
+        assert!(!out.contains("runtime:"), "{out}");
+        let member = Member { ws_id: "0123456789abcdef".into(), pane: "kabcd2345".into(), ..Default::default() };
+        let workspace = Some(ViewWorkspace { member, resume_note: None, ..Default::default() });
+        save_view(&dir, SessionView { session: SID.into(), workspace, ..Default::default() });
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, START + 187_200).unwrap();
+        assert!(!out.contains("runtime:"), "{out}");
+    }
+
+    #[test] // T§2.1: a member's line counts from `first_started_at`, through the one T§2.2 function
+    fn runtime_line_of_a_member_uses_first_started_at() {
+        let d = TempDir::new().unwrap();
+        let dir = dead_session(d.path(), SID);
+        let member = Member { ws_id: "0123456789abcdef".into(), pane: "kabcd2345".into(), ..Default::default() };
+        let workspace = Some(ViewWorkspace { member, resume_note: None, ..Default::default() });
+        save_view(&dir, SessionView { session: SID.into(), workspace, ..Default::default() });
+        let ws = crate::cmd::compact::tests::paths(d.path()).workspaces_dir().join("0123456789abcdef");
+        std::fs::create_dir_all(&ws).unwrap();
+        let body = serde_json::json!({
+            "version": 1, "phase": "up", "members": { "kabcd2345": { "zygo_session": SID, "first_started_at": START - 86_400 } }
+        });
+        std::fs::write(ws.join("workspace.json"), body.to_string()).unwrap();
+        let out = run(&ctx(d.path(), Some(&dir)), None, false, START + 187_200).unwrap();
+        assert_eq!(after(&out, "session: unreachable ("), Some("runtime: 3d04h"), "{out}");
+    }
 }

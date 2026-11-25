@@ -59,7 +59,7 @@ The direction **(operator)**: zygo shapes output in the `PostToolUse` trim hook,
 - **Context.** One conversation that the model sees: the main loop of a zygo session, or one subagent. Key: `(session, agent_id)`, with `agent_id` null for the main loop.
 - **Event.** Something that changes the context size: a **trim** (a shaped or size view replaced the raw output) or a **read-back** (a reply of `result_view`, `result_search` or `result_tree`).
 - **Carrying request.** A request of the same context, at or after the event, before the context is cut (O§6.3).
-- **Segment.** A part of a command between `;`, `&&`, `||` and newline, after the shell-word split of O§7.2.
+- **Segment.** A part of a command between `;`, `&&`, `||` and newline, after the shell-word split of O§7.2. A newline after a `|`, with only blanks, comments and newlines between them, does not end the segment: the pipeline goes on to the next line.
 - **Shaper.** One step of the pipeline of O§7.3. **Runner view.** A shaper for one test runner.
 - **Blank line.** A line that is empty or holds only ASCII space (`0x20`) and tab (`0x09`).
 - **Raw text.** The text the hook measures and stores (O§7.2).
@@ -197,9 +197,11 @@ The net figures are not in the status line:
 
 For the same reason, a Bash call is not shaped when its command may print a file **(lead)**. That is when the O§7.2 parse finds a file printer in any stage of any segment, at any depth:
 
-- file printers: `cat`, `head`, `tail`, `sed`, `awk`, `nl`, `bat`, `less`, `more`, `grep`, `rg`, `git show`, `git cat-file`;
-- places looked into: each segment and each pipeline stage; the string argument of `bash -c`, `sh -c`, `zsh -c` (parsed in turn); `( … )` subshells, `$( … )` and backticks; the command words after `xargs` and after `find … -exec` / `-execdir`;
-- a parse that is unsure (an unclosed quote, unbalanced brackets, a nesting deeper than 4, or a command over 4 KiB) counts as a file printer.
+- file printers: `cat`, `head`, `tail`, `sed`, `awk`, `nl`, `bat`, `less`, `more`, `grep`, `rg`, `git show`, `git cat-file`; and **(operator)** `egrep`, `fgrep`, `zcat`, `gawk`, `batcat`, `tac`, `git grep`, `git blame`, and `$(<f)`: a `$( … )` or backtick substitution whose text, after blanks and newlines, starts with one `<` or with `0<` (not `<<` or `<(`), which prints the file;
+- places looked into: each segment and each pipeline stage; the string argument of `bash -c`, `sh -c`, `zsh -c` (parsed in turn); **(operator)** the words after `eval` and one leading `--`, joined by single spaces (parsed in turn, as for `bash -c`); `( … )` subshells, `$( … )` and backticks; the command words after `xargs` and after `find … -exec` / `-execdir`;
+- a parse that is unsure (an unclosed quote, unbalanced brackets, a nesting deeper than 4, a command over 4 KiB, or **(operator)** a `bash`, `sh` or `zsh` stage after a `|` with no `-c` option, alone or in a cluster such as `-lc`, which runs a script that it reads from the pipe) counts as a file printer. The `-c` option is looked for among the leading options only: up to `--` or the first word that does not start with `-` or `+`; `-o`, `+o`, `-O` and `+O` take the next word.
+
+A stage made only of redirects, with an input redirect, prints that file in zsh (NULLCMD), so it is a file printer.
 
 Such a call keeps the §10.1 size view, with stdout only (as today). A pipeline such as `cargo test 2>&1 | tail -n 80` is thus not shaped: it is the cost of the rule, accepted because a missed file printer changes text the agent may edit.
 
@@ -207,7 +209,7 @@ Such a call keeps the §10.1 size view, with stdout only (as today). A pipeline 
 
 **(author)**
 
-- **Command.** `tool_input.command` when it is a string; else no command. Only its first 4 KiB is read. A shell-word split (single quotes, double quotes, backslash; it never fails) cuts it into segments, and each segment into pipeline stages at `|`. In a stage, leading `NAME=value` words and the wrappers `env`, `time`, `sudo`, `nice`, `command` are skipped. A program word is reduced to its base name.
+- **Command.** `tool_input.command` when it is a string; else no command. Only its first 4 KiB is read. A shell-word split (single quotes, double quotes, backslash; it never fails) cuts it into segments, and each segment into pipeline stages at `|`. In a stage, leading `NAME=value` words and the wrappers `env`, `time`, `sudo`, `nice`, `command`, `timeout`, `stdbuf`, `builtin` are skipped **(operator: `timeout`, `stdbuf`; author: `builtin`)**. A wrapper is skipped with its options and the argument of each option that takes one (`timeout -s KILL`, `stdbuf -o L`); after the options of `timeout`, its duration word is skipped too. A program word is reduced to its base name.
 - **Command name (stored).** From a closed list: `cargo`, `go`, `pytest`, `python`, `python3`, `uv`, `npm`, `pnpm`, `yarn`, `npx`, `node`, `make`, `just`, `git`, `gh`, `docker`, `kubectl`, `terraform`, `ls`, `find`, `tree`, `du`, `ps`, `cat`, `head`, `tail`, `sed`, `awk`, `grep`, `rg`, `jq`, `curl`. For `git`, `cargo`, `go`, `npm`, `pnpm`, `yarn`, `docker`, `kubectl` and `gh`, the next word is added when it is in that program's built-in subcommand list (for example `git diff`, `cargo test`); the builder writes these lists. The name is taken from the first segment that names a runner (O§7.6); else from the first segment whose first program is in the list; else `other`. So `cargo test || true` records `cargo test`, and `cd crates/x && git diff` records `git diff`. Nothing else of the command is stored (O-C2).
 - **Raw text, shaping on, Claude Code.** `stdout`; when `stderr` is not empty, then a newline if `stdout` is not empty and does not end in one, the line `[stderr]`, and `stderr`.
 - **Raw text, shaping on, OpenCode.** The plugin's `output.output` (`crates/zygo-core/src/hook_opencode.rs:42-49`), which holds both streams (premise PO3).
@@ -584,3 +586,5 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give or record the required bytes; the row now names `-- --color always` (colors libtest stdout), `--no-local` (a local clone prints no `\r` progress) and `git diff --color=always` (the recorded command) (found in phase3 OS-17). |
 | 2026-11-24 | O§8.2, O§8.3 | author's call | A case with no runner summary (libtest compile error, O§8.1) gets no change by O§7.6, so it cannot meet the 30 % failing floor or hold must_keep lines in a view; it is checked against the none row (found in phase3 OS-19). |
 | 2026-11-24 | O§8.1 | operator | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |
+| 2026-11-24 | O§7.1, O§7.2 | operator | The parse missed commands that print a file: the wrappers `timeout` and `stdbuf`, the printers `egrep`, `fgrep`, `zcat`, `gawk`, `batcat`, `tac`, `git grep`, `git blame` and `$(<f)`, an `eval` string, and a shell that runs a script from a pipe; the lists and the unsure parse now hold them (found in phase3 OS-11 review). |
+| 2026-11-24 | O§7.1, glossary | author's call | review of OS-40: newline after a pipe, backtick and 0< substitutions, eval --, builtin, -c only among leading options (the arguments of `-o`, `+o`, `-O`, `+O` skipped), redirect-only stage in zsh |

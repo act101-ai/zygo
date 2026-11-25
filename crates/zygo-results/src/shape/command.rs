@@ -47,16 +47,19 @@ pub const NAMES: &[&str] = &[
     "curl",
 ];
 
-/// Programs that may print a file (O§7.1); `git show` and `git cat-file` are found by subcommand.
+/// Programs that may print a file (O§7.1); `git show`, `git cat-file`, `git grep` and
+/// `git blame` are found by subcommand.
 const PRINTERS: &[&str] = &[
-    "cat", "head", "tail", "sed", "awk", "nl", "bat", "less", "more", "grep", "rg",
+    "cat", "head", "tail", "sed", "awk", "nl", "bat", "less", "more", "grep", "rg", "egrep",
+    "fgrep", "zcat", "gawk", "batcat", "tac",
 ];
 
-/// Wrappers that are skipped before the program, with their options that take an argument.
-/// O§7.2 lists the first five. `exec` and `nohup` are skipped too, for file printers only.
-const WRAPPERS: &[(&str, &[&str])] = &[
-    ("env", &["-u", "-C", "--unset", "--chdir"]),
-    ("time", &["-f", "-o", "--format", "--output"]),
+/// Wrappers that are skipped before the program, with their options that take an argument
+/// and the number of operand words skipped after the options.
+/// O§7.2 lists the first eight. `exec` and `nohup` are skipped too, for file printers only.
+const WRAPPERS: &[(&str, &[&str], usize)] = &[
+    ("env", &["-u", "-C", "--unset", "--chdir"], 0),
+    ("time", &["-f", "-o", "--format", "--output"], 0),
     (
         "sudo",
         &[
@@ -80,15 +83,25 @@ const WRAPPERS: &[(&str, &[&str])] = &[
             "--other-user",
             "--close-from",
         ],
+        0,
     ),
-    ("nice", &["-n", "--adjustment"]),
-    ("command", &[]),
-    ("exec", &["-a"]),
-    ("nohup", &[]),
+    ("nice", &["-n", "--adjustment"], 0),
+    ("command", &[], 0),
+    ("timeout", &["-k", "-s", "--kill-after", "--signal"], 1),
+    (
+        "stdbuf",
+        &["-i", "-o", "-e", "--input", "--output", "--error"],
+        0,
+    ),
+    ("builtin", &[], 0),
+    ("exec", &["-a"], 0),
+    ("nohup", &[], 0),
 ];
 
 /// The wrappers that O§7.2 lists; a stage behind any other skipped word gives no name or runner.
-const LISTED_WRAPPERS: &[&str] = &["env", "time", "sudo", "nice", "command"];
+const LISTED_WRAPPERS: &[&str] = &[
+    "env", "time", "sudo", "nice", "command", "timeout", "stdbuf", "builtin",
+];
 
 /// Reserved words that are skipped at the start of a stage, for file printers only.
 const RESERVED: &[&str] = &[
@@ -387,6 +400,9 @@ struct Stage {
     nested: Vec<Script>,
     /// Here-string (`<<<`) texts.
     here: Vec<String>,
+    /// The stage has an input redirect (`<f`, `<>f`); with no words, zsh prints the file
+    /// (NULLCMD, O§7.1).
+    input: bool,
 }
 
 #[derive(Default)]
@@ -395,6 +411,8 @@ struct Script {
     segments: Vec<Vec<Stage>>,
     /// Here-doc bodies, lexed as commands.
     bodies: Vec<Script>,
+    /// The script is a `$( … )` or backtick that starts with one `<` (`$(<f)`, O§7.1).
+    reads: bool,
 }
 
 /// What the next finished word is for.
@@ -439,7 +457,7 @@ impl Builder {
     fn end_stage(&mut self) {
         self.end_word();
         let st = take(&mut self.stage);
-        if !st.words.is_empty() || !st.nested.is_empty() || !st.here.is_empty() {
+        if !st.words.is_empty() || !st.nested.is_empty() || !st.here.is_empty() || st.input {
             self.seg.push(st);
         }
     }
@@ -529,6 +547,22 @@ impl Lexer {
                     } else {
                         self.i += if self.peek(1) == Some('&') { 2 } else { 1 };
                         b.end_stage();
+                        // The pipeline goes on over blanks, comments and newlines.
+                        loop {
+                            match self.peek(0) {
+                                Some(' ' | '\t' | '\r') => self.i += 1,
+                                Some('\n') => {
+                                    self.i += 1;
+                                    self.bodies(&mut b, depth);
+                                }
+                                Some('#') => {
+                                    while self.peek(0).is_some_and(|ch| ch != '\n') {
+                                        self.i += 1;
+                                    }
+                                }
+                                _ => break,
+                            }
+                        }
                     }
                 }
                 ')' => {
@@ -643,8 +677,10 @@ impl Lexer {
         let start = self.i;
         match self.peek(1) {
             Some('(') => {
+                let reads = reads(&self.c[self.i + 2..]);
                 self.i += 2;
-                let s = self.script(depth + 1, Some(')'));
+                let mut s = self.script(depth + 1, Some(')'));
+                s.reads = reads;
                 b.stage.nested.push(s);
                 self.raw(b, start);
             }
@@ -756,7 +792,8 @@ impl Lexer {
                 }
             }
         }
-        let s = lex(&inner, depth + 1, &mut self.unsure);
+        let mut s = lex(&inner, depth + 1, &mut self.unsure);
+        s.reads = reads(&inner.chars().collect::<Vec<_>>());
         b.stage.nested.push(s);
         self.raw(b, start);
     }
@@ -797,8 +834,12 @@ impl Lexer {
                         _ => Redir::Heredoc(false),
                     };
                 }
-                Some('&' | '>') => self.i += 1,
-                _ => {}
+                Some('&') => self.i += 1,
+                Some('>') => {
+                    self.i += 1;
+                    b.stage.input = true;
+                }
+                _ => b.stage.input = true,
             }
         } else if matches!(self.peek(0), Some('>' | '&' | '|')) {
             self.i += 1;
@@ -831,6 +872,19 @@ impl Lexer {
             b.script.bodies.push(s);
         }
     }
+}
+
+/// The text of a `$( … )` or backtick starts, after blanks and newlines, with one `<`,
+/// optionally after `0` (not `<<` or `<(`): it prints the file (O§7.1).
+fn reads(c: &[char]) -> bool {
+    let mut k = c
+        .iter()
+        .position(|ch| !matches!(ch, ' ' | '\t' | '\n'))
+        .unwrap_or(c.len());
+    if c.get(k) == Some(&'0') {
+        k += 1;
+    }
+    c.get(k) == Some(&'<') && !matches!(c.get(k + 1), Some('<' | '('))
 }
 
 /// Text after the last `/`.
@@ -926,7 +980,8 @@ fn argv(words: &[Word]) -> Argv<'_> {
             i += if t == "function" { 2 } else { 1 };
             continue;
         }
-        let Some(&(wrapper, takes)) = WRAPPERS.iter().find(|(n, _)| *n == base(t)) else {
+        let Some(&(wrapper, takes, operands)) = WRAPPERS.iter().find(|(n, _, _)| *n == base(t))
+        else {
             break;
         };
         listed &= LISTED_WRAPPERS.contains(&wrapper);
@@ -963,6 +1018,7 @@ fn argv(words: &[Word]) -> Argv<'_> {
                 listed,
             };
         }
+        i += operands;
     }
     Argv {
         args: &words[i.min(words.len())..],
@@ -1077,9 +1133,11 @@ impl Mode {
 }
 
 fn visit(s: &Script, depth: usize, mode: Mode, acc: &mut Acc) {
+    acc.file_printer |= s.reads;
     for seg in &s.segments {
         for (k, st) in seg.iter().enumerate() {
-            stage(&st.words, &st.here, depth, mode, k == 0, acc);
+            acc.file_printer |= st.input && st.words.is_empty();
+            stage(&st.words, &st.here, depth, mode, k, acc);
             for n in &st.nested {
                 visit(n, depth + 1, mode.child(), acc);
             }
@@ -1102,10 +1160,10 @@ fn inner(words: &[Word], depth: usize, mode: Mode, acc: &mut Acc) {
         acc.unsure = true;
         return;
     }
-    stage(words, &[], depth + 1, mode.child(), false, acc);
+    stage(words, &[], depth + 1, mode.child(), 0, acc);
 }
 
-fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool, acc: &mut Acc) {
+fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, acc: &mut Acc) {
     let a = argv(words);
     if let Some(s) = &a.split {
         nest(s, depth, mode, acc);
@@ -1129,7 +1187,7 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool,
                 acc.file_printer = true;
                 reuse = true;
             }
-            Some("cat-file") => acc.file_printer = true,
+            Some("cat-file" | "grep" | "blame") => acc.file_printer = true,
             Some("diff") => reuse = true,
             Some("log") if has(&["-p", "--patch"]) => reuse = true,
             Some("format-patch") if has(&["--stdout"]) => reuse = true,
@@ -1137,7 +1195,21 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool,
         },
         "diff" => reuse = true,
         "bash" | "sh" | "zsh" => {
-            let flag = rest.iter().position(|w| {
+            // `-c` is looked for among the leading options only: to `--` or the first word
+            // that is not an option. `-o`, `+o`, `-O`, `+O` take the next word.
+            let mut lead = 0;
+            while let Some(t) = rest.get(lead).map(|w| w.text.as_str()) {
+                if t == "--" || !(t.starts_with('-') || t.starts_with('+')) {
+                    break;
+                }
+                lead += if matches!(t, "-o" | "+o" | "-O" | "+O") {
+                    2
+                } else {
+                    1
+                };
+            }
+            let lead = lead.min(rest.len());
+            let flag = rest[..lead].iter().position(|w| {
                 let t = &w.text;
                 t.starts_with('-') && !t.starts_with("--") && t.contains('c')
             });
@@ -1149,6 +1221,21 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool,
             for h in here {
                 nest(h, depth, Mode::PrinterOnly, acc);
             }
+            if flag.is_none() && pos > 0 {
+                acc.unsure = true;
+            }
+        }
+        "eval" => {
+            let words = match rest.first() {
+                Some(w) if w.text == "--" => &rest[1..],
+                _ => rest,
+            };
+            let text = words
+                .iter()
+                .map(|w| w.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            nest(&text, depth, mode, acc);
         }
         "xargs" => {
             let mut i = 0;
@@ -1200,7 +1287,7 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool,
             acc.runner_name = Some(stored(name, rest));
         }
     }
-    if first && acc.list_name.is_none() && NAMES.contains(&name) {
+    if pos == 0 && acc.list_name.is_none() && NAMES.contains(&name) {
         acc.list_name = Some(stored(name, rest));
     }
 }

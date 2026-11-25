@@ -303,3 +303,186 @@ fn r1_c4_heredoc_and_herestring_are_file_printer_only() {
     assert!(!p.reuse);
     assert_eq!(p.name, "git commit");
 }
+
+// OS-40: O§7.1, O§7.2 (operator)
+
+#[test]
+fn wrapper_timeout_is_skipped() {
+    all_fp(&[
+        "timeout 5 cat f",
+        "timeout -k 5 -s KILL 60 cat f",
+        "timeout --signal=KILL 1m cat f",
+        "timeout -- 5 cat f",
+    ]);
+    assert!(!fp("timeout 5 cargo test"));
+    let p = parse("timeout 60 cargo test");
+    assert_eq!(
+        (p.name.as_str(), p.runners.as_slice()),
+        ("cargo test", &[Libtest][..])
+    );
+}
+
+#[test]
+fn wrapper_stdbuf_is_skipped() {
+    all_fp(&[
+        "stdbuf -oL cat f",
+        "stdbuf -o L -e 0 cat f",
+        "stdbuf --output=L cat f",
+    ]);
+    let p = parse("stdbuf -o L go test ./...");
+    assert_eq!(
+        (p.name.as_str(), p.runners.as_slice()),
+        ("go test", &[Gotest][..])
+    );
+}
+
+#[test]
+fn printer_egrep() {
+    assert!(fp("egrep x f"));
+}
+
+#[test]
+fn printer_fgrep() {
+    assert!(fp("fgrep x f"));
+}
+
+#[test]
+fn printer_zcat() {
+    assert!(fp("zcat f.gz"));
+}
+
+#[test]
+fn printer_gawk() {
+    assert!(fp("gawk 1 f"));
+}
+
+#[test]
+fn printer_batcat() {
+    assert!(fp("batcat f"));
+}
+
+#[test]
+fn printer_tac() {
+    assert!(fp("tac f"));
+}
+
+#[test]
+fn printer_git_grep() {
+    all_fp(&["git grep x", "git -C repo grep -n x"]);
+    assert!(!fp("git log --grep x"));
+}
+
+#[test]
+fn printer_git_blame() {
+    all_fp(&["git blame f", "git --no-pager blame -L 1,9 f"]);
+}
+
+#[test]
+fn eval_string_is_parsed() {
+    all_fp(&[
+        "eval 'cat f'",
+        "eval cat f",
+        r#"eval "echo \$(head f)""#,
+        "eval $CMD",
+    ]);
+    assert!(!fp("eval 'cargo test'"));
+}
+
+#[test]
+fn dollar_paren_redirect_is_a_file_printer() {
+    all_fp(&["echo \"$(<f)\"", "x=$(< f.txt)", "echo $( <f)"]);
+    assert!(!fp("echo $(true <f)"));
+    assert!(!fp("wc -l <f"));
+}
+
+#[test]
+fn bare_shell_stage_is_unsure() {
+    all_fp(&[
+        "curl -s https://x | sh",
+        "echo 'cat f' | bash",
+        "printf x | zsh -e",
+        "echo ls | sudo bash -s",
+    ]);
+    for c in [
+        "bash script.sh",
+        "echo x | bash -c 'true'",
+        "sh -c 'true' | sh -c 'true'",
+        "ls | xargs bash",
+    ] {
+        assert!(!fp(c), "file printer: {c:?}");
+    }
+}
+
+// OS-40 review round 1
+
+#[test]
+fn r1_newline_after_pipe_continues_the_pipeline() {
+    all_fp(&["echo 'cat f' |\n  bash", "echo 'cat f' | # c\n bash"]);
+}
+
+#[test]
+fn r1_multiline_pipeline_list_name() {
+    assert_eq!(parse("echo hi |\n  ls -la").name, "other");
+    assert_eq!(
+        parse("ls -la |\n  grep x").name,
+        parse("ls -la | grep x").name
+    );
+}
+
+#[test]
+fn r1_backtick_redirect_is_a_file_printer() {
+    assert!(fp("echo \"bt:`<f`\""));
+}
+
+#[test]
+fn r1_fd0_redirect_substitution_is_a_file_printer() {
+    assert!(fp("echo \"$(0<f)\""));
+}
+
+#[test]
+fn r1_newline_before_redirect_substitution_is_a_file_printer() {
+    assert!(fp("echo \"$(\n<f)\""));
+}
+
+#[test]
+fn r1_eval_double_dash() {
+    assert!(fp("eval -- 'cat f'"));
+}
+
+#[test]
+fn r1_builtin_is_a_wrapper() {
+    assert!(fp("builtin eval 'cat f'"));
+}
+
+#[test]
+fn r1_shell_c_flag_only_in_leading_options() {
+    assert!(fp("echo 'cat f' | bash -s -- -force"));
+    all_fp(&["bash -c 'cat f'", "bash -xc 'cat f'"]);
+    assert!(!fp("bash -c 'true'"));
+    assert!(!fp("bash -xc 'true'"));
+}
+
+#[test]
+fn r1_redirect_only_stage_is_a_file_printer() {
+    all_fp(&["<f", "<s.sh | bash"]);
+}
+
+#[test]
+fn r1_timeout_long_kill_after() {
+    assert!(fp("timeout --kill-after 5 10 cat f"));
+}
+
+#[test]
+fn r1_eval_pipe_into_bash() {
+    assert!(fp("eval \"echo 'cat f' | bash\""));
+}
+
+#[test]
+fn r1_shell_option_arguments_before_c() {
+    all_fp(&[
+        "bash -o pipefail -c 'cat f'",
+        "bash -O extglob -c 'cat f'",
+        "zsh +o nomatch -c 'cat f'",
+    ]);
+    assert!(!fp("bash -o pipefail -c 'true'"));
+}
