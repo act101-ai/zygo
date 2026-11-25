@@ -3,13 +3,16 @@
 # between (K-D25). PC10: the SessionStart hook's session_id against the rollout id, and
 # `codex resume <id>` (the TUI, on a pseudo-terminal) in a new CODEX_HOME whose sessions folder is a
 # symbolic link to a shared scratch store (K-D22); `codex exec resume` and a CODEX_HOME with no link
-# are recorded beside it. PC16: check_for_update_on_startup at its default and the CONNECT record of
-# the release-source request at a plain TUI start, refused by the mock.
-# Five runs (a..e) in one run folder against one mock with no rules (the default "ok" reply).
-# Writes fixtures/codex/workspace/, fixtures/codex/update/ and fixtures/codex/runs/resume/; prints
-# the two "Observed" lines of docs/work/phase4/nodes/PC-6.md last. Exit 0 whatever PC10 and PC16
-# measured; 1 on a harness failure ("codex resume: <why>"); 3 on a mock abort.
-# Wait bounds (0.5 s polls up to a limit) are observation limits, not assertions (K-C5).
+# are recorded beside it. PC16: check_for_update_on_startup at its default and the release-source
+# request at a plain TUI start (run e): the CONNECT records of run e that are absent from a control
+# TUI run with the key false (run f) and from the exec runs, refused by the mock.
+# Six runs (a..f) in one run folder against one mock with no rules (the default "ok" reply); each
+# TUI run passes --no-daemon (no shared background server outside the run folder).
+# Writes fixtures/codex/workspace/, fixtures/codex/update/ and fixtures/codex/runs/resume/; one UUID
+# mapping (uuid-NNNN) covers all of them, so equal placeholders are equal ids. Prints the two
+# "Observed" lines of docs/work/phase4/nodes/PC-6.md last. Exit 0 whatever PC10 and PC16 measured;
+# 1 on a harness failure ("codex resume: <why>", a run the harness refused among them); 3 on a
+# mock abort. Wait bounds (0.5 s polls up to a limit) are observation limits, not assertions (K-C5).
 # It kills only processes whose command line holds its own $RUN/codex-pkg.
 PREMISES_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC2034  # read by lib.sh
@@ -17,6 +20,7 @@ N2_AGENTS=codex
 # shellcheck disable=SC1091  # lib.sh is linted on its own
 . "$PREMISES_DIR/lib.sh"
 T1=pc10-tracer-one T2=pc10-tracer-two T3=pc10-tracer-three T4=pc10-tracer-four T5=pc16-tracer-five
+T6=pc16-tracer-six
 PTY_PID=""
 
 # pc6_cleanup: stop the pseudo-terminal helper and any Codex of this run folder (traps call it).
@@ -35,12 +39,16 @@ printf '%s\n' '#!/bin/sh' "cat >\"\$(mktemp \"$RUN/hooks/XXXXXX\")\"" >"$RUN/hoo
 chmod 755 "$RUN/hook.sh"
 : >"$RUN/marks.txt"
 
-# pc6_home <name> <link 0|1>: CX_HOME=$RUN/<name> with its config.toml; with 1, sessions -> $STORE.
+# pc6_home <name> <link 0|1> [update-key off: 1]: CX_HOME=$RUN/<name> with its config.toml; with
+# link 1, sessions -> $STORE; with a third argument 1, check_for_update_on_startup = false (the
+# control of run e), else the key is absent.
 pc6_home() {
   CX_HOME=$RUN/$1
   mkdir -p "$CX_HOME"
   [ "$2" = 0 ] || ln -s "$STORE" "$CX_HOME/sessions"
-  printf '%s\n' 'model = "gpt-mock"' 'model_provider = "mock"' '' \
+  _k=""
+  [ "${3:-0}" = 0 ] || _k='check_for_update_on_startup = false'
+  printf '%s\n' 'model = "gpt-mock"' 'model_provider = "mock"' ${_k:+"$_k"} '' \
     '[model_providers.mock]' 'name = "mock"' "base_url = \"$MOCK_URL/v1\"" 'env_key = "MOCK_API_KEY"' \
     'wire_api = "responses"' '' '[features]' 'codex_hooks = true' 'hooks = true' '' \
     "[projects.\"$RR\"]" 'trust_level = "trusted"' '' '[[hooks.SessionStart]]' '[[hooks.SessionStart.hooks]]' \
@@ -65,13 +73,38 @@ pc6_mark() {
   fi
 }
 
-# pc6_exec <name> <codex args...>: one non-interactive run.
+# pc6_used: the number of run_codex records in cx-used.d (run_codex writes one after codex_env
+# accepts the run and before Codex starts).
+pc6_used() { find "$RUN/cx-used.d" -type f 2>/dev/null | wc -l | tr -d ' '; }
+
+# pc6_wait <name> <polls> <used before> <output file>: wait for CX_PID up to <polls> 0.5 s polls,
+# then kill this run folder's Codex (_rc=killed); else _rc = its status. A run with no new
+# cx-used.d record was refused by the harness (codex_env, in the background subshell): exit 1.
+pc6_wait() {
+  _i=0 _rc=""
+  while kill -0 "$CX_PID" 2>/dev/null; do
+    _i=$((_i + 1))
+    if [ "$_i" -gt "$2" ]; then pkill -f "$RUN/codex-pkg" 2>/dev/null || true; _rc=killed; break; fi
+    sleep 0.5
+  done
+  _w=0
+  wait "$CX_PID" || _w=$?
+  [ -n "$_rc" ] || _rc=$_w
+  check_abort
+  if [ "$(pc6_used)" -le "$3" ]; then
+    echo "codex resume: run $1: the harness refused it before Codex started: $(tr -d '\r' <"$4" | grep -a '^premises:' | tail -n 1)"
+    exit 1
+  fi
+}
+
+# pc6_exec <name> <codex args...>: one non-interactive run, bounded (240 polls).
 pc6_exec() {
   _n=$1; shift
   pc6_mark "$_n" before
-  _rc=0
-  run_codex "$@" </dev/null >"$RUN/$_n.out" 2>"$RUN/$_n.err" || _rc=$?
-  check_abort
+  _u=$(pc6_used)
+  run_codex "$@" </dev/null >"$RUN/$_n.out" 2>"$RUN/$_n.err" &
+  CX_PID=$!
+  pc6_wait "$_n" 240 "$_u" "$RUN/$_n.out"
   pc6_mark "$_n" after
   echo "$_n exit $_rc" >>"$RUN/marks.txt"
 }
@@ -96,13 +129,14 @@ PY
 
 # pc6_tui <name> <tracer> <codex args...>: one TUI run on a pseudo-terminal. The helper holds the
 # master side, records the output in <name>.raw and answers the cursor-position (ESC [ 6 n) and
-# device-attribute (ESC [ c) queries; <name>.stop makes it send two Ctrl-C, drain and exit.
+# device-attribute (ESC [ c) queries. <name>.stop makes it send F2 (the warnings panel; the raw
+# offset at that point goes to <name>.f2), Esc, three Ctrl-C with drains between, and exit.
 pc6_tui() {
   _n=$1 _t=$2; shift 2
-  rm -f "$RUN/$_n.pty" "$RUN/$_n.stop"
-  python3 -I - "$RUN/$_n.pty" "$RUN/$_n.raw" "$RUN/$_n.stop" <<'PY' &
+  rm -f "$RUN/$_n.pty" "$RUN/$_n.stop" "$RUN/$_n.f2"
+  python3 -I - "$RUN/$_n.pty" "$RUN/$_n.raw" "$RUN/$_n.stop" "$RUN/$_n.f2" <<'PY' &
 import fcntl, os, select, struct, sys, termios, time
-pty_file, raw, stop = sys.argv[1:4]
+pty_file, raw, stop, f2 = sys.argv[1:5]
 m, s = os.openpty()
 fcntl.ioctl(s, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
 with open(pty_file + ".tmp", "w") as f:
@@ -146,10 +180,11 @@ start = time.time()
 with open(raw, "ab") as out:
     while not os.path.exists(stop) and time.time() - start < 300:
         pump(out, 0.2)
-    os.write(m, b"\x03")
-    drain(out, 1)
-    os.write(m, b"\x03")
-    drain(out, 3)
+    with open(f2, "w") as f:
+        f.write("%d\n" % out.tell())
+    for key, secs in ((b"\x1bOQ", 2), (b"\x1b", 0.5), (b"\x03", 1), (b"\x03", 1), (b"\x03", 3)):
+        os.write(m, key)
+        drain(out, secs)
 os.close(s)
 os.close(m)
 PY
@@ -162,6 +197,7 @@ PY
   PTY=$(cat "$RUN/$_n.pty")
   pc6_mark "$_n" before
   _b=$(pc6_seq)
+  _u=$(pc6_used)
   # shellcheck disable=SC2094  # the terminal is Codex's input and output
   run_codex "$@" <"$PTY" >"$PTY" 2>&1 &
   CX_PID=$!
@@ -176,18 +212,10 @@ PY
     while [ $_i -lt 20 ] && ! grep -rqF "$_t" "$CX_HOME/sessions/" 2>/dev/null; do sleep 0.5; _i=$((_i + 1)); done
   fi
   touch "$RUN/$_n.stop"
-  _i=0 _rc=""
-  while kill -0 "$CX_PID" 2>/dev/null; do
-    _i=$((_i + 1))
-    if [ $_i -gt 40 ]; then pkill -f "$RUN/codex-pkg" 2>/dev/null || true; _rc=killed; break; fi
-    sleep 0.5
-  done
-  _w=0
-  wait "$CX_PID" || _w=$?
-  [ -n "$_rc" ] || _rc=$_w
+  # The helper's stop keys take 7.5 s; 40 polls leave Codex 20 s to end.
+  pc6_wait "$_n" 40 "$_u" "$RUN/$_n.raw"
   wait "$PTY_PID" || true
   PTY_PID=""
-  check_abort
   pc6_mark "$_n" after
   echo "$_n exit $_rc" >>"$RUN/marks.txt"
 }
@@ -200,15 +228,17 @@ ID=$(find "$STORE" -name 'rollout-*.jsonl' |
 pc6_home cx-b 1
 pc6_exec b exec --json --dangerously-bypass-hook-trust resume "$ID" "Reply ok. $T2"
 pc6_home cx-c 1
-pc6_tui c "$T3" resume --dangerously-bypass-hook-trust "$ID" "Reply ok. $T3"
+pc6_tui c "$T3" resume --no-daemon --dangerously-bypass-hook-trust "$ID" "Reply ok. $T3"
 pc6_home cx-d 0
 pc6_exec d exec --json --dangerously-bypass-hook-trust resume "$ID" "Reply ok. $T4"
 pc6_home cx-e 0
-pc6_tui e "$T5" --dangerously-bypass-hook-trust "Reply ok. $T5"
+pc6_tui e "$T5" --no-daemon --dangerously-bypass-hook-trust "Reply ok. $T5"
+pc6_home cx-f 0 1
+pc6_tui f "$T6" --no-daemon --dangerously-bypass-hook-trust "Reply ok. $T6"
 
-python3 -I - "$RUN" "$ID" "$T1" "$T2" "$T3" "$T4" "$T5" "$CODEX_FX/config.schema.json" <<'PY'
+python3 -I - "$RUN" "$ID" "$T1" "$T2" "$T3" "$T4" "$T5" "$CODEX_FX/config.schema.json" "$T6" <<'PY'
 import glob, json, os, re, sys
-run, rid, t1, t2, t3, t4, t5, schema = sys.argv[1:9]
+run, rid, t1, t2, t3, t4, t5, schema, t6 = sys.argv[1:10]
 store = os.path.join(run, "store", "sessions")
 ws, up = os.path.join(run, "out", "workspace"), os.path.join(run, "out", "update")
 LOOP = ("127.0.0.1", "localhost", "[::1]")
@@ -265,7 +295,7 @@ def hosts(lines):
 
 # Hooks, per run.
 hooks, ss = [], {}
-for n in "abcde":
+for n in "abcdef":
     ids = []
     for p in sorted(glob.glob(os.path.join(run, "hooks.d", n, "*"))):
         text = open(p, errors="replace").read()
@@ -302,7 +332,7 @@ for line in open(os.path.join(run, "a.out"), errors="replace"):
 
 nil = "00000000-0000-0000-0000-000000000000"
 put(ws, "ids.txt", "rollout_id=%s\nrollout_meta_id=%s\nexec_thread_id=%s\n" % (rid, meta_id or "none", thread_id or "none")
-    + "".join("session_start_%s=%s\n" % (n, ",".join(ss[n]) or "none") for n in "abcde"))
+    + "".join("session_start_%s=%s\n" % (n, ",".join(ss[n]) or "none") for n in "abcdef"))
 
 in_store = False
 for d, _, files in os.walk(store):
@@ -319,6 +349,8 @@ eq = bool(ss["a"]) and rid != nil and all(i == rid for i in ss["a"]) and meta_id
 s = {
     "session_start_fired_a": yn(glob.glob(os.path.join(run, "hooks.d", "a", "*"))),
     "session_id_equals_rollout_id": yn(eq),
+    "exec_thread_id_equals_rollout_id": yn(rid != nil and thread_id == rid),
+    "session_start_c_equals_rollout_id": yn(bool(ss["c"]) and rid != nil and all(i == rid for i in ss["c"])),
     "exec_resume_exit": exits.get("b", "none"),
     "exec_resume_history": yn(t1 in first_text("b") and t2 in first_text("b")),
     "tui_resume_exit": exits.get("c", "none"),
@@ -329,8 +361,9 @@ s = {
     "no_link_resume_exit": exits.get("d", "none"),
     "no_link_resume_history": yn(t1 in first_text("d") and t4 in first_text("d")),
 }
-s["pc10"] = "verified" if all(s[k] == "yes" for k in (
-    "session_id_equals_rollout_id", "tui_resume_history", "tui_resume_in_store", "links_kept")) else "failed"
+s["pc10"] = "verified" if s["tui_resume_exit"] == "0" and all(s[k] == "yes" for k in (
+    "session_id_equals_rollout_id", "exec_thread_id_equals_rollout_id", "session_start_c_equals_rollout_id",
+    "tui_resume_history", "tui_resume_in_store", "links_kept")) else "failed"
 put(ws, "summary.txt", "".join("%s=%s\n" % kv for kv in s.items()))
 put(ws, "hooks.jsonl", "".join(json.dumps(h, ensure_ascii=False) + "\n" for h in hooks))
 if meta_line:
@@ -341,7 +374,7 @@ for n in "abcd":
         put(ws, "request-%s.json" % n, json.dumps(q[0], indent=2, ensure_ascii=False) + "\n")
 
 out = []
-for top in ("cx-a", "cx-b", "cx-c", "cx-d", "cx-e", "store"):
+for top in ("cx-a", "cx-b", "cx-c", "cx-d", "cx-e", "cx-f", "store"):
     root = os.path.join(run, top)
     rows = []
     for d, dirs, files in os.walk(root):
@@ -358,18 +391,30 @@ put(ws, "codex-home-files.txt", "".join(r + "\n" for r in out))
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.", re.S)
 
 
-def screen(n):
+def screen(n, part):
+    """The screen text of run n before F2 (part 0) or from F2 on (part 1: the warnings panel)."""
     p = os.path.join(run, n + ".raw")
-    t = open(p, "rb").read().decode("utf-8", "replace") if os.path.exists(p) else ""
+    t = open(p, "rb").read() if os.path.exists(p) else b""
+    try:
+        cut = int(open(os.path.join(run, n + ".f2")).read().strip())
+    except (OSError, ValueError):
+        cut = len(t)
+    t = (t[:cut] if part == 0 else t[cut:]).decode("utf-8", "replace")
     return ANSI.sub("", t).replace("\r", "")
 
 
-put(ws, "tui-c.txt", screen("c"))
-put(up, "tui-e.txt", screen("e"))
-ce = connects("e")
+put(ws, "tui-c.txt", screen("c", 0))
+put(ws, "tui-c-warnings.txt", screen("c", 1))
+for n in "ef":
+    put(up, "tui-%s.txt" % n, screen(n, 0))
+    put(up, "tui-%s-warnings.txt" % n, screen(n, 1))
+ce, cf = connects("e"), connects("f")
 put(up, "connect-e.txt", "".join(x + "\n" for x in ce))
+put(up, "connect-f.txt", "".join(x + "\n" for x in cf))
 cfg = open(os.path.join(run, "cx-e", "config.toml")).read()
 put(up, "config.toml", cfg)
+cfg_f = open(os.path.join(run, "cx-f", "config.toml")).read()
+put(up, "config-control.toml", cfg_f)
 
 
 def default_true(o):
@@ -387,17 +432,55 @@ try:
     sd = "true" if default_true(json.load(open(schema))) else "unknown"
 except (OSError, ValueError):
     sd = "unknown"
-seen = any(x.split()[0].rpartition(":")[0].lower() not in LOOP for x in ce if x.split())
+
+
+def req(x):
+    """A connect line's request: the line without " refused" (host:port, then a method and, when
+    the mock records it, a path)."""
+    return x[:-len(" refused")] if x.endswith(" refused") else x
+
+
+exec_lines = connects("a") + connects("b") + connects("d")
+others = {req(x) for x in exec_lines + cf}
+# The release-source request: run e's requests to a host that is not loopback, absent from the
+# control (run f, key false) and from the exec runs.
+rs = []
+for x in ce:
+    r = req(x)
+    if x.split() and x.split()[0].rpartition(":")[0].lower() not in LOOP and r not in others and r not in rs:
+        rs.append(r)
+PROPOSED = "registry.npmjs.org"  # K§6.5.4: https://registry.npmjs.org/@openai/codex/latest
+UPD = r"(?m)^\s*check_for_update_on_startup\s*=\s*(\S+)"
+mf = re.search(UPD, cfg_f)
 u = {
-    "config_key": "present" if re.search(r"(?m)^\s*check_for_update_on_startup\s*=", cfg) else "absent",
+    "config_key": "present" if re.search(UPD, cfg) else "absent",
     "schema_default": sd,
     "tui_start_exit": exits.get("e", "none"),
     "tui_start_connects": hosts(ce),
-    "exec_connects": hosts(connects("a") + connects("b") + connects("d")),
-    "release_source_request": "seen" if seen else "not-seen",
+    "control_config_key": mf.group(1) if mf else "absent",
+    "control_exit": exits.get("f", "none"),
+    "control_connects": hosts(cf),
+    "exec_connects": hosts(exec_lines),
+    "release_source_hosts": ",".join(rs) or "none",
+    "release_source_request": "seen" if rs else "not-seen",
+    "release_source_proposed": PROPOSED,
+    "release_source_matches_proposed": yn(any(r.split()[0].rpartition(":")[0].lower() == PROPOSED for r in rs)),
 }
-u["pc16"] = "verified" if (u["config_key"] == "absent" and sd == "true" and seen) else "failed"
+u["pc16"] = "verified" if (u["config_key"] == "absent" and sd == "true" and u["control_config_key"] == "false"
+                           and rs) else "failed"
 put(up, "summary.txt", "".join("%s=%s\n" % kv for kv in u.items()))
+
+# One UUID mapping over every output file (workspace, then update; files in name order), before
+# scrub: equal placeholders are equal ids across all of this part's fixtures. "uuid-NNNN" is not a
+# UUID, so scrub's per-file numbering leaves it alone.
+UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+umap = {}
+for d in (ws, up):
+    for f in sorted(os.listdir(d)):
+        p = os.path.join(d, f)
+        text = open(p, errors="replace").read()
+        text = UUID.sub(lambda m: umap.setdefault(m.group(0), "uuid-%04d" % (len(umap) + 1)), text)
+        put(d, f, text)
 PY
 
 stop_mock

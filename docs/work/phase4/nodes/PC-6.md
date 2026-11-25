@@ -1,7 +1,7 @@
 # PC-6 — Codex resume and update captures: PC10, PC16
 
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.3.7 rows PC10, PC16; K-D22 (the shared session store), K-D25 (premises against the mock, with no zygo between), K§6.5.4 (the fact PC16 measures; the fact itself is set in P4-9); K§11 items 9 and 10 (for these fixtures)
-**Files:** `scripts/premises/codex/resume.sh` (new), `fixtures/codex/workspace/` (new), `fixtures/codex/update/` (new), `fixtures/codex/runs/resume/` (new)
+**Files:** `scripts/premises/codex/resume.sh` (new), `fixtures/codex/workspace/` (new), `fixtures/codex/update/` (new), `fixtures/codex/runs/resume/` (new), `docs/specs/2026-11-25-client-model-design.md` (the K§6.3.7 PC16 row and a change-log line; review round 1 F3, lead's call)
 **Consumes:** `run_codex` (PC-2), `codex_env` (PC-2), `codex_record` (PC-2)
 **Produces:** `fixtures/codex/workspace/` (PC10: `SessionStart` `session_id` against the rollout id; `codex resume <id>` with a new scratch `CODEX_HOME` whose `sessions` links to a shared scratch store), `fixtures/codex/update/` (PC16 as P4-3 can measure it: `check_for_update_on_startup` at its default and the `CONNECT` record of the release-source request, refused by the mock), and in this node file under "Observed" one line per id: `- PCn: <verified|failed> <YYYY-MM-DD>: <fixture paths>`
 **Acceptance:** `sh scripts/premises/run-codex.sh resume && N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh && test "$(for d in workspace update; do find fixtures/codex/$d -type f -size +2c -print -quit; done | grep -c .)" -eq 2 && grep -qx 'home=scratch' fixtures/codex/runs/resume/isolation.txt && grep -qx 'codex_home=scratch' fixtures/codex/runs/resume/isolation.txt && test -f fixtures/codex/runs/resume/connect.txt && test -z "$(grep -v ' refused$' fixtures/codex/runs/resume/connect.txt)" && ! grep -qx 'Written when the node runs.' docs/work/phase4/nodes/PC-6.md && test "$(grep -cE '^- (PC10|PC16): (verified|failed) [0-9]{4}-[0-9]{2}-[0-9]{2}: fixtures/codex/' docs/work/phase4/nodes/PC-6.md)" -eq 2` → every command exits 0: each of the two folders holds a nontrivial capture; the run used scratch `HOME` and `CODEX_HOME`, and every `CONNECT` (the release-source request among them) was refused; "Observed" has no placeholder and one dated result line for each of PC10 and PC16
@@ -24,6 +24,23 @@
 ### Findings
 
 - Loopback records (accepted as recorded, lead's call 2026-11-25): TUI runs c and e sent POSTs via HTTP_PROXY to 127.0.0.1 ports other than the mock's (`127.0.0.1:<port> POST refused` in `fixtures/codex/runs/resume/connect.txt`); refused by the mock; source not identified (Codex's log database does not name them); no NO_PROXY is set by the harness (lib.sh, outside this node).
+
+The Observed lines and fixtures above are round 1's. They are re-taken (stub only until then) after PC-10 merges, with the round 2 part below.
+
+## Review round 1 findings
+
+Round 2, 2026-11-25. Tests: a scratch synthetic test runs the part's record block on made-up run folders (F1, F6, F7: 7 of 11 checks red before, 11 green after); scratch stub variants make a harness refusal in TUI run c (F2: before, exit 0 with `c exit 1` and `pc10=failed`; after, exit 1 `codex resume: run c: the harness refused it before Codex started: premises: codex 0.1.0 is below the minimum 0.172.0`) and an exec run d that hangs (F9: before, no bound; after, `d exit killed` and the part goes on).
+
+- F1 (important), PC16 had no control: run e's hosts github.com, api.github.com, chatgpt.com and ab.chatgpt.com also come from the exec runs. Fixed: a control TUI run f, as run e but with `check_for_update_on_startup = false` in its `config.toml`. `release_source_hosts` = run e's requests (a connect line without ` refused`: host:port, and the method and path when the mock records them) to a host that is not loopback and that are absent from run f and from the exec runs a, b and d. `pc16=verified` needs the key absent in run e, `false` in run f, the schema default `true` and at least one such request. The summary names the hosts and records them against the K§6.5.4 proposal (`release_source_proposed=registry.npmjs.org`, `release_source_matches_proposed=yes|no`). Round 1's real data showed run e's only extra host as raw.githubusercontent.com:443 (also in TUI run c), not registry.npmjs.org; the recapture decides it against the control.
+- F2 (important), a harness refusal in a background run became a measurement: `codex_env` exits in the background subshell, so the part recorded `c exit 1` and exited 0. Fixed: `pc6_wait` compares the `cx-used.d` record count (run_codex writes one after codex_env accepts the run) before and after each run; no new record → exit 1 naming the run and the `premises:` line.
+- F3 (important), the K§6.3.7 PC16 row said "Under a zygo launch": rewritten (lead's call, §5.4) to state what is measured (Codex's own default against the mock with no zygo between, K-D25; the release-source request against a control and the exec runs; the host against the K§6.5.4 proposal) and to name P4-9 and P4-11 for the zygo-launch measurement; change-log line added. K§11 item 52 ("each PU and PC16 premise row is `verified` and A-22.2 cites it") stays consistent: unchanged.
+- F5 (nit), the loopback POSTs and the TUI warnings: at stop, the pseudo-terminal helper sends F2 (`ESC O Q`), records the raw offset in `<run>.f2`, and then sends Esc and three Ctrl-C. The screen from F2 on is written as `tui-c-warnings.txt`, `tui-e-warnings.txt` and `tui-f-warnings.txt`. The stub cannot show the panel; the recapture records what it holds. The refused loopback path comes with PC-10's mock change.
+- F6 (nit): `pc10=verified` also needs `exec_thread_id_equals_rollout_id=yes`, `session_start_c_equals_rollout_id=yes` and `tui_resume_exit=0`.
+- F7 (nit): one UUID mapping (`uuid-NNNN`, in order of first appearance over workspace then update files, by name) is applied to every output before scrub; `uuid-NNNN` is not a UUID, so scrub's per-file numbering leaves it alone.
+- F8 (nit), time zone and OS: PC-10's (TZ=UTC, the OS scrub); no part change.
+- F9 (nit): exec runs run in the background with a bound (240 polls of 0.5 s), then this run folder's Codex is killed (`<run> exit killed`); harness hygiene, not a CI timing test.
+- F10: already done; nothing to do.
+- Also: each TUI run (c, e, f) passes `--no-daemon` (`fixtures/codex/help.txt:132`, `:379`), so no shared per-uid background server outlives the run.
 
 ## Plan
 
@@ -63,7 +80,7 @@ Safety (the operator's rules for this node):
 - Produces:
   - `scripts/premises/codex/resume.sh`, run as `sh scripts/premises/run-codex.sh resume`; exit 0 when every run ran and every fixture was written, whatever PC10 and PC16 measured; exit 1 on a harness failure (message `codex resume: <why>`); exit 3 on a mock abort.
   - `fixtures/codex/workspace/` (PC10): `summary.txt`, `ids.txt`, `hooks.jsonl`, `rollout-meta.json`, `request-a.json` … `request-d.json` (each only when that run made a `/v1/responses` request), `codex-home-files.txt`, `tui-c.txt`.
-  - `fixtures/codex/update/` (PC16): `summary.txt`, `connect-e.txt`, `config.toml`, `tui-e.txt`.
+  - `fixtures/codex/update/` (PC16): `summary.txt`, `connect-e.txt`, `config.toml`, `tui-e.txt`; round 2: `connect-f.txt`, `config-control.toml`, `tui-f.txt`, and `tui-<c|e|f>-warnings.txt` (`tui-c-warnings.txt` in `workspace/`).
   - `fixtures/codex/runs/resume/isolation.txt`, `connect.txt` (from `codex_record resume`).
   - Under "Observed" in this file, the two lines that the part prints last, in PC-7's form `- PCn: <verified|failed> <YYYY-MM-DD>: <fixture paths>`, each followed by one `  Scope: …` line.
 
@@ -73,9 +90,10 @@ Safety (the operator's rules for this node):
 |---|---|---|---|---|
 | a | `$RUN/cx-a` | link → `$STORE` | `exec --json --dangerously-bypass-hook-trust "Reply ok. $T1"` | the rollout id; `SessionStart` `session_id` |
 | b | `$RUN/cx-b` | link → `$STORE` | `exec --json --dangerously-bypass-hook-trust resume "$ID" "Reply ok. $T2"` | exec resume (supporting) |
-| c | `$RUN/cx-c` | link → `$STORE` | `resume --dangerously-bypass-hook-trust "$ID" "Reply ok. $T3"` (TUI, on the pty) | PC10: `codex resume <id>` in a new `CODEX_HOME` |
+| c | `$RUN/cx-c` | link → `$STORE` | `resume --no-daemon --dangerously-bypass-hook-trust "$ID" "Reply ok. $T3"` (TUI, on the pty) | PC10: `codex resume <id>` in a new `CODEX_HOME` |
 | d | `$RUN/cx-d` | none | `exec --json --dangerously-bypass-hook-trust resume "$ID" "Reply ok. $T4"` | control: with no link |
-| e | `$RUN/cx-e` | none | `--dangerously-bypass-hook-trust "Reply ok. $T5"` (TUI, on the pty) | PC16: update check at start |
+| e | `$RUN/cx-e` | none | `--no-daemon --dangerously-bypass-hook-trust "Reply ok. $T5"` (TUI, on the pty) | PC16: update check at start |
+| f | `$RUN/cx-f` (`check_for_update_on_startup = false`) | none | `--no-daemon --dangerously-bypass-hook-trust "Reply ok. $T6"` (TUI, on the pty) | PC16 control (round 2, F1) |
 
 `STORE=$RUN/store/sessions`. Tracers: `T1=pc10-tracer-one`, `T2=pc10-tracer-two`, `T3=pc10-tracer-three`, `T4=pc10-tracer-four`, `T5=pc16-tracer-five`. `ID` is the UUID of the one rollout file that run a made under `$STORE`. If run a made none (the stub), `ID=00000000-0000-0000-0000-000000000000`, so every later run still runs (and fails as a measurement).
 
