@@ -21,7 +21,7 @@ Test hook: the callback is the only point where code runs during the report. It 
 
 ### Steps
 
-- [ ] 1. Create `crates/zygo-usage/tests/report_snapshot.rs` with this test:
+- [x] 1. Create `crates/zygo-usage/tests/report_snapshot.rs` with this test:
 
 ```rust
 use std::cell::Cell;
@@ -72,7 +72,7 @@ fn report_reads_summary_and_savings_from_one_snapshot() {
 
   Check: the file compiles only after step 2 (`report` does not exist yet).
 
-- [ ] 2. In `crates/zygo-usage/src/savings.rs` `impl Store`, add the stub that reproduces today's two transactions in the planned order:
+- [x] 2. In `crates/zygo-usage/src/savings.rs` `impl Store`, add the stub that reproduces today's two transactions in the planned order:
 
 ```rust
 /// O§6.6: the summary and the savings of `f` from one read snapshot (FX-8).
@@ -84,7 +84,7 @@ pub fn report(&self, f: &Filter, rates: &dyn Fn(&str, &str, u64) -> Option<Rates
 
   Change the import `query::{u64_at, Filter}` to `query::{u64_at, Filter, Summary}`. Run `cargo test -p zygo-usage --test report_snapshot`. Check: it FAILS at `assert_eq!(s.bytes_trimmed, 4_000_000)` with left `4001000`.
 
-- [ ] 3. In `crates/zygo-usage/src/query.rs`, move the body of `Store::summary` into a free function. The SQL and the result stay the same:
+- [x] 3. In `crates/zygo-usage/src/query.rs`, move the body of `Store::summary` into a free function. The SQL and the result stay the same:
 
 ```rust
 /// The `Summary` of `f`, read through `tx` (one snapshot).
@@ -105,7 +105,7 @@ pub fn summary(&self, f: &Filter) -> Result<Summary> {
 
   Check: `cargo test -p zygo-usage --test store` passes.
 
-- [ ] 4. In `crates/zygo-usage/src/savings.rs`, move the body of `Store::savings` after `unchecked_transaction` into:
+- [x] 4. In `crates/zygo-usage/src/savings.rs`, move the body of `Store::savings` after `unchecked_transaction` into:
 
 ```rust
 /// O§6.6: the savings of `f`, read through `tx` (one snapshot); the filter selects events only.
@@ -114,7 +114,7 @@ fn savings_in(tx: &Transaction<'_>, f: &Filter, rates: &dyn Fn(&str, &str, u64) 
 
   `Store::savings` becomes `let tx = self.conn.unchecked_transaction()?; savings_in(&tx, f, rates)`. Check: `cargo test -p zygo-usage --test savings` passes.
 
-- [ ] 5. Add `summary_in` to the `crate::query` import in savings.rs. Replace the body of `Store::report` (step 2) with one transaction, savings first:
+- [x] 5. Add `summary_in` to the `crate::query` import in savings.rs. Replace the body of `Store::report` (step 2) with one transaction, savings first:
 
 ```rust
 // One deferred read transaction. Savings first: `rates` runs inside it, so the summary reads after
@@ -128,9 +128,9 @@ Ok((s, v))
 
   Run `cargo test -p zygo-usage --test report_snapshot`. Check: it passes.
 
-- [ ] 6. In `crates/zygo/src/cmd/usage.rs:145`, replace `.and_then(|st| Ok((st.summary(&f)?, st.savings(&f, &price)?)))` with `.and_then(|st| st.report(&f, &price))`. Check: `cargo test -p zygo --test usage_doctor` passes with no test file changed (`git diff --stat crates/zygo/tests` is empty).
+- [x] 6. In `crates/zygo/src/cmd/usage.rs:145`, replace `.and_then(|st| Ok((st.summary(&f)?, st.savings(&f, &price)?)))` with `.and_then(|st| st.report(&f, &price))`. Check: `cargo test -p zygo --test usage_doctor` passes with no test file changed (`git diff --stat crates/zygo/tests` is empty).
 
-- [ ] 7. Run the regression set. Check: all pass, no warnings:
+- [x] 7. Run the regression set. Check: all pass, no warnings:
   `cargo test -p zygo-usage`; `cargo test -p zygo-hooks` (`summary` callers: statusline/mod.rs:58, tests/hooks_basic.rs:113); `cargo clippy -p zygo-usage -p zygo --all-targets -- -D warnings`.
 
-- [ ] 8. Commit the four files (`git add` each path; `git commit -m`), subject `FX-8: one read snapshot for zygo usage summary and savings`, with the trailers `Zygo-Session:` (the implementing session's id) and `Zygo-Work: phase3:FX-8:implement`, each on its own line. Check: `git show --stat HEAD` lists only query.rs, savings.rs, tests/report_snapshot.rs and cmd/usage.rs.
+- [x] 8. Commit the four files (`git add` each path; `git commit -m`), subject `FX-8: one read snapshot for zygo usage summary and savings`, with the trailers `Zygo-Session:` (the implementing session's id) and `Zygo-Work: phase3:FX-8:implement`, each on its own line. Check: `git show --stat HEAD` lists only query.rs, savings.rs, tests/report_snapshot.rs and cmd/usage.rs.

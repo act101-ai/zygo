@@ -198,7 +198,6 @@ Session text (T, SX nodes):
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| WD-3 | Workspace approvals in `approvals.toml` | WD-2 | DONE | judgment | aad86d39 · acc 9+2/0; floor green · PR #88 |
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | DONE | implementation | 0f925e1c · acc 18/0; floor green ws 2967/0 · PR #89 |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | DONE | implementation | 867df914 · acc admin 34/mux 58/snapshot 41 · PR #94 |
@@ -286,7 +285,7 @@ Session text (T, SX nodes):
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
 | FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
-| FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | TODO | implementation | — |
+| FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -395,3 +394,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-4 DONE: checked use of the workspace definition (repo_def::check; one read, digest, store lookup per use; Pin). Review: F1, F3 fixed with tests; F2 refuted (contract: NotApproved has no why); floor ws 3017/0 · PR #98 |
 | 2026-11-25 | MS-6 DONE: registry and ack files, validation, member cache; review 5 minor: F1 fixed (typed parse, no Value tree), F3 part (limits pub), F5 tests; F4 refuted; F2 (members.json read uncapped) to operator; MS-13/MS-14 notes carried; floor ws 3035/0 · PR #99 |
 | 2026-11-25 | OS-8 DONE: zygo usage prints savings lines (net figures, breakdown, ratio). Review: F1 fixed (amounts unknown when config does not load), F2 fixed (no sign on zero), F4 tests added, F3 to FX-8 (added: one read snapshot); floor ws 3016/0 · PR #101 |
+| 2026-11-25 | FX-8 DONE: zygo usage reads summary and savings in one read transaction via new `Store::report` (savings first). Review: F1 confirmed (test sees the defect only in savings-first order; documented on `Store::report`), F2 refuted (no seam to write mid-report without a timing test) |
