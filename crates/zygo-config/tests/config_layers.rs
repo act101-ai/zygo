@@ -1802,6 +1802,7 @@ fn mail_check_refuses_bad_pane_names() { // M§6
     err(&(base() + LO + "kind = \"opencode\"\nname = \"\"\n"), &format!("{p}: {NAME_GRAMMAR}"));
     err(&(base() + LO + "kind = \"claude-code\"\nname = \"all\"\n"), &format!("{p}: is reserved"));
     err(&(base() + LO + "kind = \"opencode\"\nname = \"cli\"\n"), &format!("{p}: is reserved"));
+    err(&(base() + LO + "kind = \"claude-code\"\nname = \"zygo\"\n"), &format!("{p}: is reserved")); // S§7.2, M§6
     // unique in the loadout, across windows; the later pane is reported
     let twice = "kind = \"claude-code\"\nname = \"elena\"\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\nkind = \"opencode\"\nname = \"elena\"\n";
     err(&(base() + LO + twice), "loadout.pair.window[1].pane[0].name: is used by another pane in the loadout");

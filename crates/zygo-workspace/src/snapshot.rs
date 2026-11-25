@@ -307,7 +307,8 @@ fn key_text(e: KeyError, pane: &str) -> String {
 
 /// W§7.4 step 5: replaces `windows[]` and `panes[]` by the read, sets `snapshot_at` and adds 1 to `snapshot_seq`.
 /// `keys` has one key per row. Member records stay. A pane that has the key of a stored pane keeps that pane's
-/// unknown fields (AU78). A window keeps the unknown fields of the stored window with its index only when that stored
+/// unknown fields (AU78). The `name` (M§6) comes from the member record of the key when the pane is an agent pane, is none
+/// for a shell pane with a record, and is the stored pane's name when the key has no record. A window keeps the unknown fields of the stored window with its index only when that stored
 /// window had a pane whose key is on a pane of this window now (round 3 D5): a new window at the index of a closed one
 /// gets none. A pane whose read path is empty keeps the `cwd` of the stored pane with its key (FIX-29).
 fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
@@ -337,19 +338,28 @@ fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
     let panes: Vec<Pane> = rows
         .iter()
         .zip(keys)
-        .map(|((w, p), key)| Pane {
-            key: key.clone(),
-            window: w.index,
-            index: p.index,
-            active: p.active,
-            // FIX-29: tmux gives no `#{pane_current_path}` for a dead pane (3.2a and 3.8 probe); keep the stored cwd.
-            cwd: if p.cwd.as_os_str().is_empty() {
-                ws.panes.iter().find(|x| x.key == *key).map(|x| x.cwd.clone()).unwrap_or_default()
-            } else {
-                p.cwd.clone()
-            },
-            kind: kind_of(ws, key),
-            extra: ws.panes.iter().find(|x| x.key == *key).map(|x| x.extra.clone()).unwrap_or_default(),
+        .map(|((w, p), key)| {
+            let kind = kind_of(ws, key);
+            let name = match ws.members.get(key) {
+                Some(m) if kind != PaneKind::Shell => m.name.clone(),
+                Some(_) => None,
+                None => ws.panes.iter().find(|x| x.key == *key).and_then(|x| x.name.clone()),
+            };
+            Pane {
+                key: key.clone(),
+                window: w.index,
+                index: p.index,
+                active: p.active,
+                // FIX-29: tmux gives no `#{pane_current_path}` for a dead pane (3.2a and 3.8 probe); keep the stored cwd.
+                cwd: if p.cwd.as_os_str().is_empty() {
+                    ws.panes.iter().find(|x| x.key == *key).map(|x| x.cwd.clone()).unwrap_or_default()
+                } else {
+                    p.cwd.clone()
+                },
+                kind,
+                name,
+                extra: ws.panes.iter().find(|x| x.key == *key).map(|x| x.extra.clone()).unwrap_or_default(),
+            }
         })
         .collect();
     ws.windows = windows;

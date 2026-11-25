@@ -193,8 +193,10 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
 
 /// The structural rules of `[workspace]` and `[loadout.<name>]` (workspaces design W§11). The rules that need the
 /// launch-argument filter or the compact-window parser are not here: this crate depends on neither (AU103).
+/// `job` only on an agent pane (`claude-code`, `opencode`) and a refused `job` takes no orchestrator slot (R§9.1).
 fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
     const CLAUDE_ONLY: &str = "only with kind = \"claude-code\"";
+    const AGENT_ONLY: &str = "only with kind = \"claude-code\" or \"opencode\"";
     let mut v = Vec::new();
     let default = cfg.workspace.default_loadout.as_str();
     if default != BUILTIN_LOADOUT && !cfg.loadout.contains_key(default) {
@@ -218,6 +220,7 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
             for (pi, p) in w.pane.iter().enumerate() {
                 let pp = format!("{wp}.pane[{pi}]");
                 let claude = p.kind == "claude-code";
+                let agent = claude || p.kind == "opencode";
                 if !LOADOUT_KINDS.contains(&p.kind.as_str()) {
                     let [claude_code, opencode, shell] = LOADOUT_KINDS;
                     v.push((Severity::Error, format!("{pp}.kind"), format!("must be \"{claude_code}\", \"{opencode}\" or \"{shell}\"")));
@@ -229,7 +232,9 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
                     v.push((Severity::Error, format!("{pp}.config_dir"), CLAUDE_ONLY.into()));
                 }
                 if let Some(job) = p.job.as_deref() {
-                    if !JOBS.contains(&job) {
+                    if !agent {
+                        v.push((Severity::Error, format!("{pp}.job"), AGENT_ONLY.into()));
+                    } else if !JOBS.contains(&job) {
                         let [orch, worker] = JOBS;
                         v.push((Severity::Error, format!("{pp}.job"), format!("must be \"{orch}\" or \"{worker}\"")));
                     } else if job == "orchestrator" {
@@ -252,7 +257,7 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
                 if let Some(n) = &p.name {
                     // a shell pane has no member record (W AU53): its name has no effect
                     let msg = if p.kind == "shell" {
-                        Some("only with kind = \"claude-code\" or \"opencode\"")
+                        Some(AGENT_ONLY)
                     } else if reserved_member_name(n) {
                         Some("is reserved")
                     } else if !valid_member_name(n) {

@@ -8,6 +8,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
 mod common;
+mod dead_port;
 
 /// Held while a copy of the binary is written and while a child is spawned, so no other test's `fork` holds a write
 /// descriptor of an executable that is being exec'd (ETXTBSY).
@@ -262,10 +263,7 @@ fn bad_version_is_a_usage_error() {
 
 #[test]
 fn unreachable_server_exits_1_and_changes_nothing() {
-    let port = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = dead_port::closed_port();
     let s = setup();
     let before = snapshot(&s.copy);
     let o = run(&s, &format!("http://127.0.0.1:{port}"), &["update"]);
@@ -331,10 +329,7 @@ fn check_with_version_reports_and_installs_nothing() {
 #[ignore = "timing: the update fetch timeouts in the zygo binary against the test server"]
 fn system_proxy_is_not_used() {
     let f = Fixture::start(vec![version_file(NEW)]);
-    let port = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        l.local_addr().unwrap().port()
-    };
+    let port = dead_port::closed_port();
     let proxy = format!("http://127.0.0.1:{port}");
     let s = setup();
     let o = run_env(
@@ -664,10 +659,7 @@ mod start {
     #[ignore = "timing: asserts elapsed time against the 2 s check bound"]
     fn an_unreachable_server_is_silent_and_bounded() {
         // Nothing listens: the connection is refused.
-        let closed = {
-            let l = TcpListener::bind("127.0.0.1:0").unwrap();
-            l.local_addr().unwrap().port()
-        };
+        let closed = dead_port::closed_port();
         // Listens and never accepts: the connection opens (backlog) and no reply comes.
         let silent = TcpListener::bind("127.0.0.1:0").unwrap();
         let stalled = silent.local_addr().unwrap().port();

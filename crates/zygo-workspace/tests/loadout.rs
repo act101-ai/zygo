@@ -16,7 +16,7 @@ fn cfg(default: &str, loadouts: Vec<(&str, Vec<LoadoutWindow>)>) -> Config {
     }
 }
 fn plain(kind: PaneKind) -> PlanPane { // the defaults of `zygo claude` and `zygo opencode` (AU45)
-    PlanPane { kind, cwd: root(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None }
+    PlanPane { kind, name: None, cwd: root(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None }
 }
 fn trees() -> Vec<Worktree> {
     vec![
@@ -54,12 +54,42 @@ fn unset_pane_fields_take_the_launch_defaults_and_set_fields_are_kept() {
     assert_eq!((p.windows[0].name.as_deref(), p.windows[0].layout.as_deref()), (Some("agents"), Some("main-vertical")));
     assert_eq!(p.windows[0].panes[..3], [plain(PaneKind::Agent(Agent::ClaudeCode)), plain(PaneKind::Agent(Agent::OpenCode)), plain(PaneKind::Shell)]);
     assert_eq!(p.windows[0].panes[3], PlanPane {
-        kind: PaneKind::Agent(Agent::ClaudeCode), cwd: root(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()],
+        kind: PaneKind::Agent(Agent::ClaudeCode), name: None, cwd: root(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()],
         yolo: true, passthrough: true, server: Some("https://zygo.example".into()), compact: Some("600k".into()), config_dir: Some("~/.claude-work".into()),
     });
     for k in LOADOUT_KINDS {
         assert!(resolve(&cfg("x", vec![("x", vec![window(vec![pane(k)])])]), None, &root(), &[]).is_ok(), "{k}");
     }
+}
+
+#[test] // M§6, AU84: resolve copies a valid pane name; a name that fails the grammar is not copied
+fn member_name_resolve_copies_the_pane_name() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w = window(vec![named("claude-code", "lead"), pane("opencode"), named("opencode", "Bad"), named("claude-code", "all"), named("claude-code", "kabcdefgh")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w])]), None, &root(), &[]).unwrap();
+    let names: Vec<Option<&str>> = p.windows[0].panes.iter().map(|pp| pp.name.as_deref()).collect();
+    assert_eq!(names, [Some("lead"), None, None, None, None]);
+    assert_eq!(p.windows[0].panes[0], PlanPane { name: Some("lead".into()), ..plain(PaneKind::Agent(Agent::ClaudeCode)) });
+}
+
+#[test] // M§6, ML-3 review round 1: a name that an earlier pane of the same plan took reads as no name (the first wins)
+fn member_name_resolve_first_pane_wins_a_repeated_name() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w1 = window(vec![named("claude-code", "lead"), named("opencode", "lead"), named("opencode", "dev")]);
+    let w2 = window(vec![named("claude-code", "dev"), named("claude-code", "ops")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w1, w2])]), None, &root(), &[]).unwrap();
+    let names: Vec<Vec<Option<&str>>> =
+        p.windows.iter().map(|w| w.panes.iter().map(|pp| pp.name.as_deref()).collect()).collect();
+    assert_eq!(names, [vec![Some("lead"), None, Some("dev")], vec![None, Some("ops")]]);
+}
+
+#[test] // M§6, AU53, ML-3 review round 1: a shell pane has no name, and its name does not take one from a later agent pane
+fn member_name_shell_pane_name_is_dropped_and_does_not_block() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w = window(vec![named("shell", "lead"), named("claude-code", "lead")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w])]), None, &root(), &[]).unwrap();
+    let names: Vec<Option<&str>> = p.windows[0].panes.iter().map(|pp| pp.name.as_deref()).collect();
+    assert_eq!(names, [None, Some("lead")]);
 }
 
 #[test]

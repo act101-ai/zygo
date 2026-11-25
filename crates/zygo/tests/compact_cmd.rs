@@ -17,6 +17,7 @@ use zygo_proxy::session::SessionRequest;
 use zygo_proxy::{Proxy, ProxyHandle};
 
 mod common;
+mod dead_port;
 #[cfg(unix)]
 mod member_fixture;
 #[cfg(unix)]
@@ -77,15 +78,8 @@ fn dead_session(home: &Path, id: &str) -> PathBuf {
     let sd = SessionDir::new(dir.clone());
     sd.create().unwrap();
     sd.write_token("t").unwrap();
-    std::fs::write(sd.url(), closed_url()).unwrap();
+    std::fs::write(sd.url(), dead_port::closed_url()).unwrap();
     dir
-}
-
-fn closed_url() -> String {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    format!("http://127.0.0.1:{port}/")
 }
 
 /// Session environment of one child: `ZYGO_SESSION`, `ZYGO_SESSION_DIR`, `ZYGO_AGENT`; `None` removes the name.
