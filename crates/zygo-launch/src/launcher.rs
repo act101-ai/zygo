@@ -606,6 +606,7 @@ impl Session<'_> {
             trim_threshold_bytes: c.results.trim_threshold_bytes,
             head_lines: c.results.head_lines,
             tail_lines: c.results.tail_lines,
+            shape: c.results.shape,
             statusline_style: c.statusline.style.clone(),
             workspace: member.clone().map(|member| ViewWorkspace { member, resume_note: opts.resume_note.clone(), ..Default::default() }),
             repo_root: self.top.as_deref().and_then(Path::to_str).map(String::from),
