@@ -66,7 +66,7 @@ fn synth(caps: &[(Tier, &[Status])]) -> (Registry, GradeFile) {
         cell.push(CellUrl { capability: format!("A-{i}"), url: format!("https://example.com/{i}") });
     }
     let r = Registry { capability, bar_exception: vec![] };
-    (r, GradeFile { client: "synth".into(), name: "Synth".into(), version: "1.0.0".into(), cell, grade })
+    (r, GradeFile { client: "synth".into(), name: "Synth".into(), version: "1.0.0".into(), cell, grade, file: None })
 }
 
 fn with_evidence(ev: &[&str]) -> BTreeSet<u8> {
@@ -983,6 +983,37 @@ fn check_3_cargo_target_settings_refused() {
     assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err().contains("crates/demo/Cargo.toml"));
 }
 
+/// Two Cargo target forms change no target that the walk of `reach` counts, so they are let through: a
+/// `[[bin]]` with `test = false` and a path off the walk, and a `[[test]]` whose path leaves the crate.
+#[test]
+fn check_3_cargo_targets_off_the_walk_accepted() {
+    let pkg = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n";
+    for extra in [
+        "[[bin]]\nname = \"stub\"\npath = \"tests/helper/stub.rs\"\ntest = false\n",
+        "[[test]]\nname = \"outside\"\npath = \"../../tests/outside.rs\"\n",
+    ] {
+        let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}"))]);
+        let r = evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha");
+        assert!(r.is_ok(), "{extra}: {r:?}");
+    }
+    for (extra, key) in [
+        ("[[bin]]\nname = \"b\"\npath = \"src/main.rs\"\ntest = false\n", "path"),
+        ("[[bin]]\nname = \"b\"\npath = \"tests/ev.rs\"\ntest = false\n", "path"),
+        ("[[bin]]\nname = \"b\"\npath = \"../demo/src/main.rs\"\ntest = false\n", "path"),
+        ("[[test]]\nname = \"ev\"\npath = \"../../tests/ev.rs\"\n", "[[test]]"),
+        ("[[test]]\nname = \"x\"\npath = \"../demo/tests/x.rs\"\n", "[[test]]"),
+        ("[[test]]\nname = \"x\"\npath = \"/abs/x.rs\"\n", "[[test]]"),
+        ("[[test]]\nname = \"x\"\n", "[[test]]"),
+    ] {
+        let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}"))]);
+        let e = evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err();
+        assert!(
+            e.contains("crates/demo/Cargo.toml") && e.contains("unsupported Cargo target setting") && e.contains(key),
+            "{extra}: {e}"
+        );
+    }
+}
+
 #[test]
 fn derive_cell_fixtures_full_none_na() {
     let (r, g, _) = base();
@@ -1732,4 +1763,184 @@ fn render_compare_write_mode_writes_both() {
     assert_eq!(render::compare_or_write_mode(dir.path(), &md, &json, false), Ok(()));
     let file = dir.path().join("docs/conformance.md"); // a root that is a file cannot be written
     assert_eq!(render::compare_or_write_mode(&file, &md, &json, true).unwrap_err().item, 10);
+}
+
+/// Check items 1-9 on the registry and grade files in `dir`, evidence resolved against `root`.
+fn tree_check(root: &Path, dir: &Path) -> (Registry, Vec<GradeFile>, Vec<Client>, Resolved) {
+    let reg = Registry::load(&dir.join("capabilities.toml")).unwrap_or_else(|e| panic!("capabilities.toml: {e}"));
+    let grades = grade_files(dir).unwrap_or_else(|e| panic!("{e}"));
+    let clients = clients(root).unwrap();
+    let resolved = resolve(root, &grades);
+    let faults = check(root, &reg, &grades, &clients, &resolved);
+    assert!(
+        faults.is_empty(),
+        "{}",
+        faults.iter().map(|f| format!("item {}: {}", f.item, f.text)).collect::<Vec<_>>().join("\n")
+    );
+    (reg, grades, clients, resolved)
+}
+
+/// A copy of `docs/conformance/` in a temporary folder.
+fn conformance_copy() -> tempfile::TempDir {
+    let d = tempfile::tempdir().unwrap();
+    copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance"), d.path());
+    d
+}
+
+/// Copy the files and subfolders of `from` into `to`, subfolders recursively.
+fn copy_tree(from: &Path, to: &Path) {
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            std::fs::create_dir(&dest).unwrap();
+            copy_tree(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+/// A subfolder of `docs/conformance/` is copied, so the tree tests report faults, not an I/O error; it is not a grade file.
+#[test]
+fn tree_copy_keeps_a_subfolder() {
+    let src = conformance_copy();
+    std::fs::create_dir(src.path().join("cf4d-sub")).unwrap();
+    let d = tempfile::tempdir().unwrap();
+    copy_tree(src.path(), d.path());
+    assert!(d.path().join("cf4d-sub").is_dir());
+    let (_, grades, _, _) = tree_check(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."), d.path());
+    assert_eq!(grades.len(), 2);
+}
+
+/// CC-15's `boundary-exceptions.toml` (keys `file`, `item`, `reason`, `approved`) and the registry are not grade files.
+#[test]
+fn tree_reads_only_the_client_grade_files() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let d = conformance_copy();
+    std::fs::write(
+        d.path().join("boundary-exceptions.toml"),
+        "[[exception]]\nfile = \"crates/zygo-work/src/guards.rs\"\nitem = \"claude_attribution\"\n\
+         reason = \"matches attribution text; does not branch on a client\"\napproved = \"operator, 2026-11-25\"\n",
+    )
+    .unwrap();
+    let (_, grades, _, _) = tree_check(&root, d.path());
+    let ids: Vec<&str> = grades.iter().map(|g| g.client.as_str()).collect();
+    assert_eq!(ids, ["claude-code", "opencode"]);
+}
+
+/// The item 1 faults of the grade files in `dir`, evidence resolved against the repository.
+fn tree_item_1(dir: &Path) -> Vec<String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let reg = Registry::load(&dir.join("capabilities.toml")).unwrap();
+    let grades = grade_files(dir).unwrap_or_else(|e| panic!("{e}"));
+    let resolved = resolve(&root, &grades);
+    let faults = check(&root, &reg, &grades, &clients(&root).unwrap(), &resolved);
+    faults.into_iter().filter(|f| f.item == 1).map(|f| f.text).collect()
+}
+
+/// A stray grade file of an unknown client (`codex.toml`, client = "codex") is loaded and fails item 1.
+#[test]
+fn tree_unknown_client_grade_file_fails_item_1() {
+    let d = conformance_copy();
+    let text = std::fs::read_to_string(d.path().join("opencode.toml")).unwrap();
+    std::fs::write(d.path().join("codex.toml"), text.replace("client = \"opencode\"", "client = \"codex\"")).unwrap();
+    assert_eq!(tree_item_1(d.path()), ["grade file for `codex` names no client"]);
+}
+
+/// A grade file whose `client` is not its file stem fails item 1: the contents of the two grade files swapped.
+#[test]
+fn tree_client_not_file_stem_fails_item_1() {
+    let d = conformance_copy();
+    let cc = std::fs::read(d.path().join("claude-code.toml")).unwrap();
+    let oc = std::fs::read(d.path().join("opencode.toml")).unwrap();
+    std::fs::write(d.path().join("claude-code.toml"), oc).unwrap();
+    std::fs::write(d.path().join("opencode.toml"), cc).unwrap();
+    assert_eq!(
+        tree_item_1(d.path()),
+        [
+            "grade file `claude-code.toml`: its stem `claude-code` is not its client `opencode`",
+            "grade file `opencode.toml`: its stem `opencode` is not its client `claude-code`",
+        ]
+    );
+}
+
+/// The `toml` extension matches in any case: a stray `codex.TOML` (client = "codex") is loaded and fails item 1,
+/// and a `codex.Toml` of client `opencode` gives the client two grade files and a stem that is not its client.
+#[test]
+fn tree_grade_file_extension_any_case() {
+    let d = conformance_copy();
+    let text = std::fs::read_to_string(d.path().join("opencode.toml")).unwrap();
+    std::fs::write(d.path().join("codex.TOML"), text.replace("client = \"opencode\"", "client = \"codex\"")).unwrap();
+    assert_eq!(tree_item_1(d.path()), ["grade file for `codex` names no client"]);
+    std::fs::remove_file(d.path().join("codex.TOML")).unwrap();
+    std::fs::write(d.path().join("codex.Toml"), &text).unwrap();
+    assert_eq!(
+        tree_item_1(d.path()),
+        [
+            "client `opencode` has 2 grade files, not one",
+            "grade file `codex.Toml`: its stem `codex` is not its client `opencode`",
+        ]
+    );
+}
+
+/// A misnamed grade file (`open-code.toml`): next to `opencode.toml`, the client has two grade files (item 1);
+/// alone, the client has no grade file.
+#[test]
+fn tree_misnamed_grade_file_fails() {
+    let d = conformance_copy();
+    std::fs::copy(d.path().join("opencode.toml"), d.path().join("open-code.toml")).unwrap();
+    assert_eq!(
+        tree_item_1(d.path()),
+        [
+            "client `opencode` has 2 grade files, not one",
+            "grade file `open-code.toml`: its stem `open-code` is not its client `opencode`",
+        ]
+    );
+    std::fs::remove_file(d.path().join("opencode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("no grade file for client `opencode`"), "{e}");
+}
+
+/// File names match exactly: `OpenCode.toml` is not `opencode.toml`, also on a case-insensitive file system.
+#[test]
+fn tree_grade_file_name_matches_exactly() {
+    let d = conformance_copy();
+    std::fs::rename(d.path().join("opencode.toml"), d.path().join("cf4c-tmp")).unwrap();
+    std::fs::rename(d.path().join("cf4c-tmp"), d.path().join("OpenCode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("no grade file for client `opencode`"), "{e}");
+}
+
+/// A grade file that is a symbolic link is refused, as fixture evidence through a link is (K§6.2.3).
+#[cfg(unix)]
+#[test]
+fn tree_grade_file_symlink_refused() {
+    let d = conformance_copy();
+    let other = tempfile::tempdir().unwrap();
+    std::fs::rename(d.path().join("opencode.toml"), other.path().join("opencode.toml")).unwrap();
+    std::os::unix::fs::symlink(other.path().join("opencode.toml"), d.path().join("opencode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("opencode.toml") && e.contains("symbolic link"), "{e}");
+}
+
+/// A client with no `<client id>.toml` is a clear failure.
+#[test]
+fn tree_missing_client_grade_file_refused() {
+    let d = conformance_copy();
+    std::fs::remove_file(d.path().join("opencode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("opencode.toml") && e.contains("no grade file for client `opencode`"), "{e}");
+}
+
+/// K§6.2.5 on the repository: check items 1-9 on `docs/conformance/`, then the generator and item 10.
+#[test]
+fn conformance_tree() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let (reg, grades, clients, resolved) = tree_check(&root, &root.join("docs/conformance"));
+    let md = render::markdown(&reg, &grades, &clients, &resolved);
+    let json = render::json(&reg, &grades, &clients, &resolved);
+    if let Err(f) = render::compare_or_write(&root, &md, &json) {
+        panic!("item {}: {}", f.item, f.text);
+    }
 }
