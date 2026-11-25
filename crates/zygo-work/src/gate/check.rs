@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use zygo_core::esc;
 
-use crate::decisions::record::{parse_record, Class, Kind, Status};
-use crate::gate::git::{Blob, GitFail, VerdictGit};
-use crate::gate::transition::Version;
+use crate::decisions::record::{name_kind, parse_record, Class, Kind, NameKind, Status};
+use crate::gate::git::{Blob, GitFail, LogCommit, VerdictGit};
+use crate::gate::transition::{agent_change, RangeCtx, Version};
 
 /// The proof of one disposition (D§8.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +111,106 @@ pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
             }
         }
     }
+    // Steps 8 and 9 read one `git log` of R.
+    let log = match git.log(&base, &head) {
+        Ok(log) => log,
+        Err(e) => {
+            p.git(e);
+            return p.0;
+        }
+    };
+    let named: BTreeSet<&str> = ds
+        .iter()
+        .filter_map(|d| match &d.proof {
+            Proof::Recorded { record } => Some(record.as_str()),
+            _ => None,
+        })
+        .collect();
+    let ctx = RangeCtx { range, superseding: new_records(&log, &named, &head, &base, git, &mut p) };
+    agent_changes(&log, &ctx, git, &mut p);
     p.0
+}
+
+/// The file name of a path directly under `docs/decisions/`.
+fn decision_name(path: &str) -> Option<&str> {
+    path.strip_prefix("docs/decisions/").filter(|n| !n.contains('/'))
+}
+
+/// D§9.4 step 8: each record of a path R touches that is valid at `head` and absent at `base` gives its `supersedes`
+/// to the returned set, and, with a stop class, must be `ratified` or `fixed`. A record a `recorded` entry names is
+/// skipped: step 7 gave its stop problem.
+fn new_records(
+    log: &[LogCommit],
+    named: &BTreeSet<&str>,
+    head: &str,
+    base: &str,
+    git: &mut dyn VerdictGit,
+    p: &mut Problems,
+) -> BTreeSet<String> {
+    let touched: BTreeSet<String> = log
+        .iter()
+        .flat_map(|c| &c.paths)
+        .filter_map(|(_, path)| match name_kind(decision_name(path)?) {
+            NameKind::Record(id) => Some(id),
+            _ => None,
+        })
+        .collect();
+    let mut superseding = BTreeSet::new();
+    for id in &touched {
+        let name = format!("{id}.md");
+        let new = match version(git, head, &name) {
+            Ok(Version::Valid(r)) => r,
+            Ok(_) => continue,
+            Err(e) => {
+                p.git(e);
+                continue;
+            }
+        };
+        match version(git, base, &name) {
+            Ok(Version::Absent) => {}
+            Ok(_) => continue,
+            Err(e) => {
+                p.git(e);
+                continue;
+            }
+        }
+        superseding.extend(new.supersedes.clone());
+        let passes = matches!(new.status, Status::Ratified | Status::Fixed);
+        if new.class != Class::None && !passes && !named.contains(id.as_str()) {
+            p.push(format!("{id}: class {} stops for the operator: ratify or overturn {id}", new.class.name()));
+        }
+    }
+    superseding
+}
+
+/// An agent commit (D§5): one parent and a message line that starts with `Zygo-Session:`.
+fn agent_commit(c: &LogCommit) -> bool {
+    c.parents.len() == 1 && c.message.lines().any(|l| l.starts_with("Zygo-Session:"))
+}
+
+/// D§9.4 step 9: each record change of an agent commit, in log order, must be an agent transition of D§6.6.
+fn agent_changes(log: &[LogCommit], ctx: &RangeCtx, git: &mut dyn VerdictGit, p: &mut Problems) {
+    let mut count = 0;
+    for c in log.iter().filter(|c| agent_commit(c)) {
+        for (_, path) in &c.paths {
+            let Some(name) = decision_name(path) else { continue };
+            let Some(stem) = name.strip_suffix(".md") else { continue };
+            count += 1;
+            if count > RECORD_CHANGES_MAX {
+                p.push("too many record changes".into());
+                return;
+            }
+            if name_kind(name) == NameKind::Other {
+                continue; // not a record name: agent_change ignores it, so no read
+            }
+            let change = version(git, &c.parents[0], name)
+                .and_then(|old| Ok(agent_change(stem, &old, &version(git, &c.id, name)?, ctx)));
+            match change {
+                Ok(problem) => p.0.extend(problem),
+                Err(e) => p.git(e),
+            }
+        }
+    }
 }
 
 /// D§9.4 step 5: `commit` resolves and its full id is in R.
@@ -196,10 +295,11 @@ fn unique(ds: &[Disposition], p: &mut Problems) {
     }
     let (mut records, mut twice) = (BTreeSet::new(), BTreeSet::new());
     for d in ds {
-        if let Proof::Recorded { record } = &d.proof {
-            if !records.insert(record.as_str()) && twice.insert(record.as_str()) {
-                p.push(format!("{} serves two findings", esc(record)));
-            }
+        if let Proof::Recorded { record } = &d.proof
+            && !records.insert(record.as_str())
+            && twice.insert(record.as_str())
+        {
+            p.push(format!("{} serves two findings", esc(record)));
         }
     }
 }

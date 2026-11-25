@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use zygo_work::decisions::record::Class;
 use zygo_work::gate::check::{check_keep, format_problems, Disposition, KeepRequest, Proof};
-use zygo_work::gate::git::{BatchIo, GitRunner, ProcessGit, ProcessRunner};
+use zygo_work::gate::git::{BatchIo, Blob, GitFail, GitRunner, LogCommit, ProcessGit, ProcessRunner, VerdictGit};
 use zygo_work::repo::{RunError, Whole};
 
 // ---- copied from tests/decision_git.rs (private to that test crate) ----
@@ -357,4 +357,107 @@ fn stop_class_recorded_in_round_1_stops_for_the_operator_not_the_round_limit() {
     let p = keep(&fx, 1, Some(&h), None, Some(vec![recorded("R1-1", Class::Security, 'S')]));
     assert_eq!(p, vec![format!("R1-1: class security stops for the operator: ratify or overturn {}", id('S'))]);
     assert!(!p.iter().any(|x| x.contains("round 3")));
+}
+
+// ---- cycle 3: steps 8 and 9 ----
+
+/// The record `P` (present at `base`) set ratified by the operator keys.
+fn ratified_p() -> String { record('P', &[("status", "ratified"), ("reviewed", "2026-11-25"), ("review_note", "")]) }
+
+#[test]
+fn new_open_contract_record_no_finding_names() {
+    let fx = fixture();
+    let h = add(&fx, 'N', &[("kind", "decision"), ("class", "contract")]);
+    assert_eq!(
+        keep(&fx, 1, Some(&h), None, Some(vec![])),
+        vec![format!("{0}: class contract stops for the operator: ratify or overturn {0}", id('N'))]
+    );
+}
+
+#[test]
+fn agent_commit_sets_ratified() {
+    let fx = fixture();
+    let h = commit(&fx.n, &format!("ratify{AGENT}"), &[(&path('P'), Some(&ratified_p()))]);
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(vec![])), vec![format!("{}: agent writes status ratified", id('P'))]);
+}
+
+#[test]
+fn agent_commit_changes_class() {
+    let fx = fixture();
+    let h = commit(&fx.n, &format!("class{AGENT}"), &[(&path('P'), Some(&record('P', &[("class", "security")])))]);
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(vec![])), vec![format!("{}: frozen key class changed", id('P'))]);
+}
+
+#[test]
+fn agent_commit_sets_fixed_with_fixed_by_outside_the_range() {
+    let fx = fixture();
+    let p = record('P', &[("status", "fixed"), ("fixed_by", &fx.base)]);
+    let h = commit(&fx.n, &format!("fix{AGENT}"), &[(&path('P'), Some(&p))]);
+    assert_eq!(
+        keep(&fx, 1, Some(&h), None, Some(vec![])),
+        vec![format!("{}: fixed_by {} is not in the node range", id('P'), fx.base)]
+    );
+}
+
+#[test]
+fn agent_commit_deletes_a_record() {
+    let fx = fixture();
+    let h = commit(&fx.n, &format!("rm{AGENT}"), &[(&path('P'), None)]);
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(vec![])), vec![format!("{}: record deleted", id('P'))]);
+}
+
+#[test]
+fn zygo_session_line_in_a_middle_paragraph_is_an_agent_commit() {
+    let fx = fixture();
+    let h = commit(&fx.n, "ratify\n\nZygo-Session: s\n\nmore text", &[(&path('P'), Some(&ratified_p()))]);
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(vec![])), vec![format!("{}: agent writes status ratified", id('P'))]);
+}
+
+#[test]
+fn operator_ratify_or_overturn_without_zygo_session_passes_step_9() {
+    let fx = fixture();
+    let stop: [(&str, &str); 2] = [("kind", "decision"), ("class", "security")];
+    add(&fx, 'S', &stop);
+    let ratified = record('S', &[stop[0], stop[1], ("status", "ratified"), ("reviewed", "2026-11-25"), ("review_note", "")]);
+    let h1 = commit(&fx.n, "ratify\n\nper the Zygo-Session: rule, no trailer", &[(&path('S'), Some(&ratified))]);
+    let ds = || Some(vec![recorded("R1-1", Class::Security, 'S')]);
+    assert_eq!(keep(&fx, 1, Some(&h1), None, ds()), Vec::<String>::new());
+    let over = record('S', &[stop[0], stop[1], ("status", "overturned"), ("reviewed", "2026-11-25"), ("review_note", "No.")]);
+    let h2 = commit(&fx.n, "overturn", &[(&path('S'), Some(&over))]);
+    assert_eq!(keep(&fx, 1, Some(&h2), None, ds()), vec![format!("R1-1: {} overturned by the operator", id('S'))]);
+}
+
+/// [`ProcessGit`] whose `log` step times out.
+struct FailLog(ProcessGit);
+
+impl VerdictGit for FailLog {
+    fn commit(&mut self, rev: &str) -> Result<Option<String>, GitFail> { self.0.commit(rev) }
+    fn record_blob(&mut self, rev: &str, name: &str) -> Result<Blob, GitFail> { self.0.record_blob(rev, name) }
+    fn merge_base(&mut self, a: &str, b: &str) -> Result<Option<String>, GitFail> { self.0.merge_base(a, b) }
+    fn rev_list(&mut self, base: &str, head: &str, max: usize) -> Result<Option<Vec<String>>, GitFail> {
+        self.0.rev_list(base, head, max)
+    }
+    fn log(&mut self, _base: &str, _head: &str) -> Result<Vec<LogCommit>, GitFail> {
+        Err(GitFail::Failed { step: "git log", why: "timed out".into() })
+    }
+}
+
+#[test]
+fn log_failure_gives_cannot_check_git_log() {
+    let fx = fixture();
+    let h = code(&fx);
+    let p = check_keep(&req(1, Some(&h), None, Some(vec![])), &mut FailLog(far_git(&fx.w)));
+    assert_eq!(p, s(&["cannot check: git log timed out"]));
+}
+
+#[test]
+fn acceptance_6_passes_with_no_problem() {
+    let fx = fixture();
+    let c1 = code(&fx);
+    let h = add(&fx, 'R', &[]);
+    let ds = vec![fixed("R3-1", &c1), rejected("R3-2", Class::None), recorded("R3-3", Class::None, 'R')];
+    assert_eq!(keep(&fx, 3, Some(&h), None, Some(ds)), Vec::<String>::new());
+    let fx2 = fixture();
+    let h = code(&fx2);
+    assert_eq!(keep(&fx2, 1, Some(&h), None, Some(vec![])), Vec::<String>::new());
 }
