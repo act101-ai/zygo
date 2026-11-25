@@ -437,7 +437,8 @@ pub fn evidence(root: &Path, e: &str, client_name: &str) -> Result<Evidence, Str
             };
             let cells = split_row(row);
             let cell = |i: usize| cells.get(i).map(|c| c.trim()).unwrap_or("");
-            if cell(3) != client_name {
+            // A joint row (`Claude Code + tmux`) counts for each agent it names.
+            if !cell(3).split(" + ").any(|a| a.trim() == client_name) {
                 return Err(fail(format!("row `{id}` is for `{}`, not `{client_name}`", cell(3))));
             }
             let want = if file == "docs/premises.md" { "verified" } else { "pass" };

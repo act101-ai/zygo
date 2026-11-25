@@ -296,6 +296,18 @@ fn check_3_premise_of_another_client_not_evidence() {
 }
 
 #[test]
+fn check_3_premise_of_a_joint_agent_cell() {
+    // The Agent cell of Q4 is `Alpha + Beta`: the row counts for each client it names.
+    for name in ["Alpha", "Beta"] {
+        assert!(evidence(&repo(), "premise:docs/premises.md#Q4", name).is_ok(), "{name}");
+    }
+    for name in ["Gamma", "Alpha + Beta", "Alph"] {
+        let e = evidence(&repo(), "premise:docs/premises.md#Q4", name).unwrap_err();
+        assert!(e.contains("is for `Alpha + Beta`"), "{name}: {e}");
+    }
+}
+
+#[test]
 fn check_3_premise_or_test_source_over_1_mib_not_evidence() {
     let d = copy_repo();
     let pad = |p: &Path, line: &str| {
