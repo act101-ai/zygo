@@ -224,7 +224,8 @@ mod tests {
         let s = Store { conn };
         for (session, stored, view) in [("A", 1000, 100), ("B", 300, 0), ("C", 50, 0)] {
             s.insert_trim(&TrimRow { ts: 1, session: session.into(), agent_id: None, tool: "Bash".into(),
-                                     kind: "head".into(), stored_bytes: stored, view_bytes: view }).unwrap();
+                                     kind: "head".into(), stored_bytes: stored, view_bytes: view,
+                                     result_id: None, command: None, shaper: None }).unwrap();
         }
         assert_eq!(s.bytes_trimmed("A").unwrap(), 900);
         let st = s.conn.prepare_cached(BYTES_TRIMMED_SQL).unwrap();
