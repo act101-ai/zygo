@@ -34,7 +34,7 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
 
 ### Steps
 
-- [ ] 1. Write `scripts/test-check-premises.sh` (new, `#!/bin/sh`, `set -u`) in the form of `scripts/test-check-conformance.sh:1-47`: `HERE`, `ROOT`, `T=$(mktemp -d)`, `trap 'rm -rf "$T"' EXIT INT TERM`, and the globals `CASE`, `OUT`, `RC` and `N=0`. The first comment line is `# Tests for scripts/check-premises.sh on temporary copies (node PC-1). No agent, no network.` Helpers:
+- [x] 1. Write `scripts/test-check-premises.sh` (new, `#!/bin/sh`, `set -u`) in the form of `scripts/test-check-conformance.sh:1-47`: `HERE`, `ROOT`, `T=$(mktemp -d)`, `trap 'rm -rf "$T"' EXIT INT TERM`, and the globals `CASE`, `OUT`, `RC` and `N=0`. The first comment line is `# Tests for scripts/check-premises.sh on temporary copies (node PC-1). No agent, no network.` Helpers:
   - `fail <why>`: prints `test-check-premises: FAIL $CASE: <why>` and then `$OUT` to stderr, and exits 1.
   - `mk <name>`: makes `$T/<name>` and copies into it, at the same relative paths:
     - `scripts/check-premises.sh`;
@@ -79,9 +79,9 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
 
   Each `sed` writes to a temporary file and then moves it back, because BSD `sed -i` and GNU `sed -i` differ. After each change, use `grep -c` to check that the change took effect: the count of the old line is 0, or the count of the new line is 1. If the change did not take effect, call `fail "planted change did not apply"`.
 
-- [ ] 2. Run `sh scripts/test-check-premises.sh` → exit 1 with `test-check-premises: FAIL real tree: …`, because today's ok line lists only the fixed ids. For reference, on today's script cases 1, 2, 3, 6, 7, 8, 11, 12 and 13 fail, and cases 4, 5, 9, 10 and 14 pass.
+- [x] 2. Run `sh scripts/test-check-premises.sh` → exit 1 with `test-check-premises: FAIL real tree: …`, because today's ok line lists only the fixed ids. For reference, on today's script cases 1, 2, 3, 6, 7, 8, 11, 12 and 13 fail, and cases 4, 5, 9, 10 and 14 pass.
 
-- [ ] 3. Change `scripts/check-premises.sh`:
+- [x] 3. Change `scripts/check-premises.sh`:
   - Delete `header()`, `V_CC` … `V_TM`, their four `fail`s and `version_of()` (`:31-49`).
   - Add `HDR`: each `<Name>: <version>` line before the first `^## ` line of `$P`, stored as a `name<TAB>version` line. A header line matches the ERE `^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]: *[^ ]+ *$`. The prose line at `:3` does not match, because its name part holds a comma. Drop trailing spaces. When a name is given twice, the first one wins (as `head -n 1` does today).
   - Add `version_of <name>`: prints the version for that name from `HDR`, or nothing.
@@ -101,15 +101,15 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   - Ok line (`:213`): `check-premises: ok (<ROWS joined by one space>)`.
   - Header comment, line 2: add `; rows and agent versions are driven by data (K§6.2.5, node PC-1)`.
 
-- [ ] 4. Run `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (14 cases)`.
+- [x] 4. Run `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (14 cases)`.
 
-- [ ] 5. Run `sh scripts/check-premises.sh` on the real tree → exit 0, last line `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW15-bash PW15-tool PW15-slash PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)`.
+- [x] 5. Run `sh scripts/check-premises.sh` on the real tree → exit 0, last line `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW15-bash PW15-tool PW15-slash PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)`.
 
-- [ ] 6. Regression check: `sh scripts/premises/ver_test.sh` → exit 0, last line `ver tests: ok (<n>)`. Its K cases grep the texts kept above, and it uses stub programs only.
+- [x] 6. Regression check: `sh scripts/premises/ver_test.sh` → exit 0, last line `ver tests: ok (<n>)`. Its K cases grep the texts kept above, and it uses stub programs only.
 
-- [ ] 7. Acceptance: `sh scripts/test-check-premises.sh && sh scripts/check-premises.sh && test "$(sh scripts/test-check-premises.sh | grep -cE '^test-check-premises: ok \(([89]|[1-9][0-9]+) cases\)$')" -eq 1` → exit 0.
+- [x] 7. Acceptance: `sh scripts/test-check-premises.sh && sh scripts/check-premises.sh && test "$(sh scripts/test-check-premises.sh | grep -cE '^test-check-premises: ok \(([89]|[1-9][0-9]+) cases\)$')" -eq 1` → exit 0.
 
-- [ ] 8. Commit `scripts/check-premises.sh` and `scripts/test-check-premises.sh` with the message `feat(premises): check-premises driven by data (PC-1)`. End the message with `Zygo-Session: <session>` and `Zygo-Work: phase4:PC-1`, each on its own line. Add no Claude attribution.
+- [x] 8. Commit `scripts/check-premises.sh` and `scripts/test-check-premises.sh` with the message `feat(premises): check-premises driven by data (PC-1)`. End the message with `Zygo-Session: <session>` and `Zygo-Work: phase4:PC-1`, each on its own line. Add no Claude attribution.
 
 ### Author's checks (2026-11-25)
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks docs/premises.md, the premise fixtures and the spec notes (node N2).
+# Checks docs/premises.md, the premise fixtures and the spec notes (node N2); rows and agent versions are driven by data (K§6.2.5, node PC-1).
 # Prints the first failing item and exits 1; exits 0 when all items pass.
 # N2_FORBIDDEN_NAMES (optional, space-separated, given at run time, never written here): words
 # that must not appear as whole words (any case) in fixtures/ or docs/premises.md, such as the
@@ -28,25 +28,17 @@ nontrivial() {
 [ -s "$P" ] || fail "$P is missing or empty"
 [ -s "$SPEC" ] || fail "$SPEC is missing"
 
-header() { sed -n "s/^$1: *\(.*[^ ]\) *\$/\1/p" "$P" | head -n 1; }
-V_CC=$(header 'Claude Code')
-V_OC=$(header 'OpenCode')
-V_AL=$(header 'act-lite')
-V_TM=$(header 'tmux')
-[ -n "$V_CC" ] || fail "header line 'Claude Code: <version>' missing"
-[ -n "$V_OC" ] || fail "header line 'OpenCode: <version>' missing"
-[ -n "$V_AL" ] || fail "header line 'act-lite: <version>' missing"
-[ -n "$V_TM" ] || fail "header line 'tmux: <version>' missing"
+# HDR: one "name<TAB>version" line per "<Name>: <version>" header line before the first "## ".
+HDR=$(awk '/^## /{exit}
+  /^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]: *[^ ]+ *$/ {
+    i = index($0, ":"); v = substr($0, i + 1); gsub(/ /, "", v); print substr($0, 1, i - 1) "\t" v
+  }' "$P")
 
-version_of() {
-  case "$1" in
-    'Claude Code') echo "$V_CC" ;;
-    'OpenCode') echo "$V_OC" ;;
-    'act-lite') echo "$V_AL" ;;
-    'tmux') echo "$V_TM" ;;
-    *) echo "" ;;
-  esac
-}
+# version_of <name>: the header version for that name (the first line wins), or nothing.
+version_of() { printf '%s\n' "$HDR" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit }'; }
+
+# ROWS: the Id cell of every table row, in file order.
+ROWS=$(awk -F'|' '/^\| / { id = $2; gsub(/ /, "", id); if (id != "Id") print id }' "$P")
 
 trim() { sed 's/^ *//; s/ *$//'; }
 
@@ -56,6 +48,11 @@ S19A=$(awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f' "$SPEC")
 S105=$(awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f' "$SPEC")
 
 for id in $IDS $WIDS; do
+  n=$(grep -c "^| $id |" "$P")
+  [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
+done
+
+for id in $ROWS; do
   n=$(grep -c "^| $id |" "$P")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
   row=$(grep "^| $id |" "$P")
@@ -76,12 +73,13 @@ for id in $IDS $WIDS; do
     a=$(echo "$agent" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
     v=$(echo "$ver" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
     want=$(version_of "$a")
-    [ -n "$want" ] || fail "$id: unknown agent '$a'"
-    # A pinned agent version is a minimum (operator, 2026-11-21); act-lite stays exact.
+    [ -n "$want" ] || fail "$id: agent '$a' has no header line '$a: <version>'"
+    # The rule is chosen per header name (K§6.2.5): an agent version is a minimum (operator,
+    # 2026-11-21); act-lite stays exact; tmux is a minimum with at most one letter after it.
     case "$a" in
-      'Claude Code' | 'OpenCode') ver_ge "$v" "$want" || fail "$id: version '$v' is below the header's '$want' for $a, or not a dotted number" ;;
+      'act-lite') [ "$v" = "$want" ] || fail "$id: version '$v' differs from the header's '$want' for $a" ;;
       'tmux') ver_ge "${v%[a-z]}" "$want" || fail "$id: version '$v' is below the header's '$want' for tmux, or not a dotted number with at most one letter after it" ;;
-      *) [ "$v" = "$want" ] || fail "$id: version '$v' differs from the header's '$want' for $a" ;;
+      *) ver_ge "$v" "$want" || fail "$id: version '$v' is below the header's '$want' for $a, or not a dotted number" ;;
     esac
     i=$((i + 1))
   done
@@ -99,10 +97,10 @@ for id in $IDS $WIDS; do
 $paths
 EOF_PATHS
 
+  case " $IDS " in *" $id "*)
   if [ "$result" = failed ]; then
     pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: [^)]*\)\*"
     case "$id" in
-      PW*) ;;
       P*) echo "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
       Q*) echo "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
     esac
@@ -111,8 +109,9 @@ EOF_PATHS
       nontrivial fixtures/act-lite/README.md || fail "P6a: failed, but fixtures/act-lite/README.md is missing or trivial"
       nontrivial fixtures/act-lite/languages.json || fail "P6a: failed, but fixtures/act-lite/languages.json is missing or trivial"
     fi
-  fi
-  case "$id" in PW*)
+  fi ;;
+  esac
+  case " $WIDS " in *" $id "*)
     if [ -s "$WSPEC" ]; then
       grep -Eq "^\| $id \|.*Result $date: $result([ .;,]|\$)" "$WSPEC" || fail "$id: the W§17 row has no 'Result $date: $result'"
       [ "$result" != failed ] || grep -Eq "\*\(Note $date, [A-Z0-9-]+, $id: [^)]*\)\*" "$WSPEC" ||
@@ -134,9 +133,12 @@ nontrivial fixtures/act-lite/status.json || nontrivial fixtures/act-lite/languag
   fail "required file fixtures/act-lite/status.json or fixtures/act-lite/languages.json is missing"
 
 # Forbidden content under fixtures/: credentials, machine paths, e-mail addresses.
-# settings-schema.json is the upstream schema kept verbatim (its source is beside it); its own
-# example texts ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules only.
-VERBATIM=fixtures/claude-code/settings-schema.json
+# settings-schema.json is the upstream schema kept verbatim (its source is beside it); so is the
+# Codex config.schema.json (from the pinned rust-v0.172.0 tag, K§6.3.7). Their own example texts
+# ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules only.
+VERBATIM="fixtures/claude-code/settings-schema.json fixtures/codex/config.schema.json"
+# VX: the ERE ^(<path>|<path>): for the list, dots escaped.
+VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):"
 # Scope (N38): fixtures, the live scripts and their helpers, docs/live-checks.md (each when it
 # exists); scan_notes applies the same patterns to the spec and conformance lines naming N38.
 SCOPE=fixtures
@@ -157,9 +159,9 @@ L='(^|[^A-Za-z0-9_]|\\[nrtbf]|\\u[0-9A-Fa-f]{4})'
 # XK: an x-api-key name and its separator, quoted, backslash-quoted or bare.
 XK='x-api-key(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
 scan 'sk-ant-' '' 'API key'
-scan 'Bearer [A-Za-z0-9]' "^$VERBATIM:" 'bearer token'
+scan 'Bearer [A-Za-z0-9]' "$VX" 'bearer token'
 scan "$XK"'[^"'"'"'\\[:space:]]' "$XK"'\[omitted\]' 'x-api-key value' i
-scan '/Users/' "^$VERBATIM:" 'macOS home path'
+scan '/Users/' "$VX" 'macOS home path'
 scan '/private/var/' '' 'temporary path'
 scan '/var/folders/' '' 'temporary path'
 scan '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '' 'e-mail address'
@@ -170,7 +172,7 @@ scan 'sk-[A-Za-z0-9]*\*{3,}' '' 'masked key'
 scan "${L}org-[A-Za-z0-9]{8,}" '' 'organization id'
 scan "${L}proj_[A-Za-z0-9]{8,}" '' 'project id'
 scan 'zyg_[A-Za-z0-9]' '' 'zygo token'
-scan '[A-Za-z]:(\\\\|\\|/)Users(\\\\|\\|/)' "^$VERBATIM:" 'Windows home path' i
+scan '[A-Za-z]:(\\\\|\\|/)Users(\\\\|\\|/)' "$VX" 'Windows home path' i
 scan "${L}gh[pousr]_[A-Za-z0-9]{20,}" '' 'GitHub token'
 scan 'github_pat_[A-Za-z0-9_]{20,}' '' 'GitHub token'
 scan 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.' '' 'JWT'
@@ -210,5 +212,7 @@ EOF_HOSTS
 [ -n "${N2_FORBIDDEN_NAMES:-}" ] || echo "check-premises: note: N2_FORBIDDEN_NAMES not set; name scan skipped"
 
 [ -z "$WSKIP" ] || echo "check-premises: note: $WSPEC not found; W§17 result check skipped"
-echo "check-premises: ok (${IDS} ${WIDS})"
+# shellcheck disable=SC2086
+set -- $ROWS
+echo "check-premises: ok ($*)"
 exit 0
