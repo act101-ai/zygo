@@ -333,18 +333,36 @@ pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn
         None if name == BUILTIN_LOADOUT => builtin_solo(),
         None => return out,
     };
-    let members: Vec<(usize, &LoadoutPane)> = lo
+    // The name `zygo up` keeps (loadout.rs:212-214): an agent pane's valid member name that no earlier agent pane holds.
+    let mut seen: Vec<String> = Vec::new();
+    let members: Vec<(usize, &LoadoutPane, Option<String>)> = lo
         .window
         .iter()
         .flat_map(|w| &w.pane)
         .enumerate()
-        .filter(|(_, p)| p.pool && p.kind == "claude-code" && !p.server.as_deref().is_some_and(has_user_info))
+        .map(|(i, p)| {
+            let name = p.name.clone().filter(|n| {
+                p.kind.parse::<Agent>().is_ok()
+                    && zygo_core::ids::valid_member_name(n)
+                    && !seen.contains(n)
+            });
+            seen.extend(name.clone());
+            (i, p, name)
+        })
+        .filter(|(_, p, _)| {
+            p.pool && p.kind == "claude-code" && !p.server.as_deref().is_some_and(has_user_info)
+        })
         .collect();
-    let names: Vec<Option<String>> = members.iter().map(|(_, p)| p.name.clone()).collect();
+    let names: Vec<Option<String>> = members.iter().map(|(_, _, n)| n.clone()).collect();
     let dir_of: Vec<(String, PathBuf)> = members
         .iter()
         .zip(pool::assign(&names, dirs.len()))
-        .map(|((i, p), k)| (p.name.clone().unwrap_or_else(|| format!("pane {}", i + 1)), dirs[k].clone()))
+        .map(|((i, _, n), k)| {
+            (
+                n.clone().unwrap_or_else(|| format!("pane {}", i + 1)),
+                dirs[k].clone(),
+            )
+        })
         .collect();
     out.extend(pool::shared_lines(&dir_of));
     out

@@ -512,6 +512,77 @@ fn shared_lines_of_a_user_loadout() {
     );
 }
 
+/// F1 of the FX-15 review, R§10 and R§9.5: `zygo up` keeps a pane's name only on an agent pane, when the name is a valid
+/// member name and no earlier agent pane holds it (`loadout.rs:212-214`); `pool::order` puts named panes first, so
+/// doctor orders the members by the same names and labels a pane whose name is dropped `pane <n>`.
+#[test]
+fn pool_lines_use_the_names_up_keeps() {
+    let t = tempfile::tempdir().unwrap();
+    let (root, cwd) = (t.path().join("root"), t.path().join("cwd"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    let p = pool(&root);
+    let pane = |kind: &str, name: &str, pool: bool| {
+        format!(
+            "[[loadout.mine.window.pane]]\nkind = \"{kind}\"\nname = \"{name}\"\npool = {pool}\n"
+        )
+    };
+    let run = |panes: &str| {
+        let user = format!(
+            "{}default_loadout = \"mine\"\n[[loadout.mine.window]]\n{panes}",
+            pool_toml(&p)
+        );
+        definition_lines(
+            &cwd,
+            &merged(&root, &user),
+            &root.join("approvals.toml"),
+            &SystemGit,
+        )
+    };
+    let count = format!("pool: {}: 2 directories", p.display());
+    let a = p.join("a");
+    // Names x, x, y: up keeps x, (none), y; x gets `a`, y gets `b`, pane 2 gets `a`.
+    let dup = [("x", true), ("x", true), ("y", true)];
+    let panes: String = dup
+        .iter()
+        .map(|(n, pl)| pane("claude-code", n, *pl))
+        .collect();
+    assert_eq!(
+        run(&panes),
+        vec![
+            count.clone(),
+            format!("pool: {} is shared by x, pane 2", a.display())
+        ]
+    );
+    // An invalid member name `X` is dropped: y gets `a`, z gets `b`, pane 1 gets `a`.
+    let panes: String = [("X", true), ("y", true), ("z", true)]
+        .iter()
+        .map(|(n, pl)| pane("claude-code", n, *pl))
+        .collect();
+    assert_eq!(
+        run(&panes),
+        vec![
+            count.clone(),
+            format!("pool: {} is shared by pane 1, y", a.display())
+        ]
+    );
+    // An earlier opencode pane named `x` (not a pool member) takes the name: pane 2 is unnamed.
+    let panes = format!(
+        "{}{}{}{}",
+        pane("opencode", "x", false),
+        pane("claude-code", "x", true),
+        pane("claude-code", "y", true),
+        pane("claude-code", "z", true)
+    );
+    assert_eq!(
+        run(&panes),
+        vec![
+            count,
+            format!("pool: {} is shared by pane 2, y", a.display())
+        ]
+    );
+}
+
 /// F1 of the WD-12 review, R§10 and R§9.5: a pool pane whose server URL holds user info gets no member record
 /// (AU98), so `zygo up` gives it no pool directory; doctor's shared lines skip it too.
 #[test]
