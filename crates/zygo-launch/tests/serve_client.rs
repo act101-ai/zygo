@@ -29,6 +29,9 @@ use zygo_proxy::{Proxy, Url};
 use zygo_redact::act_lite_store::{store_path, Lookup};
 use zygo_usage::{RequestRow, Store};
 
+#[path = "../../zygo/tests/dead_port/mod.rs"]
+mod dead_port;
+
 // ---- fixtures ----
 
 #[allow(dead_code)]
@@ -142,14 +145,6 @@ fn server(extra: &str) -> Srv {
     })
     .unwrap();
     Srv { _d: d, root, h, alice: Secret::new(alice), bob: Secret::new(bob), clock, lines }
-}
-
-/// A loopback URL nothing listens on.
-fn closed_url() -> String {
-    let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    format!("http://127.0.0.1:{port}/")
 }
 
 /// Accepts every connection on 127.0.0.1:0, never writes, closes each after `hold`.
@@ -427,7 +422,7 @@ fn unusable_token_is_a_request_error() {
 
 #[test]
 fn unreachable_is_reported_as_unreachable() {
-    let c = ServeClient::connect(&Url::parse(&closed_url()).unwrap(), &Secret::new(new_token().0)).unwrap();
+    let c = ServeClient::connect(&Url::parse(&dead_port::closed_url()).unwrap(), &Secret::new(new_token().0)).unwrap();
     assert!(matches!(c.team_config(), Err(ClientError::Unreachable(_))));
 } // mutation: transport errors mapped to Reply
 
@@ -632,7 +627,7 @@ fn doctor_reachability_lines() { // §17
     let s = server("");
     let u = s.h.url().to_string();
     assert_eq!(reachability(&u), format!("{u} reachable"));
-    let c = closed_url();
+    let c = dead_port::closed_url();
     assert!(reachability(&c).starts_with(&format!("{c} unreachable (")), "{}", reachability(&c));
     assert_eq!(reachability("http://10.0.0.5:8443"), "http://10.0.0.5:8443 not allowed: not https and not a loopback host (C8)");
     let userinfo = ["n37user", "n37pass"].join(":");
@@ -991,7 +986,7 @@ fn a_server_url_with_userinfo_exits_2_and_sends_nothing() { // U1 (round 3), C8
 #[test]
 fn unreachable_server_exits_12() { // §8.2, §7 note
     let fx = fx();
-    fx.config(&format!("[server]\nurl = \"{}\"\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n", closed_url()));
+    fx.config(&format!("[server]\nurl = \"{}\"\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n", dead_port::closed_url()));
     let t = new_token().0;
     let (code, err) = run(opts(&fx, "dump", None, &[("ZYGO_TEAM_TOKEN", &t)]));
     assert_eq!(code, 12, "{err}");
@@ -1004,7 +999,7 @@ fn unreachable_server_exits_12() { // §8.2, §7 note
 #[test]
 fn an_unreachable_server_has_spawned_false() { // AU60
     let fx = fx();
-    serve_config(&fx, &Url::parse(&closed_url()).unwrap(), true);
+    serve_config(&fx, &Url::parse(&dead_port::closed_url()).unwrap(), true);
     let t = new_token().0;
     let o = Launcher::run(&stub(), opts(&fx, "dump", None, &[("ZYGO_TEAM_TOKEN", &t)]));
     assert_eq!(o, zygo_launch::launcher::LaunchOutcome { code: 12, signal: None, spawned: false, received: false, ran: None });

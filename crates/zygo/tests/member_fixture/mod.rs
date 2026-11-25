@@ -12,6 +12,9 @@ use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
 use zygo_core::Agent;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, Store};
 
+#[path = "../dead_port/mod.rs"]
+mod dead_port;
+
 pub const WS_ID: &str = "0123456789abcdef";
 pub const WS_KEY: &str = "kaaaaaaaa";
 pub const OTHER_KEY: &str = "kbbbbbbbb";
@@ -113,10 +116,7 @@ fn session_at(sessions: &Path, id: &str, url: &str) -> PathBuf {
 
 /// A session folder whose url is a closed loopback port.
 pub fn dead_session_at(sessions: &Path, id: &str) -> PathBuf {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = l.local_addr().unwrap().port();
-    drop(l);
-    session_at(sessions, id, &format!("http://127.0.0.1:{port}/"))
+    session_at(sessions, id, &dead_port::closed_url())
 }
 
 /// A session folder whose proxy reads each request (head and `content-length` body); then, with `rewrite`, it
