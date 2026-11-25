@@ -143,11 +143,11 @@ fn errors_name_the_loadout_and_the_place() {
 #[test]
 fn list_gives_each_name_with_its_source_in_name_order() {
     let s = |n: &str, src| (n.to_string(), src);
-    assert_eq!(list(&Config::default()), [s("solo", Source::Builtin)]);
+    assert_eq!(list(&Config::default(), false), [s("solo", Source::Builtin)]);
     let w = || vec![window(vec![pane("shell")])];
-    assert_eq!(list(&cfg("solo", vec![("pair", w()), ("alpha", w()), ("zed", w())])),
+    assert_eq!(list(&cfg("solo", vec![("pair", w()), ("alpha", w()), ("zed", w())]), false),
         [s("alpha", Source::User), s("pair", Source::User), s("solo", Source::Builtin), s("zed", Source::User)]);
-    assert_eq!(list(&cfg("solo", vec![("solo", w())])), [s("solo", Source::User)]);
+    assert_eq!(list(&cfg("solo", vec![("solo", w())]), false), [s("solo", Source::User)]);
 }
 
 #[test] // FIX-27 D6; kills: a `pane_cwd` that differs from `resolve`
@@ -209,5 +209,11 @@ fn repository_list_reports_the_added_loadout_as_repository() {
     let mut c = cfg("solo", vec![("pair", vec![window(vec![pane("shell")])])]);
     // what WD-7's apply_to_config adds: config.loadout["repository"] = repository_loadout(def)
     c.loadout.insert(REPOSITORY_LOADOUT.to_string(), repository_loadout(&def(BTreeMap::new())).unwrap());
-    assert_eq!(list(&c), [s("pair", Source::User), s("repository", Source::Repository), s("solo", Source::Builtin)]);
+    assert_eq!(list(&c, true), [s("pair", Source::User), s("repository", Source::Repository), s("solo", Source::Builtin)]);
+}
+
+#[test] // R§10, WD-10 review F1: a `[loadout.repository]` that the user wrote is listed as User
+fn repository_user_written_key_lists_as_user() {
+    let c = cfg("solo", vec![(REPOSITORY_LOADOUT, vec![window(vec![pane("shell")])])]);
+    assert_eq!(list(&c, false), [(REPOSITORY_LOADOUT.to_string(), Source::User), ("solo".to_string(), Source::Builtin)]);
 }

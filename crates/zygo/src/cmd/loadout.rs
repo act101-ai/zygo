@@ -388,7 +388,8 @@ pub fn run(a: &LoadoutArgs) -> i32 {
     };
     match &a.sub {
         LoadoutCmd::List => {
-            let text: String = loadout::list(&cfg)
+            // The CLI's config has no definition applied yet; WD-16 passes the value from WD-7's Merged::definition_file_of.
+            let text: String = loadout::list(&cfg, false)
                 .into_iter()
                 .map(|(name, source)| {
                     let source = match source {

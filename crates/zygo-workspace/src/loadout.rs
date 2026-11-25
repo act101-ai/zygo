@@ -115,9 +115,11 @@ pub fn builtin_solo() -> Loadout {
 }
 
 /// Each loadout name with its source, in name order. A user `[loadout.solo]` replaces the built-in one. The key
-/// `repository` has [`Source::Repository`].
-pub fn list(cfg: &Config) -> Vec<(String, Source)> {
-    let source = |k: &str| if k == REPOSITORY_LOADOUT { Source::Repository } else { Source::User };
+/// `repository` has [`Source::Repository`] only when `repository_from_files` says the workspace definition added it;
+/// else it is a user key.
+pub fn list(cfg: &Config, repository_from_files: bool) -> Vec<(String, Source)> {
+    let source =
+        |k: &str| if repository_from_files && k == REPOSITORY_LOADOUT { Source::Repository } else { Source::User };
     let mut all: Vec<(String, Source)> = cfg.loadout.keys().map(|k| (k.clone(), source(k))).collect();
     if !cfg.loadout.contains_key(BUILTIN_LOADOUT) {
         all.push((BUILTIN_LOADOUT.to_string(), Source::Builtin));
