@@ -17,4 +17,136 @@ Written when the node runs.
 
 ## Plan
 
-Written when the node starts.
+Base: `origin/phase-4` at 5cb6a387 (PC-1, PC-2 and OC-1 merged). Branch `phase-4--PC-5`. Premise checked 2026-11-25 against the live code:
+
+- `scripts/premises/run-codex.sh:9-19`: `run-codex.sh session` sources `lib.sh` with `N2_AGENTS=codex`, exports `N2_SCRATCH`, and runs `sh codex/session.sh`; a new part needs no edit there.
+- `scripts/premises/lib.sh`: `new_run` `:82` (sets `RUN`, `H`, `R`, and `CX_HOME=$H/.codex` `:88`), `start_mock` `:105`, `n2_trap_chain` `:126`, `stop_mock` `:153` (calls `check_abort` `:160`), `scrub` `:196`, `CODEX_MIN` `:208`, `CODEX_FX` `:209`, `EXTRA_ENV_ALLOW="RUST_LOG RUST_BACKTRACE"` `:216`, `codex_env` `:332` (an existing `$CX_HOME/config.toml` must hold `base_url = "<MOCK_URL>/v1"`, `:345-347`; else it writes the 8-line base text, `:350-352`), `run_codex` `:370` (returns Codex's status; writes one `$RUN/cx-used.d` file per run, also from another process that sources `lib.sh` with the same `RUN`), `codex_record` `:400`. The live code has no `CODEX_EXTRA_ALLOW`; the allow-list is `EXTRA_ENV_ALLOW` (`:216`). This node sets no `EXTRA_ENV` name, so `lib.sh` needs no change.
+- `scripts/premises/mock_upstream.py`: a rule answers `POST …/v1/responses` only when it has `"path"` (`matches` `:166-169`); the `last` key reads `body.messages` (`:183-185`), which a Responses body does not have, so this node's rules use `model` and `body`; `usage` replaces the `response.completed` usage only in a rule's own `sse` file (`set_usage` `:98`, applied `:349`), never in the default reply; a rule's `sse` file is read when a request matches it, so a rule may name a file written after the mock starts; the record counter is global for one mock (`STATE` `:50`), so one mock serves the whole part and record names never collide; `POST …/v1/responses/compact` is recorded and answered 404 (`endpoint` `:113-121`).
+- `scripts/premises/mcp_probe.py:1-27`: one tool, `probe_tool`, whose call returns `tracer-mcp-probe-result`.
+- `scripts/premises/scrub.py:150-170`: a JSON file with `body` gets `body.tools[].description` omitted; any other JSON or text file gets only the path, id, key and name rules, so `tools.json` (no `body` key) keeps tool descriptions.
+- `scripts/check-premises.sh:20-24` (`nontrivial`: a regular file over 2 bytes, not `{}` or `[]`), `:206-262` (fixture scans: `/Users/`, `/var/folders/`, `/private/var/` fail).
+- `scripts/premises/sse.py` builds Anthropic SSE only; no existing helper builds Responses SSE or reads a Codex `tools` list.
+- `fixtures/codex/config.schema.json` (rust-v0.172.0) holds every key this plan writes: `agents` (`AgentsToml`: role tables with `description`, `config_file`), `model_context_window`, `model_auto_compact_token_limit`, `compact_prompt`, `mcp_servers` (`RawMcpServerConfig`: `command`, `args`, `default_tools_approval_mode` = `auto|prompt|writes|approve`), `skills` (`SkillsConfig.config[]`: `path`, `enabled`), `tui.status_line` (ordered item ids; unset = `model-with-reasoning`, `current-dir`, `thread-name`), `tui.show_tooltips`, `check_for_update_on_startup`, `projects.<path>.trust_level`. `fixtures/codex/help.txt`: `codex exec --json`, `codex exec resume --last`.
+- `docs/work/phase4/nodes/PC-7.md` "Planning notes": PC-7 takes each row's result, date and paths from the `- PCn: <result> <date>: <paths>` lines; each path must pass `nontrivial`.
+- `docs/work/phase4/graph.md` "Review focus" item 6 applies to this node's runs.
+- `tmux` 3.8 is at `/opt/homebrew/bin/tmux` (minimum `tmux: 3.2`, `docs/premises.md`); `scripts/premises/live-tmux.sh:26-35` is the precedent for a private server (`-S <socket>`, `-f /dev/null`, socket path at most 100 characters).
+
+Drift and resolutions (author's call, §5.4; K§6.3.7 is unchanged, because none of these changes what it measures):
+
+- PC11 needs the TUI, and `run_codex` runs Codex in the foreground with no terminal. Resolution: the PC11 run is `run_codex` in a pane of a private tmux server, through a script that sources `lib.sh` with this run's `RUN`, `H`, `R`, `CX_HOME`, `MOCK_URL`, `MOCK_PID`. Every Codex start still goes through `run_codex`, and `codex_record` counts it.
+- The "Observed" line form has no place for the finding, and PC-7 writes each row's text from it. Resolution: each Observed line keeps the exact form, and one indented line `  - <finding>` follows it. The Acceptance count (`^- (PC6|…): …`) is unaffected.
+- PC6 and PC9 measure the spawn tool and the model-visible MCP tool name, so the part reads them from a probe request and builds the call replies from them. When a name is not found, the part records that and skips the dependent run (that result is then `failed`); it does not exit non-zero.
+
+Safety (the operator's rules for this node):
+
+- Real Codex runs only through the PC-2 harness: `sh scripts/premises/run-codex.sh session` (env -i, scratch `HOME` and `CODEX_HOME`, proxies at the mock, only the package copied by `codex_exe`). Never read, list or copy anything else in `~/.codex`; never `codex login`; no real token; no network but 127.0.0.1, and no new network use. No `EXTRA_ENV` name is added.
+- Steps 1-7 use no real binary. Step 7 (stub dry run) passes before step 8. Steps 8 and 10 (real runs) are run by the lead, one node at a time; nothing here needs another node's real run.
+- No CI test is added. The polls in step 5 run only in this premise script, which CI does not run.
+
+### Interfaces
+
+- Consumes (as in the code at 5cb6a387; this node edits none of these files):
+  - `new_run <name>`: `RUN=$N2_SCRATCH/<name>` (removed and made again), `H=$RUN/home`, `R=$RUN/repo` (a git repository), `CX_HOME=$H/.codex`.
+  - `start_mock [rules.json]`: sets `MOCK_URL`, `MOCK_PID`; records under `$RUN/rec/` (`<nnnn>.json`, `connect.txt`); chains `n2_mock_kill` into the traps. `stop_mock`: kills the mock, then `check_abort` (exit 3 when `$RUN/rec/ABORT` exists).
+  - `n2_trap_chain <command>`: `EXIT`, `HUP`, `INT`, `PIPE` and `TERM` run `<command>` first, then the earlier trap.
+  - `codex_env`: checks the isolation; writes `$CX_HOME/config.toml` only when it is missing; refuses one whose `base_url` is not `"$MOCK_URL/v1"`; sets `CODEX_ENV`, `CODEX_EXE`, `CODEX_VERSION`.
+  - `run_codex <codex args>`: `codex_env`, then Codex in `$R`; returns Codex's status.
+  - `codex_record <part>`: after `stop_mock`; replaces `$CODEX_FX/runs/<part>/` with `isolation.txt` and `connect.txt`; exit 1 on any value that is not scratch.
+  - `scrub <file>`: a scrubbed copy on stdout. `CODEX_FX` (default `$REPO_DIR/fixtures/codex`), `PREMISES_DIR`, `N2_SCRATCH`, `ver_ge <have> <min>`.
+- Produces: `scripts/premises/codex/session.sh` (run as `sh scripts/premises/run-codex.sh session`); `$CODEX_FX/agents/`, `compaction/`, `mcp/`, `status/`, `skills/`, `runs/session/`; the five "Observed" lines.
+
+### Fixed values
+
+Tracers: `tracer-pc6-probe`, `tracer-pc6-main-<x>`, `tracer-pc6-task-<x>` (`<x>` = `a`, `b`, `c`), `tracer-pc6-probe-desc`, `tracer-pc6-probe-dev`, `tracer-pc6-explorer-desc`, `tracer-pc6-explorer-dev`, `tracer-pc6-disc-desc`, `tracer-pc6-disc-dev`, `tracer-pc8-<c>-turn1`, `tracer-pc8-<c>-turn2` (`<c>` = `low`, `high`), `tracer-pc8-reply`, `tracer-pc8-compact-prompt`, `tracer-pc9-probe`, `tracer-pc9-call`, `tracer-pc9-done`, `tracer-pc11-turn`, `tracer-pc11-reply`, `tracer-pc15-turn`, `tracer-pc15-<loc>-desc`, `tracer-pc15-<loc>-body` (`<loc>` = `home`, `repo`, `path`).
+
+`$RUN/rules.json`, in this order (relative `sse` paths resolve against `$RUN`):
+
+```json
+[
+ {"name": "pc6-spawn-a", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-a", "sse": "sse/pc6-spawn-a.sse", "times": 1},
+ {"name": "pc6-spawn-b", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-b", "sse": "sse/pc6-spawn-b.sse", "times": 1},
+ {"name": "pc6-spawn-c", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-c", "sse": "sse/pc6-spawn-c.sse", "times": 1},
+ {"name": "pc8-high", "path": "/v1/responses$", "body": "tracer-pc8-high-turn1", "sse": "sse/pc8-text.sse", "times": 1,
+  "usage": {"input_tokens": 150000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 150010}},
+ {"name": "pc9-call", "path": "/v1/responses$", "body": "tracer-pc9-call", "sse": "sse/pc9-call.sse", "times": 1},
+ {"name": "pc9-done", "path": "/v1/responses$", "body": "tracer-pc9-call", "sse": "sse/pc9-done.sse"},
+ {"name": "pc11-reply", "path": "/v1/responses$", "body": "tracer-pc11-turn", "sse": "sse/pc11-text.sse"}
+]
+```
+
+The `config.toml` of each capture (`cx_home`): the 8 lines that `codex_env` writes (`lib.sh:350-352`, same bytes, with this mock's URL), then the capture's top-level lines, then `[projects."<R>"]` and `[projects."<real path of R>"]`, each `trust_level = "trusted"`, then the capture's tables:
+
+| Capture | `CX_HOME` | Top-level lines | Tables and files |
+|---|---|---|---|
+| pc6 | `$RUN/cx-pc6` | — | `[agents.pc6-probe]` `description = "tracer-pc6-probe-desc"`, `config_file = "<CX_HOME>/roles/pc6-probe.toml"`; `[agents.explorer]` `description = "tracer-pc6-explorer-desc"`, `config_file = "<CX_HOME>/roles/explorer.toml"`. Files: `roles/pc6-probe.toml` = `model = "gpt-mock-pc6"`, `developer_instructions = "tracer-pc6-probe-dev"`; `roles/explorer.toml` = `model = "gpt-mock-explorer"`, `developer_instructions = "tracer-pc6-explorer-dev"`; `agents/pc6-disc.toml` (named in no config) = `name = "pc6-disc"`, `description = "tracer-pc6-disc-desc"`, `model = "gpt-mock-disc"`, `developer_instructions = "tracer-pc6-disc-dev"` |
+| pc8-low, pc8-high | `$RUN/cx-pc8-low`, `$RUN/cx-pc8-high` | `model_context_window = 200000`, `model_auto_compact_token_limit = 100000`, `compact_prompt = "tracer-pc8-compact-prompt"` | — |
+| pc9 | `$RUN/cx-pc9` | — | `[mcp_servers.zygo]` `command = "python3"`, `args = ["-I", "<RUN>/mcp/zygo_probe.py"]`, `default_tools_approval_mode = "approve"`. File: `$RUN/mcp/zygo_probe.py` = `scripts/premises/mcp_probe.py` through `sed 's/probe_tool/compact/g'` |
+| pc15 | `$RUN/cx-pc15` | — | `[[skills.config]]` `path = "<RUN>/skills-extra/pc15-path/SKILL.md"`, `enabled = true`. Files: `<CX_HOME>/skills/pc15-home/SKILL.md`, `<R>/.agents/skills/pc15-repo/SKILL.md` (removed after the pc15 run), `<RUN>/skills-extra/pc15-path/SKILL.md`; each holds the lines `---`, `name: pc15-<loc>`, `description: tracer-pc15-<loc>-desc`, `---`, `tracer-pc15-<loc>-body` |
+| pc11 | `$RUN/cx-pc11` | `check_for_update_on_startup = false` | `[tui]` `status_line = ["model-with-reasoning"]`, `show_tooltips = false` |
+
+### Steps
+
+- [ ] 1. Write the frame of `scripts/premises/codex/session.sh`: a header comment (what it captures, the fixtures it writes, `Usage: sh scripts/premises/run-codex.sh session`); `PREMISES_DIR=$(cd "$(dirname "$0")/.." && pwd)`, `N2_AGENTS=codex`, `. "$PREMISES_DIR/lib.sh"` (the `codex/base.sh:9-11` form); `new_run codex-session`; `rm -rf` of `$CODEX_FX/agents`, `compaction`, `mcp`, `status`, `skills`; write `$RUN/rules.json`; `start_mock "$RUN/rules.json"`; the captures in the order pc6, pc8, pc9, pc15, pc11; `stop_mock`; `codex_record session`; last line `codex session: ok (codex $CODEX_VERSION)`. Check: `sh -n scripts/premises/codex/session.sh` and `shellcheck -s sh scripts/premises/codex/session.sh` exit 0.
+- [ ] 2. Add the shell helpers (only `exec_run` starts Codex):
+  - `cx_home <name> <top-level lines> <table lines>`: `CX_HOME=$RUN/cx-<name>`, `mkdir -p`, writes `$CX_HOME/config.toml` as in "Fixed values" (an empty argument adds nothing).
+  - `exec_run <name> <codex args...>`: `run_codex "$@" </dev/null >"$RUN/out/<name>.jsonl" 2>"$RUN/out/<name>.err"`; Codex's status is written to `$RUN/out/<name>.rc`; a non-zero Codex status never ends the part.
+  - `take <capture>`: moves every `$RUN/rec/[0-9]*.json` to `$RUN/cap/<capture>/`.
+  - `pub <src> <dest>`: `mkdir -p` the folder of `<dest>`; `scrub <src> >"<dest>"`.
+  - `py <cmd> <args...>`: `python3 -I "$RUN/pc5.py" <cmd> <args...>`.
+  Check: `sh -n` and `shellcheck -s sh` exit 0.
+- [ ] 3. Add the Python helper: `session.sh` writes `$RUN/pc5.py` once from a quoted heredoc (stdlib only). The "first request" of a `cap/` folder is its lowest-numbered record with method `POST` and a path that ends `/v1/responses`. A "user text" is the text of a body `input` item with `role` `user`. Subcommands and their exact output:
+  - `sse-text <out> <text>`: a Responses SSE stream with the events of `default_responses_sse` (`mock_upstream.py:79`) and `<text>` as the output text.
+  - `sse-call <out> <name> <arguments JSON> <call id>`: `response.created`; `response.output_item.added` and `response.output_item.done` with the item `{"type": "function_call", "id": "fc_<call id>", "call_id": "<call id>", "name": "<name>", "arguments": "<arguments JSON as a string>", "status": "completed"}`; `response.completed` with that item in `output` and usage `{"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}`.
+  - `tools <cap dir> <out>`: a JSON list with one object per tool of the first request's `body.tools`, keys `name`, `type`, `description`, `parameters`; a tool nested in another also gets `namespace` = the outer tool's name. No first request: `[]`.
+  - `pick-spawn <tools.json>`: prints the `name` of the first entry that has no `namespace`, `type` `function`, a name that starts with `spawn`, and `parameters.properties` holding both `agent_type` and `message`; else prints nothing.
+  - `pick-mcp <tools.json>`: prints the `name` of the first entry that has no `namespace`, `type` `function`, and a name that contains `zygo` and ends with `compact`; else prints nothing.
+  - `agents <models out> <marker out> <run>=<cap dir>...`: models file: per record, `<run> <seq> <model> <kind> dev=<comma list of the tracer-pc6-*-dev strings in the body, or none>`; `<kind>` = `sub` when a user text holds `tracer-pc6-task-<x>`, else `main` when a user text holds `tracer-pc6-main-<x>`, else `other`; then per run `<run>: sub_model=<model of its first sub record, or none>`. Marker file, per run that has a `main` and a `sub` record (the first of each): `<run> header <name>: main=<value or absent> sub=<value or absent>` for each header (not `authorization`, `x-api-key`, `content-length`) whose value differs or that only one has; `<run> body-key <key>: main=<present|absent> sub=<present|absent>` for each top-level body key that only one has; `<run> marker-candidates: <the header names and body keys only the sub record has, space-separated, or none>`. A run without both: `<run> marker-candidates: no sub request`.
+  - `compaction <out> <capture>=<cap dir>...`: per record, `<capture> <seq> <method> <path> model=<model> compact_prompt=<yes|no> turn=<turn1|turn2|none> input_items=<n> item_types=<comma list of the input item types>` (`turn` from the tracer of the last user text); per capture, `<capture>: compaction_requests=<n>`, counting the records whose path contains `/responses/compact` or whose body holds `tracer-pc8-compact-prompt`.
+  - `mcp <out> <tools.json> <name or empty> <cap dir of pc9-call or empty>`: `tool=<name or none>`, `call_output=<found|absent>` (`tracer-mcp-probe-result` in any record body of that folder), `requests=<n>`.
+  - `skills <out> <cap dir>`: for `<loc>` in `home repo path`, `<loc>: name=<seen|absent> description=<seen|absent> body=<seen|absent>` (`pc15-<loc>`, `tracer-pc15-<loc>-desc`, `tracer-pc15-<loc>-body` in the first request's body as JSON text).
+  - `status <out> <pane file> <exit file>`: `configured=model-with-reasoning`, `status_row=<last non-blank line of the pane file>`, `model_shown=<yes|no>` (`gpt-mock` in that row), `dir_shown=<yes|no>` (`/repo` in that row), `tui_exit=<the exit file's content, or running>`.
+  Check: `sh -n` and `shellcheck -s sh` exit 0; the heredoc text copied to `/private/tmp/claude-501/-Users-kagemartin-Work-zygo/a58a58d9-72f8-4322-be48-beff0c703496/scratchpad/pc-5p-pc5.py` passes `python3 -I -m py_compile`.
+- [ ] 4. Add the captures pc6, pc8, pc9 and pc15. Each: `cx_home`, its files, its runs, `take`, then its fixtures through `pub`. A run is `exec_run <run> exec --json <prompt>` unless stated.
+  - pc6: run `pc6-probe` (`tracer-pc6-probe`); `take pc6-probe`; `py tools` → `$RUN/pc6-tools.json`; `name=$(py pick-spawn …)`. Empty `name`: write `spawn tool: none found` to `$RUN/pc6-skip.txt` and run nothing more. Else, for `<x>`/`<role>` in `a`/`pc6-probe`, `b`/`explorer`, `c`/`pc6-disc`: `py sse-call "$RUN/sse/pc6-spawn-<x>.sse" "$name" '{"agent_type":"<role>","message":"tracer-pc6-task-<x>"}' call_pc6_<x>`; run `pc6-<x>` (`tracer-pc6-main-<x>`); `take pc6-<x>`. Then `py agents`. Fixtures in `agents/`: `config.toml`, `role-pc6-probe.toml`, `role-explorer.toml`, `pc6-disc.toml`, `tools.json`, `models.txt`, `marker.txt`, `skip.txt` (only when written), `exec-<run>.jsonl` per run, `requests/<run>-<seq>.json` per record.
+  - pc8: first `py sse-text "$RUN/sse/pc8-text.sse" tracer-pc8-reply`. For `<c>` in `low high`: `cx_home pc8-<c>`; run `pc8-<c>-1` (`tracer-pc8-<c>-turn1`); `exec_run pc8-<c>-2 exec resume --last tracer-pc8-<c>-turn2`; `take pc8-<c>`. Then `py compaction`. Fixtures in `compaction/`: `config.toml` (pc8-high's), `compaction.txt`, `requests/<capture>-<seq>.json` per record.
+  - pc9: write `$RUN/mcp/zygo_probe.py`; `cx_home pc9`; run `pc9-probe` (`tracer-pc9-probe`); `take pc9-probe`; `py tools`; `name=$(py pick-mcp …)`. Non-empty `name`: `py sse-call "$RUN/sse/pc9-call.sse" "$name" '{}' call_pc9_1`; `py sse-text "$RUN/sse/pc9-done.sse" tracer-pc9-done`; run `pc9-call` (`tracer-pc9-call`); `take pc9-call`. Then `py mcp`. Fixtures in `mcp/`: `config.toml`, `tools.json`, `mcp.txt`, `exec-<run>.jsonl` per run, `requests/<run>-<seq>.json` per record.
+  - pc15: `cx_home pc15`; write the three `SKILL.md` files; run `pc15` (`tracer-pc15-turn`); `take pc15`; `rm -rf "$R/.agents"`; `py skills`. Fixtures in `skills/`: `config.toml`, `SKILL-<loc>.md` (three), `skills.txt`, `request.json` (the first request).
+  Check: `sh -n` and `shellcheck -s sh` exit 0.
+- [ ] 5. Add the capture pc11 (TUI):
+  - `TMUX_BIN=$(command -v tmux)`, else `session: tmux is not on PATH`, exit 1. `ver_ge` of the `tmux -V` version (a trailing letter dropped) against `3.2`, else `session: tmux <v> is below 3.2`, exit 1. `SOCK=$RUN/s`; over 100 characters → `session: the tmux socket path is longer than 100 characters; set N2_SCRATCH or TMPDIR to a short directory`, exit 1. `tm` = `LC_ALL=C "$TMUX_BIN" -S "$SOCK" -f /dev/null`. `n2_trap_chain` a command that runs `tm kill-server` (errors ignored).
+  - `cx_home pc11`; `py sse-text "$RUN/sse/pc11-text.sse" tracer-pc11-reply`.
+  - Write `$RUN/pc11-tui.sh`: `PREMISES_DIR=…`, `N2_AGENTS=codex`, `N2_SCRATCH=…`, then `. "$PREMISES_DIR/lib.sh"`, then `RUN=… H=… R=… CX_HOME=… MOCK_URL=… MOCK_PID=…`, then `rc=0; run_codex || rc=$?; echo "$rc" >"$RUN/pc11-exit"`. Each value is single-quoted; a value that holds `'` → `session: <NAME> holds a quote`, exit 1.
+  - `tm new-session -d -s pc11 -x 250 -y 50 /bin/sh "$RUN/pc11-tui.sh"` (argument form, so no shell of the owner runs).
+  - `pane_wait <text> <polls>`: up to `<polls>` times, `tm capture-pane -p -t =pc11:` into `$RUN/pane.txt`, then `sleep 0.5`; returns 0 when the capture holds `<text>` (fixed string), 1 when `$RUN/pc11-exit` exists, the capture fails, or the polls run out. A return of 1 is recorded by the pane file, never an exit.
+  - Sequence: `pane_wait gpt-mock 60`, copy to `$RUN/pane-start.txt`; `tm send-keys -t =pc11: -l tracer-pc11-turn`, `sleep 0.5`, `tm send-keys -t =pc11: Enter`; `pane_wait tracer-pc11-reply 120`, copy to `$RUN/pane-turn.txt`; send `/statusline` and `Enter` the same way; `pane_wait tracer-none 4`, copy to `$RUN/pane-statusline.txt`; send `Escape`, then `C-c` twice; poll for `$RUN/pc11-exit` at most 20 times, 0.5 s apart; `tm kill-server`; `take pc11`.
+  - Fixtures in `status/`: `config.toml`, `pane-start.txt`, `pane-turn.txt`, `pane-statusline.txt` (each through `pub`; a pane file never written becomes the text `(no capture)`), then `py status "$CODEX_FX/status/status.txt" "$CODEX_FX/status/pane-turn.txt" "$RUN/pc11-exit"`. A scrubbed pane file that holds `/Users/`, `/var/folders/` or `/private/var/` → `session: pc11: a pane capture holds a machine path`, exit 1.
+  Check: `sh -n` and `shellcheck -s sh` exit 0.
+- [ ] 6. Commit `session.sh`: `feat(premises): Codex session part for PC6, PC8, PC9, PC11, PC15`, trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:PC-5`. Check: `git status --short` prints nothing.
+- [ ] 7. Stub dry run (no real binary). `S=$(mktemp -d)`; compile the `lib_test.sh:26-46` stub source to `$S/bin/codex` with `cc -DVER='"0.172.0"'`; run `N2_SCRATCH=$S/scr CODEX_FX=$S/fx PATH="$S/bin:$PATH" sh scripts/premises/run-codex.sh session`. Pass, each checked:
+  - exit 0, last line `codex session: ok (codex 0.172.0)`;
+  - `$S/fx/runs/session/isolation.txt` has `home=scratch`, `codex_home=scratch`, `codex_exe=scratch`, `proxy=mock`, `codex_version=0.172.0`, and `run_versions=` with 8 entries (pc6-probe, pc8 × 4, pc9-probe, pc15, pc11; the stub sends no request, so the spawn and MCP call runs are skipped);
+  - `$S/fx/runs/session/connect.txt` is empty;
+  - `find "$S/fx/<d>" -type f -size +2c` lists a file for each `<d>` of `agents compaction mcp status skills`;
+  - `$S/fx/agents/skip.txt` is `spawn tool: none found`; `$S/fx/mcp/mcp.txt` has `tool=none`; `$S/fx/status/status.txt` has `tui_exit=0`;
+  - `grep -c "$HOME" "$S/scr/codex-session/home/stub-env.txt"` prints 0;
+  - `pgrep -fl codex-pkg`, `pgrep -fl mock_upstream.py` and `pgrep -fl "$S/scr/codex-session/s"` print nothing.
+  Then `rm -rf "$S"`. On a failure, fix `session.sh`, commit, and run this step again before step 8.
+- [ ] 8. Real run (the lead runs it; one node's real run at a time). Precondition: `pgrep -fl '\.codex/packages'` prints nothing; else stop and report, never kill. `stamp=$(mktemp)`; `sh scripts/premises/run-codex.sh session` → exit 0, last line `codex session: ok (codex <x.y.z>)`, x.y.z ≥ 0.172.0. After: `find "$HOME/.codex" -newer "$stamp" -print` prints nothing; `pgrep -fl '\.codex/packages'`, `pgrep -fl codex-pkg`, `pgrep -fl mock_upstream.py`, `pgrep -fl zygo_probe.py` and `pgrep -fl 'codex-session/s'` print nothing; `rm -f "$stamp"`. Every line of `fixtures/codex/runs/session/connect.txt` ends ` refused`; `isolation.txt` has `home=scratch` and `codex_home=scratch`. A file under `~/.codex`, a process left, or a host in `connect.txt` that is not loopback is a finding: stop and report it; do not filter the record. When a name is not found (`agents/skip.txt`, or `tool=none` in `mcp.txt`), read `tools.json`: a spawn or MCP tool under another name or parameter set is a defect of the step 3 pick rule; fix the rule, run step 7 again, commit, and run this step again.
+- [ ] 9. Write "Observed": replace `Written when the node runs.` with five lines `- PCn: <verified|failed> <YYYY-MM-DD of step 8>: <space-separated fixture file paths>`, each followed by one line `  - <finding>` (what the fixtures show, with the values). Result rules:
+  - PC6: `verified` when `agents/models.txt` has `pc6-a: sub_model=gpt-mock-pc6` and `pc6-b: sub_model=gpt-mock-explorer`; else `failed`. The finding gives `pc6-c`'s `sub_model` (an agent file named in no config) and each run's `marker-candidates`. Paths: `fixtures/codex/agents/models.txt fixtures/codex/agents/marker.txt fixtures/codex/agents/tools.json`.
+  - PC8: `verified` when `compaction/compaction.txt` has `pc8-high: compaction_requests=` ≥ 1 and `pc8-low: compaction_requests=0`; else `failed`. The finding gives the compaction request's path, whether it carries `tracer-pc8-compact-prompt`, and its input item types. Paths: `fixtures/codex/compaction/compaction.txt fixtures/codex/compaction/config.toml` and the `requests/` file of the compaction request.
+  - PC9: `verified` when `mcp/mcp.txt` has a `tool=` name and `call_output=found`; else `failed`. The finding gives the model-visible name. Paths: `fixtures/codex/mcp/mcp.txt fixtures/codex/mcp/tools.json`.
+  - PC11: `verified` when `status/status.txt` has `model_shown=yes` and `dir_shown=no` (the configured list replaced the default one); else `failed`. The finding gives the status row and whether `pane-statusline.txt` lists items. Paths: `fixtures/codex/status/status.txt fixtures/codex/status/pane-turn.txt fixtures/codex/status/config.toml`.
+  - PC15: `verified` when `skills/skills.txt` has `path: name=seen`; else `failed`. The finding gives each location's line. Paths: `fixtures/codex/skills/skills.txt fixtures/codex/skills/config.toml`.
+  Check: each cited path is a regular file of more than 2 bytes.
+- [ ] 10. Acceptance (the lead runs it, with the step 8 precondition and after-checks, because it runs the real part again): the node's Acceptance line, unchanged, as one command. Pass: exit 0. Then compare "Observed" with the new fixtures and correct any line whose result changed.
+- [ ] 11. Commit the fixtures and this file: `feat(premises): Codex session captures PC6, PC8, PC9, PC11, PC15`, same trailers; push `phase-4--PC-5`. Check: `git status --short` prints nothing; `git log -1 origin/phase-4--PC-5` is that commit.
+
+### Author's checks (2026-11-25)
+
+1. Spec coverage: K§6.3.7 PC6 (agent TOML files load: runs a and c; the model each sends: `models.txt`; a built-in role override: run b; the subagent marker that K§6.4.5 trigger 1 needs: `marker.txt`); PC8 (`model_context_window`, `model_auto_compact_token_limit`, a raised `usage`, the compaction request shape, `compact_prompt`: pc8 low against high, `compaction.txt`); PC9 (stdio start, the model-visible name of a zygo tool named `compact` on a server named `zygo`: pc9); PC11 (`tui.status_line` items: pc11); PC15 (a skills path loads a skill folder: pc15, with the home and repo locations beside it); K§11 item 9 (step 9 paths, `nontrivial`); K§11 item 10 (`pub` through `scrub`, the pane path check, the Acceptance's `check-premises.sh` with `N2_FORBIDDEN_NAMES`).
+2. Step scan: each step names its file, signatures, values and check; the plan gives rules only where the outputs need them (`kind`, the pick rules, the result rules).
+3. Interface match: `run_codex`, `codex_env`, `codex_record` and the other `lib.sh` names match the code at 5cb6a387 (lines above); Produces matches the contract and PC-7's reading of "Observed".
+4. Review focus: item 6 (a Codex run that reaches a real host or reads the owner's `~/.codex`) is checked in step 7 (stub: `isolation.txt`, empty `connect.txt`, no owner `HOME` in the environment) and step 8 (real: `connect.txt` all ` refused`, `isolation.txt` scratch, `find ~/.codex -newer` empty, no process left).
+5. Proportion: the plan gives signatures, rules and values; the bodies of `session.sh` and `pc5.py` are the implementer's.
+6. Live code: every path, line and key above was opened at 5cb6a387. No existing function builds Responses SSE or reads a Codex `tools` list (`sse.py`, `steps.py`: Anthropic only), so `pc5.py` is new; it lives inside `session.sh`, within Files.
