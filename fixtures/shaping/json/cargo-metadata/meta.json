@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "cargo metadata --format-version 1",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch workspace of 24 path-linked library crates, no registry dependencies, run by capture-shaping.sh in /repo",
+   "tool" : "cargo 1.98.0"
+}

@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "git diff",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch repo: snapshot of crates/zygo-results (8 files) at 5539c6f4; 7 files gain a first line; tests/results.rs re-indented with tabs, run by capture-shaping.sh in /repo",
+   "tool" : "git 2.50.1"
+}

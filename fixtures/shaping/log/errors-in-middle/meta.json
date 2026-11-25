@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "python3 service.py",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch Python script, 420 lines through the logging module, ERROR lines 175 to 250, run by capture-shaping.sh in /repo",
+   "tool" : "python3 3.9.6"
+}
