@@ -282,7 +282,7 @@ A bar exception is a registry entry, never a grade-file entry **(lead)**. A regi
 [[bar_exception]]
 client = "claude-code"
 criterion = "A-1.4"
-reason = "Windows without Git Bash runs the key helper in PowerShell (docs/conformance.md, Windows shell note)"
+reason = "Windows without Git Bash runs the key helper in PowerShell, which needs & before a quoted path; zygo writes the double-quoted path, and CI runs the command only in Git Bash"
 approved = "operator 2026-11-25, docs/specs/2026-11-25-client-model-design.md K-D18"
 ```
 
@@ -690,7 +690,7 @@ The inventory of K§1 is evidence of the pattern, not the work list. P4-6 starts
 | K-D15 | Non-goals of K§3 | author | scope |
 | K-D16 | Codex ships when it meets the bar; workspace support graded | author | "found wanting, but sufficient" |
 | K-D17 | `Dialect` moves to `zygo-core`, re-exported by `zygo-config` | author | the descriptor names the proxy dialect; core is the only crate below the proxy |
-| K-D18 | Bar exceptions live in the registry, not in grade files; a `not-met` core criterion with an operator-approved exception counts for the bar, not for the score. Two exceptions are approved, each with its reason in the registry (`docs/conformance/capabilities.toml`): Claude Code A-1.4, approved with this spec (Windows without Git Bash runs the key helper in PowerShell, which needs `&` before the quoted path that zygo writes); OpenCode A-1.4, approved by the operator 2026-11-25 (OpenCode has no key-helper command). Reading of A-1: the "key helper" of A-1.2 is the client's mechanism that reads the session `token` file (Claude Code: `apiKeyHelper`; OpenCode: the `{file:}` reference in `provider.zygo.options.apiKey`); A-1.4 needs a command that runs in each shell, which OpenCode does not have | operator (approval of this spec; OpenCode A-1.4 2026-11-25); lead (place) | a registry change already stops for the operator; Claude Code ships today with that gap |
+| K-D18 | Bar exceptions live in the registry, not in grade files; a `not-met` core criterion with an operator-approved exception counts for the bar, not for the score. Two exceptions are approved, each with its reason in the registry (`docs/conformance/capabilities.toml`): Claude Code A-1.4, approved with this spec (Windows without Git Bash runs the key helper in PowerShell, which needs `&` before the quoted path that zygo writes); OpenCode A-1.4, approved by the operator 2026-11-25 (OpenCode has no key-helper command). Reading of A-1: the "key helper" of A-1.2 is the client's mechanism that reads the session `token` file (Claude Code: `apiKeyHelper`; OpenCode: the `{file:}` reference in `provider.zygo.options.apiKey`); A-1.4 needs a command that runs in each shell, which OpenCode does not have | operator (approval of this spec; OpenCode A-1.4 2026-11-25); lead (place); lead (A-1 key-helper reading, 2026-11-25) | a registry change already stops for the operator; Claude Code ships today with that gap |
 | K-D19 | `supported` flag and a gate at launch for each entry point (K§6.2.7) | author; lead (each entry point) | a below-bar client can be built and tested before release, and no path starts it by mistake |
 | K-D20 | The CLI shim stays in the `zygo` crate under `cmd/client/` | author | clap is a dependency of the binary crate only |
 | K-D21 | Messages is the translation pivot; same-dialect pairs pass through, reasoning bytes unchanged and unmarked | author; lead (no mark) | two new translators, not four; native custom tools and reasoning to OpenAI upstreams |
@@ -949,3 +949,6 @@ P4-11 (client updates):
 - 2026-11-25: the K§12 OC-1 line: the inline `disabled_providers` keeps the user's lists without `zygo` (OC-1 review round 3).
 - 2026-11-25: K§6.2.2 A-1.2, A-10.2 — passthrough excepted (§12.3); approved by the operator 2026-11-25.
 - 2026-11-25: K-D18, K§9 — OpenCode A-1.4 bar exception, approved by the operator 2026-11-25.
+- 2026-11-25: K-D18 — reading of A-1 "key helper" (OpenCode {file:} reference meets A-1.2; A-1.4 needs a command); author's call, for the operator at the CF-4 merge (K-D26).
+- 2026-11-25: K§6.2.2 A-9 — the OpenCode precedent points to its A-9.1 to A-9.5 grades in `docs/conformance/opencode.toml`, not to `docs/conformance.md` (pointer correction); author's call.
+- 2026-11-25: K§6.2.3 — the bar exception example's reason is the registry's text and cites no hand note in `docs/conformance.md`; author's call.
