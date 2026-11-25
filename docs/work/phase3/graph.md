@@ -205,7 +205,6 @@ Session text (T, SX nodes):
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | TODO | judgment | — |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
-| MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | TODO | lookup | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | DONE | implementation | 8c8dd676, 7b189dbd, a08afc56 · loadout 15/0, state 43/0 ; floor green · PR #115 |
@@ -402,4 +401,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | FX-12 DONE: HUD unread counts only regular <ULID>.json files in new/; a missing new/ is 0, same as the mail store; review round 2 added I/L/O alphabet fixtures and narrowed the module doc · PR #124 |
 | 2026-11-25 | WD-12 DONE: `zygo up` checks and assigns the config-directory pool round-robin; members run in passthrough; user-loadout job/pool values pass config check. Review round 2 moved the pool line after the step-8 write and added tests. FX-15 added (doctor pool filter) · PR #125 |
 | 2026-11-25 | FX-15 DONE: doctor pool lines use the `zygo up` member filter (server user info skipped via has_user_info) and its kept member names (agent kinds, valid_member_name, first holder); review F1 fixed in round 2; F2/F3 to operator report · PR #129 |
+| 2026-11-25 | MS-24 DONE: SP2 verified on github.com and gitlab.com with well-known private repos; both private probes fail with `could not read Username` (in PRIVATE_TEXT); result for MS-25 · PR #130 |
 | 2026-11-25 | OS-12 DONE: merged 6e1b9387 5ff2466e; clean removes CSI, 8-bit CSI, OSC (OSC 8 keeps text) and CR overwrites, line count kept. Review F4 (`ESC ( B` leaves `B`) and F5 (`ESC ESC [31m` leaves `[31m`) to FX-16; O§7.4 rewritten, pending ratification · PR #132 |
