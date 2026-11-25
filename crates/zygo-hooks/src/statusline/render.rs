@@ -85,6 +85,8 @@ pub struct HudData {
     pub member_name: Option<String>,
     /// The count of `*.json` names in `mail/<pane key>/new/` (M§9a).
     pub unread: Option<usize>,
+    /// Seconds since the start of session run time design T§2.2 (`now.saturating_sub(start)`); `None` with no start.
+    pub run_time: Option<u64>,
     /// The host of `ZYGO_URL`, for the mode `serve <host>` (AU13).
     pub team_host: Option<String>,
 }
@@ -173,6 +175,8 @@ struct Glyphs {
     trimmed: &'static str,
     /// Not in `table`: the doctor icon line keeps its 19 glyphs.
     mail: &'static str,
+    /// The run time (T§2.4). Not in `table`, as `mail`.
+    clock: &'static str,
 }
 
 const STRIPE: &str = "▌";
@@ -197,6 +201,7 @@ const NERD: Glyphs = Glyphs {
     cache: "\u{f01bc}",
     trimmed: "✂",
     mail: "\u{2709}",
+    clock: "\u{f0150}",
 };
 
 const PLAIN: Glyphs = Glyphs {
@@ -215,6 +220,7 @@ const PLAIN: Glyphs = Glyphs {
     cache: "cache",
     trimmed: "trim",
     mail: "mail",
+    clock: "run",
 };
 
 const fn table(g: &Glyphs) -> [(&'static str, &'static str); 19] {
@@ -446,6 +452,8 @@ enum Seg {
     Spend,
     Cache,
     Trimmed,
+    /// The run time (session run time design T§2.4); a local segment.
+    RunTime,
     /// `stale`, `offline`, `suspended` or `ended`; only `stale` can be removed for width.
     Marker,
 }
@@ -459,6 +467,7 @@ const COMPACT: &[&[Seg]] = &[
     &[Seg::Spend],
     &[Seg::Cache],
     &[Seg::Trimmed],
+    &[Seg::RunTime],
     &[Seg::Marker],
 ];
 /// AU9, verbose: two spaces after the logo or the reflection, three between groups, one inside a group.
@@ -469,6 +478,7 @@ const ROW_1: &[&[Seg]] = &[
     &[Seg::Model],
     &[Seg::Profile],
     &[Seg::Mode],
+    &[Seg::RunTime],
 ];
 const ROW_2: &[&[Seg]] = &[
     &[Seg::Ctx, Seg::Bar, Seg::Percent, Seg::Threshold],
@@ -483,6 +493,7 @@ const ROW_2: &[&[Seg]] = &[
 const COMPACT_DROPS: &[Seg] = &[
     Seg::Trimmed,
     Seg::Cache,
+    Seg::RunTime,
     Seg::Tokens,
     Seg::Threshold,
     Seg::Spend,
@@ -494,7 +505,7 @@ const COMPACT_DROPS: &[Seg] = &[
     Seg::Ctx,
     Seg::Work,
 ];
-const ROW_1_DROPS: &[Seg] = &[Seg::Mode, Seg::Profile, Seg::Effort, Seg::Git, Seg::Model, Seg::Worktree, Seg::Work];
+const ROW_1_DROPS: &[Seg] = &[Seg::Mode, Seg::RunTime, Seg::Profile, Seg::Effort, Seg::Git, Seg::Model, Seg::Worktree, Seg::Work];
 const ROW_2_DROPS: &[Seg] = &[
     Seg::Trimmed,
     Seg::Cache,
@@ -747,6 +758,12 @@ impl<'a> Hud<'a> {
         Some(vec![run(DIM, text)])
     }
 
+    /// T§2.4: `󰅐 <form>` / `run <form>`, dim, the same text in both styles. A local segment (H AU20): `stale` does
+    /// not dim it and `ended` does not drop it.
+    fn run_time(&self) -> Option<Vec<Run>> {
+        Some(vec![run(DIM, iconed(self.g.clock, &run_time_text(self.d.run_time?)))])
+    }
+
     /// AU20: the marker and whether it is `stale`, the one marker that width can remove.
     fn marker(&self) -> Option<(Run, bool)> {
         match self.d.outcome {
@@ -785,6 +802,7 @@ impl<'a> Hud<'a> {
             Seg::Spend => self.spend(),
             Seg::Cache => self.cache(),
             Seg::Trimmed => self.trimmed(),
+            Seg::RunTime => self.run_time(),
         }
     }
 

@@ -20,7 +20,7 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;
 use zygo_core::Agent;
 use zygo_hooks::statusline::data::collect;
-use zygo_hooks::statusline::render::{render, spend_text, ColorMode, HudData, IconSet, RenderEnv, Style};
+use zygo_hooks::statusline::render::{render, run_time_text, spend_text, ColorMode, HudData, IconSet, RenderEnv, Style};
 use zygo_proxy::client::{SessionClient, SessionStatus};
 use zygo_proxy::serve::{self, ServeHandle, ServeOpts};
 use zygo_proxy::server::{Proxy, StartOpts};
@@ -237,6 +237,12 @@ fn text(d: &HudData, style: Style) -> String {
     render(d, &renv(style, ColorMode::Off))
 }
 
+/// The run-time segment that ends verbose row 1 (session run time design T§2.4): the session id is a real ULID, so
+/// the run time is `ZYGO_TEST_NOW` less its ULID time.
+fn run_time(d: &HudData) -> String {
+    format!("\u{f0150} {}", run_time_text(d.run_time.expect("the run time of a ULID session")))
+}
+
 fn ansi(d: &HudData, style: Style) -> String {
     render(d, &renv(style, ColorMode::Ansi256))
 }
@@ -308,8 +314,8 @@ fn h14_15_team_session_hud_shows_notional_spend_at_list_prices() {
         assert_eq!(sgr_before(&colored, "≈"), "\x1b[2m", "{colored:?}");
         assert!(colored.contains(&format!("≈\x1b[0m\x1b[32m{}\x1b[0m", &want["≈".len()..])), "{colored:?}");
     }
-    // Mode (verbose only): `serve` and the host of `ZYGO_URL`.
-    assert!(text(&d, Style::Verbose).contains("  serve 127.0.0.1\n"), "{}", text(&d, Style::Verbose));
+    // Mode (verbose only): `serve` and the host of `ZYGO_URL`, then the run time.
+    assert!(text(&d, Style::Verbose).contains(&format!("  serve 127.0.0.1   {}\n", run_time(&d))), "{}", text(&d, Style::Verbose));
 
     // Request 3: a model that the built-in catalog does not have. The server prices it in its own row only.
     up.set_usage(&TokenUsage { input: 40_000, output: 8_000, ..Default::default() });
@@ -338,7 +344,7 @@ fn h14_15_team_session_hud_shows_notional_spend_at_list_prices() {
     let d = lfx.run(local.url().as_str());
     assert_eq!(d.status.as_ref().and_then(|s| s.team_session), Some(false));
     let plain = text(&d, Style::Verbose);
-    assert!(plain.contains("  local\n") && plain.contains("$0.00") && !plain.contains('≈') && !plain.contains("serve"), "{plain}");
+    assert!(plain.contains(&format!("  local   {}\n", run_time(&d))) && plain.contains("$0.00") && !plain.contains('≈') && !plain.contains("serve"), "{plain}");
 
     local.shutdown();
     server.shutdown();
