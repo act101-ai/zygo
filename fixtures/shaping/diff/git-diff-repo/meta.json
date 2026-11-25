@@ -4,6 +4,6 @@
    "command" : "git diff",
    "event" : "PostToolUse",
    "exit" : 0,
-   "source" : "scratch repo: snapshot of crates/zygo-results (8 files) at 5539c6f4; 7 files gain a first line; tests/results.rs re-indented with tabs, run by capture-shaping.sh in /repo",
+   "source" : "scratch repo: snapshot of crates/zygo-results at 5539c6f4 (Cargo.toml, src/kind.rs, src/lib.rs, src/shape/mod.rs, src/store.rs, src/sweep.rs, src/view.rs, tests/results.rs) in one commit; then the line \"# Reviewed.\" inserted as line 1 of Cargo.toml and the line \"// Reviewed.\" inserted as line 1 of src/kind.rs, src/lib.rs, src/shape/mod.rs, src/store.rs, src/sweep.rs and src/view.rs; in tests/results.rs each run of leading 4-space groups replaced by one tab per group (perl s/^((?:    )+)/\"\\t\" x (length($1) \\/ 4)/e); git diff of the working tree, run by capture-shaping.sh in /repo",
    "tool" : "git 2.50.1"
 }
