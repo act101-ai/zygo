@@ -861,3 +861,31 @@ fn check_3_test_file_without_crate_manifest_not_evidence() {
     let e = evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err();
     assert!(e.contains("crates/demo/Cargo.toml") && e.contains("no test target compiles"), "{e}");
 }
+
+#[test]
+fn check_3_cargo_target_settings_refused() {
+    let pkg = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n";
+    for (extra, key) in [
+        ("[[test]]\nname = \"h\"\npath = \"tests/h.rs\"\nharness = false\n", "[[test]]"),
+        ("[[test]]\nname = \"ev\"\n", "[[test]]"),
+        ("autotests = false\n", "autotests"),
+        ("[lib]\nharness = false\n", "harness"),
+        ("[lib]\ntest = false\n", "test = false"),
+        ("[[bin]]\nname = \"b\"\nharness = false\n", "harness"),
+        ("[[bin]]\nname = \"b\"\nrequired-features = [\"x\"]\n", "required-features"),
+    ] {
+        let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}")), ("crates/demo/tests/h.rs", "#[test]\nfn t() {}\n")]);
+        for ev in ["test:crates/demo/tests/h.rs::t", "test:crates/demo/tests/ev.rs::plain"] {
+            let e = evidence(d.path(), ev, "Alpha").unwrap_err();
+            assert!(
+                e.contains("crates/demo/Cargo.toml") && e.contains("unsupported Cargo target setting") && e.contains(key),
+                "{extra}: {e}"
+            );
+        }
+    }
+    // A plain `[lib]` or `[[bin]]` table is no target setting that changes the test targets.
+    let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}[lib]\ndoctest = false\n[[bin]]\nname = \"b\"\n"))]);
+    assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").is_ok());
+    let d = repo_with(&[("crates/demo/Cargo.toml", "[package\n")]);
+    assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err().contains("crates/demo/Cargo.toml"));
+}

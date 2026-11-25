@@ -542,11 +542,36 @@ fn test_crate_dir(rel: &str) -> Result<&str, String> {
     Ok(&rel[..parts[..i].join("/").len()])
 }
 
-/// The crate folder of a `test:` file must hold a `Cargo.toml`, else no test target compiles the file.
+/// The crate folder of a `test:` file must hold a `Cargo.toml`, else no test target compiles the file. The
+/// walk of `reach` knows only Cargo's default targets, so a manifest that changes the test targets is refused
+/// (fail closed): any `[[test]]` table, `autotests`, a `harness` or `required-features` key on a target, or
+/// `[lib] test = false`.
 fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String> {
     let manifest = format!("{crate_dir}/Cargo.toml");
-    if !root.join(&manifest).is_file() {
+    let path = root.join(&manifest);
+    if !path.is_file() {
         return Err(format!("no test target compiles {rel}: {manifest} is missing, so {crate_dir} is not a crate"));
+    }
+    let text = read_capped(&path)?;
+    let table: toml::Table = text.parse().map_err(|e| clip(format!("{manifest}: {e}")))?;
+    let unsupported = |key: &str| Err(format!("{manifest}: unsupported Cargo target setting `{key}`"));
+    if table.contains_key("test") {
+        return unsupported("[[test]]");
+    }
+    if table.get("package").and_then(|p| p.get("autotests")).is_some() {
+        return unsupported("autotests");
+    }
+    let lib = table.get("lib").into_iter();
+    let bins = table.get("bin").and_then(|b| b.as_array()).into_iter().flatten();
+    for target in lib.chain(bins) {
+        for key in ["harness", "required-features"] {
+            if target.get(key).is_some() {
+                return unsupported(key);
+            }
+        }
+    }
+    if table.get("lib").and_then(|l| l.get("test")).and_then(|t| t.as_bool()) == Some(false) {
+        return unsupported("test = false");
     }
     Ok(())
 }
