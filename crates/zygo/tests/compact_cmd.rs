@@ -1,6 +1,5 @@
 //! N28 acceptance (§20 #17): the `/zygo:` dispatcher, `compact`, `help`, `status` and the status line, slash and CLI.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -17,6 +16,7 @@ use zygo_proxy::client::{SessionClient, WindowArg};
 use zygo_proxy::session::SessionRequest;
 use zygo_proxy::{Proxy, ProxyHandle};
 
+mod common;
 #[cfg(unix)]
 mod member_fixture;
 #[cfg(unix)]
@@ -106,6 +106,14 @@ struct Env<'a> {
 }
 
 fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, String) {
+    let mut child = spawn_zygo(home, args, env);
+    common::feed_stdin(child.stdin.take().unwrap(), stdin);
+    let out = child.wait_with_output().unwrap();
+    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+}
+
+/// `zygo <args>` in `home` with `env`, all three streams piped; the caller feeds stdin.
+fn spawn_zygo(home: &Path, args: &[&str], env: &Env) -> std::process::Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
     cmd.args(args)
         .current_dir(home)
@@ -149,10 +157,7 @@ fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, St
     }
     cmd.env_remove("ZYGO_WORKSPACE");
     cmd.envs(env.vars.iter().copied());
-    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
-    let out = child.wait_with_output().unwrap();
-    (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap()
 }
 
 /// `zygo hook prompt` with `line` as the prompt; asserts exit 0 and returns stdout.
@@ -409,6 +414,20 @@ fn statusline_without_a_session_dir_prints_nothing() {
     let d = home();
     let env = Env { hud: true, ..Default::default() };
     assert_eq!(zygo(d.path(), &["hook", "statusline"], &env, b"{}"), (0, String::new(), String::new()));
+}
+
+/// Without `ZYGO_SESSION_DIR` the hook may exit before it reads stdin (H§6.8, AU24, PH11), so a write after its exit
+/// gets a broken pipe. The order is fixed with no clock: stdin stays open until the child has exited.
+#[test]
+fn statusline_without_a_session_dir_exits_before_it_reads_stdin() {
+    let d = home();
+    let env = Env { hud: true, ..Default::default() };
+    let mut child = spawn_zygo(d.path(), &["hook", "statusline"], &env);
+    let si = child.stdin.take().unwrap(); // taken first: `wait` closes a stdin it still holds
+    assert_eq!(child.wait().unwrap().code(), Some(0));
+    common::feed_stdin(si, b"{}");
+    let out = child.wait_with_output().unwrap();
+    assert_eq!((String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap()), (String::new(), String::new()));
 }
 
 /// AU1: the style of a session is `statusline` of `overrides.json`, else `statusline_style` of `view.json`. A value
