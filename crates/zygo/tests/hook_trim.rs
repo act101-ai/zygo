@@ -27,9 +27,11 @@ fn post_bash(stdout: &str) -> Vec<u8> {     // fixture shape of PostToolUse-Bash
 fn big() -> String { (0..5000).map(|i| format!("line {i:06} xxxxxxxx\n")).collect() }
 /// The data directory the usage database lives in, per Paths::from_env.
 fn data_dir(d: &Path) -> std::path::PathBuf { if cfg!(windows) { d.join("local").join("zygo") } else { d.join(".local/share/zygo") } }
+/// The usage database as the launcher leaves it (O§6.5 item 3).
+fn usage_ready(d: &Path) { drop(zygo_usage::Store::open(&data_dir(d).join("usage.db")).unwrap()); }
 
 #[test] fn trim_binary_trims_bash_over_threshold() {
-    let d = tempfile::tempdir().unwrap(); let sd = session(d.path());
+    let d = tempfile::tempdir().unwrap(); let sd = session(d.path()); usage_ready(d.path());
     let o = zygo(d.path(), &sd, &["hook", "trim"], &post_bash(&big()));
     assert_eq!(o.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&o.stderr), "");
@@ -63,7 +65,7 @@ fn data_dir(d: &Path) -> std::path::PathBuf { if cfg!(windows) { d.join("local")
     assert!(String::from_utf8_lossy(&o.stdout).contains("[zygo trimmed this output:"));
 }
 #[test] fn trim_binary_work_log_failure_keeps_view_with_one_fixed_line() {
-    let d = tempfile::tempdir().unwrap(); let sd = session(d.path());
+    let d = tempfile::tempdir().unwrap(); let sd = session(d.path()); usage_ready(d.path());
     std::fs::write(sd.work(), b"in the way").unwrap();                 // the work path is a file: append fails
     let o = zygo(d.path(), &sd, &["hook", "trim"], &post_bash(&big()));
     assert_eq!(o.status.code(), Some(0));

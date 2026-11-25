@@ -46,6 +46,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | DONE | implementation | 31bc0dac · acc 4+4/0; floor ws 2977/1 (pre-existing zygo lib flake, also on phase-3) · PR #90 |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | DONE | implementation | 5e4cd273 · bash -n ok, lib.sh 2 · PR #60 |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | DONE | judgment | adb3069b · cargo test -p zygo-config --test repo_def_shape 12 passed; floor green · PR #72 |
+| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 
 ## Log
 

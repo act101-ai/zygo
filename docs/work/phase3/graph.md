@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | DONE | implementation | 863b6b05 · loadout 10/state 41/snapshot 30 passed · PR #62 |
 | MS-7 | Secret pass on one message | MS-2 | DONE | implementation | abe0ce4b · secret 21 passed · PR #61 |
@@ -210,7 +209,7 @@ Session text (T, SX nodes):
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | DONE | implementation | 867df914 · acc admin 34/mux 58/snapshot 41 · PR #94 |
 | ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6 | TODO | implementation | — |
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
-| OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
+| OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | DONE | implementation | 6c8e57d1 · acc hooks_basic 60 (5 trim_row)/hook_trim 6 · PR #95 |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | TODO | implementation | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
@@ -244,7 +243,7 @@ Session text (T, SX nodes):
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | TODO | judgment | — |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | TODO | judgment | — |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | TODO | judgment | — |
-| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5 | TODO | implementation | — |
+| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | TODO | implementation | — |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
 | WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | TODO | judgment | — |
@@ -392,3 +391,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | DR-14 DONE: end-to-end decision gate (in-process stop path + merged-node keep; binary flow over zygo mcp stdio; no stored text). Review: R1/R3/R4 fixed (no mcp stderr marker; Win \\?\ canon; one env strip list), R2/R6 accepted, R5 refuted; floor ws 2977/1 pre-existing flake · PR #90 |
 | 2026-11-25 | ML-4 DONE: member names + mail::send by name/key/all (names::resolve; reserved cli/zygo). Review: F1 fixed (SendReport; delivers past a refused target), F3 fixed (limits once, before resolve), F5 fixed (reserved name test), F4 refuted, F2 consumers fixed; floor ws 2967/0 · PR #89 |
 | 2026-11-25 | ML-5 DONE: wake sends literal keys then Enter. Review: 3 of 6 findings confirmed and fixed (F1, F4, F5: a final ";" sent as "\;", docs for the two-call leftover state, sentinel-ordered wake test); F2, F3, F6 refuted. Floor ws 2976 passed, 0 failed. |
+| 2026-11-25 | OS-4 DONE: trim rows carry result_id and shaper; hook opens usage.db bounded. Review: F2 (Read row test), F3 (Store::open doc) fixed; F1 dropped (needs a timing test), F4 dropped (node file in scope). MS-16 now depends on OS-4 (Cargo.lock, zygo-hooks Cargo.toml). |
