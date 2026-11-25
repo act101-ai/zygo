@@ -68,7 +68,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| CF-1 | Conformance input model and check: `Agent::ALL`, registry and grade parsing with the input rules, evidence kinds, check items 1-9 on fixture inputs | — | IN-PROGRESS | judgment | acceptance exit 0 @ 08dd4087 |
+| CF-1 | Conformance input model and check: `Agent::ALL`, registry and grade parsing with the input rules, evidence kinds, check items 1-9 on fixture inputs | — | DONE | judgment | PR #87 merged 74562e3b; acceptance 65 check_/input_ tests pass @ 3aceaac3; CI run 45605170068 green (ubuntu, macos, windows) |
 | CF-2 | Conformance derived values: cell, tier and total score, bar, rollup, release state, on fixture inputs | CF-1 | TODO | implementation | — |
 | CF-3 | Conformance outputs: feature matrix, rollup and score in Markdown and JSON, the write mode and check item 10, on fixture inputs | CF-2 | TODO | implementation | — |
 | CF-4 | Registry `capabilities.toml`, grade files for Claude Code and OpenCode, generated `docs/conformance.md` and `.json`, the tree test, CI paths, old scripts deleted (PR stops for the operator, K-D26) | CF-3 | TODO | judgment | — |
@@ -114,3 +114,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | Audit round 1: 18 findings fixed as the coordinator ruled; RS-3 split into RS-3 and RS-4 (RS renumbered to RS-8); 20 nodes; Workflows (2) now stacked PRs (operator, 2026-11-25). |
 | 2026-11-25 | P4-5: 16 nodes CC-0 to CC-15 for P4-6 (K§6.1, K§6.2.7, K§11 items 23-30); CC-0 blocked until the operator merges phase 3 into `main`; 36 nodes. |
 | 2026-11-25 | Audit of the CC nodes (3 critical, 6 important, 5 minor) fixed as ruled: K-C7, K-D3, items 23-24 amended (lead); boundary exception list (operator, K-D53); CC-13 split (sweep, opaque kind); 17 CC nodes, 37 nodes. |
+| 2026-11-25 | CF-1 DONE: gate 3 rounds; round 3 review findings F1, F3-F7 fixed, F2 rejected (reason in `nodes/CF-1.md`); two implementer-found defects fixed; PR #87 merged `74562e3b`. |
