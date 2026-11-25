@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | IN-PROGRESS | implementation | `.worktrees/phase3/DR-7-node` · PR #77 |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
@@ -390,3 +389,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | RT-2 done: run time on the HUD and the status runtime: line (ulid_secs, T§2.2 start rule, run_time_text); review: 3 fixed (read keeps phase when members does not parse; rule-5 pending test; plan ignore count). PR #67. |
 | 2026-11-25 | MS-8 DONE — public-repository check with 1 h cache (S§8.2); review round 1 fixed 8 findings (cache tests, esc of server text, `--` before remote, test env); floor green ws 2773/0. |
 | 2026-11-24 | WD-9 DONE: pool listing, assignment and shared lines; shared ~ rule and pool::home used by --config-dir; fix round 1 closed 6 review findings; floor green (ws 2722/0). PR #70. |
+| 2026-11-25 | DR-7 DONE — `zygo work report` record lines (unit `decisions:` line, trailing `decision records:` line; CLI only, slash form reads none per D-C2); review round 1 fixed 3 (one `git rev-parse --show-toplevel` call, args parsed before lookup, wiring tests); floor green ws 2819/0. |

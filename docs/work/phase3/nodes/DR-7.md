@@ -61,7 +61,7 @@ Readings of the spec that this plan fixes:
 
 ### Steps
 
-- [ ] **1. Write the failing library tests.** Create `crates/zygo-work/tests/decision_report.rs`:
+- [x] **1. Write the failing library tests.** Create `crates/zygo-work/tests/decision_report.rs`:
 
 ```rust
 //! DR-7: the record lines of `zygo work report` (D§9.5, D§6.8, D§17 #11).
@@ -172,18 +172,18 @@ const N12_TOKENS: &str = "  lead m1: 1 requests, 7 in, 1 out, 0 cache read, 0 ca
 }
 ```
 
-- [ ] **2. See the tests fail.** `cargo test -p zygo-work --locked --test decision_report` → does not compile: `report` takes 3 arguments, 4 given.
+- [x] **2. See the tests fail.** `cargo test -p zygo-work --locked --test decision_report` → does not compile: `report` takes 3 arguments, 4 given.
 
-- [ ] **3. Implement the record lines** in `crates/zygo-work/src/report.rs`:
+- [x] **3. Implement the record lines** in `crates/zygo-work/src/report.rs`:
   - imports: `use crate::decisions::graph::deepest_chain; use crate::decisions::record::{name_kind, NameKind, Record, Status}; use crate::decisions::set::{read_dir, DirError, RecordSet};`
   - `fn under(u: &str, unit: &str) -> bool` — `u == unit || u.strip_prefix(unit).is_some_and(|r| r.starts_with(':'))`; replace the closure body at `report.rs:26` with `under(&j.row.unit, u)`.
   - `fn records_line(read: &Result<RecordSet, DirError>) -> Option<String>`: `Err(NotDirectory)` → `decision records: docs/decisions is not a directory`; `Err(TooMany)` → `decision records: over 10,000 files`; `Ok(set)` with no valid record and no malformed name of `NameKind::Record(_)` → `None`; else the D§9.5 line with `, <m> malformed` only when `m > 0`.
   - `report(db, records_in, unit, since)`: `let read = records_in.map(read_dir);` `let valid: &[Record] = match &read { Some(Ok(s)) => &s.valid, _ => &[] };` The blocks part keeps its current code (absent db → `no work units` without creating it; `render(&joined, valid)` when not empty). Then, when `read.as_ref().and_then(records_line)` is `Some(l)`, return `format!("{body}\n\n{l}")`, else `body`. Update the doc comment: `records_in` is the repository top; `None` gives no record lines.
   - `render(joined, records)`: after the `guard events:` `writeln!` (`report.rs:82`), count `records.iter().filter(|r| under(&r.unit, unit))` (total) and those with `r.status == Status::Open` (open); when total > 0, `writeln!(out, "  decisions: {open} open, {total} total")`.
 
-- [ ] **4. Update the existing callers** of `report::report` to the new signature, `records_in = None`, so their outputs stay byte-equal: `crates/zygo-work/tests/collection.rs:1108`, `:1123`, `:1136`, `:1141`, `:1142` (`report::report(&db, None, None)` → `report::report(&db, None, None, None)`, and so on).
+- [x] **4. Update the existing callers** of `report::report` to the new signature, `records_in = None`, so their outputs stay byte-equal: `crates/zygo-work/tests/collection.rs:1108`, `:1123`, `:1136`, `:1141`, `:1142` (`report::report(&db, None, None)` → `report::report(&db, None, None, None)`, and so on).
 
-- [ ] **5. Write the failing CLI test** in `crates/zygo/src/cmd/work.rs` `mod tests` (`use super::*` brings `PathBuf` once step 6 imports it):
+- [x] **5. Write the failing CLI test** in `crates/zygo/src/cmd/work.rs` `mod tests` (`use super::*` brings `PathBuf` once step 6 imports it):
 
 ```rust
 #[test]
@@ -210,16 +210,16 @@ fn records_only_for_the_cli_report() { // D§9.5, D-C2
 
   Run `cargo test -p zygo --locked work::tests` → does not compile: no `records_root`, `run` takes 5 arguments.
 
-- [ ] **6. Implement the CLI side** in `crates/zygo/src/cmd/work.rs`:
+- [x] **6. Implement the CLI side** in `crates/zygo/src/cmd/work.rs`:
   - `fn records_root(slash: bool, args: &[String], find: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf>` — `find()` only when `!slash` and `args.first()` is `report`; else `None`.
   - `fn run(cwd: &Path, cfg: &WorkConfig, db: &Path, records_in: Option<&Path>, args: &[String], err: &mut dyn Write) -> Result<String>`; the `Action::Report` arm calls `zygo_work::report::report(db, records_in, unit.as_deref(), since)`.
   - `verb`: `let records = records_root(ctx.slash, args, super::status::repo_top);` and pass `records.as_deref()` to `run`. The slash path reaches `verb` with `ctx.slash = true` (`crates/zygo/src/cmd/mod.rs:515-517`); the CLI with `false` (`mod.rs:601`).
   - Add `None` as the `records_in` argument at the existing `run` calls in `mod tests` (`work.rs:138`, `:142`, `:154`, `:164`, `:165`).
   - Import `PathBuf` beside `Path` (`work.rs:4`).
 
-- [ ] **7. See the tests pass.** `cargo test -p zygo-work --locked --test decision_report` → 7 passed. `cargo test -p zygo-work --locked --test collection` → all pass (report outputs unchanged). `cargo test -p zygo --locked work::tests` → all pass (the timing test stays ignored).
+- [x] **7. See the tests pass.** `cargo test -p zygo-work --locked --test decision_report` → 7 passed. `cargo test -p zygo-work --locked --test collection` → all pass (report outputs unchanged). `cargo test -p zygo --locked work::tests` → all pass (the timing test stays ignored).
 
-- [ ] **8. Write the base-spec change (D§13 item 4).** In `docs/specs/2026-11-18-zygo-design.md` §13.6 (line 692), replace the last sentence ("`zygo work report [<unit>] [--since]` prints per unit: … verdicts.") with this final text:
+- [x] **8. Write the base-spec change (D§13 item 4).** In `docs/specs/2026-11-18-zygo-design.md` §13.6 (line 692), replace the last sentence ("`zygo work report [<unit>] [--since]` prints per unit: … verdicts.") with this final text:
 
 > `zygo work report [<unit>] [--since]` prints per unit: rounds, tokens and estimated cost by role and model, check ran/passed, guard events, verdicts. The CLI form also counts the delegated decision records in `docs/decisions/` of the working tree of the repository at the current directory (`git rev-parse --show-toplevel`, 2 s bound; decision records design D§6.8, D§9.5). A unit block that has at least one valid record of that unit, or of that unit with a `:<part>`, gains `  decisions: <open> open, <total> total` after its `guard events:` line. After the last block, or after `no work units`, after one empty line, when the directory holds at least one record name: `decision records: <open> open, <total> total, deepest chain <d>`, then `, <m> malformed` when `m > 0`; a `docs/decisions` that is a link or not a directory prints `decision records: docs/decisions is not a directory`, and more than 10,000 entries print `decision records: over 10,000 files`. Outside a repository, when the git call fails, and in the slash form (which reads no record, D-C2), there are no record lines. A record never makes the report fail.
 
@@ -229,9 +229,9 @@ fn records_only_for_the_cli_report() { // D§9.5, D-C2
 
   Check: `grep -n 'decision records: over 10,000 files' docs/specs/2026-11-18-zygo-design.md` → one hit in §13.6; `tail -1` of the file is the new row.
 
-- [ ] **9. Verify.** `cargo test -p zygo-work --locked --test decision_report` → all pass; `cargo test -p zygo-work --locked --test collection` → all pass; `cargo build --workspace --locked` → builds with no warning from the changed files; `grep -rn 'report::report(' crates` → every call has 4 arguments.
+- [x] **9. Verify.** `cargo test -p zygo-work --locked --test decision_report` → all pass; `cargo test -p zygo-work --locked --test collection` → all pass; `cargo build --workspace --locked` → builds with no warning from the changed files; `grep -rn 'report::report(' crates` → every call has 4 arguments.
 
-- [ ] **10. Commit.** Stage `crates/zygo-work/src/report.rs`, `crates/zygo-work/tests/decision_report.rs`, `crates/zygo-work/tests/collection.rs`, `crates/zygo/src/cmd/work.rs`, `docs/specs/2026-11-18-zygo-design.md`; message `DR-7: record lines in zygo work report` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-7`, each on its own line. `git show --stat HEAD` → those 5 files only.
+- [x] **10. Commit.** Stage `crates/zygo-work/src/report.rs`, `crates/zygo-work/tests/decision_report.rs`, `crates/zygo-work/tests/collection.rs`, `crates/zygo/src/cmd/work.rs`, `docs/specs/2026-11-18-zygo-design.md`; message `DR-7: record lines in zygo work report` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-7`, each on its own line. `git show --stat HEAD` → those 5 files only.
 
 Author's checks:
 - Spec coverage: D§9.5 bullet 1 (step 1 `fixture_repository_gives_both_lines`, `part_unit_counts_for_its_parent_block`), bullet 2 (`fixture_repository_gives_both_lines`, `record_names_decide_the_records_line`), the two D§6.8 directory lines (`regular_file_is_not_a_directory`, `over_ten_thousand_entries`), bullet 3 (`no_units_then_the_records_line`), bullet 4 (`no_repository_no_record_lines`, `records_only_for_the_cli_report`), D§14 absent directory (`record_names_decide_the_records_line`), D-C2 slash form (`records_only_for_the_cli_report`), D§13 item 4 (step 8), D§17 #11 (step 1).
