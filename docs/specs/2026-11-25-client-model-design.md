@@ -420,7 +420,7 @@ The grade file grades branch 1 or 2 as the normal launch. Branch 3 is a known li
 
 #### 6.3.7 Premises (P4-3, K-D14)
 
-Each provisional Codex grade becomes measured by a premise row in `docs/premises.md` (`PCn`) with fixtures under `fixtures/codex/`. The method is the existing one (`docs/premises.md` "Method"): Codex runs under `env -i` with a temporary `HOME` and `CODEX_HOME`, a dummy key built at run time, and `base_url` = `scripts/premises/mock_upstream.py` directly, with no zygo between. `mock_upstream.py` gains a `/v1/responses` SSE answer and a `/v1/models` answer. `HTTPS_PROXY` points at the mock, which refuses and records each `CONNECT`, so a request to any other host is seen and fails. No run uses an OpenAI or ChatGPT login. No step runs `codex login`.
+Each provisional Codex grade becomes measured by a premise row in `docs/premises.md` (`PCn`) with fixtures under `fixtures/codex/`. The method is the existing one (`docs/premises.md` "Method"): Codex runs under `env -i` with a temporary `HOME` and `CODEX_HOME`, a dummy key built at run time, and `base_url` = `scripts/premises/mock_upstream.py` directly, with no zygo between. `mock_upstream.py` gains a `/v1/responses` SSE answer and a `/v1/models` answer. `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` point at the mock, which refuses and records each `CONNECT` and each absolute-URI request, so a request to any other host is seen and fails. No run uses an OpenAI or ChatGPT login. No step runs `codex login`.
 
 | Id | What it measures | Feeds |
 |---|---|---|
@@ -947,3 +947,4 @@ P4-11 (client updates):
 - 2026-11-25: K§12 gets the OC-1 base-spec change (operator: OpenCode A-1.2, A-1.3, A-10.2 fixed in code before CF-4).
 - 2026-11-25: the K§12 OC-1 line names `disabled_providers = []` (OC-1 review round 2).
 - 2026-11-25: the K§12 OC-1 line: the inline `disabled_providers` keeps the user's lists without `zygo` (OC-1 review round 3).
+- 2026-11-25: K§6.3.7 amended (operator): the proxy variables: HTTP_PROXY and ALL_PROXY too, so plain-HTTP and SOCKS-aware clients also reach the mock.
