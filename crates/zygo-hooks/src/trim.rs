@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use zygo_config::ResultsConfig;
@@ -94,8 +95,26 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
+/// Options of the trim hook.
+#[derive(Debug, Clone, Copy)]
+pub struct TrimOpts {
+    /// O§7.11: how long the usage write waits on a busy database before the row is dropped.
+    pub db_bound: Duration,
+}
+
+impl Default for TrimOpts {
+    fn default() -> Self {
+        TrimOpts { db_bound: zygo_usage::store::HOOK_DB_BOUND }
+    }
+}
+
 /// §10.1: store a result over the threshold in the session's results directory and return the head/tail view in its place.
 pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::Result<HookOutput> {
+    trim_in_with(input, dir, usage_db, &TrimOpts::default())
+}
+
+/// §10.1: store a result over the threshold in the session's results directory and return the head/tail view in its place.
+pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: &TrimOpts) -> anyhow::Result<HookOutput> {
     let Some((tool, text)) = target(input) else { return Ok(HookOutput::None) };
     let sv = SessionView::load(dir)?;
     // §17.1: `overrides.json` is read on every call.
@@ -123,12 +142,12 @@ pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::
         kind: stored.kind.as_str().into(),
         stored_bytes: stored.bytes,
         view_bytes: v.len() as u64,
-        result_id: None,
+        result_id: Some(stored.id.clone()),
         command: None,
-        shaper: None,
+        shaper: Some("size".into()),
     };
-    // C6: a bookkeeping failure never costs the agent its view.
-    if zygo_usage::Store::open(usage_db).and_then(|u| u.insert_trim(&row)).is_err() {
+    // C6, O§7.11: busy past the bound or broken: no row, the view stands.
+    if zygo_usage::Store::open_bounded(usage_db, opts.db_bound).and_then(|u| u.insert_trim(&row)).is_err() {
         note("usage store unavailable");
     }
     let cwd = input.raw.get("cwd").and_then(Value::as_str).unwrap_or(".");
