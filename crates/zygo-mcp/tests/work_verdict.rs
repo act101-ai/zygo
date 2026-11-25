@@ -507,3 +507,52 @@ fn refusal_shows_10_problems_then_and_n_more() {
     assert_eq!(m, format!("zygo: keep refused: {}", format_problems(&p)));
     assert!(m.ends_with("; and 2 more"));
 }
+
+// ---- cycle 3: notify and monitor ----
+
+/// Acceptance #10.
+#[test]
+fn notify_records_and_ends_the_reply_with_the_problems() {
+    for c in cases() {
+        let (t, h) = at(Level::Notify, scripted(&c));
+        assert_eq!(
+            t.call(keep(c.round, c.keys.clone())),
+            Ok(json!(format!("recorded keep for {UNIT} round {}\nzygo: dispositions: {}", c.round, c.problem))),
+            "{}",
+            c.name
+        );
+        assert_eq!(verdict_of(&h, c.round).as_deref(), Some("keep"), "{}", c.name);
+    }
+    let (t, _h) = harness(Level::Notify, script(), None, true);
+    assert_eq!(
+        t.call(keep(1, json!({"head": HEAD, "dispositions": []}))),
+        Ok(json!(format!("recorded keep for {UNIT} round 1\nzygo: dispositions: cannot check: no repository root")))
+    );
+}
+
+/// Acceptance #10, D§9.3.
+#[test]
+fn monitor_records_as_today_and_makes_no_git_call() {
+    for c in cases() {
+        let (t, h) = at(Level::Monitor, scripted(&c));
+        assert_eq!(t.call(keep(c.round, c.keys.clone())), Ok(recorded_reply(c.round)), "{}", c.name);
+        assert_eq!(verdict_of(&h, c.round).as_deref(), Some("keep"));
+        assert!(no_git(&h), "{}", c.name);
+    }
+    let (t, _h) = harness(Level::Monitor, script(), None, true);
+    assert_eq!(t.call(keep(1, json!({"head": HEAD, "dispositions": []}))), Ok(recorded_reply(1)));
+}
+
+/// D-C1: no finding label or reason reaches a file.
+#[test]
+fn no_label_or_reason_is_stored() {
+    let (t, h) = at(Level::Notify, script());
+    let ds = json!([{"finding": "LABEL-7f3a", "class": "security", "disposition": "rejected", "reason": "REASON-9c2e"}]);
+    assert!(t.call(keep(1, json!({"head": HEAD, "dispositions": ds}))).is_ok());
+    for f in walk(h._t.path()) {
+        let b = std::fs::read(&f).unwrap();
+        for s in ["LABEL-7f3a", "REASON-9c2e"] {
+            assert!(!b.windows(s.len()).any(|w| w == s.as_bytes()), "{s} in {f:?}");
+        }
+    }
+}

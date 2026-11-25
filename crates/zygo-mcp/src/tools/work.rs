@@ -223,6 +223,10 @@ impl Tool for WorkVerdict {
         // The guard (D§9.3): read the level per call, so a session override applies at the next keep.
         let root = SessionView::load(&self.session_dir).ok().and_then(|v| v.repo_root).map(PathBuf::from);
         let level = (self.level)(root.as_deref());
+        if level == Level::Monitor {
+            self.record(unit, round, verdict)?;
+            return Ok(Value::String(recorded));
+        }
         let problems = match &root {
             None => vec!["cannot check: no repository root".to_string()],
             Some(root) => {
@@ -234,7 +238,10 @@ impl Tool for WorkVerdict {
             return Err(ToolError::Failed(format!("zygo: keep refused: {}", format_problems(&problems))));
         }
         self.record(unit, round, verdict)?;
-        Ok(Value::String(recorded))
+        if problems.is_empty() {
+            return Ok(Value::String(recorded));
+        }
+        Ok(Value::String(format!("{recorded}\nzygo: dispositions: {}", format_problems(&problems))))
     }
 }
 
