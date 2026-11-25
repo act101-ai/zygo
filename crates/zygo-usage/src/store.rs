@@ -14,6 +14,8 @@ pub struct Store {
 
 const INSERT_REQUEST: &str = "INSERT INTO requests (ts, session, token_label, agent, agent_version, agent_id, agent_type, request_class, compaction, route, role_requested, role_served, model, provider, profile, passthrough, status, latency_ms, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, estimated_usd, adjustments, redactions, repo, work_item) VALUES (:ts, :session, :token_label, :agent, :agent_version, :agent_id, :agent_type, :request_class, :compaction, :route, :role_requested, :role_served, :model, :provider, :profile, :passthrough, :status, :latency_ms, :input_tokens, :output_tokens, :cache_read_tokens, :cache_write_tokens, :estimated_usd, :adjustments, :redactions, :repo, :work_item)";
 
+const INSERT_TRIM: &str = "INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes, result_id, command, shaper) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
+
 fn bind_request(stmt: &mut rusqlite::Statement<'_>, r: &RequestRow) -> Result<()> {
     if !r.estimated_usd.is_finite() {
         return Err(anyhow!("estimated_usd is not finite: {}", r.estimated_usd));
@@ -230,17 +232,26 @@ impl Store {
     }
 
     pub fn insert_trim(&self, t: &TrimRow) -> Result<()> {
-        self.conn.prepare_cached(
-            "INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )?.execute((
+        self.conn.prepare_cached(INSERT_TRIM)?.execute(rusqlite::params![
             t.ts,
-            &t.session,
-            &t.agent_id,
-            &t.tool,
-            &t.kind,
+            t.session,
+            t.agent_id,
+            t.tool,
+            t.kind,
             i64::try_from(t.stored_bytes)?,
             i64::try_from(t.view_bytes)?,
-        ))?;
+            t.result_id,
+            t.command,
+            t.shaper,
+        ])?;
+        Ok(())
+    }
+
+    /// One `readbacks` row (O§6.4). The MCP server writes it through the bounded open (OS-5).
+    pub fn insert_readback(&self, r: &ReadbackRow) -> Result<()> {
+        self.conn.prepare_cached(
+            "INSERT INTO readbacks (ts, session, read_in, result_id, tool, bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?.execute(rusqlite::params![r.ts, r.session, r.read_in, r.result_id, r.tool, i64::try_from(r.bytes)?])?;
         Ok(())
     }
 
@@ -278,6 +289,7 @@ impl Store {
         tx.execute("DELETE FROM requests WHERE ts < ?1", [cutoff])?;
         tx.execute("DELETE FROM upstream_errors WHERE ts < ?1", [cutoff])?;
         tx.execute("DELETE FROM trims WHERE ts < ?1", [cutoff])?;
+        tx.execute("DELETE FROM readbacks WHERE ts < ?1", [cutoff])?;
         tx.execute("DELETE FROM work_units WHERE began_at < ?1", [cutoff])?;
         tx.commit()?;
         Ok(())
