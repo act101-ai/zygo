@@ -983,6 +983,37 @@ fn check_3_cargo_target_settings_refused() {
     assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err().contains("crates/demo/Cargo.toml"));
 }
 
+/// Two Cargo target forms change no target that the walk of `reach` counts, so they are let through: a
+/// `[[bin]]` with `test = false` and a path off the walk, and a `[[test]]` whose path leaves the crate.
+#[test]
+fn check_3_cargo_targets_off_the_walk_accepted() {
+    let pkg = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n";
+    for extra in [
+        "[[bin]]\nname = \"stub\"\npath = \"tests/helper/stub.rs\"\ntest = false\n",
+        "[[test]]\nname = \"outside\"\npath = \"../../tests/outside.rs\"\n",
+    ] {
+        let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}"))]);
+        let r = evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha");
+        assert!(r.is_ok(), "{extra}: {r:?}");
+    }
+    for (extra, key) in [
+        ("[[bin]]\nname = \"b\"\npath = \"src/main.rs\"\ntest = false\n", "path"),
+        ("[[bin]]\nname = \"b\"\npath = \"tests/ev.rs\"\ntest = false\n", "path"),
+        ("[[bin]]\nname = \"b\"\npath = \"../demo/src/main.rs\"\ntest = false\n", "path"),
+        ("[[test]]\nname = \"ev\"\npath = \"../../tests/ev.rs\"\n", "[[test]]"),
+        ("[[test]]\nname = \"x\"\npath = \"../demo/tests/x.rs\"\n", "[[test]]"),
+        ("[[test]]\nname = \"x\"\npath = \"/abs/x.rs\"\n", "[[test]]"),
+        ("[[test]]\nname = \"x\"\n", "[[test]]"),
+    ] {
+        let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}"))]);
+        let e = evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err();
+        assert!(
+            e.contains("crates/demo/Cargo.toml") && e.contains("unsupported Cargo target setting") && e.contains(key),
+            "{extra}: {e}"
+        );
+    }
+}
+
 #[test]
 fn derive_cell_fixtures_full_none_na() {
     let (r, g, _) = base();
@@ -1732,4 +1763,35 @@ fn render_compare_write_mode_writes_both() {
     assert_eq!(render::compare_or_write_mode(dir.path(), &md, &json, false), Ok(()));
     let file = dir.path().join("docs/conformance.md"); // a root that is a file cannot be written
     assert_eq!(render::compare_or_write_mode(&file, &md, &json, true).unwrap_err().item, 10);
+}
+
+/// K§6.2.5 on the repository: check items 1-9 on `docs/conformance/`, then the generator and item 10.
+#[test]
+fn conformance_tree() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = root.join("docs/conformance");
+    let reg = Registry::load(&dir.join("capabilities.toml")).unwrap_or_else(|e| panic!("capabilities.toml: {e}"));
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "toml") && p.file_name().is_some_and(|n| n != "capabilities.toml"))
+        .collect();
+    paths.sort();
+    let grades: Vec<GradeFile> =
+        paths.iter().map(|p| GradeFile::load(p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))).collect();
+    let clients = clients(&root).unwrap();
+    let resolved = resolve(&root, &grades);
+    let faults = check(&root, &reg, &grades, &clients, &resolved);
+    assert!(
+        faults.is_empty(),
+        "{}",
+        faults.iter().map(|f| format!("item {}: {}", f.item, f.text)).collect::<Vec<_>>().join("\n")
+    );
+    let md = render::markdown(&reg, &grades, &clients, &resolved);
+    let json = render::json(&reg, &grades, &clients, &resolved);
+    if let Err(f) = render::compare_or_write(&root, &md, &json) {
+        panic!("item {}: {}", f.item, f.text);
+    }
 }

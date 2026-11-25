@@ -327,7 +327,7 @@ Found with `git grep -n -e check-conformance -e test-check-conformance` and `git
 
 Each commit message ends with the two trailers `Zygo-Session: <the implementer's session id>` and `Zygo-Work: phase4:CF-4`, each on its own line, and no other attribution.
 
-- [ ] 1. **Test first: `conformance_tree`.** Append to `crates/zygo-core/tests/conformance.rs`, with the doc line `/// K§6.2.5 on the repository: check items 1-9 on \`docs/conformance/\`, then the generator and item 10.` The test does this:
+- [x] 1. **Test first: `conformance_tree`.** Append to `crates/zygo-core/tests/conformance.rs`, with the doc line `/// K§6.2.5 on the repository: check items 1-9 on \`docs/conformance/\`, then the generator and item 10.` The test does this:
   - `root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")`;
   - `reg = Registry::load(&root.join("docs/conformance/capabilities.toml"))`, which panics with `capabilities.toml: {e}` on an error;
   - `grades` = `GradeFile::load` of each `*.toml` in `docs/conformance/` except `capabilities.toml`, sorted by path, so that a grade file of an unknown client meets item 1; it panics with `{path}: {e}` on an error;
@@ -339,7 +339,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   - `render::compare_or_write(&root, &md, &json)`: on `Err(f)` it panics with `item {f.item}: {f.text}`.
 
   `Path`, `PathBuf` and `model::*` are already in scope (`conformance.rs:11-13`). Check: `cargo test -p zygo-core --test conformance --locked -- --exact conformance_tree` fails with a panic that starts `capabilities.toml:`.
-- [ ] 2. **Test first: `check_3_cargo_targets_off_the_walk_accepted`.** Put it in `conformance.rs` after `check_3_cargo_target_settings_refused`. Use `pkg = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"` and `repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}"))])`, and assert on `evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha")`:
+- [x] 2. **Test first: `check_3_cargo_targets_off_the_walk_accepted`.** Put it in `conformance.rs` after `check_3_cargo_target_settings_refused`. Use `pkg = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"` and `repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}"))])`, and assert on `evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha")`:
   - `is_ok()` for `extra` = `"[[bin]]\nname = \"stub\"\npath = \"tests/helper/stub.rs\"\ntest = false\n"` (the `crates/zygo-launch` form) and for `"[[test]]\nname = \"outside\"\npath = \"../../tests/outside.rs\"\n"` (the `crates/zygo` form);
   - `unwrap_err()` that holds `crates/demo/Cargo.toml`, `unsupported Cargo target setting` and the key, for each of these (extra → key):
 
@@ -356,13 +356,13 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
     Each `[[bin]]` in the table also has `name = "b"`.
 
   Check: it fails on the `[[bin]]` accepted case with `unsupported Cargo target setting \`path\``.
-- [ ] 3. **Code, `crates/zygo-core/tests/conformance/model.rs`, `crate_manifest` (D1).**
+- [x] 3. **Code, `crates/zygo-core/tests/conformance/model.rs`, `crate_manifest` (D1).**
   - A `[[test]]` array is let through when each entry has a `path` for which `leaves_crate(crate_dir, path)` holds, and a `name` that is no file stem of an entry of `<crate>/tests/`. Else the result is `unsupported("[[test]]")`, as now.
   - A `[[bin]]` with `test = false` and a `path` that is relative, holds no `\`, `:` or `..` component, and is not `walk_root(path)` is skipped by the `[lib]`/`[[bin]]` key loop. Every other `[lib]` or `[[bin]]` keeps today's checks.
   - Add `fn walk_root(p: &str) -> bool`. It is true for a path whose components, with empty and `.` components dropped, are `src/lib.rs`, `src/main.rs`, `src/bin/…`, `tests/<x>` or `tests/<x>/main.rs`. These are the roots of `reach`, `model.rs:686-697`.
   - Add `fn leaves_crate(crate_dir: &str, p: &str) -> bool`. It is false for an absolute path or a path with `\` or `:`. Otherwise it resolves `p` lexically from `crate_dir` (`..` pops a component; popping past the start is false), and it is true when the result is neither `crate_dir` nor under `crate_dir/`.
   - Extend the doc comment of `crate_manifest` by the two let-through cases.
-- [ ] 4. **Check.**
+- [x] 4. **Check.**
   - `cargo test -p zygo-core --test conformance --locked -- --exact check_3_cargo_targets_off_the_walk_accepted check_3_cargo_target_settings_refused` gives 2 passed.
   - `cargo test -p zygo-core --test conformance --locked -- --skip conformance_tree` gives 110 passed, 0 failed.
 

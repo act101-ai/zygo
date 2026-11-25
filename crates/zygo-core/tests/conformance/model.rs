@@ -546,7 +546,10 @@ fn test_crate_dir(rel: &str) -> Result<&str, String> {
 /// walk of `reach` knows only Cargo's default targets, so a manifest that changes the test targets is refused
 /// (fail closed): any manifest key that changes which files Cargo compiles as test code. These are any
 /// `[[test]]` table, `autotests`, `autobins`, and on `[lib]` or a `[[bin]]` a `harness`, `required-features`
-/// or `path` key or `test = false`.
+/// or `path` key or `test = false`. Two forms change no target that the walk counts and are let through: a
+/// `[[test]]` array whose each entry has a `path` that leaves the crate and a `name` that is no file stem of an
+/// entry of `<crate>/tests/`; and a `[[bin]]` with `test = false` and a relative `path` with no `\`, `:` or `..`
+/// that is no root of the walk.
 fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String> {
     let manifest = format!("{crate_dir}/Cargo.toml");
     let path = root.join(&manifest);
@@ -556,8 +559,21 @@ fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String>
     let text = read_capped(&path)?;
     let table: toml::Table = text.parse().map_err(|e| clip(format!("{manifest}: {e}")))?;
     let unsupported = |key: &str| Err(format!("{manifest}: unsupported Cargo target setting `{key}`"));
-    if table.contains_key("test") {
-        return unsupported("[[test]]");
+    if let Some(tests) = table.get("test") {
+        let stems: Vec<String> = std::fs::read_dir(root.join(crate_dir).join("tests"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| Path::new(&e.file_name()).file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .collect();
+        let outside = |t: &toml::Value| {
+            let path = t.get("path").and_then(|p| p.as_str());
+            let name = t.get("name").and_then(|n| n.as_str());
+            path.is_some_and(|p| leaves_crate(crate_dir, p)) && name.is_some_and(|n| !stems.iter().any(|s| s == n))
+        };
+        if !tests.as_array().is_some_and(|a| a.iter().all(outside)) {
+            return unsupported("[[test]]");
+        }
     }
     for key in ["autotests", "autobins"] {
         if table.get("package").and_then(|p| p.get(key)).is_some() {
@@ -565,7 +581,7 @@ fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String>
         }
     }
     let lib = table.get("lib").into_iter();
-    let bins = table.get("bin").and_then(|b| b.as_array()).into_iter().flatten();
+    let bins = table.get("bin").and_then(|b| b.as_array()).into_iter().flatten().filter(|b| !bin_off_the_walk(b));
     for target in lib.chain(bins) {
         for key in ["harness", "required-features", "path"] {
             if target.get(key).is_some() {
@@ -577,6 +593,46 @@ fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String>
         }
     }
     Ok(())
+}
+
+/// A `[[bin]]` that Cargo never builds as a test and whose source is no root of the walk: `test = false` and a
+/// relative `path` with no `\`, `:` or `..` component for which `walk_root` is false.
+fn bin_off_the_walk(bin: &toml::Value) -> bool {
+    let Some(p) = bin.get("path").and_then(|p| p.as_str()) else { return false };
+    bin.get("test").and_then(|t| t.as_bool()) == Some(false)
+        && !p.starts_with('/')
+        && !p.contains(['\\', ':'])
+        && !p.split('/').any(|c| c == "..")
+        && !walk_root(p)
+}
+
+/// A crate-relative path that is a root of the walk of `reach` or a Cargo default binary: `src/lib.rs`,
+/// `src/main.rs`, `src/bin/…`, `tests/<x>` or `tests/<x>/main.rs`. Empty and `.` components are dropped.
+fn walk_root(p: &str) -> bool {
+    let c: Vec<&str> = p.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    matches!(c.as_slice(), ["src", "lib.rs"] | ["src", "main.rs"] | ["src", "bin", _, ..] | ["tests", _] | ["tests", _, "main.rs"])
+}
+
+/// True when `p`, resolved lexically from the repository-relative `crate_dir`, is neither `crate_dir` nor under
+/// it. False for an absolute path, a path with `\` or `:`, or one whose `..` pops past the repository root.
+fn leaves_crate(crate_dir: &str, p: &str) -> bool {
+    if p.starts_with('/') || p.contains(['\\', ':']) {
+        return false;
+    }
+    let mut out: Vec<&str> = crate_dir.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    for c in p.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                if out.pop().is_none() {
+                    return false;
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    let base: Vec<&str> = crate_dir.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    !out.starts_with(&base)
 }
 
 /// The CI targets where each `.rs` file of a crate is compiled into a test target, by canonical path; an
