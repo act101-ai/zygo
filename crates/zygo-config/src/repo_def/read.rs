@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Output;
+use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
 use zygo_core::esc;
@@ -10,6 +10,8 @@ use zygo_core::esc;
 /// One budget for all the git calls of a read (R§6.1, as `repo_file::GIT_BOUND`).
 const BUDGET: Duration = Duration::from_secs(2);
 const REFUSAL: &str = "origin/HEAD points outside refs/remotes/origin/";
+/// git's pathspec-magic variables: inherited, they change what an `ls-tree` pathspec matches, or make it fail.
+const PATHSPEC_ENV: [&str; 4] = ["GIT_ICASE_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_LITERAL_PATHSPECS"];
 
 pub trait GitRunner {
     /// `git -C <top> <args>`, finished by `deadline`. `Err` is a one-line reason (`timed out`, `tool not found`, `failed`).
@@ -20,9 +22,22 @@ pub trait GitRunner {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemGit;
 
+impl SystemGit {
+    /// The command each call runs: `repo_file::git_command()` with no lazy fetch of a partial clone's missing objects,
+    /// no terminal prompt, no replace refs and none of the caller's [`PATHSPEC_ENV`] variables.
+    pub fn command() -> Command {
+        let mut c = crate::repo_file::git_command();
+        for k in PATHSPEC_ENV {
+            c.env_remove(k);
+        }
+        c.env("GIT_NO_LAZY_FETCH", "1").env("GIT_TERMINAL_PROMPT", "0").env("GIT_NO_REPLACE_OBJECTS", "1");
+        c
+    }
+}
+
 impl GitRunner for SystemGit {
     fn git(&self, top: &Path, args: &[&str], deadline: Instant) -> Result<Output, String> {
-        crate::repo_file::git_out(top, args, deadline)
+        crate::repo_file::git_out_with(Self::command(), top, args, deadline)
             .map(|o| Output { status: o.status, stdout: o.out, stderr: o.err })
             .map_err(str::to_owned)
     }
@@ -72,16 +87,29 @@ pub fn read_default(top: &Path, git: &dyn GitRunner) -> Read {
             }
             t.to_string()
         }
-        // No such ref, or a direct one: `symbolic-ref` says the same, `rev-parse` tells them apart.
-        Ok(o) if quiet_exit(&o, 1) => match git.git(top, &["rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD"], d) {
-            Err(w) => return unread(&format!("git rev-parse: {w}")),
-            Ok(o) if quiet_exit(&o, 1) => "refs/heads/main".to_string(),
-            Ok(o) if o.status.success() => return unread(REFUSAL),
-            Ok(_) => return unread("git rev-parse: failed"),
+        // No such ref, or a direct one: `symbolic-ref` says the same, `show-ref` tells them apart.
+        Ok(o) if quiet_exit(&o, 1) => match exists(top, git, "refs/remotes/origin/HEAD", d) {
+            Err(w) => return unread(&w),
+            Ok(false) => "refs/heads/main".to_string(),
+            Ok(true) => return unread(REFUSAL),
         },
         Ok(_) => return unread("git symbolic-ref: failed"),
     };
-    let commit = match git.git(top, &["rev-parse", "--verify", "--quiet", &format!("{full_ref}^{{commit}}")], d) {
+    // The ref by exact name: `rev-parse <name>` would also take `refs/tags/<name>` when the ref is missing.
+    match exists(top, git, &full_ref, d) {
+        Err(w) => return unread(&w),
+        Ok(false) => return Read::Absent { full_ref: Some(full_ref) },
+        Ok(true) => {}
+    }
+    let oid = match git.git(top, &["show-ref", "--verify", "--hash", &full_ref], d) {
+        Err(w) => return unread(&format!("git show-ref: {w}")),
+        Ok(o) if o.status.success() => match std::str::from_utf8(&o.stdout).map(str::trim) {
+            Ok(c) if is_oid(c) => c.to_string(),
+            _ => return unread("git show-ref: failed"),
+        },
+        Ok(_) => return unread("git show-ref: failed"),
+    };
+    let commit = match git.git(top, &["rev-parse", "--verify", "--quiet", &format!("{oid}^{{commit}}")], d) {
         Err(w) => return unread(&format!("git rev-parse: {w}")),
         Ok(o) if quiet_exit(&o, 1) => return Read::Absent { full_ref: Some(full_ref) },
         Ok(o) if o.status.success() => match std::str::from_utf8(&o.stdout).map(str::trim) {
@@ -102,6 +130,16 @@ pub fn read_at(top: &Path, commit: &str, git: &dyn GitRunner) -> Read {
         return Read::Unread { why: format!("pinned commit {} is not an object id", esc(commit)) };
     }
     steps(top, git, None, commit.to_string(), Instant::now() + BUDGET)
+}
+
+/// Whether the ref `full_ref` exists, by exact name; `Err` is the unread reason.
+fn exists(top: &Path, git: &dyn GitRunner, full_ref: &str, d: Instant) -> Result<bool, String> {
+    match git.git(top, &["show-ref", "--verify", "--quiet", full_ref], d) {
+        Err(w) => Err(format!("git show-ref: {w}")),
+        Ok(o) if quiet_exit(&o, 1) => Ok(false),
+        Ok(o) if o.status.success() => Ok(true),
+        Ok(_) => Err("git show-ref: failed".into()),
+    }
 }
 
 /// 40 or 64 lower-case hex digits.
@@ -153,14 +191,22 @@ impl From<Fail> for Stop {
     }
 }
 
-/// Steps 3-5; a failed call is `Gone` when the commit or the object it named is missing, else `Unread`.
+/// Steps 3-5; a failed call is `Gone` when the commit, its root tree or the object it named is missing, else `Unread`.
 fn steps(top: &Path, git: &dyn GitRunner, full_ref: Option<String>, commit: String, d: Instant) -> Read {
     match files(top, git, &full_ref, &commit, d) {
         Ok(files) => Read::Found { files },
         Err(Stop::Read(r)) => r,
         Err(Stop::Fail(f)) => {
             let gone = |oid: &str| matches!(git.git(top, &["cat-file", "-e", oid], d), Ok(o) if quiet_exit(&o, 1));
-            if gone(&commit) || f.oid.as_deref().is_some_and(gone) {
+            // The tree id from the commit object itself: `<commit>^{tree}` fails when the tree is missing.
+            let tree = || match git.git(top, &["cat-file", "commit", &commit], d) {
+                Ok(o) if o.status.success() => {
+                    let line = o.stdout.strip_prefix(b"tree ").and_then(|r| r.split(|&b| b == b'\n').next());
+                    line.and_then(|t| std::str::from_utf8(t).ok()).map(str::to_owned)
+                }
+                _ => None,
+            };
+            if gone(&commit) || tree().is_some_and(|t| is_oid(&t) && gone(&t)) || f.oid.as_deref().is_some_and(gone) {
                 Read::Gone { commit }
             } else {
                 Read::Unread { why: f.why }
@@ -254,6 +300,7 @@ fn files(top: &Path, git: &dyn GitRunner, full_ref: &Option<String>, commit: &st
         let stem = String::from_utf8_lossy(&e.path[b".zygo/profiles/".len()..e.path.len() - b".toml".len()]).into_owned();
         read.insert(stem, content(e)?);
     }
+    ignored.sort();
     Ok(Files { full_ref: full_ref.clone(), commit: commit.to_string(), workspace, profiles: read, ignored })
 }
 
@@ -265,13 +312,27 @@ fn list(top: &Path, git: &dyn GitRunner, commit: &str, spec: &str, oid: Option<&
     if !o.status.success() {
         return Err(fail("failed"));
     }
-    let mut ents = parse(&o.stdout).ok_or_else(|| fail("failed"))?;
+    let Some(mut ents) = parse(&o.stdout) else {
+        // `ls-tree --long` lists a blob it does not have with the size `BAD`, and exits 0: name that blob.
+        return Err(Fail { oid: bad_blob(&o.stdout).or(oid.map(str::to_owned)), ..fail("failed") });
+    };
     let child = |p: &[u8]| p.strip_prefix(prefix).is_some_and(|r| !r.is_empty() && !r.contains(&b'/'));
     if !ents.iter().all(|e| child(&e.path)) {
         return Err(fail("failed"));
     }
     ents.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(ents)
+}
+
+/// The object id of the first record `<mode> blob <oid> BAD\t<path>`.
+fn bad_blob(out: &[u8]) -> Option<String> {
+    out.split(|&b| b == 0).find_map(|rec| {
+        let meta = std::str::from_utf8(&rec[..rec.iter().position(|&b| b == b'\t')?]).ok()?;
+        match meta.split_ascii_whitespace().collect::<Vec<_>>()[..] {
+            [_, "blob", oid, "BAD"] if is_oid(oid) => Some(oid.to_string()),
+            _ => None,
+        }
+    })
 }
 
 /// Records `<mode> <type> <oid> <size>\t<path>\0`; `None` for any other shape.

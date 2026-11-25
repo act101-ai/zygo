@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 use zygo_config::repo_def::{self, Files, GitRunner, Read, SystemGit};
 
@@ -73,11 +73,14 @@ fn fx(ents: &[E]) -> Fx {
     Fx { _t: t, w, c }
 }
 
+/// The output that a call returns through `edit` in place of git's.
+type Edit = Box<dyn Fn(&[&str], Output) -> Output>;
+
 /// Records each call's args and deadline; fails the calls whose subcommand is `fail` (`"*"`: all) with
 /// `Err("tool not found")`; else runs `SystemGit` with `Instant::now() + Duration::from_secs(600)`; with
-/// `short_blob`, drops the last stdout byte of `cat-file blob`.
+/// `short_blob`, drops the last stdout byte of `cat-file blob`; then passes the output through `edit`.
 #[derive(Default)]
-struct Rec { calls: RefCell<Vec<(Vec<String>, Instant)>>, fail: Option<&'static str>, short_blob: bool }
+struct Rec { calls: RefCell<Vec<(Vec<String>, Instant)>>, fail: Option<&'static str>, short_blob: bool, edit: Option<Edit> }
 
 impl GitRunner for Rec {
     fn git(&self, top: &Path, args: &[&str], deadline: Instant) -> Result<Output, String> {
@@ -89,7 +92,7 @@ impl GitRunner for Rec {
         if self.short_blob && args.starts_with(&["cat-file", "blob"]) {
             o.stdout.pop();
         }
-        Ok(o)
+        Ok(match &self.edit { Some(e) => e(args, o), None => o })
     }
 }
 
@@ -104,6 +107,38 @@ impl Rec {
 }
 
 fn head(c: &Path) -> String { git(c, &["rev-parse", MAIN]) }
+
+/// A process exit with `code`.
+fn status(code: i32) -> ExitStatus {
+    #[cfg(unix)]
+    return std::os::unix::process::ExitStatusExt::from_raw(code << 8);
+    #[cfg(windows)]
+    return std::os::windows::process::ExitStatusExt::from_raw(code as u32);
+}
+
+fn out(code: i32, stdout: &[u8], stderr: &[u8]) -> Output { Output { status: status(code), stdout: stdout.to_vec(), stderr: stderr.to_vec() } }
+
+/// A `Rec` whose calls that `when` matches return `o`.
+fn patched(when: fn(&[&str]) -> bool, o: Output) -> Rec {
+    Rec { edit: Some(Box::new(move |a, real| if when(a) { o.clone() } else { real })), ..Rec::default() }
+}
+
+/// Removes the loose object `oid` from the repository at `dir` (the fixture's objects are loose: fewer than
+/// `transfer.unpackLimit` were pushed, and a local clone links them). Git writes them read-only, which Windows
+/// refuses to remove.
+fn drop_object(dir: &Path, oid: &str) {
+    let p = dir.join(".git/objects").join(&oid[..2]).join(&oid[2..]);
+    #[cfg(windows)]
+    #[allow(clippy::permissions_set_readonly_false)] // Windows only: clears the read-only attribute
+    {
+        let mut perm = std::fs::metadata(&p).unwrap().permissions();
+        perm.set_readonly(false);
+        std::fs::set_permissions(&p, perm).unwrap();
+    }
+    std::fs::remove_file(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+    assert!(!git_cmd(dir, &["cat-file", "-e", oid]).status().unwrap().success(), "fixture: {oid} still there");
+}
+
 fn found(r: Read) -> Files { match r { Read::Found { files } => files, other => panic!("{other:?}") } }
 
 fn base() -> Fx {
@@ -129,17 +164,31 @@ fn calls_name_the_commit_or_a_full_ref() {
     let rec = Rec::default();
     found(repo_def::read_default(&f.c, &rec));
     let a = rec.args();
-    assert_eq!(a.len(), 8);
+    assert_eq!(a.len(), 10);
     assert_eq!(a[0], ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
-    assert_eq!(a[1], ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main^{commit}"]);
-    assert_eq!(a[2], ["ls-tree", "-z", "--long", "--full-tree", c.as_str(), "--", ".zygo"]);
-    assert_eq!(a[3], ["ls-tree", "-z", "--long", "--full-tree", c.as_str(), "--", ".zygo/"]);
-    assert_eq!(a[4], ["ls-tree", "-z", "--long", "--full-tree", c.as_str(), "--", ".zygo/profiles/"]);
-    assert_eq!(a[5], ["cat-file", "blob", oid(".zygo/workspace.toml").as_str()]);
-    assert_eq!(a[6], ["cat-file", "blob", oid(".zygo/profiles/go.toml").as_str()]);
-    assert_eq!(a[7], ["cat-file", "blob", oid(".zygo/profiles/rust.toml").as_str()]);
+    assert_eq!(a[1], ["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"]);
+    assert_eq!(a[2], ["show-ref", "--verify", "--hash", "refs/remotes/origin/main"]);
+    assert_eq!(a[3], ["rev-parse", "--verify", "--quiet", format!("{c}^{{commit}}").as_str()]);
+    assert_eq!(a[4], ["ls-tree", "-z", "--long", "--full-tree", c.as_str(), "--", ".zygo"]);
+    assert_eq!(a[5], ["ls-tree", "-z", "--long", "--full-tree", c.as_str(), "--", ".zygo/"]);
+    assert_eq!(a[6], ["ls-tree", "-z", "--long", "--full-tree", c.as_str(), "--", ".zygo/profiles/"]);
+    assert_eq!(a[7], ["cat-file", "blob", oid(".zygo/workspace.toml").as_str()]);
+    assert_eq!(a[8], ["cat-file", "blob", oid(".zygo/profiles/go.toml").as_str()]);
+    assert_eq!(a[9], ["cat-file", "blob", oid(".zygo/profiles/rust.toml").as_str()]);
     for arg in a.iter().flatten() {
         assert!(!["main", "HEAD", "origin/HEAD", "origin/main"].contains(&arg.as_str()), "short name {arg}");
+    }
+    // A full ref goes only to an exact-match lookup (git resolves a name given to `rev-parse` through
+    // `refs/tags/<name>` too); `rev-parse` gets an object id only.
+    let hex = |s: &str| (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit());
+    for call in &a {
+        if call.iter().any(|x| x.starts_with("refs/")) {
+            assert!(call[0] == "symbolic-ref" || call[..2] == ["show-ref", "--verify"], "ref name outside an exact lookup: {call:?}");
+        }
+        if call[0] == "rev-parse" {
+            let last = call.last().unwrap();
+            assert!(last.strip_suffix("^{commit}").is_some_and(hex), "rev-parse of a name: {call:?}");
+        }
     }
     let d: Vec<Instant> = rec.calls.borrow().iter().map(|x| x.1).collect();
     assert!(d.windows(2).all(|w| w[0] == w[1]), "one deadline per read");
@@ -266,8 +315,40 @@ fn no_origin_head_reads_the_branch_not_the_tag() {
     assert_eq!(files.full_ref.as_deref(), Some("refs/heads/main"));
     assert_eq!(files.commit, git(&f.c, &["rev-parse", "refs/heads/main"]));
     assert_eq!(files.workspace.as_deref(), Some(&b"version = 1\n"[..]));
+    // F1: a tag named `refs/heads/main` (`refs/tags/refs/heads/main`) is never read in place of the branch.
+    git(&f.c, &["update-ref", "refs/tags/refs/heads/main", "refs/remotes/origin/other"]);
     git(&f.c, &["update-ref", "-d", "refs/heads/main"]);
     assert_eq!(repo_def::read_default(&f.c, &Rec::default()), Read::Absent { full_ref: Some("refs/heads/main".into()) });
+}
+
+#[test] // F1, F7: a dangling origin/HEAD is absent, also when a tag has the target's name
+fn dangling_origin_head_is_absent_not_the_tag() {
+    let f = base();
+    let absent = Read::Absent { full_ref: Some("refs/remotes/origin/gone".into()) };
+    git(&f.w, &["checkout", "-q", "-b", "other"]);
+    commit_index(&f.w, &[E::File(".zygo/workspace.toml", b"version = 9\n")]);
+    git(&f.w, &["push", "-q", "origin", "other"]);
+    git(&f.c, &["fetch", "-q", "origin"]); // before the dangling ref: a fetch can repair origin/HEAD
+    git(&f.c, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
+    assert_eq!(repo_def::read_default(&f.c, &Rec::default()), absent);
+    git(&f.c, &["update-ref", "refs/tags/refs/remotes/origin/gone", "refs/remotes/origin/other"]);
+    assert_eq!(repo_def::read_default(&f.c, &Rec::default()), absent, "the tag was read");
+}
+
+#[test] // F1: a tag named `refs/remotes/origin/HEAD` changes nothing
+fn origin_head_tag_changes_nothing() {
+    let f = base();
+    let first = found(repo_def::read_default(&f.c, &Rec::default()));
+    git(&f.w, &["checkout", "-q", "-b", "other"]);
+    commit_index(&f.w, &[E::File(".zygo/workspace.toml", b"version = 9\n")]);
+    git(&f.w, &["push", "-q", "origin", "other"]);
+    git(&f.c, &["fetch", "-q", "origin"]);
+    git(&f.c, &["update-ref", "refs/tags/refs/remotes/origin/HEAD", "refs/remotes/origin/other"]);
+    assert_eq!(found(repo_def::read_default(&f.c, &Rec::default())), first, "origin/HEAD present");
+    git(&f.c, &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"]);
+    let files = found(repo_def::read_default(&f.c, &Rec::default()));
+    assert_eq!(files.full_ref.as_deref(), Some("refs/heads/main"), "origin/HEAD missing");
+    assert_eq!(files.workspace, first.workspace);
 }
 
 #[test] // R§7.4: steps 3-5 at the saved commit, no default-branch lookup
@@ -332,4 +413,139 @@ fn content_must_match_size_and_be_utf8() {
     let f = fx(&[E::File(".zygo/workspace.toml", b"version = 1\n")]);
     let short = Rec { short_blob: true, ..Rec::default() };
     assert_eq!(repo_def::read_default(&f.c, &short), invalid(&f, ".zygo/workspace.toml: read 11 bytes, listed 12"));
+}
+
+#[test] // F2: a blobless clone is read with no fetch; a blob that is not here is gone (R§7.4), whether pruned or promised
+fn partial_clone_is_read_without_a_fetch() {
+    let f = base();
+    let t = f.c.parent().unwrap();
+    git(&t.join("o.git"), &["config", "uploadpack.allowFilter", "true"]);
+    git(t, &["clone", "-q", "--no-local", "--filter=blob:none", "--no-checkout", "o.git", "p"]);
+    let p = t.join("p");
+    let ws = git(&p, &["rev-parse", &format!("{}:.zygo/workspace.toml", git(&p, &["rev-parse", MAIN]))]);
+    let here = |p: &Path| git_cmd(p, &["cat-file", "-e", &ws]).env("GIT_NO_LAZY_FETCH", "1").status().unwrap().success();
+    assert!(!here(&p), "fixture: blob fetched by the clone");
+    let c = head(&p);
+    assert_eq!(repo_def::read_default(&p, &Rec::default()), Read::Unread { why: format!("commit {c} or one of its objects is missing") });
+    assert_eq!(repo_def::read_at(&p, &c, &Rec::default()), Read::Gone { commit: c.clone() });
+    assert!(!here(&p), "the read fetched the blob");
+}
+
+#[test] // F2, F4, F5: the environment of each SystemGit call
+fn system_git_command_environment() {
+    let c = SystemGit::command();
+    let envs: BTreeMap<String, Option<String>> = c.get_envs()
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned()))).collect();
+    for (k, v) in [("GIT_NO_LAZY_FETCH", "1"), ("GIT_TERMINAL_PROMPT", "0"), ("GIT_NO_REPLACE_OBJECTS", "1"), ("LC_ALL", "C")] {
+        assert_eq!(envs.get(k), Some(&Some(v.to_string())), "{k}");
+    }
+    for k in ["GIT_ICASE_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_LITERAL_PATHSPECS", "GIT_DIR"] {
+        assert_eq!(envs.get(k), Some(&None), "{k} not removed");
+    }
+}
+
+#[test] // F4: a replace ref does not change the read
+fn replace_refs_are_ignored() {
+    let f = base();
+    let first = found(repo_def::read_default(&f.c, &Rec::default()));
+    let ws = git(&f.c, &["rev-parse", &format!("{}:.zygo/workspace.toml", first.commit)]);
+    let other = blob(&f.c, b"version = 8\n");
+    git(&f.c, &["replace", &ws, &other]);
+    assert_eq!(git(&f.c, &["cat-file", "blob", &ws]), "version = 8", "fixture: replace not in effect");
+    assert_eq!(found(repo_def::read_default(&f.c, &Rec::default())), first);
+}
+
+#[test] // F6: the commit is here, its root tree is not
+fn read_at_with_the_root_tree_gone_is_gone() {
+    let f = base();
+    let c = head(&f.c);
+    drop_object(&f.c, &git(&f.c, &["rev-parse", &format!("{c}^{{tree}}")]));
+    assert_eq!(repo_def::read_at(&f.c, &c, &Rec::default()), Read::Gone { commit: c.clone() });
+}
+
+#[test] // F7: a subtree or a blob gone while the commit stays
+fn read_at_with_a_subtree_or_blob_gone_is_gone() {
+    for path in [".zygo", ".zygo/profiles", ".zygo/workspace.toml", ".zygo/profiles/rust.toml"] {
+        let f = base();
+        let c = head(&f.c);
+        drop_object(&f.c, &git(&f.c, &["rev-parse", &format!("{c}:{path}")]));
+        assert_eq!(repo_def::read_at(&f.c, &c, &Rec::default()), Read::Gone { commit: c.clone() }, "{path}");
+    }
+}
+
+#[test] // F7: R§6.1 has no gone result; read_default gives unread
+fn read_default_maps_gone_to_unread() {
+    let f = base();
+    let c = head(&f.c);
+    drop_object(&f.c, &git(&f.c, &["rev-parse", &format!("{c}:.zygo/workspace.toml")]));
+    assert_eq!(repo_def::read_default(&f.c, &Rec::default()),
+               Read::Unread { why: format!("commit {c} or one of its objects is missing") });
+}
+
+#[test] // F7: only a quiet exit 1 of `cat-file -e` is a missing object
+fn exit_1_with_stderr_is_not_gone() {
+    let f = base();
+    let c = head(&f.c);
+    let rec = Rec { edit: Some(Box::new(|a, real| match a[0] {
+        "ls-tree" => out(128, b"", b"fatal: x\n"),
+        "cat-file" if a[1] == "-e" => out(1, b"", b"error: x\n"),
+        _ => real,
+    })), ..Rec::default() };
+    assert_eq!(repo_def::read_at(&f.c, &c, &rec), Read::Unread { why: "git ls-tree: failed".into() });
+}
+
+#[test] // F7: a non-zero git exit, not a runner error, is unread
+fn non_zero_exit_is_unread() {
+    let f = base();
+    let sym = patched(|a| a[0] == "symbolic-ref", out(128, b"", b"fatal: x\n"));
+    assert_eq!(repo_def::read_default(&f.c, &sym), Read::Unread { why: "git symbolic-ref: failed".into() });
+    let lst = patched(|a| a[0] == "ls-tree", out(128, b"", b"fatal: x\n"));
+    assert_eq!(repo_def::read_at(&f.c, &head(&f.c), &lst), Read::Unread { why: "git ls-tree: failed".into() });
+    let blob = patched(|a| a[..2] == ["cat-file", "blob"], out(128, b"", b"fatal: x\n"));
+    assert_eq!(repo_def::read_at(&f.c, &head(&f.c), &blob), Read::Unread { why: "git cat-file: failed".into() });
+}
+
+#[test] // F7: an `ls-tree` listing of any other shape is unread
+fn odd_ls_tree_output_is_unread() {
+    let f = base();
+    let c = head(&f.c);
+    let z = git(&f.c, &["rev-parse", &format!("{c}:.zygo")]);
+    let w = git(&f.c, &["rev-parse", &format!("{c}:.zygo/workspace.toml")]);
+    let top = |a: &[&str]| a[0] == "ls-tree" && a.last() == Some(&".zygo");
+    let sub = |a: &[&str]| a[0] == "ls-tree" && a.last() == Some(&".zygo/");
+    type When = fn(&[&str]) -> bool;
+    let cases: Vec<(&str, When, String)> = vec![
+        ("no NUL", top, format!("040000 tree {z}      -\t.zygo")),
+        ("three fields", top, format!("040000 tree {z}\t.zygo\0")),
+        ("oid not hex", top, format!("040000 tree {}      -\t.zygo\0", "g".repeat(40))),
+        ("size BAD for a blob that is here", sub, format!("100644 blob {w}     BAD\t.zygo/workspace.toml\0")),
+        ("path outside the prefix", sub, format!("100644 blob {w}      12\tother/workspace.toml\0")),
+        ("path one level deeper", sub, format!("100644 blob {w}      12\t.zygo/a/workspace.toml\0")),
+        ("two records for .zygo", top, format!("040000 tree {z}      -\t.zygo\0040000 tree {z}      -\t.zygo\0")),
+    ];
+    for (name, when, stdout) in cases {
+        let rec = patched(when, out(0, stdout.as_bytes(), b""));
+        assert_eq!(repo_def::read_at(&f.c, &c, &rec), Read::Unread { why: "git ls-tree: failed".into() }, "{name}");
+    }
+}
+
+#[test] // F7: R§6.1 step 5, the byte count both ways
+fn long_content_and_short_profile_are_invalid() {
+    let f = fx(&[E::File(".zygo/workspace.toml", b"version = 1\n")]);
+    let long = Rec { edit: Some(Box::new(|a, mut real| {
+        if a[..2] == ["cat-file", "blob"] { real.stdout.push(b'\n') }
+        real
+    })), ..Rec::default() };
+    assert_eq!(repo_def::read_default(&f.c, &long), invalid(&f, ".zygo/workspace.toml: read 13 bytes, listed 12"));
+    let f = fx(&[E::File(".zygo/profiles/rust.toml", b"[overrides]\n")]);
+    let short = Rec { short_blob: true, ..Rec::default() };
+    assert_eq!(repo_def::read_default(&f.c, &short), invalid(&f, ".zygo/profiles/rust.toml: read 11 bytes, listed 12"));
+}
+
+#[test] // F11: ignored paths in byte order
+fn ignored_is_in_byte_order() {
+    let f = fx(&[E::File(".zygo/workspace.toml", b"version = 1\n"), E::File(".zygo/README", b"r"),
+                 E::File(".zygo/profiles/notes.md", b"n"), E::File(".zygo/zzz", b"z")]);
+    let files = found(repo_def::read_default(&f.c, &Rec::default()));
+    assert_eq!(files.ignored, [".zygo/README", ".zygo/profiles/notes.md", ".zygo/zzz"]);
 }

@@ -168,12 +168,17 @@ fn git(repo: &Path, args: &[&str], deadline: Instant) -> Result<String, GitFail>
 /// `deadline` (the child is killed and its pipe readers, which a grandchild may hold open, are left behind) or its
 /// stdout cannot be read.
 pub(crate) fn git_out(repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'static str> {
+    git_out_with(git_command(), repo, args, deadline)
+}
+
+/// [`git_out`] with `git` as the command (a caller's [`git_command`] with more environment set).
+pub(crate) fn git_out_with(mut git: Command, repo: &Path, args: &[&str], deadline: Instant) -> Result<GitOut, &'static str> {
     let timed_out = "timed out";
     let left = deadline.saturating_duration_since(Instant::now());
     if left.is_zero() {
         return Err(timed_out);
     }
-    let mut child = git_command()
+    let mut child = git
         .arg("-C")
         .arg(repo)
         .args(args)

@@ -431,3 +431,24 @@ Contract change: `Read::Absent { full_ref: String }` became `Read::Absent { full
 - [x] **Step 5 — see them pass.** Run `cargo test -p zygo-config --test repo_def_read`. Pass: 14 tests, 0 failed, 0 ignored. Then `cargo test -p zygo-config`: all pass; `cargo build -p zygo-config --tests` prints no warning from `repo_def/` or `tests/repo_def_read.rs`.
 
 - [x] **Step 6 — commit.** `git add crates/zygo-config/src/lib.rs crates/zygo-config/src/repo_file.rs crates/zygo-config/src/repo_def crates/zygo-config/tests/repo_def_read.rs`, then commit with subject `WD-1: git read of .zygo/ from the default branch and at a pinned commit` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:WD-1`, each on its own line. Check: `git show --stat HEAD` lists exactly those five files and the message carries no Co-Authored-By or "Generated with" line.
+
+### Review round 1
+
+- **F1** — a full ref is resolved by exact name only: `show-ref --verify --quiet <ref>` (quiet exit 1: missing → `Absent`, or `refs/heads/main` for `origin/HEAD`), then `show-ref --verify --hash <ref>`, then `rev-parse --verify --quiet <oid>^{commit}`; `rev-parse` never gets a ref name, so `refs/tags/<ref>` is never read. Tests: `no_origin_head_reads_the_branch_not_the_tag` (F8: now adds the tag `refs/tags/refs/heads/main`), `dangling_origin_head_is_absent_not_the_tag`, `origin_head_tag_changes_nothing`, `calls_name_the_commit_or_a_full_ref` (strengthened: a call with a `refs/` argument is `symbolic-ref` or `show-ref --verify`; `rev-parse` gets only `<oid>^{commit}`).
+- **F2** — `SystemGit::command()` sets `GIT_NO_LAZY_FETCH=1` and `GIT_TERMINAL_PROMPT=0` (as DR-11). Test: `partial_clone_is_read_without_a_fetch` (a `--filter=blob:none --no-local` clone; the blob is still not here after the read), `system_git_command_environment`.
+- **F4** — `GIT_NO_REPLACE_OBJECTS=1` on every `SystemGit` call. Test: `replace_refs_are_ignored`.
+- **F5** — `SystemGit::command()` removes `GIT_ICASE_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` and `GIT_LITERAL_PATHSPECS` (not `repo_file`'s list). Test: `system_git_command_environment` (the built command's environment; the test process environment is not changed).
+- **F6** — the gone check also reads the root tree id from `cat-file commit <commit>` and runs `cat-file -e` on it (`<commit>^{tree}` itself fails when the tree is missing). Test: `read_at_with_the_root_tree_gone_is_gone`.
+- **F7** — tests: `read_at_with_a_subtree_or_blob_gone_is_gone`, `read_default_maps_gone_to_unread`, `exit_1_with_stderr_is_not_gone`, `odd_ls_tree_output_is_unread`, `long_content_and_short_profile_are_invalid`, `dangling_origin_head_is_absent_not_the_tag`, `non_zero_exit_is_unread`, `calls_name_the_commit_or_a_full_ref`. Found by them: `ls-tree --long` lists a blob it does not have with the size `BAD` and exits 0, so a missing blob failed at the listing with the tree as the named object and gave `Unread`; `list` now names that blob for the gone check.
+- **F8** — fixed in `no_origin_head_reads_the_branch_not_the_tag` (see F1).
+- **F11** — `Files.ignored` is sorted in byte order before it is returned. Test: `ignored_is_in_byte_order`.
+- **F3** — not fixed: the 2 s budget on Windows is not measured.
+- **F9** — not fixed: refuted; on Windows a kill cannot be told from an exit.
+- **F10** — not fixed: an output cap is a new rule for the operator.
+
+Author's calls (round 1):
+
+- A blob that a partial clone does not have (lazy fetch off) is `Gone` for `read_at` (so `Unread` "commit … or one of its objects is missing" for `read_default`). R§7.4: "the pinned commit or one of its objects is gone"; the repository does not have the object, and the read cannot tell a promised blob from a pruned one without a promisor query.
+- `Files.ignored` is in byte order of the full path (it was `.zygo/` entries, then `.zygo/profiles/` entries).
+- A ref that exists but does not peel to a commit (`rev-parse <oid>^{commit}` quiet exit 1) stays `Absent`, as before.
+- `SystemGit::command()` is public so that the test can check the environment of the built command.
