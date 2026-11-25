@@ -1,7 +1,8 @@
 //! The workspace definition `.zygo/`: read from the git tree (R§6.1, R§7.4), parsed into typed shapes with the
 //! allow-list validation (R§6.2-R§6.4), digested (R§6.5), the approval store (R§7.2), the check at each use
-//! (R§7.3, R§7.4), and the repository loadout (R§9.1-R§9.2).
+//! (R§7.3, R§7.4), the repository loadout (R§9.1-R§9.2), and its addition to the merged config (R§8).
 
+mod apply;
 mod check;
 mod digest;
 mod loadout;
@@ -9,6 +10,7 @@ mod read;
 mod shape;
 mod store;
 
+pub use apply::{apply_to_config, Applied};
 pub use check::{check_default, check_pinned, Pin, PinnedUse, Use};
 pub use digest::{digest, short};
 pub use loadout::{repository_loadout, REPOSITORY_LOADOUT};
