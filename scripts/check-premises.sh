@@ -61,15 +61,16 @@ fi
 # version_of <name>: the header value for that name (the first line wins), or nothing.
 version_of() { printf '%s\n' "$HDR" | N="$1" awk -F'\t' '$1 == ENVIRON["N"] { print $2; exit }'; }
 
-# TROWS: "line<TAB>id<TAB>r|o" for every table line of the file (it starts with optional blanks
-# and "|"), the first cell trimmed at its ends, in file order; r marks a row of the Results table
-# (its header row starts "| Id | Item |"; it ends at the first line that does not start with
-# optional blanks and "|"), o any other table line. The Results header and separator rows are left out.
+# TROWS: "line<TAB>id<TAB>r|o" for every table line of the file (it starts with zero to three
+# blanks and "|"; a line with four or more leading blanks or a leading tab is not a table line, as
+# Markdown renders it as code), the first cell trimmed at its ends, in file order; r marks a row of
+# the Results table (its header row starts "| Id | Item |"; it ends at the first line that is not a
+# table line), o any other table line. The Results header and separator rows are left out.
 TROWS=$(awk -F'|' '
   !t && /^\| Id \| Item \|/ { t = 1; next }
-  t == 1 { t = 2; if ($0 ~ /^[ \t]*\|[-:| \t]*$/) next }
-  t == 2 && $0 !~ /^[ \t]*\|/ { t = 3 }
-  /^[ \t]*\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
+  t == 1 { t = 2; if ($0 ~ /^ ? ? ?\|[-:| \t]*$/) next }
+  t == 2 && $0 !~ /^ ? ? ?\|/ { t = 3 }
+  /^ ? ? ?\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
 ' "$P")
 # The file has one Results table: a second header row "| Id | Item |" fails.
 res2=$(awk '/^\| Id \| Item \|/ { if (n++) { print NR; exit } }' "$P")
@@ -206,7 +207,8 @@ nontrivial fixtures/act-lite/status.json || nontrivial fixtures/act-lite/languag
 # Forbidden content under fixtures/: credentials, machine paths, e-mail addresses.
 # settings-schema.json is the upstream schema kept verbatim (its source is beside it); so is the
 # Codex config.schema.json (from the pinned rust-v0.172.0 tag, K§6.3.7). Their own example texts
-# ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules only.
+# ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules and from the
+# N2_FORBIDDEN_NAMES scan only.
 VERBATIM="fixtures/claude-code/settings-schema.json fixtures/codex/config.schema.json"
 # VX: the ERE ^(<path>|<path>): for the list, dots escaped.
 VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):"
@@ -248,18 +250,19 @@ scan "${L}gh[pousr]_[A-Za-z0-9]{20,}" '' 'GitHub token'
 scan 'github_pat_[A-Za-z0-9_]{20,}' '' 'GitHub token'
 scan 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.' '' 'JWT'
 
-# name_scan <label> <name> [<word characters>]: the name as a whole word (any case; it may hold
-# spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless given (host
-# names: A-Za-z0-9_-, as in scrub.py). The message names the file and line, never the name.
+# name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
+# it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless
+# given (host names: A-Za-z0-9_-, as in scrub.py). A hit line ("path:line:text") that matches the
+# exempt ERE is dropped, as in scan. The message names the file and line, never the name.
 name_scan() {
   e=$(printf '%s' "$2" | sed 's/[][\.*^$+?(){}|/]/\\&/g')
   wc=${3:-A-Za-z0-9_}
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
   # shellcheck disable=SC2086
-  hit=$( (grep -rniE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -iE -- "$rx") | head -n 1)
+  hit=$( (grep -rniE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -iE -- "$rx") | grep -v -E -- "${4:-^\$}" | head -n 1)
   [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | head -n 1 | cut -d: -f1-2)"
 }
-for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w"; done
+for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"; done
 # The machine's host names (from the OS at run time, full and short): hostname, and on macOS
 # scutil LocalHostName and ComputerName. A name shorter than 4 characters or localhost is skipped.
 host_names() {
