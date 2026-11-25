@@ -87,15 +87,34 @@ fn ids(ns: &[u32]) -> Vec<String> { ns.iter().map(|n| id(*n)).collect() }
     q.overturned(&id(1), &g);
     assert_eq!(q.cause(&id(3)), Some(id(1).as_str()));
     assert_eq!(q.cause(&id(5)), None);
-    assert_eq!(drain(&mut q), ids(&[3, 4, 5, 8]));
+    // 2 was returned and is still open in `g` (skipped): it is queued again, in step 2 order.
+    assert_eq!(q.cause(&id(2)), Some(id(1).as_str()));
+    assert_eq!(drain(&mut q), ids(&[2, 3, 4, 5, 8]));
     // 7 is not queued and 8 depends only on a superseded record: overturning 5 moves nothing.
     let mut q = Queue::new(&g, None, None);
     q.overturned(&id(5), &g);
     assert_eq!(q.cause(&id(8)), None);
     assert_eq!(drain(&mut q), ids(&[1, 2, 5, 3, 4, 8]));
 }
+/// Records 1 and 2, open, each depending on the other.
+fn cycle(top: &Path) -> Vec<Record> {
+    fs::write(dir(top).join(md(1)), text(&id(1), "decision", "open", "T1", "phase-3:N1", &[2], "", BODY)).unwrap();
+    fs::write(dir(top).join(md(2)), text(&id(2), "decision", "open", "T2", "phase-3:N1", &[1], "", BODY)).unwrap();
+    read_dir(top).unwrap().valid
+}
+#[test] fn overturned_on_a_cycle_ends_and_queues_each_id_once() { // D§11.2 step 5
+    let t = tempfile::tempdir().unwrap();
+    let g = cycle(t.path());
+    let mut q = Queue::new(&g, None, None);
+    assert_eq!((q.next(), q.next()), (Some(id(1)), Some(id(2))));
+    q.overturned(&id(2), &g);
+    q.overturned(&id(2), &g);
+    assert_eq!(q.remaining(), 1);
+    assert_eq!(q.cause(&id(1)), Some(id(2).as_str()));
+    assert_eq!(drain(&mut q), ids(&[1]));
+}
 
-const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes]\n";
+const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes] | review [--kind <k>] [--unit <prefix>]\n";
 const PROMPT: &str = "r ratify · p promote · o overturn · s skip · q quit";
 const COMMIT_LINE: &str = "commit these files; add a Zygo-Decision: line per id\n";
 const SESSION_LINE: &str = "zygo decision review: run it in your own shell, not in an agent session\n";
@@ -325,6 +344,94 @@ fn all_files(top: &Path) -> Vec<String> { (1..=8).map(|n| file(top, n)).collect(
     assert!(headers(&r.out)[0].contains(&id(5)), "{}", r.out);
     assert!(r.err.starts_with("zygo decision: cannot write ") && r.err.contains("docs/decisions"), "{}", r.err);
     assert!(r.out.ends_with(&ending("ratified 0, promoted 0, overturned 0, skipped 0", &[])), "{}", r.out);
+    assert_eq!(record(t.path(), 1).status.name(), "ratified");
+    assert_eq!(file(t.path(), 5), five);
+}
+
+#[test] fn a_skipped_dependent_in_a_cycle_comes_back_after_an_overturn() { // D§11.2 step 5
+    let t = tempfile::tempdir().unwrap();
+    cycle(t.path());
+    let r = review(t.path(), "s\no\nwrong\nq\n");
+    assert_eq!(r.code, 0, "{}", r.err);
+    let hs: Vec<String> = headers(&r.out).iter().map(|h| h.split(' ').nth(1).unwrap().to_string()).collect();
+    assert_eq!(hs, ids(&[1, 2, 1]), "{}", r.out);
+    let last = &r.out[r.out.rfind(&format!("] {}", id(1))).unwrap()..];
+    assert!(last.contains(&format!("depends on overturned {}\n", id(2))), "{last}");
+    assert!(r.out.ends_with(&ending("ratified 0, promoted 0, overturned 1, skipped 1", &[2])), "{}", r.out);
+    assert_eq!(record(t.path(), 1).status.name(), "open");
+}
+#[test] fn a_text_over_its_record_limit_asks_again() { // D§11.3, record.rs review_note <= 2000, promotion <= 500
+    let t = tempfile::tempdir().unwrap();
+    put_rows(t.path(), &[1, 5]);
+    let r = review(t.path(), &format!("p\nrule\n{}\nAdd it\no\n{}\nwrong\n", "x".repeat(501), "y".repeat(2001)));
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(r.out.matches("too long: at most 500 bytes\n").count(), 1, "{}", r.out);
+    assert_eq!(r.out.matches("too long: at most 2000 bytes\n").count(), 1, "{}", r.out);
+    assert_eq!((r.out.matches("promotion text: ").count(), r.out.matches("reason: ").count()), (2, 2));
+    let r1 = record(t.path(), 1);
+    assert_eq!((r1.promoted_to.as_deref(), r1.promotion.as_deref()), (Some("rule"), Some("Add it")));
+    let r5 = record(t.path(), 5);
+    assert_eq!((r5.status.name(), r5.review_note.as_deref()), ("overturned", Some("wrong")));
+    assert!(r.out.ends_with(&ending("ratified 0, promoted 1, overturned 1, skipped 0", &[1, 5])), "{}", r.out);
+    // The ratify note has the same limit; 2000 bytes is accepted.
+    let t = tempfile::tempdir().unwrap();
+    put_rows(t.path(), &[1]);
+    let r = review(t.path(), &format!("r\n{}\n{}\n", "z".repeat(2001), "z".repeat(2000)));
+    assert_eq!((r.code, r.out.matches("too long: at most 2000 bytes\n").count()), (0, 1), "{}", r.err);
+    assert_eq!(record(t.path(), 1).review_note.map(|n| n.len()), Some(2000));
+}
+#[test] fn a_bad_promote_target_asks_again() { // D§11.3
+    let t = tempfile::tempdir().unwrap();
+    put_rows(t.path(), &[1]);
+    let r = review(t.path(), "p\nbogus\nrule\nAdd it\n");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(r.out.matches("promote to adr, spec or rule: ").count(), 2);
+    assert_eq!(record(t.path(), 1).promoted_to.as_deref(), Some("rule"));
+}
+#[test] fn eof_at_a_sub_prompt_ends_the_review_and_keeps_earlier_outcomes() { // D§11.2 "a crash or q loses nothing"
+    for tail in ["r\n", "p\n", "p\nrule\n", "o\n"] {
+        let t = tempfile::tempdir().unwrap();
+        put_rows(t.path(), &[1, 5]);
+        let five = file(t.path(), 5);
+        let r = review(t.path(), &format!("r\n\n{tail}"));
+        assert_eq!((r.code, r.err.as_str()), (0, ""), "{tail:?}");
+        assert!(r.out.ends_with(&ending("ratified 1, promoted 0, overturned 0, skipped 0", &[1])), "{tail:?}: {}", r.out);
+        assert_eq!(record(t.path(), 1).status.name(), "ratified", "{tail:?}");
+        assert_eq!(file(t.path(), 5), five, "{tail:?}");
+    }
+}
+/// Stdin with one answer per read that makes `dir` read-only before it gives answer `at` (0-based).
+#[cfg(unix)]
+struct LockAt { answers: VecDeque<String>, at: usize, dir: PathBuf }
+#[cfg(unix)]
+impl Read for LockAt {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::os::unix::fs::PermissionsExt;
+        if self.at == 0 {
+            fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o500))?;
+        }
+        self.at = self.at.wrapping_sub(1);
+        let Some(a) = self.answers.pop_front() else { return Ok(0) };
+        buf[..a.len()].copy_from_slice(a.as_bytes());
+        Ok(a.len())
+    }
+}
+#[cfg(unix)]
+#[test] fn a_write_failure_after_an_outcome_lists_that_outcome_and_exits_1() { // D§14 "the write of an outcome fails"
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 { eprintln!("skipped: root ignores directory modes"); return; }
+    let t = tempfile::tempdir().unwrap();
+    put_rows(t.path(), &[1, 5]);
+    let five = file(t.path(), 5);
+    let d = dir(t.path());
+    let answers = ["r\n", "\n", "o\n", "x\n"].iter().map(|a| a.to_string()).collect();
+    let mut stdin = LockAt { answers, at: 3, dir: d.clone() };
+    let r = go(t.path(), &|_| None, true, &mut BufReader::new(&mut stdin), &["review"]);
+    fs::set_permissions(&d, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(r.code, 1, "{}", r.err);
+    assert!(r.err.starts_with("zygo decision: cannot write ") && r.err.contains("docs/decisions"), "{}", r.err);
+    assert!(r.out.ends_with(&ending("ratified 1, promoted 0, overturned 0, skipped 0", &[1])), "{}", r.out);
     assert_eq!(record(t.path(), 1).status.name(), "ratified");
     assert_eq!(file(t.path(), 5), five);
 }

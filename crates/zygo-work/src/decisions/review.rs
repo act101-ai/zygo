@@ -1,5 +1,5 @@
 //! The order of `zygo decision review` (D§11.2 steps 1, 2 and 4).
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::graph::{count_in, dependents, inverse_of};
 use super::record::{Kind, Record, Status};
@@ -14,6 +14,8 @@ pub struct Queue {
     count: HashMap<String, usize>,
     /// id -> the overturned record that last moved it to the front.
     cause: HashMap<String, String>,
+    /// The ids that `next` has returned.
+    handed: HashSet<String>,
 }
 
 impl Queue {
@@ -34,22 +36,36 @@ impl Queue {
         let rank = pairs.iter().enumerate().map(|(i, (_, id))| (id.clone(), i)).collect();
         let count = pairs.iter().map(|(n, id)| (id.clone(), *n)).collect();
         let order = pairs.into_iter().map(|(_, id)| id).collect();
-        Queue { order, rank, count, cause: HashMap::new() }
+        Queue { order, rank, count, cause: HashMap::new(), handed: HashSet::new() }
     }
 
     /// The next id to show.
     #[allow(clippy::should_implement_trait)] // `next` is the Produces name; `Queue` is not an iterator
     pub fn next(&mut self) -> Option<String> {
-        self.order.pop_front()
+        let id = self.order.pop_front()?;
+        self.handed.insert(id.clone());
+        Some(id)
     }
 
-    /// Moves the queued dependents of the overturned `id` (over the records that are not `superseded`) to the front,
-    /// in step 2 order (D§11.2 step 4).
+    /// Puts the open dependents of the overturned `id` (over the records that are not `superseded`) at the front, in
+    /// step 2 order, each once (D§11.2 step 5). A dependent is one of this queue's records other than `id` that is
+    /// `open` in `records`: the caller passes the statuses as written in this review, so a dependent that `next`
+    /// returned and that is still `open` was skipped and is queued again.
     pub fn overturned(&mut self, id: &str, records: &[Record]) {
         let live: Vec<Record> = records.iter().filter(|r| r.status != Status::Superseded).cloned().collect();
-        let deps: Vec<String> = dependents(&live, id).rows.into_iter().map(|(_, d)| d).collect();
-        let (mut moved, rest): (Vec<String>, Vec<String>) = self.order.drain(..).partition(|q| deps.contains(q));
+        let open: HashSet<&str> = live.iter().filter(|r| r.status == Status::Open).map(|r| r.id.as_str()).collect();
+        let deps: HashSet<String> = dependents(&live, id)
+            .rows
+            .into_iter()
+            .map(|(_, d)| d)
+            .filter(|d| d != id && open.contains(d.as_str()) && self.rank.contains_key(d))
+            .collect();
+        let (queued, rest): (Vec<String>, Vec<String>) = self.order.drain(..).partition(|q| deps.contains(q));
+        let again = deps.iter().filter(|d| self.handed.contains(*d)).cloned();
+        let mut moved: Vec<String> = queued.into_iter().chain(again).collect();
+        // Ranks are distinct, so one id queued and handed out sits next to itself after the sort.
         moved.sort_by_key(|m| self.rank.get(m).copied().unwrap_or(usize::MAX));
+        moved.dedup();
         for m in &moved {
             self.cause.insert(m.clone(), id.to_string());
         }

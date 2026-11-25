@@ -25,11 +25,16 @@ use super::verbs::VerbCtx;
 const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> \
     [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] \
     | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] \
-    | overturn <id> --reason <text> [--yes]";
+    | overturn <id> --reason <text> [--yes] | review [--kind <k>] [--unit <prefix>]";
 /// The commits `show` lists at most.
 const SHOW_COMMITS: usize = 50;
 /// The commits `review` lists at most per record (D§11.2 step 3).
 const REVIEW_COMMITS: usize = 20;
+/// The longest `review_note` (the ratify note and the overturn reason), in bytes: `parse_record` refuses more
+/// (crates/zygo-work/src/decisions/record.rs, `review_note`).
+const NOTE_MAX: usize = 2000;
+/// The longest `promotion`, in bytes: `parse_record` refuses more (record.rs, `promotion`).
+const PROMOTION_MAX: usize = 500;
 
 /// The streams of one `zygo decision` run.
 pub struct DecisionIo<'a> {
@@ -448,19 +453,32 @@ fn ask_until<T>(io: &mut DecisionIo, prompt: &str, take: impl Fn(String) -> Opti
     }
 }
 
-/// The D§11.3 outcome of one record: the action prompt, then its sub-prompts; an unknown action, a bad target and an
-/// empty promotion text or reason ask again; EOF quits.
+/// Asks `prompt` until the answer has at most `max` bytes and, unless `empty_ok`, is not empty; a longer answer prints
+/// `too long: at most <max> bytes` first. `None` at EOF or a read error.
+fn ask_text(io: &mut DecisionIo, prompt: &str, max: usize, empty_ok: bool) -> Option<String> {
+    loop {
+        let a = ask(io, prompt)?;
+        if a.len() > max {
+            line(io.out, &format!("too long: at most {max} bytes"));
+        } else if empty_ok || !a.is_empty() {
+            return Some(a);
+        }
+    }
+}
+
+/// The D§11.3 outcome of one record: the action prompt, then its sub-prompts; an unknown action, a bad target, an
+/// empty promotion text or reason, and a text over its record limit ask again; EOF quits.
 fn choose(io: &mut DecisionIo) -> Pick {
-    let non_empty = |s: String| (!s.is_empty()).then_some(s);
     let picked = ask_until(io, "r ratify · p promote · o overturn · s skip · q quit ", |a| {
         matches!(a.trim(), "r" | "p" | "o" | "s" | "q").then(|| a.trim().to_string())
     });
     let outcome = match picked.as_deref() {
-        Some("r") => ask(io, "note (empty for none): ").map(|note| Outcome::Ratify { note, promote: None }),
+        Some("r") => ask_text(io, "note (empty for none): ", NOTE_MAX, true).map(|note| Outcome::Ratify { note, promote: None }),
         Some("p") => ask_until(io, "promote to adr, spec or rule: ", |t| Promotion::parse(t.trim())).and_then(|p| {
-            ask_until(io, "promotion text: ", non_empty).map(|t| Outcome::Ratify { note: String::new(), promote: Some((p, t)) })
+            ask_text(io, "promotion text: ", PROMOTION_MAX, false)
+                .map(|t| Outcome::Ratify { note: String::new(), promote: Some((p, t)) })
         }),
-        Some("o") => ask_until(io, "reason: ", non_empty).map(|reason| Outcome::Overturn { reason }),
+        Some("o") => ask_text(io, "reason: ", NOTE_MAX, false).map(|reason| Outcome::Overturn { reason }),
         Some("s") => return Pick::Skip,
         _ => None,
     };
@@ -515,12 +533,14 @@ fn review(repo: &Repo, top: &Path, lock: &Path, set: &RecordSet, kind: Option<Ki
         line(io.err, &format!("zygo decision: {name}: cannot be reviewed; zygo decision check names the fault"));
     }
     let mut queue = Queue::new(&set.valid, kind, unit);
-    let total = queue.remaining();
+    let mut total = queue.remaining();
     if total == 0 {
         line(io.out, "no open records");
         return 0;
     }
     let mut statuses: HashMap<String, Status> = set.valid.iter().map(|r| (r.id.clone(), r.status)).collect();
+    // The records with the statuses written in this review: `Queue::overturned` takes an `open` one as not decided.
+    let mut records = set.valid.clone();
     let (mut tally, mut shown_count) = (Tally::default(), 0);
     let code = loop {
         let Some(id) = queue.next() else { break 0 };
@@ -560,9 +580,15 @@ fn review(repo: &Repo, top: &Path, lock: &Path, set: &RecordSet, kind: Option<Ki
                     }
                 };
                 statuses.insert(id.clone(), status);
+                if let Some(x) = records.iter_mut().find(|x| x.id == id) {
+                    x.status = status;
+                }
                 tally.files.push(format!("{DIR}/{id}.md"));
                 if status == Status::Overturned {
-                    queue.overturned(&id, &set.valid);
+                    // A skipped dependent queued again adds one to the `N` of `[i/N]`.
+                    let before = queue.remaining();
+                    queue.overturned(&id, &records);
+                    total += queue.remaining() - before;
                 }
             }
             Err(EditError::Changed) => {
