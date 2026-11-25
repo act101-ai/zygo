@@ -198,7 +198,6 @@ Session text (T, SX nodes):
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | DONE | implementation | 6c8e57d1 · acc hooks_basic 60 (5 trim_row)/hook_trim 6 · PR #95 |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | DONE | implementation | aa64beea · acc readbacks 8/zygo-mcp 72/mcp_stdio 4 · PR #96 |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | DONE | implementation | a7e1fa29 1773594e e906160f · usage_doctor 45/0, savings 8; floor green · PR #101 |
@@ -209,7 +208,7 @@ Session text (T, SX nodes):
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | DONE | judgment | 2fc1f821, 64486e85, 0bfa1c6d · admin 16/0 (7 rename_member), zygo lib 228/0 ; floor green · PR #107 |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | DONE | implementation | ed8193ef, 4bed6315 · session_text 43/0 (13 mail_item) ; floor green · PR #106 |
-| ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | TODO | implementation | — |
+| ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | DONE | implementation | 0128c7fa, 63b94dd8 · statusline_mail 7/0, statusline_render 30/0 ; floor green · PR #108 |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
 | MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | DONE | judgment | 8d5f951f · public 36/36; floor green · PR #73 |
 | MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | DONE | judgment | 2384d84a · branch 36/36; floor green · PR #74 |
@@ -283,6 +282,8 @@ Session text (T, SX nodes):
 | FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
 | FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
+| FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | TODO | mechanical | — |
+| FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -396,3 +397,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-8 DONE (2fc1f821 64486e85 0bfa1c6d): zygo ws name; review 1 important (hand-start rename race, fixed in hand_join) + 2 nits fixed; lock-wait test ignored as timing; floor green · PR #107 |
 | 2026-11-25 | WD-6 done: `repo_def::repository_loadout` builds the `repository` loadout from `[members]` with the default set; review added a loadout-check test and edge tests. |
 | 2026-11-25 | ML-9 done (ed8193ef 4bed6315): session text item 8; review 1 important (no-record pane told it is reachable; item now omitted) + 2 test gaps, dup names fixed; FX-9 added (OpenCode per-request rebuild). Floor green. PR #106. |
+| 2026-11-25 | ML-15 done (0128c7fa 63b94dd8): HUD member name + unread mail; review 2 important (mail scan starved git/status workers: fixed; width rule kept) + 2 test gaps fixed; FX-10 (HUD spec), FX-11 (doctor ✉) added. Floor green. PR #108. |

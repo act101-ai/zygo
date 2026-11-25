@@ -84,6 +84,8 @@ fn data(v: &Value) -> HudData {
         effort: text(&v["stdin"]["effort"]),
         trimmed_bytes: v["trimmed_bytes"].as_u64(),
         phase: None,
+        member_name: None,
+        unread: None,
         team_host: None,
     }
 }
@@ -1150,4 +1152,65 @@ fn run_time_format_t7_item_1() {
     }
     // Every `u64` has a form; no cap, no panic.
     assert_eq!(run_time_text(u64::MAX), "213503982334601d07h");
+}
+
+// ---- member name and unread mail (M§9a; M§13 #10, #11) ----
+
+fn mailed(name: Option<&str>, unread: Option<usize>) -> HudData {
+    HudData { member_name: name.map(str::to_string), unread, ..op13() }
+}
+
+#[test] // M§9a, H AU9 as amended: compact `[logo, phase, name, mail, work item, worktree]`; verbose `[phase], [name, mail], [work item, worktree, ahead/behind]`
+fn member_mail_groups_and_colors() {
+    let d = HudData { phase: Some("draining".into()), ..mailed(Some("ana"), Some(3)) };
+    let compact = render(&d, &nerd(C));
+    assert!(compact.starts_with(&format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m \x1b[31mws draining\x1b[0m \x1b[1mana\x1b[0m \x1b[33m✉ 3\x1b[0m \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m  \x1b[35m{CPU} opus-4.7")), "{compact:?}");
+    let verbose = render(&d, &nerd(V));
+    assert!(verbose.starts_with(&format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m  \x1b[31mws draining\x1b[0m   \x1b[1mana\x1b[0m \x1b[33m✉ 3\x1b[0m   \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m \x1b[36m↑1\x1b[0m   \x1b[35m{CPU} opus-4.7 · high")), "{verbose:?}");
+    let d = mailed(Some("ana"), Some(3));
+    assert!(compact_text(&d).starts_with(&format!("{LOGO} ana ✉ 3 {BRANCH} main {TREE} hud-work  {CPU} opus-4.7")));
+    assert!(verbose_text(&d).starts_with(&format!("{LOGO}  ana ✉ 3   {BRANCH} main {TREE} hud-work ↑1   {CPU}")));
+}
+
+#[test] // M§13 #10: `✉ 3` / `mail 3`, nothing at zero, `99+` above 99
+fn mail_count_forms() {
+    for (n, want) in [(1, "✉ 1"), (3, "✉ 3"), (99, "✉ 99"), (100, "✉ 99+"), (500, "✉ 99+")] {
+        assert!(compact_text(&mailed(None, Some(n))).starts_with(&format!("{LOGO} {want} {BRANCH} main")), "{n}");
+    }
+    assert_eq!(render(&mailed(None, Some(0)), &nerd(C)), op13_compact());
+    assert_eq!(render(&mailed(None, None), &nerd(C)), op13_compact());
+    let plain = render(&mailed(Some("ana"), Some(3)), &renv(C, IconSet::Plain, ColorMode::Off, 200));
+    assert!(plain.starts_with("zygo ana mail 3 main ⌂ hud-work  "), "{plain:?}");
+    let plain = render(&mailed(Some("ana"), Some(100)), &renv(V, IconSet::Plain, ColorMode::Off, 200));
+    assert!(plain.starts_with("zygo  ana mail 99+   main ⌂ hud-work ↑1   "), "{plain:?}");
+}
+
+#[test] // M§13 #11, H AU19, H-C6
+fn member_name_shows_once_escaped_and_cut() {
+    assert!(compact_text(&HudData { worktree: None, ..mailed(Some("ana"), None) }).starts_with(&format!("{LOGO} ana {BRANCH} main  ")));
+    // Equal to the worktree name: only the worktree segment shows it.
+    assert_eq!(render(&mailed(Some("hud-work"), None), &nerd(C)), op13_compact());
+    assert_eq!(render(&mailed(Some("hud-work"), None), &nerd(V)), op13_verbose());
+    // Width removes the worktree segment: the name shows in its place, once.
+    let narrow = render(&mailed(Some("hud-work"), None), &renv(C, IconSet::Nerd, ColorMode::Off, 20));
+    assert_eq!((narrow.matches("hud-work").count(), narrow.contains(TREE)), (1, false), "{narrow:?}");
+    assert_eq!(render(&mailed(Some(""), None), &nerd(C)), op13_compact());
+    let long = "a".repeat(40);
+    assert!(compact_text(&mailed(Some(&long), None)).starts_with(&format!("{LOGO} {}… {BRANCH} main", "a".repeat(31))));
+    let hostile = compact_text(&mailed(Some("ana\x1b[31m\n"), None));
+    assert!(hostile.starts_with(&format!("{LOGO} ana\\u{{1b}}[31m\\n {BRANCH} main")), "{hostile:?}");
+    // Escape first, then cut (AU19): 20 newlines are 40 cells of `\n`.
+    let lines = compact_text(&mailed(Some(&"\n".repeat(20)), None));
+    assert!(lines.starts_with(&format!("{LOGO} {}\\… {BRANCH} main", "\\n".repeat(15))), "{lines:?}");
+}
+
+#[test] // M§9a: neither segment is dropped for width
+fn member_mail_never_dropped_for_width() {
+    let d = mailed(Some("ana"), Some(3));
+    for width in [200, 115, 100, 80, 60, 40, 30, 20, 1] {
+        let c = strip(&render(&d, &renv(C, IconSet::Nerd, ColorMode::Ansi256, width)));
+        assert!(c.starts_with(&format!("▌▌▌ {LOGO} ana ✉ 3")), "{width}: {c}");
+        let v = strip(&render(&d, &renv(V, IconSet::Nerd, ColorMode::Ansi256, width)));
+        assert!(v.starts_with(&format!("▌▌▌ {LOGO}  ana ✉ 3")), "{width}: {v}");
+    }
 }
