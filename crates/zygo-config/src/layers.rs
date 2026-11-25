@@ -9,6 +9,7 @@ use toml::{Table, Value};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 
+use crate::repo_def::{self, Definition};
 use crate::repo_file::{read_default_branch, RepoFile};
 use crate::schema::{Approval, Config, GuardsConfig, KeyRef, Level, GUARDS};
 
@@ -118,6 +119,10 @@ pub struct Merged {
     team_table: Table,
     table: Table,
     sources: BTreeMap<String, Layer>,
+    /// The keys the approved workspace files added (R§8, R§10), source-key form, each with its file. Not a layer.
+    definition: BTreeMap<String, String>,
+    /// Repository profile names that a user profile or a team preset shadows (R§8).
+    shadowed: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -484,6 +489,8 @@ pub fn load_with_repo_reader(
         team_table: team.clone().unwrap_or_default(),
         table: Table::new(),
         sources: BTreeMap::new(),
+        definition: BTreeMap::new(),
+        shadowed: Vec::new(),
     };
     if serve {
         // The server's catalog is authoritative (§6.1).
@@ -676,6 +683,8 @@ impl Merged {
     }
 
     /// The layer that set `key` (source-key form): exact, else the nearest recorded ancestor, else `Builtin`.
+    /// R§8 "Not a layer": for a key the workspace files added, this falls back to the base layer (the ancestor's, or
+    /// `Builtin`); check [`Merged::definition_file_of`] first.
     pub fn source_of(&self, key: &str) -> Layer {
         let segs = split_key(key);
         (1..=segs.len()).rev().find_map(|n| self.sources.get(&join(&segs[..n])).copied()).unwrap_or(Layer::Builtin)
@@ -696,6 +705,58 @@ impl Merged {
             out.config = out.build().map_err(|e| err(e.describe(None)))?;
         }
         Ok(out)
+    }
+
+    /// R§8 "Not a layer": adds the approved repository profiles and the `repository` loadout after the merge, with the
+    /// source `workspace-files`. Replaces an earlier definition: its keys, and any later key under them, go first.
+    /// Trusts `def`: pass only the `def` of `Use::Approved` or `PinnedUse::Approved`.
+    pub fn with_definition(&self, def: &Definition) -> Merged {
+        let mut out = self.clone();
+        if !out.definition.is_empty() {
+            for key in std::mem::take(&mut out.definition).into_keys() {
+                let segs = split_key(&key);
+                let (last, parents) = segs.split_last().expect("split_key gives at least one segment");
+                let parent = parents.iter().try_fold(&mut out.table, |t, s| t.get_mut(s).and_then(Value::as_table_mut));
+                if let Some(t) = parent {
+                    t.remove(last);
+                }
+                let prefix = format!("{key}.");
+                out.sources.retain(|k, _| *k != key && !k.starts_with(&prefix));
+            }
+            out.config = out.build().expect("without the definition keys the table built before");
+        }
+        out.shadowed.clear();
+        let applied = repo_def::apply_to_config(&mut out.config, def);
+        let mut added: Vec<(&str, String, Value, String)> = Vec::new();
+        for name in &applied.profiles {
+            let v = Value::try_from(&out.config.profile[name]).expect("ProfileConfig serializes to TOML");
+            added.push(("profile", name.clone(), v, format!(".zygo/profiles/{name}.toml")));
+        }
+        if applied.loadout {
+            let v = Value::try_from(&out.config.loadout[repo_def::REPOSITORY_LOADOUT]).expect("Loadout serializes to TOML");
+            added.push(("loadout", repo_def::REPOSITORY_LOADOUT.into(), v, ".zygo/workspace.toml".into()));
+        }
+        for (parent, name, v, file) in added {
+            // Into `table` so a later `build` keeps them; not through `set`, so no `Layer` is recorded.
+            let t = out.table.entry(parent).or_insert_with(|| Value::Table(Table::new()));
+            t.as_table_mut().expect("a parsed layer's profile and loadout are tables").insert(name.clone(), v);
+            out.definition.insert(join(&[parent, name.as_str()]), file);
+        }
+        out.shadowed = applied.shadowed_profiles;
+        out
+    }
+
+    /// The workspace file that added `key` (source-key form): exact, else the nearest recorded ancestor, else `None`.
+    /// `None` too when a later layer set `key` or an ancestor nearer than the recorded one (a flag under a repository profile).
+    pub fn definition_file_of(&self, key: &str) -> Option<&str> {
+        let segs = split_key(key);
+        let (n, file) = (1..=segs.len()).rev().find_map(|n| self.definition.get(&join(&segs[..n])).map(|f| (n, f.as_str())))?;
+        if (n + 1..=segs.len()).any(|m| self.sources.contains_key(&join(&segs[..m]))) { None } else { Some(file) }
+    }
+
+    /// Repository profile names that a user profile or a team preset shadows (R§8).
+    pub fn shadowed_profiles(&self) -> &[String] {
+        &self.shadowed
     }
 
     /// Layer 6: one launch flag; a value the schema refuses leaves the input unchanged with a warning.
@@ -764,8 +825,18 @@ impl Merged {
         if self.team_keys.contains(key) { Err(Refusal::TeamSet { key: key.into() }) } else { Ok(()) }
     }
 
-    /// One line per leaf, sorted by source key: `<key> = <value>  # <layer>`; `Some(layer)` keeps that layer only.
+    /// One line per leaf, sorted by source key: `<key> = <value>  # <layer>`, or `# workspace-files <file>` for a key the
+    /// workspace files added; `Some(layer)` keeps that layer only, never those keys.
     pub fn show(&self, layer: Option<Layer>, is_set: &dyn Fn(&KeyRef) -> bool) -> String {
+        self.show_lines(&|file, src| layer.is_none_or(|l| file.is_none() && l == src), is_set)
+    }
+
+    /// `zygo config show --layer workspace-files` (R§10).
+    pub fn show_workspace_files(&self) -> String {
+        self.show_lines(&|file, _| file.is_some(), &|_| false)
+    }
+
+    fn show_lines(&self, keep: &dyn Fn(Option<&str>, Layer) -> bool, is_set: &dyn Fn(&KeyRef) -> bool) -> String {
         let table = Table::try_from(&self.config).expect("Config serializes to TOML");
         let mut leaves = Vec::new();
         show_leaves(Vec::new(), Value::Table(table), &mut leaves);
@@ -774,7 +845,8 @@ impl Merged {
             .filter_map(|(segs, v)| {
                 let key = join(&segs);
                 let src = self.source_of(&key);
-                if layer.is_some_and(|l| l != src) {
+                let file = self.definition_file_of(&key);
+                if !keep(file, src) {
                     return None;
                 }
                 let is_key = matches!(
@@ -790,7 +862,11 @@ impl Merged {
                         _ => v.to_string(),
                     },
                 };
-                Some((key.clone(), format!("{} = {}  # {src}\n", zygo_core::esc(&key), zygo_core::esc(&shown))))
+                let label = match file {
+                    Some(f) => format!("workspace-files {}", zygo_core::esc(f)),
+                    None => src.to_string(),
+                };
+                Some((key.clone(), format!("{} = {}  # {label}\n", zygo_core::esc(&key), zygo_core::esc(&shown))))
             })
             .collect();
         lines.sort();
