@@ -198,10 +198,9 @@ Session text (T, SX nodes):
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | DONE | implementation | 0f925e1c · acc 18/0; floor green ws 2967/0 · PR #89 |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | DONE | implementation | 867df914 · acc admin 34/mux 58/snapshot 41 · PR #94 |
-| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6, FX-7 | TODO | implementation | — |
+| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6, FX-7 | DONE | implementation | dc966a4c 24e7af32 1d672c48 894a0435 · core_basics 26/0, zygo --lib 226/0, workspace_member --include-ignored 53/0 ; floor green · PR #103 |
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | DONE | implementation | 6c8e57d1 · acc hooks_basic 60 (5 trim_row)/hook_trim 6 · PR #95 |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | DONE | implementation | aa64beea · acc readbacks 8/zygo-mcp 72/mcp_stdio 4 · PR #96 |
@@ -394,4 +393,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-4 DONE: checked use of the workspace definition (repo_def::check; one read, digest, store lookup per use; Pin). Review: F1, F3 fixed with tests; F2 refuted (contract: NotApproved has no why); floor ws 3017/0 · PR #98 |
 | 2026-11-25 | MS-6 DONE: registry and ack files, validation, member cache; review 5 minor: F1 fixed (typed parse, no Value tree), F3 part (limits pub), F5 tests; F4 refuted; F2 (members.json read uncapped) to operator; MS-13/MS-14 notes carried; floor ws 3035/0 · PR #99 |
 | 2026-11-25 | OS-8 DONE: zygo usage prints savings lines (net figures, breakdown, ratio). Review: F1 fixed (amounts unknown when config does not load), F2 fixed (no sign on zero), F4 tests added, F3 to FX-8 (added: one read snapshot); floor ws 3016/0 · PR #101 |
+| 2026-11-25 | ML-7 DONE: member name in the session view marker; hand start takes `--name`. Review: 5 confirmed findings, all fixed. The DR-4 help line fix (top-level help omits `decision new`) landed · PR #103 |
 | 2026-11-25 | FX-8 DONE: zygo usage reads summary and savings in one read transaction via new `Store::report` (savings first). Review: F1 confirmed (test sees the defect only in savings-first order; documented on `Store::report`), F2 refuted (no seam to write mid-report without a timing test) |
