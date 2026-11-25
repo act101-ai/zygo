@@ -310,6 +310,8 @@ Session text (T, SX nodes):
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | TODO | implementation | — |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
+| DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | TODO | implementation | — |
+| MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | TODO | implementation | — |
 
 ## Log
 
