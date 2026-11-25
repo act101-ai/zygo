@@ -318,7 +318,7 @@ fn inline_config_values() {
     let p = &cfg["provider"]["zygo"];
     assert_eq!(p["npm"], "@ai-sdk/anthropic");
     assert_eq!(p["options"]["baseURL"], "http://127.0.0.1:4/anthropic/v1");
-    assert_eq!(p["options"]["apiKey"], c.token.as_str());
+    assert_token_key(&p["options"]["apiKey"], &fx);
     assert_eq!(p["options"]["headers"], json!({"X-Zygo-Session": "S1", "X-Zygo-Agent-Version": "1.18.16"}));
     let roles: BTreeSet<&str> = c.config.roles.keys().map(String::as_str).collect();
     let keys: BTreeSet<&str> = p["models"].as_object().unwrap().keys().map(String::as_str).collect();
@@ -335,6 +335,87 @@ fn inline_config_values() {
     let h = built(&c).1["provider"]["zygo"]["options"]["headers"].clone();
     assert_eq!(h["X-Zygo-Repo"], "example.invalid/a/b");
     assert_eq!(h["X-Zygo-Work"], "src:7");
+}
+
+#[test]
+fn opencode_token_is_only_a_file_reference() {
+    let fx = fx();
+    let c = ctx(&fx, |c| c.token = format!("oc1-{}-{}", "probe", 7)); // distinct from any path text
+    let (spec, cfg) = built(&c);
+    assert_token_key(&cfg["provider"]["zygo"]["options"]["apiKey"], &fx);
+    assert!(spec.env.iter().all(|(_, v)| !v.contains(&c.token)), "env");
+    assert!(spec.args.iter().all(|a| !a.contains(&c.token)), "args");
+    for (rel, text) in files_under(&c.session_dir.root.join("opencode")) {
+        assert!(!text.contains(&c.token), "{rel}");
+    }
+}
+
+#[test]
+fn inline_config_limits_providers_to_zygo() {
+    let fx = fx();
+    let (_, cfg) = built(&ctx(&fx, |_| {}));
+    assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
+    // No OpenCode config file: the inline disabled_providers is empty (§8.7).
+    assert_eq!(cfg["disabled_providers"], json!([]));
+    assert_eq!(cfg["provider"].as_object().unwrap().keys().collect::<Vec<_>>(), ["zygo"]);
+}
+
+/// The key of the fixture's session `S1`: `{file:<root>/home/cache/sessions/S1/token}`, written out literally on
+/// unix; on Windows only its `/` form is checked here (the `\` to `/` change has literal cases in `src/opencode.rs`).
+fn assert_token_key(key: &Value, fx: &Fx) {
+    let k = key.as_str().expect("apiKey is a string");
+    if cfg!(windows) {
+        assert!(k.starts_with("{file:") && k.ends_with("/home/cache/sessions/S1/token}") && !k.contains('\\'), "{k}");
+    } else {
+        assert_eq!(k, format!("{{file:{}/home/cache/sessions/S1/token}}", fx.root.to_str().unwrap()));
+    }
+}
+
+#[test]
+fn a_token_path_that_breaks_the_file_reference_is_refused() {
+    let mut bad = vec!["a}b", "a{b", "a\nb", "a\tb", "a\u{1}b", "a\u{7f}b"];
+    if cfg!(unix) {
+        bad.extend(["a\"b", "a\\b"]);
+    }
+    for b in bad {
+        let fx = fx();
+        let c = ctx(&fx, |c| c.session_dir = SessionDir::new(fx.root.join(b)));
+        let e = oc().build(&c).err().expect(b).to_string();
+        assert!(e.contains("cannot reference the session token file"), "{b:?}: {e}");
+        assert!(!fx.root.join(b).exists(), "{b:?}: nothing is written before the refusal");
+    }
+}
+
+/// A relative session dir resolves against the process's working directory, so the refusal runs in a child
+/// process (`not_absolute_child`) whose working directory is a temp dir; nothing may appear there.
+#[test]
+fn a_token_path_that_is_not_absolute_is_refused() {
+    let fx = fx();
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "not_absolute_child", "--ignored", "--nocapture", "--test-threads=1"])
+        .env("ZYGO_TEST_REL", "1")
+        .current_dir(&fx.root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success() && stdout.contains("1 passed"), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    let found: Vec<String> = std::fs::read_dir(&fx.root).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(found, ["home"], "nothing is written before the refusal");
+}
+
+#[test]
+#[ignore]
+fn not_absolute_child() {
+    if std::env::var_os("ZYGO_TEST_REL").is_none() {
+        return;
+    }
+    for rel in ["rel/S1", "~/S1"] {
+        let fx = fx();
+        let c = ctx(&fx, |c| c.session_dir = SessionDir::new(PathBuf::from(rel)));
+        let e = oc().build(&c).err().expect(rel).to_string();
+        assert!(e.contains("cannot reference the session token file") && e.contains("not absolute"), "{rel}: {e}");
+        assert!(!Path::new(rel).exists(), "{rel}: nothing is written before the refusal");
+    }
 }
 
 #[test]
@@ -1039,6 +1120,8 @@ fn preflight_names_the_file_and_key() {
         ("repo/opencode.json", r#"{"agent":{"build":{"permission":{"edit":"allow"}}}}"#, "agent.build.permission.edit"),
         ("repo/opencode.json", r#"{"agent":{"acme-helper":{"model":"a/b"}}}"#, "agent.acme-helper.model"),
         ("home/.config/opencode/opencode.json", r#"{"provider":{"zygo":{}}}"#, "provider.zygo"),
+        ("home/.config/opencode/config.json", r#"{"model":"a/b"}"#, "model"),
+        ("home/.opencode/opencode.jsonc", r#"{"small_model":"a/b"}"#, "small_model"),
     ];
     for (rel, text, key) in cases {
         let fx = fx();
@@ -1054,6 +1137,38 @@ fn preflight_names_the_file_and_key() {
     put(&fx, "home/.config/opencode/opencode.json", r#"{"small_model":"a/b"}"#);
     let c = pf_ctx(&fx, &[("XDG_CONFIG_HOME", fx.root.join("xdg"))], |_| {});
     assert_eq!(oc().preflight(&c), Err(Preflight { file: fx.root.join("xdg/opencode/opencode.json"), key: "model".into() }));
+    let f2 = crate::fx();
+    put(&f2, "custom/oc.json", r#"{"model":"a/b"}"#);
+    let c = pf_ctx(&f2, &[("OPENCODE_CONFIG", f2.root.join("custom/oc.json"))], |_| {});
+    assert_eq!(oc().preflight(&c), Err(Preflight { file: f2.root.join("custom/oc.json"), key: "model".into() }));
+}
+
+/// H1: the inline `disabled_providers` keeps every list OpenCode merges before it, without `zygo` (§8.7).
+#[test]
+fn inline_config_keeps_the_user_disables_without_zygo() {
+    let fx = fx();
+    put(&fx, "home/.config/opencode/config.json", r#"{"disabled_providers":["amazon-bedrock","zygo"]}"#);
+    put(&fx, "repo/.opencode/opencode.json", r#"{"disabled_providers":["openai"]}"#);
+    let (_, cfg) = built(&pf_ctx(&fx, &[], |_| {}));
+    assert_eq!(cfg["disabled_providers"], json!(["amazon-bedrock", "openai"]));
+}
+
+/// Every source OpenCode merges before the inline config, in a stable order, each name once; an unreadable or
+/// malformed file adds nothing, as the preflight skips it.
+#[test]
+fn inline_disables_come_from_every_earlier_config_source() {
+    let fx = fx();
+    put(&fx, "home/.config/opencode/opencode.jsonc", "// c\n{\"disabled_providers\":[\"a\",\"zygo\",],}");
+    put(&fx, "home/.config/opencode/config", "disabled_providers = [\"legacy\", \"a\"]\n");
+    put(&fx, "custom/oc.json", r#"{"disabled_providers":["b","a"]}"#);
+    put(&fx, "repo/opencode.json", r#"{ not json "disabled_providers":["bad"]"#);
+    std::fs::create_dir_all(fx.root.join("repo/.opencode/opencode.jsonc")).unwrap(); // unreadable: a directory
+    put(&fx, "repo/sub/opencode.jsonc", r#"{"disabled_providers":["c"]}"#);
+    put(&fx, "home/.opencode/opencode.json", r#"{"disabled_providers":["d","c"]}"#);
+    let c = pf_ctx(&fx, &[("OPENCODE_CONFIG", fx.root.join("custom/oc.json"))], |_| {});
+    assert_eq!(oc().preflight(&c), Ok(()));
+    let (_, cfg) = built(&c);
+    assert_eq!(cfg["disabled_providers"], json!(["a", "b", "c", "d", "legacy"]));
 }
 
 #[test]
@@ -1067,6 +1182,7 @@ fn preflight_accepts_what_zygo_does_not_set() {
     ok("repo/opencode.json", r#"{"agent":{"mine":{"model":"a/b"}}}"#);
     ok("repo/opencode.json", r#"{"permission":{"edit":"allow"}}"#);
     ok("repo/opencode.json", r#"{"provider":{"other":{}}}"#);
+    ok("repo/.opencode/opencode.json", r#"{"disabled_providers":["openai","zygo"]}"#); // the inline list drops zygo (§8.7)
     ok("repo/opencode.json", "{ not json");
     ok("opencode.json", r#"{"model":"a/b"}"#);
     ok("repo/opencode.json", r#"{"agent":{"zygo-ro":{"permission":{"edit":"allow"}}}}"#);
