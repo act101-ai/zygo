@@ -225,3 +225,86 @@ fn has_marker_needs_the_marker_blob() {
         assert_eq!(has_marker(&m.wt, &c, far()), Ok(false), "tree {t}");
     }
 }
+
+const MSG_PATH: &str = "bob@b/01ARZ3NDEKTSV4RRFFQ69G5FAV.json";
+
+/// The bootstrap root `rt` and `c1` = `rt` plus a message and a registry file, with `* text eol=crlf` in the
+/// repository's attributes.
+fn two_commits(m: &Machine) -> (String, String) {
+    std::fs::create_dir_all(m.root.join(".git/info")).unwrap();
+    std::fs::write(m.root.join(".git/info/attributes"), "* text eol=crlf\n").unwrap();
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let c1 = commit(&m.wt, &rt, Some(&rt), &[
+        Change::Add { path: MSG_PATH.into(), bytes: b"{\"a\":1}\n".to_vec() },
+        Change::Add { path: "registry/a.json".into(), bytes: b"r\r\n".to_vec() },
+    ], far()).unwrap();
+    (rt, c1)
+}
+
+/// The recursive file paths of `c`.
+fn files(cwd: &std::path::Path, c: &str) -> Vec<String> {
+    git(cwd, &["ls-tree", "-r", "--name-only", c]).lines().map(String::from).collect()
+}
+
+#[test]
+fn commit_applies_adds_and_removes_on_base() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (rt, c1) = two_commits(&m);
+    assert_eq!(files(&m.root, &c1), ["ZYGO-MAIL", MSG_PATH, "registry/a.json"]);
+    for (p, want) in [(MSG_PATH, &b"{\"a\":1}\n"[..]), ("registry/a.json", &b"r\r\n"[..])] {
+        let id = git(&m.root, &["rev-parse", &format!("{c1}:{p}")]);
+        assert_eq!(cat(&m.wt, &id, 100, far()), Ok(want.to_vec()), "{p}");
+    }
+    assert_eq!(git(&m.root, &["rev-list", "--parents", "-n1", &c1]), format!("{c1} {rt}"));
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c1);
+    let c2 = commit(&m.wt, &c1, Some(&c1), &[Change::Remove { path: "registry/a.json".into() }], far()).unwrap();
+    assert_eq!(files(&m.root, &c2), ["ZYGO-MAIL", MSG_PATH]);
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c2);
+}
+
+#[test]
+fn commit_without_parent_is_a_root() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (_, c1) = two_commits(&m);
+    let c3 = commit(&m.wt, &c1, None, &[], far()).unwrap();
+    assert_eq!(git(&m.root, &["rev-list", "--parents", "-n1", &c3]), c3);
+    assert_eq!(git(&m.root, &["rev-parse", &format!("{c3}^{{tree}}")]),
+        git(&m.root, &["rev-parse", &format!("{c1}^{{tree}}")]));
+}
+
+#[test]
+fn commit_author_and_message_are_fixed() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (rt, c1) = two_commits(&m);
+    let c2 = commit(&m.wt, &c1, Some(&c1), &[Change::Remove { path: "registry/a.json".into() }], far()).unwrap();
+    let c3 = commit(&m.wt, &c1, None, &[], far()).unwrap();
+    for c in [rt, c1, c2, c3] {
+        assert_eq!(who_and_message(&m.root, &c), FIXED, "{c}");
+    }
+}
+
+#[test]
+fn commit_neither_signs_nor_prompts() {
+    // Control: the global `commit.gpgSign = true` of the test HOME is live for a plain `git commit`.
+    let ctl = tempfile::TempDir::new().unwrap();
+    git(ctl.path(), &["init", "-q"]);
+    let n0 = gpg_calls();
+    let o = plain(ctl.path()).args(["-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "--allow-empty",
+        "-m", "x"]).stdin(std::process::Stdio::null()).output().unwrap();
+    assert!(!o.status.success());
+    assert_eq!(gpg_calls(), n0 + 1);
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let n = gpg_calls();
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let c = commit(&m.wt, &rt, Some(&rt), &[Change::Add { path: "registry/a.json".into(), bytes: b"r\n".to_vec() }],
+        far()).unwrap();
+    assert_eq!(gpg_calls(), n);
+    for id in [rt, c] {
+        let raw = git(&m.root, &["cat-file", "commit", &id]);
+        assert!(!raw.lines().any(|l| l.starts_with("gpgsig")), "{raw}");
+    }
+}

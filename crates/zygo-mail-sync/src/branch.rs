@@ -236,8 +236,24 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
     -> Result<String, BranchError> {
     oid(base)?;
     parent.map(oid).transpose()?;
-    let _ = (wt, changes, deadline);
-    Err(BranchError::Io("not built".into()))
+    run_git(wt, &["read-tree", base], "read-tree", deadline)?;
+    for ch in changes {
+        match ch {
+            Change::Add { path, bytes } => {
+                let b = write_object(wt, tmp_dir(wt)?, "blob", bytes, deadline)?;
+                let info = format!("100644,{b},{path}");
+                run_git(wt, &["update-index", "--add", "--cacheinfo", &info], "update-index", deadline)?;
+            }
+            Change::Remove { path } => {
+                run_git(wt, &["update-index", "--remove", "--", path], "update-index", deadline)?;
+            }
+        }
+    }
+    let out = run_git(wt, &["write-tree"], "write-tree", deadline)?;
+    let tree = id_out(&out, "write-tree")?;
+    let c = commit_tree(wt, &tree, parent, deadline)?;
+    run_git(wt, &["update-ref", "--no-deref", "HEAD", &c], "update-ref", deadline)?;
+    Ok(c)
 }
 
 /// S§8.3 step 15: the class of a `git push --porcelain` (exit success `ok`, stdout `out`) to `refs/heads/<branch>`.
