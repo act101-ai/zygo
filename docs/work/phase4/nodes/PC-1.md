@@ -34,7 +34,10 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
 - Failure messages of the file and row checks (each printed after `check-premises: `; `<P>` is `docs/premises.md`, `<ln>` a line number of it):
   - `<P> is missing or empty`
   - `<P> has CRLF line endings`
+  - `<P> has no '## ' line (the header lines end at the first one)`
+  - `<P>:<ln>: the value of a header line holds a tab`
   - `<P>:<ln>: header '<Name>: <value>' differs from the first header line '<Name>: <value>'`
+  - `<P>:<ln>: a second Results table header row '| Id | Item |'`
   - `<P> has no Results table (a header row '| Id | Item |' and its rows)`
   - `<P>:<ln>: row id '<id>' is empty or not of the form [A-Za-z0-9][A-Za-z0-9-]*`
   - `<id>: expected exactly one row, found <n>`
@@ -48,7 +51,9 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   - `<id>: version '<v>' is below the header's '<want>' for tmux, or not a dotted number with at most one letter after it`
   - `<id>: result '<result>' is not verified or failed`
   - `<id>: evidence names no path`
+  - `<id>: evidence path <f> is absolute or holds a '..' component`
   - `<id>: evidence path <f> is missing, not a regular file, or trivial`
+- File data is printed with `printf '%s\n'`, never `echo`, and passed to awk through `ENVIRON`, never `-v`, so backslashes stay as written. Header lines in a fenced code block (```` ``` ```` or `~~~`) or an HTML comment (`<!--` to `-->`) are skipped. In a row, `\|` is a literal `|` inside a cell. Cells and header values are trimmed of blanks and tabs.
 
 ### Steps
 
@@ -61,9 +66,10 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
     - `docs/specs/2026-11-18-zygo-design.md` and `docs/specs/2026-11-20-workspaces-design.md`.
 
     It also runs `mkdir -p $T/<name>/fixtures/codex`, then prints the path.
-  - `add_header <dir> <line>`: inserts `<line>` after the line that starts `tmux: ` in `<dir>/docs/premises.md`.
-  - `add_row <dir> <row>`: inserts `<row>` after the line that starts `| PW16 |` in `<dir>/docs/premises.md`.
-  - `run <dir>`: `OUT=$(sh "<dir>/scripts/check-premises.sh" 2>&1)`, `RC=$?`, `N=$((N + 1))`.
+  - `add_header <dir> <line>`: inserts `<line>` after the line that starts `tmux: ` in `<dir>/docs/premises.md` (through `ENVIRON`, so backslashes stay).
+  - `add_lines <dir> <line>...`: inserts the lines, in order, at the same place.
+  - `add_row <dir> <row>`: inserts `<row>` after the line that starts `| PW16 |` in `<dir>/docs/premises.md` (through `ENVIRON`).
+  - `run <dir>`: `OUT=$(unset N2_FORBIDDEN_NAMES; sh "<dir>/scripts/check-premises.sh" 2>&1)`, `RC=$?`, `N=$((N + 1))`. No case inherits `N2_FORBIDDEN_NAMES` from the caller.
   - `expect_ok`: `RC` is 0, and the last line of `OUT` starts with `check-premises: ok (`.
   - `expect_fail <text>`: `RC` is 1, and `OUT` equals `check-premises: <text>`.
   - The last line of the script is `echo "test-check-premises: ok ($N cases)"`.
@@ -111,6 +117,21 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   | 33 | a second header line with another version | `Codex: 0.172.0` then `Codex: 0.100.0` after `tmux: `; the row of 32 | `expect_fail "docs/premises.md:<ln>: header 'Codex: 0.100.0' differs from the first header line 'Codex: 0.172.0'"` |
   | 34 | extra blanks at the ends of cells | `add_row` `\| PC1   \| Test row \|   tmux   \|   3.2   \|   2026-11-25   \|   verified   \| …` | `expect_ok` |
   | 35 | a header value with blanks at its end | `add_header 'Codex: 0.172.0   '`; the row of 32 | `expect_ok` |
+  | 36 | a date cell with a backslash sequence | ROW(`PC1`, `tmux`, `3.2`, …) with the date `2026-11-2\0065` | `expect_fail "PC1: date '2026-11-2\0065' is not YYYY-MM-DD"` |
+  | 37 | a result cell with a backslash sequence | ROW(`PC1`, `tmux`, `3.2`, `verifie\0144`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: result 'verifie\0144' is not verified or failed"` |
+  | 38 | a version cell with a backslash sequence | `Codex: 0.172.0`; ROW(`PC1`, `Codex`, `0.172.\060`, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: version '0.172.\060' is below the header's '0.172.0' for Codex, or not a dotted number"` |
+  | 39 | an Item cell with a backslash n | `Codex: 0.172.0`; the row of 32 with the Item ``Codex writes `a\nb` `` | `expect_ok` |
+  | 40 | an Item cell with a backslash c | as 39, with the Item ``Codex reads `\c` `` | `expect_ok` |
+  | 41 | a header value with a tab | `add_header` `Codex: 0.172.0<TAB>junk`; the row of 32 | `expect_fail "docs/premises.md:<ln>: the value of a header line holds a tab"` |
+  | 42 | a header line in a backtick fence | `add_lines` ```` ```text ````, `Cursor: 1.0`, ```` ``` ````; ROW(`PC1`, `Cursor`, `1.0`, `verified`, `fixtures/codex/pc1.txt`) | the message of 6 |
+  | 43 | a header line in a tilde fence | as 42, with `~~~` fences | the message of 6 |
+  | 44 | a header line in an HTML comment | as 42, with `<!--` and `-->` | the message of 6 |
+  | 45 | no ## line | `s/^## /### /` | `expect_fail "docs/premises.md has no '## ' line (the header lines end at the first one)"` |
+  | 46 | a second Results table | a `\| Id \| Item \| Agent \|` table with the row `\| foo1 \| x \| nobody \|` appended | `expect_fail "docs/premises.md:<ln>: a second Results table header row '\| Id \| Item \|'"` |
+  | 47 | an escaped pipe in a cell | `Codex: 0.172.0`; the row of 32 with the Item `Codex pipes a \| b` (escaped) | `expect_ok` |
+  | 48 | a tab at the end of a cell | `Codex: 0.172.0`; the row of 32 with the Agent cell `Codex<TAB>` | `expect_ok` |
+  | 49 | an evidence path with a .. component | ROW(`PC1`, `tmux`, `3.2`, `verified`, `docs/../docs/premises.md`) | `expect_fail "PC1: evidence path docs/../docs/premises.md is absolute or holds a '..' component"` |
+  | 50 | a joint agent with no header for the second | ROW(`PC1`, `Claude Code + Cursor`, `2.1.328 + 1.0`, `verified`, `fixtures/codex/pc1.txt`) | the message of 6 |
 
   `<ln>` is the line number of the planted line in the copy.
 
@@ -143,7 +164,7 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   - Ok line (`:213`): `check-premises: ok (<ROWS joined by one space>)`.
   - Header comment, line 2: add `; rows and agent versions are driven by data (K§6.2.5, node PC-1)`.
 
-- [x] 4. Run `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (35 cases)` (14 after round 1, 25 after round 2, 35 after round 3).
+- [x] 4. Run `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (50 cases)` (14 after round 1, 25 after round 2, 35 after round 3, 50 after the round 3 review).
 
 - [x] 5. Run `sh scripts/check-premises.sh` on the real tree → exit 0, last line `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW15-bash PW15-tool PW15-slash PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)`.
 
@@ -177,3 +198,17 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
 - [x] A second header line for the same name with another version fails (case 33). Fix: 7de5d9e7.
 - [x] Plan text: step 3 (ERE, `TROWS`, the empty-cell and outside-row checks), the failure messages, cases 15-35 and the count (35) match the code. Fix: this commit.
 - [x] Graph state of PC-1 set to IN-PROGRESS (DONE means merged into `phase-4`).
+
+### Review round 3 findings
+
+- F1 (cells through `echo` lose backslash sequences): fixed (a114bd85); cases 36-40.
+- F2 (a tab in a header value splits the record): fixed (a114bd85); case 41.
+- F3 (header lines in a fence or an HTML comment counted): fixed (a114bd85); cases 42-44.
+- F4 (no `## ` line makes the whole file the header region): fixed (a114bd85); case 45.
+- F5 (a second Results-table header row not reported): fixed (a114bd85); case 46.
+- F6 (prose `Word: text` lines before `##` are read as headers): rejected: fails closed with a message naming the line; docs/premises.md has no such prose.
+- F7 (an escaped `\|` splits a cell): fixed (a114bd85); case 47.
+- F8 (`trim` removes spaces only): fixed (a114bd85); case 48.
+- F9 (an evidence path may be absolute or hold `..`): fixed (a114bd85); case 49.
+- F10 (cases inherit `N2_FORBIDDEN_NAMES`): fixed (a114bd85); `run` clears it; `N2_FORBIDDEN_NAMES=alice sh scripts/test-check-premises.sh` passes.
+- F11 (a joint agent whose second name has no header): fixed (a114bd85); case 50.
