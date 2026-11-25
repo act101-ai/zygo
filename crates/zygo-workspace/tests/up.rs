@@ -2840,10 +2840,22 @@ fn mail_down_does_not_wait_for_unread_mail() {
     let _g = serial();
     let Some(_) = require_tmux() else { return };
     let l = live("0");
-    let (code, out, err) = run(&l.o);
-    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
-    let key = read(&l.store()).panes[0].key.clone();
-    mail_to(&l.o.paths, &l.id, &key, 2);
+    let store = l.store();
+    // The mail goes to an agent member with a pane and a member record, as M§5 sends do.
+    let key = "kaaaaaaaa";
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![pane(key, 0, 0, PaneKind::ClaudeCode, &l.repo)],
+        vec![(key, member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")))],
+    );
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&store);
+    assert_eq!(ws.phase, Phase::Up);
+    assert!(ws.members.contains_key(key) && ws.panes.iter().any(|p| p.key == key && p.kind == PaneKind::ClaudeCode), "{ws:?}");
+    mail_to(&l.o.paths, &l.id, key, 2);
     let d = DownOpts {
         target: DownTarget::Name("app".into()),
         now: false,
@@ -2861,7 +2873,12 @@ fn mail_down_does_not_wait_for_unread_mail() {
     };
     let (mut o2, mut e2) = (Vec::new(), Vec::new());
     let code = down::run(&d, &mut o2, &mut e2);
-    assert_eq!((code, text(o2).as_str()), (0, "zygo: app is down (0 agents saved)\n"), "{}", text(e2));
-    assert_eq!(read(&l.store()).phase, Phase::Down);
-    assert_eq!(mail_store::unread(&mail_dir(&l.o.paths, &l.id), &key).unwrap(), 2); // kept unread
+    let (o2, e2) = (text(o2), text(e2));
+    assert_eq!((code, o2.as_str()), (0, "zygo: app is down (0 agents saved)\n"), "{e2}");
+    let ws = read(&store);
+    assert_eq!(ws.phase, Phase::Down);
+    assert!(ws.members.contains_key(key), "{ws:?}");
+    let m = mail_dir(&l.o.paths, &l.id);
+    assert_eq!(mail_store::unread(&m, key).unwrap(), 2); // kept unread
+    assert_eq!(fs::read_dir(m.join(key).join("new")).unwrap().count(), 2); // still in new/
 }
