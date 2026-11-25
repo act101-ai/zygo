@@ -58,7 +58,7 @@ impl Store {
 
 ### Steps
 
-- [ ] **Step 1: failing tests.** Create `crates/zygo-usage/tests/savings.rs`. Rates: `m1` is the O§6.3 test row; `m2` is ten times it, so a wrong context gives a different figure.
+- [x] **Step 1: failing tests.** Create `crates/zygo-usage/tests/savings.rs`. Rates: `m1` is the O§6.3 test row; `m2` is ten times it, so a wrong context gives a different figure.
   ```rust
   use std::path::PathBuf;
   use rusqlite::Connection;
@@ -134,14 +134,20 @@ impl Store {
   13. `savings_readback_in_trim_session_carried_by_trim_context`: `two_contexts(&st, "S", [10, 20], "m2", "m1")`; trim `("S", 5, Some("a1"), 40_000, Some(RID))`; read-back `rb("S", "S", 15, 4_000, RID)`: `assert!(near(v.spend_usd, 0.054 - 0.005));` (the main loop would give 0.004).
   14. `savings_by_key_sorted_largest_first`: session "K", no request; trims at 1: `trim("K", 1, None, 100, None)` with `command: Some("git diff"), shaper: Some("diff")`; `trim("K", 1, None, 300, None)`; `trim("K", 1, None, 200, None)` with `tool: "Read", command: None, shaper: Some("size")`; read-back `rb("K", "K", 1, 50, RID)`:
       `assert_eq!(v.by_key, vec![key("Bash", "cargo test", "libtest", 1, 0, 300, 0.0), key("Read", "-", "size", 1, 0, 200, 0.0), key("Bash", "git diff", "diff", 1, 0, 100, 0.0), key("-", "-", "-", 0, 1, -50, 0.0)]);`
-- [ ] **Step 2: run and see it fail.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked --test savings` → compile error: unresolved `Savings`, `SavingsKey`, and no method `savings` on `Store`.
-- [ ] **Step 3: implement.** Create `crates/zygo-usage/src/savings.rs` with the two structs and `Store::savings` of `Interfaces`. In `lib.rs` add `pub mod savings;` and `pub use savings::{Savings, SavingsKey};`. Body, in one `self.conn.unchecked_transaction()`:
+- [x] **Step 2: run and see it fail.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked --test savings` → compile error: unresolved `Savings`, `SavingsKey`, and no method `savings` on `Store`.
+- [x] **Step 3: implement.** Create `crates/zygo-usage/src/savings.rs` with the two structs and `Store::savings` of `Interfaces`. In `lib.rs` add `pub mod savings;` and `pub use savings::{Savings, SavingsKey};`. Body, in one `self.conn.unchecked_transaction()`:
   1. `cols` = names from `PRAGMA table_info(trims)`. For each of `result_id`, `command`, `shaper`, put the name in the select if `cols` has it, else `NULL`. `has_rb` = `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'readbacks'` is 1.
   2. Trims: `SELECT ts, session, agent_id, tool, MAX(stored_bytes - view_bytes, 0), {result_id}, {command}, {shaper} FROM trims WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2) ORDER BY ts, rowid` with `[f.session, f.since]`. Each row is an event: `+bytes`, context `(session, agent_id)`, key `(tool, command or "-", shaper or "-")`, `views += 1`.
   3. Read-backs, when `has_rb`: `SELECT ts, session, read_in, result_id, bytes FROM readbacks WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2) ORDER BY ts, rowid`. For each, when `cols` has `result_id`: `SELECT session, agent_id, tool, {command}, {shaper} FROM trims WHERE result_id = ?1 ORDER BY rowid LIMIT 1`. Context and key follow the O§6.4 decision above. Event: `−bytes`, `readbacks += 1`, `bytes_read_back += bytes`.
   4. `Q_C` per context, cached in a `HashMap<(String, Option<String>), (Vec<CtxRequest>, bool)>`: `SELECT rowid, ts, model, provider, input_tokens, cache_read_tokens, cache_write_tokens, compaction FROM requests WHERE session = ?1 AND status BETWEEN 200 AND 299 AND CASE WHEN ?2 IS NULL THEN agent_id IS NULL AND (request_class IS NULL OR request_class IN ('main', 'compaction')) ELSE agent_id = ?2 END ORDER BY ts, rowid`. The token columns are read as `u64`. The flag is `SELECT EXISTS (SELECT 1 FROM requests WHERE session = ?1 AND agent = ?2)` with `Agent::OpenCode.as_str()`.
   5. Per event: `c = carry::carry(ts, &q, first_only, rates)`; `spend_e = ±(|bytes| as f64 / BYTES_PER_TOKEN as f64) × c.usd_per_token`. Add `c.unpriced` to a `BTreeSet<i64>`. Add bytes and `spend_e` to the totals and to the key's entry.
   6. `kept_out_tokens = n.signum() * n.unsigned_abs().div_ceil(BYTES_PER_TOKEN) as i64`. `unpriced = set.len() as u64`. Sort `by_key` as the decision above says.
-- [ ] **Step 4: run and see it pass.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked --test savings` → 14 passed, 0 failed. Then `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked` → `carry`, `store` and unit tests also pass (no regression).
-- [ ] **Step 5: commit.** Stage only `crates/zygo-usage/src/savings.rs`, `crates/zygo-usage/src/lib.rs` and `crates/zygo-usage/tests/savings.rs`. Message `OS-7: savings read`, then a blank line and the `Zygo-Session:` and `Zygo-Work:` trailers from the implementing unit's brief. No other trailer.
-- [ ] **Step 6: verification.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked --test savings` → all 14 tests pass.
+- [x] **Step 4: run and see it pass.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked --test savings` → 14 passed, 0 failed. Then `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked` → `carry`, `store` and unit tests also pass (no regression).
+- [x] **Step 5: commit.** Stage only `crates/zygo-usage/src/savings.rs`, `crates/zygo-usage/src/lib.rs` and `crates/zygo-usage/tests/savings.rs`. Message `OS-7: savings read`, then a blank line and the `Zygo-Session:` and `Zygo-Work:` trailers from the implementing unit's brief. No other trailer.
+- [x] **Step 6: verification.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-usage --locked --test savings` → all 14 tests pass.
+
+### Deviations from the plan
+
+- **`u64` columns (Step 3.4).** The premise "rusqlite 0.43 has `FromSql for u64`" is wrong: that impl needs the `fallible_uint` feature, which the workspace does not enable, so `r.get::<u64>` does not compile. Fix: `query.rs`'s `u64_at` (a negative value is a conversion error, not a wrap) is now `pub(crate)` and `savings.rs` reads the three token columns with it. `crates/zygo-usage/src/query.rs` is therefore in the Step 5 commit too.
+- **Trim select (Step 3.2).** The trims query does not select `result_id`: a trim event does not use it. Only the read-back lookup reads that column.
+- **Test helper.** `req` takes eight parameters, so it carries `#[allow(clippy::too_many_arguments)]`.
