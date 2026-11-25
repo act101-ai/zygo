@@ -234,7 +234,7 @@ Build order **(operator)**: steps 1-2, then step 4, then step 3. The work graph 
 
 ### 7.4 Clean
 
-- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), and any other escape sequence: `ESC`, then any intermediate bytes `0x20-0x2F`, then one final byte `0x30-0x7E` (for example `ESC ( B`, which libtest writes after each color code); an `ESC` followed by any other byte is removed alone. A lone `ESC` at the end, or a sequence cut off by the end of the text, is removed to the end. OSC 8 hyperlinks keep their visible text.
+- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), and any other `ESC` plus its next character. A lone `ESC` at the end is removed. OSC 8 hyperlinks keep their visible text.
 - Unless O§7.3 "text that the model may reuse" applies: `\r\n` becomes `\n`; in each line, a `\r` overwrites, so only the text after the last `\r` is kept. This removes progress bars and spinners.
 - Clean removes no line.
 
@@ -357,7 +357,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 
 | Shaper | Cases |
 |---|---|
-| clean | `cargo test --color always -- --color always` (passing; the part after `--` colors libtest stdout); `git clone --progress --no-local` stderr with `\r` progress (a clone from a local path prints no progress without `--no-local`); `git diff --color` with a CRLF file (must stay byte-equal except the color codes) |
+| clean | `cargo test --color always -- --color always` (passing; the part after `--` colors libtest stdout); `git clone --progress --no-local` stderr with `\r` progress (a clone from a local path prints no progress without `--no-local`); `git diff --color=always` with a CRLF file (must stay byte-equal except the color codes) |
 | dedup | a real build log with a repeated warning; an output that already has a line ending in ` [repeated 4 times]` (no change) |
 | libtest | `cargo test` of a scratch crate, all passing (≥ 100 tests); the same crate with 2 failing tests, one with `--nocapture` output; a test that crashes with a signal; a compile error |
 | pytest | a scratch project: all passing; 2 failing with `-v`; a collection error |
@@ -578,5 +578,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
-| 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give the required bytes; the row now names `-- --color always` and `--no-local` (found while planning phase3 OS-17). |
-| 2026-11-24 | O§7.4 | author's call | Removing `ESC` plus one character left a stray byte from `ESC ( B` (`okB.`); clean now removes the whole sequence (found in phase3 OS-17). |
+| 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give or record the required bytes; the row now names `-- --color always` (colors libtest stdout), `--no-local` (a local clone prints no `\r` progress) and `git diff --color=always` (the recorded command) (found in phase3 OS-17). |

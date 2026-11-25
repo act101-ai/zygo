@@ -1,13 +1,405 @@
 [1mdiff --git a/crlf.txt b/crlf.txt[m
-[1mindex 673ce0a..427a29a 100644[m
+[1mindex b14ad67..e127d0b 100644[m
 [1m--- a/crlf.txt[m
 [1m+++ b/crlf.txt[m
-[36m@@ -1,7 +1,7 @@[m
- line one[m
- line two[m
- line three[m
-[31m-line four[m
-[32m+[m[32mline 4[m[41m[m
- line five[m
- line six[m
- line seven[m
+[36m@@ -1,300 +1,300 @@[m
+ line 1 of the CRLF file[m
+ line 2 of the CRLF file[m
+[31m-line 3 of the CRLF file[m
+[32m+[m[32mLINE 3 of the CRLF file[m[41m[m
+ line 4 of the CRLF file[m
+ line 5 of the CRLF file[m
+[31m-line 6 of the CRLF file[m
+[32m+[m[32mLINE 6 of the CRLF file[m[41m[m
+ line 7 of the CRLF file[m
+ line 8 of the CRLF file[m
+[31m-line 9 of the CRLF file[m
+[32m+[m[32mLINE 9 of the CRLF file[m[41m[m
+ line 10 of the CRLF file[m
+ line 11 of the CRLF file[m
+[31m-line 12 of the CRLF file[m
+[32m+[m[32mLINE 12 of the CRLF file[m[41m[m
+ line 13 of the CRLF file[m
+ line 14 of the CRLF file[m
+[31m-line 15 of the CRLF file[m
+[32m+[m[32mLINE 15 of the CRLF file[m[41m[m
+ line 16 of the CRLF file[m
+ line 17 of the CRLF file[m
+[31m-line 18 of the CRLF file[m
+[32m+[m[32mLINE 18 of the CRLF file[m[41m[m
+ line 19 of the CRLF file[m
+ line 20 of the CRLF file[m
+[31m-line 21 of the CRLF file[m
+[32m+[m[32mLINE 21 of the CRLF file[m[41m[m
+ line 22 of the CRLF file[m
+ line 23 of the CRLF file[m
+[31m-line 24 of the CRLF file[m
+[32m+[m[32mLINE 24 of the CRLF file[m[41m[m
+ line 25 of the CRLF file[m
+ line 26 of the CRLF file[m
+[31m-line 27 of the CRLF file[m
+[32m+[m[32mLINE 27 of the CRLF file[m[41m[m
+ line 28 of the CRLF file[m
+ line 29 of the CRLF file[m
+[31m-line 30 of the CRLF file[m
+[32m+[m[32mLINE 30 of the CRLF file[m[41m[m
+ line 31 of the CRLF file[m
+ line 32 of the CRLF file[m
+[31m-line 33 of the CRLF file[m
+[32m+[m[32mLINE 33 of the CRLF file[m[41m[m
+ line 34 of the CRLF file[m
+ line 35 of the CRLF file[m
+[31m-line 36 of the CRLF file[m
+[32m+[m[32mLINE 36 of the CRLF file[m[41m[m
+ line 37 of the CRLF file[m
+ line 38 of the CRLF file[m
+[31m-line 39 of the CRLF file[m
+[32m+[m[32mLINE 39 of the CRLF file[m[41m[m
+ line 40 of the CRLF file[m
+ line 41 of the CRLF file[m
+[31m-line 42 of the CRLF file[m
+[32m+[m[32mLINE 42 of the CRLF file[m[41m[m
+ line 43 of the CRLF file[m
+ line 44 of the CRLF file[m
+[31m-line 45 of the CRLF file[m
+[32m+[m[32mLINE 45 of the CRLF file[m[41m[m
+ line 46 of the CRLF file[m
+ line 47 of the CRLF file[m
+[31m-line 48 of the CRLF file[m
+[32m+[m[32mLINE 48 of the CRLF file[m[41m[m
+ line 49 of the CRLF file[m
+ line 50 of the CRLF file[m
+[31m-line 51 of the CRLF file[m
+[32m+[m[32mLINE 51 of the CRLF file[m[41m[m
+ line 52 of the CRLF file[m
+ line 53 of the CRLF file[m
+[31m-line 54 of the CRLF file[m
+[32m+[m[32mLINE 54 of the CRLF file[m[41m[m
+ line 55 of the CRLF file[m
+ line 56 of the CRLF file[m
+[31m-line 57 of the CRLF file[m
+[32m+[m[32mLINE 57 of the CRLF file[m[41m[m
+ line 58 of the CRLF file[m
+ line 59 of the CRLF file[m
+[31m-line 60 of the CRLF file[m
+[32m+[m[32mLINE 60 of the CRLF file[m[41m[m
+ line 61 of the CRLF file[m
+ line 62 of the CRLF file[m
+[31m-line 63 of the CRLF file[m
+[32m+[m[32mLINE 63 of the CRLF file[m[41m[m
+ line 64 of the CRLF file[m
+ line 65 of the CRLF file[m
+[31m-line 66 of the CRLF file[m
+[32m+[m[32mLINE 66 of the CRLF file[m[41m[m
+ line 67 of the CRLF file[m
+ line 68 of the CRLF file[m
+[31m-line 69 of the CRLF file[m
+[32m+[m[32mLINE 69 of the CRLF file[m[41m[m
+ line 70 of the CRLF file[m
+ line 71 of the CRLF file[m
+[31m-line 72 of the CRLF file[m
+[32m+[m[32mLINE 72 of the CRLF file[m[41m[m
+ line 73 of the CRLF file[m
+ line 74 of the CRLF file[m
+[31m-line 75 of the CRLF file[m
+[32m+[m[32mLINE 75 of the CRLF file[m[41m[m
+ line 76 of the CRLF file[m
+ line 77 of the CRLF file[m
+[31m-line 78 of the CRLF file[m
+[32m+[m[32mLINE 78 of the CRLF file[m[41m[m
+ line 79 of the CRLF file[m
+ line 80 of the CRLF file[m
+[31m-line 81 of the CRLF file[m
+[32m+[m[32mLINE 81 of the CRLF file[m[41m[m
+ line 82 of the CRLF file[m
+ line 83 of the CRLF file[m
+[31m-line 84 of the CRLF file[m
+[32m+[m[32mLINE 84 of the CRLF file[m[41m[m
+ line 85 of the CRLF file[m
+ line 86 of the CRLF file[m
+[31m-line 87 of the CRLF file[m
+[32m+[m[32mLINE 87 of the CRLF file[m[41m[m
+ line 88 of the CRLF file[m
+ line 89 of the CRLF file[m
+[31m-line 90 of the CRLF file[m
+[32m+[m[32mLINE 90 of the CRLF file[m[41m[m
+ line 91 of the CRLF file[m
+ line 92 of the CRLF file[m
+[31m-line 93 of the CRLF file[m
+[32m+[m[32mLINE 93 of the CRLF file[m[41m[m
+ line 94 of the CRLF file[m
+ line 95 of the CRLF file[m
+[31m-line 96 of the CRLF file[m
+[32m+[m[32mLINE 96 of the CRLF file[m[41m[m
+ line 97 of the CRLF file[m
+ line 98 of the CRLF file[m
+[31m-line 99 of the CRLF file[m
+[32m+[m[32mLINE 99 of the CRLF file[m[41m[m
+ line 100 of the CRLF file[m
+ line 101 of the CRLF file[m
+[31m-line 102 of the CRLF file[m
+[32m+[m[32mLINE 102 of the CRLF file[m[41m[m
+ line 103 of the CRLF file[m
+ line 104 of the CRLF file[m
+[31m-line 105 of the CRLF file[m
+[32m+[m[32mLINE 105 of the CRLF file[m[41m[m
+ line 106 of the CRLF file[m
+ line 107 of the CRLF file[m
+[31m-line 108 of the CRLF file[m
+[32m+[m[32mLINE 108 of the CRLF file[m[41m[m
+ line 109 of the CRLF file[m
+ line 110 of the CRLF file[m
+[31m-line 111 of the CRLF file[m
+[32m+[m[32mLINE 111 of the CRLF file[m[41m[m
+ line 112 of the CRLF file[m
+ line 113 of the CRLF file[m
+[31m-line 114 of the CRLF file[m
+[32m+[m[32mLINE 114 of the CRLF file[m[41m[m
+ line 115 of the CRLF file[m
+ line 116 of the CRLF file[m
+[31m-line 117 of the CRLF file[m
+[32m+[m[32mLINE 117 of the CRLF file[m[41m[m
+ line 118 of the CRLF file[m
+ line 119 of the CRLF file[m
+[31m-line 120 of the CRLF file[m
+[32m+[m[32mLINE 120 of the CRLF file[m[41m[m
+ line 121 of the CRLF file[m
+ line 122 of the CRLF file[m
+[31m-line 123 of the CRLF file[m
+[32m+[m[32mLINE 123 of the CRLF file[m[41m[m
+ line 124 of the CRLF file[m
+ line 125 of the CRLF file[m
+[31m-line 126 of the CRLF file[m
+[32m+[m[32mLINE 126 of the CRLF file[m[41m[m
+ line 127 of the CRLF file[m
+ line 128 of the CRLF file[m
+[31m-line 129 of the CRLF file[m
+[32m+[m[32mLINE 129 of the CRLF file[m[41m[m
+ line 130 of the CRLF file[m
+ line 131 of the CRLF file[m
+[31m-line 132 of the CRLF file[m
+[32m+[m[32mLINE 132 of the CRLF file[m[41m[m
+ line 133 of the CRLF file[m
+ line 134 of the CRLF file[m
+[31m-line 135 of the CRLF file[m
+[32m+[m[32mLINE 135 of the CRLF file[m[41m[m
+ line 136 of the CRLF file[m
+ line 137 of the CRLF file[m
+[31m-line 138 of the CRLF file[m
+[32m+[m[32mLINE 138 of the CRLF file[m[41m[m
+ line 139 of the CRLF file[m
+ line 140 of the CRLF file[m
+[31m-line 141 of the CRLF file[m
+[32m+[m[32mLINE 141 of the CRLF file[m[41m[m
+ line 142 of the CRLF file[m
+ line 143 of the CRLF file[m
+[31m-line 144 of the CRLF file[m
+[32m+[m[32mLINE 144 of the CRLF file[m[41m[m
+ line 145 of the CRLF file[m
+ line 146 of the CRLF file[m
+[31m-line 147 of the CRLF file[m
+[32m+[m[32mLINE 147 of the CRLF file[m[41m[m
+ line 148 of the CRLF file[m
+ line 149 of the CRLF file[m
+[31m-line 150 of the CRLF file[m
+[32m+[m[32mLINE 150 of the CRLF file[m[41m[m
+ line 151 of the CRLF file[m
+ line 152 of the CRLF file[m
+[31m-line 153 of the CRLF file[m
+[32m+[m[32mLINE 153 of the CRLF file[m[41m[m
+ line 154 of the CRLF file[m
+ line 155 of the CRLF file[m
+[31m-line 156 of the CRLF file[m
+[32m+[m[32mLINE 156 of the CRLF file[m[41m[m
+ line 157 of the CRLF file[m
+ line 158 of the CRLF file[m
+[31m-line 159 of the CRLF file[m
+[32m+[m[32mLINE 159 of the CRLF file[m[41m[m
+ line 160 of the CRLF file[m
+ line 161 of the CRLF file[m
+[31m-line 162 of the CRLF file[m
+[32m+[m[32mLINE 162 of the CRLF file[m[41m[m
+ line 163 of the CRLF file[m
+ line 164 of the CRLF file[m
+[31m-line 165 of the CRLF file[m
+[32m+[m[32mLINE 165 of the CRLF file[m[41m[m
+ line 166 of the CRLF file[m
+ line 167 of the CRLF file[m
+[31m-line 168 of the CRLF file[m
+[32m+[m[32mLINE 168 of the CRLF file[m[41m[m
+ line 169 of the CRLF file[m
+ line 170 of the CRLF file[m
+[31m-line 171 of the CRLF file[m
+[32m+[m[32mLINE 171 of the CRLF file[m[41m[m
+ line 172 of the CRLF file[m
+ line 173 of the CRLF file[m
+[31m-line 174 of the CRLF file[m
+[32m+[m[32mLINE 174 of the CRLF file[m[41m[m
+ line 175 of the CRLF file[m
+ line 176 of the CRLF file[m
+[31m-line 177 of the CRLF file[m
+[32m+[m[32mLINE 177 of the CRLF file[m[41m[m
+ line 178 of the CRLF file[m
+ line 179 of the CRLF file[m
+[31m-line 180 of the CRLF file[m
+[32m+[m[32mLINE 180 of the CRLF file[m[41m[m
+ line 181 of the CRLF file[m
+ line 182 of the CRLF file[m
+[31m-line 183 of the CRLF file[m
+[32m+[m[32mLINE 183 of the CRLF file[m[41m[m
+ line 184 of the CRLF file[m
+ line 185 of the CRLF file[m
+[31m-line 186 of the CRLF file[m
+[32m+[m[32mLINE 186 of the CRLF file[m[41m[m
+ line 187 of the CRLF file[m
+ line 188 of the CRLF file[m
+[31m-line 189 of the CRLF file[m
+[32m+[m[32mLINE 189 of the CRLF file[m[41m[m
+ line 190 of the CRLF file[m
+ line 191 of the CRLF file[m
+[31m-line 192 of the CRLF file[m
+[32m+[m[32mLINE 192 of the CRLF file[m[41m[m
+ line 193 of the CRLF file[m
+ line 194 of the CRLF file[m
+[31m-line 195 of the CRLF file[m
+[32m+[m[32mLINE 195 of the CRLF file[m[41m[m
+ line 196 of the CRLF file[m
+ line 197 of the CRLF file[m
+[31m-line 198 of the CRLF file[m
+[32m+[m[32mLINE 198 of the CRLF file[m[41m[m
+ line 199 of the CRLF file[m
+ line 200 of the CRLF file[m
+[31m-line 201 of the CRLF file[m
+[32m+[m[32mLINE 201 of the CRLF file[m[41m[m
+ line 202 of the CRLF file[m
+ line 203 of the CRLF file[m
+[31m-line 204 of the CRLF file[m
+[32m+[m[32mLINE 204 of the CRLF file[m[41m[m
+ line 205 of the CRLF file[m
+ line 206 of the CRLF file[m
+[31m-line 207 of the CRLF file[m
+[32m+[m[32mLINE 207 of the CRLF file[m[41m[m
+ line 208 of the CRLF file[m
+ line 209 of the CRLF file[m
+[31m-line 210 of the CRLF file[m
+[32m+[m[32mLINE 210 of the CRLF file[m[41m[m
+ line 211 of the CRLF file[m
+ line 212 of the CRLF file[m
+[31m-line 213 of the CRLF file[m
+[32m+[m[32mLINE 213 of the CRLF file[m[41m[m
+ line 214 of the CRLF file[m
+ line 215 of the CRLF file[m
+[31m-line 216 of the CRLF file[m
+[32m+[m[32mLINE 216 of the CRLF file[m[41m[m
+ line 217 of the CRLF file[m
+ line 218 of the CRLF file[m
+[31m-line 219 of the CRLF file[m
+[32m+[m[32mLINE 219 of the CRLF file[m[41m[m
+ line 220 of the CRLF file[m
+ line 221 of the CRLF file[m
+[31m-line 222 of the CRLF file[m
+[32m+[m[32mLINE 222 of the CRLF file[m[41m[m
+ line 223 of the CRLF file[m
+ line 224 of the CRLF file[m
+[31m-line 225 of the CRLF file[m
+[32m+[m[32mLINE 225 of the CRLF file[m[41m[m
+ line 226 of the CRLF file[m
+ line 227 of the CRLF file[m
+[31m-line 228 of the CRLF file[m
+[32m+[m[32mLINE 228 of the CRLF file[m[41m[m
+ line 229 of the CRLF file[m
+ line 230 of the CRLF file[m
+[31m-line 231 of the CRLF file[m
+[32m+[m[32mLINE 231 of the CRLF file[m[41m[m
+ line 232 of the CRLF file[m
+ line 233 of the CRLF file[m
+[31m-line 234 of the CRLF file[m
+[32m+[m[32mLINE 234 of the CRLF file[m[41m[m
+ line 235 of the CRLF file[m
+ line 236 of the CRLF file[m
+[31m-line 237 of the CRLF file[m
+[32m+[m[32mLINE 237 of the CRLF file[m[41m[m
+ line 238 of the CRLF file[m
+ line 239 of the CRLF file[m
+[31m-line 240 of the CRLF file[m
+[32m+[m[32mLINE 240 of the CRLF file[m[41m[m
+ line 241 of the CRLF file[m
+ line 242 of the CRLF file[m
+[31m-line 243 of the CRLF file[m
+[32m+[m[32mLINE 243 of the CRLF file[m[41m[m
+ line 244 of the CRLF file[m
+ line 245 of the CRLF file[m
+[31m-line 246 of the CRLF file[m
+[32m+[m[32mLINE 246 of the CRLF file[m[41m[m
+ line 247 of the CRLF file[m
+ line 248 of the CRLF file[m
+[31m-line 249 of the CRLF file[m
+[32m+[m[32mLINE 249 of the CRLF file[m[41m[m
+ line 250 of the CRLF file[m
+ line 251 of the CRLF file[m
+[31m-line 252 of the CRLF file[m
+[32m+[m[32mLINE 252 of the CRLF file[m[41m[m
+ line 253 of the CRLF file[m
+ line 254 of the CRLF file[m
+[31m-line 255 of the CRLF file[m
+[32m+[m[32mLINE 255 of the CRLF file[m[41m[m
+ line 256 of the CRLF file[m
+ line 257 of the CRLF file[m
+[31m-line 258 of the CRLF file[m
+[32m+[m[32mLINE 258 of the CRLF file[m[41m[m
+ line 259 of the CRLF file[m
+ line 260 of the CRLF file[m
+[31m-line 261 of the CRLF file[m
+[32m+[m[32mLINE 261 of the CRLF file[m[41m[m
+ line 262 of the CRLF file[m
+ line 263 of the CRLF file[m
+[31m-line 264 of the CRLF file[m
+[32m+[m[32mLINE 264 of the CRLF file[m[41m[m
+ line 265 of the CRLF file[m
+ line 266 of the CRLF file[m
+[31m-line 267 of the CRLF file[m
+[32m+[m[32mLINE 267 of the CRLF file[m[41m[m
+ line 268 of the CRLF file[m
+ line 269 of the CRLF file[m
+[31m-line 270 of the CRLF file[m
+[32m+[m[32mLINE 270 of the CRLF file[m[41m[m
+ line 271 of the CRLF file[m
+ line 272 of the CRLF file[m
+[31m-line 273 of the CRLF file[m
+[32m+[m[32mLINE 273 of the CRLF file[m[41m[m
+ line 274 of the CRLF file[m
+ line 275 of the CRLF file[m
+[31m-line 276 of the CRLF file[m
+[32m+[m[32mLINE 276 of the CRLF file[m[41m[m
+ line 277 of the CRLF file[m
+ line 278 of the CRLF file[m
+[31m-line 279 of the CRLF file[m
+[32m+[m[32mLINE 279 of the CRLF file[m[41m[m
+ line 280 of the CRLF file[m
+ line 281 of the CRLF file[m
+[31m-line 282 of the CRLF file[m
+[32m+[m[32mLINE 282 of the CRLF file[m[41m[m
+ line 283 of the CRLF file[m
+ line 284 of the CRLF file[m
+[31m-line 285 of the CRLF file[m
+[32m+[m[32mLINE 285 of the CRLF file[m[41m[m
+ line 286 of the CRLF file[m
+ line 287 of the CRLF file[m
+[31m-line 288 of the CRLF file[m
+[32m+[m[32mLINE 288 of the CRLF file[m[41m[m
+ line 289 of the CRLF file[m
+ line 290 of the CRLF file[m
+[31m-line 291 of the CRLF file[m
+[32m+[m[32mLINE 291 of the CRLF file[m[41m[m
+ line 292 of the CRLF file[m
+ line 293 of the CRLF file[m
+[31m-line 294 of the CRLF file[m
+[32m+[m[32mLINE 294 of the CRLF file[m[41m[m
+ line 295 of the CRLF file[m
+ line 296 of the CRLF file[m
+[31m-line 297 of the CRLF file[m
+[32m+[m[32mLINE 297 of the CRLF file[m[41m[m
+ line 298 of the CRLF file[m
+ line 299 of the CRLF file[m
+[31m-line 300 of the CRLF file[m
+[32m+[m[32mLINE 300 of the CRLF file[m[41m[m

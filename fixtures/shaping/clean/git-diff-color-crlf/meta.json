@@ -4,6 +4,6 @@
    "command" : "git diff --color=always",
    "event" : "PostToolUse",
    "exit" : 0,
-   "source" : "scratch repo, 7-line CRLF file, line 4 changed, run by capture-shaping.sh in /repo",
+   "source" : "scratch repo, 300-line CRLF file, every third line changed, run by capture-shaping.sh in /repo",
    "tool" : "git 2.50.1"
 }
