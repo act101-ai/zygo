@@ -176,6 +176,18 @@ pcheck "P15 empty prerelease" 1 "live: opencode is 1.19.0-; the minimum is 1.18.
 # --- K: check-premises.sh agent rows at or above the header; act-lite exact ---------------------
 K=$T/k
 kmiss=""
+# kcopy <premises file>: copy into $K every path a table line of the file cites, as
+# check-premises.sh:161-165 reads evidence: `(fixtures|docs|scripts)/...`, no '..' component,
+# a regular file that is not a symlink. Any other path is skipped; check-premises reports it.
+kcopy() {
+  grep -E '^[[:blank:]]*\|' "$1" | grep -oE '`(fixtures|docs|scripts)/[^` ]+`' | tr -d '`' >"$T/kcopy.txt"
+  while IFS= read -r p; do
+    case "$p" in .. | ../* | */.. | */../*) continue ;; esac
+    [ -f "$REPO/$p" ] && [ ! -L "$REPO/$p" ] || continue
+    mkdir -p "$K/$(dirname "$p")" && cp "$REPO/$p" "$K/$p"
+  done <"$T/kcopy.txt"
+  return 0
+}
 for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md; do
   [ -f "$REPO/$f" ] || { kmiss=$f; break; }
 done
@@ -187,6 +199,7 @@ if [ -z "$kmiss" ]; then
   cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$K/docs/specs/"
   cp "$REPO/docs/conformance.md" "$K/docs/"
   cp -R "$REPO/fixtures" "$K/"
+  kcopy "$REPO/docs/premises.md"
 fi
 # kcase <case> <id> <agent> <old regex> <V> <want rc> <fixed text>
 kcase() {
@@ -206,6 +219,21 @@ kcase K2 P1 'Claude Code' '2\.1\.328' 2.1.327 1 "P1: version '2.1.327' is below 
 kcase K3 P1 'Claude Code' '2\.1\.328' 2.1.33a 1 "P1: version '2.1.33a' is below the header's '2.1.328'"
 kcase K4 P4 OpenCode '1\.18\.16' 1.18.20 0 "check-premises: ok"
 kcase K5 P6b act-lite '1\.2\.3' 1.2.4 1 "P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite"
+k6() {
+  name="K6 kcopy copies the paths that table lines cite, and nothing outside the K tree"
+  if [ -n "$kmiss" ]; then no "$name" "$kmiss missing"; return; fi
+  {
+    printf '%s\n' '| X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/sse.py` |'
+    printf '%s\n' "| X2 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | \`scripts/../../${REPO##*/}/scripts/premises/sse.py\` |"
+    printf '%s\n' 'Method text `scripts/premises/scrub.py`'
+  } >"$T/k6.md"
+  kcopy "$T/k6.md"
+  cmp -s "$REPO/scripts/premises/sse.py" "$K/scripts/premises/sse.py" || { no "$name" "sse.py not copied"; return; }
+  [ ! -e "$T/${REPO##*/}" ] || { no "$name" "a .. path was copied outside the K tree"; return; }
+  [ ! -e "$K/scripts/premises/scrub.py" ] || { no "$name" "a path outside a table line was copied"; return; }
+  ok "$name"
+}
+k6
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by
