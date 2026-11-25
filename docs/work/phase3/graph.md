@@ -222,7 +222,7 @@ Session text (T, SX nodes):
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | DONE | implementation | b834d51 · results 54p/0f; floor green · PR #45 |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
-| OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | TODO | implementation | — |
+| OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | IN-PROGRESS | implementation | .worktrees/phase3/OS-19-node · PR #56 |
 | OS-20 | Capture pytest fixtures from a scratch project | OS-16 | TODO | implementation | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
