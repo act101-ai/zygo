@@ -17,8 +17,24 @@ pub mod verbs;
 
 pub use text::esc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Agent {
+/// Declares `enum Agent`, `Agent::ALL` and `Agent::COUNT` from one list, so `ALL` holds each variant once.
+macro_rules! agents {
+    ($($(#[$m:meta])* $v:ident),+ $(,)?) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum Agent {
+            $($(#[$m])* $v,)+
+        }
+
+        impl Agent {
+            /// The number of variants.
+            pub const COUNT: usize = [$(stringify!($v)),+].len();
+            /// Every client, in id order (P4-6 moves this to client/mod.rs, K§9).
+            pub const ALL: [Agent; Agent::COUNT] = [$(Agent::$v),+];
+        }
+    };
+}
+
+agents! {
     #[serde(rename = "claude-code")]
     ClaudeCode,
     #[serde(rename = "opencode")]
@@ -26,8 +42,6 @@ pub enum Agent {
 }
 
 impl Agent {
-    /// Every client, in id order (P4-6 moves this to client/mod.rs, K§9).
-    pub const ALL: [Agent; 2] = [Agent::ClaudeCode, Agent::OpenCode];
 
     /// The position of this client in `ALL`; the exhaustive match makes a new variant name its place.
     const fn index(self) -> usize {
@@ -83,5 +97,17 @@ mod tests {
             assert_eq!(a.index(), i, "{a}");
             assert_eq!(a.as_str().parse::<Agent>().unwrap(), a);
         }
+    }
+
+    /// `Agent::COUNT` counts the variants of the one list that declares the enum and `Agent::ALL`,
+    /// so `ALL` holds each variant once and cannot miss one.
+    #[test]
+    fn agent_all_len_is_the_variant_count() {
+        assert_eq!(Agent::ALL.len(), Agent::COUNT);
+        let mut seen = [false; Agent::COUNT];
+        for a in Agent::ALL {
+            assert!(!std::mem::replace(&mut seen[a.index()], true), "{a} is in ALL twice");
+        }
+        assert!(seen.iter().all(|&s| s));
     }
 }
