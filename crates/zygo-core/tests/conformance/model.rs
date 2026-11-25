@@ -507,51 +507,88 @@ fn eval_cfg(m: &syn::Meta) -> Result<Targets, String> {
     }
 }
 
-/// The predicate of each `#[cfg(…)]` in `attrs`, evaluated.
-fn cfg_targets(attrs: &[syn::Attribute]) -> Result<Targets, String> {
+/// One attribute that applies where each of `conds` holds: the `cfg_attr` predicates around it, outermost first.
+struct Applied {
+    conds: Vec<syn::Meta>,
+    meta: syn::Meta,
+}
+
+/// Each attribute of `attrs`, with each `cfg_attr(<pred>, <attr>, …)` unwrapped, nested ones included.
+fn applied(attrs: &[syn::Attribute]) -> Result<Vec<Applied>, String> {
+    fn unwrap(meta: syn::Meta, conds: Vec<syn::Meta>, out: &mut Vec<Applied>) -> Result<(), String> {
+        let syn::Meta::List(l) = &meta else {
+            out.push(Applied { conds, meta });
+            return Ok(());
+        };
+        if !path_is(&l.path, &["cfg_attr"]) {
+            out.push(Applied { conds, meta });
+            return Ok(());
+        }
+        let list = l
+            .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+            .map_err(|_| "a cfg_attr is not readable".to_string())?;
+        let mut list = list.into_iter();
+        let Some(pred) = list.next() else { return Ok(()) };
+        for m in list {
+            let mut c = conds.clone();
+            c.push(pred.clone());
+            unwrap(m, c, out)?;
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    for a in attrs {
+        unwrap(a.meta.clone(), Vec::new(), &mut out)?;
+    }
+    Ok(out)
+}
+
+/// The CI targets where each of `conds` holds.
+fn when(conds: &[syn::Meta]) -> Result<Targets, String> {
+    conds.iter().try_fold(EVERY, |acc, p| Ok(and(acc, eval_cfg(p)?)))
+}
+
+/// The CI targets where the item compiles: each `cfg(<q>)` holds where it applies. A
+/// `cfg_attr(<p>, cfg(<q>))` applies where `p` holds, so it keeps the item where `p` does not hold or `q` holds.
+fn cfg_of(attrs: &[Applied]) -> Result<Targets, String> {
     let mut t = EVERY;
-    for a in attrs.iter().filter(|a| path_is(a.path(), &["cfg"])) {
-        let pred: syn::Meta = a.parse_args().map_err(|e| format!("a cfg is not readable: {e}"))?;
-        t = and(t, eval_cfg(&pred)?);
+    for a in attrs.iter().filter(|a| path_is(a.meta.path(), &["cfg"])) {
+        let syn::Meta::List(l) = &a.meta else { return Err("a cfg is not readable".into()) };
+        let pred: syn::Meta = l.parse_args().map_err(|e| format!("a cfg is not readable: {e}"))?;
+        let on = when(&a.conds)?;
+        let holds = eval_cfg(&pred)?;
+        t = and(t, or(on.map(|b| !b), holds));
     }
     Ok(t)
+}
+
+/// The CI targets where an item with `attrs` compiles.
+fn cfg_targets(attrs: &[syn::Attribute]) -> Result<Targets, String> {
+    cfg_of(&applied(attrs)?)
 }
 
 /// A test fn found: the CI targets where it is a test and compiles, and whether it is ignored on one.
 type Found = Result<(Targets, bool), String>;
 
-/// `Some` when `f` is a test fn (`#[test]`, `#[tokio::test]`, or either inside `#[cfg_attr(<pred>, …)]`).
+/// `Some` when `f` is a test fn (`#[test]`, `#[tokio::test]`, or either inside `#[cfg_attr(<pred>, …)]`, nested or not).
 fn test_fn(f: &syn::ItemFn, outer: Targets) -> Option<Found> {
-    let direct = f.attrs.iter().any(|a| is_test_attr(a.path()));
-    let mut via = Vec::new(); // the predicates of the cfg_attr that make it a test
-    let mut ignore_via = Vec::new(); // the predicates of the cfg_attr that ignore it
-    for a in f.attrs.iter().filter(|a| path_is(a.path(), &["cfg_attr"])) {
-        let parsed = a.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated);
-        let Ok(list) = parsed else {
-            return Some(Err("a cfg_attr is not readable".into()));
-        };
-        let mut list = list.into_iter();
-        let Some(pred) = list.next() else { continue };
-        for m in list {
-            if is_test_attr(m.path()) {
-                via.push(pred.clone());
-            } else if path_is(m.path(), &["ignore"]) {
-                ignore_via.push(pred.clone());
-            }
-        }
-    }
-    if !direct && via.is_empty() {
+    let attrs = match applied(&f.attrs) {
+        Ok(a) => a,
+        Err(e) => return Some(Err(e)),
+    };
+    let tests: Vec<&Applied> = attrs.iter().filter(|a| is_test_attr(a.meta.path())).collect();
+    if tests.is_empty() {
         return None;
     }
     Some((|| {
-        let mut test = if direct { EVERY } else { [false; 3] };
-        for p in &via {
-            test = or(test, eval_cfg(p)?);
+        let mut test = [false; 3];
+        for a in &tests {
+            test = or(test, when(&a.conds)?);
         }
-        let targets = and(and(test, outer), cfg_targets(&f.attrs)?);
-        let mut ignored = f.attrs.iter().any(|a| path_is(a.path(), &["ignore"]));
-        for p in &ignore_via {
-            ignored |= eval_cfg(p)? != [false; 3];
+        let targets = and(and(test, outer), cfg_of(&attrs)?);
+        let mut ignored = false;
+        for a in attrs.iter().filter(|a| path_is(a.meta.path(), &["ignore"])) {
+            ignored |= when(&a.conds)? != [false; 3];
         }
         Ok((targets, ignored))
     })())

@@ -256,6 +256,36 @@ fn check_cfg_predicates_evaluated_for_the_ci_targets() {
     }
 }
 
+/// Write `src` as the test target `crates/x/tests/t.rs` of a new temporary repository.
+fn test_target(src: &[&str]) -> tempfile::TempDir {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("crates/x/tests")).unwrap();
+    std::fs::write(d.path().join("crates/x/tests/t.rs"), src.join("\n")).unwrap();
+    d
+}
+
+#[test]
+fn check_cfg_attr_cfg_and_nested_cfg_attr_evaluated() {
+    let d = test_target(&[
+        "#[cfg_attr(unix, cfg(windows))] #[test] fn ca_cfg() {}",
+        "#[cfg_attr(any(), cfg(windows))] mod m { #[test] fn in_m() {} }",
+        "#[cfg_attr(windows, cfg(unix))] mod m2 { #[test] fn in_m2() {} }",
+        "#[test] #[cfg_attr(unix, cfg_attr(all(), ignore))] fn nested_ignore() {}",
+        "#[cfg_attr(all(), cfg_attr(unix, test))] fn nested_test() {}",
+        "#[test] #[cfg_attr(all(), cfg_attr(unix, cfg(windows)))] fn nested_cfg() {}",
+        "#[test] #[cfg_attr(feature = \"x\", allow(unused))] fn harmless() {}",
+    ]);
+    let ev = |f: &str| evidence(d.path(), &format!("test:crates/x/tests/t.rs::{f}"), "Alpha").map(|e| e.platforms);
+    // `cfg_attr(p, cfg(q))` keeps the item where `p` does not hold or `q` holds.
+    assert_eq!(ev("ca_cfg").unwrap(), ["windows"]);
+    assert_eq!(ev("in_m").unwrap(), EVERY);
+    assert_eq!(ev("in_m2").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("nested_test").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("nested_cfg").unwrap(), ["windows"]);
+    assert_eq!(ev("harmless").unwrap(), EVERY);
+    assert!(ev("nested_ignore").unwrap_err().contains("is ignored"));
+}
+
 #[test]
 fn check_3_premise_of_another_client_not_evidence() {
     assert!(evidence(&repo(), "premise:docs/premises.md#Q1", "Alpha").is_ok());
