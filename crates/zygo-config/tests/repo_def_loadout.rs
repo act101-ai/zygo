@@ -142,3 +142,42 @@ fn no_workspace_file_gives_none() {
     );
     assert_eq!(repo_def::repository_loadout(&def(None, &[])), None);
 }
+
+#[test]
+fn repository_loadout_passes_the_loadout_check() {
+    let mut big = String::from("version = 1\n[members.boss]\njob = \"orchestrator\"\n");
+    for i in 0..31 {
+        big.push_str(&format!("[members.m-{i}]\n"));
+    }
+    for text in ["version = 1\n", big.as_str()] {
+        let l = repo_def::repository_loadout(&def(Some(text), &[])).unwrap();
+        let panes = l.window[0].pane.len();
+        let mut cfg = zygo_config::Config::default();
+        cfg.loadout.insert(REPOSITORY_LOADOUT.into(), l);
+        let errors: Vec<_> = zygo_config::check(&cfg)
+            .into_iter()
+            .filter(|v| v.severity == zygo_config::Severity::Error && v.path.starts_with("loadout."))
+            .collect();
+        assert!(errors.is_empty(), "{panes} panes: {errors:?}");
+    }
+    assert_eq!(repo_def::repository_loadout(&def(Some(&big), &[])).unwrap().window[0].pane.len(), 32);
+}
+
+#[test]
+fn one_member_replaces_the_default_set() {
+    assert_eq!(names(&window("version = 1\n[members.worker-1]\n")), ["worker-1"]);
+}
+
+#[test]
+fn members_in_byte_order() {
+    assert_eq!(names(&window("version = 1\n[members.aa]\n[members.a0]\n[members.a-b]\n")), ["a-b", "a0", "aa"]);
+}
+
+#[test]
+fn opencode_orchestrator_is_first_and_keeps_its_kind() {
+    let w = window("version = 1\n[members.a]\n[members.z]\nkind = \"opencode\"\njob = \"orchestrator\"\n");
+    assert_eq!(names(&w), ["z", "a"]);
+    assert_eq!(w.pane[0].kind, "opencode");
+    assert_eq!(w.pane[0].job.as_deref(), Some("orchestrator"));
+    assert_eq!(w.layout.as_deref(), Some("main-vertical"));
+}
