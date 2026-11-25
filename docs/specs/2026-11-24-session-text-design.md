@@ -275,7 +275,7 @@ What it leaves on your machine, and how to remove it (step 8): Claude Code write
 1. Make a scratch folder with the probe hook, its settings file and a one-agent plugin:
 
 ```sh
-S=$(mktemp -d -t p315) && cd "$S" && git init -q
+S=$(mktemp -d "${TMPDIR:-/tmp}/p315.XXXXXX") && cd "$S" && git init -q
 cat > probe.py <<'EOF'
 import json, sys
 d = json.load(sys.stdin)
@@ -353,7 +353,7 @@ python3 -I scripts/premises/scrub.py "$S" "$S/oc.jsonl" > fixtures/opencode/live
 claude --version; opencode --version
 ```
 
-7. Send the three files and the two version lines to the lead.
+7. Send the three files, the two version lines, the MAIN and SUB model ids chosen in step 4, and whether the subagent's answer was shown in step 5 (yes or no) to the lead.
 
 8. Remove what the check left. Close every Claude Code session first, because `~/.claude.json` is shared:
 
@@ -363,6 +363,8 @@ cp ~/.claude.json ~/.claude.json.bak-p315
 python3 -I -c 'import json,os; p=os.path.expanduser("~/.claude.json"); d=json.load(open(p)); r=[k for k in list(d.get("projects",{})) if "p315" in k]; [d["projects"].pop(k) for k in r]; json.dump(d,open(p,"w"),indent=2); print("removed", r)'
 rm -rf "$S"
 ```
+
+Once Claude Code starts normally, delete `~/.claude.json.bak-p315`.
 
 The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's session list if you want it gone.
 
@@ -446,3 +448,7 @@ Each check is decided by a test with the stub agents and recorded fixtures, or b
 - Whether the agent-name rule is shared from `zygo-work` or repeated in `zygo-hooks`, with the same character set and length.
 - The test file layout.
 - The exact words of the §8.6, §8.7 and §10.6 edits, inside the meaning of T§13.
+
+## Change log
+
+- 2026-11-24 · T§12.2 · author's call (SX-8 review round 1) · step 1 mktemp works on GNU; step 7 sends MAIN, SUB and the step-5 answer; step 8 says when to delete the backup.

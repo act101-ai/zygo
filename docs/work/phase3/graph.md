@@ -222,7 +222,7 @@ Session text (T, SX nodes):
 | SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | DONE | implementation | 6a979de 346fa1a · subagent_text 10 pass (9 subagent_start, 1 main_compact); floor green · PR #39 |
 | SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | DONE | implementation | 530b14d 08c2e37 b669a74 · reinject pre_compact 10 pass; floor green · PR #41 |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | TODO | mechanical | — |
+| SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | DONE | mechanical | 5bcdc27 · check-premises exit 0; floor green (ws 2592/0) · PR #44 |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | TODO | implementation | — |
 | OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
@@ -324,6 +324,8 @@ Session text (T, SX nodes):
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
+| FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
+| FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
 
 ## Log
 
@@ -367,6 +369,12 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-1 done: mechanics text on SubagentStart for non-zygo subagents; review round 1 (3 confirmed, 1 refuted); floor 2570 passed 0 failed · PR #39 |
 | 2026-11-24 | OS-16 planned (6ba122f): 6 test-first tasks; mod common { pub mod shaping; } per test binary; scripts/fixtures/ created; ZYGO_FIXTURES_DIR redirect; scrub order run dir, HOME, user, host. PR #32. |
 | 2026-11-24 | OS-16 done: shaping fixture harness and capture script; review round 1 (10 confirmed); floor 2582 passed 0 failed · PR #32 |
+| 2026-11-24 | FX-1 added (b5acf60): found in the RT-1 floor, a 24-min hang of git_runner stream_stop_kills_the_process_group; root cause Darwin FIFO lost wakeup; git_runner and decision_git kill tests use an anonymous pipe; tests only; 8 steps |
+| 2026-11-24 | FX-1 in progress: node branch `phase3/FX-1--FX-1`, worktree `.worktrees/phase3/FX-1-node` · PR #40 |
+| 2026-11-24 | FX-1 done: pipe replaces FIFO in the two process-group kill tests; review round 1 (0 confirmed, 4 refuted); floor 2570 passed 0 failed · PR #40 |
+| 2026-11-24 | SX-8 DONE: P3-15 section copied into docs/live-checks.md from T§12.2; round 1 fixed 4 findings (Results row, mktemp, step 7 ids, backup delete), T§12.2 rewritten (author's call) · PR #44 |
+| 2026-11-24 | FX-3 added: CI BrokenPipe flake on PRs #41 and #42 (statusline_without_a_session_dir_prints_nothing); the hook exits before it reads stdin (H§6.8, AU24, PH11), so the test write gets EPIPE; fix in test helpers (common::feed_stdin); tests only; 9 steps |
+| 2026-11-24 | FX-3 DONE: `feed_stdin` tolerates BrokenPipe in three zygo test helpers; the new test fails first, with no clock; review 0 confirmed (hang-on-regression trade-off kept under focus 75); floor green (ws 2593/0) · PR #46 |
 | 2026-11-24 | SX-3 planned (65accaf): 7 steps · PR #41 |
 | 2026-11-24 | SX-3 in progress: node branch `phase3/SX-3--SX-3` at d55d51c, worktree `.worktrees/phase3/SX-3-node` · PR #41 |
 | 2026-11-24 | SX-3 done: pre-compact sets reinject/<agent_id> (0600 in 0700 dir) for a non-zygo subagent; review round 1 (4 confirmed, 4 refuted); floor 2602 passed 0 failed · PR #41 |
