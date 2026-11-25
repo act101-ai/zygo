@@ -130,3 +130,115 @@ oc_run() {
   LIVE_TIMEOUT=120 LIVE_VARS="N2_OC_LOG=$RUN/plog" live_exec "$OPENCODE_BIN" run --print-logs "$1" </dev/null >"$RUN/oc.out" 2>&1 || true
   check_abort
 }
+
+# The Bash commands of the runs: out-line on stdout, err-line on stderr; PO1 exits 3, the others 0.
+CMD_FAIL="printf 'out-line\\n'; printf 'err-line\\n' >&2; exit 3"
+CMD_BOTH="printf 'out-line\\n'; printf 'err-line\\n' >&2"
+
+# --- PO1 (Claude Code): the PostToolUseFailure input of a failed Bash call, and what replaces its text --
+part_po1() {
+  live_run po1
+  steps po1 "$(jq -nc --arg c "$CMD_FAIL" '{trigger: "tracer-po1",
+    steps: ([range(3) | {tool: "Bash", input: {command: $c}}] + [{text: "po1 done"}])}')"
+  cat >"$RUN/responses.json" <<'J'
+[{"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "none", "output": {}},
+ {"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "string",
+  "output": {"hookSpecificOutput": {"hookEventName": "PostToolUseFailure", "updatedToolOutput": "PO1-REPLACED-string"}}},
+ {"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "object",
+  "output": {"hookSpecificOutput": {"hookEventName": "PostToolUseFailure", "updatedToolOutput": {"stdout": "PO1-REPLACED-object", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false}}}}]
+J
+  hook_settings "$RUN/hooks" "$RUN/responses.json" >"$RUN/settings.json"
+  start_mock "$RUN/rules.json"
+  run_claude -p "tracer-po1 run the command" --settings "$RUN/settings.json" --dangerously-skip-permissions \
+    --tools Bash </dev/null >"$RUN/out.txt" 2>&1 || true
+  stop_mock
+  publish_sse "$FXC/sse"
+  _hk=$(hook_files "$RUN/hooks" PostToolUseFailure-Bash-main)
+  wrote "$(printf '%s\n' "$_hk" | sed -n 1p)" "$FXC/hooks/PostToolUseFailure-Bash-output-main.json"
+  _ids=$(for _f in $_hk; do jq -r '.tool_use_id // empty' "$_f" 2>/dev/null || true; done)
+  # shellcheck disable=SC2086
+  seen_json "$RUN/po1-seen.json" $_ids
+  # shellcheck disable=SC2086
+  python3 -I - "$RUN/po1-seen.json" "$RUN/po1-result.json" $_hk <<'PY'
+import json, sys
+seen_f, out, hooks = sys.argv[1], sys.argv[2], sys.argv[3:]
+cases = ["none", "string", "object"]  # the rules of responses.json, one use each, in order
+
+def load(p):
+    try:
+        return json.load(open(p))
+    except (OSError, ValueError):
+        return None
+
+seen = {s.get("tool_use_id"): s for s in (load(seen_f) or []) if isinstance(s, dict)}
+calls = []
+for i, h in enumerate(hooks):
+    inp = load(h) or {}
+    s = seen.get(inp.get("tool_use_id"), {})
+    c = {"case": cases[i] if i < len(cases) else "extra-%d" % i, "tool_use_id": inp.get("tool_use_id"),
+         "hook_output": load(h[:-5] + ".out")}
+    for k in ("request_file", "is_error", "tool_result_seen_by_model", "text"):
+        c[k] = s.get(k)
+    c["replaced"] = "PO1-REPLACED" in (c["text"] or "")
+    calls.append(c)
+err = (load(hooks[0]) or {}).get("error") if hooks else None
+es = err if isinstance(err, str) else ("" if err is None else json.dumps(err))
+res = {"error_field": err, "out_line_at": es.find("out-line"), "err_line_at": es.find("err-line"), "calls": calls}
+json.dump(res, open(out, "w"), indent=1)
+PY
+  wrote "$RUN/po1-result.json" "$FXC/requests/po1-result.json"
+  jq -r '.calls[] | "\(.case) \(.request_file // "")"' "$RUN/po1-result.json" | while read -r _c _f; do
+    if [ -n "$_f" ]; then wrote "$_f" "$FXC/requests/po1-request-$_c.json" </dev/null; fi
+  done
+  _v=$(jq -r '(.out_line_at >= 0 and .err_line_at >= 0) as $both
+    | ([.calls[] | select(.replaced) | .case] | join(", ")) as $r
+    | (if $both and $r != "" then "pass" else "fail" end)
+      + " error field: " + (if $both then (if .out_line_at < .err_line_at then "out-line before err-line" else "err-line before out-line" end)
+        else "out-line at \(.out_line_at), err-line at \(.err_line_at)" end)
+      + "; cases that replace the text the model sees: " + (if $r == "" then "none" else $r end)
+      + "; failed calls hooked: \(.calls | length)"' "$RUN/po1-result.json")
+  result PO1 "${_v%% *}" "${_v#* }"
+}
+
+# --- PO2 (Claude Code): updatedToolOutput with stderr "" removes the stderr the model sees ----------
+part_po2() {
+  live_run po2
+  steps po2 "$(jq -nc --arg c "$CMD_BOTH" '{trigger: "tracer-po2",
+    steps: [{tool: "Bash", input: {command: $c}}, {text: "po2 done"}]}')"
+  cat >"$RUN/responses.json" <<'J'
+[{"event": "PostToolUse", "tool": "^Bash$", "rewrite": [[["stdout"], "PO2-REPLACED-stdout"], [["stderr"], ""]]}]
+J
+  hook_settings "$RUN/hooks" "$RUN/responses.json" >"$RUN/settings.json"
+  start_mock "$RUN/rules.json"
+  run_claude -p "tracer-po2 run the command" --settings "$RUN/settings.json" --dangerously-skip-permissions \
+    --tools Bash </dev/null >"$RUN/out.txt" 2>&1 || true
+  stop_mock
+  publish_sse "$FXC/sse"
+  _hk=$(hook_files "$RUN/hooks" PostToolUse-Bash-main | sed -n 1p)
+  wrote "$_hk" "$FXC/hooks/PostToolUse-Bash-stderr-main.json"
+  seen_json "$RUN/po2-seen.json" toolu_po2_00_bash
+  python3 -I - "$RUN/po2-seen.json" "$RUN/po2-result.json" "$_hk" <<'PY'
+import json, sys
+seen_f, out, hook = sys.argv[1:4]
+
+def load(p):
+    try:
+        return json.load(open(p))
+    except (OSError, ValueError):
+        return None
+
+seen = load(seen_f) or []
+s = seen[0] if seen and isinstance(seen[0], dict) else {}
+res = {"hook_output": load(hook[:-5] + ".out") if hook else None}
+for k in ("tool_use_id", "request_file", "is_error", "tool_result_seen_by_model", "text"):
+    res[k] = s.get(k)
+res["replaced"] = "PO2-REPLACED-stdout" in (res["text"] or "")
+res["err_line_seen"] = "err-line" in (res["text"] or "")
+json.dump(res, open(out, "w"), indent=1)
+PY
+  wrote "$RUN/po2-result.json" "$FXC/requests/po2-result.json"
+  wrote "$(jq -r '.request_file // ""' "$RUN/po2-result.json")" "$FXC/requests/po2-request.json"
+  _v=$(jq -r '(if .replaced and (.err_line_seen | not) then "pass" else "fail" end)
+    + " the model saw the stdout tracer: \(if .replaced then "yes" else "no" end); the model saw err-line: \(if .err_line_seen then "yes" else "no" end)"' "$RUN/po2-result.json")
+  result PO2 "${_v%% *}" "${_v#* }"
+}
