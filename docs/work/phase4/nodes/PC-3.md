@@ -1,7 +1,7 @@
 # PC-3 — Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14
 
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.3.7 rows PC1, PC2, PC7, PC13, PC14; K§6.4.1 (the paths PC1 shows), K§6.4.4 (PC14), K§6.9 (P4-4 needs the captured Codex requests); K§11 items 9 and 10 (for these fixtures)
-**Files:** `scripts/premises/codex/proxy.sh` (new), `fixtures/codex/requests/` (new), `fixtures/codex/transport/` (new), `fixtures/codex/models/` (new), `fixtures/codex/errors/` (new), `fixtures/codex/runs/proxy/` (new)
+**Files:** `scripts/premises/codex/proxy.sh` (new), `fixtures/codex/requests/` (new), `fixtures/codex/transport/` (new), `fixtures/codex/models/` (new), `fixtures/codex/errors/` (new), `fixtures/codex/runs/proxy/` (new), `fixtures/codex/runs/base/`, `fixtures/codex/help.txt` (lead's call, 2026-11-25: PC-2's base record predates PC-10 and lacks the TZ and `daemon=` lines; this node reruns `run-codex.sh base` once before its own capture)
 **Consumes:** `run_codex` (PC-2), `codex_env` (PC-2), `codex_record` (PC-2)
 **Produces:** `fixtures/codex/requests/` (captured Codex `POST /v1/responses` bodies and headers, scrubbed: a first turn; a turn after a `function_call_output`; a turn after a `custom_tool_call_output` of `apply_patch`; a turn whose `input` carries a `reasoning` item), `fixtures/codex/models/` (the `/models` request and the shape Codex accepts, PC7), `fixtures/codex/errors/` (the context-too-long shape Codex recovers from, PC14), `fixtures/codex/transport/` (paths called, processes after exit, PC1), and in this node file under "Observed" one line per id: `- PCn: <verified|failed> <YYYY-MM-DD>: <fixture paths>`
 **Acceptance:** `sh scripts/premises/run-codex.sh proxy && N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh && test "$(find fixtures/codex/requests -type f -name '*.json' -size +2c | wc -l)" -ge 4 && grep -qx 'home=scratch' fixtures/codex/runs/proxy/isolation.txt && grep -qx 'codex_home=scratch' fixtures/codex/runs/proxy/isolation.txt && test -f fixtures/codex/runs/proxy/connect.txt && test -z "$(grep -v ' refused$' fixtures/codex/runs/proxy/connect.txt)" && ! grep -qx 'Written when the node runs.' docs/work/phase4/nodes/PC-3.md && test "$(grep -cE '^- (PC1|PC2|PC7|PC13|PC14): (verified|failed) [0-9]{4}-[0-9]{2}-[0-9]{2}: fixtures/codex/' docs/work/phase4/nodes/PC-3.md)" -eq 5 && grep -E '^- (PC1|PC2|PC7|PC13|PC14): ' docs/work/phase4/nodes/PC-3.md | cmp -s - fixtures/codex/runs/proxy/observed.txt` → every command exits 0: at least 4 captured requests; the run used scratch `HOME` and `CODEX_HOME`, and every `CONNECT` was refused; "Observed" has no placeholder and one dated result line for each of PC1, PC2, PC7, PC13, PC14, equal to `fixtures/codex/runs/proxy/observed.txt`
@@ -52,10 +52,11 @@ round 1 code it failed 15 of 28 checks, on the round 2 code it passes 28 of 28. 
 - F5 (nit): Fix: each helper variant has its own `key-helper-<v>.sh`, which logs its variant; `helper_runs` counts
   run `h` only (`helper_runs_other=<n>` the rest); PC1 needs every run-`h` request with the bearer and every
   `CONNECT` line refused; `transport/result.txt` = `connect_lines=<n> refused=<n> hosts=<host:port,…>`, cited by
-  PC1. Not done: a helper token distinct from `MOCK_API_KEY`. `mock_upstream.py` accepts one key (`MOCK_KEY`);
-  any other bearer writes ABORT and stops the mock, so a second key needs a mock change outside Files (reported
-  to the lead). Run `h` has no `env_key`, so its bearer can come only from the helper; `key-helper.txt` says so.
-  Test: no run-`h` helper → PC1 failed; a CONNECT not refused → PC1 failed; counts and hosts line.
+  PC1. The distinct token came with PC-10 (`MOCK_ALT_KEY` in `mock_upstream.py` and `start_mock`): the part
+  builds `MOCK_ALT_KEY` at run time (a shell variable, never exported or written to the repo), each helper prints
+  it, and PC1 needs every run-`h` request with `"credential": "alt"` (`with_helper_token` = `requests`). Test: no
+  run-`h` helper → PC1 failed; run `h` with the primary key → PC1 failed; a CONNECT not refused → PC1 failed;
+  counts and hosts line.
 - F6 (nit): PC14 now needs both `e1` and `e2` with Codex's "context window" words and `requests=1` each. Test:
   `e2` without the words → PC14 failed.
 - F7 (nit): a failed run deleted the committed fixtures first. Fix: the analysis files, the scrubbed copies and
@@ -73,6 +74,18 @@ round 1 code it failed 15 of 28 checks, on the round 2 code it passes 28 of 28. 
 - Not this node: the fixtures of round 1 hold the host time zone and the user-agent OS text; PC-10 (`TZ=UTC` in
   `codex_env`, user-agent OS scrub, double-slash path scrub) merges before the real rerun.
 
+### Merge of PC-10 (a1c0ce8a) into this branch
+
+- `run_codex` now refuses (prints `premises: …` and exits) while another `codex app-server` runs or a daemon
+  socket exists; that message went to the run's redirected stdout and the part ended with no word. Each run is
+  now a subshell (`(run_codex …)`), and `p3_refused <stdout>` prints such a line and exits 1, then
+  `check_abort`. `CODEX_VERSION` for the last line comes from the isolation record. Test: a stub `codex
+  app-server` started outside the run folder → exit 1 with the `premises: a codex app-server runs outside this
+  run folder …` line.
+- `n2_daemon_flag`: every call here is `exec …` (also `exec … resume --last …`) or `app-server`; all pass.
+- `codex_record`'s new scans: the FIFOs are skipped (not regular files); `codex_record` runs in the part's own
+  shell; the driver and the app-server job are waited for before it.
+
 ### Round 2 steps
 
 - [x] R1. Synthetic-record test written first; on the round 1 code: 15 of 28 checks fail (F1, F2, F3, F5, F6).
@@ -83,7 +96,7 @@ round 1 code it failed 15 of 28 checks, on the round 2 code it passes 28 of 28. 
   `connect.txt` empty; `stub-args.txt` = `app-server`; `observed.txt` five `failed` lines citing the picker files
   and `transport/result.txt`; no process holds the scratch folder; `git status --porcelain fixtures` empty.
 - [x] R4. F8 stub tests: trap (SIGTERM during a hanging `app-server` stub): part exit 143, the mock, the driver and the Codex copy gone; bound (hanging `app-server` stub): `b`, `c`, `d` each `exec-models-<v>.rc` = `bound`, driver 1, `processes.txt` none, no process left, `CODEX_FX` empty; the driver alone with no reader ends (1) once `<done>` exists.
-- [ ] R5. Real rerun (the lead releases it, after PC-10): steps 5-7 checks; exit 0; `transport/tools.txt`
+- [ ] R5. Real `run-codex.sh base`, then real rerun (the lead releases it, after PC-10): steps 5-7 checks, and `pgrep -fl 'app-server'` empty before; `daemon=none` and `TZ` in `env_names`; no `America/`, `Mac OS`, `Los_Angeles` in the fixtures; exit 0; `transport/tools.txt`
   `apply_patch=custom`; the four classes found; five dated lines.
 - [ ] R6. "Observed" replaced with the new `observed.txt` lines, verbatim; Acceptance exit 0; commit, push (PR #137).
 

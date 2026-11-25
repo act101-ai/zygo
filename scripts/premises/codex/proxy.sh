@@ -65,15 +65,18 @@ w("rules.json", [
     {"name": "models-b", "path": "/v1/models", "header": {"x-pc3-variant": "^b$"}, "json": "json/catalog-shape.json"},
     {"name": "models-c", "path": "/v1/models", "header": {"x-pc3-variant": "^c$"}, "json": "json/openai-shape.json"}])
 PY
+# The key helper's token (PC-10's MOCK_ALT_KEY): built at run time, a shell variable (never exported,
+# never in the repo); the mock accepts it beside the dummy key and records "credential": "alt".
+MOCK_ALT_KEY="pc3-alt-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
 start_mock "$RUN/rules.json"
 
 # cx_config <variant> <dir> [helper|catalog|turns]: <dir>/config.toml, written whole. helper: the
 # bearer comes from $RUN/key-helper-<variant>.sh (no env_key), which logs its variant to
-# $RUN/key-helper.ran and prints the dummy key (mock_upstream.py accepts only that one key).
+# $RUN/key-helper.ran and prints MOCK_ALT_KEY.
 cx_config() {
   mkdir -p "$2"
   if [ "${3:-}" = helper ]; then
-    printf '%s\n' '#!/bin/sh' "echo $1 >>'$RUN/key-helper.ran'" "echo '$DUMMY_KEY'" >"$RUN/key-helper-$1.sh"
+    printf '%s\n' '#!/bin/sh' "echo $1 >>'$RUN/key-helper.ran'" "echo '$MOCK_ALT_KEY'" >"$RUN/key-helper-$1.sh"
     chmod 755 "$RUN/key-helper-$1.sh"
   fi
   {
@@ -116,7 +119,8 @@ cx_run() {
   _p3_x=$1
   shift
   _p3_rc=0
-  run_codex "$@" </dev/null >"$RUN/exec-$_p3_x.out" 2>"$RUN/exec-$_p3_x.err" || _p3_rc=$?
+  (run_codex "$@") </dev/null >"$RUN/exec-$_p3_x.out" 2>"$RUN/exec-$_p3_x.err" || _p3_rc=$?
+  p3_refused "$RUN/exec-$_p3_x.out"
   echo "$_p3_rc" >"$RUN/exec-$_p3_x.rc"
   ps_note "$_p3_x"
 }
@@ -185,6 +189,13 @@ p3_rpc_kill() {
   fi
 }
 n2_trap_chain p3_rpc_kill
+# p3_refused <file>: a run's stdout holds the harness's own refusal (run_codex and codex_env print
+# "premises: ..." and exit; each run is a subshell, so that exit ends only the run): print it and
+# exit 1. Then check_abort (the mock's ABORT file).
+p3_refused() {
+  if grep '^premises: ' "$1"; then exit 1; fi
+  check_abort
+}
 
 # models_run <variant>: codex app-server with the variant's config, as a background job the shell
 # waits on for at most 150 s (then the job and this run's Codex copies are killed and the status
@@ -200,7 +211,7 @@ models_run() {
   _p3_dpid=$!
   {
     _p3_src=0
-    run_codex app-server <"$RUN/rpc-$_p3_v.in" >"$RUN/rpc-$_p3_v.out" 2>"$RUN/rpc-$_p3_v.err" || _p3_src=$?
+    (run_codex app-server) <"$RUN/rpc-$_p3_v.in" >"$RUN/rpc-$_p3_v.out" 2>"$RUN/rpc-$_p3_v.err" || _p3_src=$?
     echo "$_p3_src" >"$_p3_done"
   } &
   _p3_spid=$!
@@ -221,6 +232,7 @@ models_run() {
   wait "$_p3_dpid" || _p3_drc=$?
   _p3_dpid=""
   echo "$_p3_drc" >"$RUN/rpc-$_p3_v.status"
+  p3_refused "$RUN/rpc-$_p3_v.out"
   ps_note "models-$_p3_v"
 }
 
@@ -303,6 +315,8 @@ _p3_fx=$CODEX_FX
 CODEX_FX=$RUN/fx
 codex_record proxy
 CODEX_FX=$_p3_fx
+# Each run was a subshell: the version comes from the isolation record (one version, or it failed).
+CODEX_VERSION=$(sed -n 's/^codex_version=//p' "$RUN/fx/runs/proxy/isolation.txt")
 
 python3 -I - "$RUN" "$RUN/out" "$(date +%Y-%m-%d)" <<'PY'
 import glob, json, os, re, sys
@@ -430,12 +444,12 @@ put("transport/tools.txt", rd(os.path.join(run, "transport", "tools.txt"), "none
 ran = [l.strip() for l in rd(os.path.join(run, "key-helper.ran")).splitlines() if l.strip()]
 helper_runs = sum(1 for l in ran if l == "h")
 hrecs = [r for r in recs if var(r) == "h"]
-with_bearer = sum(1 for r in hrecs if r.get("credential_headers") == ["authorization"]
-                  and r.get("reply") != "401-no-credential")
+with_token = sum(1 for r in hrecs if r.get("credential_headers") == ["authorization"]
+                 and r.get("credential") == "alt" and r.get("reply") != "401-no-credential")
 no_cred = sum(1 for r in recs if r.get("reply") == "401-no-credential")
-put("transport/key-helper.txt", "helper_runs=%d\nhelper_runs_other=%d\nrequests=%d\nwith_bearer=%d\nno_credential=%d\n"
-    "token=the dummy key (mock_upstream.py accepts one key; run h has no env_key, so its bearer is the helper's)\n"
-    % (helper_runs, len(ran) - helper_runs, len(hrecs), with_bearer, no_cred))
+put("transport/key-helper.txt", "helper_runs=%d\nhelper_runs_other=%d\nrequests=%d\nwith_helper_token=%d\nno_credential=%d\n"
+    "token=MOCK_ALT_KEY, built at run time (records: credential=alt; the env_key runs: credential=primary)\n"
+    % (helper_runs, len(ran) - helper_runs, len(hrecs), with_token, no_cred))
 put("transport/result.txt", "connect_lines=%d refused=%d hosts=%s\n" % (
     len(clines), refused, ",".join(sorted({l.split(" ")[0] for l in clines})) or "-"))
 
@@ -500,7 +514,7 @@ pc7 = ["models/result.txt", "models/picker-b.jsonl", "models/picker-c.jsonl", "m
 if mrecs:
     pc7.append("models/request.json")
 obs = [
-    line("PC1", helper_runs >= 1 and len(hrecs) >= 1 and with_bearer == len(hrecs) and no_cred == 0
+    line("PC1", helper_runs >= 1 and len(hrecs) >= 1 and with_token == len(hrecs) and no_cred == 0
          and refused == len(clines),
          ["transport/result.txt", "transport/paths.txt", "transport/key-helper.txt", "transport/other-hosts.txt",
           "transport/processes.txt"]),
