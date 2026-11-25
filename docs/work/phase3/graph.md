@@ -324,7 +324,7 @@ Session text (T, SX nodes):
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | IN-PROGRESS | implementation | .worktrees/phase3/FX-2-node · PR #42 |
+| FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 
 ## Log
 
@@ -370,3 +370,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-16 done: shaping fixture harness and capture script; review round 1 (10 confirmed); floor 2582 passed 0 failed · PR #32 |
 | 2026-11-24 | FX-2 added (20347a0): found in RT-1's CI (ubuntu run 45530476489), edit.rs:297 lock still held after apply; a child forked by another thread keeps the flock past the close; Held guard unlocks on drop; fork test; no production impact; 5 steps |
 | 2026-11-24 | FX-2 in progress: node branch `phase3/FX-2--FX-2`, worktree `.worktrees/phase3/FX-2-node` · PR #42 |
+| 2026-11-24 | FX-2 done: decision lock unlocked before close so a child's inherited descriptor cannot keep it; review round 1 (2 confirmed, 3 refuted); floor 2593 passed 0 failed · PR #42 |
