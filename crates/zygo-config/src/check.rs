@@ -4,10 +4,12 @@ use std::fmt;
 use zygo_core::ids::{reserved_member_name, valid_member_name};
 
 use crate::layers::{join, seg};
+use crate::profile::valid_name;
 use crate::schema::{parse_duration, parse_sync_gap, valid_mail_host, valid_sync_branch, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
 
 const MAIL_HOST_FORM: &str = "must match ^[a-z0-9][a-z0-9-]{0,31}$";
 const MAIL_SYNC_FORM: &str = "must match ^zygo/[a-z0-9][a-z0-9-]{0,31}$";
+const MAIL_WORKSPACE_NAME_FORM: &str = "must match ^[a-z0-9-]{1,32}$";
 const MAIL_SYNC_GAP_FORM: &str = "must be <n>s, <n>m or <n>h";
 /// Mail sync design S§7.1.
 const MAIL_NO_HOST: &str = "set [mail] host to turn on mail sync; zygo does not publish the system host name";
@@ -131,6 +133,11 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
     let mut sync_without_host = false;
     for (name, ws) in &cfg.mail.workspace {
         let path = join(&["mail", "workspace", name.as_str()]);
+        // The table key is a workspace name (workspaces design W§5); zygo-workspace depends on this crate, so the form
+        // comes from `profile::valid_name`, the same `^[a-z0-9-]{1,32}$`.
+        if !valid_name(name) {
+            e(path.clone(), MAIL_WORKSPACE_NAME_FORM.into());
+        }
         if ws.sync.as_deref().is_some_and(|b| !valid_sync_branch(b)) {
             e(format!("{path}.sync"), MAIL_SYNC_FORM.into());
         }

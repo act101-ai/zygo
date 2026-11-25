@@ -13,6 +13,7 @@ const S11: &str = "[mail]\nhost = \"studio\"\nsync_gap = \"60s\"\n\n[mail.worksp
 const HOST_FORM: &str = "must match ^[a-z0-9][a-z0-9-]{0,31}$";
 const SYNC_FORM: &str = "must match ^zygo/[a-z0-9][a-z0-9-]{0,31}$";
 const GAP_FORM: &str = "must be <n>s, <n>m or <n>h";
+const NAME_FORM: &str = "must match ^[a-z0-9-]{1,32}$";
 const NO_HOST: &str = "set [mail] host to turn on mail sync; zygo does not publish the system host name";
 const MAIL_TEAM: &str = "config: [mail] in team config ignored; only user config may set them";
 const MAIL_REPO: &str = ".zygo.toml: [mail] ignored; the repository file may set only [guards], [navigation], [limits], [work]";
@@ -70,7 +71,8 @@ fn defaults_and_the_s11_example() {
     assert_eq!((d.host.clone(), d.sync_gap.as_str(), d.workspace.clone()), (None, "60s", BTreeMap::new()));
     assert_eq!((d.keep.as_str(), d.max_unread, d.wake_gap.as_str()), ("30d", 500, "30s"));
     assert_eq!(Config::default().mail, d);
-    assert_eq!(loaded("").source_of("mail.sync_gap"), Layer::Builtin);
+    let builtin = toml::Table::try_from(builtin::defaults()).unwrap();
+    assert_eq!(builtin["mail"]["sync_gap"].as_str(), Some("60s"));
     assert_eq!(violations(""), Vec::<String>::new());
     let m = loaded(S11);
     assert_eq!(m.warnings, Vec::<String>::new());
@@ -127,12 +129,21 @@ fn check_refuses_forms_at_the_edges() {
         assert_eq!(violations(&br), want_br, "{v:?}");
         assert_eq!(sync(&br, "zygo").map(|s| s.branch), if ok { Ok(format!("zygo/{v}")) } else { Err(SyncOff::BadBranch) }, "{v:?}");
     }
-    // the path quotes a workspace name that is not bare; no message echoes a value
-    let odd = "[mail]\nhost = \"a\"\n[mail.workspace.\"my ws\"]\nsync = \"zygo/Bad-Branch\"\nhost = \"Bad-Host\"\n";
+    // no message echoes a value
+    let odd = "[mail]\nhost = \"a\"\n[mail.workspace.my-ws]\nsync = \"zygo/Bad-Branch\"\nhost = \"Bad-Host\"\n";
     let v = violations(odd);
-    assert_eq!(v, [format!("Error mail.workspace.\"my ws\".sync: {SYNC_FORM}"), format!("Error mail.workspace.\"my ws\".host: {HOST_FORM}")]);
+    assert_eq!(v, [format!("Error mail.workspace.my-ws.sync: {SYNC_FORM}"), format!("Error mail.workspace.my-ws.host: {HOST_FORM}")]);
     assert!(v.iter().all(|l| !l.contains("Bad-")), "{v:?}");
-    assert_eq!(sync(odd, "my ws"), Err(SyncOff::BadBranch));
+    assert_eq!(sync(odd, "my-ws"), Err(SyncOff::BadBranch));
+    // the table key is a W§5 workspace name; the path quotes a key that is not bare
+    let max = "a".repeat(32);
+    for ok in ["a", "0", "-", "my-ws", max.as_str()] {
+        assert_eq!(violations(&format!("[mail.workspace.\"{ok}\"]\nremote = \"up\"\n")), Vec::<String>::new(), "{ok:?}");
+    }
+    for (bad, path) in [("", "\"\""), ("My WS", "\"My WS\""), ("a.b", "\"a.b\""), ("a_b", "a_b"), (over.as_str(), over.as_str())] {
+        assert_eq!(violations(&format!("[mail.workspace.\"{bad}\"]\nremote = \"up\"\n")),
+            [format!("Error mail.workspace.{path}: {NAME_FORM}")], "{bad:?}");
+    }
 }
 
 #[test]
@@ -211,7 +222,6 @@ fn team_layer_drops_mail_sync_keys() {
     let m = load(&ctx("", Some(team), None).c).unwrap();
     assert_eq!(m.warnings, [MAIL_TEAM]);
     assert_eq!(m.config.mail, MailConfig::default());
-    assert_eq!(m.source_of("mail.workspace.zygo.sync"), Layer::Builtin);
     assert_eq!(sync_for(&m.config, "zygo"), Err(SyncOff::NotOn));
     // the user's opt-in holds in a team session
     let user = "[mail]\nhost = \"a\"\n[mail.workspace.zygo]\nsync = \"zygo/mail\"\n";
@@ -226,6 +236,31 @@ fn repo_file_drops_mail_sync_keys() {
     let m = with_repo_file("", repo);
     assert_eq!(m.warnings, [MAIL_REPO]);
     assert_eq!(m.config.mail, MailConfig::default());
-    assert_eq!(m.source_of("mail.workspace.zygo.sync"), Layer::Builtin);
     assert_eq!(sync_for(&m.config, "zygo"), Err(SyncOff::NotOn));
+}
+
+#[test]
+fn wrong_type_in_a_workspace_table_stops_the_load() {
+    let e = load(&ctx("[mail.workspace.zygo]\nsync = 4242\n", None, None).c).unwrap_err();
+    match &e {
+        ConfigError::Parse { layer, message, .. } => assert_eq!(
+            (*layer, message.as_str()),
+            ("user", "mail.workspace.zygo.sync at line 2: expected a string, found an integer")
+        ),
+        other => panic!("{other:?}"),
+    }
+    let text = e.to_string();
+    assert!(!text.contains('\n') && !text.contains("4242"), "{text}");
+}
+
+#[test]
+fn repo_file_cannot_change_the_user_opt_in() {
+    let user = "[mail]\nhost = \"a\"\nsync_gap = \"5m\"\n[mail.workspace.zygo]\nsync = \"zygo/mail\"\n";
+    let repo = "version = 1\n[mail]\nhost = \"r\"\nsync_gap = \"1s\"\n";
+    let m = with_repo_file(user, repo);
+    assert_eq!(m.warnings, [MAIL_REPO]);
+    assert_eq!((m.config.mail.host.as_deref(), m.config.mail.sync_gap.as_str()), (Some("a"), "5m"));
+    assert_eq!((m.source_of("mail.host"), m.source_of("mail.sync_gap")), (Layer::User, Layer::User));
+    assert_eq!(sync_for(&m.config, "zygo"), Ok(SyncSettings {
+        branch: "zygo/mail".into(), remote: "origin".into(), host: "a".into(), sync_gap: Duration::from_secs(300) }));
 }
