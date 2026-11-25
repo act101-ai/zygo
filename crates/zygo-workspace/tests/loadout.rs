@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use zygo_config::repo_def::{repository_loadout, Definition, MemberDef, Pin, WorkspaceFile, REPOSITORY_LOADOUT};
 use zygo_config::{Config, Loadout, LoadoutPane, LoadoutWindow, WorkspaceConfig, BUILTIN_LOADOUT, LOADOUT_KINDS};
 use zygo_core::Agent;
 use zygo_workspace::identity::Worktree;
@@ -16,7 +18,7 @@ fn cfg(default: &str, loadouts: Vec<(&str, Vec<LoadoutWindow>)>) -> Config {
     }
 }
 fn plain(kind: PaneKind) -> PlanPane { // the defaults of `zygo claude` and `zygo opencode` (AU45)
-    PlanPane { kind, name: None, cwd: root(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None }
+    PlanPane { kind, name: None, cwd: root(), profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, job: None, pool: false, definition: None }
 }
 fn trees() -> Vec<Worktree> {
     vec![
@@ -56,6 +58,7 @@ fn unset_pane_fields_take_the_launch_defaults_and_set_fields_are_kept() {
     assert_eq!(p.windows[0].panes[3], PlanPane {
         kind: PaneKind::Agent(Agent::ClaudeCode), name: None, cwd: root(), profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()],
         yolo: true, passthrough: true, server: Some("https://zygo.example".into()), compact: Some("600k".into()), config_dir: Some("~/.claude-work".into()),
+        job: None, pool: false, definition: None,
     });
     for k in LOADOUT_KINDS {
         assert!(resolve(&cfg("x", vec![("x", vec![window(vec![pane(k)])])]), None, &root(), &[]).is_ok(), "{k}");
@@ -158,4 +161,53 @@ fn pane_cwd_is_the_folder_rule_of_resolve() {
     let tmp = std::env::temp_dir();
     assert_eq!(pane_cwd(Some(tmp.to_str().unwrap()), &root(), &trees()), (tmp.clone(), None));
     assert_eq!(pane_cwd(Some("sub/dir"), &root(), &trees()), (root().join("sub/dir"), None));
+}
+
+fn pin() -> Pin { Pin::new("c".repeat(40), "d".repeat(64)) }
+fn def(members: BTreeMap<String, MemberDef>) -> Definition {
+    Definition { workspace: Some(WorkspaceFile { version: 1, layout: None, members }), profiles: BTreeMap::new() }
+}
+
+#[test] // R§9.2, R§7.4, R§9.3 effect 2: each pane of the default set has its job, pool and the pin, in the main worktree
+fn repository_default_set_panes_carry_job_pool_and_the_pin() {
+    let member = |n: &str, job: &str| PlanPane {
+        name: Some(n.into()), job: Some(job.into()), pool: true, definition: Some(pin()), ..plain(PaneKind::Agent(Agent::ClaudeCode))
+    };
+    let l = repository_loadout(&def(BTreeMap::new())).unwrap();
+    assert_eq!(resolve_repository(&l, &pin(), &root(), &trees()), Ok(Plan {
+        loadout: "repository".into(),
+        windows: vec![PlanWindow { name: None, layout: Some("main-vertical".into()), panes: vec![
+            member("orchestrator", "orchestrator"), member("worker-1", "worker"), member("worker-2", "worker"),
+            member("worker-3", "worker"), member("worker-4", "worker"),
+        ] }],
+        warnings: vec![],
+    }));
+}
+
+#[test] // R§9.1: `cwd` resolves as W§11; a branch with no worktree gives the main worktree and the existing warning
+fn repository_branch_cwd_without_a_worktree_gives_the_main_worktree_and_the_warning() {
+    let m = MemberDef { kind: None, job: None, profile: None, pool: false, cwd: Some("branch:x".into()) };
+    let l = repository_loadout(&def(BTreeMap::from([("a".to_string(), m)]))).unwrap();
+    let p = resolve_repository(&l, &pin(), &root(), &trees()).unwrap();
+    assert_eq!((&p.windows[0].panes[0].cwd, &p.windows[0].panes[0].definition), (&root(), &Some(pin())));
+    assert_eq!(p.warnings, ["loadout repository: no worktree has branch `x` checked out; using the main worktree"]);
+}
+
+#[test] // R§9.1, R§9.3: a user loadout pane carries `job` and `pool`; only resolve_repository gives a pin
+fn repository_user_loadout_pane_carries_job_and_pool_and_no_pin() {
+    let set = LoadoutPane { job: Some("orchestrator".into()), pool: true, ..pane("claude-code") };
+    let want = vec![PlanPane { job: Some("orchestrator".into()), pool: true, ..plain(PaneKind::Agent(Agent::ClaudeCode)) }, plain(PaneKind::Shell)];
+    for name in ["team", REPOSITORY_LOADOUT] {
+        let p = resolve(&cfg(name, vec![(name, vec![window(vec![set.clone(), pane("shell")])])]), None, &root(), &[]).unwrap();
+        assert_eq!(p.windows[0].panes, want, "{name}");
+    }
+}
+
+#[test] // R§10 `loadout list`: the loadout that apply_to_config (WD-7) adds is listed with Source::Repository
+fn repository_list_reports_the_added_loadout_as_repository() {
+    let s = |n: &str, src| (n.to_string(), src);
+    let mut c = cfg("solo", vec![("pair", vec![window(vec![pane("shell")])])]);
+    // what WD-7's apply_to_config adds: config.loadout["repository"] = repository_loadout(def)
+    c.loadout.insert(REPOSITORY_LOADOUT.to_string(), repository_loadout(&def(BTreeMap::new())).unwrap());
+    assert_eq!(list(&c), [s("pair", Source::User), s("repository", Source::Repository), s("solo", Source::Builtin)]);
 }

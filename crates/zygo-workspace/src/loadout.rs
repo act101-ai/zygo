@@ -2,11 +2,13 @@
 //!
 //! A loadout names the windows and panes that `zygo up` starts. `resolve` turns one loadout of the user config (or
 //! the built-in `solo`) into a [`Plan`]: each pane has its kind, its directory and its launch fields. It reads no file
-//! and starts no program.
+//! and starts no program. `resolve_repository` does the same for the repository loadout (R§9.1) and gives each pane
+//! the pin of the approved read (R§7.4).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use zygo_config::repo_def::{Pin, REPOSITORY_LOADOUT};
 use zygo_config::{BUILTIN_LOADOUT, Config, LOADOUT_KINDS, Loadout, LoadoutPane, LoadoutWindow};
 use zygo_core::{Agent, esc};
 
@@ -19,6 +21,9 @@ pub enum Source {
     Builtin,
     /// `[loadout.<name>]` of the user config.
     User,
+    /// `[loadout.repository]` (R§9.1): the loadout of the approved workspace files, added to the config by
+    /// `repo_def::apply_to_config`.
+    Repository,
 }
 
 /// What a pane runs.
@@ -37,6 +42,8 @@ pub struct PlanPane {
     /// The member name (M§6): none for a shell pane (AU53); for an agent pane, only when zygo_core::ids::valid_member_name
     /// passes (AU84) and no earlier agent pane of the plan took it (the first wins; `zygo up` does not run `config check`).
     pub name: Option<String>,
+    /// R§9.3: the pane's `job`, copied; none: no job.
+    pub job: Option<String>,
     /// The pane's directory: the main worktree when the loadout sets no `cwd`.
     pub cwd: PathBuf,
     pub profile: Option<String>,
@@ -46,6 +53,10 @@ pub struct PlanPane {
     pub server: Option<String>,
     pub compact: Option<String>,
     pub config_dir: Option<String>,
+    /// R§9.5: take the config directory from `[workspace] pool`.
+    pub pool: bool,
+    /// R§7.4: the pin of the approved read; `Some` on each pane of [`resolve_repository`], `None` from [`resolve`].
+    pub definition: Option<Pin>,
 }
 
 /// One window of a [`Plan`], with its panes in loadout order.
@@ -103,9 +114,11 @@ pub fn builtin_solo() -> Loadout {
     Loadout { window: vec![LoadoutWindow { name: None, layout: None, pane: vec![pane] }] }
 }
 
-/// Each loadout name with its source, in name order. A user `[loadout.solo]` replaces the built-in one.
+/// Each loadout name with its source, in name order. A user `[loadout.solo]` replaces the built-in one. The key
+/// `repository` has [`Source::Repository`].
 pub fn list(cfg: &Config) -> Vec<(String, Source)> {
-    let mut all: Vec<(String, Source)> = cfg.loadout.keys().map(|k| (k.clone(), Source::User)).collect();
+    let source = |k: &str| if k == REPOSITORY_LOADOUT { Source::Repository } else { Source::User };
+    let mut all: Vec<(String, Source)> = cfg.loadout.keys().map(|k| (k.clone(), source(k))).collect();
     if !cfg.loadout.contains_key(BUILTIN_LOADOUT) {
         all.push((BUILTIN_LOADOUT.to_string(), Source::Builtin));
     }
@@ -146,6 +159,23 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
         }
         None => return Err(LoadoutError::Unknown { name: name.to_string() }),
     };
+    plan_of(name, loadout, None, main_root, worktrees)
+}
+
+/// The plan of the repository loadout `l` (R§9.1), each pane with `pin` (R§7.4). `cwd` and the errors are as
+/// [`resolve`].
+pub fn resolve_repository(l: &Loadout, pin: &Pin, main_root: &Path, worktrees: &[Worktree]) -> Result<Plan, LoadoutError> {
+    plan_of(REPOSITORY_LOADOUT, l, Some(pin), main_root, worktrees)
+}
+
+/// The plan of `loadout` named `name`; each pane gets `definition`.
+fn plan_of(
+    name: &str,
+    loadout: &Loadout,
+    definition: Option<&Pin>,
+    main_root: &Path,
+    worktrees: &[Worktree],
+) -> Result<Plan, LoadoutError> {
     if loadout.window.is_empty() {
         return Err(LoadoutError::NoWindow { name: name.to_string() });
     }
@@ -184,6 +214,7 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
             panes.push(PlanPane {
                 kind,
                 name,
+                job: p.job.clone(),
                 cwd,
                 profile: p.profile.clone(),
                 args: p.args.clone(),
@@ -192,6 +223,8 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
                 server: p.server.clone(),
                 compact: p.compact.clone(),
                 config_dir: p.config_dir.clone(),
+                pool: p.pool,
+                definition: definition.cloned(),
             });
         }
         windows.push(PlanWindow { name: w.name.clone(), layout: w.layout.clone(), panes });

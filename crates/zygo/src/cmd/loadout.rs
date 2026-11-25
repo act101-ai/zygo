@@ -376,8 +376,8 @@ pub enum LoadoutCmd {
     Show { name: String },
 }
 
-/// The OP5 check, the user config (D3), then D7: `<name escaped>  built-in` or `<name escaped>  user` per line, in the
-/// order of `loadout::list`.
+/// The OP5 check, the user config (D3), then D7: `<name escaped>  built-in`, `user` or `workspace-files` per line, in
+/// the order of `loadout::list`.
 pub fn run(a: &LoadoutArgs) -> i32 {
     if let Some(code) = op5_exit() {
         return code;
@@ -394,6 +394,7 @@ pub fn run(a: &LoadoutArgs) -> i32 {
                     let source = match source {
                         Source::Builtin => "built-in",
                         Source::User => "user",
+                        Source::Repository => "workspace-files",
                     };
                     format!("{}  {source}\n", esc(&name))
                 })
