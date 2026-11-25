@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use zygo_work::decisions::record::Class;
-use zygo_work::gate::check::{check_keep, format_problems, Disposition, KeepRequest, Proof};
+use zygo_work::gate::check::{check_keep, format_problems, names_commit, Disposition, KeepRequest, Proof};
 use zygo_work::gate::git::{BatchIo, Blob, GitFail, GitRunner, LogCommit, ProcessGit, ProcessRunner, VerdictGit};
 use zygo_work::repo::{RunError, Whole};
 
@@ -708,4 +708,69 @@ fn git_failures_give_cannot_check() {
         let p = stub_keep(&mut Stub { fail: Some(step), ..Stub::default() });
         assert_eq!(p, vec![format!("cannot check: {step} timed out")], "{step}");
     }
+}
+
+// ---- DR-13 review round 1: a ref cannot stand for a short id; a `fixed` entry without `commit` ----
+
+const H40: &str = "4444444444444444444444444444444444444444";
+const B40: &str = "2222222222222222222222222222222222222222";
+const C40X: &str = "3333333333333333333333333333333333333333";
+const OTHER: &str = "ffffffffffffffffffffffffffffffffffffffff";
+
+/// A [`VerdictGit`] with no process: `commit` looks up `refs` (a short hex that a ref of the same name shadows
+/// maps to OTHER); H40, B40, C40X resolve to themselves; merge_base gives B40; the range is [H40, C40X]; no paths.
+struct Refs(Vec<(&'static str, &'static str)>);
+
+impl VerdictGit for Refs {
+    fn commit(&mut self, rev: &str) -> Result<Option<String>, GitFail> {
+        let own = [H40, B40, C40X, OTHER].iter().find(|c| **c == rev).map(|c| c.to_string());
+        Ok(self.0.iter().find(|(r, _)| *r == rev).map(|(_, id)| id.to_string()).or(own))
+    }
+    fn record_blob(&mut self, _rev: &str, _name: &str) -> Result<Blob, GitFail> { Ok(Blob::Missing) }
+    fn merge_base(&mut self, _a: &str, _b: &str) -> Result<Option<String>, GitFail> { Ok(Some(B40.to_string())) }
+    fn rev_list(&mut self, _base: &str, _head: &str, _max: usize) -> Result<Option<Vec<String>>, GitFail> {
+        Ok(Some(vec![H40.to_string(), C40X.to_string()]))
+    }
+    fn log(&mut self, _base: &str, _head: &str) -> Result<Vec<LogCommit>, GitFail> { Ok(vec![]) }
+}
+
+#[test]
+fn names_commit_compares_the_given_hex_as_a_prefix() {
+    assert!(names_commit("4444444", H40));
+    assert!(names_commit(H40, H40));
+    assert!(!names_commit("b32729d", OTHER));
+    assert!(!names_commit("44444445", H40));
+}
+
+#[test]
+fn a_ref_named_like_a_short_head_is_refused() {
+    let p = check_keep(&req(1, Some("b32729d"), None, Some(vec![])), &mut Refs(vec![("b32729d", OTHER)]));
+    assert_eq!(p, s(&["cannot check: head b32729d is a ref name, not a commit id"]));
+}
+
+#[test]
+fn a_ref_named_like_a_short_base_is_refused() {
+    let p = check_keep(&req(1, Some(H40), Some("2222222"), Some(vec![])), &mut Refs(vec![("2222222", OTHER)]));
+    assert_eq!(p, s(&["cannot check: base 2222222 is a ref name, not a commit id"]));
+}
+
+#[test]
+fn a_ref_named_like_a_short_fixed_commit_is_refused() {
+    let ds = vec![fixed("R1-1", "abc1234")];
+    let p = check_keep(&req(1, Some(H40), None, Some(ds)), &mut Refs(vec![("abc1234", C40X)]));
+    assert_eq!(p, s(&["R1-1: cannot check: commit abc1234 is a ref name, not a commit id"]));
+}
+
+#[test]
+fn short_ids_that_resolve_to_themselves_pass() {
+    let ds = vec![fixed("R1-1", "3333333")];
+    let p = check_keep(&req(1, Some("4444444"), Some("2222222"), Some(ds)),
+        &mut Refs(vec![("4444444", H40), ("2222222", B40), ("3333333", C40X)]));
+    assert_eq!(p, Vec::<String>::new());
+}
+
+#[test]
+fn fixed_without_commit_names_no_empty_value() {
+    let p = check_keep(&req(1, Some(H40), None, Some(vec![fixed("R1-1", "")])), &mut Refs(vec![]));
+    assert_eq!(p, s(&["R1-1: no commit"]));
 }

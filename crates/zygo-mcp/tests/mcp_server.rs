@@ -879,3 +879,33 @@ echo 'zygo: down started; end your turn'"#);
     assert_eq!(r["result"]["content"], json!([{"type":"text","text":"zygo: down started; end your turn"}]));
     assert_eq!(std::fs::read_to_string(d.path().join("argv")).unwrap(), "down --now -- app ");
 }
+
+/// DR-13 review item 2(a): `work_verdict` through the dispatch. A refused keep is a result with `isError: true`; an
+/// argument refusal is the JSON-RPC error -32602. No view.json: no repository root, so no git reader is built.
+#[test]
+fn work_verdict_refusals_through_the_dispatch() {
+    let d = tempfile::tempdir().unwrap();
+    let sd = SessionDir::new(d.path().join("s"));
+    sd.create().unwrap();
+    let verdict = zygo_mcp::tools::work::WorkVerdict::new(
+        d.path().join("usage.db"),
+        "S1".into(),
+        sd,
+        Box::new(|_| (zygo_config::Level::Enforce, None)),
+        Box::new(|_| unreachable!("no repository root: no git")),
+    );
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(verdict)];
+    let call = |args: Value| {
+        let line = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"work_verdict","arguments":args}});
+        let mut out = Vec::new();
+        serve(Agent::ClaudeCode, &tools, format!("{line}\n").as_bytes(), &mut out).unwrap();
+        serde_json::from_slice::<Value>(out.split(|b| *b == b'\n').next().unwrap()).unwrap()
+    };
+    let r = call(json!({"unit": "phase3:DR-13", "round": 1, "verdict": "keep", "head": "abcdef1", "dispositions": []}));
+    assert_eq!(r["result"]["isError"], true);
+    assert_eq!(r["result"]["content"][0]["text"], "zygo: keep refused: cannot check: no repository root");
+    assert!(r.get("error").is_none());
+    let r = call(json!({"unit": "phase3:DR-13", "round": 1, "verdict": "keep", "head": 7}));
+    assert_eq!(r["error"]["code"], -32602);
+    assert!(r.get("result").is_none());
+}
