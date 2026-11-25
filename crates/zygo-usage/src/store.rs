@@ -64,6 +64,10 @@ fn insert_error(conn: &Connection, e: &UpstreamErrorRow) -> Result<()> {
 /// The schema version this build writes to `PRAGMA user_version`.
 pub const SCHEMA_VERSION: i64 = 1;
 
+/// The longest wait of each usage-store statement in the trim hook and the MCP server's read-back write
+/// (O§7.11, O-C10).
+pub const HOOK_DB_BOUND: Duration = Duration::from_millis(100);
+
 /// The `trims` columns the full open adds to an older table (O§6.5 item 3), in order.
 const TRIM_COLUMNS: [(&str, &str); 3] = [("result_id", "TEXT"), ("command", "TEXT"), ("shaper", "TEXT")];
 /// The database paths whose `trims` columns this process has checked (O§6.5 item 3: one time per process).
@@ -181,6 +185,25 @@ impl Store {
                 "usage database schema version {version} is not {SCHEMA_VERSION}"
             ));
         }
+        Ok(Store { conn })
+    }
+
+    /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): busy timeout `bound` for each
+    /// statement and no retry loop; no directory, file, schema or column is created (O§6.5 item 3), so the open takes no
+    /// write lock. A database of another schema version is an error.
+    pub fn open_bounded(path: &Path, bound: Duration) -> Result<Store> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(bound)?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version != SCHEMA_VERSION {
+            return Err(anyhow!(
+                "usage database schema version {version} is not {SCHEMA_VERSION}"
+            ));
+        }
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         Ok(Store { conn })
     }
 

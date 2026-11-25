@@ -55,7 +55,7 @@ Produces:
 
 ### Steps
 
-- [ ] 1. Write the failing tests at the end of `crates/zygo-usage/tests/store.rs`, under a comment line `// ---- OS-3: bounded open (O§7.11, O-C10) ----`. Add `use std::time::Duration;` at the top (extend the `std` import at `:1` with `time::{Duration, SystemTime, UNIX_EPOCH}`). Each name starts with `open_bounded_`.
+- [x] 1. Write the failing tests at the end of `crates/zygo-usage/tests/store.rs`, under a comment line `// ---- OS-3: bounded open (O§7.11, O-C10) ----`. Add `use std::time::Duration;` at the top (extend the `std` import at `:1` with `time::{Duration, SystemTime, UNIX_EPOCH}`). Each name starts with `open_bounded_`.
 
   ```rust
   #[test]
@@ -127,9 +127,9 @@ Produces:
 
   The helper `pragma(db, name)` exists at `tests/store.rs:121-123`. No test reads a clock or sleeps (Global constraints: no wall-clock test in CI; O§8.4).
 
-- [ ] 2. Run `cargo test -p zygo-usage --test store -- open_bounded` → it fails to compile with "no function or associated item named `open_bounded`" and "cannot find value `HOOK_DB_BOUND` in module `store`".
+- [x] 2. Run `cargo test -p zygo-usage --test store -- open_bounded` → it fails to compile with "no function or associated item named `open_bounded`" and "cannot find value `HOOK_DB_BOUND` in module `store`".
 
-- [ ] 3. In `crates/zygo-usage/src/store.rs`, after `SCHEMA_VERSION` (`:65`), add
+- [x] 3. In `crates/zygo-usage/src/store.rs`, after `SCHEMA_VERSION` (`:65`), add
 
   ```rust
   /// The longest wait of each usage-store statement in the trim hook and the MCP server's read-back write
@@ -148,10 +148,10 @@ Produces:
 
   The body is the sequence of the Decisions, first bullet: `Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX)?`, `conn.busy_timeout(bound)?`, read `PRAGMA user_version` and return `anyhow!("usage database schema version {version} is not {SCHEMA_VERSION}")` when it is not `SCHEMA_VERSION`, `conn.pragma_update(None, "synchronous", "NORMAL")?`, `Ok(Store { conn })`. No `Instant`, no `sleep`, no `execute_batch`, no `journal_mode`.
 
-- [ ] 4. Run `cargo test -p zygo-usage --test store -- open_bounded` → 6 passed, 0 failed.
+- [x] 4. Run `cargo test -p zygo-usage --test store -- open_bounded` → 6 passed, 0 failed.
 
-- [ ] 5. Run the Acceptance check: `test "$(cargo test -q -p zygo-usage --test store -- open_bounded --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-usage --test store` → the count is 6 (at least 4), then every test of `store` passes (the `#[ignore = "timing: …"]` tests stay ignored).
+- [x] 5. Run the Acceptance check: `test "$(cargo test -q -p zygo-usage --test store -- open_bounded --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-usage --test store` → the count is 6 (at least 4), then every test of `store` passes (the `#[ignore = "timing: …"]` tests stay ignored).
 
-- [ ] 6. Run `cargo clippy --locked -p zygo-usage --all-targets -- -D warnings` → no warning; and `cargo test --locked -p zygo-usage` → all pass.
+- [x] 6. Run `cargo clippy --locked -p zygo-usage --all-targets -- -D warnings` → no warning; and `cargo test --locked -p zygo-usage` → all pass.
 
-- [ ] 7. Commit `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs` and this node file (ticked steps) with message `OS-3: bounded usage-store open` and the trailer `Zygo-Session:` with the implementing session's id and the trailer `Zygo-Work: phase3:OS-3`, each on its own line at the end; no Claude attribution.
+- [x] 7. Commit `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs` and this node file (ticked steps) with message `OS-3: bounded usage-store open` and the trailer `Zygo-Session:` with the implementing session's id and the trailer `Zygo-Work: phase3:OS-3`, each on its own line at the end; no Claude attribution.
