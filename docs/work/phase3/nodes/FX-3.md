@@ -25,13 +25,13 @@
 
 ### Steps
 
-- [ ] **1. Extract `spawn_zygo`** in `crates/zygo/tests/compact_cmd.rs`. Move lines 109-152 (the `Command` setup through the `spawn()`) into
+- [x] **1. Extract `spawn_zygo`** in `crates/zygo/tests/compact_cmd.rs`. Move lines 109-152 (the `Command` setup through the `spawn()`) into
   ```rust
   /// `zygo <args>` in `home` with `env`, all three streams piped; the caller feeds stdin.
   fn spawn_zygo(home: &Path, args: &[&str], env: &Env) -> std::process::Child
   ```
   which returns the child. `zygo()` becomes `let mut child = spawn_zygo(home, args, env);`, then the unchanged line 153 write and line 154 `wait_with_output`. Check: `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd` → all pass (no behavior change).
-- [ ] **2. Add the failing test** right after `statusline_without_a_session_dir_prints_nothing`, still with the raw write:
+- [x] **2. Add the failing test** right after `statusline_without_a_session_dir_prints_nothing`, still with the raw write:
   ```rust
   /// Without `ZYGO_SESSION_DIR` the hook may exit before it reads stdin (H§6.8, AU24, PH11), so a write after its exit
   /// gets a broken pipe. The order is fixed with no clock: stdin stays open until the child has exited.
@@ -47,8 +47,8 @@
       assert_eq!((String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap()), (String::new(), String::new()));
   }
   ```
-- [ ] **3. See it fail.** `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd -- --exact statusline_without_a_session_dir_exits_before_it_reads_stdin` → FAILED, panic at the `si.write_all` line with `kind: BrokenPipe`. Run it three times; it fails each time (`--exact` runs it alone, so no concurrent spawn holds the pipe's read end).
-- [ ] **4. Add `feed_stdin`** to `crates/zygo/tests/common/mod.rs`:
+- [x] **3. See it fail.** `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd -- --exact statusline_without_a_session_dir_exits_before_it_reads_stdin` → FAILED, panic at the `si.write_all` line with `kind: BrokenPipe`. Run it three times; it fails each time (`--exact` runs it alone, so no concurrent spawn holds the pipe's read end).
+- [x] **4. Add `feed_stdin`** to `crates/zygo/tests/common/mod.rs`:
   ```rust
   /// Writes `bytes` to a child's stdin and closes it. A child may exit before it reads stdin (statusline: H§6.8, AU24, PH11), so a broken pipe is not an error.
   pub fn feed_stdin(mut stdin: std::process::ChildStdin, bytes: &[u8]) {
@@ -59,8 +59,8 @@
   }
   ```
   `stdin` drops at the end, which closes it.
-- [ ] **5. Use it in `compact_cmd.rs`.** Add `mod common;` before `#[cfg(unix)] mod member_fixture;` (line 20). In the new test, replace `si.write_all(b"{}").unwrap();` with `common::feed_stdin(si, b"{}");` (and drop `mut` from `si`). In `zygo()`, replace line 153 with `common::feed_stdin(child.stdin.take().unwrap(), stdin);`. Remove `use std::io::Write;` (line 3), now an orphan.
-- [ ] **6. See it pass.** The step 3 command → ok. Then `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd` → all pass.
-- [ ] **7. Use it in the two statusline files.** `crates/zygo/tests/statusline_cmd.rs:76` → `common::feed_stdin(child.stdin.take().unwrap(), stdin);`; remove `use std::io::Write;` (line 9). `crates/zygo/tests/statusline_git.rs:82` → `common::feed_stdin(child.stdin.take().unwrap(), stdin.as_bytes());`; remove `use std::io::Write;` (line 10). Build with no warning: `cargo test -p zygo --locked --test statusline_cmd --test statusline_git --no-run 2>&1 | grep -c warning` → `0`.
-- [ ] **8. Run the acceptance.** `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd --test statusline_cmd --test statusline_git` → all pass. `grep -nE 'stdin\.take\(\)\.unwrap\(\)\.write_all|\.write_all\(' crates/zygo/tests/compact_cmd.rs crates/zygo/tests/statusline_cmd.rs crates/zygo/tests/statusline_git.rs` → no output. The new test body contains no `sleep`, `Instant`, `SystemTime` or `Duration` (review focus 75). `git diff --stat` lists only the four test files and this node file.
-- [ ] **9. Commit.** `FX-3: test stdin helpers tolerate a child that exits before it reads stdin`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.
+- [x] **5. Use it in `compact_cmd.rs`.** Add `mod common;` before `#[cfg(unix)] mod member_fixture;` (line 20). In the new test, replace `si.write_all(b"{}").unwrap();` with `common::feed_stdin(si, b"{}");` (and drop `mut` from `si`). In `zygo()`, replace line 153 with `common::feed_stdin(child.stdin.take().unwrap(), stdin);`. Remove `use std::io::Write;` (line 3), now an orphan.
+- [x] **6. See it pass.** The step 3 command → ok. Then `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd` → all pass.
+- [x] **7. Use it in the two statusline files.** `crates/zygo/tests/statusline_cmd.rs:76` → `common::feed_stdin(child.stdin.take().unwrap(), stdin);`; remove `use std::io::Write;` (line 9). `crates/zygo/tests/statusline_git.rs:82` → `common::feed_stdin(child.stdin.take().unwrap(), stdin.as_bytes());`; remove `use std::io::Write;` (line 10). Build with no warning: `cargo test -p zygo --locked --test statusline_cmd --test statusline_git --no-run 2>&1 | grep -c warning` → `0`.
+- [x] **8. Run the acceptance.** `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd --test statusline_cmd --test statusline_git` → all pass. `grep -nE 'stdin\.take\(\)\.unwrap\(\)\.write_all|\.write_all\(' crates/zygo/tests/compact_cmd.rs crates/zygo/tests/statusline_cmd.rs crates/zygo/tests/statusline_git.rs` → no output. The new test body contains no `sleep`, `Instant`, `SystemTime` or `Duration` (review focus 75). `git diff --stat` lists only the four test files and this node file.
+- [x] **9. Commit.** `FX-3: test stdin helpers tolerate a child that exits before it reads stdin`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.

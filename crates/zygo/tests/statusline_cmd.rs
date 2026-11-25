@@ -6,7 +6,6 @@
 
 mod common;
 
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -73,7 +72,7 @@ impl Fx {
             cmd.env("ZYGO_AGENT", agent);
         }
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(stdin).unwrap();
+        common::feed_stdin(child.stdin.take().unwrap(), stdin);
         let out = child.wait_with_output().unwrap();
         (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
     }
