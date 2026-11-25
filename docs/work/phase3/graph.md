@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | DONE | judgment | adb3069b · cargo test -p zygo-config --test repo_def_shape 12 passed; floor green · PR #72 |
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | DONE | implementation | 863b6b05 · loadout 10/state 41/snapshot 30 passed · PR #62 |
@@ -213,7 +212,7 @@ Session text (T, SX nodes):
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
-| OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | TODO | implementation | — |
+| OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | DONE | implementation | a7e1fa29 1773594e e906160f · usage_doctor 45/0, savings 8; floor green · PR #101 |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | TODO | judgment | — |
@@ -292,6 +291,7 @@ Session text (T, SX nodes):
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
+| FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -392,3 +392,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-3 DONE: workspace approvals in approvals.toml (repo_def::store; [[workspace]] id+digest; plugin approvals still parse); review: F2 fixed (failed rename drops temp file), F1 refuted (per-section read by design), F3-F5 to operator (approve.rs protocol); floor ws 2961/0 · PR #88 |
 | 2026-11-25 | DR-14 DONE: end-to-end decision gate (in-process stop path + merged-node keep; binary flow over zygo mcp stdio; no stored text). Review: R1/R3/R4 fixed (no mcp stderr marker; Win \\?\ canon; one env strip list), R2/R6 accepted, R5 refuted; floor ws 2977/1 pre-existing flake · PR #90 |
 | 2026-11-25 | ML-4 DONE: member names + mail::send by name/key/all (names::resolve; reserved cli/zygo). Review: F1 fixed (SendReport; delivers past a refused target), F3 fixed (limits once, before resolve), F5 fixed (reserved name test), F4 refuted, F2 consumers fixed; floor ws 2967/0 · PR #89 |
+| 2026-11-25 | OS-8 DONE: zygo usage prints savings lines (net figures, breakdown, ratio). Review: F1 fixed (amounts unknown when config does not load), F2 fixed (no sign on zero), F4 tests added, F3 to FX-8 (added: one read snapshot); floor ws 3016/0 · PR #101 |
