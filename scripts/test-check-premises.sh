@@ -76,6 +76,11 @@ evidence() {
     echo '{}' > "$1/fixtures/codex/empty.json"
 }
 
+# sha <file>: its sha256 in lower-case hex.
+sha() {
+    { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; } <"$1" | awk '{ print tolower($1) }'
+}
+
 # run <dir>: runs the copy's script; N2_FORBIDDEN_NAMES is cleared, so no case inherits it from the caller.
 run() {
     OUT=$(unset N2_FORBIDDEN_NAMES; sh "$1/scripts/check-premises.sh" 2>&1)
@@ -195,6 +200,7 @@ expect_fail "PW15-bash: date '2026-11-3' is not YYYY-MM-DD"
 CASE="the Codex schema is verbatim"
 D=$(mk schema)
 printf '%s\n' '"/Users/alice/x"' > "$D/fixtures/codex/config.schema.json"
+printf 'sha256: %s\n' "$(sha "$D/fixtures/codex/config.schema.json")" > "$D/fixtures/codex/config.schema.source.txt"
 run "$D"
 expect_ok
 
@@ -543,10 +549,6 @@ L='    | PC9 | indented |' awk '{ print } /^\| Q7 \|/ { print ENVIRON["L"] }' "$
 run "$D"
 expect_fail "docs/premises.md:$(lnof "$D" "$(grep '^| PW6 |' "$D/docs/premises.md")"): row 'PW6' is outside the Results table"
 
-# sha <file>: its sha256 in lower-case hex.
-sha() {
-    { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; } <"$1" | awk '{ print tolower($1) }'
-}
 SCH=fixtures/claude-code/settings-schema.json
 SRC=fixtures/claude-code/settings-schema.source.txt
 CSCH=fixtures/codex/config.schema.json

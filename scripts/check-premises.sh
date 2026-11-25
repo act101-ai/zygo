@@ -208,16 +208,37 @@ nontrivial fixtures/act-lite/status.json || nontrivial fixtures/act-lite/languag
 # settings-schema.json is the upstream schema kept verbatim (its source is beside it); so is the
 # Codex config.schema.json (from the pinned rust-v0.172.0 tag, K§6.3.7). Their own example texts
 # ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules and from the
-# N2_FORBIDDEN_NAMES scan only.
+# N2_FORBIDDEN_NAMES scan only, and only while each is still the upstream copy: its sha256 must equal
+# the "sha256: <hex>" line of its source file, the same path with the final .json replaced by
+# .source.txt. A verbatim file that exists with no source file, or with another hash, fails.
 VERBATIM="fixtures/claude-code/settings-schema.json fixtures/codex/config.schema.json"
-# VX: the ERE ^(<path>|<path>): for the list, dots escaped.
-VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):"
+# SHA256: shasum -a 256, else sha256sum. sha256_of <file>: its sha256 in lower-case hex.
+if command -v shasum >/dev/null 2>&1; then SHA256="shasum -a 256"
+elif command -v sha256sum >/dev/null 2>&1; then SHA256=sha256sum
+else fail "no sha256 tool (need shasum or sha256sum)"
+fi
+# shellcheck disable=SC2086
+sha256_of() { $SHA256 <"$1" | awk '{ print tolower($1) }'; }
+for f in $VERBATIM; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  src=${f%.json}.source.txt
+  [ -f "$src" ] || fail "verbatim file $f has no source file $src"
+  want=$(sed -n 's/^sha256:[[:space:]]*\([0-9A-Fa-f]\{64\}\)[[:space:]]*$/\1/p' "$src" | head -n 1 | tr 'A-F' 'a-f')
+  got=$(sha256_of "$f")
+  [ -n "$got" ] && [ "$got" = "$want" ] || fail "verbatim file $f: sha256 $got differs from ${want:-<none>} in $src"
+done
+# VX: the ERE ^(<path>|<path>):<digits>: for the list (a grep -n hit line of exactly that file), dots escaped.
+VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
 # Scope (N38): fixtures, the live scripts and their helpers, docs/live-checks.md (each when it
 # exists); scan_notes applies the same patterns to the spec and conformance lines naming N38.
 SCOPE=fixtures
 for f in scripts/premises/live scripts/premises/live*.sh docs/live-checks.md; do
   [ -e "$f" ] && SCOPE="$SCOPE $f"
 done
+# grep -r does not follow symlinks on macOS, so a symlink in the scope is neither scanned nor evidence.
+# shellcheck disable=SC2086
+lnk=$(find $SCOPE -type l 2>/dev/null | head -n 1)
+[ -z "$lnk" ] || fail "$lnk is a symlink; a symlink in the scan scope is not scanned and is not evidence"
 NOTES=$( (grep -nH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
 # scan <ERE> <exempt ERE> <label> [i]: the first line that matches and is not exempt fails; i: any case.
 scan() {

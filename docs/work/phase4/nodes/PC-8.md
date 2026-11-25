@@ -3,7 +3,7 @@
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.2.5 (the premise check by data), K§11 item 10 (the fixture scan)
 **Files:** `scripts/check-premises.sh`, `scripts/test-check-premises.sh`, `scripts/premises/live-hud.sh`
 **Consumes:** `scripts/check-premises.sh` (PC-1), `scripts/test-check-premises.sh` (PC-1)
-**Produces:** `scripts/check-premises.sh` with (a) the forbidden-name scan (N2_FORBIDDEN_NAMES) skipping the same verbatim upstream schema files the script already exempts elsewhere (today fixtures/claude-code/settings-schema.json contains the upstream example path /Users/alice/…, so N2_FORBIDDEN_NAMES=alice sh scripts/check-premises.sh exits 1 on line 22 of that file); (b) a line indented four or more spaces (or a tab) not read as a Results table row or header line, as Markdown renders it as a code block. `scripts/test-check-premises.sh` gains one case for each, failing first.
+**Produces:** `scripts/check-premises.sh` with (a) the forbidden-name scan (N2_FORBIDDEN_NAMES) skipping the same verbatim upstream schema files the script already exempts elsewhere (today fixtures/claude-code/settings-schema.json contains the upstream example path /Users/alice/…, so N2_FORBIDDEN_NAMES=alice sh scripts/check-premises.sh exits 1 on line 22 of that file); (b) a line indented four or more spaces (or a tab) not read as a Results table row or header line, as Markdown renders it as a code block; (c) after review round 1: a verbatim file keeps its exemptions only while its sha256 equals the `sha256:` line of its source file, the exemption matches the exact path only, and a symlink in the scan scope fails. `scripts/test-check-premises.sh` gains one case for each, failing first.
 **Acceptance:** `sh scripts/test-check-premises.sh && N2_FORBIDDEN_NAMES=alice sh scripts/check-premises.sh && sh scripts/check-premises.sh` → every command exits 0.
 
 ## Planning notes
@@ -35,7 +35,7 @@ Test helper and cases, all in `scripts/test-check-premises.sh`, appended after c
 
 Cases (each starts `D=$(mk <dir>)`; the dir name is free):
 
-- 51 `CASE="a forbidden name only in the verbatim schema"`. No plant: the copy's `fixtures/claude-code/settings-schema.json` holds `alice`. `run_names "$D" alice`; `expect_ok`. Before the fix: exit 1, `check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/claude-code/settings-schema.json:22`.
+- 51 `CASE="a forbidden name only in the verbatim schema"`. No plant: the copy's `fixtures/claude-code/settings-schema.json` holds `alice`; the case asserts that first (`grep -qiw alice`, round 1 F3). `run_names "$D" alice`; `expect_ok`. Before the fix: exit 1, `check-premises: forbidden name from N2_FORBIDDEN_NAMES: fixtures/claude-code/settings-schema.json:22`.
 - 52 `CASE="a forbidden name in another fixture"` (guard: the exemption is for the listed files only).
   ```sh
   printf '%s\n' 'owner alice' > "$D/fixtures/codex/other.txt"
@@ -86,6 +86,35 @@ Author's checks (§3.3), 2026-11-25:
 4. Review focus: graph review focus 5 (PC-1) is not changed; cases 4-6 still run.
 5. Proportion: the plan gives the call, the three regexes and the cases; it gives no function body.
 6. Live code: every line cited above was read at ba67eedb.
+
+## Review round 1 findings
+
+Round 1 review (PR #127, head 0227ac56), all confirmed by the lead. Round 2 work on `phase-4--PC-8`. Line numbers are `scripts/check-premises.sh` at 0227ac56 unless stated.
+
+- F1 (important) `:212-214`, `:265`: the VERBATIM exemption covered the whole file and nothing checked it was still the upstream copy. Fix: for each VERBATIM file that exists, its source file is the same path with the final `.json` replaced by `.source.txt` (derived, not listed: `settings-schema.json` → `settings-schema.source.txt`, `config.schema.json` → `config.schema.source.txt`). The file's sha256 (`shasum -a 256`, else `sha256sum`; neither → fail) must equal the first `sha256: <64 hex>` line of the source file. Else: `verbatim file <f> has no source file <src>`, or `verbatim file <f>: sha256 <got> differs from <want|<none>> in <src>`. A mismatch fails the run, so the path, bearer and name exemptions apply only to a matching file. PC-1 case 13 ("the Codex schema is verbatim") now plants a matching `config.schema.source.txt` beside its hand-made schema. PC-2 (`origin/phase-4--PC-2`, `scripts/premises/codex/base.sh:26-28`) writes the source file in this form; its committed pair matches (52fb96b1…2bac).
+- F2 (nit) `:214`: `VX` was `^(<path>|<path>):`, so `<path>:x` was exempt. Fix: `VX` is `^(<path>|<path>):[0-9]+:` (the `grep -n` hit form).
+- F3 (nit): case 51 asserts the copied schema holds `alice`; the Codex VERBATIM entry has name-scan cases (59, 60); case 57 pins an indented line in the middle of the Results table.
+- F4 (important, existing) `:7`, `:218`: `set -uf` stops `scripts/premises/live*.sh` from expanding, so the live scripts are not scanned. Not fixed in this round. With the glob expanded (`set +f` around the loop), the real tree fails on one line, in a file outside this node's Files, and that line is not a leak: `check-premises: forbidden content (e-mail address): scripts/premises/live-detach.sh:220:  git -C "$C" init -q && git -C "$C" -c user.name=zygo-live -c user.email=zygo-live@example.invalid commit -q --allow-empty -m init`. No other rule hits a live script (all rules, all hits listed, with `N2_FORBIDDEN_NAMES="$(id -un)"`). Per the brief, stopped and reported to the lead; the fix and its two cases (a name and an `sk-ant-` key appended to a live script) wait for a decision on that line (an exemption for `@example.invalid`, or a change to live-detach.sh).
+- F5 (nit, existing) `:262`, `:226`: macOS `grep -r` does not follow symlinks. Fix: after `SCOPE` is built, `find $SCOPE -type l`; the first symlink fails: `<path> is a symlink; a symlink in the scan scope is not scanned and is not evidence`. The scope is the one F4 leaves today (fixtures, `scripts/premises/live/`, `docs/live-checks.md`); it gains the `live*.sh` files when F4 lands. Real tree: no symlink in it.
+
+Cases 57-64 (after case 56, before the final `echo`); helper `sha <file>` (lower-case sha256 hex, `shasum -a 256` else `sha256sum`) after `run_names`:
+
+| # | CASE | Plant | Expect | Before the fix |
+|---|---|---|---|---|
+| 57 | an indented line in the middle of the Results table | `    \| PC9 \| indented \|` after the `\| Q7 \|` row | fail `docs/premises.md:<line of PW6>: row 'PW6' is outside the Results table` | passes (pin of round 1 rule (b)) |
+| 58 | a name appended to the verbatim schema | `owner alice` appended to `settings-schema.json`; `run_names alice` | fail `verbatim file …settings-schema.json: sha256 <new> differs from <old> in …settings-schema.source.txt` | exit 0 |
+| 59 | a verbatim schema with no source file | `settings-schema.source.txt` removed | fail `verbatim file … has no source file …` | exit 0 |
+| 60 | the Codex verbatim schema with a matching source hash | `fixtures/codex/config.schema.json` holding `owner alice`, source with its hash; `run_names alice` | ok | passes |
+| 61 | the Codex verbatim schema with a mismatching source hash | as 60, source hash of another file | fail `verbatim file fixtures/codex/config.schema.json: sha256 … differs from … in fixtures/codex/config.schema.source.txt` | exit 0 |
+| 62 | a path that only starts with a verbatim path | `fixtures/claude-code/settings-schema.json:x` holding `owner alice`; `run_names alice` | fail `forbidden name from N2_FORBIDDEN_NAMES: fixtures/claude-code/settings-schema.json:x` | exit 0 |
+| 63 | a symlink under fixtures | `fixtures/codex/link.txt` → `../opencode/help.txt` | fail `fixtures/codex/link.txt is a symlink; …` | exit 0 |
+| 64 | a symlink under the live scripts | `scripts/premises/live/link.txt` → a fixture | fail `scripts/premises/live/link.txt is a symlink; …` | exit 0 |
+
+Steps (round 2):
+
+- [x] R1. Add cases 57-64 and the case 51 assertion; run a non-stopping copy of the harness: 58, 59, 61, 62, 63, 64 fail as in the table; 57, 60 pass. Commit `test(premises): PC-8 round 2 failing cases for verbatim hashes, exact paths and symlinks`.
+- [x] R2. In `scripts/check-premises.sh`: the hash check and `VX` (F1, F2), the symlink check (F5); comments updated. Case 13 gains its source file.
+- [x] R3. Run the tests (sh and dash), `ver_test.sh`, the Acceptance, and `N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh`; record under Results.
 
 ## Results
 
