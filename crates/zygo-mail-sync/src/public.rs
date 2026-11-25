@@ -1,9 +1,12 @@
 //! The public check of a remote (S§8.2): the URL map, the anonymous probe, the verdict lists and the 1 h cache.
 
-use crate::env::Verdict;
-use crate::git::has_text;
+use crate::env::{Probe, Verdict};
+use crate::git::{has_text, sync_git};
+use std::path::Path;
+use std::process::Command;
+use std::time::{Duration, Instant};
 use zygo_config::display::scrub_userinfo;
-use zygo_work::repo::Whole;
+use zygo_work::repo::{run_whole, RunError, Whole};
 
 /// S§8.2 step 2: a remote URL mapped to the `https` URL the probe asks, a local path, or a scheme with no `https` form.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,4 +90,49 @@ pub fn classify(w: &Whole) -> Verdict {
         Some(line) => Verdict::Unknown(format!("git ls-remote failed: {}", scrub_userinfo(line))),
         None => Verdict::Unknown("git ls-remote failed".into()),
     }
+}
+
+/// S§8.2 step 3: the anonymous `git ls-remote --heads <https_url>`: no credential helper, no ask-pass, no global or
+/// system config, `HOME` an empty folder, no prompt; proxy variables stay as the environment has them.
+pub fn probe_command(https_url: &str, empty_home: &Path) -> Command {
+    let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let mut c = sync_git(empty_home);
+    c.args(["-c", "credential.helper=", "-c", "core.askPass=", "ls-remote", "--heads", https_url]);
+    c.env("GIT_CONFIG_GLOBAL", null).env("GIT_CONFIG_SYSTEM", null).env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("HOME", empty_home).env("GIT_TERMINAL_PROMPT", "0").env_remove("GIT_ASKPASS").env_remove("SSH_ASKPASS");
+    c
+}
+
+/// S§8.2 step 3, S-C9: the production probe, an anonymous `git ls-remote` killed after 10 s.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LsRemote;
+
+impl Probe for LsRemote {
+    fn probe(&self, https_url: &str) -> Verdict {
+        let Ok(dir) = tempfile::TempDir::new() else {
+            return Verdict::Unknown("cannot make an empty home folder".into());
+        };
+        match run_whole(probe_command(https_url, dir.path()), Instant::now() + Duration::from_secs(10)) {
+            Ok(w) => classify(&w),
+            Err(RunError::TimedOut) => Verdict::Unknown("git ls-remote timed out".into()),
+            Err(RunError::NotRun) => Verdict::Unknown("git ls-remote did not start".into()),
+            Err(RunError::Failed | RunError::Absent) => Verdict::Unknown("git ls-remote failed".into()),
+        }
+    }
+}
+
+/// S§8.2 step 1: the fetch URL of `remote`, then its push URL when that differs.
+pub fn remote_urls(main_root: &Path, remote: &str, deadline: Instant) -> Result<Vec<String>, RunError> {
+    let one = |args: &[&str]| -> Result<String, RunError> {
+        let w = crate::git::run(main_root, args, deadline)?;
+        let out = String::from_utf8(w.out).map_err(|_| RunError::Failed)?;
+        let url = out.trim_end();
+        if !w.ok || url.is_empty() {
+            return Err(RunError::Failed);
+        }
+        Ok(url.to_string())
+    };
+    let fetch = one(&["remote", "get-url", remote])?;
+    let push = one(&["remote", "get-url", "--push", remote])?;
+    Ok(if push == fetch { vec![fetch] } else { vec![fetch, push] })
 }

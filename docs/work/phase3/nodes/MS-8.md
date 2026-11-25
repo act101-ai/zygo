@@ -135,7 +135,7 @@ Produces (all in `crates/zygo-mail-sync/src/public.rs`, module `zygo_mail_sync::
   2. Else `s` holds `::` and the text before it has no `/` → `Unknown` (transport helper).
   3. Else split at the first `:`. No `:`, or a `/` before it → `Local`. The host is the text before the `:` after its last `@`; a host of one ASCII letter is a Windows drive → `Local` (as `crates/zygo-work/src/repo.rs:599-601`); an empty host → `Unknown`; else `https://<host>/<rest without leading />`.
 - [x] 4. Run `cargo test -p zygo-mail-sync --test public`: 13 passed. Commit `crates/zygo-mail-sync/src/public.rs` and `crates/zygo-mail-sync/tests/public.rs` with message `MS-8: URL map and the private list` and the trailers `Zygo-Session:` and `Zygo-Work:` with the values of the implementer's brief, each on its own line at the end.
-- [ ] 5. Append to `tests/public.rs`:
+- [x] 5. Append to `tests/public.rs`:
   ```rust
   const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
@@ -171,10 +171,10 @@ Produces (all in `crates/zygo-mail-sync/src/public.rs`, module `zygo_mail_sync::
   - `remote_urls_gives_fetch_then_push`: in a `git init -q` temp folder, `remote add origin https://u:p@h/p`, `remote set-url --push origin ssh://git@h/p`; `assert_eq!(remote_urls(d, "origin", far()), Ok(vec!["https://u:p@h/p".to_string(), "ssh://git@h/p".to_string()]))`.
   - `remote_urls_gives_one_url_when_push_is_fetch`: only `remote add origin https://h/p`; `assert_eq!(remote_urls(d, "origin", far()), Ok(vec!["https://h/p".to_string()]))`.
   - `remote_urls_missing_remote_fails`: `assert_eq!(remote_urls(d, "nope", far()), Err(zygo_work::repo::RunError::Failed))`.
-- [ ] 6. Run `cargo test -p zygo-mail-sync --test public` and see it fail to compile (`probe_command`, `LsRemote`, `remote_urls` not found).
-- [ ] 7. Add `probe_command`: `sync_git(empty_home)`, then args `-c credential.helper= -c core.askPass= ls-remote --heads <https_url>`, env `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` = the null device (`if cfg!(windows) { "NUL" } else { "/dev/null" }`), `GIT_CONFIG_NOSYSTEM=1`, `HOME=empty_home`, `GIT_TERMINAL_PROMPT=0`, `env_remove` `GIT_ASKPASS` and `SSH_ASKPASS`; nothing else (proxy variables stay).
-- [ ] 8. Add `LsRemote`: `probe` makes a `tempfile::TempDir`, runs `run_whole(probe_command(https_url, dir.path()), Instant::now() + Duration::from_secs(10))` (S§8.2 step 3, 10 s) and returns `classify` of the `Whole`, or the `Unknown` reason of the author's calls for an `Err` or a folder that cannot be made. Add `remote_urls`: `git::run(main_root, &["remote", "get-url", remote], deadline)`, then the same with `"--push"` before `remote`; `?` passes a `RunError` on; a `Whole` with `ok == false`, stdout that is not UTF-8 or is empty after `trim_end()` → `Err(RunError::Failed)`; return the fetch URL, then the push URL when it differs.
-- [ ] 9. Run `cargo test -p zygo-mail-sync --test public`: 18 passed. Commit both files, message `MS-8: anonymous probe and remote URLs`, trailers as in step 4.
+- [x] 6. Run `cargo test -p zygo-mail-sync --test public` and see it fail to compile (`probe_command`, `LsRemote`, `remote_urls` not found).
+- [x] 7. Add `probe_command`: `sync_git(empty_home)`, then args `-c credential.helper= -c core.askPass= ls-remote --heads <https_url>`, env `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` = the null device (`if cfg!(windows) { "NUL" } else { "/dev/null" }`), `GIT_CONFIG_NOSYSTEM=1`, `HOME=empty_home`, `GIT_TERMINAL_PROMPT=0`, `env_remove` `GIT_ASKPASS` and `SSH_ASKPASS`; nothing else (proxy variables stay).
+- [x] 8. Add `LsRemote`: `probe` makes a `tempfile::TempDir`, runs `run_whole(probe_command(https_url, dir.path()), Instant::now() + Duration::from_secs(10))` (S§8.2 step 3, 10 s) and returns `classify` of the `Whole`, or the `Unknown` reason of the author's calls for an `Err` or a folder that cannot be made. Add `remote_urls`: `git::run(main_root, &["remote", "get-url", remote], deadline)`, then the same with `"--push"` before `remote`; `?` passes a `RunError` on; a `Whole` with `ok == false`, stdout that is not UTF-8 or is empty after `trim_end()` → `Err(RunError::Failed)`; return the fetch URL, then the push URL when it differs.
+- [x] 9. Run `cargo test -p zygo-mail-sync --test public`: 18 passed. Commit both files, message `MS-8: anonymous probe and remote URLs`, trailers as in step 4.
 - [ ] 10. Append to `mod unix` in `tests/public.rs`:
   ```rust
   use sha2::{Digest, Sha256};

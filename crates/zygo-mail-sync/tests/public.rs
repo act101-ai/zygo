@@ -95,3 +95,78 @@ fn private_http_basic_access_denied() {
 fn private_gitlab_not_found_or_no_permission() {
     assert_private("remote: The project you were looking for could not be found or you don't have permission to view it.");
 }
+
+const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
+#[test]
+fn probe_command_is_anonymous() {
+    use std::ffi::OsStr;
+    let home = tempfile::TempDir::new().unwrap();
+    let c = probe_command("https://h/p", home.path());
+    let args: Vec<&OsStr> = c.get_args().collect();
+    let tail: Vec<&OsStr> = ["-c", "credential.helper=", "-c", "core.askPass=", "ls-remote", "--heads", "https://h/p"]
+        .iter().map(OsStr::new).collect();
+    assert!(args.ends_with(&tail), "{args:?}");
+    for kv in ["gc.auto=0", "maintenance.auto=false", "fetch.writeCommitGraph=false"] {
+        assert!(args.contains(&OsStr::new(kv)), "{kv}");
+    }
+    let envs: std::collections::BTreeMap<&OsStr, Option<&OsStr>> = c.get_envs().collect();
+    let e = |k: &str| envs.get(OsStr::new(k)).copied();
+    assert_eq!(e("GIT_CONFIG_GLOBAL"), Some(Some(OsStr::new(NULL))));
+    assert_eq!(e("GIT_CONFIG_SYSTEM"), Some(Some(OsStr::new(NULL))));
+    assert_eq!(e("GIT_CONFIG_NOSYSTEM"), Some(Some(OsStr::new("1"))));
+    assert_eq!(e("HOME"), Some(Some(home.path().as_os_str())));
+    assert_eq!(e("GIT_TERMINAL_PROMPT"), Some(Some(OsStr::new("0"))));
+    assert_eq!(e("GIT_ASKPASS"), Some(None));
+    assert_eq!(e("SSH_ASKPASS"), Some(None));
+    for k in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"] {
+        assert_eq!(e(k), None, "{k} stays as the environment has it");
+    }
+    assert_eq!(c.get_current_dir(), Some(home.path()));
+}
+
+#[cfg(unix)]
+mod unix {
+    use super::*;
+    use zygo_mail_sync::env::Probe;
+
+    fn far() -> std::time::Instant { std::time::Instant::now() + std::time::Duration::from_secs(3600) }
+
+    /// Runs `git <args>` in `dir` and asserts it succeeds.
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let s = std::process::Command::new("git").current_dir(dir).args(args).status().unwrap();
+        assert!(s.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn ls_remote_closed_port_is_unknown() {
+        assert!(matches!(LsRemote.probe("https://127.0.0.1:1/p"), Verdict::Unknown(_)));
+    }
+
+    #[test]
+    fn remote_urls_gives_fetch_then_push() {
+        let t = tempfile::TempDir::new().unwrap();
+        let d = t.path();
+        git(d, &["init", "-q"]);
+        git(d, &["remote", "add", "origin", "https://u:p@h/p"]);
+        git(d, &["remote", "set-url", "--push", "origin", "ssh://git@h/p"]);
+        assert_eq!(remote_urls(d, "origin", far()), Ok(vec!["https://u:p@h/p".to_string(), "ssh://git@h/p".to_string()]));
+    }
+
+    #[test]
+    fn remote_urls_gives_one_url_when_push_is_fetch() {
+        let t = tempfile::TempDir::new().unwrap();
+        let d = t.path();
+        git(d, &["init", "-q"]);
+        git(d, &["remote", "add", "origin", "https://h/p"]);
+        assert_eq!(remote_urls(d, "origin", far()), Ok(vec!["https://h/p".to_string()]));
+    }
+
+    #[test]
+    fn remote_urls_missing_remote_fails() {
+        let t = tempfile::TempDir::new().unwrap();
+        let d = t.path();
+        git(d, &["init", "-q"]);
+        assert_eq!(remote_urls(d, "nope", far()), Err(zygo_work::repo::RunError::Failed));
+    }
+}
