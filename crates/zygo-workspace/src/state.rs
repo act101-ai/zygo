@@ -191,6 +191,12 @@ pub struct Launch {
     /// sets it from the arguments of that start; absent when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub events_off: bool,
+    /// W§7.2 member.launch.job (R§9.3 effect 2): "orchestrator" or "worker"; absent for no job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    /// W§7.2 member.launch.definition = { commit, digest } (R§7.4): the pin of the approved read of the workspace files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<zygo_config::repo_def::Pin>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -310,6 +316,8 @@ impl Launch {
             config_dir: None,
             args: Vec::new(),
             events_off: false,
+            job: None,
+            definition: None,
             extra: Extra::new(),
         }
     }
