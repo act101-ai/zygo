@@ -201,7 +201,7 @@ Session text (T, SX nodes):
 | DR-8 | Session view `repo_root`, written by the launcher | DR-1 | DONE | mechanical | c806e21 88441c1 · repo_root 2/2 core, 3/3 launcher · PR #19 |
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | DONE | mechanical | 34a088d fb104db · dispositions 4 tests · PR #18 |
 | DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | DONE | judgment | 9efee7e 281dd03 · decision_transition 45/45 · PR #21 |
-| DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | TODO | judgment | — |
+| DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | PLANNED | judgment | plan 4e482f0 · PR #35 |
 | DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | TODO | judgment | — |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
@@ -353,3 +353,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-5 round 2 (0db609f 4f86964 2b072a7): Windows os error 33 fixed with a sidecar writer lock at <git common dir>/zygo-decisions.lock; lock span tested both ends; failure-path tests. Review: 4 fixed, 1 refuted (shared-repo write access, same as zygo-work). PR #29. |
 | 2026-11-24 | MS-1 planned (454e92e): 15 steps; run_whole uses the cut mode with no cut for the process group · PR #33 |
 | 2026-11-24 | MS-1 done (e7d5023 821a65f 7017674 ab87c30): run_whole/run_stream public in zygo-work; review 4 fixed (stream deadline, leader exit, panic guard, 2-entry memory), 2 refuted; floor green · PR #33 |
+| 2026-11-24 | DR-11 planned (4e482f0); contract: one persistent `--batch` process (D§9.4), `run_piped` replaces the stdin form; author's call · PR #35 |
