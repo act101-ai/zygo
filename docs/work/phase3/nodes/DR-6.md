@@ -145,7 +145,7 @@ The end, at the queue's end or at `q`: `ratified <a>, promoted <b>, overturned <
   - `run`: `tty = stdin.is_terminal() && stdout.is_terminal()`, and the `tty` doc becomes `/// Whether stdin and stdout are terminals.`
 - [x] **8. Run** `cargo test -p zygo --locked --test decision_review`. Check: all pass. Then run `cargo clippy -p zygo -p zygo-work --all-targets --locked -- -D warnings`. Check: it is clean.
 - [x] **9. Commit** the four Files with the message `DR-6: zygo decision review` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-6:code`.
-- [ ] **10. Final verification:** `cargo test -p zygo --locked --test decision_review` → all pass. `cargo test -p zygo-work --locked` → all pass. Also run `cargo test -p zygo --locked --test decision_verbs --test decision_cli --test decision_new`. Check: all pass, because `USAGE` did not change.
+- [x] **10. Final verification:** `cargo test -p zygo --locked --test decision_review` → all pass. `cargo test -p zygo-work --locked` → all pass. Also run `cargo test -p zygo --locked --test decision_verbs --test decision_cli --test decision_new`. Check: all pass, because `USAGE` did not change.
 
 ### Implementation notes
 
@@ -156,6 +156,8 @@ The end, at the queue's end or at `q`: `ratified <a>, promoted <b>, overturned <
 5. `Queue::next` has `#[allow(clippy::should_implement_trait)]`, because Produces gives the name `next`.
 6. `review_shows_records_in_dependents_order` also asserts `depends_on <id6> superseded`.
 7. Step 8 clippy: `cargo clippy -p zygo -p zygo-work --all-targets --locked -- -D warnings` fails on code outside the Files: `crates/zygo-work/src/gate/transition.rs:10` (`large_enum_variant`), `:158` (`collapsible_if`) and `crates/zygo-work/tests/decision_record.rs:297` (`sliced_string_as_bytes`), with rustc 1.98.1. The DR-6 changes do not touch these files. With those three lints allowed, clippy is clean.
+8. Step 9 trailer: the commit has `Zygo-Work: phase3:DR-6`, as the lead's brief says, not `phase3:DR-6:code`.
+9. Step 10 results: `decision_review` 15 passed. `cargo test -p zygo-work --locked`: all binaries ok, 290 passed, 20 ignored. `decision_cli` 17 passed (6 ignored), `decision_new` 12 passed (1 ignored), `decision_verbs` 25 passed.
 
 ### Coverage
 
