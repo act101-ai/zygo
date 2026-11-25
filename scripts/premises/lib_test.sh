@@ -12,12 +12,17 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 SH=${LIB_TEST_SH:-$(command -v dash || command -v sh)}
 T=$(mktemp -d)
-# PC-10: lib.sh's process scans and daemon folders see only this test's folder (N2_TEST_ROOT), so
-# the host's own Codex daemon or another session's run does not change a result. Each child script
-# sets it as a shell variable (lib.sh refuses one from the environment, and codex_record exits 1
-# while it is set). The stub daemons a case starts (pids in $T/*.dpid) are stopped on exit.
+# PC-10: each child script sources $T/seam.sh right after lib.sh (unless NOSEAM=1): it redefines
+# n2_procs to scan only processes of this test's folder and points N2_DAEMON_DIRS under it, so the
+# host's own Codex daemon or another session's run does not change a result. The environment
+# cannot do this (lib.sh assigns both at source time). The stub daemons a case starts (pids in
+# $T/*.dpid) are stopped on exit.
 trap 'for p in $(cat "$T"/*.dpid 2>/dev/null); do kill "$p" 2>/dev/null; done; chmod -R u+rwx "$T"; rm -rf "$T"' EXIT
 trap 'exit 130' INT
+cat >"$T/seam.sh" <<EOF
+N2_DAEMON_DIRS="$T/private/tmp $T/tmp"
+n2_procs() { n2_scan "\$1" "$T"; }
+EOF
 trap 'exit 143' TERM
 n=0 bad=0
 ok() { n=$((n + 1)); printf 'ok: %s\n' "$1"; }
@@ -71,7 +76,7 @@ rm "$T/nocx/codex"
 # child runs before it sources lib.sh: a runner sets N2_AGENTS itself), CP and NR.
 prep() {
   mkdir -p "$T/tmp-$1"
-  XENV="" PRE="" CP=$T/bin NR=0
+  XENV="" PRE="" CP=$T/bin NR=0 NOSEAM=0
   if [ "$2" = caller ]; then
     mkdir -p "$T/keep-$1"
     : >"$T/keep-$1/mine"
@@ -82,9 +87,9 @@ prep() {
 child() {
   {
     echo "PREMISES_DIR='$HERE'"
-    echo "N2_TEST_ROOT='$T'"
     [ -z "$PRE" ] || printf '%s\n' "$PRE"
     echo ". '$HERE/lib.sh'"
+    [ "$NOSEAM" = 1 ] || echo ". '$T/seam.sh'"
     if [ "$2" = 1 ]; then echo ". '$HERE/live.sh'"; echo "live_traps"; fi
     echo "echo \"\$N2_SCRATCH\" >'$T/$1.dir'"
     printf '%s\n' "$3"
@@ -432,8 +437,7 @@ run_versions=${3:-$2}
 codex_exe=scratch
 env_names=${CX_NAMES% }
 proxy=mock
-daemon=none
-test_root=set" ] || { why="isolation.txt: $(tr '\n' '|' <"$f" 2>/dev/null)"; return 1; }
+daemon=none" ] || { why="isolation.txt: $(tr '\n' '|' <"$f" 2>/dev/null)"; return 1; }
 }
 
 c=X1; cxprep $c own; CP=$T/cxonly; child $c 0 'exit 0'; run $c
@@ -466,9 +470,8 @@ x3() {
   grep -qxF "base_url = \"$P/v1\"" "$C" && grep -qxF 'env_key = "MOCK_API_KEY"' "$C" || { why="config.toml: $(tr '\n' '|' <"$C")"; return 1; }
   isolation_is X3 0.172.0 || return 1
   [ "$(cat "$T/fx-X3/runs/base/connect.txt")" = "example.invalid:443 refused" ] || { why="connect.txt: $(tr '\n' '|' <"$T/fx-X3/runs/base/connect.txt")"; return 1; }
-  out_has X3 "premises: codex_record: N2_TEST_ROOT is set (a lib_test.sh run, not a capture)"
 }
-res "X3 codex runs isolated, the mock as proxy and base_url, isolation and CONNECT recorded (test_root=set: exit 1)" 1 x3
+res "X3 codex runs isolated, the mock as proxy and base_url, isolation and CONNECT recorded" 0 x3
 
 c=X4; cxprep $c caller; CP=$T/cx171; child $c 0 "new_run x; start_mock; $(mockrec X4); run_codex exec hi"; run $c; killmock $c
 x4() { out_has X4 'premises: codex 0.171.9 is below the minimum 0.172.0' && no_stub_env "$T/keep-X4"; }
@@ -476,7 +479,7 @@ res "X4 a codex below the minimum does not run" 1 x4
 
 c=X5; cxprep $c caller; CP=$T/cx173
 child $c 0 "new_run x; start_mock; $(mockrec X5); run_codex exec hi; stop_mock; codex_record base; exit 0"; run $c; killmock $c
-res "X5 a later codex runs and its version is recorded (test_root=set: exit 1)" 1 isolation_is X5 0.173.0
+res "X5 a later codex runs and its version is recorded" 0 isolation_is X5 0.173.0
 
 c=X6; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X6); H='$T/elsewhere-X6'; run_codex exec hi"; run $c; killmock $c
 x6() { out_has X6 'premises: codex HOME is not under the run folder' && no_stub_env "$T/keep-X6" "$T/elsewhere-X6"; }
@@ -509,7 +512,7 @@ b = os.path.realpath(sys.argv[2])
 sys.exit(any(os.path.realpath(p) == b or os.path.realpath(p).startswith(b + "/") for p in sys.argv[1].split(":")))' \
     "$(envval "$E" PATH)" "$T/hX8/.codex" || { why="a PATH entry is under ~/.codex: $(envval "$E" PATH)"; return 1; }
 }
-res "X8 a codex under ~/.codex runs from a scratch copy of its package (test_root=set: exit 1)" 1 x8
+res "X8 a codex under ~/.codex runs from a scratch copy of its package" 0 x8
 
 c=X9; cxprep $c caller; mkdir -p "$T/hX9/.codex/scr"; XENV="CODEX_FX=$T/fx-$c HOME=$T/hX9 N2_SCRATCH=$T/hX9/.codex/scr"
 child $c 0 "new_run x; start_mock; $(mockrec X9); run_codex exec hi"; run $c; killmock $c
@@ -762,7 +765,7 @@ x29() {
   grep -qx "env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH RUST_BACKTRACE RUST_LOG TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME" "$f" ||
     { why="isolation.txt: $(tr '\n' '|' <"$f")"; return 1; }
 }
-res "X29 runs in \$(...) and in a pipeline are recorded (test_root=set: exit 1)" 1 x29
+res "X29 runs in \$(...) and in a pipeline are recorded" 0 x29
 
 # X30 (G6): a second start_mock while the first mock runs is refused; the first mock is stopped.
 c=X30; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X30); start_mock; echo second >'$T/X30.second'"; run $c
@@ -834,7 +837,7 @@ x32() {
   [ "$(cut -d' ' -f3 "$D"/* | sort -u | wc -l | tr -d ' ')" = 2 ] || { why="the two runs share a copy"; return 1; }
   grep -qx 'run_versions=0.172.0,0.172.0' "$T/fx-X32/runs/base/isolation.txt" || { why="isolation.txt: $(tr '\n' '|' <"$T/fx-X32/runs/base/isolation.txt" 2>/dev/null)"; return 1; }
 }
-res "X32 two concurrent run_codex keep both records and copies intact (test_root=set: exit 1)" 1 x32
+res "X32 two concurrent run_codex keep both records and copies intact" 0 x32
 
 # X33 (H6): the EXIT trap of a chain of three holds no earlier trap twice (the old chain copied the
 # earlier trap into both branches of an if: 4 copies of the first at the third level); the chain
@@ -855,8 +858,9 @@ res "X33 a chain of three holds no earlier trap twice" 3 x33
 # A copy of the part with lib.sh, ver.sh, scrub.py and mock_upstream.py; CODEX_FX holds a schema.
 mkdir -p "$T/B-pd/codex"
 cp "$HERE/lib.sh" "$HERE/ver.sh" "$HERE/scrub.py" "$HERE/mock_upstream.py" "$T/B-pd/"
-sed "1a\\
-N2_TEST_ROOT='$T'" "$HERE/codex/base.sh" >"$T/B-pd/codex/base.sh"
+sed "/^\\. \"\\\$PREMISES_DIR\\/lib.sh\"\$/a\\
+. '$T/seam.sh'" "$HERE/codex/base.sh" >"$T/B-pd/codex/base.sh"
+grep -qxF ". '$T/seam.sh'" "$T/B-pd/codex/base.sh" || echo "lib tests: B: the seam line was not added to base.sh"
 SCHEMA=$REPO/fixtures/codex/config.schema.json SRC=$REPO/fixtures/codex/config.schema.source.txt
 PIN=52fb96b1ff79a51bf9ce31695a4a22d4e80f57591d91bad5747b657f4e612bac
 # bprep <case>: CODEX_FX=$T/fx-<case> with the real schema and source file.
@@ -867,8 +871,8 @@ brun() {
   rc=$?
 }
 c=B1; bprep $c; brun $c
-b1() { out_has B1 "premises: codex_record: N2_TEST_ROOT is set (a lib_test.sh run, not a capture)" && isolation_is B1 0.172.0 0.172.0,0.172.0,0.172.0,0.172.0; }
-res "B1 base runs with the pinned schema (test_root=set: codex_record exits 1)" 1 b1
+b1() { out_has B1 'codex base: ok (codex 0.172.0)' && isolation_is B1 0.172.0 0.172.0,0.172.0,0.172.0,0.172.0; }
+res "B1 base passes with the pinned schema" 0 b1
 c=B2; bprep $c; printf 'x' >>"$T/fx-$c/config.schema.json"; brun $c
 b2() {
   grep -q "^premises: config.schema.json sha256 is [0-9a-f]*, not the pinned $PIN\$" "$T/B2.out" || { why="stdout: $(tr '\n' '|' <"$T/B2.out")"; return 1; }
@@ -973,7 +977,7 @@ x34() {
 }
 res "X34 a codex app-server outside the run folder: run_codex refuses and leaves it running" 1 x34
 kill "$(cat "$T/X34.dpid")" 2>/dev/null; rm -f "$T/X34.dpid"
-# X35: a socket in the per-uid daemon folder (/private/tmp and /tmp forms, under N2_TEST_ROOT).
+# X35: a socket in the per-uid daemon folder (/private/tmp and /tmp forms, under $T by the seam).
 for f in private/tmp tmp; do
   c=X35; cxprep $c caller; rm -rf "$T/private" "$T/tmp"
   D=$T/$f/codex-daemon-$(id -u)
@@ -1022,10 +1026,16 @@ x37b() { [ "$(cat "$T/X37b.status")" = 401 ] && [ -f "$T/keep-X37b/x/rec/ABORT" 
 res "X37b without MOCK_ALT_KEY the alt key aborts the mock (check_abort: exit 3)" 3 x37b
 
 # --- PC-10 review round 1 -------------------------------------------------------------------------
-# X38 (F1): an N2_TEST_ROOT from the environment is refused before any run (as N2_AGENTS is).
-c=X38; cxprep $c caller; XENV="$XENV N2_TEST_ROOT=/nonexistent-root"; child $c 0 "echo sourced >'$T/X38.ran'"; run $c
-x38() { out_has X38 "premises: N2_TEST_ROOT comes from the environment; only lib_test.sh's child scripts set it (unset N2_TEST_ROOT)" && [ ! -e "$T/X38.ran" ] || { why="${why:-the script went on}"; return 1; }; }
-res "X38 an exported N2_TEST_ROOT is refused" 1 x38
+# X38 (F1; round 2, G1): N2_TEST_ROOT is gone: one from the environment has no effect (the run
+# and codex_record pass, isolation.txt has no test_root line); exported N2_DAEMON_DIRS and a
+# n2_procs function cannot replace lib.sh's (it assigns both at source time).
+c=X38; cxprep $c caller; NOSEAM=1; XENV="$XENV N2_TEST_ROOT=/nonexistent-root N2_DAEMON_DIRS=/nonexistent-dirs"
+child $c 0 "[ \"\$N2_DAEMON_DIRS\" = '/private/tmp /tmp' ] || echo 'N2_DAEMON_DIRS kept' >'$T/X38.bad'; new_run x; echo done >'$T/X38.ran'"; run $c
+x38() { [ -e "$T/X38.ran" ] && [ ! -e "$T/X38.bad" ] || { why="the run stopped or N2_DAEMON_DIRS came from the environment"; return 1; }; }
+res "X38 exported N2_TEST_ROOT and N2_DAEMON_DIRS have no effect" 0 x38
+c=X38b; cxprep $c caller; XENV="$XENV N2_TEST_ROOT=/nonexistent-root"
+child $c 0 "new_run x; start_mock; $(mockrec X38b); run_codex exec hi; stop_mock; codex_record base"; run $c; killmock $c
+res "X38b with an exported N2_TEST_ROOT codex_record passes and writes no test_root line" 0 isolation_is X38b 0.172.0
 
 # X39 (F2, F7): a process of the run found by its working folder only: a copy elsewhere (its path
 # outside the run folder), and a bare argv[0] (found on PATH). codex_record exits 1, names each pid
@@ -1071,7 +1081,7 @@ if [ ! -d /proc/self/fd ]; then
   mkbin "$T/nolsof" 1; rm -f "$T/nolsof/lsof"
   c=X42; cxprep $c caller; CP=$T/nolsof
   child $c 0 "new_run x; start_mock; $(mockrec X42); run_codex exec hi; stop_mock; codex_record base"; run $c; killmock $c
-  res "X42 no /proc and no lsof: codex_record fails closed" 1 out_has X42 "premises: codex_record: the working folders of processes cannot be read (no /proc, no lsof)"
+  res "X42 no /proc and no lsof: run_codex fails closed" 1 out_has X42 "premises: cannot read process working folders (no /proc, no lsof); codex not started"
 fi
 
 # X43 (F6): a TUI run (plain codex, resume) without --no-daemon is refused before codex_env; with
@@ -1088,20 +1098,83 @@ for a in "--no-daemon" "resume --no-daemon --last" "resume --help" "--version"; 
   rm -rf "$T/keep-X43b"
 done
 
-# X44 (F3): a raw capture in the run folder with a <timezone> other than UTC: codex_record exits 1
-# and names the file and the value; UTC and Etc/UTC pass.
+# X44 (F3; round 2, G6): a raw capture in the run folder with a <timezone> other than UTC (plain,
+# JSON-escaped slashes, HTML entities): codex_record exits 1 before it writes the fixture and
+# names the file and the value; UTC in any case, Etc/UTC, Etc/GMT, GMT, UTC+0 and UTC+00:00 pass.
 c=X44; cxprep $c caller
-child $c 0 "new_run x; start_mock; $(mockrec X44); run_codex exec hi; stop_mock; printf '%s' '{\"input\":\"<timezone>America/Los_Angeles</timezone> <timezone>UTC</timezone> <timezone>Etc/UTC</timezone>\"}' >\"\$RUN/rec/0099.json\"; codex_record base"
+child $c 0 "new_run x; start_mock; $(mockrec X44); run_codex exec hi; stop_mock; printf '%s' '{\"input\":\"<timezone>America\/Los_Angeles<\/timezone> &lt;timezone&gt;Europe/Paris&lt;/timezone&gt; <timezone>utc</timezone> <timezone>Etc/UTC</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> <timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>\"}' >\"\$RUN/rec/0099.json\"; codex_record base"
 run $c; killmock $c
 x44() {
   out_has X44 "premises: codex_record: rec/0099.json holds <timezone>America/Los_Angeles</timezone>, not UTC" || return 1
-  [ "$(grep -c 'not UTC' "$T/X44.out")" = 1 ] || { why="stdout: $(tr '\n' '|' <"$T/X44.out")"; return 1; }
+  out_has X44 "premises: codex_record: rec/0099.json holds <timezone>Europe/Paris</timezone>, not UTC" || return 1
+  [ "$(grep -c 'not UTC' "$T/X44.out")" = 2 ] || { why="stdout: $(tr '\n' '|' <"$T/X44.out")"; return 1; }
+  [ ! -e "$T/fx-X44/runs/base" ] || { why="the fixture was written"; return 1; }
 }
-res "X44 a <timezone> other than UTC in a capture: codex_record exits 1 and names it" 1 x44
+res "X44 a <timezone> other than UTC in a capture: codex_record exits 1 before writing and names it" 1 x44
+# X44b (G6): a file in the run folder that cannot be read: codex_record fails closed before it
+# writes the fixture.
+c=X44b; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X44b); run_codex exec hi; stop_mock; echo x >\"\$RUN/rec/0098.json\"; chmod 000 \"\$RUN/rec/0098.json\"; codex_record base"
+run $c; killmock $c
+x44b() { out_has X44b "premises: codex_record: cannot read rec/0098.json (Permission denied)" && [ ! -e "$T/fx-X44b/runs/base" ] || { why="${why:-the fixture was written}"; return 1; }; }
+if [ "$(id -u)" = 0 ]; then ok "X44b skipped: root reads a file with mode 000"; else res "X44b an unreadable file in the run folder: codex_record fails closed" 1 x44b; fi
 
-# X45 (F10): a MOCK_ALT_KEY from the environment is refused by start_mock.
-c=X45; cxprep $c caller; XENV="$XENV MOCK_ALT_KEY=$ALT"; child $c 0 "new_run x; start_mock; $(mockrec X45)"; run $c; killmock $c
-res "X45 an exported MOCK_ALT_KEY is refused" 1 out_has X45 "premises: start_mock: MOCK_ALT_KEY comes from the environment; the part sets it (unexported) at run time"
+# X45 (F10; round 2, G9): a MOCK_ALT_KEY from the environment is refused when lib.sh is sourced.
+c=X45; cxprep $c caller; XENV="$XENV MOCK_ALT_KEY=$ALT"; child $c 0 "echo sourced >'$T/X45.ran'"; run $c
+x45() { out_has X45 "premises: MOCK_ALT_KEY comes from the environment; a part sets it as a shell variable at run time (unset MOCK_ALT_KEY)" && [ ! -e "$T/X45.ran" ] || { why="${why:-the script went on}"; return 1; }; }
+res "X45 an exported MOCK_ALT_KEY is refused at source time" 1 x45
+
+# --- PC-10 review round 2 -------------------------------------------------------------------------
+# X46 (G4): lib.sh's own n2_procs (no seam) in left mode: a stub process with its cwd in the run
+# folder is named and the call returns 1.
+c=X46; cxprep $c caller; NOSEAM=1
+child $c 0 "new_run x; (cd \"\$RUN\" && export N2D_READY='$T/X46.ready' && exec '$T/dmn/codex' sleeper) & echo \$! >'$T/X46.dpid'; i=0; while [ ! -f '$T/X46.ready' ] && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; n2_procs left"
+run $c
+x46() { out_has X46 "premises: codex_record: a process with its cwd in this run folder still runs (pid $(cat "$T/X46.dpid"), $T/dmn/codex); stop it (TUI runs pass --no-daemon)"; }
+res "X46 the real n2_procs left names a process with its cwd in the run folder" 1 x46
+kill "$(cat "$T/X46.dpid")" 2>/dev/null; rm -f "$T/X46.dpid"
+
+# X47 (G2): the working-folder lookup fails closed: an lsof that exits 1 with no output, and an
+# lsof that prints nothing (no working folder for the scanning shell itself).
+if [ ! -d /proc/self/fd ]; then
+  mkdir -p "$T/lsof1" "$T/lsof0"
+  printf '#!/bin/sh\nexit 1\n' >"$T/lsof1/lsof"; printf '#!/bin/sh\nexit 0\n' >"$T/lsof0/lsof"; chmod +x "$T/lsof1/lsof" "$T/lsof0/lsof"
+  c=X47; cxprep $c caller; CP=$T/lsof1:$T/bin; child $c 0 "new_run x; start_mock; $(mockrec X47); run_codex exec hi"; run $c; killmock $c
+  res "X47 an lsof that exits 1 with no output: run_codex refuses" 1 out_has X47 "premises: cannot read process working folders (lsof exit 1, no output); codex not started"
+  c=X47b; cxprep $c caller; CP=$T/lsof0:$T/bin; child $c 0 "new_run x; start_mock; $(mockrec X47b); run_codex exec hi"; run $c; killmock $c
+  x47b() { grep -qx "premises: cannot read process working folders (no working folder for this shell, pid [0-9]*); codex not started" "$T/X47b.out" && no_stub_env "$T/keep-X47b" || { why="stdout: $(tr '\n' '|' <"$T/X47b.out")"; return 1; }; }
+  res "X47b an lsof that prints nothing: run_codex refuses" 1 x47b
+fi
+
+# X48 (G5): an app-server whose program path holds a blank (argv[0] "<T>/pc10 sp/bin/codex") is
+# found by the path in its command line.
+N2D_READY=$T/X48.ready perl -e 'exec { shift } @ARGV' "$T/dmn/codex" "$T/pc10 sp/bin/codex" app-server &
+echo $! >"$T/X48.dpid"
+waitready "$T/X48.ready" || echo "lib tests: X48 stub daemon not ready"
+c=X48; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X48); run_codex exec hi"; run $c; killmock $c
+res "X48 an app-server with a blank in its path: run_codex refuses" 1 out_has X48 "premises: a codex app-server runs outside this run folder (pid $(cat "$T/X48.dpid"), $T/pc10 sp/bin/codex); codex not started; it is left running"
+kill "$(cat "$T/X48.dpid")" 2>/dev/null; rm -f "$T/X48.dpid"
+
+# X49 (G7): the subcommand is found after global options (help.txt); e is exec; --help and
+# --version count only at the subcommand position or right after the subcommand.
+for a in "-c k=v resume|resume" "--strict-config|" "-m --help|" "resume --last --help|resume" "-C /tmp --enable x resume|resume" "--model=m fork|fork"; do
+  args=${a%|*} sub=${a#*|}
+  c=X49; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X49); run_codex $args"; run $c; killmock $c
+  x49() { out_has X49 "premises: run_codex: 'codex${sub:+ $sub}' is a TUI run; pass --no-daemon" && no_stub_env "$T/keep-X49"; }
+  res "X49 run_codex '$args' is refused" 1 x49
+  rm -rf "$T/keep-X49"
+done
+for a in "-c k=v exec hi" "e hi" "--strict-config exec hi" "-c k=v --help" "-C /tmp resume --no-daemon" "--enable x app-server --help"; do
+  c=X49b; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X49b); run_codex $a >/dev/null; stop_mock"; run $c; killmock $c
+  res "X49b run_codex '$a' runs" 0 true
+  rm -rf "$T/keep-X49b"
+done
+
+# X50 (G3): codex_record called from a subshell whose working folder is in the run folder does
+# not name its own shells (the scanner's parents are skipped).
+c=X50; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X50); run_codex exec hi; stop_mock; (cd \"\$RUN\" && codex_record base)"; run $c; killmock $c
+res "X50 codex_record from a subshell in the run folder passes" 0 isolation_is X50 0.172.0
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"

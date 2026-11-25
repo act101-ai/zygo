@@ -32,8 +32,8 @@ Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <fi
   https absolute URI to the mock's own address (127.0.0.1, localhost or [::1] with the mock's
   port) is served as an origin request to its path.
   <path> (PC-10): the absolute URI's path with the whole query and the fragment dropped ("/" when
-  empty), each segment that looks like a token (sk-..., 16+ hex digits, 20+ base64 characters with
-  a digit and a letter, bot<digits>:...) as "?"; "?" for a target that is not an absolute URI, a
+  empty), each segment that looks like a token (sk-..., 16+ hex digits, 20+ token characters:
+  letters, digits, . ~ % - _ + =; bot<digits>:...) as "?"; "?" for a target that is not an absolute URI, a
   line cut off at 64 KiB, or a path with a byte outside visible ASCII. Every line ends " refused".
 
 Rule (JSON list, first match wins):
@@ -163,7 +163,7 @@ def target_line(target):
     return host, port, scheme, rest
 
 
-TOKEN_SEG = re.compile(r"sk-.*|bot[0-9]+:.*|[0-9A-Fa-f]{16,}|(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9+_=-]{20,}")
+TOKEN_SEG = re.compile(r"sk-.*|bot[0-9]+:.*|[0-9A-Fa-f]{16,}|[A-Za-z0-9._~%+=-]{20,}")
 
 
 def path_text(scheme, rest):

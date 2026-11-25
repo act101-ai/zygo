@@ -276,12 +276,16 @@ def run(m):
     # visible ASCII is ?.
     refused("M26 query", "GET http://example.invalid/a/b?token=s3cret&x&y=2#frag HTTP/1.1\r\nHost: x\r\n\r\n",
             "example.invalid:80 GET /a/b refused")
-    tokens = ["sk" + "-abcd1234", "0123456789abcdef0123", "QUJDREVGR0hJSktMTU5PUFFS", "bot" + "123456:ABCdef"]
+    # Round 2 (G8): any segment of 20 or more token characters (letters, digits, . ~ % - _ + =),
+    # as a JWT or a percent-encoded key.
+    tokens = ["sk" + "-abcd1234", "0123456789abcdef0123", "QUJDREVGR0hJSktMTU5PUFFS", "bot" + "123456:ABCdef",
+              "eyJ" + "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "sk" + "%2Dabcdefghijklmnopqrst",
+              "a.b~c_d-e%2Ff.g~h_i-j", "chat-completions-streaming"]
     for i, tok in enumerate(tokens):
         refused("M26 token %d" % i, "GET http://example.invalid/v1/%s/send HTTP/1.1\r\nHost: x\r\n\r\n" % tok,
                 "example.invalid:80 GET /v1/?/send refused")
-    refused("M26 plain segments", "GET http://example.invalid/v1/chat-completions-streaming/x1 HTTP/1.1\r\nHost: x\r\n\r\n",
-            "example.invalid:80 GET /v1/chat-completions-streaming/x1 refused")
+    refused("M26 plain segments", "GET http://example.invalid/v1/chat-completions/x1 HTTP/1.1\r\nHost: x\r\n\r\n",
+            "example.invalid:80 GET /v1/chat-completions/x1 refused")
     refused("M26 other port", "POST http://127.0.0.1:1/some/path HTTP/1.1\r\nHost: x\r\ncontent-length: 0\r\n\r\n",
             "127.0.0.1:1 POST /some/path refused")
     refused("M26 query only", "GET http://example.invalid?k=v HTTP/1.1\r\nHost: x\r\n\r\n",

@@ -126,6 +126,17 @@ CASES += [
      ["Los_Angeles"]),
     ("timezone utc kept", "<timezone>UTC</timezone> <timezone>Etc/UTC</timezone>",
      "<timezone>UTC</timezone> <timezone>Etc/UTC</timezone>", []),
+    # Round 2 (G6): the same forms as codex_record's check.
+    ("timezone with escaped slashes", "<timezone>America\\/Los_Angeles<\\/timezone>",
+     "<timezone>(omitted)<\\/timezone>", ["Los_Angeles"]),
+    ("timezone as entities", "&lt;timezone&gt;Europe/Paris&lt;/timezone&gt;",
+     "&lt;timezone&gt;(omitted)&lt;/timezone&gt;", ["Paris"]),
+    ("timezone as unicode escapes", "\\u003ctimezone\\u003eAsia/Tokyo\\u003c/timezone\\u003e",
+     "\\u003ctimezone\\u003e(omitted)\\u003c/timezone\\u003e", ["Tokyo"]),
+    ("timezone utc forms kept", "<timezone>utc</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> "
+     "<timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>",
+     "<timezone>utc</timezone> <timezone>Etc/GMT</timezone> <timezone>GMT</timezone> "
+     "<timezone>UTC+0</timezone> <timezone>UTC+00:00</timezone>", []),
 ]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
