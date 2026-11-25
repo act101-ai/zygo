@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-11-25T21:32:03.561Z",
+  "timestamp": "2026-11-25T23:53:26.621Z",
   "ordinal": 0,
   "type": "session_meta",
   "payload": {
     "account_scoped": true,
-    "session_id": "00000000-0000-4000-8000-000000000001",
-    "id": "00000000-0000-4000-8000-000000000001",
-    "timestamp": "2026-11-25T21:32:03.460Z",
+    "session_id": "uuid-0003",
+    "id": "uuid-0003",
+    "timestamp": "2026-11-25T23:53:26.517Z",
     "cwd": "/repo",
     "runtime_workspace_roots": [
       "/repo"
@@ -25,10 +25,10 @@
     },
     "history_mode": "paginated",
     "context_window": {
-      "window_id": "00000000-0000-4000-8000-000000000002"
+      "window_id": "uuid-0006"
     },
     "git": {
-      "commit_hash": "aa754ff374c8be950dd96c3119dd9b70fce041fa",
+      "commit_hash": "bed44c8cc28fc6dfdf3df5a27552d94ed40d4376",
       "branch": "main"
     }
   }

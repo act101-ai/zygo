@@ -1,5 +1,7 @@
 session_start_fired_a=yes
 session_id_equals_rollout_id=yes
+exec_thread_id_equals_rollout_id=yes
+session_start_c_equals_rollout_id=yes
 exec_resume_exit=0
 exec_resume_history=yes
 tui_resume_exit=0
