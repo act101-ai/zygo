@@ -77,6 +77,9 @@ fn unread_skips_links_folders_and_non_ulid_names() {
         "junk.json",
         "01mcc5rm000000000000000003.json",
         "01MCC5RM00000000000000000U.json",
+        "01MCC5RM00000000000000000I.json",
+        "01MCC5RM00000000000000000L.json",
+        "01MCC5RM00000000000000000O.json",
         "01MCC5RM00000000000000004.json",
         "01MCC5RM0000000000000000005.json",
         "01MCC5RM000000000000000006",
@@ -101,7 +104,14 @@ fn unread_matches_the_store_count() {
     let t = tempfile::tempdir().unwrap();
     let p = paths(&t);
     let new = inbox(&p, ID, KEY, 2);
-    std::fs::write(new.join("junk.json"), b"{}").unwrap();
+    for name in [
+        "junk.json",
+        "01MCC5RM00000000000000000I.json",
+        "01MCC5RM00000000000000000L.json",
+        "01MCC5RM00000000000000000O.json",
+    ] {
+        std::fs::write(new.join(name), b"{}").unwrap();
+    }
     std::fs::create_dir(new.join("01MCC5RM000000000000000020.json")).unwrap();
     #[cfg(unix)] // a Windows symlink needs a privilege that CI may not have
     {

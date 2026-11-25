@@ -2,7 +2,8 @@
 //!
 //! The count is the store's unread count (M§5): the regular files named `<ULID>.json` in
 //! `<workspaces_dir>/<ws id>/mail/<pane key>/new/`; a missing `new/` counts 0. The entry type comes from the
-//! directory read: no link is followed and no message file is opened, so no message text reaches the HUD (M-C2).
+//! directory read: no link inside `new/` is followed and no message file is opened, so no message text reaches the
+//! HUD (M-C2).
 //! The status-line module does not depend on `zygo-workspace`, so the pane key check and the ULID check are copies
 //! of `zygo_workspace::identity::valid_pane_key` and `zygo_workspace::mail::store::valid_id`.
 
