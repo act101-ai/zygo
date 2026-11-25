@@ -544,8 +544,9 @@ fn test_crate_dir(rel: &str) -> Result<&str, String> {
 
 /// The crate folder of a `test:` file must hold a `Cargo.toml`, else no test target compiles the file. The
 /// walk of `reach` knows only Cargo's default targets, so a manifest that changes the test targets is refused
-/// (fail closed): any `[[test]]` table, `autotests`, a `harness` or `required-features` key on a target, or
-/// `[lib] test = false`.
+/// (fail closed): any manifest key that changes which files Cargo compiles as test code. These are any
+/// `[[test]]` table, `autotests`, `autobins`, and on `[lib]` or a `[[bin]]` a `harness`, `required-features`
+/// or `path` key or `test = false`.
 fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String> {
     let manifest = format!("{crate_dir}/Cargo.toml");
     let path = root.join(&manifest);
@@ -558,20 +559,22 @@ fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String>
     if table.contains_key("test") {
         return unsupported("[[test]]");
     }
-    if table.get("package").and_then(|p| p.get("autotests")).is_some() {
-        return unsupported("autotests");
+    for key in ["autotests", "autobins"] {
+        if table.get("package").and_then(|p| p.get(key)).is_some() {
+            return unsupported(key);
+        }
     }
     let lib = table.get("lib").into_iter();
     let bins = table.get("bin").and_then(|b| b.as_array()).into_iter().flatten();
     for target in lib.chain(bins) {
-        for key in ["harness", "required-features"] {
+        for key in ["harness", "required-features", "path"] {
             if target.get(key).is_some() {
                 return unsupported(key);
             }
         }
-    }
-    if table.get("lib").and_then(|l| l.get("test")).and_then(|t| t.as_bool()) == Some(false) {
-        return unsupported("test = false");
+        if target.get("test").and_then(|t| t.as_bool()) == Some(false) {
+            return unsupported("test = false");
+        }
     }
     Ok(())
 }

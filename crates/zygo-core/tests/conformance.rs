@@ -935,6 +935,20 @@ fn check_3_cargo_target_settings_refused() {
             );
         }
     }
+    // Each manifest key that changes which files Cargo compiles as test code is refused.
+    for (extra, key) in [
+        ("[[bin]]\nname = \"b\"\ntest = false\n", "test = false"),
+        ("[lib]\npath = \"src/other.rs\"\n", "path"),
+        ("[[bin]]\nname = \"b\"\npath = \"src/b.rs\"\n", "path"),
+        ("autobins = false\n", "autobins"),
+    ] {
+        let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}{extra}"))]);
+        let e = evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err();
+        assert!(
+            e.contains("crates/demo/Cargo.toml") && e.contains("unsupported Cargo target setting") && e.contains(key),
+            "{extra}: {e}"
+        );
+    }
     // A plain `[lib]` or `[[bin]]` table is no target setting that changes the test targets.
     let d = repo_with(&[("crates/demo/Cargo.toml", &format!("{pkg}[lib]\ndoctest = false\n[[bin]]\nname = \"b\"\n"))]);
     assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").is_ok());
