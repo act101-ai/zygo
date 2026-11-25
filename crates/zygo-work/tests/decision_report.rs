@@ -104,3 +104,24 @@ const N12_TOKENS: &str = "  lead m1: 1 requests, 7 in, 1 out, 0 cache read, 0 ca
     assert_eq!(report(&t.path().join("absent.db"), Some(&top), None, None).unwrap(),
         "no work units\n\ndecision records: over 10,000 files");
 }
+#[test] fn part_record_counts_in_its_own_block_and_its_parent() { // D§9.5 bullet 1: pins the current behaviour
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path().join("repo"); let d = decisions(&top);
+    record(&d, 1, "phase-3:N12:review", "open", &[]);
+    let db = db(t.path(), &[(N12, 100), ("phase-3:N12:review", 200)]);
+    assert_eq!(report(&db, Some(&top), None, None).unwrap(), format!(concat!(
+        "{}  decisions: 1 open, 1 total\n{}\n\n",
+        "phase-3:N12:review\n  rounds: 1\n  round 1 main: check ran no, passed no; verdict none\n  guard events: none\n",
+        "  decisions: 1 open, 1 total\n\n",
+        "decision records: 1 open, 1 total, deepest chain 1"), N12_BLOCK, N12_TOKENS));
+}
+#[cfg(unix)]
+#[test] fn symlink_is_not_a_directory() { // D§6.8
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path().join("repo"); fs::create_dir_all(top.join("docs")).unwrap();
+    let real = t.path().join("real"); fs::create_dir_all(&real).unwrap();
+    record(&real, 1, N12, "open", &[]);
+    std::os::unix::fs::symlink(&real, top.join("docs/decisions")).unwrap();
+    assert_eq!(report(&t.path().join("absent.db"), Some(&top), None, None).unwrap(),
+        "no work units\n\ndecision records: docs/decisions is not a directory");
+}
