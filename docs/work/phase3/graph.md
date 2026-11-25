@@ -212,7 +212,7 @@ Session text (T, SX nodes):
 | OS-1 | Result meta records the session that stored it | DR-1 | DONE | implementation | 7d285bd f733e6c 8a21ec2 · results 50p/0f, hooks_basic 55p/0f; floor green · PR #27 |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
-| OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | IN-PROGRESS | implementation | .worktrees/phase3/OS-16-node · PR #32 |
+| OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | DONE | implementation | a09ce9f ee1a671 3686f01 bca8cad def8f45 3b71a13 701d9e1 · shaping_fixtures 22 pass; floor green · PR #32 |
 | MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
 | WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
@@ -363,3 +363,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-12 in progress: node branch `phase3/DR-12--DR-12` at 3374eea, worktree `.worktrees/phase3/DR-12-node` · PR #37 |
 | 2026-11-24 | DR-12 done: check_keep D§9.4 steps 1-9; review round 1 fixed 6 (merge paths, session line, stop problems); floor 2560/0 · PR #37 |
 | 2026-11-24 | OS-16 planned (6ba122f): 6 test-first tasks; mod common { pub mod shaping; } per test binary; scripts/fixtures/ created; ZYGO_FIXTURES_DIR redirect; scrub order run dir, HOME, user, host. PR #32. |
+| 2026-11-24 | OS-16 done: shaping fixture harness and capture script; review round 1 (10 confirmed); floor 2582 passed 0 failed · PR #32 |
