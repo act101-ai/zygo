@@ -4,7 +4,15 @@ use std::fmt;
 use zygo_core::ids::{reserved_member_name, valid_member_name};
 
 use crate::layers::{join, seg};
-use crate::schema::{parse_duration, BUILTIN_LOADOUT, Config, KeyRef, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
+use crate::profile::valid_name;
+use crate::schema::{parse_duration, parse_sync_gap, valid_mail_host, valid_sync_branch, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
+
+const MAIL_HOST_FORM: &str = "must match ^[a-z0-9][a-z0-9-]{0,31}$";
+const MAIL_SYNC_FORM: &str = "must match ^zygo/[a-z0-9][a-z0-9-]{0,31}$";
+const MAIL_WORKSPACE_NAME_FORM: &str = "must match ^[a-z0-9-]{1,32}$";
+const MAIL_SYNC_GAP_FORM: &str = "must be <n>s, <n>m or <n>h";
+/// Mail sync design S§7.1.
+const MAIL_NO_HOST: &str = "set [mail] host to turn on mail sync; zygo does not publish the system host name";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -108,10 +116,38 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
         let [compact, verbose] = STATUSLINE_STYLES;
         e("statusline.style".into(), format!("must be \"{compact}\" or \"{verbose}\""));
     }
+    if !(1..=32).contains(&cfg.limits.max_members) {
+        e("limits.max_members".into(), "must be 1-32".into());
+    }
     for (key, text) in [("keep", &cfg.mail.keep), ("wake_gap", &cfg.mail.wake_gap)] {
         if parse_duration(text).is_none() {
             e(format!("mail.{key}"), "must be <n>s, <n>m, <n>h or <n>d".into());
         }
+    }
+    if cfg.mail.host.as_deref().is_some_and(|h| !valid_mail_host(h)) {
+        e("mail.host".into(), MAIL_HOST_FORM.into());
+    }
+    if parse_sync_gap(&cfg.mail.sync_gap).is_none() {
+        e("mail.sync_gap".into(), MAIL_SYNC_GAP_FORM.into());
+    }
+    let mut sync_without_host = false;
+    for (name, ws) in &cfg.mail.workspace {
+        let path = join(&["mail", "workspace", name.as_str()]);
+        // The table key is a workspace name (workspaces design W§5); zygo-workspace depends on this crate, so the form
+        // comes from `profile::valid_name`, the same `^[a-z0-9-]{1,32}$`.
+        if !valid_name(name) {
+            e(path.clone(), MAIL_WORKSPACE_NAME_FORM.into());
+        }
+        if ws.sync.as_deref().is_some_and(|b| !valid_sync_branch(b)) {
+            e(format!("{path}.sync"), MAIL_SYNC_FORM.into());
+        }
+        if ws.host.as_deref().is_some_and(|h| !valid_mail_host(h)) {
+            e(format!("{path}.host"), MAIL_HOST_FORM.into());
+        }
+        sync_without_host |= ws.sync.is_some() && ws.host.is_none();
+    }
+    if cfg.mail.host.is_none() && sync_without_host {
+        e("mail.host".into(), MAIL_NO_HOST.into());
     }
     let code_ok = regex::Regex::new("^[a-z0-9_]{1,64}$").expect("static pattern");
     for (i, r) in cfg.schema_rule.iter().enumerate() {
@@ -157,12 +193,17 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
 
 /// The structural rules of `[workspace]` and `[loadout.<name>]` (workspaces design W§11). The rules that need the
 /// launch-argument filter or the compact-window parser are not here: this crate depends on neither (AU103).
+/// `job` only on an agent pane (`claude-code`, `opencode`) and a refused `job` takes no orchestrator slot (R§9.1).
 fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
     const CLAUDE_ONLY: &str = "only with kind = \"claude-code\"";
+    const AGENT_ONLY: &str = "only with kind = \"claude-code\" or \"opencode\"";
     let mut v = Vec::new();
     let default = cfg.workspace.default_loadout.as_str();
     if default != BUILTIN_LOADOUT && !cfg.loadout.contains_key(default) {
         v.push((Severity::Error, "workspace.default_loadout".into(), "unknown loadout".into()));
+    }
+    if cfg.workspace.pool.as_deref().is_some_and(|p| !absolute_after_tilde(p)) {
+        v.push((Severity::Error, "workspace.pool".into(), "must be absolute after ~ expansion".into()));
     }
     for (name, l) in &cfg.loadout {
         let lp = join(&["loadout", name.as_str()]);
@@ -170,6 +211,7 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
             v.push((Severity::Error, lp.clone(), "must have at least one window".into()));
         }
         let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut orchestrator = false;
         for (wi, w) in l.window.iter().enumerate() {
             let wp = format!("{lp}.window[{wi}]");
             if w.pane.is_empty() {
@@ -178,6 +220,7 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
             for (pi, p) in w.pane.iter().enumerate() {
                 let pp = format!("{wp}.pane[{pi}]");
                 let claude = p.kind == "claude-code";
+                let agent = claude || p.kind == "opencode";
                 if !LOADOUT_KINDS.contains(&p.kind.as_str()) {
                     let [claude_code, opencode, shell] = LOADOUT_KINDS;
                     v.push((Severity::Error, format!("{pp}.kind"), format!("must be \"{claude_code}\", \"{opencode}\" or \"{shell}\"")));
@@ -188,6 +231,25 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
                 if p.config_dir.is_some() && !claude {
                     v.push((Severity::Error, format!("{pp}.config_dir"), CLAUDE_ONLY.into()));
                 }
+                if let Some(job) = p.job.as_deref() {
+                    if !agent {
+                        v.push((Severity::Error, format!("{pp}.job"), AGENT_ONLY.into()));
+                    } else if !JOBS.contains(&job) {
+                        let [orch, worker] = JOBS;
+                        v.push((Severity::Error, format!("{pp}.job"), format!("must be \"{orch}\" or \"{worker}\"")));
+                    } else if job == "orchestrator" {
+                        if orchestrator {
+                            v.push((Severity::Error, format!("{pp}.job"), "only one orchestrator per loadout".into()));
+                        }
+                        orchestrator = true;
+                    }
+                }
+                if p.pool && !claude {
+                    v.push((Severity::Error, format!("{pp}.pool"), CLAUDE_ONLY.into()));
+                }
+                if p.pool && p.config_dir.is_some() {
+                    v.push((Severity::Error, format!("{pp}.pool"), "not with config_dir".into()));
+                }
                 if p.profile.as_ref().is_some_and(|name| !cfg.profile.contains_key(name)) {
                     v.push((Severity::Warning, format!("{pp}.profile"), "unknown profile".into()));
                 }
@@ -195,7 +257,7 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
                 if let Some(n) = &p.name {
                     // a shell pane has no member record (W AU53): its name has no effect
                     let msg = if p.kind == "shell" {
-                        Some("only with kind = \"claude-code\" or \"opencode\"")
+                        Some(AGENT_ONLY)
                     } else if reserved_member_name(n) {
                         Some("is reserved")
                     } else if !valid_member_name(n) {
@@ -213,6 +275,12 @@ fn loadout_violations(cfg: &Config) -> Vec<(Severity, String, String)> {
         }
     }
     v
+}
+
+/// `[workspace] pool` is absolute once `~` and `~/` expand to the home directory, as `--config-dir` expands them (R§9.5).
+/// It reads the text only: no home lookup, no file access.
+fn absolute_after_tilde(p: &str) -> bool {
+    p == "~" || p.starts_with("~/") || std::path::Path::new(p).is_absolute()
 }
 
 /// Why `pattern` does not compile, from the parser's error kind and position; `regex::Error`'s text quotes the

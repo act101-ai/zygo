@@ -44,9 +44,9 @@ fn builtin_solo_is_one_claude_code_pane_in_the_main_worktree() {
 #[test]
 fn unset_pane_fields_take_the_launch_defaults_and_set_fields_are_kept() {
     let set = LoadoutPane {
-        kind: "claude-code".into(), name: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: true,
+        kind: "claude-code".into(), name: None, job: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: true,
         passthrough: true, server: Some("https://zygo.example".into()), compact: Some("600k".into()),
-        config_dir: Some("~/.claude-work".into()), cwd: None,
+        config_dir: Some("~/.claude-work".into()), pool: false, cwd: None,
     };
     let w = LoadoutWindow { name: Some("agents".into()), layout: Some("main-vertical".into()), pane: vec![pane("claude-code"), pane("opencode"), pane("shell"), set] };
     let p = resolve(&cfg("pair", vec![("pair", vec![w])]), None, &root(), &[]).unwrap();

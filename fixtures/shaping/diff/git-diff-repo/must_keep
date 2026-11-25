@@ -1,0 +1,7 @@
+diff --git a/Cargo.toml b/Cargo.toml
+diff --git a/src/kind.rs b/src/kind.rs
+diff --git a/src/lib.rs b/src/lib.rs
+diff --git a/src/shape/mod.rs b/src/shape/mod.rs
+diff --git a/src/store.rs b/src/store.rs
+diff --git a/src/sweep.rs b/src/sweep.rs
+diff --git a/src/view.rs b/src/view.rs

@@ -5,7 +5,7 @@
 **Goal:** Build Phase 3 of zygo (workspace mail, mail sync, output shaping and saving accounting, decision records, workspace definition, session run time and session text) as the seven approved specs specify.
 **Authority:** `docs/specs/2026-11-22-workspace-mail-design.md` (M§n; P3-1), `docs/specs/2026-11-24-decision-records-design.md` (D§n; P3-8 to P3-10), `docs/specs/2026-11-24-mail-sync-design.md` (S§n; P3-2 to P3-4), `docs/specs/2026-11-24-output-shaping-design.md` (O§n; P3-5 to P3-7), `docs/specs/2026-11-24-workspace-definition-design.md` (R§n; P3-11, P3-12), `docs/specs/2026-11-24-session-runtime-design.md` (T§n in RT nodes; P3-13), `docs/specs/2026-11-24-session-text-design.md` (T§n in SX nodes; P3-14, P3-15), each approved by the operator (P3-1 on 2026-11-22, the others on 2026-11-24); base specs `docs/specs/2026-11-18-zygo-design.md` (§n), `docs/specs/2026-11-20-workspaces-design.md` (W§n), `docs/specs/2026-11-21-statusline-hud-design.md` (H§n); order of work `docs/roadmap/phase-3.md`
 **Run:** parallel=3 · worktrees=.worktrees/phase3/ · disk-per-node=—
-**Workflows:** (1) Each node gets its own review gate of up to 3 rounds; every finding ends as fixed (a commit in the node range), rejected (with a reason) or recorded (a DDR id), per `docs/specs/2026-11-24-decision-records-design.md` — operator, 2026-11-24 (`docs/roadmap/phase-3.md` "Plan of work" item 3). (2) Each node is delivered in its own pull request to the rendezvous branch `phase-3`; the controller merges each node's pull request into `phase-3` once its review gate passes and its CI is green, a node is DONE when that pull request is merged, and each dependent node branches from `phase-3` after that; `phase-3` reaches `main` only when the operator says so — operator, 2026-11-24 ("we PR after every row, including planning"; "we need a phase-3 rendezvous branch, each row merges to that branch so you can be autonomous"). (3) DDR first: every node with no other dependency depends on DR-1 (the record format), so DR-1 is the only root — operator, "P3-8 comes first in the order of work" (`docs/roadmap/phase-3.md` "Intent"). (4) The act-lite/act101 skill changes that the DDR spec names are made in their own repositories (`~/Work/act-lite`, `~/Work/act`, `~/Work/act101-marketplace`), not in this graph; no zygo release that contains DR-13's `dispositions` guard at `enforce` ships before those skill changes ship — `docs/specs/2026-11-24-decision-records-design.md` D§12.
+**Workflows:** (1) Each node gets its own review gate of up to 3 rounds; every finding ends as fixed (a commit in the node range), rejected (with a reason) or recorded (a DDR id), per `docs/specs/2026-11-24-decision-records-design.md` — operator, 2026-11-24 (`docs/roadmap/phase-3.md` "Plan of work" item 3). (2) Rows are delivered as GitHub stacked pull requests on the trunk `phase-3`: a row's branch is created on top of the open stack's top branch, so every dependency sits in the same layer or a lower one, and its pull request is one layer of that stack (`gh stack link --base phase-3 …`); the controller merges a stack, or its bottom part, into `phase-3` (`gh stack merge`) once every layer in it has passed its review gate and its CI is green; a node is DONE when its layer merges; `phase-3` reaches `main` only when the operator says so — operator, 2026-11-24 ("we PR after every row, including planning"; "we need a phase-3 rendezvous branch, each row merges to that branch so you can be autonomous") and 2026-11-25 ("in the future i prefer you use stacked prs instead of this slow process"; "graph header is fine"; GitHub "About stacked pull requests"). (3) DDR first: every node with no other dependency depends on DR-1 (the record format), so DR-1 is the only root — operator, "P3-8 comes first in the order of work" (`docs/roadmap/phase-3.md` "Intent"). (4) The act-lite/act101 skill changes that the DDR spec names are made in their own repositories (`~/Work/act-lite`, `~/Work/act`, `~/Work/act101-marketplace`), not in this graph; no zygo release that contains DR-13's `dispositions` guard at `enforce` ships before those skill changes ship — `docs/specs/2026-11-24-decision-records-design.md` D§12.
 
 To continue in any session: "resume the work in `docs/work/phase3/graph.md`".
 
@@ -191,65 +191,48 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | DONE | implementation | a8add6a 3b33343 957db39 · live selftest ok (76); floor green · PR #26 |
-| OS-1 | Result meta records the session that stored it | DR-1 | DONE | implementation | 7d285bd f733e6c 8a21ec2 · results 50p/0f, hooks_basic 55p/0f; floor green · PR #27 |
-| OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
-| OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
-| OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | DONE | implementation | a09ce9f ee1a671 3686f01 bca8cad def8f45 3b71a13 701d9e1 · shaping_fixtures 22 pass; floor green · PR #32 |
-| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
-| MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
-| WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
-| WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
-| RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | DONE | implementation | 7efa8d9 441e170 ff23c48 · first_started_at 11 tests, 3 crates pass; floor green · PR #38 |
-| RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
-| SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | DONE | implementation | 6a979de 346fa1a · subagent_text 10 pass (9 subagent_start, 1 main_compact); floor green · PR #39 |
-| SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | DONE | implementation | 530b14d 08c2e37 b669a74 · reinject pre_compact 10 pass; floor green · PR #41 |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | DONE | mechanical | 5bcdc27 · check-premises exit 0; floor green (ws 2592/0) · PR #44 |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
-| MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | DONE | implementation | e1dd701 · git_builder 13p; floor green · PR #48 |
-| OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | DONE | judgment | 7a9afc1 · store 43p, usage_doctor 37p; floor green · PR #49 |
-| OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | DONE | judgment | 3ae61ee · shape_command 18 passed; floor green · PR #53 |
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | DONE | implementation | b834d51 · results 54p/0f; floor green · PR #45 |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | DONE | implementation | 40f864d 2311dca d0cfe8a · acceptance 22p/0f, 5 cases; floor green (ws 2626p/0f) · PR #52 |
-| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
+| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | DONE | implementation | 0c6335f1 · shaping_fixtures 22 passed; floor green · PR #55 |
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | DONE | implementation | 821a1bb1 · shaping_fixtures 22 passed; floor green · PR #56 |
-| OS-20 | Capture pytest fixtures from a scratch project | OS-16 | TODO | implementation | — |
+| OS-20 | Capture pytest fixtures from a scratch project | OS-16 | DONE | implementation | bb01285a · shaping_fixtures 22 passed; floor green · PR #57 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
-| WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
+| OS-22 | Premise script for PO1 to PO4 | OS-16 | DONE | implementation | 5e4cd273 · bash -n ok, lib.sh 2 · PR #60 |
+| WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | DONE | judgment | adb3069b · cargo test -p zygo-config --test repo_def_shape 12 passed; floor green · PR #72 |
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | DONE | implementation | 863b6b05 · loadout 10/state 41/snapshot 30 passed · PR #62 |
-| MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
+| MS-7 | Secret pass on one message | MS-2 | DONE | implementation | abe0ce4b · secret 21 passed · PR #61 |
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
-| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
+| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | DONE | judgment | 6bb2ad8b · savings 17/17; floor green · PR #71 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
+| OS-40 | Command parse: more wrappers and file printers, eval, `$(<f)`, bare shell stage | OS-11 | DONE | implementation | 5ba7eb02 · shape_command 43 passed · PR #59 |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | WD-3 | Workspace approvals in `approvals.toml` | WD-2 | TODO | judgment | — |
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | TODO | implementation | — |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
 | ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6 | TODO | implementation | — |
-| MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | TODO | judgment | — |
+| MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | TODO | implementation | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | TODO | judgment | — |
-| WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | TODO | judgment | — |
+| WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | DONE | judgment | 0d97709b · pool 16/16; floor green · PR #70 |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | judgment | — |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | TODO | implementation | — |
-| MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | TODO | implementation | — |
-| MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | TODO | judgment | — |
-| MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | TODO | judgment | — |
+| MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
+| MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | DONE | judgment | 8d5f951f · public 36/36; floor green · PR #73 |
+| MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | DONE | judgment | 2384d84a · branch 36/36; floor green · PR #74 |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | WD-6 | The repository loadout from `[members]`, with the default set | WD-4, WD-5 | TODO | implementation | — |
@@ -317,8 +300,10 @@ Session text (T, SX nodes):
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | TODO | implementation | — |
-| WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | TODO | implementation | — |
-| WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | TODO | mechanical | — |
+| WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
+| WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
+| DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | TODO | implementation | — |
+| MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | TODO | implementation | — |
 
 ## Log
 
@@ -388,4 +373,22 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-6 DONE: the OpenCode plugin transform calls `--event subagent` for non-main `zygo/` models (T§7.2 item 1); review round 1 fixed 4 (anthropic case, per-call stdin, malformed model, missing output.system); floor: workspace 2652 passed, 0 failed · PR #54 |
 | 2026-11-24 | OS-19 done: 4 libtest cases (passing 120, failing-nocapture, signal-crash SIGABRT, compile-error); failing cases labeled opencode; O§8.2/O§8.3 item 4: a case with no runner summary is checked against the none row (author's call); PR #56 |
 | 2026-11-24 | FX-6, WD-23, WD-24 added: FX-6 dead-port test helpers (CI run 45557591675); WD-23 config check refuses job on a non-agent pane (operator, R§9.1); WD-24 job through hide_secrets (W§12). Files-overlap edges: ML-7 on FX-6, WD-16 on WD-24, WD-23 on MS-3. |
+| 2026-11-24 | OS-18 DONE: diff, json and log fixtures; operator ratified the O§8.1 diff must_keep rule; review round 1 fixed 6 findings; floor: workspace 2652 passed, 0 failed · PR #55 |
+| 2026-11-24 | OS-20 done: 3 pytest cases (passing 12 files, failing-verbose -v 2 failed, collection-error with --continue-on-collection-errors); review round 1 fixed floor-reachability and must_keep; PR #57 |
+| 2026-11-24 | WD-5 done: config keys job, pool, [workspace] pool, [limits] max_members (default 8); review round fixed .zygo.toml max_members invalidating the file (repo_file::from_text); floor green (ws 2681 passed); PR #58. |
+| 2026-11-24 | OS-40 done; O§7.1/O§7.2 command forms widened (pipeline newline, backtick/`0<`/`$(<f)`, `eval --`, `builtin` wrapper, `-c` option scan, redirect-only file printer); review: 6 confirmed fixed, 1 kept as safe; floor green (ws 2695 passed) |
+| 2026-11-24 | OS-22 done; scripts/premises/live-shaping.sh po1-po4 (mock upstream, scrub, stand-in MCP for PO4); publishes only the five OS-23..26 evidence files; review: 2 confirmed + 4 plausible fixed; not run live (operator only); floor green (ws 2670) |
+| 2026-11-24 | WD-24 DONE — hide_secrets scrubs pane job; two older field tests now cover job and name; W§12 scrub list names pane job and name (author's call); review F1, F2 fixed, F3 (loadout name is a table key, outside WD-24) dropped; floor 2681p 0f. |
+| 2026-11-24 | MS-5 DONE: mail-sync state files (paths, identity, state.json, imported log, marks); fix round 1 closed 9 review findings; floor green (ws 2724/0). PR #69. |
+| 2026-11-24 | MS-3 done: mail sync config keys (host, sync_gap, mail.workspace.<n>.sync/remote), sync_for, form checks incl. W§5 workspace-name keys; review: 4 fixed, 2 dropped (unknown keys: crate norm; remote: pass-time per S§11, carried to MS-10). PR #68. |
+| 2026-11-24 | RT-2 done: run time on the HUD and the status runtime: line (ulid_secs, T§2.2 start rule, run_time_text); review: 3 fixed (read keeps phase when members does not parse; rule-5 pending test; plan ignore count). PR #67. |
+| 2026-11-25 | MS-8 DONE — public-repository check with 1 h cache (S§8.2); review round 1 fixed 8 findings (cache tests, esc of server text, `--` before remote, test env); floor green ws 2773/0. |
+| 2026-11-24 | WD-9 DONE: pool listing, assignment and shared lines; shared ~ rule and pool::home used by --config-dir; fix round 1 closed 6 review findings; floor green (ws 2722/0). PR #70. |
+| 2026-11-24 | OS-7 done: savings read (crates/zygo-usage/src/savings.rs) with 17 tests; fix round 1 closed 4 findings; floor green, ws 2723 passed, 0 failed · PR #71 |
+| 2026-11-25 | WD-2 done — repo_def shapes, allow-list validation, digest; review round 1 fixed OS-independent cwd check and added pool/layout tests; 12 tests; floor green (2736 passed). |
+| 2026-11-25 | WD-23 DONE — config check refuses job on a non-agent pane (R§9.1 rule 5, operator 2026-11-24); review found no defect; carry-forward: the launch-time job node must apply the same rule; floor green ws 2740/0. |
+| 2026-11-25 | MS-4 DONE — address grammar and ULID file form; review round 1 reserved `zygo` in zygo-core RESERVED_MEMBER_NAMES (M§6, S§7.2; scope widened to zygo-core ids.rs and two tests); floor green ws 2766/0. |
+| 2026-11-25 | MS-10 DONE — side-branch plumbing (fetch, bootstrap, commit, push); review round 1 fixed 7 (--no-tags, --force-remove, push.gpgSign off, stale worktree re-add without prune per S§6.3, local-only no-branch match, 0700 temp dir); floor green ws 2789/0. |
+| 2026-11-25 | DR-7 DONE — `zygo work report` record lines (unit `decisions:` line, trailing `decision records:` line; CLI only, slash form reads none per D-C2); review round 1 fixed 3 (one `git rev-parse --show-toplevel` call, args parsed before lookup, wiring tests); floor green ws 2819/0. |
+| 2026-11-24 | MS-7 done; zygo_mail_sync::secret::check/check_with (Clear, Finding, CouldNotRun); scans every key and string leaf; block+redact ids unioned; finding on any match count; review: 3 confirmed + 3 fixed; floor green (ws 2691). |
 | 2026-11-24 | ML-3 DONE: member/pane `name` fields in zygo-workspace (plan, member record, `panes[]`); node head 863b6b05; floor green: workspace 2682 passed, 0 failed · PR #62 |
