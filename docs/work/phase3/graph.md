@@ -225,7 +225,7 @@ Session text (T, SX nodes):
 | SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | DONE | mechanical | 5bcdc27 · check-premises exit 0; floor green (ws 2592/0) · PR #44 |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | TODO | implementation | — |
-| OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | IN-PROGRESS | judgment | .worktrees/phase3/OS-2-node · PR #49 |
+| OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | DONE | judgment | 7a9afc1 · store 43p, usage_doctor 37p; floor green · PR #49 |
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | TODO | implementation | — |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
@@ -375,3 +375,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-8 DONE: P3-15 section copied into docs/live-checks.md from T§12.2; round 1 fixed 4 findings (Results row, mktemp, step 7 ids, backup delete), T§12.2 rewritten (author's call) · PR #44 |
 | 2026-11-24 | FX-3 added: CI BrokenPipe flake on PRs #41 and #42 (statusline_without_a_session_dir_prints_nothing); the hook exits before it reads stdin (H§6.8, AU24, PH11), so the test write gets EPIPE; fix in test helpers (common::feed_stdin); tests only; 9 steps |
 | 2026-11-24 | FX-3 DONE: `feed_stdin` tolerates BrokenPipe in three zygo test helpers; the new test fails first, with no clock; review 0 confirmed (hang-on-regression trade-off kept under focus 75); floor green (ws 2593/0) · PR #46 |
+| 2026-11-24 | OS-2 DONE: `readbacks` table; three `trims` columns added on the full open; seven-column insert fallback; round 1 fixed 2 (`table_xinfo`, `open` doc), O§6.5 item 3 rewritten (author's call); floor green · PR #49 |

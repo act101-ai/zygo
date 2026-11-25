@@ -123,6 +123,9 @@ pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::
         kind: stored.kind.as_str().into(),
         stored_bytes: stored.bytes,
         view_bytes: v.len() as u64,
+        result_id: None,
+        command: None,
+        shaper: None,
     };
     // C6: a bookkeeping failure never costs the agent its view.
     if zygo_usage::Store::open(usage_db).and_then(|u| u.insert_trim(&row)).is_err() {

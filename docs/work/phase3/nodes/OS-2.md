@@ -42,7 +42,7 @@ Consumes: — (no other node's output).
 
 Cycle A: the `readbacks` table, the row types, the ten-column insert, prune.
 
-- [ ] **A1 — test helpers.** In `crates/zygo-usage/tests/store.rs`:
+- [x] **A1 — test helpers.** In `crates/zygo-usage/tests/store.rs`:
   - In the helper `trim` (`:29-31`) add `result_id: None, command: None, shaper: None` to the literal.
   - After the helper `unit` (`:32-34`) add:
 
@@ -154,12 +154,12 @@ Cycle A: the `readbacks` table, the row types, the ten-column insert, prune.
 
   Check: `grep -c readbacks` on the const body is 0, and `git show 97d8767:crates/zygo-usage/src/schema.rs | sed -n 6,77p` equals the const body (compare by eye or with a one-off `diff`).
 
-- [ ] **A2 — update the three pinned tests.** In `tests/store.rs`:
+- [x] **A2 — update the three pinned tests.** In `tests/store.rs`:
   - `schema_creates_three_tables_in_wal_mode` (`:44`): `assert_eq!(names, ["readbacks", "requests", "sync_pending", "trims", "upstream_errors", "work_units"]);` (keep the comment, add `O§6.5: readbacks`).
   - `never_list_columns_are_exact` (`:54`): `assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);`.
   - `upstream_errors_table_is_created_on_an_existing_database` (`:525`): `assert_eq!(tables(&t.db()), ["readbacks", "requests", "sync_pending", "trims", "work_units"]);`.
 
-- [ ] **A3 — failing tests, cycle A.** Append to `tests/store.rs` after the last test, under a `// ---- OS-2: readbacks and the additive trims columns (O§6.5) ----` line:
+- [x] **A3 — failing tests, cycle A.** Append to `tests/store.rs` after the last test, under a `// ---- OS-2: readbacks and the additive trims columns (O§6.5) ----` line:
 
   ```rust
   #[test] // O§6.5 item 2: the table, its NOT NULL columns, its two indexes
@@ -225,9 +225,9 @@ Cycle A: the `readbacks` table, the row types, the ten-column insert, prune.
   }
   ```
 
-- [ ] **A4 — run and see it fail.** `cargo test -p zygo-usage --test store` → does not compile: `ReadbackRow` not found, no field `result_id`/`command`/`shaper` on `TrimRow`, no method `insert_readback`.
+- [x] **A4 — run and see it fail.** `cargo test -p zygo-usage --test store` → does not compile: `ReadbackRow` not found, no field `result_id`/`command`/`shaper` on `TrimRow`, no method `insert_readback`.
 
-- [ ] **A5 — schema.** In `crates/zygo-usage/src/schema.rs`:
+- [x] **A5 — schema.** In `crates/zygo-usage/src/schema.rs`:
   - `trims` (`:35-43`): after `view_bytes INTEGER NOT NULL` add `,` and the lines `    result_id TEXT,` / `    command TEXT,` / `    shaper TEXT` (nullable, in this order).
   - After `CREATE INDEX IF NOT EXISTS upstream_errors_ts ON upstream_errors(ts);` (`:77`), before the closing `";`, add the O§6.5 item 2 text exactly (SQL comments included):
 
@@ -265,21 +265,21 @@ Cycle A: the `readbacks` table, the row types, the ten-column insert, prune.
     }
     ```
 
-- [ ] **A6 — store: ten-column insert, `insert_readback`, prune.** In `crates/zygo-usage/src/store.rs`:
+- [x] **A6 — store: ten-column insert, `insert_readback`, prune.** In `crates/zygo-usage/src/store.rs`:
   - Replace the body of `insert_trim` (`:232-245`) with the ten-column insert (the fallback comes in B4):
     `INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes, result_id, command, shaper) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)` with `t.ts, t.session, t.agent_id, t.tool, t.kind, i64::try_from(t.stored_bytes)?, i64::try_from(t.view_bytes)?, t.result_id, t.command, t.shaper` (via `rusqlite::params!`, as `insert_work_unit` does). Keep the statement text in a `const INSERT_TRIM: &str` next to `INSERT_REQUEST`.
   - After `insert_trim` add `pub fn insert_readback(&self, r: &ReadbackRow) -> Result<()>`: `prepare_cached("INSERT INTO readbacks (ts, session, read_in, result_id, tool, bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")` with `r.ts, r.session, r.read_in, r.result_id, r.tool, i64::try_from(r.bytes)?`. Doc: `/// One `readbacks` row (O§6.4). The MCP server writes it through the bounded open (OS-5).` No check of `tool`'s value (the spec sets none).
   - `prune` (`:272-284`): after the `trims` delete add `tx.execute("DELETE FROM readbacks WHERE ts < ?1", [cutoff])?;`. `replace_requests` stays as it is (O§6.5 item 6).
 
-- [ ] **A7 — the other `TrimRow` literals.** Add `result_id: None, command: None, shaper: None` to: `crates/zygo-usage/src/query.rs:226-227` (lib test `bytes_trimmed_runs_the_indexed_statement`); `crates/zygo/tests/usage_doctor.rs:37` (helper `trim`); `crates/zygo-hooks/src/trim.rs:118-126` (the hook's row; OS-4 and OS-28 fill them, O§7.9). Check: `cargo check --workspace --all-targets --locked` compiles with no error.
+- [x] **A7 — the other `TrimRow` literals.** Add `result_id: None, command: None, shaper: None` to: `crates/zygo-usage/src/query.rs:226-227` (lib test `bytes_trimmed_runs_the_indexed_statement`); `crates/zygo/tests/usage_doctor.rs:37` (helper `trim`); `crates/zygo-hooks/src/trim.rs:118-126` (the hook's row; OS-4 and OS-28 fill them, O§7.9). Check: `cargo check --workspace --all-targets --locked` compiles with no error.
 
-- [ ] **A8 — run and see it pass.** `cargo test -p zygo-usage --test store -- readbacks_schema` → the 5 cycle-A tests pass; `cargo test -p zygo-usage --test store` → all pass (the three updated tests included); `cargo test -p zygo-usage --lib` → passes.
+- [x] **A8 — run and see it pass.** `cargo test -p zygo-usage --test store -- readbacks_schema` → the 5 cycle-A tests pass; `cargo test -p zygo-usage --test store` → all pass (the three updated tests included); `cargo test -p zygo-usage --lib` → passes.
 
-- [ ] **A9 — commit.** `git add crates/zygo-usage/src/schema.rs crates/zygo-usage/src/store.rs crates/zygo-usage/src/query.rs crates/zygo-usage/tests/store.rs crates/zygo/tests/usage_doctor.rs crates/zygo-hooks/src/trim.rs` and commit `OS-2: readbacks table, ReadbackRow, ten-column trims insert, prune of readbacks` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-2`, each on its own line. No Claude attribution.
+- [x] **A9 — commit.** `git add crates/zygo-usage/src/schema.rs crates/zygo-usage/src/store.rs crates/zygo-usage/src/query.rs crates/zygo-usage/tests/store.rs crates/zygo/tests/usage_doctor.rs crates/zygo-hooks/src/trim.rs` and commit `OS-2: readbacks table, ReadbackRow, ten-column trims insert, prune of readbacks` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:OS-2`, each on its own line. No Claude attribution.
 
 Cycle B: the column check on old databases, the seam, the seven-column fallback.
 
-- [ ] **B1 — failing tests, cycle B.** Append to `tests/store.rs`:
+- [x] **B1 — failing tests, cycle B.** Append to `tests/store.rs`:
 
   ```rust
   #[test] // O§6.5 item 3; O§16 item 15 "a full open then adds the three columns"; old rows read the new columns as null
@@ -352,9 +352,9 @@ Cycle B: the column check on old databases, the seam, the seven-column fallback.
   }
   ```
 
-- [ ] **B2 — run and see it fail.** `cargo test -p zygo-usage --test store -- readbacks_schema` → does not compile: no function `open_with_column_check`. (With a stub that calls `open`, `…old_database_gets_three_columns…` fails on `TRIM_TEN` and `…seven_column_database…` fails with `table trims has no column named result_id`.)
+- [x] **B2 — run and see it fail.** `cargo test -p zygo-usage --test store -- readbacks_schema` → does not compile: no function `open_with_column_check`. (With a stub that calls `open`, `…old_database_gets_three_columns…` fails on `TRIM_TEN` and `…seven_column_database…` fails with `table trims has no column named result_id`.)
 
-- [ ] **B3 — store: the column check and the seam.** In `crates/zygo-usage/src/store.rs`:
+- [x] **B3 — store: the column check and the seam.** In `crates/zygo-usage/src/store.rs`:
   - Add near `SCHEMA_VERSION`:
 
     ```rust
@@ -393,7 +393,7 @@ Cycle B: the column check on old databases, the seam, the seven-column fallback.
   - `pub fn open(path: &Path) -> Result<Store>`: `let checked = TRIM_COLUMNS_CHECKED.lock().unwrap_or_else(|e| e.into_inner()).contains(path); Store::open_full(path, if checked { None } else { Some(&[] as &[&str]) })`. Doc: `/// The full open: creates the file and the schema, and adds each missing `trims` column one time per process for this path (O§6.5 item 3). The launcher and the CLI use it; the hook and the MCP server use `open_bounded` (OS-3).`
   - `#[doc(hidden)] pub fn open_with_column_check(path: &Path, report_missing: &[&str]) -> Result<Store>`: `Store::open_full(path, Some(report_missing))`. Doc: `/// `open`, with the column check always run and each name of `report_missing` treated as missing (O§16 item 15).`
 
-- [ ] **B4 — store: the seven-column fallback.** In `insert_trim`, convert the byte counts first (`let (stored, view) = (i64::try_from(t.stored_bytes)?, i64::try_from(t.view_bytes)?);`), then:
+- [x] **B4 — store: the seven-column fallback.** In `insert_trim`, convert the byte counts first (`let (stored, view) = (i64::try_from(t.stored_bytes)?, i64::try_from(t.view_bytes)?);`), then:
 
   ```rust
   match self.conn.prepare_cached(INSERT_TRIM) {
@@ -408,14 +408,19 @@ Cycle B: the column check on old databases, the seam, the seven-column fallback.
   ```
   with `const INSERT_TRIM_SEVEN: &str = "INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";` next to `INSERT_TRIM`. Doc on `insert_trim`: `/// Ten columns; on a table without the new columns, the seven old ones (O§6.5 item 4).`
 
-- [ ] **B5 — run and see it pass.** `cargo test -p zygo-usage --test store -- readbacks_schema` → 11 tests pass. Mutation spot checks (revert each after): (a) make the fallback guard `Err(_)` → `readbacks_schema_insert_trim_fallback_keeps_other_errors` fails, and (b) drop the `duplicate column name` arm (return every `ALTER` error) → `readbacks_schema_injected_missing_column_is_success` fails.
+- [x] **B5 — run and see it pass.** `cargo test -p zygo-usage --test store -- readbacks_schema` → 11 tests pass. Mutation spot checks (revert each after): (a) make the fallback guard `Err(_)` → `readbacks_schema_insert_trim_fallback_keeps_other_errors` fails, and (b) drop the `duplicate column name` arm (return every `ALTER` error) → `readbacks_schema_injected_missing_column_is_success` fails.
 
-- [ ] **B6 — commit.** Same six paths as A9; message `OS-2: add missing trims columns on the full open; seven-column insert fallback` with the two trailers, each on its own line. No Claude attribution.
+- [x] **B6 — commit.** Same six paths as A9; message `OS-2: add missing trims columns on the full open; seven-column insert fallback` with the two trailers, each on its own line. No Claude attribution.
 
 Verification.
 
-- [ ] **V1 — Acceptance.** Run exactly:
+- [x] **V1 — Acceptance.** Run exactly:
   `test "$(cargo test -q -p zygo-usage --test store -- readbacks_schema --list 2>/dev/null | grep -c ': test$')" -ge 7 && cargo test -p zygo-usage --test store && cargo test -p zygo-usage --lib && cargo test -p zygo --test usage_doctor`
   Pass means: the count prints 11 (at least 7; it was 0 before this node), and the four test runs each end with `test result: ok` and 0 failed. A count below 7 fails before any run.
-- [ ] **V2 — floor, affected crates.** `cargo test --locked -p zygo-usage -p zygo-hooks -p zygo-launch -p zygo-work -p zygo-proxy -p zygo-mcp` and `cargo test --locked -p zygo --test usage_doctor --test compact_cmd --test hook_trim` → all pass (the other `TrimRow` users and every full-open caller). Then `cargo test --workspace --locked --no-fail-fast` → no new failure against `origin/phase-3`. Never run the zygo binary with `ZYGO_SESSION_DIR` set (`env -u ZYGO_SESSION_DIR` if needed).
-- [ ] **V3 — scope.** `git diff --name-only origin/phase-3...HEAD` lists only the six **Files** of this node plus this node file.
+- [x] **V2 — floor, affected crates.** `cargo test --locked -p zygo-usage -p zygo-hooks -p zygo-launch -p zygo-work -p zygo-proxy -p zygo-mcp` and `cargo test --locked -p zygo --test usage_doctor --test compact_cmd --test hook_trim` → all pass (the other `TrimRow` users and every full-open caller). Then `cargo test --workspace --locked --no-fail-fast` → no new failure against `origin/phase-3`. Never run the zygo binary with `ZYGO_SESSION_DIR` set (`env -u ZYGO_SESSION_DIR` if needed).
+- [x] **V3 — scope.** `git diff --name-only origin/phase-3...HEAD` lists only the six **Files** of this node plus this node file.
+
+### Review round 1
+
+- [x] **F3 — the column check reads `PRAGMA table_xinfo(trims)`.** `PRAGMA table_info` does not list generated (hidden) columns, so a generated `shaper` counted as missing. Tests first: `readbacks_schema_generated_column_counts_as_present` (`tests/store.rs`: `open` on a ten-column `trims` table with `shaper` generated keeps `PRAGMA schema_version`) and `readbacks_schema_missing_columns_see_generated_column` (`store.rs` unit test of `missing_trim_columns`, split out of `add_trim_columns` with no change in behavior). Only the unit test fails before the fix: SQLite rejects the duplicate `ALTER` at prepare, so `schema_version` does not change in either case.
+- [x] **F2-doc — the doc comment on `Store::open`** names no function that does not exist yet.
