@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | DONE | implementation | 2f2c20a6 · acc: counts 2/1/7/5, 721 passed 0 failed; floor green · PR #67 |
 | SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | DONE | implementation | 6a979de 346fa1a · subagent_text 10 pass (9 subagent_start, 1 main_compact); floor green · PR #39 |
 | SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | DONE | implementation | 530b14d 08c2e37 b669a74 · reinject pre_compact 10 pass; floor green · PR #41 |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
@@ -217,7 +216,7 @@ Session text (T, SX nodes):
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
 | MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
-| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
+| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | DONE | judgment | 6bb2ad8b · savings 17/17; floor green · PR #71 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-40 | Command parse: more wrappers and file printers, eval, `$(<f)`, bare shell stage | OS-11 | DONE | implementation | 5ba7eb02 · shape_command 43 passed · PR #59 |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
@@ -392,3 +391,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | RT-2 done: run time on the HUD and the status runtime: line (ulid_secs, T§2.2 start rule, run_time_text); review: 3 fixed (read keeps phase when members does not parse; rule-5 pending test; plan ignore count). PR #67. |
 | 2026-11-25 | MS-8 DONE — public-repository check with 1 h cache (S§8.2); review round 1 fixed 8 findings (cache tests, esc of server text, `--` before remote, test env); floor green ws 2773/0. |
 | 2026-11-24 | WD-9 DONE: pool listing, assignment and shared lines; shared ~ rule and pool::home used by --config-dir; fix round 1 closed 6 review findings; floor green (ws 2722/0). PR #70. |
+| 2026-11-24 | OS-7 done: savings read (crates/zygo-usage/src/savings.rs) with 17 tests; fix round 1 closed 4 findings; floor green, ws 2723 passed, 0 failed · PR #71 |

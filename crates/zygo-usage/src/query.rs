@@ -40,7 +40,7 @@ pub struct Summary {
 }
 
 /// Reads a stored INTEGER as u64; a negative value is a conversion error, not a wrap.
-fn u64_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<u64> {
+pub(crate) fn u64_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<u64> {
     let v: i64 = r.get(i)?;
     u64::try_from(v).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(i, rusqlite::types::Type::Integer, Box::new(e))
