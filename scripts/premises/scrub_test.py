@@ -83,6 +83,21 @@ CASES += [
      '{"session_id":"00000000-0000-4000-8000-000000000001","turn_id":"00000000-0000-4000-8000-000000000002"}',
      [U1, U2]),
 ]
+# PC-10: the host OS name, version and architecture in a user agent -> "(os omitted)".
+CASES += [
+    ("user agent, macos", "codex_exec/0.172.0 (Mac OS 27.2.1; arm64) xterm-256color",
+     "codex_exec/0.172.0 (os omitted) xterm-256color", ["27.2.1", "arm64"]),
+    ("user agent, linux", "codex_cli_rs/0.172.0 (Linux 6.8.0-49-generic; x86_64) dumb",
+     "codex_cli_rs/0.172.0 (os omitted) dumb", ["6.8.0", "x86_64"]),
+    ("user agent, ubuntu", "codex_exec/0.172.0 (Ubuntu 24.04; aarch64) xterm",
+     "codex_exec/0.172.0 (os omitted) xterm", ["24.04", "aarch64"]),
+    ("user agent, windows", "codex_exec/0.172.0 (Windows 10.0.26100; x86_64) unknown",
+     "codex_exec/0.172.0 (os omitted) unknown", ["26100", "x86_64"]),
+    ("user agent, windows without arch", "codex_exec/0.172.0 (Windows 10.0.26100)",
+     "codex_exec/0.172.0 (os omitted)", ["26100"]),
+    ("a parenthesis that is not a user agent", "see note (Mac OS 27.2.1; arm64) and x/y (b 2)",
+     "see note (Mac OS 27.2.1; arm64) and x/y (b 2)", []),
+]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -156,11 +171,26 @@ def main():
         want = "/home/user/.codex/sessions/2026/11/25/x.jsonl /tmp/run/cx/config.toml\n"
         if got != want:
             bad.append("codex home paths: got %r" % (got,))
+        # PC-10: a TMPDIR that ends in "/" gives run folders like .../T//tmp.X; such paths map to
+        # /tmp/run too (with and without /private), not to /tmp/x.
+        with tempfile.TemporaryDirectory() as run:
+            rr = os.path.realpath(run)
+            head, tail = os.path.split(rr)
+            dbl = head + "//" + tail
+            alt = dbl[len("/private"):] if dbl.startswith("/private/") else dbl
+            t = os.path.join(d, "dbl.txt")
+            with open(t, "w") as f:
+                f.write(dbl + "/tmp/x.txt " + alt + "/home/.codex/a " + alt + "//repo/b\n")
+            got = subprocess.run([sys.executable, "-I", SCRUB, dbl, t], check=True,
+                                 capture_output=True, text=True).stdout
+        want = "/tmp/run/tmp/x.txt /home/user/.codex/a /repo/b\n"
+        if got != want:
+            bad.append("double-slash run paths: got %r" % (got,))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 3))
+    print("scrub tests: ok (%d)" % (len(CASES) + 4))
 
 
 main()

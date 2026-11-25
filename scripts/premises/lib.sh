@@ -102,12 +102,15 @@ PY
 
 # start_mock [rules.json]: start the mock for this run; sets MOCK_URL and MOCK_PID. Refused (exit 1)
 # while the mock of an earlier start_mock still runs: stop_mock first.
+# MOCK_ALT_KEY (PC-10, optional): a second credential the mock accepts like the dummy key; each
+# request record then says which one it carried ("credential": "primary" or "alt", never a
+# value). A part sets it, built at run time (never a literal in the repo), before start_mock.
 start_mock() {
   if [ -n "${MOCK_PID:-}" ] && kill -0 "$MOCK_PID" 2>/dev/null; then
     echo "premises: start_mock: the mock (pid $MOCK_PID) still runs; stop_mock first"; exit 1
   fi
   rm -f "$RUN/port"
-  MOCK_KEY="$DUMMY_KEY" python3 -I "$PREMISES_DIR/mock_upstream.py" --dir "$RUN/rec" \
+  MOCK_KEY="$DUMMY_KEY" MOCK_ALT_KEY="${MOCK_ALT_KEY:-}" python3 -I "$PREMISES_DIR/mock_upstream.py" --dir "$RUN/rec" \
     ${1:+--rules "$1"} --port-file "$RUN/port" >"$RUN/mock.log" 2>&1 &
   MOCK_PID=$!
   n2_mock_trap
@@ -205,6 +208,12 @@ scrub() {
 # of this run folder ("<version> <MOCK_URL> <CODEX_EXE> <CODEX_ENV words> <EXTRA_ENV words>"), so
 # a run in a subshell ($(...), a pipeline, a background job) counts and concurrent runs never share
 # a file; codex_record derives isolation.txt from them.
+# Daemons (PC-10): a Codex TUI run can start "codex app-server --listen unix:// --managed-daemon"
+# that outlives the run, with its socket in the per-uid folder /private/tmp/codex-daemon-<uid>
+# (/tmp/... elsewhere), the folder the owner's own Codex uses. TUI runs must pass --no-daemon
+# (`codex --help`: "Run without the shared background server"). codex_env refuses to start Codex
+# while a codex app-server runs outside the run folder or a daemon folder holds a socket;
+# codex_record exits 1 while a process of the run folder still runs.
 CODEX_MIN=0.172.0
 : "${CODEX_FX:=$REPO_DIR/fixtures/codex}"
 CX_HOME="" CODEX_EXE="" CODEX_VERSION="" CODEX_ENV=""
@@ -214,6 +223,55 @@ CX_HOME="" CODEX_EXE="" CODEX_VERSION="" CODEX_ENV=""
 #   RUST_LOG        Codex's log filter (more log lines in the run's own CODEX_HOME/log).
 #   RUST_BACKTRACE  a backtrace on a Codex panic (stderr only).
 EXTRA_ENV_ALLOW="RUST_LOG RUST_BACKTRACE"
+
+# n2_procs <daemon|left>: scan the process table (ps) and print one "premises: ..." line per finding;
+# exit 1 when there is one or when ps fails. daemon: each process whose program file name holds
+# "codex" and whose arguments hold the word app-server, unless its command line holds this run
+# folder; and each socket under /private/tmp/codex-daemon-<uid> or /tmp/codex-daemon-<uid>. left:
+# each process whose command line holds this run folder, except this shell and its parents. No
+# process is stopped. N2_TEST_ROOT (lib_test.sh only): only processes whose command line holds it
+# are scanned, and the daemon folders are looked up under it.
+n2_procs() {
+  _p_ps=$(ps -A -ww -o pid= -o ppid= -o args=) || { echo "premises: ps failed; codex not started"; exit 1; }
+  printf '%s\n' "$_p_ps" | N2_P_MODE=$1 N2_P_RUN=$RUN N2_P_SELF=$$ N2_P_ROOT=${N2_TEST_ROOT:-} python3 -I -c '
+import os, stat, sys
+e = os.environ
+mode, run, root = e["N2_P_MODE"], e["N2_P_RUN"], e["N2_P_ROOT"]
+runs = {run.rstrip("/") + "/", os.path.realpath(run).rstrip("/") + "/"}
+procs = {}
+for line in sys.stdin:
+    t = line.split(None, 2)
+    if len(t) == 3 and t[0].isdigit() and t[1].isdigit():
+        procs[int(t[0])] = (int(t[1]), t[2].rstrip("\n"))
+skip, p = {os.getpid(), os.getppid()}, int(e["N2_P_SELF"])
+while p in procs and p not in skip:
+    skip.add(p)
+    p = procs[p][0]
+out = []
+for pid, (_, args) in sorted(procs.items()):
+    if pid in skip or (root and root not in args):
+        continue
+    words = args.split()
+    ours = any(r in args for r in runs)
+    if mode == "daemon" and not ours and "app-server" in words[1:] and "codex" in os.path.basename(words[0]).lower():
+        out.append("premises: a codex app-server runs outside this run folder (pid %d, %s); codex not started; it is left running" % (pid, words[0]))
+    elif mode == "left" and ours:
+        out.append("premises: codex_record: a process of this run folder still runs (pid %d, %s); stop it (TUI runs pass --no-daemon)" % (pid, words[0]))
+if mode == "daemon":
+    seen = set()
+    for d in ("/private/tmp", "/tmp"):
+        d = "%s%s/codex-daemon-%d" % (root, d, os.getuid())
+        if os.path.realpath(d) in seen:
+            continue
+        seen.add(os.path.realpath(d))
+        for dp, _, fs in os.walk(d):
+            if any(stat.S_ISSOCK(os.lstat(os.path.join(dp, f)).st_mode) for f in fs):
+                out.append("premises: %s holds a socket (a Codex daemon); codex not started" % d)
+                break
+for o in out:
+    print(o)
+sys.exit(1 if out else 0)' || exit 1
+}
 
 # n2_realpath <path>: the real path (the path need not exist).
 n2_realpath() { python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
@@ -299,7 +357,7 @@ PY
 }
 
 # n2_extra_check: each EXTRA_ENV word is NAME=value; no name codex_env sets or that moves Codex's
-# state, trust or network (PATH TERM HOME TMPDIR MOCK_API_KEY, any *_PROXY or NO_PROXY in either
+# state, trust or network (PATH TERM TZ HOME TMPDIR MOCK_API_KEY, any *_PROXY or NO_PROXY in either
 # case, SSL_CERT_*, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE, any XDG_*, any CODEX_* not in
 # EXTRA_ENV_ALLOW); then every name must be in EXTRA_ENV_ALLOW, and every value may hold only
 # A-Za-z0-9_.:@%+,=- and no "..": no /, \ or ~, so no value names a path.
@@ -309,7 +367,7 @@ n2_extra_check() {
     case "$_cx_w" in *=*) ;; *) _cx_n="" ;; esac
     case "$_cx_n" in '' | [0-9]* | *[!A-Za-z0-9_]*) echo "premises: EXTRA_ENV word '$_cx_w' is not NAME=value"; exit 1 ;; esac
     case "$(printf '%s' "$_cx_n" | tr a-z A-Z)" in
-      PATH | TERM | HOME | TMPDIR | MOCK_API_KEY | *_PROXY | NO_PROXY | SSL_CERT_* | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | XDG_*)
+      PATH | TERM | TZ | HOME | TMPDIR | MOCK_API_KEY | *_PROXY | NO_PROXY | SSL_CERT_* | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | XDG_*)
         echo "premises: EXTRA_ENV may not set $_cx_n"; exit 1 ;;
       CODEX_*)
         case " $EXTRA_ENV_ALLOW " in *" $_cx_n "*) ;; *) echo "premises: EXTRA_ENV may not set $_cx_n"; exit 1 ;; esac ;;
@@ -327,7 +385,8 @@ n2_extra_check() {
 # (provider "mock", base_url at the mock) and refuses one whose base_url is not "$MOCK_URL/v1"
 # (after a mock restart, a part removes or rewrites its config.toml); sets CODEX_ENV: env -i with
 # scratch HOME, CODEX_HOME, XDG and TMPDIR folders, the dummy key as MOCK_API_KEY, and HTTPS_PROXY,
-# HTTP_PROXY and ALL_PROXY at the mock (K§6.3.7), TERM the constant xterm-256color. Every call,
+# HTTP_PROXY and ALL_PROXY at the mock (K§6.3.7), TERM the constant xterm-256color, TZ the constant
+# UTC (PC-10: no host timezone in a request). Every call,
 # after its fresh copy: CODEX_VERSION (that copy's --version) >= CODEX_MIN.
 codex_env() {
   CX_HOME=${CX_HOME:-$H/.codex}
@@ -338,6 +397,7 @@ codex_env() {
   n2_extra_check
   [ -n "${MOCK_URL:-}" ] && [ -n "${MOCK_PID:-}" ] || { echo "premises: codex_env needs start_mock first"; exit 1; }
   n2_plain MOCK_URL "$MOCK_URL"
+  n2_procs daemon
   codex_exe
   n2_plain CODEX_EXE "$CODEX_EXE"
   if n2_under_fold "$CODEX_EXE" "$OWNER_HOME/.codex"; then echo "premises: the codex executable is under ~/.codex"; exit 1; fi
@@ -353,7 +413,7 @@ codex_env() {
       'wire_api = "responses"' >"$_cx_cf"
     mv -f "$_cx_cf" "$CX_HOME/config.toml"
   fi
-  CODEX_ENV="env -i PATH=$(dirname "$CODEX_EXE"):/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin TERM=xterm-256color HOME=$H CODEX_HOME=$CX_HOME XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share XDG_CACHE_HOME=$H/.cache XDG_STATE_HOME=$H/.local/state TMPDIR=$RUN/tmp MOCK_API_KEY=$DUMMY_KEY HTTPS_PROXY=$MOCK_URL HTTP_PROXY=$MOCK_URL ALL_PROXY=$MOCK_URL"
+  CODEX_ENV="env -i PATH=$(dirname "$CODEX_EXE"):/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin TERM=xterm-256color TZ=UTC HOME=$H CODEX_HOME=$CX_HOME XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share XDG_CACHE_HOME=$H/.cache XDG_STATE_HOME=$H/.local/state TMPDIR=$RUN/tmp MOCK_API_KEY=$DUMMY_KEY HTTPS_PROXY=$MOCK_URL HTTP_PROXY=$MOCK_URL ALL_PROXY=$MOCK_URL"
   _cx_v=$($CODEX_ENV "$CODEX_EXE" --version | head -n 1)
   _cx_v=${_cx_v##* }
   case "$_cx_v" in
@@ -400,6 +460,7 @@ run_codex() {
 codex_record() {
   case "$1" in '' | *[!A-Za-z0-9_-]*) echo "premises: bad part name '$1'"; exit 1 ;; esac
   [ -n "$(ls -A "$RUN/cx-used.d" 2>/dev/null)" ] || { echo "premises: codex_record: no codex run in this run folder"; exit 1; }
+  n2_procs left
   _cx_out="$CODEX_FX/runs/$1"
   rm -rf "$_cx_out"
   mkdir -p "$_cx_out"

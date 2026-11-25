@@ -4,7 +4,9 @@
 Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <file>]
 
 - Listens on 127.0.0.1 (a free port, written to --port-file).
-- Accepts only the dummy credential from MOCK_KEY (x-api-key or "Bearer <key>").
+- Accepts only the dummy credential from MOCK_KEY (x-api-key or "Bearer <key>"), and (PC-10) a
+  second one from MOCK_ALT_KEY when set (read once at start, built at run time by the caller; it
+  must differ from MOCK_KEY). Each record holds "credential": "primary" or "alt" (never a value).
   Any other credential: HTTP 401, an ABORT file in the record dir, and the mock stops. A request
   with no credential at all is recorded and answered 401 without aborting.
 - A compaction request (x-claude-code-compaction) that no rule matches gets a realistic
@@ -22,13 +24,16 @@ Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <fi
 - CONNECT <host>:<port> (an HTTPS_PROXY tunnel) is refused (403, connection closed, no tunnel) and
   recorded as the line "<host>:<port> refused" in <dir>/connect.txt. Any other method (PATCH,
   OPTIONS, TRACE or any name) goes through the same handler. A request-target that is not
-  origin-form ("/...") is refused the same way and recorded as "<host>:<port> <METHOD> refused":
+  origin-form ("/...") is refused the same way and recorded as "<host>:<port> <METHOD> <path> refused":
   an absolute URI of any scheme (http, https, ws, wss, ftp, ...; the port is the scheme default
   80, 443 or 21 when the URI names none, else "?"), or any other form (asterisk "*", a bare word).
   userinfo ("user:pw@") is never recorded; an authority or port that does not parse is recorded
   verbatim with port "?". Neither gets a <nnnn>.json record or a credential check. An http or
   https absolute URI to the mock's own address (127.0.0.1, localhost or [::1] with the mock's
   port) is served as an origin request to its path.
+  <path> (PC-10): the absolute URI's path with each query value and the fragment dropped
+  ("/a?k=&j"; "/" when empty); "?" for a target that is not an absolute URI, a line cut off at
+  64 KiB, or a path with a byte outside visible ASCII. Every line ends " refused".
 
 Rule (JSON list, first match wins):
   {"name": "...", "sse": "<file>" | "json": "<file>", "status": <int, default 200>,
@@ -157,6 +162,17 @@ def target_line(target):
     return host, port, scheme, rest
 
 
+def path_text(scheme, rest):
+    """The recorded path of a refused request-target (see the module text)."""
+    if not scheme or not re.fullmatch(r"[!-~]*", rest):
+        return "?"
+    path, _, query = rest.partition("#")[0].partition("?")
+    path = path or "/"
+    if _:
+        path += "?" + "&".join(k + ("=" if eq else "") for k, eq, _v in (q.partition("=") for q in query.split("&")))
+    return path
+
+
 def default_json(model):
     return {"id": "msg_mock_default", "type": "message", "role": "assistant", "model": model,
             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
@@ -246,12 +262,13 @@ class Handler(BaseHTTPRequestHandler):
         if method == "CONNECT":
             line = "%s refused" % ("?:?" if cut or not target else target.rpartition("@")[2])
         else:
-            host, port, scheme, _ = target_line(target)
+            host, port, scheme, rest = target_line(target)
+            path = path_text(scheme, rest) if raw.endswith(b"\n") else "?"
             if cut:
-                host, port = "?", "?"
+                host, port, path = "?", "?", "?"
             elif self._own_address(host, port, scheme):
                 return
-            line = "%s:%s %s refused" % (host, port, method)
+            line = "%s:%s %s %s refused" % (host, port, method, path)
         with LOCK:
             with open(os.path.join(self.server.cfg["dir"], "connect.txt"), "a") as f:
                 f.write(line + "\n")
@@ -269,7 +286,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.path.startswith("/"):
                 self.path = "/" + self.path
             return False
-        self._refuse("%s:%s %s refused" % (host, port, self.command))
+        self._refuse("%s:%s %s %s refused" % (host, port, self.command, path_text(scheme, rest)))
         return True
 
     def _record_only(self, headers, raw):
@@ -289,7 +306,6 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(n) if n else b""
         headers = {k.lower(): v for k, v in self.headers.items()}
-        key = cfg["key"]
         got_key = headers.get("x-api-key")
         auth = headers.get("authorization")
         if got_key is None and auth is None:
@@ -297,9 +313,12 @@ class Handler(BaseHTTPRequestHandler):
             self._record_only(headers, raw)
             self._send(401, "application/json", b'{"type":"error","error":{"type":"authentication_error","message":"mock: no credential"}}')
             return
-        ok = (got_key == key and auth is None) or (auth == "Bearer " + key and got_key is None) \
-            or (got_key == key and auth == "Bearer " + key)
-        if not ok:
+        cred = None
+        for name, key in (("primary", cfg["key"]), ("alt", cfg["alt_key"])):
+            if key and ((got_key == key and auth is None) or (auth == "Bearer " + key and got_key is None)
+                        or (got_key == key and auth == "Bearer " + key)):
+                cred = name
+        if cred is None:
             with open(os.path.join(cfg["dir"], "ABORT"), "w") as f:
                 f.write("request %s %s carried a credential other than the dummy\n"
                         % (self.command, self.path))
@@ -335,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
                     rule_name = "default-summary"
         rec = {"seq": idx, "method": self.command, "path": path, "headers": rec_headers,
                "credential_headers": sorted(k for k in ("authorization", "x-api-key") if k in headers),
-               "body": body, "reply": rule_name or "default"}
+               "credential": cred, "body": body, "reply": rule_name or "default"}
         with open(os.path.join(cfg["dir"], "%04d.json" % idx), "w") as f:
             json.dump(rec, f, indent=2)
         msgid = "msg_mock_%04d" % idx
@@ -390,6 +409,9 @@ def main():
     key = os.environ.get("MOCK_KEY")
     if not key:
         sys.exit("MOCK_KEY not set")
+    alt_key = os.environ.get("MOCK_ALT_KEY") or None
+    if alt_key == key:
+        sys.exit("mock: MOCK_ALT_KEY equals MOCK_KEY")
     rules = []
     if a.rules:
         with open(a.rules) as f:
@@ -403,7 +425,7 @@ def main():
                     r[k] = os.path.join(base, r[k])
     os.makedirs(a.dir, exist_ok=True)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    srv.cfg = {"dir": a.dir, "rules": rules, "key": key}
+    srv.cfg = {"dir": a.dir, "rules": rules, "key": key, "alt_key": alt_key}
     if a.port_file:
         with open(a.port_file + ".tmp", "w") as f:
             f.write(str(srv.server_address[1]))

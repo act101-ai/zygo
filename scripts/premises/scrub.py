@@ -28,6 +28,9 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
 - Round 4 (N38): a name with spaces that ends the text, or is followed by a quote or a line end
   within 40 characters, is removed whole (C:\Users\Jo Ann -> /home/user). Host-name edges: "-" and
   "_" are part of a name, as in check-premises.sh.
+- PC-10: the OS name, version and architecture in a user agent ("product/1.2 (Mac OS 27.2.1; arm64)",
+  "(Linux 6.8.0; x86_64)", "(Windows 10.0.26100)") -> "(os omitted)". A run path with a doubled
+  "/" (a TMPDIR that ends in "/", as in .../T//tmp.X) maps like the plain path.
 """
 import getpass
 import json
@@ -110,9 +113,16 @@ def ids(kind, v):
     return IDS[v][1]
 
 
+# Each path pair also matches with any "/" doubled (a TMPDIR that ends in "/": .../T//tmp.X).
+PAIRS = [(re.compile(re.escape(a).replace("/", "/+")), b) for a, b in PAIRS]
+# The host OS in a user agent: "<product>/<version> (<OS name> <OS version>[; <arch>])".
+UA_OS = re.compile(r"(\S/[0-9][^\s/()]* )\([A-Z][A-Za-z ]*? [0-9][^;()\s]*(?:; ?[A-Za-z0-9_]+)?\)")
+
+
 def s(text):
     for a, b in PAIRS:
-        text = text.replace(a, b)
+        text = a.sub(lambda m: b, text)
+    text = UA_OS.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = re.sub(r"(/private)?/var/folders/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"/private/var/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"(?i)[A-Za-z]:(?:\\\\|\\|/)Users(?:\\\\|\\|/)" + WNAME, lambda m: "/home/user", text)

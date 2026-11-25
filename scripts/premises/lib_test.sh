@@ -12,7 +12,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 SH=${LIB_TEST_SH:-$(command -v dash || command -v sh)}
 T=$(mktemp -d)
-trap 'chmod -R u+rwx "$T"; rm -rf "$T"' EXIT
+# PC-10: lib.sh's process scans and daemon folders see only this test's folder (N2_TEST_ROOT), so
+# the host's own Codex daemon or another session's run does not change a result. The stub daemons
+# a case starts (pids in $T/*.dpid) are stopped on exit.
+export N2_TEST_ROOT="$T"
+trap 'for p in $(cat "$T"/*.dpid 2>/dev/null); do kill "$p" 2>/dev/null; done; chmod -R u+rwx "$T"; rm -rf "$T"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 n=0 bad=0
@@ -48,7 +52,7 @@ mkcx() { cc -DVER="\"$2\"" -o "$1" "$T/stub.c" || { echo "lib tests: cc failed";
 # mkbin <dir> <with claude: 0|1> [<stub codex version>]
 mkbin() {
   mkdir -p "$1"
-  for t in mktemp rm mkdir chmod dirname sleep cat cp mv rmdir sed head env grep tee python3 git cut tr ls shasum date file uname; do ln -s "$(command -v "$t")" "$1/$t"; done
+  for t in mktemp rm mkdir chmod dirname sleep cat cp mv rmdir sed head env grep tee python3 git cut tr ls shasum date file uname ps; do ln -s "$(command -v "$t")" "$1/$t"; done
   ln -s "$SH" "$1/sh"
   printf '#!/bin/sh\necho 0\n' >"$1/opencode"
   chmod +x "$1/opencode"
@@ -386,7 +390,7 @@ res "R5 run-all own dir kept after TERM to the process group" 143 r5
 # --- X: Codex runs (node PC-2): codex_env, run_codex, codex_record --------------------------------
 # Each X case: N2_AGENTS=codex, CODEX_FX=$T/fx-<case>, a stub codex (mkcx); no real agent runs.
 DK="dummy-""key"
-CX_NAMES="ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH TERM TMPDIR XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME "
+CX_NAMES="ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME "
 mkbin "$T/cxonly" 0
 rm "$T/cxonly/opencode"
 mkbin "$T/cx171" 1 0.171.9
@@ -438,7 +442,7 @@ x2() {
 res "X2 no dir made when codex is not on PATH" 1 x2
 
 X3ACT="new_run x; start_mock; $(mockrec X3); run_codex exec hi; python3 -I '$T/connect.py' \"\$(cat \"\$RUN/port\")\"; stop_mock; codex_record base; exit 0"
-c=X3; cxprep $c caller; XENV="$XENV TERM=dumb"; child $c 0 "$X3ACT"; run $c; killmock $c
+c=X3; cxprep $c caller; XENV="$XENV TERM=dumb TZ=America/Los_Angeles"; child $c 0 "$X3ACT"; run $c; killmock $c
 x3() {
   E=$T/keep-X3/x/home/stub-env.txt
   [ -f "$E" ] || { why="no $E"; return 1; }
@@ -447,6 +451,7 @@ x3() {
   [ "$(envval "$E" HOME)" = "$T/keep-X3/x/home" ] || { why="HOME=$(envval "$E" HOME)"; return 1; }
   [ "$(envval "$E" CODEX_HOME)" = "$T/keep-X3/x/home/.codex" ] || { why="CODEX_HOME=$(envval "$E" CODEX_HOME)"; return 1; }
   [ "$(envval "$E" TERM)" = xterm-256color ] || { why="TERM=$(envval "$E" TERM) (the caller's TERM is dumb)"; return 1; }
+  [ "$(envval "$E" TZ)" = UTC ] || { why="TZ=$(envval "$E" TZ) (the caller's TZ is America/Los_Angeles)"; return 1; }
   P=$(envval "$E" HTTPS_PROXY)
   printf '%s\n' "$P" | grep -Eqx 'http://127\.0\.0\.1:[0-9]+' || { why="HTTPS_PROXY=$P"; return 1; }
   [ "$(envval "$E" HTTP_PROXY)" = "$P" ] && [ "$(envval "$E" ALL_PROXY)" = "$P" ] || { why="HTTP_PROXY or ALL_PROXY is not $P"; return 1; }
@@ -527,8 +532,8 @@ res "X13 codex_record refuses a bad part name" 1 x13
 
 # --- Review round 1 (F1-F11) -------------------------------------------------------------------
 # X14 (F1): EXTRA_ENV may not set a name codex_env sets, a proxy or CA name in either case, any
-# XDG_* or CODEX_* name, TMPDIR. The check comes before the mock check, so no mock runs.
-for w in CODEX_HOME=x PATH=x TERM=x TMPDIR=x MOCK_API_KEY=x HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= \
+# XDG_* or CODEX_* name, TMPDIR, TZ (PC-10). The check comes before the mock check, so no mock runs.
+for w in CODEX_HOME=x PATH=x TERM=x TZ=x tz=x TMPDIR=x MOCK_API_KEY=x HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= \
   https_proxy=x http_proxy=x all_proxy=x 'NO_PROXY=*' 'no_proxy=*' SSL_CERT_FILE=x SSL_CERT_DIR=x \
   CURL_CA_BUNDLE=x REQUESTS_CA_BUNDLE=x XDG_CONFIG_HOME=x XDG_RUNTIME_DIR=x CODEX_SQLITE_HOME=x; do
   c=X14; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='$w'; run_codex exec hi"; run $c
@@ -748,7 +753,7 @@ run $c; killmock $c
 x29() {
   f=$T/fx-X29/runs/base/isolation.txt
   grep -qx 'codex_version=0.172.0' "$f" 2>/dev/null || { why="isolation.txt: $(tr '\n' '|' <"$f" 2>/dev/null)"; return 1; }
-  grep -qx "env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH RUST_BACKTRACE RUST_LOG TERM TMPDIR XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME" "$f" ||
+  grep -qx "env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH RUST_BACKTRACE RUST_LOG TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME" "$f" ||
     { why="isolation.txt: $(tr '\n' '|' <"$f")"; return 1; }
 }
 res "X29 runs in \$(...) and in a pipeline are recorded" 0 x29
@@ -931,6 +936,83 @@ c=K3; prep $c caller; ERR=$T/$c.err; krun $c zz
 res "K3 run-codex names a missing part" 1 out_has K3 'run-codex: no part zz'
 c=K4; prep $c caller; ERR=$T/$c.err; krun $c ../a
 res "K4 run-codex refuses a bad part name" 1 out_has K4 "run-codex: bad part name '../a'"
+
+# --- PC-10: Codex daemons ------------------------------------------------------------------------
+# A stub daemon: a compiled program that creates the file $N2D_READY and then waits until it is
+# killed. A Codex TUI run can start "codex app-server --listen unix:// --managed-daemon" that
+# outlives the run, with its socket in /private/tmp/codex-daemon-<uid> (or /tmp/...).
+cat >"$T/dmn.c" <<'C'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+int main(void) {
+  const char *r = getenv("N2D_READY"); FILE *f = r ? fopen(r, "w") : NULL; if (f) fclose(f);
+  for (;;) pause();
+}
+C
+mkdir -p "$T/dmn"
+cc -o "$T/dmn/codex" "$T/dmn.c" || { echo "lib tests: cc failed"; exit 1; }
+# X34: a codex app-server outside the run folder: run_codex refuses before any codex starts, names
+# its pid, and leaves it running.
+N2D_READY=$T/X34.ready "$T/dmn/codex" app-server --listen unix:// --managed-daemon &
+echo $! >"$T/X34.dpid"
+waitready "$T/X34.ready" || echo "lib tests: X34 stub daemon not ready"
+c=X34; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X34); run_codex exec hi"; run $c; killmock $c
+x34() {
+  dpid=$(cat "$T/X34.dpid")
+  out_has X34 "premises: a codex app-server runs outside this run folder (pid $dpid, $T/dmn/codex); codex not started; it is left running" || return 1
+  no_stub_env "$T/keep-X34" || return 1
+  kill -0 "$dpid" 2>/dev/null || { why="the stub daemon was stopped"; return 1; }
+}
+res "X34 a codex app-server outside the run folder: run_codex refuses and leaves it running" 1 x34
+kill "$(cat "$T/X34.dpid")" 2>/dev/null; rm -f "$T/X34.dpid"
+# X35: a socket in the per-uid daemon folder (/private/tmp and /tmp forms, under N2_TEST_ROOT).
+for f in private/tmp tmp; do
+  c=X35; cxprep $c caller; rm -rf "$T/private" "$T/tmp"
+  D=$T/$f/codex-daemon-$(id -u)
+  mkdir -p "$D"
+  python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$D/s"
+  child $c 0 "new_run x; start_mock; $(mockrec X35); run_codex exec hi"; run $c; killmock $c
+  x35() { out_has X35 "premises: $D holds a socket (a Codex daemon); codex not started" && no_stub_env "$T/keep-X35"; }
+  res "X35 a socket in $f/codex-daemon-<uid>: run_codex refuses" 1 x35
+  rm -rf "$T/private" "$T/tmp" "$T/keep-X35"
+done
+# X36: a process of the run folder still runs after the part (a daemon left by a TUI run):
+# codex_record exits 1 and names its pid.
+c=X36; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X36); run_codex exec hi; mkdir -p \"\$RUN/pk\"; cp '$T/dmn/codex' \"\$RUN/pk/codex\"; N2D_READY='$T/X36.ready' \"\$RUN/pk/codex\" app-server --managed-daemon & echo \$! >'$T/X36.dpid'; i=0; while [ ! -f '$T/X36.ready' ] && [ \$i -lt 100 ]; do i=\$((i + 1)); sleep 0.1; done; stop_mock; codex_record base"
+run $c; killmock $c
+x36() { out_has X36 "premises: codex_record: a process of this run folder still runs (pid $(cat "$T/X36.dpid"), $T/keep-X36/x/pk/codex); stop it (TUI runs pass --no-daemon)"; }
+res "X36 a process of the run folder left running: codex_record exits 1 and names it" 1 x36
+kill "$(cat "$T/X36.dpid")" 2>/dev/null; rm -f "$T/X36.dpid"
+
+# X37 (PC-10): start_mock hands MOCK_ALT_KEY (a shell variable, built at run time) to the mock,
+# which accepts it and records credential "alt"; without it the same request aborts the mock.
+ALT="dummy-""alt-key"
+cat >"$T/alt.py" <<'PY'
+import http.client, sys, urllib.parse
+u = urllib.parse.urlsplit(sys.argv[1])
+c = http.client.HTTPConnection(u.hostname, u.port, timeout=30)
+c.request("POST", "/v1/responses", body=b'{"model":"m","input":"x"}',
+          headers={"authorization": "Bearer " + sys.argv[2], "content-type": "application/json"})
+print(c.getresponse().status)
+PY
+c=X37; cxprep $c caller
+child $c 0 "new_run x; MOCK_ALT_KEY='$ALT'; start_mock; $(mockrec X37); python3 -I '$T/alt.py' \"\$MOCK_URL\" '$ALT' >'$T/X37.status'; stop_mock"
+run $c; killmock $c
+x37() {
+  [ "$(cat "$T/X37.status")" = 200 ] || { why="status $(cat "$T/X37.status")"; return 1; }
+  f=$T/keep-X37/x/rec/0001.json
+  python3 -I -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])).get("credential") != "alt")' "$f" ||
+    { why="record: $(tr '\n' ' ' <"$f" 2>/dev/null | cut -c1-200)"; return 1; }
+  ! grep -qF "$ALT" "$f" || { why="the record holds the alt key"; return 1; }
+}
+res "X37 start_mock passes MOCK_ALT_KEY; the mock accepts it and records credential alt" 0 x37
+c=X37b; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X37b); python3 -I '$T/alt.py' \"\$MOCK_URL\" '$ALT' >'$T/X37b.status'; stop_mock"
+run $c; killmock $c
+x37b() { [ "$(cat "$T/X37b.status")" = 401 ] && [ -f "$T/keep-X37b/x/rec/ABORT" ] || { why="status $(cat "$T/X37b.status"), no ABORT"; return 1; }; }
+res "X37b without MOCK_ALT_KEY the alt key aborts the mock (check_abort: exit 3)" 3 x37b
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"
