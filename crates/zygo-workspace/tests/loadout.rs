@@ -83,6 +83,15 @@ fn member_name_resolve_first_pane_wins_a_repeated_name() {
     assert_eq!(names, [vec![Some("lead"), None, Some("dev")], vec![None, Some("ops")]]);
 }
 
+#[test] // M§6, AU53, ML-3 review round 1: a shell pane has no name, and its name does not take one from a later agent pane
+fn member_name_shell_pane_name_is_dropped_and_does_not_block() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w = window(vec![named("shell", "lead"), named("claude-code", "lead")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w])]), None, &root(), &[]).unwrap();
+    let names: Vec<Option<&str>> = p.windows[0].panes.iter().map(|pp| pp.name.as_deref()).collect();
+    assert_eq!(names, [None, Some("lead")]);
+}
+
 #[test]
 fn cwd_is_absolute_relative_or_a_branch_worktree() {
     let abs = root().join("elsewhere");

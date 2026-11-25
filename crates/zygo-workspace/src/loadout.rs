@@ -34,8 +34,8 @@ pub enum PaneKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanPane {
     pub kind: PaneKind,
-    /// The member name (M§6), only when zygo_core::ids::valid_member_name passes (AU84) and no earlier pane of the plan
-    /// took it (the first wins; `zygo up` does not run `config check`).
+    /// The member name (M§6): none for a shell pane (AU53); for an agent pane, only when zygo_core::ids::valid_member_name
+    /// passes (AU84) and no earlier agent pane of the plan took it (the first wins; `zygo up` does not run `config check`).
     pub name: Option<String>,
     /// The pane's directory: the main worktree when the loadout sets no `cwd`.
     pub cwd: PathBuf,
@@ -176,7 +176,10 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
                     warnings.push(warning);
                 }
             }
-            let name = p.name.clone().filter(|n| zygo_core::ids::valid_member_name(n) && !names.contains(n));
+            // M§6, AU53: only an agent pane has a name; a shell pane's name is dropped and takes no name from a later pane.
+            let name = p.name.clone().filter(|n| {
+                matches!(kind, PaneKind::Agent(_)) && zygo_core::ids::valid_member_name(n) && !names.contains(n)
+            });
             names.extend(name.clone());
             panes.push(PlanPane {
                 kind,
