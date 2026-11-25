@@ -165,7 +165,9 @@ fn cwd_rule(v: &Value) -> Result<String, &'static str> {
     if s.starts_with('~') {
         return Err("must not start with ~");
     }
-    if s.starts_with('/') || std::path::Path::new(s).is_absolute() {
+    // Textual, so the result is the same on every OS: a leading `/` or a drive prefix (`C:`).
+    let drive = matches!(s.as_bytes(), [l, b':', ..] if l.is_ascii_alphabetic());
+    if s.starts_with('/') || drive {
         return Err("must not be an absolute path");
     }
     if let Some(branch) = s.strip_prefix("branch:") {

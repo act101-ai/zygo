@@ -69,6 +69,7 @@ pub fn short(digest: &str) -> &str;          // first 12 characters
 - `cwd` checks, in this order: string; every byte `0x20`-`0x7e`; does not start with `~`; not absolute (`starts_with('/')` or `Path::is_absolute`, so `/tmp` is refused on Windows as well); then, after a `branch:` prefix, 1-255 bytes; else at most 1024 bytes, no `\`, and each `/` part 1-255 bytes and not `.` or `..`.
 - `parse` does not check the profile names again: WD-1's read already refuses names that do not match the pattern and the name `none` (R§6.1 step 4). The R§18 item 4 `None.toml` case is a WD-1 read case.
 - `short(d)` is `d.get(..12).unwrap_or(d)`, so a shorter input does not panic.
+- `cwd` absolute-path check is textual (leading `/` or drive prefix), so the result is the same on every OS; review finding 1.
 
 ### Steps
 

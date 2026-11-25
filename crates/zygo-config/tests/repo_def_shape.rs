@@ -260,3 +260,36 @@ fn pr3_deep_nesting_does_not_overflow_the_stack() {
         assert!(e.starts_with(".zygo/workspace.toml: TOML parse error at line 1, column "), "{e}");
     }
 }
+
+#[test]
+fn cwd_absolute_check_is_textual_on_every_os() {
+    for cwd in ["/tmp", "C:/x", "C:x", "c:"] {
+        assert_eq!(
+            ws_err(&member(&format!("cwd = \"{cwd}\""))),
+            format!("{W}: members.a.cwd: must not be an absolute path"),
+            "cwd: {cwd}"
+        );
+    }
+    let def = repo_def::parse(&files(Some(&member("cwd = \"ab:c\"")), &[])).unwrap();
+    assert_eq!(def.workspace.unwrap().members["a"].cwd.as_deref(), Some("ab:c"));
+}
+
+#[test]
+fn pool_without_kind_is_claude_code() {
+    let def = repo_def::parse(&files(Some(&member("pool = true")), &[])).unwrap();
+    let a = &def.workspace.unwrap().members["a"];
+    assert!(a.pool);
+    assert_eq!(a.kind, None);
+}
+
+#[test]
+fn each_r6_2_layout_name_parses() {
+    for name in ["even-horizontal", "even-vertical", "main-horizontal", "main-vertical", "tiled"] {
+        let def = repo_def::parse(&files(Some(&format!("version = 1\nlayout = \"{name}\"\n")), &[])).unwrap();
+        assert_eq!(def.workspace.unwrap().layout.as_deref(), Some(name));
+    }
+    assert_eq!(
+        ws_err("version = 1\nlayout = 1\n"),
+        format!("{W}: layout: must be one of even-horizontal, even-vertical, main-horizontal, main-vertical, tiled")
+    );
+}
