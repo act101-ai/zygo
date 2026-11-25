@@ -318,6 +318,8 @@ impl Multiplexer for ListFake {
     fn kill_session(&self, _: &str) -> Result<(), MuxError> { self.other() }
     fn attach(&self, _: &str) -> Result<i32, MuxError> { self.other() }
     fn switch_client(&self, _: &str) -> Result<(), MuxError> { self.other() }
+    fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { self.other() }
+    fn send_enter(&self, _: &str) -> Result<(), MuxError> { self.other() }
 }
 
 /// The rows of `admin::testing::list_by` with the fakes (one per socket) on one shared virtual clock, the calls in
