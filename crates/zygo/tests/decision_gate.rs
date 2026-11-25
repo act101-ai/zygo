@@ -49,6 +49,41 @@ const NOTE: &str = "NOTE-41ac";
 const MARKERS: [&str; 7] = [LABEL_STOP, LABEL_REJ, REASON, FINDINGS, TITLE, BODY, NOTE];
 /// Today for the in-process `zygo decision`.
 const TODAY: &str = "2026-11-25";
+/// The developer variables no child process of this test inherits: zygo session and repository selection, tmux,
+/// and user git config or repository selection. A variable the test sets on purpose is set after the removal.
+const STRIP_ENV: [&str; 13] = [
+    "ZYGO_SESSION",
+    "ZYGO_SESSION_DIR",
+    "ZYGO_URL",
+    "ZYGO_REPO",
+    "ZYGO_WORK",
+    "ZYGO_MAIN_ROLE",
+    "ZYGO_WORKSPACE",
+    "TMUX",
+    "XDG_CONFIG_HOME",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+];
+
+/// `cmd` without the [`STRIP_ENV`] variables.
+fn clean_env(cmd: &mut Command) -> &mut Command {
+    for k in STRIP_ENV {
+        cmd.env_remove(k);
+    }
+    cmd
+}
+
+/// `p` canonical (macOS `/var` is `/private/var`), without the Windows verbatim prefix `\\?\`: the paths go to git
+/// (`git -C`, the cwd, `GIT_CEILING_DIRECTORIES`), and git for Windows and its own path output use plain paths.
+fn canon(p: &Path) -> PathBuf {
+    let c = p.canonicalize().unwrap();
+    match c.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(s) if cfg!(windows) && !s.starts_with(r"UNC\") => PathBuf::from(s),
+        _ => c,
+    }
+}
 
 /// `Node`: a lead checkout and a linked node checkout, keeps without `base`. `One`: one checkout, keeps with `base`.
 #[derive(Clone, Copy)]
@@ -77,7 +112,7 @@ impl Fx {
     /// The layout (call 1) and the session (call 2).
     fn new(layout: Layout) -> Fx {
         let t = tempfile::tempdir().unwrap();
-        let root = t.path().canonicalize().unwrap();
+        let root = canon(t.path());
         let home = root.join("home");
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join("config.toml"), "").unwrap();
@@ -181,7 +216,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
     if !global.exists() {
         fs::write(&global, "").unwrap();
     }
-    let o = Command::new("git")
+    let o = clean_env(&mut Command::new("git"))
         .args(["-c", "commit.gpgsign=false"])
         .args(args)
         .current_dir(dir)
@@ -302,7 +337,8 @@ struct Iso {
 
 impl Iso {
     fn isolate(&self, mut cmd: Command) -> Command {
-        cmd.env("HOME", self.home.path())
+        clean_env(&mut cmd)
+            .env("HOME", self.home.path())
             .env("XDG_CONFIG_HOME", self.home.path());
         if cfg!(windows) {
             cmd.env("USERPROFILE", self.home.path());
@@ -418,7 +454,7 @@ fn fixture(name: &str) -> Value {
 /// A `zygo` command with the scratch home, the session dir, no `ZYGO_AGENT`, git stopped at the temp root, cwd lead.
 fn agent_cmd(fx: &Fx) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
-    common::scratch_home(&mut cmd, &fx.home);
+    common::scratch_home(clean_env(&mut cmd), &fx.home);
     cmd.env("ZYGO_SESSION_DIR", &fx.sd.root)
         .env_remove("ZYGO_AGENT")
         .env("GIT_CEILING_DIRECTORIES", &fx.root)
@@ -487,6 +523,9 @@ impl Driver for Bin {
             String::from_utf8(out.stderr).unwrap(),
         );
         assert_eq!(out.status.code(), Some(0), "mcp: {stdout}\n{stderr}");
+        for m in MARKERS {
+            assert!(!stderr.contains(m), "{m} is in the mcp stderr: {stderr}");
+        }
         let reply = stdout
             .lines()
             .map(|l| serde_json::from_str::<Value>(l).unwrap())
@@ -513,7 +552,7 @@ impl Driver for Bin {
 
     fn decision(&self, fx: &Fx, cwd: &Path, agent: bool, args: &[&str]) -> (i32, String, String) {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
-        common::scratch_home(&mut cmd, &fx.home);
+        common::scratch_home(clean_env(&mut cmd), &fx.home);
         cmd.arg("decision")
             .args(args)
             .current_dir(cwd)
