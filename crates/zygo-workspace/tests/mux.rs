@@ -18,7 +18,9 @@ use zygo_workspace::mux::testing::{require_tmux, require_tmux_at, tmux_gate, SKI
 #[cfg(unix)]
 use zygo_workspace::mux::tmux::Tmux;
 #[cfg(unix)]
-use zygo_workspace::mux::{window_target, HookScope, Multiplexer, NewSession, NewWindow, SessionAnswer, Split};
+use zygo_workspace::mux::{
+    window_target, HookScope, Multiplexer, NewSession, NewWindow, SessionAnswer, Split, CONTROL_TEXT_MESSAGE,
+};
 use zygo_workspace::mux::{
     check_path, format_escape, hook_command, is_gone_message, is_no_target_message, parse_pane_line, parse_version,
     vis_decode, MuxError, PaneRow, ParseError, UnsafePath, WindowRow, MIN_VERSION, PANE_FIELDS, PANE_FORMAT,
@@ -40,6 +42,10 @@ fn stub(dir: &Path, name: &str, body: &str) {
     std::fs::write(&f, format!("#!/bin/sh\n{body}\n")).unwrap();
     std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+/// The wake text of M§7.3 step 2.
+#[cfg(unix)]
+const WAKE: &str = "zygo: you have mail; read it with mail_read";
 
 #[test]
 fn hook_command_quotes_the_path() {
@@ -336,6 +342,27 @@ fn no_socket_means_no_s_flag() {
 #[cfg(unix)]
 #[test]
 #[ignore = "timing: stub tmux under the fixed 2 s tmux bound"]
+fn send_keys_pass_the_socket_and_the_literal_form() {
+    // AU62, M§7.3 step 2: two calls, each with -S <socket>
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), Some(PathBuf::from("/tmp/zygo-mux-x/s")));
+    assert_eq!(t.send_keys_literal("%1", WAKE), Ok(()));
+    assert_eq!(t.send_enter("%1"), Ok(()));
+    assert_eq!(t.send_keys_literal("%12", "Enter"), Ok(()));
+    assert_eq!(
+        log_lines(dir.path()),
+        [
+            format!("LC_ALL=C -S /tmp/zygo-mux-x/s -u send-keys -t %1 -l -- {WAKE}"),
+            "LC_ALL=C -S /tmp/zygo-mux-x/s -u send-keys -t %1 Enter".to_string(),
+            "LC_ALL=C -S /tmp/zygo-mux-x/s -u send-keys -t %12 -l -- Enter".to_string(),
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: stub tmux under the fixed 2 s tmux bound"]
 fn stderr_maps_to_answers_and_errors() {
     let _g = forks();
     let dir = tempfile::tempdir().unwrap();
@@ -533,6 +560,40 @@ fn control_characters_in_window_names_are_refused_before_any_spawn() {
             "{name:?}"
         );
     }
+    assert!(!dir.path().join("log").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn send_keys_refuse_a_target_that_is_not_a_pane_id_before_any_spawn() {
+    // M-C5, W-C8: the target is `%<digits>` only
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), Some(PathBuf::from("/tmp/zygo-mux-x/s")));
+    for p in ["", "%", "1", "%1a", "%-1", "% 1", " %1", "%1 ", "%1\n", "=zygo-t:0", "zygo-t", "-t", "%\u{ff11}"] {
+        let want = Err(MuxError::Failed { message: format!("invalid tmux pane id: {p:?}") });
+        assert_eq!(t.send_keys_literal(p, WAKE), want, "{p:?}");
+        assert_eq!(t.send_enter(p), want, "{p:?}");
+    }
+    assert_eq!(t.send_keys_literal("=zygo-t:0", "a\nb"), Err(MuxError::Failed { message: "invalid tmux pane id: \"=zygo-t:0\"".into() }));
+    assert!(!dir.path().join("log").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn send_keys_refuse_control_characters_before_any_spawn() {
+    // M-C5: no newline, escape or other control character reaches send-keys
+    let _g = forks();
+    let dir = tempfile::tempdir().unwrap();
+    let t = Tmux::new(log_stub(dir.path()), Some(PathBuf::from("/tmp/zygo-mux-x/s")));
+    for text in ["a\nb", "\n", "a\rb", "\u{1b}[31m", "\u{1b}", "a\tb", "nul\u{0}", "\u{3}", "del\u{7f}", "c1\u{85}", "zygo: you have mail\n"] {
+        assert_eq!(
+            t.send_keys_literal("%1", text),
+            Err(MuxError::Failed { message: CONTROL_TEXT_MESSAGE.into() }),
+            "{text:?}"
+        );
+    }
+    assert_eq!(CONTROL_TEXT_MESSAGE, "send-keys text holds a control character");
     assert!(!dir.path().join("log").exists());
 }
 
@@ -984,6 +1045,35 @@ fn missing_targets() {
     assert_eq!(t.display("=zygo-t:9", "#{window_index}").unwrap(), w0.to_string()); // current window's value, rc 0
     assert_eq!(t.display("%99", "#{pane_id}").unwrap(), ""); // empty, rc 0
     assert_eq!(t.show_pane_option("%99", "@zygo-pane").unwrap(), None);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
+fn send_keys_type_the_text_once_and_enter_submits_it() {
+    // M§7.3 step 2 on a private server: the literal text reaches the pane once and is not submitted; Enter submits it
+    let _g = forks();
+    let Some(_) = require_tmux() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let got = dir.path().join("got");
+    let srv = PrivateServer::start();
+    let t = srv.tmux();
+    let script = format!("read -r l; printf '%s' \"$l\" > '{}'; sleep 600", got.display());
+    let argv = vec![OsString::from("sh"), OsString::from("-c"), OsString::from(script)];
+    let w0 = t
+        .new_session(&NewSession { name: "zygo-t", start_dir: dir.path(), width: 100, height: 30, env: &env(), argv: &argv, owner: None })
+        .unwrap();
+    let pane = t.display(&window_target("zygo-t", w0), "#{pane_id}").unwrap();
+    assert!(pane.starts_with('%'), "{pane}");
+    let screen = || srv.run(&["capture-pane", "-p", "-t", &pane]).unwrap();
+    t.send_keys_literal(&pane, WAKE).unwrap();
+    assert!(until(|| screen().contains(WAKE)), "{}", screen());
+    assert_eq!(screen().matches(WAKE).count(), 1, "{}", screen());
+    assert!(!got.exists(), "the literal call submitted the line");
+    t.send_enter(&pane).unwrap();
+    assert!(until(|| fs::read_to_string(&got).is_ok_and(|s| s == WAKE)), "{:?}", fs::read_to_string(&got));
+    assert_eq!(screen().matches(WAKE).count(), 1, "{}", screen());
+    assert!(matches!(t.send_enter("%99999"), Err(MuxError::NoTarget { .. })));
 }
 
 #[cfg(unix)]

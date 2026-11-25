@@ -37,7 +37,7 @@ Produces (exact):
 
 Steps:
 
-- [ ] 1. In `crates/zygo-workspace/tests/mux.rs`, add `CONTROL_TEXT_MESSAGE` to the `cfg(unix)` import at `:21` (`use zygo_workspace::mux::{window_target, HookScope, Multiplexer, NewSession, NewWindow, SessionAnswer, Split, CONTROL_TEXT_MESSAGE};`), add the wake text after `stub` (`:42`):
+- [x] 1. In `crates/zygo-workspace/tests/mux.rs`, add `CONTROL_TEXT_MESSAGE` to the `cfg(unix)` import at `:21` (`use zygo_workspace::mux::{window_target, HookScope, Multiplexer, NewSession, NewWindow, SessionAnswer, Split, CONTROL_TEXT_MESSAGE};`), add the wake text after `stub` (`:42`):
   ```rust
   /// The wake text of M§7.3 step 2.
   #[cfg(unix)]
@@ -81,7 +81,7 @@ Steps:
   ```
   Check: the file holds both tests; `grep -c '^fn send_keys' crates/zygo-workspace/tests/mux.rs` gives 2.
 
-- [ ] 2. In the same file, add the stub test after `no_socket_means_no_s_flag` (`:334`) and the live test after `missing_targets` (`:987`):
+- [x] 2. In the same file, add the stub test after `no_socket_means_no_s_flag` (`:334`) and the live test after `missing_targets` (`:987`):
   ```rust
   #[cfg(unix)]
   #[test]
@@ -135,7 +135,7 @@ Steps:
   ```
   Check: `grep -c '^fn send_keys' crates/zygo-workspace/tests/mux.rs` gives 4.
 
-- [ ] 3. Run `cargo test -p zygo-workspace --test mux -- send_keys --include-ignored`. Check: it fails to compile with E0599 `no method named send_keys_literal` / `send_enter` for `Tmux`, and E0432 for `CONTROL_TEXT_MESSAGE`.
+- [x] 3. Run `cargo test -p zygo-workspace --test mux -- send_keys --include-ignored`. Check: it fails to compile with E0599 `no method named send_keys_literal` / `send_enter` for `Tmux`, and E0432 for `CONTROL_TEXT_MESSAGE`.
 
 - [ ] 4. In `crates/zygo-workspace/src/mux/mod.rs`, after `check_window_name` (`:265`), add:
   ```rust
