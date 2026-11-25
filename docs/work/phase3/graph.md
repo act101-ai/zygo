@@ -203,7 +203,6 @@ Session text (T, SX nodes):
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
-| WD-8 | Member record fields `launch.job` and `launch.definition` | WD-4, ML-3 | DONE | mechanical | ef98f88f, 5a2d5117 · state 43/0, launch_definition 2 ; floor green · PR #110 |
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | TODO | judgment | — |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
@@ -223,7 +222,7 @@ Session text (T, SX nodes):
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | TODO | implementation | — |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
-| WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | TODO | judgment | — |
+| WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | DONE | judgment | a1f4eb0c, f16c93f8, 767b954a, e0905dec, 8cd02ad7, 6fe57c61, e6fca6e4 · up_definition 17/0 ; floor green · PR #120 |
 | WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | TODO | judgment | — |
 | WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
@@ -274,6 +273,7 @@ Session text (T, SX nodes):
 | FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | DONE | implementation | 1921d4ca, a7ac8924 · usage_doctor 45/0, statusline_render 37/0 ; floor green · PR #122 |
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | TODO | implementation | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
+| FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -400,3 +400,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | RT-3 DONE (fab29ce1 72c3d03a da38c41a): run-time HUD segment in compact and verbose with its width order; collect reads workspace.json once via member_read; review round 2 fixed 2; FX-11 widened to add the 󰅐 clock glyph to the doctor table. Floor green · PR #118 |
 | 2026-11-25 | FX-11 DONE: the doctor icon line holds 21 glyphs, adding mail (U+2709) and clock (U+F0150); mail follows reflection, clock sits between trimmed and truncation. FX-10 must add the H§6.5 Mail row after Reflection · PR #122 |
 | 2026-11-25 | FX-10 DONE: the HUD spec names the member name and unread mail segments and the `✉` glyph (AU4, AU20, AU25; H§6.2, H§6.4, H§6.5, H§6.6, H§6.7, H§6.8) · PR #123 |
+| 2026-11-25 | WD-11 DONE: `up` reads definitions; a team config read failure degrades to the user config `max_members` with a printed line; `up --all` with a repository default prints the solo line. Round-3 non-blocking findings to FX-14 · PR #120 |

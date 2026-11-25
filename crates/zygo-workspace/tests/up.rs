@@ -125,6 +125,8 @@ fn opts(t: &Path, cwd: &Path, tmux: &Path, zygo: &Path) -> UpOpts {
         vars,
         paths: paths(t),
         config: Config::default(),
+        default_loadout_set: false,
+        git: None,
     }
 }
 
