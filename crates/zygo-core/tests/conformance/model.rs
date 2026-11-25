@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde::Deserialize;
+use zygo_core::Agent;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -540,6 +541,29 @@ fn failing_core(reg: &Registry, g: &GradeFile) -> Vec<String> {
         .collect()
 }
 
+/// The display name of a client (P4-6 replaces this with the descriptor).
+fn client_name(a: Agent) -> &'static str {
+    match a {
+        Agent::ClaudeCode => "Claude Code",
+        Agent::OpenCode => "OpenCode",
+    }
+}
+
+/// One `Client` per `Agent::ALL`, its version the built-in minimum in `crates/zygo-config/data/agents.toml`.
 pub fn clients(root: &Path) -> Result<Vec<Client>, String> {
-    todo!()
+    let path = root.join("crates/zygo-config/data/agents.toml");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let table: toml::Table = text.parse().map_err(|e| format!("{}: {e}", path.display()))?;
+    Agent::ALL
+        .iter()
+        .map(|&a| {
+            let id = a.as_str();
+            let version = table
+                .get(id)
+                .and_then(|t| t.get("min_version"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("{}: no `[{id}] min_version`", path.display()))?;
+            Ok(Client { id: id.into(), name: client_name(a).into(), version: version.into(), supported: true })
+        })
+        .collect()
 }

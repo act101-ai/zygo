@@ -347,7 +347,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
 
 - [x] **11. `check` and `failing_core`.** Implement them by the rules above. Run `cargo test -p zygo-core --test conformance -- check_` → all pass. Commit `feat(conformance): check items 1-9 on fixture inputs (CF-1)`.
 
-- [ ] **12. Failing `clients` test.**
+- [x] **12. Failing `clients` test.**
 
   ```rust
   #[test] fn check_clients_from_agent_all() {
@@ -359,7 +359,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
   ```
   Run `cargo test -p zygo-core --test conformance -- check_clients` → fails.
 
-- [ ] **13. `clients`.** Implement it by the rule above. Run the step 12 command → passes. Commit `feat(conformance): client list from Agent::ALL (CF-1)`.
+- [x] **13. `clients`.** Implement it by the rule above. Run the step 12 command → passes. Commit `feat(conformance): client list from Agent::ALL (CF-1)`.
 
 - [ ] **14. Verification.** Run the Acceptance command:
   `test "$(cargo test -q -p zygo-core --test conformance -- check_ input_ --list 2>/dev/null | grep -c ': test$')" -ge 19 && cargo test -p zygo-core --test conformance --locked -- check_ input_`

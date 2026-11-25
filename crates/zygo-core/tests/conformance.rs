@@ -423,3 +423,16 @@ fn check_9_fixtures_folder_missing_or_empty() {
     std::fs::create_dir(d.path().join("fixtures/alpha")).unwrap();
     assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[9]));
 }
+
+#[test]
+fn check_clients_from_agent_all() {
+    let c = clients(&repo()).unwrap();
+    assert_eq!(
+        c,
+        vec![
+            Client { id: "claude-code".into(), name: "Claude Code".into(), version: "9.1.0".into(), supported: true },
+            Client { id: "opencode".into(), name: "OpenCode".into(), version: "9.2.0".into(), supported: true },
+        ]
+    );
+    assert!(clients(tempfile::tempdir().unwrap().path()).is_err());
+}
