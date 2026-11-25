@@ -22,8 +22,11 @@ pub struct RecordSet {
 /// Why `docs/decisions/` was not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirError {
-    /// A file, a link or an unreadable directory.
+    /// A file or a link at `docs` or `docs/decisions`.
     NotDirectory,
+    /// An `lstat` of `docs` or `docs/decisions` that fails other than `NotFound`, a listing that cannot be opened,
+    /// or an entry error while the listing is read (D§6.8).
+    Unreadable,
     /// More than 10,000 entries.
     TooMany,
 }
@@ -31,19 +34,21 @@ pub enum DirError {
 /// Reads `top/docs/decisions` (`top` is the repository root). An absent directory is an empty set; other names and
 /// subdirectories are ignored. All names are listed before any record file is opened. A link at `docs` or at
 /// `docs/decisions` is `NotDirectory`. A name that is not UTF-8 is malformed if its bytes start with `DDR-` and end
-/// with `.md`, and ignored otherwise.
+/// with `.md`, and ignored otherwise. An `lstat` error other than `NotFound`, a listing error or an entry error is
+/// `Unreadable`, and no part of the listing is used.
 pub fn read_dir(top: &Path) -> Result<RecordSet, DirError> {
     let dir = top.join(DIR);
     for path in [dir.parent().unwrap_or(&dir), &dir] {
         match fs::symlink_metadata(path) {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(RecordSet::default()),
             Ok(m) if m.file_type().is_dir() => {}
-            _ => return Err(DirError::NotDirectory),
+            Ok(_) => return Err(DirError::NotDirectory),
+            Err(_) => return Err(DirError::Unreadable),
         }
     }
     let mut names = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|_| DirError::NotDirectory)? {
-        let entry = entry.map_err(|_| DirError::NotDirectory)?;
+    for entry in fs::read_dir(&dir).map_err(|_| DirError::Unreadable)? {
+        let entry = entry.map_err(|_| DirError::Unreadable)?;
         if names.len() == MAX_ENTRIES {
             return Err(DirError::TooMany);
         }

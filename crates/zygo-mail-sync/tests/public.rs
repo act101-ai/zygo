@@ -391,6 +391,28 @@ mod unix {
         assert_eq!(fs::read(&sp.state).unwrap(), b"not json");
     }
 
+    /// MS-26: a fresh cache that matches the URL, in a file with one value `check_state` refuses, is not used: `load`
+    /// refuses the file, so the probe runs and nothing is written (S§8.3).
+    #[test]
+    fn bad_value_beside_a_fresh_cache_runs_the_probe_and_writes_nothing() {
+        let (_t, sp) = setup();
+        let f = fake(&[]); // answers Private
+        let mut s = State {
+            public: Some(zygo_mail_sync::state::PublicCache { url_sha256: vec![sha("https://h/p")],
+                verdict: "public".into(), at: 1_800_000_000 }),
+            ..Default::default()
+        };
+        save(&sp, &s).unwrap();
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(1)), Verdict::Public, "the valid cache is used");
+        assert!(seen(&f).is_empty());
+        s.pushed.insert("ack/A.json".into(), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391".into());
+        let bytes = serde_json::to_vec_pretty(&s).unwrap();
+        fs::write(&sp.state, &bytes).unwrap();
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(1)), Verdict::Private);
+        assert_eq!(seen(&f), urls(&["https://h/p"]));
+        assert_eq!(fs::read(&sp.state).unwrap(), bytes);
+    }
+
     #[test]
     fn check_keeps_the_other_state_fields() {
         let (_t, sp) = setup();
