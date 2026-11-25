@@ -328,3 +328,14 @@ Beta's total is (3 × 1 + 2 × 0 + 1 × 1) ÷ 6 = 2/3 → 66 (rounded down, not 
 | an all-`n/a` cell is `n/a` | `derive_cell_fixtures_full_none_na`, `derive_cell_na_criteria_leave_value_and_ungraded_is_unmet` |
 | release state `supported`, `meets bar, not released`, `below bar` | `derive_release_state`, `derive_rollup_spec_example` |
 | `partial` lists the missing text; `none` gives the reasons (K§6.2.4) | `derive_cell_partial_lists_missing`, `derive_cell_fixtures_full_none_na` |
+
+## Round 2
+
+Review findings of round 1, each fixed test first.
+
+- **F1** (`derive.rs` `Frac::add`, `div`, `percent`: `u128` overflow on a large registry; a debug build panics and a release build gives a wrong score). Every multiply and add in `Frac` is now checked and gives `None` on overflow. `scores` then panics with `client `<id>`: score fraction overflow`, so every build fails closed. Each result is still reduced by its gcd. Test `derive_scores_overflow_fails_closed` (27 standard capabilities with the prime criteria counts 2..103, 1 met each). It failed first: the panic was `attempt to multiply with overflow`, not the expected text. It passes in debug and in release. Fix: `2a9f80c8`.
+- **F2** (`derive.rs` `grade_of` read only the first of duplicate grades; check item 6 treats a criterion as met when any entry is met). `grade_of` now returns a `met` entry when any entry is `met`, else the first entry, so items 6 and 8 agree. Test `check_8_duplicate_grade_any_met_no_item_8` (alpha, A-1.2 not-met then met → items `{2}`). It failed first with `{2, 8}`. Fix: `fa390462`.
+- **F3** (item 8 not pinned through `check` for a core criterion that has an approved exception). Tests `check_8_core_na_with_exception_is_below_bar` (items `{4, 8}`, text `core criterion `A-1.2` is n/a` and `below the bar: A-1`) and `check_8_core_ungraded_with_exception_is_below_bar` (items `{2, 8}`). These tests pin behaviour that round 1 already had, so they passed on their first run; no code change. Commit: `79a775fd`.
+- **F4** (spec wording). In K§6.2.4 Bar, "failing core capability" now matches the bar sentence: a core criterion that is neither `met` nor `not-met` with a registry bar exception fails, so an ungraded or `n/a` core criterion fails. The change log has the new line. Commit: `bec8cb0d`.
+
+Checks after round 2: the acceptance line exits 0 with 14 `derive_` tests, and `conformance` has 82 passed. `cargo test -p zygo-core --locked` and `cargo build --workspace --locked` pass. The `conformance` target builds with 0 warnings.
