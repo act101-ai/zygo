@@ -160,14 +160,14 @@ tokens kept out of context (estimate): 9000
 estimated spend avoided: ≈$0.1146
 views: 14, read-backs: 3, view to read-back ratio: 4.67
 by tool and command:
-  Bash cargo test libtest: 6 views, 2 read-backs, 31200 bytes kept out, ≈$0.0900
-  Bash git diff diff: 3 views, 0 read-backs, 9100 bytes kept out, ≈$0.0210
-  Read - size: 5 views, 1 read-back, -4300 bytes kept out, ≈-$0.0040
+  Bash cargo test libtest: 6 views, 2 read-backs, 28500 bytes kept out, ≈$0.0888
+  Bash git diff diff: 3 views, 0 read-backs, 9000 bytes kept out, ≈$0.0270
+  Read - size: 5 views, 1 read-back, -1500 bytes kept out, ≈-$0.0012
 ```
 
 - `views` = trim rows; `read-backs` = read-back rows; the view to read-back ratio = views ÷ read-backs, two decimals, `-` when there is no read-back. A low ratio shows that views hide text the agent needs.
 - A breakdown key is `tool`, `command` (`-` when null), `shaper` (`-` when null). A read-back takes the key of its trim (by `result_id`), else `- - -`. Rows are sorted by bytes kept out, largest first.
-- A negative amount prints the sign before `$`: `≈-$0.0040`.
+- A negative amount prints the sign before `$`: `≈-$0.0012`.
 - When some carrying requests had no price row: `estimated spend avoided: ≈$0.1146 (12 requests had no price)`.
 - When the config does not load: `estimated spend avoided: unknown (config does not load)`, and the other lines print.
 - The filter (`--session`, `--since`) selects events by their `session` (O§6.4 key for read-backs) and their own `ts`. The carrying requests of a selected event are read even when they are outside the filter: the figure belongs to the event.
@@ -588,3 +588,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-24 | O§8.1 | operator | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |
 | 2026-11-24 | O§7.1, O§7.2 | operator | The parse missed commands that print a file: the wrappers `timeout` and `stdbuf`, the printers `egrep`, `fgrep`, `zcat`, `gawk`, `batcat`, `tac`, `git grep`, `git blame` and `$(<f)`, an `eval` string, and a shell that runs a script from a pipe; the lists and the unsure parse now hold them (found in phase3 OS-11 review). |
 | 2026-11-24 | O§7.1, glossary | author's call | review of OS-40: newline after a pipe, backtick and 0< substitutions, eval --, builtin, -c only among leading options (the arguments of `-o`, `+o`, `-O`, `+O` skipped), redirect-only stage in zsh |
+| 2026-11-25 | O§6.6 | author's call | the sample block's key amounts did not sum to its total, and its Read key kept out more bytes than were read back; replaced with figures a store can produce (OS-8). |
