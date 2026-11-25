@@ -337,6 +337,7 @@ pub(crate) fn hide_secrets(l: &mut Loadout, base: &PaneBase) {
             scrub(&mut p.compact);
             scrub(&mut p.config_dir);
             scrub(&mut p.name);
+            scrub(&mut p.job);
             if let Some(t) = p.cwd.as_mut() {
                 *t = match t.strip_prefix("branch:") {
                     Some(branch) => format!("branch:{}", shown_field(branch)),
@@ -651,18 +652,38 @@ mod tests {
         assert!(!text.contains("SECRET"), "{text}");
     }
 
-    #[test] // F15; kills: a field left out of the scrub (round 3, finding 5: a field is one token of the argument rule,
-    // so a URL with user info is `<user info removed>` as an argument is)
+    #[test] // F15; kills: a field left out of the scrub, `job` included (WD-24) (round 3, finding 5: a field is one token
+    // of the argument rule, so a URL with user info is `<user info removed>` as an argument is)
     fn hide_secrets_scrubs_every_other_text_field() {
         let t = tempfile::tempdir().unwrap();
         let u = |n: u32| Some(format!("https://u:SECRET{n}@h.example.invalid/x"));
-        let p = LoadoutPane { profile: u(3), compact: u(4), config_dir: u(5), cwd: u(6), name: u(7), ..pane(&[]) };
+        let p = LoadoutPane {
+            profile: u(3),
+            compact: u(4),
+            config_dir: u(5),
+            cwd: u(6),
+            name: u(7),
+            job: u(8),
+            ..pane(&[])
+        };
         let mut l = Loadout { window: vec![LoadoutWindow { name: u(1), layout: u(2), pane: vec![p] }] };
         hide_secrets(&mut l, &base(t.path()));
         let clean = Some(G.to_string());
         let w = &l.window[0];
         let p = &w.pane[0];
-        assert_eq!([&w.name, &w.layout, &p.profile, &p.compact, &p.config_dir, &p.cwd, &p.name], [&clean; 7]);
+        assert_eq!(
+            [
+                &w.name,
+                &w.layout,
+                &p.profile,
+                &p.compact,
+                &p.config_dir,
+                &p.cwd,
+                &p.name,
+                &p.job
+            ],
+            [&clean; 8]
+        );
     }
 
     // ---- diff review round 2 ----
@@ -747,6 +768,7 @@ mod tests {
         let u = |n: u32| Some(format!("u:SECRET{n}@h.example.invalid"));
         let p = LoadoutPane {
             kind: "u:SECRET0@h.example.invalid".into(), profile: u(3), server: u(7), compact: u(4), config_dir: u(5), cwd: u(6),
+            name: u(8), job: u(9),
             ..pane(&[])
         };
         let mut l = Loadout { window: vec![LoadoutWindow { name: u(1), layout: u(2), pane: vec![p] }] };
@@ -755,7 +777,10 @@ mod tests {
         let w = &l.window[0];
         let p = &w.pane[0];
         assert_eq!(p.kind, G);
-        assert_eq!([&w.name, &w.layout, &p.profile, &p.server, &p.compact, &p.config_dir, &p.cwd], [&g; 7]);
+        assert_eq!(
+            [&w.name, &w.layout, &p.profile, &p.server, &p.compact, &p.config_dir, &p.cwd, &p.name, &p.job],
+            [&g; 9]
+        );
         // a profile name with an `@` and no `:` before it stays
         assert_eq!(shown_field("me@work"), "me@work");
     }
@@ -822,14 +847,15 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = LoadoutPane {
             cwd: Some("https://u:pa SECRET1@h.example.invalid".into()), profile: Some("x https://u:SECRET2@h".into()),
-            compact: Some("https://u:pa SECRET3@h".into()), config_dir: Some("API_KEY=SECRET4".into()), ..pane(&[])
+            compact: Some("https://u:pa SECRET3@h".into()), config_dir: Some("API_KEY=SECRET4".into()),
+            name: Some("u:pa SECRET10@h".into()), job: Some("x https://u:SECRET11@h".into()), ..pane(&[])
         };
         let mut l = Loadout { window: vec![LoadoutWindow { name: Some("u:pa SECRET5@h".into()), layout: Some("{\"k\":\"SECRET6\"}".into()), pane: vec![p] }] };
         hide_secrets(&mut l, &base(t.path()));
         let w = &l.window[0];
         let p = &w.pane[0];
         let g = Some(G.to_string());
-        assert_eq!([&w.name, &p.cwd, &p.profile, &p.compact], [&g; 4]);
+        assert_eq!([&w.name, &p.cwd, &p.profile, &p.compact, &p.name, &p.job], [&g; 6]);
         assert_eq!(p.config_dir.as_deref(), Some("API_KEY=<value not shown>"));
         assert_eq!(w.layout.as_deref(), Some(H));
         // the same function for an argument and a field
