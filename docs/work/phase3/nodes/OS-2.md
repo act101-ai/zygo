@@ -31,7 +31,7 @@
 
 **Review focus:** item 21 (graph `## Review focus`): "The hook adding a column (write lock on every Bash call); the seven-column fallback hiding an error other than 'no such column'; a bounded open that waits longer than `bound` — test in OS-2, OS-3". OS-2's part: the check runs `ALTER` only for a missing column, so a database that has the columns gets no schema write (`PRAGMA schema_version` unchanged, `readbacks_schema_column_check_writes_no_schema_when_columns_exist`); and the fallback does not hide another error (`readbacks_schema_insert_trim_fallback_keeps_other_errors`). The bounded open is OS-3.
 
-**Consumes:** — (no other node's output).
+Consumes: — (no other node's output).
 
 **Produces** (the three that exist today, with their current signatures, then the new ones):
 
