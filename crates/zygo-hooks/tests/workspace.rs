@@ -2185,3 +2185,33 @@ fn mail_unreadable_folder_changes_no_decision() {
     fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
     assert_eq!((start.0, start.1.len()), (base(&o), 1), "{:?}", start.1);
 }
+
+#[test] // M§7.2 last sentence, M-C2
+fn mail_no_hook_opens_a_message_file() {
+    let _s = serial();
+    let f = fx_note();
+    ws_state(&f, Phase::Up, rec_pending());
+    let missing = f.t.path().join("missing");
+    let new = put_new(&f, 2);
+    for e in entries(&new) {
+        fs::set_permissions(new.join(e), fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    assert_eq!(parsed(ws(&f, "stop", fixture("Stop-main"))), json!({"decision": "block", "reason": L2})); // counted unopened
+    assert_eq!(
+        parsed(ws(&f, "prompt", ups("hello"))),
+        json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": L2}})
+    );
+    assert!(ss_text(&f, &ss(AS1), &missing).ends_with(&format!("\n\n{L2}")));
+    #[cfg(target_os = "linux")]
+    {
+        let names = opened(&new, || {
+            assert_eq!(parsed(ws(&f, "stop", fixture("Stop-main"))), json!({"decision": "block", "reason": L2}));
+            assert_eq!(
+                parsed(ws(&f, "prompt", ups("hello"))),
+                json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": L2}})
+            );
+            assert!(ss_text(&f, &ss(AS1), &missing).ends_with(&format!("\n\n{L2}")));
+        });
+        assert!(!names.iter().any(|n| n.ends_with(".json")), "{names:?}");
+    }
+}
