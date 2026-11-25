@@ -160,6 +160,13 @@ pub mod testing {
         super::fresh_member(agent, pp)
     }
 
+    /// The `panes[]` entry that a loadout `up` writes for `pp` as pane 0 of window 0 (ML-3 review round 1).
+    pub fn loadout_pane(pp: &crate::loadout::PlanPane) -> crate::state::Pane {
+        let (kind, member) = super::plan_pane(pp);
+        let b = super::BuildPane { key: "kaaaaaaaa".into(), shell: kind == crate::state::PaneKind::Shell, cwd: pp.cwd.clone(), active: true };
+        super::new_pane(&b, 0, 0, kind, member.as_ref())
+    }
+
     /// [`super::attach`] with the given writers.
     pub fn attach_with(
         paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
@@ -679,6 +686,30 @@ fn fresh_member(agent: zygo_core::Agent, pp: &PlanPane) -> MemberRecord {
     m
 }
 
+/// The kind and the fresh member record of one loadout pane (D30): a shell pane and an agent pane whose server has user
+/// info (AU98) start a shell and get no record.
+fn plan_pane(pp: &PlanPane) -> (PaneKind, Option<MemberRecord>) {
+    match pp.kind {
+        PlanKind::Agent(a) if !pp.server.as_deref().is_some_and(has_user_info) => (agent_kind(a), Some(fresh_member(a, pp))),
+        _ => (PaneKind::Shell, None),
+    }
+}
+
+/// The `panes[]` entry that a loadout `up` writes for `b` (W§7.2). The name comes from the pane's fresh record (M§6), so
+/// a shell pane and an AU98 pane get none.
+fn new_pane(b: &BuildPane, window: u32, index: u32, kind: PaneKind, fresh: Option<&MemberRecord>) -> Pane {
+    Pane {
+        key: b.key.clone(),
+        window,
+        index,
+        active: b.active,
+        cwd: b.cwd.clone(),
+        kind,
+        name: fresh.and_then(|m| m.name.clone()),
+        ..Pane::default()
+    }
+}
+
 fn agent_kind(agent: zygo_core::Agent) -> PaneKind {
     match agent {
         zygo_core::Agent::ClaudeCode => PaneKind::ClaudeCode,
@@ -745,20 +776,14 @@ fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut 
                 key = new_pane_key();
             }
             taken.insert(key.clone());
-            let shell = match pp.kind {
-                PlanKind::Shell => true,
-                PlanKind::Agent(_) if pp.server.as_deref().is_some_and(has_user_info) => {
-                    report.au98.push(AU98.into());
-                    true
-                }
-                PlanKind::Agent(a) => {
-                    out.fresh.insert(key.clone(), fresh_member(a, pp));
-                    out.kinds.insert(key.clone(), agent_kind(a));
-                    false
-                }
-            };
-            if shell {
-                out.kinds.insert(key.clone(), PaneKind::Shell);
+            let (kind, member) = plan_pane(pp);
+            if member.is_none() && matches!(pp.kind, PlanKind::Agent(_)) {
+                report.au98.push(AU98.into());
+            }
+            let shell = kind == PaneKind::Shell;
+            out.kinds.insert(key.clone(), kind);
+            if let Some(m) = member {
+                out.fresh.insert(key.clone(), m);
             }
             panes.push(BuildPane { key, shell, cwd: pp.cwd.clone(), active: pi == 0 });
         }
@@ -1133,15 +1158,9 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                     .flat_map(|(w, &window)| {
                         w.panes.iter().enumerate().map(move |(i, p)| (window, i, p))
                     })
-                    .map(|(window, i, p)| Pane {
-                        key: p.key.clone(),
-                        window,
-                        index: i as u32,
-                        active: p.active,
-                        cwd: p.cwd.clone(),
-                        kind: plan.kinds.get(&p.key).copied().unwrap_or_default(),
-                        name: plan.fresh.get(&p.key).and_then(|m| m.name.clone()),
-                        ..Pane::default()
+                    .map(|(window, i, p)| {
+                        let kind = plan.kinds.get(&p.key).copied().unwrap_or_default();
+                        new_pane(p, window, i as u32, kind, plan.fresh.get(&p.key))
                     })
                     .collect();
                 for (k, m) in &plan.fresh {
@@ -1151,6 +1170,10 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                 for p in cur.panes.iter_mut() {
                     if let Some(k) = plan.kinds.get(&p.key) {
                         p.kind = *k;
+                        // M§6: a pane restored as a shell (its record not resumed, or forgotten below) has no name.
+                        if *k == PaneKind::Shell {
+                            p.name = None;
+                        }
                     }
                 }
                 for k in &plan.resumed {

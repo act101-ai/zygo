@@ -397,6 +397,71 @@ fn member_name_that_fails_the_grammar_reads_as_no_name() {
     }
 }
 
+#[test] // AU84, M§6, ML-3 review round 1: a stored pane name that fails the grammar reads as no name through Pane::valid_name
+fn member_name_pane_valid_name_checks_the_grammar() {
+    for (n, want) in [("lead", Some("lead")), ("a/b", None), ("le\u{7}ad", None), ("lead\n", None), ("all", None)] {
+        assert_eq!(Pane { name: Some(n.into()), ..Pane::default() }.valid_name(), want, "{n:?}");
+    }
+    assert_eq!(Pane::default().valid_name(), None);
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    for n in ["a/b", "le\u{1b}ad"] {
+        let mut v = doc();
+        v["panes"] = json!([{"key": KEY, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "claude-code", "name": n}]);
+        put(&store, &v);
+        let ws = store.read().unwrap().unwrap(); // the file is not refused
+        assert_eq!((ws.panes[0].name.as_deref(), ws.panes[0].valid_name()), (Some(n), None), "{n:?}");
+    }
+}
+
+#[test] // AU84, ML-3 review round 1: a `name` of the wrong JSON type loads as no name; the file and the other fields stay
+fn member_name_of_the_wrong_json_type_reads_as_none() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    for bad in [json!(5), json!(["a"]), json!({"a": 1}), json!(true), json!(null)] {
+        let mut v = doc();
+        v["panes"] = json!([{"key": KEY, "window": 0, "index": 2, "cwd": "/srv/app", "kind": "claude-code", "name": bad}]);
+        v["members"] = json!({KEY: {"state": "running", "launch": {"kind": "claude-code"}, "name": bad, "badge": [1]}});
+        put(&store, &v);
+        let ws = store.read().unwrap().unwrap();
+        let (pane, m) = (&ws.panes[0], &ws.members[KEY]);
+        assert_eq!((pane.name.as_deref(), pane.valid_name(), m.name.as_deref(), m.valid_name()), (None, None, None, None), "{bad}");
+        assert_eq!((pane.index, pane.kind, m.state), (2, PaneKind::ClaudeCode, MemberState::Running), "{bad}");
+        assert_eq!(m.extra.get("badge"), Some(&json!([1])), "{bad}");
+    }
+}
+
+#[test] // M§6, ML-3 review round 1: the panes[] entry of a loadout up takes the name of an agent pane; a shell pane and an AU98 pane get none
+fn member_name_loadout_pane_entry_takes_the_name_of_an_agent_pane_only() {
+    let pp = |kind: PlanKind, server: Option<&str>| PlanPane { kind, name: Some("lead".into()), cwd: "/srv/app".into(),
+        profile: None, args: vec![], yolo: false, passthrough: false, server: server.map(String::from), compact: None, config_dir: None };
+    let entry = |p: &PlanPane| zygo_workspace::up::testing::loadout_pane(p);
+    let agent = entry(&pp(PlanKind::Agent(Agent::ClaudeCode), Some("https://zygo.example")));
+    assert_eq!((agent.kind, agent.name.as_deref(), agent.valid_name()), (PaneKind::ClaudeCode, Some("lead"), Some("lead")));
+    let shell = entry(&pp(PlanKind::Shell, None));
+    assert_eq!((shell.kind, shell.name), (PaneKind::Shell, None));
+    let au98 = entry(&pp(PlanKind::Agent(Agent::OpenCode), Some("https://u:p@zygo.example")));
+    assert_eq!((au98.kind, au98.name), (PaneKind::Shell, None));
+}
+
+#[test] // M§6, D18-D20, ML-3 review round 1: `ws forget-pane` drops the record and clears the name of its pane
+fn member_name_forget_pane_clears_the_pane_name() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    let mut v = doc();
+    v["phase"] = json!("down");
+    v["panes"] = json!([{"key": KEY, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "claude-code", "name": "lead"}]);
+    v["members"] = json!({KEY: {"state": "resumable", "launch": {"kind": "claude-code"}, "name": "lead"}});
+    put(&store, &v);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = zygo_workspace::admin::forget_pane(&p, &t.path().join("no-tmux"), Some(ID), t.path(), KEY, &mut out, &mut err);
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
+    let ws = store.read().unwrap().unwrap();
+    assert!(ws.members.is_empty());
+    assert_eq!((ws.panes[0].kind, ws.panes[0].name.as_deref()), (PaneKind::Shell, None));
+}
+
 #[test] // AU29, W§18 #11 first half; W§10: a state that does not parse is not changed
 fn update_changes_no_file_it_cannot_read() {
     let t = TempDir::new().unwrap();

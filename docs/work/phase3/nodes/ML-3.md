@@ -196,3 +196,15 @@ test "$(cargo test -q -p zygo-workspace --test loadout -- member_name --list 2>/
 ```
 
   Expected counts: loadout 1, state 3, snapshot 1.
+
+### Review round 1
+
+Files widened: `crates/zygo-workspace/src/admin.rs` (fix 5 only). Each new test is named `member_name_…`.
+
+1. `state::Pane::valid_name` (same rule as `MemberRecord::valid_name`); the `Pane.name` doc comment points at it. Test `member_name_pane_valid_name_checks_the_grammar` (`a/b`, control characters).
+2. `Pane.name` and `MemberRecord.name` read through `lenient_name` (`deserialize_with`): a string is kept, any other JSON value reads as none, so the file still loads. Test `member_name_of_the_wrong_json_type_reads_as_none`.
+3. `loadout::resolve`: a name that an earlier pane of the plan took reads as no name (the first wins). Test `member_name_resolve_first_pane_wins_a_repeated_name`.
+4. An invalid name still reads as no name, silently (Acceptance unchanged).
+5. The name goes with the record: `ws forget-pane` clears `panes[k].name` (`admin.rs`); a restore `up` clears the name of each pane it restores as a shell, which covers the forgotten records (`up.rs`). Test `member_name_forget_pane_clears_the_pane_name`; the restore path runs only under tmux and has no test in the allowed files.
+6. Snapshot: the name comes from `members[key]` when the pane is an agent pane, is none for a shell pane with a record (an ended record, AU53), and is the stored pane's name when the key has no record. Test `member_name_snapshot_takes_the_name_from_the_member_record`.
+7. `up` builds each loadout `panes[]` entry with `new_pane`, and each pane's kind and fresh record with `plan_pane`; `up::testing::loadout_pane` reaches both. Test `member_name_loadout_pane_entry_takes_the_name_of_an_agent_pane_only` (agent pane, shell pane, AU98 pane).

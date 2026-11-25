@@ -72,6 +72,17 @@ fn member_name_resolve_copies_the_pane_name() {
     assert_eq!(p.windows[0].panes[0], PlanPane { name: Some("lead".into()), ..plain(PaneKind::Agent(Agent::ClaudeCode)) });
 }
 
+#[test] // M§6, ML-3 review round 1: a name that an earlier pane of the same plan took reads as no name (the first wins)
+fn member_name_resolve_first_pane_wins_a_repeated_name() {
+    let named = |kind: &str, n: &str| LoadoutPane { name: Some(n.into()), ..pane(kind) };
+    let w1 = window(vec![named("claude-code", "lead"), named("opencode", "lead"), named("opencode", "dev")]);
+    let w2 = window(vec![named("claude-code", "dev"), named("claude-code", "ops")]);
+    let p = resolve(&cfg("team", vec![("team", vec![w1, w2])]), None, &root(), &[]).unwrap();
+    let names: Vec<Vec<Option<&str>>> =
+        p.windows.iter().map(|w| w.panes.iter().map(|pp| pp.name.as_deref()).collect()).collect();
+    assert_eq!(names, [vec![Some("lead"), None, Some("dev")], vec![None, Some("ops")]]);
+}
+
 #[test]
 fn cwd_is_absolute_relative_or_a_branch_worktree() {
     let abs = root().join("elsewhere");

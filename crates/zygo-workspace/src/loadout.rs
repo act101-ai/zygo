@@ -34,7 +34,8 @@ pub enum PaneKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanPane {
     pub kind: PaneKind,
-    /// The member name (M§6), only when zygo_core::ids::valid_member_name passes (AU84).
+    /// The member name (M§6), only when zygo_core::ids::valid_member_name passes (AU84) and no earlier pane of the plan
+    /// took it (the first wins; `zygo up` does not run `config check`).
     pub name: Option<String>,
     /// The pane's directory: the main worktree when the loadout sets no `cwd`.
     pub cwd: PathBuf,
@@ -150,6 +151,7 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
     }
     let mut warnings: Vec<String> = Vec::new();
     let mut windows = Vec::with_capacity(loadout.window.len());
+    let mut names: Vec<String> = Vec::new();
     for (wi, w) in loadout.window.iter().enumerate() {
         if w.pane.is_empty() {
             return Err(LoadoutError::NoPane { name: name.to_string(), window: wi });
@@ -174,9 +176,11 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
                     warnings.push(warning);
                 }
             }
+            let name = p.name.clone().filter(|n| zygo_core::ids::valid_member_name(n) && !names.contains(n));
+            names.extend(name.clone());
             panes.push(PlanPane {
                 kind,
-                name: p.name.clone().filter(|n| zygo_core::ids::valid_member_name(n)),
+                name,
                 cwd,
                 profile: p.profile.clone(),
                 args: p.args.clone(),
