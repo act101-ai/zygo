@@ -866,7 +866,7 @@ P4-3 (Codex premises):
 
 8. `sh scripts/check-premises.sh` passes with the `Codex: 0.172.0` header and the PC rows, with no Codex client in `Agent::ALL`; it fails when a required existing id (for example `Q7`) is removed.
 9. Each PC row has a date, a result and fixture paths that pass the `nontrivial` rule.
-10. No fixture holds a token, a key form, a user name or a home path (`scrub.py` pass).
+10. No fixture holds a token, a key form, a user name, a home path or an e-mail address (`scrub.py` pass). An address `<local>@example.invalid` at exactly the reserved domain (RFC 2606) is exempt, where `<local>` is only letters, digits, `.`, `_` and `-` and is not part of a percent hack or bang path: it can never resolve or belong to anyone. A verbatim upstream file (the Claude Code settings schema, the Codex `config.schema.json`) is exempt, at its exact path (case-sensitive), from the home-path rules (macOS and Windows), the bearer rule and the `N2_FORBIDDEN_NAMES` name scan only, and only while it is a regular file whose sha256 equals the value pinned in `scripts/check-premises.sh` and its source file gives the same value; a new upstream copy needs a reviewed change to the check. The host-name scan and every other rule still cover the verbatim files. Every scanned file is read as text, also a binary one. A path in the scanned scope that holds whitespace or `:` fails, because the scan could not read it or name it.
 
 P4-4 (proxy; a Claude Code session; Codex request bodies from `fixtures/codex/requests/`; a mock upstream):
 
@@ -953,4 +953,7 @@ P4-11 (client updates):
 - 2026-11-25: K§6.2.2 A-9 — the OpenCode precedent points to its A-9.1 to A-9.5 grades in `docs/conformance/opencode.toml`, not to `docs/conformance.md` (pointer correction); author's call.
 - 2026-11-25: K§6.2.3 — the bar exception example's reason is the registry's text and cites no hand note in `docs/conformance.md`; author's call.
 - 2026-11-25: K§6.3.7 amended (operator): the proxy variables: HTTP_PROXY and ALL_PROXY too, so plain-HTTP and SOCKS-aware clients also reach the mock.
+- 2026-11-25: K§11 item 10 amended (author's call): the e-mail rule exempts the reserved domain example.invalid (RFC 2606); the live scripts use it as a git test identity.
+- 2026-11-25: K§11 item 10 amended (author's call): the verbatim files' sha256 values are pinned in the check; the example.invalid exemption takes only a plain local part; a scanned path that holds whitespace or `:` fails (PC-8 review round 2).
+- 2026-11-25: K§11 item 10 amended (author's call): the verbatim-file exemption names its rules exactly (home paths, bearer, `N2_FORBIDDEN_NAMES`) and is exact-path and case-sensitive; binary files are scanned as text (PC-8 review round 3).
 - 2026-11-25: K-D18 — the Claude Code A-1.4 reason points to the registry (`docs/conformance/capabilities.toml`), not to the `docs/conformance.md` "Windows shell for the generated commands" note, which generation removes (pointer correction); author's call.
