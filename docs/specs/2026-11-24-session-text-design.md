@@ -104,7 +104,7 @@ One owner for each piece of text, for each receiver.
 ### 7.1 Today
 
 - The built-in agents get a model and an edit permission only (`crates/zygo-launch/src/opencode.rs:130-138`, map at `:18`: `build` → `lead`, `plan` → `plan`, `general` → `code`, `explore` → `read`). Each `zygo-<role>` agent gets the role prompt and the mechanics text (`:139-148`). Converted plugin agents are merged after (`:149`).
-- The plugin's system-prompt transform calls `zygo hook session-start` only when the request's model is `zygo/<ZYGO_MAIN_ROLE>`, and pushes the output into `output.system` (`crates/zygo-launch/assets/opencode-plugin.js:185-190`). The transform input has the model and no agent id (§8.7 note; `fixtures/opencode/plugin-hooks/experimental.chat.system.transform.json`). The OpenCode documentation does not name this hook (`docs/conformance.md:42`).
+- The plugin's system-prompt transform calls `zygo hook session-start` only when the request's model is `zygo/<ZYGO_MAIN_ROLE>`, and pushes the output into `output.system` (`crates/zygo-launch/assets/opencode-plugin.js:185-190`). The transform input has the model and no agent id (§8.7 note; `fixtures/opencode/plugin-hooks/experimental.chat.system.transform.json`). The OpenCode documentation does not name this hook (the reason of the OpenCode A-8.1 grade, capability A-8, in `docs/conformance/opencode.toml`).
 
 ### 7.2 Design: the mechanism without an agent id (author)
 
@@ -186,7 +186,7 @@ Reasons for this channel (author): `PostToolUse` is a documented context channel
 
 ### 9.3 OpenCode
 
-The transform runs per model request and writes into `output.system`, which is not in the message history. So a compaction cannot remove that text if OpenCode calls the transform on the first request after a compaction (ST3). The OpenCode documentation does not answer this (`docs/conformance.md:42`).
+The transform runs per model request and writes into `output.system`, which is not in the message history. So a compaction cannot remove that text if OpenCode calls the transform on the first request after a compaction (ST3). The OpenCode documentation does not answer this (the reason of the OpenCode A-8.1 grade, capability A-8, in `docs/conformance/opencode.toml`).
 
 | ST3 | Behavior |
 |---|---|
@@ -446,3 +446,7 @@ Each check is decided by a test with the stub agents and recorded fixtures, or b
 - Whether the agent-name rule is shared from `zygo-work` or repeated in `zygo-hooks`, with the same character set and length.
 - The test file layout.
 - The exact words of the §8.6, §8.7 and §10.6 edits, inside the meaning of T§13.
+
+## Change log
+
+- 2026-11-25: §7.1 and §9.3 — the OpenCode documentation caveat points to the reason of the OpenCode A-8.1 grade (capability A-8) in `docs/conformance/opencode.toml`, not to `docs/conformance.md:42`, which is generated and keeps no hand note (pointer correction, node CF-4); author's call.

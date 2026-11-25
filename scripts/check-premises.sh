@@ -1,8 +1,10 @@
 #!/bin/sh
 # Checks docs/premises.md, the premise fixtures and the spec notes (node N2); rows and agent versions are driven by data (K§6.2.5, node PC-1).
 # Prints the first failing item and exits 1; exits 0 when all items pass.
+# It also scans for forbidden content (N38): fixtures/, the live scripts (scripts/premises/live*.sh),
+# scripts/premises/live/, docs/live-checks.md and the spec and conformance lines naming N38.
 # N2_FORBIDDEN_NAMES (optional, space-separated, given at run time, never written here): words
-# that must not appear as whole words (any case) in fixtures/ or docs/premises.md, such as the
+# that must not appear as whole words (any case) in that scope or docs/premises.md, such as the
 # operator's user name.
 set -uf
 cd "$(dirname "$0")/.." || exit 1
@@ -23,6 +25,17 @@ nontrivial() {
   [ "$(wc -c <"$1" | tr -d ' ')" -gt 2 ] || return 1
   case "$(tr -d ' \t\r\n' <"$1")" in '{}'|'[]') return 1 ;; esac
   return 0
+}
+
+REAL=$(pwd -P)
+# in_repo <path>: true when the directory of the repository-relative <path> resolves to the same path
+# under the repository's real root (no component is a symlink, '.' or empty, and the directory is
+# readable), or does not exist (nontrivial then
+# reports the path).
+in_repo() {
+  edir=$(dirname "$1")
+  [ -d "$edir" ] || return 0
+  [ "$(cd -P "$REAL/$edir" 2>/dev/null && pwd -P)" = "$REAL/$edir" ]
 }
 
 [ -s "$P" ] || fail "$P is missing or empty"
@@ -61,15 +74,16 @@ fi
 # version_of <name>: the header value for that name (the first line wins), or nothing.
 version_of() { printf '%s\n' "$HDR" | N="$1" awk -F'\t' '$1 == ENVIRON["N"] { print $2; exit }'; }
 
-# TROWS: "line<TAB>id<TAB>r|o" for every table line of the file (it starts with optional blanks
-# and "|"), the first cell trimmed at its ends, in file order; r marks a row of the Results table
-# (its header row starts "| Id | Item |"; it ends at the first line that does not start with
-# optional blanks and "|"), o any other table line. The Results header and separator rows are left out.
+# TROWS: "line<TAB>id<TAB>r|o" for every table line of the file (it starts with zero to three
+# blanks and "|"; a line with four or more leading blanks or a leading tab is not a table line, as
+# Markdown renders it as code), the first cell trimmed at its ends, in file order; r marks a row of
+# the Results table (its header row starts "| Id | Item |"; it ends at the first line that is not a
+# table line), o any other table line. The Results header and separator rows are left out.
 TROWS=$(awk -F'|' '
   !t && /^\| Id \| Item \|/ { t = 1; next }
-  t == 1 { t = 2; if ($0 ~ /^[ \t]*\|[-:| \t]*$/) next }
-  t == 2 && $0 !~ /^[ \t]*\|/ { t = 3 }
-  /^[ \t]*\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
+  t == 1 { t = 2; if ($0 ~ /^ ? ? ?\|[-:| \t]*$/) next }
+  t == 2 && $0 !~ /^ ? ? ?\|/ { t = 3 }
+  /^ ? ? ?\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
 ' "$P")
 # The file has one Results table: a second header row "| Id | Item |" fails.
 res2=$(awk '/^\| Id \| Item \|/ { if (n++) { print NR; exit } }' "$P")
@@ -162,6 +176,7 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
   [ -n "$paths" ] || fail "$id: evidence names no path"
   while IFS= read -r f; do
     case "$f" in /* | .. | ../* | */.. | */../*) fail "$id: evidence path $f is absolute or holds a '..' component" ;; esac
+    in_repo "$f" || fail "$id: evidence path $f is not a plain path inside the repository (a symlink, \`.\`/\`//\` part, or unreadable directory)"
     nontrivial "$f" || fail "$id: evidence path $f is missing, not a regular file, or trivial"
   done <<EOF_PATHS
 $paths
@@ -203,25 +218,82 @@ done
 nontrivial fixtures/act-lite/status.json || nontrivial fixtures/act-lite/languages.json ||
   fail "required file fixtures/act-lite/status.json or fixtures/act-lite/languages.json is missing"
 
-# Forbidden content under fixtures/: credentials, machine paths, e-mail addresses.
-# settings-schema.json is the upstream schema kept verbatim (its source is beside it); so is the
-# Codex config.schema.json (from the pinned rust-v0.172.0 tag, K§6.3.7). Their own example texts
-# ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules only.
-VERBATIM="fixtures/claude-code/settings-schema.json fixtures/codex/config.schema.json"
-# VX: the ERE ^(<path>|<path>): for the list, dots escaped.
-VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):"
-# Scope (N38): fixtures, the live scripts and their helpers, docs/live-checks.md (each when it
-# exists); scan_notes applies the same patterns to the spec and conformance lines naming N38.
+# Forbidden content (credentials, machine paths, e-mail addresses, names).
+# Scope (N38): fixtures/, the live scripts (scripts/premises/live*.sh), scripts/premises/live/,
+# docs/live-checks.md (each when it exists), and the lines of the spec and docs/conformance.md that
+# name N38 (NOTES; scan and name_scan read them too). The live scripts' helpers (lib.sh,
+# workspace_lib.sh) are not scanned here; tests/forbidden_content.rs (every tracked file) covers them. Every grep
+# reads files as text (-a), so a hit in a binary file is a line with its content.
+# A path in the scope that holds whitespace would be split and not scanned, and one that holds
+# ':' could pass for a grep hit line of another file, so either fails.
 SCOPE=fixtures
+set +f   # the live*.sh glob needs globbing (set -f at the top)
 for f in scripts/premises/live scripts/premises/live*.sh docs/live-checks.md; do
+  case $f in *[[:space:]]*) fail "a path in the scan scope holds whitespace: '$f'" ;; esac
   [ -e "$f" ] && SCOPE="$SCOPE $f"
 done
-NOTES=$( (grep -nH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
-# scan <ERE> <exempt ERE> <label> [i]: the first line that matches and is not exempt fails; i: any case.
+set -f
+# shellcheck disable=SC2086
+bad=$(find $SCOPE -name '*[[:space:]]*' 2>/dev/null | head -n 1)
+[ -z "$bad" ] || fail "a path in the scan scope holds whitespace: '$bad'"
+# shellcheck disable=SC2086
+bad=$(find $SCOPE -name '*:*' 2>/dev/null | head -n 1)
+[ -z "$bad" ] || fail "a path in the scan scope holds ':': $bad"
+# grep -r does not follow symlinks on macOS, so a symlink in the scope is neither scanned nor evidence.
+# shellcheck disable=SC2086
+lnk=$(find $SCOPE -type l 2>/dev/null | head -n 1)
+[ -z "$lnk" ] || fail "$lnk is a symlink; a symlink in the scan scope is not scanned and is not evidence"
+# settings-schema.json is the upstream schema kept verbatim (its source is beside it); so is the
+# Codex config.schema.json (from the pinned rust-v0.172.0 tag, K§6.3.7). Their own example texts
+# ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules and from the
+# N2_FORBIDDEN_NAMES scan only, and only while each is still the upstream copy: a verbatim file
+# that exists must be a regular file whose sha256 equals the value pinned below, and the first
+# "sha256: <hex>" line of its source file (the same path with the final .json replaced by
+# .source.txt) must give the same value. The pins live in this script so that a new upstream copy
+# needs a reviewed change here; a fetch that rewrites the file and its source line together fails.
+VERBATIM="fixtures/claude-code/settings-schema.json fixtures/codex/config.schema.json"
+# pin_of <verbatim file>: its pinned sha256 (the Codex value is the one PC-2 pins in codex/base.sh).
+pin_of() {
+  case $1 in
+    fixtures/claude-code/settings-schema.json) echo f26f028ad94a1e2a28e9dad1f80832ab196a8e080bd3a7d7a32e6428a15e0611 ;;
+    fixtures/codex/config.schema.json) echo 52fb96b1ff79a51bf9ce31695a4a22d4e80f57591d91bad5747b657f4e612bac ;;
+  esac
+}
+# SHA256: shasum -a 256, else sha256sum. sha256_of <file>: its sha256 in lower-case hex.
+if command -v shasum >/dev/null 2>&1; then SHA256="shasum -a 256"
+elif command -v sha256sum >/dev/null 2>&1; then SHA256=sha256sum
+else fail "no sha256 tool (need shasum or sha256sum)"
+fi
+# shellcheck disable=SC2086
+sha256_of() { $SHA256 <"$1" | awk '{ print tolower($1) }'; }
+for f in $VERBATIM; do
+  [ -e "$f" ] || [ -L "$f" ] || continue
+  [ -f "$f" ] && [ ! -L "$f" ] || fail "verbatim file $f is not a regular file"
+  src=${f%.json}.source.txt
+  [ -f "$src" ] || fail "verbatim file $f has no source file $src"
+  pin=$(pin_of "$f")
+  want=$(sed -n 's/^sha256:[[:space:]]*\([0-9A-Fa-f]\{64\}\)[[:space:]]*$/\1/p' "$src" | head -n 1 | tr 'A-F' 'a-f')
+  got=$(sha256_of "$f")
+  [ "$got" = "$pin" ] && [ "$want" = "$pin" ] ||
+    fail "verbatim file $f (sha256 $got) and its source file $src (sha256 ${want:-<none>}) must both give the pinned sha256 $pin"
+done
+# VX: the ERE ^(<path>|<path>):<digits>: for the list (a grep -n hit line of exactly that file), dots
+# escaped. It is always applied case-sensitively, so only the exact path is exempt.
+VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
+NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
+# scan <ERE> <exempt ERE> <label> [i] [<drop sed -E script>]: the first line that matches and is not
+# exempt fails; i: the ERE matches any case (the exempt ERE never does). <drop sed -E script>:
+# applied to a hit line, which fails only when the ERE still matches the result; the message shows
+# the line as written. A NUL in a hit line becomes a blank first (read stops at a NUL); both are
+# outside every character class of the rules and of the drop script.
 scan() {
-  o=-E; [ "${4:-}" != i ] || o=-iE
+  o=-aE; [ "${4:-}" != i ] || o=-aiE
   # shellcheck disable=SC2086
-  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -v $o -- "${2:-^\$}" | head -n 1)
+  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -av -E -- "${2:-^\$}" |
+    tr '\000' ' ' | while IFS= read -r ln; do
+      [ -z "${5:-}" ] || printf '%s\n' "$ln" | sed -E "$5" | grep -q $o -- "$1" || continue
+      printf '%s\n' "$ln"
+    done | head -n 1)
   [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
 }
 # L: the left edge of a key or id: line start, a non-word character, or a JSON backslash escape
@@ -235,7 +307,14 @@ scan "$XK"'[^"'"'"'\\[:space:]]' "$XK"'\[omitted\]' 'x-api-key value' i
 scan '/Users/' "$VX" 'macOS home path'
 scan '/private/var/' '' 'temporary path'
 scan '/var/folders/' '' 'temporary path'
-scan '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '' 'e-mail address'
+# An address at exactly the reserved domain example.invalid (RFC 2606; the live scripts' git test
+# identity) is not a leak (K§11 item 10). Only "<local>@example.invalid" is dropped: <local> is
+# [A-Za-z0-9._-]+ after the line start or a character outside [A-Za-z0-9._%!+@-] (so a percent hack
+# or bang path such as bob%corp.com@… or corp.com!bob@… is not exempt), and the domain is followed
+# by the line end or a character outside [A-Za-z0-9.@-]. The drop repeats until nothing matches
+# (each drop takes the character after it, which may start the next address).
+MAILX=$(printf '%s\n' ':a' 's/(^|[^A-Za-z0-9._%!+@-])[A-Za-z0-9._-]+@example\.invalid([^A-Za-z0-9.@-]|$)/\1\2/' 'ta')
+scan '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '' 'e-mail address' '' "$MAILX"
 scan 'sk-ant-o' '' 'claude.ai login token'
 scan "${L}sk-[A-Za-z0-9_-]{20,}" '' 'API key'
 scan 'sk-(proj|svcacct|admin)-' '' 'OpenAI key'
@@ -248,18 +327,19 @@ scan "${L}gh[pousr]_[A-Za-z0-9]{20,}" '' 'GitHub token'
 scan 'github_pat_[A-Za-z0-9_]{20,}' '' 'GitHub token'
 scan 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.' '' 'JWT'
 
-# name_scan <label> <name> [<word characters>]: the name as a whole word (any case; it may hold
-# spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless given (host
-# names: A-Za-z0-9_-, as in scrub.py). The message names the file and line, never the name.
+# name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
+# it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless
+# given (host names: A-Za-z0-9_-, as in scrub.py). A hit line ("path:line:text") that matches the
+# exempt ERE is dropped, as in scan. The message names the file and line, never the name.
 name_scan() {
   e=$(printf '%s' "$2" | sed 's/[][\.*^$+?(){}|/]/\\&/g')
   wc=${3:-A-Za-z0-9_}
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
   # shellcheck disable=SC2086
-  hit=$( (grep -rniE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -iE -- "$rx") | head -n 1)
+  hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | head -n 1)
   [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | head -n 1 | cut -d: -f1-2)"
 }
-for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w"; done
+for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"; done
 # The machine's host names (from the OS at run time, full and short): hostname, and on macOS
 # scutil LocalHostName and ComputerName. A name shorter than 4 characters or localhost is skipped.
 host_names() {

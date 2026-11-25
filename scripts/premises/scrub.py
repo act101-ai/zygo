@@ -28,6 +28,16 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
 - Round 4 (N38): a name with spaces that ends the text, or is followed by a quote or a line end
   within 40 characters, is removed whole (C:\Users\Jo Ann -> /home/user). Host-name edges: "-" and
   "_" are part of a name, as in check-premises.sh.
+- PC-10: the OS name, version and architecture in a user agent ("product/1.2 (Mac OS 27.2.1; arm64)",
+  "(Linux 6.8.0; x86_64)", "(Windows 10.0.26100)") -> "(os omitted)". A run path with a doubled
+  "/" (a TMPDIR that ends in "/", as in .../T//tmp.X) maps like the plain path.
+- PC-10 review round 1: a user agent's parenthesis that names an OS (macOS, a Linux distribution,
+  a Windows edition, a browser's "Macintosh; Intel Mac OS X 10_15_7"; with or without a blank after
+  the product) -> "(os omitted)", and that Mac OS X text alone; os_type, os_version, os_arch,
+  os_name and os_release values (JSON keys, and in JSON text) -> "(os omitted)"; uname -a lines
+  (Darwin ... Darwin Kernel Version ..., Linux <host> <version> #<n> ...) -> "(os omitted)"; a
+  <timezone> other than UTC -> "<timezone>(omitted)</timezone>" (a backstop: codex_env sets TZ=UTC;
+  the forms and UTC names of codex_record's check); Claude's dashed path form of a run path with "//" ("--") maps like the plain form.
 """
 import getpass
 import json
@@ -110,9 +120,34 @@ def ids(kind, v):
     return IDS[v][1]
 
 
+# Each path pair also matches with any "/" doubled (a TMPDIR that ends in "/": .../T//tmp.X), and
+# a dashed pair with any "-" doubled (the same path in Claude's dashed form).
+PAIRS = [(re.compile(re.escape(a).replace("/", "/+").replace("\\-", "-+")), b) for a, b in PAIRS]
+# The host OS in a user agent: "<product>/<version>[ ](... <an OS name> ...)".
+OS_NAMES = (r"(?:Mac OS|macOS|Macintosh|Darwin|Linux|Ubuntu|Debian|Fedora|CentOS|Red Hat|Alpine|Arch|"
+            r"openSUSE|SUSE|Gentoo|NixOS|Manjaro|Mint|Windows|FreeBSD|OpenBSD|NetBSD|Android|iOS|CYGWIN|"
+            r"MINGW|MSYS)")
+UA_OS = re.compile(r"(\S/[0-9][^\s/()]*)( ?)\((?=[^()]*\b%s\b)[^()]*\)" % OS_NAMES)
+MAC_OS_X = re.compile(r"(?:Macintosh; )?(?:Intel |PPC )?Mac OS X [0-9][0-9_.]*")
+OS_KEYS = ("os_type", "os_version", "os_arch", "os_name", "os_release")
+OS_JSON = re.compile(r"((?:\\?\")(?:%s)(?:\\?\")\s*:\s*(?:\\?\"))[^\"\\]*" % "|".join(OS_KEYS))
+UNAME = re.compile(r"\b(?:Darwin \S+ [0-9]+\.[0-9]+\.[0-9]+ Darwin Kernel Version|Linux \S+ [0-9]+\.[0-9]+\.[0-9]+\S* #[0-9]+)[^\n\"\\]*")
+# A <timezone> element in the forms lib.sh's codex_record checks: plain, JSON < > escapes or
+# &lt; &gt; entities, \/ slashes; UTC in any case, Etc/UTC, GMT, Etc/GMT, UTC+0, UTC+00:00 kept.
+TIMEZONE = re.compile(r"((?:<|\\u003[cC]|&lt;)timezone(?:>|\\u003[eE]|&gt;))((?:\\/|[^<&\\\n]){1,200})"
+                      r"((?:<|\\u003[cC]|&lt;)\\?/timezone)")
+UTC_NAMES = {"utc", "etc/utc", "gmt", "etc/gmt", "utc+0", "utc+00:00"}
+
+
 def s(text):
     for a, b in PAIRS:
-        text = text.replace(a, b)
+        text = a.sub(lambda m: b, text)
+    text = UA_OS.sub(lambda m: m.group(1) + m.group(2) + "(os omitted)", text)
+    text = MAC_OS_X.sub("(os omitted)", text)
+    text = OS_JSON.sub(lambda m: m.group(1) + "(os omitted)", text)
+    text = UNAME.sub("(os omitted)", text)
+    text = TIMEZONE.sub(lambda m: m.group(0) if m.group(2).replace("\\/", "/").strip().lower() in UTC_NAMES
+                        else m.group(1) + "(omitted)" + m.group(3), text)
     text = re.sub(r"(/private)?/var/folders/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"/private/var/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"(?i)[A-Za-z]:(?:\\\\|\\|/)Users(?:\\\\|\\|/)" + WNAME, lambda m: "/home/user", text)
@@ -139,7 +174,7 @@ def s(text):
 
 def walk(o):
     if isinstance(o, dict):
-        return {s(k): walk(v) for k, v in o.items()}
+        return {s(k): "(os omitted)" if k in OS_KEYS and isinstance(v, str) else walk(v) for k, v in o.items()}
     if isinstance(o, list):
         return [walk(v) for v in o]
     if isinstance(o, str):
