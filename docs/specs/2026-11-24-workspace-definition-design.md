@@ -343,7 +343,7 @@ Two sessions at once: two `zygo workspace approve` runs take the approvals lock 
 | Approval write fails | Exit 1; the temp file is removed; nothing is stored. |
 | The pool directory is gone at a resume | The existing `--config-dir` rule (`claude.rs:80-82`): the launch fails and the pane opens a shell with the W§8.2 line. |
 | A pool directory's settings set a credential key | That member's launch exits 2 (§8.4); the other members start. |
-| `up` crashes during a repository build | AU67 repair from the saved records; no new read. |
+| `up` crashes during a repository build | AU67 repair from the saved records reads nothing. When the repair takes the plan back (no pane left), the loadout plan that follows is an R§10 `zygo up` choice and reads once; a kept member keeps its pin (R§7.4). |
 
 ## 12. Owners of state
 
@@ -489,3 +489,4 @@ Each check is a test in temp directories with temp git repositories (a bare "ori
 ## Change log
 
 - 2026-11-24 · R§9.1 · operator · config check refuses job on a non-agent pane, so a shell pane cannot take the orchestrator slot
+- 2026-11-25 · R§11 · author's call (node WD-11) · the row "`up` crashes during a repository build" said "no new read", which disagreed with the R§10 `zygo up` row when the repair takes the plan back
