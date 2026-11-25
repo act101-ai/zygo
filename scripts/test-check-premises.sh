@@ -515,6 +515,33 @@ add_row "$D" "$(row PC1 tmux 3.2 verified docs/../docs/premises.md)"
 run "$D"
 expect_fail "PC1: evidence path docs/../docs/premises.md is absolute or holds a '..' component"
 
+# PC-9 round 2 (F1): the last component is a regular file, but a directory on the path is a symlink
+# to a folder outside the tree; scripts/premises/ext is outside the forbidden-content scan scope.
+CASE="an evidence path through a symlinked directory"
+D=$(mk symdir)
+mkdir -p "$T/symdir_out"
+echo 'outside evidence' > "$T/symdir_out/ev.sh"
+ln -s "$T/symdir_out" "$D/scripts/premises/ext"
+add_row "$D" "$(row PC1 tmux 3.2 verified scripts/premises/ext/ev.sh)"
+run "$D"
+INREPO='is not a plain path inside the repository (a symlink, `.`/`//` part, or unreadable directory)'
+expect_fail "PC1: evidence path scripts/premises/ext/ev.sh $INREPO"
+
+# PC-9 round 3 (G4): a '.' or '//' part in the directory is refused too, with the same message.
+CASE="an evidence path with a . part"
+D=$(mk dotpart)
+evidence "$D"
+add_row "$D" "$(row PC1 tmux 3.2 verified fixtures/./codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: evidence path fixtures/./codex/pc1.txt $INREPO"
+
+CASE="an evidence path with a // part"
+D=$(mk slashpart)
+evidence "$D"
+add_row "$D" "$(row PC1 tmux 3.2 verified fixtures//codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: evidence path fixtures//codex/pc1.txt $INREPO"
+
 CASE="a joint agent with no header for the second"
 D=$(mk joint)
 evidence "$D"
