@@ -1,0 +1,19 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/home/user/.claude/projects/-repo/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/repo",
+  "prompt_id": "00000000-0000-4000-8000-000000000002",
+  "permission_mode": "bypassPermissions",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "printf 'out-line\\n'; printf 'err-line\\n' >&2; exit 3"
+  },
+  "tool_use_id": "toolu_po1_00_bash",
+  "error": "Exit code 3\nout-line\nerr-line",
+  "is_interrupt": false,
+  "duration_ms": 306
+}
