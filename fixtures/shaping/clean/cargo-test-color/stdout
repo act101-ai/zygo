@@ -1,0 +1,70 @@
+
+running 60 tests
+test passes_001 ... [32mok(B[m
+test passes_002 ... [32mok(B[m
+test passes_004 ... [32mok(B[m
+test passes_003 ... [32mok(B[m
+test passes_005 ... [32mok(B[m
+test passes_006 ... [32mok(B[m
+test passes_007 ... [32mok(B[m
+test passes_008 ... [32mok(B[m
+test passes_009 ... [32mok(B[m
+test passes_010 ... [32mok(B[m
+test passes_011 ... [32mok(B[m
+test passes_012 ... [32mok(B[m
+test passes_013 ... [32mok(B[m
+test passes_014 ... [32mok(B[m
+test passes_015 ... [32mok(B[m
+test passes_016 ... [32mok(B[m
+test passes_017 ... [32mok(B[m
+test passes_018 ... [32mok(B[m
+test passes_019 ... [32mok(B[m
+test passes_020 ... [32mok(B[m
+test passes_021 ... [32mok(B[m
+test passes_022 ... [32mok(B[m
+test passes_023 ... [32mok(B[m
+test passes_024 ... [32mok(B[m
+test passes_025 ... [32mok(B[m
+test passes_026 ... [32mok(B[m
+test passes_027 ... [32mok(B[m
+test passes_028 ... [32mok(B[m
+test passes_029 ... [32mok(B[m
+test passes_030 ... [32mok(B[m
+test passes_031 ... [32mok(B[m
+test passes_032 ... [32mok(B[m
+test passes_033 ... [32mok(B[m
+test passes_034 ... [32mok(B[m
+test passes_035 ... [32mok(B[m
+test passes_036 ... [32mok(B[m
+test passes_037 ... [32mok(B[m
+test passes_038 ... [32mok(B[m
+test passes_039 ... [32mok(B[m
+test passes_040 ... [32mok(B[m
+test passes_041 ... [32mok(B[m
+test passes_042 ... [32mok(B[m
+test passes_043 ... [32mok(B[m
+test passes_044 ... [32mok(B[m
+test passes_045 ... [32mok(B[m
+test passes_046 ... [32mok(B[m
+test passes_047 ... [32mok(B[m
+test passes_048 ... [32mok(B[m
+test passes_049 ... [32mok(B[m
+test passes_050 ... [32mok(B[m
+test passes_051 ... [32mok(B[m
+test passes_052 ... [32mok(B[m
+test passes_053 ... [32mok(B[m
+test passes_054 ... [32mok(B[m
+test passes_055 ... [32mok(B[m
+test passes_056 ... [32mok(B[m
+test passes_057 ... [32mok(B[m
+test passes_058 ... [32mok(B[m
+test passes_059 ... [32mok(B[m
+test passes_060 ... [32mok(B[m
+
+test result: [32mok(B[m. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: [32mok(B[m. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
