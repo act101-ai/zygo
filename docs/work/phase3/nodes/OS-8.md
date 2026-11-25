@@ -31,9 +31,9 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
 
 ### Steps
 
-- [ ] **1. Dev-dependency.** In `crates/zygo/Cargo.toml` `[dev-dependencies]` add `rusqlite.workspace = true`. Check: `cargo test -p zygo --test usage_doctor --no-run` builds.
+- [x] **1. Dev-dependency.** In `crates/zygo/Cargo.toml` `[dev-dependencies]` add `rusqlite.workspace = true`. Check: `cargo test -p zygo --test usage_doctor --no-run` builds.
 
-- [ ] **2. Test helpers** in `crates/zygo/tests/usage_doctor.rs`, after `run` (line 53). Add `ReadbackRow` to the `zygo_usage` import (line 23).
+- [x] **2. Test helpers** in `crates/zygo/tests/usage_doctor.rs`, after `run` (line 53). Add `ReadbackRow` to the `zygo_usage` import (line 23).
   ```rust
   /// The O§6.3 test row: input 4, cache_read 0.4, cache_write_5m 5, cache_write 8 USD per Mtok.
   const PRICED: &str = "[model.provider.price_usd_per_mtok]\ninput = 4.0\ncache_read = 0.4\ncache_write = 8.0\ncache_write_5m = 5.0";
@@ -52,7 +52,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   ```
   Check: `cargo test -p zygo --test usage_doctor --no-run` builds.
 
-- [ ] **3. Test `savings_usage_prints_o66_block`** (O§6.6 block, line for line as corrected in this node's plan commit; O§6.3 worked example; negative amount). Rows of the worked example (`crates/zygo-usage/tests/savings.rs` `worked_example`) in session `S`; 14 trims at ts 100 summing 40,000 bytes; 3 read-backs at ts 155 summing 4,000 bytes.
+- [x] **3. Test `savings_usage_prints_o66_block`** (O§6.6 block, line for line as corrected in this node's plan commit; O§6.3 worked example; negative amount). Rows of the worked example (`crates/zygo-usage/tests/savings.rs` `worked_example`) in session `S`; 14 trims at ts 100 summing 40,000 bytes; 3 read-backs at ts 155 summing 4,000 bytes.
   ```rust
   let d = TempDir::new().unwrap();
   let p = paths(d.path());
@@ -83,7 +83,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   ```
   (libtest: 7,625 tok × 12 − 500 tok × 5.4 per Mtok = 0.0888; diff: 2,250 × 12 = 0.0270; size: 125 × 12 − 500 × 5.4 = −0.0012.)
 
-- [ ] **4. Test `savings_usage_rates_follow_catalog_provider_and_tier`** (O§6.3 step 3, rule "Prices", O-C5). One request per session at ts 20, a trim of 4,000,000 bytes (10^6 tokens) at ts 10, so the line shows the write rate in USD.
+- [x] **4. Test `savings_usage_rates_follow_catalog_provider_and_tier`** (O§6.3 step 3, rule "Prices", O-C5). One request per session at ts 20, a trim of 4,000,000 bytes (10^6 tokens) at ts 10, so the line shows the write rate in USD.
   ```rust
   let d = TempDir::new().unwrap();
   let p = paths(d.path());
@@ -104,7 +104,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   assert_eq!(spend_line(&p, &["--session", "A"]), "estimated spend avoided: ≈$1000.0000"); // O-C5: doubled catalog rates
   ```
 
-- [ ] **5. Test `savings_usage_names_unpriced_requests`** (O§6.6, O§10 "A model with no price row"). No config file; model `m-none` is in no catalog row.
+- [x] **5. Test `savings_usage_names_unpriced_requests`** (O§6.6, O§10 "A model with no price row"). No config file; model `m-none` is in no catalog row.
   ```rust
   let d = TempDir::new().unwrap();
   let p = paths(d.path());
@@ -115,7 +115,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   assert_eq!(spend_line(&p, &[]), "estimated spend avoided: ≈$0.0000 (2 requests had no price)");
   ```
 
-- [ ] **6. Test `savings_usage_config_does_not_load_prints_unknown`** (O§10 row "Config does not load"). Uses `ALL` as updated in step 10.
+- [x] **6. Test `savings_usage_config_does_not_load_prints_unknown`** (O§10 row "Config does not load"). Uses `ALL` as updated in step 10.
   ```rust
   let d = TempDir::new().unwrap();
   let p = paths(d.path());
@@ -126,7 +126,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   assert_eq!(run(&p, &[], None).unwrap(), want);
   ```
 
-- [ ] **7. Test `savings_usage_97d8767_database_prints_dash_keys`** (O§16 item 15, O§6.5 item 5). The `97d8767` build as in `crates/zygo-usage/tests/savings.rs:174-182`.
+- [x] **7. Test `savings_usage_97d8767_database_prints_dash_keys`** (O§16 item 15, O§6.5 item 5). The `97d8767` build as in `crates/zygo-usage/tests/savings.rs:174-182`.
   ```rust
   let d = TempDir::new().unwrap();
   let p = paths(d.path());
@@ -148,7 +148,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   ], "{out}");
   ```
 
-- [ ] **8. Test `savings_usage_escapes_tool_command_shaper`** (O§6.6 "Every name passes `esc`"; model names are covered by `usage_report_escapes_role_and_model`).
+- [x] **8. Test `savings_usage_escapes_tool_command_shaper`** (O§6.6 "Every name passes `esc`"; model names are covered by `usage_report_escapes_role_and_model`).
   ```rust
   let d = TempDir::new().unwrap();
   let p = paths(d.path());
@@ -159,22 +159,22 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   assert!(out.contains("\n  Bash\\nforged: t c\\u{1b} s\\nforged: s: 1 view, 0 read-backs, 4000 bytes kept out, ≈$0.0000\n"), "{out}");
   ```
 
-- [ ] **9. H§14 #18 test** (`usage_doctor.rs:134`): replace `assert_eq!(one[at + 2], "compaction signals: 0");` with `assert!(has(&one, "compaction signals: 0"), "{one:?}");`. No other line of the test changes.
+- [x] **9. H§14 #18 test** (`usage_doctor.rs:134`): replace `assert_eq!(one[at + 2], "compaction signals: 0");` with `assert!(has(&one, "compaction signals: 0"), "{one:?}");`. No other line of the test changes.
 
-- [ ] **10. `ALL` and `S1`** (`usage_doctor.rs:69-70`): insert after `tokens trimmed (estimate): 1375\n` in `ALL`:
+- [x] **10. `ALL` and `S1`** (`usage_doctor.rs:69-70`): insert after `tokens trimmed (estimate): 1375\n` in `ALL`:
   `bytes read back: 0\ntokens kept out of context (estimate): 1375\nestimated spend avoided: ≈$0.0000\nviews: 2, read-backs: 0, view to read-back ratio: -\nby tool and command:\n  Bash - -: 2 views, 0 read-backs, 5500 bytes kept out, ≈$0.0000\n`
   and after `tokens trimmed (estimate): 1000\n` in `S1`:
   `bytes read back: 0\ntokens kept out of context (estimate): 1000\nestimated spend avoided: ≈$0.0000\nviews: 1, read-backs: 0, view to read-back ratio: -\nby tool and command:\n  Bash - -: 1 view, 0 read-backs, 4000 bytes kept out, ≈$0.0000\n`
   (These cover `usage_report_all_sessions`, `usage_report_one_session`, `usage_report_env_session_default`, `usage_report_slash_equals_cli`.)
 
-- [ ] **11. `usage_report_since_boundary` and `usage_report_empty_store_creates_nothing`** (`usage_doctor.rs:96`, `:116`): in each `want`, insert after `tokens trimmed (estimate): 0\n`:
+- [x] **11. `usage_report_since_boundary` and `usage_report_empty_store_creates_nothing`** (`usage_doctor.rs:96`, `:116`): in each `want`, insert after `tokens trimmed (estimate): 0\n`:
   `bytes read back: 0\ntokens kept out of context (estimate): 0\nestimated spend avoided: ≈$0.0000\nviews: 0, read-backs: 0, view to read-back ratio: -\nby tool and command: none\n`
 
-- [ ] **12. `usage_report_escapes_role_and_model`** (`usage_doctor.rs:179`): `assert_eq!(out.lines().count(), 12, "{out}")` → `17` (the five block lines of step 11).
+- [x] **12. `usage_report_escapes_role_and_model`** (`usage_doctor.rs:179`): `assert_eq!(out.lines().count(), 12, "{out}")` → `17` (the five block lines of step 11).
 
-- [ ] **13. Run, see fail:** `cargo test -p zygo --test usage_doctor`. Expected failures: the six `savings_usage_*` tests and the five full-output tests of steps 10-12 (no block yet). `h14_18_usage_keeps_bytes_and_adds_estimated_tokens` passes.
+- [x] **13. Run, see fail:** `cargo test -p zygo --test usage_doctor`. Expected failures: the six `savings_usage_*` tests and the five full-output tests of steps 10-12 (no block yet). `h14_18_usage_keeps_bytes_and_adds_estimated_tokens` passes.
 
-- [ ] **14. Catalog to `Rates`** in `crates/zygo/src/cmd/usage.rs`; imports `zygo_config::Catalog`, `zygo_usage::{Rates, Savings}`:
+- [x] **14. Catalog to `Rates`** in `crates/zygo/src/cmd/usage.rs`; imports `zygo_config::Catalog`, `zygo_usage::{Rates, Savings}`:
   ```rust
   /// O§6.3 step 3 and rule "Prices": the served provider's price, else the model row's first price (a team row has
   /// no provider; a passthrough provider has no price); the `long_context` tier when the prompt is over its `above`.
@@ -189,7 +189,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   }
   ```
 
-- [ ] **15. The block writer** in `usage.rs`:
+- [x] **15. The block writer** in `usage.rs`:
   - `fn usd(v: f64) -> String`: `≈$` and four decimals; a negative value `≈-$` and the four decimals of `-v` (O§6.6).
   - `fn savings_lines(o: &mut String, v: &Savings, priced: bool)`: writes, each ending in `\n`:
     `bytes read back: {v.bytes_read_back}`; `tokens kept out of context (estimate): {v.kept_out_tokens}`;
@@ -197,13 +197,13 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
     `views: {v.views}, read-backs: {v.readbacks}, view to read-back ratio: {r}` with `r` = `-` when `v.readbacks == 0`, else `{:.2}` of `views ÷ readbacks`;
     `by tool and command: none` when `v.by_key` is empty, else `by tool and command:` and per key `  {esc(tool)} {esc(command)} {esc(shaper)}: {views} view[s], {readbacks} read-back[s], {kept_out_bytes} bytes kept out, {usd(spend_usd)}` (no `s` for 1).
 
-- [ ] **16. Wire into `run`** (`usage.rs:72`), after the `--sync` return:
+- [x] **16. Wire into `run`** (`usage.rs:72`), after the `--sync` return:
   - `let catalog = base(ctx, "usage", None, None).ok().map(|m| m.config.catalog);` and `let price = |m: &str, pv: &str, n: u64| catalog.as_ref().and_then(|c| rates(c, m, pv, n));`
   - Build `Filter { session, since }` once; when `usage_db` exists, open read-only once and take `summary(&f)` and `savings(&f, &price)`, both errors through `fail`; else `(Summary::default(), Savings::default())`.
   - Call `savings_lines(&mut o, &v, catalog.is_some())` right after the `tokens trimmed (estimate)` line (`usage.rs:104`), before `compaction signals`.
 
-- [ ] **17. Run, see pass:** `cargo test -p zygo --test usage_doctor` → all pass; then the Acceptance command → count ≥ 6 (six `savings_usage_*`) and all pass.
+- [x] **17. Run, see pass:** `cargo test -p zygo --test usage_doctor` → all pass; then the Acceptance command → count ≥ 6 (six `savings_usage_*`) and all pass.
 
-- [ ] **18. Lint and crate tests:** `cargo clippy -p zygo --tests --locked -- -D warnings` → no warning; `cargo test -p zygo --locked` → all pass.
+- [x] **18. Lint and crate tests:** `cargo clippy -p zygo --tests --locked -- -D warnings` → no warning; `cargo test -p zygo --locked` → all pass.
 
-- [ ] **19. Commit** `crates/zygo/src/cmd/usage.rs`, `crates/zygo/tests/usage_doctor.rs`, `crates/zygo/Cargo.toml` and `Cargo.lock` (when step 1 changed it) with `-m "OS-8: zygo usage prints the net figures, breakdown and ratio"` and the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementer's brief. Check: `git show --stat HEAD` lists no other file.
+- [x] **19. Commit** `crates/zygo/src/cmd/usage.rs`, `crates/zygo/tests/usage_doctor.rs`, `crates/zygo/Cargo.toml` and `Cargo.lock` (when step 1 changed it) with `-m "OS-8: zygo usage prints the net figures, breakdown and ratio"` and the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementer's brief. Check: `git show --stat HEAD` lists no other file.
