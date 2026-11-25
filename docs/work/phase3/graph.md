@@ -227,7 +227,7 @@ Session text (T, SX nodes):
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | TODO | judgment | — |
-| WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3 | TODO | implementation | — |
+| WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | TODO | implementation | — |
 | RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | TODO | implementation | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | TODO | judgment | — |
