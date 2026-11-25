@@ -803,3 +803,16 @@ fn check_3_bom_trivial_fixture_not_evidence() {
         assert!(evidence(d.path(), e, "Alpha").unwrap_err().contains("trivial"), "{e}");
     }
 }
+
+#[test]
+fn check_3_met_grade_not_resolved_faults() {
+    let (r, g, c) = base();
+    let mut res = resolve(&repo(), &g);
+    res.grade.retain(|x| (x.client.as_str(), x.criterion.as_str()) != ("alpha", "A-3.1"));
+    let f = check(&repo(), &r, &g, &c, &res);
+    assert_eq!(items(&f), set(&[3]));
+    assert!(f[0].text.contains("alpha") && f[0].text.contains("A-3.1") && f[0].text.contains("evidence not resolved"), "{f:?}");
+    let f = check(&repo(), &r, &g, &c, &Resolved { grade: vec![] });
+    let met = g.iter().flat_map(|g| &g.grade).filter(|e| e.status == Status::Met).count();
+    assert_eq!(f.iter().filter(|x| x.item == 3).count(), met, "{f:?}");
+}

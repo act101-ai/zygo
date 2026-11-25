@@ -823,7 +823,7 @@ fn header_lines(path: &Path) -> Result<Vec<String>, String> {
 }
 
 /// Check items 1-9 (K§6.2.5). Item 3 reads `resolved`, the result of `resolve(root, grades)`, so the
-/// evidence is resolved once for the check and the generator.
+/// evidence is resolved once for the check and the generator; a `met` grade with no entry in `resolved` is an item 3 fault.
 pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Client], resolved: &Resolved) -> Vec<Fault> {
     let mut faults = Vec::new();
     let mut fault = |item: u8, text: String| faults.push(Fault { item, text });
@@ -860,7 +860,14 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
             }
         }
     }
-    // 3. each met grade has an item of evidence that counts
+    // 3. each met grade has an item of evidence that counts; a met grade with no entry in `resolved` is a fault
+    for g in grades {
+        for e in g.grade.iter().filter(|e| e.status == Status::Met) {
+            if resolved.get(&g.client, &e.criterion).is_none() {
+                fault(3, format!("client `{}`: met criterion `{}`: evidence not resolved", g.client, e.criterion));
+            }
+        }
+    }
     for x in &resolved.grade {
         if !x.evidence.iter().any(|e| e.result.is_ok()) {
             let errs: Vec<&str> = x.evidence.iter().filter_map(|e| e.result.as_ref().err().map(String::as_str)).collect();
