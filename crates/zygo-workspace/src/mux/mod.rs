@@ -402,12 +402,16 @@ pub trait Multiplexer {
     fn attach(&self, session: &str) -> Result<i32, MuxError>;
     /// `switch-client -t =<s>:`.
     fn switch_client(&self, session: &str) -> Result<(), MuxError>;
-    /// `send-keys -t <pane> -l -- <text>`: types `text` literally into the pane (M§7.3 step 2). A pane that is not
-    /// `%<digits>` or a text with a control character gives `Failed` before any spawn (M-C5). A missing pane:
-    /// `NoTarget`.
+    /// `send-keys -t <pane> -l -- <text>`: types `text` literally into the pane (M§7.3 step 2); a final `;` goes as
+    /// `\;`, so tmux does not read it as a command separator. A pane that is not `%<digits>` or a text with a control
+    /// character gives `Failed` before any spawn (M-C5). A missing pane: `NoTarget`.
+    ///
+    /// The text and the Enter are two calls. If this call succeeds and [`Multiplexer::send_enter`] then fails or times
+    /// out, the text stays typed in the pane, and a retry types it a second time; an error or a timeout of either call
+    /// does not prove that tmux did not deliver the keys.
     fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), MuxError>;
     /// `send-keys -t <pane> Enter` (M§7.3 step 2). A pane that is not `%<digits>` gives `Failed` before any spawn. A
-    /// missing pane: `NoTarget`.
+    /// missing pane: `NoTarget`. See [`Multiplexer::send_keys_literal`] for the state after a failed Enter.
     fn send_enter(&self, pane: &str) -> Result<(), MuxError>;
 }
 

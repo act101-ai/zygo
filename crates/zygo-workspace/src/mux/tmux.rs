@@ -512,7 +512,13 @@ impl Multiplexer for Tmux {
     fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), MuxError> {
         check_pane(pane)?;
         check_keys_text(text)?;
-        self.run(&["send-keys", "-t", pane, "-l", "--", text])
+        // tmux reads an argument that ends in `;` as a command separator and removes one `\` before a final `;`, so
+        // one `\` before the final `;` gives the pane the exact text, `\` before it included; a `;` inside stays
+        let arg = match text.strip_suffix(';') {
+            Some(head) => format!("{head}\\;"),
+            None => text.to_string(),
+        };
+        self.run(&["send-keys", "-t", pane, "-l", "--", &arg])
     }
 
     fn send_enter(&self, pane: &str) -> Result<(), MuxError> {

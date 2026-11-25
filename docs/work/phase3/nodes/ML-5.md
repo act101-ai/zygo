@@ -183,3 +183,10 @@ Steps:
 - [x] 8. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test mux -- send_keys --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-workspace --test mux --test snapshot --test admin -- --include-ignored`, then `cargo fmt --check -p zygo-workspace` and `cargo clippy -p zygo-workspace --all-targets -- -D warnings`. Check: the count is 4; all three targets pass; fmt and clippy report nothing.
 
 - [x] 9. Commit `crates/zygo-workspace/src/mux/mod.rs`, `src/mux/tmux.rs`, `tests/mux.rs`, `tests/snapshot.rs`, `tests/admin.rs` with the message `ML-5: send_keys_literal and send_enter` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-5:implement`, each on its own line. Check: `git show --stat HEAD` lists those five files only.
+
+Fix round 1 (review findings F1, F4, F5):
+
+- [x] F1. `send_keys_literal` sends a final `;` as `\;`: tmux 3.8 reads an argument that ends in `;` as a command separator and removes one `\` before a final `;`, so one added `\` gives the exact text for `a;`, `a\;`, `a\;` and `;`; a `;` inside the text stays. Tests: `send_keys_escape_a_final_semicolon_only` (argv stub, not ignored) and `send_keys_type_a_final_semicolon_literally` (live).
+- [x] F4a. `send_keys_type_the_text_once_and_enter_submits_it` reads a second, sentinel line after the Enter; an Enter from the literal call gives an empty second line, so the result does not depend on timing.
+- [x] F4b. The send_keys argv tests use `argv_stub`, which keeps the argument boundaries; `log_stub` is unchanged.
+- [x] F5. The trait docs state the typed-but-not-submitted state after a failed or timed-out Enter.

@@ -1133,8 +1133,9 @@ fn send_keys_type_the_text_once_and_enter_submits_it() {
     assert!(until(|| fs::read_to_string(&got).is_ok_and(|s| s == WAKE)), "{:?}", fs::read_to_string(&got));
     t.send_keys_literal(&pane, "zygo-sentinel").unwrap();
     t.send_enter(&pane).unwrap();
-    assert!(until(|| second.exists()), "the sentinel line was not read");
-    assert_eq!(fs::read_to_string(&second).unwrap(), "zygo-sentinel", "the literal call submitted a line");
+    // an empty second line, which an Enter from the literal call gives, never becomes the sentinel
+    let sentinel = || fs::read_to_string(&second);
+    assert!(until(|| sentinel().is_ok_and(|s| s == "zygo-sentinel")), "the literal call submitted a line: {:?}", sentinel());
     assert_eq!(fs::read_to_string(&got).unwrap(), WAKE);
     assert_eq!(screen().matches(WAKE).count(), 1, "{}", screen());
     assert!(matches!(t.send_enter("%99999"), Err(MuxError::NoTarget { .. })));
