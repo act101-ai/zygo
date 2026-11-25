@@ -62,9 +62,9 @@ No test needs a `usage.db` that is absent now: `open_bounded` creates no file (`
 
 ### Steps
 
-- [ ] **Step 1. Add the test dependency.** In `crates/zygo-mcp/Cargo.toml` `[dev-dependencies]`, add `rusqlite.workspace = true`. Run `cargo build -p zygo-mcp --tests`. Pass: it builds, and `git diff Cargo.lock` shows only `"rusqlite"` added to the `zygo-mcp` entry.
+- [x] **Step 1. Add the test dependency.** In `crates/zygo-mcp/Cargo.toml` `[dev-dependencies]`, add `rusqlite.workspace = true`. Run `cargo build -p zygo-mcp --tests`. Pass: it builds, and `git diff Cargo.lock` shows only `"rusqlite"` added to the `zygo-mcp` entry.
 
-- [ ] **Step 2. Write the failing tests** in the new file `crates/zygo-mcp/tests/readbacks.rs`. Helpers (test code, no body is fixed beyond this):
+- [x] **Step 2. Write the failing tests** in the new file `crates/zygo-mcp/tests/readbacks.rs`. Helpers (test code, no body is fixed beyond this):
   ```rust
   use std::path::PathBuf;
   use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -196,25 +196,25 @@ No test needs a `usage.db` that is absent now: `open_bounded` creates no file (`
      assert_eq!((&r[0].1[..], &r[0].2[..], &r[0].3[..], &r[0].4[..], r[0].5), (TRIM, "S-view", &s.id[..], "result_view", 3));
      ```
 
-- [ ] **Step 3. Run and see the tests fail.** `cargo test -p zygo-mcp --test readbacks`. Pass condition for this step: the build fails because `zygo_mcp::tools::results::tools_with` and `Readbacks` do not exist.
+- [x] **Step 3. Run and see the tests fail.** `cargo test -p zygo-mcp --test readbacks`. Pass condition for this step: the build fails because `zygo_mcp::tools::results::tools_with` and `Readbacks` do not exist.
 
-- [ ] **Step 4. Add `Readbacks`** to `crates/zygo-mcp/src/tools/results.rs`, with the exact fields, `new` and `record` of **Produces** above. Imports: `std::sync::{Arc, Mutex}`, `std::time::{Duration, SystemTime, UNIX_EPOCH}`, `std::io::Write`, `zygo_usage::ReadbackRow`, `zygo_core::paths::Paths`.
+- [x] **Step 4. Add `Readbacks`** to `crates/zygo-mcp/src/tools/results.rs`, with the exact fields, `new` and `record` of **Produces** above. Imports: `std::sync::{Arc, Mutex}`, `std::time::{Duration, SystemTime, UNIX_EPOCH}`, `std::io::Write`, `zygo_usage::ReadbackRow`, `zygo_core::paths::Paths`.
 
-- [ ] **Step 5. Add `tools_with` and change `tools`** in `results.rs`, as **Produces** says. `tools` keeps `pub fn tools(ctx: &McpCtx) -> Vec<Box<dyn Tool>>` and its early `return Vec::new()` without a session directory (`results.rs:9`).
+- [x] **Step 5. Add `tools_with` and change `tools`** in `results.rs`, as **Produces** says. `tools` keeps `pub fn tools(ctx: &McpCtx) -> Vec<Box<dyn Tool>>` and its early `return Vec::new()` without a session directory (`results.rs:9`).
 
-- [ ] **Step 6. Record each successful reply.** Give `ResultView`, `ResultSearch` and `ResultTree` the field `rb: Option<Arc<Readbacks>>`. In each `call`, keep the reply text and every error exactly as now (`results.rs:45-50`, `:67-69`, `:86-87`). After a successful reply, call `record` with the tool name `"result_view"`, `"result_search"` or `"result_tree"`. Only `record` touches the store. No error path reaches it.
+- [x] **Step 6. Record each successful reply.** Give `ResultView`, `ResultSearch` and `ResultTree` the field `rb: Option<Arc<Readbacks>>`. In each `call`, keep the reply text and every error exactly as now (`results.rs:45-50`, `:67-69`, `:86-87`). After a successful reply, call `record` with the tool name `"result_view"`, `"result_search"` or `"result_tree"`. Only `record` touches the store. No error path reaches it.
 
-- [ ] **Step 7. Run and see the new tests pass.** `cargo test -p zygo-mcp --test readbacks`. Pass: 8 tests pass, 0 fail (tests 1-7, and the child `tools_child`, which returns at once when its env is unset).
+- [x] **Step 7. Run and see the new tests pass.** `cargo test -p zygo-mcp --test readbacks`. Pass: 8 tests pass, 0 fail (tests 1-7, and the child `tools_child`, which returns at once when its env is unset).
 
-- [ ] **Step 8. Run the crate tests.** `cargo test -p zygo-mcp`. Pass: all pass, with `mcp_server` and `work_verdict` unchanged.
+- [x] **Step 8. Run the crate tests.** `cargo test -p zygo-mcp`. Pass: all pass, with `mcp_server` and `work_verdict` unchanged.
 
-- [ ] **Step 9. Keep the zygo-results test off the real usage store.** In `crates/zygo-results/tests/results.rs:866`, change `let tools = zygo_mcp::tools::results::tools(&ctx(Some(t.path())));` to `let tools = zygo_mcp::tools::results::tools_with(sd.results(), None);`. Leave `:841`, `:853` and `:882` as they are: the first two make no call, and the third gets only error replies, which open no store. Run `cargo test -p zygo-results --test results`. Pass: all pass.
+- [x] **Step 9. Keep the zygo-results test off the real usage store.** In `crates/zygo-results/tests/results.rs:866`, change `let tools = zygo_mcp::tools::results::tools(&ctx(Some(t.path())));` to `let tools = zygo_mcp::tools::results::tools_with(sd.results(), None);`. Leave `:841`, `:853` and `:882` as they are: the first two make no call, and the third gets only error replies, which open no store. Run `cargo test -p zygo-results --test results`. Pass: all pass.
 
-- [ ] **Step 10. Run the full acceptance check** from the header, alone: `cargo test -p zygo-mcp --test readbacks && cargo test -p zygo-mcp && cargo test -p zygo --test mcp_stdio`. Pass: exit 0, and every test passes.
+- [x] **Step 10. Run the full acceptance check** from the header, alone: `cargo test -p zygo-mcp --test readbacks && cargo test -p zygo-mcp && cargo test -p zygo --test mcp_stdio`. Pass: exit 0, and every test passes.
 
-- [ ] **Step 11. Run the verification floor**, the CI command (`.github/workflows/ci.yml:45`): `cargo test --workspace --locked --no-fail-fast`. Pass: all pass, `workspace_restore` included. `--locked` also proves that the `Cargo.lock` change of Step 1 is complete.
+- [x] **Step 11. Run the verification floor**, the CI command (`.github/workflows/ci.yml:45`): `cargo test --workspace --locked --no-fail-fast`. Pass: all pass, `workspace_restore` included. `--locked` also proves that the `Cargo.lock` change of Step 1 is complete.
 
-- [ ] **Step 12. Commit.** Stage only `crates/zygo-mcp/src/tools/results.rs`, `crates/zygo-mcp/tests/readbacks.rs`, `crates/zygo-mcp/Cargo.toml`, `Cargo.lock`, `crates/zygo-results/tests/results.rs` and this node file (with the checked boxes). Commit:
+- [x] **Step 12. Commit.** Stage only `crates/zygo-mcp/src/tools/results.rs`, `crates/zygo-mcp/tests/readbacks.rs`, `crates/zygo-mcp/Cargo.toml`, `Cargo.lock`, `crates/zygo-results/tests/results.rs` and this node file (with the checked boxes). Commit:
   ```
   git commit -F - <<'MSG'
   OS-5: read-back rows from the MCP result tools
@@ -223,6 +223,8 @@ No test needs a `usage.db` that is absent now: `open_bounded` creates no file (`
   Zygo-Work: phase3:OS-5
   MSG
   ```
+
+**Deviations:** Step 6: the three `call`s reach `record` through one private helper `reply(rb, stored, tool, text) -> Value` in `results.rs`, not three copies of the `if let Some(rb)` block; the behavior is as **Produces** says. Fail-first: Step 3 failed at the build (no `tools_with`, no `Readbacks`); with `record` disabled, tests 1, 2, 3, 5, 6 and 7 failed, and test 4 (`readback_error_replies_write_no_row`) passed, because it asserts that no row is written.
 
 ### Author's checks
 
