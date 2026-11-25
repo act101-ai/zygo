@@ -160,6 +160,23 @@ fn repo_file_cannot_set_max_members() { // R§9.4, R§18 item 12 (.zygo.toml par
 }
 
 #[test]
+fn repo_file_bad_max_members_keeps_the_file() { // R§9.4: dropped before validation, as guards.min_level is
+    let builtin = || toml::Table::try_from(builtin::defaults()).unwrap();
+    for bad in ["\"x\"", "-1", "1.5", "99999999999"] {
+        let text = format!("[guards]\nclaims = \"enforce\"\n[limits]\nmax_members = {bad}\n");
+        match repo_file::from_text("main".into(), &text) {
+            RepoFile::Found { table, .. } => assert_eq!(table["guards"]["claims"].as_str(), Some("enforce"), "{bad}"),
+            other => panic!("{bad}: {other:?}"),
+        }
+        let cx = ctx("", None, Some(PathBuf::from("repo")));
+        let m = load_with_repo_reader(&cx.c, builtin(), |_| repo_file::from_text("main".into(), &text)).unwrap();
+        assert_eq!(m.warnings, [IGNORED], "{bad}");
+        assert_eq!(m.config.guards.claims, Level::Enforce, "{bad}");
+        assert_eq!((m.config.limits.max_members, m.source_of("limits.max_members")), (8, Layer::Builtin), "{bad}");
+    }
+}
+
+#[test]
 fn team_layer_sets_max_members() { // R§9.4
     let m = load(&ctx("", Some("[limits]\nmax_members = 12\n"), None).c).unwrap();
     assert_eq!((m.config.limits.max_members, m.source_of("limits.max_members")), (12, Layer::Team));
