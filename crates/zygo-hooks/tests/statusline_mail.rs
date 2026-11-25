@@ -98,11 +98,39 @@ fn unread_counts_a_file_it_cannot_open() {
     use std::os::unix::fs::PermissionsExt;
     let t = tempfile::tempdir().unwrap();
     let p = paths(&t);
+    if is_root() {
+        eprintln!("skipped: the test runs as root, and root ignores mode 0000");
+        return;
+    }
     let new = inbox(&p, ID, KEY, 3);
     for e in std::fs::read_dir(&new).unwrap() {
         std::fs::set_permissions(e.unwrap().path(), std::fs::Permissions::from_mode(0o000)).unwrap();
     }
     assert_eq!(unread(&p, &view(ID, KEY, None), later()), Some(3));
+}
+
+#[cfg(unix)]
+fn is_root() -> bool {
+    // SAFETY: `geteuid` takes no argument and cannot fail.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(unix)]
+#[test] // M§9a: a read error hides the segment; here `new/` itself cannot be read
+fn unread_of_an_unreadable_new_dir_is_none() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let p = paths(&t);
+    if is_root() {
+        eprintln!("skipped: the test runs as root, and root ignores mode 0000");
+        return;
+    }
+    let new = inbox(&p, ID, KEY, 3);
+    let mode = std::fs::metadata(&new).unwrap().permissions().mode();
+    std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let got = unread(&p, &view(ID, KEY, None), later());
+    std::fs::set_permissions(&new, std::fs::Permissions::from_mode(mode)).unwrap();
+    assert_eq!(got, None);
 }
 
 #[test] // M§9a: `collect` gives the name (checked, M§6) and the count; no message text reaches the HUD data (M-C2)

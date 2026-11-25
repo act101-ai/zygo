@@ -587,7 +587,6 @@ pub fn collect(
     let cwd: PathBuf = input.cwd.map(PathBuf::from).or_else(|| std::env::current_dir().ok()).unwrap_or_default();
     let cwd_key = cwd.to_string_lossy().into_owned();
     let work_end = deadline.checked_sub(WRITE_RESERVE).unwrap_or(deadline);
-    let unread = view.as_ref().and_then(|v| super::mail::unread(paths, v, work_end));
     let member_name = view
         .as_ref()
         .and_then(|v| v.workspace.as_ref()?.member.name.clone())
@@ -645,6 +644,9 @@ pub fn collect(
         });
         Some((rx, Instant::now() + cap))
     });
+
+    // The unread count (M§9a), on this thread while the workers run, so that it never shrinks their budgets.
+    let unread = view.as_ref().and_then(|v| super::mail::unread(paths, v, work_end));
 
     let trimmed_bytes = trimmed_rx.and_then(|rx| wait(&rx, trimmed_until)).flatten();
     // A try that fails, times out or panics is a git part with no data.
