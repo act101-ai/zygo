@@ -60,15 +60,15 @@ Author's calls (M§5, M§6, M§10 leave them open; no new gate):
 
   Check: `cargo test -p zygo-workspace --test mail_names` fails to compile (no `names`, `send`, `Sent`, `UnknownTarget`).
 
-- [ ] **2. `MailError::UnknownTarget`** in `crates/zygo-workspace/src/mail/mod.rs`: variant `UnknownTarget { known: Vec<String> }`. `Display`: `zygo: unknown target; known names: {}` with `known.join(", ")`, or `none` when `known` is empty. Add `pub mod names;`. Change the module doc owner to "nodes ML-2, ML-4".
+- [x] **2. `MailError::UnknownTarget`** in `crates/zygo-workspace/src/mail/mod.rs`: variant `UnknownTarget { known: Vec<String> }`. `Display`: `zygo: unknown target; known names: {}` with `known.join(", ")`, or `none` when `known` is empty. Add `pub mod names;`. Change the module doc owner to "nodes ML-2, ML-4".
 
-- [ ] **3. `names.rs`** (new, `crates/zygo-workspace/src/mail/names.rs`):
+- [x] **3. `names.rs`** (new, `crates/zygo-workspace/src/mail/names.rs`):
   - `#[derive(Debug, Clone, PartialEq, Eq)] pub struct Target { pub key: String, pub name: Option<String> }`
   - `pub fn members(ws: &Workspace) -> Vec<Target>`: one per `ws.members` entry in map (key) order, `name: rec.valid_name().map(String::from)`.
   - `pub fn resolve(ws: &Workspace, to: &str, sender_key: Option<&str>) -> Result<Vec<Target>, MailError>`: `"all"` → `members` without `key == sender_key`; `valid_pane_key(to)` and a key of `ws.members` → that one target; otherwise the members whose `name == Some(to)`. An empty result for a non-`all` `to` → `Err(UnknownTarget { known })`, with `known` = the valid names as a `BTreeSet` collected into a `Vec`.
   - `pub fn sender(ws: &Workspace, key: Option<&str>) -> String`: `Some(k)` that is a key of `ws.members` → its `valid_name()`, else `k`; otherwise `"cli"`.
 
-- [ ] **4. `send`** in `mail/mod.rs`:
+- [x] **4. `send`** in `mail/mod.rs`:
   - `#[derive(Debug, Clone, PartialEq, Eq)] pub struct Sent { pub id: String, pub key: String }`
   - `pub fn send(paths: &Paths, ws: &Workspace, sender_key: Option<&str>, to: &str, subject: &str, body: &str, cfg: &zygo_config::MailConfig, now: SystemTime) -> Result<Vec<Sent>, MailError>`: `resolve` first (an unknown target writes nothing), `from = sender(..)`, `dir = mail_dir(paths, &ws.id)`. For each target: `label = name or key`; `Message::new(&from, label, subject, body, now)?`; `store::deliver(&dir, &t.key, label, &msg, cfg.max_unread)?`; push `Sent { id: msg.id, key: t.key }`. Write no log line, so subject and body reach only `mail/` (M-C2).
 

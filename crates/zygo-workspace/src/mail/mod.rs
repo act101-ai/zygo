@@ -1,4 +1,5 @@
-//! Workspace mail: the message file and the maildir store (M§5). Owner: node ML-2.
+//! Workspace mail: the message file and the maildir store (M§5). Owner: nodes ML-2, ML-4.
+pub mod names;
 pub mod store;
 
 use std::fmt;
@@ -62,6 +63,7 @@ pub enum MailError {
     BadId,
     Full { label: String, max: u32 },
     Duplicate { id: String },
+    UnknownTarget { known: Vec<String> },
     Io(std::io::Error),
 }
 
@@ -74,6 +76,12 @@ impl fmt::Display for MailError {
             MailError::BadId => write!(f, "zygo: invalid message id"),
             MailError::Full { label, max } => write!(f, "zygo: {label} has {max} unread messages"),
             MailError::Duplicate { id } => write!(f, "zygo: message {id} was already delivered"),
+            MailError::UnknownTarget { known } if known.is_empty() => {
+                write!(f, "zygo: unknown target; known names: none")
+            }
+            MailError::UnknownTarget { known } => {
+                write!(f, "zygo: unknown target; known names: {}", known.join(", "))
+            }
             MailError::Io(e) => write!(f, "zygo: mail: {e}"),
         }
     }
@@ -95,4 +103,42 @@ pub fn mail_dir(paths: &Paths, ws_id: &str) -> PathBuf {
 /// Makes `mail_dir` (and its missing parents) and sets it to `0700` (M-C4).
 pub fn ensure_mail_root(mail_dir: &std::path::Path) -> std::io::Result<()> {
     store::make_dir(mail_dir)
+}
+
+/// One delivered message: its id and the pane key it went to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sent {
+    pub id: String,
+    pub key: String,
+}
+
+/// Sends one message to each target of `to` (M§5, M§8): `resolve` first, so an unknown target writes nothing; then
+/// one file per target, with `from` from `names::sender` and `to` the target's name or, with none, its pane key.
+/// It stops at the first error; files already delivered stay. It writes no log line, so the subject and body reach
+/// only `mail/` (M-C2).
+#[allow(clippy::too_many_arguments)]
+pub fn send(
+    paths: &Paths,
+    ws: &crate::state::Workspace,
+    sender_key: Option<&str>,
+    to: &str,
+    subject: &str,
+    body: &str,
+    cfg: &zygo_config::MailConfig,
+    now: SystemTime,
+) -> Result<Vec<Sent>, MailError> {
+    let targets = names::resolve(ws, to, sender_key)?;
+    let from = names::sender(ws, sender_key);
+    let dir = mail_dir(paths, &ws.id);
+    let mut sent = Vec::with_capacity(targets.len());
+    for t in targets {
+        let label = t.name.as_deref().unwrap_or(&t.key);
+        let msg = Message::new(&from, label, subject, body, now)?;
+        store::deliver(&dir, &t.key, label, &msg, cfg.max_unread)?;
+        sent.push(Sent {
+            id: msg.id,
+            key: t.key,
+        });
+    }
+    Ok(sent)
 }
