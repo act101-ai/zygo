@@ -203,7 +203,6 @@ Session text (T, SX nodes):
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
-| WD-8 | Member record fields `launch.job` and `launch.definition` | WD-4, ML-3 | DONE | mechanical | ef98f88f, 5a2d5117 · state 43/0, launch_definition 2 ; floor green · PR #110 |
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | TODO | judgment | — |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
@@ -270,7 +269,7 @@ Session text (T, SX nodes):
 | FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
 | FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
-| FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | TODO | mechanical | — |
+| FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | DONE | mechanical | 8b19ed30, daf5faed · ✉ 4 ; floor green · PR #123 |
 | FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | DONE | implementation | 1921d4ca, a7ac8924 · usage_doctor 45/0, statusline_render 37/0 ; floor green · PR #122 |
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | TODO | implementation | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
@@ -399,4 +398,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-9 DONE (80d820d0 04a9d343): `[results] shape` (default true) in config, the session view and the launcher; trim passes it on; review round 2 fixed 2 test gaps; floor green · PR #117 |
 | 2026-11-25 | RT-3 DONE (fab29ce1 72c3d03a da38c41a): run-time HUD segment in compact and verbose with its width order; collect reads workspace.json once via member_read; review round 2 fixed 2; FX-11 widened to add the 󰅐 clock glyph to the doctor table. Floor green · PR #118 |
 | 2026-11-25 | FX-11 DONE: the doctor icon line holds 21 glyphs, adding mail (U+2709) and clock (U+F0150); mail follows reflection, clock sits between trimmed and truncation. FX-10 must add the H§6.5 Mail row after Reflection · PR #122 |
+| 2026-11-25 | FX-10 DONE: the HUD spec names the member name and unread mail segments and the `✉` glyph (AU4, AU20, AU25; H§6.2, H§6.4, H§6.5, H§6.6, H§6.7, H§6.8) · PR #123 |
 | 2026-11-25 | WD-13 DONE: launcher reads a repo profile from the default branch only for a name in neither user nor team config; prints not-approved, invalid, not-read lines; passthrough: no profile from any source, one line. L6 (duplicate precedence sentence, base §11.1) left to WD-14 · PR #121 |
