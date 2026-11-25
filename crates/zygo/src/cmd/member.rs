@@ -845,7 +845,8 @@ pub(crate) fn kept<'a>(ws: &'a Workspace, key: &str, kind: Agent, own: Option<&s
 /// The locked write of a hand start (M3 D2, M§6), in the closure of [`Callback::hand_write`]: a marker name
 /// (`h.marker`, chosen before the lock) that another key holds is `HandErr::Stop` with its line; then [`join`], whose
 /// refusal is `HandErr::NotSaved`; then the record's name is the marker name, so the record and the view agree
-/// (AU58; ML-7 review round 1, F4). An `Err` leaves `ws` unchanged.
+/// (AU58; ML-7 review round 1, F4), except that with no `--name` a kept record renamed under the lock keeps its name
+/// (ML-8 review round 1, F1). An `Err` leaves `ws` unchanged.
 pub(crate) fn hand_join(
     ws: &mut Workspace, key: &str, launch: &zygo_workspace::state::Launch, start: &Start, h: &HandJoin,
     live: &dyn Fn(&MemberRecord) -> Option<String>,
@@ -855,8 +856,12 @@ pub(crate) fn hand_join(
     {
         return Err(HandErr::Stop(name_taken_line(n, &holder)));
     }
+    // ML-8 review round 1, F1: with no `--name`, a kept record whose name under the lock is not the marker name was
+    // renamed by `ws name` after the marker was read; the rename wins.
+    let renamed = h.name.is_none()
+        && kept(ws, key, launch.kind, h.own_session.as_deref()).is_some_and(|r| r.valid_name() != h.marker.as_deref());
     join(ws, key, launch, start, h.own_session.as_deref(), live).map_err(HandErr::NotSaved)?;
-    if let Some(rec) = ws.members.get_mut(key) {
+    if !renamed && let Some(rec) = ws.members.get_mut(key) {
         rec.name = h.marker.clone();
     }
     Ok(())
@@ -1467,6 +1472,27 @@ mod tests {
         let e = hand_join(&mut w, k, &l, &start(), &h(None, Some("elena")), &none).unwrap_err();
         assert_eq!(e, HandErr::Stop("zygo: name elena belongs to pane kbbbbbbbb; nothing started".into()));
         assert_eq!(w, before);
+    }
+
+    #[test] // ML-8 review round 1, F1 (M§6): a `ws name` between the marker read and the lock wins over the marker
+    fn hand_join_keeps_a_rename_made_after_the_marker_was_read() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let l = Launch::new(Agent::ClaudeCode);
+        let mut kept_rec = rec(MemberState::Resumable, Some("abc"));
+        kept_rec.name = Some("elena".into());
+        let h = |name: Option<&str>| HandJoin {
+            own_session: Some("abc".into()),
+            name: name.map(String::from),
+            marker: Some(name.unwrap_or("old").into()),
+        };
+        let mut w = ws_with(&[(k, kept_rec.clone())]);
+        hand_join(&mut w, k, &l, &start(), &h(None), &none).unwrap();
+        assert_eq!(w.members[k].name.as_deref(), Some("elena"));
+        // With `--name`, the typed name is written, as before.
+        let mut w = ws_with(&[(k, kept_rec)]);
+        hand_join(&mut w, k, &l, &start(), &h(Some("ops")), &none).unwrap();
+        assert_eq!(w.members[k].name.as_deref(), Some("ops"));
     }
 
     #[test] // the record that `join` keeps: the accepted resume only (review round 2, finding 6(b))
