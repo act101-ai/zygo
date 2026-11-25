@@ -449,3 +449,42 @@ fn push_to_a_missing_remote_is_other() {
     let c = first(&m, "a");
     assert_eq!(push(&m.wt, "nosuch", "zygo/mail", &c, None, far()), Ok(Pushed::Other("push failed".into())));
 }
+
+/// The state of the user checkout at `root`: the bytes of `.git/HEAD` and `.git/index`, its branches and its status.
+fn checkout_state(root: &std::path::Path) -> (Vec<u8>, Vec<u8>, String, String) {
+    (std::fs::read(root.join(".git/HEAD")).unwrap(), std::fs::read(root.join(".git/index")).unwrap(),
+        git(root, &["for-each-ref", "refs/heads"]), git(root, &["--no-optional-locks", "status", "--porcelain"]))
+}
+
+#[test]
+fn index_only_steps_leave_the_user_checkout_and_the_worktree_folder_alone() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let before = checkout_state(&m.root);
+    assert_eq!(fetch(&m.root, "origin", "zygo/mail", far()), Ok(Fetched::NoBranch));
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let c = commit(&m.wt, &rt, Some(&rt), &[Change::Add { path: MSG_PATH.into(), bytes: b"{}\n".to_vec() }], far())
+        .unwrap();
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c, None, far()), Ok(Pushed::Accepted));
+    assert_eq!(set_tracking(&m.wt, "origin", "zygo/mail", &c, far()), Ok(()));
+    assert_eq!(checkout_state(&m.root), before);
+    assert_eq!(names(&m.wt), [".git"]);
+    assert!(!m.root.join(".git/FETCH_HEAD").exists());
+}
+
+#[test]
+fn remove_worktree_removes_only_that_path() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let side = m.root.parent().unwrap().join("side");
+    git(&m.root, &["worktree", "add", "-q", side.to_str().unwrap(), "-b", "side"]);
+    let head = std::fs::read(m.root.join(".git/HEAD")).unwrap();
+    bootstrap(&m.root, &m.wt, far()).unwrap();
+    assert_eq!(remove_worktree(&m.root, &m.wt, far()), Ok(()));
+    assert!(!m.wt.exists());
+    let list = git(&m.root, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains(&format!("worktree {}\n", m.wt.display())), "{list}");
+    assert!(list.contains(&format!("worktree {}\n", side.display())), "{list}");
+    assert!(side.join("README").exists());
+    assert_eq!(std::fs::read(m.root.join(".git/HEAD")).unwrap(), head);
+}

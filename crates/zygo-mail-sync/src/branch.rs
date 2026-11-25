@@ -300,6 +300,6 @@ pub fn set_tracking(wt: &Path, remote: &str, branch: &str, commit: &str, deadlin
 
 /// S§6.3 remove: `git worktree remove --force -- <wt>` in `main_root`; only that path.
 pub fn remove_worktree(main_root: &Path, wt: &Path, deadline: Instant) -> Result<(), BranchError> {
-    let _ = (main_root, wt, deadline);
-    Err(BranchError::Io("not built".into()))
+    run_git(main_root, &["worktree", "remove", "--force", "--", path_str(wt)?], "worktree remove", deadline)?;
+    Ok(())
 }
