@@ -1791,15 +1791,73 @@ fn conformance_copy() -> tempfile::TempDir {
     d
 }
 
-/// Another .toml file in the folder (CC-15's `boundary-exceptions.toml`) is not a grade file.
+/// CC-15's `boundary-exceptions.toml` (keys `file`, `item`, `reason`, `approved`) and the registry are not grade files.
 #[test]
 fn tree_reads_only_the_client_grade_files() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let d = conformance_copy();
-    std::fs::write(d.path().join("boundary-exceptions.toml"), "[[exception]]\npath = \"x\"\nwhy = \"y\"\n").unwrap();
+    std::fs::write(
+        d.path().join("boundary-exceptions.toml"),
+        "[[exception]]\nfile = \"crates/zygo-work/src/guards.rs\"\nitem = \"claude_attribution\"\n\
+         reason = \"matches attribution text; does not branch on a client\"\napproved = \"operator, 2026-11-25\"\n",
+    )
+    .unwrap();
     let (_, grades, _, _) = tree_check(&root, d.path());
     let ids: Vec<&str> = grades.iter().map(|g| g.client.as_str()).collect();
     assert_eq!(ids, ["claude-code", "opencode"]);
+}
+
+/// The item 1 faults of the grade files in `dir`, evidence resolved against the repository.
+fn tree_item_1(dir: &Path) -> Vec<String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let reg = Registry::load(&dir.join("capabilities.toml")).unwrap();
+    let grades = grade_files(dir).unwrap_or_else(|e| panic!("{e}"));
+    let resolved = resolve(&root, &grades);
+    let faults = check(&root, &reg, &grades, &clients(&root).unwrap(), &resolved);
+    faults.into_iter().filter(|f| f.item == 1).map(|f| f.text).collect()
+}
+
+/// A stray grade file of an unknown client (`codex.toml`, client = "codex") is loaded and fails item 1.
+#[test]
+fn tree_unknown_client_grade_file_fails_item_1() {
+    let d = conformance_copy();
+    let text = std::fs::read_to_string(d.path().join("opencode.toml")).unwrap();
+    std::fs::write(d.path().join("codex.toml"), text.replace("client = \"opencode\"", "client = \"codex\"")).unwrap();
+    assert_eq!(tree_item_1(d.path()), ["grade file for `codex` names no client"]);
+}
+
+/// A misnamed grade file (`open-code.toml`): next to `opencode.toml`, the client has two grade files (item 1);
+/// alone, the client has no grade file.
+#[test]
+fn tree_misnamed_grade_file_fails() {
+    let d = conformance_copy();
+    std::fs::copy(d.path().join("opencode.toml"), d.path().join("open-code.toml")).unwrap();
+    assert_eq!(tree_item_1(d.path()), ["client `opencode` has 2 grade files, not one"]);
+    std::fs::remove_file(d.path().join("opencode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("no grade file for client `opencode`"), "{e}");
+}
+
+/// File names match exactly: `OpenCode.toml` is not `opencode.toml`, also on a case-insensitive file system.
+#[test]
+fn tree_grade_file_name_matches_exactly() {
+    let d = conformance_copy();
+    std::fs::rename(d.path().join("opencode.toml"), d.path().join("cf4c-tmp")).unwrap();
+    std::fs::rename(d.path().join("cf4c-tmp"), d.path().join("OpenCode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("no grade file for client `opencode`"), "{e}");
+}
+
+/// A grade file that is a symbolic link is refused, as fixture evidence through a link is (K§6.2.3).
+#[cfg(unix)]
+#[test]
+fn tree_grade_file_symlink_refused() {
+    let d = conformance_copy();
+    let other = tempfile::tempdir().unwrap();
+    std::fs::rename(d.path().join("opencode.toml"), other.path().join("opencode.toml")).unwrap();
+    std::os::unix::fs::symlink(other.path().join("opencode.toml"), d.path().join("opencode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("opencode.toml") && e.contains("symbolic link"), "{e}");
 }
 
 /// A client with no `<client id>.toml` is a clear failure.

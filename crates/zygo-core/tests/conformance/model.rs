@@ -1133,16 +1133,45 @@ fn client_name(a: Agent) -> &'static str {
     }
 }
 
-/// The grade files in `dir`: exactly `<client id>.toml` for each client in `Agent::ALL`, in that order. Other
-/// .toml files in the folder are not grade files.
+/// The `.toml` files in `docs/conformance/` that are not grade files: the registry and CC-15's exception list.
+const NOT_GRADE_FILES: [&str; 2] = ["capabilities.toml", "boundary-exceptions.toml"];
+
+/// The grade files in `dir`: each `*.toml` file except `NOT_GRADE_FILES`, names matched exactly as listed.
+/// `<client id>.toml` for each client in `Agent::ALL` comes first, in that order, then the others by name, so
+/// that check item 1 sees a grade file of an unknown client or a second file of a client. A client with no
+/// `<client id>.toml`, a grade file that is a symbolic link or not a regular file, and a name that is not UTF-8 are refused.
 pub fn grade_files(dir: &Path) -> Result<Vec<GradeFile>, String> {
-    Agent::ALL
+    let mut names = Vec::new();
+    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let e = e.map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = e.path();
+        let name = e.file_name().into_string().map_err(|n| format!("{}: a name that is not UTF-8: {n:?}", dir.display()))?;
+        if !name.ends_with(".toml") || NOT_GRADE_FILES.contains(&name.as_str()) {
+            continue;
+        }
+        let kind = e.file_type().map_err(|e| format!("{}: {e}", path.display()))?;
+        if kind.is_symlink() {
+            return Err(format!("{}: the grade file is a symbolic link", path.display()));
+        }
+        if !kind.is_file() {
+            return Err(format!("{}: the grade file is not a regular file", path.display()));
+        }
+        names.push(name);
+    }
+    names.sort();
+    let mut ordered = Vec::new();
+    for a in Agent::ALL {
+        let want = format!("{}.toml", a.as_str());
+        let Some(i) = names.iter().position(|n| *n == want) else {
+            return Err(format!("{}: no grade file for client `{}`", dir.join(want).display(), a.as_str()));
+        };
+        ordered.push(names.remove(i));
+    }
+    ordered.extend(names);
+    ordered
         .iter()
-        .map(|a| {
-            let path = dir.join(format!("{}.toml", a.as_str()));
-            if !path.is_file() {
-                return Err(format!("{}: no grade file for client `{}`", path.display(), a.as_str()));
-            }
+        .map(|n| {
+            let path = dir.join(n);
             GradeFile::load(&path).map_err(|e| format!("{}: {e}", path.display()))
         })
         .collect()
