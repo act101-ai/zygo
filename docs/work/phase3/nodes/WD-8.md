@@ -101,6 +101,8 @@ fn launch_definition_and_job_absent_read_as_none_and_are_not_written() {
 
 - [x] **5. Commit.** Stage only `crates/zygo-workspace/src/state.rs` and `crates/zygo-workspace/tests/state.rs`; message `WD-8: member record launch.job and launch.definition`, with the `Zygo-Session` and `Zygo-Work` trailer lines that the implementer's brief names at the end, each on its own line. Check: `git show --stat HEAD` lists those two files only.
 
+- [x] **6. Review fix (AU78).** The Files line was extended with `crates/zygo-config/src/repo_def/check.rs` and `crates/zygo-config/tests/repo_def_check.rs` for AU78: `Pin` gets a flattened `extra` map and `Pin::new(commit, digest)`, and `every_struct_keeps_unknown_fields` covers `/members/kabcdefgh/launch/definition`.
+
 ### Notes for later nodes (no change here)
 
 - `member::record_start` (`crates/zygo/src/cmd/member.rs:452-465`) copies the given launch whole (`rec.launch = kept`), so a start write whose launch has `job`/`definition` unset clears saved ones, and the D4 compare at `:461` sees a difference. Keeping them at a resume (R§9.3 effect 2, R§7.4) is WD-14's scope.

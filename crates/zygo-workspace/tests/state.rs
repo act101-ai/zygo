@@ -127,9 +127,11 @@ fn enums_use_the_spec_words() {
 
 #[test] // AU78: every struct keeps the fields it does not know
 fn every_struct_keeps_unknown_fields() {
-    let mut v = serde_json::to_value(full()).unwrap();
+    let mut ws = full();
+    ws.members.get_mut(KEY).unwrap().launch.definition = Some(Pin::new(COMMIT.into(), DIGEST.into()));
+    let mut v = serde_json::to_value(ws).unwrap();
     for at in ["", "/windows/0", "/panes/0", "/members/kabcdefgh", "/members/kabcdefgh/pending", "/members/kabcdefgh/launch",
-        "/members/kabcdefgh/interrupted/0"] {
+        "/members/kabcdefgh/launch/definition", "/members/kabcdefgh/interrupted/0"] {
         v.pointer_mut(at).unwrap().as_object_mut().unwrap().insert("future".into(), json!({"n": [1, "x"]}));
     }
     let ws: Workspace = serde_json::from_value(v.clone()).unwrap();
@@ -348,14 +350,14 @@ fn launch_definition_and_job_set_are_written_and_kept_by_a_write() {
     let mut ws = full();
     let m = ws.members.get_mut(KEY).unwrap();
     m.launch.job = Some("worker".into());
-    m.launch.definition = Some(Pin { commit: COMMIT.into(), digest: DIGEST.into() });
+    m.launch.definition = Some(Pin::new(COMMIT.into(), DIGEST.into()));
     let v = serde_json::to_value(&ws).unwrap();
     assert_eq!(v["members"][KEY]["launch"]["job"], json!("worker"));
     assert_eq!(v["members"][KEY]["launch"]["definition"], json!({"commit": COMMIT, "digest": DIGEST}));
     put(&store, &v);
     let read = store.read().unwrap().unwrap();
     assert_eq!(read.members[KEY].launch.job, Some("worker".to_string()));
-    assert_eq!(read.members[KEY].launch.definition, Some(Pin { commit: COMMIT.into(), digest: DIGEST.into() }));
+    assert_eq!(read.members[KEY].launch.definition, Some(Pin::new(COMMIT.into(), DIGEST.into())));
     assert!(read.members[KEY].launch.extra.is_empty()); // typed fields, not unknown keys
     store.update(S5, &mut |w| { w.phase = Phase::Down; Ok(()) }).unwrap();
     let after: Value = serde_json::from_slice(&raw(&store)).unwrap();

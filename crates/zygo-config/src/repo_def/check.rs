@@ -11,6 +11,16 @@ use super::{digest, is_workspace_approved_in, parse, read_at, read_default, Defi
 pub struct Pin {
     pub commit: String,
     pub digest: String,
+    /// AU78: fields this version does not know, kept through a read and a write.
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Pin {
+    /// A pin with no unknown fields.
+    pub fn new(commit: String, digest: String) -> Pin {
+        Pin { commit, digest, extra: serde_json::Map::new() }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +50,7 @@ pub fn check_default(top: &Path, ws_id: &str, approvals: &Path, git: &dyn GitRun
     let digest = digest(&files);
     let full_ref = files.full_ref.clone().unwrap_or_default();
     if is_workspace_approved_in(approvals, ws_id, &digest) {
-        Use::Approved { full_ref, pin: Pin { commit: files.commit.clone(), digest }, files, def }
+        Use::Approved { full_ref, pin: Pin::new(files.commit.clone(), digest), files, def }
     } else {
         Use::NotApproved { full_ref, files, digest, def }
     }
