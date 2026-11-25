@@ -517,6 +517,18 @@ fn load_refuses_a_bad_file_and_leaves_it() {
     }
 }
 
+/// MS-26: an empty `public` object has no `verdict`, which is `""`; `check_state` refuses it, so `load` refuses the
+/// file (the `PublicCache` doc comment).
+#[test]
+fn load_refuses_a_public_cache_without_a_verdict() {
+    let (_t, sp) = setup();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::write(&sp.state, br#"{"public": {}}"#).unwrap();
+    let e = load(&sp).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::InvalidData, "{e}");
+    assert_eq!(fs::read(&sp.state).unwrap(), br#"{"public": {}}"#);
+}
+
 #[test]
 fn load_refuses_a_value_outside_the_spec() {
     let (_t, sp) = setup();
