@@ -258,8 +258,23 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
 
 /// S§8.3 step 15: the class of a `git push --porcelain` (exit success `ok`, stdout `out`) to `refs/heads/<branch>`.
 pub fn classify(ok: bool, out: &[u8], branch: &str) -> Pushed {
-    let _ = (ok, out, branch);
-    Pushed::Other("push failed".into())
+    let target = format!("refs/heads/{branch}");
+    // A ref line: exactly 3 tab-separated fields, a 1-byte flag, and `<from>:<to>` with `<to>` the target ref.
+    let line = out.split(|&b| b == b'\n').map(|l| l.split(|&b| b == b'\t').collect::<Vec<_>>()).find(|f| {
+        f.len() == 3 && f[0].len() == 1
+            && f[1].iter().position(|&b| b == b':').is_some_and(|i| &f[1][i + 1..] == target.as_bytes())
+    });
+    let Some(f) = line else { return Pushed::Other("push failed".into()) };
+    let (flag, summary) = (f[0][0], f[2]);
+    if ok && matches!(flag, b' ' | b'*' | b'+' | b'=') {
+        return Pushed::Accepted;
+    }
+    if flag != b'!' {
+        return Pushed::Other("push failed".into());
+    }
+    // A `[remote rejected]` reason is server text: never "moved" (S§18).
+    let rejected = summary.len() >= 10 && summary[..10].eq_ignore_ascii_case(b"[rejected]");
+    if rejected && git::has_text(summary, MOVED_TEXT) { Pushed::Moved } else { Pushed::Other("push rejected".into()) }
 }
 
 /// S§8.3 step 14, S§9: pushes `commit` to `refs/heads/<branch>` on `remote`, with the lease `lease` when given.
@@ -267,15 +282,20 @@ pub fn push(wt: &Path, remote: &str, branch: &str, commit: &str, lease: Option<&
     -> Result<Pushed, BranchError> {
     oid(commit)?;
     lease.map(oid).transpose()?;
-    let _ = (wt, remote, branch, deadline);
-    Err(BranchError::Io("not built".into()))
+    let lease = lease.map(|l| format!("--force-with-lease=refs/heads/{branch}:{l}"));
+    let spec = format!("{commit}:refs/heads/{branch}");
+    let mut args = vec!["push", "--porcelain"];
+    args.extend(lease.as_deref());
+    args.extend(["--", remote, &spec]);
+    let w = git::run(wt, &args, deadline).map_err(|e| BranchError::Git(e, "push"))?;
+    Ok(classify(w.ok, &w.out, branch))
 }
 
 /// Moves `refs/remotes/<remote>/<branch>` to `commit` after an accepted push.
 pub fn set_tracking(wt: &Path, remote: &str, branch: &str, commit: &str, deadline: Instant) -> Result<(), BranchError> {
     oid(commit)?;
-    let _ = (wt, remote, branch, deadline);
-    Err(BranchError::Io("not built".into()))
+    run_git(wt, &["update-ref", &format!("refs/remotes/{remote}/{branch}"), commit], "update-ref", deadline)?;
+    Ok(())
 }
 
 /// S§6.3 remove: `git worktree remove --force -- <wt>` in `main_root`; only that path.

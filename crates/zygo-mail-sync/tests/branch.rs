@@ -308,3 +308,144 @@ fn commit_neither_signs_nor_prompts() {
         assert!(!raw.lines().any(|l| l.starts_with("gpgsig")), "{raw}");
     }
 }
+
+/// A porcelain push output with the one ref line `<flag>\tC:refs/heads/<to>\t<summary>`.
+fn porcelain(flag: &str, to: &str, summary: &str) -> Vec<u8> {
+    format!("To file:///x\n{flag}\tC:refs/heads/{to}\t{summary}\nDone\n").into_bytes()
+}
+
+#[test]
+fn classify_moved_fetch_first_any_case() {
+    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[REJECTED] (Fetch First)"), "zygo/mail"), Pushed::Moved);
+}
+
+#[test]
+fn classify_moved_non_fast_forward_any_case() {
+    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[rejected] (NON-FAST-FORWARD)"), "zygo/mail"), Pushed::Moved);
+}
+
+#[test]
+fn classify_moved_stale_info_any_case() {
+    assert_eq!(classify(false, &porcelain("!", "zygo/mail", "[Rejected] (STALE INFO)"), "zygo/mail"), Pushed::Moved);
+}
+
+#[test]
+fn classify_reads_only_the_target_ref_line() {
+    let failed = Pushed::Other("push failed".into());
+    let rejected = Pushed::Other("push rejected".into());
+    for flag in ["*", " ", "+", "="] {
+        assert_eq!(classify(true, format!("{flag}\tC:refs/heads/zygo/mail\t[new branch]\nDone\n").as_bytes(), "zygo/mail"),
+            Pushed::Accepted, "flag {flag:?}");
+    }
+    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/other\t[rejected] (fetch first)\n", "zygo/mail"), failed);
+    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/mail-2\t[rejected] (fetch first)\n", "zygo/mail"), failed);
+    assert_eq!(classify(false,
+        b"remote: [rejected] (fetch first)\n!\tC:refs/heads/zygo/mail\t[remote rejected] (pre-receive hook declined)\n",
+        "zygo/mail"), rejected);
+    assert_eq!(classify(false, b"!\tC:refs/heads/zygo/mail\t[remote rejected] (fetch first)\n", "zygo/mail"), rejected);
+    assert_eq!(classify(false, b"", "zygo/mail"), failed);
+    assert_eq!(classify(false, b"*\tC:refs/heads/zygo/mail\t[new branch]\n", "zygo/mail"), failed);
+}
+
+/// The bootstrap root of `m` plus a commit that adds `registry/<who>.json`: distinct per machine even when two
+/// roots are made in the same second.
+fn first(m: &Machine, who: &str) -> String {
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    commit(&m.wt, &rt, Some(&rt), &[Change::Add { path: format!("registry/{who}.json"), bytes: b"{}\n".to_vec() }],
+        far()).unwrap()
+}
+
+#[test]
+fn push_of_a_new_branch_is_accepted_and_set_tracking_moves_the_ref() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let c = first(&m, "a");
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c, None, far()), Ok(Pushed::Accepted));
+    assert_eq!(r.tip("zygo/mail"), Some(c.clone()));
+    assert_eq!(set_tracking(&m.wt, "origin", "zygo/mail", &c, far()), Ok(()));
+    assert_eq!(git(&m.root, &["rev-parse", "refs/remotes/origin/zygo/mail"]), c);
+}
+
+#[test]
+fn push_after_the_remote_moved_is_moved() {
+    let r = Remote::new();
+    let a = Machine::new(&r);
+    let b = Machine::new(&r);
+    let ca = first(&a, "a");
+    let cb = first(&b, "b");
+    assert_eq!(push(&b.wt, "origin", "zygo/mail", &cb, None, far()), Ok(Pushed::Accepted));
+    assert_eq!(push(&a.wt, "origin", "zygo/mail", &ca, None, far()), Ok(Pushed::Moved));
+    assert_eq!(r.tip("zygo/mail"), Some(cb.clone()));
+    assert_eq!(fetch(&a.wt, "origin", "zygo/mail", far()), Ok(Fetched::Tip(cb.clone())));
+    assert_eq!(push(&a.wt, "origin", "zygo/mail", &ca, None, far()), Ok(Pushed::Moved));
+    assert_eq!(r.tip("zygo/mail"), Some(cb));
+}
+
+/// `a` pushes `c1`; `b` fetches it, commits `c2` on it and pushes. Returns `(c1, c2)`.
+fn moved_under_a(a: &Machine, b: &Machine) -> (String, String) {
+    let c1 = first(a, "a");
+    assert_eq!(push(&a.wt, "origin", "zygo/mail", &c1, None, far()), Ok(Pushed::Accepted));
+    assert_eq!(fetch(&a.wt, "origin", "zygo/mail", far()), Ok(Fetched::Tip(c1.clone())));
+    assert_eq!(fetch(&b.root, "origin", "zygo/mail", far()), Ok(Fetched::Tip(c1.clone())));
+    assert_eq!(ensure_worktree(&b.root, &b.wt, &c1, far()), Ok(()));
+    let c2 = commit(&b.wt, &c1, Some(&c1), &[Change::Add { path: "registry/b.json".into(), bytes: b"{}\n".to_vec() }],
+        far()).unwrap();
+    assert_eq!(push(&b.wt, "origin", "zygo/mail", &c2, None, far()), Ok(Pushed::Accepted));
+    (c1, c2)
+}
+
+#[test]
+fn lease_push_after_the_remote_moved_is_moved_and_leaves_the_ref() {
+    let r = Remote::new();
+    let a = Machine::new(&r);
+    let b = Machine::new(&r);
+    let (c1, c2) = moved_under_a(&a, &b);
+    let o = commit(&a.wt, &c1, None, &[], far()).unwrap();
+    assert_eq!(push(&a.wt, "origin", "zygo/mail", &o, Some(&c1), far()), Ok(Pushed::Moved));
+    assert_eq!(r.tip("zygo/mail"), Some(c2));
+}
+
+#[test]
+fn lease_push_on_the_current_base_is_accepted() {
+    let r = Remote::new();
+    let a = Machine::new(&r);
+    let b = Machine::new(&r);
+    let (_, c2) = moved_under_a(&a, &b);
+    assert_eq!(fetch(&a.wt, "origin", "zygo/mail", far()), Ok(Fetched::Tip(c2.clone())));
+    let o2 = commit(&a.wt, &c2, None, &[], far()).unwrap();
+    assert_eq!(push(&a.wt, "origin", "zygo/mail", &o2, Some(&c2), far()), Ok(Pushed::Accepted));
+    assert_eq!(r.tip("zygo/mail"), Some(o2));
+}
+
+#[test]
+fn push_declined_by_a_hook_is_other_even_with_moved_words() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let hook = r.bare.join("hooks/pre-receive");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, "#!/bin/sh\necho '[rejected] (fetch first)'\necho 'non-fast-forward'\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let c = first(&m, "a");
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c, None, far()), Ok(Pushed::Other("push rejected".into())));
+    assert_eq!(r.tip("zygo/mail"), None);
+}
+
+#[test]
+fn push_never_reads_the_remote_as_an_option() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let spy = spy(r.dir.path(), "git-receive-pack");
+    let c = first(&m, "a");
+    assert_eq!(push(&m.wt, &format!("--receive-pack={spy}"), "zygo/mail", &c, None, far()),
+        Ok(Pushed::Other("push failed".into())));
+    assert!(!r.dir.path().join("spy-ran").exists());
+}
+
+#[test]
+fn push_to_a_missing_remote_is_other() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let c = first(&m, "a");
+    assert_eq!(push(&m.wt, "nosuch", "zygo/mail", &c, None, far()), Ok(Pushed::Other("push failed".into())));
+}
