@@ -34,12 +34,7 @@ impl Message {
     /// A new version 1 message with a ULID made from `now` and `sent_at` in whole UTC seconds. It checks the
     /// subject and body limits; it checks no name (names are ML-4's).
     pub fn new(from: &str, to: &str, subject: &str, body: &str, now: SystemTime) -> Result<Message, MailError> {
-        if subject.len() > SUBJECT_MAX {
-            return Err(MailError::SubjectTooLong);
-        }
-        if body.len() > BODY_MAX {
-            return Err(MailError::BodyTooLarge);
-        }
+        check_limits(subject, body)?;
         let sent = OffsetDateTime::from(now).replace_nanosecond(0).map_err(std::io::Error::other)?;
         Ok(Message {
             version: 1,
@@ -52,6 +47,17 @@ impl Message {
             extra: serde_json::Map::new(),
         })
     }
+}
+
+/// The subject and body limits (M§5).
+fn check_limits(subject: &str, body: &str) -> Result<(), MailError> {
+    if subject.len() > SUBJECT_MAX {
+        return Err(MailError::SubjectTooLong);
+    }
+    if body.len() > BODY_MAX {
+        return Err(MailError::BodyTooLarge);
+    }
+    Ok(())
 }
 
 /// A mail error; `Display` is the whole user line.
@@ -112,10 +118,25 @@ pub struct Sent {
     pub key: String,
 }
 
-/// Sends one message to each target of `to` (M§5, M§8): `resolve` first, so an unknown target writes nothing; then
-/// one file per target, with `from` from `names::sender` and `to` the target's name or, with none, its pane key.
-/// It stops at the first error; files already delivered stay. It writes no log line, so the subject and body reach
-/// only `mail/` (M-C2).
+/// One target `send` did not deliver to: its pane key and the error.
+#[derive(Debug)]
+pub struct Refused {
+    pub key: String,
+    pub error: MailError,
+}
+
+/// What one `send` did: the messages delivered and the targets refused, each in target (key) order.
+#[derive(Debug)]
+pub struct SendReport {
+    pub sent: Vec<Sent>,
+    pub refused: Vec<Refused>,
+}
+
+/// Sends one message to each target of `to` (M§5, M§8). It checks the subject and body limits and `resolve`s `to`
+/// before it writes a file; those errors are its only `Err`. Then it writes one file per target, with `from` from
+/// `names::sender` and `to` the target's name or, with none, its pane key. A target whose message it cannot make or
+/// deliver (for example `Full`, M§5 limit per target) goes into `refused`, and the send continues with the next
+/// target. It writes no log line, so the subject and body reach only `mail/` (M-C2).
 #[allow(clippy::too_many_arguments)]
 pub fn send(
     paths: &Paths,
@@ -126,19 +147,23 @@ pub fn send(
     body: &str,
     cfg: &zygo_config::MailConfig,
     now: SystemTime,
-) -> Result<Vec<Sent>, MailError> {
+) -> Result<SendReport, MailError> {
+    check_limits(subject, body)?;
     let targets = names::resolve(ws, to, sender_key)?;
     let from = names::sender(ws, sender_key);
     let dir = mail_dir(paths, &ws.id);
-    let mut sent = Vec::with_capacity(targets.len());
+    let mut report = SendReport {
+        sent: Vec::with_capacity(targets.len()),
+        refused: Vec::new(),
+    };
     for t in targets {
         let label = t.name.as_deref().unwrap_or(&t.key);
-        let msg = Message::new(&from, label, subject, body, now)?;
-        store::deliver(&dir, &t.key, label, &msg, cfg.max_unread)?;
-        sent.push(Sent {
-            id: msg.id,
-            key: t.key,
-        });
+        let delivered = Message::new(&from, label, subject, body, now)
+            .and_then(|msg| store::deliver(&dir, &t.key, label, &msg, cfg.max_unread).map(|()| msg.id));
+        match delivered {
+            Ok(id) => report.sent.push(Sent { id, key: t.key }),
+            Err(error) => report.refused.push(Refused { key: t.key, error }),
+        }
     }
-    Ok(sent)
+    Ok(report)
 }
