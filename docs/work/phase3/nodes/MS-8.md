@@ -64,7 +64,7 @@ Produces (all in `crates/zygo-mail-sync/src/public.rs`, module `zygo_mail_sync::
 
 ### Steps
 
-- [ ] 1. Create `crates/zygo-mail-sync/tests/public.rs` with the pure tests:
+- [x] 1. Create `crates/zygo-mail-sync/tests/public.rs` with the pure tests:
   ```rust
   //! MS-8: the public check (mail sync design S§8.2, S§13 limit 7, S§18, S§19 #6). No test depends on wall-clock time.
   use zygo_mail_sync::env::Verdict;
@@ -129,12 +129,12 @@ Produces (all in `crates/zygo-mail-sync/src/public.rs`, module `zygo_mail_sync::
   `private_error_404` ← `"fatal: unable to access 'https://h/p/': The requested URL returned error: 404"`;
   `private_http_basic_access_denied` ← `"remote: HTTP Basic: Access denied. If a password was provided for Git authentication, it was incorrect"`;
   `private_gitlab_not_found_or_no_permission` ← `"remote: The project you were looking for could not be found or you don't have permission to view it."`.
-- [ ] 2. Run `cargo test -p zygo-mail-sync --test public` and see it fail to compile (`map_url`, `classify`, `PRIVATE_TEXT`, `Mapped` not found).
-- [ ] 3. In `crates/zygo-mail-sync/src/public.rs` add `Mapped`, `map_url`, `PRIVATE_TEXT` (the nine entries, as git prints them) and `classify` with the Produces signatures. `classify`: `ok` → `Public`; `has_text(&w.err, PRIVATE_TEXT)` → `Private`; else `Unknown` with the reason of the author's calls (stderr through `String::from_utf8_lossy`). `map_url` rules, in order, on `s = url.trim()`:
+- [x] 2. Run `cargo test -p zygo-mail-sync --test public` and see it fail to compile (`map_url`, `classify`, `PRIVATE_TEXT`, `Mapped` not found).
+- [x] 3. In `crates/zygo-mail-sync/src/public.rs` add `Mapped`, `map_url`, `PRIVATE_TEXT` (the nine entries, as git prints them) and `classify` with the Produces signatures. `classify`: `ok` → `Public`; `has_text(&w.err, PRIVATE_TEXT)` → `Private`; else `Unknown` with the reason of the author's calls (stderr through `String::from_utf8_lossy`). `map_url` rules, in order, on `s = url.trim()`:
   1. `s` holds `://`: the scheme is the text before it, matched without case. `https` and `ssh`: the authority runs to the first `/` after `://` (or the end), the path is the rest; the host is the authority after its last `@`. `https` keeps the port: `https://<host><path>`. `ssh` drops a trailing `:<digits>` from the host: `https://<host>/<path without leading />`. `file` → `Local`. Any other scheme → `Unknown`. An empty host → `Unknown`.
   2. Else `s` holds `::` and the text before it has no `/` → `Unknown` (transport helper).
   3. Else split at the first `:`. No `:`, or a `/` before it → `Local`. The host is the text before the `:` after its last `@`; a host of one ASCII letter is a Windows drive → `Local` (as `crates/zygo-work/src/repo.rs:599-601`); an empty host → `Unknown`; else `https://<host>/<rest without leading />`.
-- [ ] 4. Run `cargo test -p zygo-mail-sync --test public`: 13 passed. Commit `crates/zygo-mail-sync/src/public.rs` and `crates/zygo-mail-sync/tests/public.rs` with message `MS-8: URL map and the private list` and the trailers `Zygo-Session:` and `Zygo-Work:` with the values of the implementer's brief, each on its own line at the end.
+- [x] 4. Run `cargo test -p zygo-mail-sync --test public`: 13 passed. Commit `crates/zygo-mail-sync/src/public.rs` and `crates/zygo-mail-sync/tests/public.rs` with message `MS-8: URL map and the private list` and the trailers `Zygo-Session:` and `Zygo-Work:` with the values of the implementer's brief, each on its own line at the end.
 - [ ] 5. Append to `tests/public.rs`:
   ```rust
   const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
