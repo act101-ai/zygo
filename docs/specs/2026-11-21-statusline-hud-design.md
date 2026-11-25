@@ -136,6 +136,8 @@ Order is fixed (AU9). "C" = shown in compact. "V" = shown in verbose (row).
 | 0 | Stripe `▌▌▌` | constant (OP12) | `31`, `33`, `36` | yes | rows 1 and 2 |
 | 1 | Logo `𝘇𝘆𝗴𝗼`; reflection `zʎƃo` | constant (OP11) | `1;97`; reflection `2;37` | logo | logo row 1, reflection row 2 |
 | 2 | Workspace phase `ws draining` (phase 2) | `workspace.json` (WS§7.2) | H§6.4 | yes, when not `up` | row 1 |
+| 2a | Member name `<name>` (M§9a) | the member's `name` in the session view's workspace marker (`view.workspace.member.name`), checked with the M§6 grammar at each read; hidden while the worktree segment shows the same name (AU21) | bold `1` | yes, for a named member | row 1 |
+| 2b | Unread mail `✉ <n>`; plain `mail <n>` (M§9a) | the store's unread count of `mail/<pane key>/new/` (M§5, M§9a); `99+` above 99 | yellow `33` | yes, when n ≥ 1 | row 1 |
 | 3 | Work item | `ZYGO_WORK`, else status `work`; else live branch (AU11) | bold blue `1;34` | yes | row 1 |
 | 4 | Worktree `<icon> name` | git worker (AU6, AU21) | `38;5;172` | yes, when linked | row 1 |
 | 5 | Git ahead `↑N`, behind `↓N` | git worker (AU6) | `36` | no | row 1 |
@@ -150,6 +152,8 @@ Order is fixed (AU9). "C" = shown in compact. "V" = shown in verbose (row).
 | 14 | Trimmed | usage store, bytes ÷ 4 (OP1), session id from `view.json` (H§7.4) | `2` | `✂ 23k` | row 2, `trimmed 23k tok` |
 | 14a | Run time | `workspace.json` `members.<pane>.first_started_at`, else `pending.started_at`, else the ULID time of `view.session` (session run time design T§2.2) | `2` | yes, `󰅐 5h12m` | row 1, `󰅐 5h12m` |
 | 15 | `stale` / `offline` / `suspended` / `ended` | cache `outcome` and status age (AU20) | `2` / `31` / `33` / `31` | yes, when it applies | row 2 (row 2 always exists: it holds the reflection) |
+
+Member name and unread mail (M§9a) follow the workspace phase rules (AU25): shown only for a workspace member, read fresh on each call, never cached, hidden on any read error, and never removed for width. The member name passes `zygo_core::esc` (H-C6) and is cut at 32 cells (AU19). The hook reads only the names in `new/`; it never opens a message (M-C2).
 
 Work item markers (OP3). The hook splits `ZYGO_WORK` at the first `:` into source and id (source names hold no `:`, `crates/zygo-work/src/sources.rs:34-37`). An empty value counts as absent (AU11).
 
@@ -264,6 +268,8 @@ Run time (session run time design T§3.1): the reference bytes of H§6.3 and of 
 | Stripe bars | `31`, `33`, `36` (`statusline.rs:56`) | same |
 | Logo `𝘇𝘆𝗴𝗼` (plain set: `zygo`) | `1;97` (bold bright white) | same |
 | Reflection `zʎƃo` (verbose row 2) | `2;37` (dim white) | same |
+| Member name (M§9a) | `1` (bold, terminal default foreground) | same |
+| Unread mail `✉ <n>` (M§9a) | `33` | same |
 | Work item, branch | `1;34` (bold blue) | same |
 | Live branch with no work item (AU11) | `34` | same |
 | Git ahead/behind | `36` | same |
@@ -306,6 +312,7 @@ With `NO_COLOR` set and non-empty, the HUD prints no escape byte at all and omit
 | Stripe | `▌` | U+258C | `▌` | U+258C |
 | Logo | `𝘇𝘆𝗴𝗼` | U+1D607 U+1D606 U+1D5F4 U+1D5FC | `zygo` | ASCII |
 | Reflection (verbose row 2) | `zʎƃo` | U+007A U+028E U+0183 U+006F | four spaces | — |
+| Mail | `✉` | U+2709 | word `mail` | — |
 | Branch | `` (Powerline branch) | U+E0A0 | none | — |
 | GitHub issue | `` (nf-oct-mark_github) | U+F408 | none (`#123` is the marker) | — |
 | Work graph | `◆` | U+25C6 | `♦` | U+2666 |
@@ -353,7 +360,7 @@ When a row is wider than W, the HUD removes whole segments, first to last in thi
 - **Verbose row 1:** mode → run time → profile → effort → ahead/behind → model → worktree → work item. When row 1 drops a segment, row 2 does not change: the logo and the reflection keep their column.
 - **Verbose row 2:** trimmed → cache → tokens → spend → percent → threshold → bar cells → `stale` → ctx numbers.
 
-The stripe, the logo and its reflection, the workspace phase and `offline`/`suspended`/`ended` are never removed. A row that still does not fit is printed as it is; Claude Code then cuts or wraps it (premise PH3).
+The stripe, the logo and its reflection, the workspace phase, the member name, the unread mail count and `offline`/`suspended`/`ended` are never removed. A row that still does not fit is printed as it is; Claude Code then cuts or wraps it (premise PH3).
 
 ### 6.8 When data is missing
 
@@ -746,3 +753,4 @@ Author's calls for the planner. WS node ids and HUD node ids refer to `docs/work
 | 2026-11-22 | H§6.6 (token counts and trimmed tokens) | operator | HUD numbers roll over to b after 999m |
 | 2026-11-25 | AU9, AU20, H§6.2, H§6.4 (example note, color table), H§6.5, H§6.6, H§6.7, H§6.8, H§7.6 | operator-approved session run time design T§3.1 (2026-11-24); built by RT-3 | The run time segment: its row, groups, color, glyph, form, place in the width order, missing-data rows and the one `workspace.json` read. |
 | 2026-11-25 | H§6.8 | author's call | The run time rows named only a `workspace.json` that cannot be read; a readable file whose `members` is not an object or whose pane record does not decode also gives no run time, and the phase still shows (`phase.rs` `member_read`). |
+| 2026-11-25 | AU9 (member name and mail groups; text unchanged), H§6.2 (rows 2a and 2b; the note below the table), H§6.4 (rows Member name and Unread mail), H§6.5 (row Mail), H§6.7 (the never-removed sentence) | author's call (ML-15 review F4; FX-10) | M§9a adds the member name and unread mail segments and `✉` U+2709. RT-3 (`fab29ce1`) already wrote their AU9 groups, which match `COMPACT` and `ROW_1` in `crates/zygo-hooks/src/statusline/render.rs`; the two H§6.2 rows, their H§6.4 colors (`BOLD` and `fg(33)` in `render.rs`), the H§6.5 Mail row (after Reflection, the glyph table order of FX-11) and the H§6.7 sentence (the `Hud::seg` never-removed arms) complete the amendment. |
