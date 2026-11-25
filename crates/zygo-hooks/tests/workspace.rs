@@ -2036,3 +2036,26 @@ fn mail_stop_without_a_block_clears_busy() {
     assert_eq!(bt(&o), (false, 0));
     assert_eq!(entries(&new).len(), 2); // no message moved
 }
+
+#[test] // M§7.2, AU86; ML-10 D3
+fn mail_prompt_adds_the_line_and_the_stopping_block_wins() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    assert_eq!(ws(&f, "prompt", ups("hello")).unwrap(), None); // no mail
+    put_new(&f, 2);
+    set_act(&f, false, 0);
+    assert_eq!(
+        parsed(ws(&f, "prompt", ups("hello"))),
+        json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": L2}})
+    );
+    assert_eq!(bt(&f), (true, 0));
+    let store = ws_state(&f, Phase::Stopping, MemberRecord::new(Agent::ClaudeCode));
+    set_act(&f, false, 0);
+    let _op = store.op_lock().unwrap();
+    assert_eq!(parsed(ws(&f, "prompt", ups("hello"))), json!({"decision": "block", "reason": "zygo: workspace is stopping"}));
+    assert_eq!(bt(&f), (false, 0));
+    let o = fx(Agent::OpenCode);
+    put_new(&o, 2);
+    assert_eq!(ws(&o, "prompt", oc("ses_A")).unwrap(), None); // D3
+    assert_eq!(bt(&o), (true, 0));
+}

@@ -310,6 +310,18 @@ pub fn run_with(
             }
             if main {
                 change(&c, &mut start_turn);
+                // M§7.2, ML-10 D3: a Claude Code prompt adds the delivery line; the OpenCode plugin drops this output
+                // and gets the line from the per-request session text.
+                if matches!(c.view.agent, Agent::ClaudeCode) {
+                    let n = unread_mail(&c);
+                    if n > 0 {
+                        let line = crate::mail::delivery_line(n);
+                        return Ok(Some(
+                            json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}})
+                                .to_string(),
+                        ));
+                    }
+                }
             }
         }
         "stop" if main => {
