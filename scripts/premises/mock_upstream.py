@@ -20,11 +20,15 @@ Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <fi
   response.completed); /v1/models gets 404. SSE and JSON files may use {{MODEL}} and {{MSGID}}.
 - "usage" replaces response.usage in the response.completed event of an SSE reply.
 - CONNECT <host>:<port> (an HTTPS_PROXY tunnel) is refused (403, connection closed, no tunnel) and
-  recorded as the line "<host>:<port> refused" in <dir>/connect.txt. An absolute-URI request
-  (an HTTP_PROXY request such as "GET http://host/x") is refused the same way and recorded as
-  "<host>:<port> <METHOD> refused" (port 80 or 443 when the URI names none). Neither gets a
-  <nnnn>.json record or a credential check. An absolute-URI request to the mock's own address
-  (127.0.0.1, localhost or [::1] with the mock's port) is served as an origin request to its path.
+  recorded as the line "<host>:<port> refused" in <dir>/connect.txt. Any other method (PATCH,
+  OPTIONS, TRACE or any name) goes through the same handler. A request-target that is not
+  origin-form ("/...") is refused the same way and recorded as "<host>:<port> <METHOD> refused":
+  an absolute URI of any scheme (http, https, ws, wss, ftp, ...; the port is the scheme default
+  80, 443 or 21 when the URI names none, else "?"), or any other form (asterisk "*", a bare word).
+  userinfo ("user:pw@") is never recorded; an authority or port that does not parse is recorded
+  verbatim with port "?". Neither gets a <nnnn>.json record or a credential check. An http or
+  https absolute URI to the mock's own address (127.0.0.1, localhost or [::1] with the mock's
+  port) is served as an origin request to its path.
 
 Rule (JSON list, first match wins):
   {"name": "...", "sse": "<file>" | "json": "<file>", "status": <int, default 200>,
@@ -40,7 +44,6 @@ import os
 import re
 import sys
 import threading
-from urllib.parse import urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOCK = threading.Lock()
@@ -118,6 +121,42 @@ def endpoint(method, path):
     return None
 
 
+DEFAULT_PORTS = {"http": "80", "ws": "80", "https": "443", "wss": "443", "ftp": "21"}
+
+
+def target_line(target):
+    """(host, port, scheme, path-and-query) of a request-target that is not origin-form.
+    userinfo is dropped; a scheme's default port is used when the target names none; an authority
+    that does not parse keeps its text (without userinfo) as host, with port "?"."""
+    m = re.match(r"([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)(.*)$", target, re.S)
+    if m:
+        scheme, auth, rest = m.group(1).lower(), m.group(2), m.group(3)
+    else:
+        scheme, auth, rest = "", target, ""
+    auth = auth.rpartition("@")[2]
+    default = DEFAULT_PORTS.get(scheme, "?")
+    if auth.startswith("["):
+        host, sep, tail = auth.partition("]")
+        if not sep:
+            return auth, "?", scheme, rest
+        host += "]"
+    else:
+        host, sep, tail = auth.rpartition(":")
+        if not sep:
+            host, tail = auth, ""
+        else:
+            tail = ":" + tail
+    if tail == "":
+        port = default
+    elif re.fullmatch(r":[0-9]{1,5}", tail) and int(tail[1:]) <= 65535:
+        port = str(int(tail[1:]))
+    else:
+        port = "?"
+    if not host or (host.startswith("[") and not re.fullmatch(r"\[[0-9A-Fa-f:.]+\]", host)):
+        return auth, "?", scheme, rest
+    return host, port, scheme, rest
+
+
 def default_json(model):
     return {"id": "msg_mock_default", "type": "message", "role": "assistant", "model": model,
             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
@@ -178,28 +217,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_CONNECT(self):
-        self._refuse("%s refused" % self.path)
+        self._refuse("%s refused" % self.path.rpartition("@")[2])
 
-    def _absolute_uri(self):
-        """An absolute-URI request line (a plain-HTTP proxy request): refuse it, return True.
-        One to the mock's own address (127.0.0.1, localhost or [::1] and its port) becomes an
-        origin request to that path (False)."""
-        if not re.match(r"(?i)https?://", self.path):
+    def _proxy_target(self):
+        """A request-target that is not origin-form ("/..."): refuse and record it, return True.
+        An http or https absolute URI to the mock's own address (127.0.0.1, localhost or [::1]
+        and its port) becomes an origin request to that path (False)."""
+        if self.path.startswith("/"):
             return False
-        u = urlsplit(self.path)
-        host = u.hostname or ""
-        try:
-            port = u.port
-        except ValueError:
-            port = None
-        if port is None:
-            port = 443 if u.scheme.lower() == "https" else 80
-        if host.lower() in ("127.0.0.1", "localhost", "::1") and port == self.server.server_address[1]:
-            self.path = (u.path or "/") + ("?" + u.query if u.query else "")
+        line = target_line(self.path)
+        host, port, scheme, rest = line
+        if (scheme in ("http", "https") and host.lower() in ("127.0.0.1", "localhost", "[::1]")
+                and port == str(self.server.server_address[1])):
+            self.path = rest or "/"
+            if not self.path.startswith("/"):
+                self.path = "/" + self.path
             return False
-        if ":" in host:
-            host = "[%s]" % host
-        self._refuse("%s:%d %s refused" % (host, port, self.command))
+        self._refuse("%s:%s %s refused" % (host, port, self.command))
         return True
 
     def _record_only(self, headers, raw):
@@ -213,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
             json.dump(rec, f, indent=2)
 
     def handle_any(self):
-        if self._absolute_uri():
+        if self._proxy_target():
             return
         cfg = self.server.cfg
         n = int(self.headers.get("content-length") or 0)
@@ -303,11 +337,12 @@ class Handler(BaseHTTPRequestHandler):
         text = text.replace("{{MODEL}}", model).replace("{{MSGID}}", msgid)
         self._send(200, "text/event-stream", text.encode())
 
-    do_POST = handle_any
-    do_GET = handle_any
-    do_HEAD = handle_any
-    do_PUT = handle_any
-    do_DELETE = handle_any
+    def __getattr__(self, name):
+        # Every method but CONNECT (PATCH, OPTIONS, TRACE, any other) goes through handle_any;
+        # the base class looks up do_<METHOD> with hasattr and would answer 501 unrecorded.
+        if name.startswith("do_"):
+            return self.handle_any
+        raise AttributeError(name)
 
 
 def main():

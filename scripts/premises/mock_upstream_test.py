@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MOCK = os.path.join(HERE, "mock_upstream.py")
 KEY = "dummy-" + "key"
 FAILS = []
+CHECKS = [0]
 
 
 def ev(name, data):
@@ -88,7 +89,7 @@ class Mock:
             self.port = int(f.read())
 
     def req(self, method, path, body=None, auth=KEY):
-        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         headers = {"authorization": "Bearer " + auth}
         data = None
         if body is not None:
@@ -102,7 +103,7 @@ class Mock:
 
     def raw(self, text):
         """Send raw request bytes; return (status line, the server closed the connection)."""
-        s = socket.create_connection(("127.0.0.1", self.port), timeout=30)
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
         s.sendall(text.encode())
         buf = b""
         while True:
@@ -135,6 +136,7 @@ def write(tmp, name, text):
 
 
 def check(case, cond, why):
+    CHECKS[0] += 1
     if not cond:
         fail(case, why)
         return False
@@ -232,6 +234,41 @@ def run(m):
         ok = False
     check("M11", ok, "got %s %s %r, connect.txt %r, new records %r" % (st, ct, body[:120], m.connect_txt(), new))
 
+    # M12-M17 (review round 1, F7): every method and every request-target that is not origin-form
+    # and not the mock's own address is refused (403) and recorded; no request record.
+    def refused(case, text, want_line):
+        before_txt, before = m.connect_txt(), m.records()
+        try:
+            line, _ = m.raw(text)
+        except OSError as e:
+            line = "error %r" % e
+        got = m.connect_txt()[len(before_txt):]
+        check(case, line.startswith("HTTP/1.1 403") and got == want_line + "\n" and m.records() == before,
+              "status %r, new connect.txt %r, records %d -> %d" % (line, got, len(before), len(m.records())))
+
+    # M12: PATCH, OPTIONS, TRACE and an unknown method go through the same handler.
+    for meth in ("PATCH", "OPTIONS", "TRACE", "FOO"):
+        refused("M12 " + meth, "%s http://example.invalid:8080/x HTTP/1.1\r\nHost: example.invalid\r\n\r\n" % meth,
+                "example.invalid:8080 %s refused" % meth)
+    # M13: a malformed authority is recorded verbatim with ? for the port.
+    refused("M13", "GET http://[::1/x HTTP/1.1\r\nHost: x\r\n\r\n", "[::1:? GET refused")
+    # M14: a port out of range is ?, not the scheme default.
+    refused("M14", "GET http://evil.example:99999/ HTTP/1.1\r\nHost: x\r\n\r\n", "evil.example:? GET refused")
+    # M15: any scheme counts: ws (port 80), wss (443), ftp (21), an unknown scheme (?).
+    refused("M15 ws", "GET ws://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:80 GET refused")
+    refused("M15 wss", "GET wss://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:443 GET refused")
+    refused("M15 ftp", "GET ftp://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:21 GET refused")
+    refused("M15 zz", "GET zz://example.invalid/x HTTP/1.1\r\nHost: x\r\n\r\n", "example.invalid:? GET refused")
+    # M16: userinfo is never recorded.
+    refused("M16", "GET http://user:secret@example.invalid/ HTTP/1.1\r\nHost: x\r\n\r\n",
+            "example.invalid:80 GET refused")
+    # M17: a target that is neither origin-form nor an absolute URI (asterisk form, a bare word).
+    refused("M17 *", "OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n", "*:? OPTIONS refused")
+    refused("M17 word", "GET u:p@foo HTTP/1.1\r\nHost: x\r\n\r\n", "foo:? GET refused")
+    # M18: ws:// to the mock's own address is not served (only http and https are).
+    refused("M18", "GET ws://127.0.0.1:%d/v1/models HTTP/1.1\r\nHost: x\r\n\r\n" % m.port,
+            "127.0.0.1:%d GET refused" % m.port)
+
     # M9 (last: it stops the mock): another credential gives 401 and ABORT.
     st, _, _ = m.req("POST", "/v1/responses", {"model": "m", "input": "m9"}, auth="other")
     check("M9", st == 401 and os.path.exists(os.path.join(m.dir, "ABORT")), "got %s" % st)
@@ -257,7 +294,7 @@ def main():
                 m.stop()
     if FAILS:
         sys.exit(1)
-    print("mock tests: ok (11)")
+    print("mock tests: ok (%d)" % CHECKS[0])
 
 
 if __name__ == "__main__":
