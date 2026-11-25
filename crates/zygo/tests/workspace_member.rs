@@ -1,6 +1,7 @@
 //! M3: hand-started members (W§8.4, AU9, AU34, AU58, AU59, AU79, AU94, AU98, AU102, W-C9; W§18 #19, #32, #54, #55, #56). Every case runs a workspace path, so the file is cfg(unix) (OP5).
 #![cfg(unix)]
 mod common;
+mod dead_port;
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -286,11 +287,6 @@ fn record(kind: Agent, state: MemberState, agent: Option<&str>, zs: Option<&str>
     r.agent_session = agent.map(String::from);
     r.zygo_session = zs.map(String::from);
     r
-}
-
-/// A port with no listener: the port of a dropped `127.0.0.1:0` listener.
-fn closed_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
 /// The pane of the session `session` whose `@zygo-pane` is `key`.
@@ -1239,7 +1235,7 @@ fn au98_a_hand_launch_with_user_info_is_v1_for_both_agents() {
     let Some(h) = Harness::new() else { return };
     workspace_session(&h, Some(KEY2), Some(WS_ID));
     up_state(&h, &[], &mut |_| {});
-    let url = format!("https://u:p@127.0.0.1:{}", closed_port());
+    let url = format!("https://u:p@127.0.0.1:{}", dead_port::closed_port());
     let before = state_bytes(&h);
     for agent in ["claude", "opencode"] {
         let pane = split(&h, "=zygo-app:", "cat");
@@ -1321,7 +1317,7 @@ fn w18_19_loadout_values_reach_the_launch_and_the_resume() { // decision 2; #19 
     git_repo(&h);
     let dir = h.root().join("cc");
     std::fs::create_dir(&dir).unwrap();
-    let port = closed_port();
+    let port = dead_port::closed_port();
     let config = format!(
         "{TEAM_SERVER}[loadout.l19]\n[[loadout.l19.window]]\n[[loadout.l19.window.pane]]\nkind = \"shell\"\n\
          [[loadout.l19.window.pane]]\nkind = \"claude-code\"\ncompact = \"600k\"\nconfig_dir = \"{}\"\n\
@@ -1398,7 +1394,7 @@ fn w18_19_config_check_and_a_hand_launch_report_user_info() { // #19 sentence 3;
     assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
     let (id, ws) = only_state(&h);
     let pane = split(&h, &format!("={}:", ws.tmux_session), "cat");
-    let url = format!("https://u:p@127.0.0.1:{}", closed_port());
+    let url = format!("https://u:p@127.0.0.1:{}", dead_port::closed_port());
     let (_, env) = h.stub(Agent::ClaudeCode, "a");
     let mut extra = pairs(&env);
     extra.push(("ZYGO_WORKSPACE", OsStr::new(&id)));
