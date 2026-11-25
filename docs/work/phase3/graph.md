@@ -235,7 +235,7 @@ Session text (T, SX nodes):
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
-| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | IN-PROGRESS | implementation | .worktrees/phase3/SX-2-node · PR #47 |
+| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
 | MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
@@ -372,3 +372,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | FX-1 in progress: node branch `phase3/FX-1--FX-1`, worktree `.worktrees/phase3/FX-1-node` · PR #40 |
 | 2026-11-24 | FX-1 done: pipe replaces FIFO in the two process-group kill tests; review round 1 (0 confirmed, 4 refuted); floor 2570 passed 0 failed · PR #40 |
 | 2026-11-24 | SX-8 DONE: P3-15 section copied into docs/live-checks.md from T§12.2; round 1 fixed 4 findings (Results row, mktemp, step 7 ids, backup delete), T§12.2 rewritten (author's call) · PR #44 |
+| 2026-11-24 | SX-2 done: `subagent_text()` in crates/zygo-hooks/src/session_start.rs prints mechanics only for an opencode `--event subagent`; review round 1 (2 confirmed, fixed: CLI test, doc sentence); floor green · PR #47 |

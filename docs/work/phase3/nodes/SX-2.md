@@ -27,9 +27,9 @@
 
 All test code goes in `crates/zygo-hooks/tests/subagent_text.rs`. Every new test name starts with `opencode_subagent`. No test spawns a process or reads a clock (review focus 75).
 
-- [ ] **1. Make the member fixture take the agent.** Rename `fn member_fx(t: &Path) -> (SessionDir, Paths)` to `fn member_fx_as(t: &Path, agent: Agent) -> (SessionDir, Paths)`. It sets `agent` in the saved `SessionView` (`SessionView { session: SID.into(), workspace: Some(ws), agent, ..view() }`) and uses `MemberRecord::new(agent)`. Add `fn member_fx(t: &Path) -> (SessionDir, Paths) { member_fx_as(t, Agent::ClaudeCode) }` so the SX-1 tests do not change. Check: `cargo test -p zygo-hooks --test subagent_text` passes, with the same count as before.
+- [x] **1. Make the member fixture take the agent.** Rename `fn member_fx(t: &Path) -> (SessionDir, Paths)` to `fn member_fx_as(t: &Path, agent: Agent) -> (SessionDir, Paths)`. It sets `agent` in the saved `SessionView` (`SessionView { session: SID.into(), workspace: Some(ws), agent, ..view() }`) and uses `MemberRecord::new(agent)`. Add `fn member_fx(t: &Path) -> (SessionDir, Paths) { member_fx_as(t, Agent::ClaudeCode) }` so the SX-1 tests do not change. Check: `cargo test -p zygo-hooks --test subagent_text` passes, with the same count as before.
 
-- [ ] **2. Add the OpenCode helpers.**
+- [x] **2. Add the OpenCode helpers.**
   ```rust
   /// The recorded transform payload (`fixtures/opencode/plugin-hooks/experimental.chat.system.transform.json`) as an
   /// OpenCode input with `--event subagent`. Constructed: `input.modelID` changed from `lead` to `read`, a request
@@ -56,7 +56,7 @@ All test code goes in `crates/zygo-hooks/tests/subagent_text.rs`. Every new test
   ```
   Add `HookOutput` to the `zygo_core::hook` import, and import `zygo_hooks::session_text::build` and `zygo_hooks::workspace::note`.
 
-- [ ] **3. Write the failing tests.**
+- [x] **3. Write the failing tests.**
   ```rust
   #[test]
   fn opencode_subagent_prints_mechanics_as_plain_text() {
@@ -121,9 +121,9 @@ All test code goes in `crates/zygo-hooks/tests/subagent_text.rs`. Every new test
   }
   ```
 
-- [ ] **4. Run and see them fail.** `cargo test -p zygo-hooks --test subagent_text -- opencode_subagent` → `opencode_subagent_prints_mechanics_as_plain_text`, `opencode_subagent_overrides_apply` and `opencode_subagent_member_view_prints_only_mechanics` fail (today the output is the full session text, a JSON envelope for a Claude Code view, and for an OpenCode member also the note). `opencode_subagent_unparseable_view_is_an_error` passes already: it pins today's load-error path for the new branch.
+- [x] **4. Run and see them fail.** `cargo test -p zygo-hooks --test subagent_text -- opencode_subagent` → `opencode_subagent_prints_mechanics_as_plain_text`, `opencode_subagent_overrides_apply` and `opencode_subagent_member_view_prints_only_mechanics` fail (today the output is the full session text, a JSON envelope for a Claude Code view, and for an OpenCode member also the note). `opencode_subagent_unparseable_view_is_an_error` passes already: it pins today's load-error path for the new branch.
 
-- [ ] **5. Implement the branch** in `crates/zygo-hooks/src/session_start.rs`.
+- [x] **5. Implement the branch** in `crates/zygo-hooks/src/session_start.rs`.
   - Add:
     ```rust
     /// T§7.2 item 2: `session-start --event subagent` (the OpenCode transform for a request on a `zygo/` model that is
@@ -140,11 +140,11 @@ All test code goes in `crates/zygo-hooks/tests/subagent_text.rs`. Every new test
     ```
   - In the doc comment of `run_member`, after the sentence about `session-start --event member`, add: "`--event subagent` (`input.cli_event == Some(\"subagent\")`, the OpenCode transform for another role, T§7.2) gives `subagent_text` before any member part." Extend the module doc (lines 1-2) with: "for `--event subagent` the mechanics text only (session text design T§7.2 item 2)."
 
-- [ ] **6. Run and see them pass.** `cargo test -p zygo-hooks --test subagent_text -- opencode_subagent` → 4 passed, 0 failed. Then `cargo test -p zygo-hooks` → all pass (the SX-1 tests in `subagent_text.rs`, `session_text.rs` and `workspace.rs` do not change).
+- [x] **6. Run and see them pass.** `cargo test -p zygo-hooks --test subagent_text -- opencode_subagent` → 4 passed, 0 failed. Then `cargo test -p zygo-hooks` → all pass (the SX-1 tests in `subagent_text.rs`, `session_text.rs` and `workspace.rs` do not change).
 
-- [ ] **7. Run the Acceptance line** of this node as written → the count is 4 (at least 1), then all pass. Run `cargo clippy -p zygo-hooks --tests -- -D warnings` → no warnings.
+- [x] **7. Run the Acceptance line** of this node as written → the count is 4 (at least 1), then all pass. Run `cargo clippy -p zygo-hooks --tests -- -D warnings` → no warnings.
 
-- [ ] **8. Commit** `crates/zygo-hooks/src/session_start.rs` and `crates/zygo-hooks/tests/subagent_text.rs` with message `SX-2: OpenCode session-start --event subagent` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:SX-2`.
+- [x] **8. Commit** `crates/zygo-hooks/src/session_start.rs` and `crates/zygo-hooks/tests/subagent_text.rs` with message `SX-2: OpenCode session-start --event subagent` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:SX-2`.
 
 ### Spec coverage
 
@@ -155,3 +155,8 @@ All test code goes in `crates/zygo-hooks/tests/subagent_text.rs`. Every new test
 | T§17 check 11 / review focus 70: member view with resume-note inputs, M as plain text, `view.json` byte-equal | 3 (`…member_view_prints_only_mechanics`) |
 | T-C1, T§14 item 1: load error goes to the C6 wrapper | 3 (`…unparseable_view_is_an_error`); the wrapper's one stderr line is pinned by SX-1 `subagent_start_unparseable_view_one_stderr_line` |
 | T-C3, review focus 75: no real agent, no clock | all tests are in-process; no `Command`, no clock |
+
+### Review round 1
+
+- [x] **F1. CLI test for T§17 check 11.** Add `session_start_opencode_event_subagent_prints_mechanics_only` to `crates/zygo/tests/cli_surface.rs`: `zygo hook session-start --agent opencode --event subagent` on a member view with resume-note inputs prints exactly M as plain text, with no resume note, and `view.json` is byte-equal. It passes on the current code; with `--event subagent` dropped from the command it fails (the resume note is printed).
+- [x] **F2. Doc sentence (review finding F4).** In the `run_member` doc comment of `crates/zygo-hooks/src/session_start.rs`, the "Without the flag" sentence names only the OpenCode request on the main role; a non-main request carries `--event subagent`.
