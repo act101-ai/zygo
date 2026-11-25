@@ -110,8 +110,9 @@ fn counts(cap: &Capability, g: &GradeFile) -> (u32, u32) {
     (met, applicable)
 }
 
-/// The tier and total scores of `g`. Panics with `score fraction overflow` when an exact fraction does not fit
-/// in `u128`: it fails closed and never gives a wrong score.
+/// The tier and total scores of `g`. Panics with `score fraction overflow` when an exact value or an intermediate
+/// product (for example 100 × num in the percent) does not fit in `u128`, even when the exact result would fit:
+/// it fails closed and never gives a wrong score.
 pub fn scores(reg: &Registry, g: &GradeFile) -> Scores {
     let fits = |x: Option<Frac>| x.unwrap_or_else(|| overflow(g));
     let sum = |xs: Vec<Frac>| fits(xs.into_iter().try_fold(Frac::new(0, 1), Frac::add));
