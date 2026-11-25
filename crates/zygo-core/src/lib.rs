@@ -26,6 +26,9 @@ pub enum Agent {
 }
 
 impl Agent {
+    /// Every client, in id order (P4-6 moves this to client/mod.rs, K§9).
+    pub const ALL: [Agent; 2] = [Agent::ClaudeCode, Agent::OpenCode];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Agent::ClaudeCode => "claude-code",

@@ -71,9 +71,9 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
 
 ### Steps
 
-- [ ] **1. Dependencies.** `Cargo.toml` `[workspace.dependencies]`, after `sha2`: `syn = { version = "3.0.10", features = ["full", "visit"] }`. `crates/zygo-core/Cargo.toml`, a new `[dev-dependencies]` table: `syn.workspace = true` and `toml.workspace = true`. Run `cargo test -p zygo-core --no-run` (no `--locked`, so `Cargo.lock` takes the two new edges). Check: `git diff Cargo.lock` adds only `"syn 3.0.10"` and `"toml"` to the `zygo-core` package's `dependencies` and adds no `[[package]]`; `cargo test -p zygo-core --no-run --locked` exits 0.
+- [x] **1. Dependencies.** `Cargo.toml` `[workspace.dependencies]`, after `sha2`: `syn = { version = "3.0.10", features = ["full", "visit"] }`. `crates/zygo-core/Cargo.toml`, a new `[dev-dependencies]` table: `syn.workspace = true` and `toml.workspace = true`. Run `cargo test -p zygo-core --no-run` (no `--locked`, so `Cargo.lock` takes the two new edges). Check: `git diff Cargo.lock` adds only `"syn 3.0.10"` and `"toml"` to the `zygo-core` package's `dependencies` and adds no `[[package]]`; `cargo test -p zygo-core --no-run --locked` exits 0.
 
-- [ ] **2. Test crate root and the failing `Agent::ALL` test.** Create `crates/zygo-core/tests/conformance.rs`:
+- [x] **2. Test crate root and the failing `Agent::ALL` test.** Create `crates/zygo-core/tests/conformance.rs`:
 
   ```rust
   //! The conformance check and generator (K§6.2.5). CF-1: the input model and check items 1-9 on fixture inputs.
@@ -92,7 +92,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
   ```
   Run `cargo test -p zygo-core --test conformance -- check_agent_all` → fails to compile: no `ALL` on `Agent`.
 
-- [ ] **3. `Agent::ALL`.** In `crates/zygo-core/src/lib.rs`, in `impl Agent` (after the enum at `:20-26`): `pub const ALL: [Agent; 2] = [Agent::ClaudeCode, Agent::OpenCode];` with the doc line `Every client, in id order (P4-6 moves this to client/mod.rs, K§9).` Run the step 2 command → passes. Commit `feat(core): Agent::ALL for the conformance check (CF-1)`.
+- [x] **3. `Agent::ALL`.** In `crates/zygo-core/src/lib.rs`, in `impl Agent` (after the enum at `:20-26`): `pub const ALL: [Agent; 2] = [Agent::ClaudeCode, Agent::OpenCode];` with the doc line `Every client, in id order (P4-6 moves this to client/mod.rs, K§9).` Run the step 2 command → passes. Commit `feat(core): Agent::ALL for the conformance check (CF-1)`.
 
 - [ ] **4. Fixtures.** Under `crates/zygo-core/tests/conformance/fixtures/` write these files, exactly (no `Cargo.toml` anywhere under them; Cargo compiles none of the `.rs` files, the check only parses them):
 
