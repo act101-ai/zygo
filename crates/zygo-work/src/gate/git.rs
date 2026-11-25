@@ -1,8 +1,11 @@
 //! The verdict git reader (D§9.4): one `git cat-file --batch`, one `git merge-base`, one `git rev-list` and one
 //! `git log`, each bounded, behind an injectable runner (D§17).
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
+
+use zygo_core::esc;
 
 use crate::repo::{RunError, Whole};
 
@@ -13,11 +16,27 @@ pub const GIT_TOTAL: Duration = Duration::from_secs(10);
 /// The git processes one verdict may start.
 pub const GIT_PROCESSES: usize = 4;
 
+const CAT_FILE: &str = "git cat-file";
+const MERGE_BASE: &str = "git merge-base";
+const REV_LIST: &str = "git rev-list";
+const LOG: &str = "git log";
+/// The bytes of stderr kept in a `failed: <line>` reason.
+const WHY_MAX: usize = 200;
+
 /// Why a git read gave no answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GitFail {
     Failed { step: &'static str, why: String },
     TooMuch,
+}
+
+impl std::fmt::Display for GitFail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GitFail::Failed { step, why } => write!(f, "cannot check: {step} {why}"),
+            GitFail::TooMuch => f.write_str("too much to read"),
+        }
+    }
 }
 
 /// A record file in one commit.
@@ -81,14 +100,14 @@ pub trait GitRunner {
 pub struct ProcessRunner;
 
 impl GitRunner for ProcessRunner {
-    fn run(&mut self, _cmd: Command, _deadline: Instant) -> Result<Whole, RunError> {
-        todo!()
+    fn run(&mut self, cmd: Command, deadline: Instant) -> Result<Whole, RunError> {
+        crate::repo::run_whole(cmd, deadline)
     }
-    fn batch(&mut self, _cmd: Command, _deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> {
-        todo!()
+    fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> {
+        crate::repo::run_piped(cmd, deadline).map(|p| Box::new(p) as Box<dyn BatchIo>)
     }
     fn now(&self) -> Instant {
-        todo!()
+        Instant::now()
     }
 }
 
@@ -111,22 +130,203 @@ impl ProcessGit {
     pub fn with_runner(root: &Path, runner: Box<dyn GitRunner>) -> ProcessGit {
         ProcessGit { root: root.to_path_buf(), runner, first: None, started: 0, batch: None, objects: 0, bytes: 0 }
     }
+
+    /// The deadline of the next git process of `step`: `min(now + GIT_STEP, first start + GIT_TOTAL)`. Refused, with no
+    /// process counted, when `GIT_PROCESSES` have started or the total time is over.
+    fn deadline(&mut self, step: &'static str) -> Result<Instant, GitFail> {
+        if self.started == GIT_PROCESSES {
+            return Err(fail(step, "more than 4 git processes"));
+        }
+        let now = self.runner.now();
+        let end = *self.first.get_or_insert(now) + GIT_TOTAL;
+        if now >= end {
+            return Err(fail(step, "over 10 s in all"));
+        }
+        self.started += 1;
+        Ok((now + GIT_STEP).min(end))
+    }
+
+    /// `git <args>` in `root`, with no promisor fetch.
+    fn cmd(&self, args: &[&str]) -> Command {
+        let mut c = crate::repo::git_cmd(OsStr::new("git"), &self.root, args);
+        c.env("GIT_NO_LAZY_FETCH", "1");
+        c
+    }
+
+    /// The one `--batch` process: spawned at the first object read, with the deadline it got then. Its first failure
+    /// is kept, and every later read gives it with no new process.
+    fn batch_io(&mut self) -> Result<&mut Box<dyn BatchIo>, GitFail> {
+        if self.batch.is_none() {
+            let spawned = self.deadline(CAT_FILE).and_then(|deadline| {
+                let cmd = self.cmd(&["cat-file", "--batch"]);
+                self.runner.batch(cmd, deadline).map_err(|e| fail(CAT_FILE, e.reason()))
+            });
+            self.batch = Some(spawned);
+        }
+        match self.batch.as_mut() {
+            Some(Ok(io)) => Ok(io),
+            Some(Err(e)) => Err(e.clone()),
+            None => unreachable!("set above"),
+        }
+    }
+
+    /// One whole-mode git process of `step`.
+    fn whole(&mut self, step: &'static str, args: &[&str]) -> Result<Whole, GitFail> {
+        let deadline = self.deadline(step)?;
+        let cmd = self.cmd(args);
+        self.runner.run(cmd, deadline).map_err(|e| fail(step, e.reason()))
+    }
+}
+
+fn fail(step: &'static str, why: &str) -> GitFail {
+    GitFail::Failed { step, why: why.to_string() }
+}
+
+/// `failed: <the first stderr line, escaped, at most 200 bytes>`, or `failed` with no stderr.
+fn exit_why(err: &[u8]) -> String {
+    let text = String::from_utf8_lossy(err);
+    let line = esc(text.lines().next().unwrap_or(""));
+    if line.is_empty() {
+        return "failed".to_string();
+    }
+    let mut cut = line.len().min(WHY_MAX);
+    while !line.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("failed: {}", &line[..cut])
+}
+
+/// A revision git may take as one argument: 1 to 256 printable ASCII bytes, no space, no leading `-`.
+fn good_rev(rev: &str) -> bool {
+    let b = rev.as_bytes();
+    (1..=256).contains(&b.len()) && b[0] != b'-' && b.iter().all(|c| (0x21..=0x7e).contains(c))
+}
+
+/// A file name in one tree: 1 to 255 bytes, no `/`, `\n` or NUL.
+fn good_name(name: &str) -> bool {
+    (1..=255).contains(&name.len()) && !name.bytes().any(|b| b == b'/' || b == b'\n' || b == 0)
+}
+
+/// 40 or 64 bytes of [0-9a-f].
+fn hex_id(b: &[u8]) -> Option<String> {
+    let ok = matches!(b.len(), 40 | 64) && b.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'));
+    ok.then(|| String::from_utf8_lossy(b).into_owned())
+}
+
+/// `--format=%H%x00%P%x00%B --name-status -z` output (git 2.50: `<H>\0<P>\0<B>\0\n<S>\0<path>\0…<H>\0…`; the first
+/// status of a commit has a leading `\n`, and a commit with no paths is followed directly by the next id).
+fn parse_log(out: &[u8]) -> Option<Vec<LogCommit>> {
+    let mut t = out.split(|&b| b == 0).peekable();
+    let mut v = Vec::new();
+    while let Some(id) = t.next() {
+        if id.is_empty() && t.peek().is_none() {
+            break; // the NUL that ends the output
+        }
+        let id = hex_id(id)?;
+        let parents = std::str::from_utf8(t.next()?)
+            .ok()?
+            .split(' ')
+            .filter(|p| !p.is_empty())
+            .map(|p| hex_id(p.as_bytes()))
+            .collect::<Option<Vec<_>>>()?;
+        let message = String::from_utf8_lossy(t.next()?).into_owned();
+        let mut paths = Vec::new();
+        while let Some(s) = t.peek().and_then(|s| status(s)) {
+            t.next();
+            let p = String::from_utf8_lossy(t.next()?).into_owned();
+            if p.starts_with("docs/decisions/") {
+                paths.push((s, p));
+            }
+        }
+        v.push(LogCommit { id, parents, message, paths });
+    }
+    Some(v)
+}
+
+/// A name-status token: one ASCII upper-case letter, after one optional leading `\n`.
+fn status(tok: &[u8]) -> Option<char> {
+    match tok.strip_prefix(b"\n").unwrap_or(tok) {
+        [c] if c.is_ascii_uppercase() => Some(*c as char),
+        _ => None,
+    }
+}
+
+/// `rev-list` output: one id per line.
+fn parse_ids(out: &[u8]) -> Option<Vec<String>> {
+    if out.is_empty() {
+        return Some(Vec::new());
+    }
+    out.strip_suffix(b"\n")?.split(|&b| b == b'\n').map(hex_id).collect()
 }
 
 impl VerdictGit for ProcessGit {
-    fn commit(&mut self, _rev: &str) -> Result<Option<String>, GitFail> {
+    fn commit(&mut self, rev: &str) -> Result<Option<String>, GitFail> {
+        if !good_rev(rev) {
+            return Ok(None);
+        }
+        self.batch_io()?;
         todo!()
     }
-    fn record_blob(&mut self, _rev: &str, _name: &str) -> Result<Blob, GitFail> {
+
+    fn record_blob(&mut self, rev: &str, name: &str) -> Result<Blob, GitFail> {
+        if !good_rev(rev) || !good_name(name) {
+            return Ok(Blob::Missing);
+        }
         todo!()
     }
-    fn merge_base(&mut self, _a: &str, _b: &str) -> Result<Option<String>, GitFail> {
-        todo!()
+
+    fn merge_base(&mut self, a: &str, b: &str) -> Result<Option<String>, GitFail> {
+        if !good_rev(a) || !good_rev(b) {
+            return Err(fail(MERGE_BASE, "bad revision"));
+        }
+        let w = self.whole(MERGE_BASE, &["merge-base", a, b])?;
+        if w.ok {
+            if let Some(id) = w.out.strip_suffix(b"\n").and_then(hex_id) {
+                return Ok(Some(id));
+            }
+        } else if !w.err.is_empty() {
+            return Err(GitFail::Failed { step: MERGE_BASE, why: exit_why(&w.err) });
+        } else if w.out.is_empty() {
+            return Ok(None); // exit 1 with no output: no common ancestor
+        }
+        Err(fail(MERGE_BASE, "bad output"))
     }
-    fn rev_list(&mut self, _base: &str, _head: &str, _max: usize) -> Result<Option<Vec<String>>, GitFail> {
-        todo!()
+
+    fn rev_list(&mut self, base: &str, head: &str, max: usize) -> Result<Option<Vec<String>>, GitFail> {
+        if !good_rev(base) || !good_rev(head) {
+            return Err(fail(REV_LIST, "bad revision"));
+        }
+        let count = format!("--max-count={}", max.saturating_add(1));
+        let range = format!("{base}..{head}");
+        let w = self.whole(REV_LIST, &["rev-list", &count, &range, "--"])?;
+        if !w.ok {
+            return Err(GitFail::Failed { step: REV_LIST, why: exit_why(&w.err) });
+        }
+        let ids = parse_ids(&w.out).ok_or_else(|| fail(REV_LIST, "bad output"))?;
+        Ok((ids.len() <= max).then_some(ids))
     }
-    fn log(&mut self, _base: &str, _head: &str) -> Result<Vec<LogCommit>, GitFail> {
-        todo!()
+
+    fn log(&mut self, base: &str, head: &str) -> Result<Vec<LogCommit>, GitFail> {
+        if !good_rev(base) || !good_rev(head) {
+            return Err(fail(LOG, "bad revision"));
+        }
+        let range = format!("{base}..{head}");
+        let args = [
+            "log",
+            "--no-renames",
+            "--name-status",
+            "-z",
+            "--no-color",
+            "--no-show-signature",
+            "--format=%H%x00%P%x00%B",
+            &range,
+            "--",
+            "docs/decisions/",
+        ];
+        let w = self.whole(LOG, &args)?;
+        if !w.ok {
+            return Err(GitFail::Failed { step: LOG, why: exit_why(&w.err) });
+        }
+        parse_log(&w.out).ok_or_else(|| fail(LOG, "bad output"))
     }
 }
