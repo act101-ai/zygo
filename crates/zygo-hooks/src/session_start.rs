@@ -1,5 +1,6 @@
 //! §8.6: the session text as additional context at session start; for a workspace member also the resume note and
-//! the member record (workspaces design W§9.1, W§9.4; H1).
+//! the member record (workspaces design W§9.1, W§9.4; H1); for `--event subagent` the mechanics text only (session text
+//! design T§7.2 item 2).
 
 use std::io::Write;
 use std::path::Path;
@@ -25,6 +26,9 @@ pub fn run_in(input: &HookInput, dir: &SessionDir) -> anyhow::Result<HookOutput>
     if input.has_agent_id {
         return subagent(input, dir);
     }
+    if input.cli_event.as_deref() == Some("subagent") {
+        return subagent_text(dir);
+    }
     let v = SessionView::load(dir)?;
     Ok(output(v.agent, text_of(dir, &v)))
 }
@@ -41,6 +45,13 @@ fn subagent(input: &HookInput, dir: &SessionDir) -> anyhow::Result<HookOutput> {
     let v = SessionView::load(dir)?;
     Ok(HookOutput::Json(json!({"hookSpecificOutput": {"hookEventName": "SubagentStart",
         "additionalContext": mechanics_with_overrides(dir, &v)}})))
+}
+
+/// T§7.2 item 2: `session-start --event subagent` (the OpenCode transform for a request on a `zygo/` model that is
+/// not the main role): the mechanics text with the overrides applied (T-C5), as plain text for every view agent;
+/// no member part, no resume note, no write. A load error is the caller's error (T§14 item 1).
+fn subagent_text(dir: &SessionDir) -> anyhow::Result<HookOutput> {
+    Ok(HookOutput::Text(mechanics_with_overrides(dir, &SessionView::load(dir)?)))
 }
 
 /// The session text of `v` with the overrides of the session folder applied.
@@ -80,6 +91,8 @@ fn output(agent: Agent, text: String) -> HookOutput {
 /// load error writes one session-log line and prints nothing (a `view.json` that is a FIFO, a folder or not JSON is a
 /// load error); a `view.json` that is a link to a regular view loads, then writes one session-log line and gives the
 /// session text with no note and no other change, as does an entry that is no longer a regular file after the load.
+/// `--event subagent` (`input.cli_event == Some("subagent")`, the OpenCode transform for another role, T§7.2) gives
+/// `subagent_text` before any member part.
 /// Without the flag (a launch that is not a member, or the OpenCode per-request call) a load error is `run_in`'s
 /// error and that check does not run. A session folder that `workspace::check_folder` refuses skips the member part.
 /// Else `workspace::session_start` runs; a Claude Code member's output is printed to `out` there, so the result is
@@ -90,6 +103,9 @@ pub fn run_member(
 ) -> anyhow::Result<HookOutput> {
     if input.has_agent_id {
         return subagent(input, dir);
+    }
+    if input.cli_event.as_deref() == Some("subagent") {
+        return subagent_text(dir);
     }
     let member = input.cli_event.as_deref() == Some("member");
     if member && let Err(e) = workspace::check_folder(dir) {
