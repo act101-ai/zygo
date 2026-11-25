@@ -39,10 +39,8 @@ pub fn map_url(url: &str) -> Mapped {
             Mapped::Https(format!("https://{host}/{}", path.trim_start_matches('/')))
         };
     }
-    if let Some(i) = s.find("::") {
-        if !s[..i].contains('/') {
-            return Mapped::Unknown; // a transport helper, `<transport>::<address>`
-        }
+    if let Some(i) = s.find("::") && !s[..i].contains('/') {
+        return Mapped::Unknown; // a transport helper, `<transport>::<address>`
     }
     let Some((h, rest)) = s.split_once(':') else { return Mapped::Local };
     if h.contains('/') {
@@ -152,15 +150,14 @@ pub fn check(sp: &SyncPaths, urls: &[String], probe: &dyn Probe, clock: &dyn Clo
     keys.sort();
     keys.dedup();
     let state = load(sp);
-    if let Ok(Some(c)) = state.as_ref().map(|s| s.public.as_ref()) {
-        if c.at <= now && now - c.at <= CACHE_SECS && c.url_sha256 == keys {
-            match c.verdict.as_str() {
-                "public" => return Verdict::Public,
-                "private" => return Verdict::Private,
-                "local" => return Verdict::Local,
-                "unknown" => return Verdict::Unknown("the last check, under 1 h ago, could not tell".into()),
-                _ => {}
-            }
+    if let Ok(Some(c)) = state.as_ref().map(|s| s.public.as_ref())
+        && c.at <= now && now - c.at <= CACHE_SECS && c.url_sha256 == keys {
+        match c.verdict.as_str() {
+            "public" => return Verdict::Public,
+            "private" => return Verdict::Private,
+            "local" => return Verdict::Local,
+            "unknown" => return Verdict::Unknown("the last check, under 1 h ago, could not tell".into()),
+            _ => {}
         }
     }
     let verdict = fold(urls, probe);

@@ -230,4 +230,8 @@ Produces (all in `crates/zygo-mail-sync/src/public.rs`, module `zygo_mail_sync::
   - `check_keeps_the_other_state_fields`: `save(&sp, &State { last_ok: Some(5), ci_note_shown: true, ..Default::default() })`; after `check`, `load` has `last_ok == Some(5)`, `ci_note_shown`, and `public.is_some()`.
 - [x] 11. Run `cargo test -p zygo-mail-sync --test public` and see it fail to compile (`check` not found).
 - [x] 12. Add `check` with the Produces signature, by the author's calls: `now` = Unix seconds of `clock.now()` (0 before the epoch); the sorted, deduplicated key list; `load(sp)`; a fresh cache with equal keys and a known verdict name returns at once; else map each URL, probe each distinct `Https` URL once, fold, and when `load` succeeded set `public = Some(PublicCache { url_sha256: keys, verdict: <"public" | "private" | "local" | "unknown">, at: now })` and `save` (a `save` error is ignored). Run `cargo test -p zygo-mail-sync --test public`: 29 passed. Commit both files, message `MS-8: cached public check`, trailers as in step 4.
-- [ ] 13. Verify: `cargo test -p zygo-mail-sync --test public` → 29 passed, 0 failed; `cargo test --workspace --locked --no-run` → builds; `grep -rn "eprintln\|errors.log\|log_line" crates/zygo-mail-sync/src/public.rs` → no match (S§8.2: a URL never goes into a log).
+- [x] 13. Verify: `cargo test -p zygo-mail-sync --test public` → 29 passed, 0 failed; `cargo test --workspace --locked --no-run` → builds; `grep -rn "eprintln\|errors.log\|log_line" crates/zygo-mail-sync/src/public.rs` → no match (S§8.2: a URL never goes into a log).
+
+### Departure
+
+- Step 3 rule 3 named a one-letter host after `@` a Windows drive, which made `h:p` and `user@h:p` `Local` against the step 1 table and the Acceptance line. `map_url` takes a Windows drive only when the whole text before the first `:` is one ASCII letter and the rest starts with `/` or `\`, so `C:/r` stays `Local` and `h:p` maps to `https://h/p`.
