@@ -37,6 +37,7 @@ fn under(u: &str, unit: &str) -> bool {
 fn records_line(read: &Result<RecordSet, DirError>) -> Option<String> {
     let set = match read {
         Err(DirError::NotDirectory) => return Some("decision records: docs/decisions is not a directory".into()),
+        Err(DirError::Unreadable) => return Some("decision records: cannot read docs/decisions".into()),
         Err(DirError::TooMany) => return Some("decision records: over 10,000 files".into()),
         Ok(set) => set,
     };
