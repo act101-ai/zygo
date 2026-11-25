@@ -691,3 +691,236 @@ fn worktree_and_branch_edits_change_nothing() {
     assert_eq!(f.up(), gone());
     assert_eq!(f.planned().loadout, "repository");
 }
+
+// ---- WD-12: pool (R§9.5) ----
+
+/// `root/<sub>` with one empty directory per name; returns `root/<sub>`.
+fn pool_dirs(root: &Path, sub: &str, names: &[&str]) -> PathBuf {
+    let p = root.join(sub);
+    fs::create_dir_all(&p).unwrap();
+    for n in names {
+        fs::create_dir(p.join(n)).unwrap();
+    }
+    p
+}
+
+/// The approved default set (`version = 1`) with `[workspace] pool = text`.
+fn pool_fx(text: Option<&str>) -> Fx {
+    pool_fx_with(b"version = 1\n", text)
+}
+
+/// The approved `workspace.toml` `ws` with `[workspace] pool = text`.
+fn pool_fx_with(ws: &[u8], text: Option<&str>) -> Fx {
+    let mut f = fx(&[(WS, ws)]);
+    f.approve();
+    f.o.config.workspace.pool = text.map(String::from);
+    f
+}
+
+/// name → (member.config_dir, launch.config_dir, launch.passthrough) of the planned members, by pane name.
+fn pool_records(ws: &Workspace) -> BTreeMap<String, (Option<PathBuf>, Option<String>, bool)> {
+    ws.panes
+        .iter()
+        .filter_map(|p| {
+            let m = ws.members.get(&p.key)?;
+            Some((p.name.clone()?, (m.config_dir.clone(), m.launch.config_dir.clone(), m.launch.passthrough)))
+        })
+        .collect()
+}
+
+/// `zygo: <names> run in passthrough on pool <dir>`, the R§9.5 line.
+fn pool_line(names: &str, dir: &Path) -> String { format!("zygo: {names} run in passthrough on pool {}", esc(&dir.to_string_lossy())) }
+
+const POOL_ALL: &str = "orchestrator, worker-1, worker-2, worker-3, worker-4";
+const POOL_AB: [(&str, &str); 5] = [("orchestrator", "a"), ("worker-1", "b"), ("worker-2", "a"), ("worker-3", "b"), ("worker-4", "a")];
+
+/// The records of step 2: `orchestrator → a`, `worker-1 → b`, … each in passthrough.
+fn pool_assert_ab(ws: &Workspace, p: &Path) {
+    let r = pool_records(ws);
+    assert_eq!(r.len(), 5, "{r:?}");
+    for (n, d) in POOL_AB {
+        assert_eq!(r[n], (Some(p.join(d)), Some(p.join(d).to_str().unwrap().into()), true), "{n}");
+    }
+}
+
+#[test] // R§18 items 13, 14: round-robin in name order, `config_dir` and passthrough in the record
+fn pool_assigns_round_robin_with_passthrough() {
+    let _g = serial();
+    let f = pool_fx(Some("~/pool"));
+    let p = pool_dirs(&f.t.join("home"), "pool", &["a", "b"]);
+    assert_eq!(f.up(), (1, String::new(), format!("{}\n{GONE}", pool_line(POOL_ALL, &p))));
+    pool_assert_ab(&f.planned(), &p);
+}
+
+#[test] // R§18 items 13, 14: the line prints once; a file in a pool directory is not read
+fn pool_line_prints_once_and_unreadable_files_change_nothing() {
+    let _g = serial();
+    let f = pool_fx(Some("~/pool"));
+    let p = pool_dirs(&f.t.join("home"), "pool", &["a", "b"]);
+    let creds = p.join("a/creds");
+    fs::write(&creds, "x").unwrap();
+    fs::set_permissions(&creds, fs::Permissions::from_mode(0o000)).unwrap();
+    let (code, out, err) = f.up();
+    assert_eq!((code, out, err.clone()), (1, String::new(), format!("{}\n{GONE}", pool_line(POOL_ALL, &p))));
+    assert_eq!(err.matches("run in passthrough").count(), 1);
+    pool_assert_ab(&f.planned(), &p);
+}
+
+#[test] // R§18 item 15: a pool member with a profile adds the note; the record keeps the profile
+fn pool_profile_adds_the_does_not_apply_note() {
+    let _g = serial();
+    let ws = b"version = 1\n[members.orchestrator]\njob = \"orchestrator\"\npool = true\n[members.worker-1]\nprofile = \"rust\"\npool = true\n";
+    let f = pool_fx_with(ws, Some("~/pool"));
+    let p = pool_dirs(&f.t.join("home"), "pool", &["a", "b"]);
+    assert_eq!(
+        f.up().2,
+        format!("{}; profile rust of worker-1 does not apply in passthrough\n{GONE}", pool_line("orchestrator, worker-1", &p))
+    );
+    let ws = f.planned();
+    let key = &ws.panes.iter().find(|p| p.name.as_deref() == Some("worker-1")).unwrap().key;
+    // the record keeps the profile name; the launcher decides (WD-13)
+    assert_eq!(ws.members[key].launch.profile.as_deref(), Some("rust"));
+}
+
+/// Step 2's build, then its planned records saved as a stopped workspace whose members can resume; returns the pool.
+fn pool_saved(f: &Fx) -> PathBuf {
+    let p = pool_dirs(&f.t.join("home"), "pool", &["a", "b"]);
+    assert_eq!(f.up().0, 1);
+    let planned = f.planned();
+    pool_assert_ab(&planned, &p);
+    set(&f.store, |w| {
+        *w = planned.clone();
+        w.phase = Phase::Down;
+        w.build_plan = None;
+        w.fresh_members.clear();
+        for m in w.members.values_mut() {
+            m.state = MemberState::Resumable;
+            m.agent_session = Some("s".into());
+        }
+    });
+    p
+}
+
+#[test] // R§18 item 13, R§9.5 "Stable across restarts": a restore assigns nothing and prints no pool line
+fn pool_restore_keeps_saved_directories() {
+    let _g = serial();
+    let f = pool_fx(Some("~/pool"));
+    let p = pool_saved(&f);
+    fs::create_dir(p.join("0")).unwrap();
+    assert_eq!(f.up(), gone());
+    pool_assert_ab(&f.planned(), &p);
+}
+
+#[test] // R§18 item 14: the pool removed: a restore keeps passthrough and the directory; `up --reset` gives neither
+fn pool_removed_restore_keeps_passthrough_and_reset_drops_it() {
+    let _g = serial();
+    let mut f = pool_fx(Some("~/pool"));
+    let p = pool_saved(&f);
+    f.o.config.workspace.pool = None;
+    assert_eq!(f.up(), gone());
+    pool_assert_ab(&f.planned(), &p);
+    f.o.reset = true;
+    // `--reset` drops the saved sessions with one line each; no pool line.
+    let (code, out, err) = f.up();
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(err.ends_with(GONE) && !err.contains("passthrough"), "{err}");
+    let r = pool_records(&f.planned());
+    assert_eq!(r.len(), 5, "{r:?}");
+    assert!(r.values().all(|v| *v == (None, None, false)), "{r:?}");
+}
+
+#[test] // R§9.5 "A pool that does not work", review focus 34, 35: exit 1 before any write
+fn pool_broken_exits_1_and_writes_nothing() {
+    let _g = serial();
+    let mut f = pool_fx(None);
+    fs::write(f.t.join("file"), "x").unwrap();
+    pool_dirs(&f.t, "empty", &[".x"]);
+    let none = f.t.join("none").to_str().unwrap().to_string();
+    let file = f.t.join("file").to_str().unwrap().to_string();
+    let empty = f.t.join("empty").to_str().unwrap().to_string();
+    for (text, reason) in
+        [(none.as_str(), "not a directory"), (file.as_str(), "not a directory"), (empty.as_str(), "no subdirectory"), ("rel", "must be absolute after ~ expansion")]
+    {
+        f.o.config.workspace.pool = Some(text.into());
+        assert_eq!(f.up(), (1, String::new(), format!("zygo: pool {}: {reason}; nothing started\n", esc(text))), "{text}");
+        assert!(!f.state_file().exists(), "{text}");
+        assert!(f.no_new_session(), "{text}");
+    }
+}
+
+#[test] // R§9.5 ruling 8: a plan with no pool member does not read the pool
+fn pool_broken_with_loadout_solo_succeeds() {
+    let _g = serial();
+    let mut f = pool_fx(None);
+    f.o.config.workspace.pool = Some(f.t.join("none").to_str().unwrap().into());
+    f.o.loadout = Some("solo".into());
+    assert_eq!(f.up(), gone());
+    assert_eq!(f.planned().loadout, "solo");
+}
+
+#[test] // R§9.5 "No pool": `pool = true` has no effect
+fn pool_absent_gives_no_config_dir_or_passthrough() {
+    let _g = serial();
+    let f = pool_fx(None);
+    assert_eq!(f.up(), gone());
+    let r = pool_records(&f.planned());
+    assert_eq!(r.len(), 5, "{r:?}");
+    assert!(r.values().all(|v| *v == (None, None, false)), "{r:?}");
+}
+
+#[test] // R§9.5: a member that does not take the pool is unchanged
+fn pool_non_pool_member_gets_neither() {
+    let _g = serial();
+    let ws = b"version = 1\n[members.orchestrator]\njob = \"orchestrator\"\npool = true\n[members.plain]\n";
+    let f = pool_fx_with(ws, Some("~/pool"));
+    let p = pool_dirs(&f.t.join("home"), "pool", &["a"]);
+    assert_eq!(f.up(), (1, String::new(), format!("{}\n{GONE}", pool_line("orchestrator", &p))));
+    let r = pool_records(&f.planned());
+    assert_eq!(r["orchestrator"], (Some(p.join("a")), Some(p.join("a").to_str().unwrap().into()), true));
+    assert_eq!(r["plain"], (None, None, false));
+}
+
+#[test] // R§18 item 14, R§9.5 "Local mode only": `[server] url` with a pool member refuses before any pane starts
+fn pool_with_server_url_exits_1_and_starts_nothing() {
+    let _g = serial();
+    let mut f = pool_fx(Some("~/pool"));
+    let p = pool_dirs(&f.t.join("home"), "pool", &["a", "b"]);
+    f.o.config.server.url = Some("https://zygo.invalid".into());
+    assert_eq!(
+        f.up(),
+        (1, String::new(), format!("zygo: pool {}: passthrough is local mode only, and [server] url is set; nothing started\n", p.display()))
+    );
+    assert!(!f.state_file().exists());
+    assert!(f.no_new_session());
+}
+
+#[test] // WD-10 F3, D1: the `config check` job and pool rules apply to a user loadout before any write
+fn pool_user_loadout_job_and_pool_errors_refuse() {
+    let _g = serial();
+    let mut f = fx(&[]);
+    f.o.loadout = Some("pair".into());
+    let pane = |kind: &str, job: Option<&str>, pool: bool, config_dir: Option<&str>| LoadoutPane {
+        kind: kind.into(),
+        job: job.map(String::from),
+        pool,
+        config_dir: config_dir.map(String::from),
+        ..LoadoutPane::default()
+    };
+    let refused = [
+        (vec![pane("shell", Some("worker"), false, None)], "loadout.pair.window[0].pane[0].job: only with kind = \"claude-code\" or \"opencode\""),
+        (
+            vec![pane("claude-code", Some("orchestrator"), false, None), pane("claude-code", Some("orchestrator"), false, None)],
+            "loadout.pair.window[0].pane[1].job: only one orchestrator per loadout",
+        ),
+        (vec![pane("opencode", None, true, None)], "loadout.pair.window[0].pane[0].pool: only with kind = \"claude-code\""),
+        (vec![pane("claude-code", None, true, Some("/c"))], "loadout.pair.window[0].pane[0].pool: not with config_dir"),
+    ];
+    for (panes, line) in refused {
+        f.o.config.loadout.insert("pair".into(), Loadout { window: vec![LoadoutWindow { name: None, layout: None, pane: panes }] });
+        assert_eq!(f.up(), (1, String::new(), format!("zygo: {}; nothing started\n", esc(line))), "{line}");
+        assert!(!f.state_file().exists(), "{line}");
+    }
+    let ok = vec![pane("claude-code", Some("worker"), false, None)];
+    f.o.config.loadout.insert("pair".into(), Loadout { window: vec![LoadoutWindow { name: None, layout: None, pane: ok }] });
+    assert_eq!(f.up(), gone());
+}

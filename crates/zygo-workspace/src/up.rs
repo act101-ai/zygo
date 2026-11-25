@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use zygo_config::repo_def::{apply_to_config, check_default, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
-use zygo_config::{Config, BUILTIN_LOADOUT};
+use zygo_config::{Config, Severity, BUILTIN_LOADOUT};
 use zygo_core::esc;
 use zygo_core::paths::Paths;
 use zygo_work::repo::{checkout, Checkout};
@@ -24,6 +24,7 @@ use crate::identity::{
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
 use crate::mail::{mail_dir, store as mail_store};
+use crate::pool;
 use crate::mux::tmux::Tmux;
 use crate::mux::{
     check_path, check_window_name, hook_command, parse_pane_line, session_target, window_target, HookScope, Multiplexer,
@@ -688,6 +689,10 @@ fn fresh_member(agent: zygo_core::Agent, pp: &PlanPane) -> MemberRecord {
     m.launch.server = pp.server.clone();
     m.launch.compact = pp.compact.clone();
     m.launch.config_dir = pp.config_dir.clone();
+    // R§9.5: a pool member's directory, set at plan time (the launcher callback writes the same value, AU92).
+    if pp.pool {
+        m.config_dir = pp.config_dir.as_ref().map(PathBuf::from);
+    }
     m.launch.job = pp.job.clone();
     m.launch.definition = pp.definition.clone();
     let f = filter_from(agent, &pp.args, &pp.cwd);
@@ -785,6 +790,70 @@ fn check_max(plan: &loadout::Plan, max: u32) -> Result<(), Exit> {
     Ok(())
 }
 
+/// WD-10 F3, R§9.1: the `config check` rules of `job` and `pool` on the user loadout `name`, before any write (`zygo up`
+/// does not run `config check`). A repository loadout is checked when its members are read.
+fn check_jobs(cfg: &Config, name: &str) -> Result<(), Exit> {
+    let Some(l) = cfg.loadout.get(name) else { return Ok(()) };
+    let mut one = Config::default();
+    one.loadout.insert(name.into(), l.clone());
+    let bad = zygo_config::check(&one).into_iter().find(|v| {
+        v.severity == Severity::Error && v.path.starts_with("loadout.") && (v.path.ends_with(".job") || v.path.ends_with(".pool"))
+    });
+    match bad {
+        Some(v) => Err(fail(format!("zygo: {}; nothing started", esc(&v.to_string())))),
+        None => Ok(()),
+    }
+}
+
+/// R§9.5 at a fresh build: the pool members (`pool = true` on a claude-code pane that gets a member record) take the
+/// directories of `[workspace] pool` in turn and run in passthrough. Checks the pool before any write; `Some` is the
+/// line for the operator. No pool member, or no pool: the pool is not read.
+fn apply_pool(opts: &UpOpts, plan: &mut loadout::Plan) -> Result<Option<String>, Exit> {
+    let mut members: Vec<(usize, &mut PlanPane)> = plan
+        .windows
+        .iter_mut()
+        .flat_map(|w| w.panes.iter_mut())
+        .enumerate()
+        .filter(|(_, pp)| {
+            pp.pool
+                && pp.kind == PlanKind::Agent(zygo_core::Agent::ClaudeCode)
+                && !pp.server.as_deref().is_some_and(has_user_info)
+        })
+        .collect();
+    let Some(text) = opts.config.workspace.pool.as_deref().filter(|_| !members.is_empty()) else { return Ok(None) };
+    let home = pool::home_in(|k| opts.vars.get(OsStr::new(k)).cloned());
+    let dir = pool::expand(text, home.as_deref()).map_err(|r| fail(format!("zygo: pool {}: {r}; nothing started", esc(text))))?;
+    let shown = esc(&dir.to_string_lossy());
+    if opts.config.server.url.is_some() {
+        return Err(fail(format!(
+            "zygo: pool {shown}: passthrough is local mode only, and [server] url is set; nothing started"
+        )));
+    }
+    let dirs = pool::list(&dir).map_err(|r| fail(format!("zygo: pool {shown}: {}; nothing started", esc(&r))))?;
+    let names: Vec<Option<String>> = members.iter().map(|(_, pp)| pp.name.clone()).collect();
+    for ((_, pp), k) in members.iter_mut().zip(pool::assign(&names, dirs.len())) {
+        let Some(d) = dirs[k].to_str() else {
+            return Err(fail(format!("zygo: pool {shown}: a directory name is not UTF-8; nothing started")));
+        };
+        pp.config_dir = Some(d.into());
+        pp.passthrough = true;
+    }
+    // D3: an unnamed member is `pane <n>`, `n` its 1-based ordinal in the plan.
+    let label = |i: usize| match &members[i].1.name {
+        Some(n) => esc(n),
+        None => format!("pane {}", members[i].0 + 1),
+    };
+    let order = pool::order(&names);
+    let labels: Vec<String> = order.iter().map(|&i| label(i)).collect();
+    let mut line = format!("zygo: {} run in passthrough on pool {shown}", labels.join(", "));
+    for &i in &order {
+        if let Some(p) = &members[i].1.profile {
+            line.push_str(&format!("; profile {} of {} does not apply in passthrough", esc(p), label(i)));
+        }
+    }
+    Ok(Some(line))
+}
+
 /// The loadout of W§8.1 step 7, first case (R§10 `up` row): `--loadout`; else `[workspace] default_loadout` when the
 /// user config file sets it; else `repository` when the default branch has an approved `.zygo/workspace.toml`; else
 /// `solo`. The repository plan comes from one checked read (R§7.3) and each pane gets its pin (R§7.4). A choice by
@@ -795,7 +864,11 @@ fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Re
         code: if matches!(e, LoadoutError::Unknown { .. }) { 2 } else { 1 },
         message: format!("zygo: {e}"),
     };
-    let user = |name: &str| loadout::resolve(&opts.config, Some(name), &t.main_root, &t.worktrees).map_err(resolve_err);
+    let user = |name: &str| {
+        let plan = loadout::resolve(&opts.config, Some(name), &t.main_root, &t.worktrees).map_err(resolve_err)?;
+        check_jobs(&opts.config, name)?;
+        Ok(plan)
+    };
     let name = opts.loadout.as_deref().or(opts.default_loadout_set.then_some(opts.config.workspace.default_loadout.as_str()));
     let explicit = name.is_some();
     if let Some(n) = name
@@ -849,9 +922,12 @@ fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Re
 fn loadout_plan(
     opts: &UpOpts, t: &Target, ws: Option<&Workspace>, repo_read: bool, report: &mut Report, err: &mut dyn Write,
 ) -> Result<Plan, Exit> {
-    let plan = choose(opts, t, repo_read, err)?;
+    let mut plan = choose(opts, t, repo_read, err)?;
     for w in &plan.warnings {
         say(err, &format!("zygo: {w}"));
+    }
+    if let Some(l) = apply_pool(opts, &mut plan)? {
+        say(err, &l);
     }
     let mut taken: BTreeSet<String> = match ws {
         Some(w) if !opts.reset => w.members.keys().chain(w.panes.iter().map(|p| &p.key)).cloned().collect(),
