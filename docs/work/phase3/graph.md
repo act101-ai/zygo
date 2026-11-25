@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
 | WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | DONE | implementation | 2d7c5e70 · definition_keys 11 passed, config_layers 90 passed · PR #58 |
@@ -222,7 +221,7 @@ Session text (T, SX nodes):
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
 | MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
-| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
+| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | DONE | judgment | 6bb2ad8b · savings 17/17; floor green · PR #71 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-40 | Command parse: more wrappers and file printers, eval, `$(<f)`, bare shell stage | OS-11 | DONE | implementation | 5ba7eb02 · shape_command 43 passed · PR #59 |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
@@ -390,3 +389,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-40 done; O§7.1/O§7.2 command forms widened (pipeline newline, backtick/`0<`/`$(<f)`, `eval --`, `builtin` wrapper, `-c` option scan, redirect-only file printer); review: 6 confirmed fixed, 1 kept as safe; floor green (ws 2695 passed) |
 | 2026-11-24 | OS-22 done; scripts/premises/live-shaping.sh po1-po4 (mock upstream, scrub, stand-in MCP for PO4); publishes only the five OS-23..26 evidence files; review: 2 confirmed + 4 plausible fixed; not run live (operator only); floor green (ws 2670) |
 | 2026-11-24 | WD-24 DONE — hide_secrets scrubs pane job; two older field tests now cover job and name; W§12 scrub list names pane job and name (author's call); review F1, F2 fixed, F3 (loadout name is a table key, outside WD-24) dropped; floor 2681p 0f. |
+| 2026-11-24 | OS-7 done: savings read (crates/zygo-usage/src/savings.rs) with 17 tests; fix round 1 closed 4 findings; floor green, ws 2723 passed, 0 failed · PR #71 |
