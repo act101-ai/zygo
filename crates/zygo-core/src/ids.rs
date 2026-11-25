@@ -12,8 +12,9 @@ pub fn ulid_secs(s: &str) -> Option<u64> {
     ulid::Ulid::from_string(s).ok().map(|u| u.timestamp_ms() / 1000)
 }
 
-/// Member names no pane may take (workspace mail design M§6).
-pub const RESERVED_MEMBER_NAMES: [&str; 2] = ["all", "cli"];
+/// Member names no pane may take (workspace mail design M§6; mail sync design S§7.2): `zygo` is the
+/// sender of the mail sync notice for a refused message and has no inbox.
+pub const RESERVED_MEMBER_NAMES: [&str; 3] = ["all", "cli", "zygo"];
 
 /// A name no member may take (M§6): one of [`RESERVED_MEMBER_NAMES`], or of pane-key form `^k[a-z2-7]{8}$`
 /// (workspaces design W§5), so `mail_send`'s `to` (a name or a pane key) is never ambiguous.

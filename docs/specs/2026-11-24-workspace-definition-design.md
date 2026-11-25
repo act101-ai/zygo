@@ -238,7 +238,7 @@ Why: a resume that read the default branch again would give a running conversati
 - Layout: `layout` when set; else `main-vertical` when there is an orchestrator, else `tiled`.
 - Panes: the orchestrator first, then the other members in byte order of name. Each pane is one `[[loadout.repository.window.pane]]` entry with `name`, `kind`, `job`, `profile`, `pool` and `cwd` from the member, and every other W§11 field unset, so it takes the default of `zygo claude` or `zygo opencode` (AU45).
 
-The W§11 pane `name` key is owned by P3-1 (M§6); this spec uses it and does not define it **(lead: ruling 7)**. This spec adds two pane keys, in user loadouts too: `job` and `pool`. `zygo config check` (`crates/zygo-config/src/check.rs`) adds: `job` is `orchestrator` or `worker`; at most one orchestrator per loadout; `pool` only with `kind = "claude-code"`; `pool` and `config_dir` not both set.
+The W§11 pane `name` key is owned by P3-1 (M§6); this spec uses it and does not define it **(lead: ruling 7)**. This spec adds two pane keys, in user loadouts too: `job` and `pool`. `zygo config check` (`crates/zygo-config/src/check.rs`) adds five rules: `job` is `orchestrator` or `worker`; at most one orchestrator per loadout; `pool` only with `kind = "claude-code"`; `pool` and `config_dir` not both set; `job` only on an agent pane, `kind = "claude-code"` or `"opencode"` **(operator, 2026-11-24)**. **(author)** A pane with no `kind` is not an agent pane: a user loadout has no default kind, and `config check` refuses the missing `kind` as well. A `job` that the fifth rule refuses does not count toward the orchestrator limit, so a shell pane cannot take the orchestrator slot.
 
 `cwd` resolves as W§11 does (`crates/zygo-workspace/src/loadout.rs:116-128`): `branch:<name>` to the worktree that has the branch checked out, else the main worktree with one warning; a relative path under the main worktree. R§6.2 refuses an absolute path, `~` and `..`, so a repository file cannot name a folder outside the repository by its text. A link inside the checkout can still lead out; that is accepted, because the checkout is the user's own and an agent can change its folder anyway.
 
@@ -485,3 +485,7 @@ Each check is a test in temp directories with temp git repositories (a bare "ori
 - **PR1** (live check by the operator, recorded in `docs/live-checks.md`; never in CI, never by an agent: owner login risk) On the pinned Claude Code, two pool members of one workspace, on two pool directories each logged in to another account, run in passthrough and each sends its own directory's login. If it fails, the pool does not give separate accounts, and the operator decides again on R§9.5.
 - **PR2** (live check by the operator) With `CLAUDE_CONFIG_DIR` set to a pool directory, zygo's `--settings` hooks, the status line and `--plugin-dir` act as with the default directory.
 - **PR3** (CI) `toml` 1.2.1 (`Cargo.toml:66`) ends a parse of 64 KiB of nested arrays and nested inline tables with an error or a value, and no stack overflow.
+
+## Change log
+
+- 2026-11-24 · R§9.1 · operator · config check refuses job on a non-agent pane, so a shell pane cannot take the orchestrator slot
