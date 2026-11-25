@@ -180,6 +180,8 @@ The `Debug, Clone, PartialEq, Eq` derives on `Use` and `PinnedUse` are added so 
 
 - [x] **6. Commit** only the three files: `git add crates/zygo-config/src/repo_def/mod.rs crates/zygo-config/src/repo_def/check.rs crates/zygo-config/tests/repo_def_check.rs`, then `git commit -m "WD-4: checked use of the workspace definition (check_default, check_pinned, Pin)" -m <the two trailer lines that the implement brief names>`. Check: `git show --stat HEAD` lists exactly those 3 files.
 
+Review round 1: F1 and F3 tests added; F2 refuted, because the contract fixes `NotApproved` with no `why`.
+
 ### Coverage
 
 | Acceptance item | Test |

@@ -100,7 +100,7 @@ fn store(f: &Fx) -> PathBuf {
 }
 
 /// The counting runner: records each call; with `fail`, every call is `Err("tool not found")`; else `SystemGit`.
-/// With `swap = Some((n, bytes))`, once `n` reads have started, a `cat-file blob` call gives `bytes`.
+/// With `swap = Some((n, bytes))`, once `n` reads have started (`roots()`), a `cat-file blob` call gives `bytes`.
 #[derive(Default)]
 struct Cnt { calls: RefCell<Vec<Vec<String>>>, fail: bool, swap: Option<(usize, &'static [u8])> }
 
@@ -108,6 +108,11 @@ impl Cnt {
     /// One `symbolic-ref` call per `read_default`.
     fn reads(&self) -> usize {
         self.calls.borrow().iter().filter(|c| c[0] == "symbolic-ref").count()
+    }
+
+    /// One `ls-tree ... -- .zygo` call per read that reaches R§6.1 step 3, by `read_default` or `read_at`.
+    fn roots(&self) -> usize {
+        self.calls.borrow().iter().filter(|c| c[0] == "ls-tree" && c.last().map(String::as_str) == Some(".zygo")).count()
     }
 
     fn blobs(&self) -> usize {
@@ -123,7 +128,7 @@ impl GitRunner for Cnt {
         }
         let mut o = SystemGit.git(top, args, Instant::now() + Duration::from_secs(600))?;
         if let Some((n, bytes)) = self.swap {
-            if self.reads() >= n && args.len() >= 2 && args[0] == "cat-file" && args[1] == "blob" {
+            if self.roots() >= n && args.len() >= 2 && args[0] == "cat-file" && args[1] == "blob" {
                 o.stdout = bytes.to_vec();
             }
         }
@@ -191,7 +196,7 @@ fn pinned_approved_reads_the_pin() {
     repo_def::approve_workspace_in(&s, ID, &d(B)).unwrap();
     let r = Cnt::default();
     assert_eq!(repo_def::check_pinned(&f.c, ID, &pin, &s, &r), PinnedUse::Approved { def: parsed(A) });
-    assert_eq!(r.reads(), 0);
+    assert_eq!((r.reads(), r.roots(), r.blobs()), (0, 1, 1));
     assert!(r.calls.borrow().iter().all(|c| c.iter().all(|a| !a.starts_with("refs/"))));
     // R§7.2 ruling 4: the user removes the entry by hand.
     std::fs::write(&s, format!("[[workspace]]\nid = \"{ID}\"\ndigest = \"{}\"\n", d(B))).unwrap();
@@ -219,4 +224,50 @@ fn pinned_gone_unread_and_other_digest() {
     assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin { commit: seed, digest: d(A) }, &s, &Cnt::default()), PinnedUse::NotApproved);
     // The other id is not approved.
     assert_eq!(repo_def::check_pinned(&f.c, ID2, &Pin { commit: c, digest: d(A) }, &s, &Cnt::default()), PinnedUse::NotApproved);
+}
+
+#[test] // R§18 item 6; R§7.4: one read per pinned use; the def applied is the read checked
+fn pinned_one_read_per_use_and_never_a_mix() {
+    let f = fx(&[(".zygo/workspace.toml", A.as_bytes())]);
+    let s = store(&f);
+    repo_def::approve_workspace_in(&s, ID, &d(A)).unwrap();
+    repo_def::approve_workspace_in(&s, ID, &d(B)).unwrap();
+    let pin = Pin { commit: head(&f.c), digest: d(A) };
+    let r = Cnt { swap: Some((2, B.as_bytes())), ..Cnt::default() };
+    assert_eq!(repo_def::check_pinned(&f.c, ID, &pin, &s, &r), PinnedUse::Approved { def: parsed(A) });
+    assert_eq!((r.roots(), r.blobs()), (1, 1));
+    // The second read gives B (same length); its digest is not pin.digest, so B's def is never applied.
+    assert_eq!(repo_def::check_pinned(&f.c, ID, &pin, &s, &r), PinnedUse::NotApproved);
+    assert_eq!((r.roots(), r.blobs()), (2, 2));
+}
+
+#[test] // R§7.4: an invalid .zygo/ at the pinned commit is never Approved
+fn pinned_invalid_is_not_approved() {
+    let f = fx(&[(".zygo", b"x")]);
+    let s = store(&f);
+    repo_def::approve_workspace_in(&s, ID, &d(A)).unwrap();
+    let pin = Pin { commit: head(&f.c), digest: d(A) };
+    assert_eq!(repo_def::check_pinned(&f.c, ID, &pin, &s, &Cnt::default()), PinnedUse::NotApproved);
+}
+
+#[test] // R§7.4: a pinned commit that is not an object id is Unread, with no git call
+fn pinned_commit_not_an_oid_is_unread() {
+    let f = fx(&[(".zygo/workspace.toml", A.as_bytes())]);
+    let s = store(&f);
+    repo_def::approve_workspace_in(&s, ID, &d(A)).unwrap();
+    let r = Cnt::default();
+    let pin = Pin { commit: "not-a-sha".into(), digest: d(A) };
+    assert!(matches!(repo_def::check_pinned(&f.c, ID, &pin, &s, &r), PinnedUse::Unread { .. }));
+    assert!(r.calls.borrow().is_empty());
+}
+
+#[test] // R§7.2: a missing or invalid approvals file approves nothing
+fn default_missing_or_invalid_store_is_not_approved() {
+    let f = fx(&[(".zygo/workspace.toml", A.as_bytes())]);
+    let s = store(&f);
+    let Use::NotApproved { full_ref, files, digest, def } = repo_def::check_default(&f.c, ID, &s, &Cnt::default()) else { panic!() };
+    assert_eq!((full_ref.as_str(), files.commit, digest, def), (MAIN, head(&f.c), d(A), parsed(A)));
+    std::fs::write(&s, "[[workspace\nid = ").unwrap();
+    let Use::NotApproved { digest, .. } = repo_def::check_default(&f.c, ID, &s, &Cnt::default()) else { panic!() };
+    assert_eq!(digest, d(A));
 }
