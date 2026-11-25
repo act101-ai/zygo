@@ -66,13 +66,13 @@ pub fn short(digest: &str) -> &str;          // first 12 characters
 - Reason texts (R§17 leaves them to the builder, apart from R§6.4's "not allowed in a repository file" and the TOML form): see the tables in Step 1. A wrong type and a wrong value of a key get the same reason, so the reason never quotes the value.
 - Three violations are about the whole file, not one key: a TOML syntax error (R§6.4's own example), bytes that are not UTF-8, and an empty profile. These have no key-path segment: `<path>: <reason>`. All other violations are `<path>: <esc(key path)>: <reason>`. The key path joins its keys with `.`, and an array item is written `disabled[<index>]`. The `<path>` of a profile is `.zygo/profiles/<esc(name)>.toml`.
 - Order inside the workspace file: (1) `version`; (2) the other top-level keys in byte order. For `members` the order is: its type, then its count (at most 32, checked before any entry), then each member in byte order of name. For each member: its name, its type, its keys in byte order, then the cross-key rule `pool = true` needs a `claude-code` kind, then the orchestrator rule, which fires on the second orchestrator in name order. Inside a profile file: the top-level keys in byte order, then the rule that the profile is not empty.
-- `cwd` checks, in this order: string; every byte `0x20`-`0x7e`; does not start with `~`; not absolute (`starts_with('/')` or `Path::is_absolute`, so `/tmp` is refused on Windows as well); then, after a `branch:` prefix, 1-255 bytes; else at most 1024 bytes, no `\`, and each `/` part 1-255 bytes and not `.` or `..`.
 - `parse` does not check the profile names again: WD-1's read already refuses names that do not match the pattern and the name `none` (R§6.1 step 4). The R§18 item 4 `None.toml` case is a WD-1 read case.
 - `short(d)` is `d.get(..12).unwrap_or(d)`, so a shorter input does not panic.
+- `cwd` absolute-path check is textual (leading `/` or drive prefix), so the result is the same on every OS; review finding 1.
 
 ### Steps
 
-- [ ] **Step 1: write the failing tests** in `crates/zygo-config/tests/repo_def_shape.rs` (new):
+- [x] **Step 1: write the failing tests** in `crates/zygo-config/tests/repo_def_shape.rs` (new):
 
 ```rust
 //! WD-2: shapes, allow-list validation and digest of `.zygo/` (R§6.2-R§6.5, R-C3, R-C7, R§19 PR3, R§18 item 4).
@@ -259,9 +259,9 @@ for text in [arrays, tables] {
 }
 ```
 
-- [ ] **Step 2: run it and see it fail.** `cargo test -p zygo-config --test repo_def_shape` fails to compile: `Definition`, `MemberDef`, `RepoProfile`, `WorkspaceFile`, `parse`, `digest` and `short` are not in `zygo_config::repo_def`.
+- [x] **Step 2: run it and see it fail.** `cargo test -p zygo-config --test repo_def_shape` fails to compile: `Definition`, `MemberDef`, `RepoProfile`, `WorkspaceFile`, `parse`, `digest` and `short` are not in `zygo_config::repo_def`.
 
-- [ ] **Step 3: write `crates/zygo-config/src/repo_def/shape.rs`** (new). It holds the four structs of Interfaces and `pub fn parse(files: &Files) -> Result<Definition, String>`, plus these private items:
+- [x] **Step 3: write `crates/zygo-config/src/repo_def/shape.rs`** (new). It holds the four structs of Interfaces and `pub fn parse(files: &Files) -> Result<Definition, String>`, plus these private items:
   - `const NOT_ALLOWED: &str = "not allowed in a repository file";`
   - `const LAYOUTS: [&str; 5] = ["even-horizontal", "even-vertical", "main-horizontal", "main-vertical", "tiled"];`
   - `const MEMBERS_MAX: usize = 32;` and `const ENTRIES_MAX: usize = 16;`
@@ -271,7 +271,7 @@ for text in [arrays, tables] {
   - `parse` checks `.zygo/workspace.toml` first and then each `files.profiles` entry in map order (byte order of name). It builds each error as `format!("{path}: {}: {reason}", zygo_core::esc(&key))`, or as `format!("{path}: {reason}")` when the key path is empty. The profile path is `format!(".zygo/profiles/{}.toml", zygo_core::esc(name))`.
   Result: `cargo build -p zygo-config` compiles.
 
-- [ ] **Step 4: write `crates/zygo-config/src/repo_def/digest.rs`** (new). The R§6.5 byte layout, exactly:
+- [x] **Step 4: write `crates/zygo-config/src/repo_def/digest.rs`** (new). The R§6.5 byte layout, exactly:
 
 ```rust
 use sha2::{Digest, Sha256};
@@ -296,8 +296,8 @@ pub fn digest(files: &Files) -> String {
 pub fn short(digest: &str) -> &str { digest.get(..12).unwrap_or(digest) }
 ```
 
-- [ ] **Step 5: re-export from `crates/zygo-config/src/repo_def/mod.rs`.** Add `mod digest;`, `mod shape;`, `pub use digest::{digest, short};` and `pub use shape::{parse, Definition, MemberDef, RepoProfile, WorkspaceFile};`. Keep the WD-1 `pub use read::{…}` line as it is. Update the module doc comment to name R§6.2-R§6.5. Result: `cargo build -p zygo-config` compiles.
+- [x] **Step 5: re-export from `crates/zygo-config/src/repo_def/mod.rs`.** Add `mod digest;`, `mod shape;`, `pub use digest::{digest, short};` and `pub use shape::{parse, Definition, MemberDef, RepoProfile, WorkspaceFile};`. Keep the WD-1 `pub use read::{…}` line as it is. Update the module doc comment to name R§6.2-R§6.5. Result: `cargo build -p zygo-config` compiles.
 
-- [ ] **Step 6: verify.** `cargo test -p zygo-config --test repo_def_shape` passes with 9 passed and 0 failed (`parse_rules_of_r18_item_4`, `allow_list_holds_at_every_depth`, `value_rules`, `toml_syntax_error_is_message_and_position_only`, `first_violation_wins_in_r6_4_order`, `key_path_is_escaped`, `valid_files_parse_to_the_typed_shape`, `digest_is_sha256_of_the_r6_5_layout`, `pr3_deep_nesting_does_not_overflow_the_stack`). After that, `cargo test -p zygo-config --locked` shows no failure, so WD-1's `repo_def_read` and the existing suites still pass.
+- [x] **Step 6: verify.** `cargo test -p zygo-config --test repo_def_shape` passes with 9 passed and 0 failed (`parse_rules_of_r18_item_4`, `allow_list_holds_at_every_depth`, `value_rules`, `toml_syntax_error_is_message_and_position_only`, `first_violation_wins_in_r6_4_order`, `key_path_is_escaped`, `valid_files_parse_to_the_typed_shape`, `digest_is_sha256_of_the_r6_5_layout`, `pr3_deep_nesting_does_not_overflow_the_stack`). After that, `cargo test -p zygo-config --locked` shows no failure, so WD-1's `repo_def_read` and the existing suites still pass.
 
-- [ ] **Step 7: commit.** Commit the four files in the Files line with the message `WD-2: shapes, allow-list validation and digest of .zygo/`.
+- [x] **Step 7: commit.** Commit the four files in the Files line with the message `WD-2: shapes, allow-list validation and digest of .zygo/`.
