@@ -122,6 +122,14 @@ expect_fail() {
     [ "$OUT" = "check-premises: $1" ] || fail "output is not 'check-premises: $1'"
 }
 
+# expect_fail_prefix <text>: exit 1 and one output line that starts "check-premises: <text>" (the
+# rest of the line may hold bytes that differ between shells, such as a NUL from a binary file).
+expect_fail_prefix() {
+    [ "$RC" -eq 1 ] || fail "exit $RC, expected 1"
+    [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" -eq 1 ] || fail "output is not one line"
+    case "$OUT" in "check-premises: $1"*) ;; *) fail "output does not start with 'check-premises: $1'" ;; esac
+}
+
 CASE="real tree"
 D=$(mk real)
 run "$D"
@@ -835,5 +843,38 @@ D=$(mk g7_liveglob)
 ln -s ../../docs/premises.md "$D/scripts/premises/live-zz.sh"
 run "$D"
 expect_fail "scripts/premises/live-zz.sh is a symlink; a symlink in the scan scope is not scanned and is not evidence"
+
+# grep reads every file as text (-a), so a hit in a binary file is a line with its content, not a
+# "Binary file … matches" message (stdout on BSD grep, stderr on GNU grep).
+BINF=fixtures/codex/bin.dat
+CASE="H1: a binary file with an e-mail address"
+D=$(mk h1_mail)
+printf 'a\0b bob@corp.com\n' > "$D/$BINF"
+run "$D"
+expect_fail_prefix "forbidden content (e-mail address): $BINF:1:a"
+
+CASE="H1: a binary file with an API key"
+D=$(mk h1_key)
+printf 'a\0b sk-ant-x\n' > "$D/$BINF"
+run "$D"
+expect_fail_prefix "forbidden content (API key): $BINF:1:a"
+
+CASE="H1: a binary file with a forbidden name"
+D=$(mk h1_name)
+printf 'a\0b alice\n' > "$D/$BINF"
+run_names "$D" alice
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
+
+# The exemption is the exact path, also for a rule that matches any case: a case variant of the
+# Codex verbatim path is scanned. On a case-insensitive file system the variant is the verbatim file,
+# so its hash is pinned here (pin_codex) and the hash check passes; on a case-sensitive one the hash
+# check does not see it. Either way only the exact-path exemption decides the result.
+CASE="H2: a case variant of the Codex verbatim path with a Windows home path"
+D=$(mk h2_case)
+UCSCH=fixtures/codex/CONFIG.schema.json
+printf '%s\n' 'C:\Users\bob' > "$D/$UCSCH"
+pin_codex "$D" "$D/$UCSCH"
+run "$D"
+expect_fail 'forbidden content (Windows home path): fixtures/codex/CONFIG.schema.json:1:C:\Users\bob'
 
 echo "test-check-premises: ok ($N cases)"
