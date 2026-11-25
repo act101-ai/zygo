@@ -58,7 +58,7 @@ if m.first_started_at.unwrap_or(0) == 0 && p.started_at != 0 {
 
 ### Steps
 
-- [ ] **Step 1: write the failing state tests** in `crates/zygo-workspace/tests/state.rs` (after `update_keeps_unknown_fields`):
+- [x] **Step 1: write the failing state tests** in `crates/zygo-workspace/tests/state.rs` (after `update_keeps_unknown_fields`):
 
 ```rust
 #[test] // T§4, T§7 item 5, W AU78: a member record of an older zygo has no first_started_at; a write keeps every field
@@ -94,9 +94,9 @@ fn first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write() {
 }
 ```
 
-- [ ] **Step 2: run the state tests and see them fail to compile** (`no field first_started_at on type MemberRecord`): `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state first_started_at`.
+- [x] **Step 2: run the state tests and see them fail to compile** (`no field first_started_at on type MemberRecord`): `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state first_started_at`.
 
-- [ ] **Step 3: write the failing hook tests** in `crates/zygo-hooks/tests/workspace.rs` (after `session_start_refusals`). Helpers, then three tests:
+- [x] **Step 3: write the failing hook tests** in `crates/zygo-hooks/tests/workspace.rs` (after `session_start_refusals`). Helpers, then three tests:
 
 ```rust
 /// The hook commit of a pending start by `agent` (T§3.2): the Claude Code `SessionStart` with no `session_id`, or the
@@ -173,9 +173,9 @@ fn first_started_at_stays_absent_for_a_zero_start_until_a_later_nonzero_hook_com
 }
 ```
 
-- [ ] **Step 4: run the hook tests and see them fail to compile** (`no field first_started_at`): `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test workspace first_started_at`.
+- [x] **Step 4: run the hook tests and see them fail to compile** (`no field first_started_at`): `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test workspace first_started_at`.
 
-- [ ] **Step 5: write the failing zygo-crate tests** in `crates/zygo/src/cmd/member.rs` `mod tests` (after `record_exit_changes_nothing_for_another_session`; `join_…` after `join_refuses_with_the_reason_and_changes_nothing`, since it uses `start()`):
+- [x] **Step 5: write the failing zygo-crate tests** in `crates/zygo/src/cmd/member.rs` `mod tests` (after `record_exit_changes_nothing_for_another_session`; `join_…` after `join_refuses_with_the_reason_and_changes_nothing`, since it uses `start()`):
 
 ```rust
 #[test] // T§3.2 (W AU92 addition), T§5 "Commit without the lock", T§7 item 4; graph review focus 59
@@ -250,14 +250,14 @@ fn join_first_started_at_is_absent_for_a_replaced_record_and_kept_for_an_accepte
 }
 ```
 
-- [ ] **Step 6: run the zygo-crate tests and see them fail to compile** (`no field first_started_at`): `env -u ZYGO_SESSION_DIR cargo test -p zygo --lib first_started_at`.
+- [x] **Step 6: run the zygo-crate tests and see them fail to compile** (`no field first_started_at`): `env -u ZYGO_SESSION_DIR cargo test -p zygo --lib first_started_at`.
 
-- [ ] **Step 7: add the field** in `crates/zygo-workspace/src/state.rs`: in `MemberRecord`, right after `pending` (`:100-101`), the Produces field with its doc line and `#[serde(default, skip_serializing_if = "Option::is_none")]`; in `MemberRecord::new` (`:296-313`), `first_started_at: None,` after `pending: None,`. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state` → all pass, including the two `first_started_at…` tests and the unchanged `json_has_the_fields_of_w7_2` and `none_is_absent_and_absent_reads_as_default`.
+- [x] **Step 7: add the field** in `crates/zygo-workspace/src/state.rs`: in `MemberRecord`, right after `pending` (`:100-101`), the Produces field with its doc line and `#[serde(default, skip_serializing_if = "Option::is_none")]`; in `MemberRecord::new` (`:296-313`), `first_started_at: None,` after `pending: None,`. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state` → all pass, including the two `first_started_at…` tests and the unchanged `json_has_the_fields_of_w7_2` and `none_is_absent_and_absent_reads_as_default`.
 
-- [ ] **Step 8: set the field at both commits.** (a) `crates/zygo-hooks/src/workspace.rs`, `record_session`, arm `Some(p) if p.zygo_session == session` (`:402`): as its first statement, the commit rule of Interfaces with `m` and `p`. Extend the doc comment of `record_session` (`:381-387`) after "moves into the record (its own agent session id when it has one)" with ", `first_started_at` is set from `pending.started_at` when it is absent or 0 and that time is not 0 (T§3.2)". (b) `crates/zygo/src/cmd/member.rs`, `record_exit`, block `if names(rec) && let Some(p) = rec.pending.take()` (`:480-482`): as its first statement, the same rule with `m` = `rec`. Extend the doc comment (`:467-471`) after "commit that `pending` when no hook did" with " (setting `first_started_at` from its `started_at` when absent or 0 and that time is not 0, T§3.2)". Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test workspace first_started_at` → 3 pass; `env -u ZYGO_SESSION_DIR cargo test -p zygo --lib first_started_at` → 5 pass.
+- [x] **Step 8: set the field at both commits.** (a) `crates/zygo-hooks/src/workspace.rs`, `record_session`, arm `Some(p) if p.zygo_session == session` (`:402`): as its first statement, the commit rule of Interfaces with `m` and `p`. Extend the doc comment of `record_session` (`:381-387`) after "moves into the record (its own agent session id when it has one)" with ", `first_started_at` is set from `pending.started_at` when it is absent or 0 and that time is not 0 (T§3.2)". (b) `crates/zygo/src/cmd/member.rs`, `record_exit`, block `if names(rec) && let Some(p) = rec.pending.take()` (`:480-482`): as its first statement, the same rule with `m` = `rec`. Extend the doc comment (`:467-471`) after "commit that `pending` when no hook did" with " (setting `first_started_at` from its `started_at` when absent or 0 and that time is not 0, T§3.2)". Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test workspace first_started_at` → 3 pass; `env -u ZYGO_SESSION_DIR cargo test -p zygo --lib first_started_at` → 5 pass.
 
-- [ ] **Step 9: amend the base spec** `docs/specs/2026-11-20-workspaces-design.md` with the T§3.2 text word for word. (a) W§7.2 field table: a new row right after the `member.pending` row (`:290`): ``| `member.first_started_at` | Unix time (seconds) of the first committed start of this member record: the `pending.started_at` of the first commit (W AU92). Absent until then, and in a record of an older zygo (T§4). Never changed after it is set; a new record (a fresh loadout member, `up --reset`, a hand start that replaces the record, `zygo ws forget-pane`) starts without it. |`` (b) W AU92 (`:233`): before the closing ` | author |`, append the sentences: ``Each commit of a pending start (the member `SessionStart`, the OpenCode `session` call, the wrapper's exit commit) sets `first_started_at = pending.started_at` when `first_started_at` is absent or 0 and `pending.started_at` is not 0. The start write itself does not set it: a start that never spawns (`spawned = false`) leaves no trace.`` Check: `grep -o first_started_at docs/specs/2026-11-20-workspaces-design.md | wc -l` → `3` (1 in the new row, 2 in AU92); `git diff --stat -- docs` lists only that spec.
+- [x] **Step 9: amend the base spec** `docs/specs/2026-11-20-workspaces-design.md` with the T§3.2 text word for word. (a) W§7.2 field table: a new row right after the `member.pending` row (`:290`): ``| `member.first_started_at` | Unix time (seconds) of the first committed start of this member record: the `pending.started_at` of the first commit (W AU92). Absent until then, and in a record of an older zygo (T§4). Never changed after it is set; a new record (a fresh loadout member, `up --reset`, a hand start that replaces the record, `zygo ws forget-pane`) starts without it. |`` (b) W AU92 (`:233`): before the closing ` | author |`, append the sentences: ``Each commit of a pending start (the member `SessionStart`, the OpenCode `session` call, the wrapper's exit commit) sets `first_started_at = pending.started_at` when `first_started_at` is absent or 0 and `pending.started_at` is not 0. The start write itself does not set it: a start that never spawns (`spawned = false`) leaves no trace.`` Check: `grep -o first_started_at docs/specs/2026-11-20-workspaces-design.md | wc -l` → `3` (1 in the new row, 2 in AU92); `git diff --stat -- docs` lists only that spec.
 
-- [ ] **Step 10: run the acceptance check**: `env -u ZYGO_SESSION_DIR sh -c 'test "$(cargo test -q -p zygo-workspace -p zygo-hooks -p zygo -- first_started_at --list 2>/dev/null | grep -c ": test$")" -ge 6 && cargo test --locked -p zygo-workspace -p zygo-hooks -p zygo'` → exit 0; the count is 10 on unix (2 state, 3 hook, 5 zygo) and every test passes with no new `#[ignore]`.
+- [x] **Step 10: run the acceptance check**: `env -u ZYGO_SESSION_DIR sh -c 'test "$(cargo test -q -p zygo-workspace -p zygo-hooks -p zygo -- first_started_at --list 2>/dev/null | grep -c ": test$")" -ge 6 && cargo test --locked -p zygo-workspace -p zygo-hooks -p zygo'` → exit 0; the count is 10 on unix (2 state, 3 hook, 5 zygo) and every test passes with no new `#[ignore]`.
 
-- [ ] **Step 11: commit** the six files of the node (`crates/zygo-workspace/src/state.rs`, `crates/zygo-workspace/tests/state.rs`, `crates/zygo-hooks/src/workspace.rs`, `crates/zygo-hooks/tests/workspace.rs`, `crates/zygo/src/cmd/member.rs`, `docs/specs/2026-11-20-workspaces-design.md`) with message `RT-1: member record first_started_at, set by each commit of a pending start`, ending with two trailer lines: `Zygo-Session:` followed by the implementing session's id, and `Zygo-Work: phase3:RT-1`; no Claude attribution. Check: `git show --stat HEAD` lists exactly those six files.
+- [x] **Step 11: commit** the six files of the node (`crates/zygo-workspace/src/state.rs`, `crates/zygo-workspace/tests/state.rs`, `crates/zygo-hooks/src/workspace.rs`, `crates/zygo-hooks/tests/workspace.rs`, `crates/zygo/src/cmd/member.rs`, `docs/specs/2026-11-20-workspaces-design.md`) with message `RT-1: member record first_started_at, set by each commit of a pending start`, ending with two trailer lines: `Zygo-Session:` followed by the implementing session's id, and `Zygo-Work: phase3:RT-1`; no Claude attribution. Check: `git show --stat HEAD` lists exactly those six files.
