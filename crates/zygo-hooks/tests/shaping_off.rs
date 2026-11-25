@@ -4,7 +4,8 @@ mod common {
 }
 use common::shaping;
 use serde_json::Value;
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use zygo_core::{
     Agent,
     hook::{HookInput, guarded},
@@ -14,6 +15,10 @@ use zygo_core::{
 use zygo_hooks::trim::{self, TrimOpts};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/shape_off");
+/// The marker of a shaped view; the `97d8767` baseline has no shaping (O§9).
+const SHAPED: &str = "[zygo shaped";
+/// The masked result id in a golden `hook_stdout`.
+const ZERO_ID: &str = "00000000000000000000000000";
 
 struct Got {
     stdout: String,
@@ -21,6 +26,11 @@ struct Got {
 }
 
 fn run_off(agent: Agent, input: &[u8]) -> Got {
+    run_off_at(agent, input, SessionView::default().trim_threshold_bytes)
+}
+
+/// Runs the trim hook with `shape = false` and the trim threshold `threshold`.
+fn run_off_at(agent: Agent, input: &[u8], threshold: u64) -> Got {
     let t = tempfile::tempdir().unwrap();
     let dir = SessionDir::new(t.path().join("s"));
     dir.create().unwrap();
@@ -29,6 +39,7 @@ fn run_off(agent: Agent, input: &[u8]) -> Got {
         agent,
         results: true,
         shape: false,
+        trim_threshold_bytes: threshold,
         ..Default::default()
     }
     .save(&dir)
@@ -57,7 +68,7 @@ fn run_off(agent: Agent, input: &[u8]) -> Got {
     assert!(ids.len() <= 1, "{ids:?}");
     match ids.first() {
         Some(id) => Got {
-            stdout: out.replace(id.as_str(), &"0".repeat(26)),
+            stdout: mask(&out, id),
             stored: Some(std::fs::read(dir.results().join(id)).unwrap()),
         },
         None => Got {
@@ -65,6 +76,21 @@ fn run_off(agent: Agent, input: &[u8]) -> Got {
             stored: None,
         },
     }
+}
+
+/// `out` with the stored id `id` replaced by 26 `0`; panics when `out` does not name `id`, or names the masked id
+/// before masking.
+fn mask(out: &str, id: &str) -> String {
+    assert_ne!(id, ZERO_ID, "the stored id is the masked id");
+    assert!(
+        !out.contains(ZERO_ID),
+        "a result was stored as {id}, but the hook stdout names {ZERO_ID}: {out}"
+    );
+    assert!(
+        out.contains(id),
+        "a result was stored as {id}, but the hook stdout does not name it: {out}"
+    );
+    out.replace(id, ZERO_ID)
 }
 
 fn bless() -> bool {
@@ -100,6 +126,13 @@ fn compare(p: &Path, want: Option<&[u8]>, problems: &mut Vec<String>) {
 /// Compares `got` with `GOLDEN/rel/{hook_stdout,stored}`, or writes them under `ZYGO_BLESS=1`; returns each problem, naming the path.
 fn check(rel: &str, got: &Got) -> Vec<String> {
     let d = Path::new(GOLDEN).join(rel);
+    if bless() {
+        assert!(
+            !got.stdout.contains(SHAPED),
+            "refusing to bless {}/hook_stdout: it holds `{SHAPED}`, and the 97d8767 baseline has no shaping (O§9)",
+            d.display()
+        );
+    }
     let mut p = vec![];
     compare(&d.join("hook_stdout"), Some(got.stdout.as_bytes()), &mut p);
     compare(&d.join("stored"), got.stored.as_deref(), &mut p);
@@ -161,8 +194,8 @@ fn is_bash_fixture(p: &Path) -> bool {
         && p.file_stem().unwrap().to_string_lossy().split('-').nth(1) == Some("Bash")
 }
 
-#[test]
-fn shape_off_claude_code_bash_fixtures_match_goldens() {
+/// The Bash fixtures of `fixtures/claude-code/hooks/`, sorted.
+fn bash_fixtures() -> Vec<PathBuf> {
     let dir = shaping::repo().join("fixtures/claude-code/hooks");
     let mut files: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
@@ -170,6 +203,12 @@ fn shape_off_claude_code_bash_fixtures_match_goldens() {
         .filter(|p| is_bash_fixture(p))
         .collect();
     files.sort();
+    files
+}
+
+#[test]
+fn shape_off_claude_code_bash_fixtures_match_goldens() {
+    let files = bash_fixtures();
     assert!(!files.is_empty());
     let mut p = vec![];
     for f in &files {
@@ -196,5 +235,91 @@ fn shape_off_opencode_after_bash_matches_golden() {
         "opencode/tool.execute.after-bash",
         &run_off(Agent::OpenCode, &input),
     );
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+/// O§7.13 item 4, O§9: a `PostToolUseFailure` case gives empty stdout and stores nothing, also when its output is
+/// over the trim threshold.
+#[test]
+fn shape_off_failure_cases_over_threshold_give_nothing() {
+    let threshold = 1024;
+    let cases: Vec<_> = shaping::cases(None)
+        .into_iter()
+        .filter(|c| c.meta["event"] == "PostToolUseFailure")
+        .collect();
+    assert!(!cases.is_empty());
+    let mut p = vec![];
+    for c in &cases {
+        let rel = format!("shaping/{}/{}", c.shaper, c.name);
+        assert!(
+            c.stdout.len() as u64 > threshold,
+            "{rel}: {} bytes, not over {threshold}",
+            c.stdout.len()
+        );
+        let input = serde_json::to_vec(&shaping::hook_input(c)).unwrap();
+        p.extend(empty(&rel, &run_off_at(agent_of(c), &input, threshold)));
+    }
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+/// The golden folder of each input that has a golden: every input except a `PostToolUseFailure` one.
+fn golden_rels() -> BTreeSet<String> {
+    let mut s = BTreeSet::new();
+    for c in shaping::cases(None) {
+        if c.meta["event"] != "PostToolUseFailure" {
+            s.insert(format!("shaping/{}/{}", c.shaper, c.name));
+        }
+    }
+    for f in bash_fixtures() {
+        let v: Value = serde_json::from_slice(&std::fs::read(&f).unwrap()).unwrap();
+        if v["hook_event_name"] != "PostToolUseFailure" {
+            s.insert(format!(
+                "claude-code/{}",
+                f.file_stem().unwrap().to_string_lossy()
+            ));
+        }
+    }
+    s.insert("opencode/tool.execute.after-bash".into());
+    s
+}
+
+/// Every file under `dir`, as a path relative to `root` with `/` separators.
+fn files_under(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    for e in std::fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            files_under(root, &p, out);
+        } else {
+            let rel = p
+                .strip_prefix(root)
+                .unwrap()
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned());
+            out.push(rel.collect::<Vec<_>>().join("/"));
+        }
+    }
+}
+
+/// Each golden file is `hook_stdout` or `stored` in the folder of an input (no stale golden), and no `hook_stdout`
+/// holds a shaped view (O§9: the `97d8767` baseline has no shaping).
+#[test]
+fn shape_off_goldens_are_unshaped_and_not_stale() {
+    let want = golden_rels();
+    let mut files = vec![];
+    files_under(Path::new(GOLDEN), Path::new(GOLDEN), &mut files);
+    assert!(!files.is_empty());
+    let mut p = vec![];
+    for f in &files {
+        let (dir, name) = f.rsplit_once('/').unwrap_or(("", f));
+        if !want.contains(dir) || !matches!(name, "hook_stdout" | "stored") {
+            p.push(format!("{GOLDEN}/{f}: no input maps to it (stale golden)"));
+        }
+        if name == "hook_stdout"
+            && String::from_utf8_lossy(&std::fs::read(Path::new(GOLDEN).join(f)).unwrap())
+                .contains(SHAPED)
+        {
+            p.push(format!("{GOLDEN}/{f}: holds `{SHAPED}`"));
+        }
+    }
     assert!(p.is_empty(), "{}", p.join("\n"));
 }
