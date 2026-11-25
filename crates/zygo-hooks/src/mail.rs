@@ -1,4 +1,6 @@
-//! Workspace mail in the session text (M§8a). Owner: node ML-9.
+//! Workspace mail in the session text (M§8a; owner: node ML-9) and the hook delivery texts (M§7.1, M§7.2; owner:
+//! node ML-10).
+use serde_json::json;
 use zygo_core::esc;
 use zygo_workspace::mail::names;
 use zygo_workspace::state::Workspace;
@@ -22,4 +24,14 @@ pub fn session_item(ws: &Workspace, own_key: &str) -> Option<String> {
     }
     let names: Vec<String> = names.iter().map(|n| esc(n)).collect();
     Some(format!("Workspace mail: {first}. Members: `{}`. {MAIL_TAIL}", names.join(", ")))
+}
+
+/// The delivery line of `n` unread messages (M§7.2): the prompt line, the SessionStart line and the Stop reason.
+pub fn delivery_line(n: usize) -> String {
+    format!("zygo: {n} new messages; read them with mail_read")
+}
+
+/// The Stop hook output that blocks the end of a turn once for `n` unread messages (M§7.1).
+pub fn stop_block(n: usize) -> String {
+    json!({"decision": "block", "reason": delivery_line(n)}).to_string()
 }
