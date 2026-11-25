@@ -195,27 +195,21 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
-| ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | DONE | implementation | 863b6b05 · loadout 10/state 41/snapshot 30 passed · PR #62 |
-| MS-7 | Secret pass on one message | MS-2 | DONE | implementation | abe0ce4b · secret 21 passed · PR #61 |
-| OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | DONE | judgment | c403338f · store 50 passed (7 open_bounded) · PR #64 |
-| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | DONE | judgment | 6bb2ad8b · savings 17/17; floor green · PR #71 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
-| OS-40 | Command parse: more wrappers and file printers, eval, `$(<f)`, bare shell stage | OS-11 | DONE | implementation | 5ba7eb02 · shape_command 43 passed · PR #59 |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | WD-3 | Workspace approvals in `approvals.toml` | WD-2 | DONE | judgment | aad86d39 · acc 9+2/0; floor green · PR #88 |
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | DONE | implementation | 0f925e1c · acc 18/0; floor green ws 2967/0 · PR #89 |
-| ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
-| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6 | TODO | implementation | — |
+| ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | DONE | implementation | 867df914 · acc admin 34/mux 58/snapshot 41 · PR #94 |
+| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6, FX-7 | TODO | implementation | — |
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
-| OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
-| OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
+| OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | DONE | implementation | 6c8e57d1 · acc hooks_basic 60 (5 trim_row)/hook_trim 6 · PR #95 |
+| OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | DONE | implementation | aa64beea · acc readbacks 8/zygo-mcp 72/mcp_stdio 4 · PR #96 |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | DONE | implementation | a7e1fa29 1773594e e906160f · usage_doctor 45/0, savings 8; floor green · PR #101 |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
-| WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | TODO | judgment | — |
+| WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | DONE | judgment | af19550d e91ef159 6971ba06 · repo_def_check 9/0; floor green · PR #98 |
 | WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | DONE | judgment | 0d97709b · pool 16/16; floor green · PR #70 |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | judgment | — |
@@ -232,7 +226,7 @@ Session text (T, SX nodes):
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
 | ML-14 | Unread counts in `zygo workspace`, `zygo ls` and `up`; `forget-pane` removes the maildir | ML-2, ML-8 | TODO | judgment | — |
-| MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | TODO | judgment | — |
+| MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | DONE | judgment | 39e9eb0e 64419fc6 bad0bc1c · registry 27/0; floor green · PR #99 |
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | TODO | lookup | — |
 | OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | TODO | mechanical | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
@@ -244,7 +238,7 @@ Session text (T, SX nodes):
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | TODO | judgment | — |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | TODO | judgment | — |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | TODO | judgment | — |
-| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5 | TODO | implementation | — |
+| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | TODO | implementation | — |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
 | WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | TODO | judgment | — |
@@ -270,7 +264,7 @@ Session text (T, SX nodes):
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | TODO | implementation | — |
-| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17 | TODO | judgment | — |
+| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26 | TODO | mechanical | — |
@@ -291,6 +285,7 @@ Session text (T, SX nodes):
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
+| FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
 | FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
@@ -392,4 +387,11 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-3 DONE: workspace approvals in approvals.toml (repo_def::store; [[workspace]] id+digest; plugin approvals still parse); review: F2 fixed (failed rename drops temp file), F1 refuted (per-section read by design), F3-F5 to operator (approve.rs protocol); floor ws 2961/0 · PR #88 |
 | 2026-11-25 | DR-14 DONE: end-to-end decision gate (in-process stop path + merged-node keep; binary flow over zygo mcp stdio; no stored text). Review: R1/R3/R4 fixed (no mcp stderr marker; Win \\?\ canon; one env strip list), R2/R6 accepted, R5 refuted; floor ws 2977/1 pre-existing flake · PR #90 |
 | 2026-11-25 | ML-4 DONE: member names + mail::send by name/key/all (names::resolve; reserved cli/zygo). Review: F1 fixed (SendReport; delivers past a refused target), F3 fixed (limits once, before resolve), F5 fixed (reserved name test), F4 refuted, F2 consumers fixed; floor ws 2967/0 · PR #89 |
+| 2026-11-25 | ML-5 DONE: wake sends literal keys then Enter. Review: 3 of 6 findings confirmed and fixed (F1, F4, F5: a final ";" sent as "\;", docs for the two-call leftover state, sentinel-ordered wake test); F2, F3, F6 refuted. Floor ws 2976 passed, 0 failed. |
+| 2026-11-25 | OS-4 DONE: trim rows carry result_id and shaper; hook opens usage.db bounded. Review: F2 (Read row test), F3 (Store::open doc) fixed; F1 dropped (needs a timing test), F4 dropped (node file in scope). MS-16 now depends on OS-4 (Cargo.lock, zygo-hooks Cargo.toml). |
+| 2026-11-25 | OS-5 DONE: result_view/search/tree write one read-back row per successful reply; store opened bounded, kept, reopened after a failure. Review: F2 (stderr line test), F3 (positive control), F4 (Store::open doc) fixed; F1 dropped (O§6.4 keeps the store). |
+| 2026-11-25 | FX-7 added from the zygo lib flake triage (`ws p=2977 f=1`): a failed exec in the test process frees the swapped environ, so parallel git spawns lose PATH; fix runs it in a child process. Files-overlap edges: ML-7 and WD-14 on FX-7. |
+| 2026-11-25 | FX-7 DONE: exec-failure relaunch test runs in a child process; flake 7/20 before, 0/20 after. Review F1 fixed: child tests in ws.rs and down.rs do nothing unless their parent ran them (--include-ignored 2/20 to 0/20); down.rs added to Files. |
+| 2026-11-25 | WD-4 DONE: checked use of the workspace definition (repo_def::check; one read, digest, store lookup per use; Pin). Review: F1, F3 fixed with tests; F2 refuted (contract: NotApproved has no why); floor ws 3017/0 · PR #98 |
+| 2026-11-25 | MS-6 DONE: registry and ack files, validation, member cache; review 5 minor: F1 fixed (typed parse, no Value tree), F3 part (limits pub), F5 tests; F4 refuted; F2 (members.json read uncapped) to operator; MS-13/MS-14 notes carried; floor ws 3035/0 · PR #99 |
 | 2026-11-25 | OS-8 DONE: zygo usage prints savings lines (net figures, breakdown, ratio). Review: F1 fixed (amounts unknown when config does not load), F2 fixed (no sign on zero), F4 tests added, F3 to FX-8 (added: one read snapshot); floor ws 3016/0 · PR #101 |
