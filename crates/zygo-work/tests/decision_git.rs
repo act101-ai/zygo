@@ -456,7 +456,19 @@ fn piped_send_after_the_child_closed_stdin_fails() {
     // The child closes its stdin, then says so; it exits at once.
     let mut p = sh("exec 0<&-; printf 'closed\\n'");
     assert_eq!(p.read_line(16).unwrap(), b"closed");
-    assert!(matches!(p.send(b"x\n"), Err(RunError::Failed)));
+    let r = p.send(b"x\n").and_then(|()| p.read_line(16).map(drop));
+    assert!(matches!(r, Err(RunError::Failed)));
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_send_then_read_fails_with_a_foreign_reader() {
+    // A background `cat` holds the stdin read end (copied through fd 3, because dash points a background
+    // job's fd 0 at /dev/null), so the write succeeds; the read then sees the exit. The group kill ends `cat`.
+    let mut p = sh("exec 3<&0; cat <&3 >/dev/null 2>&1 3<&- & exec 0<&- 3<&-; printf 'closed\\n'");
+    assert_eq!(p.read_line(16).unwrap(), b"closed");
+    let r = p.send(b"x\n").and_then(|()| p.read_line(16).map(drop));
+    assert!(matches!(r, Err(RunError::Failed)));
 }
 
 // ---- real git: PD1 and the tree entry modes (D§6.8) ----
