@@ -252,10 +252,11 @@ fn check_cfg_predicates_evaluated_for_the_ci_targets() {
     }
 }
 
-/// Write `src` as the test target `crates/x/tests/t.rs` of a new temporary repository.
+/// Write `src` as the test target `crates/x/tests/t.rs` of a new temporary repository, with a minimal `crates/x/Cargo.toml`.
 fn test_target(src: &[&str]) -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(d.path().join("crates/x/tests")).unwrap();
+    std::fs::write(d.path().join("crates/x/Cargo.toml"), "[package]\nname = \"x\"\nversion = \"0.1.0\"\n").unwrap();
     std::fs::write(d.path().join("crates/x/tests/t.rs"), src.join("\n")).unwrap();
     d
 }
@@ -850,4 +851,13 @@ fn check_3_cfg_attr_path_resolved_per_platform() {
     let ev = |e: &str| evidence(d.path(), e, "Alpha").map(|e| e.platforms);
     assert_eq!(ev("test:crates/demo/tests/p5/plat.rs::t").unwrap(), ["linux", "macos"]);
     assert_eq!(ev("test:crates/demo/tests/p5/win2.rs::w").unwrap(), ["windows"]);
+}
+
+#[test]
+fn check_3_test_file_without_crate_manifest_not_evidence() {
+    let d = repo_with(&[]);
+    assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").is_ok());
+    std::fs::remove_file(d.path().join("crates/demo/Cargo.toml")).unwrap();
+    let e = evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err();
+    assert!(e.contains("crates/demo/Cargo.toml") && e.contains("no test target compiles"), "{e}");
 }

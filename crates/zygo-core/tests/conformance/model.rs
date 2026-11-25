@@ -448,6 +448,7 @@ fn evidence_in(root: &Path, e: &str, client_name: &str, cache: &mut ReachCache) 
     match ev {
         Ev::Test { func, .. } => {
             let crate_dir = test_crate_dir(rel).map_err(fail)?;
+            crate_manifest(&canon_root, crate_dir, rel).map_err(fail)?;
             let text = read_capped(&canon).map_err(fail)?;
             let mut found = with_parsed(rel, &text, |file| {
                 let mut found = Vec::new();
@@ -539,6 +540,15 @@ fn test_crate_dir(rel: &str) -> Result<&str, String> {
         return Err(format!("{rel} is under a tests fixtures folder, which holds test data"));
     }
     Ok(&rel[..parts[..i].join("/").len()])
+}
+
+/// The crate folder of a `test:` file must hold a `Cargo.toml`, else no test target compiles the file.
+fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String> {
+    let manifest = format!("{crate_dir}/Cargo.toml");
+    if !root.join(&manifest).is_file() {
+        return Err(format!("no test target compiles {rel}: {manifest} is missing, so {crate_dir} is not a crate"));
+    }
+    Ok(())
 }
 
 /// The CI targets where each `.rs` file of a crate is compiled into a test target, by canonical path; an
