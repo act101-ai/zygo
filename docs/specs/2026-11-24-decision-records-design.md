@@ -209,7 +209,10 @@ No guard checks the trailer (D§9.6).
 
 ### 6.8 Limits
 
-**(author)** The directory: a reader `lstat`s `docs/decisions`. A link or a file that is not a directory is refused: the listing verbs exit 1 with `zygo decision: docs/decisions is not a directory`, `new` exits 1 with the same text, and the report prints `decision records: docs/decisions is not a directory`. Absent is not an error (D§14). A reader does not enter subdirectories.
+**(author)** The directory: a reader `lstat`s `docs` and `docs/decisions`. Absent is not an error (D§14). A reader does not enter subdirectories. Two cases refuse the directory, each with its own line:
+
+- A link or a file that is not a directory: the listing verbs (`ls`, `show`, `deps`, `check`), `new` and the operator verbs (`review`, `ratify`, `overturn`) exit 1 with `zygo decision: docs/decisions is not a directory`, and the report prints `decision records: docs/decisions is not a directory`.
+- A directory that cannot be read: an `lstat` that fails for a reason other than absent, a listing that cannot be opened (for example, no read permission), or an entry that gives an error while the listing is read. The same verbs exit 1 with `zygo decision: cannot read docs/decisions`, and the report prints `decision records: cannot read docs/decisions`. This case is never reported as not a directory, and no part of the listing is used.
 
 The names: a file is a record when its name matches `^DDR-[0-9A-HJKMNP-TV-Z]{26}\.md$`. A name that starts with `DDR-` and ends in `.md` but does not match is malformed. Every other name (`README.md`, `*.tmp`, other files) is not a record and is ignored. A reader considers at most 10,000 entries of the directory. Above that, a listing verb exits 1 with `zygo decision: more than 10,000 files in docs/decisions/`, and the report prints `decision records: over 10,000 files`.
 
@@ -378,7 +381,7 @@ A git process that fails or passes its bound gives the problem `cannot check: <g
 **(operator)** `zygo work report` counts open records. **(author)** The output of `crates/zygo-work/src/report.rs` gains two lines. Records are read from the working tree of the repository at the current directory (`git rev-parse --show-toplevel`, 2 s bound).
 
 - In each unit block, after the `guard events:` line (`report.rs:82`), when at least one valid record has this `unit`, or this unit with a `:<part>`: `  decisions: <open> open, <total> total`.
-- After the last block, after one empty line, when `docs/decisions/` holds at least one record name: `decision records: <open> open, <total> total, deepest chain <d>`, then `, <m> malformed` when `m > 0`. `<d>` is the number of records on the longest `depends_on` path among valid records (a record with no `depends_on` counts 1; a cycle is cut at the first repeat). The two D§6.8 directory cases print their own line in place of this one.
+- After the last block, after one empty line, when `docs/decisions/` holds at least one record name: `decision records: <open> open, <total> total, deepest chain <d>`, then `, <m> malformed` when `m > 0`. `<d>` is the number of records on the longest `depends_on` path among valid records (a record with no `depends_on` counts 1; a cycle is cut at the first repeat). The three D§6.8 directory cases (not a directory, cannot be read, over 10,000 files) print their own line in place of this one.
 - With no units and at least one record, the report prints `no work units` and then the records line.
 - Outside a repository, or when the git call fails: no records lines. The report never fails because of a record.
 
@@ -509,6 +512,7 @@ A crash or `q` loses nothing: each outcome is in its file, and the next `review`
 |---|---|---|---|---|---|
 | `docs/decisions/` absent | a named `record` is missing: a problem; nothing else | no records lines | empty list, exit 0 | exit 0 | `no open records`, exit 0 |
 | `docs/decisions` a link or not a directory | in git: its paths are not record blobs, so a named record is missing | its D§6.8 line | exit 1 | exit 1 | exit 1 |
+| `docs/decisions` cannot be read (`lstat` error other than absent, listing or entry error) | not affected: it reads records from git (D§9.1) | its D§6.8 line | exit 1 | exit 1 | exit 1 |
 | A malformed file | a problem only when the node names it or changes it | counted in `malformed` | one stderr line per file, skipped | one line per fault, exit 1 | one stderr line; it cannot be reviewed or changed |
 | A file over 64 KiB, a link, a FIFO | as malformed, never opened | as malformed | as malformed | as malformed | as malformed |
 | A git process fails or passes its bound | `cannot check: …` (refused at `enforce`) | no records lines | the git-backed part (commits in `show`) is left out with one stderr line | as for `ls` | as for `show` |
@@ -583,3 +587,4 @@ The verdict tests use a git fixture repository with linked checkouts. The git-fa
 - 2026-11-24 — D§17 #4 — author's call — with each record printed once at its smallest depth (D§11.2), 3 dependents at depths 1, 2, 3 cannot include one reached on two paths; the case now has a fourth record at depth 3 (found while planning phase3 DR-2).
 - 2026-11-24 — D§11.3 — author's call — name the writer lock and its location (Windows mandatory locks, DR-5 review round 2).
 - 2026-11-24 — D§9.4 step 8 — author's call — git log lists no paths for a merge commit, so a record added in a merge passed step 8; --diff-merges=first-parent lists them.
+- 2026-11-25 — D§6.8 (with D§9.5 and D§14) — author's call (the lead) — an unreadable directory was reported as not a directory; it now has its own case and line, `cannot read docs/decisions` (DR-7 review).
