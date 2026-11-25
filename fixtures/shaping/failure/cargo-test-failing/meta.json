@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "cd scratch && cargo test",
+   "event" : "PostToolUseFailure",
+   "exit" : 101,
+   "source" : "the error field of the fourth Bash call of scripts/premises/live-shaping.sh po1 (cargo test in the scratch crate of fixtures/shaping/libtest/failing-nocapture, without --nocapture), Claude Code 2.1.332, cargo 1.98.1, mock upstream; the hook input is not committed",
+   "tool" : "claude 2.1.332"
+}
