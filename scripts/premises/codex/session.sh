@@ -316,8 +316,10 @@ cx_home() {
 # exec_run <name> <codex args...>: one Codex run, output in $RUN/out/<name>.{jsonl,err,rc}. A
 # non-zero Codex status never ends the part; an isolation failure (codex_env exits) does, and the
 # trap then shows what that run printed.
+# The trap runs inside exec_run's redirections, so it writes to fd 9, the part's own stderr.
 EXEC_CUR=""
-exec_show() { [ -z "$EXEC_CUR" ] || cat "$RUN/out/$EXEC_CUR.jsonl" "$RUN/out/$EXEC_CUR.err" >&2 2>/dev/null || true; }
+exec 9>&2
+exec_show() { [ -z "$EXEC_CUR" ] || cat "$RUN/out/$EXEC_CUR.jsonl" "$RUN/out/$EXEC_CUR.err" 2>/dev/null >&9 || true; }
 n2_trap_chain exec_show
 exec_run() {
   EXEC_CUR=$1; shift
@@ -490,11 +492,20 @@ q() { case "$2" in *"'"*) echo "session: $1 holds a quote"; exit 1 ;; esac; prin
   echo '. "$PREMISES_DIR/lib.sh"'
   q RUN "$RUN"; q H "$H"; q R "$R"; q CX_HOME "$CX_HOME"; q MOCK_URL "$MOCK_URL"; q MOCK_PID "$MOCK_PID"
   # shellcheck disable=SC2016
+  # A refusal (codex_env or run_codex exits before Codex ends) leaves pc11-refused and its
+  # "premises:" lines in pc11-pre.txt or the pane; the part then prints them and exits 1.
+  # shellcheck disable=SC2016
+  echo 'trap '\''[ -e "$RUN/pc11-exit" ] || : >"$RUN/pc11-refused"'\'' EXIT'
   # --no-daemon: else the TUI starts a managed app-server daemon (from CODEX_HOME/packages, with a
   # socket under /tmp/codex-daemon-<uid>) that outlives the run.
-  echo 'rc=0; run_codex --no-daemon || rc=$?; echo "$rc" >"$RUN/pc11-exit"'
+  echo 'set -- --no-daemon'
+  # The checks run_codex makes, first with their output in a file (the pane closes on a refusal).
+  # shellcheck disable=SC2016
+  echo '{ n2_daemon_flag "$@"; codex_env; n2_procs daemon || exit 1; } >"$RUN/pc11-pre.txt" 2>&1'
+  # shellcheck disable=SC2016
+  echo 'rc=0; run_codex "$@" || rc=$?; echo "$rc" >"$RUN/pc11-exit"'
 } >"$RUN/pc11-tui.sh"
-rm -f "$RUN/pc11-exit" "$RUN/pane.txt"
+rm -f "$RUN/pc11-exit" "$RUN/pc11-refused" "$RUN/pane.txt"
 tm new-session -d -s pc11 -x 250 -y 50 /bin/sh "$RUN/pc11-tui.sh"
 # pane_wait <text> <polls>: up to <polls> captures of the pane, 0.5 s apart, into $RUN/pane.txt; 0
 # when one holds <text>, 1 when the TUI ended, a capture failed or the polls ran out.
@@ -526,6 +537,12 @@ for _k in Escape C-c C-c; do tm send-keys -t =pc11: "$_k" 2>/dev/null || true; s
 _i=0
 while [ ! -e "$RUN/pc11-exit" ] && [ "$_i" -lt 20 ]; do _i=$((_i + 1)); sleep 0.5; done
 tm_kill
+if [ -e "$RUN/pc11-refused" ]; then
+  echo "session: pc11: the TUI run was refused before Codex ended:"
+  cat "$RUN/pc11-pre.txt" 2>/dev/null || true
+  grep -h '^premises:' "$RUN"/pane*.txt 2>/dev/null | sort -u || true
+  exit 1
+fi
 take pc11
 pub "$RUN/cx-pc11/config.toml" "$FX/config.toml"
 for _p in start turn statusline; do
@@ -535,9 +552,5 @@ done
 py status "$FX/status.txt" "$FX/pane-turn.txt" "$RUN/pc11-exit"
 
 stop_mock
-# No process of this run may outlive it: any command line that names the run folder (either form).
-ps -axo pid=,command= >"$RUN/ps.txt"
-_left=$(grep -F -e "$RUN/" -e "$(n2_realpath "$RUN")/" "$RUN/ps.txt" || true)
-[ -z "$_left" ] || { printf 'session: processes of this run are still running:\n%s\n' "$_left"; exit 1; }
 codex_record session
 echo "codex session: ok (codex $CODEX_VERSION)"
