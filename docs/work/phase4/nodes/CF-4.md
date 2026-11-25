@@ -367,7 +367,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   - `cargo test -p zygo-core --test conformance --locked -- --skip conformance_tree` gives 110 passed, 0 failed.
 
   Commit: `fix(conformance): accept Cargo targets that change no walked test target`.
-- [ ] 5. **Registry and grade files.** Write `docs/conformance/capabilities.toml` by "Registry" (with only the A-1.4 bar exception). Write `docs/conformance/claude-code.toml` and `docs/conformance/opencode.toml` by "Grade files" and the "Grading table". Check: `cargo test -p zygo-core --test conformance --locked -- --exact conformance_tree` fails, and its message is exactly these two lines:
+- [x] 5. **Registry and grade files.** Write `docs/conformance/capabilities.toml` by "Registry" (with only the A-1.4 bar exception). Write `docs/conformance/claude-code.toml` and `docs/conformance/opencode.toml` by "Grade files" and the "Grading table". Check: `cargo test -p zygo-core --test conformance --locked -- --exact conformance_tree` fails, and its message is exactly these two lines:
 
   ```
   item 8: client `claude-code` is supported and below the bar: A-1, A-10

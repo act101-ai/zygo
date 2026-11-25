@@ -1,0 +1,410 @@
+client = "claude-code"
+name = "Claude Code"
+version = "2.1.328"
+
+[[cell]]
+capability = "A-1"
+url = "https://code.claude.com/docs/en/llm-gateway"
+
+[[cell]]
+capability = "A-2"
+url = "https://code.claude.com/docs/en/env-vars"
+
+[[cell]]
+capability = "A-3"
+url = "https://code.claude.com/docs/en/model-config"
+
+[[cell]]
+capability = "A-4"
+url = "https://code.claude.com/docs/en/sub-agents"
+
+[[cell]]
+capability = "A-5"
+url = "https://code.claude.com/docs/en/cli-reference"
+
+[[cell]]
+capability = "A-6"
+url = "https://code.claude.com/docs/en/mcp"
+
+[[cell]]
+capability = "A-7"
+url = "https://code.claude.com/docs/en/hooks"
+
+[[cell]]
+capability = "A-8"
+url = "https://code.claude.com/docs/en/hooks"
+
+[[cell]]
+capability = "A-9"
+url = "https://code.claude.com/docs/en/statusline"
+
+[[cell]]
+capability = "A-10"
+url = "https://code.claude.com/docs/en/env-vars"
+
+[[cell]]
+capability = "A-11"
+url = "https://code.claude.com/docs/en/plugins"
+
+[[cell]]
+capability = "A-12"
+url = "https://code.claude.com/docs/en/settings"
+
+[[cell]]
+capability = "A-13"
+url = "https://code.claude.com/docs/en/cli-reference"
+
+[[cell]]
+capability = "A-14"
+url = "https://code.claude.com/docs/en/sub-agents"
+
+[[cell]]
+capability = "A-15"
+url = "https://code.claude.com/docs/en/hooks"
+
+[[cell]]
+capability = "A-16"
+url = "https://code.claude.com/docs/en/context-window"
+
+[[cell]]
+capability = "A-17"
+url = "https://code.claude.com/docs/en/mcp"
+
+[[cell]]
+capability = "A-18"
+url = "https://code.claude.com/docs/en/hooks"
+
+[[cell]]
+capability = "A-19"
+url = "https://code.claude.com/docs/en/hooks"
+
+[[cell]]
+capability = "A-20"
+url = "https://code.claude.com/docs/en/sub-agents"
+
+[[cell]]
+capability = "A-21"
+url = "https://code.claude.com/docs/en/cli-reference"
+
+[[cell]]
+capability = "WA-1"
+url = "https://code.claude.com/docs/en/cli-reference"
+
+[[cell]]
+capability = "WA-2"
+url = "https://code.claude.com/docs/en/hooks"
+
+[[grade]]
+criterion = "A-1.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-1.2"
+status = "not-met"
+reason = "In passthrough (base spec 12.3) the session token is also in the ANTHROPIC_CUSTOM_HEADERS environment row as X-Zygo-Token (stub_launch.rs claude_code_session_token_stays_in_the_token_file...); the criterion allows only the token file and the 0600 passthrough files"
+
+[[grade]]
+criterion = "A-1.3"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures", "test:crates/zygo-launch/tests/claude_code.rs::preflight_names_the_file_and_key", "test:crates/zygo-launch/tests/launcher.rs::denylist_removes_provider_and_routing_names"]
+
+[[grade]]
+criterion = "A-1.4"
+status = "not-met"
+reason = "Windows without Git Bash runs the apiKeyHelper command in PowerShell, which needs & before a quoted path; zygo writes the double-quoted path, and CI runs the command only in Git Bash (stub_launch.rs every_command_zygo_writes_for_claude_code_runs_in_the_agents_shell)"
+
+[[grade]]
+criterion = "A-2.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-2.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures", "test:crates/zygo-launch/tests/claude_code.rs::agent_version_line_is_left_out_when_empty"]
+
+[[grade]]
+criterion = "A-2.3"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-2.4"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-3.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures", "premise:docs/premises.md#Q3", "premise:docs/premises.md#P2"]
+
+[[grade]]
+criterion = "A-3.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures", "test:crates/zygo-launch/tests/claude_code.rs::disabled_alias_targets_are_redirected"]
+
+[[grade]]
+criterion = "A-3.3"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::disabled_alias_targets_are_redirected", "test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-4.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::disabled_alias_targets_are_redirected", "test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-4.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-5.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-5.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::launch_leaves_the_users_own_files_untouched"]
+
+[[grade]]
+criterion = "A-5.3"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::preflight_names_the_file_and_key", "test:crates/zygo-launch/tests/claude_code.rs::unreadable_user_settings_keep_only_zygos_file", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-6.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "test:crates/zygo-launch/tests/stub_launch.rs::every_command_zygo_writes_for_claude_code_runs_in_the_agents_shell", "test:crates/zygo/tests/mcp_stdio.rs::claude_code_binary_serves_compact_and_exits_zero_on_eof"]
+
+[[grade]]
+criterion = "A-7.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::trim_bash_100kib_returns_view_and_stores_bytes", "premise:docs/premises.md#Q4"]
+
+[[grade]]
+criterion = "A-7.2"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::trim_read_text_view_has_no_tail", "premise:docs/premises.md#Q4"]
+
+[[grade]]
+criterion = "A-7.3"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::trim_grep_content_mode", "test:crates/zygo-hooks/tests/hooks_basic.rs::trim_glob_filenames", "premise:docs/premises.md#Q4"]
+
+[[grade]]
+criterion = "A-7.4"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::trim_webfetch_result", "premise:docs/premises.md#Q4"]
+
+[[grade]]
+criterion = "A-7.5"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::trim_other_events_pass", "premise:docs/premises.md#Q4"]
+
+[[grade]]
+criterion = "A-8.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/session_text.rs::session_start_json_envelope_claude_code", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "premise:docs/premises.md#PW10", "premise:docs/premises.md#PW2", "fixture:fixtures/claude-code/hooks/SessionStart-main.json"]
+
+[[grade]]
+criterion = "A-8.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-9.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/statusline_render.rs::worktree_git_marks_model_profile", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-9.2"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/statusline_render.rs::work_item_markers", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-9.3"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/statusline_render.rs::h14_08_ctx_numbers_bar_and_threshold_mark", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-9.4"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/statusline_render.rs::h14_08_ctx_numbers_bar_and_threshold_mark", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-9.5"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/statusline_render.rs::tokens_spend_cache_trimmed", "test:crates/zygo-hooks/tests/statusline_render.rs::h14_18_trimmed_bytes_show_as_estimated_tokens", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-9.6"
+status = "not-met"
+reason = "Windows without Git Bash runs the statusLine command in PowerShell, which needs & before a quoted path; zygo writes the double-quoted path, and CI runs the command only in Git Bash"
+
+[[grade]]
+criterion = "A-10.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/launcher.rs::denylist_removes_provider_and_routing_names", "test:crates/zygo-launch/tests/launcher.rs::denylist_removes_the_claude_code_markers_and_the_member_names", "test:crates/zygo-launch/tests/launcher.rs::denylist_folds_case_with_windows_rules", "test:crates/zygo-launch/tests/stub_launch.rs::non_member_child_has_neither_workspace_name_nor_a_marker"]
+
+[[grade]]
+criterion = "A-10.2"
+status = "not-met"
+reason = "In passthrough (base spec 12.3) the session token is in the client's environment: ANTHROPIC_CUSTOM_HEADERS holds X-Zygo-Token (stub_launch.rs claude_code_session_token_stays_in_the_token_file...); outside passthrough it is not"
+
+[[grade]]
+criterion = "A-11.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/premise.rs::claude_code_plugin_snapshot_loads_plugin_colon_skill", "premise:docs/live-checks.md#40"]
+
+[[grade]]
+criterion = "A-11.2"
+status = "met"
+evidence = ["test:crates/zygo-plugins/tests/snapshot.rs::claude_snapshot_has_plugin_dirs_and_the_embedded_plugin", "test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-12.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::alias_of_a_disabled_role_picks_the_redirect_role", "test:crates/zygo-proxy/tests/request_path.rs::route_profile_override_serves", "test:crates/zygo-proxy/tests/session_api.rs::profile_applied_to_session_config"]
+
+[[grade]]
+criterion = "A-13.1"
+status = "met"
+evidence = ["test:crates/zygo-config/tests/builtin.rs::minimum_agent_versions_match_premises"]
+
+[[grade]]
+criterion = "A-13.2"
+status = "met"
+evidence = ["test:crates/zygo/tests/usage_doctor.rs::doctor_agents_versions", "test:crates/zygo/tests/usage_doctor.rs::doctor_agents_below_minimum_missing_unreadable"]
+
+[[grade]]
+criterion = "A-14.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/session_text.rs::session_text_section_order", "test:crates/zygo-hooks/tests/session_text.rs::session_start_json_envelope_claude_code"]
+
+[[grade]]
+criterion = "A-14.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_and_mcp_match_fixtures"]
+
+[[grade]]
+criterion = "A-15.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::lead_main_edit_write_notebook_denied", "test:crates/zygo-launch/tests/claude_code.rs::role_guard_follows_the_effective_role", "fixture:fixtures/claude-code/hooks/PreToolUse-Edit-main.json"]
+
+[[grade]]
+criterion = "A-15.2"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/hooks_basic.rs::lead_subagent_gets_no_output", "fixture:fixtures/claude-code/hooks/PreToolUse-Edit-sub.json"]
+
+[[grade]]
+criterion = "A-16.1"
+status = "met"
+evidence = ["test:crates/zygo-proxy/tests/window.rs::soft_end_turn_main_rewritten", "premise:docs/premises.md#P1"]
+
+[[grade]]
+criterion = "A-16.2"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/compact.rs::sets_and_clears_on_a_live_session", "test:crates/zygo-proxy/tests/window.rs::soft_override_and_off"]
+
+[[grade]]
+criterion = "A-16.3"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/compact.rs::sets_and_clears_on_a_live_session"]
+
+[[grade]]
+criterion = "A-17.1"
+status = "met"
+evidence = ["test:crates/zygo-mcp/tests/mcp_server.rs::compact_listed_for_claude_code_and_returns_compaction_requested", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec"]
+
+[[grade]]
+criterion = "A-17.2"
+status = "met"
+evidence = ["test:crates/zygo-proxy/tests/window.rs::compact_call_rewritten_any_size", "premise:docs/premises.md#P1"]
+
+[[grade]]
+criterion = "A-18.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "test:crates/zygo-hooks/tests/session_text.rs::pre_compact_without_open_unit", "fixture:fixtures/claude-code/hooks/PreCompact-main.json"]
+
+[[grade]]
+criterion = "A-18.2"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/session_text.rs::pre_compact_one_open_unit", "test:crates/zygo-hooks/tests/session_text.rs::pre_compact_two_units_and_stopped_unit"]
+
+[[grade]]
+criterion = "A-19.1"
+status = "met"
+evidence = ["test:crates/zygo/tests/work_hook.rs::binary_records_begin_call_and_stop", "test:crates/zygo-work/tests/collection.rs::begin_writes_line_and_begin_json", "test:crates/zygo-work/tests/collection.rs::begin_lead_uses_main", "premise:docs/premises.md#P3"]
+
+[[grade]]
+criterion = "A-19.2"
+status = "met"
+evidence = ["test:crates/zygo-work/tests/collection.rs::post_every_call_appends_call_or_failed", "test:crates/zygo/tests/work_hook.rs::binary_records_begin_call_and_stop"]
+
+[[grade]]
+criterion = "A-19.3"
+status = "met"
+evidence = ["test:crates/zygo-work/tests/guards.rs::claims_continues_once", "premise:docs/premises.md#Q1"]
+
+[[grade]]
+criterion = "A-19.4"
+status = "met"
+evidence = ["test:crates/zygo/tests/guard_hook.rs::binary_guard_denies_claude_attribution_in_a_pr_body"]
+
+[[grade]]
+criterion = "A-20.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "premise:docs/live-checks.md#A-20", "fixture:fixtures/claude-code/live/a20-tools.json"]
+
+[[grade]]
+criterion = "A-20.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/claude_code.rs::turn_cap_sets_max_turns"]
+
+[[grade]]
+criterion = "A-21.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_session_token_stays_in_the_token_file_and_in_passthrough_in_settings_and_custom_headers", "test:crates/zygo-launch/tests/stub_launch.rs::non_member_child_has_neither_workspace_name_nor_a_marker", "test:crates/zygo-launch/tests/stub_launch.rs::every_command_zygo_writes_for_claude_code_runs_in_the_agents_shell"]
+
+[[grade]]
+criterion = "A-21.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/premise.rs::claude_code_flags_are_in_the_pinned_help", "test:crates/zygo-launch/tests/premise.rs::claude_code_setting_keys_are_in_the_pinned_schema", "test:crates/zygo-launch/tests/premise.rs::claude_code_env_rows_and_agent_keys_have_evidence"]
+
+[[grade]]
+criterion = "WA-1.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::stub_reads_the_one_token_session_args_of_a_claude_code_launch", "test:crates/zygo-launch/tests/claude_code.rs::session_args_follow_w4_and_the_pinned_help", "premise:docs/premises.md#PW1", "premise:docs/premises.md#PW2"]
+
+[[grade]]
+criterion = "WA-1.2"
+status = "met"
+evidence = ["premise:docs/premises.md#PW1", "premise:docs/premises.md#PW3", "premise:docs/premises.md#PW10", "test:crates/zygo-launch/tests/stub_launch.rs::stub_reads_the_one_token_session_args_of_a_claude_code_launch", "test:crates/zygo/src/cmd/ws.rs::saved_config_dir_replaces_or_removes_the_variable"]
+
+[[grade]]
+criterion = "WA-2.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/workspace.rs::claude_code_prompt_entry_sets_busy_and_blocks_while_stopping", "premise:docs/premises.md#PW5", "fixture:fixtures/claude-code/workspace/UserPromptSubmit-blocked.json"]
+
+[[grade]]
+criterion = "WA-2.2"
+status = "not-met"
+reason = "A turn ended by Esc sends no Stop or StopFailure (PW7 sub-checks 7.2 and 7.3, a failed premise); zygo falls back to the AU26 idle rule"
+
+[[grade]]
+criterion = "WA-2.3"
+status = "not-met"
+reason = "Internal subagents send SubagentStop with no SubagentStart (PW7 sub-check 7.5, a failed premise), so a subagent start is not seen for each subagent"
+
+[[grade]]
+criterion = "WA-2.4"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/workspace.rs::claude_code_events_change_busy_and_the_tool_count", "premise:docs/premises.md#Q1", "fixture:fixtures/claude-code/workspace/SubagentStop-last-dispatched.json"]
+
+[[grade]]
+criterion = "WA-2.5"
+status = "met"
+evidence = ["premise:docs/premises.md#PW5", "fixture:fixtures/claude-code/workspace/PreToolUse-Agent-denied.json"]

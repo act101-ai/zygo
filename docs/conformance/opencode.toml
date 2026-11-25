@@ -1,0 +1,414 @@
+client = "opencode"
+name = "OpenCode"
+version = "1.18.16"
+
+[[cell]]
+capability = "A-1"
+url = "https://opencode.ai/docs/providers/"
+
+[[cell]]
+capability = "A-2"
+url = "https://opencode.ai/docs/config/"
+
+[[cell]]
+capability = "A-3"
+url = "https://opencode.ai/docs/models/"
+
+[[cell]]
+capability = "A-4"
+url = "https://opencode.ai/docs/agents/"
+
+[[cell]]
+capability = "A-5"
+url = "https://opencode.ai/docs/config/"
+
+[[cell]]
+capability = "A-6"
+url = "https://opencode.ai/docs/mcp-servers/"
+
+[[cell]]
+capability = "A-7"
+url = "https://opencode.ai/docs/plugins/"
+
+[[cell]]
+capability = "A-8"
+url = "https://opencode.ai/docs/plugins/"
+
+[[cell]]
+capability = "A-9"
+url = "https://opencode.ai/docs/cli/"
+
+[[cell]]
+capability = "A-10"
+url = "https://opencode.ai/docs/cli/"
+
+[[cell]]
+capability = "A-11"
+url = "https://opencode.ai/docs/skills/"
+
+[[cell]]
+capability = "A-12"
+url = "https://opencode.ai/docs/models/"
+
+[[cell]]
+capability = "A-13"
+url = "https://opencode.ai/docs/cli/"
+
+[[cell]]
+capability = "A-14"
+url = "https://opencode.ai/docs/agents/"
+
+[[cell]]
+capability = "A-15"
+url = "https://opencode.ai/docs/permissions/"
+
+[[cell]]
+capability = "A-16"
+url = "https://opencode.ai/docs/config/"
+
+[[cell]]
+capability = "A-17"
+url = "https://opencode.ai/docs/mcp-servers/"
+
+[[cell]]
+capability = "A-18"
+url = "https://opencode.ai/docs/plugins/"
+
+[[cell]]
+capability = "A-19"
+url = "https://opencode.ai/docs/plugins/"
+
+[[cell]]
+capability = "A-20"
+url = "https://opencode.ai/docs/permissions/"
+
+[[cell]]
+capability = "A-21"
+url = "https://opencode.ai/docs/cli/"
+
+[[cell]]
+capability = "WA-1"
+url = "https://opencode.ai/docs/cli/"
+
+[[cell]]
+capability = "WA-2"
+url = "https://opencode.ai/docs/plugins/"
+
+[[grade]]
+criterion = "A-1.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values", "premise:docs/premises.md#P4"]
+
+[[grade]]
+criterion = "A-1.2"
+status = "not-met"
+reason = "OpenCode has no key helper: zygo writes the session token as provider.zygo.options.apiKey in the OPENCODE_CONFIG_CONTENT environment row (base spec 8.7; opencode.rs launch_sets_the_opencode_environment), so the token is in an environment row"
+
+[[grade]]
+criterion = "A-1.3"
+status = "not-met"
+reason = "zygo sets model and small_model to zygo roles and stops on conflicting user keys, but writes no enabled_providers: OpenCode's own provider logins (opencode providers) and other providers stay selectable, so a model request can go to a vendor host"
+
+[[grade]]
+criterion = "A-1.4"
+status = "not-met"
+reason = "OpenCode has no key-helper command: zygo writes the token inline as provider.zygo.options.apiKey, so no key-helper command runs in any shell; a core criterion cannot be n/a"
+
+[[grade]]
+criterion = "A-2.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values", "premise:docs/premises.md#P4"]
+
+[[grade]]
+criterion = "A-2.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values", "premise:docs/premises.md#P4"]
+
+[[grade]]
+criterion = "A-2.3"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values"]
+
+[[grade]]
+criterion = "A-2.4"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values"]
+
+[[grade]]
+criterion = "A-3.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values", "premise:docs/premises.md#P4"]
+
+[[grade]]
+criterion = "A-3.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values"]
+
+[[grade]]
+criterion = "A-3.3"
+status = "n/a"
+reason = "OpenCode has no model aliases: its built-in agents are the map (base spec 8.7, no alias sentence); small_model is set to a role"
+
+[[grade]]
+criterion = "A-4.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::agents_map_to_roles", "test:crates/zygo-launch/tests/opencode.rs::small_model_follows_read", "premise:docs/premises.md#P5"]
+
+[[grade]]
+criterion = "A-4.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::agents_map_to_roles", "premise:docs/premises.md#P5"]
+
+[[grade]]
+criterion = "A-5.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::env_rows_and_args", "test:crates/zygo-launch/tests/opencode.rs::launch_sets_the_opencode_environment", "premise:docs/premises.md#P5", "premise:docs/premises.md#Q2"]
+reason = "The live OpenCode docs describe a newer plugin API than 1.18.16 and do not name OPENCODE_CONFIG_CONTENT or OPENCODE_CONFIG_DIR; the grade rests on the cited premise, the fixtures and fixtures/opencode/binary-names.txt"
+
+[[grade]]
+criterion = "A-5.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::launch_leaves_the_users_own_files_untouched"]
+
+[[grade]]
+criterion = "A-5.3"
+status = "met"
+evidence = ["premise:docs/premises.md#P4", "test:crates/zygo-launch/tests/opencode.rs::preflight_names_the_file_and_key", "test:crates/zygo-launch/tests/opencode.rs::a_project_config_that_defines_provider_zygo_stops_the_launch"]
+
+[[grade]]
+criterion = "A-6.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::inline_config_values", "premise:docs/premises.md#P5"]
+
+[[grade]]
+criterion = "A-7.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::hooks_on_fixtures_give_the_specified_output", "test:crates/zygo-launch/tests/opencode.rs::normalize_after_bash_fixture", "premise:docs/premises.md#Q2"]
+reason = "The live OpenCode docs describe a newer plugin API than 1.18.16 and do not name the tool.execute.after output assignment; the grade rests on the cited premise, the fixtures and fixtures/opencode/binary-names.txt"
+
+[[grade]]
+criterion = "A-7.2"
+status = "not-met"
+reason = "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so read output reaches the model whole"
+
+[[grade]]
+criterion = "A-7.3"
+status = "not-met"
+reason = "The plugin trims bash output only: hook_opencode::normalize gives a tool_response only for bash, so grep, glob and list output reaches the model whole"
+
+[[grade]]
+criterion = "A-7.4"
+status = "not-met"
+reason = "OpenCode has a webfetch tool (live check OC-SHAPES), but hook_opencode::normalize gives a tool_response only for bash, so webfetch output is never trimmed"
+
+[[grade]]
+criterion = "A-7.5"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_fixtures", "fixture:fixtures/opencode/plugin-hooks/tool.execute.after-bash.json", "premise:docs/premises.md#Q2"]
+
+[[grade]]
+criterion = "A-8.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/session_text.rs::session_start_text_for_opencode", "test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_fixtures", "premise:docs/premises.md#Q2"]
+reason = "The live OpenCode docs describe a newer plugin API than 1.18.16 and do not name experimental.chat.system.transform; the grade rests on the cited premise, the fixtures and fixtures/opencode/binary-names.txt"
+
+[[grade]]
+criterion = "A-8.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::agents_map_to_roles", "premise:docs/premises.md#P5"]
+
+[[grade]]
+criterion = "A-9.1"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/status.rs::inside_a_session", "test:crates/zygo/tests/serve_cli.rs::status_and_help_escape_the_profile_name"]
+
+[[grade]]
+criterion = "A-9.2"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/status.rs::inside_a_session"]
+
+[[grade]]
+criterion = "A-9.3"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/status.rs::inside_a_session"]
+
+[[grade]]
+criterion = "A-9.4"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/status.rs::inside_a_session"]
+
+[[grade]]
+criterion = "A-9.5"
+status = "met"
+evidence = ["test:crates/zygo/src/cmd/status.rs::inside_a_session", "test:crates/zygo/src/cmd/status.rs::h14_18_trimmed_in_tokens_and_the_spend_line"]
+
+[[grade]]
+criterion = "A-9.6"
+status = "n/a"
+reason = "zygo writes no status command for OpenCode: the OpenCode launch has no status-line setting, and the A-9 values show in zygo status"
+
+[[grade]]
+criterion = "A-10.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/launcher.rs::denylist_removes_provider_and_routing_names", "test:crates/zygo-launch/tests/launcher.rs::denylist_folds_case_with_windows_rules", "test:crates/zygo-launch/tests/opencode.rs::launch_sets_the_opencode_environment"]
+
+[[grade]]
+criterion = "A-10.2"
+status = "not-met"
+reason = "The session token is in the client's environment: OPENCODE_CONFIG_CONTENT holds it as provider.zygo.options.apiKey (base spec 8.4 accepted limit, 8.7; opencode.rs launch_sets_the_opencode_environment)"
+
+[[grade]]
+criterion = "A-11.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::delivery_writes_the_opencode_forms", "test:crates/zygo-launch/tests/opencode.rs::embedded_skill_is_delivered_always", "premise:docs/premises.md#P5"]
+
+[[grade]]
+criterion = "A-11.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::delivery_writes_the_opencode_forms", "premise:docs/premises.md#P5"]
+
+[[grade]]
+criterion = "A-12.1"
+status = "met"
+evidence = ["test:crates/zygo-proxy/tests/session_api.rs::profile_applied_to_session_config", "test:crates/zygo-launch/tests/opencode.rs::agents_map_to_roles", "premise:docs/premises.md#P4"]
+
+[[grade]]
+criterion = "A-13.1"
+status = "met"
+evidence = ["test:crates/zygo-config/tests/builtin.rs::minimum_agent_versions_match_premises"]
+
+[[grade]]
+criterion = "A-13.2"
+status = "met"
+evidence = ["test:crates/zygo/tests/usage_doctor.rs::doctor_agents_versions", "test:crates/zygo/tests/usage_doctor.rs::doctor_agents_below_minimum_missing_unreadable"]
+
+[[grade]]
+criterion = "A-14.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/session_text.rs::session_start_text_for_opencode", "test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_fixtures", "premise:docs/premises.md#Q2"]
+
+[[grade]]
+criterion = "A-14.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::agents_map_to_roles", "premise:docs/premises.md#P5"]
+
+[[grade]]
+criterion = "A-15.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::lead_guard_and_default_agent_follow_main_role", "premise:docs/premises.md#Q2"]
+
+[[grade]]
+criterion = "A-15.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::agents_map_to_roles", "test:crates/zygo-launch/tests/opencode.rs::lead_guard_and_default_agent_follow_main_role"]
+
+[[grade]]
+criterion = "A-16.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::model_limits", "test:crates/zygo-launch/tests/opencode.rs::compact_flag_sets_the_window", "premise:docs/premises.md#Q2"]
+
+[[grade]]
+criterion = "A-16.2"
+status = "not-met"
+reason = "OpenCode reads limit.context once at start and gets no proxy compaction signal, so a window change needs a relaunch with zygo opencode --compact <n>"
+
+[[grade]]
+criterion = "A-16.3"
+status = "not-met"
+reason = "zygo compact refuses in an OpenCode session (exit 2): OpenCode reads its window at start; relaunch with zygo opencode --compact <n>"
+
+[[grade]]
+criterion = "A-17.1"
+status = "not-met"
+reason = "zygo mcp lists the compact tool for Claude Code only (base spec 10.3); the OpenCode tool list has no compact tool"
+
+[[grade]]
+criterion = "A-17.2"
+status = "not-met"
+reason = "The proxy SSE rewrite that turns a compact tool call into a compaction is not armed for OpenCode in v1 (base spec 10.2.5), and the tool is not listed"
+
+[[grade]]
+criterion = "A-18.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_fixtures", "premise:docs/premises.md#Q2", "fixture:fixtures/opencode/plugin-hooks/experimental.session.compacting.json"]
+reason = "The live OpenCode docs describe a newer plugin API than 1.18.16 and do not name experimental.session.compacting; the grade rests on the cited premise, the fixtures and fixtures/opencode/binary-names.txt"
+
+[[grade]]
+criterion = "A-18.2"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/session_text.rs::pre_compact_one_open_unit", "test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_fixtures"]
+
+[[grade]]
+criterion = "A-19.1"
+status = "not-met"
+reason = "work_begin is recorded only by the work hook with --event begin, which zygo registers for Claude Code only; OpenCode hook input carries no agent id, so no unit is recorded per agent"
+
+[[grade]]
+criterion = "A-19.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::plugin_text_matches_the_fixtures", "test:crates/zygo-launch/tests/opencode.rs::normalize_after_bash_fixture", "test:crates/zygo-work/tests/collection.rs::post_every_call_appends_call_or_failed"]
+
+[[grade]]
+criterion = "A-19.3"
+status = "not-met"
+reason = "The pinned OpenCode plugin API has no subagent-stop event (only tool.execute hooks in fixtures/opencode/plugin-hooks/), so the claims guard never runs"
+
+[[grade]]
+criterion = "A-19.4"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::hooks_on_fixtures_give_the_specified_output", "premise:docs/live-checks.md#OC-THROW"]
+
+[[grade]]
+criterion = "A-20.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::agents_map_to_roles", "premise:docs/premises.md#Q2"]
+
+[[grade]]
+criterion = "A-20.2"
+status = "not-met"
+reason = "limits.subagent_max_turns reaches only Claude Code (maxTurns in claude_code.rs); zygo writes no OpenCode agent steps key, though OpenCode has one (Q2)"
+
+[[grade]]
+criterion = "A-21.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::launch_sets_the_opencode_environment", "test:crates/zygo-launch/tests/premise.rs::opencode_inline_config_keys_flags_and_env_are_in_the_pinned_schema", "test:crates/zygo-launch/tests/stub_launch.rs::launch_leaves_the_users_own_files_untouched"]
+
+[[grade]]
+criterion = "A-21.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/premise.rs::opencode_inline_config_keys_flags_and_env_are_in_the_pinned_schema"]
+
+[[grade]]
+criterion = "WA-1.1"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::plugin_workspace_events_match_pw4_fixtures", "premise:docs/premises.md#PW4", "fixture:fixtures/opencode/workspace/pw4.txt"]
+
+[[grade]]
+criterion = "WA-1.2"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::session_args_follow_w4_and_the_pinned_help", "premise:docs/premises.md#PW4"]
+
+[[grade]]
+criterion = "WA-2.1"
+status = "met"
+evidence = ["test:crates/zygo-hooks/tests/workspace.rs::opencode_turn_signals", "test:crates/zygo-launch/tests/opencode.rs::plugin_workspace_events_match_pw4_fixtures", "premise:docs/premises.md#PW4"]
+
+[[grade]]
+criterion = "WA-2.2"
+status = "not-met"
+reason = "No evidence that a turn the user interrupts gives session.idle or a status idle; PW4 sub-check 4.3 covers only a turn that ends by itself"
+
+[[grade]]
+criterion = "WA-2.3"
+status = "not-met"
+reason = "The pinned OpenCode plugin API has no subagent start event; the plugin sees only the task tool call (workspaces design AU27)"
+
+[[grade]]
+criterion = "WA-2.4"
+status = "not-met"
+reason = "The pinned OpenCode plugin API has no subagent end event; a child session idle is not a subagent stop signal (workspaces design AU27)"
+
+[[grade]]
+criterion = "WA-2.5"
+status = "met"
+evidence = ["premise:docs/premises.md#PW4", "premise:docs/live-checks.md#OC-THROW", "fixture:fixtures/opencode/workspace/tool.execute.before-task.json", "test:crates/zygo-launch/tests/opencode.rs::plugin_workspace_events_match_pw4_fixtures"]
