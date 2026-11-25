@@ -65,9 +65,17 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 
 ## 6. Names
 
-**(author)** A loadout pane gets an optional `name` (W§11 schema addition): `^[a-z][a-z0-9-]{0,31}$`, unique in the loadout. `up` copies it into the `panes[]` entry and the member record. A hand-started member (AU9) takes `--name <n>` on `zygo claude` / `zygo opencode`, else it has no name and gets mail by pane key only. `all`, `cli` and every name of pane-key form `^k[a-z2-7]{8}$` (W§5) are reserved, so `mail_send`'s `to` (a name or a pane key) is never ambiguous. Names are checked at each read, as AU84.
+**(author)** A loadout pane gets an optional `name` (W§11 schema addition): `^[a-z][a-z0-9-]{0,31}$`, unique in the loadout. `up` copies it into the `panes[]` entry and the member record. A hand-started member (AU9) takes `--name <n>` on `zygo claude` / `zygo opencode`, else it has no name and gets mail by pane key only. `all`, `cli`, `zygo` and every name of pane-key form `^k[a-z2-7]{8}$` (W§5) are reserved, so `mail_send`'s `to` (a name or a pane key) is never ambiguous. `zygo` is the sender of the mail sync notice for a refused message (mail sync design S§8.6); like `cli`, it has no inbox. Names are checked at each read, as AU84.
 
 A rename by `zygo ws name <key> <name>` changes the name; mail stays in the pane-key folder.
+
+**Addresses (mail sync design S§5, S§7.2).** An address is `<name>@<host>`: `<name>` is a member name as above, `<host>` is the name of one workspace on the side branch, form `^[a-z0-9][a-z0-9-]{0,31}$`. A `to` value is one of:
+
+- `<name>` or a pane key: a member of this machine. A bare name never means a remote member.
+- `<name>@<host>`: with a host of this workspace (mail sync design S§7.5), the same as `<name>`; with another host, a remote member (mail sync design S§8).
+- `all`: the members of this machine, as M§5. Not sent to other hosts.
+
+A send to an address whose name is reserved (`cli@<host>`, `zygo@<host>`) is refused: they have no inbox.
 
 ## 7. Delivery
 
@@ -212,3 +220,4 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-24 | M§6 | author's call | A name of pane-key form is reserved so `mail_send`'s `to` stays unambiguous (ML-1 review). |
 | 2026-11-24 | M-C3, M§5 | author's call | link, not rename, so a delivery or read never replaces an existing message (ML-2 review) |
 | 2026-11-24 | M§11 | mail sync design S§16 | Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11). |
+| 2026-11-25 | M§6 | author's call (S§16) | Gains the address grammar (S§7.2) and the reserved name `zygo`, the sender of the S§8.6 refused-message notice, which has no inbox. |
