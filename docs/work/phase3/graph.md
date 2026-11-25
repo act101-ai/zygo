@@ -33,7 +33,7 @@ Decision records (D):
 - No record text, finding text, label or disposition reason in the usage store, a log or a session file; no hook reads a record file; the slash form reads none; the verdict check is in the MCP tool — `docs/specs/2026-11-24-decision-records-design.md` D-C1, D-C2, D§3, D§10.1
 - The record file is the only owner of a record's state (no index); a record is never deleted or renamed; an agent never writes an operator key or status — D-C3, D-C4, D-C5
 - Record id `^DDR-[0-9A-HJKMNP-TV-Z]{26}$`; file `docs/decisions/<id>.md`; TOML front matter between `+++` lines; zygo edits with `toml_edit` and keeps unknown keys, comments and the body byte-equal — D§6.1, D§6.2
-- Bounds: each git process 2 s; one verdict at most 4 git processes and 10 s; `--batch` at most 2,048 objects and 16 MiB; node range at most 10,000 commits; at most 1,000 record changes read; record file at most 64 KiB, front matter closed within 8 KiB; directory at most 10,000 entries; `work_verdict` arguments at most 256 KiB, `dispositions` at most 256 entries, `finding` 1–200 bytes, `reason` 1–2,000 bytes; `title` 1–120 bytes; `unit` at most 128 bytes; `depends_on` at most 64 ids; `review_note` at most 2,000 bytes; `promotion` at most 500 bytes; `<problems>` at most 10 then `; and <n> more`, at most 4 KiB; `show` at most 50 commits, `review` at most 20 — D-C6, D§9.3, D§10.1, D§11.2
+- Bounds: each git process 2 s; one verdict at most 4 git processes and 10 s; `--batch` at most 2,048 objects and 16 MiB; node range at most 10,000 commits; at most 1,000 record changes read; record file at most 64 KiB, front matter closed within 8 KiB; directory at most 10,000 entries; `work_verdict` arguments at most 256 KiB, `dispositions` at most 256 entries, `finding` 1–200 characters, `reason` 1–2,000 characters; `title` 1–120 bytes; `unit` at most 128 bytes; `depends_on` at most 64 ids; `review_note` at most 2,000 bytes; `promotion` at most 500 bytes; `<problems>` at most 10 then `; and <n> more`, at most 4 KiB; `show` at most 50 commits, `review` at most 20 — D-C6, D§9.3, D§10.1, D§11.2
 - The `dispositions` guard follows the §13.4 levels and §13.5 resolution, default `enforce` — D-C7, D§9.3
 - Text from a record or from git is printed one line at a time through `zygo_core::esc` — D§10.1
 - Not a security boundary against an agent that runs as the same OS user; no code or text claims more — D-C9
@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
@@ -392,3 +391,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | ML-3 DONE: member/pane `name` fields in zygo-workspace (plan, member record, `panes[]`); node head 863b6b05; floor green: workspace 2682 passed, 0 failed · PR #62 |
 | 2026-11-24 | OS-3 DONE: bounded usage-store open `open_bounded` + `HOOK_DB_BOUND`; node head c403338f; review 3 findings fixed; floor green: workspace 2677 passed, 0 failed · PR #64 |
 | 2026-11-24 | FX-6 DONE: dead-port helpers point at fixed port 1 via shared `tests/dead_port`; plan revised after macOS bound-not-listening connect timed out; review found the same race in update.rs, fixed; floor: workspace 2671 passed, 0 failed · PR #65 |
+| 2026-11-25 | DR-13 DONE: work_verdict head/base/dispositions + dispositions guard (monitor/notify/enforce); review: short id shadowed by a ref now refused, config warning shown, dispatch tests; bounds header bytes→characters (D§9.2); floor ws 2966/0 · PR #85 |
