@@ -1542,6 +1542,11 @@ fn render_json_spec_example_values() {
 }
 
 #[test]
+fn render_json_golden_fixture() {
+    assert_eq!(json_of(&render_input()), text("expected-conformance.json").replace("\r\n", "\n"));
+}
+
+#[test]
 fn render_json_weights_match_derive() {
     let v = jv(&json_of(&render_input()));
     let w = ["core", "standard", "extra"].map(|k| v["weights"][k].as_u64().unwrap());
