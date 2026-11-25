@@ -76,6 +76,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | DONE | mechanical | 80d820d0, 04a9d343 · config_layers 93/0, core_basics 27/0, hooks_basic 60/0, launcher 14/0 ; floor green · PR #117 |
 | WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | DONE | judgment | f5a7e8cd f97e8031 bce0413f · repo_def_apply 18/0, config_layers 90/0 (16 ignored) ; floor green · PR #112 |
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | DONE | lookup | 6a93103b · SP2 verified (git 2.50.1) ; floor n/a (docs only) · PR #130 |
+| DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | DONE | mechanical | e02fc394, d8c6c053 · acc PD2/PD3 rows = 2, LIVE PD2 verified (513 chunks, raw bytes equal), LIVE PD3 verified ; floor green · PR #133 |
 
 ## Log
 
