@@ -122,6 +122,8 @@ fn readback_error_replies_write_no_row() {
     assert!(matches!(call(se, json!({"id": s.id, "pattern": "("})), Err(ToolError::InvalidParams(_)))); // bad pattern
     assert!(matches!(call(se, json!({"id": s.id})), Err(ToolError::InvalidParams(_)))); // no pattern
     assert_eq!(rows(&e.db), Vec::<Row>::new());
+    assert_eq!(call(v, json!({"id": s.id})).unwrap(), "a\nb"); // recording is on: a successful reply writes its row
+    assert_eq!(rows(&e.db).len(), 1);
 }
 
 #[test]
@@ -158,28 +160,69 @@ fn readback_missing_store_creates_nothing_and_opens_again_at_the_next_readback()
     assert_eq!(r[0].5, 3);
 }
 
-/// Parent half: runs `tools_child` in a new process with a scratch `HOME`, so `Paths::from_env` never names the real
-/// usage store.
-#[test]
-fn tools_takes_the_session_view_and_the_home_usage_db() {
+/// Runs the ignored test `child` of this binary in a new process with a scratch `HOME`, so `Paths::from_env` never
+/// names the real usage store. `ZYGO_READBACKS_CHILD` names the child, so no other test of the new process does work.
+fn run_child(child: &str) -> std::process::Output {
     let h = tempfile::tempdir().unwrap();
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "tools_child", "--nocapture", "--test-threads=1"])
-        .env("ZYGO_READBACKS_CHILD", "1")
+    std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", child, "--ignored", "--nocapture", "--test-threads=1"])
+        .env("ZYGO_READBACKS_CHILD", child)
         .env("HOME", h.path())
         .env("LOCALAPPDATA", h.path())
         .env("APPDATA", h.path())
         .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
-    assert!(stdout.contains("1 passed"), "{stdout}");
+        .unwrap()
 }
 
-/// Child half: runs only when the parent sets `ZYGO_READBACKS_CHILD`.
+/// True when the parent started this process for the child test `name`; false in every other run, `--include-ignored`
+/// included.
+fn is_child(name: &str) -> bool {
+    std::env::var_os("ZYGO_READBACKS_CHILD").is_some_and(|v| v == name)
+}
+
+fn assert_child_passed(out: &std::process::Output) -> (String, String) {
+    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned());
+    assert_eq!(out.status.code(), Some(0), "{stdout}\n{stderr}");
+    assert!(stdout.contains("test result: ok. 1 passed"), "{stdout}");
+    (stdout, stderr)
+}
+
+/// O§10 row "Usage store busy or broken (MCP read-back)": each failed read-back writes one stderr line.
 #[test]
+fn readback_store_busy_writes_one_stderr_line() {
+    let (stdout, stderr) = assert_child_passed(&run_child("store_busy_child"));
+    assert_eq!(stderr.matches("read-back not recorded").count(), 2, "{stderr}");
+    assert!(!stdout.contains("read-back not recorded"), "{stdout}");
+}
+
+/// Child half of `readback_store_busy_writes_one_stderr_line`.
+#[test]
+#[ignore = "run by readback_store_busy_writes_one_stderr_line in a new process"]
+fn store_busy_child() {
+    if !is_child("store_busy_child") {
+        return;
+    }
+    let e = env();
+    let s = zygo_results::Store::put(&e.dir, "Bash", Some(TRIM), b"a\nb\n").unwrap();
+    let t = tools(&e, Duration::ZERO);
+    let raw = Connection::open(&e.db).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap(); // a second connection holds the write lock
+    assert_eq!(call(by_name(&t, "result_view"), json!({"id": s.id})).unwrap(), "a\nb");
+    assert_eq!(call(by_name(&t, "result_view"), json!({"id": s.id})).unwrap(), "a\nb");
+    raw.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(rows(&e.db).len(), 0);
+}
+
+#[test]
+fn tools_takes_the_session_view_and_the_home_usage_db() {
+    assert_child_passed(&run_child("tools_child"));
+}
+
+/// Child half of `tools_takes_the_session_view_and_the_home_usage_db`.
+#[test]
+#[ignore = "run by tools_takes_the_session_view_and_the_home_usage_db in a new process"]
 fn tools_child() {
-    if std::env::var_os("ZYGO_READBACKS_CHILD").is_none() {
+    if !is_child("tools_child") {
         return;
     }
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
