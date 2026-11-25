@@ -355,6 +355,9 @@ fn inline_config_limits_providers_to_zygo() {
     let fx = fx();
     let (_, cfg) = built(&ctx(&fx, |_| {}));
     assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
+    // The inline config merges after every user, project and OPENCODE_CONFIG file, and arrays replace on merge
+    // (OpenCode config.ts:41-52, :468-475), so this empty list cancels any earlier disabled_providers (§8.7).
+    assert_eq!(cfg["disabled_providers"], json!([]));
     assert_eq!(cfg["provider"].as_object().unwrap().keys().collect::<Vec<_>>(), ["zygo"]);
 }
 
@@ -384,13 +387,35 @@ fn a_token_path_that_breaks_the_file_reference_is_refused() {
     }
 }
 
+/// A relative session dir resolves against the process's working directory, so the refusal runs in a child
+/// process (`not_absolute_child`) whose working directory is a temp dir; nothing may appear there.
 #[test]
 fn a_token_path_that_is_not_absolute_is_refused() {
+    let fx = fx();
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "not_absolute_child", "--ignored", "--nocapture", "--test-threads=1"])
+        .env("ZYGO_TEST_REL", "1")
+        .current_dir(&fx.root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success() && stdout.contains("1 passed"), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    let found: Vec<String> = std::fs::read_dir(&fx.root).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(found, ["home"], "nothing is written before the refusal");
+}
+
+#[test]
+#[ignore]
+fn not_absolute_child() {
+    if std::env::var_os("ZYGO_TEST_REL").is_none() {
+        return;
+    }
     for rel in ["rel/S1", "~/S1"] {
         let fx = fx();
         let c = ctx(&fx, |c| c.session_dir = SessionDir::new(PathBuf::from(rel)));
         let e = oc().build(&c).err().expect(rel).to_string();
         assert!(e.contains("cannot reference the session token file") && e.contains("not absolute"), "{rel}: {e}");
+        assert!(!Path::new(rel).exists(), "{rel}: nothing is written before the refusal");
     }
 }
 
@@ -1096,7 +1121,6 @@ fn preflight_names_the_file_and_key() {
         ("repo/opencode.json", r#"{"agent":{"build":{"permission":{"edit":"allow"}}}}"#, "agent.build.permission.edit"),
         ("repo/opencode.json", r#"{"agent":{"acme-helper":{"model":"a/b"}}}"#, "agent.acme-helper.model"),
         ("home/.config/opencode/opencode.json", r#"{"provider":{"zygo":{}}}"#, "provider.zygo"),
-        ("repo/.opencode/opencode.json", r#"{"disabled_providers":["openai","zygo"]}"#, "disabled_providers"),
     ];
     for (rel, text, key) in cases {
         let fx = fx();
@@ -1125,7 +1149,7 @@ fn preflight_accepts_what_zygo_does_not_set() {
     ok("repo/opencode.json", r#"{"agent":{"mine":{"model":"a/b"}}}"#);
     ok("repo/opencode.json", r#"{"permission":{"edit":"allow"}}"#);
     ok("repo/opencode.json", r#"{"provider":{"other":{}}}"#);
-    ok("repo/.opencode/opencode.json", r#"{"disabled_providers":["openai"]}"#);
+    ok("repo/.opencode/opencode.json", r#"{"disabled_providers":["openai","zygo"]}"#); // the inline [] cancels it (§8.7)
     ok("repo/opencode.json", "{ not json");
     ok("opencode.json", r#"{"model":"a/b"}"#);
     ok("repo/opencode.json", r#"{"agent":{"zygo-ro":{"permission":{"edit":"allow"}}}}"#);

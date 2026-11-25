@@ -573,17 +573,24 @@ fn claude_code_session_token_stays_in_the_token_file_and_in_passthrough_in_setti
     }
 }
 
-#[test]
-#[ignore = "timing: version probe and git lookups must beat the 2 s bound"]
-fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
-    let rig = rig();
+/// The launch the two OpenCode spec tests share: a git repo, the catalog config, `--yolo run hello` and denied
+/// parent variables.
+fn opencode_spec_launch(rig: &Rig) -> Run {
     git_repo(&rig.cwd, "main", "https://example.com/acme/widgets.git");
     std::fs::write(&rig.paths.config_file, CATALOG_CONFIG).unwrap();
-    let r = launch(&rig, &opencode(&rig), OPENCODE_VERSION, |o| {
+    launch(rig, &opencode(rig), OPENCODE_VERSION, |o| {
         o.yolo = true;
         o.args = vec!["run".into(), "hello".into()];
         o.env.0.extend(denied_parent());
-    });
+    })
+}
+
+/// No wall-clock dependency: the header values that need the version probe and the git lookups are in
+/// `opencode_inline_config_headers_match_the_spec`.
+#[test]
+fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
+    let rig = rig();
+    let r = opencode_spec_launch(&rig);
     assert_eq!(r.code, 0, "{}", r.stderr);
     let e = &r.cap.env;
     assert_eq!(r.cap.argv, ["run", "--auto", "hello"]);
@@ -605,10 +612,7 @@ fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
         assert_eq!(key, format!("{{file:{}/token}}", e["ZYGO_SESSION_DIR"]));
     }
     assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
-    assert_eq!(
-        cfg["provider"]["zygo"]["options"]["headers"],
-        json!({"X-Zygo-Session": e["ZYGO_SESSION"], "X-Zygo-Agent-Version": "1.18.16", "X-Zygo-Repo": "example.com/acme/widgets", "X-Zygo-Work": "branch:main"})
-    );
+    assert_eq!(cfg["disabled_providers"], json!([])); // cancels a user or project disabled_providers (§8.7)
     let roles = zygo_config::builtin::defaults().role;
     assert_eq!(cfg["provider"]["zygo"]["models"].as_object().unwrap().keys().collect::<Vec<_>>(), roles.keys().collect::<Vec<_>>());
     assert_eq!(cfg["agent"]["build"]["permission"], json!({"edit": "deny"})); // lead guard, §8.3: build maps to main_role lead
@@ -621,6 +625,20 @@ fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
     assert!(r.cap.argv.iter().all(|a| !a.contains(token)) && !r.stderr.contains(token));
     let hit: Vec<&String> = r.cap.session.iter().chain(e.iter()).filter(|(_, t)| t.contains("denied-value-")).map(|(k, _)| k).collect();
     assert!(hit.is_empty(), "{hit:?}");
+}
+
+#[test]
+#[ignore = "timing: version probe and git lookups must beat the 2 s bound"]
+fn opencode_inline_config_headers_match_the_spec() {
+    let rig = rig();
+    let r = opencode_spec_launch(&rig);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let e = &r.cap.env;
+    let cfg: Value = serde_json::from_str(&e["OPENCODE_CONFIG_CONTENT"]).unwrap();
+    assert_eq!(
+        cfg["provider"]["zygo"]["options"]["headers"],
+        json!({"X-Zygo-Session": e["ZYGO_SESSION"], "X-Zygo-Agent-Version": "1.18.16", "X-Zygo-Repo": "example.com/acme/widgets", "X-Zygo-Work": "branch:main"})
+    );
 }
 
 /// Runs only on the CI windows job. Proves: a Claude Code program that is an npm-style `claude.cmd` shim

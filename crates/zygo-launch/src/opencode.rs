@@ -108,8 +108,8 @@ fn limit(ctx: &LaunchCtx, model: &str) -> Value {
 /// The provider key as a reference to the session's `token` file (§8.7, premise PO1): OpenCode
 /// reads the file when it loads its config, so the token is in no environment row. OpenCode matches
 /// `{file:…}` on the raw config text, so the path uses `/` (Windows `\` becomes `/`; elsewhere a `\` is refused)
-/// and may hold no `{`, `}`, `"` or control character. A path that is not absolute is refused, so OpenCode's own
-/// resolution (`~/`, relative to the project) never applies.
+/// and may hold no `{`, `}`, `"` or control character. A path that is not absolute (on Windows: no `X:/` drive and
+/// not UNC `//`) is refused, so OpenCode's own resolution (`~/`, relative to the project or the drive) never applies.
 fn token_ref(t: &Path) -> anyhow::Result<String> {
     let raw = t.to_str().ok_or_else(|| anyhow!("cannot use the session directory path: it is not valid UTF-8"))?;
     let p = if cfg!(windows) { raw.replace('\\', "/") } else { raw.to_string() };
@@ -119,7 +119,8 @@ fn token_ref(t: &Path) -> anyhow::Result<String> {
     }
     let b = p.as_bytes();
     let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'/';
-    if !(p.starts_with('/') || drive) {
+    let absolute = if cfg!(windows) { drive || p.starts_with("//") } else { p.starts_with('/') };
+    if !absolute {
         bail!("cannot reference the session token file {shown}: its path is not absolute");
     }
     Ok(format!("{{file:{p}}}"))
@@ -176,6 +177,7 @@ fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str) -> Value 
         "model": format!("zygo/{}", c.main_role),
         "small_model": format!("zygo/{small}"),
         "enabled_providers": ["zygo"],
+        "disabled_providers": [],
         "provider": { "zygo": {
             "npm": "@ai-sdk/anthropic",
             "options": {
@@ -579,9 +581,6 @@ fn conflict(v: &Value, names: &AgentNames) -> Option<String> {
     if v.pointer("/provider/zygo").is_some() {
         return Some("provider.zygo".into());
     }
-    if v.get("disabled_providers").and_then(Value::as_array).is_some_and(|a| a.iter().any(|p| p == "zygo")) {
-        return Some("disabled_providers".into());
-    }
     for k in ["model", "small_model"] {
         if v.get(k).is_some() {
             return Some(k.into());
@@ -651,6 +650,15 @@ mod tests {
     fn a_windows_token_path_uses_slashes() {
         assert_eq!(token_ref(Path::new(r"C:\h\a b\S1\token")).unwrap(), "{file:C:/h/a b/S1/token}");
         assert_eq!(token_ref(Path::new(r"\\srv\share\S1\token")).unwrap(), "{file://srv/share/S1/token}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_token_path_without_a_drive_is_refused() {
+        for p in [r"\h\S1\token", "/h/S1/token", r"C:h\S1\token"] {
+            let e = token_ref(Path::new(p)).unwrap_err().to_string();
+            assert!(e.contains("not absolute"), "{p}: {e}");
+        }
     }
 
     #[cfg(unix)]
