@@ -683,6 +683,8 @@ impl Merged {
     }
 
     /// The layer that set `key` (source-key form): exact, else the nearest recorded ancestor, else `Builtin`.
+    /// R§8 "Not a layer": for a key the workspace files added, this falls back to the base layer (the ancestor's, or
+    /// `Builtin`); check [`Merged::definition_file_of`] first.
     pub fn source_of(&self, key: &str) -> Layer {
         let segs = split_key(key);
         (1..=segs.len()).rev().find_map(|n| self.sources.get(&join(&segs[..n])).copied()).unwrap_or(Layer::Builtin)
@@ -706,9 +708,24 @@ impl Merged {
     }
 
     /// R§8 "Not a layer": adds the approved repository profiles and the `repository` loadout after the merge, with the
-    /// source `workspace-files`. Trusts `def`: pass only the `def` of `Use::Approved` or `PinnedUse::Approved`.
+    /// source `workspace-files`. Replaces an earlier definition: its keys, and any later key under them, go first.
+    /// Trusts `def`: pass only the `def` of `Use::Approved` or `PinnedUse::Approved`.
     pub fn with_definition(&self, def: &Definition) -> Merged {
         let mut out = self.clone();
+        if !out.definition.is_empty() {
+            for key in std::mem::take(&mut out.definition).into_keys() {
+                let segs = split_key(&key);
+                let (last, parents) = segs.split_last().expect("split_key gives at least one segment");
+                let parent = parents.iter().try_fold(&mut out.table, |t, s| t.get_mut(s).and_then(Value::as_table_mut));
+                if let Some(t) = parent {
+                    t.remove(last);
+                }
+                let prefix = format!("{key}.");
+                out.sources.retain(|k, _| *k != key && !k.starts_with(&prefix));
+            }
+            out.config = out.build().expect("without the definition keys the table built before");
+        }
+        out.shadowed.clear();
         let applied = repo_def::apply_to_config(&mut out.config, def);
         let mut added: Vec<(&str, String, Value, String)> = Vec::new();
         for name in &applied.profiles {
@@ -730,9 +747,11 @@ impl Merged {
     }
 
     /// The workspace file that added `key` (source-key form): exact, else the nearest recorded ancestor, else `None`.
+    /// `None` too when a later layer set `key` or an ancestor nearer than the recorded one (a flag under a repository profile).
     pub fn definition_file_of(&self, key: &str) -> Option<&str> {
         let segs = split_key(key);
-        (1..=segs.len()).rev().find_map(|n| self.definition.get(&join(&segs[..n])).map(String::as_str))
+        let (n, file) = (1..=segs.len()).rev().find_map(|n| self.definition.get(&join(&segs[..n])).map(|f| (n, f.as_str())))?;
+        if (n + 1..=segs.len()).any(|m| self.sources.contains_key(&join(&segs[..m]))) { None } else { Some(file) }
     }
 
     /// Repository profile names that a user profile or a team preset shadows (R§8).
@@ -844,7 +863,7 @@ impl Merged {
                     },
                 };
                 let label = match file {
-                    Some(f) => format!("workspace-files {f}"),
+                    Some(f) => format!("workspace-files {}", zygo_core::esc(f)),
                     None => src.to_string(),
                 };
                 Some((key.clone(), format!("{} = {}  # {label}\n", zygo_core::esc(&key), zygo_core::esc(&shown))))

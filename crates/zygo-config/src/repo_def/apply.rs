@@ -17,7 +17,8 @@ pub struct Applied {
 }
 
 /// Adds the repository profiles (no `features`) and the `repository` loadout to `cfg`, each only when the name is
-/// not already there. Trusts `def`: pass only the `def` of `Use::Approved` or `PinnedUse::Approved`; `parse` validated it.
+/// not already there. Trusts `def`: pass only the `def` of `Use::Approved` or `PinnedUse::Approved`. `parse` validated its
+/// values (the R§6.4 allow list); the profile names are validated only by the read (`read.rs`, `^[a-z0-9-]{1,32}$`, not `none`).
 pub fn apply_to_config(cfg: &mut Config, def: &Definition) -> Applied {
     let mut a = Applied::default();
     for (name, p) in &def.profiles {

@@ -200,12 +200,22 @@ fn show_labels_workspace_files() {
 
 #[test]
 fn layer_filter_hides_workspace_files() {
-    let w = with_ws_and_rust();
+    let d = tmp("repo");
+    let found = RepoFile::Found {
+        branch: "main".into(),
+        table: toml::from_str("version = 1\n[navigation]\nlines = 7\n").unwrap(),
+        ignored: vec![],
+    };
+    let m = load_with_repo_reader(&ctx(None, Some(d.to_path_buf()), None), toml::Table::new(), |_| found).unwrap();
+    let w = m.with_definition(&def(Some("version = 1\n"), &[("rust", RUST)]));
     for l in [Layer::Builtin, Layer::Team, Layer::User, Layer::Repository, Layer::Profile, Layer::Flags, Layer::Session] {
         let s = w.show(Some(l), &|_| true);
         assert!(!s.contains("workspace-files"), "{l}: {s}");
         assert!(!s.lines().any(|x| x.starts_with("profile.rust.") || x.starts_with("loadout.repository.")), "{l}: {s}");
     }
+    // R§10: `--layer repository` stays `.zygo.toml`.
+    let repo = w.show(Some(Layer::Repository), &|_| true);
+    assert_eq!(repo, "navigation.lines = 7  # repository\n");
 }
 
 #[test]
@@ -283,4 +293,54 @@ fn load_does_not_read_zygo_dir() {
     assert!(!m.config.loadout.contains_key(REPOSITORY_LOADOUT));
     assert_eq!(m.show_workspace_files(), "");
     assert!(m.shadowed_profiles().is_empty());
+}
+
+// ---- review fixes ----
+
+/// A second `with_definition` replaces the first: A then B is B alone.
+#[test]
+fn second_definition_replaces_first() {
+    const OTHER: &str = "overrides = { review = \"other\" }\n";
+    let (_c, m) = merged(None, None);
+    let b = def(None, &[("rust", OTHER)]);
+    let ab = m.with_definition(&def(Some("version = 1\n"), &[("rust", RUST)])).with_definition(&b);
+    let only_b = m.with_definition(&b);
+    assert!(ab.shadowed_profiles().is_empty(), "{:?}", ab.shadowed_profiles());
+    assert_eq!(ab.config.profile["rust"].overrides["review"], "other");
+    assert!(ab.config.profile["rust"].disabled.is_empty());
+    assert!(!ab.config.loadout.contains_key(REPOSITORY_LOADOUT));
+    assert_eq!(ab.definition_file_of("loadout.repository.window"), None);
+    assert_eq!(
+        ab.show_workspace_files(),
+        "profile.rust.disabled = []  # workspace-files .zygo/profiles/rust.toml\nprofile.rust.overrides.review = \"other\"  # workspace-files .zygo/profiles/rust.toml\n"
+    );
+    assert_eq!(ab.show_workspace_files(), only_b.show_workspace_files());
+    assert_eq!(ab.config, only_b.config);
+    assert_eq!(ab.show(None, &|_| true), only_b.show(None, &|_| true));
+    // And after a rebuild.
+    let x = ab.apply_flag("results.head_lines", toml::Value::Integer(5));
+    assert_eq!(x.config.profile["rust"].overrides["review"], "other");
+    assert!(!x.config.loadout.contains_key(REPOSITORY_LOADOUT));
+}
+
+/// A flag key under a definition profile is labelled `flags`.
+#[test]
+fn flag_under_definition_profile_is_flags() {
+    let w = with_ws_and_rust().apply_flag("profile.rust.prompt", toml::Value::String("x".into()));
+    assert_eq!(w.config.profile["rust"].prompt.as_deref(), Some("x"));
+    assert_eq!(w.definition_file_of("profile.rust.prompt"), None);
+    assert_eq!(w.definition_file_of("profile.rust.overrides.review"), Some(".zygo/profiles/rust.toml"));
+    assert_eq!(w.show(Some(Layer::Flags), &|_| true), "profile.rust.prompt = \"x\"  # flags\n");
+    let all = w.show(None, &|_| true);
+    assert!(all.contains("profile.rust.prompt = \"x\"  # flags\n"), "{all}");
+    assert!(!w.show_workspace_files().contains("prompt"));
+}
+
+/// The file in the `workspace-files <file>` label is escaped like the key and the value.
+#[test]
+fn workspace_files_label_escaped() {
+    let (_c, m) = merged(None, None);
+    let out = m.with_definition(&def(None, &[("a\nb", RUST)])).show_workspace_files();
+    assert_eq!(out.lines().count(), 2, "{out}");
+    assert!(out.contains("  # workspace-files .zygo/profiles/a\\nb.toml\n"), "{out}");
 }
