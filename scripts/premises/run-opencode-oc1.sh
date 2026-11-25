@@ -1,9 +1,10 @@
 #!/bin/sh
 # PO1 and PO2 (node OC-1), OpenCode 1.18.16.
 # PO1: a provider's options.apiKey given as {file:<absolute path>} in OPENCODE_CONFIG_CONTENT is read
-#      from that file; the inline config text holds no key.
-# PO2: enabled_providers = ["zygo"] drops the catalog, environment-key, stored-login and config
-#      providers: only zygo/ models list and no request goes to another provider.
+#      from that file; the inline config text holds no key; after all runs no file under the run folder
+#      (the scratch HOME is in it) holds the key text, except the files this script wrote with it.
+# PO2: with enabled_providers = ["zygo"] only zygo/ models list and no request goes to the vendor path,
+#      while the control (no enabled_providers) lists catalog, env-key/stored-login and config providers.
 # Isolation: env -i, a scratch HOME and XDG_*, the mock upstream (only the dummy key is accepted),
 # HTTP(S)_PROXY at a closed local port so that no request reaches a real host.
 # OC1_STUB=1: a stub opencode; no version check, no result checks, no fixture; isolation checks only.
@@ -100,6 +101,9 @@ if [ -n "${OC1_STUB:-}" ]; then
   exit $fails
 fi
 
+# A-1.2 at run time: every file under the run folder (scratch HOME included) that holds the key text.
+grep -rlF -- "$DUMMY_KEY" "$RUN" 2>/dev/null | sed "s|^$RUN/||" | sort >"$RUN/key-files.txt" || true
+
 python3 -I - "$RUN" "$DUMMY_KEY" >"$RUN/result.json" <<'PY'
 import json, os, sys
 run, key = sys.argv[1:3]
@@ -121,9 +125,17 @@ po1 = {"inline config holds the key": key in on_inline,
        "a POST /v1/messages with x-api-key accepted (the mock aborts on any key but the dummy)": bool(po1_hit),
        "mock ABORT file": os.path.exists(run + "/rec/ABORT"),
        "run output has the scripted reply text": "po1 done" in open(run + "/run-po1.out").read()}
+# Files this script wrote with the key: the token file, and the PO2 control's user config and stored login
+# (plus new_run's Claude Code key approval). Any other hit is a file OpenCode or the mock wrote.
+planted = {"sess dir/token", "home/.config/opencode/opencode.json", "home/.local/share/opencode/auth.json",
+           "home/.claude/.claude.json"}
+key_files = lines("key-files.txt")
+po1["files holding the key text after all runs (search of the run folder, scratch HOME included)"] = key_files
+po1["of them, files not written by this script with the key"] = [f for f in key_files if f not in planted]
 po1["pass"] = (not po1["inline config holds the key"] and po1[
     "a POST /v1/messages with x-api-key accepted (the mock aborts on any key but the dummy)"]
-    and not po1["mock ABORT file"] and po1["run output has the scripted reply text"])
+    and not po1["mock ABORT file"] and po1["run output has the scripted reply text"]
+    and "sess dir/token" in key_files and not po1["of them, files not written by this script with the key"])
 po2 = {"ON: models": on, "ON: every model is zygo/": bool(on) and all(l.startswith("zygo/") for l in on),
        "ON: requests to /vendor/": [view(r) for r in on_vendor],
        "ON: anthropic/probe-model run output (first 300 chars)": open(run + "/run-po2-on.out").read()[:300],

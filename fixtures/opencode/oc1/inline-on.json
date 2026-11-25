@@ -8,7 +8,7 @@
     "zygo": {
       "npm": "@ai-sdk/anthropic",
       "options": {
-        "baseURL": "http://127.0.0.1:63910/v1",
+        "baseURL": "http://127.0.0.1:52559/v1",
         "apiKey": "{file:/tmp/run/sess dir/token}"
       },
       "models": {

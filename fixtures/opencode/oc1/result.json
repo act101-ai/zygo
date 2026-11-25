@@ -25,6 +25,13 @@
     "a POST /v1/messages with x-api-key accepted (the mock aborts on any key but the dummy)": true,
     "mock ABORT file": false,
     "run output has the scripted reply text": true,
+    "files holding the key text after all runs (search of the run folder, scratch HOME included)": [
+      "home/.claude/.claude.json",
+      "home/.config/opencode/opencode.json",
+      "home/.local/share/opencode/auth.json",
+      "sess dir/token"
+    ],
+    "of them, files not written by this script with the key": [],
     "pass": true
   },
   "PO2": {
@@ -33,7 +40,7 @@
     ],
     "ON: every model is zygo/": true,
     "ON: requests to /vendor/": [],
-    "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_f8d35585\"\n  }\n}\n",
+    "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_bf05edcb\"\n  }\n}\n",
     "OFF: lists anthropic/probe-model": true,
     "OFF: lists an openai/ model": true,
     "OFF: model count": 73,
