@@ -357,7 +357,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 
 | Shaper | Cases |
 |---|---|
-| clean | `cargo test --color always` (passing); `git clone --progress` stderr with `\r` progress; `git diff --color` with a CRLF file (must stay byte-equal except the color codes) |
+| clean | `cargo test --color always -- --color always` (passing; the part after `--` colors libtest stdout); `git clone --progress --no-local` stderr with `\r` progress (a clone from a local path prints no progress without `--no-local`); `git diff --color` with a CRLF file (must stay byte-equal except the color codes) |
 | dedup | a real build log with a repeated warning; an output that already has a line ending in ` [repeated 4 times]` (no change) |
 | libtest | `cargo test` of a scratch crate, all passing (≥ 100 tests); the same crate with 2 failing tests, one with `--nocapture` output; a test that crashes with a signal; a compile error |
 | pytest | a scratch project: all passing; 2 failing with `-v`; a collection error |
@@ -573,3 +573,9 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 - **PO2** Claude Code 2.1.328: a Bash `updatedToolOutput` with `stderr` set to `""` removes the original stderr from what the model sees (Q4, `docs/premises.md:35`, verified `stdout` only). Result decides O§7.8.
 - **PO3** OpenCode 1.18.16 (the version of Q7, `docs/premises.md:38`): `tool.execute.after` for `bash` gives stdout and stderr together in `output.output`.
 - **PO4** On both agents, the text that the model sees for a `result_view` reply is the reply text plus at most a fixed wrapper, so the reply's byte count is the read-back size within that wrapper.
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give the required bytes; the row now names `-- --color always` and `--no-local` (found while planning phase3 OS-17). |
