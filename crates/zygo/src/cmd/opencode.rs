@@ -18,7 +18,7 @@ pub(crate) fn run(a: &LaunchOpenCode) -> i32 {
         }
     };
     match launch_opts(a, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(OpenCode::new(z)) }, opts, saved_launch(a)),
+        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(OpenCode::new(z)) }, opts, saved_launch(a), a.name.clone()),
         Err(m) => {
             print_err(&format!("{m}\n"));
             2

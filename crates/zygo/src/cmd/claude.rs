@@ -18,7 +18,7 @@ pub(super) fn run(l: &Launch) -> i32 {
         }
     };
     match launch_opts(l, Env::from_process(), cwd, Paths::from_env()) {
-        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(ClaudeCode::for_zygo(z)) }, opts, saved_launch(l)),
+        Ok(opts) => member::launch_hand(&|z| -> Box<dyn AgentAdapter> { Box::new(ClaudeCode::for_zygo(z)) }, opts, saved_launch(l), l.name.clone()),
         Err(m) => {
             print_err(&format!("{m}\n"));
             2

@@ -253,7 +253,9 @@ fn launch_member(
     opts.agent_session = resumed.clone().map(AgentSession::Resume);
     opts.resume_note = resume_note(rec, resumed.as_deref());
     // D1: `ws run` writes only a record that exists (no hand join).
-    let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone(), hand: None };
+    // M§9a, AU84: the record's member name when it passes the grammar.
+    let name = rec.valid_name().map(String::from);
+    let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone(), hand: None, name };
     member::run_wrapped(adapter.as_ref(), opts, &ctx);
 }
 

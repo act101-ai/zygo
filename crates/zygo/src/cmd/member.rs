@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::{write_atomic, SessionDir};
 use zygo_core::session_view::Member;
@@ -47,12 +48,36 @@ pub struct MemberCtx {
     pub store: Store,
     pub launch: zygo_workspace::state::Launch,
     pub hand: Option<HandJoin>,
+    /// The member name of the marker (M§6, M§9a): `--name`, else the kept record's valid name; none for no name.
+    pub name: Option<String>,
 }
 
-/// What the callback of a hand start needs (M3 D1): the launch's own session argument (AU94).
+/// What the callback of a hand start needs (M3 D1): the launch's own session argument (AU94) and the `--name` value
+/// (M§6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandJoin {
     pub own_session: Option<String>,
+    pub name: Option<String>,
+}
+
+/// The line of a `--name` outside a pane of a workspace (M§6).
+const NAME_NEEDS_PANE: &str = "zygo: --name needs a pane of a workspace; nothing started";
+
+/// The line of a `--name` value that fails `valid_member_name` (M§6).
+fn bad_name_line(n: &str) -> String {
+    format!("zygo: bad --name value `{}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key", zygo_core::esc(n))
+}
+
+/// The line of a `--name` value that the member of pane `key` holds (M§6).
+fn name_taken_line(n: &str, key: &str) -> String {
+    format!("zygo: name {n} belongs to pane {key}; nothing started")
+}
+
+/// The refusal of the start write of a hand start: the reason of the not-saved line (a v1 launch), or the line of a
+/// launch that stops (`StopLaunch`).
+enum HandErr {
+    NotSaved(String),
+    Stop(String),
 }
 
 /// The member wrapper (W§8.2 steps 4, 5 and 7): marks the launch as a member (AU102), pre-assigns a Claude Code
@@ -61,7 +86,7 @@ pub struct HandJoin {
 /// outcome is returned unchanged, so the agent's exit code stays.
 pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberCtx) -> LaunchOutcome {
     let kind = adapter.agent();
-    opts.member = Some(Member { ws_id: m.ws_id.clone(), pane: m.pane.clone(), ..Default::default() });
+    opts.member = Some(Member { ws_id: m.ws_id.clone(), pane: m.pane.clone(), name: m.name.clone(), ..Default::default() });
     if opts.agent_session.is_none() && kind == Agent::ClaudeCode && !adapter.has_session_arg(&opts.args) {
         opts.agent_session = Some(AgentSession::Preassign(new_session_uuid()));
     }
@@ -218,7 +243,11 @@ impl Callback {
             }),
             Some(h) => match self.hand_write(&start, h) {
                 Ok(ws) => Ok(Some(ws)),
-                Err(reason) => {
+                Err(HandErr::Stop(line)) => {
+                    print_err(&format!("{line}\n"));
+                    return Err(anyhow::Error::new(StopLaunch(line)));
+                }
+                Err(HandErr::NotSaved(reason)) => {
                     print_err(&format!("{NOT_SAVED}{reason}\n"));
                     return Err(anyhow::Error::new(NotMember(reason)));
                 }
@@ -277,27 +306,42 @@ impl Callback {
 
     /// The start write of a hand start (W§8.4, M3 D2): [`join`] under `lock` with the 5 s bound of launchers, so the
     /// phase, AU94 and W-C9 are checked again in the same lock. `Err` holds the reason of the not-saved line: the
-    /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`.
-    fn hand_write(&self, start: &Start, h: &HandJoin) -> Result<Workspace, String> {
+    /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`. A `--name`
+    /// that another key holds under `lock` is `HandErr::Stop` with its line (M§6); else `join` runs and the record
+    /// gets the `--name` value when there is one.
+    fn hand_write(&self, start: &Start, h: &HandJoin) -> Result<Workspace, HandErr> {
         let sessions = self.paths.sessions_dir.clone();
         let live = |r: &MemberRecord| live_session(&sessions, r);
         let mut refused: Option<String> = None;
+        let mut stop: Option<String> = None;
         let mut previous: Option<MemberRecord> = None;
         let written = self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
+            if let Some(n) = h.name.as_deref()
+                && let Some(holder) = name_holder(ws, &self.pane, n)
+            {
+                let line = name_taken_line(n, &holder);
+                stop = Some(line.clone());
+                anyhow::bail!(line);
+            }
             previous = ws.members.get(&self.pane).cloned();
             join(ws, &self.pane, &self.launch, start, h.own_session.as_deref(), &live).map_err(|reason| {
                 refused = Some(reason.clone());
                 anyhow::anyhow!(reason)
-            })
+            })?;
+            if let (Some(n), Some(rec)) = (h.name.as_ref(), ws.members.get_mut(&self.pane)) {
+                rec.name = Some(n.clone());
+            }
+            Ok(())
         });
         if written.as_ref().is_ok_and(Option::is_some) {
             *self.previous.lock().unwrap_or_else(|e| e.into_inner()) = previous;
         }
         match written {
             Ok(Some(ws)) => Ok(ws),
-            Ok(None) => Err(format!("no workspace state for {}", self.ws_id)),
-            Err(StateError::Refused(_)) if refused.is_some() => Err(refused.unwrap_or_default()),
-            Err(e) => Err(format!("could not write the member record: {}", zygo_core::esc(&e.to_string()))),
+            Ok(None) => Err(HandErr::NotSaved(format!("no workspace state for {}", self.ws_id))),
+            Err(StateError::Refused(_)) if stop.is_some() => Err(HandErr::Stop(stop.unwrap_or_default())),
+            Err(StateError::Refused(_)) if refused.is_some() => Err(HandErr::NotSaved(refused.unwrap_or_default())),
+            Err(e) => Err(HandErr::NotSaved(format!("could not write the member record: {}", zygo_core::esc(&e.to_string())))),
         }
     }
 }
@@ -869,7 +913,8 @@ fn not_saved(reason: &str) {
 /// fails AU54 or is not the socket of `$TMUX`, and a socket of `$TMUX` that fails AU54 or AU62; later failures print
 /// the not-saved line (paths and ids escaped, C6). Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
 pub(crate) fn hand_start(
-    launch: zygo_workspace::state::Launch, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths, tmux: &dyn Fn() -> PathBuf,
+    launch: zygo_workspace::state::Launch, name: Option<String>, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths,
+    tmux: &dyn Fn() -> PathBuf,
 ) -> HandStart {
     if !cfg!(unix) || env("ZYGO_SESSION").is_some() {
         return HandStart::V1;
@@ -951,7 +996,23 @@ pub(crate) fn hand_start(
     if let Some(c) = conflict(&ws, &key, launch.kind, own.as_deref(), &|r| live_session(&paths.sessions_dir, r)) {
         return HandStart::Refused(c.line(&key));
     }
-    HandStart::Member(Box::new(MemberCtx { ws_id: id.to_string(), pane: key, store, launch, hand: Some(HandJoin { own_session: own }) }))
+    // M§6: a name that another key holds refuses after the W§8.4 checks and `conflict`.
+    if let Some(n) = name.as_deref()
+        && let Some(holder) = name_holder(&ws, &key, n)
+    {
+        return HandStart::Refused(name_taken_line(n, &holder));
+    }
+    // M§9a: the marker name is `--name`, else the name of the record that `join` keeps.
+    let marker =
+        name.clone().or_else(|| kept(&ws, &key, launch.kind, own.as_deref()).and_then(|r| r.valid_name().map(String::from)));
+    HandStart::Member(Box::new(MemberCtx {
+        ws_id: id.to_string(),
+        pane: key,
+        store,
+        launch,
+        hand: Some(HandJoin { own_session: own, name }),
+        name: marker,
+    }))
 }
 
 /// `zygo claude` and `zygo opencode` (W§8.4): the hand-start checks, then a v1 launch, the member wrapper, or the
@@ -960,9 +1021,23 @@ pub(crate) fn hand_start(
 /// this and makes no check when `ZYGO_WORKSPACE` is set, so a member's binary is never replaced before the read.
 pub(crate) fn launch_hand(
     adapter: &dyn Fn(PathBuf) -> Box<dyn AgentAdapter>, opts: LaunchOpts, launch: zygo_workspace::state::Launch,
+    name: Option<String>,
 ) -> i32 {
+    // M§6: the `--name` grammar first, before any tmux call or write.
+    if let Some(n) = name.as_deref()
+        && !valid_member_name(n)
+    {
+        print_err(&format!("{}\n", bad_name_line(n)));
+        return 1;
+    }
     let paths = opts.paths.clone();
-    match hand_start(launch, &|k| std::env::var_os(k), &paths, &tmux_program) {
+    let named = name.is_some();
+    match hand_start(launch, name, &|k| std::env::var_os(k), &paths, &tmux_program) {
+        // M§6: `--name` asks for a named member or nothing.
+        HandStart::V1 if named => {
+            print_err(&format!("{NAME_NEEDS_PANE}\n"));
+            1
+        }
         HandStart::V1 => Launcher::run(adapter(std::env::current_exe().unwrap_or_default()).as_ref(), opts).code,
         HandStart::Member(m) => {
             let zygo = zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize));

@@ -1737,6 +1737,154 @@ fn errors_log(h: &Harness) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// ---- The member name of a hand start and of `ws run` (M§6, M§9a; ML-7) ----
+
+const NAME_NEEDS_PANE: &str = "zygo: --name needs a pane of a workspace; nothing started\n";
+
+fn taken(n: &str, key: &str) -> String {
+    format!("zygo: name {n} belongs to pane {key}; nothing started\n")
+}
+
+fn named(kind: Agent, state: MemberState, agent: Option<&str>, zs: Option<&str>, n: &str) -> MemberRecord {
+    let mut r = record(kind, state, agent, zs);
+    r.name = Some(n.into());
+    r
+}
+
+#[test] // M§9a, AU84: `ws run` writes the record's member name into the marker; a bad stored name gives none
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
+fn ws_run_writes_the_record_member_name_into_the_view() {
+    let h = Harness::no_tmux();
+    up_state(
+        &h,
+        &[
+            (KEY, named(Agent::ClaudeCode, MemberState::Ended, None, None, "elena")),
+            ("kcccccccc", named(Agent::ClaudeCode, MemberState::Ended, None, None, "Elena")),
+        ],
+        &mut |_| {},
+    );
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", KEY], &pairs(&env))).output("ws run");
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    assert_eq!(view(&out)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": KEY, "name": "elena"}));
+    let (out_b, env_b) = h.stub(Agent::ClaudeCode, "b");
+    let o = Guarded::spawn(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", "kcccccccc"], &pairs(&env_b))).output("ws run");
+    assert!(o.status.success(), "{}", text(&o.stderr));
+    assert_eq!(view(&out_b)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": "kcccccccc"}));
+}
+
+#[test] // M§6, M§9a: `--name` reaches the record and the view, for both agents
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_hand_start_with_name_writes_the_member_name_to_the_record_and_the_view() {
+    let Some(h) = Harness::new() else { return };
+    let pane = split_in_workspace(&h, &mut |_| {});
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--name", "elena"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let key = pane_key(&h, &pane);
+    assert_eq!(view(&out)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": key, "name": "elena"}));
+    assert_eq!(member(&h, &key).unwrap().name, Some("elena".into()));
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::OpenCode, "o");
+    let o = Guarded::spawn(hand(&h, &pane, &["opencode", "--name", "ops"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let key = pane_key(&h, &pane);
+    assert_eq!(view(&out)["workspace"]["member"], json!({"ws_id": WS_ID, "pane": key, "name": "ops"}));
+    assert_eq!(member(&h, &key).unwrap().name, Some("ops".into()));
+}
+
+#[test] // M§6: a name that fails the grammar or is reserved exits 1 with one line and starts nothing
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_bad_or_reserved_member_name_exits_1_and_starts_nothing() {
+    let Some(h) = Harness::new() else { return };
+    let pane = split_in_workspace(&h, &mut |_| {});
+    let before = state_bytes(&h);
+    let long = "a".repeat(33);
+    for (i, n) in ["Elena", "1x", "a_b", "-a", long.as_str(), "all", "cli", "zygo", "kabcdefgh"].into_iter().enumerate() {
+        let (out, env) = h.stub(Agent::ClaudeCode, &format!("a{i}"));
+        let arg = format!("--name={n}");
+        let o = Guarded::spawn(hand(&h, &pane, &["claude", &arg], &pairs(&env))).output("hand start");
+        assert_eq!(o.status.code(), Some(1), "{n}: {}", text(&o.stderr));
+        assert_eq!(
+            text(&o.stderr),
+            format!("zygo: bad --name value `{n}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key\n")
+        );
+        assert!(!out.join("argv.json").exists(), "{n}");
+        assert_eq!(pane_key(&h, &pane), "", "{n}");
+        assert_eq!(state_bytes(&h), before, "{n}");
+    }
+    let n = "a".repeat(32);
+    let (_, env) = h.stub(Agent::ClaudeCode, "ok");
+    let arg = format!("--name={n}");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", &arg], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(member(&h, &pane_key(&h, &pane)).unwrap().name, Some(n));
+}
+
+#[test] // M§6: a name another member of the workspace holds exits 1 with one line and starts nothing
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_member_name_another_member_holds_exits_1_and_starts_nothing() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    up_state(&h, &[(KEY, named(Agent::ClaudeCode, MemberState::Ended, None, None, "elena"))], &mut |_| {});
+    let before = raw_member(&h, KEY);
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--name", "elena"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    assert_eq!(text(&o.stderr), taken("elena", KEY));
+    assert!(!out.join("argv.json").exists());
+    assert_eq!(raw_member(&h, KEY), before);
+    assert!(member(&h, &pane_key(&h, &pane)).is_none());
+}
+
+#[test] // M§6: the callback checks the name again under the lock; a holder there stops the launch (no v1 launch)
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn the_callback_refuses_a_member_name_taken_since_the_check() {
+    let Some(h) = Harness::new() else { return };
+    let (o, out, key) = refused_in_callback(&h, &["claude", "--name", "elena"], &mut |h, _| {
+        h.store(WS_ID)
+            .update_existing(Duration::from_secs(5), &mut |w| {
+                w.members.insert(KEY.into(), named(Agent::ClaudeCode, MemberState::Ended, None, None, "elena"));
+                Ok(())
+            })
+            .unwrap();
+    });
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    assert_eq!(text(&o.stderr).matches(&taken("elena", KEY)).count(), 1, "{}", text(&o.stderr));
+    assert!(!text(&o.stderr).contains(NOT_SAVED), "{}", text(&o.stderr));
+    assert!(!out.join("argv.json").exists());
+    assert!(member(&h, &key).is_none());
+}
+
+#[test] // M§6: `--name` outside a pane of a workspace exits 1 with one line and starts nothing
+fn member_name_outside_a_workspace_pane_exits_1_and_starts_nothing() {
+    let h = Harness::no_tmux();
+    for (kind, verb, stub) in [(Agent::ClaudeCode, "claude", "a"), (Agent::OpenCode, "opencode", "o")] {
+        let (out, env) = h.stub(kind, stub);
+        let mut extra = pairs(&env);
+        extra.push(no_check());
+        let o = Guarded::spawn(h.zygo(&[verb, "--name", "elena"], &extra)).output(verb);
+        assert_eq!(o.status.code(), Some(1), "{verb}: {}", text(&o.stderr));
+        assert_eq!(text(&o.stderr), NAME_NEEDS_PANE, "{verb}");
+        assert!(!out.join("argv.json").exists(), "{verb}");
+        assert!(!h.store(WS_ID).dir().exists(), "{verb}");
+    }
+}
+
+#[test] // M§6: the accepted resume keeps its saved member name when `--name` is not given
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn an_accepted_hand_resume_keeps_the_member_name_without_name() {
+    let Some(h) = Harness::new() else { return };
+    let first = workspace_session(&h, Some(KEY), Some(WS_ID));
+    up_state(&h, &[(KEY, named(Agent::ClaudeCode, MemberState::Resumable, Some("abc"), Some(OLD_ZS), "elena"))], &mut |_| {});
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &first, &["claude", "--", "--resume", "abc"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert_eq!(view(&out)["workspace"]["member"]["name"], "elena");
+    assert_eq!(member(&h, KEY).unwrap().name, Some("elena".into()));
+}
+
 #[test] // FIX-30, AU54, C6: the member wrapper's snapshots log the AU54 text and make no tmux call; the agent runs
 #[ignore = "timing: the agent launch has 2 s launcher probes"]
 fn au54_the_member_wrapper_logs_its_snapshots_and_makes_no_tmux_call() {
