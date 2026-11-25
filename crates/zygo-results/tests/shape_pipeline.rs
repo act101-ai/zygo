@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use zygo_results::Kind;
 use zygo_results::shape::{self, clean::clean, command::parse, ShapeInput, Shaped, Shaper, Step, SHAPE_MAX_BYTES};
 use Step::{ColorCodesRemoved as Color, ProgressLinesRemoved as Progress, RepeatedLinesCounted as Counted};
@@ -8,24 +7,61 @@ const DIFF: &str = "\x1b[1mdiff --git a/f b/f\x1b[0m\n--- a/f\n+++ b/f\n@@ -1 +1
 const DIFF_PLAIN: &str = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1,3 @@\n-old\r\n+x\n+x\n+x\n";
 const JSON: &str = "[\n  \x1b[0;39m1\x1b[0m,\n  1,\n  1,\n  1\n]\n";
 const JSON_PLAIN: &str = "[\n  1,\n  1,\n  1,\n  1\n]\n";
+const JSONL: &str = "\x1b[1m{\"a\":1}\x1b[0m\r\n{\"a\":1}\n{\"a\":1}\n";
+const JSONL_PLAIN: &str = "{\"a\":1}\r\n{\"a\":1}\n{\"a\":1}\n";
 
 fn input(cmd: Option<&str>, kind: Kind, threshold: u64) -> ShapeInput {
     ShapeInput { parsed: cmd.map(parse), kind, threshold }
 }
 
-/// Runs the pipeline, then the O-C9 line walk: each output line is an input
-/// line, a cleaned input line, or one of those plus ` [repeated <n> times]`, n >= 3.
+/// The reuse decision of `shape::run` (O§7.3).
+fn reuse_of(inp: &ShapeInput) -> bool {
+    inp.parsed.as_ref().is_some_and(|p| p.reuse) || matches!(inp.kind, Kind::Diff | Kind::Json | Kind::Jsonl)
+}
+
+/// O-C9 line walk, in order, one cursor over the source lines. The source is
+/// `clean(raw, reuse)` when it changes the text, else `raw`; `raw` when over `SHAPE_MAX_BYTES`.
+/// Each output line is the source line at the cursor (advance 1), or
+/// `<line> [repeated N times]` where the N source lines from the cursor equal `<line>` (advance N).
+/// At the end the cursor is at the end of the source.
+fn walk_ok(raw: &str, reuse: bool, out: &str) -> bool {
+    let cleaned = (raw.len() <= SHAPE_MAX_BYTES).then(|| clean(raw, reuse)).flatten().map(|c| c.0);
+    let src: Vec<&str> = cleaned.as_deref().unwrap_or(raw).split('\n').collect();
+    let mut i = 0;
+    for line in out.split('\n') {
+        if src.get(i) == Some(&line) {
+            i += 1;
+            continue;
+        }
+        let counted = line.strip_suffix(" times]").and_then(|l| l.rsplit_once(" [repeated "))
+            .and_then(|(b, d)| Some((b, d.parse::<usize>().ok()?)));
+        match counted {
+            Some((base, n)) if n > 0 && src.get(i..i + n).is_some_and(|run| run.iter().all(|l| *l == base)) => i += n,
+            _ => return false,
+        }
+    }
+    i == src.len()
+}
+
+/// Runs the pipeline, then asserts the O-C9 line walk on its output.
 fn shape(raw: &str, inp: &ShapeInput) -> Shaped {
     let out = shape::run(raw, inp);
-    let cleaned: Vec<String> = [false, true].into_iter().filter_map(|r| clean(raw, r).map(|c| c.0)).collect();
-    let mut known: HashSet<&str> = raw.split('\n').collect();
-    cleaned.iter().for_each(|c| known.extend(c.split('\n')));
-    for line in out.text.split('\n') {
-        let base = line.strip_suffix(" times]").and_then(|l| l.rsplit_once(" [repeated "))
-            .filter(|(_, n)| n.parse::<usize>().is_ok_and(|n| n >= 3)).map(|(b, _)| b);
-        assert!(known.contains(line) || base.is_some_and(|b| known.contains(b)), "{line:?}");
-    }
+    assert!(walk_ok(raw, reuse_of(inp), &out.text), "{:?}", out.text);
     out
+}
+
+#[test]
+fn line_walk_rejects_wrong_outputs() {
+    for wrong in [
+        "diff --git a/f b/f",
+        "",
+        "diff --git a/f b/f\n+x [repeated 99 times]\n",
+        "+x\n--- a/f\ndiff --git a/f b/f\n",
+        "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1,3 @@\n-old\n+x [repeated 3 times]\n",
+    ] {
+        assert!(!walk_ok(DIFF, true, wrong), "{wrong:?}");
+    }
+    assert!(walk_ok(DIFF, true, DIFF_PLAIN));
 }
 
 #[test]
@@ -45,7 +81,7 @@ fn reuse_text_differs_from_raw_only_by_removed_escapes() {
         (DIFF, DIFF_PLAIN, input(Some("git diff"), Kind::Text, T)),
         (DIFF, DIFF_PLAIN, input(None, Kind::Diff, T)),
         (JSON, JSON_PLAIN, input(None, Kind::Json, T)),
-        (JSON, JSON_PLAIN, input(None, Kind::Jsonl, T)),
+        (JSONL, JSONL_PLAIN, input(None, Kind::Jsonl, T)),
     ] {
         let out = shape(raw, &inp);
         assert_eq!(out.text, want, "{inp:?}");
@@ -82,8 +118,36 @@ fn raw_of_exactly_max_bytes_is_shaped() {
     raw.push_str(&"y".repeat(SHAPE_MAX_BYTES - raw.len()));
     assert_eq!(raw.len(), SHAPE_MAX_BYTES);
     let out = shape(&raw, &input(None, Kind::Text, T));
+    let n = SHAPE_MAX_BYTES / unit.len();
+    assert_eq!(out.text, format!("x [repeated {n} times]\n{}", "y".repeat(SHAPE_MAX_BYTES - n * unit.len())));
     assert_eq!(out.steps, vec![Color, Counted]);
+    assert_eq!(out.shaper, Some(Shaper::Dedup));
     assert!(!out.size_view);
+}
+
+#[test]
+fn raw_over_max_bytes_under_threshold_is_untouched() {
+    let unit = "\x1b[31mx\x1b[0m\n";
+    let mut raw = unit.repeat(SHAPE_MAX_BYTES / unit.len() + 1);
+    raw.truncate(SHAPE_MAX_BYTES + 2);
+    assert_eq!(raw.len(), SHAPE_MAX_BYTES + 2);
+    let out = shape(&raw, &input(None, Kind::Text, u64::MAX));
+    assert_eq!(out, Shaped { text: raw.clone(), steps: vec![], shaper: None, size_view: false });
+}
+
+#[test]
+fn threshold_edges() {
+    // one byte over
+    let out = shape("ab", &input(None, Kind::Text, 1));
+    assert_eq!(out.shaper, Some(Shaper::Size));
+    assert!(out.size_view);
+    // threshold 0: empty text is not over; one byte is
+    let out = shape("", &input(None, Kind::Text, 0));
+    assert_eq!(out.shaper, None);
+    assert!(!out.size_view);
+    let out = shape("x", &input(None, Kind::Text, 0));
+    assert_eq!(out.shaper, Some(Shaper::Size));
+    assert!(out.size_view);
 }
 
 #[test]
