@@ -1207,3 +1207,16 @@ fn derive_scores_overflow_fails_closed() {
     derive::scores(&r, &g);
 }
 
+#[test]
+fn check_8_duplicate_grade_any_met_no_item_8() {
+    let (r, mut g, c) = base();
+    let mut e = entry(&mut g[0], "A-1.2").clone();
+    e.status = Status::NotMet;
+    e.evidence = vec![];
+    e.reason = Some("no key helper".into());
+    let at = g[0].grade.iter().position(|x| x.criterion == "A-1.2").unwrap();
+    g[0].grade.insert(at, e); // not-met first, met second
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
+    assert_eq!(items(&f), set(&[2]), "{f:?}");
+}
+

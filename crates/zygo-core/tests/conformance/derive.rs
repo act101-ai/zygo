@@ -94,9 +94,12 @@ fn capability_of<'a>(reg: &'a Registry, id: &str) -> &'a Capability {
     reg.capability.iter().find(|c| c.id == id).unwrap_or_else(|| panic!("no capability `{id}` in the registry"))
 }
 
-/// The grade of a criterion: the first entry for it; `None` when it has no grade (counts as not met).
+/// The grade of a criterion: a `met` entry for it when any is `met` (the rule of check item 6), else its first
+/// entry; `None` when it has no grade (counts as not met). Check item 2 faults a criterion graded twice.
 fn grade_of<'a>(g: &'a GradeFile, criterion: &str) -> Option<&'a GradeEntry> {
-    g.grade.iter().find(|e| e.criterion == criterion)
+    let mut entries = g.grade.iter().filter(|e| e.criterion == criterion);
+    let first = entries.next()?;
+    Some(std::iter::once(first).chain(entries).find(|e| e.status == Status::Met).unwrap_or(first))
 }
 
 /// `(met, applicable)` of a capability: applicable = the criteria that are not `n/a`.
