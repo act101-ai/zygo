@@ -26,19 +26,39 @@ nontrivial() {
 }
 
 [ -s "$P" ] || fail "$P is missing or empty"
+! grep -q "$(printf '\r')" "$P" || fail "$P has CRLF line endings"
 [ -s "$SPEC" ] || fail "$SPEC is missing"
 
-# HDR: one "name<TAB>version" line per "<Name>: <version>" header line before the first "## ".
+# HDR: one "name<TAB>value" line per "<Name>: <value>" header line before the first "## ", the
+# value trimmed at its ends. A row's agent needs a value that is a bare dotted version.
 HDR=$(awk '/^## /{exit}
-  /^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]: *[^ ]+ *$/ {
-    i = index($0, ":"); v = substr($0, i + 1); gsub(/ /, "", v); print substr($0, 1, i - 1) "\t" v
+  /^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]:/ {
+    i = index($0, ":"); v = substr($0, i + 1); gsub(/^[ \t]+|[ \t]+$/, "", v); print substr($0, 1, i - 1) "\t" v
   }' "$P")
 
-# version_of <name>: the header version for that name (the first line wins), or nothing.
+# version_of <name>: the header value for that name (the first line wins), or nothing.
 version_of() { printf '%s\n' "$HDR" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit }'; }
 
-# ROWS: the Id cell of every table row, in file order.
-ROWS=$(awk -F'|' '/^\| / { id = $2; gsub(/ /, "", id); if (id != "Id") print id }' "$P")
+# ROWS: "line<TAB>id" for every row of the Results table (its header row starts "| Id | Item |";
+# it ends at the first line that does not start with optional blanks and "|"), the Id cell
+# trimmed at its ends, in file order. The separator row right after the header row is skipped.
+ROWS=$(awk -F'|' '
+  !t && /^\| Id \| Item \|/ { t = 1; next }
+  t == 1 { t = 2; if ($0 ~ /^[ \t]*\|[-:| \t]*$/) next }
+  t == 2 { if ($0 !~ /^[ \t]*\|/) exit; id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id }
+' "$P")
+[ -n "$ROWS" ] || fail "$P has no Results table (a header row '| Id | Item |' and its rows)"
+TAB=$(printf '\t')
+while IFS=$TAB read -r ln id; do
+  printf '%s\n' "$id" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]*$' ||
+    fail "$P:$ln: row id '$id' is empty or not of the form [A-Za-z0-9][A-Za-z0-9-]*"
+done <<EOF_ROWS
+$ROWS
+EOF_ROWS
+IDLIST=$(printf '%s\n' "$ROWS" | cut -f2)
+# rows_of <id>: how many rows of the Results table have that id.
+rows_of() { printf '%s\n' "$IDLIST" | grep -cxF -- "$1"; }
+CHECKED=""
 
 trim() { sed 's/^ *//; s/ *$//'; }
 
@@ -48,14 +68,16 @@ S19A=$(awk '/^## 19a\. /{f=1;next} /^## 20\. /{f=0} f' "$SPEC")
 S105=$(awk '/^### 10\.5 /{f=1;next} /^### 10\.6 /{f=0} f' "$SPEC")
 
 for id in $IDS $WIDS; do
-  n=$(grep -c "^| $id |" "$P")
+  n=$(rows_of "$id")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
 done
 
-for id in $ROWS; do
-  n=$(grep -c "^| $id |" "$P")
+# Each entry is "line:id"; an id holds no blank and no colon (checked above).
+for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
+  ln=${e%%:*} id=${e#*:}
+  n=$(rows_of "$id")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
-  row=$(grep "^| $id |" "$P")
+  row=$(sed -n "${ln}p" "$P")
   agent=$(echo "$row" | awk -F'|' '{print $4}' | trim)
   ver=$(echo "$row" | awk -F'|' '{print $5}' | trim)
   date=$(echo "$row" | awk -F'|' '{print $6}' | trim)
@@ -73,7 +95,9 @@ for id in $ROWS; do
     a=$(echo "$agent" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
     v=$(echo "$ver" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
     want=$(version_of "$a")
-    [ -n "$want" ] || fail "$id: agent '$a' has no header line '$a: <version>'"
+    [ -n "$want" ] || fail "$id: agent '$a' has no header line '$a: <version>' before the first '## ' of $P"
+    printf '%s\n' "$want" | grep -Eq '^[0-9]+(\.[0-9]+)*$' ||
+      fail "$id: header '$a: $want': header version must be a bare dotted version"
     # The rule is chosen per header name (K§6.2.5): an agent version is a minimum (operator,
     # 2026-11-21); act-lite stays exact; tmux is a minimum with at most one letter after it.
     case "$a" in
@@ -120,6 +144,7 @@ EOF_PATHS
       WSKIP=1
     fi ;;
   esac
+  CHECKED="${CHECKED:+$CHECKED }$id"
 done
 
 for f in fixtures/claude-code/help.txt fixtures/opencode/help.txt \
@@ -212,7 +237,5 @@ EOF_HOSTS
 [ -n "${N2_FORBIDDEN_NAMES:-}" ] || echo "check-premises: note: N2_FORBIDDEN_NAMES not set; name scan skipped"
 
 [ -z "$WSKIP" ] || echo "check-premises: note: $WSPEC not found; W§17 result check skipped"
-# shellcheck disable=SC2086
-set -- $ROWS
-echo "check-premises: ok ($*)"
+echo "check-premises: ok ($CHECKED)"
 exit 0
