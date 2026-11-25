@@ -224,8 +224,9 @@ Why: a resume that read the default branch again would give a running conversati
 - **§11.3 validation.** The same rules, by the proxy that will serve: each override key is a bundle role; each model is in the catalog and servable on the agent's dialect; each disabled role is a bundle role, listed once, and not `main_role`. In serve mode the server's catalog decides (§6.1). An invalid profile: the existing line, and the launch goes on without the profile (§11.3; `crates/zygo-launch/src/launcher.rs:331-332`).
 - **When the launcher reads.** Only when the requested profile name is in neither the user nor the team config (`launcher.rs:326-328`), so a launch with no repository profile makes no extra git call. A member with a pin reads its pin (R§7.4). Any other launch reads the default branch. Lines of the default-branch read, each once, in place of `profile <n> not found; launching without it`:
   - not approved: `zygo: profile <n> is in this repository's workspace files, which are not approved on this machine (digest <12>); launching without it; see zygo workspace approve`;
-  - invalid: `zygo: profile <n>: this repository's workspace files are invalid (<why>); launching without it`.
-- **Passthrough.** A launch in passthrough sends no role names (§12.3), so a profile, from any source, does not apply to it (R§9.5).
+  - invalid: `zygo: profile <n>: this repository's workspace files are invalid (<why>); launching without it`;
+  - not read (R§6.1): `zygo: profile <n>: this repository's workspace files were not read (<why>); launching without it`.
+- **Passthrough.** A launch in passthrough sends no role names (§12.3), so a profile, from any source, does not apply to it (R§9.5). A requested profile name gives `zygo: profile <n> does not apply in passthrough`, nothing is read, and the launch goes on.
 - **§11.4 effects.** No change. The usage row records the profile name.
 
 ## 9. Members (P3-12)
@@ -489,3 +490,4 @@ Each check is a test in temp directories with temp git repositories (a bare "ori
 ## Change log
 
 - 2026-11-24 · R§9.1 · operator · config check refuses job on a non-agent pane, so a shell pane cannot take the orchestrator slot
+- 2026-11-25 · R§8 · author's call (node WD-13) · a named profile that does not apply is reported, as R§9.5 does for up; the not-read line of the launcher's read is listed with the other two

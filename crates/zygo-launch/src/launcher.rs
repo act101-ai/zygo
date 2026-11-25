@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo_config::profile::{requested, select, validate, Profile};
+use zygo_config::profile::{requested, select, valid_name, validate, Profile};
 use zygo_config::keys::default_store;
 use zygo_config::repo_def::{check_default, short, GitRunner, SystemGit, Use};
 use zygo_config::{load, Dialect, LoadContext, Merged};
@@ -335,11 +335,24 @@ impl Launcher {
         let mut cfg = cfg;
         let mut profile = None;
         let known = known_plugins(&selection(&cfg, None), &zygo_plugins::store::state(&opts.paths.plugin_store));
-        // R§8 "Passthrough": no profile from any source, and no read.
-        let name = if opts.passthrough { None } else { requested(&cfg, opts.profile.as_deref()) };
+        let name = requested(&cfg, opts.profile.as_deref());
+        // R§8 "Passthrough": no profile from any source, and no read; a requested name is reported.
+        let name = match name {
+            Some(n) if opts.passthrough => {
+                out.line(&format!("zygo: profile {} does not apply in passthrough", zygo_core::esc(&n)));
+                None
+            }
+            n => n,
+        };
         if let Some(n) = name {
             if !cfg.config.profile.contains_key(&n) {
-                match repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref()) {
+                // A name that no profile can have reads nothing.
+                let read = if valid_name(&n) {
+                    repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref())
+                } else {
+                    Err(format!("zygo: profile {} not found; launching without it", zygo_core::esc(&n)))
+                };
+                match read {
                     Ok(m) => cfg = m,
                     Err(line) => out.line(&line),
                 }
@@ -855,23 +868,24 @@ fn definition_git(#[allow(unused_variables)] opts: &LaunchOpts) -> Arc<dyn GitRu
     Arc::new(SystemGit)
 }
 
-/// R§8 "When the launcher reads": one default-branch read and check (R§7.3) for profile `n`, which neither the user
+/// R§8 "When the launcher reads": one default-branch read and check (R§7.3) for profile `name`, which neither the user
 /// nor the team config has. `Ok`: `cfg` with the approved definition added (`Merged::with_definition`). `Err`: the one
 /// line printed in place of the profile.
 fn repository_profile(
     opts: &LaunchOpts,
     cfg: &Merged,
-    n: &str,
+    name: &str,
     top: Option<&Path>,
     common_dir: Option<&Path>,
 ) -> Result<Merged, String> {
+    let n = zygo_core::esc(name);
     let not_found = format!("zygo: profile {n} not found; launching without it");
     let (Some(top), Some(cd)) = (top, common_dir) else {
         return Err(not_found);
     };
     match check_default(top, &workspace_id(cd), &opts.paths.approvals_file, definition_git(opts).as_ref()) {
-        Use::Approved { def, .. } if def.profiles.contains_key(n) => Ok(cfg.with_definition(&def)),
-        Use::NotApproved { digest, def, .. } if def.profiles.contains_key(n) => Err(format!(
+        Use::Approved { def, .. } if def.profiles.contains_key(name) => Ok(cfg.with_definition(&def)),
+        Use::NotApproved { digest, def, .. } if def.profiles.contains_key(name) => Err(format!(
             "zygo: profile {n} is in this repository's workspace files, which are not approved on this machine (digest {}); launching without it; see zygo workspace approve",
             short(&digest)
         )),

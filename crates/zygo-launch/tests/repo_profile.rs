@@ -76,7 +76,7 @@ fn fx(profiles: &[(&str, &str)]) -> Fx {
         std::fs::write(dir.join(format!("{n}.toml")), text).unwrap();
     }
     git(&src, &["add", "-A"]);
-    git(&src, &["commit", "-q", "-m", "profiles"]);
+    git(&src, &["commit", "-q", "--allow-empty", "-m", "profiles"]);
     git(&root, &["clone", "-q", "--bare", "src", "origin.git"]);
     git(&root, &["clone", "-q", "origin.git", "work"]);
     let cwd = root.join("work");
@@ -110,6 +110,20 @@ impl GitRunner for Rec {
         self.0.lock().unwrap().push(args.iter().map(|a| a.to_string()).collect());
         SystemGit.git(top, args, deadline)
     }
+}
+
+impl Rec {
+    /// The number of reads: each default-branch read starts with one `symbolic-ref` call (R§6.1 step 2).
+    fn reads(&self) -> usize {
+        self.0.lock().unwrap().iter().filter(|c| c[0] == "symbolic-ref").count()
+    }
+    fn calls(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+}
+
+fn count(err: &str, line: &str) -> usize {
+    err.lines().filter(|l| *l == line).count()
 }
 
 /// Fails every call with `tool not found`.
@@ -202,6 +216,7 @@ fn approved_repository_profile_sends_its_overrides() {
     assert_eq!(s.view.profile.as_deref(), Some("rust"));
     assert!(!s.err.contains("profile"), "{}", s.err);
     assert!(rec.0.lock().unwrap().iter().any(|c| c[0] == "ls-tree"), "the read went through the hook");
+    assert_eq!(rec.reads(), 1, "one read per launch (R§18 item 6)");
 }
 
 #[test]
@@ -286,18 +301,28 @@ fn passthrough_applies_no_profile_from_any_source() {
     assert_eq!(s.profile, None);
     assert_eq!(s.view.profile, None);
     assert!(s.view.disabled_roles.is_empty());
-    assert!(rec.0.lock().unwrap().is_empty());
-    assert!(!s.err.contains("profile"), "{}", s.err);
+    assert_eq!(rec.calls(), 0);
+    assert_eq!(count(&s.err, "zygo: profile rust does not apply in passthrough"), 1, "{}", s.err);
+    assert_eq!(s.err.matches("profile").count(), 1, "{}", s.err);
     // user source, by flag and by default_profile
     std::fs::write(&fx.paths.config_file, "[user]\ndefault_profile = \"mine\"\n[profile.mine]\ndisabled = [\"review\"]\n").unwrap();
     for flag in [Some("mine"), None] {
-        let s = launch(&fx, Arc::new(Rec::default()), |o| {
+        let rec = Arc::new(Rec::default());
+        let s = launch(&fx, rec.clone(), |o| {
             o.profile = flag.map(String::from);
             o.passthrough = true;
         });
         assert_eq!(s.profile, None, "{flag:?}");
         assert!(s.view.disabled_roles.is_empty(), "{flag:?}");
+        assert_eq!(rec.calls(), 0, "{flag:?}");
+        assert_eq!(count(&s.err, "zygo: profile mine does not apply in passthrough"), 1, "{flag:?}: {}", s.err);
     }
+    // `--profile none` requests nothing: no line
+    let s = launch(&fx, Arc::new(Rec::default()), |o| {
+        o.profile = Some("none".into());
+        o.passthrough = true;
+    });
+    assert!(!s.err.contains("profile"), "{}", s.err);
 }
 
 #[test]
@@ -323,4 +348,123 @@ fn files_without_the_name_print_not_found() {
         s.err
     );
     assert_eq!(s.profile, None);
+}
+
+#[test]
+fn files_without_the_name_print_not_found_when_not_approved() {
+    let fx = fx(&[("go", RUST)]);
+    let rec = Arc::new(Rec::default());
+    let s = launch(&fx, rec.clone(), |o| o.profile = Some("rust".into()));
+    assert_eq!(count(&s.err, "zygo: profile rust not found; launching without it"), 1, "{}", s.err);
+    assert!(!s.err.contains("not approved"), "{}", s.err);
+    assert_eq!(s.profile, None);
+    assert_eq!(rec.reads(), 1);
+}
+
+#[test]
+fn absent_files_print_not_found() {
+    let fx = fx(&[]);
+    let rec = Arc::new(Rec::default());
+    let s = launch(&fx, rec.clone(), |o| o.profile = Some("rust".into()));
+    assert_eq!(count(&s.err, "zygo: profile rust not found; launching without it"), 1, "{}", s.err);
+    assert_eq!(s.profile, None);
+    assert_eq!(rec.reads(), 1);
+}
+
+#[test]
+fn no_checkout_prints_not_found_and_reads_nothing() {
+    let fx = fx(&[("rust", RUST)]);
+    approve(&fx);
+    let rec = Arc::new(Rec::default());
+    // The test hook says "no repository": no top level and no common dir.
+    let s = launch(&fx, rec.clone(), |o| {
+        o.profile = Some("rust".into());
+        o.top = Some(None);
+    });
+    assert_eq!(count(&s.err, "zygo: profile rust not found; launching without it"), 1, "{}", s.err);
+    assert_eq!(s.profile, None);
+    assert_eq!(rec.calls(), 0);
+}
+
+#[test]
+fn default_profile_that_only_the_repository_has_is_read_and_applied() {
+    let fx = fx(&[("rust", RUST)]);
+    approve(&fx);
+    std::fs::write(&fx.paths.config_file, "[user]\ndefault_profile = \"rust\"\n").unwrap();
+    let rec = Arc::new(Rec::default());
+    let s = launch(&fx, rec.clone(), |_| {});
+    let p = s.profile.expect("the profile was sent");
+    assert_eq!(p.name, "rust");
+    assert_eq!(p.disabled, ["design"]);
+    assert_eq!(s.config.roles["code"].model, "claude-haiku-5-5");
+    assert!(!s.err.contains("profile"), "{}", s.err);
+    assert_eq!(rec.reads(), 1);
+}
+
+#[test]
+fn invalid_name_reads_nothing_and_prints_not_found() {
+    let fx = fx(&[("rust", RUST)]);
+    approve(&fx);
+    for (name, line) in [
+        ("Foo_Bar", "zygo: profile Foo_Bar not found; launching without it"),
+        ("a\nb", "zygo: profile a\\nb not found; launching without it"),
+    ] {
+        let rec = Arc::new(Rec::default());
+        let s = launch(&fx, rec.clone(), |o| o.profile = Some(name.into()));
+        assert_eq!(count(&s.err, line), 1, "{name:?}: {}", s.err);
+        assert_eq!(s.profile, None);
+        assert_eq!(rec.calls(), 0, "{name:?}");
+    }
+}
+
+/// A team server on 127.0.0.1:0 with one token and `extra` (as tests/serve_client.rs:111); the token.
+fn team_server(root: &Path, extra: &str) -> (zygo_proxy::serve::ServeHandle, String) {
+    let (token, hash) = zygo_proxy::team::new_token();
+    let dir = root.join("server");
+    let config_file = dir.join("config.toml");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&config_file, format!("[serve]\ntokens = [{{ label = \"t\", sha256 = \"{hash}\" }}]\n{extra}")).unwrap();
+    let paths = Paths {
+        config_file: config_file.clone(),
+        cache_dir: dir.join("cache"),
+        data_dir: dir.join("data"),
+        sessions_dir: dir.join("cache/sessions"),
+        marketplaces_dir: dir.join("cache/marketplaces"),
+        plugin_store: dir.join("data/plugins"),
+        approvals_file: dir.join("data/approvals.toml"),
+        usage_db: dir.join("data/usage.db"),
+    };
+    let ctx = zygo_config::LoadContext { paths, repo: None, team: None };
+    let h = zygo_proxy::serve::start(zygo_proxy::serve::ServeOpts {
+        listen: "127.0.0.1:0".into(),
+        tls: None,
+        config_file,
+        load: Arc::new(move || Ok(zygo_config::load_with_builtin(&ctx, builtin())?)),
+        report: Arc::new(|_: &str| {}),
+        pid_file: None,
+        signals: false,
+        start: zygo_proxy::server::StartOpts { usage_db: Some(dir.join("data/usage.db")), ..Default::default() },
+    })
+    .unwrap();
+    (h, token)
+}
+
+#[test]
+fn team_preset_of_the_same_name_is_used_and_nothing_is_read() {
+    let fx = fx(&[("rust", RUST)]);
+    approve(&fx);
+    let (h, token) = team_server(&fx.root, "[profile.rust]\ndisabled = [\"review\"]\n");
+    std::fs::write(&fx.paths.config_file, "[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n").unwrap();
+    let rec = Arc::new(Rec::default());
+    let s = launch(&fx, rec.clone(), |o| {
+        o.profile = Some("rust".into());
+        o.server = Some(h.url().to_string());
+        o.env.0.push(("ZYGO_TEAM_TOKEN".into(), token.clone().into()));
+    });
+    h.shutdown();
+    let p = s.profile.expect("the team preset was sent");
+    assert_eq!(p.disabled, ["review"]);
+    assert!(p.overrides.is_empty());
+    assert!(!s.err.contains("profile"), "{}", s.err);
+    assert_eq!(rec.calls(), 0);
 }
