@@ -11,6 +11,7 @@ fn trim(ts: i64, kept: u64) -> TrimRow {
         shaper: Some("libtest".into()) }
 }
 
+// Relies on `report` reading savings first (see the doc on `Store::report`).
 /// FX-8: a trim written by a second connection while `report` runs (from inside the rates callback) shows in
 /// neither the summary nor the savings figures.
 #[test]

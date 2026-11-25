@@ -136,7 +136,9 @@ fn readback_events(tx: &Transaction<'_>, f: &Filter, cols: &[String]) -> Result<
 }
 
 impl Store {
-    /// O§6.6: the summary and the savings of `f` from one read snapshot (FX-8).
+    /// O§6.6: the summary and the savings of `f` from one read snapshot (FX-8). Both values come from one read
+    /// transaction so the figures describe one row set. Savings is read first so that `tests/report_snapshot.rs`
+    /// can see a write made from the rates callback; do not split the transaction or reverse the order.
     pub fn report(&self, f: &Filter, rates: &dyn Fn(&str, &str, u64) -> Option<Rates>) -> Result<(Summary, Savings)> {
         // One deferred read transaction. Savings first: `rates` runs inside it, so the summary reads after
         // the callback and only the shared snapshot keeps a concurrent write out of both.
