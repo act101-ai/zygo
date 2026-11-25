@@ -1,9 +1,9 @@
 //! Repository id (§8.2 step 1) and bounded, pinned `git` calls.
 
 use std::ffi::OsStr;
-use std::io::{BufRead, Read};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -169,7 +169,7 @@ fn hand(e: &[u8], deadline: Instant, each: &mut dyn FnMut(&[u8]) -> Flow, run: &
 /// passed and the run ends `Done`. A panic in `each` kills and reaps the group. Memory holds at most two entries: the
 /// one in `each` and the one being read.
 pub fn run_stream(cmd: Command, deadline: Instant, each: &mut dyn FnMut(&[u8]) -> Flow) -> Result<Streamed, RunError> {
-    let (child, out, err) = spawn_piped(cmd, deadline, true)?;
+    let (child, out, err) = spawn_piped(cmd, deadline, true, Stdio::null())?;
     let mut run = Running { child, armed: true };
     let erx = drain_err(err);
     // The callback is not `Send`, so it runs on this thread; the reader hands over one entry at a time, and a
@@ -239,7 +239,7 @@ pub fn run_stream(cmd: Command, deadline: Instant, each: &mut dyn FnMut(&[u8]) -
 /// and once the child has exited, before it is reaped. On Windows the process tree is killed at the deadline.
 fn run_bounded_out(cmd: Command, deadline: Instant, cut: Option<u64>) -> Result<Ran, RunError> {
     let group = cut.is_some();
-    let (mut child, mut out, err) = spawn_piped(cmd, deadline, group)?;
+    let (mut child, mut out, err) = spawn_piped(cmd, deadline, group, Stdio::null())?;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let limit = cut.map_or(u64::MAX, |n| n.saturating_add(1));
@@ -265,13 +265,13 @@ fn run_bounded_out(cmd: Command, deadline: Instant, cut: Option<u64>) -> Result<
     Ok(Ran { ok, out, cut: over, err })
 }
 
-/// Spawns `cmd` with stdin null and stdout and stderr piped, in its own process group on unix when `group`.
+/// Spawns `cmd` with the given stdin and stdout and stderr piped, in its own process group on unix when `group`.
 /// `TimedOut` before any spawn when `deadline` is past; `NotRun` when the spawn fails.
-fn spawn_piped(mut cmd: Command, deadline: Instant, group: bool) -> Result<(Child, ChildStdout, ChildStderr), RunError> {
+fn spawn_piped(mut cmd: Command, deadline: Instant, group: bool, stdin: Stdio) -> Result<(Child, ChildStdout, ChildStderr), RunError> {
     if Instant::now() >= deadline {
         return Err(RunError::TimedOut);
     }
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(unix)]
     if group {
         std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
@@ -285,6 +285,101 @@ fn spawn_piped(mut cmd: Command, deadline: Instant, group: bool) -> Result<(Chil
         return Err(RunError::Failed);
     };
     Ok((child, out, err))
+}
+
+/// The size of each stdout chunk that the [`Piped`] reader hands over.
+const PIPED_CHUNK: usize = 64 * 1024;
+
+/// A running process that answers requests on stdin (a request-and-reply form of [`run_whole`]), in its own process
+/// group on unix (its tree on Windows). A reader thread hands stdout over in 64 KiB chunks through a channel that holds
+/// one chunk, so stdout that is not asked for stays in the pipe. Every wait ends at `deadline` (the group is killed,
+/// `TimedOut`). Dropping it kills the group (unix) or the tree (Windows) and reaps the process.
+pub struct Piped {
+    run: Running,
+    stdin: ChildStdin,
+    rx: mpsc::Receiver<Vec<u8>>,
+    buf: Vec<u8>,
+    deadline: Instant,
+}
+
+/// Spawns `cmd` with stdin, stdout and stderr piped, as in [`run_whole`]: `TimedOut` before any spawn when the
+/// deadline is past, `NotRun` when the spawn fails. Stderr is drained and not kept.
+pub fn run_piped(cmd: Command, deadline: Instant) -> Result<Piped, RunError> {
+    let (child, mut out, err) = spawn_piped(cmd, deadline, true, Stdio::piped())?;
+    let mut run = Running { child, armed: true };
+    // Without a stdin pipe the guard kills and reaps the process.
+    let stdin = run.child.stdin.take().ok_or(RunError::Failed)?;
+    drop(drain_err(err));
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
+    std::thread::spawn(move || {
+        loop {
+            let mut chunk = vec![0; PIPED_CHUNK];
+            match out.read(&mut chunk) {
+                Ok(0) => return,
+                Ok(n) => {
+                    chunk.truncate(n);
+                    if tx.send(chunk).is_err() {
+                        return; // the receiver is gone: the process was dropped
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => return,
+            }
+        }
+    });
+    Ok(Piped { run, stdin, rx, buf: Vec::new(), deadline })
+}
+
+impl Piped {
+    /// Writes `bytes` to stdin and flushes; `Failed` when the write fails (the process ended).
+    pub fn send(&mut self, bytes: &[u8]) -> Result<(), RunError> {
+        self.stdin.write_all(bytes).and_then(|()| self.stdin.flush()).map_err(|_| RunError::Failed)
+    }
+
+    /// The next stdout line, without its `\n`; `Failed` when no `\n` is in the first `max + 1` bytes or stdout ends.
+    pub fn read_line(&mut self, max: usize) -> Result<Vec<u8>, RunError> {
+        loop {
+            let seen = self.buf.len().min(max.saturating_add(1));
+            if let Some(i) = self.buf[..seen].iter().position(|&b| b == b'\n') {
+                let mut line: Vec<u8> = self.buf.drain(..=i).collect();
+                line.pop();
+                return Ok(line);
+            }
+            if self.buf.len() > max {
+                return Err(RunError::Failed);
+            }
+            self.fill()?;
+        }
+    }
+
+    /// The next `n` bytes of stdout; `Failed` when stdout ends first.
+    pub fn read_exact(&mut self, n: usize) -> Result<Vec<u8>, RunError> {
+        while self.buf.len() < n {
+            self.fill()?;
+        }
+        Ok(self.buf.drain(..n).collect())
+    }
+
+    /// Adds the next stdout chunk to `buf`: `TimedOut` at the deadline (the group is killed), `Failed` at the end of
+    /// stdout.
+    fn fill(&mut self) -> Result<(), RunError> {
+        let now = Instant::now();
+        if now >= self.deadline {
+            self.run.stop();
+            return Err(RunError::TimedOut);
+        }
+        match self.rx.recv_timeout(self.deadline - now) {
+            Ok(chunk) => {
+                self.buf.extend_from_slice(&chunk);
+                Ok(())
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.run.stop();
+                Err(RunError::TimedOut)
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(RunError::Failed),
+        }
+    }
 }
 
 /// Reads up to 64 KiB of `err` on a thread, drains the rest, and sends the kept bytes.
@@ -348,7 +443,7 @@ fn wait_bounded(child: &mut Child, deadline: Instant, group: bool) -> Result<Opt
 
 /// `<program> -c core.fsmonitor=false -C <cwd> <args>` on `git_command_for`, with `GIT_OPTIONAL_LOCKS=0` and
 /// `GIT_TERMINAL_PROMPT=0`.
-fn git_cmd(program: &OsStr, cwd: &Path, args: &[&str]) -> Command {
+pub(crate) fn git_cmd(program: &OsStr, cwd: &Path, args: &[&str]) -> Command {
     let mut c = zygo_config::repo_file::git_command_for(program);
     c.args(["-c", "core.fsmonitor=false", "-C"]).arg(cwd).args(args);
     c.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0");
