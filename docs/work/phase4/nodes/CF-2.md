@@ -92,7 +92,7 @@ Beta's total is (3 × 1 + 2 × 0 + 1 × 1) ÷ 6 = 2/3 → 66 (rounded down, not 
 
 ### Steps
 
-- [ ] **1. Module and a synthetic-input helper.** Create `crates/zygo-core/tests/conformance/derive.rs` with the doc line `//! Derived values (K§6.2.4): cell, scores, bar, rollup and release state.`, `use crate::model::*;`, and the types and four signatures of "Interfaces", each body `todo!()`. In `conformance.rs`, after the `mod model;` block (`:2-4`), add:
+- [x] **1. Module and a synthetic-input helper.** Create `crates/zygo-core/tests/conformance/derive.rs` with the doc line `//! Derived values (K§6.2.4): cell, scores, bar, rollup and release state.`, `use crate::model::*;`, and the types and four signatures of "Interfaces", each body `todo!()`. In `conformance.rs`, after the `mod model;` block (`:2-4`), add:
 
   ```rust
   #[allow(dead_code)] // CF-3 reads the rest
@@ -101,7 +101,9 @@ Beta's total is (3 × 1 + 2 × 0 + 1 × 1) ÷ 6 = 2/3 → 66 (rounded down, not 
   ```
   and, after `use model::*;`, `use derive::{Bar, Cell, Counts, Grade, Scores, Unmet};`. Add the test helper `fn synth(caps: &[(Tier, &[Status])]) -> (Registry, GradeFile)`. Capability `i` (1-based, list order) is `A-{i}`, name `c`, standard `s`. Its criterion `j` (1-based) is `A-{i}.{j}`, text `t{i}.{j}`. No bar exceptions. The grade file: client `synth`, name `Synth`, version `1.0.0`, one `CellUrl` per capability with url `https://example.com/{i}`, one grade per criterion with the given status, evidence empty, reason `Some("r{i}.{j}")` for `NotMet` and `Na`, `None` for `Met`. Check: `cargo test -p zygo-core --test conformance --no-run --locked` exits 0, and `cargo test -p zygo-core --test conformance --locked` → 65 passed.
 
-- [ ] **2. Cell tests (failing).** Add to `conformance.rs`:
+  Done: `--no-run` exit 0; the target 65 passed (temporary unused warnings until steps 3-10).
+
+- [x] **2. Cell tests (failing).** Add to `conformance.rs`:
 
   ```rust
   #[test]
@@ -138,9 +140,13 @@ Beta's total is (3 × 1 + 2 × 0 + 1 × 1) ÷ 6 = 2/3 → 66 (rounded down, not 
   ```
   Run `cargo test -p zygo-core --test conformance derive_cell` → the 3 tests fail (panic `not yet implemented`).
 
-- [ ] **3. Implement `derive::cell`** by the "Cell" rule. Run `cargo test -p zygo-core --test conformance derive_cell` → 3 passed.
+  Done: failed first: 3 failed, each `not yet implemented` in `derive.rs`.
 
-- [ ] **4. Score tests (failing).** Add:
+- [x] **3. Implement `derive::cell`** by the "Cell" rule. Run `cargo test -p zygo-core --test conformance derive_cell` → 3 passed.
+
+  Done: 3 passed.
+
+- [x] **4. Score tests (failing).** Add:
 
   ```rust
   fn pct(t: Option<u32>, c: Option<u32>, s: Option<u32>, e: Option<u32>) -> Scores {
@@ -200,9 +206,13 @@ Beta's total is (3 × 1 + 2 × 0 + 1 × 1) ÷ 6 = 2/3 → 66 (rounded down, not 
   ```
   Run `cargo test -p zygo-core --test conformance derive_scores` → the 4 tests fail (`not yet implemented`).
 
-- [ ] **5. Implement `derive::scores`** by the "Scores" rule. Use a private exact fraction `struct Frac { num: u128, den: u128 }` (den > 0), reduced by the gcd after each add, multiply and divide. Tier score = (Σ met_i/app_i) ÷ n over the tier's applicable cells; total = (Σ w × tier) ÷ Σ w; percent = `(100 * num / den) as u32` (integer division, so ⌊·⌋), applied once to each of the four fractions. `scores` reads no `f64` and never calls `cell(..).value`. Run `cargo test -p zygo-core --test conformance derive_scores` → 4 passed.
+  Done: failed first: 4 failed, each `not yet implemented`.
 
-- [ ] **6. Bar tests (failing).** Add:
+- [x] **5. Implement `derive::scores`** by the "Scores" rule. Use a private exact fraction `struct Frac { num: u128, den: u128 }` (den > 0), reduced by the gcd after each add, multiply and divide. Tier score = (Σ met_i/app_i) ÷ n over the tier's applicable cells; total = (Σ w × tier) ÷ Σ w; percent = `(100 * num / den) as u32` (integer division, so ⌊·⌋), applied once to each of the four fractions. `scores` reads no `f64` and never calls `cell(..).value`. Run `cargo test -p zygo-core --test conformance derive_scores` → 4 passed.
+
+  Done: 4 passed (89 / 96 / 75 / 94; rounded first 88; exact mean 55).
+
+- [x] **6. Bar tests (failing).** Add:
 
   ```rust
   fn exception(client: &str, criterion: &str) -> BarException {
@@ -247,11 +257,17 @@ Beta's total is (3 × 1 + 2 × 0 + 1 × 1) ÷ 6 = 2/3 → 66 (rounded down, not 
   ```
   Run `cargo test -p zygo-core --test conformance derive_bar` → the 3 tests fail (`not yet implemented`).
 
-- [ ] **7. Implement `derive::bar`** by the "Bar" rule. In `model.rs:915` change `fn blank` to `pub fn blank` (doc line `/// True when the text is absent or only white space.`); `derive` calls `blank(&b.approved)`. Run `cargo test -p zygo-core --test conformance derive_bar` → 3 passed.
+  Done: failed first: 3 failed, each `not yet implemented`.
 
-- [ ] **8. Replace CF-1's minimal bar rule in check item 8.** In `model.rs` item 8 (`:1052-1059`), replace `let failing = failing_core(reg, g);` with `let failing = crate::derive::bar(reg, g).failing;`. The fault text stays `client `<id>` is supported and below the bar: <ids joined by ", ">`. Delete `failing_core` and its doc line (`:1071-1082`). Check: `grep -rn failing_core crates/zygo-core/tests/` prints nothing; `cargo test -p zygo-core --test conformance check_` → all `check_…` tests pass with no change to their text, among them `check_4_reason_and_core_na` (`{4, 8}`), `check_6_bar_exception_faults` (`{6}` for the approved exception on `met` A-1.1; `{6, 8}` for the unapproved ones), `check_6_duplicate_or_reasonless_bar_exception`, `check_8_supported_client_below_bar` and `check_8_registry_exception_meets_bar`.
+- [x] **7. Implement `derive::bar`** by the "Bar" rule. In `model.rs:915` change `fn blank` to `pub fn blank` (doc line `/// True when the text is absent or only white space.`); `derive` calls `blank(&b.approved)`. Run `cargo test -p zygo-core --test conformance derive_bar` → 3 passed.
 
-- [ ] **9. Rollup and release tests (failing).** Add:
+  Done: 3 passed.
+
+- [x] **8. Replace CF-1's minimal bar rule in check item 8.** In `model.rs` item 8 (`:1052-1059`), replace `let failing = failing_core(reg, g);` with `let failing = crate::derive::bar(reg, g).failing;`. The fault text stays `client `<id>` is supported and below the bar: <ids joined by ", ">`. Delete `failing_core` and its doc line (`:1071-1082`). Check: `grep -rn failing_core crates/zygo-core/tests/` prints nothing; `cargo test -p zygo-core --test conformance check_` → all `check_…` tests pass with no change to their text, among them `check_4_reason_and_core_na` (`{4, 8}`), `check_6_bar_exception_faults` (`{6}` for the approved exception on `met` A-1.1; `{6, 8}` for the unapproved ones), `check_6_duplicate_or_reasonless_bar_exception`, `check_8_supported_client_below_bar` and `check_8_registry_exception_meets_bar`.
+
+  Done: `grep -rn failing_core` prints nothing; `check_` → 50 passed, no test text changed.
+
+- [x] **9. Rollup and release tests (failing).** Add:
 
   ```rust
   fn n(full: u32, partial: u32, none: u32, na: u32, met: u32, applicable: u32) -> Counts {
@@ -289,9 +305,15 @@ Beta's total is (3 × 1 + 2 × 0 + 1 × 1) ÷ 6 = 2/3 → 66 (rounded down, not 
   ```
   Run `cargo test -p zygo-core --test conformance derive_r` → the 3 tests fail (`not yet implemented`).
 
-- [ ] **10. Implement `derive::rollup`** by the "Rollup" rule, built from `cell` and `bar`. Run `cargo test -p zygo-core --test conformance derive_` → 13 passed.
+  Done: failed first: 3 failed, each `not yet implemented`.
 
-- [ ] **11. Acceptance and commit.** Run `test "$(cargo test -q -p zygo-core --test conformance -- derive_ --list 2>/dev/null | grep -c ': test$')" -ge 9 && cargo test -p zygo-core --test conformance --locked` → exit 0 (13 `derive_` tests; the whole target, 78 tests, passes). Run `cargo test --workspace --locked --no-fail-fast` → exit 0. Run `cargo test -p zygo-core --test conformance --no-run --locked 2>&1 | grep -c '^warning'` → `0`. Commit `feat(conformance): derived cell, scores, bar, rollup (CF-2)`, ending with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:CF-2`. Push. CI is green on ubuntu, macOS and Windows.
+- [x] **10. Implement `derive::rollup`** by the "Rollup" rule, built from `cell` and `bar`. Run `cargo test -p zygo-core --test conformance derive_` → 13 passed.
+
+  Done: `derive_` → 13 passed.
+
+- [x] **11. Acceptance and commit.** Run `test "$(cargo test -q -p zygo-core --test conformance -- derive_ --list 2>/dev/null | grep -c ': test$')" -ge 9 && cargo test -p zygo-core --test conformance --locked` → exit 0 (13 `derive_` tests; the whole target, 78 tests, passes). Run `cargo test --workspace --locked --no-fail-fast` → exit 0. Run `cargo test -p zygo-core --test conformance --no-run --locked 2>&1 | grep -c '^warning'` → `0`. Commit `feat(conformance): derived cell, scores, bar, rollup (CF-2)`, ending with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:CF-2`. Push. CI is green on ubuntu, macOS and Windows.
+
+  Done: acceptance exit 0: 13 `derive_` tests; `conformance` 78 passed. `cargo test -p zygo-core --locked`, `cargo build --workspace --locked` exit 0; warnings 0. Deviation: `cargo test --workspace --locked --no-fail-fast` exit 101 in this checkout only: `zygo --test guard_hook` `binary_guard_not_a_repository_writes_no_line` and `binary_guard_slow_rev_parse_says_unread_once` panic at `crates/zygo/tests/guard_hook.rs:72` ("no directory outside the temp roots") because the checkout is under `/private/tmp`; CF-2 does not touch the `zygo` crate; every other target passes; CI decides.
 
 ### Coverage map (Acceptance → test)
 

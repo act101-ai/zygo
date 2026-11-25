@@ -2,11 +2,15 @@
 #[allow(dead_code)] // later nodes read the rest of the model
 #[path = "conformance/model.rs"]
 mod model;
+#[allow(dead_code)] // CF-3 reads the rest
+#[path = "conformance/derive.rs"]
+mod derive;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use model::*;
+use derive::{Bar, Cell, Counts, Grade, Scores, Unmet};
 
 fn fx() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/conformance/fixtures")
@@ -40,6 +44,28 @@ fn set(v: &[u8]) -> BTreeSet<u8> {
 
 fn entry<'a>(g: &'a mut GradeFile, criterion: &str) -> &'a mut GradeEntry {
     g.grade.iter_mut().find(|e| e.criterion == criterion).unwrap()
+}
+
+/// A registry and grade file from `(tier, statuses)` per capability: capability `i` is `A-{i}`, its
+/// criterion `j` is `A-{i}.{j}` with text `t{i}.{j}`; a `not-met` or `n/a` grade has reason `r{i}.{j}`.
+fn synth(caps: &[(Tier, &[Status])]) -> (Registry, GradeFile) {
+    let mut capability = vec![];
+    let mut cell = vec![];
+    let mut grade = vec![];
+    for (i, (tier, statuses)) in caps.iter().enumerate() {
+        let i = i + 1;
+        let mut criterion = vec![];
+        for (j, status) in statuses.iter().enumerate() {
+            let j = j + 1;
+            criterion.push(Criterion { id: format!("A-{i}.{j}"), text: format!("t{i}.{j}") });
+            let reason = (*status != Status::Met).then(|| format!("r{i}.{j}"));
+            grade.push(GradeEntry { criterion: format!("A-{i}.{j}"), status: *status, evidence: vec![], reason });
+        }
+        capability.push(Capability { id: format!("A-{i}"), name: "c".into(), tier: *tier, standard: "s".into(), criterion });
+        cell.push(CellUrl { capability: format!("A-{i}"), url: format!("https://example.com/{i}") });
+    }
+    let r = Registry { capability, bar_exception: vec![] };
+    (r, GradeFile { client: "synth".into(), name: "Synth".into(), version: "1.0.0".into(), cell, grade })
 }
 
 fn with_evidence(ev: &[&str]) -> BTreeSet<u8> {
@@ -954,4 +980,215 @@ fn check_3_cargo_target_settings_refused() {
     assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").is_ok());
     let d = repo_with(&[("crates/demo/Cargo.toml", "[package\n")]);
     assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err().contains("crates/demo/Cargo.toml"));
+}
+
+#[test]
+fn derive_cell_fixtures_full_none_na() {
+    let (r, g, _) = base();
+    assert_eq!(derive::cell(&r, &g[0], "A-1"), Cell { grade: Grade::Full, value: Some(1.0), missing: vec![], na: vec![] });
+    assert_eq!(
+        derive::cell(&r, &g[0], "WA-2"),
+        Cell {
+            grade: Grade::Na,
+            value: None,
+            missing: vec![],
+            na: vec![Unmet { criterion: "WA-2.1".into(), text: "Turn start.".into(), reason: Some("Alpha has no turn events".into()) }]
+        }
+    );
+    assert_eq!(
+        derive::cell(&r, &g[1], "A-3"),
+        Cell {
+            grade: Grade::None,
+            value: Some(0.0),
+            missing: vec![Unmet {
+                criterion: "A-3.1".into(),
+                text: "The picker shows the role list.".into(),
+                reason: Some("Beta has no model picker".into())
+            }],
+            na: vec![]
+        }
+    );
+}
+
+#[test]
+fn derive_cell_partial_lists_missing() {
+    let (r, mut g, _) = base();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no key helper".into());
+    }
+    assert_eq!(
+        derive::cell(&r, &g[0], "A-1"),
+        Cell {
+            grade: Grade::Partial,
+            value: Some(0.5),
+            missing: vec![Unmet {
+                criterion: "A-1.2".into(),
+                text: "The credential is the session token.".into(),
+                reason: Some("no key helper".into())
+            }],
+            na: vec![]
+        }
+    );
+}
+
+#[test]
+fn derive_cell_na_criteria_leave_value_and_ungraded_is_unmet() {
+    let (r, g) = synth(&[(Tier::Extra, &[Status::Met, Status::Na, Status::NotMet][..]), (Tier::Extra, &[Status::Na, Status::Na][..])]);
+    let c = derive::cell(&r, &g, "A-1");
+    assert_eq!((c.grade, c.value, c.missing.len(), c.na.len()), (Grade::Partial, Some(0.5), 1, 1));
+    let c = derive::cell(&r, &g, "A-2"); // an all-n/a cell is n/a
+    assert_eq!((c.grade, c.value, c.na.len()), (Grade::Na, None, 2));
+    let (r, mut g) = synth(&[(Tier::Standard, &[Status::Met, Status::Met][..])]);
+    g.grade.retain(|e| e.criterion != "A-1.2");
+    assert_eq!(derive::cell(&r, &g, "A-1").missing, vec![Unmet { criterion: "A-1.2".into(), text: "t1.2".into(), reason: None }]);
+}
+
+fn pct(t: Option<u32>, c: Option<u32>, s: Option<u32>, e: Option<u32>) -> Scores {
+    Scores { total: t, core: c, standard: s, extra: e }
+}
+
+#[test]
+fn derive_scores_fixtures() {
+    let (r, g, _) = base();
+    assert_eq!(derive::scores(&r, &g[0]), pct(Some(100), Some(100), Some(100), None));
+    assert_eq!(derive::scores(&r, &g[1]), pct(Some(66), Some(100), Some(0), Some(100))); // 2/3 rounds down
+}
+
+#[test]
+fn derive_scores_na_tier_leaves_weights() {
+    let (r, mut g, _) = base();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no key helper".into());
+    }
+    // (3 × 0.5 + 2 × 1) ÷ 5 = 0.7; an n/a extra tier counted as 0 with weight 1 would give 58
+    assert_eq!(derive::scores(&r, &g[0]), pct(Some(70), Some(50), Some(100), None));
+    let (r, g) = synth(&[(Tier::Extra, &[Status::Na][..])]);
+    assert_eq!(derive::scores(&r, &g), pct(None, None, None, None));
+}
+
+#[test]
+fn derive_scores_mean_of_cells_exact_floor() {
+    use Status::{Met as M, NotMet as N};
+    // cell values 1/1, 1/4, 2/5: exact mean 0.55 → 55 (f64 arithmetic gives 54)
+    let (r, g) = synth(&[(Tier::Standard, &[M][..]), (Tier::Standard, &[M, N, N, N][..]), (Tier::Standard, &[M, M, N, N, N][..])]);
+    assert_eq!(derive::scores(&r, &g), pct(Some(55), None, Some(55), None));
+}
+
+/// K§6.2.6: core 7 full + 1 at 3/4 (A-1.4 not-met, approved exception); standard 12 cells summing to 9;
+/// extra 5/6, 1, 1 and one all-n/a cell.
+fn spec_example() -> (Registry, GradeFile) {
+    use Status::{Met as M, Na as X, NotMet as N};
+    let mut caps: Vec<(Tier, &[Status])> = vec![(Tier::Core, &[M, M, M, N][..])];
+    caps.extend([(Tier::Core, &[M, M][..]); 5]);
+    caps.extend([(Tier::Core, &[M, M, M][..]); 2]);
+    caps.extend([(Tier::Standard, &[M][..]); 9]);
+    caps.extend([(Tier::Standard, &[N][..]); 3]);
+    caps.extend([(Tier::Extra, &[M, M, M, M, M, N][..]), (Tier::Extra, &[M][..]), (Tier::Extra, &[M][..]), (Tier::Extra, &[X, X][..])]);
+    let (mut r, g) = synth(&caps);
+    r.bar_exception.push(BarException { client: "synth".into(), criterion: "A-1.4".into(), reason: "r".into(), approved: Some("operator".into()) });
+    (r, g)
+}
+
+#[test]
+fn derive_scores_spec_example_rounds_last() {
+    let (r, g) = spec_example();
+    assert_eq!(derive::cell(&r, &g, "A-1").value, Some(0.75));
+    let s = derive::scores(&r, &g);
+    assert_eq!(s, pct(Some(89), Some(96), Some(75), Some(94)));
+    // review focus 3: the tier percents rounded before the total give 88, not 89
+    let (c, st, e) = (s.core.unwrap(), s.standard.unwrap(), s.extra.unwrap());
+    assert_eq!((3 * c + 2 * st + e) / 6, 88);
+}
+
+fn exception(client: &str, criterion: &str) -> BarException {
+    BarException { client: client.into(), criterion: criterion.into(), reason: "r".into(), approved: Some("operator".into()) }
+}
+
+#[test]
+fn derive_bar_below_then_exception_meets() {
+    let (mut r, mut g, _) = base();
+    assert_eq!(derive::bar(&r, &g[0]), Bar { meets: true, failing: vec![], exceptions: vec![] });
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no key helper".into());
+    }
+    assert_eq!(derive::bar(&r, &g[0]), Bar { meets: false, failing: vec!["A-1".into()], exceptions: vec![] });
+    r.bar_exception.push(exception("alpha", "A-1.2"));
+    assert_eq!(derive::bar(&r, &g[0]), Bar { meets: true, failing: vec![], exceptions: vec!["A-1.2".into()] });
+    assert!(derive::bar(&r, &g[1]).exceptions.is_empty()); // another client's exception
+}
+
+#[test]
+fn derive_bar_unapproved_exception_does_not_count() {
+    let (mut r, mut g, _) = base();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no key helper".into());
+    }
+    for approved in [None, Some(" ".to_string())] {
+        r.bar_exception = vec![BarException { approved, ..exception("alpha", "A-1.2") }];
+        assert_eq!(derive::bar(&r, &g[0]), Bar { meets: false, failing: vec!["A-1".into()], exceptions: vec![] });
+    }
+}
+
+#[test]
+fn derive_bar_core_na_or_ungraded_fails_even_with_exception() {
+    let (mut r, g0, _) = base();
+    r.bar_exception.push(exception("alpha", "A-1.2"));
+    let mut g = g0.clone();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::Na;
+        e.reason = Some("x".into());
+    }
+    assert_eq!(derive::bar(&r, &g[0]).failing, ["A-1"]); // an exception counts only for not-met (K§6.2.4)
+    let mut g = g0.clone();
+    g[0].grade.retain(|e| e.criterion != "A-1.1");
+    assert_eq!(derive::bar(&r, &g[0]).failing, ["A-1"]);
+    let mut g = g0.clone();
+    entry(&mut g[0], "WA-2.1").status = Status::NotMet; // a non-core gap never fails the bar
+    assert!(derive::bar(&r, &g[0]).meets);
+}
+
+fn n(full: u32, partial: u32, none: u32, na: u32, met: u32, applicable: u32) -> Counts {
+    Counts { full, partial, none, na, met, applicable }
+}
+
+#[test]
+fn derive_rollup_fixtures() {
+    let (r, g, _) = base();
+    let a = derive::rollup(&r, &g[0], true);
+    assert_eq!((a.core, a.standard, a.extra, a.total), (n(1, 0, 0, 0, 2, 2), n(1, 0, 0, 0, 1, 1), n(0, 0, 0, 1, 0, 0), n(2, 0, 0, 1, 3, 3)));
+    let b = derive::rollup(&r, &g[1], true);
+    assert_eq!((b.core, b.standard, b.extra, b.total), (n(1, 0, 0, 0, 2, 2), n(0, 0, 1, 0, 0, 1), n(1, 0, 0, 0, 1, 1), n(2, 0, 1, 0, 3, 4)));
+    assert_eq!(b.bar, derive::bar(&r, &g[1]));
+}
+
+#[test]
+fn derive_rollup_spec_example() {
+    let (r, g) = spec_example();
+    let x = derive::rollup(&r, &g, true);
+    assert_eq!((x.core, x.standard, x.extra, x.total), (n(7, 1, 0, 0, 19, 20), n(9, 0, 3, 0, 9, 12), n(2, 1, 0, 1, 7, 8), n(18, 2, 3, 1, 35, 40)));
+    assert_eq!(x.bar, Bar { meets: true, failing: vec![], exceptions: vec!["A-1.4".into()] });
+    assert_eq!(x.release, "supported");
+}
+
+#[test]
+fn derive_release_state() {
+    let (r, mut g, _) = base();
+    assert_eq!(derive::rollup(&r, &g[0], true).release, "supported");
+    assert_eq!(derive::rollup(&r, &g[0], false).release, "meets bar, not released");
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no key helper".into());
+    }
+    assert_eq!(derive::rollup(&r, &g[0], false).release, "below bar");
+    assert_eq!(derive::rollup(&r, &g[0], true).release, "below bar");
 }
