@@ -74,13 +74,14 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CF-4 | Registry `capabilities.toml`, grade files for Claude Code and OpenCode, generated `docs/conformance.md` and `.json`, the tree test, CI paths, old scripts deleted (PR stops for the operator, K-D26) | CF-3, OC-1 | TODO | judgment | — |
 | OC-1 | OpenCode: session token out of the environment and config (apiKey from the token file), providers limited to zygo | — | DONE | judgment | PR #128 merged 53eabe25; acceptance exit 0 on merged tree; CI run 45693613400 green (ubuntu, macos, windows) |
 | PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | DONE | judgment | PR #91 merged adac6bc0; acceptance exit 0 @ 54039f94 (test-check-premises 50 cases); CI run 45678686867 green (ubuntu, macos, windows) |
-| PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | TODO | judgment | — |
+| PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | DONE | judgment | PR #126 merged 1206befa; acceptance exit 0 @ 4784e06b (real codex 0.172.0 run, ~/.codex unchanged); CI run 45698780636 green (ubuntu, macos, windows) |
 | PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2 | TODO | implementation | — |
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2 | TODO | implementation | — |
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2 | TODO | implementation | — |
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2 | TODO | implementation | — |
 | PC-7 | `docs/premises.md` and `docs/live-checks.md`: `Codex` headers, rows PC1-PC16, LC-CX1, Codex method lines | PC-1, PC-3, PC-4, PC-5, PC-6, OC-1 | TODO | mechanical | — |
 | PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | TODO | implementation | — |
+| PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | TODO | mechanical | — |
 | RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | TODO | judgment | — |
 | RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | TODO | judgment | — |
 | RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | TODO | judgment | — |
@@ -124,3 +125,5 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | Operator: OpenCode A-1.2, A-1.3, A-10.2 fixed in code (OC-1, before CF-4); OpenCode A-1.4 and Claude Code A-1.4 bar exceptions; Claude Code A-1.2 and A-10.2 reworded "passthrough excepted (§12.3)". CF-4 applies the registry and spec changes. |
 | 2026-11-25 | PC-7 depends on OC-1 (author's call): both change `docs/premises.md` (OC-1 adds the OpenCode rows PO1, PO2). |
 | 2026-11-25 | OC-1 DONE: gate 3 rounds; round 1 F1-F12 (F3 rejected: CF-4 regrade), round 2 G1-G5, round 3 H1-H6 fixed (H3 narrowed), H7 rejected (reasons in nodes/OC-1.md); PR #128 merged 53eabe25. |
+| 2026-11-25 | PC-2 DONE: gate 3 rounds; round 1 F1-F11, round 2 G1-G10, round 3 H1-H7 fixed, thin-launcher limit recorded (nodes/PC-2.md); PR #126 merged 1206befa. |
+| 2026-11-25 | PC-9 added (author's call): ver_test.sh K1/K4 fail since OC-1's PO1 evidence path. |
