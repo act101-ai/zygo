@@ -1998,3 +1998,41 @@ fn mail_lines_name_the_count_and_the_tool() {
     assert_eq!(mail::delivery_line(2), L2);
     assert_eq!(serde_json::from_str::<Value>(&mail::stop_block(2)).unwrap(), json!({"decision": "block", "reason": L2}));
 }
+
+#[test] // M§7.1, AU43; ML-10 D1, D2
+fn mail_stop_blocks_once_and_keeps_busy() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    put_new(&f, 2);
+    set_act(&f, true, 2);
+    assert_eq!(parsed(ws(&f, "stop", fixture("Stop-main"))), json!({"decision": "block", "reason": L2}));
+    assert_eq!(bt(&f), (true, 2)); // blocking: activity.json not changed
+    assert_eq!(ws(&f, "stop", with(fixture("Stop-main"), "stop_hook_active", json!(true))).unwrap(), None);
+    assert_eq!(bt(&f), (false, 0));
+}
+
+#[test] // M§7.1, M§13 #4, AU43; ML-10 D1, D2
+fn mail_stop_without_a_block_clears_busy() {
+    let _s = serial();
+    let f = fx(Agent::ClaudeCode);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None); // no mail/ at all
+    assert_eq!(bt(&f), (false, 0));
+    let new = put_new(&f, 0);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", fixture("Stop-main")).unwrap(), None); // empty new/
+    assert_eq!(bt(&f), (false, 0));
+    put_new(&f, 2);
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", with(fixture("Stop-main"), "hook_event_name", json!("StopFailure"))).unwrap(), None);
+    assert_eq!(bt(&f), (false, 0));
+    set_act(&f, true, 1);
+    assert_eq!(ws(&f, "stop", with(fixture("Stop-main"), "agent_id", json!("a1"))).unwrap(), None);
+    assert_eq!(bt(&f), (true, 1)); // not the main loop (AU43)
+    let o = fx(Agent::OpenCode);
+    put_new(&o, 2);
+    set_act(&o, true, 0);
+    assert_eq!(ws(&o, "stop", oc("ses_A")).unwrap(), None);
+    assert_eq!(bt(&o), (false, 0));
+    assert_eq!(entries(&new).len(), 2); // no message moved
+}

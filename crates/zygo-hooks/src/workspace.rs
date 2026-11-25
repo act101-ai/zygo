@@ -22,13 +22,14 @@ use std::time::Duration;
 use anyhow::{anyhow, bail};
 use serde_json::{json, Value};
 use zygo_core::esc;
-use zygo_core::hook::{slash_dispatch, HookOutput, SlashDispatch};
+use zygo_core::hook::{error_line, slash_dispatch, HookOutput, SlashDispatch};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{ResumeNote, SessionView};
 use zygo_core::Agent;
 use zygo_workspace::activity::{self, Activity};
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
+use zygo_workspace::mail::{mail_dir, store};
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
@@ -232,6 +233,19 @@ pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, bound: D
     }
 }
 
+/// The number of unread messages of the member (M§7, ML-2 `store::unread`), counted from the names in `new/` with no
+/// message opened. A read error writes one stderr line and counts as 0, so no hook decision changes (M-C1, M§10, C6;
+/// ML-10 D4).
+fn unread_mail(c: &Ctx) -> usize {
+    match store::unread(&mail_dir(c.paths, &c.ws_id), &c.pane) {
+        Ok(n) => n,
+        Err(e) => {
+            error_line(&format!("workspace hook {}: {e}", c.event));
+            0
+        }
+    }
+}
+
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).
 fn main_loop(p: &Value) -> bool {
     !p.as_object().is_some_and(|o| o.contains_key("agent_id"))
@@ -239,8 +253,9 @@ fn main_loop(p: &Value) -> bool {
 
 /// `zygo hook workspace --event <event>` (W§9.1, D4, D5). It checks the event, then reads `ZYGO_SESSION_DIR`
 /// through `env` (none or empty: nothing), then parses the input; a prompt line that `zygo hook prompt` consumes ends
-/// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2 and a
-/// Claude Code `prompt` the block JSON of AU86; every other call gives `None`. The dispatcher is the one that the
+/// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2, a
+/// Claude Code `prompt` the block JSON of AU86 or the mail delivery line (M§7.2), and a Claude Code `stop` the mail
+/// block JSON of M§7.1; every other call gives `None`. The dispatcher is the one that the
 /// `zygo` binary registers (`slash_dispatch`).
 pub fn run(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
@@ -297,10 +312,22 @@ pub fn run_with(
                 change(&c, &mut start_turn);
             }
         }
-        "stop" if main => change(&c, &mut |a| {
-            a.busy = false;
-            a.tools_running = 0;
-        }),
+        "stop" if main => {
+            // M§7.1, ML-10 D1, D2: a Claude Code `Stop` that is not already a forced continuation blocks once while
+            // `new/` holds mail, and changes nothing in `activity.json`; every other main-loop stop clears.
+            if payload.get("hook_event_name").and_then(Value::as_str) == Some("Stop")
+                && payload.get("stop_hook_active") == Some(&Value::Bool(false))
+            {
+                let n = unread_mail(&c);
+                if n > 0 {
+                    return Ok(Some(crate::mail::stop_block(n)));
+                }
+            }
+            change(&c, &mut |a| {
+                a.busy = false;
+                a.tools_running = 0;
+            })
+        }
         // W§9.1 names no `busy` change for `SessionEnd`.
         "session-end" if main => change(&c, &mut |a| a.tools_running = 0),
         // D5, D8-D10: `session` changes nothing in `activity.json`; it commits and records (one write), then applies
