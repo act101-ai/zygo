@@ -3629,6 +3629,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygo-mail-sync"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "fs4",
+ "hex",
+ "libc",
+ "rand",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "ulid",
+ "zygo-config",
+ "zygo-core",
+ "zygo-plugins",
+ "zygo-redact",
+ "zygo-work",
+ "zygo-workspace",
+]
+
+[[package]]
 name = "zygo-mcp"
 version = "0.2.1"
 dependencies = [
