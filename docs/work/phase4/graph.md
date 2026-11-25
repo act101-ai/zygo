@@ -72,13 +72,14 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CF-2 | Conformance derived values: cell, tier and total score, bar, rollup, release state, on fixture inputs | CF-1 | DONE | implementation | PR #100 merged 3e98ae7c; acceptance 15 derive_ tests, conformance 84 pass @ 11c0dd70; CI run 45610449986 green (ubuntu, macos, windows) |
 | CF-3 | Conformance outputs: feature matrix, rollup and score in Markdown and JSON, the write mode and check item 10, on fixture inputs | CF-2 | DONE | implementation | PR #102 merged 1c147219; acceptance 25 render_ tests, conformance 109 pass @ 80118dc2; CI run 45618690411 green (ubuntu, macos, windows) |
 | CF-4 | Registry `capabilities.toml`, grade files for Claude Code and OpenCode, generated `docs/conformance.md` and `.json`, the tree test, CI paths, old scripts deleted (PR stops for the operator, K-D26) | CF-3 | TODO | judgment | — |
-| PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | IN-PROGRESS | judgment | acceptance exit 0 @ 1a89e491 |
+| PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | DONE | judgment | PR #91 merged adac6bc0; acceptance exit 0 @ 54039f94 (test-check-premises 50 cases); CI run 45678686867 green (ubuntu, macos, windows) |
 | PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | TODO | judgment | — |
 | PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2 | TODO | implementation | — |
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2 | TODO | implementation | — |
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2 | TODO | implementation | — |
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2 | TODO | implementation | — |
 | PC-7 | `docs/premises.md` and `docs/live-checks.md`: `Codex` headers, rows PC1-PC16, LC-CX1, Codex method lines | PC-1, PC-3, PC-4, PC-5, PC-6 | TODO | mechanical | — |
+| PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | TODO | implementation | — |
 | RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | TODO | judgment | — |
 | RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | TODO | judgment | — |
 | RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | TODO | judgment | — |
@@ -117,3 +118,5 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | CF-1 DONE: gate 3 rounds; round 3 review findings F1, F3-F7 fixed, F2 rejected (reason in `nodes/CF-1.md`); two implementer-found defects fixed; PR #87 merged `74562e3b`. |
 | 2026-11-25 | CF-2 DONE: gate 2 rounds; round 1 F1-F4 fixed (F4: K§6.2.4 failing-core sentence, author's call), round 2 N1-N2 fixed; PR #100 merged `3e98ae7c`. |
 | 2026-11-25 | CF-3 DONE: gate 3 rounds; round 1 F1-F6 fixed, round 2 D1-D5 fixed (one md_text escape rule, cell URL as a link), round 3 no findings; PR #102 merged `1c147219`. |
+| 2026-11-25 | PC-1 DONE: gate 3 rounds; round 3 F1-F5, F7-F11 fixed, F6 rejected (reason in nodes/PC-1.md); PR #91 merged adac6bc0. |
+| 2026-11-25 | PC-8 added (author's call): two check-premises.sh defects the PC-1 round 3 implementer found. |
