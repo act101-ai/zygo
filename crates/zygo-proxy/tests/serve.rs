@@ -815,6 +815,7 @@ fn requests_reply_ends_at_the_rows_bound_incomplete() { // §7 note: 25 s; B2
     let r = rx.recv_timeout(Duration::from_secs(10)).unwrap(); // ends at the bound, the writer still paused
     assert_eq!(rows_reply(&r), (200, 0, Some(false)));
     hold.release();
+    assert!(s.h.usage_written(1, Duration::from_secs(30)));
     assert_eq!(rows_reply(&requests(&s, &id, &s.alice)), (200, 1, Some(true)));
     assert_eq!(ROWS_WAIT, Duration::from_secs(25));
     s.h.shutdown();
