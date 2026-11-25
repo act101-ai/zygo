@@ -188,16 +188,13 @@ pub(crate) mod tests {
         (h, g.session, dir)
     }
 
-    /// A session dir `id` whose url is a closed loopback port.
+    /// A session dir `id` whose url is the closed port of `dead_port`.
     pub(crate) fn dead_session(d: &Path, id: &str) -> PathBuf {
         let dir = paths(d).sessions_dir.join(id);
         let sd = SessionDir::new(dir.clone());
         sd.create().unwrap();
         sd.write_token("t").unwrap();
-        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = l.local_addr().unwrap().port();
-        drop(l);
-        std::fs::write(sd.url(), format!("http://127.0.0.1:{port}/")).unwrap();
+        std::fs::write(sd.url(), super::dead_port::closed_url()).unwrap();
         dir
     }
 

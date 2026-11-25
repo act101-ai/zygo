@@ -88,7 +88,7 @@ pub fn closed_url() -> String {
 
 - [x] 4. See it pass: run the command from step 2. The test passes. Commit `crates/zygo/tests/dead_port/mod.rs` and `crates/zygo/src/cmd/compact.rs`.
 
-- [ ] 5. Change `dead_session` in `crates/zygo/src/cmd/compact.rs:188-198` so that it writes `super::dead_port::closed_url()` to `sd.url()`. Delete the bind, `local_addr` and `drop` lines (193-195). The doc line becomes ``/// A session dir `id` whose url is the closed port of `dead_port`.`` Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --lib -- cmd::compact cmd::status cmd::verbs`. All tests pass, `unreachable_is_compact_failed` too. Commit.
+- [x] 5. Change `dead_session` in `crates/zygo/src/cmd/compact.rs:188-198` so that it writes `super::dead_port::closed_url()` to `sd.url()`. Delete the bind, `local_addr` and `drop` lines (193-195). The doc line becomes ``/// A session dir `id` whose url is the closed port of `dead_port`.`` Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --lib -- cmd::compact cmd::status cmd::verbs`. All tests pass, `unreachable_is_compact_failed` too. Commit.
 
 - [ ] 6. In `crates/zygo/tests/compact_cmd.rs`, add `mod dead_port;` after `mod common;` (line 19). Delete `fn closed_url` (lines 84-89). `dead_session` (line 80) writes `dead_port::closed_url()`. In `crates/zygo/tests/member_fixture/mod.rs`, add `#[path = "../dead_port/mod.rs"] mod dead_port;`. `dead_session_at` (lines 115-120) becomes `session_at(sessions, id, &dead_port::closed_url())`. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --test compact_cmd --test session_verbs`. All tests pass with no new warning. Commit.
 
