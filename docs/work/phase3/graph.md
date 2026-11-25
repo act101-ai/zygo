@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-4 | `zygo decision new`: write a record template | DR-3 | DONE | implementation | f0d049d beeaa1d 3965c61 · decision_new 12p/0f/1i; floor green · PR #25 |
 | DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | DONE | judgment | 397edc5 aba92f9 d3e3ff7 0db609f 4f86964 2b072a7 · decision_verbs 25p/0f; floor green · PR #29 |
 | DR-6 | `zygo decision review`: the phase-end review | DR-5 | DONE | implementation | 732af80 82d2e65 cb609a4 · decision_review 21/0; floor green · PR #34 |
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
@@ -324,7 +323,7 @@ Session text (T, SX nodes):
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
 | FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 | FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
-| FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | IN-PROGRESS | mechanical | .worktrees/phase3/FX-5-node · PR #51 |
+| FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 
 ## Log
 
@@ -382,3 +381,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-3 planned (65accaf): 7 steps · PR #41 |
 | 2026-11-24 | SX-3 in progress: node branch `phase3/SX-3--SX-3` at d55d51c, worktree `.worktrees/phase3/SX-3-node` · PR #41 |
 | 2026-11-24 | SX-3 done: pre-compact sets reinject/<agent_id> (0600 in 0700 dir) for a non-zygo subagent; review round 1 (4 confirmed, 4 refuted); floor 2602 passed 0 failed · PR #41 |
+| 2026-11-24 | FX-5 done: piped send test asserts send-then-read fails (Linux foreign-reader race, CI run 45544809983); dash-safe foreign-reader test; single-test `piped_epipe` binary keeps the EPIPE check; review round 1 (3 confirmed, fixed); floor green · PR #51 |
