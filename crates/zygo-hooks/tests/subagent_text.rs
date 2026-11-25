@@ -3,8 +3,10 @@
 //! child process is this test binary.
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use zygo_core::{
@@ -12,10 +14,11 @@ use zygo_core::{
     overrides::Overrides,
     paths::Paths,
     session_dir::SessionDir,
-    session_view::SessionView,
+    session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace},
     Agent,
 };
 use zygo_hooks::{session_start, session_text::mechanics};
+use zygo_workspace::state::{MemberRecord, MemberState, Pending, Phase, Store};
 
 const REDACT: &str = "`[REDACTED:<id>]` marks a secret zygo removed; never write it into a file.";
 const ATTRIBUTION: &str = "Never add Claude attribution to commits, pull request titles or bodies, tags, release notes or comments: no `Co-Authored-By: Claude` trailer, no `noreply@anthropic.com` address, no `Generated with Claude Code` line and no Claude session link.";
@@ -23,6 +26,10 @@ const STORE: &str = "Large tool outputs are stored by zygo; read them with resul
 const NAV: &str = "Use act-lite's skeleton, symbols or repo_outline before reading a whole source file.";
 const TRAILER: &str = "Add the commit trailers `Zygo-Session: <session>` and, when your brief names a unit, `Zygo-Work: <unit>`, each on its own line at the end of the message.";
 const CHILD: &str = "ZYGO_SX1_C6_CHILD";
+/// The workspace id, pane key and zygo session of the member view (AU84 forms).
+const WS_ID: &str = "0123456789abcdef";
+const PANE: &str = "kaaaaaaaa";
+const SID: &str = "01JTESTSESSIONAAAAAAAAAAAA";
 
 fn fixture(name: &str) -> Value {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../fixtures/claude-code/hooks/{name}.json"));
@@ -172,8 +179,10 @@ fn subagent_start_unparseable_view_one_stderr_line() {
     assert!(o.status.success(), "{o:?}");
     assert!(String::from_utf8(o.stdout).unwrap().contains("c6_child_unparseable_view ... ok"));
     let err = String::from_utf8(o.stderr).unwrap();
-    assert_eq!(err.lines().count(), 1, "{err:?}");
-    assert!(err.starts_with("zygo hook: ") && err.ends_with('\n'), "{err:?}");
+    // The one line is the error of the `view.json` load (a JSON parse error, which names no path), nothing else.
+    let load = format!("{:#}", SessionView::load(&d).unwrap_err());
+    assert!(load.contains("EOF while parsing"), "{load:?}");
+    assert_eq!(err, format!("zygo hook: {load}\n"));
 }
 
 /// Child half of `subagent_start_unparseable_view_one_stderr_line`; returns at once without `CHILD`.
@@ -211,4 +220,117 @@ fn main_compact_output_equals_startup() {
     assert_eq!(both(t.path(), &d, &input(&compact)), a);
     let got: Value = serde_json::from_str(&a).unwrap();
     assert_eq!(got["hookSpecificOutput"]["hookEventName"], json!("SessionStart"));
+}
+
+/// A member session (H1): `view()` with a workspace marker and a resume note, in `<t>/cache/sessions/<SID>`, and a
+/// workspace state with a pending member record for the pane, so the member part of `run_member` would print the
+/// session text, commit the record and clear the note. Returns the session folder and the paths.
+fn member_fx(t: &Path) -> (SessionDir, Paths) {
+    let p = paths(t);
+    let d = SessionDir::new(p.sessions_dir.join(SID));
+    d.create().unwrap();
+    let note = ResumeNote { clean_stop: true, interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "Explore".into(), ..Default::default() }],
+        closed_units: vec!["u-1".into()], ..Default::default() };
+    let ws = ViewWorkspace { member: Member { ws_id: WS_ID.into(), pane: PANE.into(), ..Default::default() }, resume_note: Some(note), ..Default::default() };
+    SessionView { session: SID.into(), workspace: Some(ws), ..view() }.save(&d).unwrap();
+    let mut m = MemberRecord::new(Agent::ClaudeCode);
+    m.state = MemberState::Resumable;
+    m.pending = Some(Pending { zygo_session: SID.into(), agent_session: None, started_at: 7, ..Default::default() });
+    m.closed_units = vec!["u-1".into()];
+    m.note_pending = true;
+    let root = t.to_path_buf();
+    Store::open(&p, WS_ID)
+        .update(Duration::from_secs(5), &mut |w| {
+            w.name = "app".into();
+            w.tmux_session = "zygo-app".into();
+            w.common_dir = root.join("app/.git");
+            w.main_root = root.join("app");
+            w.loadout = "solo".into();
+            w.phase = Phase::Up;
+            w.members = BTreeMap::from([(PANE.to_string(), m.clone())]);
+            Ok(())
+        })
+        .unwrap();
+    (d, p)
+}
+
+/// Every file under `p` and its bytes.
+fn tree(p: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut all = BTreeMap::new();
+    for e in std::fs::read_dir(p).unwrap() {
+        let path = e.unwrap().path();
+        if path.is_dir() {
+            all.extend(tree(&path));
+        } else {
+            all.insert(path.clone(), std::fs::read(&path).unwrap());
+        }
+    }
+    all
+}
+
+/// `run_member` on the member session of `t` with `--event member` and without; asserts that it printed nothing to
+/// `out`, that no file under `t` changed (view.json, the workspace state, the session log, `errors.log`) and that the
+/// output equals `run_in`'s. Returns the output.
+fn member_run(t: &Path, d: &SessionDir, p: &Paths, v: &Value) -> String {
+    let before = tree(t);
+    let mut got = Vec::new();
+    for ev in [Some("member".to_string()), None] {
+        let i = HookInput { cli_event: ev.clone(), ..input(v) };
+        let mut out = Vec::new();
+        let a = session_start::run_member(&i, d, p, &t.join("no-zygo"), &mut out).unwrap().to_stdout();
+        assert!(out.is_empty(), "{ev:?}: the member part printed");
+        assert_eq!(session_start::run_in(&i, d).unwrap().to_stdout(), a, "{ev:?}");
+        assert_eq!(tree(t), before, "{ev:?}: a file changed");
+        got.push(a);
+    }
+    assert_eq!(got[0], got[1]);
+    got.remove(0)
+}
+
+#[test]
+fn subagent_start_member_view_sub_session_start_compact_gets_nothing() {
+    // T§6.3 item 2, T§17 check 5: the member part never runs for an input with `agent_id`.
+    let t = tempfile::tempdir().unwrap();
+    let (d, p) = member_fx(t.path());
+    let sub = fixture("SessionStart-sub");
+    assert_eq!((sub["hook_event_name"].as_str(), sub["source"].as_str(), sub.get("agent_id").is_some()),
+        (Some("SessionStart"), Some("compact"), true));
+    let view = std::fs::read(d.view_json()).unwrap();
+    assert_eq!(member_run(t.path(), &d, &p, &sub), "");
+    assert_eq!(std::fs::read(d.view_json()).unwrap(), view);
+    assert!(!d.log().exists());
+    // The same input without `agent_id` runs the member part: the fixture reaches it.
+    let mut out = Vec::new();
+    let i = HookInput { cli_event: Some("member".into()), ..input(&without(sub, "agent_id")) };
+    session_start::run_member(&i, &d, &p, &t.path().join("no-zygo"), &mut out).unwrap();
+    assert!(!out.is_empty());
+    assert_ne!(std::fs::read(d.view_json()).unwrap(), view);
+}
+
+#[test]
+fn subagent_start_member_view_gets_only_mechanics() {
+    // T§6.3 item 2, T§17 check 2: on a member view the output is the mechanics envelope and the member part did not run.
+    let t = tempfile::tempdir().unwrap();
+    let (d, p) = member_fx(t.path());
+    let m = [REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" ");
+    assert_eq!(session_start::mechanics_with_overrides(&d, &SessionView::load(&d).unwrap()), m);
+    assert_eq!(member_run(t.path(), &d, &p, &fixture("SubagentStart-sub")), envelope(&m));
+    assert!(!d.log().exists());
+}
+
+#[test]
+fn subagent_start_zygo_prefix_rule_matches_is_zygo() {
+    // T§6.3 item 2: the rule of `zygo_work::hooks::is_zygo`: a string `agent_type` that starts with `zygo-`, exactly.
+    let (t, d) = sd();
+    view().save(&d).unwrap();
+    let want = envelope(&[REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" "));
+    let sub = fixture("SubagentStart-sub");
+    for ty in [json!("zygote"), json!("my-plugin:zygo-x"), json!(" zygo-code"), json!("Zygo-code"), json!("ZYGO-code"),
+        json!(""), json!("zygo"), Value::Null, json!(7)]
+    {
+        assert_eq!(both(t.path(), &d, &input(&with(sub.clone(), "agent_type", ty.clone()))), want, "{ty}");
+    }
+    for ty in ["zygo-", "zygo-plan"] {
+        assert_eq!(both(t.path(), &d, &input(&with(sub.clone(), "agent_type", json!(ty)))), "", "{ty}");
+    }
 }
