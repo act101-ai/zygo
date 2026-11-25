@@ -198,7 +198,6 @@ Session text (T, SX nodes):
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | DONE | implementation | a7e1fa29 1773594e e906160f · usage_doctor 45/0, savings 8; floor green · PR #101 |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | DONE | judgment | af19550d e91ef159 6971ba06 · repo_def_check 9/0; floor green · PR #98 |
@@ -227,7 +226,7 @@ Session text (T, SX nodes):
 | WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | DONE | implementation | 8c8dd676, 7b189dbd, a08afc56 · loadout 15/0, state 43/0 ; floor green · PR #115 |
 | RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | TODO | implementation | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
-| MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | TODO | judgment | — |
+| MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | TODO | judgment | — |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | TODO | judgment | — |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | TODO | implementation | — |
@@ -397,4 +396,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-9 done (ed8193ef 4bed6315): session text item 8; review 1 important (no-record pane told it is reachable; item now omitted) + 2 test gaps, dup names fixed; FX-9 added (OpenCode per-request rebuild). Floor green. PR #106. |
 | 2026-11-25 | ML-15 done (0128c7fa 63b94dd8): HUD member name + unread mail; review 2 important (mail scan starved git/status workers: fixed; width rule kept) + 2 test gaps fixed; FX-10 (HUD spec), FX-11 (doctor ✉) added. Floor green. PR #108. |
 | 2026-11-25 | WD-8 done: `state::Launch` gains `job` and `definition`; review found `Pin` dropped unknown keys (AU78), fixed with `Pin.extra` and `Pin::new` · PR #110 |
+| 2026-11-25 | MS-9 DONE (e7987782 f30700e9 bec4c680): outbox kept: send rules, secret pass, refuse with notice, counts, sweep; round-2 review fixes applied; outbox 29/0; floor green · PR #111 |
 | 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
