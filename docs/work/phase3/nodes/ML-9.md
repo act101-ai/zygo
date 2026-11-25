@@ -188,3 +188,10 @@ const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with ma
 - The launcher assignment has no test here: the launcher view tests in `crates/zygo-launch/tests/launcher.rs` (for example line 672) are `#[ignore = "timing: …"]` and that file is not in **Files**.
 - Spec gap, not decided here: M§8a gives no text for an empty member list (own member unnamed and no other named member); the plan prints ``Members: ``.`` with an empty pair of backticks.
 - The four state-backed tests are `#[cfg(unix)]` (Global constraints: tests that use workspace state); the Acceptance count of 5 holds on unix (8) but not on Windows (4).
+
+## Round 2
+
+- F1: `mail::session_item` returns `Option<String>`; `None` when `own_key` has no member record (no one can reach that pane by mail: `names::resolve`), so item 8 is left out. The `workspace.rs` caller uses `and_then`. Tests: `mail_item_absent_for_a_pane_with_no_member_record`, `mail_item_absent_at_session_start_for_a_pane_with_no_member_record`.
+- F2: test `mail_item_absent_when_workspace_state_is_unreadable`: a malformed `workspace.json` gives no item 8, the same text and resume note as with `mail` off, and one `errors.log` line for Claude Code (none for OpenCode).
+- F3: not added. The view is built inside `Session::run` (`crates/zygo-launch/src/launcher.rs`), after plugin sync and the session client and before the agent spawn; it has no seam a unit test reaches, and the view tests of `crates/zygo-launch/tests/launcher.rs` are `#[ignore = "timing: …"]`.
+- F4: the member list holds each name once, in key order of its first member. Test: `mail_item_lists_each_name_once`.

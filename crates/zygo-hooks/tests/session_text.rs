@@ -558,23 +558,41 @@ fn start(agent: Agent) -> HookInput {
 #[test] // M§8a item 1
 fn mail_item_named_member_lists_every_member_name() {
     let ws = ws_of("app", &[(OWN, Some("elena")), (PEER, Some("kai")), (LATE, None)]);
-    assert_eq!(mail::session_item(&ws, OWN), item8("you are `elena` in workspace `app`", "elena, kai"));
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `app`", "elena, kai")));
+}
+
+#[test] // M§8a item 1, review round 2 F4: a name shared by two members is listed once, in key order of its first member
+fn mail_item_lists_each_name_once() {
+    let ws = ws_of("app", &[(OWN, Some("kai")), (PEER, Some("elena")), (LATE, Some("kai"))]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `kai` in workspace `app`", "kai, elena")));
 }
 
 #[test] // M§8a item 1, no-name clause
 fn mail_item_member_with_no_name_gets_the_pane_clause() {
     let ws = ws_of("app", &[(OWN, None), (PEER, Some("kai"))]);
-    assert_eq!(mail::session_item(&ws, OWN), item8("you have no mail name; others reach you by pane kaaaaaaaa", "kai"));
-    assert_eq!(mail::session_item(&ws, LATE), item8("you have no mail name; others reach you by pane kcccccccc", "kai"));
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you have no mail name; others reach you by pane kaaaaaaaa", "kai")));
+}
+
+#[test] // M§8a item 1, review round 2 F1: a pane with no member record is not a mail member (names::resolve)
+fn mail_item_absent_for_a_pane_with_no_member_record() {
+    let ws = ws_of("app", &[(OWN, None), (PEER, Some("kai"))]);
+    assert_eq!(mail::session_item(&ws, LATE), None);
+}
+
+#[cfg(unix)]
+#[test] // review round 2 F1, at session start
+fn mail_item_absent_at_session_start_for_a_pane_with_no_member_record() {
+    let x = mx(Agent::ClaudeCode, true, true, None, &[(PEER, Some("kai"))]);
+    assert_eq!(member_text(&x, &start(Agent::ClaudeCode)), build(&SessionView::load(&x.dir).unwrap()));
 }
 
 #[test] // AU84, esc
 fn mail_item_escapes_every_name_and_skips_invalid_names() {
     let ws = ws_of("a\u{1b}[2J\nb", &[(OWN, Some("elena")), (PEER, Some("Kai\u{202e}x"))]);
-    assert_eq!(mail::session_item(&ws, OWN), item8("you are `elena` in workspace `a\\u{1b}[2J\\nb`", "elena"));
-    let ws = ws_of("app", &[(OWN, Some("bad\nname")), (PEER, Some("kai"))]);
-    assert_eq!(mail::session_item(&ws, OWN), item8("you have no mail name; others reach you by pane kaaaaaaaa", "kai"));
-    assert_eq!(mail::session_item(&ws, "k\u{7}"), item8("you have no mail name; others reach you by pane k\\u{07}", "kai"));
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you are `elena` in workspace `a\\u{1b}[2J\\nb`", "elena")));
+    let ws = ws_of("app", &[(OWN, Some("bad\nname")), (PEER, Some("kai")), ("k\u{7}", None)]);
+    assert_eq!(mail::session_item(&ws, OWN), Some(item8("you have no mail name; others reach you by pane kaaaaaaaa", "kai")));
+    assert_eq!(mail::session_item(&ws, "k\u{7}"), Some(item8("you have no mail name; others reach you by pane k\\u{07}", "kai")));
 }
 
 #[cfg(unix)]
@@ -612,6 +630,30 @@ fn mail_item_not_in_mechanics_or_subagent_text() {
     assert_eq!(member_text(&x, &hook("SubagentStart-sub")), m);
     let sub = HookInput { cli_event: Some("subagent".into()), ..HookInput::parse(Agent::OpenCode, b"{}").unwrap() };
     assert_eq!(member_text(&x, &sub), m);
+}
+
+#[cfg(unix)]
+#[test] // review round 2 F2: a `workspace.json` that does not read gives no item 8; the rest is as with `mail` off
+fn mail_item_absent_when_workspace_state_is_unreadable() {
+    let note = || Some(ResumeNote { clean_stop: true, closed_units: vec!["u-1".into()], ..Default::default() });
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let text = |mail: bool| {
+            let x = mx(agent, mail, true, note(), &[(OWN, Some("elena"))]);
+            let state = x.paths.workspaces_dir().join(WS_ID);
+            std::fs::write(state.join("workspace.json"), b"{not json").unwrap();
+            let got = member_text(&x, &start(agent));
+            let errors = std::fs::read_to_string(state.join("errors.log")).unwrap_or_default();
+            (got, errors.lines().count(), build(&SessionView::load(&x.dir).unwrap()))
+        };
+        let (on, on_lines, base) = text(true);
+        let (off, off_lines, _) = text(false);
+        assert!(!on.contains("Workspace mail:"), "{agent:?}: {on}");
+        assert_eq!(on, off, "{agent:?}");
+        assert_eq!(on, format!("{base}\n\n{U1}"), "{agent:?}");
+        // Claude Code: record_session's read writes the one line (C6); OpenCode writes nothing (D10).
+        let lines = if agent == Agent::ClaudeCode { 1 } else { 0 };
+        assert_eq!((on_lines, off_lines), (lines, lines), "{agent:?}");
+    }
 }
 
 #[cfg(unix)]
