@@ -27,10 +27,11 @@ const CLEARED: &[&str] = &[
 /// A deadline one hour away: a test not about time never times out under machine load.
 pub fn far() -> Instant { Instant::now() + Duration::from_secs(3600) }
 
-/// The test `HOME` of this process: its `.gitconfig` turns on `commit.gpgSign` with a spy gpg program that records
-/// each call and fails. The first call sets `HOME` and `XDG_CONFIG_HOME` and removes the git author and config
-/// variables from the process environment, so the code under test (which starts git with the process environment)
-/// reads only this config.
+/// The test `HOME` of this process: its `.gitconfig` turns on `commit.gpgSign` and `push.gpgSign` with a spy gpg
+/// program that records each call and fails, and sets `push.default = matching` (a push with no refspec connects). The first call sets `HOME`, `XDG_CONFIG_HOME` and `GIT_SSH_COMMAND` (a
+/// spy ssh that records each call and fails; the builder keeps a set `GIT_SSH_COMMAND`) and removes the git author
+/// and config variables from the process environment, so the code under test (which starts git with the process
+/// environment) reads only this config.
 pub fn home() -> &'static Path {
     static HOME: OnceLock<TempDir> = OnceLock::new();
     HOME.get_or_init(|| {
@@ -40,14 +41,19 @@ pub fn home() -> &'static Path {
         fs::write(&spy, format!("#!/bin/sh\necho ran >> '{}'\nexit 1\n", h.join("gpg-ran").display())).unwrap();
         fs::set_permissions(&spy, fs::Permissions::from_mode(0o755)).unwrap();
         fs::write(h.join(".gitconfig"), format!(
-            "[commit]\n\tgpgSign = true\n[gpg]\n\tprogram = {}\n[init]\n\tdefaultBranch = main\n", spy.display(),
+            "[commit]\n\tgpgSign = true\n[push]\n\tgpgSign = true\n\tdefault = matching\n[gpg]\n\tprogram = {}\n[init]\n\tdefaultBranch = main\n",
+            spy.display(),
         )).unwrap();
+        let ssh = h.join("ssh-spy");
+        fs::write(&ssh, format!("#!/bin/sh\necho ran >> '{}'\nexit 1\n", h.join("ssh-ran").display())).unwrap();
+        fs::set_permissions(&ssh, fs::Permissions::from_mode(0o755)).unwrap();
         fs::create_dir_all(h.join(".config")).unwrap();
         // SAFETY: every test calls `home()` (directly or through `git`, `Remote::new` or `Machine::new`) before it
         // spawns a process, and `OnceLock` blocks the other callers until the variables are set.
         unsafe {
             std::env::set_var("HOME", &h);
             std::env::set_var("XDG_CONFIG_HOME", h.join(".config"));
+            std::env::set_var("GIT_SSH_COMMAND", &ssh);
             for k in CLEARED {
                 std::env::remove_var(k);
             }
@@ -61,6 +67,11 @@ pub fn gpg_calls() -> usize {
     fs::read_to_string(home().join("gpg-ran")).map(|s| s.lines().count()).unwrap_or(0)
 }
 
+/// The count of ssh calls in this process so far.
+pub fn ssh_calls() -> usize {
+    fs::read_to_string(home().join("ssh-ran")).map(|s| s.lines().count()).unwrap_or(0)
+}
+
 /// A plain `git` in `cwd` with the test `HOME`, without the git variables of [`CLEARED`].
 pub fn plain(cwd: &Path) -> Command {
     home();
@@ -72,11 +83,11 @@ pub fn plain(cwd: &Path) -> Command {
     c
 }
 
-/// `git -c commit.gpgSign=false -c user.name=t -c user.email=t@t.invalid <args>` in `cwd`; asserts success and
-/// returns stdout without its last `\n`.
+/// `git -c commit.gpgSign=false -c push.gpgSign=false -c user.name=t -c user.email=t@t.invalid <args>` in `cwd`;
+/// asserts success and returns stdout without its last `\n`.
 pub fn git(cwd: &Path, args: &[&str]) -> String {
     let o = plain(cwd)
-        .args(["-c", "commit.gpgSign=false", "-c", "user.name=t", "-c", "user.email=t@t.invalid"])
+        .args(["-c", "commit.gpgSign=false", "-c", "push.gpgSign=false", "-c", "user.name=t", "-c", "user.email=t@t.invalid"])
         .args(args).stdin(Stdio::null()).output().unwrap();
     assert!(o.status.success(), "git {args:?} in {}: {}", cwd.display(), String::from_utf8_lossy(&o.stderr));
     let mut s = String::from_utf8(o.stdout).unwrap();

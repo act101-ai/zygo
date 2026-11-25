@@ -437,8 +437,14 @@ fn push_never_reads_the_remote_as_an_option() {
     let m = Machine::new(&r);
     let spy = spy(r.dir.path(), "git-receive-pack");
     let c = first(&m, "a");
+    // Read as an option, `--receive-pack=<spy>` leaves the refspec `<c>:refs/heads/zygo/mail` as the repository, an
+    // scp-like ssh address, with no refspec: under the global `push.default = matching` git connects and starts the
+    // test's spy ssh. Read as a remote after `--`, git blocks it as a strange pathname before any transport.
+    assert_eq!(git(&m.root, &["config", "--global", "push.default"]), "matching");
+    let n = ssh_calls();
     assert_eq!(push(&m.wt, &format!("--receive-pack={spy}"), "zygo/mail", &c, None, far()),
         Ok(Pushed::Other("push failed".into())));
+    assert_eq!(ssh_calls(), n);
     assert!(!r.dir.path().join("spy-ran").exists());
 }
 
@@ -450,10 +456,11 @@ fn push_to_a_missing_remote_is_other() {
     assert_eq!(push(&m.wt, "nosuch", "zygo/mail", &c, None, far()), Ok(Pushed::Other("push failed".into())));
 }
 
-/// The state of the user checkout at `root`: the bytes of `.git/HEAD` and `.git/index`, its branches and its status.
+/// The state of the user checkout at `root`: the bytes of `.git/HEAD` and `.git/index`, its branches and tags, and
+/// its status.
 fn checkout_state(root: &std::path::Path) -> (Vec<u8>, Vec<u8>, String, String) {
     (std::fs::read(root.join(".git/HEAD")).unwrap(), std::fs::read(root.join(".git/index")).unwrap(),
-        git(root, &["for-each-ref", "refs/heads"]), git(root, &["--no-optional-locks", "status", "--porcelain"]))
+        git(root, &["for-each-ref", "refs/heads", "refs/tags"]), git(root, &["--no-optional-locks", "status", "--porcelain"]))
 }
 
 #[test]
@@ -487,4 +494,91 @@ fn remove_worktree_removes_only_that_path() {
     assert!(list.contains(&format!("worktree {}\n", side.display())), "{list}");
     assert!(side.join("README").exists());
     assert_eq!(std::fs::read(m.root.join(".git/HEAD")).unwrap(), head);
+}
+
+// Review round 1.
+
+#[test]
+fn fetch_creates_no_tag_in_the_user_checkout() {
+    let r = Remote::new();
+    let a = Machine::new(&r);
+    let b = Machine::new(&r);
+    let c = push_plain_root(&b, b"ZYGO-MAIL", b"1\n");
+    git(&b.root, &["tag", "side", &c]);
+    git(&b.root, &["push", "-q", "origin", "refs/tags/side"]);
+    assert_eq!(fetch(&a.root, "origin", "zygo/mail", far()), Ok(Fetched::Tip(c)));
+    assert_eq!(git(&a.root, &["for-each-ref", "refs/tags"]), "");
+}
+
+#[test]
+fn commit_remove_ignores_a_file_in_the_worktree_folder() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (_, c1) = two_commits(&m);
+    std::fs::create_dir_all(m.wt.join("registry")).unwrap();
+    std::fs::write(m.wt.join("registry/a.json"), "planted\n").unwrap();
+    let c2 = commit(&m.wt, &c1, Some(&c1), &[Change::Remove { path: "registry/a.json".into() }], far()).unwrap();
+    assert_eq!(files(&m.root, &c2), ["ZYGO-MAIL", MSG_PATH]);
+}
+
+#[test]
+fn push_neither_signs_nor_prompts_with_global_push_gpg_sign() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    assert_eq!(git(&m.root, &["config", "--global", "push.gpgSign"]), "true");
+    let c = first(&m, "a");
+    let n = gpg_calls();
+    assert_eq!(push(&m.wt, "origin", "zygo/mail", &c, None, far()), Ok(Pushed::Accepted));
+    assert_eq!(gpg_calls(), n);
+    assert_eq!(r.tip("zygo/mail"), Some(c));
+}
+
+#[test]
+fn ensure_worktree_recovers_a_folder_whose_admin_dir_is_gone() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    std::fs::remove_dir_all(m.root.join(".git/worktrees/mail-sync")).unwrap();
+    assert!(m.wt.join(".git").is_file());
+    assert_eq!(ensure_worktree(&m.root, &m.wt, &rt, far()), Ok(()));
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), rt);
+    assert_eq!(names(&m.wt), [".git"]);
+    let c = commit(&m.wt, &rt, Some(&rt), &[Change::Add { path: "registry/a.json".into(), bytes: b"{}\n".to_vec() }],
+        far()).unwrap();
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c);
+}
+
+#[test]
+fn no_branch_reads_only_git_s_own_line() {
+    assert!(no_branch(b"fatal: couldn't find remote ref refs/heads/zygo/mail\n"));
+    assert!(no_branch(b"warning: x\nFATAL: Couldn't Find Remote Ref refs/heads/zygo/mail\n"));
+    assert!(!no_branch(b"remote: fatal: couldn't find remote ref refs/heads/zygo/mail\nfatal: the remote end hung up\n"));
+    assert!(!no_branch(b"fatal: remote error: couldn't find remote ref refs/heads/zygo/mail\n"));
+    assert!(!no_branch(b""));
+}
+
+#[test]
+fn object_temp_folder_is_private_and_left_clean() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let tmp = m.wt.parent().unwrap();
+    assert_eq!(std::fs::metadata(tmp).unwrap().permissions().mode() & 0o777, 0o700);
+    std::fs::write(tmp.join(".zygo-object-stale"), "x").unwrap();
+    commit(&m.wt, &rt, Some(&rt), &[Change::Add { path: "registry/a.json".into(), bytes: b"{}\n".to_vec() }], far())
+        .unwrap();
+    assert!(!names(tmp).iter().any(|n| n.starts_with(".zygo-object")), "{:?}", names(tmp));
+}
+
+#[test]
+fn ls_reads_a_prefix_as_a_literal_path() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let b = blob(&m.root, b"1\n");
+    let t = tree_literally(&m.root, &[("100644", b":(glob)x", &b), ("100644", b"ZYGO-MAIL", &b)]);
+    let c = commit_tree(&m.root, &t, None);
+    assert_eq!(ensure_worktree(&m.root, &m.wt, &c, far()), Ok(()));
+    let paths: Vec<String> = entries(&m.wt, &c, Some(":(glob)x")).into_iter().map(|e| e.path).collect();
+    assert_eq!(paths, [":(glob)x"]);
 }

@@ -91,18 +91,33 @@ fn path_str(p: &Path) -> Result<&str, BranchError> {
 /// A local file error as `Io`.
 fn io(e: std::io::Error) -> BranchError { BranchError::Io(e.to_string()) }
 
-/// The folder of the worktree `wt` (`<workspace_cache_dir>/<id>/`), made when missing: it holds the temp files of
-/// [`write_object`].
+/// The prefix of the temp files of [`write_object`].
+const TEMP_PREFIX: &str = ".zygo-object";
+
+/// The folder of the worktree `wt` (`<workspace_cache_dir>/<id>/`), made when missing and set to `0700` (the sync
+/// folders, `state.rs`): it holds the temp files of [`write_object`]. Temp files left by a crash are removed.
 fn tmp_dir(wt: &Path) -> Result<&Path, BranchError> {
     let p = wt.parent().ok_or_else(|| BranchError::Io(format!("no parent folder: {}", wt.display())))?;
     std::fs::create_dir_all(p).map_err(io)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).map_err(io)?;
+    }
+    for e in std::fs::read_dir(p).map_err(io)? {
+        let e = e.map_err(io)?;
+        let left = e.file_name().to_str().is_some_and(|n| n.starts_with(TEMP_PREFIX));
+        if left && !e.file_type().map_err(io)?.is_dir() {
+            std::fs::remove_file(e.path()).map_err(io)?;
+        }
+    }
     Ok(p)
 }
 
 /// Writes `bytes` as a git object of `kind` through a `0600` temp file in `tmp` (no stdin: the runner's is null)
 /// and `git hash-object -t <kind> -w --no-filters` in `cwd`; returns its id. The temp file is deleted on every path.
 fn write_object(cwd: &Path, tmp: &Path, kind: &str, bytes: &[u8], deadline: Instant) -> Result<String, BranchError> {
-    let mut f = tempfile::Builder::new().prefix(".zygo-object").tempfile_in(tmp).map_err(io)?;
+    let mut f = tempfile::Builder::new().prefix(TEMP_PREFIX).tempfile_in(tmp).map_err(io)?;
     f.write_all(bytes).and_then(|()| f.flush()).map_err(io)?;
     let out = run_git(cwd, &["hash-object", "-t", kind, "-w", "--no-filters", "--", path_str(f.path())?],
         "hash-object", deadline)?;
@@ -123,30 +138,33 @@ fn commit_tree(cwd: &Path, tree: &str, parent: Option<&str>, deadline: Instant) 
 }
 
 /// S§6.3 make/use: points the worktree `wt` at `commit`. An existing worktree (`wt/.git` a regular file) gets
-/// `update-ref --no-deref HEAD`; else `git worktree add --force --detach --no-checkout` runs in `main_root`.
+/// `update-ref --no-deref HEAD`; else `git worktree add --force --detach --no-checkout` runs in `main_root`. When
+/// that `update-ref` fails (a stale folder: its admin folder is gone), the folder is removed and made again; no
+/// `worktree prune` runs (S§6.3).
 pub fn ensure_worktree(main_root: &Path, wt: &Path, commit: &str, deadline: Instant) -> Result<(), BranchError> {
     oid(commit)?;
     if std::fs::symlink_metadata(wt.join(".git")).is_ok_and(|m| m.is_file()) {
-        run_git(wt, &["update-ref", "--no-deref", "HEAD", commit], "update-ref", deadline)?;
-        return Ok(());
+        match run_git(wt, &["update-ref", "--no-deref", "HEAD", commit], "update-ref", deadline) {
+            Ok(_) => return Ok(()),
+            Err(BranchError::Git(RunError::Failed, _)) => std::fs::remove_dir_all(wt).map_err(io)?,
+            Err(e) => return Err(e),
+        }
     }
-    if let Some(p) = wt.parent() {
-        std::fs::create_dir_all(p).map_err(io)?;
-    }
+    tmp_dir(wt)?;
     let w = path_str(wt)?;
     run_git(main_root, &["worktree", "add", "--force", "--detach", "--no-checkout", "--", w, commit], "worktree add",
         deadline)?;
     Ok(())
 }
 
-/// S§6.5: fetches `refs/heads/<branch>` into `refs/remotes/<remote>/<branch>` with no `FETCH_HEAD`. A remote
-/// without the branch ("couldn't find remote ref", any case) is `NoBranch` (S§6.4).
+/// S§6.5: fetches `refs/heads/<branch>` into `refs/remotes/<remote>/<branch>` with no `FETCH_HEAD` and no tags
+/// (S-G2). A remote without the branch ([`no_branch`]) is `NoBranch` (S§6.4).
 pub fn fetch(cwd: &Path, remote: &str, branch: &str, deadline: Instant) -> Result<Fetched, BranchError> {
     let spec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
-    let w = git::run(cwd, &["fetch", "--no-write-fetch-head", "--", remote, &spec], deadline)
+    let w = git::run(cwd, &["fetch", "--no-write-fetch-head", "--no-tags", "--", remote, &spec], deadline)
         .map_err(|e| BranchError::Git(e, "fetch"))?;
     if !w.ok {
-        if git::has_text(&w.err, &["couldn't find remote ref"]) {
+        if no_branch(&w.err) {
             return Ok(Fetched::NoBranch);
         }
         return Err(BranchError::Git(RunError::Failed, "fetch"));
@@ -154,6 +172,13 @@ pub fn fetch(cwd: &Path, remote: &str, branch: &str, deadline: Instant) -> Resul
     let tip = format!("refs/remotes/{remote}/{branch}^{{commit}}");
     let out = run_git(cwd, &["rev-parse", "--verify", &tip], "rev-parse", deadline)?;
     Ok(Fetched::Tip(id_out(&out, "rev-parse")?))
+}
+
+/// S§6.4: whether the stderr of a failed fetch says that the remote has no such branch: a line of git's own that
+/// starts `fatal: couldn't find remote ref` (any case). A `remote:` or `fatal: remote error:` line is server text.
+pub fn no_branch(err: &[u8]) -> bool {
+    const LINE: &[u8] = b"fatal: couldn't find remote ref";
+    err.split(|&b| b == b'\n').any(|l| l.len() >= LINE.len() && l[..LINE.len()].eq_ignore_ascii_case(LINE))
 }
 
 /// S§6.4: makes the root commit whose tree is the one entry `ZYGO-MAIL` = [`MARKER`], points the worktree at it
@@ -169,12 +194,12 @@ pub fn bootstrap(main_root: &Path, wt: &Path, deadline: Instant) -> Result<Strin
     Ok(root)
 }
 
-/// The entries of `tip` (at the top, or under `prefix`) to `each`, through `git ls-tree -z --long --full-tree`. An
-/// entry that does not parse, or whose path is not UTF-8, is not passed (S-C5).
+/// The entries of `tip` (at the top, or under `prefix`, a literal path) to `each`, through `git --literal-pathspecs
+/// ls-tree -z --long --full-tree`. An entry that does not parse, or whose path is not UTF-8, is not passed (S-C5).
 pub fn ls(wt: &Path, tip: &str, prefix: Option<&str>, deadline: Instant, each: &mut dyn FnMut(Entry) -> Flow)
     -> Result<Streamed, BranchError> {
     oid(tip)?;
-    let mut args = vec!["ls-tree", "-z", "--long", "--full-tree", tip];
+    let mut args = vec!["--literal-pathspecs", "ls-tree", "-z", "--long", "--full-tree", tip];
     if let Some(p) = prefix {
         args.extend(["--", p]);
     }
@@ -245,7 +270,7 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
                 run_git(wt, &["update-index", "--add", "--cacheinfo", &info], "update-index", deadline)?;
             }
             Change::Remove { path } => {
-                run_git(wt, &["update-index", "--remove", "--", path], "update-index", deadline)?;
+                run_git(wt, &["update-index", "--force-remove", "--", path], "update-index", deadline)?;
             }
         }
     }
@@ -277,14 +302,15 @@ pub fn classify(ok: bool, out: &[u8], branch: &str) -> Pushed {
     if rejected && git::has_text(summary, MOVED_TEXT) { Pushed::Moved } else { Pushed::Other("push rejected".into()) }
 }
 
-/// S§8.3 step 14, S§9: pushes `commit` to `refs/heads/<branch>` on `remote`, with the lease `lease` when given.
+/// S§8.3 step 14, S§9: pushes `commit` to `refs/heads/<branch>` on `remote`, with the lease `lease` when given,
+/// unsigned (`-c push.gpgSign=false`, as `commit.gpgSign` in S§6.5).
 pub fn push(wt: &Path, remote: &str, branch: &str, commit: &str, lease: Option<&str>, deadline: Instant)
     -> Result<Pushed, BranchError> {
     oid(commit)?;
     lease.map(oid).transpose()?;
     let lease = lease.map(|l| format!("--force-with-lease=refs/heads/{branch}:{l}"));
     let spec = format!("{commit}:refs/heads/{branch}");
-    let mut args = vec!["push", "--porcelain"];
+    let mut args = vec!["-c", "push.gpgSign=false", "push", "--porcelain"];
     args.extend(lease.as_deref());
     args.extend(["--", remote, &spec]);
     let w = git::run(wt, &args, deadline).map_err(|e| BranchError::Git(e, "push"))?;
