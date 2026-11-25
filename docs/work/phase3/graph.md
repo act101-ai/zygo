@@ -201,7 +201,6 @@ Session text (T, SX nodes):
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
 | MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | DONE | judgment | 8d5f951f · public 36/36; floor green · PR #73 |
 | MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | DONE | judgment | 2384d84a · branch 36/36; floor green · PR #74 |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
@@ -227,7 +226,7 @@ Session text (T, SX nodes):
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | TODO | implementation | — |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
-| WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | TODO | judgment | — |
+| WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | DONE | judgment | a1f4eb0c, f16c93f8, 767b954a, e0905dec, 8cd02ad7, 6fe57c61, e6fca6e4 · up_definition 17/0 ; floor green · PR #120 |
 | WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | TODO | judgment | — |
 | WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
@@ -278,6 +277,7 @@ Session text (T, SX nodes):
 | FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | TODO | implementation | — |
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | TODO | implementation | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
+| FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -400,3 +400,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-17 DONE: `zygo doctor` prints the workspace-files, pool, shared-pool and member-maximum lines; it finds the checkout the same way `up` does. 2 rounds, 9 findings: 5 fixed, 1 closed by a fix, 1 carried forward, 2 dropped · PR #119 |
 | 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
 | 2026-11-25 | ML-14 done: unread counts in zygo workspace, zygo ls and up; forget-pane removes mail/<key>/ (file, folder or link); FX-12 (HUD count) and FX-13 (maildir lifecycle) added from review. Floor green · PR #116. |
+| 2026-11-25 | WD-11 DONE: `up` reads definitions; a team config read failure degrades to the user config `max_members` with a printed line; `up --all` with a repository default prints the solo line. Round-3 non-blocking findings to FX-14 · PR #120 |
