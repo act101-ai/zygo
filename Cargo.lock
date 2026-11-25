@@ -3592,6 +3592,7 @@ dependencies = [
  "zygo-config",
  "zygo-core",
  "zygo-hooks",
+ "zygo-mail-sync",
  "zygo-proxy",
  "zygo-results",
  "zygo-usage",
