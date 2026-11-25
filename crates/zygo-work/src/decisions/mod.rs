@@ -4,4 +4,5 @@ pub mod graph;
 pub mod history;
 pub mod new;
 pub mod record;
+pub mod review;
 pub mod set;
