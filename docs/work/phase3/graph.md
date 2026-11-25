@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | DONE | implementation | 2d7c5e70 · definition_keys 11 passed, config_layers 90 passed · PR #58 |
 | RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | DONE | implementation | 7efa8d9 441e170 ff23c48 · first_started_at 11 tests, 3 crates pass; floor green · PR #38 |
 | RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
@@ -242,7 +241,7 @@ Session text (T, SX nodes):
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | TODO | implementation | — |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | TODO | implementation | — |
-| MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | IN-PROGRESS | judgment | .worktrees/phase3/MS-8-node · PR #73 |
+| MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | DONE | judgment | 8d5f951f · public 36/36; floor green · PR #73 |
 | MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | TODO | judgment | — |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
@@ -390,3 +389,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | WD-24 DONE — hide_secrets scrubs pane job; two older field tests now cover job and name; W§12 scrub list names pane job and name (author's call); review F1, F2 fixed, F3 (loadout name is a table key, outside WD-24) dropped; floor 2681p 0f. |
 | 2026-11-24 | MS-5 DONE: mail-sync state files (paths, identity, state.json, imported log, marks); fix round 1 closed 9 review findings; floor green (ws 2724/0). PR #69. |
 | 2026-11-24 | MS-3 done: mail sync config keys (host, sync_gap, mail.workspace.<n>.sync/remote), sync_for, form checks incl. W§5 workspace-name keys; review: 4 fixed, 2 dropped (unknown keys: crate norm; remote: pass-time per S§11, carried to MS-10). PR #68. |
+| 2026-11-25 | MS-8 DONE — public-repository check with 1 h cache (S§8.2); review round 1 fixed 8 findings (cache tests, esc of server text, `--` before remote, test env); floor green ws 2773/0. |
