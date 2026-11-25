@@ -1856,7 +1856,6 @@ fn results_shape_is_true_without_a_results_table() {
     assert!(cfg("").results.shape);
     let m = loaded("");
     assert!(m.config.results.shape);
-    assert_eq!(m.source_of("results.shape"), Layer::Builtin);
 }
 
 #[test]
@@ -1866,4 +1865,11 @@ fn results_shape_false_in_the_user_file_reads_false() {
     assert_eq!(m.source_of("results.shape"), Layer::User);
     let r = &m.config.results;
     assert_eq!((r.trim_threshold_bytes, r.head_lines, r.tail_lines), (16384, 60, 20));
+}
+
+#[test]
+fn results_shape_is_true_when_the_results_table_omits_it() {
+    let m = loaded("[results]\nhead_lines = 5\n");
+    assert!(m.config.results.shape);
+    assert_eq!(m.config.results.head_lines, 5);
 }

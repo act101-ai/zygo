@@ -168,3 +168,8 @@ cargo test -p zygo-config -p zygo-core -p zygo-launch -p zygo-hooks --test confi
 ```
 
 All pass, including `results_shape_is_true_without_a_results_table`, `results_shape_false_in_the_user_file_reads_false`, `view_shape_absent_from_view_json_reads_true_and_false_round_trips` and `view_shape_of_the_user_config_reaches_the_view`. (Confirmed at `0bd0da71`: this one cargo call builds and runs exactly these four test targets.)
+
+### Round 2
+
+- [x] **F1.** Delete `assert_eq!(m.source_of("results.shape"), Layer::Builtin);` from `results_shape_is_true_without_a_results_table`: `source_of` gives `Builtin` for any key with no recorded layer (`layers.rs:679-682`), so the assertion proves nothing. The value check stays.
+- [x] **F2.** Add `results_shape_is_true_when_the_results_table_omits_it`: a user file with `[results]\nhead_lines = 5` gives `shape == true` and `head_lines == 5`.
