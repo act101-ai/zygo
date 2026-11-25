@@ -912,7 +912,8 @@ fn find_tests(items: &[syn::Item], func: &str, stack: &mut Vec<Result<Targets, S
     }
 }
 
-fn blank(s: &Option<String>) -> bool {
+/// True when the text is absent or only white space.
+pub fn blank(s: &Option<String>) -> bool {
     s.as_deref().is_none_or(|s| s.trim().is_empty())
 }
 
@@ -1052,7 +1053,7 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
     // 8. a supported client meets the bar
     for c in clients.iter().filter(|c| c.supported) {
         let [g] = files_of(&c.id)[..] else { continue };
-        let failing = failing_core(reg, g);
+        let failing = crate::derive::bar(reg, g).failing;
         if !failing.is_empty() {
             fault(8, format!("client `{}` is supported and below the bar: {}", c.id, failing.join(", ")));
         }
@@ -1066,19 +1067,6 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
         }
     }
     faults
-}
-
-/// CF-2 replaces this with derive::bar(reg, g).failing
-fn failing_core(reg: &Registry, g: &GradeFile) -> Vec<String> {
-    let ok = |criterion: &str| {
-        g.grade.iter().any(|e| e.criterion == criterion && e.status == Status::Met)
-            || reg.bar_exception.iter().any(|b| b.client == g.client && b.criterion == criterion && !blank(&b.approved))
-    };
-    reg.capability
-        .iter()
-        .filter(|cap| cap.tier == Tier::Core && cap.criterion.iter().any(|c| !ok(&c.id)))
-        .map(|cap| cap.id.clone())
-        .collect()
 }
 
 /// The display name of a client (P4-6 replaces this with the descriptor).

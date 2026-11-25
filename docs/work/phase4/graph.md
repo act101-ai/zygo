@@ -69,7 +69,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | CF-1 | Conformance input model and check: `Agent::ALL`, registry and grade parsing with the input rules, evidence kinds, check items 1-9 on fixture inputs | — | DONE | judgment | PR #87 merged 74562e3b; acceptance 65 check_/input_ tests pass @ 3aceaac3; CI run 45605170068 green (ubuntu, macos, windows) |
-| CF-2 | Conformance derived values: cell, tier and total score, bar, rollup, release state, on fixture inputs | CF-1 | TODO | implementation | — |
+| CF-2 | Conformance derived values: cell, tier and total score, bar, rollup, release state, on fixture inputs | CF-1 | IN-PROGRESS | implementation | — |
 | CF-3 | Conformance outputs: feature matrix, rollup and score in Markdown and JSON, the write mode and check item 10, on fixture inputs | CF-2 | TODO | implementation | — |
 | CF-4 | Registry `capabilities.toml`, grade files for Claude Code and OpenCode, generated `docs/conformance.md` and `.json`, the tree test, CI paths, old scripts deleted (PR stops for the operator, K-D26) | CF-3 | TODO | judgment | — |
 | PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | TODO | judgment | — |
