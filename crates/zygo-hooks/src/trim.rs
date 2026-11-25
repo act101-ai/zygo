@@ -123,12 +123,12 @@ pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::
         kind: stored.kind.as_str().into(),
         stored_bytes: stored.bytes,
         view_bytes: v.len() as u64,
-        result_id: None,
+        result_id: Some(stored.id.clone()),
         command: None,
-        shaper: None,
+        shaper: Some("size".into()),
     };
-    // C6: a bookkeeping failure never costs the agent its view.
-    if zygo_usage::Store::open(usage_db).and_then(|u| u.insert_trim(&row)).is_err() {
+    // C6, O§7.11: busy past the bound or broken: no row, the view stands.
+    if zygo_usage::Store::open_bounded(usage_db, zygo_usage::store::HOOK_DB_BOUND).and_then(|u| u.insert_trim(&row)).is_err() {
         note("usage store unavailable");
     }
     let cwd = input.raw.get("cwd").and_then(Value::as_str).unwrap_or(".");

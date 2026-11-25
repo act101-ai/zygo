@@ -60,9 +60,9 @@ Other callers of `trim_in` keep their signature: `crates/zygo-launch/tests/openc
 
 ### Steps
 
-- [ ] **Step 1: Add `rusqlite` as a dev-dependency of `zygo-hooks`.** This step depends on the ruling above. In `crates/zygo-hooks/Cargo.toml` under `[dev-dependencies]`, add `rusqlite.workspace = true` (workspace entry `Cargo.toml:57`, `0.43.0`, `bundled`). Run `cargo build -p zygo-hooks --tests` and check that `Cargo.lock` gains `"rusqlite"` in the `zygo-hooks` dependency list and nothing else.
+- [x] **Step 1: Add `rusqlite` as a dev-dependency of `zygo-hooks`.** This step depends on the ruling above. In `crates/zygo-hooks/Cargo.toml` under `[dev-dependencies]`, add `rusqlite.workspace = true` (workspace entry `Cargo.toml:57`, `0.43.0`, `bundled`). Run `cargo build -p zygo-hooks --tests` and check that `Cargo.lock` gains `"rusqlite"` in the `zygo-hooks` dependency list and nothing else.
 
-- [ ] **Step 2: Write the failing row tests and make `hooks_basic` create the database first.** All edits are in `crates/zygo-hooks/tests/hooks_basic.rs`.
+- [x] **Step 2: Write the failing row tests and make `hooks_basic` create the database first.** All edits are in `crates/zygo-hooks/tests/hooks_basic.rs`.
 
   New helpers after `dir_names` (`:114`). No existing helper does this: the only id extraction is inline in `crates/zygo/tests/workspace_restore.rs:763`, in another crate.
 
@@ -134,7 +134,7 @@ Other callers of `trim_in` keep their signature: `crates/zygo-launch/tests/openc
   }
   ```
 
-- [ ] **Step 3: Make `hook_trim` create the database first.** This step depends on the ruling above. In `crates/zygo/tests/hook_trim.rs`, add after `data_dir` (`:29`):
+- [x] **Step 3: Make `hook_trim` create the database first.** This step depends on the ruling above. In `crates/zygo/tests/hook_trim.rs`, add after `data_dir` (`:29`):
 
   ```rust
   /// The usage database as the launcher leaves it (O§6.5 item 3).
@@ -143,22 +143,22 @@ Other callers of `trim_in` keep their signature: `crates/zygo-launch/tests/openc
 
   Call `usage_ready(d.path());` after `let sd = session(d.path());` in `trim_binary_trims_bash_over_threshold` (`:31`) and in `trim_binary_work_log_failure_keeps_view_with_one_fixed_line` (`:65`). `zygo-usage` is a normal dependency of `zygo` (`crates/zygo/Cargo.toml:15`). Keep every assertion.
 
-- [ ] **Step 4: Run the tests and see them fail.** Run `cargo test -p zygo-hooks --test hooks_basic -- trim_row`. Expect 3 failures:
+- [x] **Step 4: Run the tests and see them fail.** Run `cargo test -p zygo-hooks --test hooks_basic -- trim_row`. Expect 3 failures:
   - `trim_row_bash_records_result_id_and_size_shaper`: `result_id` and `shaper` are `None`;
   - `trim_row_on_97d8767_database_writes_seven_columns`: the full `Store::open` adds `result_id`, `command` and `shaper`, so there are 10 columns;
   - `trim_row_missing_database_keeps_view_and_creates_nothing`: the full open creates `usage/`.
   
   Then run `cargo test -p zygo-hooks --test hooks_basic` and `cargo test -p zygo --test hook_trim`. Everything else passes, including the four tests edited in Steps 2-3.
 
-- [ ] **Step 5: Implement the row fields and the bounded open in `crates/zygo-hooks/src/trim.rs`, with the bound still fixed.**
+- [x] **Step 5: Implement the row fields and the bounded open in `crates/zygo-hooks/src/trim.rs`, with the bound still fixed.**
   1. In the `TrimRow` literal (`:118-129`), set `result_id: Some(stored.id.clone())` and `shaper: Some("size".into())`. Keep `command: None`: the O§7.2 command name comes with the shaping pipeline in a later node.
   2. Replace `zygo_usage::Store::open(usage_db)` (`:131`) with `zygo_usage::Store::open_bounded(usage_db, zygo_usage::store::HOOK_DB_BOUND)`.
   3. Change the comment above it to `// C6, O§7.11: busy past the bound or broken: no row, the view stands.`
   4. Keep `note("usage store unavailable")` unchanged (O§10: one stderr line).
 
-- [ ] **Step 6: Run the tests and see them pass.** Run `cargo test -p zygo-hooks --test hooks_basic` and `cargo test -p zygo --test hook_trim`. All pass, including the 3 `trim_row…` tests.
+- [x] **Step 6: Run the tests and see them pass.** Run `cargo test -p zygo-hooks --test hooks_basic` and `cargo test -p zygo --test hook_trim`. All pass, including the 3 `trim_row…` tests.
 
-- [ ] **Step 7: Commit.**
+- [x] **Step 7: Commit.**
   ```sh
   git add crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/hooks_basic.rs crates/zygo/tests/hook_trim.rs crates/zygo-hooks/Cargo.toml Cargo.lock
   git commit -F - <<'MSG'

@@ -115,6 +115,35 @@ fn dir_names(p: &Path) -> Vec<String> {
     let mut n: Vec<String> = std::fs::read_dir(p).unwrap().map(|f| f.unwrap().file_name().to_string_lossy().into_owned()).collect();
     n.sort(); n
 }
+/// The usage database as the launcher leaves it (O§6.5 item 3: the hook's bounded open creates nothing).
+fn usage_ready(e: &Env) { drop(Usage::open(&db(e)).unwrap()); }
+/// The result id in a §10.1 trim marker.
+fn marker_id(view: &str) -> String { view.split("saved as result ").nth(1).unwrap().split('.').next().unwrap().to_string() }
+type RowCols = (String, String, i64, i64, Option<String>, Option<String>, Option<String>);
+fn trim_rows(e: &Env) -> Vec<RowCols> {
+    let c = rusqlite::Connection::open(db(e)).unwrap();
+    let mut q = c.prepare("SELECT session, tool, stored_bytes, view_bytes, result_id, command, shaper FROM trims ORDER BY rowid").unwrap();
+    q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))).unwrap().map(Result::unwrap).collect()
+}
+fn trim_cols(e: &Env) -> Vec<String> {
+    let c = rusqlite::Connection::open(db(e)).unwrap();
+    let mut q = c.prepare("PRAGMA table_xinfo(trims)").unwrap();
+    q.query_map([], |r| r.get(1)).unwrap().map(Result::unwrap).collect()
+}
+/// The `trims` table and its indexes as at `97d8767`: `git show 97d8767:crates/zygo-usage/src/schema.rs`, lines 35-43 and 63-64,
+/// copied byte for byte. The hook touches no other table. The full schema copy is `SCHEMA_97D8767` in `crates/zygo-usage/tests/store.rs:37`.
+const TRIMS_97D8767: &str = "CREATE TABLE IF NOT EXISTS trims (
+    ts INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    agent_id TEXT,
+    tool TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    stored_bytes INTEGER NOT NULL,
+    view_bytes INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS trims_session ON trims(session);
+CREATE INDEX IF NOT EXISTS trims_ts ON trims(ts);";
+const TRIM_SEVEN: [&str; 7] = ["ts", "session", "agent_id", "tool", "kind", "stored_bytes", "view_bytes"];
 
 #[test] fn trim_bash_100kib_returns_view_and_stores_bytes() {       // §20 #14
     let e = env(true);
@@ -132,7 +161,7 @@ fn dir_names(p: &Path) -> Vec<String> {
     assert_eq!(zygo_results::Store::get(&e.dir.results(), &ids[0]).unwrap().data, raw.as_bytes());
 }
 #[test] fn trim_records_bytes_trimmed() {                            // §10.1 Measure
-    let e = env(true);
+    let e = env(true); usage_ready(&e);
     let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
     assert_eq!(bytes_trimmed(&e), 105000 - o["stdout"].as_str().unwrap().len() as u64);
 }
@@ -259,7 +288,7 @@ fn names(n: usize) -> Vec<String> { (0..n).map(|i| format!("src/module_{i:04}.rs
     assert!(result_ids(&e).is_empty());
 }
 #[test] fn trim_subagent_output_is_trimmed() {   // (reg) the sub payload takes the same path as main
-    let e = env(true);
+    let e = env(true); usage_ready(&e);
     let mut v = fixture("PostToolUse-Bash-sub"); v["tool_response"]["stdout"] = json!(lines(5000));
     assert!(updated(&out(run_trim(&v, &e)))["stdout"].as_str().unwrap().contains("[zygo trimmed this output: 5000 lines,"));
     assert!(bytes_trimmed(&e) > 0);
@@ -342,6 +371,35 @@ fn trim_guard(e: &Env, b: &[u8]) -> (String, i32) { guarded(&|b| trim::trim_in(&
     let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
     assert!(o["stdout"].as_str().unwrap().contains("[zygo trimmed this output:"));
     assert_eq!(result_ids(&e).len(), 1);
+}
+#[test] fn trim_row_bash_records_result_id_and_size_shaper() {      // O§7.9: result_id = stored id, shaper "size", command null
+    let e = env(true); usage_ready(&e);
+    let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
+    let view = o["stdout"].as_str().unwrap();
+    let id = marker_id(view);
+    assert_eq!(result_ids(&e), [id.clone()]);
+    assert_eq!(trim_rows(&e), [("sess-1".to_string(), "Bash".to_string(), 105000, view.len() as i64, Some(id), None, Some("size".to_string()))]);
+}
+#[test] fn trim_row_on_97d8767_database_writes_seven_columns() {    // O§6.5 items 3-4, O§16 item 15
+    let e = env(true);
+    std::fs::create_dir_all(db(&e).parent().unwrap()).unwrap();
+    let c = rusqlite::Connection::open(db(&e)).unwrap();
+    c.execute_batch(TRIMS_97D8767).unwrap();
+    c.execute_batch("PRAGMA user_version = 1").unwrap();
+    drop(c);
+    let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
+    assert!(o["stdout"].as_str().unwrap().contains("[zygo trimmed this output: 5000 lines, 105000 bytes;"));
+    assert_eq!(trim_cols(&e), TRIM_SEVEN);                             // no column added
+    let c = rusqlite::Connection::open(db(&e)).unwrap();
+    let row: (String, String, i64, i64) = c.query_row("SELECT session, tool, stored_bytes, view_bytes FROM trims", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+    assert_eq!(row, ("sess-1".into(), "Bash".into(), 105000, o["stdout"].as_str().unwrap().len() as i64));
+}
+#[test] fn trim_row_missing_database_keeps_view_and_creates_nothing() {   // O§7.11, O§10 "broken (hook)"
+    let e = env(true);
+    let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
+    assert!(o["stdout"].as_str().unwrap().contains("[zygo trimmed this output:"));
+    assert_eq!(result_ids(&e).len(), 1);
+    assert!(!db(&e).parent().unwrap().exists());
 }
 #[test] fn trim_result_store_failure_error_is_fixed_text() {
     let e = env(true);
