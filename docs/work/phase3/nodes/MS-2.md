@@ -232,3 +232,11 @@ Produces (this node):
 - [x] **7. Workspace and the unchanged builder.** `cargo test --workspace --locked --no-run` → builds every crate and test (the Windows build is proved by the `windows-latest` CI job of the pull request). `git diff --exit-code origin/phase-3 -- crates/zygo-plugins` → exit 0 (`git_command` and its tests `crates/zygo-plugins/tests/sync.rs:66`, `:116` unchanged). `cargo test -p zygo-plugins --locked --test sync` → all pass.
 
 - [x] **8. Commit** `Cargo.toml`, `Cargo.lock`, and every file under `crates/zygo-mail-sync/`, message `MS-2: zygo-mail-sync crate, hardened git calls and test seams`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:MS-2`.
+
+### Review round 1
+
+- [x] **F1** (S-G2) A sync fetch wrote commit-graph files when user config set `fetch.writeCommitGraph=true`. Test `sync_fetch_writes_no_commit_graph` failed first; `sync_git` now adds `-c fetch.writeCommitGraph=false`; `sync_git_is_git_command_plus_the_maintenance_overrides` expects the three overrides. Spec S-C4 and the change log updated (SP6 names only the gc and maintenance flags, so it is unchanged; S§17 lists no overrides).
+- [x] **F2** `Clock`, `Probe`, `Spawner` and `Seam` are `Send + Sync`; the `Count` fake uses `Arc<AtomicUsize>`; compile-time test `env_is_send_and_sync`.
+- [x] **F3** The `SystemClock.now()` call with no assertion is removed from `production_seams_are_inert`.
+- [x] **F4** `tempfile` moved from `[dev-dependencies]` to `[dependencies]` (workspace version).
+- [x] **F5** Tests `run_non_zero_exit_gives_stdout_and_stderr` (`git rev-parse --git-dir no-such-ref`: `.git` on stdout, exit 128, message on stderr) and `stream_past_deadline_times_out`.

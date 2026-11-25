@@ -6,10 +6,10 @@ use std::process::Command;
 use std::time::Instant;
 use zygo_work::repo::{run_stream, run_whole, Flow, RunError, Streamed, Whole};
 
-/// S-C4: `git_command` in `cwd` plus `-c gc.auto=0 -c maintenance.auto=false`.
+/// S-C4: `git_command` in `cwd` plus `-c gc.auto=0 -c maintenance.auto=false -c fetch.writeCommitGraph=false`.
 pub fn sync_git(cwd: &Path) -> Command {
     let mut c = zygo_plugins::sync::git_command(cwd);
-    c.args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"]);
+    c.args(["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.writeCommitGraph=false"]);
     c
 }
 
