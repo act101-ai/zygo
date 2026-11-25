@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
-| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | DONE | implementation | 0c6335f1 · shaping_fixtures 22 passed; floor green · PR #55 |
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | DONE | implementation | 821a1bb1 · shaping_fixtures 22 passed; floor green · PR #56 |
 | OS-20 | Capture pytest fixtures from a scratch project | OS-16 | DONE | implementation | bb01285a · shaping_fixtures 22 passed; floor green · PR #57 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
@@ -301,7 +300,7 @@ Session text (T, SX nodes):
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | TODO | implementation | — |
-| MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | TODO | implementation | — |
+| MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | DONE | implementation | 2c17b835 · acc 20/0; floor green · PR #83 |
 
 ## Log
 
@@ -392,3 +391,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | ML-3 DONE: member/pane `name` fields in zygo-workspace (plan, member record, `panes[]`); node head 863b6b05; floor green: workspace 2682 passed, 0 failed · PR #62 |
 | 2026-11-24 | OS-3 DONE: bounded usage-store open `open_bounded` + `HOOK_DB_BOUND`; node head c403338f; review 3 findings fixed; floor green: workspace 2677 passed, 0 failed · PR #64 |
 | 2026-11-24 | FX-6 DONE: dead-port helpers point at fixed port 1 via shared `tests/dead_port`; plan revised after macOS bound-not-listening connect timed out; review found the same race in update.rs, fixed; floor: workspace 2671 passed, 0 failed · PR #65 |
+| 2026-11-25 | MS-26 done; state::load now refuses values check_state refuses (InvalidData, file unchanged); review: 2 test gaps closed (probe beside fresh cache; public without verdict); floor ws 2944/0. |
