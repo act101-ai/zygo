@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | DONE | implementation | 683c800 46baa07 2334e49 f1ffb87 0b60e99 · decision_cli 17p/0f/6i, cli_surface 20p/0f/3i; floor green; decision check 0 · PR #22 |
 | DR-4 | `zygo decision new`: write a record template | DR-3 | DONE | implementation | f0d049d beeaa1d 3965c61 · decision_new 12p/0f/1i; floor green · PR #25 |
 | DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | DONE | judgment | 397edc5 aba92f9 d3e3ff7 0db609f 4f86964 2b072a7 · decision_verbs 25p/0f; floor green · PR #29 |
 | DR-6 | `zygo decision review`: the phase-end review | DR-5 | DONE | implementation | 732af80 82d2e65 cb609a4 · decision_review 21/0; floor green · PR #34 |
@@ -325,7 +324,7 @@ Session text (T, SX nodes):
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
 | FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 | FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
-| FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | IN-PROGRESS | mechanical | .worktrees/phase3/FX-4-node · PR #50 |
+| FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 
 ## Log
 
@@ -380,3 +379,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | FX-2 done: decision lock unlocked before close so a child's inherited descriptor cannot keep it; review round 1 (2 confirmed, 3 refuted); floor 2593 passed 0 failed · PR #42 |
 | 2026-11-24 | OS-14 DONE: `size_view` and `shaped_view` in zygo-results view.rs; review round 1 (0 confirmed; F1 empty steps and F2 empty text refuted, spec O§7.3 line 227 and O§7.8); floor green (ws 2596/0) · PR #45 |
 | 2026-11-24 | SX-2 done: `subagent_text()` in crates/zygo-hooks/src/session_start.rs prints mechanics only for an opencode `--event subagent`; review round 1 (2 confirmed, fixed: CLI test, doc sentence); floor green · PR #47 |
+| 2026-11-24 | FX-4 DONE: rows-bound test waits for `usage_written(1, …)` before the complete-flag GET (Windows race, CI run 45543172599; product correct per the N37 note); review 0 confirmed; floor green · PR #50 |
