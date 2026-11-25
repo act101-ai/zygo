@@ -1,11 +1,10 @@
 //! MS-5: the sync state files (mail sync design S§5, S§7.5, S§8.3, S§8.4, S§8.5, S§15; S§16 W§7.1, M-C4).
-//! No test depends on wall-clock time.
-#![cfg(unix)]
+//! No test depends on wall-clock time. The tests of modes and links are `cfg(unix)`; the rest also run on
+//! Windows, where `assert_mode` checks nothing.
 
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tempfile::TempDir;
 use ulid::Ulid;
@@ -29,12 +28,28 @@ fn paths(p: &Path) -> Paths {
 
 fn setup() -> (TempDir, SyncPaths) {
     let t = TempDir::new().unwrap();
-    let sp = SyncPaths::new(&paths(t.path()), ID);
+    let sp = SyncPaths::new(&paths(t.path()), ID).unwrap();
     (t, sp)
 }
 
+#[cfg(unix)]
 fn mode(p: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
     fs::symlink_metadata(p).unwrap().permissions().mode() & 0o777
+}
+
+#[cfg(unix)]
+fn set_mode(p: &Path, m: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(m)).unwrap();
+}
+
+/// The mode of `p` is `m` (unix); nothing on other systems.
+fn assert_mode(p: &Path, m: u32) {
+    #[cfg(unix)]
+    assert_eq!(mode(p), m, "{}", p.display());
+    #[cfg(not(unix))]
+    let _ = (p, m);
 }
 
 /// The sorted file names in `dir`.
@@ -51,11 +66,15 @@ fn u(n: u64) -> Ulid {
     Ulid::from_parts(n, n as u128)
 }
 
+fn set(v: &[Ulid]) -> HashSet<Ulid> {
+    v.iter().copied().collect()
+}
+
 #[test]
 fn sync_paths_follow_w71() {
     let t = TempDir::new().unwrap();
     let p = paths(t.path());
-    let sp = SyncPaths::new(&p, ID);
+    let sp = SyncPaths::new(&p, ID).unwrap();
     let m = p.workspaces_dir().join(ID).join("mail");
     assert_eq!(sp.mail, m);
     assert_eq!(sp.mail, zygo_workspace::mail::mail_dir(&p, ID));
@@ -63,8 +82,8 @@ fn sync_paths_follow_w71() {
         (sp.outbox.clone(), sp.outbox_tmp.clone(), sp.refused.clone()),
         (
             m.join("outbox"),
-            m.join("outbox/tmp"),
-            m.join("outbox/refused")
+            m.join("outbox").join("tmp"),
+            m.join("outbox").join("refused")
         )
     );
     let s = m.join("sync");
@@ -97,7 +116,11 @@ fn sync_paths_follow_w71() {
     );
     assert_eq!(
         sp.worktree,
-        t.path().join("cache/workspaces").join(ID).join("mail-sync")
+        t.path()
+            .join("cache")
+            .join("workspaces")
+            .join(ID)
+            .join("mail-sync")
     );
     // pure: nothing is created
     assert!(!t.path().join("data").exists() && !t.path().join("cache").exists());
@@ -109,11 +132,29 @@ fn sync_paths_follow_w71() {
 }
 
 #[test]
+fn sync_paths_refuse_a_bad_workspace_id() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    for bad in [
+        "../../escape",
+        "",
+        "0123456789ABCDEF",
+        "0123456789abcde",
+        "0123456789abcdef0",
+    ] {
+        let e = SyncPaths::new(&p, bad).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{bad:?}");
+    }
+    assert_eq!(names(t.path()), Vec::<String>::new()); // nothing is created
+}
+
+#[cfg(unix)]
+#[test]
 fn write_atomic_replaces_0600_in_0700_folders() {
     let (_t, sp) = setup();
     let f = sp.sync.join("x");
     write_atomic(&f, b"one").unwrap();
-    fs::set_permissions(&f, fs::Permissions::from_mode(0o644)).unwrap();
+    set_mode(&f, 0o644);
     write_atomic(&f, b"two").unwrap();
     assert_eq!(fs::read(&f).unwrap(), b"two");
     assert_eq!(mode(&f), 0o600);
@@ -123,6 +164,7 @@ fn write_atomic_replaces_0600_in_0700_folders() {
     assert_eq!((mode(&sp.outbox), mode(&sp.outbox_tmp)), (0o700, 0o700));
 }
 
+#[cfg(unix)]
 #[test]
 fn write_atomic_refuses_a_linked_folder() {
     let (t, sp) = setup();
@@ -132,6 +174,38 @@ fn write_atomic_refuses_a_linked_folder() {
     std::os::unix::fs::symlink(&real, &sp.sync).unwrap();
     let e = write_atomic(&sp.state, b"{}").unwrap_err();
     assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput);
+    assert_eq!(names(&real), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_sets_mail_to_0700() {
+    let (_t, sp) = setup();
+    fs::create_dir_all(&sp.sync).unwrap();
+    set_mode(&sp.mail, 0o755);
+    mark_again(&sp).unwrap();
+    assert_eq!((mode(&sp.mail), mode(&sp.sync)), (0o700, 0o700));
+    set_mode(&sp.mail, 0o755);
+    imported_append(&sp, u(1)).unwrap();
+    assert_eq!(mode(&sp.mail), 0o700);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_write_refuses_a_linked_mail_folder() {
+    let (t, sp) = setup();
+    let real = t.path().join("elsewhere");
+    fs::create_dir(&real).unwrap();
+    fs::create_dir_all(sp.mail.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&real, &sp.mail).unwrap();
+    assert_eq!(
+        save(&sp, &State::default()).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        imported_append(&sp, u(1)).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
     assert_eq!(names(&real), Vec::<String>::new());
 }
 
@@ -146,19 +220,21 @@ fn make_identity_writes_32_hex_once() {
         "{a}"
     );
     assert_eq!(fs::read_to_string(&sp.identity).unwrap(), a);
-    assert_eq!(mode(&sp.identity), 0o600);
-    assert_eq!(mode(&sp.sync), 0o700);
+    assert_mode(&sp.identity, 0o600);
+    assert_mode(&sp.sync, 0o700);
     assert_eq!(identity(&sp).unwrap(), Some(a.clone()));
     assert_eq!(make_identity(&sp).unwrap(), a);
-    // an existing identity is kept, not replaced
+    // an existing identity is kept, not replaced; a `\n` or `\r\n` ending is allowed
     let fixed = "00112233445566778899aabbccddeeff";
-    fs::write(&sp.identity, format!("{fixed}\n")).unwrap();
-    assert_eq!(identity(&sp).unwrap().as_deref(), Some(fixed));
-    assert_eq!(make_identity(&sp).unwrap(), fixed);
-    assert_eq!(
-        fs::read_to_string(&sp.identity).unwrap(),
-        format!("{fixed}\n")
-    );
+    for end in ["\n", "\r\n"] {
+        fs::write(&sp.identity, format!("{fixed}{end}")).unwrap();
+        assert_eq!(identity(&sp).unwrap().as_deref(), Some(fixed), "{end:?}");
+        assert_eq!(make_identity(&sp).unwrap(), fixed);
+        assert_eq!(
+            fs::read_to_string(&sp.identity).unwrap(),
+            format!("{fixed}{end}")
+        );
+    }
 }
 
 #[test]
@@ -171,6 +247,8 @@ fn identity_refuses_a_bad_file() {
         "00112233445566778899AABBCCDDEEFF",
         "00112233445566778899aabbccddeef",
         "00112233445566778899aabbccddeeff0",
+        "00112233445566778899aabbccddeeff\n\n",
+        "00112233445566778899aabbccddeeff\r",
     ] {
         fs::write(&sp.identity, bad).unwrap();
         assert_eq!(
@@ -187,6 +265,44 @@ fn identity_refuses_a_bad_file() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn reads_refuse_a_link_and_a_fifo() {
+    let (t, sp) = setup();
+    fs::create_dir_all(&sp.sync).unwrap();
+    let other = t.path().join("other");
+    fs::write(
+        &other,
+        format!("00112233445566778899aabbccddeeff\n{}\n", u(1)),
+    )
+    .unwrap();
+    for p in [&sp.identity, &sp.imported, &sp.state, &sp.last_start] {
+        std::os::unix::fs::symlink(&other, p).unwrap();
+    }
+    assert!(identity(&sp).is_err());
+    assert!(make_identity(&sp).is_err());
+    assert!(imported_load(&sp).is_err());
+    assert!(imported_append(&sp, u(2)).is_err());
+    assert!(load(&sp).is_err());
+    fs::write(&other, "7").unwrap();
+    assert_eq!(read_last_start(&sp), None);
+    assert_eq!(
+        fs::read_to_string(&other).unwrap(),
+        "7",
+        "the link target is not changed"
+    );
+    // a FIFO is refused without a wait for a writer
+    for p in [&sp.identity, &sp.imported, &sp.state, &sp.last_start] {
+        fs::remove_file(p).unwrap();
+        let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    }
+    assert!(identity(&sp).is_err());
+    assert!(imported_load(&sp).is_err());
+    assert!(load(&sp).is_err());
+    assert_eq!(read_last_start(&sp), None);
+}
+
 #[test]
 fn imported_append_adds_27_bytes_and_load_reads_back() {
     let (_t, sp) = setup();
@@ -199,15 +315,23 @@ fn imported_append_adds_27_bytes_and_load_reads_back() {
         fs::read_to_string(&sp.imported).unwrap(),
         format!("{}\n{}\n{}\n", u(1), u(2), u(3))
     );
-    assert_eq!(
-        imported_load(&sp).unwrap(),
-        [u(1), u(2), u(3)].into_iter().collect::<HashSet<_>>()
-    );
-    assert_eq!(mode(&sp.imported), 0o600);
-    assert_eq!(mode(&sp.sync), 0o700);
+    assert_eq!(imported_load(&sp).unwrap(), set(&[u(1), u(2), u(3)]));
+    assert_mode(&sp.imported, 0o600);
+    assert_mode(&sp.sync, 0o700);
     imported_append(&sp, u(1)).unwrap(); // never trimmed; a repeat is one more line
     assert_eq!(fs::metadata(&sp.imported).unwrap().len(), 27 * 4);
     assert_eq!(imported_load(&sp).unwrap().len(), 3);
+}
+
+#[cfg(unix)]
+#[test]
+fn imported_append_sets_an_old_file_to_0600() {
+    let (_t, sp) = setup();
+    fs::create_dir_all(&sp.sync).unwrap();
+    fs::write(&sp.imported, "").unwrap();
+    set_mode(&sp.imported, 0o644);
+    imported_append(&sp, u(1)).unwrap();
+    assert_eq!(mode(&sp.imported), 0o600);
 }
 
 #[test]
@@ -219,18 +343,14 @@ fn imported_load_ignores_a_torn_last_line() {
     // a torn tail: part of an entry, then a whole entry without its newline
     for tail in [&s3[..10], &s3[..]] {
         fs::write(&sp.imported, format!("{whole}{tail}")).unwrap();
-        assert_eq!(
-            imported_load(&sp).unwrap(),
-            [u(1), u(2)].into_iter().collect::<HashSet<_>>(),
-            "{tail:?}"
-        );
+        assert_eq!(imported_load(&sp).unwrap(), set(&[u(1), u(2)]), "{tail:?}");
     }
     // a complete line that is not a ULID is skipped
     fs::write(&sp.imported, format!("{whole}not-a-ulid\n")).unwrap();
-    assert_eq!(
-        imported_load(&sp).unwrap(),
-        [u(1), u(2)].into_iter().collect::<HashSet<_>>()
-    );
+    assert_eq!(imported_load(&sp).unwrap(), set(&[u(1), u(2)]));
+    // a `\r\n` line ending is read
+    fs::write(&sp.imported, format!("{}\r\n{}\n", u(1), u(2))).unwrap();
+    assert_eq!(imported_load(&sp).unwrap(), set(&[u(1), u(2)]));
     // an append after a torn tail starts a new line: the new entry is read, the fragment is not
     let frag = &s3[..10];
     fs::write(&sp.imported, format!("{whole}{frag}")).unwrap();
@@ -239,24 +359,18 @@ fn imported_load_ignores_a_torn_last_line() {
         fs::read_to_string(&sp.imported).unwrap(),
         format!("{whole}{frag}\n{}\n", u(4))
     );
-    assert_eq!(
-        imported_load(&sp).unwrap(),
-        [u(1), u(2), u(4)].into_iter().collect::<HashSet<_>>()
-    );
+    assert_eq!(imported_load(&sp).unwrap(), set(&[u(1), u(2), u(4)]));
 }
 
-#[test]
-fn state_round_trip_holds_no_url() {
-    let (_t, sp) = setup();
-    let url = "https://user:pw@example.com/team/repo.git";
+fn good_state() -> State {
     let h = hex::encode(Sha256::digest(
         "https://example.com/team/repo.git".as_bytes(),
     ));
-    let s = State {
+    State {
         last_ok: Some(1_700_000_000),
         last_error: Some("push".into()),
         public: Some(PublicCache {
-            url_sha256: vec![h.clone()],
+            url_sha256: vec![h],
             verdict: "private".into(),
             at: 1_700_000_000,
         }),
@@ -269,37 +383,133 @@ fn state_round_trip_holds_no_url() {
             "d00491fd7e5bb6fa28c517a0bb32b8b506539d4d".into(),
         )]),
         ci_note_shown: true,
-    };
+    }
+}
+
+#[test]
+fn state_round_trip_holds_no_url() {
+    let (_t, sp) = setup();
+    let s = good_state();
+    let h = s.public.as_ref().unwrap().url_sha256[0].clone();
     save(&sp, &s).unwrap();
-    assert_eq!(load(&sp), s);
+    assert_eq!(load(&sp).unwrap(), s);
     let text = fs::read_to_string(&sp.state).unwrap();
     assert!(text.contains(&h), "{text}");
-    for no in [url, "https://", "example.com", "user", "pw@"] {
+    for no in ["https://", "example.com", "user", "pw@"] {
         assert!(!text.contains(no), "{no:?} in {text}");
     }
-    assert_eq!(mode(&sp.state), 0o600);
-    assert_eq!(mode(&sp.sync), 0o700);
+    assert_mode(&sp.state, 0o600);
+    assert_mode(&sp.sync, 0o700);
+    assert_eq!(names(&sp.sync), ["state.json"]);
+    // every verdict of S§8.2 is kept
+    for v in ["public", "private", "local", "unknown"] {
+        let mut s = good_state();
+        s.public.as_mut().unwrap().verdict = v.into();
+        save(&sp, &s).unwrap();
+        assert_eq!(load(&sp).unwrap(), s, "{v}");
+    }
+}
+
+#[test]
+fn save_refuses_a_value_outside_the_spec() {
+    let (_t, sp) = setup();
+    save(&sp, &good_state()).unwrap();
+    let before = fs::read(&sp.state).unwrap();
+    let mut bad: Vec<(&str, State)> = Vec::new();
+    let mut s = good_state();
+    s.last_error = Some("https://u:tok@h/x".into());
+    bad.push(("last_error url", s));
+    for e in ["", "Push", "push failed", "push\n", &"a".repeat(65)] {
+        let mut s = good_state();
+        s.last_error = Some(e.into());
+        bad.push(("last_error", s));
+    }
+    for v in ["", "Public", "https://u:tok@h/x", "maybe"] {
+        let mut s = good_state();
+        s.public.as_mut().unwrap().verdict = v.into();
+        bad.push(("verdict", s));
+    }
+    for h in [
+        "https://example.com/team/repo.git",
+        &"A".repeat(64),
+        &"a".repeat(63),
+        &"a".repeat(65),
+    ] {
+        let mut s = good_state();
+        s.public.as_mut().unwrap().url_sha256.push(h.into());
+        bad.push(("url_sha256", s));
+    }
+    for (k, v) in [
+        (
+            "https://u:tok@h/x",
+            "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+        ),
+        ("ack/A.json", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"),
+        ("ack/../x.json", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"),
+        ("other/a.json", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"),
+        ("ack/a.json", "https://u:tok@h/x"),
+        ("ack/a.json", "E69DE29BB2D1D6434B8B29AE775AD8C2E48C5391"),
+        ("ack/a.json", "e69de29"),
+    ] {
+        let mut s = good_state();
+        s.pushed.insert(k.into(), v.into());
+        bad.push(("pushed", s.clone()));
+        let mut s = good_state();
+        s.pending.insert(k.into(), v.into());
+        bad.push(("pending", s));
+    }
+    for (what, s) in &bad {
+        let e = save(&sp, s).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{what}: {s:?}");
+        assert_eq!(
+            fs::read(&sp.state).unwrap(),
+            before,
+            "{what}: the file is unchanged"
+        );
+    }
     assert_eq!(names(&sp.sync), ["state.json"]);
 }
 
 #[test]
-fn load_gives_default_for_missing_or_bad_file() {
+fn load_gives_default_for_a_missing_file() {
     let (_t, sp) = setup();
-    assert_eq!(load(&sp), State::default());
-    fs::create_dir_all(&sp.sync).unwrap();
-    for bad in ["", "{", "[]", "{\"pushed\": 3}"] {
-        fs::write(&sp.state, bad).unwrap();
-        assert_eq!(load(&sp), State::default(), "{bad:?}");
-    }
+    assert_eq!(load(&sp).unwrap(), State::default());
     // missing fields take their defaults; unknown fields are ignored
+    fs::create_dir_all(&sp.sync).unwrap();
     fs::write(&sp.state, "{\"last_ok\": 5, \"later\": true}").unwrap();
     assert_eq!(
-        load(&sp),
+        load(&sp).unwrap(),
         State {
             last_ok: Some(5),
             ..State::default()
         }
     );
+    fs::write(&sp.state, "{\"public\": {\"verdict\": \"local\"}}").unwrap();
+    assert_eq!(
+        load(&sp).unwrap(),
+        State {
+            public: Some(PublicCache {
+                verdict: "local".into(),
+                ..PublicCache::default()
+            }),
+            ..State::default()
+        }
+    );
+}
+
+#[test]
+fn load_refuses_a_bad_file_and_leaves_it() {
+    let (_t, sp) = setup();
+    fs::create_dir_all(&sp.sync).unwrap();
+    for bad in ["", "{", "[]", "{\"pushed\": 3}"] {
+        fs::write(&sp.state, bad).unwrap();
+        assert_eq!(
+            load(&sp).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData,
+            "{bad:?}"
+        );
+        assert_eq!(fs::read_to_string(&sp.state).unwrap(), bad);
+    }
 }
 
 #[test]
@@ -308,8 +518,8 @@ fn take_again_is_true_once_after_mark_again() {
     assert!(!take_again(&sp).unwrap());
     mark_again(&sp).unwrap();
     assert_eq!(fs::read(&sp.again).unwrap(), b"");
-    assert_eq!(mode(&sp.again), 0o600);
-    assert_eq!(mode(&sp.sync), 0o700);
+    assert_mode(&sp.again, 0o600);
+    assert_mode(&sp.sync, 0o700);
     assert!(take_again(&sp).unwrap());
     assert!(!sp.again.exists());
     assert!(!take_again(&sp).unwrap());
@@ -326,8 +536,8 @@ fn last_start_round_trip() {
     write_last_start(&sp, 1_700_000_060).unwrap();
     assert_eq!(read_last_start(&sp), Some(1_700_000_060));
     assert_eq!(fs::read_to_string(&sp.last_start).unwrap(), "1700000060");
-    assert_eq!(mode(&sp.last_start), 0o600);
-    assert_eq!(mode(&sp.sync), 0o700);
+    assert_mode(&sp.last_start, 0o600);
+    assert_mode(&sp.sync, 0o700);
     write_last_start(&sp, 7).unwrap();
     assert_eq!(read_last_start(&sp), Some(7));
     for bad in ["", "x", "-1", "1.5"] {

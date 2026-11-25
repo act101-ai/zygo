@@ -1,9 +1,10 @@
 //! The sync state files of one workspace (S§5, S§15): `mail/outbox/` (with `tmp/` and `refused/`), `mail/sync/`
 //! (`identity`, `state.json`, `members.json`, `imported`, `incoming/`, `lock`, `again`, `last_start`) and the
 //! worktree `<workspace_cache_dir>/<id>/mail-sync/`. Every write is atomic, files `0600`, folders `0700` (W-C4,
-//! M-C4). No file holds a URL or mail content (W-C7, S-C2).
+//! M-C4); `mail/` and `mail/sync/` are checked at each write and a link at either is refused. A read refuses a
+//! link and does not wait on a FIFO. No file holds a URL or mail content (W-C7, S-C2).
 use std::collections::{BTreeMap, HashSet};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -45,12 +46,19 @@ pub struct SyncPaths {
 }
 
 impl SyncPaths {
-    /// The sync paths of workspace `ws_id`. Pure: it creates and checks nothing.
-    pub fn new(paths: &Paths, ws_id: &str) -> SyncPaths {
+    /// The sync paths of workspace `ws_id`. An id that is not `^[0-9a-f]{16}$` (AU84) is `InvalidInput`, so no
+    /// path leaves `workspaces_dir` or `workspace_cache_dir`. It creates nothing.
+    pub fn new(paths: &Paths, ws_id: &str) -> std::io::Result<SyncPaths> {
+        if !zygo_workspace::identity::valid_ws_id(ws_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the workspace id is not 16 lower-case hex characters",
+            ));
+        }
         let m = zygo_workspace::mail::mail_dir(paths, ws_id);
         let outbox = m.join("outbox");
         let sync = m.join("sync");
-        SyncPaths {
+        Ok(SyncPaths {
             outbox_tmp: outbox.join("tmp"),
             refused: outbox.join("refused"),
             incoming: sync.join("incoming"),
@@ -65,12 +73,12 @@ impl SyncPaths {
             mail: m,
             outbox,
             sync,
-        }
+        })
     }
 }
 
 /// W-C4, M-C4: makes `path`'s folder (and its parents) `0700`, then writes `bytes` to a `0600` temp file in it,
-/// syncs it and renames it over `path` (`zygo_core::session_dir::write_atomic`).
+/// syncs it and renames it over `path` (`zygo_core::session_dir::write_atomic`), then syncs the folder (unix).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path
         .parent()
@@ -82,7 +90,25 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             )
         })?;
     zygo_workspace::mail::ensure_mail_root(dir)?;
-    zygo_core::session_dir::write_atomic(path, bytes).map_err(to_io)
+    zygo_core::session_dir::write_atomic(path, bytes).map_err(to_io)?;
+    sync_dir(dir)
+}
+
+/// Syncs folder `dir` (unix), so a rename or a new name in it lasts through a power loss: S§19 #14 counts on the
+/// imported log and the state files after a crash. No test can show a power loss.
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
+}
+
+/// `write_atomic` for a file under `mail/sync/` or `mail/outbox/`: `mail/` itself is checked first (`0700`, no
+/// link, M-C4), as `write_atomic` checks only the file's own folder.
+fn write_file(sp: &SyncPaths, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    zygo_workspace::mail::ensure_mail_root(&sp.mail)?;
+    write_atomic(path, bytes)
 }
 
 /// The `io::Error` inside the core writer's `anyhow::Error` (a failed rename is a `tempfile::PersistError`).
@@ -96,22 +122,72 @@ fn to_io(e: anyhow::Error) -> io::Error {
     }
 }
 
+/// Opens `path` for reading with no link follow and no wait on a FIFO. `Ok(None)` when it does not exist; a link
+/// or anything that is not a regular file is `InvalidInput`. (`zygo_workspace::mail::store::open_regular` has a
+/// size cap for messages and gives no error kind, so it does not fit here.)
+fn open_regular(path: &Path) -> io::Result<Option<File>> {
+    let refused = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        )
+    };
+    let mut o = OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    #[cfg(not(unix))]
+    match fs::symlink_metadata(path) {
+        Ok(m) if !m.is_file() => return Err(refused()),
+        _ => {}
+    }
+    let f = match o.open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        #[cfg(unix)]
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => return Err(refused()),
+        Err(e) => return Err(e),
+    };
+    if !f.metadata()?.is_file() {
+        return Err(refused());
+    }
+    Ok(Some(f))
+}
+
+/// The bytes of the regular file `path` (`open_regular`); `Ok(None)` when it does not exist.
+fn read_regular(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    let Some(mut f) = open_regular(path)? else {
+        return Ok(None);
+    };
+    let mut b = Vec::new();
+    f.read_to_end(&mut b)?;
+    Ok(Some(b))
+}
+
+/// `s` without one line ending, `\r\n` or `\n`.
+fn strip_eol(s: &[u8]) -> &[u8] {
+    s.strip_suffix(b"\r\n")
+        .or_else(|| s.strip_suffix(b"\n"))
+        .unwrap_or(s)
+}
+
 /// Exactly 32 characters, each `0-9` or `a-f`.
-fn valid_identity(s: &str) -> bool {
-    s.len() == 32 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+fn valid_identity(s: &[u8]) -> bool {
+    s.len() == 32 && s.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// S§5 Identity, S§7.5: the workspace's sync identity, `None` when the file does not exist yet. A file that is not
-/// 32 lower-case hex characters (one trailing `\n` allowed) is `InvalidData`.
+/// 32 lower-case hex characters (one `\n` or `\r\n` ending allowed) is `InvalidData`; a link is refused.
 pub fn identity(sp: &SyncPaths) -> std::io::Result<Option<String>> {
-    let text = match fs::read_to_string(&sp.identity) {
-        Ok(t) => t,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
+    let Some(b) = read_regular(&sp.identity)? else {
+        return Ok(None);
     };
-    let v = text.strip_suffix('\n').unwrap_or(&text);
+    let v = strip_eol(&b);
     if valid_identity(v) {
-        Ok(Some(v.to_string()))
+        Ok(Some(String::from_utf8_lossy(v).into_owned()))
     } else {
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -127,16 +203,18 @@ pub fn make_identity(sp: &SyncPaths) -> std::io::Result<String> {
         return Ok(v);
     }
     let v = format!("{:032x}", rand::random::<u128>());
-    write_atomic(&sp.identity, v.as_bytes())?;
+    write_file(sp, &sp.identity, v.as_bytes())?;
     Ok(v)
 }
 
-/// S§8.2: the cached public check.
+/// S§8.2: the cached public check. A missing field takes its default, which makes the cache stale (no URL hash
+/// matches, `at` 0), so the check runs again.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PublicCache {
     /// The SHA-256 hex of each checked URL without user info; never the URL (W-C7).
     pub url_sha256: Vec<String>,
-    /// The verdict of the check.
+    /// The verdict of the check: one of `VERDICTS`.
     pub verdict: String,
     /// Unix seconds of the injected clock at the check.
     pub at: u64,
@@ -160,34 +238,113 @@ pub struct State {
     pub ci_note_shown: bool,
 }
 
-/// S§8.3: the state; the default for a missing or unparsable file.
-pub fn load(sp: &SyncPaths) -> State {
-    fs::read(&sp.state)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+/// The verdicts of the public check (S§8.2 steps 2 and 4).
+const VERDICTS: [&str; 4] = ["public", "private", "local", "unknown"];
+
+/// The longest check name `save` takes.
+const CHECK_NAME_MAX: usize = 64;
+
+fn lower_hex(s: &str, lens: &[usize]) -> bool {
+    lens.contains(&s.len()) && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// S§8.3: writes the state atomically.
+/// A check name: `^[a-z0-9-]{1,64}$`. The spec gives no closed list of check names (S§8.3, S-C2).
+fn valid_check_name(s: &str) -> bool {
+    (1..=CHECK_NAME_MAX).contains(&s.len())
+        && s.bytes()
+            .all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+}
+
+/// An own file's branch path: `registry/<host>.json` or `ack/<host>.json`, the host in the S§5 form
+/// `^[a-z0-9][a-z0-9-]{0,31}$`.
+fn valid_own_path(s: &str) -> bool {
+    let host = s
+        .strip_prefix("registry/")
+        .or_else(|| s.strip_prefix("ack/"))
+        .and_then(|r| r.strip_suffix(".json"));
+    host.is_some_and(|h| {
+        (1..=32).contains(&h.len())
+            && h.bytes()
+                .all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+            && !h.starts_with('-')
+    })
+}
+
+/// W-C7, S-C2: every value of `s` is one the spec allows, so no URL, credential or content reaches the file.
+fn check_state(s: &State) -> io::Result<()> {
+    let bad = |what: &str| {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("state.json: {what} is not allowed"),
+        ))
+    };
+    if s.last_error
+        .as_deref()
+        .is_some_and(|e| !valid_check_name(e))
+    {
+        return bad("last_error");
+    }
+    if let Some(p) = &s.public {
+        if !VERDICTS.contains(&p.verdict.as_str()) {
+            return bad("public.verdict");
+        }
+        if !p.url_sha256.iter().all(|h| lower_hex(h, &[64])) {
+            return bad("public.url_sha256");
+        }
+    }
+    // a git blob id: SHA-1 (40) or SHA-256 (64) hex
+    for (what, m) in [("pushed", &s.pushed), ("pending", &s.pending)] {
+        if !m
+            .iter()
+            .all(|(k, v)| valid_own_path(k) && lower_hex(v, &[40, 64]))
+        {
+            return bad(what);
+        }
+    }
+    Ok(())
+}
+
+/// S§8.3: the state. A missing file is the default; a link, a read error or a file that is not a JSON object of
+/// this form is an error, so the S§7.5 twin check never runs on a silent default.
+pub fn load(sp: &SyncPaths) -> std::io::Result<State> {
+    let Some(b) = read_regular(&sp.state)? else {
+        return Ok(State::default());
+    };
+    let bad = |e: serde_json::Error| io::Error::new(io::ErrorKind::InvalidData, e);
+    let v: serde_json::Value = serde_json::from_slice(&b).map_err(bad)?;
+    if !v.is_object() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "state.json is not a JSON object",
+        ));
+    }
+    serde_json::from_value(v).map_err(bad)
+}
+
+/// The caller holds `mail/sync/lock`: the pass under the lock is the only writer of `state.json` (S§15).
+/// S§8.3: writes the state atomically. A value outside the spec (`check_state`) is `InvalidInput`, and nothing is
+/// written.
 pub fn save(sp: &SyncPaths, s: &State) -> std::io::Result<()> {
-    write_atomic(
+    check_state(s)?;
+    write_file(
+        sp,
         &sp.state,
         &serde_json::to_vec_pretty(s).map_err(io::Error::other)?,
     )
 }
 
-/// S§8.5: each ULID in the imported log. Only `\n`-ended lines count: the bytes after the last `\n` are a torn
-/// entry from a crash and are ignored; a line that is not a ULID is skipped. No file: an empty set.
+/// S§8.5: each ULID in the imported log. Only `\n`-ended lines count (a `\r` before the `\n` is allowed): the bytes
+/// after the last `\n` are a torn entry from a crash and are ignored; a line that is not a ULID is skipped. No
+/// file: an empty set. A link is refused.
 pub fn imported_load(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
-    let bytes = match fs::read(&sp.imported) {
-        Ok(b) => b,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(HashSet::new()),
-        Err(e) => return Err(e),
+    let Some(bytes) = read_regular(&sp.imported)? else {
+        return Ok(HashSet::new());
     };
     let mut lines = bytes.split(|b| *b == b'\n');
     lines.next_back(); // after the last `\n`: empty, or a torn entry
     Ok(lines
         .filter_map(|l| {
+            let l = l.strip_suffix(b"\r").unwrap_or(l);
             std::str::from_utf8(l)
                 .ok()
                 .and_then(|s| Ulid::from_string(s).ok())
@@ -195,21 +352,41 @@ pub fn imported_load(sp: &SyncPaths) -> std::io::Result<HashSet<Ulid>> {
         .collect())
 }
 
-/// S§8.5 step 2: appends `<ULID>\n` (27 bytes) and syncs the file. When the file does not end with `\n` (a torn
-/// entry), a `\n` goes first, so the new entry is a line of its own. The log is never trimmed (S§13 limit 6).
+/// S§8.5 step 2: appends `<ULID>\n` (27 bytes) and syncs the file; the file is set to `0600` (unix). When the file
+/// does not end with `\n` (a torn entry), a `\n` goes first, so the new entry is a line of its own. The log is
+/// never trimmed (S§13 limit 6). `mail/` and `mail/sync/` are checked first.
 pub fn imported_append(sp: &SyncPaths, id: Ulid) -> std::io::Result<()> {
+    zygo_workspace::mail::ensure_mail_root(&sp.mail)?;
     zygo_workspace::mail::ensure_mail_root(&sp.sync)?;
     let mut o = OpenOptions::new();
-    o.read(true).append(true).create(true);
+    o.read(true).append(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         o.mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     }
-    let mut f = o.open(&sp.imported)?;
+    let (mut f, created) = match o.clone().create_new(true).open(&sp.imported) {
+        Ok(f) => (f, true),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (o.open(&sp.imported)?, false),
+        Err(e) => return Err(e),
+    };
+    let meta = f.metadata()?;
+    if !meta.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "mail/sync/imported is not a regular file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o7777 != 0o600 {
+            f.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+    }
     let mut line = String::with_capacity(28);
-    if f.metadata()?.len() > 0 {
+    if meta.len() > 0 {
         let mut last = [0u8; 1];
         f.seek(SeekFrom::End(-1))?;
         f.read_exact(&mut last)?;
@@ -220,12 +397,17 @@ pub fn imported_append(sp: &SyncPaths, id: Ulid) -> std::io::Result<()> {
     line.push_str(&id.to_string());
     line.push('\n');
     f.write_all(line.as_bytes())?;
-    f.sync_all()
+    f.sync_all()?;
+    if created {
+        // the new name in `sync/` must last too (S§19 #14)
+        sync_dir(&sp.sync)?;
+    }
+    Ok(())
 }
 
 /// S§8.3 step 2: asks the lock holder for one more pass.
 pub fn mark_again(sp: &SyncPaths) -> std::io::Result<()> {
-    write_atomic(&sp.again, b"")
+    write_file(sp, &sp.again, b"")
 }
 
 /// S§8.3 steps 4 and 17: clears the mark and tells whether it was set, in one call.
@@ -237,16 +419,14 @@ pub fn take_again(sp: &SyncPaths) -> std::io::Result<bool> {
     }
 }
 
-/// S§8.4: the Unix seconds of the last sync start; `None` when the file is missing or not a number.
+/// S§8.4: the Unix seconds of the last sync start; `None` when the file is missing, a link, not a regular file or
+/// not a number.
 pub fn read_last_start(sp: &SyncPaths) -> Option<u64> {
-    fs::read_to_string(&sp.last_start)
-        .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()
+    let b = read_regular(&sp.last_start).ok()??;
+    std::str::from_utf8(&b).ok()?.trim().parse::<u64>().ok()
 }
 
 /// S§8.4: writes the start time in its own file, atomically; the hook path is its only writer.
 pub fn write_last_start(sp: &SyncPaths, unix: u64) -> std::io::Result<()> {
-    write_atomic(&sp.last_start, unix.to_string().as_bytes())
+    write_file(sp, &sp.last_start, unix.to_string().as_bytes())
 }
