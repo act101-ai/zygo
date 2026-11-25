@@ -98,3 +98,22 @@ Without the fix, the new test's child keeps a copy of every descriptor of the te
 - Green (step 4): `cargo test -p zygo-work --locked --lib decisions::edit` → `test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out`. `cargo test -p zygo-work --locked --lib` → `test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`. No test process left after the runs.
 - `git diff --stat` before the commit: only `edit.rs` (48 insertions, 2 deletions) and this node file. The clock/retry grep on the `edit.rs` diff → no output.
 - `cargo clippy -p zygo-work --locked --all-targets -- -D warnings` → 2 errors, both in `crates/zygo-work/src/gate/transition.rs` (`clippy::large_enum_variant` at line 10, `clippy::collapsible_if` at line 158). That file is outside this node and unchanged by it; `edit.rs` has no clippy finding. Reported, not fixed here.
+
+### Review round 1
+
+Accepted:
+
+- **F1. `waitpid` of a child that was never forked.** `child` started at 0 and the cleanup called `waitpid(child, …)` unconditionally. If `apply_with` failed before the hook ran, `waitpid(0)` reaped any child in the process group; if `fork` failed, `waitpid(-1)` reaped any child. Either can steal the `git` child of `repo::tests::find_checkout_tells_timeout_from_not_a_repository` (`repo.rs:635`, `group=false`) and make it report a false timeout. Fix: the cleanup waits only when `child > 0`.
+- **F2. A panic skipped the cleanup.** A panic in `apply_with` or at `File::open(&l).unwrap()` skipped the close/`waitpid` block: the child stayed blocked in `read` and both pipe ends stayed open in the parent. Fix: a drop guard `Reap` local to the test owns `fds` and `child`; on drop it closes the write end, waits for the child only if `child > 0`, and closes the read end. The happy path takes `try_lock` (the `free` result) while the child still holds the descriptor, then drops the guard before the asserts. The forked child still makes only async-signal-safe calls (`close`, `read`, `_exit`).
+
+Refuted:
+
+- **F3. Pipe ends inherited by a child of a sibling test thread.** The wait is bounded by that sibling child's own lifetime; already recorded in "Notes for review".
+- **F4. EINTR on `read` / `waitpid`.** The forked child installs no signal handler that can interrupt its `read`, and the test process installs none that interrupts the parent's `waitpid`; no EINTR path exists.
+- **F5. Non-`Ok` release paths.** `_lock` is a scope binding in `apply_with`; every return, `?` and unwind drops `Held`, which unlocks. Correct by construction.
+
+Results:
+
+- Red with the mutant (`Held::drop` made a no-op, not committed, restored after the run): `cargo test -p zygo-work --locked --lib decisions::edit` → `the_lock_is_released_while_a_forked_child_holds_the_descriptor ... FAILED`, panicked at `edit.rs:360:9`: `the lock is still held through the child's copy of the descriptor`. `the_record_is_locked_from_the_re_read_to_the_rename` also failed (`edit.rs:307:9`): the forked child of the parallel test holds its descriptor, as step 2 predicted. `test result: FAILED. 2 passed; 2 failed`.
+- Green: `cargo test -p zygo-work --locked --lib decisions::edit` → `test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out`. `cargo test -p zygo-work --locked --lib` → `test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`.
+- No leftover test process after the red and green runs (`ps -U <uid> | grep zygo_work` → none).

@@ -315,31 +315,46 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_lock_is_released_while_a_forked_child_holds_the_descriptor() {
+        /// The pipe and the forked child; on drop (also in a panic) it closes the write end, which lets the child
+        /// exit, reaps the child only if the fork made one (`waitpid` of 0 or -1 would reap another test's child) and
+        /// closes the read end.
+        struct Reap {
+            fds: [libc::c_int; 2],
+            child: libc::pid_t,
+        }
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::close(self.fds[1]);
+                    if self.child > 0 {
+                        libc::waitpid(self.child, std::ptr::null_mut(), 0);
+                    }
+                    libc::close(self.fds[0]);
+                }
+            }
+        }
         let t = tempfile::tempdir().unwrap();
         let (p, l) = put(t.path());
         let mut fds = [0; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-        let mut child = 0;
+        let mut g = Reap { fds, child: 0 };
         let mut hook = || {
-            child = unsafe { libc::fork() };
-            if child == 0 {
+            g.child = unsafe { libc::fork() };
+            if g.child == 0 {
                 // The child: only async-signal-safe calls; it waits until the parent closes the write end.
                 let mut b = 0u8;
                 unsafe {
-                    libc::close(fds[1]);
-                    libc::read(fds[0], (&mut b as *mut u8).cast(), 1);
+                    libc::close(g.fds[1]);
+                    libc::read(g.fds[0], (&mut b as *mut u8).cast(), 1);
                     libc::_exit(0);
                 }
             }
         };
         let o = Outcome::Overturn { reason: "x".into() };
         let r = apply_with(&p, &l, OPEN.as_bytes(), &o, "2026-12-01", &mut || {}, &mut hook);
-        let free = File::open(&l).unwrap().try_lock().is_ok();
-        unsafe {
-            libc::close(fds[1]);
-            libc::waitpid(child, std::ptr::null_mut(), 0);
-            libc::close(fds[0]);
-        }
+        let free = File::open(&l).unwrap().try_lock().is_ok(); // observed while the child holds the descriptor
+        let child = g.child;
+        drop(g);
         assert!(child > 0);
         assert_eq!(r, Ok(()));
         assert!(free, "the lock is still held through the child's copy of the descriptor");
