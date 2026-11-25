@@ -227,7 +227,7 @@ Session text (T, SX nodes):
 | MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | TODO | implementation | — |
 | OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
-| OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | PLANNED | implementation | — |
+| OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | IN-PROGRESS | implementation | .worktrees/phase3/OS-14-node · PR #45 |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | TODO | implementation | — |
