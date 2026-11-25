@@ -1184,6 +1184,19 @@ fn unknown_fields_of_kept_panes_and_windows_survive() {
     assert_eq!((ws.windows[0].width, ws.windows[0].layout.as_str()), (200, "b25d,200x50,0,0,0")); // the read wins
 }
 
+#[test] // M§6, W§7.4 step 5: a snapshot keeps Pane.name of the stored pane with the same key after every %N changed
+fn member_name_snapshot_keeps_the_stored_pane_name_by_key() {
+    let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);
+    store.update(S5, &mut |ws| { ws.panes[0].name = Some("lead".into()); Ok(()) }).unwrap();
+    let read = vec![line(0, "main", 0, "%7", 0, 1, "kbbbbbbbb", "/srv/app"), line(0, "main", 0, "%9", 1, 0, "kaaaaaaaa", "/srv/app")];
+    let fake = Fake::new(Some(ID), vec![Ok(read)]);
+    assert_eq!(run(&p, &fake, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
+    let ws = store.read().unwrap().unwrap();
+    let name = |k: &str| ws.panes.iter().find(|x| x.key == k).unwrap().name.clone();
+    assert_eq!((name("kaaaaaaaa").as_deref(), name("kbbbbbbbb").as_deref()), (Some("lead"), None));
+    assert_eq!(ws.panes.iter().find(|x| x.key == "kaaaaaaaa").unwrap().index, 1); // the read wins for the layout
+}
+
 #[test] // Round 2 M1: a taken file that a dead taker left (older than 60 s) is queued again with its flag
 fn old_taken_files_are_queued_again() {
     let (_d, p, store) = up(&["kaaaaaaaa"]);

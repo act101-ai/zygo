@@ -34,6 +34,8 @@ pub enum PaneKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanPane {
     pub kind: PaneKind,
+    /// The member name (M§6), only when zygo_core::ids::valid_member_name passes (AU84).
+    pub name: Option<String>,
     /// The pane's directory: the main worktree when the loadout sets no `cwd`.
     pub cwd: PathBuf,
     pub profile: Option<String>,
@@ -174,6 +176,7 @@ pub fn resolve(cfg: &Config, name: Option<&str>, main_root: &Path, worktrees: &[
             }
             panes.push(PlanPane {
                 kind,
+                name: p.name.clone().filter(|n| zygo_core::ids::valid_member_name(n)),
                 cwd,
                 profile: p.profile.clone(),
                 args: p.args.clone(),

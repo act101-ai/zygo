@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
+use zygo_workspace::loadout::{PaneKind as PlanKind, PlanPane};
 use zygo_workspace::state::*;
 
 const ID: &str = "0123456789abcdef";
@@ -334,6 +335,66 @@ fn first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write() {
     assert_eq!(after["members"][KEY], v["members"][KEY]);
     let m: MemberRecord = serde_json::from_value(v["members"][KEY].clone()).unwrap();
     assert_eq!(m, MemberRecord { first_started_at: Some(1_700_000_100), ..full().members[KEY].clone() });
+}
+
+#[test] // M§6: up copies the loadout pane name into the fresh member record
+fn member_name_fresh_member_takes_the_plan_pane_name() {
+    let pp = |name: Option<&str>| PlanPane { kind: PlanKind::Agent(Agent::ClaudeCode), name: name.map(String::from), cwd: "/srv/app".into(),
+        profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None };
+    let lead = zygo_workspace::up::testing::fresh_member(Agent::ClaudeCode, &pp(Some("lead")));
+    assert_eq!(lead.name.as_deref(), Some("lead"));
+    assert_eq!(lead.valid_name(), Some("lead"));
+    assert_eq!(lead.state, MemberState::Running);
+    assert_eq!(serde_json::to_value(&lead).unwrap()["name"], json!("lead"));
+    let none = zygo_workspace::up::testing::fresh_member(Agent::ClaudeCode, &pp(None));
+    assert_eq!((none.name.as_deref(), none.valid_name()), (None, None));
+    assert!(serde_json::to_value(&none).unwrap().get("name").is_none());
+    assert_eq!(MemberRecord::new(Agent::OpenCode).name, None);
+}
+
+#[test] // AU78, M§6: a workspace.json without `name` loads; a write keeps the name and every unknown field
+fn member_name_absent_reads_as_none_and_a_write_keeps_unknown_fields() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut v = doc();
+    v["panes"] = json!([{"key": KEY, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "claude-code", "title": "t"}]);
+    v["members"] = json!({KEY: {"state": "running", "launch": {"kind": "claude-code"}, "badge": [1]}});
+    put(&store, &v);
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!((ws.panes[0].name.as_deref(), ws.members[KEY].name.as_deref()), (None, None));
+    store.update(S5, &mut |ws| { ws.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert!(after["panes"][0].get("name").is_none());
+    assert!(after["members"][KEY].get("name").is_none());
+    store.update(S5, &mut |ws| {
+        ws.panes[0].name = Some("lead".into());
+        ws.members.get_mut(KEY).unwrap().name = Some("lead".into());
+        Ok(())
+    }).unwrap();
+    store.update(S5, &mut |ws| { ws.phase = Phase::Up; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert_eq!((&after["panes"][0]["name"], &after["members"][KEY]["name"]), (&json!("lead"), &json!("lead")));
+    assert_eq!(after["panes"][0]["title"], json!("t"));
+    assert_eq!(after["members"][KEY]["badge"], json!([1]));
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!((ws.panes[0].name.as_deref(), ws.members[KEY].valid_name()), (Some("lead"), Some("lead")));
+}
+
+#[test] // AU84, M§6: a stored name that fails the grammar loads but reads as no name
+fn member_name_that_fails_the_grammar_reads_as_no_name() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let long_ok = "a".repeat(32);
+    let too_long = "a".repeat(33);
+    for (n, want) in [("lead-2", Some("lead-2")), (long_ok.as_str(), Some(long_ok.as_str())), ("Lead", None), ("9lead", None),
+        ("-lead", None), ("", None), ("lead_2", None), ("all", None), ("cli", None), ("kabcdefgh", None), (too_long.as_str(), None)] {
+        let mut v = doc();
+        v["members"] = json!({KEY: {"state": "running", "launch": {"kind": "claude-code"}, "name": n}});
+        put(&store, &v);
+        let ws = store.read().unwrap().unwrap(); // the file is not refused
+        assert_eq!(ws.members[KEY].name.as_deref(), Some(n), "{n:?}");
+        assert_eq!(ws.members[KEY].valid_name(), want, "{n:?}");
+    }
 }
 
 #[test] // AU29, W§18 #11 first half; W§10: a state that does not parse is not changed

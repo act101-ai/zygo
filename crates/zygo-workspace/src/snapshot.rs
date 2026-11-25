@@ -307,7 +307,7 @@ fn key_text(e: KeyError, pane: &str) -> String {
 
 /// W§7.4 step 5: replaces `windows[]` and `panes[]` by the read, sets `snapshot_at` and adds 1 to `snapshot_seq`.
 /// `keys` has one key per row. Member records stay. A pane that has the key of a stored pane keeps that pane's
-/// unknown fields (AU78). A window keeps the unknown fields of the stored window with its index only when that stored
+/// unknown fields (AU78) and its `name` (M§6). A window keeps the unknown fields of the stored window with its index only when that stored
 /// window had a pane whose key is on a pane of this window now (round 3 D5): a new window at the index of a closed one
 /// gets none. A pane whose read path is empty keeps the `cwd` of the stored pane with its key (FIX-29).
 fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
@@ -349,6 +349,7 @@ fn apply(ws: &mut Workspace, rows: &Rows, keys: &[String]) {
                 p.cwd.clone()
             },
             kind: kind_of(ws, key),
+            name: ws.panes.iter().find(|x| x.key == *key).and_then(|x| x.name.clone()),
             extra: ws.panes.iter().find(|x| x.key == *key).map(|x| x.extra.clone()).unwrap_or_default(),
         })
         .collect();

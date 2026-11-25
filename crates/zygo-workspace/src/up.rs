@@ -155,6 +155,11 @@ pub mod testing {
     /// [`super::up_all`] with the given writers.
     pub fn run_all_with(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 { super::run_all(opts, out, err) }
 
+    /// [`super::fresh_member`]: the record that `up` writes for a fresh loadout member (ML-3).
+    pub fn fresh_member(agent: zygo_core::Agent, pp: &crate::loadout::PlanPane) -> crate::state::MemberRecord {
+        super::fresh_member(agent, pp)
+    }
+
     /// [`super::attach`] with the given writers.
     pub fn attach_with(
         paths: &Paths, tmux: &Path, tmux_env: Option<&OsStr>, name: Option<&str>, cwd: &Path, out: &mut dyn Write,
@@ -661,6 +666,7 @@ impl Builder<'_> {
 fn fresh_member(agent: zygo_core::Agent, pp: &PlanPane) -> MemberRecord {
     let mut m = MemberRecord::new(agent);
     m.state = MemberState::Running;
+    m.name = pp.name.clone();
     m.launch.profile = pp.profile.clone();
     m.launch.yolo = pp.yolo;
     m.launch.passthrough = pp.passthrough;
@@ -1134,6 +1140,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                         active: p.active,
                         cwd: p.cwd.clone(),
                         kind: plan.kinds.get(&p.key).copied().unwrap_or_default(),
+                        name: plan.fresh.get(&p.key).and_then(|m| m.name.clone()),
                         ..Pane::default()
                     })
                     .collect();
