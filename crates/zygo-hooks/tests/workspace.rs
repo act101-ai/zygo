@@ -1027,6 +1027,79 @@ fn session_start_refusals() {
     assert!(!g.paths.state_dir().exists());
 }
 
+/// The hook commit of a pending start by `agent` (T§3.2): the Claude Code `SessionStart` with no `session_id`, or the
+/// OpenCode `session` call with only `cwd`. The zygo program does not exist and the agent id does not change, so no
+/// snapshot child starts.
+fn commit_by_hook(f: &Fx, agent: Agent) {
+    let missing = f.t.path().join("missing");
+    match agent {
+        Agent::ClaudeCode => {
+            let input = hook(Agent::ClaudeCode, &without(fixture("SessionStart-main"), "session_id"));
+            session_start::run_member(&input, &f.dir, &f.paths, &missing, &mut Vec::new()).unwrap();
+        }
+        Agent::OpenCode => {
+            ws_with(f, &missing, "session", json!({"cwd": "/repo"})).unwrap();
+        }
+    }
+}
+
+/// `members.<KEY>` of `workspace.json` as JSON.
+fn member_json(f: &Fx) -> Value {
+    serde_json::from_slice::<Value>(&raw(f)).unwrap()["members"][KEY].clone()
+}
+
+#[test] // T§3.2 (W AU92 addition), T§5 "Fresh member", T§7 item 4
+fn first_started_at_is_set_by_the_hook_commit_of_each_agent() {
+    let _s = serial();
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let f = fx(agent);
+        ws_state(&f, Phase::Up, rec_pending()); // pending SID, started_at 7; no first_started_at
+        commit_by_hook(&f, agent);
+        let m = member(&f);
+        assert_eq!((m.pending.clone(), m.zygo_session.as_deref(), m.first_started_at), (None, Some(SID), Some(7)), "{agent:?}");
+        assert_eq!(member_json(&f)["first_started_at"], json!(7), "{agent:?}");
+        assert!(errors(&f).is_empty(), "{agent:?}");
+    }
+}
+
+#[test] // T§3.2 "never changed after it is set", T§5 "`zygo down`, then `zygo up`", T§7 item 4
+fn first_started_at_is_kept_by_a_later_hook_commit() {
+    let _s = serial();
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let f = fx(agent);
+        ws_state(&f, Phase::Up, MemberRecord { first_started_at: Some(3), ..rec_pending() }); // pending started_at 7
+        commit_by_hook(&f, agent);
+        let m = member(&f);
+        assert_eq!((m.pending.clone(), m.zygo_session.as_deref(), m.first_started_at), (None, Some(SID), Some(3)), "{agent:?}");
+    }
+}
+
+#[test] // T§2.2 (0 is unknown), T§3.2, T§7 item 4; graph review focus 60
+fn first_started_at_stays_absent_for_a_zero_start_until_a_later_nonzero_hook_commit() {
+    let _s = serial();
+    let zero = |at| MemberRecord { pending: Some(Pending { zygo_session: SID.into(), agent_session: None, started_at: at, ..Default::default() }), ..rec_pending() };
+    for agent in [Agent::ClaudeCode, Agent::OpenCode] {
+        let f = fx(agent);
+        let store = ws_state(&f, Phase::Up, zero(0));
+        commit_by_hook(&f, agent);
+        let m = member(&f);
+        assert_eq!((m.pending.clone(), m.zygo_session.as_deref(), m.first_started_at), (None, Some(SID), None), "{agent:?}");
+        assert!(member_json(&f).get("first_started_at").is_none(), "{agent:?}");
+        // a later start with a non-zero time: its commit sets the field
+        store.update(S5, &mut |w| {
+            w.members.get_mut(KEY).unwrap().pending = Some(Pending { zygo_session: SID.into(), agent_session: None, started_at: 11, ..Default::default() });
+            Ok(())
+        }).unwrap();
+        commit_by_hook(&f, agent);
+        assert_eq!(member(&f).first_started_at, Some(11), "{agent:?}");
+        // a stored 0 counts as absent (T§3.2 "absent or 0")
+        let g = fx(agent);
+        ws_state(&g, Phase::Up, MemberRecord { first_started_at: Some(0), ..rec_pending() });
+        commit_by_hook(&g, agent);
+        assert_eq!(member(&g).first_started_at, Some(7), "{agent:?}");
+    }
+}
+
 #[test] // W§9.4, AU42, AU104, D14, D15; controller decision 1
 fn resume_note_texts_and_agents() {
     let _s = serial();
