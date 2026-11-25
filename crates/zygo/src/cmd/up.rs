@@ -3,11 +3,11 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use zygo_config::Config;
+use zygo_config::{Config, Layer, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_workspace::up::{self, UpOpts};
 
-use super::{cwd_or_exit, exe_or_exit, op5_exit, tmux_program, user_config_or_exit};
+use super::{cwd_or_exit, exe_or_exit, op5_exit, print_err, tmux_program, ExitCode};
 
 #[derive(clap::Args)]
 pub struct UpArgs {
@@ -38,9 +38,13 @@ pub fn run(a: &UpArgs) -> i32 {
         return code;
     }
     let paths = Paths::from_env();
-    let config = match user_config_or_exit(&paths, "up") {
-        Ok(c) => c,
-        Err(code) => return code,
+    // The user config only (D3, AU10, AU22), kept as `Merged` for `default_loadout_set`.
+    let merged = match zygo_config::load(&LoadContext { paths: paths.clone(), repo: None, team: None }) {
+        Ok(m) => m,
+        Err(e) => {
+            print_err(&format!("zygo up: {}\n", zygo_core::esc(&e.to_string())));
+            return ExitCode::ConfigInvalid as i32;
+        }
     };
     let cwd = match cwd_or_exit() {
         Ok(d) => d,
@@ -50,9 +54,16 @@ pub fn run(a: &UpArgs) -> i32 {
         Ok(p) => p,
         Err(code) => return code,
     };
-    let opts = opts(a, cwd, zygo, paths, config, &|k| std::env::var_os(k));
+    let opts = UpOpts {
+        default_loadout_set: default_loadout_set(&merged),
+        ..opts(a, cwd, zygo, paths, merged.config, &|k| std::env::var_os(k))
+    };
     if a.all { up::up_all(&opts) } else { up::up(&opts) }
 }
+
+/// R§10 `up` row: true when the user config file sets `[workspace] default_loadout` (as `definition_lines`,
+/// `cmd/doctor.rs`).
+fn default_loadout_set(m: &Merged) -> bool { m.source_of("workspace.default_loadout") == Layer::User }
 
 /// The `UpOpts` of the CLI form; `env` gives `TMUX` and `ZYGO_SESSION` (`std::env::var_os` outside tests).
 /// `ZYGO_SESSION` goes to the library as it is, an empty value too (D8): the library counts an empty value as set for
@@ -71,6 +82,8 @@ fn opts(a: &UpArgs, cwd: PathBuf, zygo: PathBuf, paths: Paths, config: Config, e
         vars: std::env::vars_os().collect(),
         paths,
         config,
+        default_loadout_set: false,
+        git: None,
     }
 }
 
@@ -78,7 +91,7 @@ fn opts(a: &UpArgs, cwd: PathBuf, zygo: PathBuf, paths: Paths, config: Config, e
 mod tests {
     use std::ffi::OsString;
 
-    use super::{opts, UpArgs};
+    use super::{default_loadout_set, opts, UpArgs};
 
     /// D8 (M1 review round 3, F3): `zygo up` gives the library `ZYGO_SESSION` as it is. An empty value is `Some("")`:
     /// the library counts it as set for each "inside an agent" decision (AU64, AU95; `zygo-workspace/src/env.rs:62`,
@@ -97,5 +110,17 @@ mod tests {
         assert_eq!(make(&with("")).zygo_session, Some("".into()));
         assert_eq!(make(&|_: &str| None).zygo_session, None);
         assert_eq!(make(&with("s01")).zygo_session, Some("s01".into()));
+    }
+
+    /// R§10 `up` row: `[workspace] default_loadout` chooses only when the user config file sets it. Kills: the
+    /// built-in `solo` counting as the user's choice.
+    #[test]
+    fn default_loadout_set_only_when_the_user_file_sets_it() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = crate::cmd::compact::tests::paths(t.path());
+        let m = || zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None }).unwrap();
+        assert!(!default_loadout_set(&m()));
+        std::fs::write(&paths.config_file, "[workspace]\ndefault_loadout = \"solo\"\n").unwrap();
+        assert!(default_loadout_set(&m()));
     }
 }

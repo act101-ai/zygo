@@ -8,8 +8,10 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use zygo_config::repo_def::GitRunner;
 use zygo_config::Config;
 use zygo_core::esc;
 use zygo_core::paths::Paths;
@@ -63,7 +65,7 @@ const LOADOUT_IGNORED: &str = "zygo: --loadout applies only with --reset or to a
 
 /// The inputs of `zygo up` for one workspace. `tmux_env` is `$TMUX`, `zygo_session` is `ZYGO_SESSION` and `vars` is
 /// the caller environment; only the entry point reads them from the process.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UpOpts {
     pub name: Option<String>,
     pub loadout: Option<String>,
@@ -77,6 +79,10 @@ pub struct UpOpts {
     pub vars: BTreeMap<OsString, OsString>,
     pub paths: Paths,
     pub config: Config,
+    /// True when the user config file sets `[workspace] default_loadout` (workspace definition design R§10).
+    pub default_loadout_set: bool,
+    /// The git runner of the default-branch read (R§7.3); `None`: `SystemGit`. A test passes a counting runner.
+    pub git: Option<Arc<dyn GitRunner + Send + Sync>>,
 }
 
 /// A refusal: the exit code and the whole line as printed, without `\n`.
