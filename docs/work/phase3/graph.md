@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | DONE | implementation | 2d7c5e70 · definition_keys 11 passed, config_layers 90 passed · PR #58 |
 | RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | DONE | implementation | 7efa8d9 441e170 ff23c48 · first_started_at 11 tests, 3 crates pass; floor green · PR #38 |
 | RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | DONE | implementation | 2f2c20a6 · acc: counts 2/1/7/5, 721 passed 0 failed; floor green · PR #67 |
 | SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | DONE | implementation | 6a979de 346fa1a · subagent_text 10 pass (9 subagent_start, 1 main_compact); floor green · PR #39 |
@@ -240,7 +239,7 @@ Session text (T, SX nodes):
 | ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | judgment | — |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | TODO | implementation | — |
-| MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | IN-PROGRESS | implementation | .worktrees/phase3/MS-4-node · PR #76 |
+| MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
 | MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | TODO | judgment | — |
 | MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | TODO | judgment | — |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
@@ -390,3 +389,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | MS-5 DONE: mail-sync state files (paths, identity, state.json, imported log, marks); fix round 1 closed 9 review findings; floor green (ws 2724/0). PR #69. |
 | 2026-11-24 | MS-3 done: mail sync config keys (host, sync_gap, mail.workspace.<n>.sync/remote), sync_for, form checks incl. W§5 workspace-name keys; review: 4 fixed, 2 dropped (unknown keys: crate norm; remote: pass-time per S§11, carried to MS-10). PR #68. |
 | 2026-11-24 | RT-2 done: run time on the HUD and the status runtime: line (ulid_secs, T§2.2 start rule, run_time_text); review: 3 fixed (read keeps phase when members does not parse; rule-5 pending test; plan ignore count). PR #67. |
+| 2026-11-25 | MS-4 DONE — address grammar and ULID file form; review round 1 reserved `zygo` in zygo-core RESERVED_MEMBER_NAMES (M§6, S§7.2; scope widened to zygo-core ids.rs and two tests); floor green ws 2766/0. |
