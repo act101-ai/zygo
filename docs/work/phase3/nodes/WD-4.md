@@ -48,7 +48,7 @@ The `Debug, Clone, PartialEq, Eq` derives on `Use` and `PinnedUse` are added so 
 
 ### Steps
 
-- [ ] **1. Write the failing tests** in `crates/zygo-config/tests/repo_def_check.rs` (new). Header: `//! WD-4: checked use (R§7.3, R§7.4; R§18 items 6, 8).` Constants: `MAIN = "refs/remotes/origin/main"`, `ID = "3f9a1c0d5e7b2a46"`, `ID2 = "0123456789abcdef"`, `A = "version = 1\nlayout = \"main-vertical\"\n"`, `B = "version = 1\nlayout = \"even-vertical\"\n"` (A and B have the same length, so a swapped blob passes the size check of R§6.1 step 5). Helpers, copied from `tests/repo_def_read.rs:15-38` and changed as noted:
+- [x] **1. Write the failing tests** in `crates/zygo-config/tests/repo_def_check.rs` (new). Header: `//! WD-4: checked use (R§7.3, R§7.4; R§18 items 6, 8).` Constants: `MAIN = "refs/remotes/origin/main"`, `ID = "3f9a1c0d5e7b2a46"`, `ID2 = "0123456789abcdef"`, `A = "version = 1\nlayout = \"main-vertical\"\n"`, `B = "version = 1\nlayout = \"even-vertical\"\n"` (A and B have the same length, so a swapped blob passes the size check of R§6.1 step 5). Helpers, copied from `tests/repo_def_read.rs:15-38` and changed as noted:
   - `git_cmd`, `git`, `blob`: as `repo_def_read.rs:15-38`.
   - `commit_files(dir, ents: &[(&str, &[u8])])`: `update-index --add --cacheinfo 100644,<blob>,<path>` for each, then `commit -q -m c` (as `commit_index`, `repo_def_read.rs:45-56`, regular files only).
   - `struct Fx { _t: TempDir, w: PathBuf, c: PathBuf }` and `fx(ents)`: as `repo_def_read.rs:63-76` (bare `o.git`, `w` with a `README` seed commit, then `ents`, push, `clone -q --no-checkout o.git c`). `ents` must not be empty: an empty commit fails.
@@ -156,9 +156,9 @@ The `Debug, Clone, PartialEq, Eq` derives on `Use` and `PinnedUse` are added so 
 
   Check: the file exists and holds the 5 tests above.
 
-- [ ] **2. Run the tests and see them fail.** `cargo test -p zygo-config --test repo_def_check`. Check: compile error, `check_default`, `check_pinned`, `Pin`, `PinnedUse` and `Use` not found in `repo_def`.
+- [x] **2. Run the tests and see them fail.** `cargo test -p zygo-config --test repo_def_check`. Check: compile error, `check_default`, `check_pinned`, `Pin`, `PinnedUse` and `Use` not found in `repo_def`.
 
-- [ ] **3. Add `crates/zygo-config/src/repo_def/check.rs`** with the Produces items above. Module doc: `//! The check at each use (R§7.3) and the pinned check (R§7.4): one read, one digest, one store lookup.` In `mod.rs` add `mod check;` and `pub use check::{check_default, check_pinned, Pin, PinnedUse, Use};`, and add "the check at each use (R§7.3, R§7.4)" to the module doc. Result mapping. All of it acts on the one `Read` value that the function got.
+- [x] **3. Add `crates/zygo-config/src/repo_def/check.rs`** with the Produces items above. Module doc: `//! The check at each use (R§7.3) and the pinned check (R§7.4): one read, one digest, one store lookup.` In `mod.rs` add `mod check;` and `pub use check::{check_default, check_pinned, Pin, PinnedUse, Use};`, and add "the check at each use (R§7.3, R§7.4)" to the module doc. Result mapping. All of it acts on the one `Read` value that the function got.
   - `check_default`: one `read_default(top, git)`.
     - `Absent { full_ref }` → `Use::Absent { full_ref: full_ref.unwrap_or_default() }`.
     - `Unread { why }` → `Use::Unread { why }`.
@@ -174,11 +174,13 @@ The `Debug, Clone, PartialEq, Eq` derives on `Use` and `PinnedUse` are added so 
 
   Check: `cargo build -p zygo-config` succeeds with no warnings.
 
-- [ ] **4. Run the tests and see them pass.** `cargo test -p zygo-config --test repo_def_check`. Check: 5 passed, 0 failed.
+- [x] **4. Run the tests and see them pass.** `cargo test -p zygo-config --test repo_def_check`. Check: 5 passed, 0 failed.
 
-- [ ] **5. Run the floor for the crate.** `cargo test -p zygo-config --locked`, then the graph floor `cargo test --workspace --locked --no-fail-fast`. Check: all pass. `repo_def_read`, `repo_def_shape` and `repo_def_store` are unchanged and green.
+- [x] **5. Run the floor for the crate.** `cargo test -p zygo-config --locked`, then the graph floor `cargo test --workspace --locked --no-fail-fast`. Check: all pass. `repo_def_read`, `repo_def_shape` and `repo_def_store` are unchanged and green.
 
-- [ ] **6. Commit** only the three files: `git add crates/zygo-config/src/repo_def/mod.rs crates/zygo-config/src/repo_def/check.rs crates/zygo-config/tests/repo_def_check.rs`, then `git commit -m "WD-4: checked use of the workspace definition (check_default, check_pinned, Pin)" -m <the two trailer lines that the implement brief names>`. Check: `git show --stat HEAD` lists exactly those 3 files.
+- [x] **6. Commit** only the three files: `git add crates/zygo-config/src/repo_def/mod.rs crates/zygo-config/src/repo_def/check.rs crates/zygo-config/tests/repo_def_check.rs`, then `git commit -m "WD-4: checked use of the workspace definition (check_default, check_pinned, Pin)" -m <the two trailer lines that the implement brief names>`. Check: `git show --stat HEAD` lists exactly those 3 files.
+
+Review round 1: F1 and F3 tests added; F2 refuted, because the contract fixes `NotApproved` with no `why`.
 
 ### Coverage
 
