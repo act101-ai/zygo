@@ -132,3 +132,96 @@ fn child_flag_blocked() {
     let got = guarded(&|b| pre_compact::run_with(&HookInput::parse(Agent::ClaudeCode, b)?, Some(&d)), &stdin);
     assert_eq!(got, (KEEP_NO_UNIT.to_string(), 0));
 }
+
+/// Runs `case` of `child_case` in a child process with `CHILD` = `root`; returns its stderr.
+fn child(root: &Path, case: &str) -> String {
+    let o = Command::new(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", "child_case", "--nocapture", "--test-threads=1"])
+        .env(CHILD, root)
+        .env(CASE, case)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{case}: {o:?}");
+    assert!(String::from_utf8(o.stdout).unwrap().contains("child_case ... ok"), "{case}");
+    String::from_utf8(o.stderr).unwrap()
+}
+
+const CASE: &str = "ZYGO_SX3_CASE";
+
+/// The inputs of `child_case`, by case name.
+fn case_input(case: &str) -> Value {
+    match case {
+        "main" => fixture("PreCompact-main"),
+        "zygo" => with(fixture("PreCompact-sub"), "agent_type", json!("zygo-read")),
+        "bad_id" => with(fixture("PreCompact-sub"), "agent_id", json!("../x")),
+        "sub" => fixture("PreCompact-sub"),
+        other => panic!("unknown case {other}"),
+    }
+}
+
+/// Child half of the stderr tests: runs `case_input($CASE)` against `$CHILD/s`, or `$CHILD/gone` for the case
+/// `gone`; returns at once without `CHILD`.
+#[test]
+#[ignore]
+fn child_case() {
+    let (Some(root), Some(case)) = (std::env::var_os(CHILD), std::env::var(CASE).ok()) else { return };
+    let (sub, input) = if case == "gone" { ("gone", "sub") } else { ("s", case.as_str()) };
+    let d = SessionDir::new(Path::new(&root).join(sub));
+    let stdin = serde_json::to_vec(&case_input(input)).unwrap();
+    let got = guarded(&|b| pre_compact::run_with(&HookInput::parse(Agent::ClaudeCode, b)?, Some(&d)), &stdin);
+    assert_eq!(got, (KEEP_NO_UNIT.to_string(), 0));
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_compact_existing_flag_gets_mode_0600() {
+    // Review F2: T§9.2 item 1 sets the modes of a flag and directory that already exist.
+    use std::os::unix::fs::PermissionsExt;
+    let (_t, d) = sd();
+    let f = d.reinject().join(ID);
+    std::fs::create_dir(d.reinject()).unwrap();
+    std::fs::set_permissions(d.reinject(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(&f, "").unwrap();
+    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(run(&d, &fixture("PreCompact-sub")), KEEP_NO_UNIT);
+    assert_eq!(std::fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(d.reinject()).unwrap().permissions().mode() & 0o777, 0o700);
+}
+
+#[test]
+fn pre_compact_missing_root_is_not_created() {
+    // Review F3: a stale ZYGO_SESSION_DIR. The root is never created; the text is still printed with one stderr line.
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().join("gone"));
+    assert_eq!(run(&d, &fixture("PreCompact-sub")), KEEP_NO_UNIT);
+    assert!(!d.root.exists());
+    let err = child(t.path(), "gone");
+    assert!(!d.root.exists());
+    let flag = d.reinject().join(ID);
+    assert!(err.starts_with(&format!("zygo hook: pre-compact: cannot create {}: ", flag.display())), "{err:?}");
+    assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
+}
+
+#[test]
+fn pre_compact_no_session_dir_creates_nothing() {
+    // Review gap 1: with no session directory there is no flag path; the text is unchanged.
+    let cwd = std::env::current_dir().unwrap();
+    let before: Vec<_> = std::fs::read_dir(&cwd).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let out = pre_compact::run_with(&input(&fixture("PreCompact-sub")), None).unwrap().to_stdout();
+    assert_eq!(out, KEEP_NO_UNIT);
+    assert!(!cwd.join("reinject").exists());
+    let after: Vec<_> = std::fs::read_dir(&cwd).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn pre_compact_no_flag_cases_write_no_stderr() {
+    // Review gap 2: the main input, a `zygo-` type and a bad id write nothing to stderr and create nothing.
+    for case in ["main", "zygo", "bad_id"] {
+        let (t, d) = sd();
+        assert_eq!(child(t.path(), case), "", "{case}");
+        assert_eq!(std::fs::read_dir(&d.root).unwrap().count(), 0, "{case}");
+        assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 1, "{case}");
+    }
+}

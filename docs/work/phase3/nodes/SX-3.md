@@ -237,3 +237,23 @@ pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<H
 - [x] **Step 7: verify (node Acceptance).** `test "$(cargo test -q -p zygo-hooks --test reinject -- pre_compact --list 2>/dev/null | grep -c ': test$')" -ge 5 && cargo test -p zygo-hooks --test reinject -- pre_compact` → exit 0. The count is 6, and the run shows 6 passed, 0 failed, 0 ignored (the filter excludes `child_flag_blocked`). CI repeats it on ubuntu, macOS and Windows through `cargo test --workspace`.
 
   Observed: count 6; `test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out` (the filtered one is `child_flag_blocked`); exit 0.
+
+### Review round 1
+
+Confirmed findings, each test first (all in `crates/zygo-hooks/tests/reinject.rs`, fix in `crates/zygo-hooks/src/pre_compact.rs` `create_flag`; `crates/zygo-core/src/session_dir.rs` unchanged).
+
+- **F2, the mode of an existing flag.** Test `pre_compact_existing_flag_gets_mode_0600` (unix): pre-creates `reinject/` 0755 and `reinject/a1a80dd100f197242` 0644, runs the sub input, asserts file 0600 and directory 0700. Red: `left: 420, right: 384` (the file stayed 0644; the directory was already set to 0700). Fix: after `open`, `set_permissions(0o600)` on the file under `cfg(unix)`. Green: ok.
+- **F3, a removed session root is created again.** Test `pre_compact_missing_root_is_not_created`: a `SessionDir` whose root does not exist; in-process `run_with` returns the §10.6 text and the root still does not exist; the child test `child_case` (case `gone`, through `guarded`) gives `(text, 0)` and exactly one stderr line `zygo hook: pre-compact: cannot create <root>/reinject/<id>: …`, and the root still does not exist. Red: failed at the first `!d.root.exists()` (the recursive `SessionDir::create` made `<root>/reinject`). Fix: `create_flag` no longer calls `SessionDir::create`; it makes only `reinject/` with a non-recursive `DirBuilder` (mode 0700, `AlreadyExists` accepted), then sets 0700. A missing root is a create failure (T§14 item 2). Green: ok.
+- **Gap 1.** Test `pre_compact_no_session_dir_creates_nothing`: `run_with(&sub, None)` returns the text; the working directory has the same entries before and after and no `reinject`. Green on its first run (it tests existing behavior; no code change).
+- **Gap 2.** Test `pre_compact_no_flag_cases_write_no_stderr`: through `child_case`, the main input, `agent_type` `zygo-read` and the id `../x` each give `(text, 0)`, empty stderr, an empty session root and nothing beside it. Green on its first run (existing behavior). Mutation `if !zygo` → `if true` makes it fail (with `pre_compact_zygo_type_creates_no_flag`); restored.
+
+`child_case` is a second `#[ignore]` child test; its name does not contain `pre_compact`, so the Acceptance filter neither counts nor runs it.
+
+Observed: Acceptance count 10, `test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out`, exit 0. `cargo test -p zygo-hooks --locked`: 173 passed, 0 failed, 55 ignored. `cargo test -p zygo-core --locked`: 34 passed, 0 failed, 3 ignored.
+
+Refuted findings:
+
+- **F1, a symlink at `reinject`:** to plant it needs write access to the user's 0700 session directory, and every session file has the same exposure.
+- **The stderr order:** an author's call; stdout and stderr are separate streams.
+- **A binary-level test:** `crates/zygo/tests/hook_session.rs` is outside Files, and dispatch is confirmed at `crates/zygo/src/cmd/hook.rs:29`.
+- **The partial state after a failed create:** an empty `reinject/` or flag left after a failure is harmless for SX-4.

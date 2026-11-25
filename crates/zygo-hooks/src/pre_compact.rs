@@ -43,14 +43,26 @@ pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<H
     Ok(out)
 }
 
-/// The empty flag `p` in `reinject/` (directory 0700, file 0600 on unix).
+/// The empty flag `p` in `reinject/` (directory 0700, file 0600 on unix, set also when they exist). Only `reinject/`
+/// itself is created: a missing session root is an error, never created again.
 fn create_flag(dir: &SessionDir, p: &Path) -> anyhow::Result<()> {
-    SessionDir::new(dir.reinject()).create()?;
+    let r = dir.reinject();
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    match b.create(&r) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e.into()),
+        _ => {}
+    }
+    #[cfg(unix)]
+    std::fs::set_permissions(&r, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create(true).truncate(false);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    o.open(p)?;
+    let _f = o.open(p)?;
+    #[cfg(unix)]
+    _f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     Ok(())
 }
 
