@@ -80,24 +80,32 @@ fn piped_answers_cat_file_batch_requests_in_turn() {
     assert_eq!(p.read_line(600).unwrap(), b"nope missing");
 }
 
+/// Dropping `Piped` kills the whole process group, proven with no timer as in git_runner.rs
+/// `stream_stop_kills_the_process_group`: the leader and a grandchild hold the only write ends of a pipe (fd 3), and a
+/// blocking read ends (EOF) only when both are dead. An anonymous pipe, not a FIFO: on macOS a reader blocked on a FIFO
+/// can miss the wakeup when the last writer closes, and hang with no writer left.
 #[cfg(unix)]
 #[test]
 fn piped_drop_kills_the_process_group() {
     use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::io::AsRawFd;
-    let t = TempDir::new().unwrap();
-    let fifo = t.path().join("f");
-    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
-    // Read end first and non-blocking, so the grandchild's open for writing does not wait.
-    let mut rd = fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&fifo).unwrap();
+    use std::os::unix::process::CommandExt;
+    let (mut rd, wr) = std::io::pipe().unwrap(); // both ends close-on-exec
+    let w = wr.as_raw_fd();
     let mut c = Command::new("sh");
-    // The grandchild opens the FIFO, then prints `go`; then it and the leader block.
-    c.args(["-c", "( exec 3>\"$1\"; printf 'go\\n'; exec sleep 1000000 ) & exec sleep 1000000", "sh"]).arg(&fifo);
+    // The grandchild prints `go` once it runs; then it and the leader block, each holding fd 3.
+    c.args(["-c", "( printf 'go\\n'; exec sleep 1000000 ) & exec sleep 1000000"]);
+    // SAFETY: only async-signal-safe calls between fork and exec.
+    unsafe {
+        c.pre_exec(move || {
+            let r = if w == 3 { libc::fcntl(3, libc::F_SETFD, 0) } else { libc::dup2(w, 3) };
+            if r == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
+        });
+    }
     let mut p = run_piped(c, far()).unwrap();
     assert_eq!(p.read_line(16).unwrap(), b"go");
     drop(p);
-    assert_eq!(unsafe { libc::fcntl(rd.as_raw_fd(), libc::F_SETFL, 0) }, 0); // now blocking
+    drop(wr); // the test's own write end, else the read below never ends
     let mut rest = Vec::new();
     assert_eq!(rd.read_to_end(&mut rest).unwrap(), 0);
 }
