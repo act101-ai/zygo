@@ -129,7 +129,7 @@ Shared `~` rule (outside the Files list, with reason): the rule lives inside the
 - [x] 3. Add `pub mod pool;` to `crates/zygo-workspace/src/lib.rs` between `pub mod mux;` and `pub mod repair;`, and add "pool" to the crate doc line. Create `crates/zygo-workspace/src/pool.rs` with the six functions of "Interfaces" (module doc: R§9.5, R-C6; "names and types only, no file opened"). Bodies follow the signatures. `list`: `if !dir.is_dir()` → `not a directory`; `read_dir` with `map_err(|e| format!("not readable ({:?})", e.kind()))`, and the same for each entry; keep each entry whose `file_name().as_encoded_bytes()` does not start with `b'.'` and whose `path().is_dir()`; `sort_by` the encoded bytes of the names; empty → `no subdirectory`. `shared_lines`: group by directory in order of first appearance, emit groups of length >= 2.
 - [x] 4. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --locked --test pool` → 8 pass on unix (7 on Windows).
 - [x] 5. Commit `crates/zygo-workspace/src/pool.rs`, `crates/zygo-workspace/src/lib.rs`, `crates/zygo-workspace/tests/pool.rs`: `WD-9: pool listing, assignment and shared lines`.
-- [ ] 6. In `crates/zygo/src/cmd/claude.rs` `set_config_dir`, replace the `rest`/`dir` match (`:68-78`) with:
+- [x] 6. In `crates/zygo/src/cmd/claude.rs` `set_config_dir`, replace the `rest`/`dir` match (`:68-78`) with:
   ```rust
   let home = env.get(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).filter(|h| h.is_absolute());
   let dir = match zygo_workspace::pool::tilde(d, home.or_else(std::env::home_dir).as_deref()) {
@@ -139,5 +139,5 @@ Shared `~` rule (outside the Files list, with reason): the rule lives inside the
   };
   ```
   Keep the doc comment and the lines after it as they are.
-- [ ] 7. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked config_dir` → the four existing tests pass (`config_dir_sets_env`, `config_dir_expands_tilde`, `config_dir_bare_tilde_is_home`, `config_dir_relative_is_absolute_against_cwd`). Commit `crates/zygo/src/cmd/claude.rs`: `WD-9: --config-dir uses the shared ~ rule`.
-- [ ] 8. Verification: `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --locked --test pool` → all pass.
+- [x] 7. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked config_dir` → the four existing tests pass (`config_dir_sets_env`, `config_dir_expands_tilde`, `config_dir_bare_tilde_is_home`, `config_dir_relative_is_absolute_against_cwd`). Commit `crates/zygo/src/cmd/claude.rs`: `WD-9: --config-dir uses the shared ~ rule`.
+- [x] 8. Verification: `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --locked --test pool` → all pass.
