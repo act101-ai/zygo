@@ -851,9 +851,11 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             }
             c.members.remove(key);
             if let Some(p) = c.panes.iter_mut().find(|p| p.key == key)
-                && p.kind != PaneKind::Shell
+                && (p.kind != PaneKind::Shell || p.name.is_some())
             {
+                // M§6: the name goes with the record.
                 p.kind = PaneKind::Shell;
+                p.name = None;
                 c.snapshot_seq += 1;
             }
             Ok(())

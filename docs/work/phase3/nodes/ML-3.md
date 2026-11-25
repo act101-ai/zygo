@@ -48,7 +48,7 @@ pub fn fresh_member(agent: zygo_core::Agent, pp: &crate::loadout::PlanPane) -> c
 
 ### Steps
 
-- [ ] 1. Write the failing loadout test. In `crates/zygo-workspace/tests/loadout.rs`, add `name: None` to `plain()` (line 19) and to the `PlanPane` literal of `unset_pane_fields_take_the_launch_defaults_and_set_fields_are_kept` (line 56), and add:
+- [x] 1. Write the failing loadout test. In `crates/zygo-workspace/tests/loadout.rs`, add `name: None` to `plain()` (line 19) and to the `PlanPane` literal of `unset_pane_fields_take_the_launch_defaults_and_set_fields_are_kept` (line 56), and add:
 
 ```rust
 #[test] // M§6, AU84: resolve copies a valid pane name; a name that fails the grammar is not copied
@@ -62,13 +62,13 @@ fn member_name_resolve_copies_the_pane_name() {
 }
 ```
 
-- [ ] 2. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test loadout member_name` and see it fail to compile (`struct PlanPane has no field named name`).
+- [x] 2. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test loadout member_name` and see it fail to compile (`struct PlanPane has no field named name`).
 
-- [ ] 3. In `crates/zygo-workspace/src/loadout.rs`: add `pub name: Option<String>,` to `PlanPane` after `kind` (doc line: `/// The member name (M§6), only when zygo_core::ids::valid_member_name passes (AU84).`), and in `resolve`'s literal (line 175) add `name: p.name.clone().filter(|n| zygo_core::ids::valid_member_name(n)),`.
+- [x] 3. In `crates/zygo-workspace/src/loadout.rs`: add `pub name: Option<String>,` to `PlanPane` after `kind` (doc line: `/// The member name (M§6), only when zygo_core::ids::valid_member_name passes (AU84).`), and in `resolve`'s literal (line 175) add `name: p.name.clone().filter(|n| zygo_core::ids::valid_member_name(n)),`.
 
-- [ ] 4. Run the step 2 command and see `member_name_resolve_copies_the_pane_name` pass; then `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test loadout` passes whole.
+- [x] 4. Run the step 2 command and see `member_name_resolve_copies_the_pane_name` pass; then `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test loadout` passes whole.
 
-- [ ] 5. Write the failing state tests in `crates/zygo-workspace/tests/state.rs` after `first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write`; add `use zygo_workspace::loadout::{PaneKind as PlanKind, PlanPane};` to the imports:
+- [x] 5. Write the failing state tests in `crates/zygo-workspace/tests/state.rs` after `first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write`; add `use zygo_workspace::loadout::{PaneKind as PlanKind, PlanPane};` to the imports:
 
 ```rust
 #[test] // M§6: up copies the loadout pane name into the fresh member record
@@ -132,9 +132,9 @@ fn member_name_that_fails_the_grammar_reads_as_no_name() {
 }
 ```
 
-- [ ] 6. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state member_name` and see it fail to compile (`no field name on type MemberRecord`, `no field name on type Pane`, `no method named valid_name`, `cannot find function fresh_member in module testing`).
+- [x] 6. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state member_name` and see it fail to compile (`no field name on type MemberRecord`, `no field name on type Pane`, `no method named valid_name`, `cannot find function fresh_member in module testing`).
 
-- [ ] 7. In `crates/zygo-workspace/src/state.rs`: add to `Pane` after `kind` and to `MemberRecord` after `launch`:
+- [x] 7. In `crates/zygo-workspace/src/state.rs`: add to `Pane` after `kind` and to `MemberRecord` after `launch`:
 
 ```rust
     /// The member name (M§6); checked at each read by [`MemberRecord::valid_name`] (AU84).
@@ -151,7 +151,7 @@ fn member_name_that_fails_the_grammar_reads_as_no_name() {
     }
 ```
 
-- [ ] 8. In `crates/zygo-workspace/src/up.rs`: in `fresh_member` (line 661) add `m.name = pp.name.clone();` after `m.state = MemberState::Running;`; in the `panes[]` literal at line 1130 add `name: plan.fresh.get(&p.key).and_then(|m| m.name.clone()),` before `..Pane::default()`; in `mod testing` add:
+- [x] 8. In `crates/zygo-workspace/src/up.rs`: in `fresh_member` (line 661) add `m.name = pp.name.clone();` after `m.state = MemberState::Running;`; in the `panes[]` literal at line 1130 add `name: plan.fresh.get(&p.key).and_then(|m| m.name.clone()),` before `..Pane::default()`; in `mod testing` add:
 
 ```rust
     /// [`super::fresh_member`]: the record that `up` writes for a fresh loadout member (ML-3).
@@ -160,9 +160,9 @@ fn member_name_that_fails_the_grammar_reads_as_no_name() {
     }
 ```
 
-- [ ] 9. Run the step 6 command and see the three `member_name` tests pass; then `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state` passes whole (`json_has_the_fields_of_w7_2` and `none_is_absent_and_absent_reads_as_default` still hold: no `name` key when none).
+- [x] 9. Run the step 6 command and see the three `member_name` tests pass; then `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test state` passes whole (`json_has_the_fields_of_w7_2` and `none_is_absent_and_absent_reads_as_default` still hold: no `name` key when none).
 
-- [ ] 10. Write the failing snapshot test in `crates/zygo-workspace/tests/snapshot.rs` after `unknown_fields_of_kept_panes_and_windows_survive`:
+- [x] 10. Write the failing snapshot test in `crates/zygo-workspace/tests/snapshot.rs` after `unknown_fields_of_kept_panes_and_windows_survive`:
 
 ```rust
 #[test] // M§6, W§7.4 step 5: a snapshot keeps Pane.name of the stored pane with the same key after every %N changed
@@ -179,20 +179,33 @@ fn member_name_snapshot_keeps_the_stored_pane_name_by_key() {
 }
 ```
 
-- [ ] 11. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test snapshot member_name` and see it fail on the assertion (`left: (None, None)`, `right: (Some("lead"), None)`): `apply` builds `Pane` without the stored name.
+- [x] 11. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test snapshot member_name` and see it fail on the assertion (`left: (None, None)`, `right: (Some("lead"), None)`): `apply` builds `Pane` without the stored name.
 
-- [ ] 12. In `crates/zygo-workspace/src/snapshot.rs` `apply` (line 340 literal), add `name: ws.panes.iter().find(|x| x.key == *key).and_then(|x| x.name.clone()),` and extend the doc comment at lines 309-313 with "and its `name` (M§6)" after "keeps that pane's unknown fields (AU78)".
+- [x] 12. In `crates/zygo-workspace/src/snapshot.rs` `apply` (line 340 literal), add `name: ws.panes.iter().find(|x| x.key == *key).and_then(|x| x.name.clone()),` and extend the doc comment at lines 309-313 with "and its `name` (M§6)" after "keeps that pane's unknown fields (AU78)".
 
-- [ ] 13. Run the step 11 command and see it pass; then `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test snapshot` passes whole.
+- [x] 13. Run the step 11 command and see it pass; then `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --test snapshot` passes whole.
 
-- [ ] 14. Run `env -u ZYGO_SESSION_DIR cargo build --workspace --all-targets` and `env -u ZYGO_SESSION_DIR cargo clippy -p zygo-workspace --all-targets -- -D warnings`; both exit 0 (no other crate builds a `PlanPane` or a full `MemberRecord` literal).
+- [x] 14. Run `env -u ZYGO_SESSION_DIR cargo build --workspace --all-targets` and `env -u ZYGO_SESSION_DIR cargo clippy -p zygo-workspace --all-targets -- -D warnings`; both exit 0 (no other crate builds a `PlanPane` or a full `MemberRecord` literal).
 
-- [ ] 15. Commit the four source files and three test files with subject `ML-3: member name in the plan, the member record and panes[]` and two trailers, each on its own line at the end: `Zygo-Session:` with the id of the session that implements, and `Zygo-Work: phase3:ML-3`. No Claude attribution.
+- [x] 15. Commit the four source files and three test files with subject `ML-3: member name in the plan, the member record and panes[]` and two trailers, each on its own line at the end: `Zygo-Session:` with the id of the session that implements, and `Zygo-Work: phase3:ML-3`. No Claude attribution.
 
-- [ ] 16. Verify: run the Acceptance command from the contract and see every count hold and all tests pass:
+- [x] 16. Verify: run the Acceptance command from the contract and see every count hold and all tests pass:
 
 ```sh
 test "$(cargo test -q -p zygo-workspace --test loadout -- member_name --list 2>/dev/null | grep -c ': test$')" -ge 1 && test "$(cargo test -q -p zygo-workspace --test state -- member_name --list 2>/dev/null | grep -c ': test$')" -ge 3 && test "$(cargo test -q -p zygo-workspace --test snapshot -- member_name --list 2>/dev/null | grep -c ': test$')" -ge 1 && cargo test -p zygo-workspace --test loadout --test state --test snapshot
 ```
 
   Expected counts: loadout 1, state 3, snapshot 1.
+
+### Review round 1
+
+Files widened: `crates/zygo-workspace/src/admin.rs` (fix 5 only). Each new test is named `member_name_…`.
+
+1. `state::Pane::valid_name` (same rule as `MemberRecord::valid_name`); the `Pane.name` doc comment points at it. Test `member_name_pane_valid_name_checks_the_grammar` (`a/b`, control characters).
+2. `Pane.name` and `MemberRecord.name` read through `lenient_name` (`deserialize_with`): a string is kept, any other JSON value reads as none, so the file still loads. Test `member_name_of_the_wrong_json_type_reads_as_none`.
+3. `loadout::resolve`: a name that an earlier pane of the plan took reads as no name (the first wins). Test `member_name_resolve_first_pane_wins_a_repeated_name`.
+3a. `loadout::resolve` gives a shell pane no name, and a shell pane's name does not count in the repeated-name check (M§6, AU53). Test `member_name_shell_pane_name_is_dropped_and_does_not_block`.
+4. An invalid name still reads as no name, silently (Acceptance unchanged).
+5. The name goes with the record: `ws forget-pane` clears `panes[k].name` (`admin.rs`); a restore `up` clears the name of each pane it restores as a shell, which covers the forgotten records (`up.rs`). Test `member_name_forget_pane_clears_the_pane_name`; the restore path runs only under tmux and has no test in the allowed files.
+6. Snapshot: the name comes from `members[key]` when the pane is an agent pane, is none for a shell pane with a record (an ended record, AU53), and is the stored pane's name when the key has no record. Test `member_name_snapshot_takes_the_name_from_the_member_record`.
+7. `up` builds each loadout `panes[]` entry with `new_pane`, and each pane's kind and fresh record with `plan_pane`; `up::testing::loadout_pane` reaches both. Test `member_name_loadout_pane_entry_takes_the_name_of_an_agent_pane_only` (agent pane, shell pane, AU98 pane).

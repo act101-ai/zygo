@@ -1184,6 +1184,50 @@ fn unknown_fields_of_kept_panes_and_windows_survive() {
     assert_eq!((ws.windows[0].width, ws.windows[0].layout.as_str()), (200, "b25d,200x50,0,0,0")); // the read wins
 }
 
+#[test] // M§6, W§7.4 step 5: a snapshot keeps Pane.name of the stored pane with the same key after every %N changed
+fn member_name_snapshot_keeps_the_stored_pane_name_by_key() {
+    let (_d, p, store) = up(&["kaaaaaaaa", "kbbbbbbbb"]);
+    store.update(S5, &mut |ws| { ws.panes[0].name = Some("lead".into()); Ok(()) }).unwrap();
+    let read = vec![line(0, "main", 0, "%7", 0, 1, "kbbbbbbbb", "/srv/app"), line(0, "main", 0, "%9", 1, 0, "kaaaaaaaa", "/srv/app")];
+    let fake = Fake::new(Some(ID), vec![Ok(read)]);
+    assert_eq!(run(&p, &fake, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
+    let ws = store.read().unwrap().unwrap();
+    let name = |k: &str| ws.panes.iter().find(|x| x.key == k).unwrap().name.clone();
+    assert_eq!((name("kaaaaaaaa").as_deref(), name("kbbbbbbbb").as_deref()), (Some("lead"), None));
+    assert_eq!(ws.panes.iter().find(|x| x.key == "kaaaaaaaa").unwrap().index, 1); // the read wins for the layout
+}
+
+#[test] // M§6, ML-3 review round 1: the member record is the source of the pane name; a shell pane gets none
+fn member_name_snapshot_takes_the_name_from_the_member_record() {
+    let (_d, p, store) = up(&["kaaaaaaaa", "kcccccccc"]);
+    store
+        .update(S5, &mut |ws| {
+            ws.panes[0].name = Some("old".into());
+            ws.panes[1].name = Some("gone".into());
+            let named = |agent, st, n: &str| MemberRecord { name: Some(n.into()), ..member(agent, st) };
+            ws.members.insert("kaaaaaaaa".into(), named(Agent::ClaudeCode, MemberState::Running, "lead"));
+            ws.members.insert("kbbbbbbbb".into(), named(Agent::OpenCode, MemberState::Resumable, "dev"));
+            ws.members.insert("kcccccccc".into(), named(Agent::ClaudeCode, MemberState::Ended, "gone"));
+            Ok(())
+        })
+        .unwrap();
+    let read = vec![
+        line(0, "main", 0, "%0", 0, 1, "kaaaaaaaa", "/srv/app"),
+        line(0, "main", 0, "%1", 1, 0, "kbbbbbbbb", "/srv/app"),
+        line(0, "main", 0, "%2", 2, 0, "kcccccccc", "/srv/app"),
+    ];
+    let fake = Fake::new(Some(ID), vec![Ok(read)]);
+    assert_eq!(run(&p, &fake, ID, None, false, HOOK_WAIT).unwrap(), SnapshotOutcome::Written);
+    let ws = store.read().unwrap().unwrap();
+    let name = |k: &str| ws.panes.iter().find(|x| x.key == k).unwrap().name.clone();
+    // a record name change wins over the old pane name; a record with no prior pane entry gives its name;
+    // an ended record (a shell pane, AU53) gives none
+    assert_eq!(
+        (name("kaaaaaaaa").as_deref(), name("kbbbbbbbb").as_deref(), name("kcccccccc").as_deref()),
+        (Some("lead"), Some("dev"), None)
+    );
+}
+
 #[test] // Round 2 M1: a taken file that a dead taker left (older than 60 s) is queued again with its flag
 fn old_taken_files_are_queued_again() {
     let (_d, p, store) = up(&["kaaaaaaaa"]);
