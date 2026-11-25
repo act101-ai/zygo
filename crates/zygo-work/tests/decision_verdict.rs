@@ -1,0 +1,268 @@
+//! DR-12: the keep check (D§9.4) over the node range, on a fixture repository with a linked node checkout. No test
+//! waits on wall-clock time: real-git tests run with every deadline an hour away, and no developer git config is read.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
+use tempfile::TempDir;
+use zygo_work::decisions::record::Class;
+use zygo_work::gate::check::{check_keep, format_problems, Disposition, KeepRequest, Proof};
+use zygo_work::gate::git::{BatchIo, GitRunner, ProcessGit, ProcessRunner};
+use zygo_work::repo::{RunError, Whole};
+
+// ---- copied from tests/decision_git.rs (private to that test crate) ----
+
+const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
+/// `git -C <dir> <args>` with no global or system config, a fixed identity and `LC_ALL=C`.
+fn git_in(dir: &Path, args: &[&str]) -> Command {
+    let mut c = Command::new("git");
+    c.arg("-C").arg(dir).args(["-c", "commit.gpgsign=false"]).args(args);
+    c.env("GIT_CONFIG_GLOBAL", NULL).env("GIT_CONFIG_NOSYSTEM", "1").env("LC_ALL", "C");
+    c.env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t");
+    c
+}
+
+/// A setup git call that must succeed.
+fn git(dir: &Path, args: &[&str]) {
+    let out = git_in(dir, args).output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// The trimmed stdout of a setup git call that must succeed.
+fn out(dir: &Path, args: &[&str]) -> String {
+    let o = git_in(dir, args).output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
+/// The real runner with its clock one hour ahead, so every deadline is an hour away and machine load cannot fail a test.
+struct Far(ProcessRunner);
+
+impl GitRunner for Far {
+    fn run(&mut self, cmd: Command, deadline: Instant) -> Result<Whole, RunError> { self.0.run(cmd, deadline) }
+    fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> { self.0.batch(cmd, deadline) }
+    fn now(&self) -> Instant { Instant::now() + Duration::from_secs(3600) }
+}
+
+/// [`Far`] with `HOME`, `XDG_CONFIG_HOME` (and `USERPROFILE`) set to an empty temp dir on each command, so no
+/// developer `~/.gitconfig` reaches a real-git test.
+struct Iso {
+    far: Far,
+    home: TempDir,
+}
+
+impl Iso {
+    fn isolate(&self, mut cmd: Command) -> Command {
+        cmd.env("HOME", self.home.path()).env("XDG_CONFIG_HOME", self.home.path());
+        if cfg!(windows) {
+            cmd.env("USERPROFILE", self.home.path());
+        }
+        cmd
+    }
+}
+
+impl GitRunner for Iso {
+    fn run(&mut self, cmd: Command, deadline: Instant) -> Result<Whole, RunError> {
+        let cmd = self.isolate(cmd);
+        self.far.run(cmd, deadline)
+    }
+    fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> {
+        let cmd = self.isolate(cmd);
+        self.far.batch(cmd, deadline)
+    }
+    fn now(&self) -> Instant { self.far.now() }
+}
+
+fn far_git(root: &Path) -> ProcessGit {
+    ProcessGit::with_runner(root, Box::new(Iso { far: Far(ProcessRunner), home: TempDir::new().unwrap() }))
+}
+
+// ---- the keep fixture ----
+
+const UNIT: &str = "phase3:DR-12";
+const C40: &str = "6e7fe2f0c1d2e3f4a5b6c7d8e9f0011223344556";
+const BODY: &str = "\n## Finding\n\nF.\n\n## Choice\n\nC.\n\n## Alternatives rejected\n\nA.\n\n## Evidence\n\nE.\n\n## Cost to reverse\n\nR.\n";
+const AGENT: &str = "\n\nZygo-Session: s";
+
+/// The record id `DDR-0…0<c>`; `c` is never I, L, O or U.
+fn id(c: char) -> String { format!("DDR-{}{c}", "0".repeat(25)) }
+
+fn path(c: char) -> String { format!("docs/decisions/{}.md", id(c)) }
+
+/// Record `id(c)`: an open `accepted-limit`, class `none`, title `T`, unit UNIT, round 3, role `code`, model
+/// `unknown`, commit C40, date 2026-11-24, reverse_cost `low`, `depends_on = []`, body BODY. Each `(key, value)` of
+/// `set` replaces or adds a key; values are TOML strings, except `round` and `depends_on`, written as given.
+fn record(c: char, set: &[(&str, &str)]) -> String {
+    let q = |v: &str| format!("\"{v}\"");
+    let mut keys: Vec<(String, String)> = [
+        ("id", q(&id(c))),
+        ("kind", q("accepted-limit")),
+        ("status", q("open")),
+        ("class", q("none")),
+        ("title", q("T")),
+        ("unit", q(UNIT)),
+        ("round", "3".to_string()),
+        ("role", q("code")),
+        ("model", q("unknown")),
+        ("commit", q(C40)),
+        ("date", q("2026-11-24")),
+        ("reverse_cost", q("low")),
+        ("depends_on", "[]".to_string()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    for (k, v) in set {
+        let v = if matches!(*k, "round" | "depends_on") { v.to_string() } else { q(v) };
+        match keys.iter_mut().find(|(key, _)| key == k) {
+            Some(slot) => slot.1 = v,
+            None => keys.push((k.to_string(), v)),
+        }
+    }
+    let front: String = keys.iter().map(|(k, v)| format!("{k} = {v}\n")).collect();
+    format!("+++\n{front}+++\n{BODY}")
+}
+
+struct Fx {
+    _t: TempDir,
+    w: PathBuf,
+    n: PathBuf,
+    root: String,
+    base: String,
+}
+
+/// `w` on `main`: `root` (file `a`), then `base` (adds `docs/decisions/README.md` and `path('P')`). The linked
+/// checkout `n` on `node` at `base`. `w` stays at `base`.
+fn fixture() -> Fx {
+    let t = TempDir::new().unwrap();
+    git(t.path(), &["init", "-q", "-b", "main", "w"]);
+    let w = t.path().join("w");
+    fs::write(w.join("a"), "a\n").unwrap();
+    git(&w, &["add", "-A"]);
+    git(&w, &["commit", "-q", "-m", "root"]);
+    let root = out(&w, &["rev-parse", "HEAD"]);
+    fs::create_dir_all(w.join("docs/decisions")).unwrap();
+    fs::write(w.join("docs/decisions/README.md"), "readme\n").unwrap();
+    fs::write(w.join(path('P')), record('P', &[])).unwrap();
+    git(&w, &["add", "-A"]);
+    git(&w, &["commit", "-q", "-m", "base"]);
+    let base = out(&w, &["rev-parse", "HEAD"]);
+    git(&w, &["worktree", "add", "-q", "../n", "-b", "node"]);
+    let n = t.path().join("n");
+    Fx { _t: t, w, n, root, base }
+}
+
+/// In `n`: writes `Some(text)` or removes (`None`) each path, `git add -A`, commits with `msg`; returns the full id.
+fn commit(n: &Path, msg: &str, files: &[(&str, Option<&str>)]) -> String {
+    for (p, text) in files {
+        let f = n.join(p);
+        match text {
+            Some(text) => {
+                fs::create_dir_all(f.parent().unwrap()).unwrap();
+                fs::write(&f, text).unwrap();
+            }
+            None => fs::remove_file(&f).unwrap(),
+        }
+    }
+    git(n, &["add", "-A"]);
+    git(n, &["commit", "-q", "-m", msg]);
+    out(n, &["rev-parse", "HEAD"])
+}
+
+/// An agent commit in `fx.n` that writes `path(c)` = `record(c, set)`; returns the full id.
+fn add(fx: &Fx, c: char, set: &[(&str, &str)]) -> String {
+    commit(&fx.n, &format!("add{AGENT}"), &[(&path(c), Some(&record(c, set)))])
+}
+
+/// The usual `h`: an agent commit of `src.txt`.
+fn code(fx: &Fx) -> String { commit(&fx.n, &format!("code{AGENT}"), &[("src.txt", Some("1\n"))]) }
+
+fn req(round: u32, head: Option<&str>, base: Option<&str>, ds: Option<Vec<Disposition>>) -> KeepRequest {
+    KeepRequest {
+        unit: UNIT.to_string(),
+        round,
+        head: head.map(str::to_string),
+        base: base.map(str::to_string),
+        dispositions: ds,
+    }
+}
+
+/// `check_keep` with `far_git(&fx.w)`: the main checkout reads the node's commits (PD1).
+fn keep(fx: &Fx, round: u32, head: Option<&str>, base: Option<&str>, ds: Option<Vec<Disposition>>) -> Vec<String> {
+    check_keep(&req(round, head, base, ds), &mut far_git(&fx.w))
+}
+
+fn fixed(l: &str, c: &str) -> Disposition {
+    Disposition { finding: l.to_string(), class: Class::None, proof: Proof::Fixed { commit: c.to_string() } }
+}
+
+fn rejected(l: &str, class: Class) -> Disposition {
+    Disposition { finding: l.to_string(), class, proof: Proof::Rejected { reason: "not a defect".to_string() } }
+}
+
+fn recorded(l: &str, class: Class, c: char) -> Disposition {
+    Disposition { finding: l.to_string(), class, proof: Proof::Recorded { record: id(c) } }
+}
+
+fn s(v: &[&str]) -> Vec<String> { v.iter().map(|x| x.to_string()).collect() }
+
+// ---- cycle 1: format_problems, steps 1 to 4 ----
+
+#[test]
+fn no_head() {
+    let fx = fixture();
+    assert_eq!(keep(&fx, 3, None, None, Some(vec![])), s(&["no head commit"]));
+}
+
+#[test]
+fn no_dispositions() {
+    let fx = fixture();
+    let h = code(&fx);
+    assert_eq!(keep(&fx, 3, Some(&h), None, None), s(&["no dispositions"]));
+}
+
+#[test]
+fn duplicate_label() {
+    let fx = fixture();
+    let h = code(&fx);
+    let ds = vec![rejected("R1-1", Class::None), rejected("R1-1", Class::None)];
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(ds)), s(&["finding R1-1 has two dispositions"]));
+}
+
+#[test]
+fn one_record_for_two_findings() {
+    let fx = fixture();
+    let h = add(&fx, 'R', &[]);
+    let ds = vec![recorded("R3-1", Class::None, 'R'), recorded("R3-2", Class::None, 'R')];
+    assert_eq!(keep(&fx, 3, Some(&h), None, Some(ds)), vec![format!("{} serves two findings", id('R'))]);
+}
+
+#[test]
+fn acceptance_8_head_already_in_head_skips_steps_5_to_9() {
+    let fx = fixture();
+    let h = code(&fx);
+    git(&fx.w, &["merge", "-q", "--ff-only", "node"]);
+    // The entry would fail step 5 if it ran.
+    let ds = vec![fixed("R1-1", C40)];
+    assert_eq!(
+        keep(&fx, 1, Some(&h), None, Some(ds)),
+        s(&["head is already in HEAD: call before the merge, or give base"])
+    );
+}
+
+#[test]
+fn format_problems_12_gives_10_then_and_2_more() {
+    let p: Vec<String> = (0..12).map(|i| format!("p{i}")).collect();
+    assert_eq!(format_problems(&p), "p0; p1; p2; p3; p4; p5; p6; p7; p8; p9; and 2 more");
+    assert_eq!(format_problems(&[]), "");
+}
+
+#[test]
+fn format_problems_stays_within_4_kib() {
+    let p = vec!["x".repeat(1000); 12];
+    assert_eq!(format_problems(&p), format!("{}; and 8 more", vec!["x".repeat(1000); 4].join("; ")));
+    let one = format_problems(&["é".repeat(3000)]); // 6,000 bytes
+    assert!(one.len() <= 4096 && one.starts_with('é'));
+}
