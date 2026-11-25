@@ -22,8 +22,9 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace};
 use zygo_core::Agent;
-use zygo_hooks::{prompt, session_start, session_text, workspace};
+use zygo_hooks::{mail, prompt, session_start, session_text, workspace};
 use zygo_workspace::activity::{self, Activity};
+use zygo_workspace::mail::mail_dir;
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Pending, Phase, Store, Subagent};
 
@@ -39,6 +40,7 @@ const S5: Duration = Duration::from_secs(5);
 const I1: &str = "zygo stopped this session while subagents Explore a1 were running; their results were lost; dispatch them again if still needed.";
 const U12: &str = "Units u-1, u-2 were closed when zygo stopped this session; call work_begin to open them again if work continues.";
 const U1: &str = "Units u-1 were closed when zygo stopped this session; call work_begin to open them again if work continues.";
+const L2: &str = "zygo: 2 new messages; read them with mail_read";
 const CRASH: &str = "zygo did not stop this session cleanly; the list of closed units was not saved.";
 
 /// `data_dir` = `<p>/data` is not under `$HOME`, so the state folder is `<p>/data/state`.
@@ -1979,4 +1981,20 @@ fn prompt_hook_child() {
         &bytes,
     );
     assert_eq!(out, (String::new(), 0));
+}
+
+/// Writes `n` message files with body `{}` into `new/` of the member `KEY` (made when missing) and returns that folder.
+fn put_new(f: &Fx, n: usize) -> PathBuf {
+    let new = mail_dir(&f.paths, ID).join(KEY).join("new");
+    fs::create_dir_all(&new).unwrap();
+    for i in 0..n {
+        fs::write(new.join(format!("01J{i:023}.json")), "{}").unwrap();
+    }
+    new
+}
+
+#[test] // M§7.1, M§7.2
+fn mail_lines_name_the_count_and_the_tool() {
+    assert_eq!(mail::delivery_line(2), L2);
+    assert_eq!(serde_json::from_str::<Value>(&mail::stop_block(2)).unwrap(), json!({"decision": "block", "reason": L2}));
 }
