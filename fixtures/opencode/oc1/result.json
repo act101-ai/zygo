@@ -1,8 +1,9 @@
 {
   "PO1": {
-    "inline config holds the key": false,
+    "session key differs from the vendor dummy key": true,
+    "inline config holds a key": false,
     "inline apiKey": "{file:/tmp/run/sess dir/token}",
-    "requests of the zygo/lead run": [
+    "requests of the zygo/lead run (zygo mock: only the session key, any other key aborts)": [
       {
         "seq": 1,
         "method": "POST",
@@ -22,31 +23,43 @@
         "reply": "po1-00"
       }
     ],
-    "a POST /v1/messages with x-api-key accepted (the mock aborts on any key but the dummy)": true,
-    "mock ABORT file": false,
+    "a POST /v1/messages with x-api-key accepted by the zygo mock": true,
+    "mock ABORT file (zygo, vendor)": [
+      false,
+      false
+    ],
     "run output has the scripted reply text": true,
-    "files holding the key text after all runs (search of the run folder, scratch HOME included)": [
-      "home/.claude/.claude.json",
-      "home/.config/opencode/opencode.json",
-      "home/.local/share/opencode/auth.json",
+    "files holding the session key after all runs (search of the run folder and TMPDIR, no exclusion)": [
       "sess dir/token"
     ],
-    "of them, files not written by this script with the key": [],
+    "TMPDIR (run folder tmp/) entries": [
+      ".b9ff72adfbbebbb2-00000000.dylib",
+      ".b9ff72afe2bf6f8a-00000000.dylib",
+      "opencode"
+    ],
+    "/tmp/opencode before": "present, mtime 1795634435",
+    "/tmp/opencode after": "present, mtime 1795634435",
+    "/tmp/opencode entries changed during the run": 0,
+    "of them, files other than the token file": [],
     "pass": true
   },
   "PO2": {
+    "user config.json and project opencode.json": "both set disabled_providers [\"zygo\"]",
     "ON: models": [
       "zygo/lead"
     ],
     "ON: every model is zygo/": true,
-    "ON: requests to /vendor/": [],
-    "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_bf05edcb\"\n  }\n}\n",
+    "ON: zygo/lead answered (the PO1 run, same ON config)": true,
+    "ON: requests to the vendor mock": [],
+    "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_dc82c07a\"\n  }\n}\n",
+    "control without the inline disabled_providers []: models": [],
+    "control without the inline disabled_providers []: lists no zygo/ model": true,
     "OFF: lists anthropic/probe-model": true,
     "OFF: lists an openai/ model": true,
     "OFF: model count": 73,
-    "OFF: requests to /vendor/": [
+    "OFF: requests to the vendor mock": [
       {
-        "seq": 3,
+        "seq": 1,
         "method": "POST",
         "path": "/vendor/v1/messages",
         "credential_headers": [
@@ -55,7 +68,7 @@
         "reply": "default"
       },
       {
-        "seq": 4,
+        "seq": 2,
         "method": "POST",
         "path": "/vendor/v1/messages",
         "credential_headers": [
