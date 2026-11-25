@@ -512,6 +512,45 @@ fn shared_lines_of_a_user_loadout() {
     );
 }
 
+/// F1 of the WD-12 review, R§10 and R§9.5: a pool pane whose server URL holds user info gets no member record
+/// (AU98), so `zygo up` gives it no pool directory; doctor's shared lines skip it too.
+#[test]
+fn pool_lines_skip_a_pane_with_user_info() {
+    let t = tempfile::tempdir().unwrap();
+    let (root, cwd) = (t.path().join("root"), t.path().join("cwd"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    let panes = "[[loadout.mine.window]]\n\
+        [[loadout.mine.window.pane]]\nkind = \"claude-code\"\nname = \"x\"\npool = true\n\
+        [[loadout.mine.window.pane]]\nkind = \"claude-code\"\nname = \"y\"\npool = true\nserver = \"https://u:p@host\"\n\
+        [[loadout.mine.window.pane]]\nkind = \"claude-code\"\nname = \"z\"\npool = true\n";
+    let run = |p: &Path| {
+        let user = format!("{}default_loadout = \"mine\"\n{panes}", pool_toml(p));
+        definition_lines(
+            &cwd,
+            &merged(&root, &user),
+            &root.join("approvals.toml"),
+            &SystemGit,
+        )
+    };
+    // Pool `a`, `b`: `x` gets `a`, `z` gets `b`; no directory is shared.
+    let p = pool(&root);
+    assert_eq!(
+        run(&p),
+        vec![format!("pool: {}: 2 directories", p.display())]
+    );
+    // Pool `a` only: `x` and `z` share it; `y` is not a member.
+    let one = root.join("one");
+    std::fs::create_dir_all(one.join("a")).unwrap();
+    assert_eq!(
+        run(&one),
+        vec![
+            format!("pool: {}: 1 directories", one.display()),
+            format!("pool: {} is shared by x, z", one.join("a").display()),
+        ]
+    );
+}
+
 /// F5, R§18 item 23: a `git` whose `ls-tree` fails: `zygo doctor` prints the unread line and exits 0.
 #[cfg(unix)]
 #[test]

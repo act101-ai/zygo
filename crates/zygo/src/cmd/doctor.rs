@@ -22,6 +22,7 @@ use zygo_plugins::select::selection;
 use zygo_plugins::snapshot::missing_commands;
 use zygo_plugins::store::{state, ManifestState};
 use zygo_work::policy::Policy;
+use zygo_workspace::args::has_user_info;
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::loadout::builtin_solo;
 use zygo_workspace::mux::tmux::Tmux;
@@ -332,8 +333,13 @@ pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn
         None if name == BUILTIN_LOADOUT => builtin_solo(),
         None => return out,
     };
-    let members: Vec<(usize, &LoadoutPane)> =
-        lo.window.iter().flat_map(|w| &w.pane).enumerate().filter(|(_, p)| p.pool && p.kind == "claude-code").collect();
+    let members: Vec<(usize, &LoadoutPane)> = lo
+        .window
+        .iter()
+        .flat_map(|w| &w.pane)
+        .enumerate()
+        .filter(|(_, p)| p.pool && p.kind == "claude-code" && !p.server.as_deref().is_some_and(has_user_info))
+        .collect();
     let names: Vec<Option<String>> = members.iter().map(|(_, p)| p.name.clone()).collect();
     let dir_of: Vec<(String, PathBuf)> = members
         .iter()
