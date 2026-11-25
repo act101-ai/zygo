@@ -1,4 +1,7 @@
-0 message developer You are a coding agent running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project 
-1 message developer <skills_instructions>
-2 message user # AGENTS.md instructions for /repo
-agents_tracer_in=2
+0.0 message developer input_text PC3 base instructions.
+1.0 message developer input_text <skills_instructions>
+1.1 message developer input_text <permissions instructions>
+2.0 message user input_text # AGENTS.md instructions for /repo
+2.1 message user input_text <environment_context>
+environment_context_in=2.1
+agents_tracer_in=2.0

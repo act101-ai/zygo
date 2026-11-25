@@ -1,21 +1,22 @@
 {
-  "seq": 6,
+  "seq": 12,
   "method": "GET",
   "path": "/v1/models?client_version=0.172.0",
   "headers": {
-    "x-pc3-variant": "h",
     "x-pc3-static": "pc3-static-value",
+    "x-pc3-variant": "b",
     "x-pc3-env": "xterm-256color",
     "authorization": "[omitted]",
-    "originator": "codex_exec",
-    "user-agent": "codex_exec/0.172.0 (Mac OS 27.2.1; arm64) xterm-256color (codex_exec; 0.172.0)",
+    "originator": "codex_cli_rs",
+    "user-agent": "codex_cli_rs/0.172.0 (os omitted) xterm-256color",
     "accept": "*/*",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:57164"
+    "host": "127.0.0.1:53815"
   },
   "credential_headers": [
     "authorization"
   ],
+  "credential": "alt",
   "body": null,
-  "reply": "default"
+  "reply": "models-b"
 }

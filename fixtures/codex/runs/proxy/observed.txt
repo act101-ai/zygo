@@ -1,5 +1,5 @@
-- PC1: verified 2026-11-25: fixtures/codex/transport/paths.txt fixtures/codex/transport/key-helper.txt fixtures/codex/transport/other-hosts.txt fixtures/codex/transport/processes.txt
+- PC1: verified 2026-11-25: fixtures/codex/transport/result.txt fixtures/codex/transport/paths.txt fixtures/codex/transport/key-helper.txt fixtures/codex/transport/other-hosts.txt fixtures/codex/transport/processes.txt
 - PC2: verified 2026-11-25: fixtures/codex/requests/http-headers.txt
-- PC7: verified 2026-11-25: fixtures/codex/models/result.txt fixtures/codex/models/catalog-shape.json fixtures/codex/models/openai-shape.json fixtures/codex/models/catalog-file.json fixtures/codex/models/request.json
+- PC7: verified 2026-11-25: fixtures/codex/models/result.txt fixtures/codex/models/picker-b.jsonl fixtures/codex/models/picker-c.jsonl fixtures/codex/models/picker-d.jsonl fixtures/codex/models/catalog-shape.json fixtures/codex/models/openai-shape.json fixtures/codex/models/catalog-file.json fixtures/codex/models/request.json
 - PC13: verified 2026-11-25: fixtures/codex/requests/injected-items.txt fixtures/codex/requests/first-turn.json
 - PC14: verified 2026-11-25: fixtures/codex/errors/result.txt fixtures/codex/errors/context-400.json fixtures/codex/errors/context-failed.sse fixtures/codex/errors/e1-exec.txt fixtures/codex/errors/e2-exec.txt

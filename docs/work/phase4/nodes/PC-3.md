@@ -16,9 +16,9 @@
 
 ## Observed
 
-- PC1: verified 2026-11-25: fixtures/codex/transport/paths.txt fixtures/codex/transport/key-helper.txt fixtures/codex/transport/other-hosts.txt fixtures/codex/transport/processes.txt
+- PC1: verified 2026-11-25: fixtures/codex/transport/result.txt fixtures/codex/transport/paths.txt fixtures/codex/transport/key-helper.txt fixtures/codex/transport/other-hosts.txt fixtures/codex/transport/processes.txt
 - PC2: verified 2026-11-25: fixtures/codex/requests/http-headers.txt
-- PC7: verified 2026-11-25: fixtures/codex/models/result.txt fixtures/codex/models/catalog-shape.json fixtures/codex/models/openai-shape.json fixtures/codex/models/catalog-file.json fixtures/codex/models/request.json
+- PC7: verified 2026-11-25: fixtures/codex/models/result.txt fixtures/codex/models/picker-b.jsonl fixtures/codex/models/picker-c.jsonl fixtures/codex/models/picker-d.jsonl fixtures/codex/models/catalog-shape.json fixtures/codex/models/openai-shape.json fixtures/codex/models/catalog-file.json fixtures/codex/models/request.json
 - PC13: verified 2026-11-25: fixtures/codex/requests/injected-items.txt fixtures/codex/requests/first-turn.json
 - PC14: verified 2026-11-25: fixtures/codex/errors/result.txt fixtures/codex/errors/context-400.json fixtures/codex/errors/context-failed.sse fixtures/codex/errors/e1-exec.txt fixtures/codex/errors/e2-exec.txt
 
@@ -96,9 +96,9 @@ round 1 code it failed 15 of 28 checks, on the round 2 code it passes 28 of 28. 
   `connect.txt` empty; `stub-args.txt` = `app-server`; `observed.txt` five `failed` lines citing the picker files
   and `transport/result.txt`; no process holds the scratch folder; `git status --porcelain fixtures` empty.
 - [x] R4. F8 stub tests: trap (SIGTERM during a hanging `app-server` stub): part exit 143, the mock, the driver and the Codex copy gone; bound (hanging `app-server` stub): `b`, `c`, `d` each `exec-models-<v>.rc` = `bound`, driver 1, `processes.txt` none, no process left, `CODEX_FX` empty; the driver alone with no reader ends (1) once `<done>` exists.
-- [ ] R5. Real `run-codex.sh base`, then real rerun (the lead releases it, after PC-10): steps 5-7 checks, and `pgrep -fl 'app-server'` empty before; `daemon=none` and `TZ` in `env_names`; no `America/`, `Mac OS`, `Los_Angeles` in the fixtures; exit 0; `transport/tools.txt`
+- [x] R5. Real `run-codex.sh base` (2026-11-25: exit 0; `isolation.txt` gains `TZ`, `daemon=none`; `help.txt` and the schema unchanged), then real rerun (2026-11-25: exit 0; `apply_patch=custom`, Codex applied the authored patch; PC13 `environment_context_in=2.1`, `agents_tracer_in=2.0`; all five verified) (the lead releases it, after PC-10): steps 5-7 checks, and `pgrep -fl 'app-server'` empty before; `daemon=none` and `TZ` in `env_names`; no `America/`, `Mac OS`, `Los_Angeles` in the fixtures; exit 0; `transport/tools.txt`
   `apply_patch=custom`; the four classes found; five dated lines.
-- [ ] R6. "Observed" replaced with the new `observed.txt` lines, verbatim; Acceptance exit 0; commit, push (PR #137).
+- [x] R6. (2026-11-25: Acceptance exit 0, its real run under the same checks) "Observed" replaced with the new `observed.txt` lines, verbatim; Acceptance exit 0; commit, push (PR #137).
 
 ## Plan
 
