@@ -1,0 +1,7 @@
+home=scratch
+codex_home=scratch
+codex_version=0.172.0
+run_versions=0.172.0,0.172.0,0.172.0,0.172.0,0.172.0
+codex_exe=scratch
+env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH TERM TMPDIR XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+proxy=mock

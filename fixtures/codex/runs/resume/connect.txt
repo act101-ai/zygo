@@ -1,0 +1,24 @@
+github.com:443 refused
+api.github.com:443 refused
+chatgpt.com:443 refused
+ab.chatgpt.com:443 refused
+github.com:443 refused
+api.github.com:443 refused
+chatgpt.com:443 refused
+ab.chatgpt.com:443 refused
+raw.githubusercontent.com:443 refused
+github.com:443 refused
+api.github.com:443 refused
+chatgpt.com:443 refused
+127.0.0.1:57297 POST refused
+api.github.com:443 refused
+ab.chatgpt.com:443 refused
+github.com:443 refused
+ab.chatgpt.com:443 refused
+raw.githubusercontent.com:443 refused
+github.com:443 refused
+api.github.com:443 refused
+api.github.com:443 refused
+chatgpt.com:443 refused
+127.0.0.1:57310 POST refused
+ab.chatgpt.com:443 refused

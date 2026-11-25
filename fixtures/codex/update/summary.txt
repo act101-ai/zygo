@@ -1,0 +1,7 @@
+config_key=absent
+schema_default=true
+tui_start_exit=0
+tui_start_connects=raw.githubusercontent.com:443,github.com:443,api.github.com:443,api.github.com:443,chatgpt.com:443,127.0.0.1:57310,ab.chatgpt.com:443
+exec_connects=github.com:443,api.github.com:443,chatgpt.com:443,ab.chatgpt.com:443,github.com:443,api.github.com:443,chatgpt.com:443,ab.chatgpt.com:443,github.com:443,ab.chatgpt.com:443
+release_source_request=seen
+pc16=verified

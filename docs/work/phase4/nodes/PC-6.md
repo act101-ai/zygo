@@ -16,7 +16,14 @@
 
 ## Observed
 
-Written when the node runs.
+- PC10: verified 2026-11-25: fixtures/codex/workspace/summary.txt fixtures/codex/workspace/codex-home-files.txt fixtures/codex/workspace/hooks.jsonl fixtures/codex/workspace/ids.txt fixtures/codex/workspace/request-a.json fixtures/codex/workspace/request-b.json fixtures/codex/workspace/request-c.json fixtures/codex/workspace/rollout-meta.json fixtures/codex/workspace/tui-c.txt
+  Scope: codex resume <id> (TUI, pseudo-terminal) in a new CODEX_HOME whose sessions links to a shared store; exec resume and a CODEX_HOME with no link recorded beside it.
+- PC16: verified 2026-11-25: fixtures/codex/update/summary.txt fixtures/codex/update/config.toml fixtures/codex/update/connect-e.txt fixtures/codex/update/tui-e.txt
+  Scope: Codex's own default against the mock with no zygo between (K-D25); under a zygo launch: P4-9 and P4-11; the notice text: LC-CX1 (owner-run).
+
+### Findings
+
+- Loopback records (accepted as recorded, lead's call 2026-11-25): TUI runs c and e sent POSTs via HTTP_PROXY to 127.0.0.1 ports other than the mock's (`127.0.0.1:<port> POST refused` in `fixtures/codex/runs/resume/connect.txt`); refused by the mock; source not identified (Codex's log database does not name them); no NO_PROXY is set by the harness (lib.sh, outside this node).
 
 ## Plan
 
@@ -144,21 +151,21 @@ Both feature names are set because the pinned schema lists both. Which of them g
   - `pgrep -fl "$S/scr"` prints nothing.
 
   Then `rm -rf "$S"`. Do not go on unless every check passes.
-- [ ] 8. Real run (the lead, alone). Precondition: `pgrep -fl '\.codex/packages'` prints nothing, else stop and report (never kill). `stamp=$(mktemp)`; `sh scripts/premises/run-codex.sh resume` → exit 0. Then:
+- [x] 8. Real run (the lead, alone). Precondition: `pgrep -fl '\.codex/packages'` prints nothing, else stop and report (never kill). `stamp=$(mktemp)`; `sh scripts/premises/run-codex.sh resume` → exit 0. Then:
   - `find "$HOME/.codex" -newer "$stamp" -print` prints nothing.
   - `pgrep -fl codex-pkg`, `pgrep -fl '\.codex/packages'` and `pgrep -fl mock_upstream` print nothing.
   - `rm -f "$stamp"`.
 
-  If the find lists a file, a process is left, or `connect.txt` holds a loopback host, stop and report it as a finding; do not filter the record.
-- [ ] 9. Check the captures:
+  If the find lists a file or a process is left, stop and report it as a finding; do not filter the record. A refused loopback record in `connect.txt` is recorded (under "Findings") and reported, not a stop (lead's call 2026-11-25).
+- [x] 9. Check the captures:
   - `fixtures/codex/workspace/summary.txt` and `fixtures/codex/update/summary.txt` hold every key of step 6.
   - `fixtures/codex/workspace/ids.txt` shows one placeholder for `rollout_id`, `rollout_meta_id` and `session_start_a` when `session_id_equals_rollout_id=yes`.
   - `fixtures/codex/runs/resume/isolation.txt`: `run_versions` five times the real version.
   - Every line of `connect.txt` ends ` refused`.
   - Record a failed PC as found (a measured `failed` is a result, not a defect of this node). A harness error (exit 1) is a defect: fix it and run steps 7 and 8 again.
-- [ ] 10. Replace `Written when the node runs.` under "## Observed" with the four lines that step 8 printed last, verbatim.
-- [ ] 11. Acceptance (the node's command, exactly as the contract's **Acceptance** line) → exit 0.
-- [ ] 12. Commit `scripts/premises/codex/resume.sh`, `fixtures/codex/workspace/`, `fixtures/codex/update/`, `fixtures/codex/runs/resume/` and this file with the message `feat(premises): Codex resume and update captures (PC-6)`, ending with `Zygo-Session: <session>` and `Zygo-Work: phase4:PC-6`, each on its own line. No Claude attribution.
+- [x] 10. Replace `Written when the node runs.` under "## Observed" with the four lines that step 8 printed last, verbatim.
+- [x] 11. Acceptance (the node's command, exactly as the contract's **Acceptance** line) → exit 0.
+- [x] 12. Commit `scripts/premises/codex/resume.sh`, `fixtures/codex/workspace/`, `fixtures/codex/update/`, `fixtures/codex/runs/resume/` and this file with the message `feat(premises): Codex resume and update captures (PC-6)`, ending with `Zygo-Session: <session>` and `Zygo-Work: phase4:PC-6`, each on its own line. No Claude attribution.
 
 ### Author's checks (2026-11-25)
 
