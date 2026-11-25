@@ -1,0 +1,5 @@
+configured=model-with-reasoning
+status_row=gpt-mock default
+model_shown=yes
+dir_shown=no
+tui_exit=0

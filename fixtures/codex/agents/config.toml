@@ -1,0 +1,22 @@
+model = "gpt-mock"
+model_provider = "mock"
+
+[model_providers.mock]
+name = "mock"
+base_url = "http://127.0.0.1:54908/v1"
+env_key = "MOCK_API_KEY"
+wire_api = "responses"
+
+[projects."/repo"]
+trust_level = "trusted"
+
+[projects."/repo"]
+trust_level = "trusted"
+
+[agents.pc6-probe]
+description = "tracer-pc6-probe-desc"
+config_file = "/tmp/run/cx-pc6/roles/pc6-probe.toml"
+
+[agents.explorer]
+description = "tracer-pc6-explorer-desc"
+config_file = "/tmp/run/cx-pc6/roles/explorer.toml"

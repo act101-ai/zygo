@@ -1,0 +1,9 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000001"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-mock` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_1","type":"collab_tool_call","tool":"spawn_agent","sender_thread_id":"00000000-0000-4000-8000-000000000001","receiver_thread_ids":[],"prompt":"tracer-pc6-task-c","agents_states":{},"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"collab_tool_call","tool":"spawn_agent","sender_thread_id":"00000000-0000-4000-8000-000000000001","receiver_thread_ids":["00000000-0000-4000-8000-000000000002"],"prompt":"tracer-pc6-task-c","agents_states":{"00000000-0000-4000-8000-000000000002":{"status":"pending_init","message":null}},"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc 'sleep 15'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc 'sleep 15'","aggregated_output":"","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":30,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":3,"reasoning_output_tokens":0}}

@@ -1,0 +1,7 @@
+pc8-low 0014 POST /v1/responses model=gpt-mock compact_prompt=no turn=turn1 input_items=4 item_types=message,message,message,message
+pc8-low 0015 POST /v1/responses model=gpt-mock compact_prompt=no turn=turn2 input_items=6 item_types=message,message,message,message,message,message
+pc8-low: compaction_requests=0
+pc8-high 0016 POST /v1/responses model=gpt-mock compact_prompt=no turn=turn1 input_items=4 item_types=message,message,message,message
+pc8-high 0017 POST /v1/responses model=gpt-mock compact_prompt=yes turn=none input_items=6 item_types=message,message,message,message,message,message
+pc8-high 0018 POST /v1/responses model=gpt-mock compact_prompt=no turn=turn2 input_items=6 item_types=message,message,message,message,message,message
+pc8-high: compaction_requests=1
