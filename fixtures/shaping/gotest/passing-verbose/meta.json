@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "go test -v ./...",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch module example.com/gotestfix: package parse with 60 serial tests, package group with 12 parallel subtests of TestGroup that each log 3 steps 10 ms apart, package docs with no test files; GOPROXY=off, caches in the scratch dir, run by capture-shaping.sh in /repo",
+   "tool" : "go 1.23.4"
+}

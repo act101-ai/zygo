@@ -236,7 +236,7 @@ Build order **(operator)**: steps 1-2, then step 4, then step 3. The work graph 
 
 ### 7.4 Clean
 
-- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), and any other `ESC` plus its next character. A lone `ESC` at the end is removed. OSC 8 hyperlinks keep their visible text.
+- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), a charset designation (`ESC (` or `ESC )` plus one character, 3 bytes in all), and any other `ESC` plus its next character. A lone `ESC` is removed alone: at the end of the text, and before another `ESC`, which then starts its own sequence. OSC 8 hyperlinks keep their visible text.
 - Unless O§7.3 "text that the model may reuse" applies: `\r\n` becomes `\n`; in each line, a `\r` overwrites, so only the text after the last `\r` is kept. This removes progress bars and spinners.
 - Clean removes no line.
 
@@ -589,3 +589,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-24 | O§7.1, O§7.2 | operator | The parse missed commands that print a file: the wrappers `timeout` and `stdbuf`, the printers `egrep`, `fgrep`, `zcat`, `gawk`, `batcat`, `tac`, `git grep`, `git blame` and `$(<f)`, an `eval` string, and a shell that runs a script from a pipe; the lists and the unsure parse now hold them (found in phase3 OS-11 review). |
 | 2026-11-24 | O§7.1, glossary | author's call | review of OS-40: newline after a pipe, backtick and 0< substitutions, eval --, builtin, -c only among leading options (the arguments of `-o`, `+o`, `-O`, `+O` skipped), redirect-only stage in zsh |
 | 2026-11-25 | O§6.6 | author's call | the sample block's key amounts did not sum to its total, and its Read key kept out more bytes than were read back; replaced with figures a store can produce (OS-8). |
+| 2026-11-25 | O§7.4 | author's call (pending operator ratification under O§15 item 2) | OS-12 review F4/F5: charset designations and ESC ESC left residue |

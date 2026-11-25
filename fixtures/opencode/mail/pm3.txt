@@ -1,0 +1,2 @@
+OpenCode 1.18.16
+3.3 ok one request holds the wake line and the line pushed in experimental.chat.system.transform: yes

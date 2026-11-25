@@ -1,6 +1,6 @@
 # Live checks (node N38)
 
-Checks on the real pinned agents, one dated result per check. A pinned agent version is a minimum (operator, 2026-11-21). Spec: `docs/specs/2026-11-18-zygo-design.md` §20 #16b, #21, #28, #40; §19 P1; §7.6; the N24, N25, N14, N15, N28, N33, N34, N35 notes; `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (P-HUD-1, and the PRB-1 probe); `docs/specs/2026-11-20-workspaces-design.md` W§17 (node P2); `docs/specs/2026-11-24-session-text-design.md` T§12.2 (P3-15).
+Checks on the real pinned agents, one dated result per check. A pinned agent version is a minimum (operator, 2026-11-21). Spec: `docs/specs/2026-11-18-zygo-design.md` §20 #16b, #21, #28, #40; §19 P1; §7.6; the N24, N25, N14, N15, N28, N33, N34, N35 notes; `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (P-HUD-1, and the PRB-1 probe); `docs/specs/2026-11-20-workspaces-design.md` W§17 (node P2); `docs/specs/2026-11-24-session-text-design.md` T§12.2 (P3-15); `docs/specs/2026-11-24-decision-records-design.md` D§18 (PD2, PD3).
 
 Claude Code: 2.1.328 or later
 OpenCode: 1.18.16 or later
@@ -259,6 +259,315 @@ The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's 
 - ST4 verified: it holds a `transform` line with model `SUB`. Failed: none, while the subagent's answer was shown in step 5.
 - The `keys` lists go into the rows as information; they change no behavior in the session-text spec.
 
+## Mail premises (node ML-17)
+
+Node ML-17 (script: node ML-16); `docs/specs/2026-11-22-workspace-mail-design.md` M§14 (PM1, PM2, PM3). From the checkout, with tmux 3.2 or later, `jq`, `python3` and `perl`, and `claude` and `opencode` on `PATH` at or above the pinned versions (the caller adds the OpenCode folder to `PATH`). No login is read. Network needed: OpenCode fetches its provider package from the package registry into the temporary `HOME`.
+
+```sh
+N2_SCRATCH=/tmp/ml17-pm sh scripts/premises/live-mail.sh --pm
+```
+
+- It prints one `LIVE <id> verified|failed (agent <versions>): …` line for each of PM1, PM2 and PM3, also appended to `$N2_SCRATCH/results.txt`, and at the end of the run copies `fixtures/claude-code/mail/pm1.txt`, `pm2.txt`, `pm3.txt` and `fixtures/opencode/mail/pm2.txt`, `pm3.txt` into the checkout, a failed line included. Exit status: 0, the run finished (a failed line does not change it); 3, a request at the mock carried a credential other than the dummy key (the mock writes `ABORT` and stops); 1, a tool or agent is missing or below its minimum version, a path holds a quote or a space, the tmux socket path is longer than 100 characters (set `TMPDIR` to a short folder), or the fixtures could not be copied to the repository; 2, a usage error; 129, 130, 141 or 143 after a signal.
+- Each agent runs in a 200 x 50 pane of a tmux server of the script's own (`-S <socket in a private folder>`, `-f /dev/null`); text is typed with `send-keys -l`, then `Enter` 0.5 s later. Every part uses a temporary `HOME`, the dummy key and the mock upstream, with no zygo between. PM1: Claude Code with a probe MCP server (`scripts/premises/mcp_probe.py`) and a `Stop` hook that answers `decision: block` once. PM2 and PM3, Claude Code: `--tools ""`, with `SessionStart` and `UserPromptSubmit` hooks that return `additionalContext` lines, then the wake line typed into the idle pane. PM2 and PM3, OpenCode: the TUI with a probe plugin that pushes a mail line in `experimental.chat.system.transform`, then the wake line typed into the idle pane.
+- Bounds. Claude Code panes: 60 s for each session start (the first `SessionStart` input; the folder trust question is answered yes), then a 3 s pause. PM1: 60 s for the first `Stop` input, 5 s for its hook output, then 60 s each for the request with the block reason, the `PostToolUse` input of the probe tool, the request with the tool result and the second `Stop` input. PM2 and PM3, Claude Code: 60 s for a `Stop` input after the wake line (a timeout is note 2.4). OpenCode pane: 60 s for the plugin's first event, a 5 s pause, then 90 s for a request with the wake line. 5 s for each pane program to end after SIGTERM, then SIGKILL.
+- Side effects: the scratch folder. With `N2_SCRATCH` set, `<N2_SCRATCH>/live-<pid>` stays, with the raw records (`ml-rec/PM<n>.out`, `ml-rec/PM<n>-oc.out`), the temporary `HOME`s, the recorded requests, the hook logs and the pane text, and `<N2_SCRATCH>/results.txt` keeps each `LIVE` line. Without `N2_SCRATCH`, `lib.sh` makes a temporary folder and deletes it, raw output included, after exit 0 (it keeps and names it after any other exit). Nothing under the real `HOME` is written. The traps end the private tmux server, the mock and every agent and helper process, and remove the private folder (`${TMPDIR:-/tmp}/zm.XXXXXX`).
+- Last run: 2026-11-25, macOS, Claude Code 2.1.332, OpenCode 1.18.16, tmux 3.8: PM1, PM2 and PM3 verified. Rows: `docs/premises.md` PM1 to PM3.
+
+## PD2, PD3 (decision records premises)
+
+Node DR-15; `docs/specs/2026-11-24-decision-records-design.md` D§18 PD2, PD3; D§9.2; D§8.4.
+
+**Design.** One print-mode Claude Code run proves both premises. The upstream is `scripts/premises/mock_upstream.py`: its authored replies make the main loop call `mcp__zygo__work_verdict` twice. Call 1 is small (`discard`). Call 2 is the PD2 object: exactly 262,144 bytes of compact UTF-8 JSON (`ARGS_MAX`, `crates/zygo-mcp/src/tools/work.rs:37`; D§9.2), schema-valid, with 256 `dispositions`, quotes, backslashes, tabs, newlines and non-ASCII text. The mock streams call 2 the way the real API streams a large tool input: as many `input_json_delta` events of at most 512 bytes each, split on character boundaries (`split.py` below; `scripts/premises/sse.py` writes the other events). The MCP server is a stub stdio server named `zygo` (`stub.py` below). It lists `work_verdict` with zygo's description and input schema (`work.rs:72`, `:176-196`), writes each `tools/call` line to a file exactly as received, and records nothing else. A `PreToolUse` hook on `mcp__zygo__work_verdict` (the matcher zygo registers, `crates/zygo-launch/src/claude_code.rs:484`) runs `scripts/premises/hook_log.py`, which saves each hook input.
+- PD2 is `verified` when the arguments of call 2 that the stub received, written as compact JSON, are byte-equal to the 262,144 bytes that the mock sent, and the raw `tools/call` line that the stub received holds those 262,144 bytes unchanged (`raw_line_holds_sent_bytes` in `verify.py`). zygo measures the same compact form (`serde_json::to_vec`, `work.rs:201`).
+- PD3 is `verified` when both `PreToolUse` inputs (both main-loop calls) have no `agent_id` key. zygo's hook takes the key's presence as "subagent" (`crates/zygo-core/src/hook.rs:35`) and denies only then (`crates/zygo-work/src/hooks.rs:184-185`).
+
+**Why a mock and not the real API.** On this machine, `claude auth status` with a temporary `HOME` and `CLAUDE_CONFIG_DIR` gave `"loggedIn": false, "authMethod": "none"` (Claude Code 2.1.332, 2026-11-25). Thus `claude -p` with an isolated `HOME` cannot use the claude.ai login. Both premises concern only Claude Code: the path from an API `tool_use` block to the MCP server (PD2), and the hook input that Claude Code builds (PD3). Neither depends on the model, so authored replies are enough. The run uses no login and no key.
+
+**What the run touches.**
+- Reads: the Claude Code binary on `PATH`, and the repository's `scripts/premises/` files.
+- Writes: only `/private/tmp/dr15-live/`. Step L4 also writes the two scrubbed fixtures into this worktree.
+- Isolation: `env -i` with a temporary `HOME`, `CLAUDE_CONFIG_DIR` and `XDG_*`. `--strict-mcp-config` and `--settings` take only the run's files, and there are no managed settings (L1 checks).
+- Network: the API goes to the mock on 127.0.0.1 with the dummy key. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `DISABLE_AUTOUPDATER=1` stop other traffic. The mock stops the run and writes `rec/ABORT` if any other credential arrives (`mock_upstream.py:125-134`).
+- zygo: no zygo process runs, so no verdict reaches any `usage.db` or session ledger.
+- The operator's state: the run does not touch the claude.ai login, `~/.claude.json`, or the lead's config folder. L4 checks that no transcript for the run is in the real config folders.
+
+**Spend.** No real-API run. Model: none (the mock sends authored replies). Turn bound: `--max-turns 4` (3 assistant turns are scripted). Cost: $0. Wall-clock bound: the Bash tool timeout of 300,000 ms on L3.
+
+L1. Preflight:
+
+```sh
+cd "$(git rev-parse --path-format=absolute --git-common-dir)/../.worktrees/phase3/DR-15-node" && test "$(git branch --show-current)" = phase3/DR-15--DR-15 && v=$(claude --version | awk '{print $1}') && echo "claude $v" && sh -c '. scripts/premises/ver.sh && ver_ge "$1" 2.1.328' sh "$v" && command -v python3 jq && test ! -e /private/tmp/dr15-live && test ! -e "/Library/Application Support/ClaudeCode/managed-settings.json" && echo "preflight ok"
+```
+
+Check: the output prints `claude <version>` (2.1.328 or later; the pinned version is a minimum), two tool paths and `preflight ok`. The shell is now in the worktree, and L2-L4 use it as `W`.
+
+L2. Build the run folder (writes only `/private/tmp/dr15-live`):
+
+```sh
+W=$(git rev-parse --show-toplevel) && D=/private/tmp/dr15-live && PY=$(command -v python3) && mkdir "$D" && mkdir -p "$D/home/.claude" "$D/home/.config" "$D/home/.local/share" "$D/home/.cache" "$D/repo" "$D/rec" "$D/hooks" "$D/mcp" "$D/sse" "$D/payload" "$D/out" && claude --version > "$D/version.txt" && git -C "$D/repo" init -q && git -C "$D/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init || { echo "L2 run folder failed"; false; }
+cat > "$D/gen.py" <<'EOF'
+"""gen.py <dir>: the PD2 and PD3 work_verdict arguments as compact UTF-8 JSON (DR-15)."""
+import json, os, sys
+
+ARGS_MAX = 262144  # crates/zygo-mcp/src/tools/work.rs ARGS_MAX (D§9.2: 256 KiB)
+CLASSES = ["none", "acceptance", "security", "irreversible", "contract", "spec", "rule"]
+KINDS = ["fixed", "rejected", "recorded"]
+
+
+def compact(o):
+    return json.dumps(o, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def text(seed, n):
+    unit = "dr15 %s é✂ \"q\" \\ \t|\n" % seed
+    return (unit * (n // len(unit) + 1))[:n]
+
+
+rows = []
+for i in range(256):
+    kind = KINDS[i % 3]
+    e = {"finding": text("f%03d" % i, 200), "class": CLASSES[i % 7], "disposition": kind}
+    if kind == "fixed":
+        e["commit"] = "%040x" % (i + 1)
+    elif kind == "rejected":
+        e["reason"] = text("r%03d" % i, 1000)
+    else:
+        e["record"] = "DDR-%026d" % i
+    rows.append(e)
+big = {"unit": "phase3:DR-15:probe", "round": 1, "verdict": "keep", "findings": "",
+       "head": "a" * 40, "base": "b" * 40, "dispositions": rows}
+pad = ARGS_MAX - len(compact(big))
+assert pad > 0, pad
+big["findings"] = ("pd2 padding " * (pad // 12 + 1))[:pad]
+data = compact(big)
+assert len(data) == ARGS_MAX, len(data)
+small = {"unit": "phase3:DR-15:probe", "round": 1, "verdict": "discard", "findings": "dr15 pd3 probe"}
+open(os.path.join(sys.argv[1], "big.json"), "wb").write(data)
+open(os.path.join(sys.argv[1], "small.json"), "wb").write(compact(small))
+print("big.json %d bytes, small.json %d bytes" % (len(data), len(compact(small))))
+EOF
+cat > "$D/split.py" <<'EOF'
+"""split.py <input json> <max bytes>: reads one sse.py tool reply on stdin and writes it with its single
+input_json_delta replaced by many, each partial_json at most <max bytes> of UTF-8, cut on character boundaries (DR-15)."""
+import json, sys
+
+text = open(sys.argv[1], "rb").read().decode("utf-8")
+limit = int(sys.argv[2])
+chunks, cur, size = [], [], 0
+for ch in text:
+    n = len(ch.encode("utf-8"))
+    if size + n > limit:
+        chunks.append("".join(cur))
+        cur, size = [], 0
+    cur.append(ch)
+    size += n
+if cur:
+    chunks.append("".join(cur))
+assert "".join(chunks) == text
+out = []
+for ev in sys.stdin.read().split("\n\n"):
+    if not ev.strip():
+        continue
+    name, data = ev.split("\n", 1)
+    d = json.loads(data[len("data: "):])
+    if d.get("type") == "content_block_delta" and d["delta"].get("type") == "input_json_delta":
+        for c in chunks:
+            e = {"type": "content_block_delta", "index": d["index"], "delta": {"type": "input_json_delta", "partial_json": c}}
+            out.append("%s\ndata: %s\n\n" % (name, json.dumps(e)))
+    else:
+        out.append(ev + "\n\n")
+sys.stdout.write("".join(out))
+EOF
+cat > "$D/stub.py" <<'EOF'
+"""stub.py <log dir>: stdio MCP server named zygo in the run's --mcp-config; one tool, work_verdict, with zygo's
+input schema (crates/zygo-mcp/src/tools/work.rs). Saves each tools/call line as received; records nothing else."""
+import json, os, sys
+
+REV = {"type": "string", "pattern": "^[0-9a-f]{7,64}$"}
+SCHEMA = {"type": "object", "properties": {
+    "unit": {"type": "string"},
+    "round": {"type": "integer", "minimum": 1},
+    "verdict": {"type": "string", "enum": ["keep", "discard", "rework"]},
+    "findings": {"type": "string"},
+    "head": REV,
+    "base": REV,
+    "dispositions": {"type": "array", "maxItems": 256, "items": {"type": "object", "properties": {
+        "finding": {"type": "string", "minLength": 1, "maxLength": 200},
+        "class": {"type": "string", "enum": ["none", "acceptance", "security", "irreversible", "contract", "spec", "rule"]},
+        "disposition": {"type": "string", "enum": ["fixed", "rejected", "recorded"]},
+        "commit": REV,
+        "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "record": {"type": "string", "pattern": "^DDR-[0-9A-HJKMNP-TV-Z]{26}$"}},
+        "required": ["finding", "class", "disposition"]}}},
+    "required": ["unit", "round", "verdict"]}
+DESC = "Lead only. Record your verdict on a unit of work and round after its subagent has stopped: keep, discard or rework, with your findings. On keep, give `head` (the commit you judged) and `dispositions` (an empty list when the review had no findings): one entry for each review finding, fixed with its commit, rejected with its reason, or recorded with its DDR id; in one checkout, also give `base`."
+n = 0
+for raw in sys.stdin.buffer:
+    try:
+        msg = json.loads(raw)
+    except ValueError:
+        continue
+    mid, method = msg.get("id"), msg.get("method")
+    if method == "tools/call":
+        n += 1
+        with open(os.path.join(sys.argv[1], "call-%02d.raw" % n), "wb") as f:
+            f.write(raw)
+    if mid is None:
+        continue
+    if method == "initialize":
+        out = {"result": {"protocolVersion": msg.get("params", {}).get("protocolVersion", "2024-11-05"),
+                          "capabilities": {"tools": {}}, "serverInfo": {"name": "zygo", "version": "0.0.0-dr15"}}}
+    elif method == "tools/list":
+        out = {"result": {"tools": [{"name": "work_verdict", "description": DESC, "inputSchema": SCHEMA}]}}
+    elif method == "tools/call":
+        out = {"result": {"content": [{"type": "text", "text": "dr15-stub-ok call %d" % n}]}}
+    else:
+        out = {"error": {"code": -32601, "message": "not found"}}
+    out.update({"jsonrpc": "2.0", "id": mid})
+    sys.stdout.write(json.dumps(out) + "\n")
+    sys.stdout.flush()
+EOF
+cat > "$D/verify.py" <<'EOF'
+"""verify.py <run dir>: PD2 and PD3 results of the DR-15 run as <run>/out/pd2.json, pd3.json; prints two LIVE lines."""
+import glob, hashlib, json, os, sys, time
+
+D = sys.argv[1]
+ver = open(os.path.join(D, "version.txt")).read().split()[0]
+
+
+def compact(o):
+    return json.dumps(o, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def digest(b):
+    return {"bytes": len(b), "sha256": hashlib.sha256(b).hexdigest()}
+
+
+sent = {k: open(os.path.join(D, "payload", k + ".json"), "rb").read() for k in ("big", "small")}
+which = {"keep": "big", "discard": "small"}
+hooks = {}
+for p in sorted(glob.glob(os.path.join(D, "hooks", "*-PreToolUse-mcp__zygo__work_verdict-*.json"))):
+    h = json.load(open(p))
+    hooks.setdefault(which.get(h.get("tool_input", {}).get("verdict")), []).append((os.path.basename(p), h))
+calls = {}
+for p in sorted(glob.glob(os.path.join(D, "mcp", "call-*.raw"))):
+    raw = open(p, "rb").read()
+    args = json.loads(raw)["params"]["arguments"]
+    calls.setdefault(which.get(args.get("verdict")), []).append((raw, args))
+results = {}
+for p in sorted(glob.glob(os.path.join(D, "rec", "[0-9]*.json"))):
+    body = json.load(open(p)).get("body")
+    if not isinstance(body, dict):
+        continue
+    for m in body.get("messages") or []:
+        for c in m.get("content") if isinstance(m.get("content"), list) else []:
+            if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id", "").startswith("toolu_dr15_"):
+                results[c["tool_use_id"]] = {"is_error": bool(c.get("is_error")), "content": c.get("content")}
+listed = []
+for p in sorted(glob.glob(os.path.join(D, "rec", "[0-9]*.json"))):
+    body = json.load(open(p)).get("body")
+    if isinstance(body, dict) and body.get("tools"):
+        listed = [t.get("name") for t in body["tools"] if str(t.get("name", "")).startswith("mcp__")]
+        break
+
+init = {}
+for line in open(os.path.join(D, "out", "stream.jsonl"), encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if e.get("type") == "system" and e.get("subtype") == "init":
+        init = e
+        break
+harness = {"mcp_servers": init.get("mcp_servers"), "work_verdict_listed": "mcp__zygo__work_verdict" in (init.get("tools") or []),
+           "small_call_reached_stub": len(calls.get("small", [])) == 1}
+day = time.strftime("%Y-%m-%d")
+big_calls = calls.get("big", [])
+recv = big_calls[0] if len(big_calls) == 1 else None
+big_hooks = hooks.get("big", [])
+hook_in = compact(big_hooks[0][1]["tool_input"]) if big_hooks else b""
+pd2_ok = recv is not None and compact(recv[1]) == sent["big"] and sent["big"] in recv[0] and len(sent["big"]) == 262144
+pd2 = {"premise": "PD2", "claude_code": ver, "date": day, "harness": harness, "result": "verified" if pd2_ok else "failed",
+       "sent": digest(sent["big"]),
+       "pre_tool_use_tool_input": dict(digest(hook_in), equal=hook_in == sent["big"]),
+       "received": None if recv is None else dict(digest(compact(recv[1])), equal=compact(recv[1]) == sent["big"],
+                                                  raw_line_bytes=len(recv[0]), raw_line_holds_sent_bytes=sent["big"] in recv[0]),
+       "tools_calls_seen": {k: len(v) for k, v in calls.items()},
+       "mcp_tools_in_first_request": listed,
+       "tool_result": results.get("toolu_dr15_01")}
+inputs = [(n, h) for k in ("small", "big") for n, h in hooks.get(k, [])]
+pd3_ok = len(inputs) == 2 and all("agent_id" not in h for _, h in inputs)
+small_in = hooks.get("small", [(None, None)])[0][1]
+pd3 = {"premise": "PD3", "claude_code": ver, "date": day, "harness": harness, "result": "verified" if pd3_ok else "failed",
+       "pre_tool_use_inputs": [{"file": n, "tool_name": h.get("tool_name"), "keys": sorted(h), "has_agent_id": "agent_id" in h,
+                                "has_agent_type": "agent_type" in h} for n, h in inputs],
+       "small_call_input": small_in,
+       "tool_result": results.get("toolu_dr15_00")}
+os.makedirs(os.path.join(D, "out"), exist_ok=True)
+for name, o in (("pd2", pd2), ("pd3", pd3)):
+    with open(os.path.join(D, "out", name + ".json"), "w") as f:
+        json.dump(o, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+r = pd2["received"] or {}
+print("LIVE PD2 %s (agent %s): sent %d bytes sha256 %s; received %s bytes, equal %s; raw line holds sent bytes %s; tool_result is_error %s"
+      % (pd2["result"], ver, pd2["sent"]["bytes"], pd2["sent"]["sha256"], r.get("bytes"), r.get("equal"),
+         r.get("raw_line_holds_sent_bytes"), (pd2["tool_result"] or {}).get("is_error")))
+print("LIVE PD3 %s (agent %s): %d PreToolUse inputs for mcp__zygo__work_verdict from the main loop; agent_id key in %d"
+      % (pd3["result"], ver, len(inputs), sum(1 for _, h in inputs if "agent_id" in h)))
+EOF
+cat > "$D/rules.json" <<'EOF'
+[{"name": "dr15-00", "sse": "sse/00.sse", "times": 1, "last": "dr15-probe go", "body": "\"tools\": \\[\\{", "no_header": ["x-claude-code-compaction", "x-claude-code-agent-id"]},
+ {"name": "dr15-01", "sse": "sse/01.sse", "times": 1, "last": "toolu_dr15_00", "body": "\"tools\": \\[\\{", "no_header": ["x-claude-code-compaction", "x-claude-code-agent-id"]},
+ {"name": "dr15-02", "sse": "sse/02.sse", "times": 1, "last": "toolu_dr15_01", "body": "\"tools\": \\[\\{", "no_header": ["x-claude-code-compaction", "x-claude-code-agent-id"]}]
+EOF
+python3 -I "$D/gen.py" "$D/payload" && python3 -I "$W/scripts/premises/sse.py" tool mcp__zygo__work_verdict toolu_dr15_00 "$(cat "$D/payload/small.json")" > "$D/sse/00.sse" && python3 -I "$W/scripts/premises/sse.py" tool mcp__zygo__work_verdict toolu_dr15_01 '{}' | python3 -I "$D/split.py" "$D/payload/big.json" 512 > "$D/sse/01.sse" && python3 -I "$W/scripts/premises/sse.py" text "dr15 done" > "$D/sse/02.sse" || { echo "L2 payload failed"; false; }
+python3 -I -c 'import json, sys
+parts = [json.loads(l[6:])["delta"]["partial_json"] for l in open(sys.argv[1], encoding="utf-8") if l.startswith("data: ") and "input_json_delta" in l]
+joined = "".join(parts).encode("utf-8")
+print("sse/01.sse input_json_delta events %d, largest %d bytes, equal to big.json %s" % (len(parts), max(len(p.encode("utf-8")) for p in parts), joined == open(sys.argv[2], "rb").read()))' "$D/sse/01.sse" "$D/payload/big.json"
+printf '{"mcpServers":{"zygo":{"command":"%s","args":["-I","%s/stub.py","%s/mcp"]}}}\n' "$PY" "$D" "$D" > "$D/mcp.json"
+printf '{"hooks":{"PreToolUse":[{"matcher":"mcp__zygo__work_verdict","hooks":[{"type":"command","command":"%s -I %s/scripts/premises/hook_log.py %s/hooks"}]}]}}\n' "$PY" "$W" "$D" > "$D/settings.json"
+printf '{"hasCompletedOnboarding":true,"numStartups":5,"theme":"dark","customApiKeyResponses":{"approved":["dummy-key"],"rejected":[]},"projects":{"%s/repo":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}\n' "$D" > "$D/home/.claude/.claude.json"
+jq -e . "$D/rules.json" "$D/mcp.json" "$D/settings.json" "$D/home/.claude/.claude.json" > /dev/null && wc -c "$D/payload/big.json" "$D/payload/small.json"
+```
+
+Check: `gen.py` prints `big.json 262144 bytes, small.json 87 bytes`, and `wc` shows `262144` for `big.json`. The `sse/01.sse` line shows at least 512 `input_json_delta` events, the largest at most 512 bytes, and `equal to big.json True`: the concatenation of all `partial_json` values of `sse/01.sse` is byte-equal to `big.json`. (Offline test of these scripts and `sse.py`, 2026-11-25: a stdin replay of `initialize`, `tools/list` and the 256 KiB `tools/call` into `stub.py` answered all three and saved the line. `verify.py` gave `verified` on a complete synthetic run and `failed` with no call and no hook input. Offline test of `split.py`, 2026-11-25: 513 events, the largest 512 bytes, equal to `big.json`; `verify.py` gave `failed` on a synthetic run whose raw `tools/call` line escaped the non-ASCII text, although the parsed arguments were equal.)
+
+L3. Run Claude Code once on the mock (Bash timeout 300000):
+
+```sh
+W=$(git rev-parse --show-toplevel) && D=/private/tmp/dr15-live && CC=$(command -v claude) || { echo "L3 setup failed"; false; }
+MOCK_KEY=dummy-key python3 -I "$W/scripts/premises/mock_upstream.py" --dir "$D/rec" --rules "$D/rules.json" --port-file "$D/port" > "$D/mock.log" 2>&1 &
+MP=$!
+trap 'kill $MP 2>/dev/null' EXIT
+python3 -I -c 'import os, sys, time
+for _ in range(100):
+    if os.path.exists(sys.argv[1]) and os.path.getsize(sys.argv[1]):
+        sys.exit(0)
+    time.sleep(0.1)
+sys.exit("mock did not start")' "$D/port" || { echo "L3 mock start failed"; false; }
+(cd "$D/repo" && env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=xterm-256color HOME="$D/home" CLAUDE_CONFIG_DIR="$D/home/.claude" XDG_CONFIG_HOME="$D/home/.config" XDG_DATA_HOME="$D/home/.local/share" XDG_CACHE_HOME="$D/home/.cache" ANTHROPIC_BASE_URL="http://127.0.0.1:$(cat "$D/port")" ANTHROPIC_API_KEY=dummy-key DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 ENABLE_TOOL_SEARCH=false "$CC" -p "dr15-probe go" --max-turns 4 --strict-mcp-config --mcp-config "$D/mcp.json" --settings "$D/settings.json" --allowedTools mcp__zygo__work_verdict --output-format stream-json --verbose < /dev/null > "$D/out/stream.jsonl" 2> "$D/out/stderr.txt"); echo "claude exit $?"
+kill $MP; wait $MP 2>/dev/null
+test ! -e "$D/rec/ABORT" && echo "no ABORT"
+ls "$D/hooks" "$D/mcp"
+jq -c 'select(.type == "system" and .subtype == "init") | {mcp_servers, work_verdict_listed: (.tools | index("mcp__zygo__work_verdict") != null)}' "$D/out/stream.jsonl"
+jq -r 'select(.type == "result") | .result' "$D/out/stream.jsonl"
+```
+
+Check: `claude exit 0` and `no ABORT`. `hooks/` holds `0001-PreToolUse-mcp__zygo__work_verdict-main.json` and `0002-…-main.json`, and `mcp/` holds `call-01.raw` and `call-02.raw`. The init line shows the server `zygo` as `connected` and `work_verdict_listed: true`. The result line is `dr15 done`.
+
+L4. Results and scrubbed fixtures:
+
+```sh
+W=$(git rev-parse --show-toplevel) && D=/private/tmp/dr15-live && python3 -I "$D/verify.py" "$D" | tee "$D/out/live.txt" && mkdir -p "$W/fixtures/claude-code/live" && python3 -I "$W/scripts/premises/scrub.py" "$D" "$D/out/pd2.json" > "$W/fixtures/claude-code/live/pd2.json" && python3 -I "$W/scripts/premises/scrub.py" "$D" "$D/out/pd3.json" > "$W/fixtures/claude-code/live/pd3.json" && jq -c '{premise, claude_code, date, result, harness}' "$W/fixtures/claude-code/live/pd2.json" "$W/fixtures/claude-code/live/pd3.json" && echo "dr15 transcripts in real config folders: $(ls "$HOME/.claude/projects" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" 2>/dev/null | grep -c dr15-live)" && ls "$D/home/.claude/projects" && N2_FORBIDDEN_NAMES="$(id -un)" sh "$W/scripts/check-premises.sh"
+```
+
+Check:
+- Two `LIVE PD2 …` and `LIVE PD3 …` lines are printed, each `verified` or `failed`. Their text goes to the implementer.
+- Both fixtures exist in the worktree, with `small_call_reached_stub: true` in `harness`.
+- `dr15 transcripts in real config folders: 0` is printed, and the run's transcript folder is under `$D/home/.claude/projects`.
+- `check-premises: ok`.
+
 ## Results
 
 | Id | Check | Agent | Version | Date | Result | Evidence |
@@ -307,3 +616,5 @@ The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's 
 | FIX21-BARE-ZYGO | `zygo claude --passthrough -- --bare` (§12.3) | Claude Code | 2.1.330 | 2026-11-22 | recorded | Exit 2: "zygo: --passthrough does not work with --bare: bare mode reads only API keys" |
 | FIX21-BARE | Claude Code alone, `--bare` with zygo's two attribution keys in `--settings`, commits on the stored login | Claude Code | 2.1.330 | 2026-11-22 | fail: cannot sign in | Exit 1, stdout "Not logged in · Please run /login": bare mode reads only `ANTHROPIC_API_KEY` or an `apiKeyHelper` (`claude --help`). No request was sent. `fixtures/claude-code/live/fix21-bare.json`; FIX21-MOCK covers bare mode |
 | FIX21-MOCK | Claude Code's commit attribution text is in no request of a zygo session, with or without `--bare` (§8.5) | Claude Code | 2.1.330 | 2026-11-22 | pass | Linux; mock upstream. Control (Claude Code alone): 1 of 2 requests, the main one (12 tools), holds the commit attribution reminder with the noreply address in angle brackets; control `--bare` (recorded): 0 of 2, its main request has Bash, Edit and Read; zygo: 0 of 1 (12 tools, Bash among them); zygo `--bare`: 0 of 1 (9 tools, Bash among them). `fixtures/claude-code/live/fix21-mock.json` |
+| PD2 | A `work_verdict` argument object of 256 KiB (262,144 bytes of compact JSON, the D§9.2 bound) reaches the MCP server unchanged (decision records D§18 PD2) | Claude Code | 2.1.332 | 2026-11-25 | verified | macOS; print mode, mock upstream (no key, no model), temporary `HOME`, `--strict-mcp-config` with a stub stdio MCP server named `zygo` that lists zygo's `work_verdict` schema. The mock streamed the object as 513 `input_json_delta` events of at most 512 bytes each. Sent 262144 bytes, sha256 3bd49a86ddb3280422777d34f8acb1cf586d935656b79f4ec615aa914753bb6a; received 262144 bytes, sha256 3bd49a86ddb3280422777d34f8acb1cf586d935656b79f4ec615aa914753bb6a, equal: true; raw line holds the sent bytes: true; `PreToolUse` `tool_input` equal: true; tool result error: false. Limit: print mode, main loop only, no `--agents` and no zygo proxy; zygo's interactive launch path (`crates/zygo-launch/src/claude_code.rs:622`) was not exercised. D§18 names 2.1.328; 2.1.332 was used because the pinned version is a minimum (Method). `fixtures/claude-code/live/pd2.json`; D§18, D§9.2 |
+| PD3 | The `PreToolUse` input for `work_verdict` from the main loop has no `agent_id` key, so the lead-only deny (`crates/zygo-work/src/hooks.rs:184-185`) lets the lead's call through (decision records D§18 PD3, D§8.4) | Claude Code | 2.1.332 | 2026-11-25 | verified | macOS; the PD2 run, print mode, main loop only. 2 `PreToolUse` inputs for `mcp__zygo__work_verdict`; `agent_id` key in 0; keys: `cwd`, `effort`, `hook_event_name`, `mcp_server`, `permission_mode`, `prompt_id`, `session_id`, `tool_input`, `tool_name`, `tool_use_id`, `transcript_path`. Limit: print mode, main loop only, no `--agents` and no zygo proxy; zygo's interactive launch path (`crates/zygo-launch/src/claude_code.rs:622`) was not exercised. D§18 names 2.1.328; 2.1.332 was used because the pinned version is a minimum (Method). `fixtures/claude-code/live/pd3.json`; D§18, D§8.4 |
