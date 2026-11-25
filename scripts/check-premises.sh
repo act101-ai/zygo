@@ -205,13 +205,43 @@ nontrivial fixtures/act-lite/status.json || nontrivial fixtures/act-lite/languag
   fail "required file fixtures/act-lite/status.json or fixtures/act-lite/languages.json is missing"
 
 # Forbidden content under fixtures/: credentials, machine paths, e-mail addresses.
+# Scope (N38): fixtures, the live scripts and their helpers, docs/live-checks.md (each when it
+# exists); scan_notes applies the same patterns to the spec and conformance lines naming N38.
+# A path in the scope that holds whitespace would be split and not scanned, and one that holds
+# ':' could pass for a grep hit line of another file, so either fails.
+SCOPE=fixtures
+set +f   # the live*.sh glob needs globbing (set -f at the top)
+for f in scripts/premises/live scripts/premises/live*.sh docs/live-checks.md; do
+  case $f in *[[:space:]]*) fail "a path in the scan scope holds whitespace: '$f'" ;; esac
+  [ -e "$f" ] && SCOPE="$SCOPE $f"
+done
+set -f
+# shellcheck disable=SC2086
+bad=$(find $SCOPE -name '*[[:space:]]*' 2>/dev/null | head -n 1)
+[ -z "$bad" ] || fail "a path in the scan scope holds whitespace: '$bad'"
+# shellcheck disable=SC2086
+bad=$(find $SCOPE -name '*:*' 2>/dev/null | head -n 1)
+[ -z "$bad" ] || fail "a path in the scan scope holds ':': $bad"
+# grep -r does not follow symlinks on macOS, so a symlink in the scope is neither scanned nor evidence.
+# shellcheck disable=SC2086
+lnk=$(find $SCOPE -type l 2>/dev/null | head -n 1)
+[ -z "$lnk" ] || fail "$lnk is a symlink; a symlink in the scan scope is not scanned and is not evidence"
 # settings-schema.json is the upstream schema kept verbatim (its source is beside it); so is the
 # Codex config.schema.json (from the pinned rust-v0.172.0 tag, K§6.3.7). Their own example texts
 # ("//Users/alice/…", "Bearer token") are exempt from the path and bearer rules and from the
-# N2_FORBIDDEN_NAMES scan only, and only while each is still the upstream copy: its sha256 must equal
-# the "sha256: <hex>" line of its source file, the same path with the final .json replaced by
-# .source.txt. A verbatim file that exists with no source file, or with another hash, fails.
+# N2_FORBIDDEN_NAMES scan only, and only while each is still the upstream copy: a verbatim file
+# that exists must be a regular file whose sha256 equals the value pinned below, and the first
+# "sha256: <hex>" line of its source file (the same path with the final .json replaced by
+# .source.txt) must give the same value. The pins live in this script so that a new upstream copy
+# needs a reviewed change here; a fetch that rewrites the file and its source line together fails.
 VERBATIM="fixtures/claude-code/settings-schema.json fixtures/codex/config.schema.json"
+# pin_of <verbatim file>: its pinned sha256 (the Codex value is the one PC-2 pins in codex/base.sh).
+pin_of() {
+  case $1 in
+    fixtures/claude-code/settings-schema.json) echo f26f028ad94a1e2a28e9dad1f80832ab196a8e080bd3a7d7a32e6428a15e0611 ;;
+    fixtures/codex/config.schema.json) echo 52fb96b1ff79a51bf9ce31695a4a22d4e80f57591d91bad5747b657f4e612bac ;;
+  esac
+}
 # SHA256: shasum -a 256, else sha256sum. sha256_of <file>: its sha256 in lower-case hex.
 if command -v shasum >/dev/null 2>&1; then SHA256="shasum -a 256"
 elif command -v sha256sum >/dev/null 2>&1; then SHA256=sha256sum
@@ -221,36 +251,27 @@ fi
 sha256_of() { $SHA256 <"$1" | awk '{ print tolower($1) }'; }
 for f in $VERBATIM; do
   [ -e "$f" ] || [ -L "$f" ] || continue
+  [ -f "$f" ] && [ ! -L "$f" ] || fail "verbatim file $f is not a regular file"
   src=${f%.json}.source.txt
   [ -f "$src" ] || fail "verbatim file $f has no source file $src"
+  pin=$(pin_of "$f")
   want=$(sed -n 's/^sha256:[[:space:]]*\([0-9A-Fa-f]\{64\}\)[[:space:]]*$/\1/p' "$src" | head -n 1 | tr 'A-F' 'a-f')
   got=$(sha256_of "$f")
-  [ -n "$got" ] && [ "$got" = "$want" ] || fail "verbatim file $f: sha256 $got differs from ${want:-<none>} in $src"
+  [ "$got" = "$pin" ] && [ "$want" = "$pin" ] ||
+    fail "verbatim file $f (sha256 $got) and its source file $src (sha256 ${want:-<none>}) must both give the pinned sha256 $pin"
 done
 # VX: the ERE ^(<path>|<path>):<digits>: for the list (a grep -n hit line of exactly that file), dots escaped.
 VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
-# Scope (N38): fixtures, the live scripts and their helpers, docs/live-checks.md (each when it
-# exists); scan_notes applies the same patterns to the spec and conformance lines naming N38.
-SCOPE=fixtures
-set +f   # the live*.sh glob needs globbing (set -f at the top)
-for f in scripts/premises/live scripts/premises/live*.sh docs/live-checks.md; do
-  [ -e "$f" ] && SCOPE="$SCOPE $f"
-done
-set -f
-# grep -r does not follow symlinks on macOS, so a symlink in the scope is neither scanned nor evidence.
-# shellcheck disable=SC2086
-lnk=$(find $SCOPE -type l 2>/dev/null | head -n 1)
-[ -z "$lnk" ] || fail "$lnk is a symlink; a symlink in the scan scope is not scanned and is not evidence"
 NOTES=$( (grep -nH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
-# scan <ERE> <exempt ERE> <label> [i] [<drop ERE>]: the first line that matches and is not exempt
-# fails; i: any case. <drop ERE> (one group): in a hit line each match of it is replaced by its group
-# 1, and the line fails only when the ERE still matches; the message shows the line as written.
+# scan <ERE> <exempt ERE> <label> [i] [<drop sed -E script>]: the first line that matches and is not
+# exempt fails; i: any case. <drop sed -E script>: applied to a hit line, which fails only when the
+# ERE still matches the result; the message shows the line as written.
 scan() {
   o=-E; [ "${4:-}" != i ] || o=-iE
   # shellcheck disable=SC2086
   hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -v $o -- "${2:-^\$}" |
     while IFS= read -r ln; do
-      [ -z "${5:-}" ] || printf '%s\n' "$ln" | sed -E "s/$5/\\1/g" | grep -q $o -- "$1" || continue
+      [ -z "${5:-}" ] || printf '%s\n' "$ln" | sed -E "$5" | grep -q $o -- "$1" || continue
       printf '%s\n' "$ln"
     done | head -n 1)
   [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
@@ -267,8 +288,13 @@ scan '/Users/' "$VX" 'macOS home path'
 scan '/private/var/' '' 'temporary path'
 scan '/var/folders/' '' 'temporary path'
 # An address at exactly the reserved domain example.invalid (RFC 2606; the live scripts' git test
-# identity) is not a leak (K§11 item 10): "@example.invalid" followed by a non-domain character or end.
-scan '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '' 'e-mail address' '' '@example\.invalid([^A-Za-z0-9.-]|$)'
+# identity) is not a leak (K§11 item 10). Only "<local>@example.invalid" is dropped: <local> is
+# [A-Za-z0-9._-]+ after the line start or a character outside [A-Za-z0-9._%!+@-] (so a percent hack
+# or bang path such as bob%corp.com@… or corp.com!bob@… is not exempt), and the domain is followed
+# by the line end or a character outside [A-Za-z0-9.@-]. The drop repeats until nothing matches
+# (each drop takes the character after it, which may start the next address).
+MAILX=$(printf '%s\n' ':a' 's/(^|[^A-Za-z0-9._%!+@-])[A-Za-z0-9._-]+@example\.invalid([^A-Za-z0-9.@-]|$)/\1\2/' 'ta')
+scan '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '' 'e-mail address' '' "$MAILX"
 scan 'sk-ant-o' '' 'claude.ai login token'
 scan "${L}sk-[A-Za-z0-9_-]{20,}" '' 'API key'
 scan 'sk-(proj|svcacct|admin)-' '' 'OpenAI key'
