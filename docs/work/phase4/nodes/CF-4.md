@@ -402,7 +402,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   - Each rollup shows `- Bar: meets bar` and `- Release: supported`.
   - With the grades of the table unchanged by step 7, the score table rows are `| Claude Code | 91 | 87 | 96 | 94 |` and `| OpenCode | 78 | 84 | 76 | 66 |`.
 - [x] 9. Commit `docs/conformance.md` and `docs/conformance.json`: `docs(conformance): generated feature matrix, rollup and score`.
-- [ ] 10. **CI paths, `.github/workflows/ci.yml`.** After line 14 (`- 'docs/specs/2026-11-18-zygo-design.md'` of `push`) and after line 24 (the same line of `pull_request`), insert these four lines, each with 6 spaces of indent:
+- [x] 10. **CI paths, `.github/workflows/ci.yml`.** After line 14 (`- 'docs/specs/2026-11-18-zygo-design.md'` of `push`) and after line 24 (the same line of `pull_request`), insert these four lines, each with 6 spaces of indent:
 
   ```yaml
         - 'docs/conformance/**'
@@ -412,7 +412,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   ```
 
   Check: the last two commands of Acceptance each give 4, and the test with `-eq 4` exits 0.
-- [ ] 11. **Delete the old scripts.**
+- [x] 11. **Delete the old scripts.**
   1. `git grep -n -e check-conformance -e test-check-conformance -- . ':!docs/work' ':!docs/specs'` lists only lines of the two scripts. (`docs/conformance.md:3` is gone after step 8.)
   2. `git rm scripts/check-conformance.sh scripts/test-check-conformance.sh`.
 
