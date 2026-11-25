@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | TODO | judgment | — |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
@@ -403,3 +402,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | SX-9 DONE: live premises ST1-ST4 verified; review findings F1-F3 fixed in round 2; OpenCode ran on glm/Z.AI, not OpenRouter (deviation in nodes/SX-9.md) · PR #135 |
 | 2026-11-25 | OS-27 DONE: 22 shaping-off goldens (19 hook_stdout, 3 stored); review F1–F4, F6 fixed; F5 rejected (.gitattributes outside node files, no golden holds `\r`) · PR #140 |
 | 2026-11-25 | OS-13 DONE: dedup step folds runs of equal consecutive lines, lossless. Review round 2 added 5 edge-input tests; F1 (expand count limit) rejected, needs an operator-approved threshold; F3 rejected · PR #139 |
+| 2026-11-25 | OS-15 DONE: shape::run pipeline (steps 1-2, reuse rule, 4 MiB bound, size_view); review R1, R3, R4 fixed in tests; R2 (sniff of colored diff/json) held for operator ratification of O§7.3 (lead) · PR #145 |
