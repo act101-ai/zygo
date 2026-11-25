@@ -102,7 +102,7 @@ class Mock:
         return out
 
     def raw(self, text):
-        """Send raw request bytes; return (status line, the server closed the connection)."""
+        """Send raw request bytes; return (status line, the whole reply) after the server closed."""
         s = socket.create_connection(("127.0.0.1", self.port), timeout=10)
         s.sendall(text.encode())
         buf = b""
@@ -112,7 +112,7 @@ class Mock:
                 break
             buf += chunk
         s.close()
-        return buf.split(b"\r\n", 1)[0].decode(), True
+        return buf.split(b"\r\n", 1)[0].decode(), buf.decode("latin-1")
 
     def records(self):
         return sorted(n for n in os.listdir(self.dir) if n.endswith(".json"))
@@ -290,6 +290,37 @@ def run(m):
     overlong("M21", "GET http://evil4.example/ HTTP/1.1\r\nHost: x\r\nX-A: %s\r\n\r\n" % big, 431,
              "evil4.example:80 GET refused\n")
     overlong("M21 origin", "GET /v1/models HTTP/1.1\r\nHost: x\r\nX-A: %s\r\n\r\n" % big, 431, "")
+
+    # M22-M25 (review round 3, H3): every other error reply of the base class (400, 505) to a
+    # request line with a target that is not origin-form and not the mock's own address is recorded
+    # too. A request that fails before its version is accepted gets an HTTP/0.9 reply (no status
+    # line): the error code is read from the reply body.
+    def base_error(case, text, want_code, want_line):
+        before_txt, before = m.connect_txt(), m.records()
+        try:
+            _, reply = m.raw(text)
+        except OSError as e:
+            reply = "error %r" % e
+        got = m.connect_txt()[len(before_txt):]
+        check(case, "Error code: %d" % want_code in reply and got == want_line and m.records() == before,
+              "reply %r, new connect.txt %r, records %d -> %d" % (reply[:200], got, len(before), len(m.records())))
+
+    base_error("M22 CONNECT syntax", "CONNECT evil5.example:443 HTTP/1.1 x\r\nHost: x\r\n\r\n", 400,
+               "evil5.example:443 refused\n")
+    base_error("M22 GET syntax", "GET http://evil5.example/ HTTP/1.1 x\r\nHost: x\r\n\r\n", 400,
+               "evil5.example:80 GET refused\n")
+    base_error("M23 HTTP/0.9 CONNECT", "CONNECT evil6.example:443\r\n\r\n", 400, "evil6.example:443 refused\n")
+    base_error("M23 CONNECT alone", "CONNECT\r\n\r\n", 400, "?:? refused\n")
+    base_error("M24 HTTP/2.0", "GET http://evil7.example:8080/ HTTP/2.0\r\nHost: x\r\n\r\n", 505,
+               "evil7.example:8080 GET refused\n")
+    base_error("M24 CONNECT HTTP/2.0", "CONNECT evil7.example:443 HTTP/2.0\r\nHost: x\r\n\r\n", 505,
+               "evil7.example:443 refused\n")
+    base_error("M25 HTTP/1.1x", "POST https://evil8.example/v1 HTTP/1.1x\r\nHost: x\r\n\r\n", 400,
+               "evil8.example:443 POST refused\n")
+    base_error("M25 unparsable", "GET http://[::1/x HTTP/1.1x\r\nHost: x\r\n\r\n", 400, "[::1:? GET refused\n")
+    # Not recorded: an origin-form target, and the mock's own address.
+    base_error("M25 origin", "GET /v1/models HTTP/2.0\r\nHost: x\r\n\r\n", 505, "")
+    base_error("M25 own address", "GET http://127.0.0.1:%d/v1/models HTTP/1.1x\r\nHost: x\r\n\r\n" % m.port, 400, "")
 
     # M9 (last: it stops the mock): another credential gives 401 and ABORT.
     st, _, _ = m.req("POST", "/v1/responses", {"model": "m", "input": "m9"}, auth="other")
