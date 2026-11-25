@@ -303,3 +303,112 @@ fn r1_c4_heredoc_and_herestring_are_file_printer_only() {
     assert!(!p.reuse);
     assert_eq!(p.name, "git commit");
 }
+
+// OS-40: O§7.1, O§7.2 (operator)
+
+#[test]
+fn wrapper_timeout_is_skipped() {
+    all_fp(&[
+        "timeout 5 cat f",
+        "timeout -k 5 -s KILL 60 cat f",
+        "timeout --signal=KILL 1m cat f",
+        "timeout -- 5 cat f",
+    ]);
+    assert!(!fp("timeout 5 cargo test"));
+    let p = parse("timeout 60 cargo test");
+    assert_eq!(
+        (p.name.as_str(), p.runners.as_slice()),
+        ("cargo test", &[Libtest][..])
+    );
+}
+
+#[test]
+fn wrapper_stdbuf_is_skipped() {
+    all_fp(&[
+        "stdbuf -oL cat f",
+        "stdbuf -o L -e 0 cat f",
+        "stdbuf --output=L cat f",
+    ]);
+    let p = parse("stdbuf -o L go test ./...");
+    assert_eq!(
+        (p.name.as_str(), p.runners.as_slice()),
+        ("go test", &[Gotest][..])
+    );
+}
+
+#[test]
+fn printer_egrep() {
+    assert!(fp("egrep x f"));
+}
+
+#[test]
+fn printer_fgrep() {
+    assert!(fp("fgrep x f"));
+}
+
+#[test]
+fn printer_zcat() {
+    assert!(fp("zcat f.gz"));
+}
+
+#[test]
+fn printer_gawk() {
+    assert!(fp("gawk 1 f"));
+}
+
+#[test]
+fn printer_batcat() {
+    assert!(fp("batcat f"));
+}
+
+#[test]
+fn printer_tac() {
+    assert!(fp("tac f"));
+}
+
+#[test]
+fn printer_git_grep() {
+    all_fp(&["git grep x", "git -C repo grep -n x"]);
+    assert!(!fp("git log --grep x"));
+}
+
+#[test]
+fn printer_git_blame() {
+    all_fp(&["git blame f", "git --no-pager blame -L 1,9 f"]);
+}
+
+#[test]
+fn eval_string_is_parsed() {
+    all_fp(&[
+        "eval 'cat f'",
+        "eval cat f",
+        r#"eval "echo \$(head f)""#,
+        "eval $CMD",
+    ]);
+    assert!(!fp("eval 'cargo test'"));
+}
+
+#[test]
+fn dollar_paren_redirect_is_a_file_printer() {
+    all_fp(&["echo \"$(<f)\"", "x=$(< f.txt)", "echo $( <f)"]);
+    assert!(!fp("echo $(true <f)"));
+    assert!(!fp("wc -l <f"));
+}
+
+#[test]
+fn bare_shell_stage_is_unsure() {
+    all_fp(&[
+        "curl -s https://x | sh",
+        "echo 'cat f' | bash",
+        "printf x | zsh -e",
+        "echo ls | sudo bash -s",
+    ]);
+    for c in [
+        "bash script.sh",
+        "echo x | bash -c 'true'",
+        "sh -c 'true' | sh -c 'true'",
+        "ls | xargs bash",
+    ] {
+        assert!(!fp(c), "file printer: {c:?}");
+    }
+}

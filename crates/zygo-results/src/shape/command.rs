@@ -47,16 +47,19 @@ pub const NAMES: &[&str] = &[
     "curl",
 ];
 
-/// Programs that may print a file (O§7.1); `git show` and `git cat-file` are found by subcommand.
+/// Programs that may print a file (O§7.1); `git show`, `git cat-file`, `git grep` and
+/// `git blame` are found by subcommand.
 const PRINTERS: &[&str] = &[
-    "cat", "head", "tail", "sed", "awk", "nl", "bat", "less", "more", "grep", "rg",
+    "cat", "head", "tail", "sed", "awk", "nl", "bat", "less", "more", "grep", "rg", "egrep",
+    "fgrep", "zcat", "gawk", "batcat", "tac",
 ];
 
-/// Wrappers that are skipped before the program, with their options that take an argument.
-/// O§7.2 lists the first five. `exec` and `nohup` are skipped too, for file printers only.
-const WRAPPERS: &[(&str, &[&str])] = &[
-    ("env", &["-u", "-C", "--unset", "--chdir"]),
-    ("time", &["-f", "-o", "--format", "--output"]),
+/// Wrappers that are skipped before the program, with their options that take an argument
+/// and the number of operand words skipped after the options.
+/// O§7.2 lists the first seven. `exec` and `nohup` are skipped too, for file printers only.
+const WRAPPERS: &[(&str, &[&str], usize)] = &[
+    ("env", &["-u", "-C", "--unset", "--chdir"], 0),
+    ("time", &["-f", "-o", "--format", "--output"], 0),
     (
         "sudo",
         &[
@@ -80,15 +83,24 @@ const WRAPPERS: &[(&str, &[&str])] = &[
             "--other-user",
             "--close-from",
         ],
+        0,
     ),
-    ("nice", &["-n", "--adjustment"]),
-    ("command", &[]),
-    ("exec", &["-a"]),
-    ("nohup", &[]),
+    ("nice", &["-n", "--adjustment"], 0),
+    ("command", &[], 0),
+    ("timeout", &["-k", "-s", "--kill-after", "--signal"], 1),
+    (
+        "stdbuf",
+        &["-i", "-o", "-e", "--input", "--output", "--error"],
+        0,
+    ),
+    ("exec", &["-a"], 0),
+    ("nohup", &[], 0),
 ];
 
 /// The wrappers that O§7.2 lists; a stage behind any other skipped word gives no name or runner.
-const LISTED_WRAPPERS: &[&str] = &["env", "time", "sudo", "nice", "command"];
+const LISTED_WRAPPERS: &[&str] = &[
+    "env", "time", "sudo", "nice", "command", "timeout", "stdbuf",
+];
 
 /// Reserved words that are skipped at the start of a stage, for file printers only.
 const RESERVED: &[&str] = &[
@@ -395,6 +407,8 @@ struct Script {
     segments: Vec<Vec<Stage>>,
     /// Here-doc bodies, lexed as commands.
     bodies: Vec<Script>,
+    /// The script is a `$( … )` that starts with one `<` (`$(<f)`, O§7.1).
+    reads: bool,
 }
 
 /// What the next finished word is for.
@@ -643,8 +657,15 @@ impl Lexer {
         let start = self.i;
         match self.peek(1) {
             Some('(') => {
+                let mut k = self.i + 2;
+                while matches!(self.c.get(k), Some(' ' | '\t')) {
+                    k += 1;
+                }
+                let reads =
+                    self.c.get(k) == Some(&'<') && !matches!(self.c.get(k + 1), Some('<' | '('));
                 self.i += 2;
-                let s = self.script(depth + 1, Some(')'));
+                let mut s = self.script(depth + 1, Some(')'));
+                s.reads = reads;
                 b.stage.nested.push(s);
                 self.raw(b, start);
             }
@@ -926,7 +947,8 @@ fn argv(words: &[Word]) -> Argv<'_> {
             i += if t == "function" { 2 } else { 1 };
             continue;
         }
-        let Some(&(wrapper, takes)) = WRAPPERS.iter().find(|(n, _)| *n == base(t)) else {
+        let Some(&(wrapper, takes, operands)) = WRAPPERS.iter().find(|(n, _, _)| *n == base(t))
+        else {
             break;
         };
         listed &= LISTED_WRAPPERS.contains(&wrapper);
@@ -963,6 +985,7 @@ fn argv(words: &[Word]) -> Argv<'_> {
                 listed,
             };
         }
+        i += operands;
     }
     Argv {
         args: &words[i.min(words.len())..],
@@ -1077,9 +1100,10 @@ impl Mode {
 }
 
 fn visit(s: &Script, depth: usize, mode: Mode, acc: &mut Acc) {
+    acc.file_printer |= s.reads;
     for seg in &s.segments {
         for (k, st) in seg.iter().enumerate() {
-            stage(&st.words, &st.here, depth, mode, k == 0, acc);
+            stage(&st.words, &st.here, depth, mode, k, acc);
             for n in &st.nested {
                 visit(n, depth + 1, mode.child(), acc);
             }
@@ -1102,10 +1126,10 @@ fn inner(words: &[Word], depth: usize, mode: Mode, acc: &mut Acc) {
         acc.unsure = true;
         return;
     }
-    stage(words, &[], depth + 1, mode.child(), false, acc);
+    stage(words, &[], depth + 1, mode.child(), 0, acc);
 }
 
-fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool, acc: &mut Acc) {
+fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, acc: &mut Acc) {
     let a = argv(words);
     if let Some(s) = &a.split {
         nest(s, depth, mode, acc);
@@ -1129,7 +1153,7 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool,
                 acc.file_printer = true;
                 reuse = true;
             }
-            Some("cat-file") => acc.file_printer = true,
+            Some("cat-file" | "grep" | "blame") => acc.file_printer = true,
             Some("diff") => reuse = true,
             Some("log") if has(&["-p", "--patch"]) => reuse = true,
             Some("format-patch") if has(&["--stdout"]) => reuse = true,
@@ -1149,6 +1173,17 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool,
             for h in here {
                 nest(h, depth, Mode::PrinterOnly, acc);
             }
+            if flag.is_none() && pos > 0 {
+                acc.unsure = true;
+            }
+        }
+        "eval" => {
+            let text = rest
+                .iter()
+                .map(|w| w.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            nest(&text, depth, mode, acc);
         }
         "xargs" => {
             let mut i = 0;
@@ -1200,7 +1235,7 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, first: bool,
             acc.runner_name = Some(stored(name, rest));
         }
     }
-    if first && acc.list_name.is_none() && NAMES.contains(&name) {
+    if pos == 0 && acc.list_name.is_none() && NAMES.contains(&name) {
         acc.list_name = Some(stored(name, rest));
     }
 }
