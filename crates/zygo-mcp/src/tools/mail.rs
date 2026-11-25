@@ -153,7 +153,8 @@ impl Tool for MailSend {
         let (to, subject, body) = (string(obj, "to")?, string(obj, "subject")?, string(obj, "body")?);
         let m = &self.0;
         let ws = m.workspace()?;
-        if ws.phase == Phase::Stopping {
+        // AU86 with AU83: stopping blocks only while `down` holds `op.lock`.
+        if ws.phase == Phase::Stopping && !Store::open(&m.paths, &m.ws_id).op_lock_free() {
             return Err(ToolError::Failed(STOPPING.into()));
         }
         let report = mail::send(&m.paths, &ws, Some(&m.pane), to, subject, body, &m.cfg, (m.clock)()).map_err(failed)?;

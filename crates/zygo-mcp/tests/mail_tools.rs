@@ -188,10 +188,25 @@ fn send_unknown_target_names_the_known_names() {
 fn send_in_stopping_is_refused() {
     let x = setup();
     state(&x.p, |w| w.phase = Phase::Stopping);
+    // The `down` stand-in: it holds `op.lock` while phase is stopping (AU83).
+    let _op = Store::open(&x.p, ID).op_lock().unwrap();
     let t = tools(&x, MailConfig::default());
     assert_eq!(tool(&t, "mail_send").call(send_args("elena")), Err(ToolError::Failed("zygo: workspace is stopping".into())));
     assert!(new_ids(&x.p, ELENA).is_empty());
     assert!(woke(&x).is_empty());
+}
+
+#[test]
+fn send_in_stopping_without_down_is_delivered() {
+    let x = setup();
+    state(&x.p, |w| w.phase = Phase::Stopping);
+    assert!(Store::open(&x.p, ID).op_lock_free());
+    let t = tools(&x, MailConfig::default());
+    let v = tool(&t, "mail_send").call(send_args("elena")).unwrap();
+    let ids = new_ids(&x.p, ELENA);
+    assert_eq!(ids.len(), 1);
+    assert_eq!(v, json!({"sent":[{"id":ids[0],"to":"elena"}],"refused":[]}));
+    assert_eq!(woke(&x), vec![vec![ELENA.to_string()]]);
 }
 
 #[test]
@@ -201,6 +216,20 @@ fn send_refused_target_alone_is_an_error() {
     let t = tools(&x, MailConfig { max_unread: 1, ..Default::default() });
     assert_eq!(tool(&t, "mail_send").call(send_args("elena")), Err(ToolError::Failed("zygo: elena has 1 unread messages".into())));
     assert!(woke(&x).is_empty());
+}
+
+#[test]
+fn send_with_one_refused_target_reports_both() {
+    let x = setup();
+    seed(&x.p, 1);
+    let before = new_ids(&x.p, ELENA);
+    let t = tools(&x, MailConfig { max_unread: 1, ..Default::default() });
+    let v = tool(&t, "mail_send").call(send_args("all")).unwrap();
+    let a = new_ids(&x.p, ANON);
+    assert_eq!(a.len(), 1);
+    assert_eq!(v, json!({"sent":[{"id":a[0],"to":ANON}],"refused":["zygo: elena has 1 unread messages"]}));
+    assert_eq!(new_ids(&x.p, ELENA), before);
+    assert_eq!(woke(&x), vec![vec![ANON.to_string()]]);
 }
 
 #[test]
