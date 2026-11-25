@@ -78,6 +78,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | DONE | lookup | 6a93103b · SP2 verified (git 2.50.1) ; floor n/a (docs only) · PR #130 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | DONE | implementation | d0ca20df 3c6b5aa9 22ca6760 · shaping_fixtures 22 passed ; floor green · PR #131 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | DONE | implementation | 6e1b9387 5ff2466e · shape_clean 23 passed ; floor green · PR #132 |
+| DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | DONE | mechanical | e02fc394, d8c6c053 · acc PD2/PD3 rows = 2, LIVE PD2 verified (513 chunks, raw bytes equal), LIVE PD3 verified ; floor green · PR #133 |
 
 ## Log
 
