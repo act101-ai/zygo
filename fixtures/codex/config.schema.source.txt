@@ -1,0 +1,4 @@
+source: https://raw.githubusercontent.com/openai/codex/rust-v0.172.0/codex-rs/core/config.schema.json
+retrieved: 2026-11-25
+sha256: 52fb96b1ff79a51bf9ce31695a4a22d4e80f57591d91bad5747b657f4e612bac
+note: verbatim (not scrubbed); the pinned schema of the rust-v0.172.0 tag (K§6.3.7).

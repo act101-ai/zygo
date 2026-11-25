@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mock Anthropic upstream for the N2 premise experiments (Python 3 stdlib only).
+"""Mock Anthropic and OpenAI Responses upstream for the premise experiments (Python 3 stdlib only).
 
 Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <file>]
 
@@ -11,14 +11,32 @@ Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <fi
   <analysis>/<summary> reply instead of the one-word default.
 - Records each request (method, path, headers, JSON body) as <dir>/<nnnn>.json, with
   authorization and x-api-key values written as "[omitted]".
-- Replies with the SSE file of the first rule that matches and has uses left, else a
-  plain short end_turn reply. SSE files may use {{MODEL}} and {{MSGID}}.
+- Rules are tried for POST .../v1/messages, POST .../v1/responses and GET .../v1/models (query
+  string allowed). A rule with no "path" matches only POST .../v1/messages. The first rule that
+  matches and has uses left replies with its "sse" or "json" file and its "status"; "times" gives
+  a rule sequence (the n-th matching request gets the n-th rule's reply).
+- No rule matched: /v1/messages gets a plain short end_turn reply; /v1/responses gets a short
+  Responses SSE stream (response.created, output_text.delta "ok", output_item.done,
+  response.completed); /v1/models gets 404. SSE and JSON files may use {{MODEL}} and {{MSGID}}.
+- "usage" replaces response.usage in the response.completed event of an SSE reply.
+- CONNECT <host>:<port> (an HTTPS_PROXY tunnel) is refused (403, connection closed, no tunnel) and
+  recorded as the line "<host>:<port> refused" in <dir>/connect.txt. Any other method (PATCH,
+  OPTIONS, TRACE or any name) goes through the same handler. A request-target that is not
+  origin-form ("/...") is refused the same way and recorded as "<host>:<port> <METHOD> refused":
+  an absolute URI of any scheme (http, https, ws, wss, ftp, ...; the port is the scheme default
+  80, 443 or 21 when the URI names none, else "?"), or any other form (asterisk "*", a bare word).
+  userinfo ("user:pw@") is never recorded; an authority or port that does not parse is recorded
+  verbatim with port "?". Neither gets a <nnnn>.json record or a credential check. An http or
+  https absolute URI to the mock's own address (127.0.0.1, localhost or [::1] with the mock's
+  port) is served as an origin request to its path.
 
 Rule (JSON list, first match wins):
-  {"name": "...", "sse": "<file>", "times": <n, default unlimited>,
+  {"name": "...", "sse": "<file>" | "json": "<file>", "status": <int, default 200>,
+   "usage": {...}, "times": <n, default unlimited>,
    "header": {"<name>": "<regex>"}, "no_header": ["<name>"],
    "model": "<regex>", "last": "<regex on the last non-system message as JSON>",
    "body": "<regex on the whole body as JSON>", "path": "<regex>"}
+Relative "sse" and "json" paths resolve against the rules file folder.
 """
 import argparse
 import json
@@ -58,14 +76,98 @@ def default_sse(model, text="ok"):
         ])
 
 
+def default_responses_sse(model: str) -> str:
+    rid = "resp_mock_default"
+    item = {"type": "message", "id": "msg_mock_default", "role": "assistant", "status": "completed",
+            "content": [{"type": "output_text", "text": "ok", "annotations": []}]}
+    return "".join(
+        "event: %s\ndata: %s\n\n" % (e, json.dumps(d))
+        for e, d in [
+            ("response.created", {"type": "response.created", "response": {
+                "id": rid, "object": "response", "model": model, "status": "in_progress", "output": []}}),
+            ("response.output_text.delta", {"type": "response.output_text.delta", "item_id": item["id"],
+                                            "output_index": 0, "content_index": 0, "delta": "ok"}),
+            ("response.output_item.done", {"type": "response.output_item.done", "output_index": 0,
+                                           "item": item}),
+            ("response.completed", {"type": "response.completed", "response": {
+                "id": rid, "object": "response", "model": model, "status": "completed", "output": [item],
+                "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}}}),
+        ])
+
+
+def set_usage(sse: str, usage: dict) -> str:
+    """Replace response.usage in the data JSON of the response.completed event only."""
+    out = []
+    for block in sse.split("\n\n"):
+        lines = block.split("\n")
+        if "event: response.completed" in lines:
+            for i, line in enumerate(lines):
+                if line.startswith("data: "):
+                    d = json.loads(line[6:])
+                    d.setdefault("response", {})["usage"] = usage
+                    lines[i] = "data: " + json.dumps(d)
+        out.append("\n".join(lines))
+    return "\n\n".join(out)
+
+
+def endpoint(method, path):
+    """The route a rule may answer: "messages", "responses", "models", or None."""
+    if method == "POST" and re.search(r"/v1/messages(\?|$)", path):
+        return "messages"
+    if method == "POST" and re.search(r"/v1/responses(\?|$)", path):
+        return "responses"
+    if method == "GET" and re.search(r"/v1/models(\?|$)", path):
+        return "models"
+    return None
+
+
+DEFAULT_PORTS = {"http": "80", "ws": "80", "https": "443", "wss": "443", "ftp": "21"}
+
+
+def target_line(target):
+    """(host, port, scheme, path-and-query) of a request-target that is not origin-form.
+    userinfo is dropped; a scheme's default port is used when the target names none; an authority
+    that does not parse keeps its text (without userinfo) as host, with port "?"."""
+    m = re.match(r"([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)(.*)$", target, re.S)
+    if m:
+        scheme, auth, rest = m.group(1).lower(), m.group(2), m.group(3)
+    else:
+        scheme, auth, rest = "", target, ""
+    auth = auth.rpartition("@")[2]
+    default = DEFAULT_PORTS.get(scheme, "?")
+    if auth.startswith("["):
+        host, sep, tail = auth.partition("]")
+        if not sep:
+            return auth, "?", scheme, rest
+        host += "]"
+    else:
+        host, sep, tail = auth.rpartition(":")
+        if not sep:
+            host, tail = auth, ""
+        else:
+            tail = ":" + tail
+    if tail == "":
+        port = default
+    elif re.fullmatch(r":[0-9]{1,5}", tail) and int(tail[1:]) <= 65535:
+        port = str(int(tail[1:]))
+    else:
+        port = "?"
+    if not host or (host.startswith("[") and not re.fullmatch(r"\[[0-9A-Fa-f:.]+\]", host)):
+        return auth, "?", scheme, rest
+    return host, port, scheme, rest
+
+
 def default_json(model):
     return {"id": "msg_mock_default", "type": "message", "role": "assistant", "model": model,
             "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
             "stop_sequence": None, "usage": {"input_tokens": 10, "output_tokens": 1}}
 
 
-def matches(rule, path, headers, body):
-    if "path" in rule and not re.search(rule["path"], path):
+def matches(rule, route, path, headers, body):
+    if "path" not in rule:
+        if route != "messages":
+            return False
+    elif not re.search(rule["path"], path):
         return False
     for name, rx in rule.get("header", {}).items():
         v = headers.get(name.lower())
@@ -100,6 +202,76 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _refuse(self, line):
+        """Refuse a proxy request (CONNECT or absolute URI): record the line, 403, close."""
+        with LOCK:
+            with open(os.path.join(self.server.cfg["dir"], "connect.txt"), "a") as f:
+                f.write(line + "\n")
+        self.close_connection = True
+        data = b'{"error":{"message":"mock: proxy request refused"}}'
+        self.send_response(403)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.send_header("connection", "close")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_CONNECT(self):
+        self._refuse("%s refused" % self.path.rpartition("@")[2])
+
+    def send_error(self, code, message=None, explain=None):
+        # Every error reply of the base class (400 bad syntax or version, 414 request line over
+        # 64 KiB, 431 header line too long or too many headers, 505 HTTP/2 or later) comes before
+        # any do_<METHOD>: a proxy request among them is recorded too, then the base class answers
+        # and closes. The handlers here never call send_error.
+        self._record_base_error()
+        super().send_error(code, message, explain)
+
+    def _own_address(self, host, port, scheme):
+        return (scheme in ("http", "https") and host.lower() in ("127.0.0.1", "localhost", "[::1]")
+                and port == str(self.server.server_address[1]))
+
+    def _record_base_error(self):
+        """Record the request line read so far when its target is not origin-form and not the
+        mock's own address (a CONNECT with no target: ?:?). A line cut off at 64 KiB (414: no line
+        end) gives host and port ? unless an absolute URI's authority ended inside it; a target that
+        does not parse keeps its text with port ?. The method is the first word as read."""
+        raw = self.raw_requestline
+        words = raw.decode("latin-1").split()
+        method = words[0] if words else "?"
+        target = words[1] if len(words) > 1 else ""
+        if target.startswith("/") or (not target and method != "CONNECT"):
+            return
+        cut = not raw.endswith(b"\n") and not re.match(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*[/?#]", target)
+        if method == "CONNECT":
+            line = "%s refused" % ("?:?" if cut or not target else target.rpartition("@")[2])
+        else:
+            host, port, scheme, _ = target_line(target)
+            if cut:
+                host, port = "?", "?"
+            elif self._own_address(host, port, scheme):
+                return
+            line = "%s:%s %s refused" % (host, port, method)
+        with LOCK:
+            with open(os.path.join(self.server.cfg["dir"], "connect.txt"), "a") as f:
+                f.write(line + "\n")
+
+    def _proxy_target(self):
+        """A request-target that is not origin-form ("/..."): refuse and record it, return True.
+        An http or https absolute URI to the mock's own address (127.0.0.1, localhost or [::1]
+        and its port) becomes an origin request to that path (False)."""
+        if self.path.startswith("/"):
+            return False
+        line = target_line(self.path)
+        host, port, scheme, rest = line
+        if self._own_address(host, port, scheme):
+            self.path = rest or "/"
+            if not self.path.startswith("/"):
+                self.path = "/" + self.path
+            return False
+        self._refuse("%s:%s %s refused" % (host, port, self.command))
+        return True
+
     def _record_only(self, headers, raw):
         with LOCK:
             STATE["n"] += 1
@@ -111,6 +283,8 @@ class Handler(BaseHTTPRequestHandler):
             json.dump(rec, f, indent=2)
 
     def handle_any(self):
+        if self._proxy_target():
+            return
         cfg = self.server.cfg
         n = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(n) if n else b""
@@ -141,29 +315,47 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path
         model = body.get("model", "claude-mock") if isinstance(body, dict) else "claude-mock"
         rule_name = None
-        sse = None
+        rule = None
+        route = endpoint(self.command, path)
         with LOCK:
             STATE["n"] += 1
             idx = STATE["n"]
-            if self.command == "POST" and re.search(r"/v1/messages(\?|$)", path):
-                for i, rule in enumerate(cfg["rules"]):
-                    left = rule.get("times")
+            if route is not None:
+                for i, r in enumerate(cfg["rules"]):
+                    left = r.get("times")
                     used = STATE["uses"].get(i, 0)
                     if left is not None and used >= left:
                         continue
-                    if matches(rule, path, headers, body):
+                    if matches(r, route, path, headers, body):
                         STATE["uses"][i] = used + 1
-                        rule_name = rule.get("name", "rule%d" % i)
-                        with open(rule["sse"]) as f:
-                            sse = f.read()
+                        rule_name = r.get("name", "rule%d" % i)
+                        rule = r
                         break
-                if sse is None and "x-claude-code-compaction" in headers:
+                if rule is None and route == "messages" and "x-claude-code-compaction" in headers:
                     rule_name = "default-summary"
         rec = {"seq": idx, "method": self.command, "path": path, "headers": rec_headers,
                "credential_headers": sorted(k for k in ("authorization", "x-api-key") if k in headers),
                "body": body, "reply": rule_name or "default"}
         with open(os.path.join(cfg["dir"], "%04d.json" % idx), "w") as f:
             json.dump(rec, f, indent=2)
+        msgid = "msg_mock_%04d" % idx
+        if rule is not None:
+            with open(rule.get("sse") or rule["json"]) as f:
+                text = f.read().replace("{{MODEL}}", model).replace("{{MSGID}}", msgid)
+            status = int(rule.get("status", 200))
+            if "sse" not in rule:
+                self._send(status, "application/json", text.encode())
+                return
+            if "usage" in rule:
+                text = set_usage(text, rule["usage"])
+            if route == "messages" and not (isinstance(body, dict) and body.get("stream")):
+                self._send(200, "application/json", json.dumps(default_json(model)).encode())
+                return
+            self._send(status, "text/event-stream", text.encode())
+            return
+        if route == "responses":
+            self._send(200, "text/event-stream", default_responses_sse(model).encode())
+            return
         if self.command != "POST":
             self._send(404, "application/json", b'{"type":"error","error":{"type":"not_found_error","message":"mock"}}')
             return
@@ -177,18 +369,16 @@ class Handler(BaseHTTPRequestHandler):
         if not stream:
             self._send(200, "application/json", json.dumps(default_json(model)).encode())
             return
-        if rule_name == "default-summary":
-            text = default_sse(model, SUMMARY)
-        else:
-            text = sse if sse is not None else default_sse(model)
-        text = text.replace("{{MODEL}}", model).replace("{{MSGID}}", "msg_mock_%04d" % idx)
+        text = default_sse(model, SUMMARY if rule_name == "default-summary" else "ok")
+        text = text.replace("{{MODEL}}", model).replace("{{MSGID}}", msgid)
         self._send(200, "text/event-stream", text.encode())
 
-    do_POST = handle_any
-    do_GET = handle_any
-    do_HEAD = handle_any
-    do_PUT = handle_any
-    do_DELETE = handle_any
+    def __getattr__(self, name):
+        # Every method but CONNECT (PATCH, OPTIONS, TRACE, any other) goes through handle_any;
+        # the base class looks up do_<METHOD> with hasattr and would answer 501 unrecorded.
+        if name.startswith("do_"):
+            return self.handle_any
+        raise AttributeError(name)
 
 
 def main():
@@ -205,9 +395,12 @@ def main():
         with open(a.rules) as f:
             rules = json.load(f)
         base = os.path.dirname(os.path.abspath(a.rules))
-        for r in rules:
-            if not os.path.isabs(r["sse"]):
-                r["sse"] = os.path.join(base, r["sse"])
+        for i, r in enumerate(rules):
+            if "sse" not in r and "json" not in r:
+                sys.exit("mock: rule %d needs sse or json" % i)
+            for k in ("sse", "json"):
+                if k in r and not os.path.isabs(r[k]):
+                    r[k] = os.path.join(base, r[k])
     os.makedirs(a.dir, exist_ok=True)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     srv.cfg = {"dir": a.dir, "rules": rules, "key": key}
