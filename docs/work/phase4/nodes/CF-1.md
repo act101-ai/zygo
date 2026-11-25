@@ -94,7 +94,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
 
 - [x] **3. `Agent::ALL`.** In `crates/zygo-core/src/lib.rs`, in `impl Agent` (after the enum at `:20-26`): `pub const ALL: [Agent; 2] = [Agent::ClaudeCode, Agent::OpenCode];` with the doc line `Every client, in id order (P4-6 moves this to client/mod.rs, K§9).` Run the step 2 command → passes. Commit `feat(core): Agent::ALL for the conformance check (CF-1)`.
 
-- [ ] **4. Fixtures.** Under `crates/zygo-core/tests/conformance/fixtures/` write these files, exactly (no `Cargo.toml` anywhere under them; Cargo compiles none of the `.rs` files, the check only parses them):
+- [x] **4. Fixtures.** Under `crates/zygo-core/tests/conformance/fixtures/` write these files, exactly (no `Cargo.toml` anywhere under them; Cargo compiles none of the `.rs` files, the check only parses them):
 
   `registry.toml`: three capabilities, in this order. `A-1`, name `Transport`, tier `core`, standard `Each model request goes to the proxy.`, criteria `A-1.1` (`Each model request goes to the proxy.`) and `A-1.2` (`The credential is the session token.`). `A-3`, name `Model list`, tier `standard`, standard `The picker shows the roles.`, criterion `A-3.1` (`The picker shows the role list.`). `WA-2`, name `Turn signals`, tier `extra`, standard `zygo sees each turn.`, criterion `WA-2.1` (`Turn start.`). No `bar_exception`. Write each criterion as its own `[[capability.criterion]]` table and each value as a basic string on one line `key = "value"`.
 
@@ -133,10 +133,10 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
 
   Check: `wc -c repo/fixtures/beta/tiny.txt` prints 2; `git status` shows only new files.
 
-- [ ] **5. Test helpers.** In `conformance.rs`, `use model::*;` and these helpers (bodies are the obvious ones):
+- [x] **5. Test helpers.** In `conformance.rs`, `use model::*;` and these helpers (bodies are the obvious ones):
   `fn fx() -> PathBuf` (`CARGO_MANIFEST_DIR/tests/conformance/fixtures`); `fn repo() -> PathBuf` (`fx()/repo`); `fn text(name: &str) -> String` (read `fx()/name`); `fn client(id: &str, name: &str, version: &str) -> Client` (`supported: true`); `fn base() -> (Registry, Vec<GradeFile>, Vec<Client>)` (`Registry::load(fx/registry.toml)`, `GradeFile::load` of `alpha.toml` then `beta.toml`, clients `alpha`/`Alpha`/`1.0.0` and `beta`/`Beta`/`2.0.0`, each `.unwrap()`); `fn items(f: &[Fault]) -> BTreeSet<u8>`; `fn set(v: &[u8]) -> BTreeSet<u8>`; `fn entry<'a>(g: &'a mut GradeFile, criterion: &str) -> &'a mut GradeEntry`; `fn with_evidence(ev: &[&str]) -> BTreeSet<u8>` (base, set alpha's `A-3.1` evidence to `ev`, return `items(&check(&repo(), …))`); `fn copy_repo() -> tempfile::TempDir` (recursive copy of `repo()` into a new temporary folder).
 
-- [ ] **6. Failing input-rule tests.** Each `parse` call below on fixture text with one change:
+- [x] **6. Failing input-rule tests.** Each `parse` call below on fixture text with one change:
 
   ```rust
   #[test] fn input_unknown_key_refused() {
@@ -191,7 +191,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
   ```
   Run `cargo test -p zygo-core --test conformance -- input_` → the 7 tests fail (`not yet implemented`).
 
-- [ ] **7. `parse`, `load`, `parse_evidence`.** Implement them by the rules above, with a private `fn valid_id(id: &str) -> bool` for the id pattern (no new dependency). Run the step 6 command → 7 pass. Commit `feat(conformance): registry and grade-file model with the input rules (CF-1)`.
+- [x] **7. `parse`, `load`, `parse_evidence`.** Implement them by the rules above, with a private `fn valid_id(id: &str) -> bool` for the id pattern (no new dependency). Run the step 6 command → 7 pass. Commit `feat(conformance): registry and grade-file model with the input rules (CF-1)`.
 
 - [ ] **8. Failing evidence tests (K§11 item 2).**
 

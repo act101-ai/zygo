@@ -1,0 +1,41 @@
+client = "alpha"
+name = "Alpha"
+version = "1.0.0"
+
+[[cell]]
+capability = "A-1"
+url = "https://example.com/alpha/transport"
+
+[[cell]]
+capability = "A-3"
+url = "https://example.com/alpha/models"
+
+[[cell]]
+capability = "WA-2"
+url = "https://example.com/alpha/turns"
+
+[[grade]]
+criterion = "A-1.1"
+status = "met"
+evidence = ["test:crates/demo/tests/ev.rs::plain"]
+
+[[grade]]
+criterion = "A-1.2"
+status = "met"
+evidence = ["premise:docs/premises.md#Q1"]
+
+[[grade]]
+criterion = "A-3.1"
+status = "met"
+evidence = ["test:crates/demo/tests/ev.rs::tokio_plain"]
+
+[[grade]]
+criterion = "WA-2.1"
+status = "n/a"
+reason = "Alpha has no turn events"
+
+[[bar_exception]]
+client = "alpha"
+criterion = "A-1.2"
+reason = "planted"
+approved = "operator"
