@@ -46,7 +46,7 @@ fn later() -> Instant {
     Instant::now() + Duration::from_secs(10)
 }
 
-#[test] // M§9a: the count of `*.json` in `mail/<pane key>/new/`
+#[test] // M§9a: the count of regular <ULID>.json files in mail/<pane key>/new/
 fn unread_counts_the_json_names_in_new() {
     let t = tempfile::tempdir().unwrap();
     let p = paths(&t);
@@ -59,13 +59,72 @@ fn unread_counts_the_json_names_in_new() {
     assert_eq!(unread(&p, &view(ID, "kzzzz2222", None), later()), Some(0));
 }
 
-#[test] // M§9a: hidden outside a workspace and on a read error
-fn unread_outside_a_workspace_or_without_new_is_none() {
+#[test] // M§9a: hidden outside a workspace; a missing new/ counts 0 (the store's count)
+fn unread_outside_a_workspace_is_none_and_a_missing_new_is_zero() {
     let t = tempfile::tempdir().unwrap();
     let p = paths(&t);
     inbox(&p, ID, KEY, 3);
     assert_eq!(unread(&p, &SessionView { session: "S1".into(), ..Default::default() }, later()), None);
-    assert_eq!(unread(&p, &view(ID, "kqqqq2222", None), later()), None);
+    assert_eq!(unread(&p, &view(ID, "kqqqq2222", None), later()), Some(0));
+}
+
+#[test] // M§9a: only regular <ULID>.json files count; no link is followed
+fn unread_skips_links_folders_and_non_ulid_names() {
+    let t = tempfile::tempdir().unwrap();
+    let p = paths(&t);
+    let new = inbox(&p, ID, KEY, 2);
+    for name in [
+        "junk.json",
+        "01mcc5rm000000000000000003.json",
+        "01MCC5RM00000000000000000U.json",
+        "01MCC5RM00000000000000000I.json",
+        "01MCC5RM00000000000000000L.json",
+        "01MCC5RM00000000000000000O.json",
+        "01MCC5RM00000000000000004.json",
+        "01MCC5RM0000000000000000005.json",
+        "01MCC5RM000000000000000006",
+        "01MCC5RM000000000000000007.json.tmp",
+        ".json",
+    ] {
+        std::fs::write(new.join(name), b"{}").unwrap();
+    }
+    std::fs::create_dir(new.join("01MCC5RM000000000000000008.json")).unwrap();
+    #[cfg(unix)] // a Windows symlink needs a privilege that CI may not have
+    {
+        let target = t.path().join("outside.json");
+        std::fs::write(&target, b"{}").unwrap();
+        std::os::unix::fs::symlink(&target, new.join("01MCC5RM000000000000000009.json")).unwrap();
+        std::os::unix::fs::symlink(t.path().join("gone"), new.join("01MCC5RM000000000000000010.json")).unwrap();
+    }
+    assert_eq!(unread(&p, &view(ID, KEY, None), later()), Some(2));
+}
+
+#[test] // M§9a: the HUD count is the store's count (M§5), so the HUD and `zygo workspace` agree
+fn unread_matches_the_store_count() {
+    let t = tempfile::tempdir().unwrap();
+    let p = paths(&t);
+    let new = inbox(&p, ID, KEY, 2);
+    for name in [
+        "junk.json",
+        "01MCC5RM00000000000000000I.json",
+        "01MCC5RM00000000000000000L.json",
+        "01MCC5RM00000000000000000O.json",
+    ] {
+        std::fs::write(new.join(name), b"{}").unwrap();
+    }
+    std::fs::create_dir(new.join("01MCC5RM000000000000000020.json")).unwrap();
+    #[cfg(unix)] // a Windows symlink needs a privilege that CI may not have
+    {
+        let target = t.path().join("outside.json");
+        std::fs::write(&target, b"{}").unwrap();
+        std::os::unix::fs::symlink(&target, new.join("01MCC5RM000000000000000021.json")).unwrap();
+    }
+    let mail = p.workspaces_dir().join(ID).join("mail");
+    let store = zygo_workspace::mail::store::unread(&mail, KEY).unwrap();
+    assert_eq!(store, 2);
+    assert_eq!(unread(&p, &view(ID, KEY, None), later()), Some(store));
+    let missing = zygo_workspace::mail::store::unread(&mail, "kqqqq2222").unwrap();
+    assert_eq!(unread(&p, &view(ID, "kqqqq2222", None), later()), Some(missing));
 }
 
 #[test] // M§9a, WS AU84: both ids are checked before a path is built
