@@ -25,7 +25,7 @@ Author's calls (M§5, M§6, M§10 leave them open; no new gate):
 - `sender(ws, Some(k))` for a `k` that is not a key of `members` gives `cli`, so `from` never names a pane that is not a member.
 - Unknown-target line: `zygo: unknown target; known names: <names>`, with the valid names sorted, without duplicates, joined by `, `, or `none`. The line does not repeat the `to` text.
 
-- [ ] **1. Tests first.** Create `crates/zygo-workspace/tests/mail_names.rs`, `#![cfg(unix)]` (global constraint: tests that use workspace state). Copy the `paths(p: &Path) -> Paths` helper from `tests/mail_store.rs:30-34`. Fixture:
+- [x] **1. Tests first.** Create `crates/zygo-workspace/tests/mail_names.rs`, `#![cfg(unix)]` (global constraint: tests that use workspace state). Copy the `paths(p: &Path) -> Paths` helper from `tests/mail_store.rs:30-34`. Fixture:
   ```rust
   const ID: &str = "0123456789abcdef";
   const LEAD: &str = "klead2222"; const ELENA: &str = "kelena222"; const ANON: &str = "kanon2222"; const BAD: &str = "kbad22222";
