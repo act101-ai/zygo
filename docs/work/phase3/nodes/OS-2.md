@@ -414,8 +414,8 @@ Cycle B: the column check on old databases, the seam, the seven-column fallback.
 
 Verification.
 
-- [ ] **V1 — Acceptance.** Run exactly:
+- [x] **V1 — Acceptance.** Run exactly:
   `test "$(cargo test -q -p zygo-usage --test store -- readbacks_schema --list 2>/dev/null | grep -c ': test$')" -ge 7 && cargo test -p zygo-usage --test store && cargo test -p zygo-usage --lib && cargo test -p zygo --test usage_doctor`
   Pass means: the count prints 11 (at least 7; it was 0 before this node), and the four test runs each end with `test result: ok` and 0 failed. A count below 7 fails before any run.
-- [ ] **V2 — floor, affected crates.** `cargo test --locked -p zygo-usage -p zygo-hooks -p zygo-launch -p zygo-work -p zygo-proxy -p zygo-mcp` and `cargo test --locked -p zygo --test usage_doctor --test compact_cmd --test hook_trim` → all pass (the other `TrimRow` users and every full-open caller). Then `cargo test --workspace --locked --no-fail-fast` → no new failure against `origin/phase-3`. Never run the zygo binary with `ZYGO_SESSION_DIR` set (`env -u ZYGO_SESSION_DIR` if needed).
-- [ ] **V3 — scope.** `git diff --name-only origin/phase-3...HEAD` lists only the six **Files** of this node plus this node file.
+- [x] **V2 — floor, affected crates.** `cargo test --locked -p zygo-usage -p zygo-hooks -p zygo-launch -p zygo-work -p zygo-proxy -p zygo-mcp` and `cargo test --locked -p zygo --test usage_doctor --test compact_cmd --test hook_trim` → all pass (the other `TrimRow` users and every full-open caller). Then `cargo test --workspace --locked --no-fail-fast` → no new failure against `origin/phase-3`. Never run the zygo binary with `ZYGO_SESSION_DIR` set (`env -u ZYGO_SESSION_DIR` if needed).
+- [x] **V3 — scope.** `git diff --name-only origin/phase-3...HEAD` lists only the six **Files** of this node plus this node file.
