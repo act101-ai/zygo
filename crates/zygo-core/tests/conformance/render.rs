@@ -76,6 +76,15 @@ pub fn platform_text(platforms: &[String]) -> Option<String> {
     }
 }
 
+/// `s` as one CommonMark code span: a fence one backtick longer than the longest backtick run in `s`, with a
+/// space inside the fence when `s` begins or ends with a backtick.
+fn code_span(s: &str) -> String {
+    let longest = s.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    let pad = if s.starts_with('`') || s.ends_with('`') { " " } else { "" };
+    format!("{fence}{pad}{s}{pad}{fence}")
+}
+
 fn percent(x: Option<u32>) -> String {
     x.map_or("n/a".into(), |n| format!("{n}%"))
 }
@@ -131,8 +140,8 @@ fn criteria_block(reg: &Registry, c: &Client, g: &GradeFile, res: &Resolved) -> 
                     .unwrap_or_default()
                     .into_iter()
                     .map(|(e, ev)| match platform_text(&ev.platforms) {
-                        Some(p) => format!("`{}` ({p})", e.text),
-                        None => format!("`{}`", e.text),
+                        Some(p) => format!("{} ({p})", code_span(&e.text)),
+                        None => code_span(&e.text),
                     })
                     .collect();
                 let text = if items.is_empty() { "no evidence that counts".to_string() } else { items.join(", ") };

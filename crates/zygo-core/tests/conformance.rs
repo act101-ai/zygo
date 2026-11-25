@@ -1430,6 +1430,21 @@ fn render_markdown_html_escaped() {
     assert!(!md.contains("<details>") && !md.contains("<!--"));
 }
 
+/// An evidence text with backticks stays one code span (CommonMark): the fence is one backtick longer than the
+/// longest run inside, with a space inside the fence when the text begins or ends with a backtick.
+#[test]
+fn render_markdown_evidence_backtick_span() {
+    let (r, g, c) = base();
+    let ok = || Ok(Evidence { platforms: vec!["linux".into(), "macos".into(), "windows".into()] });
+    let evidence = vec![
+        ResolvedEvidence { text: "fixture:a`b".into(), result: ok() },
+        ResolvedEvidence { text: "`x``".into(), result: ok() },
+    ];
+    let res = Resolved { grade: vec![ResolvedGrade { file: 0, client: "alpha".into(), criterion: "A-1.1".into(), evidence }] };
+    let md = render::markdown(&r, &g, &c, &res);
+    assert!(md.contains("- A-1.1 met: ``fixture:a`b``, ``` `x`` ```\n"), "{md}");
+}
+
 #[test]
 fn render_markdown_below_bar_rollup() {
     let (r, mut g, c) = base();
