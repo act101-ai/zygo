@@ -375,7 +375,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   ```
 
   Any other fault is a slip in step 5: fix the file to match the table, and never change a grade to clear a fault. Commit: `feat(conformance): capability registry and grade files for Claude Code and OpenCode`.
-- [ ] 6. **Stop for the operator (K§6.2.1, K-D18, K-D26).**
+- [x] 6. **Stop for the operator (K§6.2.1, K-D18, K-D26).**
   1. Push the branch.
   2. Open the pull request as a draft. Its body holds "Stops for the operator", "Differences from today's hand grades" and "Judgment calls", verbatim. It also says that CI is red on `conformance_tree` item 8 alone until the decisions land.
   3. The controller sets CF-4 to `BLOCKED(operator: bar exception …)`, with one line per stop.
