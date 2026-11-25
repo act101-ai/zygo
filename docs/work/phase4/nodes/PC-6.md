@@ -40,6 +40,7 @@ Round 2, 2026-11-25. Tests: a scratch synthetic test runs the part's record bloc
 - F8 (nit), time zone and OS: PC-10's (TZ=UTC, the OS scrub); no part change.
 - F9 (nit): exec runs run in the background with a bound (240 polls of 0.5 s), then this run folder's Codex is killed (`<run> exit killed`); harness hygiene, not a CI timing test.
 - F10: already done; nothing to do.
+- Recapture after PC-10 (2026-11-25, kept scratch, not committed): (1) F7 bug, fixed: a UUID in the run folder's own path (a session scratchpad) was mapped before scrub, so scrub no longer matched the path and TUI texts, requests, hooks and configs kept `/tmp/claude-501/…/uuid-NNNN/scratchpad/…`; the mapping now leaves the run path's UUIDs to scrub (synthetic case added, red then green). (2) PC16 measured `failed`: control run f (key `false`) made the same CONNECT hosts as run e (raw.githubusercontent.com, github.com, api.github.com, chatgpt.com, ab.chatgpt.com), so no host is unique to e. By count, every TUI run with the key at its default (c and e here, e in round 1) made two `api.github.com:443` CONNECTs and the control made one; Codex's log database does not name the request. A count-based comparison (run e's requests minus the control's and the exec runs', as multisets) would name `api.github.com:443`; the set rule cannot. The method choice is the lead's (F1).
 - Also: each TUI run (c, e, f) passes `--no-daemon` (`fixtures/codex/help.txt:132`, `:379`), so no shared per-uid background server outlives the run.
 
 ## Plan

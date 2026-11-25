@@ -475,15 +475,22 @@ put(up, "summary.txt", "".join("%s=%s\n" % kv for kv in u.items()))
 
 # One UUID mapping over every output file (workspace, then update; files in name order), before
 # scrub: equal placeholders are equal ids across all of this part's fixtures. "uuid-NNNN" is not a
-# UUID, so scrub's per-file numbering leaves it alone.
+# UUID, so scrub's per-file numbering leaves it alone. A UUID in the run folder's own path is left
+# as it is, so scrub still maps that path (to /tmp/run, /home/user, /repo).
 UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+keep = set(UUID.findall(run + " " + os.path.realpath(run)))
 umap = {}
+
+
+def uid(m):
+    u = m.group(0)
+    return u if u in keep else umap.setdefault(u, "uuid-%04d" % (len(umap) + 1))
+
+
 for d in (ws, up):
     for f in sorted(os.listdir(d)):
         p = os.path.join(d, f)
-        text = open(p, errors="replace").read()
-        text = UUID.sub(lambda m: umap.setdefault(m.group(0), "uuid-%04d" % (len(umap) + 1)), text)
-        put(d, f, text)
+        put(d, f, UUID.sub(uid, open(p, errors="replace").read()))
 PY
 
 stop_mock
