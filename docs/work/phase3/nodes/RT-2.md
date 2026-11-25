@@ -26,7 +26,7 @@ Produces (exact, after this node):
 
 Steps:
 
-- [ ] 1. Add a test module at the end of `crates/zygo-core/src/ids.rs`:
+- [x] 1. Add a test module at the end of `crates/zygo-core/src/ids.rs`:
   ```rust
   #[cfg(test)]
   mod tests {
@@ -50,8 +50,8 @@ Steps:
       }
   }
   ```
-- [ ] 2. Run `cargo test --locked -p zygo-core --lib ulid_secs`. It fails to compile: `ulid_secs` is not defined.
-- [ ] 3. Add to `crates/zygo-core/src/ids.rs`, after `ulid()`:
+- [x] 2. Run `cargo test --locked -p zygo-core --lib ulid_secs`. It fails to compile: `ulid_secs` is not defined.
+- [x] 3. Add to `crates/zygo-core/src/ids.rs`, after `ulid()`:
   ```rust
   /// The creation time of ULID `s` in whole seconds (`timestamp_ms ÷ 1000`, floor; session run time design T§2.1);
   /// `None` for a string that is not a ULID. The first character is `0`-`7`: a larger one is 130 bits.
@@ -62,8 +62,8 @@ Steps:
       ulid::Ulid::from_string(s).ok().map(|u| u.timestamp_ms() / 1000)
   }
   ```
-- [ ] 4. Run `cargo test --locked -p zygo-core --lib ulid_secs`. 2 tests pass.
-- [ ] 5. Append to `crates/zygo-hooks/tests/statusline_render.rs` a new import line `use zygo_hooks::statusline::render::run_time_text;` (below the existing `use` lines, which do not change) and this test:
+- [x] 4. Run `cargo test --locked -p zygo-core --lib ulid_secs`. 2 tests pass.
+- [x] 5. Append to `crates/zygo-hooks/tests/statusline_render.rs` a new import line `use zygo_hooks::statusline::render::run_time_text;` (below the existing `use` lines, which do not change) and this test:
   ```rust
   // ---- run time (session run time design T§2.3, T§7 items 1 and 3) ----
 
@@ -80,8 +80,8 @@ Steps:
       assert_eq!(run_time_text(u64::MAX), "213503982334601d07h");
   }
   ```
-- [ ] 6. Run `cargo test --locked -p zygo-hooks --test statusline_render run_time_format`. It fails to compile: `run_time_text` is not defined.
-- [ ] 7. Add to `crates/zygo-hooks/src/statusline/render.rs`, after `spend_text` (`:253-265`), under a `// ---- run time (T§2.3) ----` line:
+- [x] 6. Run `cargo test --locked -p zygo-hooks --test statusline_render run_time_format`. It fails to compile: `run_time_text` is not defined.
+- [x] 7. Add to `crates/zygo-hooks/src/statusline/render.rs`, after `spend_text` (`:253-265`), under a `// ---- run time (T§2.3) ----` line:
   ```rust
   /// The run-time form of the HUD and of `zygo status` (session run time design T§2.3), `secs` = now − start (the
   /// caller gives 0 when start > now): `<m>m` below 1 hour, `<h>h<mm>m` below 1 day, else `<D>d<hh>h`. Floor at each
@@ -94,8 +94,8 @@ Steps:
       }
   }
   ```
-- [ ] 8. Run `cargo test --locked -p zygo-hooks --test statusline_render run_time_format`. 1 test passes.
-- [ ] 9. Append to `crates/zygo-hooks/tests/statusline_phase.rs` a new import line `use zygo_hooks::statusline::phase::{member_read, start, MemberRead};` (the existing `use` lines and tests do not change) and these items:
+- [x] 8. Run `cargo test --locked -p zygo-hooks --test statusline_render run_time_format`. 1 test passes.
+- [x] 9. Append to `crates/zygo-hooks/tests/statusline_phase.rs` a new import line `use zygo_hooks::statusline::phase::{member_read, start, MemberRead};` (the existing `use` lines and tests do not change) and these items:
   ```rust
   // ---- the start-time rule (session run time design T§2.2, T§7 item 2) ----
 
@@ -205,8 +205,8 @@ Steps:
       assert!(!fx.paths().workspaces_dir().exists());
   }
   ```
-- [ ] 10. Run `cargo test --locked -p zygo-hooks --test statusline_phase start_rule`. It fails to compile: `member_read`, `start` and `MemberRead` are not defined.
-- [ ] 11. Change `crates/zygo-hooks/src/statusline/phase.rs`:
+- [x] 10. Run `cargo test --locked -p zygo-hooks --test statusline_phase start_rule`. It fails to compile: `member_read`, `start` and `MemberRead` are not defined.
+- [x] 11. Change `crates/zygo-hooks/src/statusline/phase.rs`:
   - Module doc: add one line that the reader also gives the run-time start of session run time design T§2.2 from the same read (T§2.6).
   - `Marker` gets `#[serde(default)] members: serde_json::Value` (absent reads as `Null`); `version` and `phase` stay as they are, so a file that `read` refuses today is still refused.
   - Add the record struct (unknown fields ignored; still no `zygo-workspace` dependency, H§7.6 as amended by T§3.1):
@@ -238,8 +238,8 @@ Steps:
     ```
     Rules of `member_read`, in order: `own = zygo_core::ids::ulid_secs(&view.session).filter(|&s| s != 0)`. No `view.workspace`: `MemberRead { phase: None, start: own }`, and no file is read. `ws_id` fails `valid_ws_id`, or `read_marker` gives `None`: `MemberRead::default()`. Else `phase = Some(marker.phase)`, and `start` from `marker.members`: `Null` → `own`; an object without the key `view.workspace.member.pane` → `own`; an object whose value for the pane does not decode into `Record` → `None`; any other `members` value → `None`. For a decoded record: when neither `pending.zygo_session` nor `zygo_session` equals `view.session` → `own`; else `first_started_at` when not 0; else `pending.started_at` when `pending.zygo_session == view.session` and it is not 0; else `own`.
   - `read` becomes: the `ZYGO_SESSION_DIR` line (`:58`), then `member_read(paths, &SessionView::load(&SessionDir::new(session_dir)).ok()?).phase`. Its doc keeps its text.
-- [ ] 12. Run `cargo test --locked -p zygo-hooks --test statusline_phase`. The 6 `start_rule_*` tests and every existing test in the file (`ws_id_rule_equals_the_w1_rule` to `h14_36_phase_colors_and_hidden_cases`) pass; the two `#[ignore = "timing: …"]` tests stay ignored.
-- [ ] 13. In `crates/zygo/src/cmd/status.rs`, append to `mod tests` (after the existing `use` lines, add `use zygo_core::session_dir::SessionDir;` and `use zygo_core::session_view::{Member, SessionView, ViewWorkspace};`):
+- [x] 12. Run `cargo test --locked -p zygo-hooks --test statusline_phase`. The 6 `start_rule_*` tests and every existing test in the file (`ws_id_rule_equals_the_w1_rule` to `h14_36_phase_colors_and_hidden_cases`) pass; the four `#[ignore = "timing: …"]` tests, all from before RT-2, stay ignored (`4 ignored`).
+- [x] 13. In `crates/zygo/src/cmd/status.rs`, append to `mod tests` (after the existing `use` lines, add `use zygo_core::session_dir::SessionDir;` and `use zygo_core::session_view::{Member, SessionView, ViewWorkspace};`):
   ```rust
   // ---- the `runtime:` line (session run time design T§2.5, T§7 items 3 and 8) ----
 
@@ -324,8 +324,8 @@ Steps:
   }
   ```
   In the existing tests of the module, each call `run(a, b, c)` gets the argument `0` as `now` (`run(a, b, c, 0)`); no assertion and no other line changes. Their session dirs hold no `view.json`, so they get no `runtime:` line.
-- [ ] 14. Run `cargo test --locked -p zygo --lib runtime_line` (`cmd` is in the lib target, `crates/zygo/src/lib.rs:1`). It fails to compile: `run` takes 3 arguments.
-- [ ] 15. Change `crates/zygo/src/cmd/status.rs`:
+- [x] 14. Run `cargo test --locked -p zygo --lib runtime_line` (`cmd` is in the lib target, `crates/zygo/src/lib.rs:1`). It fails to compile: `run` takes 3 arguments.
+- [x] 15. Change `crates/zygo/src/cmd/status.rs`:
   - Imports: `use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};`, `use zygo_core::session_view::SessionView;`, `use zygo_hooks::statusline::phase;`, and `run_time_text` added to the existing `use zygo_hooks::statusline::render::spend_text;` line.
   - Signature: `pub fn run(ctx: &VerbCtx, repo: Option<&Path>, hide: bool, now: u64) -> anyhow::Result<String>`.
   - Before the `match session_status(ctx)`: 
@@ -340,9 +340,9 @@ Steps:
     ```
   - In the `Some(Ok(s))` arm, `session.extend(runtime);` right after the `session: …` push and before the `if hide` block (C7 does not change the line). In the `outside` arm, `session.extend(runtime);` right after the `session: unreachable (…)` push, inside the `if let Some(Err(e))` block.
   - `verb`: `run(ctx, repo_top().as_deref(), hide_window(ctx), SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()))`.
-- [ ] 16. Run `cargo test --locked -p zygo --lib status::tests`. The 5 `runtime_line_*` tests and the existing `outside_a_session`, `inside_a_session`, `h14_18_trimmed_in_tokens_and_the_spend_line`, `spend_line_forms`, `unreachable_session` and `server_text_cannot_forge_a_status_line` pass.
-- [ ] 17. In `docs/specs/2026-11-18-zygo-design.md`, rewrite the §17 `zygo status` row (`:821`) as: ``| `zygo status` | Mode, server, profile, work item, repo policy, session status (inside a session: context use, override, savings in tokens, the `spend:` line of §10.7, and the `runtime:` line (session run time; P3-13); a status reply with no `spend_usd`, from an older server, gives no `spend:` line). *(2026-11-22, HUD design)* *(2026-11-24, session run time design T§3.3)* |``, and append to the change table after the last row (`:1119`): ``| 2026-11-24 | §17 (`zygo status` row) | operator (session run time design T§2.5, T§3.3, approved 2026-11-24); node RT-2 | Inside a session, `zygo status` prints the `runtime:` line right after `session:`. |``. Check: `grep -c 'the \`runtime:\` line (session run time; P3-13)' docs/specs/2026-11-18-zygo-design.md` prints `1`.
-- [ ] 18. Run the acceptance check of this node (the four `--list` counts, then `cargo test --locked -p zygo-core -p zygo-hooks -p zygo`). Counts: `ulid_secs` 2, `run_time_format` 1, `start_rule` 6, `runtime_line` 5; every test passes. Then `cargo build --workspace --locked`.
-- [ ] 19. Commit `crates/zygo-core/src/ids.rs`, `crates/zygo-hooks/src/statusline/phase.rs`, `crates/zygo-hooks/tests/statusline_phase.rs`, `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo/src/cmd/status.rs` and `docs/specs/2026-11-18-zygo-design.md` with the message `RT-2: start rule, run-time form and the runtime: line` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:RT-2`, each on its own line; no attribution line.
+- [x] 16. Run `cargo test --locked -p zygo --lib status::tests`. The 5 `runtime_line_*` tests and the existing `outside_a_session`, `inside_a_session`, `h14_18_trimmed_in_tokens_and_the_spend_line`, `spend_line_forms`, `unreachable_session` and `server_text_cannot_forge_a_status_line` pass.
+- [x] 17. In `docs/specs/2026-11-18-zygo-design.md`, rewrite the §17 `zygo status` row (`:821`) as: ``| `zygo status` | Mode, server, profile, work item, repo policy, session status (inside a session: context use, override, savings in tokens, the `spend:` line of §10.7, and the `runtime:` line (session run time; P3-13); a status reply with no `spend_usd`, from an older server, gives no `spend:` line). *(2026-11-22, HUD design)* *(2026-11-24, session run time design T§3.3)* |``, and append to the change table after the last row (`:1119`): ``| 2026-11-24 | §17 (`zygo status` row) | operator (session run time design T§2.5, T§3.3, approved 2026-11-24); node RT-2 | Inside a session, `zygo status` prints the `runtime:` line right after `session:`. |``. Check: `grep -c 'the \`runtime:\` line (session run time; P3-13)' docs/specs/2026-11-18-zygo-design.md` prints `1`.
+- [x] 18. Run the acceptance check of this node (the four `--list` counts, then `cargo test --locked -p zygo-core -p zygo-hooks -p zygo`). Counts: `ulid_secs` 2, `run_time_format` 1, `start_rule` 6, `runtime_line` 5; every test passes. Then `cargo build --workspace --locked`.
+- [x] 19. Commit `crates/zygo-core/src/ids.rs`, `crates/zygo-hooks/src/statusline/phase.rs`, `crates/zygo-hooks/tests/statusline_phase.rs`, `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo/src/cmd/status.rs` and `docs/specs/2026-11-18-zygo-design.md` with the message `RT-2: start rule, run-time form and the runtime: line` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:RT-2`, each on its own line; no attribution line.
 
 Review focus, each with its test: graph row 61 (record of another session → own ULID start) — `start_rule_own_start_for_another_session_no_record_and_an_old_record`; graph row 62 (read-check failure → no start, no ULID fallback) — `start_rule_no_start_when_workspace_json_fails_a_read_check`; graph row 63 (`u64::MAX`, unit floors, two-digit second unit) — `run_time_format_t7_item_1`; graph row 64 (placement after `session:` in the `Ok`, `unreachable` and `hide` forms) — `runtime_line_follows_the_session_line`, `runtime_line_follows_an_unreachable_session`.
