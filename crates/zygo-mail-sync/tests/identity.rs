@@ -115,10 +115,10 @@ fn read_meta_logs_one_line_per_invalid_file_with_check_and_blob_only() {
     let mut log = Vec::new();
     let got = read_meta(&m.root, &t, far(), &mut |l| log.push(l.to_string())).unwrap();
     assert_eq!(log, vec![
-        format!("mail sync: registry file refused: check mode, blob {}", blob(&m.root, &big)),
-        format!("mail sync: registry file refused: check size, blob {}", blob(&m.root, &huge)),
-        format!("mail sync: registry file refused: check json, blob {}", blob(&m.root, b"{")),
-        format!("mail sync: ack file refused: check host, blob {}", blob(&m.root, &forged)),
+        format!("mail sync: registry file refused: check mode, object {}", blob(&m.root, &big)),
+        format!("mail sync: registry file refused: check size, object {}", blob(&m.root, &huge)),
+        format!("mail sync: registry file refused: check json, object {}", blob(&m.root, b"{")),
+        format!("mail sync: ack file refused: check host, object {}", blob(&m.root, &forged)),
     ]);
     assert_eq!(got.registries.keys().collect::<Vec<_>>(), ["big", "huge", "x"]); // README: not a .json name, not read
     assert_eq!(got.registries["big"].value, Err(Check("mode")));
@@ -175,7 +175,7 @@ fn collision_names_the_other_workspace_state_that_holds_that_identity() {
     std::fs::write(bad.join("identity"), OTHER).unwrap(); // not a workspace id: never read
     let e = check(&meta(&[("x", OTHER, B1)], &[]), "x", ME, &State::default(), &p, WS_ID).unwrap_err();
     assert_eq!(e, Stop::Collision { moved_from: Some(MOVED_WS.into()) });
-    assert_eq!(e.line(), format!("{COLLISION} The workspace state {MOVED_WS} holds that identity: the repository moved, and the old state still exists."));
+    assert_eq!(e.line(), format!("{COLLISION} The workspace state {MOVED_WS} on this machine also holds that identity."));
     assert_eq!(e.check_name(), "collision"); // the errors.log value holds no workspace id
     drop(d);
     // this workspace's own state is never named
@@ -229,4 +229,116 @@ fn a_real_tip_with_another_identity_at_the_host_is_a_collision() {
     let meta = read_meta(&m.root, &t, far(), &mut |_| {}).unwrap();
     let (_d, p) = states(&[]);
     assert_eq!(check(&meta, "x", ME, &State::default(), &p, WS_ID), Err(Stop::Collision { moved_from: None }));
+}
+
+/// A root commit whose `registry` and `ack` trees are given as raw `(mode, name, hex id)` entries, in git order.
+fn raw_tip(m: &Machine, regs: &[(&str, &str, &str)], acks: &[(&str, &str, &str)]) -> String {
+    let marker = blob(&m.root, b"1\n");
+    let mut top: Vec<(&str, &[u8], String)> = vec![("100644", b"ZYGO-MAIL", marker)];
+    for (folder, es) in [("ack", acks), ("registry", regs)] {
+        if es.is_empty() {
+            continue;
+        }
+        let entries: Vec<(&str, &[u8], &str)> = es.iter().map(|(mo, n, id)| (*mo, n.as_bytes(), *id)).collect();
+        top.push(("40000", folder.as_bytes(), tree_literally(&m.root, &entries)));
+    }
+    let entries: Vec<(&str, &[u8], &str)> = top.iter().map(|(mo, n, id)| (*mo, *n, id.as_str())).collect();
+    let top = tree_literally(&m.root, &entries);
+    commit_tree(&m.root, &top, None)
+}
+
+#[test]
+fn read_meta_refuses_links_submodules_and_trees_by_mode_without_a_read() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let link = blob(&m.root, &reg("l", ME).to_bytes());
+    let missing = "0123456789012345678901234567890123456789"; // no such object: a `cat` of it would fail
+    let t = raw_tip(&m, &[("120000", "l.json", &link), ("160000", "s.json", missing)], &[("40000", "t.json", missing)]);
+    let mut log = Vec::new();
+    let got = read_meta(&m.root, &t, far(), &mut |l| log.push(l.to_string())).unwrap();
+    assert_eq!(got.registries["l"], Read { blob: link.clone(), value: Err(Check("mode")) });
+    assert_eq!(got.registries["s"], Read { blob: missing.into(), value: Err(Check("mode")) });
+    assert_eq!(got.acks["t"], Read { blob: missing.into(), value: Err(Check("mode")) });
+    assert_eq!(log, vec![
+        format!("mail sync: registry file refused: check mode, object {link}"),
+        format!("mail sync: registry file refused: check mode, object {missing}"),
+        format!("mail sync: ack file refused: check mode, object {missing}"),
+    ]);
+}
+
+#[test]
+fn read_meta_after_the_deadline_is_an_error() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let t = tip(&m, &[("registry", "x.json", "100644", &reg("x", ME).to_bytes())]);
+    let past = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(1)).unwrap();
+    assert!(read_meta(&m.root, &t, past, &mut |_| {}).is_err());
+}
+
+#[test]
+fn read_meta_refuses_a_name_that_is_not_a_host_without_a_key() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (b, c) = (reg("x", ME).to_bytes(), ack("x", ME).to_bytes());
+    let t = tip(&m, &[("ack", "Bad.json", "100644", &c), ("registry", ".json", "100644", &b),
+        ("registry", "a\tb.json", "100644", &b), ("registry", "x.json", "100644", &b)]);
+    let mut log = Vec::new();
+    let got = read_meta(&m.root, &t, far(), &mut |l| log.push(l.to_string())).unwrap();
+    assert_eq!(got.registries.keys().collect::<Vec<_>>(), ["x"]);
+    assert!(got.acks.is_empty());
+    let (bb, cb) = (blob(&m.root, &b), blob(&m.root, &c));
+    assert_eq!(log, vec![
+        format!("mail sync: registry file refused: check name, object {bb}"),
+        format!("mail sync: registry file refused: check name, object {bb}"),
+        format!("mail sync: ack file refused: check name, object {cb}"),
+    ]);
+}
+
+#[test]
+fn a_duplicate_entry_at_the_host_never_hides_a_collision() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let (other, mine) = (blob(&m.root, &reg("x", OTHER).to_bytes()), blob(&m.root, &reg("x", ME).to_bytes()));
+    let (_d, p) = states(&[]);
+    let st = State { pushed: BTreeMap::from([("registry/x.json".into(), mine.clone())]), ..Default::default() };
+    for (a, b) in [(&other, &mine), (&mine, &other)] {
+        let t = raw_tip(&m, &[("100644", "x.json", a), ("100644", "x.json", b)], &[]);
+        let meta = read_meta(&m.root, &t, far(), &mut |_| {}).unwrap();
+        assert_eq!(check(&meta, "x", ME, &st, &p, WS_ID), Err(Stop::Collision { moved_from: None }));
+    }
+}
+
+#[test]
+fn the_moved_scan_skips_unreadable_invalid_and_linked_states() {
+    use std::os::unix::fs::symlink;
+    let m = meta(&[("x", OTHER, B1)], &[]);
+    let setups: [fn(&Path, &Path); 6] = [
+        |ws, _| { std::fs::create_dir_all(ws.join("mail/sync/identity")).unwrap(); },           // unreadable
+        |ws, _| { std::fs::create_dir_all(ws.join("mail/sync")).unwrap(); std::fs::write(ws.join("mail/sync/identity"), "zz").unwrap(); },
+        |ws, real| { std::fs::create_dir_all(ws.join("mail/sync")).unwrap(); symlink(real.join("mail/sync/identity"), ws.join("mail/sync/identity")).unwrap(); },
+        |ws, real| { symlink(real, ws).unwrap(); },                                               // workspaces/<id> link
+        |ws, real| { std::fs::create_dir_all(ws).unwrap(); symlink(real.join("mail"), ws.join("mail")).unwrap(); },
+        |ws, real| { std::fs::create_dir_all(ws.join("mail")).unwrap(); symlink(real.join("mail/sync"), ws.join("mail/sync")).unwrap(); },
+    ];
+    for (i, setup) in setups.iter().enumerate() {
+        let (d, p) = states(&[]);
+        let real = d.path().join("elsewhere");
+        std::fs::create_dir_all(real.join("mail/sync")).unwrap();
+        std::fs::write(real.join("mail/sync/identity"), OTHER).unwrap();
+        std::fs::create_dir_all(p.workspaces_dir()).unwrap();
+        setup(&p.workspaces_dir().join(MOVED_WS), &real);
+        assert_eq!(check(&m, "x", ME, &State::default(), &p, WS_ID), Err(Stop::Collision { moved_from: None }), "setup {i}");
+    }
+}
+
+#[test]
+fn an_own_ack_under_another_host_with_no_record_is_an_own_host_and_a_twin() {
+    // S§19 #11, S§7.5 "Own hosts" and "Twin"
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let t = tip(&m, &[("ack", "c.json", "100644", &ack("c", ME).to_bytes())]);
+    let meta = read_meta(&m.root, &t, far(), &mut |_| {}).unwrap();
+    assert_eq!(own_hosts(&meta, ME, "x"), ["x", "c"]);
+    let (_d, p) = states(&[]);
+    assert_eq!(check(&meta, "x", ME, &State::default(), &p, WS_ID), Err(Stop::Twin));
 }

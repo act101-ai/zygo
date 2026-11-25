@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
+use zygo_config::valid_mail_host;
 use zygo_core::paths::Paths;
 use zygo_work::repo::Flow;
 
@@ -37,8 +38,8 @@ pub struct TipMeta {
 /// Why a sync stops before it writes (S§7.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stop {
-    /// The current host's file holds another identity; `moved_from` is another workspace state (its workspace id)
-    /// that holds that identity (S§19 #10).
+    /// The current host's file holds another identity, or the current host's name is held by more than one file;
+    /// `moved_from` is another workspace state on this machine (its workspace id) that holds that identity (S§19 #10).
     Collision { moved_from: Option<String> },
     /// Another workspace writes with this identity (S§19 #11).
     Twin,
@@ -51,7 +52,7 @@ impl Stop {
             Stop::Twin => TWIN.to_string(),
             Stop::Collision { moved_from: None } => COLLISION.to_string(),
             Stop::Collision { moved_from: Some(id) } => format!(
-                "{COLLISION} The workspace state {id} holds that identity: the repository moved, and the old state still exists."
+                "{COLLISION} The workspace state {id} on this machine also holds that identity."
             ),
         }
     }
@@ -65,10 +66,12 @@ impl Stop {
     }
 }
 
-/// S§7.3, S§7.4 Validation, S-C5: the `registry/<h>.json` and `ack/<h>.json` files of `tip`. Any other name in
-/// those folders is not read. A file that is not a `100644` blob is `Check("mode")` and one above the size limit is
-/// `Check("size")`, both without a read. Each refused file logs one line, `mail sync: registry file refused: check
-/// <check>, blob <blob id>` (or `ack file`), which never names the path (it holds a host, S-C2).
+/// S§7.3, S§7.4 Validation, S-C5: the `registry/<h>.json` and `ack/<h>.json` files of `tip`. A name without the
+/// `.json` suffix is not read. A `.json` name whose `h` is not a mail host is `Check("name")` and is not kept. A
+/// file that is not a `100644` blob is `Check("mode")` and one above the size limit is `Check("size")`, both
+/// without a read. A second entry with the name of a kept one is not read, and the kept value becomes
+/// `Check("duplicate")`. Each refused entry logs one line, `mail sync: registry file refused: check <check>, object
+/// <id>` (or `ack file`), which never names the path (it holds a host, S-C2).
 pub fn read_meta(wt: &Path, tip: &str, deadline: Instant, log: &mut dyn FnMut(&str))
     -> Result<TipMeta, BranchError> {
     let mut meta = TipMeta::default();
@@ -80,14 +83,21 @@ pub fn read_meta(wt: &Path, tip: &str, deadline: Instant, log: &mut dyn FnMut(&s
         })?;
         for e in entries {
             let Some(h) = e.path.strip_prefix(folder).and_then(|n| n.strip_suffix(".json")) else { continue };
-            if h.is_empty() {
+            if !valid_mail_host(h) {
+                refused(kind, Check("name"), &e.id, log);
                 continue;
             }
             let h = h.to_string();
             if kind == "registry" {
+                if duplicate(&mut meta.registries, &h, kind, &e.id, log) {
+                    continue;
+                }
                 let value = read_one(wt, &e, REGISTRY_MAX, deadline, |s, b| parse_registry(&h, &e.mode, s, b))?;
                 meta.registries.insert(h, logged(kind, e.id, value, log));
             } else {
+                if duplicate(&mut meta.acks, &h, kind, &e.id, log) {
+                    continue;
+                }
                 let value = read_one(wt, &e, ACK_MAX, deadline, |s, b| parse_ack(&h, &e.mode, s, b))?;
                 meta.acks.insert(h, logged(kind, e.id, value, log));
             }
@@ -110,10 +120,24 @@ fn read_one<T>(wt: &Path, e: &Entry, max: u64, deadline: Instant, parse: impl Fn
     Ok(parse(size, &bytes))
 }
 
-/// `value` as a [`Read`]; a refused value logs its kind, check and blob id.
+/// Whether `h` is already a key of `map`: then its value becomes `Check("duplicate")` and `id` is logged, so no
+/// entry of a name that is listed twice can be taken as the file of that host.
+fn duplicate<T>(map: &mut BTreeMap<String, Read<T>>, h: &str, kind: &str, id: &str, log: &mut dyn FnMut(&str)) -> bool {
+    let Some(r) = map.get_mut(h) else { return false };
+    r.value = Err(Check("duplicate"));
+    refused(kind, Check("duplicate"), id, log);
+    true
+}
+
+/// The log line of one refused entry: its kind, check and object id only (S-C2).
+fn refused(kind: &str, c: Check, id: &str, log: &mut dyn FnMut(&str)) {
+    log(&format!("mail sync: {kind} file refused: check {}, object {id}", c.0));
+}
+
+/// `value` as a [`Read`]; a refused value is logged.
 fn logged<T>(kind: &str, blob: String, value: Result<T, Check>, log: &mut dyn FnMut(&str)) -> Read<T> {
     if let Err(c) = &value {
-        log(&format!("mail sync: {kind} file refused: check {}, blob {blob}", c.0));
+        refused(kind, *c, &blob, log);
     }
     Read { blob, value }
 }
@@ -127,11 +151,16 @@ pub fn own_hosts(meta: &TipMeta, identity: &str, host: &str) -> Vec<String> {
     v
 }
 
-/// S§7.5: collision first (the current host's registry, then its ack, holds another identity), then twin (a valid
-/// file of this identity, at any host, whose blob is neither the pushed nor the pending one in `st`). A refused file
-/// is skipped. `paths` and `self_ws` find another workspace state that holds the colliding identity (S§19 #10).
+/// S§7.5: collision first (the current host's registry, then its ack, holds another identity, or is listed twice
+/// at the tip), then twin (a valid file of this identity, at any host, whose blob is neither the pushed nor the
+/// pending one in `st`). Any other refused file is skipped. `paths` and `self_ws` find another workspace state that holds the colliding identity (S§19 #10).
 pub fn check(meta: &TipMeta, host: &str, identity: &str, st: &State, paths: &Paths, self_ws: &str)
     -> Result<(), Stop> {
+    let dup = Check("duplicate");
+    if meta.registries.get(host).is_some_and(|r| r.value.as_ref().err() == Some(&dup))
+        || meta.acks.get(host).is_some_and(|r| r.value.as_ref().err() == Some(&dup)) {
+        return Err(Stop::Collision { moved_from: None });
+    }
     let at_host = [
         meta.registries.get(host).and_then(|r| r.value.as_ref().ok()).map(|r| &r.identity),
         meta.acks.get(host).and_then(|r| r.value.as_ref().ok()).map(|a| &a.identity),
@@ -154,14 +183,20 @@ pub fn check(meta: &TipMeta, host: &str, identity: &str, st: &State, paths: &Pat
 }
 
 /// The first other workspace state, by sorted id, whose identity is `identity`. A name that is not a workspace id
-/// is never read; an unreadable or invalid identity file is skipped.
+/// is never read; a state whose `<id>`, `mail` or `sync` folder is a link, or whose identity file is a link,
+/// unreadable or invalid, is skipped.
 fn moved(paths: &Paths, self_ws: &str, identity: &str) -> Option<String> {
     let mut names: Vec<String> = std::fs::read_dir(paths.workspaces_dir()).ok()?
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
         .filter(|n| n != self_ws)
         .collect();
+    let link = |p: &Path| std::fs::symlink_metadata(p).map_or(true, |m| m.file_type().is_symlink());
     names.sort();
     names.into_iter().find(|n| {
+        let ws = paths.workspaces_dir().join(n);
+        if [ws.clone(), ws.join("mail"), ws.join("mail/sync")].iter().any(|p| link(p)) {
+            return false;
+        }
         SyncPaths::new(paths, n).ok()
             .and_then(|sp| crate::state::identity(&sp).ok().flatten())
             .is_some_and(|i| i == identity)
