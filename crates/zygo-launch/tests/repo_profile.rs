@@ -173,7 +173,21 @@ struct Seen {
 
 /// LaunchOpts::new with PATH = an empty `bin` dir (plus `SystemRoot` on Windows, as tests/launcher.rs:180-185),
 /// cwd = fx.cwd, builtin() and a captured stderr; `top` is not set, so the launcher's own `checkout` runs.
+/// Asserts the code is 2 and that build ran; `err` is the captured stderr.
 fn launch(fx: &Fx, git: Arc<dyn GitRunner + Send + Sync>, f: impl FnOnce(&mut LaunchOpts)) -> Seen {
+    let (code, err, seen) = launch_any(fx, git, f);
+    assert_eq!(code, 2, "{err}");
+    let (profile, config, view) = seen.expect("build ran");
+    Seen { profile, config, view, err }
+}
+
+/// The launch of `launch` with no assertion: the code, the captured stderr and what `build` saw, if it ran.
+#[allow(clippy::type_complexity)]
+fn launch_any(
+    fx: &Fx,
+    git: Arc<dyn GitRunner + Send + Sync>,
+    f: impl FnOnce(&mut LaunchOpts),
+) -> (i32, String, Option<(Option<Profile>, SessionConfig, SessionView)>) {
     let mut env = vec![
         (OsString::from("PATH"), OsString::from(fx.root.join("bin"))),
         (OsString::from("ACT_CONFIG_DIR"), OsString::from(fx.root.join("act"))),
@@ -196,9 +210,8 @@ fn launch(fx: &Fx, git: Arc<dyn GitRunner + Send + Sync>, f: impl FnOnce(&mut La
     };
     let code = Launcher::run(&stub, o).code;
     let err = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-    assert_eq!(code, 2, "{err}");
-    let (profile, config, view) = stub.seen.lock().unwrap().take().expect("build ran");
-    Seen { profile, config, view, err }
+    let seen = stub.seen.lock().unwrap().take();
+    (code, err, seen)
 }
 
 #[test]
@@ -323,6 +336,32 @@ fn passthrough_applies_no_profile_from_any_source() {
         o.passthrough = true;
     });
     assert!(!s.err.contains("profile"), "{}", s.err);
+    // the name is escaped in the line
+    let s = launch(&fx, Arc::new(Rec::default()), |o| {
+        o.profile = Some("a\nb".into());
+        o.passthrough = true;
+    });
+    assert_eq!(count(&s.err, "zygo: profile a\\nb does not apply in passthrough"), 1, "{}", s.err);
+    assert_eq!(s.err.matches("profile").count(), 1, "{}", s.err);
+    // team source: a serve-mode preset. The team server refuses a passthrough session (base §12.1: local mode
+    // only), so the launch ends at session creation, after the profile step, and `build` does not run.
+    let (h, token) = team_server(&fx.root, "[profile.team]\ndisabled = [\"review\"]\n");
+    std::fs::write(&fx.paths.config_file, "[server]\ntoken = \"env:ZYGO_TEAM_TOKEN\"\n").unwrap();
+    let rec = Arc::new(Rec::default());
+    let (code, err, seen) = launch_any(&fx, rec.clone(), |o| {
+        o.profile = Some("team".into());
+        o.passthrough = true;
+        o.server = Some(h.url().to_string());
+        o.env.0.push(("ZYGO_TEAM_TOKEN".into(), token.clone().into()));
+    });
+    h.shutdown();
+    assert_eq!(code, 1, "{err}");
+    assert!(seen.is_none());
+    assert_eq!(
+        err,
+        "zygo: profile team does not apply in passthrough\nzygo: session refused: passthrough is local mode only\n"
+    );
+    assert_eq!(rec.calls(), 0);
 }
 
 #[test]
