@@ -4,7 +4,7 @@
 **Files:** `scripts/premises/codex/proxy.sh` (new), `fixtures/codex/requests/` (new), `fixtures/codex/transport/` (new), `fixtures/codex/models/` (new), `fixtures/codex/errors/` (new), `fixtures/codex/runs/proxy/` (new), `fixtures/codex/runs/base/`, `fixtures/codex/help.txt` (lead's call, 2026-11-25: PC-2's base record predates PC-10 and lacks the TZ and `daemon=` lines; this node reruns `run-codex.sh base` once before its own capture)
 **Consumes:** `run_codex` (PC-2), `codex_env` (PC-2), `codex_record` (PC-2)
 **Produces:** `fixtures/codex/requests/` (captured Codex `POST /v1/responses` bodies and headers, scrubbed: a first turn; a turn after a `function_call_output`; a turn after a `custom_tool_call_output` of `apply_patch`; a turn whose `input` carries a `reasoning` item), `fixtures/codex/models/` (the `/models` request and the shape Codex accepts, PC7), `fixtures/codex/errors/` (the context-too-long shape Codex recovers from, PC14), `fixtures/codex/transport/` (paths called, processes after exit, PC1), and in this node file under "Observed" one line per id: `- PCn: <verified|failed> <YYYY-MM-DD>: <fixture paths>`
-**Acceptance:** `sh scripts/premises/run-codex.sh proxy && N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh && test "$(find fixtures/codex/requests -type f -name '*.json' -size +2c | wc -l)" -ge 4 && grep -qx 'home=scratch' fixtures/codex/runs/proxy/isolation.txt && grep -qx 'codex_home=scratch' fixtures/codex/runs/proxy/isolation.txt && test -f fixtures/codex/runs/proxy/connect.txt && test -z "$(grep -v ' refused$' fixtures/codex/runs/proxy/connect.txt)" && ! grep -qx 'Written when the node runs.' docs/work/phase4/nodes/PC-3.md && test "$(grep -cE '^- (PC1|PC2|PC7|PC13|PC14): (verified|failed) [0-9]{4}-[0-9]{2}-[0-9]{2}: fixtures/codex/' docs/work/phase4/nodes/PC-3.md)" -eq 5 && grep -E '^- (PC1|PC2|PC7|PC13|PC14): ' docs/work/phase4/nodes/PC-3.md | cmp -s - fixtures/codex/runs/proxy/observed.txt` → every command exits 0: at least 4 captured requests; the run used scratch `HOME` and `CODEX_HOME`, and every `CONNECT` was refused; "Observed" has no placeholder and one dated result line for each of PC1, PC2, PC7, PC13, PC14, equal to `fixtures/codex/runs/proxy/observed.txt`
+**Acceptance:** `sh scripts/premises/run-codex.sh proxy && N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh && test "$(find fixtures/codex/requests -type f -name '*.json' -size +2c | wc -l)" -ge 4 && grep -qx 'home=scratch' fixtures/codex/runs/proxy/isolation.txt && grep -qx 'codex_home=scratch' fixtures/codex/runs/proxy/isolation.txt && test -f fixtures/codex/runs/proxy/connect.txt && test -z "$(grep -v ' refused$' fixtures/codex/runs/proxy/connect.txt)" && ! grep -qx 'Written when the node runs.' docs/work/phase4/nodes/PC-3.md && test "$(grep -cE '^- (PC1|PC2|PC7|PC13|PC14): (verified|failed) [0-9]{4}-[0-9]{2}-[0-9]{2}: fixtures/codex/' docs/work/phase4/nodes/PC-3.md)" -eq 5 && t=$(mktemp) && sed -E 's/ (verified|failed) [0-9]{4}-[0-9]{2}-[0-9]{2}:/ \1 DATE:/' fixtures/codex/runs/proxy/observed.txt >"$t" && grep -E '^- (PC1|PC2|PC7|PC13|PC14): ' docs/work/phase4/nodes/PC-3.md | sed -E 's/ (verified|failed) [0-9]{4}-[0-9]{2}-[0-9]{2}:/ \1 DATE:/' | cmp -s - "$t" && rm -f "$t"` → every command exits 0: at least 4 captured requests; the run used scratch `HOME` and `CODEX_HOME`, and every `CONNECT` was refused; "Observed" has no placeholder and one dated result line for each of PC1, PC2, PC7, PC13, PC14, equal to `fixtures/codex/runs/proxy/observed.txt` apart from the date
 
 ## Planning notes
 
@@ -12,7 +12,7 @@
 - PC13 (the user-role items Codex injects) is read from the same captured requests; the redaction span rule that uses it is P4-9 (K§6.4.2).
 - PC-7 writes the `docs/premises.md` rows from "Observed"; this node does not edit `docs/premises.md`.
 - Acceptance placeholder clause anchored to the line (it matched its own text); lead's call 2026-11-25.
-- Acceptance clause added in round 2 (lead's call): the Observed lines here equal `fixtures/codex/runs/proxy/observed.txt` (`grep … | cmp -s - …`, POSIX).
+- Acceptance clause added in round 2 (lead's call): the Observed lines here equal `fixtures/codex/runs/proxy/observed.txt` (`grep … | cmp -s - …`, POSIX). Round 3 (lead's call, G1): the date field is normalized on both sides (`sed -E`, a temporary file), so a later run day still compares.
 
 ## Observed
 
@@ -100,6 +100,66 @@ round 1 code it failed 15 of 28 checks, on the round 2 code it passes 28 of 28. 
   `apply_patch=custom`; the four classes found; five dated lines.
 - [x] R6. (2026-11-25: Acceptance exit 0, its real run under the same checks) "Observed" replaced with the new `observed.txt` lines, verbatim; Acceptance exit 0; commit, push (PR #137).
 
+## Review round 2 findings (PR #137 at 3a1d7fb0, 2026-11-25)
+
+Round 3 is the last round. Tests: the synthetic-record test (scratch) now has 45 checks; on the round 2 code 7
+fail (G2, G6, G8), on the round 3 code none. G1, G4, G5, G7: shell tests on the clause, the lifted `p3_swap` and a
+stub run (below). All run on stubs only.
+
+- G1 (important), fixed: the Acceptance's Observed comparison failed on any later day. The clause now normalizes
+  the date on both sides (`sed -E 's/ (verified|failed) <date>:/ \1 DATE:/'`, a temporary file, `cmp`; lead's call)
+  and the part dates its lines in UTC (`TZ=UTC date +%Y-%m-%d`). Test: same lines pass, another date passes, a
+  changed verdict or path fails (the round 2 clause fails "another date").
+- G2 (important), fixed: the authored catalog replaced Codex's base prompt and reasoning in all four requests.
+  Round 1 (no catalog) and round 2 (catalog) differ in exactly: `input[0]` (developer, the base prompt), `reasoning`
+  (`{"summary":"auto"}` against `{"effort":"low","summary":"auto"}`) and the `apply_patch` tool. Runs `a`, `b`, `c`
+  now have no catalog, so first-turn, after-function-call-output and turn-with-reasoning carry Codex's own base
+  prompt and reasoning for `gpt-mock`; turn-with-reasoning is produced without a catalog (its reasoning items come
+  from the authored replies, as before). A new run `p` (`pc3-turn-p`, own CODEX_HOME, mock rule `p` → the
+  apply_patch reply) alone uses `catalog-patch.json`: authored `apply_patch_tool_type: "freeform"`; copied from run
+  `b`'s first request at run time `base_instructions` (its first developer item's text); `default_reasoning_level:
+  null` and `supported_reasoning_levels: []` (run `b` sends no effort); the other fields are required ModelInfo
+  fields (step 2.2) that no Responses request carries. The class rules now name the run (variant `t` for the three,
+  `p` for apply_patch). `requests/authored.txt` states per record the run, the catalog and its fields, and for run
+  `p` `base_instructions_as_run_b=` and `reasoning_as_run_b=`. `transport/tools.txt` keeps run `a`'s lines
+  (`apply_patch=none`) and adds `p_tools=`, `p_apply_patch=`. Test: classes from `t` and `p`; authored lines; a
+  differing base prompt and reasoning are stated `no`; `0.0` is Codex's base prompt in injected-items. Not checked
+  offline: that 0.172.0 accepts `default_reasoning_level: null` (Option in ModelInfo, inferred from the fallback
+  metadata sending no effort); if it does not, the apply_patch class is missing and the run exits 1.
+- G3 (nit), recorded, not fixed here: `"platformOs":"macos"` in `picker-*.jsonl`, `<shell>zsh</shell>` and
+  `/private/tmp` in requests, and unscrubbed namespace-tool descriptions are scrub and harness rules outside PC-3's
+  Files (`scrub.py`); the lead adds node PC-11 (scrub fix and an in-place re-scrub of the committed Codex fixtures).
+- G4 (nit), fixed: `p3_swap` moves the five old folders aside into `$RUN/old`, moves the five new ones in, then
+  deletes the old; on any failure it removes what it moved in and moves the old set back (exit 1). Test (the
+  function lifted from the part): success swaps all five and keeps other files; a failed move-in and a failed
+  move-aside each leave the old set.
+- G5 (nit), fixed: the bound and the traps kill the app-server job and every process under it (`p3_tree`, `pgrep
+  -P` depth first, collected before the kill), then this run's Codex copies. Test: a stub `lsof` first on PATH
+  sleeps under the daemon scan of model run `b` (the job still in `codex_env`), then SIGTERM: the round 2 part
+  leaves the sleeping `lsof`; the round 3 part leaves no process. The 150 s bound test was not rerun: its hanging
+  stub `app-server` would trip PC-5's real run's daemon check; the bound calls the same `p3_kill_job`.
+- G6 (nit), fixed: PC13 counts the environment context and the AGENTS.md tracer only in `user`-role items before
+  the prompt. Test: both parts in a developer item → PC13 failed.
+- G7 (nit), fixed: the key helpers are written under `umask 077`, mode 700, removed before the swap and by the
+  traps on any exit. Test (same stub run as G5): mode 700 during the run; round 2: 755 and 2 files left after
+  SIGTERM; round 3: none left.
+- G8 (nit), fixed: list `d` is labelled `file=` (ids from the catalog file); `b`, `c` keep `served=` (the
+  provider's `/models` reply). Test: `d: … file=gpt-mock,gpt-mock-file bundled=-`.
+- Also: run `p` makes ten runs (`run_versions=` ten times in a stub run, not nine as step 4 says).
+
+### Round 3 steps
+
+- [x] T1. Synthetic test first: 7 of 45 checks fail on the round 2 code (G2, G6, G8).
+- [x] T2. Fixes; `sh -n`, `shellcheck -s sh` exit 0; synthetic test 45 of 45; G1 clause test 4 of 4; swap test 3 of 3;
+  G5/G7 stub test: round 2 fails, round 3 passes.
+- [x] T3. Stub dry run (`stub-bin` first, `command -v codex` = the stub): exit 1, the missing-classes line;
+  `CODEX_FX` empty; isolation as before with ten runs, `TZ`, `daemon=none`; `connect.txt` empty; `stub-args.txt`
+  `app-server`; five `failed` lines dated in UTC; `authored.txt` one line per class; run `a`'s config without a
+  catalog, run `p`'s with `catalog-patch.json`; no key helper and no process left.
+- [ ] T4. Real rerun (the lead releases it, after PC-5): the checks of R5; `tools.txt` `p_apply_patch=custom`;
+  `authored.txt` `base_instructions_as_run_b=yes reasoning_as_run_b=yes`; injected-items `0.0` is Codex's base
+  prompt; Observed rewritten; Acceptance exit 0; commit, push.
+
 ## Plan
 
 Base: `origin/phase-4` at 5cb6a387 (PC-1, PC-2, OC-1 merged). Branch `phase-4--PC-3`. Premise checked 2026-11-25 against the live code:
@@ -129,9 +189,9 @@ Safety (operator's rules for real Codex runs):
   - `codex_record <part>` (PC-2): after `stop_mock`; writes `$CODEX_FX/runs/<part>/isolation.txt` and `connect.txt`; exit 1 on any isolation failure.
   - `CODEX_FX` (default `$REPO_DIR/fixtures/codex`), `CODEX_VERSION`, `DUMMY_KEY`, `MOCK_URL`.
 - Produces (all under `$CODEX_FX`, scrubbed; written whole on each run):
-  - `requests/first-turn.json`, `requests/after-function-call-output.json`, `requests/after-custom-tool-call-output.json`, `requests/turn-with-reasoning.json` (mock records: `method`, `path`, `headers`, `body`), `requests/injected-items.txt` (PC13), `requests/http-headers.txt` (PC2).
+  - `requests/first-turn.json`, `requests/after-function-call-output.json`, `requests/after-custom-tool-call-output.json`, `requests/turn-with-reasoning.json` (mock records: `method`, `path`, `headers`, `body`), `requests/injected-items.txt` (PC13), `requests/http-headers.txt` (PC2), `requests/authored.txt` (round 3).
   - `transport/result.txt` (round 2), `transport/paths.txt`, `transport/key-helper.txt`, `transport/other-hosts.txt`, `transport/processes.txt`, `transport/tools.txt`, `transport/replies/*.sse` (the authored turn replies) (PC1).
-  - `models/request.json` (when Codex sent one), `models/catalog-shape.json`, `models/openai-shape.json`, `models/catalog-file.json`, `models/catalog-turns.json` (round 2), `models/picker-b.jsonl`, `models/picker-c.jsonl`, `models/picker-d.jsonl`, `models/result.txt` (PC7).
+  - `models/request.json` (when Codex sent one), `models/catalog-shape.json`, `models/openai-shape.json`, `models/catalog-file.json`, `models/catalog-patch.json` (round 3; round 2's `catalog-turns.json` is gone), `models/picker-b.jsonl`, `models/picker-c.jsonl`, `models/picker-d.jsonl`, `models/result.txt` (PC7).
   - `errors/context-400.json`, `errors/context-failed.sse`, `errors/e1-exec.txt`, `errors/e2-exec.txt`, `errors/result.txt` (PC14).
   - `runs/proxy/isolation.txt`, `runs/proxy/connect.txt` (`codex_record`), `runs/proxy/observed.txt` (the five "Observed" lines).
 

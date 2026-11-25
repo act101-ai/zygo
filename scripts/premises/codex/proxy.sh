@@ -11,11 +11,13 @@
 #   PC14  the context-too-long shapes (HTTP 400, response.failed)   -> fixtures/codex/errors/
 # The four turn records (first turn, after function_call_output, after a custom_tool_call_output
 # of the offered freeform apply_patch, a turn with a reasoning item) are
-# fixtures/codex/requests/*.json. The turn runs use an authored model catalog (catalog-turns.json)
-# that makes gpt-mock a known model with apply_patch_tool_type "freeform". Every mock reply is
-# authored here (never model output); every fixture is a scrubbed copy. All fixtures are built in
-# the run folder ($RUN/fx) and replace the fixture folders only at the end, after every class and
-# verdict is computed: a failed run leaves the committed fixtures as they were.
+# fixtures/codex/requests/*.json. Runs a, b, c use no model catalog (Codex's own base prompt and
+# reasoning for gpt-mock): first turn, after function_call_output, turn with reasoning. Run p alone
+# uses catalog-patch.json, which turns on the freeform apply_patch tool and copies run b's base
+# prompt and (no) reasoning effort; requests/authored.txt states this per record. Every mock reply
+# is authored here (never model output); every fixture is a scrubbed copy. All fixtures are built
+# in the run folder ($RUN/fx) and replace the fixture folders only at the end, after every class
+# and verdict is computed, by a swap that restores the old set on any failure.
 PREMISES_DIR=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck disable=SC2034 # lib.sh reads N2_AGENTS (unexported on purpose)
 N2_AGENTS=codex
@@ -44,10 +46,6 @@ w("json/context-400.json", {"error": {"message": "pc3 input is over the limit", 
                                       "param": "input", "code": "context_length_exceeded"}})
 w("json/catalog-shape.json", {"models": [m("gpt-mock"), m("gpt-mock-listed")]})
 w("json/catalog-file.json", {"models": [m("gpt-mock"), m("gpt-mock-file")]})
-# ModelInfo.apply_patch_tool_type (ApplyPatchToolType, snake_case: "freeform" | "function"),
-# codex-rs/protocol/src/openai_models.rs; a model with no entry gets the default metadata and no
-# apply_patch tool (the first real run, 0.172.0).
-w("json/catalog-turns.json", {"models": [m("gpt-mock", apply_patch_tool_type="freeform")]})
 w("json/openai-shape.json", {"object": "list", "data": [{"id": "gpt-mock-listed", "object": "model",
                                                          "created": 0, "owned_by": "pc3"}]})
 resp = {"id": "resp_pc3_e2", "object": "response", "model": "{{MODEL}}"}
@@ -61,6 +59,7 @@ w("rules.json", [
     {"name": "e2", "path": R, "body": "pc3-turn-e2", "times": 1, "sse": "sse/context-failed.sse"},
     {"name": "final", "path": R, "body": '"type": "custom_tool_call_output"', "sse": "sse/turn-final.sse"},
     {"name": "patch", "path": R, "body": '"type": "function_call_output"', "sse": "sse/turn-patch.sse"},
+    {"name": "p", "path": R, "body": "pc3-turn-p", "sse": "sse/turn-patch.sse"},
     {"name": "fc", "path": R, "body": "pc3-turn-b", "sse": "sse/turn-fc.sse"},
     {"name": "models-b", "path": "/v1/models", "header": {"x-pc3-variant": "^b$"}, "json": "json/catalog-shape.json"},
     {"name": "models-c", "path": "/v1/models", "header": {"x-pc3-variant": "^c$"}, "json": "json/openai-shape.json"}])
@@ -70,20 +69,21 @@ PY
 MOCK_ALT_KEY="pc3-alt-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
 start_mock "$RUN/rules.json"
 
-# cx_config <variant> <dir> [helper|catalog|turns]: <dir>/config.toml, written whole. helper: the
-# bearer comes from $RUN/key-helper-<variant>.sh (no env_key), which logs its variant to
-# $RUN/key-helper.ran and prints MOCK_ALT_KEY.
+# cx_config <variant> <dir> [helper|catalog|patch]: <dir>/config.toml, written whole. helper: the
+# bearer comes from $RUN/key-helper-<variant>.sh (no env_key; mode 700, removed at the end and by
+# the traps), which logs its variant to $RUN/key-helper.ran and prints MOCK_ALT_KEY. catalog:
+# model_catalog_json = catalog-file.json (model list d); patch: catalog-patch.json (run p).
 cx_config() {
   mkdir -p "$2"
   if [ "${3:-}" = helper ]; then
-    printf '%s\n' '#!/bin/sh' "echo $1 >>'$RUN/key-helper.ran'" "echo '$MOCK_ALT_KEY'" >"$RUN/key-helper-$1.sh"
-    chmod 755 "$RUN/key-helper-$1.sh"
+    (umask 077 && printf '%s\n' '#!/bin/sh' "echo $1 >>'$RUN/key-helper.ran'" "echo '$MOCK_ALT_KEY'" >"$RUN/key-helper-$1.sh")
+    chmod 700 "$RUN/key-helper-$1.sh"
   fi
   {
     echo 'model = "gpt-mock"'
     echo 'model_provider = "mock"'
     [ "${3:-}" != catalog ] || echo "model_catalog_json = \"$RUN/json/catalog-file.json\""
-    [ "${3:-}" != turns ] || echo "model_catalog_json = \"$RUN/json/catalog-turns.json\""
+    [ "${3:-}" != patch ] || echo "model_catalog_json = \"$RUN/json/catalog-patch.json\""
     echo
     echo '[model_providers.mock]'
     echo 'name = "mock"'
@@ -179,16 +179,27 @@ except BrokenPipeError:
     sys.exit(1)
 PY
 
-# p3_rpc_kill: the traps stop a running driver and app-server job (and this run's Codex copies).
-_p3_dpid="" _p3_spid=""
-p3_rpc_kill() {
-  [ -z "$_p3_dpid" ] || kill "$_p3_dpid" 2>/dev/null || :
-  if [ -n "$_p3_spid" ]; then
-    kill "$_p3_spid" 2>/dev/null || :
-    pkill -f "$RUN/codex-pkg" 2>/dev/null || :
-  fi
+# p3_tree <pid>: <pid> and all its descendants (pgrep -P, depth first), one per line.
+p3_tree() {
+  echo "$1"
+  for _p3_c in $(pgrep -P "$1" 2>/dev/null); do p3_tree "$_p3_c"; done
 }
-n2_trap_chain p3_rpc_kill
+# p3_kill_job <pid>: kill a job and every process under it (a subshell still in codex_env or
+# run_codex, and their children), then this run's Codex copies.
+p3_kill_job() {
+  _p3_pids=$(p3_tree "$1")
+  # shellcheck disable=SC2086 # a list of pids
+  kill $_p3_pids 2>/dev/null || :
+  pkill -f "$RUN/codex-pkg" 2>/dev/null || :
+}
+# p3_cleanup: the traps stop a running driver and app-server job and remove the key helpers.
+_p3_dpid="" _p3_spid=""
+p3_cleanup() {
+  [ -z "$_p3_dpid" ] || kill "$_p3_dpid" 2>/dev/null || :
+  [ -z "$_p3_spid" ] || p3_kill_job "$_p3_spid"
+  rm -f "$RUN"/key-helper-*.sh
+}
+n2_trap_chain p3_cleanup
 # p3_refused <file>: a run's stdout holds the harness's own refusal (run_codex and codex_env print
 # "premises: ..." and exit; each run is a subshell, so that exit ends only the run): print it and
 # exit 1. Then check_abort (the mock's ABORT file).
@@ -198,8 +209,8 @@ p3_refused() {
 }
 
 # models_run <variant>: codex app-server with the variant's config, as a background job the shell
-# waits on for at most 150 s (then the job and this run's Codex copies are killed and the status
-# is "bound"). The job writes $RUN/exec-models-<v>.rc when the server exits; that file is also
+# waits on for at most 150 s (then the job, every process under it and this run's Codex copies
+# are killed and the status is "bound"). The job writes $RUN/exec-models-<v>.rc when the server exits; that file is also
 # the driver's <done>. The driver's status goes to $RUN/rpc-<v>.status.
 models_run() {
   _p3_v=$1
@@ -219,8 +230,7 @@ models_run() {
   while [ ! -e "$_p3_done" ]; do
     _p3_i=$((_p3_i + 1))
     if [ "$_p3_i" -ge 750 ]; then
-      kill "$_p3_spid" 2>/dev/null || :
-      pkill -f "$RUN/codex-pkg" 2>/dev/null || :
+      p3_kill_job "$_p3_spid"
       echo bound >"$_p3_done"
       break
     fi
@@ -239,8 +249,8 @@ models_run() {
 # Common turn flags (word-split on purpose).
 T="exec --json -s workspace-write --enable apply_patch_freeform"
 
-# a (probe): the tools Codex offers; the turn replies name its shell tool.
-cx_config t "$H/.codex" turns
+# a (probe): the tools Codex offers (no catalog); the turn replies name its shell tool.
+cx_config t "$H/.codex"
 # shellcheck disable=SC2086 # T is a list of words
 cx_run a $T pc3-turn-a
 python3 -I - "$RUN" <<'PY'
@@ -287,11 +297,50 @@ for name, text in replies.items():
         f.write(text)
 PY
 
-# b (turns), c (resume): one CODEX_HOME with a.
+# b (turns), c (resume): one CODEX_HOME with a, no catalog.
 # shellcheck disable=SC2086 # T is a list of words
 cx_run b $T pc3-turn-b
 # shellcheck disable=SC2086 # T is a list of words
 cx_run c $T resume --last pc3-turn-c
+
+# catalog-patch.json for run p: one gpt-mock entry. Authored: apply_patch_tool_type "freeform"
+# (ModelInfo.apply_patch_tool_type, ApplyPatchToolType snake_case, codex-rs/protocol/src/
+# openai_models.rs; the field that offers the freeform apply_patch tool, confirmed by the round 2
+# real run). Copied from run b's first request, so the request keeps Codex's own values:
+# base_instructions = the text of its first developer item (Codex's base prompt for gpt-mock);
+# default_reasoning_level = null and supported_reasoning_levels = [] (run b sends no reasoning
+# effort). The other fields are required ModelInfo fields (step 2.2) that a Responses request does
+# not carry (names, priority, visibility, shell_type, truncation_policy, ...); run p's tools are
+# compared with run a's in tools.txt.
+python3 -I - "$RUN" <<'PY'
+import glob, json, os, sys
+run = sys.argv[1]
+base = ""
+for p in sorted(glob.glob(os.path.join(run, "rec", "[0-9]*.json"))):
+    rec = json.load(open(p))
+    body = rec.get("body")
+    if isinstance(body, dict) and "pc3-turn-b" in json.dumps(body.get("input")):
+        for x in body.get("input") or []:
+            if isinstance(x, dict) and x.get("role") == "developer":
+                parts = [c for c in x.get("content") or [] if isinstance(c, dict)]
+                base = parts[0].get("text", "") if parts else ""
+                break
+        break
+entry = {"slug": "gpt-mock", "display_name": "PC3 gpt-mock", "description": "authored for PC-3",
+         "supported_reasoning_levels": [], "default_reasoning_level": None, "shell_type": "shell_command",
+         "visibility": "list", "supported_in_api": True, "priority": 1, "support_verbosity": False,
+         "truncation_policy": {"mode": "bytes", "limit": 10000}, "experimental_supported_tools": [],
+         "base_instructions": base, "apply_patch_tool_type": "freeform"}
+with open(os.path.join(run, "json", "catalog-patch.json"), "w") as f:
+    json.dump({"models": [entry]}, f)
+    f.write("\n")
+PY
+
+# p (apply_patch): its own CODEX_HOME with catalog-patch.json; the authored reply calls apply_patch.
+CX_HOME=$RUN/cx-patch
+cx_config p "$CX_HOME" patch
+# shellcheck disable=SC2086 # T is a list of words
+cx_run p $T pc3-turn-p
 
 # h (key helper): no env_key; the bearer comes from the auth command.
 CX_HOME=$RUN/cx-helper
@@ -318,7 +367,7 @@ CODEX_FX=$_p3_fx
 # Each run was a subshell: the version comes from the isolation record (one version, or it failed).
 CODEX_VERSION=$(sed -n 's/^codex_version=//p' "$RUN/fx/runs/proxy/isolation.txt")
 
-python3 -I - "$RUN" "$RUN/out" "$(date +%Y-%m-%d)" <<'PY'
+python3 -I - "$RUN" "$RUN/out" "$(TZ=UTC date +%Y-%m-%d)" <<'PY'
 import glob, json, os, re, sys
 run, out, day = sys.argv[1:4]
 def rd(p, default=""):
@@ -361,21 +410,51 @@ def patch_applied(r):
     return offered and bool(outs) and not any("unsupported custom tool call" in json.dumps(x.get("output"))
                                               for x in outs)
 turns = [r for r in recs if r.get("method") == "POST" and re.search(r"/v1/responses(\?|$)", r.get("path", ""))]
+# Runs a, b, c (variant t) have no catalog; run p (variant p) alone has catalog-patch.json.
 CLASSES = [
-    ("first-turn", lambda r: user_msg(r, "pc3-turn-b") and not has_type(r, "function_call_output")),
-    ("after-function-call-output", lambda r: has_type(r, "function_call_output", "call_pc3_1")
+    ("first-turn", "b", lambda r: var(r) == "t" and user_msg(r, "pc3-turn-b")
+     and not has_type(r, "function_call_output")),
+    ("after-function-call-output", "b", lambda r: var(r) == "t" and has_type(r, "function_call_output", "call_pc3_1")
      and not has_type(r, "custom_tool_call_output")),
-    ("after-custom-tool-call-output", lambda r: patch_applied(r) and not any_msg(r, "pc3-turn-c")),
-    ("turn-with-reasoning", lambda r: user_msg(r, "pc3-turn-c") and has_type(r, "reasoning")),
+    ("after-custom-tool-call-output", "p", lambda r: var(r) == "p" and patch_applied(r)),
+    ("turn-with-reasoning", "c", lambda r: var(r) == "t" and user_msg(r, "pc3-turn-c") and has_type(r, "reasoning")),
 ]
 found, missing = {}, []
-for name, test in CLASSES:
+for name, _, test in CLASSES:
     r = next((r for r in turns if test(r)), None)
     if r is None:
         missing.append(name)
     else:
         found[name] = r
         put("requests/%s.json" % name, json.dumps(r, indent=2) + "\n")
+
+# requests/authored.txt: per record, the run, whether a model catalog was used and which fields
+# it set; for run p, whether the base prompt and reasoning equal run b's (Codex's own).
+def first_dev(r):
+    for x in items(r):
+        if x.get("role") == "developer":
+            parts = [c for c in x.get("content") or [] if isinstance(c, dict)]
+            return parts[0].get("text") if parts else None
+    return None
+def reasoning_of(r):
+    b = r.get("body")
+    return b.get("reasoning") if isinstance(b, dict) else None
+al = []
+for name, run_id, _ in CLASSES:
+    if name not in found:
+        al.append("%s: none" % name)
+    elif run_id != "p":
+        al.append("%s: run=%s catalog=none" % (name, run_id))
+    else:
+        pr, ft0 = found[name], found.get("first-turn")
+        same_b = "yes" if ft0 is not None and first_dev(pr) == first_dev(ft0) else "no"
+        same_r = "yes" if ft0 is not None and reasoning_of(pr) == reasoning_of(ft0) else "no"
+        al.append("%s: run=p catalog=models/catalog-patch.json set=apply_patch_tool_type:freeform "
+                  "copied_from_run_b=base_instructions,default_reasoning_level:null,supported_reasoning_levels:[] "
+                  "required_not_in_request=slug,display_name,description,shell_type,visibility,supported_in_api,"
+                  "priority,support_verbosity,truncation_policy,experimental_supported_tools "
+                  "base_instructions_as_run_b=%s reasoning_as_run_b=%s" % (name, same_b, same_r))
+put("requests/authored.txt", "\n".join(al) + "\n")
 
 # PC13: every part of every item before the prompt in the first turn.
 # The run paths get scrub's names before a line is cut: a cut path no longer matches scrub's rule.
@@ -403,9 +482,10 @@ else:
             first = (local(text).splitlines() or [""])[0][:120]
             lines.append("%d.%d %s %s %s %s" % (i, j, x.get("type", "-"), x.get("role", "-"),
                                                 p.get("type", "-") if p is not x else "-", first))
-            if tracer == "none" and "pc3-agents-tracer" in text:
+            # PC13 counts the parts of user-role items only (what Codex injects as the user).
+            if x.get("role") == "user" and tracer == "none" and "pc3-agents-tracer" in text:
                 tracer = "%d.%d" % (i, j)
-            if envctx == "none" and "<environment_context>" in text:
+            if x.get("role") == "user" and envctx == "none" and "<environment_context>" in text:
                 envctx = "%d.%d" % (i, j)
 lines.append("environment_context_in=%s" % envctx)
 lines.append("agents_tracer_in=%s" % tracer)
@@ -440,7 +520,13 @@ for line in clines:
 put("transport/other-hosts.txt", "".join("%d %s\n" % (n, l) for l, n in sorted(hosts.items())) or "none\n")
 refused = sum(1 for l in clines if l.endswith(" refused"))
 put("transport/processes.txt", rd(os.path.join(run, "processes.txt"), "none\n"))
-put("transport/tools.txt", rd(os.path.join(run, "transport", "tools.txt"), "none\n"))
+# tools.txt: run a's lines (no catalog), then run p's tools (catalog-patch.json).
+prec = next((r for r in turns if var(r) == "p"), None)
+ptools = tools(prec) if prec is not None else []
+ptype = next((t.get("type") for t in ptools if t.get("name") == "apply_patch"), None)
+put("transport/tools.txt", rd(os.path.join(run, "transport", "tools.txt"), "none\n")
+    + "p_tools=%s\np_apply_patch=%s\n" % (",".join("%s:%s" % (t.get("type", "-"), t.get("name", "-")) for t in ptools),
+                                          ptype if ptype in ("custom", "function") else "none"))
 ran = [l.strip() for l in rd(os.path.join(run, "key-helper.ran")).splitlines() if l.strip()]
 helper_runs = sum(1 for l in ran if l == "h")
 hrecs = [r for r in recs if var(r) == "h"]
@@ -459,7 +545,7 @@ mall = [r for r in recs if r.get("method") == "GET" and "/models" in (r.get("pat
 mrecs = [r for r in mall if var(r) in PICK]
 if mrecs:
     put("models/request.json", json.dumps(mrecs[0], indent=2) + "\n")
-for n in ("catalog-shape.json", "openai-shape.json", "catalog-file.json", "catalog-turns.json"):
+for n in ("catalog-shape.json", "openai-shape.json", "catalog-file.json", "catalog-patch.json"):
     put("models/" + n, rd(os.path.join(run, "json", n)))
 def ids_of(n):
     try:
@@ -486,9 +572,10 @@ for v, slug, srcf in (("b", "gpt-mock-listed", "catalog-shape.json"), ("c", "gpt
             names = [x.get("id") or x.get("model") for x in data or [] if isinstance(x, dict)]
     listed[v] = ok
     served = ids_of(srcf)
-    ml.append("%s: models_request=%d listed=%s driver=%s served=%s bundled=%s" % (
+    # served= ids the provider's /models reply named (b, c); file= ids from the catalog file (d).
+    ml.append("%s: models_request=%d listed=%s driver=%s %s=%s bundled=%s" % (
         v, sum(1 for r in mrecs if var(r) == v), "yes" if ok else "no",
-        rd(os.path.join(run, "rpc-%s.status" % v), "none").strip() or "none",
+        rd(os.path.join(run, "rpc-%s.status" % v), "none").strip() or "none", "file" if v == "d" else "served",
         ",".join(x for x in names if x in served) or "-", ",".join(x for x in names if x not in served) or "-"))
 put("models/result.txt", "\n".join(ml) + "\n")
 
@@ -541,6 +628,39 @@ scrub "$RUN/sse/context-failed.sse" >"$RUN/fx/errors/context-failed.sse"
 publish_sse "$RUN/fx/transport/replies"
 rm -f "$RUN/fx/transport/replies/context-failed.sse"
 
+# The key helpers are no longer needed (the traps remove them too, on any exit).
+rm -f "$RUN"/key-helper-*.sh
+
+# p3_swap begin
+# p3_swap: replace the five fixture folders as one step. The old ones are moved aside into
+# $RUN/old, the new ones moved in from $RUN/fx, then the old ones deleted. On any failure the new
+# ones moved in so far are removed and the old set is moved back; return 1.
+P3_DIRS="requests transport models errors runs/proxy"
+p3_swap() {
+  mkdir -p "$RUN/old/runs" "$CODEX_FX/runs" || return 1
+  _p3_ok=1 _p3_aside="" _p3_in=""
+  for _p3_d in $P3_DIRS; do
+    [ -e "$CODEX_FX/$_p3_d" ] || continue
+    if mv "$CODEX_FX/$_p3_d" "$RUN/old/$_p3_d"; then _p3_aside="$_p3_aside $_p3_d"; else _p3_ok=0; break; fi
+  done
+  if [ "$_p3_ok" = 1 ]; then
+    for _p3_d in $P3_DIRS; do
+      if mv "$RUN/fx/$_p3_d" "$CODEX_FX/$_p3_d"; then _p3_in="$_p3_in $_p3_d"; else _p3_ok=0; break; fi
+    done
+  fi
+  if [ "$_p3_ok" = 1 ]; then
+    rm -rf "$RUN/old"
+    return 0
+  fi
+  for _p3_d in $_p3_in; do rm -rf "${CODEX_FX:?}/$_p3_d"; done
+  for _p3_d in $_p3_aside; do
+    mv "$RUN/old/$_p3_d" "$CODEX_FX/$_p3_d" || echo "codex proxy: could not restore $_p3_d; it is in $RUN/old/$_p3_d"
+  done
+  echo "codex proxy: fixture swap failed; the old fixtures are back"
+  return 1
+}
+# p3_swap end
+
 _p3_missing=$(cat "$RUN/missing.txt")
 if [ -n "$_p3_missing" ]; then
   echo "codex proxy: fixtures not replaced; this run's are in $RUN/fx"
@@ -548,9 +668,5 @@ if [ -n "$_p3_missing" ]; then
   exit 1
 fi
 # Every class and verdict is in: replace the fixture folders.
-for _p3_d in requests transport models errors runs/proxy; do
-  rm -rf "${CODEX_FX:?}/$_p3_d"
-  mkdir -p "$(dirname "$CODEX_FX/$_p3_d")"
-  mv "$RUN/fx/$_p3_d" "$CODEX_FX/$_p3_d"
-done
+p3_swap || exit 1
 echo "codex proxy: ok (codex $CODEX_VERSION)"
