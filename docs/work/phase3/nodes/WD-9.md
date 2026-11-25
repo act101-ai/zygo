@@ -26,7 +26,7 @@ Shared `~` rule (outside the Files list, with reason): the rule lives inside the
 
 ### Steps
 
-- [ ] 1. Create `crates/zygo-workspace/tests/pool.rs`:
+- [x] 1. Create `crates/zygo-workspace/tests/pool.rs`:
   ```rust
   use std::path::{Path, PathBuf};
 
@@ -125,10 +125,10 @@ Shared `~` rule (outside the Files list, with reason): the rule lives inside the
   }
   ```
   The mode-`000` test holds no directory of mode `000`, so the temp directory removes itself (an unlink needs write access to the parent, not to the file). As root, a mode-`000` file stays readable, and the test still checks that the listing is the same.
-- [ ] 2. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --locked --test pool` → compile error: `zygo_workspace::pool` is not found.
-- [ ] 3. Add `pub mod pool;` to `crates/zygo-workspace/src/lib.rs` between `pub mod mux;` and `pub mod repair;`, and add "pool" to the crate doc line. Create `crates/zygo-workspace/src/pool.rs` with the six functions of "Interfaces" (module doc: R§9.5, R-C6; "names and types only, no file opened"). Bodies follow the signatures. `list`: `if !dir.is_dir()` → `not a directory`; `read_dir` with `map_err(|e| format!("not readable ({:?})", e.kind()))`, and the same for each entry; keep each entry whose `file_name().as_encoded_bytes()` does not start with `b'.'` and whose `path().is_dir()`; `sort_by` the encoded bytes of the names; empty → `no subdirectory`. `shared_lines`: group by directory in order of first appearance, emit groups of length >= 2.
-- [ ] 4. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --locked --test pool` → 8 pass on unix (7 on Windows).
-- [ ] 5. Commit `crates/zygo-workspace/src/pool.rs`, `crates/zygo-workspace/src/lib.rs`, `crates/zygo-workspace/tests/pool.rs`: `WD-9: pool listing, assignment and shared lines`.
+- [x] 2. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --locked --test pool` → compile error: `zygo_workspace::pool` is not found.
+- [x] 3. Add `pub mod pool;` to `crates/zygo-workspace/src/lib.rs` between `pub mod mux;` and `pub mod repair;`, and add "pool" to the crate doc line. Create `crates/zygo-workspace/src/pool.rs` with the six functions of "Interfaces" (module doc: R§9.5, R-C6; "names and types only, no file opened"). Bodies follow the signatures. `list`: `if !dir.is_dir()` → `not a directory`; `read_dir` with `map_err(|e| format!("not readable ({:?})", e.kind()))`, and the same for each entry; keep each entry whose `file_name().as_encoded_bytes()` does not start with `b'.'` and whose `path().is_dir()`; `sort_by` the encoded bytes of the names; empty → `no subdirectory`. `shared_lines`: group by directory in order of first appearance, emit groups of length >= 2.
+- [x] 4. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-workspace --locked --test pool` → 8 pass on unix (7 on Windows).
+- [x] 5. Commit `crates/zygo-workspace/src/pool.rs`, `crates/zygo-workspace/src/lib.rs`, `crates/zygo-workspace/tests/pool.rs`: `WD-9: pool listing, assignment and shared lines`.
 - [ ] 6. In `crates/zygo/src/cmd/claude.rs` `set_config_dir`, replace the `rest`/`dir` match (`:68-78`) with:
   ```rust
   let home = env.get(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).filter(|h| h.is_absolute());
