@@ -953,3 +953,4 @@ P4-11 (client updates):
 - 2026-11-25: K§6.2.2 A-9 — the OpenCode precedent points to its A-9.1 to A-9.5 grades in `docs/conformance/opencode.toml`, not to `docs/conformance.md` (pointer correction); author's call.
 - 2026-11-25: K§6.2.3 — the bar exception example's reason is the registry's text and cites no hand note in `docs/conformance.md`; author's call.
 - 2026-11-25: K§6.3.7 amended (operator): the proxy variables: HTTP_PROXY and ALL_PROXY too, so plain-HTTP and SOCKS-aware clients also reach the mock.
+- 2026-11-25: K-D18 — the Claude Code A-1.4 reason points to the registry (`docs/conformance/capabilities.toml`), not to the `docs/conformance.md` "Windows shell for the generated commands" note, which generation removes (pointer correction); author's call.
