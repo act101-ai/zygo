@@ -1,7 +1,7 @@
 # RT-3 — Run-time HUD segment in compact and verbose, with its place in the width-removal order
 
 **Spec:** docs/specs/2026-11-24-session-runtime-design.md §2.4, §2.6, §3.1, §5 (row "Small terminal width"), §6 (rows `data.rs`, `render.rs` segment), §7 items 3, 6 and 7; base-spec amendments H§6.2, H AU9, H AU20, H§6.4, H§6.5, H§6.6, H§6.7, H§6.8, H§7.6 and the H§6.3/H§6.4 example note (docs/specs/2026-11-21-statusline-hud-design.md)
-**Files:** `crates/zygo-hooks/src/statusline/data.rs`, `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo-hooks/tests/statusline_phase.rs`, `docs/specs/2026-11-21-statusline-hud-design.md`
+**Files:** `crates/zygo-hooks/src/statusline/data.rs`, `crates/zygo-hooks/src/statusline/render.rs`, `crates/zygo-hooks/tests/statusline_render.rs`, `crates/zygo-hooks/tests/statusline_phase.rs`, `docs/specs/2026-11-21-statusline-hud-design.md`, `crates/zygo-hooks/tests/statusline_team.rs`, `crates/zygo/tests/compact_cmd.rs`
 **Consumes:** `member_read` (RT-2), `MemberRead` (RT-2), `run_time_text` (RT-2)
 **Produces:** `zygo_hooks::statusline::render::HudData.run_time: Option<u64>` (seconds, `now.saturating_sub(start)`; `None` with no start); the private `render::Seg::RunTime` in `COMPACT` (own group after `[Trimmed]`, before `[Marker]`), `ROW_1` (own group after `[Mode]`), `COMPACT_DROPS` (third, after `Trimmed`, `Cache`) and `ROW_1_DROPS` (second, after `Mode`); the private `Glyphs.clock` (Nerd `󰅐` U+F0150, plain `run`)
 **Acceptance:** `test "$(cargo test -q -p zygo-hooks --test statusline_render -- run_time_segment --list 2>/dev/null | grep -c ': test$')" -ge 4 && test "$(cargo test -q -p zygo-hooks --test statusline_render -- run_time_width --list 2>/dev/null | grep -c ': test$')" -ge 2 && cargo test --locked -p zygo-hooks --test statusline_render -- h14_01_golden_files_hold_each_render_byte_for_byte h14_04_emission_examples_1_and_3_are_golden --exact && cargo test --locked -p zygo-hooks` → every count holds (at least 4 named `run_time_segment…` in zygo-hooks `statusline_render`; at least 2 named `run_time_width…` in zygo-hooks `statusline_render`; a count of 0 fails before any run), then all pass on ubuntu, macOS and Windows CI: the golden tests `h14_01_golden_files_hold_each_render_byte_for_byte` and `h14_04_emission_examples_1_and_3_are_golden` pass with the reference files in `crates/zygo-hooks/tests/golden/` unchanged by this node (the HUD without a run time keeps its bytes; T§3.1 last row), and the tests whose names contain `run_time_segment` (T§7 items 3 and 6: OP13 compact, OP13 verbose and example 3 stale bytes with `󰅐 5h12m` at `now` = start + 18720 through `ZYGO_TEST_NOW`; plain set `run 5h12m`; `stale` leaves the run-time run unchanged; start > now gives `0m`) and `run_time_width` (T§7 item 7: compact keeps tokens at the width that fits only without trimmed, cache and run time, and keeps the run time at one cell more; verbose row 1 keeps profile at the width that fits only without mode and run time) run and pass
@@ -32,7 +32,7 @@ Produces (exact, after this node):
 
 Steps:
 
-- [ ] 1. In `crates/zygo-hooks/tests/statusline_render.rs`, in the `data` helper (`:74-90`), add `run_time: None,` after `unread: None,` (`:88`). Add these imports after the `use zygo_hooks::statusline::render::run_time_text;` line (`:14`):
+- [x] 1. In `crates/zygo-hooks/tests/statusline_render.rs`, in the `data` helper (`:74-90`), add `run_time: None,` after `unread: None,` (`:88`). Add these imports after the `use zygo_hooks::statusline::render::run_time_text;` line (`:14`):
   ```rust
   use zygo_core::paths::Paths;
   use zygo_core::session_dir::SessionDir;
@@ -220,7 +220,7 @@ Steps:
   ```
   Check: `cargo test --locked -p zygo-hooks --test statusline_render run_time_` fails to compile: `HudData` has no field `run_time`.
 
-- [ ] 2. In `crates/zygo-hooks/tests/statusline_phase.rs`, add after `start_rule_pending_of_another_session_gives_the_own_start` (`:501-508`), before `read_keeps_the_phase_when_members_does_not_parse` (`:509`):
+- [x] 2. In `crates/zygo-hooks/tests/statusline_phase.rs`, add after `start_rule_pending_of_another_session_gives_the_own_start` (`:501-508`), before `read_keeps_the_phase_when_members_does_not_parse` (`:509`):
   ```rust
   #[test] // T§2.6, H§7.6 as amended (graph row 65): `collect` takes the phase and the start from one `member_read` of
   // the `view.json` of its session dir. `ZYGO_SESSION_DIR` is not set here: the old `phase::read` call would give no phase.
@@ -253,21 +253,21 @@ Steps:
   ```
   Check: `cargo test --locked -p zygo-hooks --test statusline_phase collect_run_time` fails to compile: `HudData` has no field `run_time`.
 
-- [ ] 3. In `crates/zygo-hooks/src/statusline/render.rs`, in `HudData`, add after `pub unread: Option<usize>,` (`:87`):
+- [x] 3. In `crates/zygo-hooks/src/statusline/render.rs`, in `HudData`, add after `pub unread: Option<usize>,` (`:87`):
   ```rust
   /// Seconds since the start of session run time design T§2.2 (`now.saturating_sub(start)`); `None` with no start.
   pub run_time: Option<u64>,
   ```
   Check: `cargo build --locked -p zygo-hooks` fails: missing field `run_time` in the `HudData` literal of `collect` (`data.rs:692`).
 
-- [ ] 4. In `crates/zygo-hooks/src/statusline/render.rs`, glyphs: add to `struct Glyphs` after `mail` (`:175`):
+- [x] 4. In `crates/zygo-hooks/src/statusline/render.rs`, glyphs: add to `struct Glyphs` after `mail` (`:175`):
   ```rust
   /// The run time (T§2.4). Not in `table`, as `mail`.
   clock: &'static str,
   ```
   Add `clock: "\u{f0150}",` to `NERD` after `mail: "\u{2709}",` (`:199`), and `clock: "run",` to `PLAIN` after `mail: "mail",` (`:217`).
 
-- [ ] 5. In `crates/zygo-hooks/src/statusline/render.rs`, the segment:
+- [x] 5. In `crates/zygo-hooks/src/statusline/render.rs`, the segment:
   - In `enum Seg` (`:427`), add before `Marker`:
     ```rust
     /// The run time (session run time design T§2.4); a local segment.
@@ -288,7 +288,7 @@ Steps:
   - In `fn seg` (`:762-789`), add `Seg::RunTime => self.run_time(),` after `Seg::Trimmed => self.trimmed(),` (it is after `_ if gone(seg) => None`, so width can remove it).
   Check: `cargo build --locked -p zygo-hooks` still fails, only with the missing field `run_time` at `data.rs:692` (no other error). Steps 1 and 2 run after step 6.
 
-- [ ] 6. In `crates/zygo-hooks/src/statusline/data.rs`, `collect` (`:570`):
+- [x] 6. In `crates/zygo-hooks/src/statusline/data.rs`, `collect` (`:570`):
   - Replace `let phase = super::phase::read(paths, env);` (`:586`) with:
     ```rust
     // One `workspace.json` read gives the phase and the run-time start (T§2.6, H§7.6).
@@ -301,11 +301,11 @@ Steps:
   - In the doc comment of `collect` (`:567`), replace "the workspace phase from `paths.workspaces_dir()` (AU25, never cached)" with "the workspace phase and the run-time start from one read of `paths.workspaces_dir()` (AU25, session run time design T§2.6; never cached)".
   Check: `cargo test --locked -p zygo-hooks --test statusline_render run_time_` → 8 passed (5 `run_time_segment`, 2 `run_time_width`, `run_time_format_t7_item_1`); `cargo test --locked -p zygo-hooks --test statusline_phase collect_run_time` → 1 passed.
 
-- [ ] 7. Check the golden bytes did not move: `cargo test --locked -p zygo-hooks --test statusline_render -- h14_01_golden_files_hold_each_render_byte_for_byte h14_04_emission_examples_1_and_3_are_golden --exact` → 2 passed, and `git diff --stat -- crates/zygo-hooks/tests/golden` prints nothing.
+- [x] 7. Check the golden bytes did not move: `cargo test --locked -p zygo-hooks --test statusline_render -- h14_01_golden_files_hold_each_render_byte_for_byte h14_04_emission_examples_1_and_3_are_golden --exact` → 2 passed, and `git diff --stat -- crates/zygo-hooks/tests/golden` prints nothing.
 
-- [ ] 8. Check the counts of the contract: `cargo test -q -p zygo-hooks --test statusline_render -- run_time_segment --list` lists 5 tests, and `-- run_time_width --list` lists 2.
+- [x] 8. Check the counts of the contract: `cargo test -q -p zygo-hooks --test statusline_render -- run_time_segment --list` lists 5 tests, and `-- run_time_width --list` lists 2.
 
-- [ ] 9. Amend `docs/specs/2026-11-21-statusline-hud-design.md` as T§3.1 says. "T§" in the new text means a section of `docs/specs/2026-11-24-session-runtime-design.md`, named "session run time design" on first use in each place.
+- [x] 9. Amend `docs/specs/2026-11-21-statusline-hud-design.md` as T§3.1 says. "T§" in the new text means a section of `docs/specs/2026-11-24-session-runtime-design.md`, named "session run time design" on first use in each place.
   - AU9 (`:104`): compact groups become `[logo, workspace phase, member name, mail, work item, worktree], [model, profile], [ctx, bar, threshold], [tokens], [spend], [cache], [trimmed], [run time], [stale/offline/suspended/ended]`. Verbose row 1 groups become `[workspace phase], [member name, mail], [work item, worktree, ahead/behind], [model · effort], [profile], [mode], [run time]`. Row 2 does not change.
   - AU20 (`:115`): the local segment list becomes `(stripe, logo, phase, work item, worktree, git, trimmed, run time, profile from `view.json`)`.
   - H§6.2 (`:150`): after row 14 add `| 14a | Run time | `workspace.json` `members.<pane>.first_started_at`, else `pending.started_at`, else the ULID time of `view.session` (session run time design T§2.2) | `2` | yes, `󰅐 5h12m` | row 1, `󰅐 5h12m` |`. The number `14a` keeps row 15 and the "row 14" citation of `docs/specs/2026-11-24-output-shaping-design.md:178` valid.
@@ -319,4 +319,9 @@ Steps:
   - `## Change log`: add the last row `| 2026-11-25 | AU9, AU20, H§6.2, H§6.4 (example note, color table), H§6.5, H§6.6, H§6.7, H§6.8, H§7.6 | operator-approved session run time design T§3.1 (2026-11-24); built by RT-3 | The run time segment: its row, groups, color, glyph, form, place in the width order, missing-data rows and the one `workspace.json` read. |`.
   Check: `grep -c 'run time' docs/specs/2026-11-21-statusline-hud-design.md` is at least 9, and `grep -c 'U+F0150' docs/specs/2026-11-21-statusline-hud-design.md` is 1.
 
-- [ ] 10. Acceptance: `cargo test --locked -p zygo-hooks` → all pass, with the 5 `run_time_segment…` and 2 `run_time_width…` tests of `statusline_render` and `collect_run_time_and_phase_come_from_one_member_read` of `statusline_phase` in the run, and `crates/zygo-hooks/tests/golden/` unchanged.
+- [x] 10. Acceptance: `cargo test --locked -p zygo-hooks` → all pass, with the 5 `run_time_segment…` and 2 `run_time_width…` tests of `statusline_render` and `collect_run_time_and_phase_come_from_one_member_read` of `statusline_phase` in the run, and `crates/zygo-hooks/tests/golden/` unchanged.
+
+### Round 2
+
+- [x] F2. `crates/zygo-hooks/tests/statusline_team.rs`: the helper `run_time` took the expected text from `d.run_time`, the value under test. It now decodes the ULID time of the test's own session id with a local Crockford decoder (no new dependency), computes `T - start`, asserts `d.run_time == Some(that)` and gives `󰅐 <run_time_text>` for the row-1 expectations.
+- [x] F4. `docs/specs/2026-11-21-statusline-hud-design.md` H§6.8: add the row for a readable `workspace.json` whose `members` is not an object or null, or whose pane record does not decode: the phase shows, no run time (`phase.rs` `member_read`; test `statusline_phase.rs` start rule for an undecodable record). Change log row added.
