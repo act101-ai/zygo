@@ -1,13 +1,14 @@
 //! §10.6 compaction instructions: what to keep and what to drop.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use zygo_core::hook::{HookInput, HookOutput};
+use serde_json::Value;
+use zygo_core::hook::{error_line, HookInput, HookOutput};
 use zygo_core::session_dir::SessionDir;
 use zygo_work::log::{open_unit, Begin};
 
-pub fn run(_input: &HookInput) -> anyhow::Result<HookOutput> {
-    run_in(SessionDir::from_env().as_ref())
+pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
+    run_with(input, SessionDir::from_env().as_ref())
 }
 
 pub fn run_in(dir: Option<&SessionDir>) -> anyhow::Result<HookOutput> {
@@ -16,6 +17,41 @@ pub fn run_in(dir: Option<&SessionDir>) -> anyhow::Result<HookOutput> {
         None => Vec::new(),
     };
     Ok(HookOutput::Text(text(&units)))
+}
+
+/// `reinject/<agent_id>` when `agent_id` passes the work-log agent-name rule (1-64 of `[A-Za-z0-9_-]`, the rule of
+/// `zygo_work::log::check_agent`); else `None`.
+pub fn flag_path(dir: &SessionDir, agent_id: &str) -> Option<PathBuf> {
+    let ok = (1..=64).contains(&agent_id.len())
+        && agent_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    ok.then(|| dir.reinject().join(agent_id))
+}
+
+/// T§9.2 item 1: the output of `run_in(dir)`. For an input whose `agent_id` is a string and whose `agent_type` does
+/// not start with `zygo-`, it also creates the empty flag `flag_path(dir, agent_id)`. If the flag cannot be created,
+/// it writes one stderr line and still returns the text (T§14 item 2).
+pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<HookOutput> {
+    let out = run_in(dir)?;
+    let zygo = input.raw.get("agent_type").and_then(Value::as_str).is_some_and(|t| t.starts_with("zygo-"));
+    if !zygo
+        && let (Some(d), Some(id)) = (dir, input.agent_id.as_deref())
+        && let Some(p) = flag_path(d, id)
+        && let Err(e) = create_flag(d, &p)
+    {
+        error_line(&format!("pre-compact: cannot create {}: {e:#}", p.display()));
+    }
+    Ok(out)
+}
+
+/// The empty flag `p` in `reinject/` (directory 0700, file 0600 on unix).
+fn create_flag(dir: &SessionDir, p: &Path) -> anyhow::Result<()> {
+    SessionDir::new(dir.reinject()).create()?;
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o.open(p)?;
+    Ok(())
 }
 
 /// Every unit with no `stopped_at`, sorted by `(unit, round, agent stem)`. A missing work directory is empty; any other read error is an error.
