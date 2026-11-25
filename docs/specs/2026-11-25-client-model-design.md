@@ -420,7 +420,7 @@ The grade file grades branch 1 or 2 as the normal launch. Branch 3 is a known li
 
 #### 6.3.7 Premises (P4-3, K-D14)
 
-Each provisional Codex grade becomes measured by a premise row in `docs/premises.md` (`PCn`) with fixtures under `fixtures/codex/`. The method is the existing one (`docs/premises.md` "Method"): Codex runs under `env -i` with a temporary `HOME` and `CODEX_HOME`, a dummy key built at run time, and `base_url` = `scripts/premises/mock_upstream.py` directly, with no zygo between. `mock_upstream.py` gains a `/v1/responses` SSE answer and a `/v1/models` answer. `HTTPS_PROXY` points at the mock, which refuses and records each `CONNECT`, so a request to any other host is seen and fails. No run uses an OpenAI or ChatGPT login. No step runs `codex login`.
+Each provisional Codex grade becomes measured by a premise row in `docs/premises.md` (`PCn`) with fixtures under `fixtures/codex/`. The method is the existing one (`docs/premises.md` "Method"): Codex runs under `env -i` with a temporary `HOME` and `CODEX_HOME`, a dummy key built at run time, and `base_url` = `scripts/premises/mock_upstream.py` directly, with no zygo between. `mock_upstream.py` gains a `/v1/responses` SSE answer and a `/v1/models` answer. `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` point at the mock, which refuses and records each `CONNECT` and each absolute-URI request, so a request to any other host is seen and fails. No run uses an OpenAI or ChatGPT login. No step runs `codex login`.
 
 | Id | What it measures | Feeds |
 |---|---|---|
@@ -952,3 +952,4 @@ P4-11 (client updates):
 - 2026-11-25: K-D18 — reading of A-1 "key helper" (OpenCode {file:} reference meets A-1.2; A-1.4 needs a command); author's call, for the operator at the CF-4 merge (K-D26).
 - 2026-11-25: K§6.2.2 A-9 — the OpenCode precedent points to its A-9.1 to A-9.5 grades in `docs/conformance/opencode.toml`, not to `docs/conformance.md` (pointer correction); author's call.
 - 2026-11-25: K§6.2.3 — the bar exception example's reason is the registry's text and cites no hand note in `docs/conformance.md`; author's call.
+- 2026-11-25: K§6.3.7 amended (operator): the proxy variables: HTTP_PROXY and ALL_PROXY too, so plain-HTTP and SOCKS-aware clients also reach the mock.

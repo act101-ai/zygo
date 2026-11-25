@@ -73,6 +73,16 @@ CASES = [
      ["Jo", "Ann"]),
     ("msys name with spaces at the end", "/c/" + "Users/Mary Jane Smith", "/home/user", ["Mary", "Jane", "Smith"]),
 ]
+# PC-2: Codex rollout file names and session and turn ids (UUIDv7, lower case).
+U1 = "0199b0c2-7c1d-7a3e-9f00-1234567890ab"
+U2 = "0199b0c3-0000-7000-8000-00000000abcd"
+CASES += [
+    ("codex rollout file name", "rollout-2026-11-25T10-20-30-" + U1 + ".jsonl",
+     "rollout-2026-11-25T10-20-30-00000000-0000-4000-8000-000000000001.jsonl", [U1]),
+    ("codex session and turn ids", '{"session_id":"' + U1 + '","turn_id":"' + U2 + '"}',
+     '{"session_id":"00000000-0000-4000-8000-000000000001","turn_id":"00000000-0000-4000-8000-000000000002"}',
+     [U1, U2]),
+]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -135,11 +145,22 @@ def main():
                                 run, j], capture_output=True, text=True)
         if r.returncode != 0 or json.loads(r.stdout)["v"] != "zzhostq_x zzhostq-y a\\nhost. x_zzhostq":
             bad.append("host name edges: got %r" % (r.stdout,))
+        # PC-2: CODEX_HOME paths under the run folder (the default under home, and another one).
+        with tempfile.TemporaryDirectory() as run:
+            rr = os.path.realpath(run)
+            t = os.path.join(d, "cx.txt")
+            with open(t, "w") as f:
+                f.write(rr + "/home/.codex/sessions/2026/11/25/x.jsonl " + rr + "/cx/config.toml\n")
+            got = subprocess.run([sys.executable, "-I", SCRUB, rr, t], check=True,
+                                 capture_output=True, text=True).stdout
+        want = "/home/user/.codex/sessions/2026/11/25/x.jsonl /tmp/run/cx/config.toml\n"
+        if got != want:
+            bad.append("codex home paths: got %r" % (got,))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 2))
+    print("scrub tests: ok (%d)" % (len(CASES) + 3))
 
 
 main()
