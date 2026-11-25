@@ -240,6 +240,9 @@ fn set_mtime(path: &Path, t: SystemTime) -> io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
     }
+    // Windows `SetFileTime` needs `FILE_WRITE_ATTRIBUTES`, which a read-only handle does not have (os error 5).
+    #[cfg(not(unix))]
+    o.write(true);
     o.open(path)?.set_modified(t)
 }
 
