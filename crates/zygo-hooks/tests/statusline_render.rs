@@ -813,6 +813,7 @@ fn the_glyph_table_names_each_icon_of_a_set() {
         ("stripe", "▌", "▌"),
         ("logo", LOGO, "zygo"),
         ("reflection", REFLECTION, ""),
+        ("mail", "\u{2709}", "mail"),
         ("branch", BRANCH, ""),
         ("github", "\u{f408}", ""),
         ("work-graph", "◆", "♦"),
@@ -828,11 +829,12 @@ fn the_glyph_table_names_each_icon_of_a_set() {
         ("notional", "≈", "≈"),
         ("cache", DB, "cache"),
         ("trimmed", "✂", "trim"),
+        ("clock", CLOCK, "run"),
         ("truncation", "…", "…"),
     ] {
         assert_eq!((n[name], p[name]), (nerd, plain), "{name}");
     }
-    assert_eq!(n.len(), 19);
+    assert_eq!(n.len(), 21);
 }
 
 // ---- segments ----
