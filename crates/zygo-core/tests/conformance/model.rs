@@ -58,6 +58,9 @@ pub struct GradeFile {
     pub cell: Vec<CellUrl>,
     #[serde(default)]
     pub grade: Vec<GradeEntry>,
+    /// The file name in `docs/conformance/`, set by `grade_files`; check item 1 compares its stem with `client`.
+    #[serde(skip)]
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -546,7 +549,10 @@ fn test_crate_dir(rel: &str) -> Result<&str, String> {
 /// walk of `reach` knows only Cargo's default targets, so a manifest that changes the test targets is refused
 /// (fail closed): any manifest key that changes which files Cargo compiles as test code. These are any
 /// `[[test]]` table, `autotests`, `autobins`, and on `[lib]` or a `[[bin]]` a `harness`, `required-features`
-/// or `path` key or `test = false`.
+/// or `path` key or `test = false`. Two forms change no target that the walk counts and are let through: a
+/// `[[test]]` array whose each entry has a `path` that leaves the crate and a `name` that is no file stem of an
+/// entry of `<crate>/tests/`; and a `[[bin]]` with `test = false` and a relative `path` with no `\`, `:` or `..`
+/// that is no root of the walk.
 fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String> {
     let manifest = format!("{crate_dir}/Cargo.toml");
     let path = root.join(&manifest);
@@ -556,8 +562,21 @@ fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String>
     let text = read_capped(&path)?;
     let table: toml::Table = text.parse().map_err(|e| clip(format!("{manifest}: {e}")))?;
     let unsupported = |key: &str| Err(format!("{manifest}: unsupported Cargo target setting `{key}`"));
-    if table.contains_key("test") {
-        return unsupported("[[test]]");
+    if let Some(tests) = table.get("test") {
+        let stems: Vec<String> = std::fs::read_dir(root.join(crate_dir).join("tests"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| Path::new(&e.file_name()).file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .collect();
+        let outside = |t: &toml::Value| {
+            let path = t.get("path").and_then(|p| p.as_str());
+            let name = t.get("name").and_then(|n| n.as_str());
+            path.is_some_and(|p| leaves_crate(crate_dir, p)) && name.is_some_and(|n| !stems.iter().any(|s| s == n))
+        };
+        if !tests.as_array().is_some_and(|a| a.iter().all(outside)) {
+            return unsupported("[[test]]");
+        }
     }
     for key in ["autotests", "autobins"] {
         if table.get("package").and_then(|p| p.get(key)).is_some() {
@@ -565,7 +584,7 @@ fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String>
         }
     }
     let lib = table.get("lib").into_iter();
-    let bins = table.get("bin").and_then(|b| b.as_array()).into_iter().flatten();
+    let bins = table.get("bin").and_then(|b| b.as_array()).into_iter().flatten().filter(|b| !bin_off_the_walk(b));
     for target in lib.chain(bins) {
         for key in ["harness", "required-features", "path"] {
             if target.get(key).is_some() {
@@ -577,6 +596,46 @@ fn crate_manifest(root: &Path, crate_dir: &str, rel: &str) -> Result<(), String>
         }
     }
     Ok(())
+}
+
+/// A `[[bin]]` that Cargo never builds as a test and whose source is no root of the walk: `test = false` and a
+/// relative `path` with no `\`, `:` or `..` component for which `walk_root` is false.
+fn bin_off_the_walk(bin: &toml::Value) -> bool {
+    let Some(p) = bin.get("path").and_then(|p| p.as_str()) else { return false };
+    bin.get("test").and_then(|t| t.as_bool()) == Some(false)
+        && !p.starts_with('/')
+        && !p.contains(['\\', ':'])
+        && !p.split('/').any(|c| c == "..")
+        && !walk_root(p)
+}
+
+/// A crate-relative path that is a root of the walk of `reach` or a Cargo default binary: `src/lib.rs`,
+/// `src/main.rs`, `src/bin/…`, `tests/<x>` or `tests/<x>/main.rs`. Empty and `.` components are dropped.
+fn walk_root(p: &str) -> bool {
+    let c: Vec<&str> = p.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    matches!(c.as_slice(), ["src", "lib.rs"] | ["src", "main.rs"] | ["src", "bin", _, ..] | ["tests", _] | ["tests", _, "main.rs"])
+}
+
+/// True when `p`, resolved lexically from the repository-relative `crate_dir`, is neither `crate_dir` nor under
+/// it. False for an absolute path, a path with `\` or `:`, or one whose `..` pops past the repository root.
+fn leaves_crate(crate_dir: &str, p: &str) -> bool {
+    if p.starts_with('/') || p.contains(['\\', ':']) {
+        return false;
+    }
+    let mut out: Vec<&str> = crate_dir.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    for c in p.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                if out.pop().is_none() {
+                    return false;
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    let base: Vec<&str> = crate_dir.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    !out.starts_with(&base)
 }
 
 /// The CI targets where each `.rs` file of a crate is compiled into a test target, by canonical path; an
@@ -944,6 +1003,12 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
         if !clients.iter().any(|c| c.id == g.client) {
             fault(1, format!("grade file for `{}` names no client", g.client));
         }
+        if let Some(f) = &g.file {
+            let stem = Path::new(f).file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            if stem != g.client {
+                fault(1, format!("grade file `{f}`: its stem `{stem}` is not its client `{}`", g.client));
+            }
+        }
     }
     // 2. each registry criterion graded exactly once, and no other
     for g in grades {
@@ -1075,6 +1140,54 @@ fn client_name(a: Agent) -> &'static str {
         Agent::ClaudeCode => "Claude Code",
         Agent::OpenCode => "OpenCode",
     }
+}
+
+/// The `.toml` files in `docs/conformance/` that are not grade files: the registry and CC-15's exception list.
+const NOT_GRADE_FILES: [&str; 2] = ["capabilities.toml", "boundary-exceptions.toml"];
+
+/// The grade files in `dir`: each file whose extension is `toml` in any case, except `NOT_GRADE_FILES`, names
+/// matched exactly as listed. Subfolders are not grade files (the flat layout of K§6.2.1).
+/// `<client id>.toml` for each client in `Agent::ALL` comes first, in that order, then the others by name, so
+/// that check item 1 sees a grade file of an unknown client or a second file of a client. A client with no
+/// `<client id>.toml`, a grade file that is a symbolic link or not a regular file, and a name that is not UTF-8 are refused.
+pub fn grade_files(dir: &Path) -> Result<Vec<GradeFile>, String> {
+    let mut names = Vec::new();
+    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let e = e.map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = e.path();
+        let name = e.file_name().into_string().map_err(|n| format!("{}: a name that is not UTF-8: {n:?}", dir.display()))?;
+        let toml = Path::new(&name).extension().is_some_and(|x| x.eq_ignore_ascii_case("toml"));
+        if !toml || NOT_GRADE_FILES.contains(&name.as_str()) {
+            continue;
+        }
+        let kind = e.file_type().map_err(|e| format!("{}: {e}", path.display()))?;
+        if kind.is_symlink() {
+            return Err(format!("{}: the grade file is a symbolic link", path.display()));
+        }
+        if !kind.is_file() {
+            return Err(format!("{}: the grade file is not a regular file", path.display()));
+        }
+        names.push(name);
+    }
+    names.sort();
+    let mut ordered = Vec::new();
+    for a in Agent::ALL {
+        let want = format!("{}.toml", a.as_str());
+        let Some(i) = names.iter().position(|n| *n == want) else {
+            return Err(format!("{}: no grade file for client `{}`", dir.join(want).display(), a.as_str()));
+        };
+        ordered.push(names.remove(i));
+    }
+    ordered.extend(names);
+    ordered
+        .iter()
+        .map(|n| {
+            let path = dir.join(n);
+            let mut g = GradeFile::load(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            g.file = Some(n.clone());
+            Ok(g)
+        })
+        .collect()
 }
 
 /// One `Client` per `Agent::ALL`, its version the built-in minimum in `crates/zygo-config/data/agents.toml`.
