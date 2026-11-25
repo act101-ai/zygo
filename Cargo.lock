@@ -3656,6 +3656,7 @@ version = "0.2.1"
 dependencies = [
  "anyhow",
  "libc",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

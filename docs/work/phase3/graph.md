@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| OS-22 | Premise script for PO1 to PO4 | OS-16 | DONE | implementation | 5e4cd273 · bash -n ok, lib.sh 2 · PR #60 |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | DONE | judgment | adb3069b · cargo test -p zygo-config --test repo_def_shape 12 passed; floor green · PR #72 |
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
@@ -214,7 +213,7 @@ Session text (T, SX nodes):
 | ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6 | TODO | implementation | — |
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
-| OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
+| OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | DONE | implementation | aa64beea · acc readbacks 8/zygo-mcp 72/mcp_stdio 4 · PR #96 |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | TODO | implementation | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
@@ -392,3 +391,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | DR-16 DONE: unreadable docs/decisions has its own DirError::Unreadable and line "cannot read docs/decisions"; review: 2 test gaps closed (operator verbs with docs at 000; new writes nothing); floor ws 2949/0 · PR #84 |
 | 2026-11-25 | DR-13 DONE: work_verdict head/base/dispositions + dispositions guard (monitor/notify/enforce); review: short id shadowed by a ref now refused, config warning shown, dispatch tests; bounds header bytes→characters (D§9.2); floor ws 2966/0 · PR #85 |
 | 2026-11-25 | WD-3 DONE: workspace approvals in approvals.toml (repo_def::store; [[workspace]] id+digest; plugin approvals still parse); review: F2 fixed (failed rename drops temp file), F1 refuted (per-section read by design), F3-F5 to operator (approve.rs protocol); floor ws 2961/0 · PR #88 |
+| 2026-11-25 | OS-5 DONE: result_view/search/tree write one read-back row per successful reply; store opened bounded, kept, reopened after a failure. Review: F2 (stderr line test), F3 (positive control), F4 (Store::open doc) fixed; F1 dropped (O§6.4 keeps the store). |
