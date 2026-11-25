@@ -924,3 +924,132 @@ fn pool_user_loadout_job_and_pool_errors_refuse() {
     f.o.config.loadout.insert("pair".into(), Loadout { window: vec![LoadoutWindow { name: None, layout: None, pane: ok }] });
     assert_eq!(f.up(), gone());
 }
+
+/// A pane of a user loadout.
+fn pool_pane(kind: &str, name: Option<&str>, pool: bool, profile: Option<&str>) -> LoadoutPane {
+    LoadoutPane { kind: kind.into(), name: name.map(String::from), pool, profile: profile.map(String::from), ..LoadoutPane::default() }
+}
+
+/// No workspace files; the user loadout `pair` of one window `window` with `panes`; `[workspace] pool = "~/pool"` with
+/// directories `a`, `b`; returns the pool.
+fn pool_user(window: Option<&str>, panes: Vec<LoadoutPane>) -> (Fx, PathBuf) {
+    let mut f = fx(&[]);
+    let w = LoadoutWindow { name: window.map(String::from), layout: None, pane: panes };
+    f.o.config.loadout.insert("pair".into(), Loadout { window: vec![w] });
+    f.o.config.workspace.pool = Some("~/pool".into());
+    let p = pool_dirs(&f.t.join("home"), "pool", &["a", "b"]);
+    (f, p)
+}
+
+fn pool_xy() -> Vec<LoadoutPane> {
+    vec![pool_pane("claude-code", Some("y"), true, None), pool_pane("claude-code", Some("x"), true, None), pool_pane("shell", None, false, None)]
+}
+
+/// `x → a`, `y → b` in passthrough, through the user loadout `pair`.
+fn pool_assert_xy(f: &Fx, p: &Path) {
+    assert_eq!(f.up(), (1, String::new(), format!("{}\n{GONE}", pool_line("x, y", p))));
+    let ws = f.planned();
+    assert_eq!(ws.loadout, "pair");
+    let r = pool_records(&ws);
+    assert_eq!(r["x"], (Some(p.join("a")), Some(p.join("a").to_str().unwrap().into()), true));
+    assert_eq!(r["y"], (Some(p.join("b")), Some(p.join("b").to_str().unwrap().into()), true));
+    assert!(f.git.calls().is_empty(), "{:?}", f.git.calls());
+}
+
+#[test] // review F1: a refusal after step 7 (check_plan) prints no pool line
+fn pool_line_not_printed_when_a_later_step_refuses() {
+    let _g = serial();
+    let (mut f, _p) = pool_user(Some("w\u{1}"), pool_xy());
+    f.o.loadout = Some("pair".into());
+    let (code, out, err) = f.up();
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert_eq!(err, "zygo: window 0: name \"w\\u{1}\" refused: window name holds a control character\n");
+    assert!(!f.state_file().exists());
+}
+
+#[test] // review F2a, R§9.5: `--loadout <user>` takes the pool
+fn pool_user_loadout_by_flag_assigns() {
+    let _g = serial();
+    let (mut f, p) = pool_user(None, pool_xy());
+    f.o.loadout = Some("pair".into());
+    pool_assert_xy(&f, &p);
+}
+
+#[test] // review F2b, R§9.5: `[workspace] default_loadout` naming a user loadout takes the pool
+fn pool_user_default_loadout_assigns() {
+    let _g = serial();
+    let (mut f, p) = pool_user(None, pool_xy());
+    f.o.config.workspace.default_loadout = "pair".into();
+    f.o.default_loadout_set = true;
+    pool_assert_xy(&f, &p);
+}
+
+#[test] // review F2c, R§9.5 "Local mode only": the refusal on a user loadout
+fn pool_user_loadout_with_server_url_refuses() {
+    let _g = serial();
+    let (mut f, p) = pool_user(None, pool_xy());
+    f.o.loadout = Some("pair".into());
+    f.o.config.server.url = Some("https://zygo.invalid".into());
+    assert_eq!(
+        f.up(),
+        (1, String::new(), format!("zygo: pool {}: passthrough is local mode only, and [server] url is set; nothing started\n", p.display()))
+    );
+    assert!(!f.state_file().exists());
+    assert!(f.no_new_session());
+}
+
+#[test] // review F2d, D3: an unnamed pool member is `pane <n>` (1-based in the plan), after the named ones
+fn pool_unnamed_member_is_pane_n() {
+    let _g = serial();
+    let panes = vec![pool_pane("shell", None, false, None), pool_pane("claude-code", None, true, None), pool_pane("claude-code", Some("z"), true, None)];
+    let (mut f, p) = pool_user(None, panes);
+    f.o.loadout = Some("pair".into());
+    assert_eq!(f.up(), (1, String::new(), format!("{}\n{GONE}", pool_line("z, pane 2", &p))));
+    let ws = f.planned();
+    let unnamed = &ws.members[&ws.panes[1].key];
+    assert_eq!((unnamed.config_dir.clone(), unnamed.launch.passthrough), (Some(p.join("b")), true));
+    assert_eq!(pool_records(&ws)["z"].0, Some(p.join("a")));
+}
+
+#[test] // review F2e, R§9.5 "not readable": a pool that cannot be read or searched refuses; a closed subdirectory is
+// listed (names and types only, R-C6)
+fn pool_unreadable_root_exits_1() {
+    let _g = serial();
+    let (mut f, p) = pool_user(None, pool_xy());
+    f.o.loadout = Some("pair".into());
+    for mode in [0o000, 0o600] {
+        fs::set_permissions(&p, fs::Permissions::from_mode(mode)).unwrap();
+        let root = fs::read_dir(&p).and_then(|mut d| d.try_for_each(|e| e?.metadata().map(|_| ()))).is_ok();
+        let got = f.up();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        if root {
+            continue; // running as root: permissions do not apply
+        }
+        assert_eq!(got, (1, String::new(), format!("zygo: pool {}: not readable (PermissionDenied); nothing started\n", p.display())), "{mode:o}");
+        assert!(!f.state_file().exists());
+        assert!(f.no_new_session());
+    }
+    fs::set_permissions(p.join("a"), fs::Permissions::from_mode(0o000)).unwrap();
+    let got = f.up();
+    fs::set_permissions(p.join("a"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(got, (1, String::new(), format!("{}\n{GONE}", pool_line("x, y", &p))));
+}
+
+#[test] // review F2f: names, profiles and the pool path go through `esc`
+fn pool_line_escapes_control_characters() {
+    let _g = serial();
+    let panes = vec![pool_pane("claude-code", Some("a\u{1}"), true, Some("r\u{7}x")), pool_pane("claude-code", Some("b"), true, None)];
+    let mut f = fx(&[]);
+    f.o.config.loadout.insert("pair".into(), Loadout { window: vec![LoadoutWindow { name: None, layout: None, pane: panes }] });
+    let p = pool_dirs(&f.t, "p\u{1b}ool", &["a", "b"]);
+    f.o.config.workspace.pool = Some(p.to_str().unwrap().into());
+    f.o.loadout = Some("pair".into());
+    let (code, _, err) = f.up();
+    assert_eq!(code, 1);
+    // `a\u{1}` is not a valid member name (AU84), so the pane is unnamed: `pane 1`.
+    let line = format!("{}; profile {} of pane 1 does not apply in passthrough\n", pool_line("b, pane 1", &p), esc("r\u{7}x"));
+    assert!(line.contains("r\\u{07}x"), "{line}");
+    assert!(line.contains("p\\u{1b}ool"), "{line}");
+    assert!(err.contains(&line), "{err}");
+    assert!(!err.chars().any(|c| c.is_control() && c != '\n'), "{err:?}");
+}

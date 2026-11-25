@@ -41,7 +41,7 @@ These items are out of scope for phase 2 **(operator)**. Reason: the scope is re
 - Messages between agents, and wake of one agent by another.
 - Triggers (actions that start on an event).
 - Git modes (four modes in an earlier draft) and automatic worktree management. zygo does not create, delete, or switch worktrees.
-- Slots of agents. The config-directory pool returns (workspace definition design R§9.5).
+- Slots of agents. The config-directory pool is in scope (workspace definition design R§9.5) **(operator)**.
 - Toasts (desktop notifications).
 - Restart briefs (text that zygo writes for a fresh restart).
 - Separate `pause` and `resume` verbs. `down` and `up` do this work **(operator, OP1)**.
@@ -583,7 +583,7 @@ Exit codes follow §8.2: `0`, `1` failure or busy, `2` usage or platform. `zygo 
 | Alternative | Why rejected |
 |---|---|
 | A supervisor daemon | Reduced scope **(operator)**. tmux already holds the processes, and hooks plus launchers can write the state (AU1). A daemon adds install and lifecycle work (§18.3). It may return in a later phase. |
-| Messages, wake, triggers, git modes, slots, toasts, restart briefs | Reduced scope **(operator)**. Elephant-goldfish subagents make cross-agent coordination unnecessary for now. They may return in a later phase. The config-directory pool returned (workspace definition design R§9.5) **(operator)**; slots stay a non-goal. |
+| Messages, wake, triggers, git modes, slots, toasts, restart briefs | Reduced scope **(operator)**. Elephant-goldfish subagents make cross-agent coordination unnecessary for now. They may return in a later phase. Slots stay a non-goal; the config-directory pool is in scope (workspace definition design R§9.5) **(operator)**. |
 | Fresh restart by default | **(operator, OP4)**. The operator wants each agent to continue its conversation. A fresh restart loses the lead's plan and context. |
 | A Windows Terminal backend | Windows Terminal has no scriptable layout query or session hooks to snapshot from. OP5 keeps the trait, so a later backend is possible. |
 | A one-agent Windows mode | It gives a second, smaller feature set to keep in step. WSL gives the full feature. |

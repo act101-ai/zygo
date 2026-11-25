@@ -747,6 +747,8 @@ struct Plan {
     forget: Vec<String>,
     loadout: String,
     from_loadout: bool,
+    /// The R§9.5 pool line, printed once the step 8 write succeeds (a later refusal starts nothing).
+    pool_line: Option<String>,
 }
 
 /// The lines of step 12, by group (D23).
@@ -926,9 +928,7 @@ fn loadout_plan(
     for w in &plan.warnings {
         say(err, &format!("zygo: {w}"));
     }
-    if let Some(l) = apply_pool(opts, &mut plan)? {
-        say(err, &l);
-    }
+    let pool_line = apply_pool(opts, &mut plan)?;
     let mut taken: BTreeSet<String> = match ws {
         Some(w) if !opts.reset => w.members.keys().chain(w.panes.iter().map(|p| &p.key)).cloned().collect(),
         _ => BTreeSet::new(),
@@ -942,6 +942,7 @@ fn loadout_plan(
         forget: vec![],
         loadout: plan.loadout.clone(),
         from_loadout: true,
+        pool_line,
     };
     for (wi, pw) in plan.windows.iter().enumerate() {
         let mut panes = Vec::with_capacity(pw.panes.len());
@@ -987,6 +988,7 @@ fn restore_plan(store: &Store, cur: &Workspace, report: &mut Report) -> Plan {
         forget: vec![],
         loadout: cur.loadout.clone(),
         from_loadout: false,
+        pool_line: None,
     };
     let indexes: BTreeSet<u32> = cur.panes.iter().map(|p| p.window).collect();
     for idx in indexes {
@@ -1376,6 +1378,9 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             Ok(())
         })
         .map_err(write_err)?;
+    if let Some(l) = &plan.pool_line {
+        say(err, l);
+    }
     let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), written.tmux_socket.clone()), &id, snapshot::OP_WAIT);
     // Step 9.
     let first = &plan.windows[0];
