@@ -1542,6 +1542,13 @@ fn render_json_spec_example_values() {
 }
 
 #[test]
+fn render_json_weights_match_derive() {
+    let v = jv(&json_of(&render_input()));
+    let w = ["core", "standard", "extra"].map(|k| v["weights"][k].as_u64().unwrap());
+    assert_eq!(w, derive::WEIGHTS.map(u64::from));
+}
+
+#[test]
 fn render_json_key_order() {
     let json = json_of(&synth_input(&[(Tier::Core, &[Status::Met][..])]));
     let counts = ["full", "partial", "none", "na", "met", "applicable"];

@@ -110,6 +110,9 @@ fn counts(cap: &Capability, g: &GradeFile) -> (u32, u32) {
     (met, applicable)
 }
 
+/// The tier weights of the total score (K§6.2.4): core, standard, extra.
+pub const WEIGHTS: [u32; 3] = [3, 2, 1];
+
 /// The tier and total scores of `g`. Panics with `score fraction overflow` when an exact value or an intermediate
 /// product (for example 100 × num in the percent) does not fit in `u128`, even when the exact result would fit:
 /// it fails closed and never gives a wrong score.
@@ -129,7 +132,8 @@ pub fn scores(reg: &Registry, g: &GradeFile) -> Scores {
         (n > 0).then(|| fits(sum(values).div(n)))
     };
     let (core, standard, extra) = (tier(Tier::Core), tier(Tier::Standard), tier(Tier::Extra));
-    let weighted = [(3, core), (2, standard), (1, extra)];
+    let [wc, ws, we] = WEIGHTS.map(u128::from);
+    let weighted = [(wc, core), (ws, standard), (we, extra)];
     let weights: u128 = weighted.iter().filter(|(_, s)| s.is_some()).map(|(w, _)| w).sum();
     let total = (weights > 0).then(|| {
         let terms = weighted.iter().filter_map(|&(w, s)| s.map(|s| fits(s.mul(w)))).collect();

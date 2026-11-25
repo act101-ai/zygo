@@ -321,7 +321,7 @@ pub fn json(reg: &Registry, grades: &[GradeFile], clients: &[Client], _res: &Res
             }
         })
         .collect();
-    let doc = JDoc { generated_by: GENERATED_BY, weights: JWeights { core: 3, standard: 2, extra: 1 }, clients };
+    let doc = JDoc { generated_by: GENERATED_BY, weights: JWeights { core: derive::WEIGHTS[0], standard: derive::WEIGHTS[1], extra: derive::WEIGHTS[2] }, clients };
     serde_json::to_string_pretty(&doc).expect("the conformance JSON serializes") + "\n"
 }
 
