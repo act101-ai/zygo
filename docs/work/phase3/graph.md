@@ -237,7 +237,7 @@ Session text (T, SX nodes):
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | WD-3 | Workspace approvals in `approvals.toml` | WD-2 | TODO | judgment | — |
-| SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | TODO | implementation | — |
+| SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | IN-PROGRESS | implementation | .worktrees/phase3/SX-6-node · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | TODO | implementation | — |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
 | ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8 | TODO | implementation | — |
