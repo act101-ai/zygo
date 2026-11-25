@@ -6,6 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
@@ -68,16 +69,20 @@ fn ws() -> Workspace {
     ws.members.insert(ELENA.into(), m);
     ws
 }
-struct Setup { _t: TempDir, p: Paths, s: Store, w: Workspace, guard: Option<fs::File> }
+/// One test at a time: the tmux test forks, and a child that has not yet run `exec` keeps an inherited `flock` (the
+/// `wake.lock` of another test's wake, or a `pid` lock) held, so a parallel test could see `Gap` or `NotLive`.
+static FORKS: Mutex<()> = Mutex::new(());
+struct Setup { _t: TempDir, p: Paths, s: Store, w: Workspace, guard: Option<fs::File>, _g: MutexGuard<'static, ()> }
 /// A temporary folder, a live `s1`, and one message to ELENA in `new/`.
 fn setup() -> Setup {
+    let g = FORKS.lock().unwrap_or_else(|e| e.into_inner());
     let t = TempDir::new().unwrap();
     let p = paths(t.path());
     let s = Store::open(&p, ID);
     let guard = Some(live(&p, "s1"));
     let m = Message::new("lead", "elena", "subj-7f3a", "body-9c1e", at(T0)).unwrap();
     mail_store::deliver(&mail_dir(&p, ID), ELENA, "elena", &m, 500).unwrap();
-    Setup { _t: t, p, s, w: ws(), guard }
+    Setup { _t: t, p, s, w: ws(), guard, _g: g }
 }
 
 struct At { idle: bool, now: SystemTime }

@@ -98,7 +98,9 @@ Unit: phase3:ML-6:plan
 
   Check: `cargo test -p zygo-workspace --test mail_wake` fails to compile (no `mail::wake`, no `Store::live_session`).
 
-  Deviation (step 1): in `second_wake_inside_the_gap_is_skipped` the test removes `wake.json` before the `213503982334601d` case (`crates/zygo-workspace/tests/mail_wake.rs:286`). The wake of the text `x` case just before writes `woken_at` = `T0`, so without the remove the first huge-gap wake at `T0` is `Gap`, not `Woken`. The intent (huge gap: wake, then `Gap`, no panic) is kept.
+  Deviation (step 1): in `second_wake_inside_the_gap_is_skipped` the test removes `wake.json` before the `213503982334601d` case (`crates/zygo-workspace/tests/mail_wake.rs:291`). The wake of the text `x` case just before writes `woken_at` = `T0`, so without the remove the first huge-gap wake at `T0` is `Gap`, not `Woken`. The intent (huge gap: wake, then `Gap`, no panic) is kept.
+
+  Deviation (step 1, found in step 4): the tests of `mail_wake.rs` run one at a time. `setup()` holds the test-only mutex `FORKS` (`crates/zygo-workspace/tests/mail_wake.rs:74`), as `serial()` in `tests/admin.rs` and `forks()` in `tests/mux.rs` do. Cause: the tmux test forks, and a child that has not yet run `exec` keeps an inherited `flock` held, so a parallel wake saw `WouldBlock` on `wake.lock` and gave `Gap` (`second_wake_inside_the_gap_is_skipped`, 1 failure in 78 runs; 0 in 300 runs without the tmux test; 0 in 300 runs with the mutex). No product code changed for this.
 
 - [x] **2. `Store::live_session`** in `crates/zygo-workspace/src/state.rs` (D1), after `live_launcher`: `pub fn live_session(&self, m: &MemberRecord) -> Option<PathBuf>`. Doc: `The live session folder of a member (D14): sessions/<pending.zygo_session> when live, else sessions/<zygo_session> when live; an id that fails valid_session_id is not looked up.` It is the rule of `down.rs:822`, with `self.sessions_dir` and `valid_session_id`. `down.rs` does not change.
 
