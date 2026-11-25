@@ -98,6 +98,7 @@ mod tests {
             compact: compact.map(String::from),
             yolo: true,
             config_dir: None,
+            name: None,
             rest: vec!["-p".into(), "hi".into()],
         }
     }

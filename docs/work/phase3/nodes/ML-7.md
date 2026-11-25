@@ -63,7 +63,7 @@ Steps:
 - [x] 3. In `session_view.rs:135-140`, add to `Member` before `extra`: `/// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view.` `#[serde(default, skip_serializing_if = "Option::is_none")] pub name: Option<String>,`
 - [x] 4. Run `cargo test -p zygo-core --test core_basics`. Check: all pass, `session_view_member_name_is_optional_and_round_trips` among them.
 - [x] 5. Commit `crates/zygo-core/src/session_view.rs` and `crates/zygo-core/tests/core_basics.rs`, message `ML-7: member name in the session view marker` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-7:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
-- [ ] 6. In the `tests` module of `crates/zygo/src/cmd/mod.rs` (`:604`), add (import `super::Cmd` and `clap::CommandFactory`):
+- [x] 6. In the `tests` module of `crates/zygo/src/cmd/mod.rs` (`:604`), add (import `super::Cmd` and `clap::CommandFactory`):
   ```rust
   #[test] // M§6: `--name <n>` on both launch verbs; DR-4 carried item: the help names `new`
   fn launch_name_parses_for_both_agents_and_help_lists_decision_new() {
@@ -76,10 +76,10 @@ Steps:
       assert!(Cli::command().render_help().to_string().contains("Decision records: new, ls, show, deps, check"));
   }
   ```
-- [ ] 7. Run `cargo test -p zygo --lib launch_name_parses`. Check: E0609, no field `name` on `Launch`.
-- [ ] 8. In `mod.rs`, add to `Launch` after `config_dir`: `/// Member name in a workspace pane (M§6)` `#[arg(long)] pub(crate) name: Option<String>,`; to `LaunchOpenCode` after `yolo`: `#[arg(long)] pub(crate) name: Option<String>,`; change `mod.rs:361` to `/// Decision records: new, ls, show, deps, check`. Add `name: None` to the literals at `ws.rs:422` and `ws.rs:436` (`ws run` takes the name from the record, step 13), `claude.rs:94` and `opencode.rs:65`. Check: `cargo build -p zygo` compiles.
-- [ ] 9. Run `cargo test -p zygo --lib`. Check: all pass.
-- [ ] 10. In the `tests` module of `crates/zygo/src/cmd/member.rs` (import `zygo_workspace::state::Pane`), add:
+- [x] 7. Run `cargo test -p zygo --lib launch_name_parses`. Check: E0609, no field `name` on `Launch`.
+- [x] 8. In `mod.rs`, add to `Launch` after `config_dir`: `/// Member name in a workspace pane (M§6)` `#[arg(long)] pub(crate) name: Option<String>,`; to `LaunchOpenCode` after `yolo`: `#[arg(long)] pub(crate) name: Option<String>,`; change `mod.rs:361` to `/// Decision records: new, ls, show, deps, check`. Add `name: None` to the literals at `ws.rs:422` and `ws.rs:436` (`ws run` takes the name from the record, step 13), `claude.rs:94` and `opencode.rs:65`. Check: `cargo build -p zygo` compiles.
+- [x] 9. Run `cargo test -p zygo --lib`. Check: all pass.
+- [x] 10. In the `tests` module of `crates/zygo/src/cmd/member.rs` (import `zygo_workspace::state::Pane`), add:
   ```rust
   #[test] // M§6, AU84: a name held by another key's record or pane entry; its own key and a bad stored name hold none
   fn name_holder_reads_other_keys_by_au84() {
@@ -106,9 +106,9 @@ Steps:
       assert!(kept(&w, "kbbbbbbbb", Agent::ClaudeCode, Some("abc")).is_none());
   }
   ```
-- [ ] 11. Run `cargo test -p zygo --lib -- name_holder kept_is`. Check: E0425, `name_holder` and `kept` not found.
-- [ ] 12. In `member.rs` before `join`, add `name_holder` (the first `ws.members` entry with key ≠ `key` and `valid_name() == Some(name)`, else the first `ws.panes` entry with key ≠ `key` and `valid_name() == Some(name)`; its key) and `kept` (`own?`, then `ws.members.get(key)` filtered by `agent_session.as_deref() == Some(own) && launch.kind == kind`). In `join` replace `member.rs:814-815` by `let keep = kept(ws, key, launch.kind, own).is_some();`. Run `cargo test -p zygo --lib`. Check: all pass, the existing `join_*` tests unchanged.
-- [ ] 13. Commit `crates/zygo/src/cmd/{mod,member,ws,claude,opencode}.rs`, message `ML-7: --name flag, name_holder, kept`, same trailers. Check: `git show --stat HEAD` lists those five files.
+- [x] 11. Run `cargo test -p zygo --lib -- name_holder kept_is`. Check: E0425, `name_holder` and `kept` not found.
+- [x] 12. In `member.rs` before `join`, add `name_holder` (the first `ws.members` entry with key ≠ `key` and `valid_name() == Some(name)`, else the first `ws.panes` entry with key ≠ `key` and `valid_name() == Some(name)`; its key) and `kept` (`own?`, then `ws.members.get(key)` filtered by `agent_session.as_deref() == Some(own) && launch.kind == kind`). In `join` replace `member.rs:814-815` by `let keep = kept(ws, key, launch.kind, own).is_some();`. Run `cargo test -p zygo --lib`. Check: all pass, the existing `join_*` tests unchanged.
+- [x] 13. Commit `crates/zygo/src/cmd/{mod,member,ws,claude,opencode}.rs`, message `ML-7: --name flag, name_holder, kept`, same trailers. Check: `git show --stat HEAD` lists those five files.
 - [ ] 14. In `crates/zygo/tests/workspace_member.rs`, add after `errors_log` the constants and tests below. Common shape: `let (out, env) = h.stub(Agent::ClaudeCode, "a");`, launch by `hand(&h, &pane, args, &pairs(&env))` or `h.zygo(..)` under `Guarded::spawn(..).output(..)`; tmux cases begin `let Some(h) = Harness::new() else { return };` and carry `#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]`; no-tmux launches carry `#[ignore = "timing: the agent launch has 2 s launcher probes"]`.
   ```rust
   const NAME_NEEDS_PANE: &str = "zygo: --name needs a pane of a workspace; nothing started\n";

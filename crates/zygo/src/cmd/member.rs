@@ -787,6 +787,23 @@ pub(crate) fn conflict(
     }
 }
 
+/// The key of another member that holds the member name `name` (M§6): the first record of `ws.members`, else the first
+/// entry of `ws.panes`, with a key other than `key` whose stored name passes the grammar (AU84) and equals `name`.
+pub(crate) fn name_holder(ws: &Workspace, key: &str, name: &str) -> Option<String> {
+    ws.members
+        .iter()
+        .find(|(k, r)| k.as_str() != key && r.valid_name() == Some(name))
+        .map(|(k, _)| k.clone())
+        .or_else(|| ws.panes.iter().find(|p| p.key != key && p.valid_name() == Some(name)).map(|p| p.key.clone()))
+}
+
+/// The record of `key` that [`join`] keeps: the accepted resume only, whose `agent_session` is `own` and whose kind is
+/// `kind` (review round 2, finding 6(b)).
+pub(crate) fn kept<'a>(ws: &'a Workspace, key: &str, kind: Agent, own: Option<&str>) -> Option<&'a MemberRecord> {
+    let own = own?;
+    ws.members.get(key).filter(|r| r.agent_session.as_deref() == Some(own) && r.launch.kind == kind)
+}
+
 /// The one start write of a hand start (D2, W§8.4), in the closure of the callback's locked write: the phase must be
 /// `up` or `draining`; then [`conflict`]; then the record of `key` is kept for the accepted resume (`own` is its
 /// `agent_session` and its kind is the launch's kind) and replaced by a new one otherwise; then state `running`, and
@@ -804,8 +821,7 @@ pub(crate) fn join(
     if let Some(c) = conflict(ws, key, launch.kind, own, live) {
         return Err(c.reason(key));
     }
-    let keep = own.is_some()
-        && ws.members.get(key).is_some_and(|r| r.agent_session.as_deref() == own && r.launch.kind == launch.kind);
+    let keep = kept(ws, key, launch.kind, own).is_some();
     if !keep {
         ws.members.remove(key);
     }
@@ -967,7 +983,7 @@ mod tests {
     use zygo_core::Agent;
     use zygo_launch::env::Env;
     use zygo_launch::launcher::LaunchOutcome;
-    use zygo_workspace::state::{CompactOverride, Launch, MemberRecord, MemberState, Pending, Phase, Subagent};
+    use zygo_workspace::state::{CompactOverride, Launch, MemberRecord, MemberState, Pane, Pending, Phase, Subagent};
 
     fn out(code: i32, signal: Option<i32>, received: bool, ran: u64) -> LaunchOutcome {
         LaunchOutcome { code, signal, spawned: true, received, ran: Some(Duration::from_secs(ran)) }
@@ -1312,6 +1328,31 @@ mod tests {
         r.agent_session = agent.map(String::from);
         r.zygo_session = Some("01JZZZZZZZZZZZZZZZZZZZZZZZ".into());
         r
+    }
+
+    #[test] // M§6, AU84: a name held by another key's record or pane entry; its own key and a bad stored name hold none
+    fn name_holder_reads_other_keys_by_au84() {
+        let mut a = rec(MemberState::Ended, None);
+        a.name = Some("elena".into());
+        let mut b = rec(MemberState::Ended, None);
+        b.name = Some("x_y".into());
+        let mut w = ws_with(&[("kaaaaaaaa", a), ("kbbbbbbbb", b)]);
+        w.panes.push(Pane { key: "kcccccccc".into(), name: Some("ops".into()), ..Default::default() });
+        assert_eq!(name_holder(&w, "kbbbbbbbb", "elena"), Some("kaaaaaaaa".to_string()));
+        assert_eq!(name_holder(&w, "kaaaaaaaa", "elena"), None);
+        assert_eq!(name_holder(&w, "kaaaaaaaa", "x_y"), None);
+        assert_eq!(name_holder(&w, "kaaaaaaaa", "ops"), Some("kcccccccc".to_string()));
+        assert_eq!(name_holder(&w, "kcccccccc", "ops"), None);
+    }
+
+    #[test] // the record that `join` keeps: the accepted resume only (review round 2, finding 6(b))
+    fn kept_is_the_record_of_its_own_resume_only() {
+        let w = ws_with(&[("kaaaaaaaa", rec(MemberState::Resumable, Some("abc")))]);
+        assert!(kept(&w, "kaaaaaaaa", Agent::ClaudeCode, Some("abc")).is_some());
+        assert!(kept(&w, "kaaaaaaaa", Agent::ClaudeCode, None).is_none());
+        assert!(kept(&w, "kaaaaaaaa", Agent::ClaudeCode, Some("xyz")).is_none());
+        assert!(kept(&w, "kaaaaaaaa", Agent::OpenCode, Some("abc")).is_none());
+        assert!(kept(&w, "kbbbbbbbb", Agent::ClaudeCode, Some("abc")).is_none());
     }
 
     #[test]

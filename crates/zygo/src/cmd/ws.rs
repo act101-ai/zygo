@@ -426,6 +426,7 @@ pub(crate) fn launch_of(rec: &MemberRecord, resumed: bool) -> Launch {
         compact: effective_compact(rec),
         yolo: l.yolo,
         config_dir: if resumed { None } else { l.config_dir.clone() },
+        name: None,
         rest: l.args.clone(),
     }
 }
@@ -438,6 +439,7 @@ pub(crate) fn launch_open_code_of(rec: &MemberRecord) -> LaunchOpenCode {
         server: l.server.clone(),
         compact: effective_compact(rec),
         yolo: l.yolo,
+        name: None,
         rest: l.args.clone(),
     }
 }

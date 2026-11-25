@@ -67,6 +67,7 @@ mod tests {
             server: Some("https://example.invalid".into()),
             compact: compact.map(String::from),
             yolo: true,
+            name: None,
             rest: vec!["run".into(), "x".into()],
         }
     }
