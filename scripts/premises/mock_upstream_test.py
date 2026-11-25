@@ -269,6 +269,28 @@ def run(m):
     refused("M18", "GET ws://127.0.0.1:%d/v1/models HTTP/1.1\r\nHost: x\r\n\r\n" % m.port,
             "127.0.0.1:%d GET refused" % m.port)
 
+    # M19-M21 (review round 2, G8): a request line over 64 KiB (414) or a header line too long
+    # (431) is answered by the base class before any handler; a proxy request among them is still
+    # recorded (host and port ? when the target is cut off or does not parse; the method as read).
+    def overlong(case, text, want_status, want_line):
+        before_txt, before = m.connect_txt(), m.records()
+        try:
+            line, _ = m.raw(text)
+        except OSError as e:
+            line = "error %r" % e
+        got = m.connect_txt()[len(before_txt):]
+        check(case, line.startswith("HTTP/1.1 %d" % want_status) and got == want_line
+              and m.records() == before,
+              "status %r, new connect.txt %r, records %d -> %d" % (line, got[:200], len(before), len(m.records())))
+
+    big = "a" * 70000
+    overlong("M19", "GET http://evil.example/%s HTTP/1.1\r\nHost: x\r\n\r\n" % big, 414,
+             "evil.example:80 GET refused\n")
+    overlong("M20", "CONNECT %s:443 HTTP/1.1\r\nHost: x\r\n\r\n" % ("e" * 70000), 414, "?:? refused\n")
+    overlong("M21", "GET http://evil4.example/ HTTP/1.1\r\nHost: x\r\nX-A: %s\r\n\r\n" % big, 431,
+             "evil4.example:80 GET refused\n")
+    overlong("M21 origin", "GET /v1/models HTTP/1.1\r\nHost: x\r\nX-A: %s\r\n\r\n" % big, 431, "")
+
     # M9 (last: it stops the mock): another credential gives 401 and ABORT.
     st, _, _ = m.req("POST", "/v1/responses", {"model": "m", "input": "m9"}, auth="other")
     check("M9", st == 401 and os.path.exists(os.path.join(m.dir, "ABORT")), "got %s" % st)

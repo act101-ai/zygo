@@ -219,6 +219,33 @@ class Handler(BaseHTTPRequestHandler):
     def do_CONNECT(self):
         self._refuse("%s refused" % self.path.rpartition("@")[2])
 
+    def send_error(self, code, message=None, explain=None):
+        # 414 (request line over 64 KiB) and 431 (a header line too long, or too many headers)
+        # come from the base class before any do_<METHOD>: a proxy request among them is recorded
+        # too, then the base class answers and closes.
+        if code in (414, 431):
+            self._record_overlong()
+        super().send_error(code, message, explain)
+
+    def _record_overlong(self):
+        """Record the request line read so far when its target is not origin-form. The target is
+        cut off (414: no version after it): host and port are then ? unless an absolute URI's
+        authority ended inside it. The method is the first word as read."""
+        words = self.raw_requestline.decode("latin-1").split(None, 2)
+        method = words[0] if words else "?"
+        target = words[1] if len(words) > 1 else ""
+        if target.startswith("/"):
+            return
+        cut = len(words) < 3 and not re.match(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*[/?#]", target)
+        if method == "CONNECT":
+            line = "%s refused" % ("?:?" if cut else target.rpartition("@")[2])
+        else:
+            host, port = ("?", "?") if cut else target_line(target)[:2]
+            line = "%s:%s %s refused" % (host, port, method)
+        with LOCK:
+            with open(os.path.join(self.server.cfg["dir"], "connect.txt"), "a") as f:
+                f.write(line + "\n")
+
     def _proxy_target(self):
         """A request-target that is not origin-form ("/..."): refuse and record it, return True.
         An http or https absolute URI to the mock's own address (127.0.0.1, localhost or [::1]
