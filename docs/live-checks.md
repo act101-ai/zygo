@@ -1,6 +1,6 @@
 # Live checks (node N38)
 
-Checks on the real pinned agents, one dated result per check. A pinned agent version is a minimum (operator, 2026-11-21). Spec: `docs/specs/2026-11-18-zygo-design.md` §20 #16b, #21, #28, #40; §19 P1; §7.6; the N24, N25, N14, N15, N28, N33, N34, N35 notes; `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (P-HUD-1, and the PRB-1 probe); `docs/specs/2026-11-20-workspaces-design.md` W§17 (node P2).
+Checks on the real pinned agents, one dated result per check. A pinned agent version is a minimum (operator, 2026-11-21). Spec: `docs/specs/2026-11-18-zygo-design.md` §20 #16b, #21, #28, #40; §19 P1; §7.6; the N24, N25, N14, N15, N28, N33, N34, N35 notes; `docs/specs/2026-11-21-statusline-hud-design.md` H§12 (P-HUD-1, and the PRB-1 probe); `docs/specs/2026-11-20-workspaces-design.md` W§17 (node P2); `docs/specs/2026-11-24-session-text-design.md` T§12.2 (P3-15).
 
 Claude Code: 2.1.328 or later
 OpenCode: 1.18.16 or later
@@ -144,6 +144,120 @@ PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-attribution.sh [login 
 - Part `mock` uses no login and no key, with a temporary `HOME`: Claude Code alone on the mock upstream (the control, with Claude Code's default attribution), Claude Code alone with `--bare` (recorded only), then `zygo claude` (not passthrough) on the mock, without and with `--bare`. It counts the recorded requests that hold Claude Code's own commit attribution text (the Anthropic noreply address in angle brackets, or the generated line with its link; zygo's session sentence names both forms without the brackets and the link). Pass: the control has such a request, and no zygo request has one.
 - Tools: `Write`, and `Bash` only for `git add` and `git commit` (no `--yolo`). Spend: at most 8 turns on haiku in each of the two sign-in runs (the `bare` run stops before its first request).
 - It prints one `LIVE <id> pass|fail|recorded (agent <version>): …` line for each of FIX21-LOGIN, FIX21-BARE-ZYGO, FIX21-BARE and FIX21-MOCK, and writes `fixtures/claude-code/live/fix21-login.json`, `fix21-bare.json` and `fix21-mock.json`.
+
+## P3-15 (session text after a compaction and in subagents)
+
+Node SX-8; `docs/specs/2026-11-24-session-text-design.md` T§12.2 (ST1, ST2, ST3, ST4 of T§12.1). The text below is a copy of T§12.2; T§12.2 is the authority, and a change there is copied here. Results go to the `docs/premises.md` "Results" table (rows ST1 to ST4) as T§12.1 "How a result enters the repository" says, and a dated row goes to the "Results" table of this file, as for the other checks.
+
+Run on your own machine with your normal Claude Code and OpenCode logins. It runs no zygo and no CI job; from this repository it uses only `scripts/premises/scrub.py`. Claude Code runs once in print mode on Haiku with no compaction: about 5 model requests, about 80,000 input tokens in all (each request sends the whole context again; most of it is a cache read). OpenCode runs three short turns and one compaction on the models you pick.
+
+What it leaves on your machine, and how to remove it (step 8): Claude Code writes its transcripts to `~/.claude/projects/<folder name>/`, and it can add an entry for the scratch folder to `~/.claude.json`; OpenCode keeps the scratch session in its own data folder. It does not load your user settings or MCP servers (`--setting-sources project,local`, `--strict-mcp-config`), and it does not change your config files.
+
+**Claude Code (ST1, ST2)**
+
+1. Make a scratch folder with the probe hook, its settings file and a one-agent plugin:
+
+```sh
+S=$(mktemp -d "${TMPDIR:-/tmp}/p315.XXXXXX") && cd "$S" && git init -q
+cat > probe.py <<'EOF'
+import json, sys
+d = json.load(sys.stdin)
+open(sys.argv[1], "a").write(json.dumps(d) + "\n")
+ev = d.get("hook_event_name", "")
+if ev in ("SessionStart", "SubagentStart"):
+    who = "sub" if "agent_id" in d else "main"
+    tag = "CANARY-%s-%s-%s" % (ev, d.get("source", "na"), who)
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": ev, "additionalContext": "\n" + tag}}))
+EOF
+H="python3 -I $S/probe.py $S/hooks.jsonl"
+E='[{"hooks":[{"type":"command","command":"'"$H"'"}]}]'
+printf '{"hooks":{"SessionStart":%s,"SubagentStart":%s}}\n' "$E" "$E" > settings.json
+mkdir -p plug/p315/.claude-plugin plug/p315/agents
+printf '{"name":"p315","version":"0.0.1"}\n' > plug/p315/.claude-plugin/plugin.json
+printf -- '---\nname: probe\ndescription: Replies DONE.\n---\nReply with the word DONE and nothing else.\n' > plug/p315/agents/probe.md
+echo "$S"
+```
+
+2. Run Claude Code once. It waits for each subagent (no background subagents, no fork mode) and exits after its reply:
+
+```sh
+cd "$S" && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 CLAUDE_CODE_FORK_SUBAGENT=0 claude -p --model haiku --setting-sources project,local --strict-mcp-config --settings "$S/settings.json" --plugin-dir "$S/plug/p315" "Call the general-purpose subagent with the task 'Reply with the word DONE.' and wait for its result. Then call the p315:probe subagent with the task 'Reply with the word DONE.' and wait for its result. Then reply with both results."
+```
+
+3. Read the evidence from the subagent transcripts (`~/.claude/projects/<project>/<session>/subagents/agent-<id>.jsonl`, https://code.claude.com/docs/en/sub-agents). Only entries that are not `assistant` entries count, so a model's own words are never evidence:
+
+```sh
+python3 -I - "$S/hooks.jsonl" > "$S/evidence.txt" <<'EOF'
+import json, os, sys
+hooks = [json.loads(l) for l in open(sys.argv[1])]
+main = next(h for h in hooks if h.get("hook_event_name") == "SessionStart" and "agent_id" not in h)
+base = main["transcript_path"][: -len(".jsonl")]
+for h in hooks:
+    if h.get("hook_event_name") != "SubagentStart":
+        continue
+    p = os.path.join(base, "subagents", "agent-%s.jsonl" % h["agent_id"])
+    kinds = []
+    if os.path.exists(p):
+        for line in open(p):
+            e = json.loads(line)
+            if e.get("type") != "assistant" and "CANARY-SubagentStart" in line:
+                kinds.append(str(e.get("type")))
+    print(h.get("agent_type"), "transcript" if os.path.exists(p) else "no-transcript", "canary:" + (",".join(kinds) or "none"))
+EOF
+cat "$S/evidence.txt"
+```
+
+**OpenCode (ST3, ST4)**
+
+4. Pick two different model ids of one OpenCode provider, `MAIN` and `SUB` (for example a Sonnet id and a Haiku id). `small_model` is set to `MAIN`, so a title request cannot look like a subagent request. Make the probe plugin and start OpenCode in the scratch folder:
+
+```sh
+mkdir -p "$S/oc/plugins" && cat > "$S/oc/plugins/probe.js" <<'EOF'
+import { appendFileSync } from "node:fs";
+const put = (o) => { try { appendFileSync(process.env.P315_LOG, JSON.stringify({ t: Date.now(), ...o }) + "\n"); } catch {} };
+export const P315 = async () => ({
+  "experimental.chat.system.transform": async (input) => put({ hook: "transform", model: input?.model?.id, session: input?.sessionID ?? null, keys: Object.keys(input ?? {}).sort() }),
+  "experimental.session.compacting": async (input) => put({ hook: "compacting", session: input?.sessionID ?? null, keys: Object.keys(input ?? {}).sort() }),
+});
+EOF
+cd "$S" && P315_LOG="$S/oc.jsonl" OPENCODE_CONFIG_DIR="$S/oc" OPENCODE_CONFIG_CONTENT='{"small_model":"<provider>/<MAIN>","agent":{"general":{"model":"<provider>/<SUB>"}}}' opencode -m <provider>/<MAIN>
+```
+
+5. Type: `Use the general subagent to read probe.py and tell me its first line.` Wait until its answer is shown. Type `/compact` and wait until the summary is shown. Type `Reply OK.` and wait for the reply. Exit OpenCode.
+
+**Capture**
+
+6. From the checkout of this repository:
+
+```sh
+python3 -I scripts/premises/scrub.py "$S" "$S/hooks.jsonl" > fixtures/claude-code/live/st-hooks.jsonl
+cp "$S/evidence.txt" fixtures/claude-code/live/st-evidence.txt
+python3 -I scripts/premises/scrub.py "$S" "$S/oc.jsonl" > fixtures/opencode/live/st-transform.jsonl
+claude --version; opencode --version
+```
+
+7. Send the three files, the two version lines, the MAIN and SUB model ids chosen in step 4, and whether the subagent's answer was shown in step 5 (yes or no) to the lead.
+
+8. Remove what the check left. Close every Claude Code session first, because `~/.claude.json` is shared:
+
+```sh
+rm -rf ~/.claude/projects/*p315*
+cp ~/.claude.json ~/.claude.json.bak-p315
+python3 -I -c 'import json,os; p=os.path.expanduser("~/.claude.json"); d=json.load(open(p)); r=[k for k in list(d.get("projects",{})) if "p315" in k]; [d["projects"].pop(k) for k in r]; json.dump(d,open(p,"w"),indent=2); print("removed", r)'
+rm -rf "$S"
+```
+
+Once Claude Code starts normally, delete `~/.claude.json.bak-p315`.
+
+The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's session list if you want it gone.
+
+**Reading the result** (the lead, `docs/specs/2026-11-24-session-text-design.md` T§12.1 "How a result enters the repository"):
+
+- ST1 verified: the `general-purpose` line of `st-evidence.txt` says `transcript` and `canary:` with at least one entry. ST1 failed: it says `transcript` and `canary:none`. `no-transcript`: not decided; no row.
+- ST2: the same for the `p315:probe` line.
+- ST3 verified: `st-transform.jsonl` holds a `transform` line with model `MAIN` after the `compacting` line, with the same `session` when both lines have one. Failed: no such line, while the log shows the `Reply OK.` turn ran (a `transform` line before the `compacting` line exists).
+- ST4 verified: it holds a `transform` line with model `SUB`. Failed: none, while the subagent's answer was shown in step 5.
+- The `keys` lists go into the rows as information; they change no behavior in the session-text spec.
 
 ## Results
 
