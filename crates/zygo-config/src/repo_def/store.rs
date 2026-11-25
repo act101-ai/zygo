@@ -116,19 +116,56 @@ pub fn approve_workspace_in(file: &Path, ws_id: &str, digest: &str) -> anyhow::R
         .with_context(|| format!("{}: workspace is not an array of tables", file.display()))?;
 
     let tmp = dir.join(format!(".{name}.{}.tmp", zygo_core::ids::ulid()));
+    write_replace(&tmp, &out, file, |from, to| std::fs::rename(from, to))?;
+    drop(lock);
+    Ok(Stored::Added)
+}
+
+/// Writes `out` to the new file `tmp`, `fsync`, then `rename(tmp, file)`; on any error `tmp` is removed.
+fn write_replace(
+    tmp: &Path,
+    out: &str,
+    file: &Path,
+    rename: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> anyhow::Result<()> {
     let res = (|| -> std::io::Result<()> {
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&tmp)?;
+            .open(tmp)?;
         f.write_all(out.as_bytes())?;
         f.sync_all()?;
-        std::fs::rename(&tmp, file)
+        rename(tmp, file)
     })();
     if let Err(e) = res {
-        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(tmp);
         return Err(e).with_context(|| file.display().to_string());
     }
-    drop(lock);
-    Ok(Stored::Added)
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// R§11 "Approval write fails": a rename that fails after the temp file exists leaves the file as it was and
+    /// no temp file.
+    #[test]
+    fn failed_rename_removes_the_temp_file() {
+        let t = tempfile::tempdir().unwrap();
+        let file = t.path().join("approvals.toml");
+        std::fs::write(&file, "# before\n").unwrap();
+        let tmp = t.path().join(".approvals.toml.x.tmp");
+        let r = write_replace(&tmp, "# after\n", &file, |from, _| {
+            assert!(from.exists(), "the temp file exists when the rename runs");
+            Err(std::io::Error::other("injected rename failure"))
+        });
+        assert!(r.is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"# before\n");
+        let names: Vec<_> = std::fs::read_dir(t.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["approvals.toml"]);
+    }
 }
