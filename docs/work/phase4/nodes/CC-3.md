@@ -1,0 +1,22 @@
+# CC-3 — Core client module: `zygo_core::client`, the descriptor type, concerns 1 and 2, `Dialect` in core
+
+**Spec:** docs/specs/2026-11-25-client-model-design.md K§6.1.1 (lower layer), K§6.1.2 (the descriptor; concerns 1 and 2; `Agent::DEFAULT`), K§6.2.5 items 7 and 8 (they read the descriptor), K§9 (P4-6: `client/`, `lib.rs`, `hook.rs`, `session_view.rs`, `builtin.rs`, `agents.toml`, `conformance.rs`, `builtin.rs` test), K-D1, K-D3, K-D17, K-D19
+**Files:** `crates/zygo-core/src/client/mod.rs` (new), `crates/zygo-core/src/client/claude_code.rs` (new), `crates/zygo-core/src/client/opencode.rs` (new), `crates/zygo-core/src/lib.rs`, `crates/zygo-core/src/hook.rs`, `crates/zygo-core/src/hook_opencode.rs` (deleted; moved into `client/opencode.rs`), `crates/zygo-core/src/session_view.rs`, `crates/zygo-config/src/schema.rs`, `crates/zygo-config/src/builtin.rs`, `crates/zygo-config/data/agents.toml` (deleted), `crates/zygo-core/tests/conformance.rs`, `crates/zygo-config/tests/agent_minimums.rs` (new), `scripts/test-edit-rules/CC-3.rules` (new, if a test line is rewritten)
+**Consumes:** `zygo_core::Agent::ALL` (CF-1), `conformance_tree` (CF-4), `model::check` (CF-1), `inventory` (CC-1), `base` (CC-1), `check-test-edits.sh` (CC-2)
+**Produces:** `zygo_core::client::Agent` (re-exported as `zygo_core::Agent`; serde ids unchanged), `Agent::ALL: [Agent; 2]` (moved from `lib.rs`), `Agent::DEFAULT: Agent`, `Agent::spec(&self) -> &'static ClientSpec`, `zygo_core::client::ClientSpec { id: &'static str, name: &'static str, program: &'static str, verb: &'static str, config_dir: &'static str, install_hint: &'static str, min_version: &'static str, supported: bool, .. }`, `zygo_core::Dialect` (re-exported by `zygo_config::schema` with the same serde names), `zygo_config::builtin::min_agent_version(agent: Agent) -> Version` (reads `Agent::spec().min_version`)
+**Acceptance:** `test ! -e crates/zygo-config/data/agents.toml && test ! -e crates/zygo-core/src/hook_opencode.rs && cargo test -p zygo-core -p zygo-config --locked --no-fail-fast && cargo test -p zygo-config --test builtin --locked -- --exact minimum_agent_versions_match_premises && cargo test -p zygo-config --test agent_minimums --locked && cargo test -p zygo-core --test conformance --locked -- --exact conformance_tree && sh scripts/check-test-edits.sh "$(sed -n 's/^Base: \([0-9a-f]\{40\}\)$/\1/p' docs/work/phase4/nodes/CC-1.md)"` → every command exits 0, and `cargo test --workspace --locked --no-fail-fast` is green on ubuntu, macOS and Windows CI
+
+## Planning notes
+
+- File list: from the K§9 list and the inventory at `c21b32e0`. Before the plan is written, confirm it against the CC-1 `## Observed` rows that name CC-3, and add each file a row names.
+- Transition (author): `Agent` moves into `client/mod.rs` with its variants still public, so each consumer crate keeps compiling while CC-4 to CC-10 move their sites. CC-13 makes the kind opaque (`pub struct Agent(Kind)`, K§6.1.1). The brief allows the enforcing step last.
+- `FromStr` and `as_str` are built from `Agent::ALL` and each `ClientSpec.id`; the one `match` on the kind is `Agent::spec()` in `client/mod.rs`.
+- `ClientSpec` holds concern 1 (identity: the fields above plus the status surface; `announces_own_updates` and the release source are P4-11) and concern 2 (the hook input function; `HookInput::parse` calls it). CC-4 to CC-10 each add the fields of their concern. Field names other than the listed ones are the builder's (K§10). `config_dir` is the K§6.1.4 config folder name; CC-14 reads it.
+- `supported = true` for both clients (K§9). Check item 8 reads it; item 7 reads `min_version` in place of `agents.toml` (K§6.2.5).
+- `minimum_agent_versions_match_premises` (`crates/zygo-config/tests/builtin.rs:223` at `c21b32e0`) stays as it is: `min_agent_version` keeps its signature, so the test compiles with no edit (K-C7). The K§9 obligation that it read `Agent::ALL` is met by the new test `agent_minimums` in a new file, which compares each `Agent::ALL` minimum with its `docs/premises.md` header (author; CC-2 note: new tests in new files).
+- `Agent::DEFAULT` replaces `Agent::ClaudeCode` at `session_view.rs:50` here; `cmd/hook.rs:106` and `cmd/loadout.rs:328` are CC-10.
+- `Dialect` (`crates/zygo-config/src/schema.rs:182-188` at `c21b32e0`) moves to `zygo-core`; `zygo_config::schema::Dialect` stays a path by re-export, so `zygo-proxy` needs no edit (K-D17).
+
+## Plan
+
+Written when the node starts.
