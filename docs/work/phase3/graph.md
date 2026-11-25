@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
-| DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | DONE | mechanical | 34a088d fb104db · dispositions 4 tests · PR #18 |
 | DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | DONE | judgment | 9efee7e 281dd03 · decision_transition 45/45 · PR #21 |
 | DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | DONE | judgment | 52a5006 b306476 5e3b797 196e814 0add171 · decision_git 33/33; floor green · PR #35 |
 | DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | DONE | judgment | e0e426b 05c4148 43c44e7 7acba21 · decision_verdict 41/41; floor green · PR #37 |
@@ -219,7 +218,7 @@ Session text (T, SX nodes):
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | DONE | implementation | e1dd701 · git_builder 13p; floor green · PR #48 |
 | OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
-| OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | IN-PROGRESS | judgment | .worktrees/phase3/OS-11-node · PR #53 |
+| OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | DONE | judgment | 3ae61ee · shape_command 18 passed; floor green · PR #53 |
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | DONE | implementation | b834d51 · results 54p/0f; floor green · PR #45 |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
@@ -385,3 +384,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | RT-1 in progress: node worktree .worktrees/phase3/RT-1-node, branch phase3/RT-1--RT-1 · PR #38 |
 | 2026-11-24 | RT-1 done (7efa8d9 441e170 ff23c48): member record first_started_at; review round 1: 1 confirmed, 3 refuted; floor 2529 passed, 0 failed · PR #38 |
 | 2026-11-24 | MS-2 done: zygo-mail-sync crate with hardened git calls and test seams, 13 empty module files; review round 1 (5 confirmed, fixed; S-C4 rewritten for fetch.writeCommitGraph=false); floor green · PR #48 |
+| 2026-11-24 | OS-11 done: command parse (crates/zygo-results/src/shape/command.rs); review round 1 fixed 9 findings (A1-A5, C1, C2, C4; C3 refuted); floor: workspace 2657 passed, 0 failed · PR #53 |
