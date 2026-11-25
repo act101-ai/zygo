@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
-| MS-7 | Secret pass on one message | MS-2 | DONE | implementation | abe0ce4b · secret 21 passed · PR #61 |
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | DONE | judgment | c403338f · store 50 passed (7 open_bounded) · PR #64 |
 | OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | DONE | judgment | 6bb2ad8b · savings 17/17; floor green · PR #71 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
@@ -206,7 +205,7 @@ Session text (T, SX nodes):
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | DONE | implementation | 0f925e1c · acc 18/0; floor green ws 2967/0 · PR #89 |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | DONE | implementation | 867df914 · acc admin 34/mux 58/snapshot 41 · PR #94 |
-| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6 | TODO | implementation | — |
+| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6, FX-7 | TODO | implementation | — |
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | DONE | implementation | 6c8e57d1 · acc hooks_basic 60 (5 trim_row)/hook_trim 6 · PR #95 |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | DONE | implementation | aa64beea · acc readbacks 8/zygo-mcp 72/mcp_stdio 4 · PR #96 |
@@ -268,7 +267,7 @@ Session text (T, SX nodes):
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | TODO | implementation | — |
-| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17 | TODO | judgment | — |
+| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26 | TODO | mechanical | — |
@@ -289,6 +288,7 @@ Session text (T, SX nodes):
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
+| FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -392,3 +392,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-5 DONE: wake sends literal keys then Enter. Review: 3 of 6 findings confirmed and fixed (F1, F4, F5: a final ";" sent as "\;", docs for the two-call leftover state, sentinel-ordered wake test); F2, F3, F6 refuted. Floor ws 2976 passed, 0 failed. |
 | 2026-11-25 | OS-4 DONE: trim rows carry result_id and shaper; hook opens usage.db bounded. Review: F2 (Read row test), F3 (Store::open doc) fixed; F1 dropped (needs a timing test), F4 dropped (node file in scope). MS-16 now depends on OS-4 (Cargo.lock, zygo-hooks Cargo.toml). |
 | 2026-11-25 | OS-5 DONE: result_view/search/tree write one read-back row per successful reply; store opened bounded, kept, reopened after a failure. Review: F2 (stderr line test), F3 (positive control), F4 (Store::open doc) fixed; F1 dropped (O§6.4 keeps the store). |
+| 2026-11-25 | FX-7 added from the zygo lib flake triage (`ws p=2977 f=1`): a failed exec in the test process frees the swapped environ, so parallel git spawns lose PATH; fix runs it in a child process. Files-overlap edges: ML-7 and WD-14 on FX-7. |
+| 2026-11-25 | FX-7 DONE: exec-failure relaunch test runs in a child process; flake 7/20 before, 0/20 after. Review F1 fixed: child tests in ws.rs and down.rs do nothing unless their parent ran them (--include-ignored 2/20 to 0/20); down.rs added to Files. |
