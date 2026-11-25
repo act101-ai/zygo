@@ -211,7 +211,7 @@ Session text (T, SX nodes):
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | TODO | implementation | — |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
-| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6 | TODO | implementation | — |
+| ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6, FX-7 | TODO | implementation | — |
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
@@ -273,7 +273,7 @@ Session text (T, SX nodes):
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | TODO | implementation | — |
-| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17 | TODO | judgment | — |
+| WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26 | TODO | mechanical | — |
@@ -294,6 +294,7 @@ Session text (T, SX nodes):
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
+| FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -392,3 +393,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | DR-16 DONE: unreadable docs/decisions has its own DirError::Unreadable and line "cannot read docs/decisions"; review: 2 test gaps closed (operator verbs with docs at 000; new writes nothing); floor ws 2949/0 · PR #84 |
 | 2026-11-25 | DR-13 DONE: work_verdict head/base/dispositions + dispositions guard (monitor/notify/enforce); review: short id shadowed by a ref now refused, config warning shown, dispatch tests; bounds header bytes→characters (D§9.2); floor ws 2966/0 · PR #85 |
 | 2026-11-25 | WD-3 DONE: workspace approvals in approvals.toml (repo_def::store; [[workspace]] id+digest; plugin approvals still parse); review: F2 fixed (failed rename drops temp file), F1 refuted (per-section read by design), F3-F5 to operator (approve.rs protocol); floor ws 2961/0 · PR #88 |
+| 2026-11-25 | FX-7 added from the zygo lib flake triage (`ws p=2977 f=1`): a failed exec in the test process frees the swapped environ, so parallel git spawns lose PATH; fix runs it in a child process. Files-overlap edges: ML-7 and WD-14 on FX-7. |
