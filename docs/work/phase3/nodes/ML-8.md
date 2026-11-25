@@ -194,7 +194,7 @@ Steps:
 - [x] 5. Run `cargo test -p zygo-workspace --test admin -- rename_member --include-ignored`. Check: 5 passed, 0 failed.
 - [x] 6. Run `cargo test -p zygo-workspace --test admin -- forget_pane --include-ignored`. Check: all pass (the move of step 3 changed no `forget-pane` line).
 - [x] 7. Commit `crates/zygo-workspace/src/admin.rs` and `crates/zygo-workspace/tests/admin.rs`, message `ML-8: zygo_workspace::admin::rename_member` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
-- [ ] 8. In the `tests` module of `crates/zygo/src/cmd/ws.rs` (`ws.rs:485`), add:
+- [x] 8. In the `tests` module of `crates/zygo/src/cmd/ws.rs` (`ws.rs:485`), add:
   ```rust
   #[test] // M§6: `zygo ws name <key> <name> [--workspace <w>]`
   fn ws_name_parses_key_name_and_workspace() {
@@ -211,7 +211,7 @@ Steps:
       assert!(Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa"]).is_err());
   }
   ```
-- [ ] 9. Run `cargo test -p zygo --lib ws_name_parses`. Check: build fails with E0599, no variant `Name` on `WsCmd`.
-- [ ] 10. In `ws.rs`, add to `WsCmd` after `ForgetPane` (`ws.rs:56-61`): `/// Name one member of a workspace; mail stays in its pane-key folder` `Name { key: String, name: String, /// Workspace name; default: the workspace of this folder  #[arg(long)] workspace: Option<String> }`. In `dispatch` add the arm `WsCmd::Name { key, name, workspace }`: `cwd` as the `ForgetPane` arm does it (`ws.rs:82-89`, keyed on `workspace`), then `admin::rename_member(&paths, &tmux_program(), workspace.as_deref(), &cwd, &key, &name, &mut std::io::stdout().lock(), &mut std::io::stderr().lock())`. Add `zygo ws name <key> <name> [--workspace <w>]` to the module doc at `ws.rs:1`. Check: `cargo build -p zygo` passes.
-- [ ] 11. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test admin -- rename_member --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-workspace --test admin && cargo test -p zygo --lib`. Check: the count is 5; all pass, `ws_name_parses_key_name_and_workspace` among them.
-- [ ] 12. Commit `crates/zygo/src/cmd/ws.rs`, message `ML-8: zygo ws name` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists that one file.
+- [x] 9. Run `cargo test -p zygo --lib ws_name_parses`. Check: build fails with E0599, no variant `Name` on `WsCmd`.
+- [x] 10. In `ws.rs`, add to `WsCmd` after `ForgetPane` (`ws.rs:56-61`): `/// Name one member of a workspace; mail stays in its pane-key folder` `Name { key: String, name: String, /// Workspace name; default: the workspace of this folder  #[arg(long)] workspace: Option<String> }`. In `dispatch` add the arm `WsCmd::Name { key, name, workspace }`: `cwd` as the `ForgetPane` arm does it (`ws.rs:82-89`, keyed on `workspace`), then `admin::rename_member(&paths, &tmux_program(), workspace.as_deref(), &cwd, &key, &name, &mut std::io::stdout().lock(), &mut std::io::stderr().lock())`. Add `zygo ws name <key> <name> [--workspace <w>]` to the module doc at `ws.rs:1`. Check: `cargo build -p zygo` passes.
+- [x] 11. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test admin -- rename_member --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-workspace --test admin && cargo test -p zygo --lib`. Check: the count is 5; all pass, `ws_name_parses_key_name_and_workspace` among them.
+- [x] 12. Commit `crates/zygo/src/cmd/ws.rs`, message `ML-8: zygo ws name` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists that one file.

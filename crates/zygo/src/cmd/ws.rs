@@ -1,5 +1,5 @@
-//! `zygo ws forget <name>`, `zygo ws forget-pane <key> [--name <name>]` and the hidden `zygo ws snapshot` (W§12,
-//! AU44). `zygo ws` does not sweep (AU71).
+//! `zygo ws forget <name>`, `zygo ws forget-pane <key> [--name <name>]`, `zygo ws name <key> <name> [--workspace <w>]`
+//! (M§6) and the hidden `zygo ws snapshot` (W§12, AU44). `zygo ws` does not sweep (AU71).
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -59,6 +59,14 @@ pub enum WsCmd {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Name one member of a workspace; mail stays in its pane-key folder
+    Name {
+        key: String,
+        name: String,
+        /// Workspace name; default: the workspace of this folder
+        #[arg(long)]
+        workspace: Option<String>,
+    },
 }
 
 /// The OP5 check first, for every subcommand, then the subcommand.
@@ -93,6 +101,26 @@ pub fn dispatch(args: WsArgs) -> i32 {
                 name.as_deref(),
                 &cwd,
                 &key,
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            )
+        }
+        WsCmd::Name { key, name, workspace } => {
+            let cwd = if workspace.is_some() {
+                std::path::PathBuf::new()
+            } else {
+                match cwd_or_exit() {
+                    Ok(d) => d,
+                    Err(code) => return code,
+                }
+            };
+            admin::rename_member(
+                &paths,
+                &tmux_program(),
+                workspace.as_deref(),
+                &cwd,
+                &key,
+                &name,
                 &mut std::io::stdout().lock(),
                 &mut std::io::stderr().lock(),
             )
@@ -653,5 +681,20 @@ mod tests {
         let e = super::relaunch(Path::new("/nonexistent/zygo-m5"), &[OsString::from("ws")]);
         assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
         println!("child ran: relaunch_exec_error_in_child");
+    }
+
+    #[test] // M§6: `zygo ws name <key> <name> [--workspace <w>]`
+    fn ws_name_parses_key_name_and_workspace() {
+        use clap::Parser;
+        use super::super::{Cli, Cmd};
+        let Cmd::Ws(WsArgs { sub: WsCmd::Name { key, name, workspace } }) =
+            Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa", "elena", "--workspace", "app"]).unwrap().command
+        else { panic!() };
+        assert_eq!((key.as_str(), name.as_str(), workspace.as_deref()), ("kaaaaaaaa", "elena", Some("app")));
+        let Cmd::Ws(WsArgs { sub: WsCmd::Name { workspace, .. } }) =
+            Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa", "elena"]).unwrap().command
+        else { panic!() };
+        assert_eq!(workspace, None);
+        assert!(Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa"]).is_err());
     }
 }
