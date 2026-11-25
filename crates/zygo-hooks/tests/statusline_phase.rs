@@ -504,6 +504,35 @@ fn start_rule_pending_of_another_session_gives_the_own_start() {
     assert_eq!(start_of(serde_json::json!({ "zygo_session": SID, "pending": p })), Some(OWN));
 }
 
+#[test] // T§2.6, H§7.6 as amended (graph row 65): `collect` takes the phase and the start from one `member_read` of
+// the `view.json` of its session dir. `ZYGO_SESSION_DIR` is not set here: the old `phase::read` call would give no phase.
+fn collect_run_time_and_phase_come_from_one_member_read() {
+    let fx = Fx::new();
+    let sd = SessionDir::new(fx.dir.clone());
+    let at = |now: u64| {
+        let env = move |key: &str| (key == "ZYGO_TEST_NOW").then(|| OsString::from(now.to_string()));
+        let d = collect(Box::new(Cursor::new(Vec::new())), &fx.dir, &fx.paths(), &env, Instant::now() + Duration::from_secs(10));
+        (d.phase, d.run_time)
+    };
+    // A member whose record names this session: `first_started_at`.
+    member(SID, ID).save(&sd).unwrap();
+    fx.state(ID, &with_record(serde_json::json!({ "zygo_session": SID, "first_started_at": 1_700_000_000u64 })));
+    assert_eq!(at(1_700_000_000 + 18_720), (Some("up".into()), Some(18_720)));
+    // Start > now: 0 (T§2.3).
+    assert_eq!(at(1_699_999_999), (Some("up".into()), Some(0)));
+    // `members` does not parse: the phase stays, no run time (RT-2 review fix).
+    fx.state(ID, br#"{"version":1,"phase":"up","members":7}"#);
+    assert_eq!(at(1_700_000_000), (Some("up".into()), None));
+    // A failed read check (`version` 2): neither, and no ULID fallback (T§2.2 rule 2).
+    fx.state(ID, br#"{"version":2,"phase":"up"}"#);
+    assert_eq!(at(OWN + 18_720), (None, None));
+    // Outside a workspace: the ULID time of `view.session` (rule 1); a session that is not a ULID: none.
+    SessionView { session: SID.into(), ..Default::default() }.save(&sd).unwrap();
+    assert_eq!(at(OWN + 18_720), (None, Some(18_720)));
+    SessionView { session: "S1".into(), ..Default::default() }.save(&sd).unwrap();
+    assert_eq!(at(OWN + 18_720), (None, None));
+}
+
 /// `read` (H§7.6, AU25) reads only `version` and `phase`: a `members` value that the start rule cannot parse does not
 /// change the phase.
 #[test]

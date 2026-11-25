@@ -478,11 +478,13 @@ pub struct ResultsConfig {
     pub trim_threshold_bytes: u64,
     pub head_lines: u32,
     pub tail_lines: u32,
+    /// O§9: the shaping pipeline for Bash (O§7); `false` gives the behavior at `97d8767`.
+    pub shape: bool,
 }
 
 impl Default for ResultsConfig {
     fn default() -> Self {
-        ResultsConfig { trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20 }
+        ResultsConfig { trim_threshold_bytes: 16384, head_lines: 60, tail_lines: 20, shape: true }
     }
 }
 
