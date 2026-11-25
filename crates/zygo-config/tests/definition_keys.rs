@@ -8,6 +8,8 @@ const IGNORED: &str = ".zygo.toml: limits.max_members ignored; only user or team
 const LO: &str = "[loadout.pair]\n[[loadout.pair.window]]\n[[loadout.pair.window.pane]]\n";
 const PANE: &str = "[[loadout.pair.window.pane]]\n";
 const BAD_JOB: &str = "must be \"orchestrator\" or \"worker\"";
+const AGENT_ONLY: &str = "only with kind = \"claude-code\" or \"opencode\"";
+const BAD_KIND: &str = "must be \"claude-code\", \"opencode\" or \"shell\"";
 
 #[must_use = "the directory is removed when this value drops; bind it"]
 struct Cx {
@@ -108,6 +110,38 @@ fn check_one_orchestrator_per_loadout() { // R§9.1
     let two_windows = format!("{LO}{orch}[[loadout.pair.window]]\n{PANE}{orch}");
     assert_eq!(one(&two_windows), "Error loadout.pair.window[1].pane[0].job: only one orchestrator per loadout");
     none(&format!("{LO}{orch}[loadout.other]\n[[loadout.other.window]]\n[[loadout.other.window.pane]]\n{orch}"));
+}
+
+#[test]
+fn check_job_only_on_an_agent_pane() { // R§9.1 rule 5 (operator, 2026-11-24)
+    let pane = |kind: &str, job: &str| format!("{LO}kind = \"{kind}\"\njob = \"{job}\"\n");
+    for job in ["worker", "orchestrator", "lead"] {
+        assert_eq!(one(&pane("shell", job)), format!("Error loadout.pair.window[0].pane[0].job: {AGENT_ONLY}"), "{job:?}");
+    }
+    for kind in ["claude-code", "opencode"] {
+        for job in JOBS {
+            none(&pane(kind, job));
+        }
+    }
+    none(&format!("{LO}kind = \"shell\"\n"));
+}
+
+#[test]
+fn check_refused_job_takes_no_orchestrator_slot() { // R§9.1 rule 5 with rule 2
+    let both = format!("{LO}kind = \"shell\"\njob = \"orchestrator\"\n{PANE}kind = \"claude-code\"\njob = \"orchestrator\"\n");
+    assert_eq!(one(&both), format!("Error loadout.pair.window[0].pane[0].job: {AGENT_ONLY}"));
+}
+
+#[test]
+fn check_job_on_a_pane_without_an_agent_kind() { // R§9.1 rule 5: no kind is not an agent pane (no implicit claude-code)
+    for kind in ["", "kind = \"vim\"\n"] {
+        let found: Vec<String> =
+            check(&loaded(&format!("{LO}{kind}job = \"worker\"\n")).config).iter().map(|v| format!("{:?} {v}", v.severity)).collect();
+        assert_eq!(found, [
+            format!("Error loadout.pair.window[0].pane[0].kind: {BAD_KIND}"),
+            format!("Error loadout.pair.window[0].pane[0].job: {AGENT_ONLY}"),
+        ], "{kind:?}");
+    }
 }
 
 #[test]
