@@ -25,15 +25,15 @@ Facts this plan rests on:
 
 ### Part A — lead session (live run)
 
-- [ ] A1. Go to the node worktree: `cd "$(git rev-parse --path-format=absolute --git-common-dir)/../.worktrees/phase3/SX-9-node"`. Check: `git branch --show-current` prints `phase3/SX-9--SX-9`; `git status --porcelain` prints nothing; `git log --oneline -1 --grep='^SX-9: plan'` prints this plan's commit; `ls fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl` fails for all three (no file yet).
-- [ ] A2. Check versions, tools and models.
+- [x] A1. Go to the node worktree: `cd "$(git rev-parse --path-format=absolute --git-common-dir)/../.worktrees/phase3/SX-9-node"`. Check: `git branch --show-current` prints `phase3/SX-9--SX-9`; `git status --porcelain` prints nothing; `git log --oneline -1 --grep='^SX-9: plan'` prints this plan's commit; `ls fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl` fails for all three (no file yet).
+- [x] A2. Check versions, tools and models.
   - `v=$(claude --version | awk '{print $1}') && echo "claude $v" && sh -c '. scripts/premises/ver.sh && ver_ge "$1" 2.1.328' sh "$v" && echo cc-ok` → prints `claude <version>` and `cc-ok`.
   - `o=$(opencode --version) && echo "opencode $o" && sh -c '. scripts/premises/ver.sh && ver_ge "$1" 1.18.16' sh "$o" && echo oc-ok` → prints `opencode <version>` and `oc-ok`.
   - `command -v git python3 tmux` → three paths.
   - `env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" PATH="$PATH" TERM=xterm-256color TMPDIR="$TMPDIR" claude auth status | grep -E '"loggedIn": true'` → one line.
   - `env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" PATH="$PATH" TERM=xterm-256color TMPDIR="$TMPDIR" opencode models openrouter | grep -xE 'openrouter/anthropic/claude-(sonnet-4\.6|haiku-4\.5)'` → exactly the two lines `openrouter/anthropic/claude-haiku-4.5` and `openrouter/anthropic/claude-sonnet-4.6`.
   - Pass: all five. If one fails, stop and fix the cause (version on `PATH`, login, provider); do not continue.
-- [ ] A3. Make the scratch folder, the clean-environment wrapper and the extracted blocks:
+- [x] A3. Make the scratch folder, the clean-environment wrapper and the extracted blocks:
 
 ```sh
 test ! -e /private/tmp/sx9-p315 && mkdir -p /private/tmp/sx9-p315/blocks && cat > /private/tmp/sx9-p315/clean.sh <<'EOF'
@@ -43,58 +43,58 @@ python3 -I -c 'import re,sys; t=open(sys.argv[1]).read(); s=t[t.index("## P3-15 
 ```
 
   Check: the Python command prints `6`; `head -n 1 /private/tmp/sx9-p315/blocks/b1.sh` prints `S=$(mktemp -d "${TMPDIR:-/tmp}/p315.XXXXXX") && cd "$S" && git init -q`; `head -n 1 /private/tmp/sx9-p315/blocks/b5.sh` starts `python3 -I scripts/premises/scrub.py`; `head -n 1 /private/tmp/sx9-p315/blocks/b6.sh` prints `rm -rf ~/.claude/projects/*p315*`.
-- [ ] A4. Run steps 1, 2 and 3 (Claude Code, ST1 and ST2) as one script, so that `S` carries from step 1 to steps 2 and 3. Bash tool timeout 600000 ms:
+- [x] A4. Run steps 1, 2 and 3 (Claude Code, ST1 and ST2) as one script, so that `S` carries from step 1 to steps 2 and 3. Bash tool timeout 600000 ms:
 
 ```sh
 cat /private/tmp/sx9-p315/blocks/b1.sh /private/tmp/sx9-p315/blocks/b2.sh /private/tmp/sx9-p315/blocks/b3.sh > /private/tmp/sx9-p315/cc.sh && cd /private/tmp/sx9-p315 && sh /private/tmp/sx9-p315/clean.sh /bin/sh /private/tmp/sx9-p315/cc.sh > /private/tmp/sx9-p315/cc.out 2> /private/tmp/sx9-p315/cc.err < /dev/null; echo "exit $?"
 ```
 
   Check: prints `exit 0`; `sed -n 1p /private/tmp/sx9-p315/cc.out > /private/tmp/sx9-p315/S.txt && test -d "$(cat /private/tmp/sx9-p315/S.txt)" && cat /private/tmp/sx9-p315/S.txt` prints a folder whose name starts `p315.` (step 1's `echo "$S"`); `cat "$(cat /private/tmp/sx9-p315/S.txt)/evidence.txt"` prints one line starting `general-purpose ` and one starting `p315:probe ` (step 3). If the exit is not 0 or a line is missing, read `cc.out` and `cc.err`, run step 8 for this `S` (A11 commands), move the folder aside (`mv /private/tmp/sx9-p315 /private/tmp/sx9-p315-failed1`) and repeat from A3.
-- [ ] A5. Write the OpenCode script (block 4 with the chosen models, `S` set from `S.txt`):
+- [x] A5. Write the OpenCode script (block 4 with the chosen models, `S` set from `S.txt`):
 
 ```sh
 { echo 'S=$(cat /private/tmp/sx9-p315/S.txt)'; sed -e 's#<provider>/<MAIN>#openrouter/anthropic/claude-sonnet-4.6#g' -e 's#<provider>/<SUB>#openrouter/anthropic/claude-haiku-4.5#g' /private/tmp/sx9-p315/blocks/b4.sh; } > /private/tmp/sx9-p315/oc.sh
 ```
 
   Check: `grep -c '<provider>' /private/tmp/sx9-p315/oc.sh` prints `0`; `grep -o 'openrouter/anthropic/claude-sonnet-4.6' /private/tmp/sx9-p315/oc.sh | wc -l` prints `2`; `grep -o 'openrouter/anthropic/claude-haiku-4.5' /private/tmp/sx9-p315/oc.sh | wc -l` prints `1`.
-- [ ] A6. Start step 4 in a private tmux server with the clean environment: `sh /private/tmp/sx9-p315/clean.sh tmux -L p315 -f /dev/null new-session -d -s oc -x 200 -y 50 /bin/sh /private/tmp/sx9-p315/oc.sh`. Check: `tmux -L p315 has-session -t oc` exits 0, and `tmux -L p315 capture-pane -p -t oc > /private/tmp/sx9-p315/pane-0.txt` shows the OpenCode prompt box (read the file). If the pane shows an error instead, save it, `tmux -L p315 kill-server`, fix the cause and repeat A6.
-- [ ] A7. Step 5, first line: `tmux -L p315 send-keys -t oc -l 'Use the general subagent to read probe.py and tell me its first line.'` then `tmux -L p315 send-keys -t oc Enter`. Wait until the main turn has finished (poll with `tmux -L p315 capture-pane -p -t oc`, or with Monitor and an until-loop on `grep -qF 'import json, sys'` over that capture). Then `tmux -L p315 capture-pane -p -J -S - -t oc > /private/tmp/sx9-p315/pane-1.txt`. Check: record the answer as `yes` if `pane-1.txt` shows the reply with the first line of `probe.py` (`import json, sys`), else `no`; `grep -c '"hook":"transform"' "$(cat /private/tmp/sx9-p315/S.txt)/oc.jsonl"` prints 1 or more.
-- [ ] A8. Step 5, compaction: `tmux -L p315 send-keys -t oc -l '/compact'` then `tmux -L p315 send-keys -t oc Enter`. Wait until `grep -q '"hook":"compacting"' "$(cat /private/tmp/sx9-p315/S.txt)/oc.jsonl"` succeeds and the pane shows the summary. Then `tmux -L p315 capture-pane -p -J -S - -t oc > /private/tmp/sx9-p315/pane-2.txt`. Check: `grep -c '"hook":"compacting"' "$(cat /private/tmp/sx9-p315/S.txt)/oc.jsonl"` prints 1 or more. If `/compact` opened a menu instead of running, press `Enter` once more and wait again.
-- [ ] A9. Step 5, last turn and exit: `tmux -L p315 send-keys -t oc -l 'Reply OK.'` then `tmux -L p315 send-keys -t oc Enter`; wait until the pane shows the reply; `tmux -L p315 capture-pane -p -J -S - -t oc > /private/tmp/sx9-p315/pane-3.txt`; then `tmux -L p315 send-keys -t oc -l '/exit'` and `tmux -L p315 send-keys -t oc Enter`. Check: `tmux -L p315 has-session -t oc` exits non-zero (OpenCode ended, so the session and server ended). If it still runs after the exit, `tmux -L p315 kill-server`, then the same check.
-- [ ] A10. Step 6 (capture), from the node worktree root:
+- [x] A6. Start step 4 in a private tmux server with the clean environment: `sh /private/tmp/sx9-p315/clean.sh tmux -L p315 -f /dev/null new-session -d -s oc -x 200 -y 50 /bin/sh /private/tmp/sx9-p315/oc.sh`. Check: `tmux -L p315 has-session -t oc` exits 0, and `tmux -L p315 capture-pane -p -t oc > /private/tmp/sx9-p315/pane-0.txt` shows the OpenCode prompt box (read the file). If the pane shows an error instead, save it, `tmux -L p315 kill-server`, fix the cause and repeat A6.
+- [x] A7. Step 5, first line: `tmux -L p315 send-keys -t oc -l 'Use the general subagent to read probe.py and tell me its first line.'` then `tmux -L p315 send-keys -t oc Enter`. Wait until the main turn has finished (poll with `tmux -L p315 capture-pane -p -t oc`, or with Monitor and an until-loop on `grep -qF 'import json, sys'` over that capture). Then `tmux -L p315 capture-pane -p -J -S - -t oc > /private/tmp/sx9-p315/pane-1.txt`. Check: record the answer as `yes` if `pane-1.txt` shows the reply with the first line of `probe.py` (`import json, sys`), else `no`; `grep -c '"hook":"transform"' "$(cat /private/tmp/sx9-p315/S.txt)/oc.jsonl"` prints 1 or more.
+- [x] A8. Step 5, compaction: `tmux -L p315 send-keys -t oc -l '/compact'` then `tmux -L p315 send-keys -t oc Enter`. Wait until `grep -q '"hook":"compacting"' "$(cat /private/tmp/sx9-p315/S.txt)/oc.jsonl"` succeeds and the pane shows the summary. Then `tmux -L p315 capture-pane -p -J -S - -t oc > /private/tmp/sx9-p315/pane-2.txt`. Check: `grep -c '"hook":"compacting"' "$(cat /private/tmp/sx9-p315/S.txt)/oc.jsonl"` prints 1 or more. If `/compact` opened a menu instead of running, press `Enter` once more and wait again.
+- [x] A9. Step 5, last turn and exit: `tmux -L p315 send-keys -t oc -l 'Reply OK.'` then `tmux -L p315 send-keys -t oc Enter`; wait until the pane shows the reply; `tmux -L p315 capture-pane -p -J -S - -t oc > /private/tmp/sx9-p315/pane-3.txt`; then `tmux -L p315 send-keys -t oc -l '/exit'` and `tmux -L p315 send-keys -t oc Enter`. Check: `tmux -L p315 has-session -t oc` exits non-zero (OpenCode ended, so the session and server ended). If it still runs after the exit, `tmux -L p315 kill-server`, then the same check.
+- [x] A10. Step 6 (capture), from the node worktree root:
 
 ```sh
 { echo 'S=$(cat /private/tmp/sx9-p315/S.txt)'; cat /private/tmp/sx9-p315/blocks/b5.sh; } > /private/tmp/sx9-p315/capture.sh && sh /private/tmp/sx9-p315/clean.sh /bin/sh /private/tmp/sx9-p315/capture.sh > /private/tmp/sx9-p315/capture.out 2> /private/tmp/sx9-p315/capture.err; echo "exit $?"
 ```
 
   Check: prints `exit 0`; `grep -E '^[0-9]+\.[0-9]+\.[0-9]+( \(Claude Code\))?$' /private/tmp/sx9-p315/capture.out` prints the two version lines (`<version> (Claude Code)` and the OpenCode version); `git status --porcelain` prints exactly `?? fixtures/claude-code/live/st-evidence.txt`, `?? fixtures/claude-code/live/st-hooks.jsonl`, `?? fixtures/opencode/live/st-transform.jsonl`.
-- [ ] A11. Step 7 (hand-off) and step 8 (cleanup).
+- [x] A11. Step 7 (hand-off) and step 8 (cleanup).
   - Keep the raw run folder: `cp -R "$(cat /private/tmp/sx9-p315/S.txt)" /private/tmp/sx9-p315/S-copy`. Check: `ls /private/tmp/sx9-p315/S-copy/hooks.jsonl /private/tmp/sx9-p315/S-copy/evidence.txt /private/tmp/sx9-p315/S-copy/oc.jsonl` lists three files.
   - Write the hand-off (step 7). With the A7 answer `yes`: `{ grep -E '^[0-9]+\.[0-9]+\.[0-9]+( \(Claude Code\))?$' /private/tmp/sx9-p315/capture.out; echo 'provider: openrouter'; echo 'MAIN: anthropic/claude-sonnet-4.6'; echo 'SUB: anthropic/claude-haiku-4.5'; echo 'subagent answer shown in step 5: yes'; echo "date: $(date +%Y-%m-%d)"; } > /private/tmp/sx9-p315/handoff.txt`. With the answer `no`, the same command with `step 5: no` in place of `step 5: yes`. Check: `cat /private/tmp/sx9-p315/handoff.txt` prints 7 lines, the fifth ends `yes` or `no`.
   - Step 8. Block 6 edits `~/.claude.json`, and step 8 says to close every Claude Code session first. The lead session uses its own `CLAUDE_CONFIG_DIR`, not `~/.claude.json`; other sessions of the operator may use it. Ask the operator whether a Claude Code session on the default config folder is open. If none: `{ echo 'S=$(cat /private/tmp/sx9-p315/S.txt)'; cat /private/tmp/sx9-p315/blocks/b6.sh; } > /private/tmp/sx9-p315/cleanup.sh && sh /private/tmp/sx9-p315/clean.sh /bin/sh /private/tmp/sx9-p315/cleanup.sh > /private/tmp/sx9-p315/cleanup.out 2>&1; echo "exit $?"` → `exit 0`, and `cleanup.out` has a line starting `removed [`; delete `~/.claude.json.bak-p315` once Claude Code starts normally. If one is open: run only `/bin/sh -c 'rm -rf ~/.claude/projects/*p315*'` and `rm -rf "$(cat /private/tmp/sx9-p315/S.txt)"`, and tell the operator to run block 6's second and third lines (`cp ~/.claude.json …`, `python3 -I -c …`) later. Check: `test ! -e "$(cat /private/tmp/sx9-p315/S.txt)"` exits 0; `/bin/sh -c 'ls -d ~/.claude/projects/*p315*'` finds nothing.
-- [ ] A12. Hand off to the implementer: the node worktree `.worktrees/phase3/SX-9-node` as it is (three fixtures uncommitted) and the folder `/private/tmp/sx9-p315` (kept).
+- [x] A12. Hand off to the implementer: the node worktree `.worktrees/phase3/SX-9-node` as it is (three fixtures uncommitted) and the folder `/private/tmp/sx9-p315` (kept).
 
 ### Part B — implementer (zygo-code)
 
 Work in `.worktrees/phase3/SX-9-node`, branch `phase3/SX-9--SX-9`. Do not run Claude Code, OpenCode or any block of P3-15.
 
-- [ ] B1. Check the hand-off: `git branch --show-current` prints `phase3/SX-9--SX-9`; `git status --porcelain` prints exactly the three `??` lines of A10; `cat /private/tmp/sx9-p315/handoff.txt` prints 7 lines (Claude Code version, OpenCode version, provider, MAIN, SUB, answer `yes` or `no`, date). If a check fails, stop and report to the lead (Part A is not done).
-- [ ] B2. Fixtures not empty: `for f in fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl; do test -s "$f" || echo "empty $f"; done` prints nothing.
-- [ ] B3. Fixtures scrubbed. Each command prints nothing:
+- [x] B1. Check the hand-off: `git branch --show-current` prints `phase3/SX-9--SX-9`; `git status --porcelain` prints exactly the three `??` lines of A10; `cat /private/tmp/sx9-p315/handoff.txt` prints 7 lines (Claude Code version, OpenCode version, provider, MAIN, SUB, answer `yes` or `no`, date). If a check fails, stop and report to the lead (Part A is not done).
+- [x] B2. Fixtures not empty: `for f in fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl; do test -s "$f" || echo "empty $f"; done` prints nothing.
+- [x] B3. Fixtures scrubbed. Each command prints nothing:
   - `grep -niE "$(id -un)|/Users/|/private/var/|/var/folders/" fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl`
   - `for h in "$(hostname)" "$(hostname -s)" "$(scutil --get LocalHostName)" "$(scutil --get ComputerName)"; do grep -niF -- "$h" fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl; done`
   - `grep -nE '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl`
   - If one prints a line, stop and report it to the lead; do not edit the fixture by hand.
-- [ ] B4. Read ST1 and ST2 by T§12.2 "Reading the result": `cat fixtures/claude-code/live/st-evidence.txt`. Each line is `<agent_type> transcript|no-transcript canary:<kinds>|canary:none`.
+- [x] B4. Read ST1 and ST2 by T§12.2 "Reading the result": `cat fixtures/claude-code/live/st-evidence.txt`. Each line is `<agent_type> transcript|no-transcript canary:<kinds>|canary:none`.
   - ST1 (the `general-purpose` line): `transcript` and `canary:` with at least one entry → `verified`; `transcript` and `canary:none` → `failed`; `no-transcript` → not decided.
   - ST2 (the `p315:probe` line): the same rule.
   - A missing line (the agent was not called) is neither case of the spec: record it as not decided and report it.
-- [ ] B5. Read ST3 and ST4: `python3 -I -c 'import json,sys; [print(n, d.get("hook"), d.get("model"), d.get("session"), ",".join(d.get("keys") or [])) for n, d in enumerate(map(json.loads, open(sys.argv[1])), 1)]' fixtures/opencode/live/st-transform.jsonl` (line number, hook, model, session, keys; the file order is the order of the calls).
+- [x] B5. Read ST3 and ST4: `python3 -I -c 'import json,sys; [print(n, d.get("hook"), d.get("model"), d.get("session"), ",".join(d.get("keys") or [])) for n, d in enumerate(map(json.loads, open(sys.argv[1])), 1)]' fixtures/opencode/live/st-transform.jsonl` (line number, hook, model, session, keys; the file order is the order of the calls).
   - ST3 `verified`: a `transform` line with model `anthropic/claude-sonnet-4.6` after the `compacting` line, with the same session when both lines have one. `failed`: no such line, while a `transform` line before the `compacting` line exists. Neither → not decided.
   - ST4 `verified`: a `transform` line with model `anthropic/claude-haiku-4.5`. `failed`: none, and `handoff.txt` says `subagent answer shown in step 5: yes`. Neither → not decided.
   - Copy the `keys` of the first `transform` line and of the `compacting` line (information for the SX-10 rows).
-- [ ] B6. If any of ST1-ST4 is not decided: stop here, commit nothing, and report the lines to the lead (C3).
-- [ ] B7. Record the result: tick every Part A box that the hand-off proves and B1-B5, then append to this file (after Part C) a section `## Result` with these lines, the values from `handoff.txt`, B4 and B5:
+- [x] B6. If any of ST1-ST4 is not decided: stop here, commit nothing, and report the lines to the lead (C3).
+- [x] B7. Record the result: tick every Part A box that the hand-off proves and B1-B5, then append to this file (after Part C) a section `## Result` with these lines, the values from `handoff.txt`, B4 and B5:
   - `- Run: <date>, on the operator's machine, by the lead session (operator decision 2026-11-25).`
   - `- \`claude --version\`: <line 1 of handoff.txt>; \`opencode --version\`: <line 2>.`
   - `- OpenCode models: provider \`openrouter\`, MAIN \`anthropic/claude-sonnet-4.6\`, SUB \`anthropic/claude-haiku-4.5\`; subagent answer shown in step 5: <yes|no>.`
@@ -104,9 +104,9 @@ Work in `.worktrees/phase3/SX-9-node`, branch `phase3/SX-9--SX-9`. Do not run Cl
   - `- ST4: <verified|failed> — the same file: <line number of the SUB transform line, or "no transform line with model anthropic/claude-haiku-4.5">.`
   - `- keys: transform \`<keys>\`; compacting \`<keys>\`.`
   - Check: `grep -c '^- ST[1-4]: \(verified\|failed\) ' docs/work/phase3/nodes/SX-9.md` prints `4`; the file has no `/Users/`, no user name, no e-mail address.
-- [ ] B8. Acceptance: `for f in fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl; do test -s "$f" || exit 1; done && N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh` → exit 0, last line starts `check-premises: ok`. Run it in a subshell (`sh -c '…'`) so the `exit 1` cannot end the session's shell.
-- [ ] B9. Scope: `git status --porcelain` prints exactly ` M docs/work/phase3/nodes/SX-9.md` and the three `??` fixture lines.
-- [ ] B10. Commit and push: `git add fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl docs/work/phase3/nodes/SX-9.md`, then `git commit -m "SX-9: ST1-ST4 evidence" -m "<the Zygo-Session and Zygo-Work trailers of the implementer's brief, one per line>"` with no Claude attribution, then `git push -u origin phase3/SX-9--SX-9`. Check: `git show --stat --format= HEAD` lists the four files and nothing else; `git status -sb` shows the branch tracking `origin/phase3/SX-9--SX-9` with nothing ahead.
+- [x] B8. Acceptance: `for f in fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl; do test -s "$f" || exit 1; done && N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh` → exit 0, last line starts `check-premises: ok`. Run it in a subshell (`sh -c '…'`) so the `exit 1` cannot end the session's shell.
+- [x] B9. Scope: `git status --porcelain` prints exactly ` M docs/work/phase3/nodes/SX-9.md` and the three `??` fixture lines.
+- [x] B10. Commit and push: `git add fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl docs/work/phase3/nodes/SX-9.md`, then `git commit -m "SX-9: ST1-ST4 evidence" -m "<the Zygo-Session and Zygo-Work trailers of the implementer's brief, one per line>"` with no Claude attribution, then `git push -u origin phase3/SX-9--SX-9`. Check: `git show --stat --format= HEAD` lists the four files and nothing else; `git status -sb` shows the branch tracking `origin/phase3/SX-9--SX-9` with nothing ahead.
 - [ ] B11. Report: the commit hash, the four ST lines of `## Result`, the two version lines, and each `failed` id with its C2 line.
 
 ### Part C — a `failed` or not-decided ST line
@@ -119,3 +119,15 @@ A `failed` line passes this node (acceptance: each of ST1-ST4 `verified` or `fai
   - ST4 `verified`: the OpenCode `zygo-<role>` prompts lose the mechanics text (T§7.2 item 3; `crates/zygo-launch/src/opencode.rs`). ST4 `failed`: the `--event subagent` branch and its tests are removed (T§7.2 item 3; `crates/zygo-hooks/src/session_start.rs`, `opencode-plugin.js`).
   - Report line per `failed` id (B11): `SX-10 <id> failed: <the T§12.1 "If failed" cell>`.
 - [ ] C3. Not decided (an ST1 or ST2 line with `no-transcript`, a missing line, or ST3/ST4 with neither condition true): no row (T§12.2 "Reading the result"), the node is not done, and SX-10 cannot start. The lead runs the check again: `mv /private/tmp/sx9-p315 /private/tmp/sx9-p315-run1`, `rm fixtures/claude-code/live/st-hooks.jsonl fixtures/claude-code/live/st-evidence.txt fixtures/opencode/live/st-transform.jsonl` in the node worktree, and repeat Part A from A3; then Part B from B1.
+
+## Result
+
+- Run: 2026-11-25, on the operator's machine, by the lead session (operator decision 2026-11-25).
+- `claude --version`: 2.1.332 (Claude Code); `opencode --version`: 1.18.16.
+- OpenCode models: provider zygo (profile `glm`, Z.AI), MAIN `zygo/lead` (glm-5.3), SUB `zygo/code` (glm-5.3-flash); subagent answer shown in step 5: yes.
+- Deviation: OpenCode models changed from OpenRouter/Anthropic to glm on Z.AI by operator instruction (2026-11-25); the launch was `zygo opencode --profile glm -- -m zygo/lead` with the probe plugin in the run folder's `.opencode/plugins/`, because zygo sets its own OPENCODE_CONFIG_DIR.
+- ST1: verified — `fixtures/claude-code/live/st-evidence.txt` line `general-purpose transcript canary:attachment,attachment,api-request-blob`.
+- ST2: verified — the same file, line `p315:probe transcript canary:attachment,attachment,api-request-blob`.
+- ST3: verified — `fixtures/opencode/live/st-transform.jsonl`: compacting line 6 (session `ses_placeholder0001`), transform line 7 with model `lead` (session `ses_placeholder0001`).
+- ST4: verified — the same file: line 3 (transform, model `code`, session `ses_placeholder0002`; line 4 also).
+- keys: transform `model,sessionID`; compacting `sessionID`.
