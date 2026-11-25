@@ -43,6 +43,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | DONE | implementation | 821a1bb1 · shaping_fixtures 22 passed; floor green · PR #56 |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | DONE | judgment | 5c96374f · acc 18/0 (1 ignored); floor green · PR #85 |
 | OS-20 | Capture pytest fixtures from a scratch project | OS-16 | DONE | implementation | bb01285a · shaping_fixtures 22 passed; floor green · PR #57 |
+| DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | DONE | implementation | 31bc0dac · acc 4+4/0; floor ws 2977/1 (pre-existing zygo lib flake, also on phase-3) · PR #90 |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | DONE | implementation | 5e4cd273 · bash -n ok, lib.sh 2 · PR #60 |
 
 ## Log
