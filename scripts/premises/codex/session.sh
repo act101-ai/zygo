@@ -105,9 +105,13 @@ def sse_text(out, text):
 
 
 def sse_call(out, name, arguments, call_id):
+    """<name> is a tool name, or <namespace>/<name> for a tool inside a namespace tool."""
     rid = "resp_pc5_" + call_id
+    ns, _, name = name.rpartition("/")
     item = {"type": "function_call", "id": "fc_" + call_id, "call_id": call_id, "name": name,
             "arguments": arguments, "status": "completed"}
+    if ns:
+        item["namespace"] = ns
     write(out, sse([
         ("response.created", {"type": "response.created", "response": {
             "id": rid, "object": "response", "model": "{{MODEL}}", "status": "in_progress", "output": []}}),
@@ -145,20 +149,26 @@ def load(path):
         return json.load(f)
 
 
+def full(e):
+    """A tool's call name: <name>, or <namespace>/<name> inside a namespace tool (Codex 0.172 puts
+    spawn_agent in multi_agent_v1 and an MCP server's tools in mcp__<server>)."""
+    return "%s/%s" % (e["namespace"], e["name"]) if e.get("namespace") else e["name"]
+
+
 def pick_spawn(path):
     for e in load(path):
         props = (e.get("parameters") or {}).get("properties") or {}
-        if ("namespace" not in e and e.get("type") == "function" and str(e.get("name") or "").startswith("spawn")
+        if (e.get("type") == "function" and str(e.get("name") or "").startswith("spawn")
                 and "agent_type" in props and "message" in props):
-            print(e["name"])
+            print(full(e))
             return
 
 
 def pick_mcp(path):
     for e in load(path):
         n = str(e.get("name") or "")
-        if "namespace" not in e and e.get("type") == "function" and "zygo" in n and n.endswith("compact"):
-            print(n)
+        if e.get("type") == "function" and "zygo" in full(e) and n.endswith("compact"):
+            print(full(e))
             return
 
 
@@ -246,6 +256,10 @@ def skills(out, cap):
 def status(out, pane, exit_file):
     with open(pane, encoding="utf-8", errors="replace") as f:
         rows = [l for l in f.read().splitlines() if l.strip()]
+    # The status line is the last non-blank row, or the row above the key-hint footer when the
+    # last row is that footer ("? for shortcuts").
+    if len(rows) > 1 and "? for shortcuts" in rows[-1]:
+        rows.pop()
     row = rows[-1].strip() if rows else ""
     try:
         with open(exit_file) as f:
@@ -476,7 +490,9 @@ q() { case "$2" in *"'"*) echo "session: $1 holds a quote"; exit 1 ;; esac; prin
   echo '. "$PREMISES_DIR/lib.sh"'
   q RUN "$RUN"; q H "$H"; q R "$R"; q CX_HOME "$CX_HOME"; q MOCK_URL "$MOCK_URL"; q MOCK_PID "$MOCK_PID"
   # shellcheck disable=SC2016
-  echo 'rc=0; run_codex || rc=$?; echo "$rc" >"$RUN/pc11-exit"'
+  # --no-daemon: else the TUI starts a managed app-server daemon (from CODEX_HOME/packages, with a
+  # socket under /tmp/codex-daemon-<uid>) that outlives the run.
+  echo 'rc=0; run_codex --no-daemon || rc=$?; echo "$rc" >"$RUN/pc11-exit"'
 } >"$RUN/pc11-tui.sh"
 rm -f "$RUN/pc11-exit" "$RUN/pane.txt"
 tm new-session -d -s pc11 -x 250 -y 50 /bin/sh "$RUN/pc11-tui.sh"
@@ -519,5 +535,9 @@ done
 py status "$FX/status.txt" "$FX/pane-turn.txt" "$RUN/pc11-exit"
 
 stop_mock
+# No process of this run may outlive it: any command line that names the run folder (either form).
+ps -axo pid=,command= >"$RUN/ps.txt"
+_left=$(grep -F -e "$RUN/" -e "$(n2_realpath "$RUN")/" "$RUN/ps.txt" || true)
+[ -z "$_left" ] || { printf 'session: processes of this run are still running:\n%s\n' "$_left"; exit 1; }
 codex_record session
 echo "codex session: ok (codex $CODEX_VERSION)"
