@@ -301,7 +301,7 @@ Session text (T, SX nodes):
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | TODO | implementation | — |
-| MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | TODO | implementation | — |
+| MS-26 | `state::load` refuses a state.json value that `save` refuses (S§8.3) | MS-5 | IN-PROGRESS | implementation | `.worktrees/phase3/MS-26-node` · PR #83 |
 
 ## Log
 
