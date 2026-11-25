@@ -187,3 +187,239 @@ fn check_3_symlink_fixture_not_evidence() {
     assert!(evidence(d.path(), "fixture:fixtures/beta/link.json").is_err());
     assert!(evidence(d.path(), "fixture:fixtures/beta/capture.json").is_ok());
 }
+
+#[test]
+fn check_valid_fixtures_pass() {
+    let (r, g, c) = base();
+    assert_eq!(check(&repo(), &r, &g, &c), vec![]);
+}
+
+#[test]
+fn check_1_client_without_grade_file() {
+    let (r, g, mut c) = base();
+    c.push(client("gamma", "Gamma", "3.0.0"));
+    let f = check(&repo(), &r, &g, &c);
+    assert_eq!(items(&f), set(&[1, 9]));
+    assert!(f[0].text.contains("gamma"));
+}
+
+#[test]
+fn check_1_grade_file_unknown_or_twice() {
+    let (r, g, c) = base();
+    let mut d = g.clone();
+    let mut x = g[1].clone();
+    x.client = "delta".into();
+    d.push(x);
+    assert_eq!(items(&check(&repo(), &r, &d, &c)), set(&[1]));
+    let mut d = g.clone();
+    d.push(g[0].clone());
+    assert_eq!(items(&check(&repo(), &r, &d, &c)), set(&[1]));
+}
+
+#[test]
+fn check_2_missing_grade() {
+    let (r, mut g, c) = base();
+    g[0].grade.retain(|e| e.criterion != "A-3.1");
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[2]));
+}
+
+#[test]
+fn check_2_unknown_criterion() {
+    let (r, mut g, c) = base();
+    let mut e = entry(&mut g[0], "A-1.1").clone();
+    e.criterion = "A-9.1".into();
+    g[0].grade.push(e);
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[2]));
+}
+
+#[test]
+fn check_2_duplicate_grade() {
+    let (r, mut g, c) = base();
+    let e = entry(&mut g[0], "A-3.1").clone();
+    g[0].grade.push(e);
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[2]));
+}
+
+#[test]
+fn check_3_ignored_test_not_evidence() {
+    for f in ["ignored_plain", "ignored_reason", "ignored_cfg_attr"] {
+        assert_eq!(with_evidence(&[&format!("test:crates/demo/tests/ev.rs::{f}")]), set(&[3]), "{f}");
+    }
+}
+
+#[test]
+fn check_3_missing_or_plain_function_not_evidence() {
+    for e in [
+        "test:crates/demo/tests/ev.rs::no_such_fn",
+        "test:crates/demo/tests/ev.rs::helper_not_test",
+        "test:crates/demo/tests/ev.rs::dup",
+        "test:crates/demo/tests/none.rs::plain",
+    ] {
+        assert_eq!(with_evidence(&[e]), set(&[3]), "{e}");
+    }
+    assert_eq!(with_evidence(&[]), set(&[3]));
+    assert_eq!(with_evidence(&["test:crates/demo/tests/ev.rs::no_such_fn", "test:crates/demo/tests/ev.rs::plain"]), set(&[]));
+}
+
+#[test]
+fn check_3_cfg_test_fn_in_other_file_not_evidence() {
+    assert_eq!(with_evidence(&["test:crates/demo/tests/ev.rs::only_in_lib"]), set(&[3]));
+    assert_eq!(with_evidence(&["test:crates/demo/src/lib.rs::only_in_lib"]), set(&[]));
+}
+
+#[test]
+fn check_3_premise_failed_or_observed_not_evidence() {
+    assert_eq!(with_evidence(&["premise:docs/premises.md#Q2"]), set(&[3]));
+    assert_eq!(with_evidence(&["premise:docs/premises.md#Q3"]), set(&[3]));
+    assert_eq!(with_evidence(&["premise:docs/premises.md#Q1"]), set(&[]));
+}
+
+#[test]
+fn check_3_premise_id_in_other_file_only() {
+    assert_eq!(with_evidence(&["premise:docs/premises.md#L1"]), set(&[3]));
+    assert_eq!(with_evidence(&["premise:docs/live-checks.md#Q1"]), set(&[3]));
+}
+
+#[test]
+fn check_3_premise_not_run_absent_or_twice_not_evidence() {
+    for e in ["premise:docs/live-checks.md#L2", "premise:docs/premises.md#Q8", "premise:docs/premises.md#Q9"] {
+        assert_eq!(with_evidence(&[e]), set(&[3]), "{e}");
+    }
+}
+
+#[test]
+fn check_3_trivial_fixture_not_evidence() {
+    for e in [
+        "fixture:fixtures/beta/empty.json",
+        "fixture:fixtures/beta/list.json",
+        "fixture:fixtures/beta/tiny.txt",
+        "fixture:fixtures/beta/missing.json",
+        "fixture:fixtures/beta",
+    ] {
+        assert_eq!(with_evidence(&[e]), set(&[3]), "{e}");
+    }
+    assert_eq!(with_evidence(&["fixture:fixtures/beta/capture.json"]), set(&[]));
+}
+
+#[test]
+fn check_4_reason_and_core_na() {
+    let (r, g0, c) = base();
+    let mut g = g0.clone();
+    entry(&mut g[0], "WA-2.1").reason = None;
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[4]));
+    let mut g = g0.clone();
+    entry(&mut g[1], "A-3.1").reason = Some(" ".into());
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[4]));
+    let mut g = g0.clone();
+    {
+        let e = entry(&mut g[0], "A-1.1");
+        e.status = Status::Na;
+        e.reason = Some("x".into());
+    }
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[4, 8]));
+}
+
+#[test]
+fn check_5_cell_url() {
+    let (r, g0, c) = base();
+    let mut g = g0.clone();
+    g[0].cell.retain(|x| x.capability != "A-3");
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[5]));
+    let mut g = g0.clone();
+    g[0].cell.iter_mut().find(|x| x.capability == "A-3").unwrap().url = "http://example.com".into();
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[5]));
+}
+
+#[test]
+fn check_6_bar_exception_faults() {
+    let x = |client: &str, criterion: &str, approved: Option<&str>| BarException {
+        client: client.into(),
+        criterion: criterion.into(),
+        reason: "r".into(),
+        approved: approved.map(Into::into),
+    };
+    let (r0, g0, c) = base();
+    for b in [x("gamma", "A-1.2", Some("operator")), x("alpha", "A-1.1", Some("operator")), x("beta", "A-3.1", Some("operator"))] {
+        let mut r = r0.clone();
+        r.bar_exception.push(b);
+        assert_eq!(items(&check(&repo(), &r, &g0, &c)), set(&[6]));
+    }
+    let mut g = g0.clone();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no helper".into());
+    }
+    for a in [None, Some(" ")] {
+        let mut r = r0.clone();
+        r.bar_exception.push(x("alpha", "A-1.2", a));
+        assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[6]));
+    }
+}
+
+#[test]
+fn check_6_bar_exception_key_in_grade_file() {
+    assert!(GradeFile::load(&fx().join("grade-with-bar-exception.toml")).unwrap_err().contains("bar_exception"));
+}
+
+#[test]
+fn check_7_version_faults() {
+    let (r, g, mut c) = base();
+    c[0].version = "1.0.1".into();
+    let f = check(&repo(), &r, &g, &c);
+    assert_eq!(items(&f), set(&[7]));
+    assert!(f[0].text.contains("alpha"));
+    let (_, _, c) = base();
+    for (file, from, to) in [
+        ("docs/premises.md", "Alpha: 1.0.0\n", "Alpha: 1.0.2\n"),
+        ("docs/live-checks.md", "Alpha: 1.0.0 or later", "Alpha: 1.0.0"),
+        ("docs/premises.md", "Beta: 2.0.0\n", ""),
+    ] {
+        let d = copy_repo();
+        let p = d.path().join(file);
+        std::fs::write(&p, std::fs::read_to_string(&p).unwrap().replace(from, to)).unwrap();
+        assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[7]), "{file} {from}");
+    }
+}
+
+#[test]
+fn check_8_supported_client_below_bar() {
+    let (r, mut g, mut c) = base();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no key helper".into());
+    }
+    let f = check(&repo(), &r, &g, &c);
+    assert_eq!(items(&f), set(&[8]));
+    assert!(f[0].text.contains("A-1"));
+    c[0].supported = false;
+    assert_eq!(check(&repo(), &r, &g, &c), vec![]);
+}
+
+#[test]
+fn check_8_registry_exception_meets_bar() {
+    let (mut r, mut g, c) = base();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no key helper".into());
+    }
+    r.bar_exception.push(BarException {
+        client: "alpha".into(),
+        criterion: "A-1.2".into(),
+        reason: "r".into(),
+        approved: Some("operator 2026-11-25".into()),
+    });
+    assert_eq!(check(&repo(), &r, &g, &c), vec![]);
+}
+
+#[test]
+fn check_9_fixtures_folder_missing_or_empty() {
+    let (r, g, c) = base();
+    let d = copy_repo();
+    std::fs::remove_dir_all(d.path().join("fixtures/alpha")).unwrap();
+    assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[9]));
+    std::fs::create_dir(d.path().join("fixtures/alpha")).unwrap();
+    assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[9]));
+}

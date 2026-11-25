@@ -228,7 +228,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
 
 - [x] **9. `evidence`.** Implement it by the rules above (`syn::parse_file`, recursion into inline modules with a stack of `cfg` texts). Run the step 8 command → passes (on Windows the two `#[cfg(unix)]` tests do not exist). Commit `feat(conformance): evidence kinds test, fixture and premise (CF-1)`.
 
-- [ ] **10. Failing check tests (items 1-9; K§11 item 1).** Each case changes one thing in `base()` and asserts the exact item set:
+- [x] **10. Failing check tests (items 1-9; K§11 item 1).** Each case changes one thing in `base()` and asserts the exact item set:
 
   ```rust
   #[test] fn check_valid_fixtures_pass() { let (r, g, c) = base(); assert_eq!(check(&repo(), &r, &g, &c), vec![]); }
@@ -345,7 +345,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
   ```
   Run `cargo test -p zygo-core --test conformance -- check_` → the tests of this step fail (`not yet implemented`); steps 2 and 8 tests still pass.
 
-- [ ] **11. `check` and `failing_core`.** Implement them by the rules above. Run `cargo test -p zygo-core --test conformance -- check_` → all pass. Commit `feat(conformance): check items 1-9 on fixture inputs (CF-1)`.
+- [x] **11. `check` and `failing_core`.** Implement them by the rules above. Run `cargo test -p zygo-core --test conformance -- check_` → all pass. Commit `feat(conformance): check items 1-9 on fixture inputs (CF-1)`.
 
 - [ ] **12. Failing `clients` test.**
 

@@ -395,13 +395,149 @@ fn is_ignore(a: &syn::Attribute) -> bool {
     plain.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == "ignore")
 }
 
+fn blank(s: &Option<String>) -> bool {
+    s.as_deref().is_none_or(|s| s.trim().is_empty())
+}
+
+/// The header lines of a premise file: each line before the first that starts with `##`, a line-end `\r` removed.
+fn header_lines(path: &Path) -> Result<Vec<String>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(text.lines().take_while(|l| !l.starts_with("##")).map(|l| l.strip_suffix('\r').unwrap_or(l).to_string()).collect())
+}
+
 pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Client]) -> Vec<Fault> {
-    todo!()
+    let mut faults = Vec::new();
+    let mut fault = |item: u8, text: String| faults.push(Fault { item, text });
+    let files_of = |id: &str| grades.iter().filter(|g| g.client == id).collect::<Vec<_>>();
+    let criteria: Vec<(&Capability, &Criterion)> =
+        reg.capability.iter().flat_map(|cap| cap.criterion.iter().map(move |c| (cap, c))).collect();
+    let core_criterion = |id: &str| criteria.iter().any(|(cap, c)| c.id == id && cap.tier == Tier::Core);
+
+    // 1. one grade file per client, and no grade file for another client
+    for c in clients {
+        let n = files_of(&c.id).len();
+        if n != 1 {
+            fault(1, format!("client `{}` has {n} grade files, not one", c.id));
+        }
+    }
+    for g in grades {
+        if !clients.iter().any(|c| c.id == g.client) {
+            fault(1, format!("grade file for `{}` names no client", g.client));
+        }
+    }
+    // 2. each registry criterion graded exactly once, and no other
+    for g in grades {
+        for (_, c) in &criteria {
+            let n = g.grade.iter().filter(|e| e.criterion == c.id).count();
+            if n == 0 {
+                fault(2, format!("client `{}`: criterion `{}` has no grade", g.client, c.id));
+            } else if n > 1 {
+                fault(2, format!("client `{}`: criterion `{}` is graded {n} times", g.client, c.id));
+            }
+        }
+        for e in &g.grade {
+            if !criteria.iter().any(|(_, c)| c.id == e.criterion) {
+                fault(2, format!("client `{}`: criterion `{}` is not in the registry", g.client, e.criterion));
+            }
+        }
+    }
+    // 3. each met grade has an item of evidence that counts
+    for g in grades {
+        for e in g.grade.iter().filter(|e| e.status == Status::Met) {
+            let errs: Vec<String> = e.evidence.iter().map(|x| evidence(root, x)).filter_map(Result::err).collect();
+            if errs.len() == e.evidence.len() {
+                let why = if errs.is_empty() { "no evidence".to_string() } else { errs.join("; ") };
+                fault(3, format!("client `{}`: met criterion `{}` has no evidence that counts: {why}", g.client, e.criterion));
+            }
+        }
+    }
+    // 4. a reason for each not-met or n/a grade; no n/a on a core criterion
+    for g in grades {
+        for e in &g.grade {
+            if e.status != Status::Met && blank(&e.reason) {
+                fault(4, format!("client `{}`: criterion `{}` has no reason", g.client, e.criterion));
+            }
+            if e.status == Status::Na && core_criterion(&e.criterion) {
+                fault(4, format!("client `{}`: core criterion `{}` is n/a", g.client, e.criterion));
+            }
+        }
+    }
+    // 5. an https cell url for each capability
+    for g in grades {
+        for cap in &reg.capability {
+            if !g.cell.iter().any(|x| x.capability == cap.id && x.url.starts_with("https://")) {
+                fault(5, format!("client `{}`: capability `{}` has no https cell url", g.client, cap.id));
+            }
+        }
+    }
+    // 6. each bar exception: a known client, a core criterion not met, an approval
+    for b in &reg.bar_exception {
+        let who = format!("bar exception `{}` `{}`", b.client, b.criterion);
+        if !clients.iter().any(|c| c.id == b.client) {
+            fault(6, format!("{who}: client `{}` is not a client", b.client));
+        }
+        let met = files_of(&b.client)
+            .iter()
+            .any(|g| g.grade.iter().any(|e| e.criterion == b.criterion && e.status == Status::Met));
+        if met {
+            fault(6, format!("{who}: criterion `{}` is met", b.criterion));
+        }
+        if !core_criterion(&b.criterion) {
+            fault(6, format!("{who}: criterion `{}` is not a core criterion", b.criterion));
+        }
+        if blank(&b.approved) {
+            fault(6, format!("{who}: not approved"));
+        }
+    }
+    // 7. the client version is the graded version and the pinned premise version
+    let premises = header_lines(&root.join("docs/premises.md"));
+    let live = header_lines(&root.join("docs/live-checks.md"));
+    for c in clients {
+        let [g] = files_of(&c.id)[..] else { continue };
+        if g.version != c.version {
+            fault(7, format!("client `{}`: graded version {} is not the client version {}", c.id, g.version, c.version));
+        }
+        for (file, lines, want) in [
+            ("docs/premises.md", &premises, format!("{}: {}", g.name, g.version)),
+            ("docs/live-checks.md", &live, format!("{}: {} or later", g.name, g.version)),
+        ] {
+            match lines {
+                Err(e) => fault(7, format!("client `{}`: {e}", c.id)),
+                Ok(lines) if !lines.contains(&want) => fault(7, format!("client `{}`: {file} has no line `{want}`", c.id)),
+                Ok(_) => {}
+            }
+        }
+    }
+    // 8. a supported client meets the bar
+    for c in clients.iter().filter(|c| c.supported) {
+        let [g] = files_of(&c.id)[..] else { continue };
+        let failing = failing_core(reg, g);
+        if !failing.is_empty() {
+            fault(8, format!("client `{}` is supported and below the bar: {}", c.id, failing.join(", ")));
+        }
+    }
+    // 9. a fixtures folder with an entry for each client
+    for c in clients {
+        let dir = root.join("fixtures").join(&c.id);
+        let has_entry = std::fs::read_dir(&dir).is_ok_and(|mut d| d.next().is_some());
+        if !has_entry {
+            fault(9, format!("client `{}`: fixtures/{}/ is missing or empty", c.id, c.id));
+        }
+    }
+    faults
 }
 
 /// CF-2 replaces this with derive::bar(reg, g).failing
 fn failing_core(reg: &Registry, g: &GradeFile) -> Vec<String> {
-    todo!()
+    let ok = |criterion: &str| {
+        g.grade.iter().any(|e| e.criterion == criterion && e.status == Status::Met)
+            || reg.bar_exception.iter().any(|b| b.client == g.client && b.criterion == criterion)
+    };
+    reg.capability
+        .iter()
+        .filter(|cap| cap.tier == Tier::Core && cap.criterion.iter().any(|c| !ok(&c.id)))
+        .map(|cap| cap.id.clone())
+        .collect()
 }
 
 pub fn clients(root: &Path) -> Result<Vec<Client>, String> {
