@@ -216,7 +216,7 @@ Session text (T, SX nodes):
 | OS-20 | Capture pytest fixtures from a scratch project | OS-16 | DONE | implementation | bb01285a · shaping_fixtures 22 passed; floor green · PR #57 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | DONE | implementation | 5e4cd273 · bash -n ok, lib.sh 2 · PR #60 |
-| WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
+| WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | IN-PROGRESS | judgment | .worktrees/phase3/WD-2-node · PR #72 |
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
