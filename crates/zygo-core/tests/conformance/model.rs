@@ -1,7 +1,7 @@
 //! The conformance input model (K§6.2.1, K§6.2.3) and check items 1-9 (K§6.2.5).
 
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use zygo_core::Agent;
@@ -382,13 +382,14 @@ fn parse_evidence(e: &str) -> Result<Ev<'_>, String> {
 /// Resolve the evidence of each `met` grade of `grades` (K§6.2.3). A `premise:` row counts for the
 /// grade file's `name`; check item 7 holds that name equal to the client's name.
 pub fn resolve(root: &Path, grades: &[GradeFile]) -> Resolved {
+    let mut cache = ReachCache::default();
     let mut grade = Vec::new();
     for (file, g) in grades.iter().enumerate() {
         for e in g.grade.iter().filter(|e| e.status == Status::Met) {
             let evidence = e
                 .evidence
                 .iter()
-                .map(|text| ResolvedEvidence { text: text.clone(), result: evidence(root, text, &g.name) })
+                .map(|text| ResolvedEvidence { text: text.clone(), result: evidence_in(root, text, &g.name, &mut cache) })
                 .collect();
             grade.push(ResolvedGrade { file, client: g.client.clone(), criterion: e.criterion.clone(), evidence });
         }
@@ -419,6 +420,11 @@ fn or(a: Targets, b: Targets) -> Targets {
 /// Whether `e` counts as evidence for the client named `client_name`, and on which CI targets.
 /// A `fixture:` or `premise:` item holds on every target.
 pub fn evidence(root: &Path, e: &str, client_name: &str) -> Result<Evidence, String> {
+    evidence_in(root, e, client_name, &mut ReachCache::default())
+}
+
+/// `evidence`, with the test targets of each crate walked once per `cache`.
+fn evidence_in(root: &Path, e: &str, client_name: &str, cache: &mut ReachCache) -> Result<Evidence, String> {
     let ev = parse_evidence(e)?;
     let fail = |why: String| format!("evidence `{e}`: {why}");
     let rel = match ev {
@@ -434,6 +440,7 @@ pub fn evidence(root: &Path, e: &str, client_name: &str) -> Result<Evidence, Str
     let every = Evidence { platforms: names(EVERY) };
     match ev {
         Ev::Test { func, .. } => {
+            let crate_dir = test_crate_dir(rel).map_err(fail)?;
             let text = read_capped(&canon).map_err(fail)?;
             let mut found = with_parsed(rel, &text, |file| {
                 let mut found = Vec::new();
@@ -450,6 +457,13 @@ pub fn evidence(root: &Path, e: &str, client_name: &str) -> Result<Evidence, Str
             if ignored {
                 return Err(fail(format!("test fn `{func}` is ignored")));
             }
+            let reach = cache.0.entry(crate_dir.to_string()).or_insert_with(|| reach(&canon_root.join(crate_dir)));
+            let Some(compiled) = reach.get(&canon) else {
+                return Err(fail(format!(
+                    "no test target compiles {rel}: no {crate_dir}/tests/*.rs reaches it by `mod`, and it is not in the module tree of {crate_dir}/src/lib.rs or src/main.rs"
+                )));
+            };
+            let targets = and(targets, compiled.clone().map_err(|err| fail(format!("a `mod` that reaches {rel}: {err}")))?);
             if targets == [false; 3] {
                 return Err(fail(format!("test fn `{func}` compiles on no CI target, so it never runs in CI")));
             }
@@ -494,6 +508,123 @@ pub fn evidence(root: &Path, e: &str, client_name: &str) -> Result<Evidence, Str
             Ok(every)
         }
     }
+}
+
+/// The crate folder of a `test:` path: the components before the first `tests` or `src` after `crates/<name>`.
+/// A file under `tests/**/fixtures/` is refused: it is test data, not a test.
+fn test_crate_dir(rel: &str) -> Result<&str, String> {
+    let parts: Vec<&str> = rel.split('/').collect();
+    let Some(i) = (2..parts.len() - 1).find(|&i| parts[i] == "tests" || parts[i] == "src") else {
+        return Err(format!("{rel} is not under the tests/ or src/ folder of a crate"));
+    };
+    if parts[i] == "tests" && parts[i + 1..parts.len() - 1].contains(&"fixtures") {
+        return Err(format!("{rel} is under a tests fixtures folder, which holds test data"));
+    }
+    Ok(&rel[..parts[..i].join("/").len()])
+}
+
+/// The CI targets where each `.rs` file of a crate is compiled into a test target, by canonical path; an
+/// `Err` when a `mod` on the way has a cfg that is not provable.
+type Reach = HashMap<PathBuf, Result<Targets, String>>;
+
+/// The `Reach` of each crate folder, so that `resolve` walks each crate once.
+#[derive(Default)]
+struct ReachCache(HashMap<String, Reach>);
+
+/// A `mod <name>;` declaration: the files it loads, first one found wins, each with the folder of its own
+/// `mod` declarations; and the CI targets where the declaration compiles.
+struct ModDecl {
+    candidates: Vec<(PathBuf, PathBuf)>,
+    cfg: Result<Targets, String>,
+}
+
+/// The value of an unconditional `#[path = "…"]`.
+fn path_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().find_map(|a| match &a.meta {
+        syn::Meta::NameValue(nv) if path_is(&nv.path, &["path"]) => match &nv.value {
+            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Some(s.value()),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// Push each `mod <name>;` of `items` and of their inline modules. `file_dir` is the folder of the file,
+/// `dir` the folder of the modules of this scope; `top` is true at file level (a `#[path]` there is relative
+/// to `file_dir`, in an inline module to `dir`).
+fn mod_decls(items: &[syn::Item], file_dir: &Path, dir: &Path, top: bool, outer: &Result<Targets, String>, out: &mut Vec<ModDecl>) {
+    use syn::ext::IdentExt;
+    for item in items {
+        let syn::Item::Mod(m) = item else { continue };
+        let cfg = outer.clone().and_then(|o| Ok(and(o, cfg_targets(&m.attrs)?)));
+        let name = m.ident.unraw().to_string();
+        let path = path_attr(&m.attrs);
+        match (&m.content, path) {
+            (Some((_, inner)), path) => {
+                let sub = dir.join(path.unwrap_or(name));
+                mod_decls(inner, file_dir, &sub, false, &cfg, out);
+            }
+            (None, Some(p)) => {
+                let f = if top { file_dir.join(&p) } else { dir.join(&p) };
+                let owned = f.parent().map(Path::to_path_buf).unwrap_or_default();
+                out.push(ModDecl { candidates: vec![(f, owned)], cfg });
+            }
+            (None, None) => {
+                let sub = dir.join(&name);
+                let candidates = vec![(dir.join(format!("{name}.rs")), sub.clone()), (sub.join("mod.rs"), sub)];
+                out.push(ModDecl { candidates, cfg });
+            }
+        }
+    }
+}
+
+/// Walk a crate's test targets (`tests/*.rs`, `tests/*/main.rs`) and its crate roots (`src/lib.rs`,
+/// `src/main.rs`) through each `mod` declaration. A file that cannot be read or parsed adds no module.
+fn reach(crate_dir: &Path) -> Reach {
+    let mut reach = Reach::new();
+    let mut queue: Vec<(PathBuf, PathBuf, Result<Targets, String>)> = Vec::new();
+    let mut roots = vec![crate_dir.join("src/lib.rs"), crate_dir.join("src/main.rs")];
+    for e in std::fs::read_dir(crate_dir.join("tests")).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            roots.push(p.join("main.rs"));
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            roots.push(p);
+        }
+    }
+    let mut merge = |file: PathBuf, dir: PathBuf, t: Result<Targets, String>, queue: &mut Vec<_>| {
+        let new = match (reach.get(&file), t) {
+            (None, t) => t,
+            (Some(Ok(old)), Ok(t)) if or(*old, t) != *old => Ok(or(*old, t)),
+            (Some(Err(_)), Ok(t)) => Ok(t),
+            _ => return,
+        };
+        queue.push((file.clone(), dir, new.clone()));
+        reach.insert(file, new);
+    };
+    for r in roots.into_iter().filter(|r| r.is_file()) {
+        if let Ok(c) = r.canonicalize() {
+            let dir = c.parent().map(Path::to_path_buf).unwrap_or_default();
+            merge(c, dir, Ok(EVERY), &mut queue);
+        }
+    }
+    while let Some((file, dir, t)) = queue.pop() {
+        let Ok(text) = read_capped(&file) else { continue };
+        let file_dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        let shown = file.display().to_string();
+        let decls = with_parsed(&shown, &text, |f| {
+            let mut out = Vec::new();
+            mod_decls(&f.items, &file_dir, &dir, true, &t, &mut out);
+            out
+        });
+        for d in decls.into_iter().flatten() {
+            let Some((f, sub)) = d.candidates.into_iter().find(|(f, _)| f.is_file()) else { continue };
+            if let Ok(c) = f.canonicalize() {
+                merge(c, sub, d.cfg, &mut queue);
+            }
+        }
+    }
+    reach
 }
 
 /// Split a table row on each `|` not preceded by `\`.

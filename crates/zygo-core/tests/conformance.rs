@@ -221,9 +221,7 @@ fn check_tokio_multi_thread_test_counts() {
 
 #[test]
 fn check_cfg_predicates_evaluated_for_the_ci_targets() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(d.path().join("crates/x")).unwrap();
-    let src = [
+    let d = test_target(&[
         "#[cfg(any())] mod never { #[test] fn dead() {} }",
         "#[cfg(all(test, unix))] #[test] fn both() {}",
         "#[cfg(target_os = \"windows\")] #[test] fn tos() {}",
@@ -237,10 +235,8 @@ fn check_cfg_predicates_evaluated_for_the_ci_targets() {
         "#[cfg(any(target_os = \"linux\", target_family = \"windows\"))] #[test] fn mix() {}",
         "#[cfg(target_os = \"freebsd\")] #[test] fn bsd() {}",
         "#[cfg(all())] mod always { #[cfg(target_os = \"macos\")] mod mac { #[tokio::test] async fn deep() {} } }",
-    ]
-    .join("\n");
-    std::fs::write(d.path().join("crates/x/t.rs"), src).unwrap();
-    let ev = |f: &str| evidence(d.path(), &format!("test:crates/x/t.rs::{f}"), "Alpha").map(|e| e.platforms);
+    ]);
+    let ev = |f: &str| evidence(d.path(), &format!("test:crates/x/tests/t.rs::{f}"), "Alpha").map(|e| e.platforms);
     assert_eq!(ev("both").unwrap(), ["linux", "macos"]);
     assert_eq!(ev("tos").unwrap(), ["windows"]);
     assert_eq!(ev("ca").unwrap(), ["linux", "macos"]);
@@ -318,6 +314,25 @@ fn check_3_premise_of_another_client_not_evidence() {
     let (r, mut g, c) = base();
     entry(&mut g[1], "A-1.2").evidence = vec!["premise:docs/premises.md#Q1".into()];
     assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[3]));
+}
+
+#[test]
+fn check_3_test_file_no_test_target_compiles_not_evidence() {
+    let ev = |e: &str| evidence(&repo(), e, "Alpha");
+    // Reached from the test target tests/ev.rs by `#[path]`, then by `mod` from that file; from src/lib.rs by `mod`.
+    assert_eq!(ev("test:crates/demo/tests/sub/reached.rs::in_reached").unwrap().platforms, EVERY);
+    assert_eq!(ev("test:crates/demo/tests/sub/deeper.rs::in_deeper").unwrap().platforms, EVERY);
+    assert_eq!(ev("test:crates/demo/src/inner/deep.rs::in_src_deep").unwrap().platforms, EVERY);
+    // The cfg of the `mod` that reaches the file limits its targets.
+    assert_eq!(ev("test:crates/demo/tests/sub/win.rs::in_win_file").unwrap().platforms, ["windows"]);
+    // No test target and no crate root reaches these files.
+    for e in ["test:crates/demo/tests/sub/orphan.rs::in_orphan", "test:crates/demo/src/orphan.rs::in_src_orphan"] {
+        assert!(ev(e).unwrap_err().contains("no test target compiles"), "{e}");
+    }
+    // A file under tests/**/fixtures/ is never evidence, even when a `mod` reaches it.
+    assert!(ev("test:crates/demo/tests/fixtures/f.rs::in_fixture").unwrap_err().contains("fixtures"));
+    assert_eq!(with_evidence(&["test:crates/demo/tests/sub/orphan.rs::in_orphan"]), set(&[3]));
+    assert_eq!(with_evidence(&["test:crates/demo/tests/sub/reached.rs::in_reached"]), set(&[]));
 }
 
 #[test]

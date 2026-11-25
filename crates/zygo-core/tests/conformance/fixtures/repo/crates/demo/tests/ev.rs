@@ -46,3 +46,13 @@ mod b {
     #[test]
     fn dup() {}
 }
+
+#[path = "sub/reached.rs"]
+mod reached;
+
+#[cfg(windows)]
+#[path = "sub/win.rs"]
+mod win_file;
+
+#[path = "fixtures/f.rs"]
+mod f;
