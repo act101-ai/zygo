@@ -1,9 +1,9 @@
 {
-   "agent" : "claude-code",
+   "agent" : "opencode",
    "captured_on" : "2026-11-25",
    "command" : "cargo test -- --nocapture",
    "event" : "PostToolUse",
    "exit" : 101,
-   "source" : "scratch lib crate `scratch` (cargo new --lib --vcs none); src/lib.rs holds `pub fn add(a: u64, b: u64) -> u64 { a + b }` and 120 unit tests tests::adds_001 to tests::adds_120, each `assert_eq!(add(i, i), 2 * i)`; plus tests::sums_a_ledger (`println!(\"ledger row {i}: {r}\")` for rows [3, 4, 5], then `assert_eq!(sum, 13, \"ledger total\")`) and tests::add_exceeds_its_inputs (`assert!(add(1, 1) > 2, \"add(1, 1) must exceed 2\")`); run with -- --nocapture; cargo test run by capture-shaping.sh in /repo",
+   "source" : "scratch lib crate `scratch` (cargo new --lib --vcs none); src/lib.rs holds `pub fn add(a: u64, b: u64) -> u64 { a + b }` and, in `mod tests` with `use super::add;`, 120 unit tests tests::adds_001 to tests::adds_120, each one `assert_eq!` with literal numbers, from `assert_eq!(add(1, 1), 2);` to `assert_eq!(add(120, 120), 240);`; plus tests::sums_a_ledger (`let rows = [3u64, 4, 5];`, then `for (i, r) in rows.iter().enumerate() { println!(\"ledger row {i}: {r}\"); }`, then `assert_eq!(rows.iter().sum::<u64>(), 13, \"ledger total\");`) and tests::add_exceeds_its_inputs (`assert!(add(1, 1) > 2, \"add(1, 1) must exceed 2\");`); run with -- --nocapture; cargo test run by capture-shaping.sh in /repo",
    "tool" : "cargo 1.98.0"
 }

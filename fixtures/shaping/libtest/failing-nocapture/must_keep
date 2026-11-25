@@ -6,3 +6,9 @@ thread 'tests::sums_a_ledger' (16884743) panicked at src/lib.rs:494:9:
 assertion `left == right` failed: ledger total
   left: 12
  right: 13
+ledger row 0: 3
+ledger row 1: 4
+ledger row 2: 5
+failures:
+    tests::add_exceeds_its_inputs
+    tests::sums_a_ledger
