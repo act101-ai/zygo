@@ -14,9 +14,9 @@ Fix: the existing child-process pattern of `crates/zygo/src/cmd/down.rs:303-334`
 
 Commits: each commit message starts with `FX-7:` and ends with the `Zygo-Session` and `Zygo-Work` trailers that the brief gives, each on its own line. No Claude attribution.
 
-- [ ] 1. Record the flake on the base (evidence, no code change). Run `for i in $(seq 1 20); do env -u ZYGO_SESSION_DIR cargo test -q -p zygo --locked --lib -- cmd::ws cmd::work cmd::plugins >/dev/null 2>&1 || echo fail; done | wc -l`. Expected: at least 1 failure (triage: 97 in 200). If 0, record the count and continue; the triage evidence stands.
+- [x] 1. Record the flake on the base (evidence, no code change). Run `for i in $(seq 1 20); do env -u ZYGO_SESSION_DIR cargo test -q -p zygo --locked --lib -- cmd::ws cmd::work cmd::plugins >/dev/null 2>&1 || echo fail; done | wc -l`. Expected: at least 1 failure (triage: 97 in 200). If 0, record the count and continue; the triage evidence stands.
 
-- [ ] 2. Write the failing test. In `crates/zygo/src/cmd/ws.rs` `mod tests`, replace the body of `relaunch_returns_the_exec_error` (`ws.rs:622-627`) with the parent. Do not add the child yet:
+- [x] 2. Write the failing test. In `crates/zygo/src/cmd/ws.rs` `mod tests`, replace the body of `relaunch_returns_the_exec_error` (`ws.rs:622-627`) with the parent. Do not add the child yet:
 
 ```rust
     /// D4: the exec failure path. `relaunch` sets `ZYGO_RELAUNCHED`, so std points the process-wide `environ` at a
@@ -38,7 +38,7 @@ Commits: each commit message starts with `FX-7:` and ends with the `Zygo-Session
 
   Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --lib -- --exact cmd::ws::tests::relaunch_returns_the_exec_error`. Expected: FAIL at the second assertion; the child run matches no test, so its output holds `test result: ok. 0 passed` and not `1 passed`. A compile error is not the red result.
 
-- [ ] 3. Add the child test, directly after the parent, with the old body unchanged:
+- [x] 3. Add the child test, directly after the parent, with the old body unchanged:
 
 ```rust
     /// The child of `relaunch_returns_the_exec_error`: the failed `exec` swaps `environ`, so it runs alone.
