@@ -263,6 +263,19 @@ pub fn spend_text(spend_usd: Option<f64>, notional: Option<bool>, total: Option<
     Some(if notional == Some(true) { format!("{NOTIONAL}{form}") } else { form })
 }
 
+// ---- run time (T§2.3) ----
+
+/// The run-time form of the HUD and of `zygo status` (session run time design T§2.3), `secs` = now − start (the
+/// caller gives 0 when start > now): `<m>m` below 1 hour, `<h>h<mm>m` below 1 day, else `<D>d<hh>h`. Floor at each
+/// unit; the second unit has two digits; no cap.
+pub fn run_time_text(secs: u64) -> String {
+    match secs {
+        0..3600 => format!("{}m", secs / 60),
+        3600..86400 => format!("{}h{:02}m", secs / 3600, secs % 3600 / 60),
+        _ => format!("{}d{:02}h", secs / 86400, secs % 86400 / 3600),
+    }
+}
+
 /// Whole cents first (half up), then the form: `<$0.01`, two decimals below $100.00, whole dollars (half up) from
 /// there, `>$99999` above $99999 (AU32).
 fn amount(usd: f64) -> String {
