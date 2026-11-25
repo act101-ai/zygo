@@ -381,6 +381,15 @@ fn trim_guard(e: &Env, b: &[u8]) -> (String, i32) { guarded(&|b| trim::trim_in(&
     assert_eq!(result_ids(&e), std::slice::from_ref(&id));
     assert_eq!(trim_rows(&e), [("sess-1".to_string(), "Bash".to_string(), 105000, view.len() as i64, Some(id), None, Some("size".to_string()))]);
 }
+#[test] fn trim_row_read_records_result_id_and_size_shaper() {      // O§7.9: shaper "size" for a trim of another tool too
+    let e = env(true); usage_ready(&e);
+    let v = post("PostToolUse-Read-main", json!({"type": "text", "file": {"filePath": "/repo/big.txt", "content": lines(1000), "numLines": 1000, "startLine": 1, "totalLines": 1000}}));
+    let o = updated(&out(run_trim(&v, &e)));
+    let view = o["file"]["content"].as_str().unwrap();
+    let id = marker_id(view);
+    assert_eq!(result_ids(&e), std::slice::from_ref(&id));
+    assert_eq!(trim_rows(&e), [("sess-1".to_string(), "Read".to_string(), 21000, view.len() as i64, Some(id), None, Some("size".to_string()))]);
+}
 #[test] fn trim_row_on_97d8767_database_writes_seven_columns() {    // O§6.5 items 3-4, O§16 item 15
     let e = env(true);
     std::fs::create_dir_all(db(&e).parent().unwrap()).unwrap();

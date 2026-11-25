@@ -234,3 +234,10 @@ Other callers of `trim_in` keep their signature: `crates/zygo-launch/tests/openc
 - **Proportion.** One code change (about 15 lines in `trim.rs`), 4 new tests, 4 one-line test fixes. The 97d8767 copy holds only the `trims` DDL that the hook touches.
 - **Live code.** All line numbers are at 882a7bdd. The scope defect was found by running the bounded open against `hook_trim` and `hooks_basic`, then reverting.
 - **Not in scope.** The doc of `Store::open` (`crates/zygo-usage/src/store.rs:111-113`, "until then they call this open") becomes stale for the hook. It is in `zygo-usage`, outside **Files**. Leave it for OS-5 or the lead.
+
+### Fix round 1
+
+- F2, fixed: only the Bash row's `result_id` and `shaper` were asserted, but O§7.9 sets `shaper = "size"` for every trim. New test `trim_row_read_records_result_id_and_size_shaper` trims a Read output and asserts the row's `result_id` (the stored id) and `shaper = "size"`. It failed with a temporary non-Bash shaper of `"mutant"` (not committed) and passes on the committed code.
+- F3, fixed: the doc of `Store::open` (`crates/zygo-usage/src/store.rs`) named an MCP read-back write that does not exist in `crates/zygo-mcp/src`. It now says only that `Store::open` is the full open (it creates and migrates) and that the trim hook uses `Store::open_bounded`.
+- F1, dropped: a test that proves `opts.db_bound` reaches `open_bounded` must release the lock during the wait. That is a wall-clock ordering, and timing tests do not run in CI.
+- F4, dropped: the node file is in scope by rule.
