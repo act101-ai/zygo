@@ -4,6 +4,6 @@
    "command" : "go test -v ./...",
    "event" : "PostToolUseFailure",
    "exit" : 1,
-   "source" : "the passing-verbose module plus a parallel subtest TestGroup/fail_fetch that logs 3 fetch attempts at 5 ms offsets and fails with t.Errorf, run by capture-shaping.sh in /repo",
+   "source" : "the passing-verbose module plus a parallel subtest TestGroup/fail_fetch that logs fetch start once t.Parallel returns, then 3 fetch attempts at 5 ms offsets, and fails with t.Errorf, run by capture-shaping.sh in /repo",
    "tool" : "go 1.23.4"
 }

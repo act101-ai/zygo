@@ -27,101 +27,101 @@
 === RUN   TestGroup/fail_fetch
 === PAUSE TestGroup/fail_fetch
 === CONT  TestGroup/pass_01
-    group_test.go:15: pass_01: step 1 ok
-=== CONT  TestGroup/pass_07
-=== CONT  TestGroup/pass_10
-=== CONT  TestGroup/pass_11
-=== NAME  TestGroup/pass_07
-    group_test.go:15: pass_07: step 1 ok
-=== NAME  TestGroup/pass_11
-    group_test.go:15: pass_11: step 1 ok
 === CONT  TestGroup/pass_08
+=== CONT  TestGroup/pass_05
+    group_test.go:15: pass_05: step 1 ok
+=== NAME  TestGroup/pass_08
     group_test.go:15: pass_08: step 1 ok
+=== CONT  TestGroup/pass_04
+    group_test.go:15: pass_04: step 1 ok
 === CONT  TestGroup/pass_03
     group_test.go:15: pass_03: step 1 ok
 === CONT  TestGroup/pass_02
     group_test.go:15: pass_02: step 1 ok
-=== CONT  TestGroup/fail_fetch
-=== CONT  TestGroup/pass_05
-    group_test.go:15: pass_05: step 1 ok
-=== CONT  TestGroup/pass_09
-    group_test.go:15: pass_09: step 1 ok
-=== CONT  TestGroup/pass_04
-    group_test.go:15: pass_04: step 1 ok
-=== CONT  TestGroup/pass_12
-    group_test.go:15: pass_12: step 1 ok
-=== NAME  TestGroup/pass_10
-    group_test.go:15: pass_10: step 1 ok
+=== CONT  TestGroup/pass_07
+    group_test.go:15: pass_07: step 1 ok
 === CONT  TestGroup/pass_06
     group_test.go:15: pass_06: step 1 ok
+=== CONT  TestGroup/pass_11
+    group_test.go:15: pass_11: step 1 ok
+=== CONT  TestGroup/fail_fetch
+    group_test.go:22: fetch start
+=== CONT  TestGroup/pass_12
+    group_test.go:15: pass_12: step 1 ok
+=== CONT  TestGroup/pass_10
+    group_test.go:15: pass_10: step 1 ok
+=== CONT  TestGroup/pass_09
+    group_test.go:15: pass_09: step 1 ok
+=== NAME  TestGroup/pass_01
+    group_test.go:15: pass_01: step 1 ok
 === NAME  TestGroup/fail_fetch
-    group_test.go:24: fetch attempt 1: status 503
-=== NAME  TestGroup/pass_06
-    group_test.go:15: pass_06: step 2 ok
-=== NAME  TestGroup/pass_09
-    group_test.go:15: pass_09: step 2 ok
+    group_test.go:25: fetch attempt 1: status 503
 === NAME  TestGroup/pass_04
     group_test.go:15: pass_04: step 2 ok
-=== NAME  TestGroup/pass_12
-    group_test.go:15: pass_12: step 2 ok
-=== NAME  TestGroup/pass_10
-    group_test.go:15: pass_10: step 2 ok
-=== NAME  TestGroup/pass_05
-    group_test.go:15: pass_05: step 2 ok
 === NAME  TestGroup/pass_03
     group_test.go:15: pass_03: step 2 ok
-=== NAME  TestGroup/pass_02
-    group_test.go:15: pass_02: step 2 ok
+=== NAME  TestGroup/pass_05
+    group_test.go:15: pass_05: step 2 ok
+=== NAME  TestGroup/pass_01
+    group_test.go:15: pass_01: step 2 ok
 === NAME  TestGroup/pass_11
     group_test.go:15: pass_11: step 2 ok
+=== NAME  TestGroup/pass_02
+    group_test.go:15: pass_02: step 2 ok
+=== NAME  TestGroup/pass_09
+    group_test.go:15: pass_09: step 2 ok
 === NAME  TestGroup/pass_07
     group_test.go:15: pass_07: step 2 ok
 === NAME  TestGroup/pass_08
     group_test.go:15: pass_08: step 2 ok
-=== NAME  TestGroup/pass_01
-    group_test.go:15: pass_01: step 2 ok
-=== NAME  TestGroup/fail_fetch
-    group_test.go:24: fetch attempt 2: status 503
-=== NAME  TestGroup/pass_11
-    group_test.go:15: pass_11: step 3 ok
-=== NAME  TestGroup/pass_06
-    group_test.go:15: pass_06: step 3 ok
-=== NAME  TestGroup/pass_01
-    group_test.go:15: pass_01: step 3 ok
 === NAME  TestGroup/pass_12
-    group_test.go:15: pass_12: step 3 ok
-=== NAME  TestGroup/pass_09
-    group_test.go:15: pass_09: step 3 ok
-=== NAME  TestGroup/pass_08
-    group_test.go:15: pass_08: step 3 ok
-=== NAME  TestGroup/pass_03
-    group_test.go:15: pass_03: step 3 ok
+    group_test.go:15: pass_12: step 2 ok
 === NAME  TestGroup/pass_10
-    group_test.go:15: pass_10: step 3 ok
-=== NAME  TestGroup/pass_05
-    group_test.go:15: pass_05: step 3 ok
+    group_test.go:15: pass_10: step 2 ok
+=== NAME  TestGroup/pass_06
+    group_test.go:15: pass_06: step 2 ok
+=== NAME  TestGroup/fail_fetch
+    group_test.go:25: fetch attempt 2: status 503
 === NAME  TestGroup/pass_02
     group_test.go:15: pass_02: step 3 ok
+=== NAME  TestGroup/pass_06
+    group_test.go:15: pass_06: step 3 ok
+=== NAME  TestGroup/pass_05
+    group_test.go:15: pass_05: step 3 ok
+=== NAME  TestGroup/pass_01
+    group_test.go:15: pass_01: step 3 ok
 === NAME  TestGroup/pass_07
     group_test.go:15: pass_07: step 3 ok
 === NAME  TestGroup/pass_04
     group_test.go:15: pass_04: step 3 ok
+=== NAME  TestGroup/pass_12
+    group_test.go:15: pass_12: step 3 ok
+=== NAME  TestGroup/pass_10
+    group_test.go:15: pass_10: step 3 ok
+=== NAME  TestGroup/pass_08
+    group_test.go:15: pass_08: step 3 ok
+=== NAME  TestGroup/pass_11
+    group_test.go:15: pass_11: step 3 ok
+=== NAME  TestGroup/pass_09
+    group_test.go:15: pass_09: step 3 ok
+=== NAME  TestGroup/pass_03
+    group_test.go:15: pass_03: step 3 ok
 === NAME  TestGroup/fail_fetch
-    group_test.go:24: fetch attempt 3: status 503
-    group_test.go:27: want status 200, got 503
+    group_test.go:25: fetch attempt 3: status 503
+    group_test.go:28: want status 200, got 503
 --- FAIL: TestGroup (0.00s)
-    --- PASS: TestGroup/pass_04 (0.03s)
-    --- PASS: TestGroup/pass_10 (0.03s)
-    --- PASS: TestGroup/pass_07 (0.03s)
     --- PASS: TestGroup/pass_12 (0.03s)
-    --- PASS: TestGroup/pass_06 (0.03s)
-    --- PASS: TestGroup/pass_09 (0.03s)
-    --- PASS: TestGroup/pass_08 (0.03s)
-    --- PASS: TestGroup/pass_11 (0.03s)
     --- PASS: TestGroup/pass_03 (0.03s)
+    --- PASS: TestGroup/pass_01 (0.03s)
+    --- PASS: TestGroup/pass_10 (0.03s)
+    --- PASS: TestGroup/pass_09 (0.03s)
     --- PASS: TestGroup/pass_05 (0.03s)
     --- PASS: TestGroup/pass_02 (0.03s)
-    --- PASS: TestGroup/pass_01 (0.03s)
+    --- PASS: TestGroup/pass_07 (0.03s)
+    --- PASS: TestGroup/pass_04 (0.03s)
+    --- PASS: TestGroup/pass_08 (0.03s)
+    --- PASS: TestGroup/pass_06 (0.03s)
+    --- PASS: TestGroup/pass_11 (0.03s)
     --- FAIL: TestGroup/fail_fetch (0.03s)
 FAIL
 FAIL	example.com/gotestfix/group	0.037s
@@ -306,5 +306,5 @@ FAIL	example.com/gotestfix/group	0.037s
     parse_test.go:422: field 60 parsed
 --- PASS: TestField060 (0.00s)
 PASS
-ok  	example.com/gotestfix/parse	0.006s
+ok  	example.com/gotestfix/parse	0.005s
 FAIL
