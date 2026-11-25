@@ -247,3 +247,41 @@ fn savings_by_key_sorted_largest_first() {
     assert_eq!(v.by_key, vec![key("Bash", "cargo test", "libtest", 1, 0, 300, 0.0), key("Read", "-", "size", 1, 0, 200, 0.0),
         key("Bash", "git diff", "diff", 1, 0, 100, 0.0), key("-", "-", "-", 0, 1, -50, 0.0)]);
 }
+
+#[test]
+fn savings_since_filter_leaves_out_earlier_events() {
+    let t = Tmp::new();
+    let st = open(&t);
+    st.insert_trim(&trim("F", 10, None, 1_000, None)).unwrap();
+    st.insert_trim(&trim("F", 30, None, 2_000, None)).unwrap();
+    st.insert_readback(&rb("F", "F", 10, 100, RID)).unwrap();
+    st.insert_readback(&rb("F", "F", 30, 200, RID)).unwrap();
+    let v = st.savings(&Filter { session: None, since: Some(20) }, &rates).unwrap();
+    assert_eq!((v.kept_out_bytes, v.bytes_read_back), (2_000 - 200, 200));
+}
+
+#[test]
+fn savings_negative_readback_bytes_saturate_and_agree() {
+    let t = Tmp::new();
+    let st = open(&t);
+    Connection::open(t.db()).unwrap().execute(
+        "INSERT INTO readbacks (ts, session, read_in, result_id, tool, bytes) VALUES (5, 'M', 'M', ?1, 'result_view', ?2)",
+        rusqlite::params![RID, i64::MIN]).unwrap();
+    let v = st.savings(&Filter::default(), &rates).unwrap();
+    assert_eq!((v.kept_out_bytes, v.bytes_read_back), (i64::MAX, i64::MAX as u64));
+    assert_eq!(v.kept_out_bytes.unsigned_abs(), v.bytes_read_back);
+}
+
+#[test]
+fn savings_readbacks_without_result_id_column_are_dash_key_in_main_loop() {
+    let t = Tmp::new();
+    let st = open(&t);
+    two_contexts(&st, "R", [10, 20], "m1", "m2");
+    st.insert_readback(&rb("R", "R", 5, 4_000, RID)).unwrap();
+    Connection::open(t.db()).unwrap().execute_batch("ALTER TABLE trims DROP COLUMN result_id").unwrap();
+    let v = st.savings(&Filter::default(), &rates).unwrap();
+    assert!(near(v.spend_usd, -0.0054), "{}", v.spend_usd);
+    assert_eq!((v.readbacks, v.bytes_read_back, v.kept_out_bytes), (1, 4_000, -4_000));
+    assert_eq!(v.by_key, vec![key("-", "-", "-", 0, 1, -4_000, v.by_key[0].spend_usd)]);
+    assert!(near(v.by_key[0].spend_usd, -0.0054));
+}

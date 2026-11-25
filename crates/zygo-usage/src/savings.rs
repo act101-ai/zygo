@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::Result;
-use rusqlite::{OptionalExtension, Transaction};
+use rusqlite::Transaction;
 use zygo_core::{tokens::BYTES_PER_TOKEN, Agent};
 
 use crate::{carry::{self, CtxRequest, Rates}, query::{u64_at, Filter}, store::Store};
@@ -46,6 +46,9 @@ struct Event {
     ctx: Ctx,
     key: Key,
 }
+
+/// The first trim row of a `result_id`: `(session, agent_id, tool, command, shaper)`.
+type Trim = (String, Option<String>, String, Option<String>, Option<String>);
 
 fn dash(v: Option<String>) -> String { v.unwrap_or_else(|| "-".into()) }
 
@@ -97,18 +100,29 @@ fn readback_events(tx: &Transaction<'_>, f: &Filter, cols: &[String]) -> Result<
     let rows = s.query_map(rusqlite::params![f.session, f.since], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?))
     })?.collect::<rusqlite::Result<Vec<_>>>()?;
-    let lookup = cols.iter().any(|c| c == "result_id").then(|| format!(
-        "SELECT session, agent_id, tool, {}, {} FROM trims WHERE result_id = ?1 ORDER BY rowid LIMIT 1",
-        trim_col(cols, "command"), trim_col(cols, "shaper")));
+    // One pass over `trims`: `result_id` has no index, so a query per read-back would scan the table each time.
+    let mut trims: HashMap<String, (i64, Trim)> = HashMap::new();
+    if cols.iter().any(|c| c == "result_id") {
+        let sql = format!(
+            "SELECT result_id, rowid, session, agent_id, tool, {}, {} FROM trims WHERE result_id IN \
+             (SELECT result_id FROM readbacks WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2))",
+            trim_col(cols, "command"), trim_col(cols, "shaper"));
+        let mut s = tx.prepare(&sql)?;
+        let found = s.query_map(rusqlite::params![f.session, f.since], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?,
+                (r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
+        })?;
+        for row in found {
+            let (rid, rowid, trim) = row?;
+            match trims.get(&rid) {
+                Some((lowest, _)) if *lowest <= rowid => {}
+                _ => { trims.insert(rid, (rowid, trim)); }
+            }
+        }
+    }
     let mut out = Vec::with_capacity(rows.len());
     for (ts, read_in, rid, bytes) in rows {
-        let trim = match &lookup {
-            Some(sql) => tx.prepare_cached(sql)?.query_row([&rid], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?,
-                    r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?))
-            }).optional()?,
-            None => None,
-        };
+        let trim = trims.get(&rid).map(|(_, t)| t.clone());
         let (ctx, key) = match trim {
             Some((session, agent_id, tool, command, shaper)) => {
                 let agent_id = if session == read_in { agent_id } else { None };
@@ -116,7 +130,7 @@ fn readback_events(tx: &Transaction<'_>, f: &Filter, cols: &[String]) -> Result<
             }
             None => ((read_in, None), ("-".into(), "-".into(), "-".into())),
         };
-        out.push(Event { ts, bytes: -bytes, readback: true, ctx, key });
+        out.push(Event { ts, bytes: bytes.saturating_neg(), readback: true, ctx, key });
     }
     Ok(out)
 }
@@ -151,14 +165,14 @@ impl Store {
             if e.readback {
                 v.readbacks += 1;
                 k.readbacks += 1;
-                v.bytes_read_back += e.bytes.unsigned_abs();
+                v.bytes_read_back = v.bytes_read_back.saturating_add(e.bytes.unsigned_abs());
             } else {
                 v.views += 1;
                 k.views += 1;
             }
-            k.kept_out_bytes += e.bytes;
+            k.kept_out_bytes = k.kept_out_bytes.saturating_add(e.bytes);
             k.spend_usd += spend;
-            v.kept_out_bytes += e.bytes;
+            v.kept_out_bytes = v.kept_out_bytes.saturating_add(e.bytes);
             v.spend_usd += spend;
         }
         let n = v.kept_out_bytes;
