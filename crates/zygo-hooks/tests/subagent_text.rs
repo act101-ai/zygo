@@ -10,14 +10,18 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use zygo_core::{
-    hook::{guarded, HookInput},
+    hook::{guarded, HookInput, HookOutput},
     overrides::Overrides,
     paths::Paths,
     session_dir::SessionDir,
     session_view::{Member, ResumeNote, SessionView, SubagentRef, ViewWorkspace},
     Agent,
 };
-use zygo_hooks::{session_start, session_text::mechanics};
+use zygo_hooks::{
+    session_start,
+    session_text::{build, mechanics},
+    workspace::note,
+};
 use zygo_workspace::state::{MemberRecord, MemberState, Pending, Phase, Store};
 
 const REDACT: &str = "`[REDACTED:<id>]` marks a secret zygo removed; never write it into a file.";
@@ -226,14 +230,19 @@ fn main_compact_output_equals_startup() {
 /// workspace state with a pending member record for the pane, so the member part of `run_member` would print the
 /// session text, commit the record and clear the note. Returns the session folder and the paths.
 fn member_fx(t: &Path) -> (SessionDir, Paths) {
+    member_fx_as(t, Agent::ClaudeCode)
+}
+
+/// `member_fx` with `agent` as the view agent and the member record agent.
+fn member_fx_as(t: &Path, agent: Agent) -> (SessionDir, Paths) {
     let p = paths(t);
     let d = SessionDir::new(p.sessions_dir.join(SID));
     d.create().unwrap();
     let note = ResumeNote { clean_stop: true, interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "Explore".into(), ..Default::default() }],
         closed_units: vec!["u-1".into()], ..Default::default() };
     let ws = ViewWorkspace { member: Member { ws_id: WS_ID.into(), pane: PANE.into(), ..Default::default() }, resume_note: Some(note), ..Default::default() };
-    SessionView { session: SID.into(), workspace: Some(ws), ..view() }.save(&d).unwrap();
-    let mut m = MemberRecord::new(Agent::ClaudeCode);
+    SessionView { session: SID.into(), workspace: Some(ws), agent, ..view() }.save(&d).unwrap();
+    let mut m = MemberRecord::new(agent);
     m.state = MemberState::Resumable;
     m.pending = Some(Pending { zygo_session: SID.into(), agent_session: None, started_at: 7, ..Default::default() });
     m.closed_units = vec!["u-1".into()];
@@ -333,4 +342,89 @@ fn subagent_start_zygo_prefix_rule_matches_is_zygo() {
     for ty in ["zygo-", "zygo-plan"] {
         assert_eq!(both(t.path(), &d, &input(&with(sub.clone(), "agent_type", json!(ty)))), "", "{ty}");
     }
+}
+
+/// The recorded transform payload (`fixtures/opencode/plugin-hooks/experimental.chat.system.transform.json`) as an
+/// OpenCode input with `--event subagent`. Constructed: `input.modelID` changed from `lead` to `read`, a request
+/// that the plugin sends with `--event subagent` (T§7.2 item 1). The hook does not read the model.
+fn oc_subagent() -> HookInput {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/opencode/plugin-hooks/experimental.chat.system.transform.json");
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    v["input"]["modelID"] = json!("read");
+    HookInput { cli_event: Some("subagent".into()), ..HookInput::parse(Agent::OpenCode, &serde_json::to_vec(&v).unwrap()).unwrap() }
+}
+
+/// `run_member` (`zygo` = a path that does not exist) and `run_in` on `i`. Asserts that both return
+/// `HookOutput::Text` with equal text and that `run_member` wrote nothing to `out`. Returns the text.
+fn oc_text(t: &Path, d: &SessionDir, p: &Paths, i: &HookInput) -> String {
+    let mut out = Vec::new();
+    let a = session_start::run_member(i, d, p, &t.join("no-zygo"), &mut out).unwrap();
+    assert!(out.is_empty(), "the member part printed");
+    let b = session_start::run_in(i, d).unwrap();
+    let (HookOutput::Text(a), HookOutput::Text(b)) = (a, b) else { panic!("not plain text") };
+    assert_eq!(a, b);
+    a
+}
+
+#[test]
+fn opencode_subagent_prints_mechanics_as_plain_text() {
+    // T§7.2 item 2, T-C5: a view that is not a member; plain text for either view agent.
+    for agent in [Agent::OpenCode, Agent::ClaudeCode] {
+        let (t, d) = sd();
+        SessionView { agent, ..view() }.save(&d).unwrap();
+        let m = [REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" ");
+        assert_eq!(m.len(), 721);
+        assert_eq!(oc_text(t.path(), &d, &paths(t.path()), &oc_subagent()), m, "{agent:?}");
+        assert!(!d.log().exists());
+    }
+}
+
+#[test]
+fn opencode_subagent_overrides_apply() {
+    // T-C5, T§17 check 4 form: overrides results and work_units off, navigation off.
+    let (t, d) = sd();
+    SessionView { agent: Agent::OpenCode, navigation: false, ..view() }.save(&d).unwrap();
+    Overrides { results: Some(false), work_units: Some(false), ..Default::default() }.save(&d).unwrap();
+    let m = format!("{REDACT} {ATTRIBUTION}");
+    assert_eq!(m.len(), 317);
+    assert_eq!(oc_text(t.path(), &d, &paths(t.path()), &oc_subagent()), m);
+}
+
+#[test]
+fn opencode_subagent_member_view_prints_only_mechanics() {
+    // T§17 check 11, review focus 70: a member view that holds resume-note inputs gives M as plain text, and no
+    // file under the root changes (view.json, the workspace state, the session log, errors.log).
+    let m = [REDACT, ATTRIBUTION, STORE, NAV, TRAILER].join(" ");
+    for agent in [Agent::OpenCode, Agent::ClaudeCode] {
+        let t = tempfile::tempdir().unwrap();
+        let (d, p) = member_fx_as(t.path(), agent);
+        let view = std::fs::read(d.view_json()).unwrap();
+        let before = tree(t.path());
+        assert_eq!(oc_text(t.path(), &d, &p, &oc_subagent()), m, "{agent:?}");
+        assert_eq!(std::fs::read(d.view_json()).unwrap(), view, "{agent:?}: view.json changed");
+        assert_eq!(tree(t.path()), before, "{agent:?}: a file changed");
+        assert!(!d.log().exists());
+    }
+    // The same OpenCode input without `--event subagent` reaches the member part: session text, blank line, note.
+    let t = tempfile::tempdir().unwrap();
+    let (d, p) = member_fx_as(t.path(), Agent::OpenCode);
+    let v = SessionView::load(&d).unwrap();
+    let n = note(v.workspace.as_ref().unwrap().resume_note.as_ref().unwrap()).unwrap();
+    let i = HookInput { cli_event: None, ..oc_subagent() };
+    let got = session_start::run_member(&i, &d, &p, &t.path().join("no-zygo"), &mut Vec::new()).unwrap().to_stdout();
+    assert_eq!(got, format!("{}\n\n{n}", build(&v)));
+}
+
+#[test]
+fn opencode_subagent_unparseable_view_is_an_error() {
+    // T§14 item 1: the load error goes to the C6 wrapper; nothing printed to `out`, no session-log line.
+    let (t, d) = sd();
+    std::fs::write(d.view_json(), "{").unwrap();
+    let i = oc_subagent();
+    let mut out = Vec::new();
+    assert!(session_start::run_member(&i, &d, &paths(t.path()), &t.path().join("no-zygo"), &mut out).is_err());
+    assert!(session_start::run_in(&i, &d).is_err());
+    assert!(out.is_empty());
+    assert!(!d.log().exists());
 }
