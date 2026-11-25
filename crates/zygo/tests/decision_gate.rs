@@ -11,17 +11,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
-use zygo::cmd::decision::{run_in, DecisionIo, Repo};
+use zygo::cmd::decision::{DecisionIo, Repo, run_in};
 use zygo_config::Level;
+use zygo_core::Agent;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{LegendEntry, SessionView};
-use zygo_core::Agent;
 use zygo_mcp::tools::work::WorkVerdict;
 use zygo_mcp::{Tool, ToolError};
 use zygo_usage::{Filter, Store, WorkUnitRow};
-use zygo_work::decisions::record::{parse_record, Class, Record, Status, FILL_MARKER};
+use zygo_work::decisions::record::{Class, FILL_MARKER, Record, Status, parse_record};
 use zygo_work::gate::git::{BatchIo, GitRunner, ProcessGit, ProcessRunner};
 use zygo_work::repo::{RunError, Whole};
 
@@ -85,7 +85,10 @@ impl Fx {
             Layout::Node => {
                 let lead = root.join("main");
                 init(&lead);
-                git(&lead, &["worktree", "add", "-q", "../node", "-b", "node/N1"]);
+                git(
+                    &lead,
+                    &["worktree", "add", "-q", "../node", "-b", "node/N1"],
+                );
                 (lead, root.join("node"), None)
             }
             Layout::One => {
@@ -96,7 +99,11 @@ impl Fx {
         };
         let sd = SessionDir::new(root.join("session"));
         sd.create().unwrap();
-        let legend = vec![LegendEntry { role: "code".into(), description: String::new(), custom: false }];
+        let legend = vec![LegendEntry {
+            role: "code".into(),
+            description: String::new(),
+            custom: false,
+        }];
         SessionView {
             session: SESSION.into(),
             agent: Agent::ClaudeCode,
@@ -108,7 +115,15 @@ impl Fx {
         }
         .save(&sd)
         .unwrap();
-        Fx { _t: t, root, home, sd, lead, work, base }
+        Fx {
+            _t: t,
+            root,
+            home,
+            sd,
+            lead,
+            work,
+            base,
+        }
     }
 
     /// The usage store under the scratch home (call 3).
@@ -137,9 +152,15 @@ impl Fx {
 
     /// The verdict of the UNIT row of `round`.
     fn verdict(&self, round: u32) -> Option<String> {
-        let rows = Store::open(&self.db()).unwrap().work_units(&Filter::default()).unwrap();
-        let row = rows.into_iter().find(|r| r.unit == UNIT && r.round == round);
-        row.unwrap_or_else(|| panic!("no row for round {round}")).verdict
+        let rows = Store::open(&self.db())
+            .unwrap()
+            .work_units(&Filter::default())
+            .unwrap();
+        let row = rows
+            .into_iter()
+            .find(|r| r.unit == UNIT && r.round == round);
+        row.unwrap_or_else(|| panic!("no row for round {round}"))
+            .verdict
     }
 }
 
@@ -174,7 +195,11 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_COMMITTER_EMAIL", "t@t")
         .output()
         .unwrap();
-    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        o.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     String::from_utf8(o.stdout).unwrap().trim().to_string()
 }
 
@@ -277,7 +302,8 @@ struct Iso {
 
 impl Iso {
     fn isolate(&self, mut cmd: Command) -> Command {
-        cmd.env("HOME", self.home.path()).env("XDG_CONFIG_HOME", self.home.path());
+        cmd.env("HOME", self.home.path())
+            .env("XDG_CONFIG_HOME", self.home.path());
         if cfg!(windows) {
             cmd.env("USERPROFILE", self.home.path());
         }
@@ -300,7 +326,13 @@ impl GitRunner for Iso {
 }
 
 fn far_git(root: &Path) -> ProcessGit {
-    ProcessGit::with_runner(root, Box::new(Iso { far: Far(ProcessRunner), home: TempDir::new().unwrap() }))
+    ProcessGit::with_runner(
+        root,
+        Box::new(Iso {
+            far: Far(ProcessRunner),
+            home: TempDir::new().unwrap(),
+        }),
+    )
 }
 
 // ---- the drivers ----
@@ -334,7 +366,10 @@ impl Driver for InProc {
     fn decision(&self, fx: &Fx, cwd: &Path, agent: bool, args: &[&str]) -> (i32, String, String) {
         let checkout = || {
             let top = git(cwd, &["rev-parse", "--show-toplevel"]);
-            let common = git(cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+            let common = git(
+                cwd,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            );
             Some((PathBuf::from(top), PathBuf::from(common)))
         };
         let commits = |_: &Path, _: &str, _: usize| Ok(vec![]);
@@ -343,13 +378,158 @@ impl Driver for InProc {
         let db = fx.db();
         let sd: OsString = fx.sd.root.clone().into();
         let env = |k: &str| (agent && k == "ZYGO_SESSION_DIR").then(|| sd.clone());
-        let repo = Repo { checkout: &checkout, commits: &commits, head: &head, today: &today, usage_db: &db };
+        let repo = Repo {
+            checkout: &checkout,
+            commits: &commits,
+            head: &head,
+            today: &today,
+            usage_db: &db,
+        };
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let mut input = std::io::empty();
-        let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty: false };
+        let mut io = DecisionIo {
+            input: &mut input,
+            out: &mut out,
+            err: &mut err,
+            tty: false,
+        };
         let code = run_in(&repo, &env, &args, &mut io);
-        (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
+        (
+            code,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+}
+
+/// The `zygo` binary: `work_verdict` over `zygo mcp --agent claude-code` stdio between the work hooks, and `zygo
+/// decision` as a process.
+struct Bin;
+
+/// The Claude Code hook fixture `name` (as `work_hook.rs`).
+fn fixture(name: &str) -> Value {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/claude-code/hooks")
+        .join(name);
+    serde_json::from_slice(&fs::read(p).unwrap()).unwrap()
+}
+
+/// A `zygo` command with the scratch home, the session dir, no `ZYGO_AGENT`, git stopped at the temp root, cwd lead.
+fn agent_cmd(fx: &Fx) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+    common::scratch_home(&mut cmd, &fx.home);
+    cmd.env("ZYGO_SESSION_DIR", &fx.sd.root)
+        .env_remove("ZYGO_AGENT")
+        .env("GIT_CEILING_DIRECTORIES", &fx.root)
+        .current_dir(&fx.lead);
+    cmd
+}
+
+/// `zygo hook <args>` with `payload` on stdin. (exit code, stdout, stderr)
+fn hook(fx: &Fx, args: &[&str], payload: &Value) -> (Option<i32>, String, String) {
+    use std::process::Stdio;
+    let mut cmd = agent_cmd(fx);
+    cmd.arg("hook").args(args);
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    common::feed_stdin(child.stdin.take().unwrap(), payload.to_string().as_bytes());
+    let out = child.wait_with_output().unwrap();
+    (
+        out.status.code(),
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+    )
+}
+
+/// The hook fixture `name` as a `work_verdict` call from the lead.
+fn verdict_payload(fx: &Fx, name: &str, args: &Value) -> Value {
+    let mut p = fixture(name);
+    p["tool_name"] = json!("mcp__zygo__work_verdict");
+    p["tool_input"] = args.clone();
+    p["cwd"] = json!(fx.lead.to_str().unwrap());
+    p
+}
+
+impl Driver for Bin {
+    fn keep(&self, fx: &Fx, args: Value) -> Result<String, String> {
+        use std::process::Stdio;
+        let quiet = (Some(0), String::new(), String::new());
+        let pre = verdict_payload(fx, "PreToolUse-Bash-main.json", &args);
+        assert_eq!(
+            hook(fx, &["work", "--event", "verdict"], &pre),
+            quiet,
+            "PreToolUse"
+        );
+
+        let call = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "work_verdict", "arguments": args}});
+        let input = format!(
+            "{}\n{}\n{call}\n",
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        );
+        let mut cmd = agent_cmd(fx);
+        cmd.args(["mcp", "--agent", "claude-code"]);
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        common::feed_stdin(child.stdin.take().unwrap(), input.as_bytes());
+        let out = child.wait_with_output().unwrap();
+        let (stdout, stderr) = (
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+        );
+        assert_eq!(out.status.code(), Some(0), "mcp: {stdout}\n{stderr}");
+        let reply = stdout
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .find(|v| v["id"] == 2)
+            .unwrap_or_else(|| panic!("no reply 2: {stdout}\n{stderr}"));
+        let result = reply
+            .get("result")
+            .unwrap_or_else(|| panic!("no result: {stdout}\n{stderr}"));
+        let text = result["content"][0]["text"].as_str().unwrap().to_string();
+        let is_error = result["isError"].as_bool().unwrap_or(false);
+
+        let post = if is_error {
+            let mut p = verdict_payload(fx, "PostToolUseFailure-Read-main.json", &args);
+            p["error"] = json!(text);
+            p
+        } else {
+            let mut p = verdict_payload(fx, "PostToolUse-Bash-main.json", &args);
+            p["tool_response"] = json!([{"type": "text", "text": text}]);
+            p
+        };
+        assert_eq!(hook(fx, &["work"], &post), quiet, "PostToolUse");
+        if is_error { Err(text) } else { Ok(text) }
+    }
+
+    fn decision(&self, fx: &Fx, cwd: &Path, agent: bool, args: &[&str]) -> (i32, String, String) {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+        common::scratch_home(&mut cmd, &fx.home);
+        cmd.arg("decision")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_CEILING_DIRECTORIES", &fx.root);
+        cmd.stdin(std::process::Stdio::null());
+        if agent {
+            cmd.env("ZYGO_SESSION_DIR", &fx.sd.root);
+        } else {
+            cmd.env_remove("ZYGO_SESSION_DIR");
+        }
+        let out = cmd.output().unwrap();
+        (
+            out.status.code().unwrap(),
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+        )
     }
 }
 
@@ -358,12 +538,28 @@ impl Driver for InProc {
 /// `zygo decision new` as the agent: an open `security` finding of UNIT round 1, filled. The id.
 fn new_record(d: &dyn Driver, fx: &Fx) -> String {
     let args = [
-        "new", "--kind", "open-finding", "--title", TITLE, "--unit", UNIT, "--round", "1", "--role", "code", "--class",
+        "new",
+        "--kind",
+        "open-finding",
+        "--title",
+        TITLE,
+        "--unit",
+        UNIT,
+        "--round",
+        "1",
+        "--role",
+        "code",
+        "--class",
         "security",
     ];
     let (code, out, err) = d.decision(fx, &fx.work, true, &args);
     assert_eq!((code, err.as_str()), (0, ""), "new: {out}");
-    let id = Path::new(out.trim_end()).file_stem().unwrap().to_str().unwrap().to_string();
+    let id = Path::new(out.trim_end())
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
     fill(&rec_path(fx, &id));
     let r = record(fx, &id);
     assert_eq!((r.status, r.class), (Status::Open, Class::Security));
@@ -375,7 +571,14 @@ fn assert_operator_ok(fx: &Fx, ran: (i32, String, String), id: &str) {
     let (code, out, err) = ran;
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert_eq!(out.lines().count(), 1, "{out:?}");
-    assert_eq!(Path::new(out.trim_end()).file_name().unwrap().to_str().unwrap(), format!("{id}.md"));
+    assert_eq!(
+        Path::new(out.trim_end())
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        format!("{id}.md")
+    );
     assert!(rec_path(fx, id).is_file());
 }
 
@@ -384,8 +587,13 @@ fn record_and_stop(d: &dyn Driver, fx: &Fx) -> String {
     let id = new_record(d, fx);
     let h1 = commit(&fx.work, &agent_msg("add record", &id));
     fx.row(1);
-    let refused = d.keep(fx, keep_args(fx, 1, &h1, vec![stop_entry(&id), rejected_entry()]));
-    let want = format!("zygo: keep refused: {LABEL_STOP}: class security stops for the operator: ratify or overturn {id}");
+    let refused = d.keep(
+        fx,
+        keep_args(fx, 1, &h1, vec![stop_entry(&id), rejected_entry()]),
+    );
+    let want = format!(
+        "zygo: keep refused: {LABEL_STOP}: class security stops for the operator: ratify or overturn {id}"
+    );
     assert_eq!(refused, Err(want));
     assert_eq!(fx.verdict(1), None);
     id
@@ -394,10 +602,17 @@ fn record_and_stop(d: &dyn Driver, fx: &Fx) -> String {
 /// D§8.5 steps 1, 3-5; #7 ratify.
 fn ratify_flow(d: &dyn Driver, fx: &Fx) {
     let id = record_and_stop(d, fx);
-    assert_operator_ok(fx, d.decision(fx, &fx.work, false, &["ratify", &id, "--yes"]), &id);
+    assert_operator_ok(
+        fx,
+        d.decision(fx, &fx.work, false, &["ratify", &id, "--yes"]),
+        &id,
+    );
     assert_eq!(record(fx, &id).status, Status::Ratified);
     let h2 = commit(&fx.work, "ratify");
-    let kept = d.keep(fx, keep_args(fx, 1, &h2, vec![stop_entry(&id), rejected_entry()]));
+    let kept = d.keep(
+        fx,
+        keep_args(fx, 1, &h2, vec![stop_entry(&id), rejected_entry()]),
+    );
     assert_eq!(kept, Ok(format!("recorded keep for {UNIT} round 1")));
     assert_eq!(fx.verdict(1).as_deref(), Some("keep"));
 }
@@ -405,12 +620,32 @@ fn ratify_flow(d: &dyn Driver, fx: &Fx) {
 /// D§8.5 step 5; #7 overturn. The final head.
 fn overturn_flow(d: &dyn Driver, fx: &Fx) -> String {
     let id = record_and_stop(d, fx);
-    assert_operator_ok(fx, d.decision(fx, &fx.work, false, &["overturn", &id, "--reason", NOTE, "--yes"]), &id);
+    assert_operator_ok(
+        fx,
+        d.decision(
+            fx,
+            &fx.work,
+            false,
+            &["overturn", &id, "--reason", NOTE, "--yes"],
+        ),
+        &id,
+    );
     let r = record(fx, &id);
-    assert_eq!((r.status, r.review_note.as_deref()), (Status::Overturned, Some(NOTE)));
+    assert_eq!(
+        (r.status, r.review_note.as_deref()),
+        (Status::Overturned, Some(NOTE))
+    );
     let h2 = commit(&fx.work, "overturn");
-    let refused = d.keep(fx, keep_args(fx, 1, &h2, vec![stop_entry(&id), rejected_entry()]));
-    assert_eq!(refused, Err(format!("zygo: keep refused: {LABEL_STOP}: {id} overturned by the operator")));
+    let refused = d.keep(
+        fx,
+        keep_args(fx, 1, &h2, vec![stop_entry(&id), rejected_entry()]),
+    );
+    assert_eq!(
+        refused,
+        Err(format!(
+            "zygo: keep refused: {LABEL_STOP}: {id} overturned by the operator"
+        ))
+    );
     assert_eq!(fx.verdict(1), None);
 
     fx.row(2);
@@ -419,24 +654,44 @@ fn overturn_flow(d: &dyn Driver, fx: &Fx) -> String {
     let p = rec_path(fx, &id);
     let text = fs::read_to_string(&p).unwrap();
     assert_eq!(text.matches("status = \"overturned\"").count(), 1, "{text}");
-    fs::write(&p, text.replace("status = \"overturned\"", &format!("status = \"fixed\"\nfixed_by = \"{a}\""))).unwrap();
+    fs::write(
+        &p,
+        text.replace(
+            "status = \"overturned\"",
+            &format!("status = \"fixed\"\nfixed_by = \"{a}\""),
+        ),
+    )
+    .unwrap();
     let h3 = commit(&fx.work, &agent_msg("set fixed", &id));
-    let fixed = json!({"finding": LABEL_STOP, "class": "security", "disposition": "fixed", "commit": a});
+    let fixed =
+        json!({"finding": LABEL_STOP, "class": "security", "disposition": "fixed", "commit": a});
     let kept = d.keep(fx, keep_args(fx, 2, &h3, vec![fixed, rejected_entry()]));
     assert_eq!(kept, Ok(format!("recorded keep for {UNIT} round 2")));
     assert_eq!(fx.verdict(2).as_deref(), Some("keep"));
     assert_eq!(fx.verdict(1), None);
     let r = record(fx, &id);
-    assert_eq!((r.status, r.fixed_by.as_deref()), (Status::Fixed, Some(a.as_str())));
+    assert_eq!(
+        (r.status, r.fixed_by.as_deref()),
+        (Status::Fixed, Some(a.as_str()))
+    );
     h3
 }
 
 /// #8 (`Node` only): after the merge, a keep without `base` is refused.
 fn merged_keep_is_refused(d: &dyn Driver, fx: &Fx, head: &str) {
-    git(&fx.lead, &["merge", "-q", "--no-ff", "--no-edit", "node/N1"]);
+    git(
+        &fx.lead,
+        &["merge", "-q", "--no-ff", "--no-edit", "node/N1"],
+    );
     fx.row(3);
     let refused = d.keep(fx, keep_args(fx, 3, head, vec![rejected_entry()]));
-    assert_eq!(refused, Err("zygo: keep refused: head is already in HEAD: call before the merge, or give base".to_string()));
+    assert_eq!(
+        refused,
+        Err(
+            "zygo: keep refused: head is already in HEAD: call before the merge, or give base"
+                .to_string()
+        )
+    );
     assert_eq!(fx.verdict(3), None);
 }
 
@@ -468,5 +723,40 @@ fn inproc_one_checkout_ratify_flow() {
 fn inproc_one_checkout_overturn_flow() {
     let fx = Fx::new(Layout::One);
     overturn_flow(&InProc, &fx);
+    assert_no_text(&fx);
+}
+
+// ---- on demand: the binary (timing) ----
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_STEP)"]
+fn binary_node_checkout_ratify_flow() {
+    let fx = Fx::new(Layout::Node);
+    ratify_flow(&Bin, &fx);
+    assert_no_text(&fx);
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_STEP)"]
+fn binary_node_checkout_overturn_flow_then_merged_keep_is_refused() {
+    let fx = Fx::new(Layout::Node);
+    let head = overturn_flow(&Bin, &fx);
+    merged_keep_is_refused(&Bin, &fx, &head);
+    assert_no_text(&fx);
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_STEP)"]
+fn binary_one_checkout_ratify_flow() {
+    let fx = Fx::new(Layout::One);
+    ratify_flow(&Bin, &fx);
+    assert_no_text(&fx);
+}
+
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_STEP)"]
+fn binary_one_checkout_overturn_flow() {
+    let fx = Fx::new(Layout::One);
+    overturn_flow(&Bin, &fx);
     assert_no_text(&fx);
 }
