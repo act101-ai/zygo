@@ -1,0 +1,4 @@
+   Compiling scratch v0.1.0 (/repo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.33s
+     Running unittests src/lib.rs (target/debug/deps/scratch-b66679a8c20ae5f6)
+   Doc-tests scratch
