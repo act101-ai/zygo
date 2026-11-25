@@ -58,6 +58,9 @@ pub struct GradeFile {
     pub cell: Vec<CellUrl>,
     #[serde(default)]
     pub grade: Vec<GradeEntry>,
+    /// The file name in `docs/conformance/`, set by `grade_files`; check item 1 compares its stem with `client`.
+    #[serde(skip)]
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1000,6 +1003,12 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
         if !clients.iter().any(|c| c.id == g.client) {
             fault(1, format!("grade file for `{}` names no client", g.client));
         }
+        if let Some(f) = &g.file {
+            let stem = Path::new(f).file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            if stem != g.client {
+                fault(1, format!("grade file `{f}`: its stem `{stem}` is not its client `{}`", g.client));
+            }
+        }
     }
     // 2. each registry criterion graded exactly once, and no other
     for g in grades {
@@ -1136,7 +1145,8 @@ fn client_name(a: Agent) -> &'static str {
 /// The `.toml` files in `docs/conformance/` that are not grade files: the registry and CC-15's exception list.
 const NOT_GRADE_FILES: [&str; 2] = ["capabilities.toml", "boundary-exceptions.toml"];
 
-/// The grade files in `dir`: each `*.toml` file except `NOT_GRADE_FILES`, names matched exactly as listed.
+/// The grade files in `dir`: each file whose extension is `toml` in any case, except `NOT_GRADE_FILES`, names
+/// matched exactly as listed. Subfolders are not grade files (the flat layout of K§6.2.1).
 /// `<client id>.toml` for each client in `Agent::ALL` comes first, in that order, then the others by name, so
 /// that check item 1 sees a grade file of an unknown client or a second file of a client. A client with no
 /// `<client id>.toml`, a grade file that is a symbolic link or not a regular file, and a name that is not UTF-8 are refused.
@@ -1146,7 +1156,8 @@ pub fn grade_files(dir: &Path) -> Result<Vec<GradeFile>, String> {
         let e = e.map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = e.path();
         let name = e.file_name().into_string().map_err(|n| format!("{}: a name that is not UTF-8: {n:?}", dir.display()))?;
-        if !name.ends_with(".toml") || NOT_GRADE_FILES.contains(&name.as_str()) {
+        let toml = Path::new(&name).extension().is_some_and(|x| x.eq_ignore_ascii_case("toml"));
+        if !toml || NOT_GRADE_FILES.contains(&name.as_str()) {
             continue;
         }
         let kind = e.file_type().map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1172,7 +1183,9 @@ pub fn grade_files(dir: &Path) -> Result<Vec<GradeFile>, String> {
         .iter()
         .map(|n| {
             let path = dir.join(n);
-            GradeFile::load(&path).map_err(|e| format!("{}: {e}", path.display()))
+            let mut g = GradeFile::load(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            g.file = Some(n.clone());
+            Ok(g)
         })
         .collect()
 }

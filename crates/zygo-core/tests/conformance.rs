@@ -66,7 +66,7 @@ fn synth(caps: &[(Tier, &[Status])]) -> (Registry, GradeFile) {
         cell.push(CellUrl { capability: format!("A-{i}"), url: format!("https://example.com/{i}") });
     }
     let r = Registry { capability, bar_exception: vec![] };
-    (r, GradeFile { client: "synth".into(), name: "Synth".into(), version: "1.0.0".into(), cell, grade })
+    (r, GradeFile { client: "synth".into(), name: "Synth".into(), version: "1.0.0".into(), cell, grade, file: None })
 }
 
 fn with_evidence(ev: &[&str]) -> BTreeSet<u8> {
@@ -1782,13 +1782,35 @@ fn tree_check(root: &Path, dir: &Path) -> (Registry, Vec<GradeFile>, Vec<Client>
 
 /// A copy of `docs/conformance/` in a temporary folder.
 fn conformance_copy() -> tempfile::TempDir {
-    let from = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance");
     let d = tempfile::tempdir().unwrap();
-    for e in std::fs::read_dir(&from).unwrap() {
-        let e = e.unwrap();
-        std::fs::copy(e.path(), d.path().join(e.file_name())).unwrap();
-    }
+    copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance"), d.path());
     d
+}
+
+/// Copy the files and subfolders of `from` into `to`, subfolders recursively.
+fn copy_tree(from: &Path, to: &Path) {
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let dest = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            std::fs::create_dir(&dest).unwrap();
+            copy_tree(&e.path(), &dest);
+        } else {
+            std::fs::copy(e.path(), dest).unwrap();
+        }
+    }
+}
+
+/// A subfolder of `docs/conformance/` is copied, so the tree tests report faults, not an I/O error; it is not a grade file.
+#[test]
+fn tree_copy_keeps_a_subfolder() {
+    let src = conformance_copy();
+    std::fs::create_dir(src.path().join("cf4d-sub")).unwrap();
+    let d = tempfile::tempdir().unwrap();
+    copy_tree(src.path(), d.path());
+    assert!(d.path().join("cf4d-sub").is_dir());
+    let (_, grades, _, _) = tree_check(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."), d.path());
+    assert_eq!(grades.len(), 2);
 }
 
 /// CC-15's `boundary-exceptions.toml` (keys `file`, `item`, `reason`, `approved`) and the registry are not grade files.
@@ -1826,13 +1848,55 @@ fn tree_unknown_client_grade_file_fails_item_1() {
     assert_eq!(tree_item_1(d.path()), ["grade file for `codex` names no client"]);
 }
 
+/// A grade file whose `client` is not its file stem fails item 1: the contents of the two grade files swapped.
+#[test]
+fn tree_client_not_file_stem_fails_item_1() {
+    let d = conformance_copy();
+    let cc = std::fs::read(d.path().join("claude-code.toml")).unwrap();
+    let oc = std::fs::read(d.path().join("opencode.toml")).unwrap();
+    std::fs::write(d.path().join("claude-code.toml"), oc).unwrap();
+    std::fs::write(d.path().join("opencode.toml"), cc).unwrap();
+    assert_eq!(
+        tree_item_1(d.path()),
+        [
+            "grade file `claude-code.toml`: its stem `claude-code` is not its client `opencode`",
+            "grade file `opencode.toml`: its stem `opencode` is not its client `claude-code`",
+        ]
+    );
+}
+
+/// The `toml` extension matches in any case: a stray `codex.TOML` (client = "codex") is loaded and fails item 1,
+/// and a `codex.Toml` of client `opencode` gives the client two grade files and a stem that is not its client.
+#[test]
+fn tree_grade_file_extension_any_case() {
+    let d = conformance_copy();
+    let text = std::fs::read_to_string(d.path().join("opencode.toml")).unwrap();
+    std::fs::write(d.path().join("codex.TOML"), text.replace("client = \"opencode\"", "client = \"codex\"")).unwrap();
+    assert_eq!(tree_item_1(d.path()), ["grade file for `codex` names no client"]);
+    std::fs::remove_file(d.path().join("codex.TOML")).unwrap();
+    std::fs::write(d.path().join("codex.Toml"), &text).unwrap();
+    assert_eq!(
+        tree_item_1(d.path()),
+        [
+            "client `opencode` has 2 grade files, not one",
+            "grade file `codex.Toml`: its stem `codex` is not its client `opencode`",
+        ]
+    );
+}
+
 /// A misnamed grade file (`open-code.toml`): next to `opencode.toml`, the client has two grade files (item 1);
 /// alone, the client has no grade file.
 #[test]
 fn tree_misnamed_grade_file_fails() {
     let d = conformance_copy();
     std::fs::copy(d.path().join("opencode.toml"), d.path().join("open-code.toml")).unwrap();
-    assert_eq!(tree_item_1(d.path()), ["client `opencode` has 2 grade files, not one"]);
+    assert_eq!(
+        tree_item_1(d.path()),
+        [
+            "client `opencode` has 2 grade files, not one",
+            "grade file `open-code.toml`: its stem `open-code` is not its client `opencode`",
+        ]
+    );
     std::fs::remove_file(d.path().join("opencode.toml")).unwrap();
     let e = grade_files(d.path()).unwrap_err();
     assert!(e.contains("no grade file for client `opencode`"), "{e}");
