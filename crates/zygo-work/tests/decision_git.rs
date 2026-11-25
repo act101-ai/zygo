@@ -259,3 +259,35 @@ fn log_output_parses_into_commits() {
     ]);
     assert_eq!(g.log("x", "y"), Err(failed("git log", "bad output")));
 }
+
+#[test]
+fn the_2049th_object_read_is_too_much() {
+    let canned = format!("{} commit 0\n\n", hex('a')).repeat(2_048).into_bytes();
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    for _ in 0..2_048 {
+        assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
+    }
+    assert_eq!(g.commit("a"), Err(GitFail::TooMuch));
+    assert_eq!(log.borrow().sent.len(), 2_048); // the 2,049th request is not sent
+}
+
+#[test]
+fn a_read_past_16_mib_in_all_is_too_much() {
+    let big = 16 * 1024 * 1024 - 1;
+    let mut canned = format!("{} commit {big}\n", hex('a')).into_bytes();
+    canned.resize(canned.len() + big, b'x');
+    canned.extend_from_slice(format!("\n{a} commit 1\nx\n{a} commit 1\n", a = hex('a')).as_bytes());
+    let Rig { mut g, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
+    assert_eq!(g.commit("a"), Ok(Some(hex('a')))); // exactly 16 MiB in all
+    assert_eq!(g.commit("a"), Err(GitFail::TooMuch));
+}
+
+#[test]
+fn a_failed_batch_stays_failed_with_one_process() {
+    let Rig { mut g, log, .. } = rig(Vec::new(), Vec::new());
+    let e: Result<Option<String>, GitFail> = Err(failed("git cat-file", "failed"));
+    assert_eq!(g.commit("a"), e);
+    assert_eq!(g.record_blob("a", &rec('A')), e.map(|_: Option<String>| Blob::Missing));
+    assert_eq!(log.borrow().runs.iter().filter(|r| r.0 == "cat-file").count(), 1);
+}

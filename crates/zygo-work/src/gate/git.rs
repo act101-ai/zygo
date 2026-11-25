@@ -20,6 +20,21 @@ const CAT_FILE: &str = "git cat-file";
 const MERGE_BASE: &str = "git merge-base";
 const REV_LIST: &str = "git rev-list";
 const LOG: &str = "git log";
+/// The object reads of one `--batch` process (D§9.4).
+const BATCH_OBJECTS: usize = 2_048;
+/// The object bytes read by one `--batch` process, in all (D§9.4).
+const BATCH_BYTES: u64 = 16 * 1024 * 1024;
+/// The longest `--batch` reply header read.
+const HEADER_MAX: usize = 600;
+/// The modes of a regular file tree entry.
+const REGULAR: [&[u8]; 2] = [b"100644", b"100755"];
+
+/// One `--batch` reply.
+enum Reply {
+    Missing,
+    Object { id: String, kind: String, body: Vec<u8> },
+}
+
 /// The bytes of stderr kept in a `failed: <line>` reason.
 const WHY_MAX: usize = 200;
 
@@ -170,6 +185,50 @@ impl ProcessGit {
         }
     }
 
+    /// Reads `object` through the one `--batch` process. Every error is kept (the process is dropped), so later reads
+    /// give it with no new process.
+    fn ask(&mut self, object: &str) -> Result<Reply, GitFail> {
+        let reply = self.read_object(object);
+        if let Err(e) = &reply {
+            self.batch = Some(Err(e.clone()));
+        }
+        reply
+    }
+
+    /// The object and byte caps are checked before any stdout of the object is read: the 2,049th request is not sent,
+    /// and a header whose size takes the total past 16 MiB gives `TooMuch` with no body read.
+    fn read_object(&mut self, object: &str) -> Result<Reply, GitFail> {
+        self.batch_io()?;
+        if self.objects == BATCH_OBJECTS {
+            return Err(GitFail::TooMuch);
+        }
+        self.objects += 1;
+        let Some(Ok(io)) = self.batch.as_mut() else { unreachable!("batch_io gave a process") };
+        let run = |e: RunError| fail(CAT_FILE, e.reason());
+        let bad = || fail(CAT_FILE, "bad output");
+        io.send(format!("{object}\n").as_bytes()).map_err(run)?;
+        let header = io.read_line(HEADER_MAX).map_err(run)?;
+        let header = std::str::from_utf8(&header).map_err(|_| bad())?;
+        match header.split(' ').collect::<Vec<_>>()[..] {
+            [_, "missing" | "ambiguous"] => Ok(Reply::Missing),
+            [id, kind, size] => {
+                let id = hex_id(id.as_bytes()).ok_or_else(bad)?;
+                let size: u64 = size.parse().map_err(|_| bad())?;
+                let total = self.bytes.saturating_add(size);
+                if total > BATCH_BYTES {
+                    return Err(GitFail::TooMuch);
+                }
+                self.bytes = total;
+                let body = io.read_exact(size as usize).map_err(run)?;
+                if io.read_exact(1).map_err(run)? != b"\n" {
+                    return Err(bad());
+                }
+                Ok(Reply::Object { id, kind: kind.to_string(), body })
+            }
+            _ => Err(bad()),
+        }
+    }
+
     /// One whole-mode git process of `step`.
     fn whole(&mut self, step: &'static str, args: &[&str]) -> Result<Whole, GitFail> {
         let deadline = self.deadline(step)?;
@@ -251,6 +310,23 @@ fn status(tok: &[u8]) -> Option<char> {
     }
 }
 
+/// The entry `name` of a raw tree: `Some(Some((mode, raw id)))`, `Some(None)` when absent, `None` when malformed.
+fn find_entry<'a>(mut t: &'a [u8], name: &[u8], id_len: usize) -> Option<Option<(&'a [u8], &'a [u8])>> {
+    while !t.is_empty() {
+        let sp = t.iter().position(|&b| b == b' ')?;
+        let nul = sp + 1 + t[sp + 1..].iter().position(|&b| b == 0)?;
+        let end = nul + 1 + id_len;
+        if end > t.len() {
+            return None;
+        }
+        if &t[sp + 1..nul] == name {
+            return Some(Some((&t[..sp], &t[nul + 1..end])));
+        }
+        t = &t[end..];
+    }
+    Some(None)
+}
+
 /// `rev-list` output: one id per line.
 fn parse_ids(out: &[u8]) -> Option<Vec<String>> {
     if out.is_empty() {
@@ -264,15 +340,34 @@ impl VerdictGit for ProcessGit {
         if !good_rev(rev) {
             return Ok(None);
         }
-        self.batch_io()?;
-        todo!()
+        match self.ask(&format!("{rev}^{{commit}}"))? {
+            Reply::Object { id, .. } => Ok(Some(id)),
+            Reply::Missing => Ok(None),
+        }
     }
 
     fn record_blob(&mut self, rev: &str, name: &str) -> Result<Blob, GitFail> {
         if !good_rev(rev) || !good_name(name) {
             return Ok(Blob::Missing);
         }
-        todo!()
+        // The tree is read and its entry mode decides: a link or submodule is never read as a blob (D§6.8).
+        let Reply::Object { id, kind, body } = self.ask(&format!("{rev}:docs/decisions"))? else { return Ok(Blob::Missing) };
+        if kind != "tree" {
+            return Ok(Blob::Missing);
+        }
+        let bad = || fail(CAT_FILE, "bad output");
+        let (mode, raw) = match find_entry(&body, name.as_bytes(), id.len() / 2).ok_or_else(bad)? {
+            None => return Ok(Blob::Missing),
+            Some(entry) => entry,
+        };
+        if !REGULAR.contains(&mode) {
+            return Ok(Blob::NotRegular);
+        }
+        let blob: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+        match self.ask(&blob)? {
+            Reply::Object { kind, body, .. } if kind == "blob" => Ok(Blob::Data(body)),
+            _ => Err(bad()),
+        }
     }
 
     fn merge_base(&mut self, a: &str, b: &str) -> Result<Option<String>, GitFail> {
