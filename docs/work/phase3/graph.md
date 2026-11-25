@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-6 | `zygo decision review`: the phase-end review | DR-5 | DONE | implementation | 732af80 82d2e65 cb609a4 · decision_review 21/0; floor green · PR #34 |
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
 | DR-8 | Session view `repo_root`, written by the launcher | DR-1 | DONE | mechanical | c806e21 88441c1 · repo_root 2/2 core, 3/3 launcher · PR #19 |
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | DONE | mechanical | 34a088d fb104db · dispositions 4 tests · PR #18 |
@@ -323,6 +322,7 @@ Session text (T, SX nodes):
 | FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 | FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
+| FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 
 ## Log
 
@@ -381,6 +381,7 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-3 in progress: node branch `phase3/SX-3--SX-3` at d55d51c, worktree `.worktrees/phase3/SX-3-node` · PR #41 |
 | 2026-11-24 | SX-3 done: pre-compact sets reinject/<agent_id> (0600 in 0700 dir) for a non-zygo subagent; review round 1 (4 confirmed, 4 refuted); floor 2602 passed 0 failed · PR #41 |
 | 2026-11-24 | FX-4 DONE: rows-bound test waits for `usage_written(1, …)` before the complete-flag GET (Windows race, CI run 45543172599; product correct per the N37 note); review 0 confirmed; floor green · PR #50 |
+| 2026-11-24 | FX-5 done: piped send test asserts send-then-read fails (Linux foreign-reader race, CI run 45544809983); dash-safe foreign-reader test; single-test `piped_epipe` binary keeps the EPIPE check; review round 1 (3 confirmed, fixed); floor green · PR #51 |
 | 2026-11-24 | RT-1 planned (6d70796): 11 steps, 10 first_started_at tests · PR #38 |
 | 2026-11-24 | RT-1 in progress: node worktree .worktrees/phase3/RT-1-node, branch phase3/RT-1--RT-1 · PR #38 |
 | 2026-11-24 | RT-1 done (7efa8d9 441e170 ff23c48): member record first_started_at; review round 1: 1 confirmed, 3 refuted; floor 2529 passed, 0 failed · PR #38 |
