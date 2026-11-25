@@ -325,6 +325,7 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
+| FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | PLANNED | implementation | — |
 
 ## Log
 
@@ -372,3 +373,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | FX-1 in progress: node branch `phase3/FX-1--FX-1`, worktree `.worktrees/phase3/FX-1-node` · PR #40 |
 | 2026-11-24 | FX-1 done: pipe replaces FIFO in the two process-group kill tests; review round 1 (0 confirmed, 4 refuted); floor 2570 passed 0 failed · PR #40 |
 | 2026-11-24 | SX-8 DONE: P3-15 section copied into docs/live-checks.md from T§12.2; round 1 fixed 4 findings (Results row, mktemp, step 7 ids, backup delete), T§12.2 rewritten (author's call) · PR #44 |
+| 2026-11-24 | FX-3 added: CI BrokenPipe flake on PRs #41 and #42 (statusline_without_a_session_dir_prints_nothing); the hook exits before it reads stdin (H§6.8, AU24, PH11), so the test write gets EPIPE; fix in test helpers (common::feed_stdin); tests only; 9 steps |
