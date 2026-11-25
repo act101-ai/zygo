@@ -99,6 +99,38 @@ for tid in ids:
 json.dump(res, open(out, "w"), indent=1)
 PY
 }
+# po1_crate <dir>: <dir>/scratch, a crate whose cargo test passes 120 tests and fails 2 (the
+# failing-nocapture recipe of fixtures/shaping/libtest)
+po1_crate() {
+  mkdir -p "$1/scratch/src"
+  printf '%s\n' '[package]' 'name = "scratch"' 'version = "0.1.0"' 'edition = "2024"' '' '[dependencies]' \
+    >"$1/scratch/Cargo.toml"
+  {
+    printf '%s\n' 'pub fn add(a: u64, b: u64) -> u64 {' '    a + b' '}' '' '#[cfg(test)]' 'mod tests {' \
+      '    use super::add;' ''
+    _n=1
+    while [ "$_n" -le 120 ]; do
+      printf '    #[test]\n    fn adds_%03d() {\n        assert_eq!(add(%d, %d), %d);\n    }\n' \
+        "$_n" "$_n" "$_n" "$((_n * 2))"
+      _n=$((_n + 1))
+    done
+    printf '%s\n' '' '    #[test]' '    fn sums_a_ledger() {' '        let rows = [3u64, 4, 5];' \
+      '        for (i, r) in rows.iter().enumerate() {' '            println!("ledger row {i}: {r}");' '        }' \
+      '        assert_eq!(rows.iter().sum::<u64>(), 13, "ledger total");' '    }' '' '    #[test]' \
+      '    fn add_exceeds_its_inputs() {' '        assert!(add(1, 1) > 2, "add(1, 1) must exceed 2");' '    }' '}'
+  } >"$1/scratch/src/lib.rs"
+}
+# po1_verdict <po1-result.json>: the pass|fail text of the LIVE PO1 line; the cargo-test call is not
+# part of the verdict
+po1_verdict() {
+  jq -r '(.out_line_at >= 0 and .err_line_at >= 0) as $both
+    | ([.calls[] | select(.replaced and .case != "cargo-test") | .case] | join(", ")) as $r
+    | (if $both and $r != "" then "pass" else "fail" end)
+      + " error field: " + (if $both then (if .out_line_at < .err_line_at then "out-line before err-line" else "err-line before out-line" end)
+        else "out-line at \(.out_line_at), err-line at \(.err_line_at)" end)
+      + "; cases that replace the text the model sees: " + (if $r == "" then "none" else $r end)
+      + "; failed calls hooked: \(.calls | length)"' "$1"
+}
 
 # --- OpenCode helpers -----------------------------------------------------------------------
 # oc_setup [<mcp json>]: the probe plugin and opencode.json (provider on the mock) in the run's HOME
@@ -134,27 +166,48 @@ oc_run() {
 
 # The Bash commands of the runs: out-line on stdout, err-line on stderr; PO1 exits 3, the others 0.
 CMD_FAIL="printf 'out-line\\n'; printf 'err-line\\n' >&2; exit 3"
+CMD_CARGO="cd scratch && cargo test"
 CMD_BOTH="printf 'out-line\\n'; printf 'err-line\\n' >&2"
 
 # --- PO1 (Claude Code): the PostToolUseFailure input of a failed Bash call, and what replaces its text --
 part_po1() {
   live_run po1
-  steps po1 "$(jq -nc --arg c "$CMD_FAIL" '{trigger: "tracer-po1", no_header: ["x-claude-code-agent-id"], extra: {body: "\"tools\": \\[\\{"},
-    steps: ([range(3) | {tool: "Bash", input: {command: $c}}] + [{text: "po1 done"}])}')"
+  steps po1 "$(jq -nc --arg c "$CMD_FAIL" --arg k "$CMD_CARGO" '{trigger: "tracer-po1", no_header: ["x-claude-code-agent-id"], extra: {body: "\"tools\": \\[\\{"},
+    steps: ([range(3) | {tool: "Bash", input: {command: $c}}] + [{tool: "Bash", input: {command: $k}}] + [{text: "po1 done"}])}')"
   cat >"$RUN/responses.json" <<'J'
 [{"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "none", "output": {}},
  {"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "string",
   "output": {"hookSpecificOutput": {"hookEventName": "PostToolUseFailure", "updatedToolOutput": "PO1-REPLACED-string"}}},
  {"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "object",
-  "output": {"hookSpecificOutput": {"hookEventName": "PostToolUseFailure", "updatedToolOutput": {"stdout": "PO1-REPLACED-object", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false}}}}]
+  "output": {"hookSpecificOutput": {"hookEventName": "PostToolUseFailure", "updatedToolOutput": {"stdout": "PO1-REPLACED-object", "stderr": "", "interrupted": false, "isImage": false, "noOutputExpected": false}}}},
+ {"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "cargo-test", "output": {}}]
 J
+  # cargo for the cargo-test call: the isolated PATH (TOOL_PATH, lib.sh) holds no cargo
+  _cg=$(rustup which cargo 2>/dev/null || command -v cargo) || { echo "live: cargo is not on PATH"; exit 1; }
+  case "$(dirname "$_cg")" in
+    *"'"* | *" "*) echo "live: a path holds a single quote or a space; this script cannot use it"; exit 1 ;;
+  esac
+  TOOL_PATH="$(dirname "$_cg"):$TOOL_PATH"
+  echo "live: cargo $_cg"
   hook_settings "$RUN/hooks" "$RUN/responses.json" >"$RUN/settings.json"
   start_mock "$RUN/rules.json"
+  po1_crate "$R"
   run_claude -p "tracer-po1 run the command" --settings "$RUN/settings.json" --dangerously-skip-permissions \
     --tools Bash </dev/null >"$RUN/out.txt" 2>&1 || true
   stop_mock
   kept "$RUN/sse" "$RUN/hooks"
   _hk=$(hook_files "$RUN/hooks" PostToolUseFailure-Bash-main)
+  # the raw hook input of the cargo-test call, scrubbed, stays in the run folder (never under fixtures/)
+  _ck=""
+  for _f in $_hk; do
+    [ "$(jq -r '.tool_use_id // empty' "$_f" 2>/dev/null || true)" = toolu_po1_03_bash ] && { _ck=$_f; break; }
+  done
+  if [ -n "$_ck" ]; then
+    scrub "$_ck" >"$RUN/po1-cargo-test-hook.json"
+    kept "$RUN/po1-cargo-test-hook.json"
+  else
+    echo "live: no PostToolUseFailure input for toolu_po1_03_bash"
+  fi
   wrote "$(printf '%s\n' "$_hk" | sed -n 1p)" "$FXC/hooks/PostToolUseFailure-Bash-output-main.json"
   _ids=$(for _f in $_hk; do jq -r '.tool_use_id // empty' "$_f" 2>/dev/null || true; done)
   # shellcheck disable=SC2086
@@ -163,7 +216,7 @@ J
   python3 -I - "$RUN/po1-seen.json" "$RUN/po1-result.json" $_hk <<'PY'
 import json, sys
 seen_f, out, hooks = sys.argv[1], sys.argv[2], sys.argv[3:]
-cases = ["none", "string", "object"]  # the rules of responses.json, one use each, in order
+cases = ["none", "string", "object", "cargo-test"]  # the rules of responses.json, one use each, in order
 
 def load(p):
     try:
@@ -189,13 +242,7 @@ json.dump(res, open(out, "w"), indent=1)
 PY
   # shellcheck disable=SC2046
   kept "$RUN/po1-result.json" $(jq -r '.calls[].request_file // empty' "$RUN/po1-result.json")
-  _v=$(jq -r '(.out_line_at >= 0 and .err_line_at >= 0) as $both
-    | ([.calls[] | select(.replaced) | .case] | join(", ")) as $r
-    | (if $both and $r != "" then "pass" else "fail" end)
-      + " error field: " + (if $both then (if .out_line_at < .err_line_at then "out-line before err-line" else "err-line before out-line" end)
-        else "out-line at \(.out_line_at), err-line at \(.err_line_at)" end)
-      + "; cases that replace the text the model sees: " + (if $r == "" then "none" else $r end)
-      + "; failed calls hooked: \(.calls | length)"' "$RUN/po1-result.json")
+  _v=$(po1_verdict "$RUN/po1-result.json")
   result PO1 "${_v%% *}" "${_v#* }"
 }
 
