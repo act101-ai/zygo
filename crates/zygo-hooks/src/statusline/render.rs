@@ -81,6 +81,10 @@ pub struct HudData {
     pub trimmed_bytes: Option<u64>,
     /// The workspace phase; only `building`, `draining`, `stopping` and `down` show (AU25).
     pub phase: Option<String>,
+    /// The member name of `view.json`, checked at the read (M§6, M§9a).
+    pub member_name: Option<String>,
+    /// The count of `*.json` names in `mail/<pane key>/new/` (M§9a).
+    pub unread: Option<usize>,
     /// The host of `ZYGO_URL`, for the mode `serve <host>` (AU13).
     pub team_host: Option<String>,
 }
@@ -167,6 +171,8 @@ struct Glyphs {
     threshold: &'static str,
     cache: &'static str,
     trimmed: &'static str,
+    /// Not in `table`: the doctor icon line keeps its 19 glyphs.
+    mail: &'static str,
 }
 
 const STRIPE: &str = "▌";
@@ -190,6 +196,7 @@ const NERD: Glyphs = Glyphs {
     threshold: "⇣",
     cache: "\u{f01bc}",
     trimmed: "✂",
+    mail: "\u{2709}",
 };
 
 const PLAIN: Glyphs = Glyphs {
@@ -207,6 +214,7 @@ const PLAIN: Glyphs = Glyphs {
     threshold: "▼",
     cache: "cache",
     trimmed: "trim",
+    mail: "mail",
 };
 
 const fn table(g: &Glyphs) -> [(&'static str, &'static str); 19] {
@@ -317,6 +325,7 @@ struct Sgr {
 
 const EMPTY: Sgr = Sgr { intensity: Intensity::Normal, fg: Fg::Default };
 const DIM: Sgr = Sgr { intensity: Intensity::Dim, fg: Fg::Default };
+const BOLD: Sgr = Sgr { intensity: Intensity::Bold, fg: Fg::Default };
 
 const fn fg(code: u8) -> Sgr {
     Sgr { intensity: Intensity::Normal, fg: Fg::Basic(code) }
@@ -417,6 +426,10 @@ fn emit(mut runs: Vec<Run>, color: bool) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Seg {
     Phase,
+    /// The member name (M§9a).
+    Name,
+    /// The unread mail count (M§9a).
+    Mail,
     Work,
     Worktree,
     Git,
@@ -439,7 +452,7 @@ enum Seg {
 
 /// AU9, compact: one space inside a group, two between groups; the first group follows the logo after one space.
 const COMPACT: &[&[Seg]] = &[
-    &[Seg::Phase, Seg::Work, Seg::Worktree],
+    &[Seg::Phase, Seg::Name, Seg::Mail, Seg::Work, Seg::Worktree],
     &[Seg::Model, Seg::Profile],
     &[Seg::Ctx, Seg::Bar, Seg::Threshold],
     &[Seg::Tokens],
@@ -449,8 +462,14 @@ const COMPACT: &[&[Seg]] = &[
     &[Seg::Marker],
 ];
 /// AU9, verbose: two spaces after the logo or the reflection, three between groups, one inside a group.
-const ROW_1: &[&[Seg]] =
-    &[&[Seg::Phase], &[Seg::Work, Seg::Worktree, Seg::Git], &[Seg::Model], &[Seg::Profile], &[Seg::Mode]];
+const ROW_1: &[&[Seg]] = &[
+    &[Seg::Phase],
+    &[Seg::Name, Seg::Mail],
+    &[Seg::Work, Seg::Worktree, Seg::Git],
+    &[Seg::Model],
+    &[Seg::Profile],
+    &[Seg::Mode],
+];
 const ROW_2: &[&[Seg]] = &[
     &[Seg::Ctx, Seg::Bar, Seg::Percent, Seg::Threshold],
     &[Seg::Tokens],
@@ -495,6 +514,7 @@ const MODEL_CELLS: usize = 24;
 const PROFILE_CELLS: usize = 16;
 const EFFORT_CELLS: usize = 8;
 const HOST_CELLS: usize = 32;
+const MEMBER_CELLS: usize = 32;
 
 /// Text from outside zygo: escaped (H-C6), then cut (AU19).
 fn name(text: &str, max: usize) -> String {
@@ -549,6 +569,22 @@ impl<'a> Hud<'a> {
             _ => return None,
         };
         Some(vec![run(sgr, format!("ws {phase}"))])
+    }
+
+    /// M§9a: bold, default foreground; hidden while the worktree segment shows the same name (M§13 #11).
+    fn member_name(&self, worktree_shown: bool) -> Option<Vec<Run>> {
+        let n = present(&self.d.member_name)?;
+        if worktree_shown && present(&self.d.worktree) == Some(n) {
+            return None;
+        }
+        Some(vec![run(BOLD, name(n, MEMBER_CELLS))])
+    }
+
+    /// M§9a, M§13 #10: yellow; nothing at zero; `99+` above 99.
+    fn mail(&self) -> Option<Vec<Run>> {
+        let n = self.d.unread.filter(|&n| n >= 1)?;
+        let count = if n > 99 { "99+".to_string() } else { n.to_string() };
+        Some(vec![run(fg(33), iconed(self.g.mail, &count))])
     }
 
     /// OP3, AU11 and the marker table of H§6.2.
@@ -728,6 +764,8 @@ impl<'a> Hud<'a> {
         match seg {
             // Never removed (H§6.7).
             Seg::Phase => self.phase(),
+            Seg::Name => self.member_name(!gone(Seg::Worktree)),
+            Seg::Mail => self.mail(),
             Seg::Marker => self.marker().filter(|(_, stale)| !(*stale && gone(Seg::Marker))).map(|(r, _)| vec![r]),
             _ if gone(seg) => None,
             Seg::Work => self.work(),
