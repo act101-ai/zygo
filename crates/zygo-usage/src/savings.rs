@@ -6,7 +6,7 @@ use anyhow::Result;
 use rusqlite::Transaction;
 use zygo_core::{tokens::BYTES_PER_TOKEN, Agent};
 
-use crate::{carry::{self, CtxRequest, Rates}, query::{u64_at, Filter}, store::Store};
+use crate::{carry::{self, CtxRequest, Rates}, query::{summary_in, u64_at, Filter, Summary}, store::Store};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Savings {
@@ -136,50 +136,66 @@ fn readback_events(tx: &Transaction<'_>, f: &Filter, cols: &[String]) -> Result<
 }
 
 impl Store {
+    /// O§6.6: the summary and the savings of `f` from one read snapshot (FX-8).
+    pub fn report(&self, f: &Filter, rates: &dyn Fn(&str, &str, u64) -> Option<Rates>) -> Result<(Summary, Savings)> {
+        // One deferred read transaction. Savings first: `rates` runs inside it, so the summary reads after
+        // the callback and only the shared snapshot keeps a concurrent write out of both.
+        let tx = self.conn.unchecked_transaction()?;
+        let v = savings_in(&tx, f, rates)?;
+        let s = summary_in(&tx, f)?;
+        tx.finish()?;
+        Ok((s, v))
+    }
+
     /// O§6.6: the filter selects events only; each event's `Q_C` is read without it.
     pub fn savings(&self, f: &Filter, rates: &dyn Fn(&str, &str, u64) -> Option<Rates>) -> Result<Savings> {
         // One deferred read transaction: every figure comes from the same snapshot.
         let tx = self.conn.unchecked_transaction()?;
-        let cols = tx.prepare("PRAGMA table_info(trims)")?
-            .query_map([], |r| r.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        let mut events = trim_events(&tx, f, &cols)?;
-        if has_table(&tx, "readbacks")? {
-            events.extend(readback_events(&tx, f, &cols)?);
-        }
-        let mut v = Savings::default();
-        let mut contexts: HashMap<Ctx, (Vec<CtxRequest>, bool)> = HashMap::new();
-        let mut unpriced = BTreeSet::new();
-        let mut keys: BTreeMap<Key, SavingsKey> = BTreeMap::new();
-        for e in events {
-            if !contexts.contains_key(&e.ctx) {
-                let c = context(&tx, &e.ctx)?;
-                contexts.insert(e.ctx.clone(), c);
-            }
-            let (q, first_only) = &contexts[&e.ctx];
-            let c = carry::carry(e.ts, q, *first_only, rates);
-            unpriced.extend(c.unpriced);
-            let spend = e.bytes as f64 / BYTES_PER_TOKEN as f64 * c.usd_per_token;
-            let k = keys.entry(e.key.clone()).or_insert_with(|| SavingsKey {
-                tool: e.key.0, command: e.key.1, shaper: e.key.2, ..Default::default()
-            });
-            if e.readback {
-                v.readbacks += 1;
-                k.readbacks += 1;
-                v.bytes_read_back = v.bytes_read_back.saturating_add(e.bytes.unsigned_abs());
-            } else {
-                v.views += 1;
-                k.views += 1;
-            }
-            k.kept_out_bytes = k.kept_out_bytes.saturating_add(e.bytes);
-            k.spend_usd += spend;
-            v.kept_out_bytes = v.kept_out_bytes.saturating_add(e.bytes);
-            v.spend_usd += spend;
-        }
-        let n = v.kept_out_bytes;
-        v.kept_out_tokens = n.signum() * n.unsigned_abs().div_ceil(BYTES_PER_TOKEN) as i64;
-        v.unpriced = unpriced.len() as u64;
-        v.by_key = keys.into_values().collect();
-        v.by_key.sort_by_key(|k| std::cmp::Reverse(k.kept_out_bytes));
-        Ok(v)
+        savings_in(&tx, f, rates)
     }
+}
+
+/// O§6.6: the savings of `f`, read through `tx` (one snapshot); the filter selects events only.
+fn savings_in(tx: &Transaction<'_>, f: &Filter, rates: &dyn Fn(&str, &str, u64) -> Option<Rates>) -> Result<Savings> {
+    let cols = tx.prepare("PRAGMA table_info(trims)")?
+        .query_map([], |r| r.get::<_, String>(1))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut events = trim_events(tx, f, &cols)?;
+    if has_table(tx, "readbacks")? {
+        events.extend(readback_events(tx, f, &cols)?);
+    }
+    let mut v = Savings::default();
+    let mut contexts: HashMap<Ctx, (Vec<CtxRequest>, bool)> = HashMap::new();
+    let mut unpriced = BTreeSet::new();
+    let mut keys: BTreeMap<Key, SavingsKey> = BTreeMap::new();
+    for e in events {
+        if !contexts.contains_key(&e.ctx) {
+            let c = context(tx, &e.ctx)?;
+            contexts.insert(e.ctx.clone(), c);
+        }
+        let (q, first_only) = &contexts[&e.ctx];
+        let c = carry::carry(e.ts, q, *first_only, rates);
+        unpriced.extend(c.unpriced);
+        let spend = e.bytes as f64 / BYTES_PER_TOKEN as f64 * c.usd_per_token;
+        let k = keys.entry(e.key.clone()).or_insert_with(|| SavingsKey {
+            tool: e.key.0, command: e.key.1, shaper: e.key.2, ..Default::default()
+        });
+        if e.readback {
+            v.readbacks += 1;
+            k.readbacks += 1;
+            v.bytes_read_back = v.bytes_read_back.saturating_add(e.bytes.unsigned_abs());
+        } else {
+            v.views += 1;
+            k.views += 1;
+        }
+        k.kept_out_bytes = k.kept_out_bytes.saturating_add(e.bytes);
+        k.spend_usd += spend;
+        v.kept_out_bytes = v.kept_out_bytes.saturating_add(e.bytes);
+        v.spend_usd += spend;
+    }
+    let n = v.kept_out_bytes;
+    v.kept_out_tokens = n.signum() * n.unsigned_abs().div_ceil(BYTES_PER_TOKEN) as i64;
+    v.unpriced = unpriced.len() as u64;
+    v.by_key = keys.into_values().collect();
+    v.by_key.sort_by_key(|k| std::cmp::Reverse(k.kept_out_bytes));
+    Ok(v)
 }

@@ -142,7 +142,7 @@ pub fn run(ctx: &VerbCtx, args: &[String], env_session: Option<&str>) -> anyhow:
     let fail = |e: anyhow::Error| anyhow!("zygo usage: {}", esc(&e.to_string()));
     let f = Filter { session, since };
     let (s, v) = if ctx.paths.usage_db.exists() {
-        Store::open_read_only(&ctx.paths.usage_db).and_then(|st| Ok((st.summary(&f)?, st.savings(&f, &price)?))).map_err(fail)?
+        Store::open_read_only(&ctx.paths.usage_db).and_then(|st| st.report(&f, &price)).map_err(fail)?
     } else {
         (Summary::default(), Savings::default())
     };
