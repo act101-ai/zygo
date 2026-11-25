@@ -45,7 +45,7 @@ fn run(top: &Path, args: &[&str]) -> Ran {
 fn assert_cannot_read(rel: &str) {
     let t = tempfile::tempdir().unwrap();
     let top = t.path().join("repo");
-    let Some(_g) = locked(&top, rel) else { return };
+    let Some(g) = locked(&top, rel) else { return };
     assert_eq!(read_dir(&top), Err(DirError::Unreadable));
     for a in [&["ls"][..], &["check"], &NEW[..]] {
         let r = run(&top, a);
@@ -53,10 +53,27 @@ fn assert_cannot_read(rel: &str) {
     }
     assert_eq!(report(&t.path().join("absent.db"), Some(&top), None, None).unwrap(),
         "no work units\n\ndecision records: cannot read docs/decisions");
+    drop(g); // the mode is back, so the listing below can be read
+    let names: Vec<_> = fs::read_dir(top.join("docs/decisions")).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, ["README.md"], "`new` wrote nothing");
 }
 
 #[test] fn decisions_at_mode_000_cannot_be_read() { assert_cannot_read("docs/decisions"); } // D§6.8 listing error
 #[test] fn docs_at_mode_000_cannot_be_read() { assert_cannot_read("docs"); }                // D§6.8 lstat error
+/// The operator verbs first lstat `docs/decisions` and stop only on `NotFound` (D§14 row 1). With `docs` at mode 000
+/// that lstat fails with a permission error, which must reach `cannot read` and not `no open records`.
+fn assert_operator_verbs_cannot_read(rel: &str) {
+    const ID: &str = "DDR-01JDQ2Y7Z8K4M5N6P7Q8R00001";
+    let t = tempfile::tempdir().unwrap();
+    let top = t.path().join("repo");
+    let Some(_g) = locked(&top, rel) else { return };
+    for a in [&["ratify", ID, "--yes"][..], &["overturn", ID, "--reason", "r", "--yes"]] {
+        let r = run(&top, a);
+        assert_eq!((r.code, r.out.as_str(), r.err.as_str()), (1, "", CANNOT), "{a:?}");
+    }
+}
+#[test] fn operator_verbs_with_decisions_at_mode_000() { assert_operator_verbs_cannot_read("docs/decisions"); }
+#[test] fn operator_verbs_with_docs_at_mode_000() { assert_operator_verbs_cannot_read("docs"); } // first lstat fails
 #[test] fn regular_file_is_still_not_a_directory() {                                       // D§6.8 case 1
     let t = tempfile::tempdir().unwrap();
     let top = t.path().join("repo");
