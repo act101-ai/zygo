@@ -979,9 +979,16 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             first.get_or_insert(cannot(&e));
         }
     }
-    // M§5: mail/<key>/ after the record (no send can target the key now) and after the caches; tried also after a cache error.
+    // M§5: mail/<key>/ after the record and after the caches; tried also after a cache error. The record goes first, so
+    // a send that reads the state after it cannot resolve the key. A send that read the state earlier can still deliver
+    // (that race is tracked as its own node). A folder or a link is removed by `remove_pane` (a link as a link); any
+    // other entry, such as a regular file, is removed as itself, as `remove_tree` does.
     let removed = pane_maildir(paths, &id, key).and_then(|entry| match entry {
-        Some(entry) => mail_store::remove_pane(&mail_dir(paths, &id), key).map_err(|e| format!("{}: {e}", entry.display())),
+        Some(entry) => {
+            let plain = fs::symlink_metadata(&entry).is_ok_and(|m| !m.is_dir() && !m.file_type().is_symlink());
+            let gone = if plain { fs::remove_file(&entry) } else { mail_store::remove_pane(&mail_dir(paths, &id), key) };
+            gone.map_err(|e| format!("{}: {e}", entry.display()))
+        }
         None => Ok(()),
     });
     if let Err(e) = removed {

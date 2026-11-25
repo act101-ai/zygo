@@ -2116,3 +2116,18 @@ fn mail_forget_pane_refuses_a_linked_mail_folder() {
     assert!(store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb")); // nothing written
     assert!(cache(&p, &id).join("results/kbbbbbbbb/r1").exists()); // nothing deleted
 }
+
+#[test] // M§5: a regular file at mail/<key> is removed as a file; the other maildirs are kept
+fn mail_forget_pane_removes_a_file_at_the_maildir_path() {
+    let _s = serial();
+    let PaneSetup { td: _td, p, tmux, id, plain, .. } = pane_setup();
+    let m = mail_dir(&p, &id);
+    mail_to(&p, &id, "kaaaaaaaa", 1);
+    fs::write(m.join("kbbbbbbbb"), "not a maildir").unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(m.join("kbbbbbbbb")).is_err());
+    assert_eq!(mail_store::unread(&m, "kaaaaaaaa").unwrap(), 1);
+}
