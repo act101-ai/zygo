@@ -23,7 +23,8 @@ Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <fi
   recorded as the line "<host>:<port> refused" in <dir>/connect.txt. An absolute-URI request
   (an HTTP_PROXY request such as "GET http://host/x") is refused the same way and recorded as
   "<host>:<port> <METHOD> refused" (port 80 or 443 when the URI names none). Neither gets a
-  <nnnn>.json record or a credential check.
+  <nnnn>.json record or a credential check. An absolute-URI request to the mock's own address
+  (127.0.0.1, localhost or [::1] with the mock's port) is served as an origin request to its path.
 
 Rule (JSON list, first match wins):
   {"name": "...", "sse": "<file>" | "json": "<file>", "status": <int, default 200>,
@@ -180,19 +181,24 @@ class Handler(BaseHTTPRequestHandler):
         self._refuse("%s refused" % self.path)
 
     def _absolute_uri(self):
-        """An absolute-URI request line (a plain-HTTP proxy request): refuse it, return True."""
+        """An absolute-URI request line (a plain-HTTP proxy request): refuse it, return True.
+        One to the mock's own address (127.0.0.1, localhost or [::1] and its port) becomes an
+        origin request to that path (False)."""
         if not re.match(r"(?i)https?://", self.path):
             return False
         u = urlsplit(self.path)
         host = u.hostname or ""
-        if ":" in host:
-            host = "[%s]" % host
         try:
             port = u.port
         except ValueError:
             port = None
         if port is None:
             port = 443 if u.scheme.lower() == "https" else 80
+        if host.lower() in ("127.0.0.1", "localhost", "::1") and port == self.server.server_address[1]:
+            self.path = (u.path or "/") + ("?" + u.query if u.query else "")
+            return False
+        if ":" in host:
+            host = "[%s]" % host
         self._refuse("%s:%d %s refused" % (host, port, self.command))
         return True
 

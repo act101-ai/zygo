@@ -218,6 +218,20 @@ def run(m):
           and m.records() == before,
           "status %r, connect.txt %r, records %d -> %d" % (line, m.connect_txt(), len(before), len(m.records())))
 
+    # M11: an absolute-URI request to the mock's own address is served as an origin request.
+    before_txt, before = m.connect_txt(), set(m.records())
+    st, ct, body = m.req("POST", "http://127.0.0.1:%d/v1/responses" % m.port,
+                         {"model": "m", "stream": True, "input": "m11"})
+    new = sorted(set(m.records()) - before)
+    ok = st == 200 and ct == "text/event-stream" and "event: response.completed" in body \
+        and '"output_tokens": 1' in body and m.connect_txt() == before_txt and len(new) == 1
+    try:
+        with open(os.path.join(m.dir, new[-1])) as f:
+            ok = ok and json.load(f)["path"] == "/v1/responses"
+    except (ValueError, IndexError, KeyError):
+        ok = False
+    check("M11", ok, "got %s %s %r, connect.txt %r, new records %r" % (st, ct, body[:120], m.connect_txt(), new))
+
     # M9 (last: it stops the mock): another credential gives 401 and ABORT.
     st, _, _ = m.req("POST", "/v1/responses", {"model": "m", "input": "m9"}, auth="other")
     check("M9", st == 401 and os.path.exists(os.path.join(m.dir, "ABORT")), "got %s" % st)
@@ -243,7 +257,7 @@ def main():
                 m.stop()
     if FAILS:
         sys.exit(1)
-    print("mock tests: ok (10)")
+    print("mock tests: ok (11)")
 
 
 if __name__ == "__main__":
