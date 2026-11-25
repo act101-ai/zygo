@@ -230,3 +230,73 @@ fn stream_stop_kills_the_process_group() {
     let mut rest = Vec::new();
     assert_eq!(rd.read_to_end(&mut rest).unwrap(), 0);
 }
+
+/// Review F1: the deadline holds while entries keep coming. The callback runs past the deadline, so the run must end
+/// `TimedOut` with no entry handed over after the deadline. A runner that hands one over gets `Stop` and fails at
+/// once. The 250 ms only lets the first entry arrive before the deadline (so the check has power); correct code passes
+/// whatever the machine load.
+#[cfg(unix)]
+#[test]
+fn stream_deadline_while_entries_flow() {
+    let mut c = Command::new("sh");
+    c.args(["-c", "while :; do printf 'a\\000'; done"]);
+    let deadline = Instant::now() + Duration::from_millis(250);
+    let mut late = false;
+    let r = run_stream(c, deadline, &mut |_| {
+        if Instant::now() >= deadline {
+            late = true;
+            return Flow::Stop;
+        }
+        while Instant::now() < deadline {}
+        Flow::Go
+    });
+    assert_eq!(r, Err(RunError::TimedOut));
+    assert!(!late, "an entry was handed over after the deadline");
+}
+
+/// Review F2: as in whole mode, the end of the leader ends the run, although a background child still holds stdout.
+/// A runner that waits for EOF fails at the deadline (an error, not a hang); `sleep 30` is the holder, not a wait.
+#[cfg(unix)]
+#[test]
+fn stream_leader_exit_with_child_holding_stdout() {
+    let mut c = Command::new("sh");
+    c.args(["-c", "printf 'a\\000'; sleep 30 & exit 0"]);
+    let mut seen = Vec::new();
+    let r = run_stream(c, Instant::now() + Duration::from_secs(20), &mut |e| {
+        seen.push(e.to_vec());
+        Flow::Go
+    });
+    assert!(matches!(r, Ok(Streamed::Done { ok: true, .. })), "{r:?}");
+    assert_eq!(seen, [b"a".to_vec()]);
+}
+
+/// Review F3: a callback that panics still leaves no process: the run kills and reaps the group while it unwinds, so
+/// the PID is gone (ESRCH) at once. `sleep 1000` is the process that must be killed, not a wait of the test.
+#[cfg(unix)]
+#[test]
+fn stream_callback_panic_kills_group() {
+    let mut c = Command::new("sh");
+    c.args(["-c", "printf '%s\\000' $$; exec sleep 1000"]);
+    let mut pid: i32 = 0;
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_stream(c, far(), &mut |e| {
+            pid = std::str::from_utf8(e).unwrap().parse().unwrap();
+            panic!("the callback panics");
+        })
+    }));
+    assert!(r.is_err());
+    assert!(pid > 0);
+    assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
+    assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+}
+
+/// Review F4: a last piece with no NUL is not an entry.
+#[cfg(unix)]
+#[test]
+fn stream_drops_last_piece_without_nul() {
+    let mut c = Command::new("sh");
+    c.args(["-c", "printf 'a\\000b'"]);
+    let (r, seen) = stream_all(c);
+    assert!(matches!(r, Ok(Streamed::Done { ok: true, .. })), "{r:?}");
+    assert_eq!(seen, [b"a".to_vec()]);
+}

@@ -113,15 +113,68 @@ fn stop(child: &mut Child) {
     zygo_config::repo_file::kill_tree(child);
 }
 
+/// A spawned child that is not reaped yet. Dropping it (e.g. when the callback panics) kills it with its process
+/// group (unix) or tree (Windows) and reaps it; [`Running::stop`] does that at once.
+struct Running {
+    child: Child,
+    armed: bool,
+}
+
+impl Running {
+    fn stop(&mut self) {
+        if std::mem::replace(&mut self.armed, false) {
+            stop(&mut self.child);
+        }
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Whether the child has exited, without reaping it on unix. Unix: a `waitid` error (SIGCHLD ignored, the kernel
+/// reaped it) counts as exited.
+#[cfg(unix)]
+fn leader_exited(child: &mut Child) -> bool {
+    zygo_config::repo_file::exited_unreaped(child).unwrap_or(true)
+}
+
+#[cfg(not(unix))]
+fn leader_exited(child: &mut Child) -> bool {
+    !matches!(child.try_wait(), Ok(None))
+}
+
+/// The poll step of [`run_stream`] while no entry comes, as in [`wait_bounded`].
+const TICK: Duration = Duration::from_millis(10);
+
+/// Gives `e` to `each`, unless the deadline is past. `Some(end)` ends the run, and `run` is stopped first.
+fn hand(e: &[u8], deadline: Instant, each: &mut dyn FnMut(&[u8]) -> Flow, run: &mut Running) -> Option<Result<Streamed, RunError>> {
+    let end = if Instant::now() >= deadline {
+        Err(RunError::TimedOut)
+    } else if each(e) == Flow::Stop {
+        Ok(Streamed::Stopped)
+    } else {
+        return None;
+    };
+    run.stop();
+    Some(end)
+}
+
 /// Runs `cmd` (S§8.7 stream mode) with stdin null, in its own process group on unix: each NUL-ended stdout entry,
 /// without its NUL, goes to `each`; a last piece with no NUL is not passed. `Flow::Stop` kills the group and gives
-/// `Stopped`. `TimedOut` before any spawn when the deadline is past, and at the deadline (group killed). Memory is
-/// bounded by a few entries.
+/// `Stopped`. `TimedOut` before any spawn when the deadline is past, and at the deadline, checked before each entry
+/// (group killed). When the leader exits, the group is killed (as in [`run_whole`]), the entries already written are
+/// passed and the run ends `Done`. A panic in `each` kills and reaps the group. Memory holds at most two entries: the
+/// one in `each` and the one being read.
 pub fn run_stream(cmd: Command, deadline: Instant, each: &mut dyn FnMut(&[u8]) -> Flow) -> Result<Streamed, RunError> {
-    let (mut child, out, err) = spawn_piped(cmd, deadline, true)?;
+    let (child, out, err) = spawn_piped(cmd, deadline, true)?;
+    let mut run = Running { child, armed: true };
     let erx = drain_err(err);
-    // The callback is not `Send`, so it runs on this thread; the reader hands over one entry at a time.
-    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);
+    // The callback is not `Send`, so it runs on this thread; the reader hands over one entry at a time, and a
+    // rendezvous channel keeps no entry in between.
+    let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(0);
     std::thread::spawn(move || {
         let mut out = std::io::BufReader::new(out);
         loop {
@@ -138,26 +191,45 @@ pub fn run_stream(cmd: Command, deadline: Instant, each: &mut dyn FnMut(&[u8]) -
             }
         }
     });
+    let left = || deadline.saturating_duration_since(Instant::now());
+    // Entries until stdout ends or the leader exits.
     loop {
-        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        if Instant::now() >= deadline {
+            run.stop();
+            return Err(RunError::TimedOut);
+        }
+        if leader_exited(&mut run.child) {
+            break;
+        }
+        match rx.recv_timeout(left().min(TICK)) {
             Ok(e) => {
-                if each(&e) == Flow::Stop {
-                    stop(&mut child);
-                    return Ok(Streamed::Stopped);
+                if let Some(end) = hand(&e, deadline, each, &mut run) {
+                    return end;
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                stop(&mut child);
-                return Err(RunError::TimedOut);
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
-    let status = wait_bounded(&mut child, deadline, true)?;
+    // `wait_bounded` reaps the child on every path (unix: after it kills the group), so the guard is disarmed.
+    let status = wait_bounded(&mut run.child, deadline, true);
+    run.armed = false;
+    let status = status?;
+    // The entries written before the group ended.
+    loop {
+        match rx.recv_timeout(left()) {
+            Ok(e) => {
+                if let Some(end) = hand(&e, deadline, each, &mut run) {
+                    return end;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => return Err(RunError::TimedOut),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
     // An unknown status counts as success, as in `run_bounded_out`.
     let ok = status.is_none_or(|s| s.success());
-    let left = deadline.saturating_duration_since(Instant::now());
-    let err = if ok { Vec::new() } else { erx.recv_timeout(left).unwrap_or_default() };
+    let err = if ok { Vec::new() } else { erx.recv_timeout(left()).unwrap_or_default() };
     Ok(Streamed::Done { ok, err })
 }
 
