@@ -1,0 +1,5 @@
+[claude-code]
+min_version = "9.1.0"
+
+[opencode]
+min_version = "9.2.0"

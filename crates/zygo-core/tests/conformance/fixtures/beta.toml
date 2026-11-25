@@ -1,0 +1,35 @@
+client = "beta"
+name = "Beta"
+version = "2.0.0"
+
+[[cell]]
+capability = "A-1"
+url = "https://example.com/beta/transport"
+
+[[cell]]
+capability = "A-3"
+url = "https://example.com/beta/models"
+
+[[cell]]
+capability = "WA-2"
+url = "https://example.com/beta/turns"
+
+[[grade]]
+criterion = "A-1.1"
+status = "met"
+evidence = ["fixture:fixtures/beta/capture.json"]
+
+[[grade]]
+criterion = "A-1.2"
+status = "met"
+evidence = ["premise:docs/live-checks.md#L1"]
+
+[[grade]]
+criterion = "A-3.1"
+status = "not-met"
+reason = "Beta has no model picker"
+
+[[grade]]
+criterion = "WA-2.1"
+status = "met"
+evidence = ["test:crates/demo/tests/ev.rs::unix_only"]
