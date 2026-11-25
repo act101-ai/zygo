@@ -510,6 +510,64 @@ fn member_session_start_refuses_a_linked_or_relative_session_folder() {
     }
 }
 
+/// T§17 check 11 through the binary: `zygo hook session-start --agent opencode --event subagent` on a member view that
+/// holds resume-note inputs prints exactly the mechanics text M as plain text, with no resume note, and `view.json` is
+/// byte-equal before and after. The fixture is the one of `opencode_subagent_member_view_prints_only_mechanics`
+/// (`crates/zygo-hooks/tests/subagent_text.rs`).
+#[cfg(unix)]
+#[test]
+fn session_start_opencode_event_subagent_prints_mechanics_only() {
+    use zygo_core::session_view::{ResumeNote, SessionView, SubagentRef};
+    use zygo_workspace::state::{MemberRecord, MemberState, Pending, Phase};
+    let h = tempfile::tempdir().unwrap();
+    let (sd, paths) = member_home(h.path(), zygo_core::Agent::OpenCode);
+    let mut v = SessionView::load(&sd).unwrap();
+    let rn = ResumeNote {
+        clean_stop: true,
+        interrupted: vec![SubagentRef { agent_id: "a1".into(), agent_type: "Explore".into(), ..Default::default() }],
+        closed_units: vec!["u-1".into()],
+        ..Default::default()
+    };
+    v.workspace.as_mut().unwrap().resume_note = Some(rn.clone());
+    v.save(&sd).unwrap();
+    let mut m = MemberRecord::new(zygo_core::Agent::OpenCode);
+    m.state = MemberState::Resumable;
+    m.pending = Some(Pending { zygo_session: WS_SID.into(), agent_session: None, started_at: 7, ..Default::default() });
+    m.closed_units = vec!["u-1".into()];
+    m.note_pending = true;
+    ws_state(&paths, Phase::Up, std::collections::BTreeMap::from([(WS_KEY.to_string(), m)]));
+    let mechanics = zygo_hooks::session_start::mechanics_with_overrides(&sd, &v);
+    let note = zygo_hooks::workspace::note(&rn).unwrap();
+    let mut req: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/opencode/plugin-hooks/experimental.chat.system.transform.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    req["input"]["modelID"] = serde_json::json!("read");
+    let view_before = std::fs::read(sd.view_json()).unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_zygo"));
+    common::scratch_home(&mut cmd, h.path());
+    let mut child = cmd
+        .args(["hook", "session-start", "--agent", "opencode", "--event", "subagent"])
+        .env("ZYGO_SESSION_DIR", &sd.root)
+        .env_remove("ZYGO_AGENT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(&serde_json::to_vec(&req).unwrap()).unwrap();
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "stderr: {}", String::from_utf8_lossy(&o.stderr));
+    let stdout = String::from_utf8(o.stdout).unwrap();
+    assert!(!stdout.contains(&note), "the resume note was printed:\n{stdout}");
+    assert_eq!(stdout, mechanics);
+    assert_eq!(std::fs::read(sd.view_json()).unwrap(), view_before, "view.json changed");
+}
+
 /// `cmd` with `stdin` under a 5 s bound: a hook that waits fails the test instead of hanging it.
 #[cfg(unix)]
 fn run_bounded(cmd: &mut Command, stdin: &[u8]) -> std::process::Output {

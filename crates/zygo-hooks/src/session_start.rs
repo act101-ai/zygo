@@ -93,7 +93,7 @@ fn output(agent: Agent, text: String) -> HookOutput {
 /// session text with no note and no other change, as does an entry that is no longer a regular file after the load.
 /// `--event subagent` (`input.cli_event == Some("subagent")`, the OpenCode transform for another role, T§7.2) gives
 /// `subagent_text` before any member part.
-/// Without the flag (a launch that is not a member, or the OpenCode per-request call) a load error is `run_in`'s
+/// Without the flag (a launch that is not a member, or an OpenCode request on the main role) a load error is `run_in`'s
 /// error and that check does not run. A session folder that `workspace::check_folder` refuses skips the member part.
 /// Else `workspace::session_start` runs; a Claude Code member's output is printed to `out` there, so the result is
 /// `HookOutput::None`. A `view.json` that is a FIFO is a load error of `SessionView::load` (`<path>: is a FIFO`), with

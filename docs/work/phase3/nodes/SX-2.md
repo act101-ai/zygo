@@ -155,3 +155,8 @@ All test code goes in `crates/zygo-hooks/tests/subagent_text.rs`. Every new test
 | T§17 check 11 / review focus 70: member view with resume-note inputs, M as plain text, `view.json` byte-equal | 3 (`…member_view_prints_only_mechanics`) |
 | T-C1, T§14 item 1: load error goes to the C6 wrapper | 3 (`…unparseable_view_is_an_error`); the wrapper's one stderr line is pinned by SX-1 `subagent_start_unparseable_view_one_stderr_line` |
 | T-C3, review focus 75: no real agent, no clock | all tests are in-process; no `Command`, no clock |
+
+### Review round 1
+
+- [x] **F1. CLI test for T§17 check 11.** Add `session_start_opencode_event_subagent_prints_mechanics_only` to `crates/zygo/tests/cli_surface.rs`: `zygo hook session-start --agent opencode --event subagent` on a member view with resume-note inputs prints exactly M as plain text, with no resume note, and `view.json` is byte-equal. It passes on the current code; with `--event subagent` dropped from the command it fails (the resume note is printed).
+- [x] **F2. Doc sentence (review finding F4).** In the `run_member` doc comment of `crates/zygo-hooks/src/session_start.rs`, the "Without the flag" sentence names only the OpenCode request on the main role; a non-main request carries `--event subagent`.
