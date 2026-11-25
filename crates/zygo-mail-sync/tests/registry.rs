@@ -141,6 +141,7 @@ fn registry_refused_for_a_bad_identity() {
 
 #[test]
 fn registry_holds_256_members_and_refuses_257() {
+    assert_eq!(MEMBERS_MAX, 256);
     assert_eq!(pr("b", &reg("b", &names(256))).unwrap().members.len(), 256);
     assert_eq!(pr("b", &reg("b", &names(257))), Err(Check("members")));
 }
@@ -237,6 +238,7 @@ fn ack_refused_over_8_mib() {
 
 #[test]
 fn ack_holds_200000_entries_and_refuses_200001() {
+    assert_eq!(ACK_ENTRIES_MAX, 200000);
     assert_eq!(
         pa("b", &ack("b", &ids(200000))).unwrap().imported.len(),
         200000
@@ -260,12 +262,6 @@ fn ack_refused_for_an_entry_that_is_not_a_ulid() {
             "{e}"
         );
     }
-}
-
-#[test]
-fn refused_ack_is_empty_for_the_caller() {
-    let r = pa("b", &ack("b", &["x".into()]));
-    assert!(r.map(|a| a.imported).unwrap_or_default().is_empty());
 }
 
 #[test]
@@ -386,4 +382,93 @@ fn cache_addresses_and_knows() {
     assert!(c.knows(&a("bob", "b")));
     assert!(!c.knows(&a("bob", "c")));
     assert!(!c.knows(&a("eve", "b")));
+}
+
+#[test]
+fn registry_refused_when_the_bytes_are_over_64_kib_and_the_size_is_not() {
+    let mut b = reg("b", &names(1));
+    b.resize(65537, b' ');
+    assert_eq!(parse_registry("b", "100644", 100, &b), Err(Check("size")));
+}
+
+/// `{..., "x":[0,0,...]}`: `base` (an object) with an unknown key that holds `n` zeros.
+fn with_unknown_array(base: &[u8], n: usize) -> Vec<u8> {
+    let mut b = base[..base.len() - 1].to_vec();
+    b.extend_from_slice(br#","x":["#);
+    for i in 0..n {
+        if i > 0 {
+            b.push(b',');
+        }
+        b.push(b'0');
+    }
+    b.extend_from_slice(b"]}");
+    b
+}
+
+#[test]
+fn ack_with_a_large_unknown_array_gives_the_same_result() {
+    let n = 4_000_000; // about 8 MB, under ACK_MAX
+    let good = ack("b", &ids(2));
+    let big = with_unknown_array(&good, n);
+    assert!(big.len() as u64 <= ACK_MAX);
+    assert_eq!(pa("b", &big), pa("b", &good));
+    assert!(pa("b", &big).is_ok());
+    let bad = ack("b", &["x".into()]);
+    assert_eq!(pa("b", &with_unknown_array(&bad, n)), Err(Check("entry")));
+}
+
+#[test]
+fn version_is_checked_before_the_shape() {
+    let other = j(json!({"version":2,"other":true}));
+    assert_eq!(pr("b", &other), Err(Check("version")));
+    assert_eq!(pa("b", &other), Err(Check("version")));
+    // the array form of the fields is not an object with `version`
+    let arr = j(json!([1, "b", IDN, []]));
+    assert_eq!(pr("b", &arr), Err(Check("version")));
+    assert_eq!(pa("b", &arr), Err(Check("version")));
+    for v in [
+        json!(1.0),
+        json!([1]),
+        json!({"v":1}),
+        json!(null),
+        json!(true),
+    ] {
+        let b = j(json!({"version":v,"host":"b","identity":IDN,"imported":[]}));
+        assert_eq!(pa("b", &b), Err(Check("version")), "{v}");
+    }
+    let big = with_unknown_array(&j(json!({"host":"b"})), 1000);
+    let big = String::from_utf8(big)
+        .unwrap()
+        .replace(r#""x":"#, r#""version":"#);
+    assert_eq!(pa("b", big.as_bytes()), Err(Check("version")));
+    // a missing field after a good version names `json`
+    assert_eq!(
+        pa("b", &j(json!({"version":1,"host":"b"}))),
+        Err(Check("json"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_cache_that_fails_leaves_the_old_file() {
+    // `mail/sync` is a link to a folder that holds an old cache: the write fails at its folder check.
+    let (t, sp) = setup();
+    let real = t.path().join("elsewhere");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("members.json"), b"old").unwrap();
+    fs::create_dir_all(&sp.mail).unwrap();
+    std::os::unix::fs::symlink(&real, &sp.sync).unwrap();
+    assert!(write_cache(&sp, &cache()).is_err());
+    assert_eq!(fs::read(real.join("members.json")).unwrap(), b"old");
+    assert_eq!(fs::read_dir(&real).unwrap().count(), 1); // no temp file left
+}
+
+#[cfg(unix)]
+#[test]
+fn read_cache_of_a_fifo_is_empty_without_a_wait() {
+    let (_t, sp) = setup();
+    fs::create_dir_all(&sp.sync).unwrap();
+    let c = std::ffi::CString::new(sp.members.as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    assert_eq!(read_cache(&sp), MemberCache::default());
 }

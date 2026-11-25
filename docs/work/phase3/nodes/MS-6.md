@@ -230,3 +230,5 @@ Steps:
 - [x] 14. Run `cargo test -p zygo-mail-sync --test registry`: the 23 tests pass (20 on a non-unix target).
 - [x] 15. Run the floor for this crate: `cargo fmt --all -- --check`, `cargo clippy -p zygo-mail-sync --all-targets --locked -- -D warnings`, `cargo test -p zygo-mail-sync --locked`: all exit 0 (the `state` tests still pass after step 4).
 - [x] 16. Commit `crates/zygo-mail-sync/src/registry.rs`, `crates/zygo-mail-sync/src/state.rs`, `crates/zygo-mail-sync/tests/registry.rs` with `git commit -m "MS-6: registry and ack files, member cache" -m "<trailers>"`, where `<trailers>` is the `Zygo-Session` and `Zygo-Work` lines that the implement brief gives; `git log -1 --stat` shows those three files only.
+
+Review round 1: F1 fixed (no Value tree); limits made pub; F5 tests added; the caller-side refused-ack check moves to MS-14; F2 (members.json read cap) and F4 (type errors name `json`; duplicate names) are not changed.

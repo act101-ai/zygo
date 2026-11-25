@@ -5,6 +5,7 @@
 //! the prune removes nothing for that host.
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 use zygo_config::valid_mail_host;
 use zygo_core::ids::valid_member_name;
@@ -37,10 +38,10 @@ pub struct Ack {
 pub const REGISTRY_MAX: u64 = 65536;
 /// The largest ack file, in bytes (S-C5).
 pub const ACK_MAX: u64 = 8388608;
-/// The most entries in one ack file (S§7.4).
+/// The most entries in one ack file (S§7.4); a writer checks it before `to_bytes`.
 pub const ACK_ENTRIES_MAX: usize = 200000;
-/// The most members in one registry (S§7.3, S§19 #12).
-const MEMBERS_MAX: usize = 256;
+/// The most members in one registry (S§7.3, S§19 #12); a writer checks it before `to_bytes`.
+pub const MEMBERS_MAX: usize = 256;
 
 /// The registry file form; field order is the key order of [`Registry::to_bytes`].
 #[derive(Serialize, Deserialize)]
@@ -60,19 +61,35 @@ struct AckFile {
     imported: Vec<String>,
 }
 
-/// The checks both files share: git mode `100644`, `size` and the bytes at most `max`, JSON, `version` 1.
-fn head(mode: &str, size: u64, bytes: &[u8], max: u64) -> Result<serde_json::Value, Check> {
+/// The top level of a file, read for `version` only. Serde skips every other key with `IgnoredAny`, so no value
+/// tree is built (S-C5).
+#[derive(Deserialize)]
+struct Head {
+    version: Option<u64>,
+}
+
+/// The checks both files share: git mode `100644`, `size` and the bytes at most `max`, JSON, then an object whose
+/// `version` is the integer 1. The syntax pass and the `version` read skip values without building them (S-C5).
+fn head(mode: &str, size: u64, bytes: &[u8], max: u64) -> Result<(), Check> {
     if mode != "100644" {
         return Err(Check("mode"));
     }
     if size > max || bytes.len() as u64 > max {
         return Err(Check("size"));
     }
-    let v: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| Check("json"))?;
-    if v.get("version") != Some(&serde_json::json!(1)) {
+    serde_json::from_slice::<IgnoredAny>(bytes).map_err(|_| Check("json"))?;
+    // The JSON is valid, so its first byte that is not whitespace tells an object; serde would also read the
+    // array form of a struct.
+    let object = bytes.iter().find(|c| !c.is_ascii_whitespace()) == Some(&b'{');
+    if !object
+        || !matches!(
+            serde_json::from_slice::<Head>(bytes),
+            Ok(Head { version: Some(1) })
+        )
+    {
         return Err(Check("version"));
     }
-    Ok(v)
+    Ok(())
 }
 
 /// The owner checks (S§6.1): `host` is the file name `fh` and in the host form; `identity` is `^[0-9a-f]{32}$`.
@@ -94,8 +111,8 @@ pub fn parse_registry(
     size: u64,
     bytes: &[u8],
 ) -> Result<Registry, Check> {
-    let v = head(mode, size, bytes, REGISTRY_MAX)?;
-    let f: RegistryFile = serde_json::from_value(v).map_err(|_| Check("json"))?;
+    head(mode, size, bytes, REGISTRY_MAX)?;
+    let f: RegistryFile = serde_json::from_slice(bytes).map_err(|_| Check("json"))?;
     owner(file_host, &f.host, &f.identity)?;
     if f.members.len() > MEMBERS_MAX {
         return Err(Check("members"));
@@ -127,8 +144,8 @@ impl Registry {
 /// S§7.4 Validation: the ack `ack/<file_host>.json` of git mode `mode` and blob size `size`. The entry limit
 /// counts the array as given; a duplicate entry collapses in the set. Unknown keys are ignored.
 pub fn parse_ack(file_host: &str, mode: &str, size: u64, bytes: &[u8]) -> Result<Ack, Check> {
-    let v = head(mode, size, bytes, ACK_MAX)?;
-    let f: AckFile = serde_json::from_value(v).map_err(|_| Check("json"))?;
+    head(mode, size, bytes, ACK_MAX)?;
+    let f: AckFile = serde_json::from_slice(bytes).map_err(|_| Check("json"))?;
     owner(file_host, &f.host, &f.identity)?;
     if f.imported.len() > ACK_ENTRIES_MAX {
         return Err(Check("entries"));
