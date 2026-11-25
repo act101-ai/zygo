@@ -266,3 +266,95 @@ fn format_problems_stays_within_4_kib() {
     let one = format_problems(&["é".repeat(3000)]); // 6,000 bytes
     assert!(one.len() <= 4096 && one.starts_with('é'));
 }
+
+// ---- cycle 2: steps 5 to 7 ----
+
+#[test]
+fn fixed_commit_that_is_an_ancestor_of_base() {
+    let fx = fixture();
+    let h = code(&fx);
+    let ds = vec![fixed("R1-1", &fx.root)];
+    assert_eq!(
+        keep(&fx, 1, Some(&h), Some(&fx.base), Some(ds)),
+        vec![format!("R1-1: commit {} is not in the node range", fx.root)]
+    );
+}
+
+#[test]
+fn recorded_in_round_2() {
+    let fx = fixture();
+    let h = add(&fx, 'R', &[]);
+    assert_eq!(
+        keep(&fx, 2, Some(&h), None, Some(vec![recorded("R2-1", Class::None, 'R')])),
+        s(&["R2-1: recorded with class none needs round 3 or later"])
+    );
+}
+
+#[test]
+fn recorded_record_absent_at_head() {
+    let fx = fixture();
+    let h = code(&fx);
+    assert_eq!(
+        keep(&fx, 3, Some(&h), None, Some(vec![recorded("R3-1", Class::None, 'Z')])),
+        vec![format!("R3-1: {} is not at head", id('Z'))]
+    );
+}
+
+#[test]
+fn recorded_record_present_at_base() {
+    let fx = fixture();
+    let h = code(&fx);
+    assert_eq!(
+        keep(&fx, 3, Some(&h), None, Some(vec![recorded("R3-1", Class::None, 'P')])),
+        vec![format!("R3-1: {} was not added in the node range", id('P'))]
+    );
+}
+
+#[test]
+fn recorded_record_of_another_unit() {
+    let fx = fixture();
+    let h = add(&fx, 'R', &[("unit", "phase3:DR-99")]);
+    assert_eq!(
+        keep(&fx, 3, Some(&h), None, Some(vec![recorded("R3-1", Class::None, 'R')])),
+        vec![format!("R3-1: {} has unit phase3:DR-99, not phase3:DR-12", id('R'))]
+    );
+}
+
+#[test]
+fn recorded_record_of_another_class() {
+    let fx = fixture();
+    let h = add(&fx, 'R', &[("kind", "decision")]);
+    assert_eq!(
+        keep(&fx, 3, Some(&h), None, Some(vec![recorded("R3-1", Class::Security, 'R')])),
+        vec![format!("R3-1: {} has class none, not security", id('R'))]
+    );
+}
+
+#[test]
+fn rejected_entry_of_class_security() {
+    let fx = fixture();
+    let h = code(&fx);
+    assert_eq!(
+        keep(&fx, 1, Some(&h), None, Some(vec![rejected("R1-1", Class::Security)])),
+        s(&["R1-1: class security needs a record for the operator"])
+    );
+}
+
+#[test]
+fn recorded_open_record_of_class_security() {
+    let fx = fixture();
+    let h = add(&fx, 'S', &[("kind", "decision"), ("class", "security")]);
+    assert_eq!(
+        keep(&fx, 3, Some(&h), None, Some(vec![recorded("R3-1", Class::Security, 'S')])),
+        vec![format!("R3-1: class security stops for the operator: ratify or overturn {}", id('S'))]
+    );
+}
+
+#[test]
+fn stop_class_recorded_in_round_1_stops_for_the_operator_not_the_round_limit() {
+    let fx = fixture();
+    let h = add(&fx, 'S', &[("kind", "decision"), ("class", "security")]);
+    let p = keep(&fx, 1, Some(&h), None, Some(vec![recorded("R1-1", Class::Security, 'S')]));
+    assert_eq!(p, vec![format!("R1-1: class security stops for the operator: ratify or overturn {}", id('S'))]);
+    assert!(!p.iter().any(|x| x.contains("round 3")));
+}

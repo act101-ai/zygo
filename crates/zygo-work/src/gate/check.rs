@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 
 use zygo_core::esc;
 
-use crate::decisions::record::Class;
-use crate::gate::git::{GitFail, VerdictGit};
+use crate::decisions::record::{parse_record, Class, Kind, Status};
+use crate::gate::git::{Blob, GitFail, VerdictGit};
+use crate::gate::transition::Version;
 
 /// The proof of one disposition (D§8.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,8 +82,108 @@ pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
     unique(ds, &mut p);
     let Some(head) = head else { return p.0 };
     // Step 4: node range.
-    let Some((_base, _range)) = node_range(req, &head, git, &mut p) else { return p.0 };
+    let Some((base, range)) = node_range(req, &head, git, &mut p) else { return p.0 };
+    // Steps 5 to 7, each in entry order: one problem per entry.
+    for d in ds {
+        if let Proof::Fixed { commit } = &d.proof {
+            match in_range(commit, &range, git) {
+                Ok(true) => {}
+                Ok(false) => p.push(format!("{}: commit {} is not in the node range", esc(&d.finding), esc(commit))),
+                Err(e) => p.git(e),
+            }
+        }
+    }
+    for d in ds {
+        if let Proof::Rejected { reason } = &d.proof {
+            if reason.is_empty() {
+                p.push(format!("{}: no reason", esc(&d.finding)));
+            } else if d.class != Class::None {
+                p.push(format!("{}: class {} needs a record for the operator", esc(&d.finding), d.class.name()));
+            }
+        }
+    }
+    for d in ds {
+        if let Proof::Recorded { record } = &d.proof {
+            match recorded_why(req, d.class, record, &head, &base, git) {
+                Ok(None) => {}
+                Ok(Some(why)) => p.push(format!("{}: {why}", esc(&d.finding))),
+                Err(e) => p.git(e),
+            }
+        }
+    }
     p.0
+}
+
+/// D§9.4 step 5: `commit` resolves and its full id is in R.
+fn in_range(commit: &str, range: &BTreeSet<String>, git: &mut dyn VerdictGit) -> Result<bool, GitFail> {
+    if commit.is_empty() {
+        return Ok(false);
+    }
+    Ok(git.commit(commit)?.is_some_and(|c| range.contains(&c)))
+}
+
+/// The record file `name` at `rev` (D§9.4 steps 7 to 9).
+fn version(git: &mut dyn VerdictGit, rev: &str, name: &str) -> Result<Version, GitFail> {
+    Ok(match git.record_blob(rev, name)? {
+        Blob::Missing => Version::Absent,
+        Blob::NotRegular => Version::Malformed,
+        Blob::Data(b) => {
+            let stem = name.strip_suffix(".md").unwrap_or(name);
+            parse_record(stem, &b).map_or(Version::Malformed, Version::Valid)
+        }
+    })
+}
+
+/// D§9.4 step 7: the first failing check of one `recorded` entry, in step order; `None` when it passes.
+fn recorded_why(
+    req: &KeepRequest,
+    class: Class,
+    record: &str,
+    head: &str,
+    base: &str,
+    git: &mut dyn VerdictGit,
+) -> Result<Option<String>, GitFail> {
+    if record.is_empty() {
+        return Ok(Some("no record".into()));
+    }
+    if class == Class::None && req.round < 3 {
+        return Ok(Some("recorded with class none needs round 3 or later".into()));
+    }
+    let r = esc(record);
+    let name = format!("{record}.md");
+    let rec = match version(git, head, &name)? {
+        Version::Absent => return Ok(Some(format!("{r} is not at head"))),
+        Version::Malformed => return Ok(Some(format!("{r} is not a valid record at head"))),
+        Version::Valid(rec) => rec,
+    };
+    if !matches!(version(git, base, &name)?, Version::Absent) {
+        return Ok(Some(format!("{r} was not added in the node range")));
+    }
+    if rec.unit != req.unit {
+        return Ok(Some(format!("{r} has unit {}, not {}", esc(&rec.unit), esc(&req.unit))));
+    }
+    if rec.class != class {
+        return Ok(Some(format!("{r} has class {}, not {}", rec.class.name(), class.name())));
+    }
+    let kind_ok = matches!(rec.kind, Kind::AcceptedLimit | Kind::Compromise | Kind::OpenFinding)
+        || (rec.kind == Kind::Decision && class != Class::None);
+    if !kind_ok {
+        return Ok(Some(format!("{r} of kind {} cannot record this finding", rec.kind.name())));
+    }
+    for dep in &rec.depends_on {
+        if !matches!(version(git, head, &format!("{dep}.md"))?, Version::Valid(_)) {
+            return Ok(Some(format!("{r} depends on {dep}, which is not a record at head")));
+        }
+    }
+    let stop = class != Class::None;
+    Ok(match rec.status {
+        Status::Open if !stop => None,
+        Status::Ratified if stop => None,
+        st if !stop => Some(format!("{r} is {}, not open", st.name())),
+        Status::Open => Some(format!("class {} stops for the operator: ratify or overturn {r}", class.name())),
+        Status::Overturned => Some(format!("{r} overturned by the operator")),
+        st => Some(format!("{r} is {}, not ratified", st.name())),
+    })
 }
 
 /// D§9.4 step 3: one problem per repeated label and per repeated record id.
