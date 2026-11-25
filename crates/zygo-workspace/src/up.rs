@@ -8,9 +8,11 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo_config::Config;
+use zygo_config::repo_def::{apply_to_config, check_default, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
+use zygo_config::{Config, BUILTIN_LOADOUT};
 use zygo_core::esc;
 use zygo_core::paths::Paths;
 use zygo_work::repo::{checkout, Checkout};
@@ -59,11 +61,12 @@ const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update
 const AU98: &str = "zygo: --server holds user info; this agent is not saved by the workspace";
 const NEW_SERVER: &str =
     "zygo: started a new tmux server from inside a zygo agent; its panes have no provider keys from the environment";
+const UP_ALL_NO_REPOSITORY: &str = "zygo: up --all reads no repository workspace files; using solo";
 const LOADOUT_IGNORED: &str = "zygo: --loadout applies only with --reset or to a new workspace; restoring the saved layout";
 
 /// The inputs of `zygo up` for one workspace. `tmux_env` is `$TMUX`, `zygo_session` is `ZYGO_SESSION` and `vars` is
 /// the caller environment; only the entry point reads them from the process.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UpOpts {
     pub name: Option<String>,
     pub loadout: Option<String>,
@@ -77,6 +80,10 @@ pub struct UpOpts {
     pub vars: BTreeMap<OsString, OsString>,
     pub paths: Paths,
     pub config: Config,
+    /// True when the user config file sets `[workspace] default_loadout` (workspace definition design R§10).
+    pub default_loadout_set: bool,
+    /// The git runner of the default-branch read (R§7.3); `None`: `SystemGit`. A test passes a counting runner.
+    pub git: Option<Arc<dyn GitRunner + Send + Sync>>,
 }
 
 /// A refusal: the exit code and the whole line as printed, without `\n`.
@@ -681,6 +688,8 @@ fn fresh_member(agent: zygo_core::Agent, pp: &PlanPane) -> MemberRecord {
     m.launch.server = pp.server.clone();
     m.launch.compact = pp.compact.clone();
     m.launch.config_dir = pp.config_dir.clone();
+    m.launch.job = pp.job.clone();
+    m.launch.definition = pp.definition.clone();
     let f = filter_from(agent, &pp.args, &pp.cwd);
     m.launch.args = f.kept;
     m.dropped_flags = f.dropped_flags;
@@ -746,12 +755,101 @@ struct Report {
 
 fn kind_name(m: &MemberRecord) -> &'static str { m.launch.kind.as_str() }
 
-/// The loadout plan (W§8.1 step 7, first case).
-fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut Report, err: &mut dyn Write) -> Result<Plan, Exit> {
-    let plan = loadout::resolve(&opts.config, opts.loadout.as_deref(), &t.main_root, &t.worktrees).map_err(|e| Exit {
+/// R§10 `up` row: the workspace files are not approved.
+fn not_approved_line(full_ref: &str, digest: &str) -> String {
+    format!(
+        "zygo: this repository's workspace files ({}, digest {}) are not approved on this machine; nothing from them was applied; see zygo workspace approve",
+        esc(full_ref),
+        short(digest)
+    )
+}
+
+/// R§10 `up` row: the workspace files are invalid (an invalid read has no digest).
+fn invalid_line(full_ref: &str, why: &str) -> String {
+    format!("zygo: this repository's workspace files ({}) are invalid ({}); nothing from them was applied", esc(full_ref), esc(why))
+}
+
+/// R§10 `up` row: the workspace files could not be read.
+fn unread_line(why: &str) -> String {
+    format!("zygo: this repository's workspace files are unread ({}); nothing from them was applied", esc(why))
+}
+
+/// R§9.4: the agent panes of the repository loadout against `[limits] max_members`, before any write.
+fn check_max(plan: &loadout::Plan, max: u32) -> Result<(), Exit> {
+    let n = plan.windows.iter().flat_map(|w| &w.panes).filter(|p| matches!(p.kind, PlanKind::Agent(_))).count();
+    if n > max as usize {
+        return Err(fail(format!(
+            "zygo: this repository's workspace files start {n} agents; [limits] max_members is {max}; nothing started"
+        )));
+    }
+    Ok(())
+}
+
+/// The loadout of W§8.1 step 7, first case (R§10 `up` row): `--loadout`; else `[workspace] default_loadout` when the
+/// user config file sets it; else `repository` when the default branch has an approved `.zygo/workspace.toml`; else
+/// `solo`. The repository plan comes from one checked read (R§7.3) and each pane gets its pin (R§7.4). A choice by
+/// `--loadout repository` or a user `default_loadout = "repository"` refuses where the default choice plans `solo`.
+/// `repo_read` is false for `zygo up --all`, which makes no read.
+fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Result<loadout::Plan, Exit> {
+    let resolve_err = |e: LoadoutError| Exit {
         code: if matches!(e, LoadoutError::Unknown { .. }) { 2 } else { 1 },
         message: format!("zygo: {e}"),
-    })?;
+    };
+    let user = |name: &str| loadout::resolve(&opts.config, Some(name), &t.main_root, &t.worktrees).map_err(resolve_err);
+    let name = opts.loadout.as_deref().or(opts.default_loadout_set.then_some(opts.config.workspace.default_loadout.as_str()));
+    let explicit = name.is_some();
+    if let Some(n) = name
+        && (n != REPOSITORY_LOADOUT || opts.config.loadout.contains_key(REPOSITORY_LOADOUT))
+    {
+        return user(n);
+    }
+    // R§10 `zygo up --all` row (AU10): no default-branch read; the user default, else `solo`. A user default
+    // `repository` with no user table (the early return above takes one) plans `solo` with one line.
+    if !repo_read {
+        if name == Some(REPOSITORY_LOADOUT) {
+            say(err, UP_ALL_NO_REPOSITORY);
+            return user(BUILTIN_LOADOUT);
+        }
+        return user(name.unwrap_or(BUILTIN_LOADOUT));
+    }
+    let git: &dyn GitRunner = match &opts.git {
+        Some(g) => g.as_ref(),
+        None => &SystemGit,
+    };
+    let line = match check_default(&t.main_root, &t.id, &opts.paths.approvals_file, git) {
+        Use::Approved { pin, def, .. } if def.workspace.is_some() => {
+            let mut cfg = opts.config.clone();
+            if apply_to_config(&mut cfg, &def).loadout_shadowed {
+                return user(REPOSITORY_LOADOUT);
+            }
+            let plan = loadout::resolve_repository(&cfg.loadout[REPOSITORY_LOADOUT], &pin, &t.main_root, &t.worktrees)
+                .map_err(resolve_err)?;
+            check_max(&plan, opts.config.limits.max_members)?;
+            return Ok(plan);
+        }
+        Use::Approved { full_ref, .. } if explicit => {
+            format!("zygo: this repository's workspace files at {} have no .zygo/workspace.toml; nothing started", esc(&full_ref))
+        }
+        Use::NotApproved { full_ref, digest, def, .. } if explicit || def.workspace.is_some() => {
+            not_approved_line(&full_ref, &digest)
+        }
+        Use::Invalid { full_ref, why, .. } => invalid_line(full_ref.as_deref().unwrap_or_default(), &why),
+        Use::Unread { why } => unread_line(&why),
+        Use::Absent { full_ref } if explicit => format!("zygo: this repository has no workspace files at {}", esc(&full_ref)),
+        Use::Approved { .. } | Use::NotApproved { .. } | Use::Absent { .. } => return user(BUILTIN_LOADOUT),
+    };
+    if explicit {
+        return Err(fail(line));
+    }
+    say(err, &line);
+    user(BUILTIN_LOADOUT)
+}
+
+/// The loadout plan (W§8.1 step 7, first case).
+fn loadout_plan(
+    opts: &UpOpts, t: &Target, ws: Option<&Workspace>, repo_read: bool, report: &mut Report, err: &mut dyn Write,
+) -> Result<Plan, Exit> {
+    let plan = choose(opts, t, repo_read, err)?;
     for w in &plan.warnings {
         say(err, &format!("zygo: {w}"));
     }
@@ -961,9 +1059,12 @@ fn attach_step(
     }
 }
 
-/// W§8.1 steps 4-12 for one target, and 13 when `attach` (crate-private, for W8).
-pub(crate) fn up_target(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool) -> i32 {
-    match build(opts, target, out, err, attach) {
+/// W§8.1 steps 4-12 for one target, and 13 when `attach` (crate-private, for W8). `repo_read` is false for `--all`:
+/// its loadout choice makes no default-branch read (R§10).
+pub(crate) fn up_target(
+    opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool,
+) -> i32 {
+    match build(opts, target, out, err, attach, repo_read) {
         Ok(code) => code,
         Err(e) => {
             say(err, &e.message);
@@ -972,7 +1073,7 @@ pub(crate) fn up_target(opts: &UpOpts, target: Target, out: &mut dyn Write, err:
     }
 }
 
-fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool) -> Result<i32, Exit> {
+fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool) -> Result<i32, Exit> {
     let id = target.id.clone();
     let name = target.name.clone();
     let session = format!("zygo-{name}");
@@ -1086,7 +1187,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             }
             restore_plan(&store, cur, &mut report)
         }
-        _ => loadout_plan(opts, &target, ws.as_ref(), &mut report, err)?,
+        _ => loadout_plan(opts, &target, ws.as_ref(), repo_read, &mut report, err)?,
     };
     check_plan(&plan)?;
     check_separators(&opts.zygo, &id, &target.main_root, &plan, repaired)?;
@@ -1468,7 +1569,7 @@ fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             say(err, &e.message);
             e.code
         }
-        Ok(t) => up_target(opts, t, out, err, true),
+        Ok(t) => up_target(opts, t, out, err, true, true),
     }
 }
 
@@ -1559,7 +1660,7 @@ fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             continue;
         }
         // D7: `up_target` takes and releases its own `op.lock`.
-        if up_target(opts, target, out, err, false) == 0 {
+        if up_target(opts, target, out, err, false, false) == 0 {
             say(out, &format!("zygo: {name} is up"));
         } else {
             say(err, &format!("zygo: {name} skipped"));

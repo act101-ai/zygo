@@ -500,6 +500,8 @@ fn live() -> Live {
         vars,
         paths: p,
         config: Config::default(),
+        default_loadout_set: false,
+        git: None,
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = up::testing::run_with(&o, &mut out, &mut err);
@@ -625,6 +627,8 @@ fn refusals_change_nothing() {
             vars: BTreeMap::new(),
             paths: paths(t),
             config: Config::default(),
+            default_loadout_set: false,
+            git: None,
         };
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = up::testing::run_with(&u, &mut out, &mut err);
