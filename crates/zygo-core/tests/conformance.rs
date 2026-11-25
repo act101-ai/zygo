@@ -816,3 +816,24 @@ fn check_3_met_grade_not_resolved_faults() {
     let met = g.iter().flat_map(|g| &g.grade).filter(|e| e.status == Status::Met).count();
     assert_eq!(f.iter().filter(|x| x.item == 3).count(), met, "{f:?}");
 }
+
+#[test]
+fn check_3_file_inner_cfg_limits_targets() {
+    let d = repo_with(&[
+        ("crates/demo/tests/gone.rs", "#![cfg(any())]\n#[test]\nfn never() {}\n"),
+        ("crates/demo/tests/unixonly.rs", "#![cfg(unix)]\n#[test]\nfn t() {}\n"),
+        ("crates/demo/tests/root2.rs", "mod m2;\n"),
+        ("crates/demo/tests/m2.rs", "#![cfg(windows)]\n#[test]\nfn t() {}\n"),
+        ("crates/demo/tests/root3.rs", "#[path = \"in3/m3.rs\"]\nmod m3;\n"),
+        ("crates/demo/tests/in3/m3.rs", "#![cfg(windows)]\nmod m4;\n"),
+        ("crates/demo/tests/in3/m4.rs", "#[test]\nfn t4() {}\n"),
+        ("crates/demo/tests/attr.rs", "#![cfg_attr(unix, cfg(any()))]\n#[test]\nfn t() {}\n"),
+    ]);
+    let ev = |e: &str| evidence(d.path(), e, "Alpha").map(|e| e.platforms);
+    assert!(ev("test:crates/demo/tests/gone.rs::never").unwrap_err().contains("never runs in CI"));
+    assert_eq!(ev("test:crates/demo/tests/unixonly.rs::t").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("test:crates/demo/tests/m2.rs::t").unwrap(), ["windows"]);
+    // The inner cfg of a file limits the files it reaches by `mod`.
+    assert_eq!(ev("test:crates/demo/tests/in3/m4.rs::t4").unwrap(), ["windows"]);
+    assert_eq!(ev("test:crates/demo/tests/attr.rs::t").unwrap(), ["windows"]);
+}

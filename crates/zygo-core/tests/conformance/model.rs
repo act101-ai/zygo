@@ -451,7 +451,8 @@ fn evidence_in(root: &Path, e: &str, client_name: &str, cache: &mut ReachCache) 
             let text = read_capped(&canon).map_err(fail)?;
             let mut found = with_parsed(rel, &text, |file| {
                 let mut found = Vec::new();
-                find_tests(&file.items, func, &mut Vec::new(), &mut found);
+                // The inner attributes of the file (`#![cfg(…)]`) limit each item in it.
+                find_tests(&file.items, func, &mut vec![cfg_targets(&file.attrs)], &mut found);
                 found
             })
             .map_err(fail)?;
@@ -631,6 +632,8 @@ fn reach(crate_dir: &Path) -> Reach {
         let shown = file.display().to_string();
         let decls = with_parsed(&shown, &text, |f| {
             let mut out = Vec::new();
+            // The inner cfg of the file limits each `mod` in it.
+            let t = t.and_then(|t| Ok(and(t, cfg_targets(&f.attrs)?)));
             mod_decls(&f.items, &file_dir, &dir, true, &t, &mut out);
             out
         });
