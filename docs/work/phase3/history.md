@@ -84,6 +84,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | DONE | mechanical | a300fa02, 875d61fe · acc 4/4 ST verified · PR #135 |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | DONE | implementation | PR #139; node 492ed380, c842cfab; acc 15/15 |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | DONE | judgment | 4cf4c8c1, f313648b, 845cb854 · acc 22/22 · PR #143 |
+| ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | DONE | judgment | 5f0212b1, 3643f93d, 1efbd8a3, bc17d413, 9946594d, 9fe2d6ef, 9a57d777, 68c3fa62 · acc 14 mail_ tests, 26/26 · PR #144 |
 
 ## Log
 

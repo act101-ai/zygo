@@ -81,11 +81,11 @@ A send to an address whose name is reserved (`cli@<host>`, `zygo@<host>`) is ref
 
 ### 7.1 Busy member: the Stop hook
 
-**(author)** The `Stop` hook of a member (W§9.1) reads the count of `mail/<own key>/new/`. When it is not zero and the input's `stop_hook_active` is `false` (`fixtures/claude-code/hooks/Stop-main.json:11`), it prints `{"decision":"block","reason":"zygo: <n> new messages; read them with mail_read"}`, so the agent reads the mail before its turn ends. With `stop_hook_active = true` it prints nothing (no loop; Claude Code also caps consecutive Stop blocks at 8, `fixtures/claude-code/settings-schema.json:1247-1249`). `busy` is cleared as in AU43 only when the hook does not block.
+**(author)** The `Stop` hook of a member with `[features] mail` on (W§9.1) reads the count of `mail/<own key>/new/`. When it is not zero, the input's `stop_hook_active` is `false` and the workspace phase is not `draining` or `stopping` (`fixtures/claude-code/hooks/Stop-main.json:11`), it prints `{"decision":"block","reason":"zygo: <n> new messages; read them with mail_read"}`, so the agent reads the mail before its turn ends. With `stop_hook_active = true` it prints nothing (no loop; Claude Code also caps consecutive Stop blocks at 8, `fixtures/claude-code/settings-schema.json:1247-1249`). While the phase is `draining` or `stopping` it does not block, so `down` does not wait for unread mail (M§9). `busy` is cleared as in AU43 only when the hook does not block. A member with `[features] mail` off has no mail tools: its `Stop` hook does not read `mail/` and does not block.
 
 ### 7.2 New turn: UserPromptSubmit and SessionStart
 
-**(author)** When `new/` is not empty, the member's `UserPromptSubmit` hook adds one line of context, `zygo: <n> new messages; read them with mail_read`, and the main-loop `SessionStart` adds the same line after the resume note (W§9.4). Neither hook puts mail text into the context.
+**(author)** For a member with `[features] mail` on, when `new/` is not empty, the member's `UserPromptSubmit` hook adds one line of context, `zygo: <n> new messages; read them with mail_read`, and the main-loop `SessionStart` adds the same line after the resume note (W§9.4). Neither hook puts mail text into the context. A member with `[features] mail` off gets no line, and its hooks do not read `mail/`.
 
 ### 7.3 Idle member: the wake
 
@@ -136,7 +136,7 @@ The text holds names and tool names only, no message text (M-C2), and nothing ab
 ## 9. Interplay with phase 2
 
 - `down` does not wait for unread mail (it is durable). During `stopping`, `mail_send` returns `zygo: workspace is stopping` (AU86).
-- The resume note (W§9.4) adds `<n> unread messages; read them with mail_read.` when `new/` is not empty.
+- When `new/` is not empty, the main-loop `SessionStart` adds the M§7.2 line after the resume note (W§9.4). The resume note adds no second line.
 - A detached member (W§7.5) keeps its mail; `up` lists its unread count with the detached line.
 - `zygo workspace` and `zygo ls` show unread counts per member.
 - A wake never counts as a `UserPromptSubmit` for AU26 until the agent's turn starts.
@@ -224,3 +224,6 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-25 | M§5 | mail sync design S§16 | `from` and `to` can hold a full address `<name>@<host>` (S§6.2); the file format and its version do not change. |
 | 2026-11-25 | M§9a | author's call | The HUD count is the store's count (regular <ULID>.json files; a missing new/ is 0), so the HUD and zygo workspace agree (ML-14 review; FX-12). |
 | 2026-11-25 | M§5 | author's call | Retention states the record/maildir invariant: a send from an older state read recreated mail/<key>/ after forget-pane, and up --reset dropped records but kept their maildirs (ML-14 review; FX-13). |
+| 2026-11-25 | M§7.1 | author's call (ML-10 review) | The Stop block is for a member with `[features] mail` on, which has `mail_read`, and it does not block in `draining` or `stopping`, so `down` does not wait for unread mail (M§9). |
+| 2026-11-25 | M§7.2 | author's call (ML-10 review) | The prompt and SessionStart lines are for a member with `[features] mail` on, which has `mail_read` (M§8, M§8a). |
+| 2026-11-25 | M§9 | author's call (ML-10 review) | The resume-note bullet said the note adds a second unread line; SessionStart gives only the M§7.2 line, after the note. |
