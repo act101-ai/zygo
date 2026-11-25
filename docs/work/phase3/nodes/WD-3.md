@@ -45,7 +45,7 @@ pub fn approve_workspace_in(file: &Path, ws_id: &str, digest: &str) -> anyhow::R
 
 ### Steps
 
-- [ ] **Step 1 — store tests.** New `crates/zygo-config/tests/repo_def_store.rs`, header `//! WD-3: workspace approvals in approvals.toml (R§7.2, R§11, R§18 item 8).` Helpers:
+- [x] **Step 1 — store tests.** New `crates/zygo-config/tests/repo_def_store.rs`, header `//! WD-3: workspace approvals in approvals.toml (R§7.2, R§11, R§18 item 8).` Helpers:
 
   ```rust
   use std::path::{Path, PathBuf};
@@ -128,9 +128,9 @@ pub fn approve_workspace_in(file: &Path, ws_id: &str, digest: &str) -> anyhow::R
   }
   ```
 
-- [ ] **Step 2 — see them fail.** `cargo test -p zygo-config --test repo_def_store` → compile error E0432 (no `approve_workspace_in`, `is_workspace_approved_in`, `Stored` in `repo_def`).
+- [x] **Step 2 — see them fail.** `cargo test -p zygo-config --test repo_def_store` → compile error E0432 (no `approve_workspace_in`, `is_workspace_approved_in`, `Stored` in `repo_def`).
 
-- [ ] **Step 3 — shared-file tests.** New `crates/zygo-plugins/tests/approve_shared.rs`, header `//! WD-3: plugin approvals beside [[workspace]] entries in one approvals.toml (R§7.2, R§18 item 21).` Uses `zygo_plugins::approve::{approve_in, is_approved_in}` and `zygo_config::repo_def::{approve_workspace_in, is_workspace_approved_in}`; P1 = `"a".repeat(64)`, P2 = `"b".repeat(64)`, W = `"c".repeat(64)`.
+- [x] **Step 3 — shared-file tests.** New `crates/zygo-plugins/tests/approve_shared.rs`, header `//! WD-3: plugin approvals beside [[workspace]] entries in one approvals.toml (R§7.2, R§18 item 21).` Uses `zygo_plugins::approve::{approve_in, is_approved_in}` and `zygo_config::repo_def::{approve_workspace_in, is_workspace_approved_in}`; P1 = `"a".repeat(64)`, P2 = `"b".repeat(64)`, W = `"c".repeat(64)`.
 
   ```rust
   #[test] fn plugin_approvals_hold_beside_workspace_entries() {
@@ -154,10 +154,10 @@ pub fn approve_workspace_in(file: &Path, ws_id: &str, digest: &str) -> anyhow::R
 
   `cargo test -p zygo-plugins --test approve_shared` → compile error E0432 (as Step 2).
 
-- [ ] **Step 4 — the store.** New `crates/zygo-config/src/repo_def/store.rs`, doc line `//! Workspace approvals (R§7.2): [[workspace]] id digest in the plugin approvals file, written with the protocol of zygo_plugins::approve::approve_in.` In `repo_def/mod.rs` add `mod store;` and `pub use store::{approve_workspace_in, is_workspace_approved_in, Stored};`; extend the module doc with "and the approval store (R§7.2)".
+- [x] **Step 4 — the store.** New `crates/zygo-config/src/repo_def/store.rs`, doc line `//! Workspace approvals (R§7.2): [[workspace]] id digest in the plugin approvals file, written with the protocol of zygo_plugins::approve::approve_in.` In `repo_def/mod.rs` add `mod store;` and `pub use store::{approve_workspace_in, is_workspace_approved_in, Stored};`; extend the module doc with "and the approval store (R§7.2)".
   - Private shape: `#[derive(Deserialize)] struct File { #[serde(default)] workspace: Vec<Entry> }`, `#[derive(Deserialize)] struct Entry { id: String, digest: String }` (no `deny_unknown_fields`; other tables such as `[[approval]]` are ignored, as `approve.rs:16-19` ignores `[[workspace]]`). "Invalid" is exactly: not TOML, or this shape does not deserialize.
   - Private `fn id16(s) -> bool` (`^[0-9a-f]{16}$`) and `fn hex64(s) -> bool` (as `approve.rs:21`).
   - `is_workspace_approved_in`: `id16(ws_id) && hex64(digest)`, read to string, parse `File`, any entry with `id == ws_id && digest == digest`; every failure is `false`.
   - `approve_workspace_in`: the `approve.rs:38-77` body with these changes only: input check `bail!("workspace id is not 16 lower-case hex characters")` / `bail!("digest is not 64 lower-case hex characters")` before any file system call; the duplicate test runs on the `File` parsed from the text read under the lock (one read; return `Ok(Stored::AlreadyPresent)` with nothing written); the appended text is `format!("[[workspace]]\nid = {}\ndigest = {}\n", q(ws_id), q(digest))`; the second parse error is `"{file}: workspace is not an array of tables"`; success returns `Ok(Stored::Added)`. Error context on the first parse stays `"{file}: invalid approvals file"`.
 
-- [ ] **Step 5 — acceptance.** `cargo test -p zygo-config --test repo_def_store && cargo test -p zygo-plugins --test approve_shared` → all pass (9 + 2). Then `cargo test -p zygo-config -p zygo-plugins --locked` → no other test changes; `cargo build --workspace --locked` → builds (no other crate touched).
+- [x] **Step 5 — acceptance.** `cargo test -p zygo-config --test repo_def_store && cargo test -p zygo-plugins --test approve_shared` → all pass (9 + 2). Then `cargo test -p zygo-config -p zygo-plugins --locked` → no other test changes; `cargo build --workspace --locked` → builds (no other crate touched).
