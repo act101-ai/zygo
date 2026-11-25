@@ -107,12 +107,20 @@ fn limit(ctx: &LaunchCtx, model: &str) -> Value {
 
 /// The provider key as a reference to the session's `token` file (§8.7, premise PO1): OpenCode
 /// reads the file when it loads its config, so the token is in no environment row. OpenCode matches
-/// `{file:…}` on the raw config text, so the path uses `/` and may hold no `{`, `}` or `"`.
-fn token_ref(ctx: &LaunchCtx) -> anyhow::Result<String> {
-    let t = ctx.session_dir.token();
-    let p = t.to_str().ok_or_else(|| anyhow!("cannot use the session directory path: it is not valid UTF-8"))?.replace('\\', "/");
-    if p.contains(['{', '}', '"']) {
-        bail!("cannot reference the session token file {p}: its path holds {{, }} or \"");
+/// `{file:…}` on the raw config text, so the path uses `/` (Windows `\` becomes `/`; elsewhere a `\` is refused)
+/// and may hold no `{`, `}`, `"` or control character. A path that is not absolute is refused, so OpenCode's own
+/// resolution (`~/`, relative to the project) never applies.
+fn token_ref(t: &Path) -> anyhow::Result<String> {
+    let raw = t.to_str().ok_or_else(|| anyhow!("cannot use the session directory path: it is not valid UTF-8"))?;
+    let p = if cfg!(windows) { raw.replace('\\', "/") } else { raw.to_string() };
+    let shown = p.escape_debug();
+    if p.contains(['{', '}', '"', '\\']) || p.chars().any(|c| c < ' ' || c == '\u{7f}') {
+        bail!("cannot reference the session token file {shown}: its path holds {{, }}, \", \\ or a control character");
+    }
+    let b = p.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'/';
+    if !(p.starts_with('/') || drive) {
+        bail!("cannot reference the session token file {shown}: its path is not absolute");
     }
     Ok(format!("{{file:{p}}}"))
 }
@@ -451,8 +459,8 @@ impl AgentAdapter for OpenCode {
     fn build(&self, ctx: &LaunchCtx) -> anyhow::Result<ChildSpec> {
         let zygo = self.zygo.to_str().filter(|z| !z.is_empty()).ok_or_else(|| anyhow!("cannot find the path of the running zygo binary"))?;
         ctx.session_dir.root.to_str().ok_or_else(|| anyhow!("cannot use the session directory path: it is not valid UTF-8"))?;
-        let key = token_ref(ctx)?;
-        let dir =ctx.session_dir.root.join("opencode");
+        let key = token_ref(&ctx.session_dir.token())?;
+        let dir = ctx.session_dir.root.join("opencode");
         std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
         let path = serde_json::to_string(zygo)?;
         let plugins = dir.join("plugins");
@@ -571,6 +579,9 @@ fn conflict(v: &Value, names: &AgentNames) -> Option<String> {
     if v.pointer("/provider/zygo").is_some() {
         return Some("provider.zygo".into());
     }
+    if v.get("disabled_providers").and_then(Value::as_array).is_some_and(|a| a.iter().any(|p| p == "zygo")) {
+        return Some("disabled_providers".into());
+    }
     for k in ["model", "small_model"] {
         if v.get(k).is_some() {
             return Some(k.into());
@@ -629,4 +640,24 @@ fn strip_jsonc(text: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_token_path_uses_slashes() {
+        assert_eq!(token_ref(Path::new(r"C:\h\a b\S1\token")).unwrap(), "{file:C:/h/a b/S1/token}");
+        assert_eq!(token_ref(Path::new(r"\\srv\share\S1\token")).unwrap(), "{file://srv/share/S1/token}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_unix_token_path_is_kept_and_a_backslash_is_refused() {
+        assert_eq!(token_ref(Path::new("/h/a b/S1/token")).unwrap(), "{file:/h/a b/S1/token}");
+        let e = token_ref(Path::new(r"/h/a\b/token")).unwrap_err().to_string();
+        assert!(e.contains("cannot reference the session token file") && e.contains("its path holds"), "{e}");
+    }
 }

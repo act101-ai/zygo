@@ -318,8 +318,7 @@ fn inline_config_values() {
     let p = &cfg["provider"]["zygo"];
     assert_eq!(p["npm"], "@ai-sdk/anthropic");
     assert_eq!(p["options"]["baseURL"], "http://127.0.0.1:4/anthropic/v1");
-    let want = format!("{{file:{}}}", c.session_dir.token().to_str().unwrap().replace('\\', "/"));
-    assert_eq!(p["options"]["apiKey"], want.as_str());
+    assert_token_key(&p["options"]["apiKey"], &fx);
     assert_eq!(p["options"]["headers"], json!({"X-Zygo-Session": "S1", "X-Zygo-Agent-Version": "1.18.16"}));
     let roles: BTreeSet<&str> = c.config.roles.keys().map(String::as_str).collect();
     let keys: BTreeSet<&str> = p["models"].as_object().unwrap().keys().map(String::as_str).collect();
@@ -343,8 +342,7 @@ fn opencode_token_is_only_a_file_reference() {
     let fx = fx();
     let c = ctx(&fx, |c| c.token = format!("oc1-{}-{}", "probe", 7)); // distinct from any path text
     let (spec, cfg) = built(&c);
-    let want = format!("{{file:{}}}", c.session_dir.token().to_str().unwrap().replace('\\', "/"));
-    assert_eq!(cfg["provider"]["zygo"]["options"]["apiKey"], want.as_str());
+    assert_token_key(&cfg["provider"]["zygo"]["options"]["apiKey"], &fx);
     assert!(spec.env.iter().all(|(_, v)| !v.contains(&c.token)), "env");
     assert!(spec.args.iter().all(|a| !a.contains(&c.token)), "args");
     for (rel, text) in files_under(&c.session_dir.root.join("opencode")) {
@@ -360,14 +358,39 @@ fn inline_config_limits_providers_to_zygo() {
     assert_eq!(cfg["provider"].as_object().unwrap().keys().collect::<Vec<_>>(), ["zygo"]);
 }
 
+/// The key of the fixture's session `S1`: `{file:<root>/home/cache/sessions/S1/token}`, written out literally on
+/// unix; on Windows only its `/` form is checked here (the `\` to `/` change has literal cases in `src/opencode.rs`).
+fn assert_token_key(key: &Value, fx: &Fx) {
+    let k = key.as_str().expect("apiKey is a string");
+    if cfg!(windows) {
+        assert!(k.starts_with("{file:") && k.ends_with("/home/cache/sessions/S1/token}") && !k.contains('\\'), "{k}");
+    } else {
+        assert_eq!(k, format!("{{file:{}/home/cache/sessions/S1/token}}", fx.root.to_str().unwrap()));
+    }
+}
+
 #[test]
 fn a_token_path_that_breaks_the_file_reference_is_refused() {
-    let bad: &[&str] = if cfg!(windows) { &["a}b", "a{b"] } else { &["a}b", "a{b", "a\"b"] };
+    let mut bad = vec!["a}b", "a{b", "a\nb", "a\tb", "a\u{1}b", "a\u{7f}b"];
+    if cfg!(unix) {
+        bad.extend(["a\"b", "a\\b"]);
+    }
     for b in bad {
         let fx = fx();
         let c = ctx(&fx, |c| c.session_dir = SessionDir::new(fx.root.join(b)));
         let e = oc().build(&c).err().expect(b).to_string();
-        assert!(e.contains("cannot reference the session token file"), "{e}");
+        assert!(e.contains("cannot reference the session token file"), "{b:?}: {e}");
+        assert!(!fx.root.join(b).exists(), "{b:?}: nothing is written before the refusal");
+    }
+}
+
+#[test]
+fn a_token_path_that_is_not_absolute_is_refused() {
+    for rel in ["rel/S1", "~/S1"] {
+        let fx = fx();
+        let c = ctx(&fx, |c| c.session_dir = SessionDir::new(PathBuf::from(rel)));
+        let e = oc().build(&c).err().expect(rel).to_string();
+        assert!(e.contains("cannot reference the session token file") && e.contains("not absolute"), "{rel}: {e}");
     }
 }
 
@@ -1073,6 +1096,7 @@ fn preflight_names_the_file_and_key() {
         ("repo/opencode.json", r#"{"agent":{"build":{"permission":{"edit":"allow"}}}}"#, "agent.build.permission.edit"),
         ("repo/opencode.json", r#"{"agent":{"acme-helper":{"model":"a/b"}}}"#, "agent.acme-helper.model"),
         ("home/.config/opencode/opencode.json", r#"{"provider":{"zygo":{}}}"#, "provider.zygo"),
+        ("repo/.opencode/opencode.json", r#"{"disabled_providers":["openai","zygo"]}"#, "disabled_providers"),
     ];
     for (rel, text, key) in cases {
         let fx = fx();
@@ -1101,6 +1125,7 @@ fn preflight_accepts_what_zygo_does_not_set() {
     ok("repo/opencode.json", r#"{"agent":{"mine":{"model":"a/b"}}}"#);
     ok("repo/opencode.json", r#"{"permission":{"edit":"allow"}}"#);
     ok("repo/opencode.json", r#"{"provider":{"other":{}}}"#);
+    ok("repo/.opencode/opencode.json", r#"{"disabled_providers":["openai"]}"#);
     ok("repo/opencode.json", "{ not json");
     ok("opencode.json", r#"{"model":"a/b"}"#);
     ok("repo/opencode.json", r#"{"agent":{"zygo-ro":{"permission":{"edit":"allow"}}}}"#);

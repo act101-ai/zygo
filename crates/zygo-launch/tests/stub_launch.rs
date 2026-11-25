@@ -598,8 +598,12 @@ fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
     assert_eq!(cfg["model"], "zygo/lead");
     assert_eq!(cfg["provider"]["zygo"]["npm"], "@ai-sdk/anthropic");
     assert_eq!(cfg["provider"]["zygo"]["options"]["baseURL"], format!("{url}/anthropic/v1"));
-    let key = format!("{{file:{}}}", sd.join("token").to_str().unwrap().replace('\\', "/"));
-    assert_eq!(cfg["provider"]["zygo"]["options"]["apiKey"], key.as_str());
+    let key = cfg["provider"]["zygo"]["options"]["apiKey"].as_str().unwrap();
+    if cfg!(windows) {
+        assert!(key.starts_with("{file:") && key.ends_with("/token}") && !key.contains('\\'), "{key}");
+    } else {
+        assert_eq!(key, format!("{{file:{}/token}}", e["ZYGO_SESSION_DIR"]));
+    }
     assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
     assert_eq!(
         cfg["provider"]["zygo"]["options"]["headers"],
