@@ -391,7 +391,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   - A changed criterion text: replace that `text`, then grade the criterion again by the new text with evidence by K§6.2.3.
 
   Check: `cargo test -p zygo-core --test conformance --locked -- --exact conformance_tree` fails with item 10 only (`docs/conformance.md: differs from the generated text …` and `docs/conformance.json: …`). Commit: `feat(conformance): bar exceptions approved by the operator`.
-- [ ] 8. **Generate the outputs.**
+- [x] 8. **Generate the outputs.**
   1. `ZYGO_WRITE_CONFORMANCE=1 cargo test -p zygo-core --test conformance --locked -- --exact conformance_tree` passes.
   2. `cargo test -p zygo-core --test conformance --locked -- --exact conformance_tree` passes.
   3. A second write run leaves `git diff --exit-code docs/conformance.md docs/conformance.json` at exit 0.
@@ -401,7 +401,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   - `docs/conformance.json` `generated_by` holds the same text.
   - Each rollup shows `- Bar: meets bar` and `- Release: supported`.
   - With the grades of the table unchanged by step 7, the score table rows are `| Claude Code | 91 | 87 | 96 | 94 |` and `| OpenCode | 78 | 84 | 76 | 66 |`.
-- [ ] 9. Commit `docs/conformance.md` and `docs/conformance.json`: `docs(conformance): generated feature matrix, rollup and score`.
+- [x] 9. Commit `docs/conformance.md` and `docs/conformance.json`: `docs(conformance): generated feature matrix, rollup and score`.
 - [ ] 10. **CI paths, `.github/workflows/ci.yml`.** After line 14 (`- 'docs/specs/2026-11-18-zygo-design.md'` of `push`) and after line 24 (the same line of `pull_request`), insert these four lines, each with 6 spaces of indent:
 
   ```yaml
