@@ -154,6 +154,49 @@ fn read_capped(path: &Path) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|e| err(&e))
 }
 
+/// At most 300 characters of an error text from a parser, so that a long input line does not fill the report.
+fn clip(text: String) -> String {
+    match text.char_indices().nth(300) {
+        Some((i, _)) => format!("{}…", &text[..i]),
+        None => text,
+    }
+}
+
+/// The deepest nesting of `(`, `[` and `{` that `with_parsed` parses; deeper nesting overflows the parser's stack.
+const NEST_MAX: usize = 256;
+
+/// The stack of the thread that parses Rust source: `NEST_MAX` levels need more than a test thread's 2 MiB.
+const PARSE_STACK: usize = 64 << 20;
+
+/// Parse Rust source text and give the file to `f`, on a thread with a `PARSE_STACK` stack; refuse nesting
+/// deeper than `NEST_MAX`, counted on the raw text, before the parse. `syn` types are not `Send`, so `f`
+/// returns what the caller needs.
+fn with_parsed<T: Send>(rel: &str, text: &str, f: impl FnOnce(&syn::File) -> T + Send) -> Result<T, String> {
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    for b in text.bytes() {
+        match b {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    if deepest > NEST_MAX {
+        return Err(format!("{rel}: brackets are nested {deepest} deep, more than {NEST_MAX}"));
+    }
+    std::thread::scope(|scope| {
+        let parse = || syn::parse_file(text).map(|file| f(&file)).map_err(|err| format!("{rel}: {err}"));
+        std::thread::Builder::new()
+            .stack_size(PARSE_STACK)
+            .spawn_scoped(scope, parse)
+            .map_err(|err| format!("{rel}: no parse thread: {err}"))?
+            .join()
+            .map_err(|_| format!("{rel}: the parse failed"))?
+    })
+}
+
 /// Read `path`, then `parse`; an `Err` text starts with `<path>: `.
 fn load_with<T>(path: &Path, parse: fn(&str) -> Result<T, String>) -> Result<T, String> {
     let text = read_capped(path)?;
@@ -213,7 +256,7 @@ impl Registry {
     }
 
     pub fn parse(text: &str) -> Result<Registry, String> {
-        let reg: Registry = toml::from_str(text).map_err(|e| e.to_string())?;
+        let reg: Registry = toml::from_str(text).map_err(|e| clip(e.to_string()))?;
         if reg.capability.is_empty() {
             return Err("the registry has no capability".into());
         }
@@ -258,7 +301,7 @@ impl GradeFile {
     }
 
     pub fn parse(text: &str) -> Result<GradeFile, String> {
-        let g: GradeFile = toml::from_str(text).map_err(|e| e.to_string())?;
+        let g: GradeFile = toml::from_str(text).map_err(|e| clip(e.to_string()))?;
         need_text("client", &g.client)?;
         need_text("name", &g.name)?;
         need_text("version", &g.version)?;
@@ -392,9 +435,12 @@ pub fn evidence(root: &Path, e: &str, client_name: &str) -> Result<Evidence, Str
     match ev {
         Ev::Test { func, .. } => {
             let text = read_capped(&canon).map_err(fail)?;
-            let file = syn::parse_file(&text).map_err(|err| fail(format!("{rel}: {err}")))?;
-            let mut found = Vec::new();
-            find_tests(&file.items, func, &mut Vec::new(), &mut found);
+            let mut found = with_parsed(rel, &text, |file| {
+                let mut found = Vec::new();
+                find_tests(&file.items, func, &mut Vec::new(), &mut found);
+                found
+            })
+            .map_err(fail)?;
             let found = match found.len() {
                 0 => return Err(fail(format!("no test fn `{func}` in {rel}"))),
                 1 => found.remove(0),

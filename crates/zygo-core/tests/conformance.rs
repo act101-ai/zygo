@@ -265,6 +265,31 @@ fn test_target(src: &[&str]) -> tempfile::TempDir {
 }
 
 #[test]
+fn input_deeply_nested_test_source_refused() {
+    // Deep nesting overflows the parser's stack; the check refuses it with an error that names the file.
+    for (open, close) in [("(", ")"), ("{", "}"), ("[", "]")] {
+        let body = format!("{}0{}", open.repeat(100_000), close.repeat(100_000));
+        let d = test_target(&["#[test] fn plain() {}", &format!("fn deep() {{ let _ = {body}; }}")]);
+        let e = evidence(d.path(), "test:crates/x/tests/t.rs::plain", "Alpha").unwrap_err();
+        assert!(e.contains("crates/x/tests/t.rs") && e.contains("nested"), "{e}");
+    }
+    // Nesting at the cap of 256 parses: 255 brackets inside the fn body's `{`.
+    for (open, close) in [("(", ")"), ("{", "}"), ("[", "]")] {
+        let body = format!("{}0{}", open.repeat(255), close.repeat(255));
+        let d = test_target(&["#[test] fn plain() {}", &format!("fn deep() {{ let _ = {body}; }}")]);
+        assert!(evidence(d.path(), "test:crates/x/tests/t.rs::plain", "Alpha").is_ok(), "{open}");
+    }
+}
+
+#[test]
+fn input_long_toml_error_clipped() {
+    let bad = format!("{}\n", "x".repeat(10_000));
+    for e in [Registry::parse(&bad).unwrap_err(), GradeFile::parse(&bad).unwrap_err()] {
+        assert!(e.chars().count() <= 301, "{} chars", e.chars().count());
+    }
+}
+
+#[test]
 fn check_cfg_attr_cfg_and_nested_cfg_attr_evaluated() {
     let d = test_target(&[
         "#[cfg_attr(unix, cfg(windows))] #[test] fn ca_cfg() {}",
