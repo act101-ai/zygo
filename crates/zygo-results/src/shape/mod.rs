@@ -1,3 +1,4 @@
+pub mod clean;
 pub mod command;
 
 /// Raw text above this size gets only the size view (O§7.3).

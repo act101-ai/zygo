@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
-| OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
@@ -271,6 +270,7 @@ Session text (T, SX nodes):
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | TODO | implementation | — |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
+| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -402,3 +402,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | FX-12 DONE: HUD unread counts only regular <ULID>.json files in new/; a missing new/ is 0, same as the mail store; review round 2 added I/L/O alphabet fixtures and narrowed the module doc · PR #124 |
 | 2026-11-25 | WD-12 DONE: `zygo up` checks and assigns the config-directory pool round-robin; members run in passthrough; user-loadout job/pool values pass config check. Review round 2 moved the pool line after the step-8 write and added tests. FX-15 added (doctor pool filter) · PR #125 |
 | 2026-11-25 | FX-15 DONE: doctor pool lines use the `zygo up` member filter (server user info skipped via has_user_info) and its kept member names (agent kinds, valid_member_name, first holder); review F1 fixed in round 2; F2/F3 to operator report · PR #129 |
+| 2026-11-25 | OS-12 DONE: merged 6e1b9387 5ff2466e; clean removes CSI, 8-bit CSI, OSC (OSC 8 keeps text) and CR overwrites, line count kept. Review F4 (`ESC ( B` leaves `B`) and F5 (`ESC ESC [31m` leaves `[31m`) to FX-16; O§7.4 rewritten, pending ratification · PR #132 |
