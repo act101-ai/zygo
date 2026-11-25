@@ -427,7 +427,17 @@ pub fn load(ctx: &LoadContext) -> Result<Merged, ConfigError> {
 }
 
 #[doc(hidden)]
-pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged, ConfigError> {
+pub fn load_with_builtin(ctx: &LoadContext, builtin: Table) -> Result<Merged, ConfigError> {
+    load_with_repo_reader(ctx, builtin, read_default_branch)
+}
+
+/// [`load_with_builtin`] with `read` in place of the `.zygo.toml` read from the default branch. A test seam only.
+#[doc(hidden)]
+pub fn load_with_repo_reader(
+    ctx: &LoadContext,
+    mut builtin: Table,
+    read: impl FnOnce(&Path) -> RepoFile,
+) -> Result<Merged, ConfigError> {
     let serve = ctx.team.is_some();
     let user_path = ctx.paths.config_file.display().to_string();
     let user_text: Option<String> = match std::fs::read_to_string(&ctx.paths.config_file) {
@@ -489,7 +499,7 @@ pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged
     m.merge(user, Layer::User);
 
     if let Some(repo) = &ctx.repo {
-        m.repo_file = read_default_branch(repo);
+        m.repo_file = read(repo);
         match &m.repo_file {
             RepoFile::Absent | RepoFile::Unread { .. } => {}
             RepoFile::Invalid { why, .. } => m.warnings.push(format!(".zygo.toml: invalid ({why}); ignored")),
@@ -507,6 +517,11 @@ pub fn load_with_builtin(ctx: &LoadContext, mut builtin: Table) -> Result<Merged
                     && g.remove("min_level").is_some()
                 {
                     m.warnings.push(".zygo.toml: guards.min_level ignored; only user or team config may set it".into());
+                }
+                if let Some(l) = t.get_mut("limits").and_then(Value::as_table_mut)
+                    && l.remove("max_members").is_some()
+                {
+                    m.warnings.push(".zygo.toml: limits.max_members ignored; only user or team config may set it".into());
                 }
                 m.merge(t, Layer::Repository);
             }
