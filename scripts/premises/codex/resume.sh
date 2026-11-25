@@ -437,21 +437,34 @@ except (OSError, ValueError):
     sd = "unknown"
 
 
-def req(x):
-    """A connect line's request: the line without " refused" (host:port, then a method and, when
-    the mock records it, a path)."""
-    return x[:-len(" refused")] if x.endswith(" refused") else x
+def counts(n):
+    """host:port -> the number of run n's connect lines to it (CONNECT or a proxy request), loopback
+    hosts left out (their ports differ per run)."""
+    out = {}
+    for x in connects(n):
+        hp = x.split()[0] if x.split() else ""
+        if hp and hp.rpartition(":")[0].lower() not in LOOP:
+            out[hp] = out.get(hp, 0) + 1
+    return out
+
+
+def fmt(c):
+    return ",".join("%s=%d" % kv for kv in sorted(c.items())) or "none"
 
 
 exec_lines = connects("a") + connects("b") + connects("d")
-others = {req(x) for x in exec_lines + cf}
-# The release-source request: run e's requests to a host that is not loopback, absent from the
-# control (run f, key false) and from the exec runs.
-rs = []
-for x in ce:
-    r = req(x)
-    if x.split() and x.split()[0].rpartition(":")[0].lower() not in LOOP and r not in others and r not in rs:
-        rs.append(r)
+cnt = {n: counts(n) for n in "abcdef"}
+# The release-source request, by per-request counts (lead's call, 2026-11-25): a host:port that
+# run e (key at its default) reaches more often than the control f (key false), with the same
+# positive difference in the other key-default TUI run c, and no exec run (a, b, d) reaching it
+# more often than f. A CONNECT shows the host only: the path is not visible.
+rs, diff = [], {}
+for hp in sorted(cnt["e"]):
+    dv = cnt["e"][hp] - cnt["f"].get(hp, 0)
+    if dv > 0 and cnt["c"].get(hp, 0) - cnt["f"].get(hp, 0) == dv \
+            and all(cnt[x].get(hp, 0) - cnt["f"].get(hp, 0) <= 0 for x in "abd"):
+        rs.append(hp)
+        diff[hp] = dv
 PROPOSED = "registry.npmjs.org"  # K§6.5.4: https://registry.npmjs.org/@openai/codex/latest
 UPD = r"(?m)^\s*check_for_update_on_startup\s*=\s*(\S+)"
 mf = re.search(UPD, cfg_f)
@@ -464,11 +477,17 @@ u = {
     "control_exit": exits.get("f", "none"),
     "control_connects": hosts(cf),
     "exec_connects": hosts(exec_lines),
-    "release_source_hosts": ",".join(rs) or "none",
-    "release_source_request": "seen" if rs else "not-seen",
-    "release_source_proposed": PROPOSED,
-    "release_source_matches_proposed": yn(any(r.split()[0].rpartition(":")[0].lower() == PROPOSED for r in rs)),
 }
+for n in "cefabd":
+    u["connect_counts_" + n] = fmt(cnt[n])
+u.update({
+    "release_source_hosts": ",".join(rs) or "none",
+    "release_source_excess": ",".join("%s=+%d" % (h, diff[h]) for h in rs) or "none",
+    "release_source_request": "seen" if rs else "not-seen",
+    "release_source_path": "not visible (CONNECT)",
+    "release_source_proposed": PROPOSED,
+    "release_source_matches_proposed": yn(any(h.rpartition(":")[0].lower() == PROPOSED for h in rs)),
+})
 u["pc16"] = "verified" if (u["config_key"] == "absent" and sd == "true" and u["control_config_key"] == "false"
                            and rs) else "failed"
 put(up, "summary.txt", "".join("%s=%s\n" % kv for kv in u.items()))
@@ -520,4 +539,15 @@ today=$(date +%Y-%m-%d)
 echo "- PC10: $(sed -n 's/^pc10=//p' "$CODEX_FX/workspace/summary.txt") $today: $(pc6_paths workspace)"
 echo "  Scope: codex resume <id> (TUI, pseudo-terminal) in a new CODEX_HOME whose sessions links to a shared store; exec resume and a CODEX_HOME with no link recorded beside it."
 echo "- PC16: $(sed -n 's/^pc16=//p' "$CODEX_FX/update/summary.txt") $today: $(pc6_paths update)"
-echo "  Scope: Codex's own default against the mock with no zygo between (K-D25); under a zygo launch: P4-9 and P4-11; the notice text: LC-CX1 (owner-run)."
+_x=$(sed -n 's/^release_source_excess=//p' "$CODEX_FX/update/summary.txt")
+if [ "$_x" = none ]; then
+  _rs="no controlled count difference (no release-source request seen)"
+else
+  _w=""
+  for _it in $(printf '%s' "$_x" | tr ',' ' '); do
+    _h=${_it%=+*} _d=${_it##*=+}
+    if [ "$_d" = 1 ]; then _w="${_w:+$_w, }one extra $_h CONNECT"; else _w="${_w:+$_w, }$_d extra $_h CONNECTs"; fi
+  done
+  _rs="release source inferred from a controlled count difference ($_w when the key is on), path not visible"
+fi
+echo "  Scope: Codex's own default against the mock with no zygo between (K-D25); $_rs; under a zygo launch: P4-9 and P4-11; the notice text: LC-CX1 (owner-run)."
