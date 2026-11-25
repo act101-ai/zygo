@@ -226,7 +226,7 @@ The migration of A-1 to A-21, WA-1 and WA-2 **(author)**. Each criterion restate
 
 | Cap. | Tier | Criteria |
 |---|---|---|
-| A-1 Transport | core | .1 Each model request goes to the proxy at the client dialect's prefix. .2 The credential is the session token, got through the client's key helper; the token is in no argument, no environment row and no file except the session's `token` file (and the `0600` passthrough files of §12.3). .3 The client's own login and provider selection are off: no model request goes to a vendor host and no login prompt shows (passthrough excepted). .4 The key-helper command runs in each shell that the client uses on Linux, macOS and Windows. |
+| A-1 Transport | core | .1 Each model request goes to the proxy at the client dialect's prefix. .2 The credential is the session token, got through the client's key helper; the token is in no argument, no environment row and no file except the session's `token` file (and the `0600` passthrough files of §12.3); passthrough excepted (§12.3). .3 The client's own login and provider selection are off: no model request goes to a vendor host and no login prompt shows (passthrough excepted). .4 The key-helper command runs in each shell that the client uses on Linux, macOS and Windows. |
 | A-2 Attribution | core | .1 `X-Zygo-Session` on each request. .2 `X-Zygo-Agent-Version` on each request. .3 `X-Zygo-Repo` on each request when the session has a repository id. .4 `X-Zygo-Work` on each request when a work item is set. |
 | A-3 Model list | standard | .1 The picker shows the session's role list. .2 The default model is a role. .3 Each model alias of the client resolves to a role. |
 | A-4 Subagent roles | standard | .1 Each built-in subagent maps to a role. .2 One `zygo-<role>` subagent exists per enabled role, with model `<role>`. |
@@ -234,8 +234,8 @@ The migration of A-1 to A-21, WA-1 and WA-2 **(author)**. Each criterion restate
 | A-6 Local services | core | .1 `zygo mcp` is registered as a stdio MCP server and starts in the session. |
 | A-7 Result trimming | standard | .1 Shell tool output over the threshold reaches the model as the §10.1 view. .2 File-read text output over the threshold, the same. .3 Search and listing tool output, the same. .4 Web-fetch output, the same (`n/a` for a client with no such tool). .5 The view takes the place of the tool's output in the tool's own result, not of an error or a feedback message. |
 | A-8 Session context | core | .1 The §8.6 session text reaches the main loop at each session start (new, cleared, resumed). .2 The mechanics text (§8.6 item 7) reaches each `zygo-<role>` subagent. |
-| A-9 Status | extra | .1 to .5: the profile, the work item, the context use, the compaction override and the session savings show on the client's status surface, or in `zygo status` when the client has no surface (the OpenCode precedent, `docs/conformance.md` evidence for A-9). .6 Each status command that zygo writes runs in each shell the client uses. |
-| A-10 Secrets hygiene | core | .1 The §8.4 denylist, with the client's rows, is applied to the client's environment. .2 The session token is not in the client's environment. |
+| A-9 Status | extra | .1 to .5: the profile, the work item, the context use, the compaction override and the session savings show on the client's status surface, or in `zygo status` when the client has no surface (the OpenCode precedent: its A-9.1 to A-9.5 grades in `docs/conformance/opencode.toml`). .6 Each status command that zygo writes runs in each shell the client uses. |
+| A-10 Secrets hygiene | core | .1 The §8.4 denylist, with the client's rows, is applied to the client's environment. .2 The session token is not in the client's environment, passthrough excepted (§12.3). |
 | A-11 Skills and plugins | standard | .1 The skills of the session's plugin snapshot load. .2 The other parts of each snapshot plugin (commands, agents, hooks, MCP servers) load in the client's form. |
 | A-12 Model profile | standard | .1 `--profile <name>` applies through the session (§11). |
 | A-13 Version | core | .1 The descriptor holds a minimum version. .2 `zygo doctor` reports the installed version against it. |
@@ -282,7 +282,7 @@ A bar exception is a registry entry, never a grade-file entry **(lead)**. A regi
 [[bar_exception]]
 client = "claude-code"
 criterion = "A-1.4"
-reason = "Windows without Git Bash runs the key helper in PowerShell (docs/conformance.md, Windows shell note)"
+reason = "Windows without Git Bash runs the key helper in PowerShell, which needs & before a quoted path; zygo writes the double-quoted path, and CI runs the command only in Git Bash"
 approved = "operator 2026-11-25, docs/specs/2026-11-25-client-model-design.md K-D18"
 ```
 
@@ -690,7 +690,7 @@ The inventory of K§1 is evidence of the pattern, not the work list. P4-6 starts
 | K-D15 | Non-goals of K§3 | author | scope |
 | K-D16 | Codex ships when it meets the bar; workspace support graded | author | "found wanting, but sufficient" |
 | K-D17 | `Dialect` moves to `zygo-core`, re-exported by `zygo-config` | author | the descriptor names the proxy dialect; core is the only crate below the proxy |
-| K-D18 | Bar exceptions live in the registry, not in grade files; a `not-met` core criterion with an operator-approved exception counts for the bar, not for the score. Approval of this spec approves one: Claude Code A-1.4 (Windows PowerShell: `docs/conformance.md` "Windows shell for the generated commands") | operator (approval of this spec); lead (place) | a registry change already stops for the operator; Claude Code ships today with that gap |
+| K-D18 | Bar exceptions live in the registry, not in grade files; a `not-met` core criterion with an operator-approved exception counts for the bar, not for the score. Two exceptions are approved, each with its reason in the registry (`docs/conformance/capabilities.toml`): Claude Code A-1.4, approved with this spec (Windows without Git Bash runs the key helper in PowerShell, which needs `&` before the quoted path that zygo writes); OpenCode A-1.4, approved by the operator 2026-11-25 (OpenCode has no key-helper command). Reading of A-1: the "key helper" of A-1.2 is the client's mechanism that reads the session `token` file (Claude Code: `apiKeyHelper`; OpenCode: the `{file:}` reference in `provider.zygo.options.apiKey`); A-1.4 needs a command that runs in each shell, which OpenCode does not have | operator (approval of this spec; OpenCode A-1.4 2026-11-25); lead (place); lead (A-1 key-helper reading, 2026-11-25) | a registry change already stops for the operator; Claude Code ships today with that gap |
 | K-D19 | `supported` flag and a gate at launch for each entry point (K§6.2.7) | author; lead (each entry point) | a below-bar client can be built and tested before release, and no path starts it by mistake |
 | K-D20 | The CLI shim stays in the `zygo` crate under `cmd/client/` | author | clap is a dependency of the binary crate only |
 | K-D21 | Messages is the translation pivot; same-dialect pairs pass through, reasoning bytes unchanged and unmarked | author; lead (no mark) | two new translators, not four; native custom tools and reasoning to OpenAI upstreams |
@@ -762,7 +762,7 @@ Planning rows (P4-1, P4-5, P4-8) write work-graph files under `docs/work/` only.
 
 P4-2 (conformance):
 
-- `docs/conformance/capabilities.toml` (new): the registry, with the Claude Code A-1.4 bar exception.
+- `docs/conformance/capabilities.toml` (new): the registry, with the Claude Code A-1.4 and OpenCode A-1.4 bar exceptions (K-D18).
 - `docs/conformance/claude-code.toml`, `docs/conformance/opencode.toml` (new): grades, from today's `docs/conformance.md` evidence.
 - `crates/zygo-core/tests/conformance.rs` (new): check and generator; `crates/zygo-core/Cargo.toml`: `toml` and `syn` dev-dependencies.
 - `crates/zygo-core/src/lib.rs`: `Agent::ALL` (P4-6 moves it to `client/mod.rs`).
@@ -866,7 +866,7 @@ P4-3 (Codex premises):
 
 8. `sh scripts/check-premises.sh` passes with the `Codex: 0.172.0` header and the PC rows, with no Codex client in `Agent::ALL`; it fails when a required existing id (for example `Q7`) is removed.
 9. Each PC row has a date, a result and fixture paths that pass the `nontrivial` rule.
-10. No fixture holds a token, a key form, a user name or a home path (`scrub.py` pass).
+10. No fixture holds a token, a key form, a user name, a home path or an e-mail address (`scrub.py` pass). An address `<local>@example.invalid` at exactly the reserved domain (RFC 2606) is exempt, where `<local>` is only letters, digits, `.`, `_` and `-` and is not part of a percent hack or bang path: it can never resolve or belong to anyone. A verbatim upstream file (the Claude Code settings schema, the Codex `config.schema.json`) is exempt, at its exact path (case-sensitive), from the home-path rules (macOS and Windows), the bearer rule and the `N2_FORBIDDEN_NAMES` name scan only, and only while it is a regular file whose sha256 equals the value pinned in `scripts/check-premises.sh` and its source file gives the same value; a new upstream copy needs a reviewed change to the check. The host-name scan and every other rule still cover the verbatim files. Every scanned file is read as text, also a binary one. A path in the scanned scope that holds whitespace or `:` fails, because the scan could not read it or name it.
 
 P4-4 (proxy; a Claude Code session; Codex request bodies from `fixtures/codex/requests/`; a mock upstream):
 
@@ -947,4 +947,13 @@ P4-11 (client updates):
 - 2026-11-25: K§12 gets the OC-1 base-spec change (operator: OpenCode A-1.2, A-1.3, A-10.2 fixed in code before CF-4).
 - 2026-11-25: the K§12 OC-1 line names `disabled_providers = []` (OC-1 review round 2).
 - 2026-11-25: the K§12 OC-1 line: the inline `disabled_providers` keeps the user's lists without `zygo` (OC-1 review round 3).
+- 2026-11-25: K§6.2.2 A-1.2, A-10.2 — passthrough excepted (§12.3); approved by the operator 2026-11-25.
+- 2026-11-25: K-D18, K§9 — OpenCode A-1.4 bar exception, approved by the operator 2026-11-25.
+- 2026-11-25: K-D18 — reading of A-1 "key helper" (OpenCode {file:} reference meets A-1.2; A-1.4 needs a command); author's call, for the operator at the CF-4 merge (K-D26).
+- 2026-11-25: K§6.2.2 A-9 — the OpenCode precedent points to its A-9.1 to A-9.5 grades in `docs/conformance/opencode.toml`, not to `docs/conformance.md` (pointer correction); author's call.
+- 2026-11-25: K§6.2.3 — the bar exception example's reason is the registry's text and cites no hand note in `docs/conformance.md`; author's call.
 - 2026-11-25: K§6.3.7 amended (operator): the proxy variables: HTTP_PROXY and ALL_PROXY too, so plain-HTTP and SOCKS-aware clients also reach the mock.
+- 2026-11-25: K§11 item 10 amended (author's call): the e-mail rule exempts the reserved domain example.invalid (RFC 2606); the live scripts use it as a git test identity.
+- 2026-11-25: K§11 item 10 amended (author's call): the verbatim files' sha256 values are pinned in the check; the example.invalid exemption takes only a plain local part; a scanned path that holds whitespace or `:` fails (PC-8 review round 2).
+- 2026-11-25: K§11 item 10 amended (author's call): the verbatim-file exemption names its rules exactly (home paths, bearer, `N2_FORBIDDEN_NAMES`) and is exact-path and case-sensitive; binary files are scanned as text (PC-8 review round 3).
+- 2026-11-25: K-D18 — the Claude Code A-1.4 reason points to the registry (`docs/conformance/capabilities.toml`), not to the `docs/conformance.md` "Windows shell for the generated commands" note, which generation removes (pointer correction); author's call.
