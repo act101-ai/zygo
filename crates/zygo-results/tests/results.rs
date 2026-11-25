@@ -863,7 +863,7 @@ fn tools_acceptance_100_kib_bash_output_is_trimmed_and_the_three_tools_read_the_
     let v = view(&s, &ResultsConfig::default());
     assert!(v.len() <= 8192);
     assert!(v.contains(&format!("[zygo trimmed this output: {} lines, {} bytes; only part of it is shown. The full output is saved as result {id}. To read the rest, call result_search, result_view or result_tree with id \"{id}\".]", s.lines, text.len(), id = s.id)));
-    let tools = zygo_mcp::tools::results::tools(&ctx(Some(t.path())));
+    let tools = zygo_mcp::tools::results::tools_with(sd.results(), None);
     let first_400: Vec<String> = (1..=400).map(|i| format!("row {i} payload")).collect();
     assert_eq!(call(by_name(&tools, "result_view"), serde_json::json!({"id": s.id})).unwrap(), first_400.join("\n"));
     let want: Vec<String> = (61..=120).map(|i| format!("row {i} payload")).collect();

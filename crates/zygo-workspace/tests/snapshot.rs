@@ -213,6 +213,8 @@ impl Multiplexer for Fake {
     fn kill_session(&self, _: &str) -> Result<(), MuxError> { self.other("kill_session") }
     fn attach(&self, _: &str) -> Result<i32, MuxError> { self.other("attach") }
     fn switch_client(&self, _: &str) -> Result<(), MuxError> { self.other("switch_client") }
+    fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { self.other("send_keys_literal") }
+    fn send_enter(&self, _: &str) -> Result<(), MuxError> { self.other("send_enter") }
 }
 
 // Live harness (D19): a private tmux server per test, serialized by `LIVE`.
