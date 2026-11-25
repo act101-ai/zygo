@@ -61,7 +61,7 @@ Consumers checked: OS-27 (shape-off baseline) and WD-13 depend on OS-9.
 
 ### Steps
 
-- [ ] **1. Write the failing config tests.** Append to `crates/zygo-config/tests/config_layers.rs`:
+- [x] **1. Write the failing config tests.** Append to `crates/zygo-config/tests/config_layers.rs`:
 
 ```rust
 // ---- OS-9: `[results] shape` (output shaping O§9) ----
@@ -87,11 +87,11 @@ fn results_shape_false_in_the_user_file_reads_false() {
 
   Check: `cargo test -p zygo-config --test config_layers results_shape` fails to compile (`no field shape on type ResultsConfig`).
 
-- [ ] **2. Add `ResultsConfig.shape`.** In `crates/zygo-config/src/schema.rs`: the field and `Default` as in **Produces**.
+- [x] **2. Add `ResultsConfig.shape`.** In `crates/zygo-config/src/schema.rs`: the field and `Default` as in **Produces**.
 
   Check: `cargo test -p zygo-config --test config_layers results_shape` passes 2 of 2. `cargo build -p zygo-hooks` fails at `trim.rs:126` (missing field `shape`); step 6 fixes it.
 
-- [ ] **3. Write the failing core test.** Append to `crates/zygo-core/tests/core_basics.rs`:
+- [x] **3. Write the failing core test.** Append to `crates/zygo-core/tests/core_basics.rs`:
 
 ```rust
 // ---- OS-9: session view `shape` (output shaping O§9, O§11) ----
@@ -116,11 +116,11 @@ fn view_shape_absent_from_view_json_reads_true_and_false_round_trips() {
 
   Check: `cargo test -p zygo-core --test core_basics view_shape` fails to compile (`no field shape on type SessionView`).
 
-- [ ] **4. Add `SessionView.shape`.** In `crates/zygo-core/src/session_view.rs`: the field and the `Default` line as in **Produces**.
+- [x] **4. Add `SessionView.shape`.** In `crates/zygo-core/src/session_view.rs`: the field and the `Default` line as in **Produces**.
 
   Check: `cargo test -p zygo-core --test core_basics` passes, including `view_shape_absent_from_view_json_reads_true_and_false_round_trips` and the existing `session_view_default_equals_the_serde_defaults` (`Default` equals the serde defaults).
 
-- [ ] **5. Write the failing launcher test.** Append to `crates/zygo-launch/tests/launcher.rs` (no `#[ignore]`: the launch stops at the preflight refusal, as in the DR-8 tests):
+- [x] **5. Write the failing launcher test.** Append to `crates/zygo-launch/tests/launcher.rs` (no `#[ignore]`: the launch stops at the preflight refusal, as in the DR-8 tests):
 
 ```rust
 // ---- OS-9: the launcher copies `[results] shape` into view.json (output shaping O§9, O§11) ----
@@ -147,7 +147,7 @@ fn view_shape_of_the_user_config_reaches_the_view() {
 
   Check: after step 6 builds `zygo-hooks`, `cargo test -p zygo-launch --test launcher view_shape` fails at the last assertion (the view literal's `..Default::default()` gives `true`).
 
-- [ ] **6. Fix the hook's `ResultsConfig` literal.** In `crates/zygo-hooks/src/trim.rs:126`, inside `trim_in_with`:
+- [x] **6. Fix the hook's `ResultsConfig` literal.** In `crates/zygo-hooks/src/trim.rs:126`, inside `trim_in_with`:
 
 ```rust
 let cfg = ResultsConfig { trim_threshold_bytes: threshold, head_lines: sv.head_lines, tail_lines: sv.tail_lines, shape: sv.shape };
@@ -155,11 +155,11 @@ let cfg = ResultsConfig { trim_threshold_bytes: threshold, head_lines: sv.head_l
 
   Check: `cargo test -p zygo-hooks --test hooks_basic` passes with no change to any assertion (hook output unchanged).
 
-- [ ] **7. Copy the key in the launcher.** In `crates/zygo-launch/src/launcher.rs`, the `SessionView { … }` literal (`:589-613`): add `shape: c.results.shape,` after `tail_lines: c.results.tail_lines,`.
+- [x] **7. Copy the key in the launcher.** In `crates/zygo-launch/src/launcher.rs`, the `SessionView { … }` literal (`:589-613`): add `shape: c.results.shape,` after `tail_lines: c.results.tail_lines,`.
 
   Check: `cargo test -p zygo-launch --test launcher view_shape` passes 1 of 1.
 
-- [ ] **8. Whole build.** Check: `cargo build --workspace --all-targets --locked` succeeds (no other literal lacks `shape`).
+- [x] **8. Whole build.** Check: `cargo build --workspace --all-targets --locked` succeeds (no other literal lacks `shape`).
 
 ### Acceptance
 

@@ -633,3 +633,22 @@ fn valid_member_name_refuses_the_pane_key_form() {
         assert!(valid_member_name(ok), "{ok:?}");
     }
 }
+
+// ---- OS-9: session view `shape` (output shaping O§9, O§11) ----
+
+#[test]
+fn view_shape_absent_from_view_json_reads_true_and_false_round_trips() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    // a view.json written before the field existed
+    std::fs::write(d.view_json(), br#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":true,"results":true,"navigation":false}"#).unwrap();
+    let v = SessionView::load(&d).unwrap();
+    assert!(v.shape);
+    assert_eq!(v.extra, Default::default());
+    assert!(SessionView::default().shape);
+    SessionView { session: "s".into(), shape: false, ..Default::default() }.save(&d).unwrap();
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(raw["shape"], false);
+    assert!(!SessionView::load(&d).unwrap().shape);
+}

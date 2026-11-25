@@ -1847,3 +1847,23 @@ fn mail_feature_cannot_be_set_by_a_profile() {
         .unwrap_err();
     assert_eq!(v.to_string(), "profile.p.features.mail: not a feature key");
 }
+
+// ---- OS-9: `[results] shape` (output shaping O§9) ----
+
+#[test]
+fn results_shape_is_true_without_a_results_table() {
+    assert!(Config::default().results.shape);
+    assert!(cfg("").results.shape);
+    let m = loaded("");
+    assert!(m.config.results.shape);
+    assert_eq!(m.source_of("results.shape"), Layer::Builtin);
+}
+
+#[test]
+fn results_shape_false_in_the_user_file_reads_false() {
+    let m = loaded("[results]\nshape = false\n");
+    assert!(!m.config.results.shape);
+    assert_eq!(m.source_of("results.shape"), Layer::User);
+    let r = &m.config.results;
+    assert_eq!((r.trim_threshold_bytes, r.head_lines, r.tail_lines), (16384, 60, 20));
+}
