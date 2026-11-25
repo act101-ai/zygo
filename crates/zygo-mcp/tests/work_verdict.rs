@@ -372,3 +372,138 @@ fn dispositions_level_resolution() {
     assert_eq!(lvl("[guards]\ndispositions = \"monitor\"\n", Some("enforce")), Level::Enforce);
     assert_eq!(lvl("[guards]\nmin_level = \"notify\"\ndispositions = \"notify\"\n", Some("monitor")), Level::Notify);
 }
+
+// ---- cycle 2: the guard at enforce ----
+
+/// One Acceptance #5 problem: the same topology and texts as `crates/zygo-work/tests/decision_verdict.rs`.
+struct Case {
+    name: &'static str,
+    round: u32,
+    edit: fn(&mut Script),
+    keys: Value,
+    problem: String,
+}
+
+fn none(_: &mut Script) {}
+fn add_r(s: &mut Script) { change(s, 'R', 'A', Some(record('R', &[]))) }
+fn ratified_p() -> String { record('P', &[("status", "ratified"), ("reviewed", "2026-11-25"), ("review_note", "")]) }
+
+fn cases() -> Vec<Case> {
+    vec![
+        Case { name: "no head", round: 3, edit: none, keys: json!({"dispositions": []}), problem: "no head commit".into() },
+        Case { name: "no dispositions", round: 3, edit: none, keys: json!({"head": HEAD}), problem: "no dispositions".into() },
+        Case { name: "duplicate label", round: 1, edit: none,
+            keys: json!({"head": HEAD, "dispositions": [rj("R1-1", "none"), rj("R1-1", "none")]}),
+            problem: "finding R1-1 has two dispositions".into() },
+        Case { name: "one record for two findings", round: 3, edit: add_r,
+            keys: json!({"head": HEAD, "dispositions": [rc("R3-1", "none", 'R'), rc("R3-2", "none", 'R')]}),
+            problem: format!("{} serves two findings", id('R')) },
+        Case { name: "fixed commit is an ancestor of base", round: 1, edit: none,
+            keys: json!({"head": HEAD, "base": BASE, "dispositions": [fx("R1-1", ROOT)]}),
+            problem: format!("R1-1: commit {ROOT} is not in the node range") },
+        Case { name: "recorded in round 2", round: 2, edit: add_r, keys: json!({"head": HEAD, "dispositions": [rc("R2-1", "none", 'R')]}),
+            problem: "R2-1: recorded with class none needs round 3 or later".into() },
+        Case { name: "record absent at head", round: 3, edit: none, keys: json!({"head": HEAD, "dispositions": [rc("R3-1", "none", 'Z')]}),
+            problem: format!("R3-1: {} is not at head", id('Z')) },
+        Case { name: "record present at base", round: 3, edit: none, keys: json!({"head": HEAD, "dispositions": [rc("R3-1", "none", 'P')]}),
+            problem: format!("R3-1: {} was not added in the node range", id('P')) },
+        Case { name: "record of another unit", round: 3, edit: |s| change(s, 'R', 'A', Some(record('R', &[("unit", "phase3:DR-99")]))),
+            keys: json!({"head": HEAD, "dispositions": [rc("R3-1", "none", 'R')]}),
+            problem: format!("R3-1: {} has unit phase3:DR-99, not {UNIT}", id('R')) },
+        Case { name: "record of another class", round: 3, edit: |s| change(s, 'R', 'A', Some(record('R', &[("kind", "decision")]))),
+            keys: json!({"head": HEAD, "dispositions": [rc("R3-1", "security", 'R')]}),
+            problem: format!("R3-1: {} has class none, not security", id('R')) },
+        Case { name: "rejected of class security", round: 1, edit: none, keys: json!({"head": HEAD, "dispositions": [rj("R1-1", "security")]}),
+            problem: "R1-1: class security needs a record for the operator".into() },
+        Case { name: "recorded open security record", round: 3,
+            edit: |s| change(s, 'S', 'A', Some(record('S', &[("kind", "decision"), ("class", "security")]))),
+            keys: json!({"head": HEAD, "dispositions": [rc("R3-1", "security", 'S')]}),
+            problem: format!("R3-1: class security stops for the operator: ratify or overturn {}", id('S')) },
+        Case { name: "new open contract record no finding names", round: 1,
+            edit: |s| change(s, 'N', 'A', Some(record('N', &[("kind", "decision"), ("class", "contract")]))),
+            keys: json!({"head": HEAD, "dispositions": []}),
+            problem: format!("{0}: class contract stops for the operator: ratify or overturn {0}", id('N')) },
+        Case { name: "agent sets ratified", round: 1, edit: |s| change(s, 'P', 'M', Some(ratified_p())),
+            keys: json!({"head": HEAD, "dispositions": []}), problem: format!("{}: agent writes status ratified", id('P')) },
+        Case { name: "agent changes class", round: 1, edit: |s| change(s, 'P', 'M', Some(record('P', &[("class", "security")]))),
+            keys: json!({"head": HEAD, "dispositions": []}), problem: format!("{}: frozen key class changed", id('P')) },
+        Case { name: "agent sets fixed outside the range", round: 1,
+            edit: |s| change(s, 'P', 'M', Some(record('P', &[("status", "fixed"), ("fixed_by", BASE)]))),
+            keys: json!({"head": HEAD, "dispositions": []}), problem: format!("{}: fixed_by {BASE} is not in the node range", id('P')) },
+        Case { name: "agent deletes a record", round: 1, edit: |s| change(s, 'P', 'D', None),
+            keys: json!({"head": HEAD, "dispositions": []}), problem: format!("{}: record deleted", id('P')) },
+    ]
+}
+
+fn scripted(c: &Case) -> Script {
+    let mut s = script();
+    (c.edit)(&mut s);
+    s
+}
+
+#[test]
+fn enforce_refuses_each_acceptance_5_problem_and_keeps_the_verdict() {
+    for c in cases() {
+        let (t, h) = at(Level::Enforce, scripted(&c));
+        assert_eq!(t.call(keep(c.round, c.keys.clone())), Err(ToolError::Failed(format!("zygo: keep refused: {}", c.problem))), "{}", c.name);
+        assert_eq!(verdict_of(&h, c.round), None, "{}", c.name);
+    }
+}
+
+#[test]
+fn enforce_records_acceptance_6() {
+    let mut s = script();
+    add_r(&mut s);
+    let (t, h) = at(Level::Enforce, s);
+    let ds = json!([fx("R3-1", C1), rj("R3-2", "none"), rc("R3-3", "none", 'R')]);
+    assert_eq!(t.call(keep(3, json!({"head": HEAD, "dispositions": ds}))), Ok(recorded_reply(3)));
+    assert_eq!(verdict_of(&h, 3).as_deref(), Some("keep"));
+    let (t, h) = at(Level::Enforce, script());
+    assert_eq!(t.call(keep(1, json!({"head": HEAD, "dispositions": []}))), Ok(recorded_reply(1)));
+    assert_eq!(verdict_of(&h, 1).as_deref(), Some("keep"));
+}
+
+/// Acceptance #9.
+#[test]
+fn git_log_failure_refuses_with_cannot_check() {
+    let mut s = script();
+    s.log_fail = Some(GitFail::Failed { step: "git log", why: "timed out".into() });
+    let (t, h) = at(Level::Enforce, s);
+    assert_eq!(
+        t.call(keep(1, json!({"head": HEAD, "dispositions": []}))),
+        Err(ToolError::Failed("zygo: keep refused: cannot check: git log timed out".into()))
+    );
+    assert_eq!(verdict_of(&h, 1), None);
+}
+
+/// D§9.4, D§13 item 6.
+#[test]
+fn git_runs_in_the_session_repository_root() {
+    let (t, h) = at(Level::Enforce, script());
+    assert_eq!(t.call(keep(1, json!({"head": HEAD, "dispositions": []}))), Ok(recorded_reply(1)));
+    assert_eq!(*h.roots.lock().unwrap(), vec![PathBuf::from(ROOT_DIR)]);
+    assert!(!h.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn no_repository_root_gives_cannot_check() {
+    for (root, view) in [(None, true), (None, false)] {
+        let (t, h) = harness(Level::Enforce, script(), root, view);
+        assert_eq!(
+            t.call(keep(1, json!({"head": HEAD, "dispositions": []}))),
+            Err(ToolError::Failed("zygo: keep refused: cannot check: no repository root".into()))
+        );
+        assert_eq!(verdict_of(&h, 1), None);
+        assert!(h.roots.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn refusal_shows_10_problems_then_and_n_more() {
+    let ds: Vec<Value> = (0..12).map(|i| rj(&format!("R1-{i}"), "security")).collect();
+    let p: Vec<String> = (0..12).map(|i| format!("R1-{i}: class security needs a record for the operator")).collect();
+    let (t, _h) = at(Level::Enforce, script());
+    let Err(ToolError::Failed(m)) = t.call(keep(1, json!({"head": HEAD, "dispositions": ds}))) else { panic!() };
+    assert_eq!(m, format!("zygo: keep refused: {}", format_problems(&p)));
+    assert!(m.ends_with("; and 2 more"));
+}

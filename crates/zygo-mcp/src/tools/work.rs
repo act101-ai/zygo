@@ -4,9 +4,10 @@ use serde_json::{json, Map, Value};
 use zygo_config::Level;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
+use zygo_core::session_view::SessionView;
 use zygo_usage::Store;
 use zygo_work::decisions::record::{valid_id, Class};
-use zygo_work::gate::check::{Disposition, Proof};
+use zygo_work::gate::check::{check_keep, format_problems, Disposition, KeepRequest, Proof};
 use zygo_work::gate::git::{ProcessGit, VerdictGit};
 use zygo_work::guards;
 use zygo_work::hooks::{self, BeginArgs};
@@ -213,9 +214,27 @@ impl Tool for WorkVerdict {
         if args.get("findings").is_some_and(|f| !f.is_string()) {
             return Err(bad("findings must be a string"));
         }
-        let _keep = KeepArgs::parse(args.as_object().ok_or_else(|| bad("the arguments must be an object"))?)?;
+        let keep = KeepArgs::parse(args.as_object().ok_or_else(|| bad("the arguments must be an object"))?)?;
+        let recorded = format!("recorded {verdict} for {unit} round {round}");
+        if verdict != "keep" {
+            self.record(unit, round, verdict)?;
+            return Ok(Value::String(recorded));
+        }
+        // The guard (D§9.3): read the level per call, so a session override applies at the next keep.
+        let root = SessionView::load(&self.session_dir).ok().and_then(|v| v.repo_root).map(PathBuf::from);
+        let level = (self.level)(root.as_deref());
+        let problems = match &root {
+            None => vec!["cannot check: no repository root".to_string()],
+            Some(root) => {
+                let req = KeepRequest { unit: unit.to_string(), round, head: keep.head, base: keep.base, dispositions: keep.dispositions };
+                check_keep(&req, &mut *(self.git)(root))
+            }
+        };
+        if level == Level::Enforce && !problems.is_empty() {
+            return Err(ToolError::Failed(format!("zygo: keep refused: {}", format_problems(&problems))));
+        }
         self.record(unit, round, verdict)?;
-        Ok(Value::String(format!("recorded {verdict} for {unit} round {round}")))
+        Ok(Value::String(recorded))
     }
 }
 
@@ -234,6 +253,7 @@ mod tests {
     use serde_json::json;
     use zygo_config::Features;
     use zygo_core::session_dir::SessionDir;
+use zygo_core::session_view::SessionView;
     use zygo_core::Agent;
     use zygo_usage::{Filter, Store, WorkUnitRow};
 
