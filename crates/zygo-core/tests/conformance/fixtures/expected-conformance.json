@@ -1,0 +1,186 @@
+{
+  "generated_by": "crates/zygo-core/tests/conformance.rs (ZYGO_WRITE_CONFORMANCE=1); do not edit: a hand edit fails the check",
+  "weights": {
+    "core": 3,
+    "standard": 2,
+    "extra": 1
+  },
+  "clients": [
+    {
+      "id": "alpha",
+      "name": "Alpha",
+      "version": "1.0.0",
+      "supported": true,
+      "matrix": {
+        "A-1": {
+          "tier": "core",
+          "grade": "partial",
+          "value": 0.5,
+          "url": "https://example.com/alpha/transport",
+          "missing": [
+            {
+              "criterion": "A-1.2",
+              "text": "The credential is the session token.",
+              "reason": "no key helper"
+            }
+          ],
+          "na": []
+        },
+        "A-3": {
+          "tier": "standard",
+          "grade": "full",
+          "value": 1.0,
+          "url": "https://example.com/alpha/models",
+          "missing": [],
+          "na": []
+        },
+        "WA-2": {
+          "tier": "extra",
+          "grade": "n/a",
+          "value": null,
+          "url": "https://example.com/alpha/turns",
+          "missing": [],
+          "na": [
+            {
+              "criterion": "WA-2.1",
+              "text": "Turn start.",
+              "reason": "Alpha has no turn events"
+            }
+          ]
+        }
+      },
+      "rollup": {
+        "core": {
+          "full": 0,
+          "partial": 1,
+          "none": 0,
+          "na": 0,
+          "met": 1,
+          "applicable": 2
+        },
+        "standard": {
+          "full": 1,
+          "partial": 0,
+          "none": 0,
+          "na": 0,
+          "met": 1,
+          "applicable": 1
+        },
+        "extra": {
+          "full": 0,
+          "partial": 0,
+          "none": 0,
+          "na": 1,
+          "met": 0,
+          "applicable": 0
+        },
+        "total": {
+          "full": 1,
+          "partial": 1,
+          "none": 0,
+          "na": 1,
+          "met": 2,
+          "applicable": 3
+        },
+        "bar": {
+          "verdict": "meets bar",
+          "failing": [],
+          "exceptions": [
+            "A-1.2"
+          ]
+        },
+        "release": "supported"
+      },
+      "score": {
+        "total": 70,
+        "core": 50,
+        "standard": 100,
+        "extra": null
+      }
+    },
+    {
+      "id": "beta",
+      "name": "Beta",
+      "version": "2.0.0",
+      "supported": true,
+      "matrix": {
+        "A-1": {
+          "tier": "core",
+          "grade": "full",
+          "value": 1.0,
+          "url": "https://example.com/beta/transport",
+          "missing": [],
+          "na": []
+        },
+        "A-3": {
+          "tier": "standard",
+          "grade": "none",
+          "value": 0.0,
+          "url": "https://example.com/beta/models",
+          "missing": [
+            {
+              "criterion": "A-3.1",
+              "text": "The picker shows the role list.",
+              "reason": "Beta has no model picker"
+            }
+          ],
+          "na": []
+        },
+        "WA-2": {
+          "tier": "extra",
+          "grade": "full",
+          "value": 1.0,
+          "url": "https://example.com/beta/turns",
+          "missing": [],
+          "na": []
+        }
+      },
+      "rollup": {
+        "core": {
+          "full": 1,
+          "partial": 0,
+          "none": 0,
+          "na": 0,
+          "met": 2,
+          "applicable": 2
+        },
+        "standard": {
+          "full": 0,
+          "partial": 0,
+          "none": 1,
+          "na": 0,
+          "met": 0,
+          "applicable": 1
+        },
+        "extra": {
+          "full": 1,
+          "partial": 0,
+          "none": 0,
+          "na": 0,
+          "met": 1,
+          "applicable": 1
+        },
+        "total": {
+          "full": 2,
+          "partial": 0,
+          "none": 1,
+          "na": 0,
+          "met": 3,
+          "applicable": 4
+        },
+        "bar": {
+          "verdict": "meets bar",
+          "failing": [],
+          "exceptions": []
+        },
+        "release": "supported"
+      },
+      "score": {
+        "total": 66,
+        "core": 100,
+        "standard": 0,
+        "extra": 100
+      }
+    }
+  ]
+}
