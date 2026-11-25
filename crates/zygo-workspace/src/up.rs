@@ -21,6 +21,7 @@ use crate::identity::{
     main_worktree, new_pane_key, slug, unique_name, valid_name, valid_pane_key, workspace_id, worktrees, Worktree,
 };
 use crate::loadout::{self, LoadoutError, PaneKind as PlanKind, PlanPane};
+use crate::mail::{mail_dir, store as mail_store};
 use crate::mux::tmux::Tmux;
 use crate::mux::{
     check_path, check_window_name, hook_command, parse_pane_line, session_target, window_target, HookScope, Multiplexer,
@@ -1433,18 +1434,23 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
     if let Err(e) = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), done.tmux_socket.clone()), &id, snapshot::OP_WAIT) {
         say(err, &format!("zygo: final snapshot not saved: {e:#}"));
     }
-    // D23.
+    // D23; M§9: the unread count when it is not zero.
+    let mail = mail_dir(&opts.paths, &id);
     let detached: Vec<String> = done
         .members
         .iter()
         .filter(|(k, m)| m.state == MemberState::Resumable && !planned_keys.contains(*k) && !not_built.contains(*k))
         .filter_map(|(k, m)| {
             m.agent_session.as_deref().map(|s| {
-                format!(
+                let line = format!(
                     "zygo: {} agent session {} is detached (its pane was closed); resume it by hand or run zygo ws forget-pane {k}",
                     kind_name(m),
                     esc(s)
-                )
+                );
+                match mail_store::unread(&mail, k) {
+                    Ok(n) if n > 0 => format!("{line}; unread {n}"),
+                    _ => line,
+                }
             })
         })
         .collect();

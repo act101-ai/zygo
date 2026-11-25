@@ -60,7 +60,7 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 - A message file (version 1): `{ "version": 1, "id": <ULID>, "from": <name or "cli">, "to": <name>, "sent_at": <RFC 3339>, "subject": <text, at most 200 bytes>, "body": <text, at most 1 MiB> }`. Fields that a reader does not know are kept (AU78). With mail sync between machines (mail sync design S§6.2), `from` and `to` can hold a full address `<name>@<host>`: `to` is the address of the target and `from` the address of the sender; the file format and its version do not change. The file format and the ULID names are fixed so that phase 3 can carry the same files on a side branch with no change (`docs/roadmap/phase-3.md`, P3-2): a message file is never edited after its link into `new/`, and the move to `cur/` is local read state, not part of the message.
 - Send: write `tmp/<ULID>.json` (`0600`) and `fsync` it, hard-link it to `new/<ULID>.json` (a link refuses to replace an existing name), `fsync` `new/`, then remove the `tmp/` name. A send to `all` writes one file per member, sender excluded.
 - Read: move `new/<ULID>.json` to `cur/<ULID>.json` the same way (hard-link into `cur/`, then remove the `new/` name), then return it. A link that fails because the file is gone means another reader took it: skip it.
-- Retention: the sweep (AU69) deletes `cur/` files older than `[mail] keep = "30d"`. `zygo ws forget` deletes `mail/`. `zygo ws forget-pane <key>` deletes `mail/<key>/`.
+- Retention: the sweep (AU69) deletes `cur/` files older than `[mail] keep = "30d"`. A maildir exists only for a pane key that has a member record. Every path that removes a member record removes `mail/<key>/`: `zygo ws forget-pane <key>`, `zygo up --reset`, and every other path that drops a record. `zygo ws forget` deletes `mail/`. A delivery does not create a maildir for a key that has no member record.
 - Limits: a send that would put more than `[mail] max_unread = 500` files in the target's `new/` is refused with `zygo: <name> has 500 unread messages`.
 
 ## 6. Names
@@ -148,10 +148,10 @@ The text holds names and tool names only, no message text (M-C2), and nothing ab
 | Segment | Text (Nerd / plain) | Shown when | Source | Color | Place | Width |
 |---|---|---|---|---|---|---|
 | Member name | `<name>` / `<name>` | the member has a name (M§6), and the name is not equal to the worktree segment's name (H AU21) | the member's `name`, written by the launcher into the session view's workspace marker: a new field `name: Option<String>` on `Member` (`crates/zygo-core/src/session_view.rs:103-106`, today `ws_id` and `pane` only), added with `#[serde(default)]` so older views still load | bold default, `1` | first group, right after the workspace phase; verbose row 1, own group before the work item | 32 cells (H AU19) |
-| Unread mail | `✉ <n>` / `mail <n>` | `n` ≥ 1 | count of `*.json` in `mail/<pane key>/new/` (M§5); the pane key from `view.workspace.member.pane` | yellow `33` | first group, after the member name | `99+` above 99 |
+| Unread mail | `✉ <n>` / `mail <n>` | `n` ≥ 1 | the store's unread count (M§5): the regular files named `<ULID>.json` (`^[0-9A-HJKMNP-TV-Z]{26}$` before `.json`) in `mail/<pane key>/new/`; a link, a folder or any other name is not counted, and a missing `new/` counts 0. This is the same number `zygo workspace` shows. The pane key from `view.workspace.member.pane` | yellow `33` | first group, after the member name | `99+` above 99 |
 
 - Neither segment is dropped for width (as the phase segment, H AU25).
-- The hook validates the pane key (`^k[a-z2-7]{8}$`, WS AU84) before it builds the path, reads the directory with the H§7.7 deadline, and counts names only; it never opens a message (M-C2). The status line reaches only the user (H-C4), so the count tells the agent nothing.
+- The hook validates the pane key (`^k[a-z2-7]{8}$`, WS AU84) before it builds the path, reads the directory with the H§7.7 deadline, takes each entry's type from the directory read (no link is followed), and counts only the regular `<ULID>.json` files, with its own copy of the ULID check (no dependency of the hook on `zygo-workspace`); it never opens a message (M-C2). The status line reaches only the user (H-C4), so the count tells the agent nothing.
 - The name passes `zygo_core::esc` (H-C6), although M§6 already limits it to `[a-z0-9-]`.
 - Use: an idle pane whose unread count grows shows a failed wake (M§7.3).
 
@@ -222,3 +222,5 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-24 | M§11 | mail sync design S§16 | Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11). |
 | 2026-11-25 | M§6 | mail sync design S§16 | Gains the address grammar (S§7.2) and the reserved name `zygo`, the sender of the S§8.6 refused-message notice, which has no inbox. |
 | 2026-11-25 | M§5 | mail sync design S§16 | `from` and `to` can hold a full address `<name>@<host>` (S§6.2); the file format and its version do not change. |
+| 2026-11-25 | M§9a | author's call | The HUD count is the store's count (regular <ULID>.json files; a missing new/ is 0), so the HUD and zygo workspace agree (ML-14 review; FX-12). |
+| 2026-11-25 | M§5 | author's call | Retention states the record/maildir invariant: a send from an older state read recreated mail/<key>/ after forget-pane, and up --reset dropped records but kept their maildirs (ML-14 review; FX-13). |

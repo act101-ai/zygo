@@ -835,7 +835,7 @@ Both passes run in stage 6, last before the body leaves, on the body as earlier 
 | `zygo up [--loadout <n>] [--reset] [--no-attach] [--all] [--] [<name>]` | Create or restore the workspace of this repository, or `<name>`, in its tmux session and resume its agents; `--all`: every workspace that was up (workspaces design W§8). |
 | `zygo down [--now] [--timeout <dur>] [--wait] [--all] [--] [<name>]` | Drain, save and stop the workspace; `--now` skips the drain; detached when run from an agent or from a pane of that workspace, unless `--wait` (workspaces design W§9, AU18). Also `/zygo:down [--now]` (§17.1) and the MCP tool `workspace_down` when `[features] workspace_tool` is on (§15.4). |
 | `zygo workspace` | Status of this session's workspace, else of the folder's: its phase and one line per member (workspaces design W§12). |
-| `zygo ls` | One line per workspace with its main worktree, state, agents and attached clients (workspaces design W§12). |
+| `zygo ls` | One line per workspace with its main worktree, state, agents, attached clients and unread messages: `<name>  <main worktree>  <state>  agents <r>/<s>/<d>  clients <c>  unread <n>` (workspaces design W§12). |
 | `zygo attach [--] [<name>]` | Attach or switch to a running workspace (workspaces design W§12). |
 | `zygo loadout list`, `zygo loadout show <n>` | Loadouts with their source; one loadout in TOML (workspaces design W§11, W§12). |
 | `zygo ws forget [--] <name>`, `zygo ws forget-pane <key>` | Delete a workspace's state and caches; delete one member record and its caches (workspaces design W§12). |
@@ -1122,3 +1122,4 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 | 2026-11-24 | §17 (`zygo status` row) | operator (session run time design T§2.5, T§3.3, approved 2026-11-24); node RT-2 | Inside a session, `zygo status` prints the `runtime:` line right after `session:`. |
 | 2026-11-25 | §13.6 | decision records design D§13 item 4 (approved 2026-11-24; node DR-7) | `zygo work report` prints the `decisions:` line in each unit block and the `decision records:` line after the units (D§9.5); the slash form reads no record (D-C2). |
 | 2026-11-25 | §13.3, §13.4, §13.5 | decision records design D§13 items 1, 2, 3 (approved 2026-11-24; node DR-13) | `work_verdict` takes `head`, `base` and `dispositions`; the `dispositions` guard (default `enforce`) checks a keep in the MCP tool; `dispositions` is a `[guards]` key. |
+| 2026-11-25 | §17 | author's call | zygo ls rows end with the workspace unread count (ML-14). |
