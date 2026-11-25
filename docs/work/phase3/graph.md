@@ -206,7 +206,6 @@ Session text (T, SX nodes):
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | TODO | judgment | — |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
-| ML-14 | Unread counts in `zygo workspace`, `zygo ls` and `up`; `forget-pane` removes the maildir | ML-2, ML-8 | DONE | judgment | d27a16f9, e898f769, af9ba2c7, e8ef03ca, 65cc6726, 79dd9dd3 · admin 49/0, up 72/0 ; floor green · PR #116 |
 | MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | DONE | judgment | 39e9eb0e 64419fc6 bad0bc1c · registry 27/0; floor green · PR #99 |
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | TODO | lookup | — |
 | OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | DONE | mechanical | 80d820d0, 04a9d343 · config_layers 93/0, core_basics 27/0, hooks_basic 60/0, launcher 14/0 ; floor green · PR #117 |
@@ -223,7 +222,7 @@ Session text (T, SX nodes):
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
 | WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | DONE | judgment | a1f4eb0c, f16c93f8, 767b954a, e0905dec, 8cd02ad7, 6fe57c61, e6fca6e4 · up_definition 17/0 ; floor green · PR #120 |
-| WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | TODO | judgment | — |
+| WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | DONE | judgment | b00e2819, ffe10789, 777c51d6, d5c92329, 93add253 · repo_profile 15/0 ; floor green · PR #121 |
 | WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
@@ -401,3 +400,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | FX-11 DONE: the doctor icon line holds 21 glyphs, adding mail (U+2709) and clock (U+F0150); mail follows reflection, clock sits between trimmed and truncation. FX-10 must add the H§6.5 Mail row after Reflection · PR #122 |
 | 2026-11-25 | FX-10 DONE: the HUD spec names the member name and unread mail segments and the `✉` glyph (AU4, AU20, AU25; H§6.2, H§6.4, H§6.5, H§6.6, H§6.7, H§6.8) · PR #123 |
 | 2026-11-25 | WD-11 DONE: `up` reads definitions; a team config read failure degrades to the user config `max_members` with a printed line; `up --all` with a repository default prints the solo line. Round-3 non-blocking findings to FX-14 · PR #120 |
+| 2026-11-25 | WD-13 DONE: launcher reads a repo profile from the default branch only for a name in neither user nor team config; prints not-approved, invalid, not-read lines; passthrough: no profile from any source, one line. L6 (duplicate precedence sentence, base §11.1) left to WD-14 · PR #121 |

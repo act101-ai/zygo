@@ -527,7 +527,7 @@ Code navigation comes from act-lite (https://github.com/act101-ai/act-lite), del
 
 ### 11.1 Shape
 
-In user config (and in team config as shared presets):
+Profiles come from three sources: user config, team config (shared presets), and, after the operator approves them on this machine, the repository's `.zygo/profiles/<name>.toml` files, read from the default branch (workspace definition design R§6, R§7, R§8). In user config (and in team config as shared presets):
 
 ```toml
 [profile.rust]
@@ -547,6 +547,16 @@ prompt = "Answer in British English."   # the user prompt, ≤ 2048 bytes, appli
 default_profile = "rust"                # optional
 ```
 
+A repository profile file holds one profile, named by its file stem, with `overrides` and `disabled` only:
+
+```toml
+# .zygo/profiles/rust.toml
+overrides = { review = "gpt-6-sol", code = "claude-sonnet-5-5" }   # role → catalog model id
+disabled = ["design"]                                               # bundle roles hidden from the lead
+```
+
+It cannot set `prompt`, custom roles, `plugins` or `features`, and it cannot define a provider: it names roles and models from the user's catalog only. It is not a layer of §6.1: the approved repository profiles are added to the merged config after the layers, with the source `workspace-files`. A repository profile whose name a user profile or a team preset has is not used, and is never merged key by key with it.
+
 ### 11.2 Selection
 
 `--profile <name>` wins; `--profile none` disables; else `user.default_profile`; else none. A user profile with the same name as a team preset shadows it. `zygo profile list | show <name> | use <name>` (sets `default_profile`).
@@ -560,6 +570,9 @@ default_profile = "rust"                # optional
 - `plugins`: ≤ 32 names, each `<marketplace>:<plugin>` (the form of §15.2) naming a plugin in a configured marketplace.
 - `features`: keys of §15.4 only; `redaction.secrets` is refused (a profile cannot turn it off).
 - Text fields: no control characters other than newline and tab.
+- A repository profile (§11.1) gets the same rules. The shape rules of workspace definition design R§6.3 (its two keys, at most 16 entries each, the name pattern, printable ASCII values) apply at the read, before these rules.
+- The launcher reads the default branch for a repository profile only when the requested name is in neither the user nor the team config, so a launch with no repository profile makes no extra git call. In place of `zygo: profile <n> not found; launching without it`, files that are not approved give `zygo: profile <n> is in this repository's workspace files, which are not approved on this machine (digest <12>); launching without it; see zygo workspace approve`, invalid files give `zygo: profile <n>: this repository's workspace files are invalid (<why>); launching without it`, and files that were not read give `zygo: profile <n>: this repository's workspace files were not read (<why>); launching without it`. The launch goes on without the profile (exit 0).
+- A launch in passthrough sends no role names (§12.3), so no profile, from any source, applies to it. A requested profile name gives `zygo: profile <n> does not apply in passthrough`, nothing is read, and the launch goes on.
 - Invalid → the launcher prints the first violation and launches **without** the profile (exit 0, one warning line). A stale override at request time (the model left the catalog after a server reload) falls back to the role's own model and records `profile_override_stale`.
 
 ### 11.4 Effects
@@ -1123,3 +1136,6 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 | 2026-11-25 | §13.6 | decision records design D§13 item 4 (approved 2026-11-24; node DR-7) | `zygo work report` prints the `decisions:` line in each unit block and the `decision records:` line after the units (D§9.5); the slash form reads no record (D-C2). |
 | 2026-11-25 | §13.3, §13.4, §13.5 | decision records design D§13 items 1, 2, 3 (approved 2026-11-24; node DR-13) | `work_verdict` takes `head`, `base` and `dispositions`; the `dispositions` guard (default `enforce`) checks a keep in the MCP tool; `dispositions` is a `[guards]` key. |
 | 2026-11-25 | §17 | author's call | zygo ls rows end with the workspace unread count (ML-14). |
+| 2026-11-25 | §11.1 | operator (workspace definition design R§8, R§14 row §11.1: the source); author's call (node WD-13) for the text | Profiles also come from the repository's approved `.zygo/profiles/`, with `overrides` and `disabled` only, added after the layers with the source `workspace-files`. |
+| 2026-11-25 | §11.3 | workspace definition design R§8, R§14 row §11.3; author's call (node WD-13) for the text | A repository profile gets the same rules after the R§6.3 shape rules at read; the launcher reads only for a name not in user or team config, with the not-approved and invalid lines; passthrough applies no profile. |
+| 2026-11-25 | §11.3 | author's call (node WD-13) | a named profile that does not apply is reported, as R§9.5 does for up; the not-read line of the launcher's read is listed with the other two; the not-found line is written in full. |
