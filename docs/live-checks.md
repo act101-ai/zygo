@@ -259,6 +259,20 @@ The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's 
 - ST4 verified: it holds a `transform` line with model `SUB`. Failed: none, while the subagent's answer was shown in step 5.
 - The `keys` lists go into the rows as information; they change no behavior in the session-text spec.
 
+## Mail premises (node ML-17)
+
+Node ML-17 (script: node ML-16); `docs/specs/2026-11-22-workspace-mail-design.md` M§14 (PM1, PM2, PM3). From the checkout, with tmux 3.2 or later, `jq`, `python3` and `perl`, and `claude` and `opencode` on `PATH` at or above the pinned versions (the caller adds the OpenCode folder to `PATH`). No login is read. Network needed: OpenCode fetches its provider package from the package registry into the temporary `HOME`.
+
+```sh
+N2_SCRATCH=/tmp/ml17-pm sh scripts/premises/live-mail.sh --pm
+```
+
+- It prints one `LIVE <id> verified|failed (agent <versions>): …` line for each of PM1, PM2 and PM3, also appended to `$N2_SCRATCH/results.txt`, and at the end of the run copies `fixtures/claude-code/mail/pm1.txt`, `pm2.txt`, `pm3.txt` and `fixtures/opencode/mail/pm2.txt`, `pm3.txt` into the checkout, a failed line included. Exit status: 0, the run finished (a failed line does not change it); 3, a request at the mock carried a credential other than the dummy key (the mock writes `ABORT` and stops); 1, a tool or agent is missing or below its minimum version, a path holds a quote or a space, the tmux socket path is longer than 100 characters (set `TMPDIR` to a short folder), or the fixtures could not be copied to the repository; 2, a usage error; 129, 130, 141 or 143 after a signal.
+- Each agent runs in a 200 x 50 pane of a tmux server of the script's own (`-S <socket in a private folder>`, `-f /dev/null`); text is typed with `send-keys -l`, then `Enter` 0.5 s later. Every part uses a temporary `HOME`, the dummy key and the mock upstream, with no zygo between. PM1: Claude Code with a probe MCP server (`scripts/premises/mcp_probe.py`) and a `Stop` hook that answers `decision: block` once. PM2 and PM3, Claude Code: `--tools ""`, with `SessionStart` and `UserPromptSubmit` hooks that return `additionalContext` lines, then the wake line typed into the idle pane. PM2 and PM3, OpenCode: the TUI with a probe plugin that pushes a mail line in `experimental.chat.system.transform`, then the wake line typed into the idle pane.
+- Bounds. Claude Code panes: 60 s for each session start (the first `SessionStart` input; the folder trust question is answered yes), then a 3 s pause. PM1: 60 s for the first `Stop` input, 5 s for its hook output, then 60 s each for the request with the block reason, the `PostToolUse` input of the probe tool, the request with the tool result and the second `Stop` input. PM2 and PM3, Claude Code: 60 s for a `Stop` input after the wake line (a timeout is note 2.4). OpenCode pane: 60 s for the plugin's first event, a 5 s pause, then 90 s for a request with the wake line. 5 s for each pane program to end after SIGTERM, then SIGKILL.
+- Side effects: the scratch folder. With `N2_SCRATCH` set, `<N2_SCRATCH>/live-<pid>` stays, with the raw records (`ml-rec/PM<n>.out`, `ml-rec/PM<n>-oc.out`), the temporary `HOME`s, the recorded requests, the hook logs and the pane text, and `<N2_SCRATCH>/results.txt` keeps each `LIVE` line. Without `N2_SCRATCH`, `lib.sh` makes a temporary folder and deletes it, raw output included, after exit 0 (it keeps and names it after any other exit). Nothing under the real `HOME` is written. The traps end the private tmux server, the mock and every agent and helper process, and remove the private folder (`${TMPDIR:-/tmp}/zm.XXXXXX`).
+- Last run: 2026-11-25, macOS, Claude Code 2.1.332, OpenCode 1.18.16, tmux 3.8: PM1, PM2 and PM3 verified. Rows: `docs/premises.md` PM1 to PM3.
+
 ## Results
 
 | Id | Check | Agent | Version | Date | Result | Evidence |
