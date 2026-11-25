@@ -1,0 +1,3 @@
+home=scratch
+codex_home=scratch
+codex_version=0.172.0
