@@ -222,8 +222,45 @@ fn savings_usage_config_does_not_load_prints_unknown() {
     seed(&p);
     std::fs::write(&p.config_file, "[[model]\n").unwrap();
     assert!(ALL.contains("\nestimated spend avoided: ≈$0.0000\n"));
-    let want = ALL.replace("\nestimated spend avoided: ≈$0.0000\n", "\nestimated spend avoided: unknown (config does not load)\n");
+    let key = "\n  Bash - -: 2 views, 0 read-backs, 5500 bytes kept out, ≈$0.0000\n";
+    assert!(ALL.contains(key));
+    let want = ALL.replace("\nestimated spend avoided: ≈$0.0000\n", "\nestimated spend avoided: unknown (config does not load)\n")
+        .replace(key, "\n  Bash - -: 2 views, 0 read-backs, 5500 bytes kept out, unknown\n");
     assert_eq!(run(&p, &[], None).unwrap(), want);
+}
+
+/// O§6.6 sign: a negative amount that rounds to zero at four decimals prints `≈$0.0000`, on the total and the key.
+#[test]
+fn savings_usage_negative_rounding_to_zero_has_no_sign() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    std::fs::write(&p.config_file, cfg(&[("p1", PRICED)])).unwrap();
+    let s = Store::open(&p.usage_db).unwrap();
+    s.insert_trim(&ktrim("S", 10, ("Bash", None, None), 4, "R0")).unwrap();
+    s.insert_readback(&rb("S", 15, 8, "R0")).unwrap();
+    s.insert_request(&creq("S", 20, "m1", "p1", 1_000, 1_000, false)).unwrap();
+    // trim 1 token × 5 − read-back 2 tokens × 5 USD per Mtok = −0.000005
+    let out = run(&p, &[], None).unwrap();
+    assert!(out.contains("\nestimated spend avoided: ≈$0.0000\n"), "{out}");
+    assert!(out.contains("\n  Bash - -: 1 view, 1 read-back, -4 bytes kept out, ≈$0.0000\n"), "{out}");
+}
+
+/// O§6.3 step 3: a prompt equal to `above` takes the base tier (`>`, as `Prices::cost`); a tier with no
+/// `cache_write_5m` writes at `cache_write`.
+#[test]
+fn savings_usage_rate_tier_boundary_and_no_5m_rate() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let long = format!("{PRICED}\nlong_context = {{ above = 5000, input = 40.0, output = 0.0, cache_read = 4.0, cache_write = 80.0 }}");
+    let no5m = "[model.provider.price_usd_per_mtok]\ninput = 4.0\noutput = 0.0\ncache_read = 0.4\ncache_write = 8.0";
+    std::fs::write(&p.config_file, cfg(&[("p1", &long), ("p3", no5m)])).unwrap();
+    let s = Store::open(&p.usage_db).unwrap();
+    for (sess, prov, c) in [("F", "p1", 2_450), ("G", "p3", 1_000)] {
+        s.insert_request(&creq(sess, 20, "m1", prov, c, c, false)).unwrap();
+        s.insert_trim(&ktrim(sess, 10, ("Bash", None, None), 4_000_000, sess)).unwrap();
+    }
+    assert_eq!(spend_line(&p, &["--session", "F"]), "estimated spend avoided: ≈$5.0000"); // prompt 5000 = above: base cache_write_5m
+    assert_eq!(spend_line(&p, &["--session", "G"]), "estimated spend avoided: ≈$8.0000"); // no cache_write_5m: cache_write
 }
 
 #[test]
@@ -237,7 +274,11 @@ fn savings_usage_97d8767_database_prints_dash_keys() {
         ALTER TABLE trims DROP COLUMN shaper; PRAGMA user_version = 1").unwrap();
     c.execute("INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes) VALUES (5, 'S1', NULL, 'Bash', 'head', 1000, 100)", []).unwrap();
     drop(c);
+    let before = std::fs::read(&p.usage_db).unwrap();
     let out = run(&p, &[], None).unwrap(); // Ok is exit 0
+    assert_eq!(std::fs::read(&p.usage_db).unwrap(), before, "the database bytes changed");
+    let files: Vec<_> = std::fs::read_dir(&p.data_dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(files, [OsString::from("usage.db")]);
     assert_eq!(after_trimmed(&out)[..6], [
         "bytes read back: 0",
         "tokens kept out of context (estimate): 225",

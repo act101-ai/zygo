@@ -82,12 +82,15 @@ fn rates(catalog: &Catalog, model: &str, provider: &str, prompt: u64) -> Option<
     })
 }
 
-/// O§6.6: `≈$` and four decimals; a negative amount puts the sign before `$`.
+/// O§6.6: `≈$` and four decimals; a negative amount puts the sign before `$`, only when it is below zero at four
+/// decimals (`-0.00004` prints `≈$0.0000`).
 fn usd(v: f64) -> String {
-    if v < 0.0 { format!("≈-${:.4}", -v) } else { format!("≈${v:.4}") }
+    let a = format!("{:.4}", v.abs());
+    if v < 0.0 && a != "0.0000" { format!("≈-${a}") } else { format!("≈${a}") }
 }
 
-/// O§6.6: the net figures, the ratio and the breakdown; `priced` is false when the config does not load.
+/// O§6.6: the net figures, the ratio and the breakdown; `priced` is false when the config does not load, and every
+/// amount (the total and each key's) is then `unknown` (O§10).
 fn savings_lines(o: &mut String, v: &Savings, priced: bool) {
     let n = |k: u64, one: &str| if k == 1 { format!("1 {one}") } else { format!("{k} {one}s") };
     let _ = writeln!(o, "bytes read back: {}\ntokens kept out of context (estimate): {}", v.bytes_read_back, v.kept_out_tokens);
@@ -107,10 +110,11 @@ fn savings_lines(o: &mut String, v: &Savings, priced: bool) {
     }
     o.push_str("by tool and command:\n");
     for k in &v.by_key {
+        let amount = if priced { usd(k.spend_usd) } else { "unknown".to_string() };
         let _ = writeln!(
             o,
             "  {} {} {}: {}, {}, {} bytes kept out, {}",
-            esc(&k.tool), esc(&k.command), esc(&k.shaper), n(k.views, "view"), n(k.readbacks, "read-back"), k.kept_out_bytes, usd(k.spend_usd)
+            esc(&k.tool), esc(&k.command), esc(&k.shaper), n(k.views, "view"), n(k.readbacks, "read-back"), k.kept_out_bytes, amount
         );
     }
 }

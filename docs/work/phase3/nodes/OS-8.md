@@ -207,3 +207,5 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
 - [x] **18. Lint and crate tests:** `cargo clippy -p zygo --tests --locked -- -D warnings` → no warning; `cargo test -p zygo --locked` → all pass.
 
 - [x] **19. Commit** `crates/zygo/src/cmd/usage.rs`, `crates/zygo/tests/usage_doctor.rs`, `crates/zygo/Cargo.toml` and `Cargo.lock` (when step 1 changed it) with `-m "OS-8: zygo usage prints the net figures, breakdown and ratio"` and the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementer's brief. Check: `git show --stat HEAD` lists no other file.
+
+Review round 1: F1, F2 fixed; F4 tests added; F3 (summary and savings read two snapshots) goes to a new node.
