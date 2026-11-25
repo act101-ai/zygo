@@ -242,3 +242,143 @@ PY
     + " the model saw the stdout tracer: \(if .replaced then "yes" else "no" end); the model saw err-line: \(if .err_line_seen then "yes" else "no" end)"' "$RUN/po2-result.json")
   result PO2 "${_v%% *}" "${_v#* }"
 }
+
+# --- PO3 (OpenCode): tool.execute.after for bash gives stdout and stderr together in output.output ----
+part_po3() {
+  live_run po3
+  steps po3 "$(jq -nc --arg c "$CMD_BOTH" '{trigger: "tracer-po3", extra: {body: "\"tools\""},
+    steps: [{tool: "bash", input: {command: $c, description: "po3"}}, {text: "po3 done"}]}')"
+  start_mock "$RUN/rules.json"
+  oc_setup
+  oc_run "tracer-po3 run the command"
+  stop_mock
+  publish_sse "$FXO/sse"
+  wrote "$RUN/plog/tool.execute.after-bash.json" "$FXO/plugin-hooks/tool.execute.after-bash-stderr.json"
+  seen_json "$RUN/po3-seen.json" toolu_po3_00_bash
+  wrote "$(jq -r '.[0].request_file // ""' "$RUN/po3-seen.json")" "$FXO/requests/po3-request.json"
+  _v=$(jq -r '(.output.output // "" | if type == "string" then . else tojson end) as $o
+    | ($o | index("out-line")) as $a | ($o | index("err-line")) as $b
+    | (if $a != null and $b != null then "pass" else "fail" end)
+      + " output.output: " + (if $a != null and $b != null then (if $a < $b then "out-line before err-line" else "err-line before out-line" end)
+        else "out-line \(if $a == null then "absent" else "present" end), err-line \(if $b == null then "absent" else "present" end)" end)' \
+    "$RUN/plog/tool.execute.after-bash.json" 2>/dev/null || echo "fail no tool.execute.after record for bash")
+  result PO3 "${_v%% *}" "${_v#* }"
+}
+
+# --- PO4 (both agents): the text the model sees for a result_view reply -----------------------------
+# rv_mcp: $RUN/rv_mcp.py, a stdio MCP server named zygo with one tool, result_view
+rv_mcp() {
+  cat >"$RUN/rv_mcp.py" <<'PY'
+"""Stdio MCP server of live-shaping.sh PO4: serverInfo zygo, one tool result_view. Its reply has the
+shape of crates/zygo-mcp/src/server.rs:132; the text is the lines po4-line-NNN from the first to the
+last number of "lines", joined with newlines, no final newline."""
+import json
+import sys
+
+
+def view(lines):
+    try:
+        a, b = (int(x) for x in str(lines).split("-", 1))
+    except ValueError:
+        a, b = 1, 0
+    return "\n".join("po4-line-%03d" % n for n in range(a, b + 1))
+
+
+for line in sys.stdin:
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    mid, method = msg.get("id"), msg.get("method")
+    if mid is None:
+        continue
+    if method == "initialize":
+        res = {"protocolVersion": msg.get("params", {}).get("protocolVersion", "2024-11-05"),
+               "capabilities": {"tools": {}}, "serverInfo": {"name": "zygo", "version": "0.0.1"}}
+    elif method == "tools/list":
+        res = {"tools": [{"name": "result_view", "description": "Returns lines of a stored result.",
+                          "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "lines": {"type": "string"}},
+                                          "required": ["id"]}}]}
+    elif method == "tools/call":
+        args = (msg.get("params") or {}).get("arguments") or {}
+        res = {"content": [{"type": "text", "text": view(args.get("lines", ""))}], "isError": False}
+    else:
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "not found"}}) + "\n")
+        sys.stdout.flush()
+        continue
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": mid, "result": res}) + "\n")
+    sys.stdout.flush()
+PY
+}
+# po4_judge <id> <readback dest> <tool_use_id of lines 1-400> <tool_use_id of lines 1-40>: the readback
+# record, the request copies beside it (po4-request-<lines>.json), one LIVE line
+po4_judge() {
+  seen_json "$RUN/po4-seen.json" "$3" "$4"
+  python3 -I - "$RUN/po4-seen.json" "$RUN/po4-readback.json" <<'PY'
+import json, sys
+seen_f, out = sys.argv[1:3]
+
+
+def view(a, b):
+    return "\n".join("po4-line-%03d" % n for n in range(a, b + 1))
+
+
+try:
+    seen = json.load(open(seen_f))
+except (OSError, ValueError):
+    seen = []
+calls = []
+for (lines, t), s in zip((("1-400", view(1, 400)), ("1-40", view(1, 40))), seen):
+    text = s.get("text") or ""
+    i = text.find(t)
+    c = {"lines": lines, "reply_bytes": len(t.encode()), "seen_bytes": len(text.encode()), "reply_found": i >= 0,
+         "prefix": text[:i] if i >= 0 else None, "suffix": text[i + len(t):] if i >= 0 else None}
+    c["wrapper_bytes"] = c["seen_bytes"] - c["reply_bytes"]
+    c.update(s)
+    calls.append(c)
+json.dump(calls, open(out, "w"), indent=1)
+PY
+  wrote "$RUN/po4-readback.json" "$2"
+  jq -r '.[] | "\(.lines) \(.request_file // "")"' "$RUN/po4-readback.json" | while read -r _l _f; do
+    if [ -n "$_f" ]; then wrote "$_f" "${2%/*}/po4-request-$_l.json" </dev/null; fi
+  done
+  _v=$(jq -r '(length == 2 and all(.[]; .reply_found) and .[0].wrapper_bytes == .[1].wrapper_bytes) as $ok
+    | (if $ok then "pass" else "fail" end) + " "
+      + ([.[] | "lines \(.lines): reply \(.reply_bytes) bytes, seen \(.seen_bytes) bytes, reply found \(if .reply_found then "yes" else "no" end), wrapper \(.wrapper_bytes) bytes"]
+         | if length == 0 then "no tool result seen" else join("; ") end)' "$RUN/po4-readback.json")
+  result "$1" "${_v%% *}" "${_v#* }"
+}
+part_po4() {
+  live_run po4-cc
+  rv_mcp
+  steps po4c "$(jq -nc '{trigger: "tracer-po4", steps: [
+    {tool: "mcp__zygo__result_view", input: {id: "01PO4000000000000000000000", lines: "1-400"}},
+    {tool: "mcp__zygo__result_view", input: {id: "01PO4000000000000000000000", lines: "1-40"}},
+    {text: "po4 done"}]}')"
+  jq -n --arg p "$(command -v python3)" --arg s "$RUN/rv_mcp.py" '{mcpServers: {zygo: {command: $p, args: ["-I", $s]}}}' >"$RUN/mcp.json"
+  start_mock "$RUN/rules.json"
+  run_claude -p "tracer-po4 read the result" --mcp-config "$RUN/mcp.json" --strict-mcp-config \
+    --dangerously-skip-permissions </dev/null >"$RUN/out.txt" 2>&1 || true
+  stop_mock
+  po4_judge PO4-CC "$FXC/requests/po4-readback.json" toolu_po4c_00_mcp__zygo__result_view toolu_po4c_01_mcp__zygo__result_view
+
+  live_run po4-oc
+  rv_mcp
+  steps po4o "$(jq -nc '{trigger: "tracer-po4", extra: {body: "\"tools\""}, steps: [
+    {tool: "zygo_result_view", input: {id: "01PO4000000000000000000000", lines: "1-400"}},
+    {tool: "zygo_result_view", input: {id: "01PO4000000000000000000000", lines: "1-40"}},
+    {text: "po4 done"}]}')"
+  start_mock "$RUN/rules.json"
+  oc_setup "$(jq -nc --arg s "$RUN/rv_mcp.py" '{zygo: {type: "local", command: ["python3", "-I", $s], enabled: true}}')"
+  oc_run "tracer-po4 read the result"
+  stop_mock
+  po4_judge PO4-OC "$FXO/requests/po4-readback.json" toolu_po4o_00_zygo_result_view toolu_po4o_01_zygo_result_view
+}
+
+case $MODE in
+  po1) part_po1 ;;
+  po2) part_po2 ;;
+  po3) part_po3 ;;
+  po4) part_po4 ;;
+esac
+live_done "$REPO_DIR/fixtures"
