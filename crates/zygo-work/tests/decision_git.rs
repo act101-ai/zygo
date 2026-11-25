@@ -10,7 +10,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use zygo_work::gate::git::{
-    BatchIo, Blob, GitFail, GitRunner, LogCommit, ProcessGit, VerdictGit, GIT_PROCESSES, GIT_STEP, GIT_TOTAL,
+    BatchIo, Blob, GitFail, GitRunner, LogCommit, ProcessGit, ProcessRunner, VerdictGit, GIT_PROCESSES, GIT_STEP,
+    GIT_TOTAL,
 };
 use zygo_work::repo::{run_piped, RunError, Whole};
 
@@ -290,4 +291,122 @@ fn a_failed_batch_stays_failed_with_one_process() {
     assert_eq!(g.commit("a"), e);
     assert_eq!(g.record_blob("a", &rec('A')), e.map(|_: Option<String>| Blob::Missing));
     assert_eq!(log.borrow().runs.iter().filter(|r| r.0 == "cat-file").count(), 1);
+}
+
+// ---- real git: PD1 and the tree entry modes (D§6.8) ----
+
+/// The real runner with its clock one hour ahead, so every deadline is an hour away and machine load cannot fail a test.
+struct Far(ProcessRunner);
+
+impl GitRunner for Far {
+    fn run(&mut self, cmd: Command, deadline: Instant) -> Result<Whole, RunError> { self.0.run(cmd, deadline) }
+    fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> { self.0.batch(cmd, deadline) }
+    fn now(&self) -> Instant { Instant::now() + S(3600) }
+}
+
+fn far_git(root: &Path) -> ProcessGit { ProcessGit::with_runner(root, Box::new(Far(ProcessRunner))) }
+
+struct Fx {
+    base: String,
+    c1: String,
+    c2: String,
+}
+
+/// `<tmp>/w` on `main` at `base` (`docs/decisions/README.md`), and the linked checkout `<tmp>/n` on `node` with `c1`
+/// (records A and X, X with mode 100755) and `c2` (A changed, L a symlink entry, S a submodule entry). `w` stays at
+/// `base`: `c1` and `c2` exist only on `node`.
+fn fixture() -> (TempDir, PathBuf, Fx) {
+    let t = TempDir::new().unwrap();
+    git(t.path(), &["init", "-q", "-b", "main", "w"]);
+    let w = t.path().join("w");
+    fs::create_dir_all(w.join("docs/decisions")).unwrap();
+    fs::write(w.join("docs/decisions/README.md"), "readme\n").unwrap();
+    git(&w, &["add", "-A"]);
+    git(&w, &["commit", "-q", "-m", "base"]);
+    let base = out(&w, &["rev-parse", "HEAD"]);
+    git(&w, &["worktree", "add", "-q", "../n", "-b", "node"]);
+    let n = t.path().join("n");
+    let d = |c: char| format!("docs/decisions/{}", rec(c));
+    fs::write(n.join(d('A')), "a1\n").unwrap();
+    fs::write(n.join(d('X')), "x\n").unwrap();
+    git(&n, &["add", &d('A'), &d('X')]);
+    git(&n, &["update-index", "--chmod=+x", &d('X')]);
+    git(&n, &["commit", "-q", "-m", "c1"]);
+    let c1 = out(&n, &["rev-parse", "HEAD"]);
+    fs::write(n.join(d('A')), "a2\n").unwrap();
+    git(&n, &["add", &d('A')]);
+    let readme = out(&n, &["hash-object", "-w", "docs/decisions/README.md"]);
+    git(&n, &["update-index", "--add", "--cacheinfo", &format!("120000,{readme},{}", d('L'))]);
+    git(&n, &["update-index", "--add", "--cacheinfo", &format!("160000,{base},{}", d('S'))]);
+    git(&n, &["commit", "-q", "-m", "c2\n\nZygo-Session: s"]);
+    let c2 = out(&n, &["rev-parse", "HEAD"]);
+    (t, w, Fx { base, c1, c2 })
+}
+
+#[test]
+fn pd1_main_checkout_reads_linked_checkout_commits_before_merge() {
+    let (_t, w, fx) = fixture();
+    let mut g = far_git(&w);
+    let d = |c: char| format!("docs/decisions/{}", rec(c));
+    assert_eq!(out(&w, &["rev-parse", "HEAD"]), fx.base);
+    assert_eq!(g.commit(&fx.c2[..7]), Ok(Some(fx.c2.clone())));
+    assert_eq!(g.record_blob(&fx.c2, &rec('A')), Ok(Blob::Data(b"a2\n".to_vec())));
+    assert_eq!(g.merge_base(&fx.base, &fx.c2), Ok(Some(fx.base.clone())));
+    assert_eq!(g.rev_list(&fx.base, &fx.c2, 10_000), Ok(Some(vec![fx.c2.clone(), fx.c1.clone()])));
+    assert_eq!(g.log(&fx.base, &fx.c2), Ok(vec![
+        LogCommit { id: fx.c2.clone(), parents: vec![fx.c1.clone()], message: "c2\n\nZygo-Session: s\n".into(),
+                    paths: vec![('M', d('A')), ('A', d('L')), ('A', d('S'))] },
+        LogCommit { id: fx.c1.clone(), parents: vec![fx.base.clone()], message: "c1\n".into(),
+                    paths: vec![('A', d('A')), ('A', d('X'))] },
+    ]));
+}
+
+#[test]
+fn record_blob_tells_regular_link_submodule_and_missing() {
+    let (_t, w, fx) = fixture();
+    let mut g = far_git(&w);
+    assert_eq!(g.record_blob(&fx.c2, &rec('X')), Ok(Blob::Data(b"x\n".to_vec())));
+    assert_eq!(g.record_blob(&fx.c2, &rec('L')), Ok(Blob::NotRegular));
+    assert_eq!(g.record_blob(&fx.c2, &rec('S')), Ok(Blob::NotRegular));
+    assert_eq!(g.record_blob(&fx.c2, &rec('Z')), Ok(Blob::Missing));
+    assert_eq!(g.record_blob(&fx.base, &rec('A')), Ok(Blob::Missing));
+    assert_eq!(g.record_blob("nope", "README.md"), Ok(Blob::Missing));
+}
+
+#[test]
+fn docs_decisions_as_a_blob_is_missing() {
+    let t = TempDir::new().unwrap();
+    git(t.path(), &["init", "-q", "-b", "main", "w"]);
+    let w = t.path().join("w");
+    fs::create_dir_all(w.join("docs")).unwrap();
+    fs::write(w.join("docs/decisions"), "x\n").unwrap();
+    git(&w, &["add", "-A"]);
+    git(&w, &["commit", "-q", "-m", "a"]);
+    let mut g = far_git(&w);
+    assert_eq!(g.record_blob("HEAD", &rec('A')), Ok(Blob::Missing));
+}
+
+#[test]
+fn rev_list_over_max_is_none() {
+    let (_t, w, fx) = fixture();
+    let mut g = far_git(&w);
+    assert_eq!(g.rev_list(&fx.base, &fx.c2, 1), Ok(None));
+    assert_eq!(g.rev_list(&fx.base, &fx.c2, 2).unwrap().unwrap().len(), 2);
+}
+
+#[test]
+fn merge_base_of_unknown_object_fails_naming_merge_base() {
+    let (_t, w, fx) = fixture();
+    let mut g = far_git(&w);
+    let e = g.merge_base("nope", &fx.base).unwrap_err();
+    assert!(matches!(&e, GitFail::Failed { step: "git merge-base", .. }), "{e:?}");
+    assert!(e.to_string().starts_with("cannot check: git merge-base failed: "), "{e}");
+}
+
+#[test]
+fn merge_base_of_unrelated_histories_is_none() {
+    let (_t, w, fx) = fixture();
+    let o = out(&w, &["commit-tree", &format!("{}^{{tree}}", fx.base), "-m", "o"]);
+    let mut g = far_git(&w);
+    assert_eq!(g.merge_base(&fx.base, &o), Ok(None));
 }
