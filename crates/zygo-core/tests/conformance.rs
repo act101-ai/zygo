@@ -1192,3 +1192,18 @@ fn derive_release_state() {
     assert_eq!(derive::rollup(&r, &g[0], false).release, "below bar");
     assert_eq!(derive::rollup(&r, &g[0], true).release, "below bar");
 }
+
+#[test]
+#[should_panic(expected = "score fraction overflow")]
+fn derive_scores_overflow_fails_closed() {
+    // 27 standard capabilities with the prime criteria counts 2..103, each 1 met and the rest not-met:
+    // the exact mean has a denominator over u128 (CF-2 review F1)
+    let primes: Vec<usize> = (2..=103).filter(|n: &usize| (2..*n).all(|d| n % d != 0)).collect();
+    assert_eq!(primes.len(), 27);
+    let statuses: Vec<Vec<Status>> =
+        primes.iter().map(|&p| std::iter::once(Status::Met).chain(std::iter::repeat_n(Status::NotMet, p - 1)).collect()).collect();
+    let caps: Vec<(Tier, &[Status])> = statuses.iter().map(|s| (Tier::Standard, &s[..])).collect();
+    let (r, g) = synth(&caps);
+    derive::scores(&r, &g);
+}
+

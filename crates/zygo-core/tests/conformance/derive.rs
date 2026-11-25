@@ -107,8 +107,11 @@ fn counts(cap: &Capability, g: &GradeFile) -> (u32, u32) {
     (met, applicable)
 }
 
-/// The tier and total scores of `g`.
+/// The tier and total scores of `g`. Panics with `score fraction overflow` when an exact fraction does not fit
+/// in `u128`: it fails closed and never gives a wrong score.
 pub fn scores(reg: &Registry, g: &GradeFile) -> Scores {
+    let fits = |x: Option<Frac>| x.unwrap_or_else(|| overflow(g));
+    let sum = |xs: Vec<Frac>| fits(xs.into_iter().try_fold(Frac::new(0, 1), Frac::add));
     let tier = |t: Tier| {
         let values: Vec<Frac> = reg
             .capability
@@ -119,18 +122,25 @@ pub fn scores(reg: &Registry, g: &GradeFile) -> Scores {
             .map(|(met, applicable)| Frac::new(met.into(), applicable.into()))
             .collect();
         let n = values.len() as u128;
-        (n > 0).then(|| values.into_iter().fold(Frac::new(0, 1), Frac::add).div(n))
+        (n > 0).then(|| fits(sum(values).div(n)))
     };
     let (core, standard, extra) = (tier(Tier::Core), tier(Tier::Standard), tier(Tier::Extra));
     let weighted = [(3, core), (2, standard), (1, extra)];
     let weights: u128 = weighted.iter().filter(|(_, s)| s.is_some()).map(|(w, _)| w).sum();
     let total = (weights > 0).then(|| {
-        weighted.iter().filter_map(|&(w, s)| s.map(|s| s.mul(w))).fold(Frac::new(0, 1), Frac::add).div(weights)
+        let terms = weighted.iter().filter_map(|&(w, s)| s.map(|s| fits(s.mul(w)))).collect();
+        fits(sum(terms).div(weights))
     });
-    Scores { total: total.map(Frac::percent), core: core.map(Frac::percent), standard: standard.map(Frac::percent), extra: extra.map(Frac::percent) }
+    let percent = |x: Option<Frac>| x.map(|x| x.percent().unwrap_or_else(|| overflow(g)) as u32);
+    Scores { total: percent(total), core: percent(core), standard: percent(standard), extra: percent(extra) }
 }
 
-/// An exact non-negative fraction `num / den` (den > 0), kept reduced, so the rounding is the last step (K§6.2.4).
+fn overflow(g: &GradeFile) -> ! {
+    panic!("client `{}`: score fraction overflow", g.client)
+}
+
+/// An exact non-negative fraction `num / den` (den > 0), reduced by the gcd after each operation, so the rounding
+/// is the last step (K§6.2.4). Each operation uses checked arithmetic and gives `None` on overflow.
 #[derive(Debug, Clone, Copy)]
 struct Frac {
     num: u128,
@@ -143,21 +153,22 @@ impl Frac {
         Frac { num: num / d, den: den / d }
     }
 
-    fn add(self, o: Frac) -> Frac {
-        Frac::new(self.num * o.den + o.num * self.den, self.den * o.den)
+    fn add(self, o: Frac) -> Option<Frac> {
+        let num = self.num.checked_mul(o.den)?.checked_add(o.num.checked_mul(self.den)?)?;
+        Some(Frac::new(num, self.den.checked_mul(o.den)?))
     }
 
-    fn mul(self, k: u128) -> Frac {
-        Frac::new(self.num * k, self.den)
+    fn mul(self, k: u128) -> Option<Frac> {
+        Some(Frac::new(self.num.checked_mul(k)?, self.den))
     }
 
-    fn div(self, k: u128) -> Frac {
-        Frac::new(self.num, self.den * k)
+    fn div(self, k: u128) -> Option<Frac> {
+        Some(Frac::new(self.num, self.den.checked_mul(k)?))
     }
 
     /// ⌊100 × x⌋.
-    fn percent(self) -> u32 {
-        (100 * self.num / self.den) as u32
+    fn percent(self) -> Option<u128> {
+        Some(self.num.checked_mul(100)? / self.den)
     }
 }
 
