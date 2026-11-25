@@ -182,7 +182,9 @@ kmiss=""
 # "|"; a path is `(fixtures|docs|scripts)/...` with no '..' component, its directory resolves to the
 # same path under the source root's real path (no component is a symlink), and it is a regular file,
 # not a symlink. Any other path is skipped; check-premises reports it. A failed mkdir or cp prints
-# the path on stderr and returns 1.
+# the path on stderr and returns 1. The '..' case mirrors check-premises; the directory check also
+# refuses every '..' path (one before the last component never equals the resolved path; a last '..'
+# names a directory), so K13 cannot isolate it.
 kcopy() {
   kroot=$(cd -P "$2" && pwd -P) || { printf 'kcopy: no source root %s\n' "$2" >&2; return 1; }
   grep -E '^ ? ? ?\|' "$1" | grep -oE '`(fixtures|docs|scripts)/[^` ]+`' | tr -d '`' >"$T/kcopy.txt"
@@ -196,6 +198,9 @@ kcopy() {
   done <"$T/kcopy.txt"
   return 0
 }
+# ksetup <source root> <dest>: kcopy the paths that <source root>/docs/premises.md cites; a failed
+# copy sets kmiss to kcopy's message, so K1-K6 fail with it (K14 tests this).
+ksetup() { kcopy "$1/docs/premises.md" "$1" "$2" 2>"$T/kcopy.err" || kmiss="K setup: $(cat "$T/kcopy.err")"; }
 for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md; do
   [ -f "$REPO/$f" ] || { kmiss="$f missing"; break; }
 done
@@ -207,7 +212,7 @@ if [ -z "$kmiss" ]; then
   cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$K/docs/specs/"
   cp "$REPO/docs/conformance.md" "$K/docs/"
   cp -R "$REPO/fixtures" "$K/"
-  kcopy "$REPO/docs/premises.md" "$REPO" "$K" 2>"$T/kcopy.err" || kmiss="K setup: $(cat "$T/kcopy.err")"
+  ksetup "$REPO" "$K"
 fi
 # kcase <case> <id> <agent> <old regex> <V> <want rc> <fixed text>
 kcase() {
@@ -286,17 +291,38 @@ if ! kcopy "$T/K11.md" "$S" "$KD"; then no "$name" "kcopy failed"
 elif [ "$(kfiles "$KD")" != "./scripts/premises/ev.sh " ]; then no "$name" "copied: $(kfiles "$KD")"
 else ok "$name"; fi
 rm -f "$S/scripts/premises/dir/four.sh" "$S/scripts/premises/dir/tab.sh"
+# kskip <name> (round 3): root writes into a read-only folder, so a case that needs a failed copy
+# prints a skip line and counts as passed.
+kskip() { printf 'skip: running as root: %s\n' "$1"; ok "$1 (skipped)"; }
 # K12: a failed copy fails kcopy with a message that names the path.
 name="K12 a failed copy fails kcopy and names the path"
-KD=$(kfresh K12)
-printf '| X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/ev.sh` |\n' >"$T/K12.md"
-chmod a-w "$KD"
-kcopy "$T/K12.md" "$S" "$KD" 2>"$T/K12.err"
-rc=$?
-chmod u+w "$KD"
-if [ "$rc" -eq 0 ]; then no "$name" "kcopy exit 0"
-elif ! grep -qF 'kcopy: cannot copy scripts/premises/ev.sh' "$T/K12.err"; then no "$name" "stderr: $(cat "$T/K12.err")"
-else ok "$name"; fi
+if [ "$(id -u)" -eq 0 ]; then kskip "$name"
+else
+  KD=$(kfresh K12)
+  printf '| X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/ev.sh` |\n' >"$T/K12.md"
+  chmod a-w "$KD"
+  kcopy "$T/K12.md" "$S" "$KD" 2>"$T/K12.err"
+  rc=$?
+  chmod u+w "$KD"
+  if [ "$rc" -eq 0 ]; then no "$name" "kcopy exit 0"
+  elif ! grep -qF 'kcopy: cannot copy scripts/premises/ev.sh' "$T/K12.err"; then no "$name" "stderr: $(cat "$T/K12.err")"
+  else ok "$name"; fi
+fi
+# K13 (round 3): a cited path with a '..' component whose directory resolves inside S is not copied.
+kguard K13 "a cited path with a .. component inside the tree" scripts/premises/../premises/ev.sh
+# K14 (round 3): a failed setup copy (ksetup into a read-only folder) fails K1 with kcopy's message.
+name="K14 a failed setup copy fails K1 with kcopy's message"
+if [ "$(id -u)" -eq 0 ]; then kskip "$name"
+else
+  KD=$(kfresh K14)
+  chmod a-w "$KD"
+  out=$(kmiss=""; ksetup "$REPO" "$KD"; kcase K1 P1 'Claude Code' '2\.1\.328' 2.1.330 0 "check-premises: ok")
+  chmod u+w "$KD"
+  case "$out" in
+    "FAIL: K1 "*"(K setup: kcopy: cannot copy "*) ok "$name" ;;
+    *) no "$name" "K1 printed: $(printf '%s' "$out" | tr '\n' '|')" ;;
+  esac
+fi
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by

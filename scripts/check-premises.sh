@@ -29,7 +29,8 @@ nontrivial() {
 
 REAL=$(pwd -P)
 # in_repo <path>: true when the directory of the repository-relative <path> resolves to the same path
-# under the repository's real root (no component is a symlink), or does not exist (nontrivial then
+# under the repository's real root (no component is a symlink, '.' or empty, and the directory is
+# readable), or does not exist (nontrivial then
 # reports the path).
 in_repo() {
   edir=$(dirname "$1")
@@ -175,7 +176,7 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
   [ -n "$paths" ] || fail "$id: evidence names no path"
   while IFS= read -r f; do
     case "$f" in /* | .. | ../* | */.. | */../*) fail "$id: evidence path $f is absolute or holds a '..' component" ;; esac
-    in_repo "$f" || fail "$id: evidence path $f passes through a symlink or resolves outside the repository"
+    in_repo "$f" || fail "$id: evidence path $f is not a plain path inside the repository (a symlink, \`.\`/\`//\` part, or unreadable directory)"
     nontrivial "$f" || fail "$id: evidence path $f is missing, not a regular file, or trivial"
   done <<EOF_PATHS
 $paths

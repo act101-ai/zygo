@@ -28,27 +28,27 @@ Capability: `mechanical` (one shell function and one test case in a test script;
 
 - Consumes: `scripts/check-premises.sh` (PC-1), run as `sh "$K/scripts/check-premises.sh"` (it `cd`s to its script folder's parent); its evidence-path rule (the Results loop's `evidence path` checks, `in_repo` and `nontrivial`) and its table-line rule (`TROWS`), cited by name, not line number (round 2, F4).
 - Produces (inside `scripts/premises/ver_test.sh`, used nowhere else):
-  `kcopy <premises file> <source root> <dest>` (round 2 form) — for each path that matches `` `(fixtures|docs|scripts)/[^` ]+` `` (backticks removed) on a table line of `<premises file>` (a line matching `^ ? ? ?\|`, the `TROWS` rule of check-premises.sh), with no `..` component (the Results loop's `case`), whose directory resolves (`cd -P`, `pwd -P`) to the same path under the source root's real path, and for which `<source root>/<path>` is a regular file and not a symlink: `mkdir -p "<dest>/<dir of path>"`, then `cp "<source root>/<path>" "<dest>/<path>"`. Any other path is skipped silently (check-premises then reports it in the K tree as it would in the real tree). Returns 0; a failed `mkdir` or `cp` prints `kcopy: cannot copy <path>` on stderr and returns 1, and the K setup then fails every K1-K5 case with that message. A superset of the evidence cells (every table line, not only cells 8+ of Results rows) is intended: an extra copied file is a file the real tree has.
+  `kcopy <premises file> <source root> <dest>` (round 2 form) — for each path that matches `` `(fixtures|docs|scripts)/[^` ]+` `` (backticks removed) on a table line of `<premises file>` (a line matching `^ ? ? ?\|`, the `TROWS` rule of check-premises.sh), with no `..` component (the Results loop's `case`), whose directory resolves (`cd -P`, `pwd -P`) to the same path under the source root's real path, and for which `<source root>/<path>` is a regular file and not a symlink: `mkdir -p "<dest>/<dir of path>"`, then `cp "<source root>/<path>" "<dest>/<path>"`. Any other path is skipped silently (check-premises then reports it in the K tree as it would in the real tree). Returns 0; a failed `mkdir` or `cp` prints `kcopy: cannot copy <path>` on stderr and returns 1, and the K setup (`ksetup <source root> <dest>`, round 3) then sets `kmiss` to that message, so every K1-K6 case fails with it. A superset of the evidence cells (every table line, not only cells 8+ of Results rows) is intended: an extra copied file is a file the real tree has.
 
 ### Steps
 
 - [x] 1. Baseline: run `sh scripts/premises/ver_test.sh 2>&1`. Pass: K1 and K4 print `FAIL` with `PO1: evidence path scripts/premises/run-opencode-oc1.sh is missing`; last line `ver tests: 2 failed`; exit 1.
-- [x] 2. Write test K6 in `scripts/premises/ver_test.sh`, directly after the `kcase K5 …` line (`:208`). Name: `K6 kcopy copies the paths that table lines cite, and nothing outside the K tree`. If `$kmiss` is set: `no "$name" "$kmiss missing"`. Else write `$T/k6.md` with these three lines (`<base>` is `${REPO##*/}`):
+- [x] 2. Write test K6 in `scripts/premises/ver_test.sh`, directly after the `kcase K5 …` line. Name: `K6 kcopy copies the paths that table lines cite, and nothing outside the K tree`. If `$kmiss` is set: `no "$name" "$kmiss"`. Else make its own empty folder `KD=$(kfresh K6)` (`$T/K6`, round 2) and write `$T/K6.md` with these three lines (`<base>` is `${REPO##*/}`):
   ```
   | X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/sse.py` |
   | X2 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/../../<base>/scripts/premises/sse.py` |
   Method text `scripts/premises/scrub.py`
   ```
-  call `kcopy "$T/k6.md"`, then assert, failing with the reason in parentheses:
-  - `cmp -s "$REPO/scripts/premises/sse.py" "$K/scripts/premises/sse.py"` (`sse.py not copied`);
+  call `kcopy "$T/K6.md" "$REPO" "$KD"`, then assert, failing with the reason in parentheses:
+  - `cmp -s "$REPO/scripts/premises/sse.py" "$KD/scripts/premises/sse.py"` (`sse.py not copied`);
   - `[ ! -e "$T/${REPO##*/}" ]` (`a .. path was copied outside the K tree`);
-  - `[ ! -e "$K/scripts/premises/scrub.py" ]` (`a path outside a table line was copied`);
+  - `[ ! -e "$KD/scripts/premises/scrub.py" ]` (`a path outside a table line was copied`);
   then `ok "$name"`.
 - [x] 3. Run `sh scripts/premises/ver_test.sh 2>&1`. Pass: K6 prints `FAIL` (kcopy is not defined, or the reason `sse.py not copied`); K1 and K4 still `FAIL`; last line `ver tests: 3 failed`.
 - [x] 4. Implement `kcopy` (Interfaces) in `scripts/premises/ver_test.sh` directly after `kmiss=""` (`:178`), above the K setup block that calls it, with a comment that cites `check-premises.sh:161-165`. In the block's `if [ -z "$kmiss" ]` branch after `cp -R "$REPO/fixtures" "$K/"`, add `kcopy "$REPO/docs/premises.md"`. Keep the fixed copies (check-premises needs them for itself, not as evidence). POSIX sh only (the file runs under `sh` and `dash`); read the path list with `while IFS= read -r`, not word splitting.
-- [x] 5. Run the Acceptance check `sh scripts/premises/ver_test.sh 2>&1`. Pass: every case line is `ok:`, K1, K4 and K6 included; last line `ver tests: ok (54)`; exit 0.
-- [x] 6. Run `dash scripts/premises/ver_test.sh 2>&1`. Pass: last line `ver tests: ok (54)`, exit 0.
-- [x] 7. Run `sh scripts/check-premises.sh 2>&1`. Pass: last line `check-premises: ok (P1 … PO1 PO2)`, exit 0 (the node does not change it). Run `git diff --name-only origin/phase-4`. Pass: only `scripts/premises/ver_test.sh` and `docs/work/phase4/nodes/PC-9.md`.
+- [x] 5. Run the Acceptance check `sh scripts/premises/ver_test.sh 2>&1`. Pass: every case line is `ok:`, K1, K4 and K6 included; last line `ver tests: ok (<n>)` (54 in round 1, 62 at round 3); exit 0.
+- [x] 6. Run `dash scripts/premises/ver_test.sh 2>&1`. Pass: last line `ver tests: ok (<n>)`, the same count as step 5, exit 0.
+- [x] 7. Run `sh scripts/check-premises.sh 2>&1`. Pass: last line `check-premises: ok (P1 … PO1 PO2)`, exit 0 (the node does not change it). Run `git diff --name-only origin/phase-4`. Pass: only the Files line's paths (`scripts/premises/ver_test.sh`, `scripts/check-premises.sh`, `scripts/test-check-premises.sh`, from round 2) and `docs/work/phase4/nodes/PC-9.md`.
 - [x] 8. Commit `fix(premises): PC-9 ver_test K tree copies cited evidence paths` with trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:PC-9`; push the node branch.
 
 ## Review round 1 findings
@@ -61,3 +61,14 @@ Round 1 review (PR #136, head cdba2b8a), all confirmed by the lead. Round 2 work
 - F4 (nit): the line cites `check-premises.sh:161-165` (kcopy comment) and `:161-167` (Interfaces) were stale after PC-8. Fix: both cite by name (the `TROWS` rule, the Results loop's evidence path checks, `in_repo`, `nontrivial`).
 - F5 (nit): kcopy's table-line rule `^[[:blank:]]*\|` was wider than check-premises.sh's `TROWS` (zero to three blanks, no tab). Fix: kcopy uses `^ ? ? ?\|`. Case K11 (three blanks copied; four blanks and a tab not); it failed before the fix, and a mutation back to the wide rule fails it.
 - F6 (nit): a failed copy was silent. Fix: a failed `mkdir` or `cp` prints `kcopy: cannot copy <path>` on stderr and returns 1; the K setup stores that message in `kmiss`, so K1-K5 fail with it. Case K12 (a read-only destination); it failed before the fix (`kcopy exit 0`).
+
+## Review round 2 findings
+
+Round 2 review (PR #136, head a4d114ef): nits only, dispositions by the lead. Round 3 work on `phase-4--PC-9`. Each new case was written before its fix and failed first; the mutations ran on scratch copies.
+
+- G1 (FIX): the `..` guards had no case that only they refuse. ver_test.sh K13 (`kguard`) cites `scripts/premises/../premises/ev.sh`, which resolves inside the scratch tree; kcopy copies nothing. Mutation: deleting kcopy's `..` guard alone leaves K13 `ok`; deleting the guard and the resolved-directory check fails K6, K10 and K13. The guard cannot be the only refusal: a `..` before the last component makes `$kroot/<dir>` differ from the `pwd -P` result, and a last `..` names a directory, which `-f` refuses; the kcopy comment says so. In check-premises.sh the existing case "an evidence path with a .. component" (`docs/../docs/premises.md`, inside the repository) already isolates the guard by its message: deleting the guard fails it (`… passes through a symlink …` in place of `… holds a '..' component`). No duplicate case was added.
+- G2 (FIX): the setup wiring is now `ksetup <source root> <dest>`, which the K setup calls. Case K14 runs `ksetup` into a read-only folder and then `kcase K1` in a subshell; K1 must print `FAIL: K1 … (K setup: kcopy: cannot copy …`. It failed before `ksetup` existed; deleting `|| kmiss=…` from `ksetup` fails it (`K1 printed: ok: K1 …`).
+- G3 (FIX): K12 and K14 need a failed copy, which root does not get. When `id -u` is 0 they print `skip: running as root: <name>` and count as passed (`kskip`). Checked with a stub `id` that prints 0: both print the skip line; `ver tests: ok (62)`.
+- G4 (FIX): check-premises.sh's `in_repo` message is now `<id>: evidence path <f> is not a plain path inside the repository (a symlink, `.`/`//` part, or unreadable directory)`; the rule is unchanged. test-check-premises.sh: the symlinked-directory case expects the new text (it failed first); new cases "an evidence path with a . part" (`fixtures/./codex/pc1.txt`) and "an evidence path with a // part" (`fixtures//codex/pc1.txt`) expect it too.
+- G5 (RECORD): a case-variant citation (for example `Scripts/premises/…` on a case-insensitive file system) passes under macOS bash and fails under dash. A fix needs a per-component on-disk case check. Linux (case-sensitive) refuses it as missing. Known limit; no change.
+- G6 (FIX): Interfaces (a kcopy failure fails K1-K6, through `ksetup`) and steps 2, 5, 6 and 7 now match the code (K6's own folder and `$T/K6.md`, `ok (<n>)`, the Files line).
