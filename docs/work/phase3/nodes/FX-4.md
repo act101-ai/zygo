@@ -27,14 +27,14 @@ That reply is correct by the spec note at :703. The test races wall-clock time; 
 
 ### Steps
 
-- [ ] **1. Verify the premise.** Read `serve.rs:807-821`, `routes.rs:164-171`, `tee.rs:427-437`, `tee.rs:521-541`, `tee.rs:584-598` and `server.rs:320-324`; confirm each fact in the premises list. Check: every cited line matches.
-- [ ] **2. Make the one-line change.** In `requests_reply_ends_at_the_rows_bound_incomplete`, between `hold.release();` and the `requests(` GET, insert:
+- [x] **1. Verify the premise.** Read `serve.rs:807-821`, `routes.rs:164-171`, `tee.rs:427-437`, `tee.rs:521-541`, `tee.rs:584-598` and `server.rs:320-324`; confirm each fact in the premises list. Check: every cited line matches.
+- [x] **2. Make the one-line change.** In `requests_reply_ends_at_the_rows_bound_incomplete`, between `hold.release();` and the `requests(` GET, insert:
   ```rust
   assert!(s.h.usage_written(1, Duration::from_secs(30)));
   ```
   The 30 s value is a failure bound, like the test's `recv_timeout`, not a margin. Check: `git diff --stat` lists only `crates/zygo-proxy/tests/serve.rs` (and this node file), one line added; the diff contains no `sleep`.
-- [ ] **3. Run the acceptance.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-proxy --locked --test serve` → all pass. Check: the order `hold.release()` → `usage_written(1, …)` → `requests(` holds in the test body.
-- [ ] **4. Commit.** `FX-4: rows-bound test waits for the written row before the complete-flag GET`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.
+- [x] **3. Run the acceptance.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-proxy --locked --test serve` → all pass. Check: the order `hold.release()` → `usage_written(1, …)` → `requests(` holds in the test body.
+- [x] **4. Commit.** `FX-4: rows-bound test waits for the written row before the complete-flag GET`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.
 
 ### Note: no failing-first test
 
