@@ -104,8 +104,10 @@ fn cases_reads_folders_in_order() {
 
 #[test]
 fn each_case_has_the_format() {
-    let p: Vec<String> = case_dirs(&shaping::root()).iter().flat_map(|d| format_problems(d)).collect();
-    assert!(p.is_empty(), "{}", p.join("\n"));
+    let root = shaping::root();
+    let mut p: BTreeSet<String> = symlinks(&root).iter().map(|s| format!("{} is a symlink", s.display())).collect();
+    p.extend(case_dirs(&root).iter().flat_map(|d| format_problems(d)));
+    assert!(p.is_empty(), "{}", p.into_iter().collect::<Vec<_>>().join("\n"));
 }
 
 #[test]
@@ -116,13 +118,28 @@ fn failing_case_with_empty_must_keep_fails() {
     let summary = write_case(r, "libtest", "summary", &meta(0), b"test result: FAILED. 1 passed; 1 failed\n", b"", b"");
     let pytest = write_case(r, "pytest", "summary", &meta(0), b"==== 2 failed, 3 passed in 0.10s ====\n", b"", b"");
     let go = write_case(r, "gotest", "summary", &meta(0), b"--- FAIL: TestX (0.00s)\nFAIL\n", b"", b"");
-    for d in [&exit, &summary, &pytest, &go] {
+    let color = write_case(r, "libtest", "color", &meta(0), b"test result: \x1b[31mFAILED\x1b[0m. 1 passed; 1 failed\n", b"", b"");
+    let quiet = write_case(r, "pytest", "quiet", &meta(0), b"..F\n2 failed, 1 passed in 0.05s\n", b"", b"");
+    let blank = write_case(r, "libtest", "blank", &meta(101), b"x\n", b"", b"\r\n  \n");
+    for d in [&exit, &summary, &pytest, &go, &color, &quiet, &blank] {
         assert!(format_problems(d).iter().any(|p| p.contains("failing test and empty must_keep")), "{}", d.display());
     }
     let kept = write_case(r, "libtest", "kept", &meta(101), b"x\n", b"", b"x\n");
     let passing = write_case(r, "libtest", "passing", &meta(0), b"test result: ok. 3 passed; 0 failed\n", b"", b"");
     assert_eq!(format_problems(&kept), Vec::<String>::new());
     assert_eq!(format_problems(&passing), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn format_check_names_a_symlink() {
+    let t = tempfile::tempdir().unwrap();
+    let d = write_case(t.path(), "clean", "link", &meta(0), b"o", b"e", b"");
+    std::fs::write(t.path().join("big"), b"o").unwrap();
+    std::fs::remove_file(d.join("stdout")).unwrap();
+    std::os::unix::fs::symlink(t.path().join("big"), d.join("stdout")).unwrap();
+    let p = format_problems(&d).join("\n");
+    assert!(p.contains("stdout") && p.contains("symlink"), "{p}");
 }
 
 #[test]
@@ -147,8 +164,26 @@ fn format_check_names_missing_files_and_bad_meta() {
     assert!(format_problems(&d).iter().any(|p| p.contains("UTF-8")));
 }
 
-/// A failing test run in a runner summary (author's call 5): libtest, pytest, go.
-const FAILING: &str = r"(?m)^test result: FAILED\.|^=+ .*\b\d+ (failed|errors?)\b.*=+\r?$|^--- FAIL: |^FAIL(\s|$)";
+/// A failing test run in a runner summary (author's call 5): libtest, pytest (with or without the
+/// `=` banner), go. Matched after ANSI CSI sequences are removed.
+const FAILING: &str = r"(?m)^test result: FAILED\.|^=+ .*\b\d+ (failed|errors?)\b.*=+\r?$|^(=+ )?(\d+ failed|.*, \d+ failed)\b.* in \d+(\.\d+)?s( =+)?\r?$|^--- FAIL: |^FAIL(\s|$)";
+const ANSI_CSI: &str = r"\x1b\[[0-9;?]*[ -/]*[@-~]";
+
+/// `p` and every path under it that is a symlink, sorted; symlinks are not followed.
+fn symlinks(p: &Path) -> Vec<PathBuf> {
+    let Ok(m) = std::fs::symlink_metadata(p) else { return vec![] };
+    if m.file_type().is_symlink() {
+        return vec![p.to_path_buf()];
+    }
+    let mut v = vec![];
+    if m.is_dir() {
+        for e in std::fs::read_dir(p).unwrap() {
+            v.extend(symlinks(&e.unwrap().path()));
+        }
+    }
+    v.sort();
+    v
+}
 
 /// Every `root/*/*/` folder, sorted; none when `root` is missing.
 fn case_dirs(root: &Path) -> Vec<PathBuf> {
@@ -165,6 +200,9 @@ fn case_dirs(root: &Path) -> Vec<PathBuf> {
 fn format_problems(dir: &Path) -> Vec<String> {
     let mut p = vec![];
     let mut bad = |what: String| p.push(format!("{}: {what}", dir.display()));
+    for s in symlinks(dir) {
+        bad(format!("{} is a symlink", s.display()));
+    }
     let file = |f: &str| std::fs::read(dir.join(f)).ok();
     let (meta_bytes, stdout, stderr, must_keep) = (file("meta.json"), file("stdout"), file("stderr"), file("must_keep"));
     for (f, v) in [("meta.json", &meta_bytes), ("stdout", &stdout), ("stderr", &stderr), ("must_keep", &must_keep)] {
@@ -212,8 +250,9 @@ fn format_problems(dir: &Path) -> Vec<String> {
         }
     }
     let text = [stdout.unwrap_or_default(), stderr.unwrap_or_default()].join(&b'\n');
+    let text = regex::bytes::Regex::new(ANSI_CSI).unwrap().replace_all(&text, &b""[..]);
     let failing = meta["exit"].as_i64().is_some_and(|e| e != 0) || regex::bytes::Regex::new(FAILING).unwrap().is_match(&text);
-    let kept = must_keep.is_some_and(|b| b.split(|c| *c == b'\n').any(|l| !l.is_empty()));
+    let kept = must_keep.is_some_and(|b| b.split(|c| *c == b'\n').any(|l| l.iter().any(|c| !c.is_ascii_whitespace())));
     if failing && !kept {
         bad("failing test and empty must_keep".into());
     }
@@ -348,6 +387,7 @@ fn capture_script_writes_four_files_and_scrubs() {
         .env("PWD", &scratch)
         .env("USER", "capuser")
         .env("ZYGO_FIXTURES_DIR", &out)
+        .env("ZYGO_CAPTURE_TOOL", "sh 0.0")
         .status()
         .unwrap();
     assert!(st.success());
@@ -373,4 +413,157 @@ fn capture_script_writes_four_files_and_scrubs() {
     }
     std::fs::write(d.join("must_keep"), b"x\n").unwrap(); // exit 3 needs a must_keep line
     assert!(format_problems(&d).is_empty(), "{:?}", format_problems(&d)); // meta.json has the O§8.1 keys
+}
+
+/// A temp tree for one capture-shaping.sh run: `home`, the run dir `run` and the output dir `out`.
+#[cfg(unix)]
+struct Cap {
+    root: PathBuf,
+    home: PathBuf,
+    run: PathBuf,
+    out: PathBuf,
+    _t: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl Cap {
+    fn new(run: &str) -> Cap {
+        let t = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(t.path()).unwrap();
+        let (home, run, out) = (root.join("home"), root.join(run), root.join("out"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&run).unwrap();
+        Cap { root, home, run, out, _t: t }
+    }
+    /// The script's command with the default environment; `args` follow the script path.
+    fn cmd(&self, args: &[&str]) -> Command {
+        let mut c = Command::new("sh");
+        c.arg(shaping::repo().join("scripts/fixtures/capture-shaping.sh"))
+            .args(args)
+            .current_dir(&self.run)
+            .env("HOME", &self.home)
+            .env("PWD", &self.run)
+            .env("USER", "capuser")
+            .env("ZYGO_FIXTURES_DIR", &self.out)
+            .env("ZYGO_CAPTURE_TOOL", "sh 0.0");
+        c
+    }
+    fn read(&self, f: &str) -> String {
+        String::from_utf8(std::fs::read(self.out.join("clean/x").join(f)).unwrap()).unwrap()
+    }
+    fn meta(&self) -> Value {
+        serde_json::from_str(&self.read("meta.json")).unwrap()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_scrubs_user_name_as_a_whole_word() {
+    let c = Cap::new("w");
+    let st = c
+        .cmd(&["clean", "x", "--", "printf", r"%s\n", "running 3 tests", "testing test_a contest 3tests", "/home/test/x", "by test."])
+        .env("USER", "test")
+        .status()
+        .unwrap();
+    assert!(st.success());
+    // A whole-word name is still replaced, so `test result:` would still become `user result:`.
+    assert_eq!(c.read("stdout"), "running 3 tests\ntesting test_a contest 3tests\n/home/user/x\nby user.\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_scrubs_paths_at_a_path_boundary() {
+    let c = Cap::new("w");
+    let t = c.root.to_str().unwrap();
+    let (sibling, inside) = (format!("{t}/work/x"), format!("{t}/w/y"));
+    let st = c.cmd(&["clean", "x", "--", "printf", r"%s\n", &sibling, &inside]).status().unwrap();
+    assert!(st.success());
+    assert_eq!(c.read("stdout"), format!("{sibling}\n/repo/y\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_leaves_no_folder_without_home() {
+    let c = Cap::new("w");
+    let st = c.cmd(&["clean", "x", "--", "true"]).env_remove("HOME").status().unwrap();
+    assert!(!st.success());
+    assert!(!c.out.join("clean/x").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_refuses_an_existing_case() {
+    let c = Cap::new("w");
+    let d = c.out.join("clean/x");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("stdout"), b"old").unwrap();
+    let st = c.cmd(&["clean", "x", "--", "printf", "new"]).status().unwrap();
+    assert_eq!(st.code(), Some(1));
+    assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
+    assert_eq!(std::fs::read(d.join("stdout")).unwrap(), b"old");
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_refuses_bad_names() {
+    let c = Cap::new("w");
+    for (shaper, name) in [("Clean", "x"), ("clean", "a_b")] {
+        let st = c.cmd(&[shaper, name, "--", "true"]).status().unwrap();
+        assert_eq!(st.code(), Some(2), "{shaper}/{name}");
+        assert!(!c.out.exists(), "{shaper}/{name}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_hides_a_relative_output_dir_from_the_command() {
+    let c = Cap::new("w");
+    let st = c.cmd(&["clean", "x", "--", "sh", "-c", "ls -R"]).env("ZYGO_FIXTURES_DIR", "rel").status().unwrap();
+    assert!(st.success());
+    let d = c.run.join("rel/clean/x");
+    let stdout = String::from_utf8(std::fs::read(d.join("stdout")).unwrap()).unwrap();
+    for f in ["stdout", "stderr", "must_keep", "meta.json"] {
+        assert!(d.join(f).exists(), "{f}");
+        assert!(!stdout.contains(f), "{f} listed: {stdout}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_runs_the_program_once_and_takes_tool_from_env() {
+    use std::os::unix::fs::PermissionsExt;
+    let c = Cap::new("w");
+    let (prog, log) = (c.root.join("prog"), c.root.join("log"));
+    std::fs::write(&prog, format!("#!/bin/sh\necho ran >>'{}'\n", log.display())).unwrap();
+    std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let p = prog.to_str().unwrap();
+    let st = c.cmd(&["clean", "x", "--", p]).env("ZYGO_CAPTURE_TOOL", "prog 1.2.3").status().unwrap();
+    assert!(st.success());
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "ran\n");
+    assert_eq!(c.meta()["tool"], "prog 1.2.3");
+    for unset in [None, Some("")] {
+        let c = Cap::new("w");
+        let mut cmd = c.cmd(&["clean", "x", "--", p]);
+        match unset {
+            None => cmd.env_remove("ZYGO_CAPTURE_TOOL"),
+            Some(v) => cmd.env("ZYGO_CAPTURE_TOOL", v),
+        };
+        assert_eq!(cmd.status().unwrap().code(), Some(2));
+        assert!(!c.out.exists());
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "ran\n", "the program ran with no tool");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_script_records_the_command_as_shell_text() {
+    let c = Cap::new("w");
+    assert!(c.cmd(&["clean", "x", "--", "sh", "-c", "cargo test 2>&1 | tail -n 3"]).status().unwrap().success());
+    assert_eq!(c.meta()["command"], "cargo test 2>&1 | tail -n 3");
+    let c = Cap::new("w");
+    assert!(c.cmd(&["clean", "x", "--", "printf", r"%s\n", "a  b"]).status().unwrap().success());
+    assert_eq!(c.meta()["command"], r"printf '%s\n' 'a  b'");
+    let c = Cap::new("w");
+    assert!(c.cmd(&["clean", "x", "--", "printf", "it's", ""]).status().unwrap().success());
+    assert_eq!(c.meta()["command"], r"printf 'it'\''s' ''");
 }
