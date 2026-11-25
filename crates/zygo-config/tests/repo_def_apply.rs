@@ -153,3 +153,134 @@ fn no_workspace_file_no_loadout() {
     assert!(!a.loadout && !a.loadout_shadowed);
     assert!(!cfg.loadout.contains_key(REPOSITORY_LOADOUT));
 }
+
+// ---- Merged::with_definition ----
+
+#[test]
+fn user_profile_shadows_on_merged() {
+    let (_c, m) = merged(Some("[profile.rust]\nprompt = \"u\"\n"), None);
+    let w = m.with_definition(&def(None, &[("rust", RUST)]));
+    assert_eq!(w.config.profile["rust"], m.config.profile["rust"]);
+    assert_eq!(w.shadowed_profiles(), ["rust"]);
+    assert_eq!(w.definition_file_of("profile.rust.prompt"), None);
+    assert!(w.show(None, &|_| true).contains("profile.rust.prompt = \"u\"  # user\n"));
+    assert!(!w.show(None, &|_| true).contains("workspace-files"));
+}
+
+#[test]
+fn team_preset_shadows_on_merged() {
+    let (_c, m) = merged(Some(""), Some("[profile.rust]\ndisabled = [\"review\"]\n"));
+    let w = m.with_definition(&def(None, &[("rust", RUST)]));
+    assert_eq!(w.config.profile["rust"].disabled, ["review"]);
+    assert!(w.config.profile["rust"].overrides.is_empty());
+    assert_eq!(w.shadowed_profiles(), ["rust"]);
+    assert_eq!(w.source_of("profile.rust"), Layer::Team);
+}
+
+fn with_ws_and_rust() -> Merged {
+    let (_c, m) = merged(None, None);
+    m.with_definition(&def(Some("version = 1\n"), &[("rust", RUST)]))
+}
+
+#[test]
+fn show_labels_workspace_files() {
+    let w = with_ws_and_rust();
+    let all = w.show(None, &|_| true);
+    assert!(all.contains("profile.rust.disabled = [\"design\"]  # workspace-files .zygo/profiles/rust.toml\n"), "{all}");
+    assert!(all.contains("profile.rust.overrides.review = \"gpt-6-sol\"  # workspace-files .zygo/profiles/rust.toml\n"), "{all}");
+    assert!(
+        all.lines().any(|l| l.starts_with("loadout.repository.window = ") && l.ends_with("  # workspace-files .zygo/workspace.toml")),
+        "{all}"
+    );
+    assert_eq!(w.definition_file_of("profile.rust.overrides.review"), Some(".zygo/profiles/rust.toml"));
+    assert_eq!(w.definition_file_of("loadout.repository.window"), Some(".zygo/workspace.toml"));
+    assert_eq!(w.definition_file_of("results.head_lines"), None);
+    assert!(w.shadowed_profiles().is_empty());
+}
+
+#[test]
+fn layer_filter_hides_workspace_files() {
+    let w = with_ws_and_rust();
+    for l in [Layer::Builtin, Layer::Team, Layer::User, Layer::Repository, Layer::Profile, Layer::Flags, Layer::Session] {
+        let s = w.show(Some(l), &|_| true);
+        assert!(!s.contains("workspace-files"), "{l}: {s}");
+        assert!(!s.lines().any(|x| x.starts_with("profile.rust.") || x.starts_with("loadout.repository.")), "{l}: {s}");
+    }
+}
+
+#[test]
+fn show_workspace_files_exact() {
+    let (_c, m) = merged(Some("[results]\ntrim_threshold_bytes = 1000\n"), None);
+    assert_eq!(m.show_workspace_files(), "");
+    assert_eq!(
+        m.with_definition(&def(None, &[("rust", RUST)])).show_workspace_files(),
+        "profile.rust.disabled = [\"design\"]  # workspace-files .zygo/profiles/rust.toml\nprofile.rust.overrides.review = \"gpt-6-sol\"  # workspace-files .zygo/profiles/rust.toml\n"
+    );
+}
+
+#[test]
+fn user_loadout_repository_shadows_on_merged() {
+    let (_c, m) = merged(Some(USER_LOADOUT), None);
+    let w = m.with_definition(&def(Some("version = 1\n"), &[]));
+    assert_eq!(w.config.loadout[REPOSITORY_LOADOUT], m.config.loadout[REPOSITORY_LOADOUT]);
+    assert_eq!(w.definition_file_of("loadout.repository.window"), None);
+    assert_eq!(w.show_workspace_files(), "");
+}
+
+#[test]
+fn layer_has_no_workspace_files_variant() {
+    assert!("workspace-files".parse::<Layer>().is_err());
+    // No wildcard: a new variant fails to compile.
+    let n = |l: Layer| match l {
+        Layer::Builtin | Layer::Team | Layer::User | Layer::Repository | Layer::Profile | Layer::Flags | Layer::Session => 7,
+    };
+    assert_eq!(n(Layer::User), 7);
+}
+
+#[test]
+fn apply_profile_on_repository_profile() {
+    let (_c, m) = merged(None, None);
+    let w = m.with_definition(&def(None, &[("rust", RUST)]));
+    let p = w.apply_profile("rust").unwrap();
+    assert_eq!(p.config.profile, w.config.profile);
+    assert_eq!(p.config.features, w.config.features);
+    assert_eq!(p.show(None, &|_| true), w.show(None, &|_| true));
+}
+
+#[test]
+fn definition_survives_rebuild() {
+    let (_c, m) = merged(Some("[profile.u]\nfeatures = { work_units = false }\n"), None);
+    let w = m.with_definition(&def(Some("version = 1\n"), &[("rust", RUST)]));
+    for x in [
+        w.apply_profile("u").unwrap(),
+        w.apply_flag("results.head_lines", toml::Value::Integer(5)),
+        w.with_overrides(&Overrides { results: Some(false), ..Overrides::default() }).unwrap(),
+    ] {
+        assert!(x.config.profile.contains_key("rust"));
+        assert!(x.config.loadout.contains_key(REPOSITORY_LOADOUT));
+        assert_eq!(x.show_workspace_files(), w.show_workspace_files());
+    }
+}
+
+/// R-C8: `load` does not read `.zygo/`.
+#[test]
+fn load_does_not_read_zygo_dir() {
+    let d = tmp("rc8");
+    git(&d, &["init", "-b", "main"]);
+    std::fs::create_dir_all(d.join(".zygo/profiles")).unwrap();
+    std::fs::write(d.join(".zygo/workspace.toml"), "version = 1\n").unwrap();
+    std::fs::write(d.join(".zygo/profiles/rust.toml"), RUST).unwrap();
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-m", "x"]);
+    let mut reads = 0;
+    let m = load_with_repo_reader(&ctx(None, Some(d.to_path_buf()), None), toml::Table::new(), |_| {
+        reads += 1;
+        RepoFile::Absent
+    })
+    .unwrap();
+    assert_eq!(reads, 1);
+    assert!(!m.config.profile.contains_key("rust"));
+    assert!(!m.config.loadout.contains_key(REPOSITORY_LOADOUT));
+    assert_eq!(m.show_workspace_files(), "");
+    assert!(m.shadowed_profiles().is_empty());
+}
