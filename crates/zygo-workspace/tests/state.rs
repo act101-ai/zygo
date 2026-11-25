@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
+use zygo_config::repo_def::Pin;
 use zygo_workspace::loadout::{PaneKind as PlanKind, PlanPane};
 use zygo_workspace::state::*;
 
@@ -335,6 +336,52 @@ fn first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write() {
     assert_eq!(after["members"][KEY], v["members"][KEY]);
     let m: MemberRecord = serde_json::from_value(v["members"][KEY].clone()).unwrap();
     assert_eq!(m, MemberRecord { first_started_at: Some(1_700_000_100), ..full().members[KEY].clone() });
+}
+
+const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+const DIGEST: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+#[test] // R§7.4, R§9.3 effect 2, W§7.2: member.launch.job and member.launch.definition = { commit, digest } round-trip through a write
+fn launch_definition_and_job_set_are_written_and_kept_by_a_write() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut ws = full();
+    let m = ws.members.get_mut(KEY).unwrap();
+    m.launch.job = Some("worker".into());
+    m.launch.definition = Some(Pin { commit: COMMIT.into(), digest: DIGEST.into() });
+    let v = serde_json::to_value(&ws).unwrap();
+    assert_eq!(v["members"][KEY]["launch"]["job"], json!("worker"));
+    assert_eq!(v["members"][KEY]["launch"]["definition"], json!({"commit": COMMIT, "digest": DIGEST}));
+    put(&store, &v);
+    let read = store.read().unwrap().unwrap();
+    assert_eq!(read.members[KEY].launch.job, Some("worker".to_string()));
+    assert_eq!(read.members[KEY].launch.definition, Some(Pin { commit: COMMIT.into(), digest: DIGEST.into() }));
+    assert!(read.members[KEY].launch.extra.is_empty()); // typed fields, not unknown keys
+    store.update(S5, &mut |w| { w.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert_eq!(after["members"][KEY], v["members"][KEY]);
+    assert_eq!(serde_json::from_value::<MemberRecord>(v["members"][KEY].clone()).unwrap(), ws.members[KEY]);
+}
+
+#[test] // R§9.3 effect 2 ("absent for no job"), W AU78: a record of an older zygo has neither key; it reads as None and a write adds neither
+fn launch_definition_and_job_absent_read_as_none_and_are_not_written() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let v = serde_json::to_value(full()).unwrap();
+    assert!(v["members"][KEY]["launch"].get("job").is_none());
+    assert!(v["members"][KEY]["launch"].get("definition").is_none());
+    put(&store, &v);
+    let read = store.read().unwrap().unwrap();
+    assert_eq!((read.members[KEY].launch.job.clone(), read.members[KEY].launch.definition.clone()), (None, None));
+    store.update(S5, &mut |w| { w.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert!(after["members"][KEY]["launch"].get("job").is_none());
+    assert!(after["members"][KEY]["launch"].get("definition").is_none());
+    assert_eq!(after["members"][KEY], v["members"][KEY]);
+    let l = Launch::new(Agent::OpenCode);
+    assert_eq!((l.job, l.definition), (None, None));
+    assert_eq!(serde_json::to_value(Launch::new(Agent::OpenCode)).unwrap(),
+        json!({"kind": "opencode", "passthrough": false, "yolo": false, "args": []}));
 }
 
 #[test] // M§6: up copies the loadout pane name into the fresh member record
