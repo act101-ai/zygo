@@ -260,7 +260,10 @@ A withdrawn call keeps its id so that earlier reviews stay traceable.
 | `…/<id>/down.log` | Output of a detached `down` (AU97). |
 | `$HOME/.local/state/zygo/down-all.log` | Output of a detached `down --all` (AU97). |
 | `…/<id>/errors.log` | One line per failed hook or snapshot write. At most 64 KiB. |
+| `…/<id>/mail/outbox/` | Messages to remote addresses that wait for a push; `refused/` holds the ones the secret pass refused, `tmp/` partial writes (mail sync design S§5, S§8.3 step 11). Folders `0700`, files `0600`. |
+| `…/<id>/mail/sync/` | Mail sync state (mail sync design S§15): `identity` (S§7.5), `state.json` and `members.json` (S§8.3, S§7.3), `imported` and `incoming/` (S§8.5), `lock` and `again` (S§8.3), `last_start` (S§8.4). Folders `0700`, files `0600`. |
 | `$HOME/.cache/zygo/workspaces/<id>/results/<pane key>/` | Results of a member, linked from each of its sessions (AU16). |
+| `$HOME/.cache/zygo/workspaces/<id>/mail-sync/` | The detached worktree of the mail side branch (mail sync design S§6.3). Removed only by `zygo ws forget`, by path. |
 | `$HOME/.cache/zygo/sessions/<ULID>/activity.json` | Turn and subagent state from the workspace hook (W§9.1). |
 | `$HOME/.cache/zygo/sessions/<ULID>/activity.lock` | fs4 lock for changes to `activity.json` (AU56). |
 
@@ -1066,3 +1069,4 @@ None. The operator decided OP11 (slash commands), OP12 (saved overrides) and OP1
 | 2026-11-23 | W§9.3 step 2 | author's call (node FIX-33) | CI: runner-inherited pipes reached the detached child. |
 | 2026-11-24 | W§11 | operator for the keys (workspace definition design R§9.3, R§9.5); author's call for the config check rules (R§9.1, R§9.5); node WD-5 | Workspace definition design R§14 row W§11: pane keys `job` and `pool`, key `[workspace] pool`, and their `config check` rules. |
 | 2026-11-24 | W§12 | author's call (node WD-24) | the scrub list now names pane `job` and `name`, which the code scrubs. |
+| 2026-11-24 | W§7.1 | author's call (node MS-5) | Mail sync design S§16 row W§7.1: the sync keeps its state in `mail/outbox/` and `mail/sync/` and its side-branch worktree in the cache root `$HOME/.cache/zygo/workspaces/<id>/mail-sync/`. |
