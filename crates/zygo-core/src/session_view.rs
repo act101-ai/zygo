@@ -135,6 +135,9 @@ pub struct LegendEntry {
 pub struct Member {
     pub ws_id: String,
     pub pane: String,
+    /// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(flatten)]
     pub extra: UnknownFields,
 }

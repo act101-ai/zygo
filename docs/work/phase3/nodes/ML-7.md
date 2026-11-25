@@ -41,7 +41,7 @@ Produces (exact):
 
 Steps:
 
-- [ ] 1. In `crates/zygo-core/tests/core_basics.rs`, after `session_view_workspace_round_trips_and_is_none_for_an_old_file`, add:
+- [x] 1. In `crates/zygo-core/tests/core_basics.rs`, after `session_view_workspace_round_trips_and_is_none_for_an_old_file`, add:
   ```rust
   #[test] // M§9a: `name` on the member marker; a marker without it still loads
   fn session_view_member_name_is_optional_and_round_trips() {
@@ -59,10 +59,10 @@ Steps:
       assert_eq!(json["workspace"]["member"], serde_json::json!({"ws_id": "w1", "pane": "p1", "name": "elena"}));
   }
   ```
-- [ ] 2. Run `cargo test -p zygo-core --test core_basics -- view_member_name`. Check: E0609/E0560, no field `name` on `Member`.
-- [ ] 3. In `session_view.rs:135-140`, add to `Member` before `extra`: `/// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view.` `#[serde(default, skip_serializing_if = "Option::is_none")] pub name: Option<String>,`
-- [ ] 4. Run `cargo test -p zygo-core --test core_basics`. Check: all pass, `session_view_member_name_is_optional_and_round_trips` among them.
-- [ ] 5. Commit `crates/zygo-core/src/session_view.rs` and `crates/zygo-core/tests/core_basics.rs`, message `ML-7: member name in the session view marker` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-7:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
+- [x] 2. Run `cargo test -p zygo-core --test core_basics -- view_member_name`. Check: E0609/E0560, no field `name` on `Member`.
+- [x] 3. In `session_view.rs:135-140`, add to `Member` before `extra`: `/// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view.` `#[serde(default, skip_serializing_if = "Option::is_none")] pub name: Option<String>,`
+- [x] 4. Run `cargo test -p zygo-core --test core_basics`. Check: all pass, `session_view_member_name_is_optional_and_round_trips` among them.
+- [x] 5. Commit `crates/zygo-core/src/session_view.rs` and `crates/zygo-core/tests/core_basics.rs`, message `ML-7: member name in the session view marker` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-7:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
 - [ ] 6. In the `tests` module of `crates/zygo/src/cmd/mod.rs` (`:604`), add (import `super::Cmd` and `clap::CommandFactory`):
   ```rust
   #[test] // M§6: `--name <n>` on both launch verbs; DR-4 carried item: the help names `new`

@@ -359,6 +359,22 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     assert_eq!(m, ViewWorkspace { member, resume_note: None, ..Default::default() });
 }
 
+#[test] // M§9a: `name` on the member marker; a marker without it still loads
+fn session_view_member_name_is_optional_and_round_trips() {
+    use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let old: Member = serde_json::from_value(serde_json::json!({"ws_id": "w1", "pane": "p1"})).unwrap();
+    assert_eq!(old.name, None);
+    assert_eq!(serde_json::to_value(&old).unwrap(), serde_json::json!({"ws_id": "w1", "pane": "p1"}));
+    let named = Member { name: Some("elena".into()), ..old };
+    let v = SessionView { workspace: Some(ViewWorkspace { member: named.clone(), ..Default::default() }), ..Default::default() };
+    v.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap().workspace.unwrap().member, named);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(json["workspace"]["member"], serde_json::json!({"ws_id": "w1", "pane": "p1", "name": "elena"}));
+}
+
 #[test]
 fn session_view_save_keeps_unknown_top_level_fields() { // H1 attempt-2 review round 1, F4 (AU78 pattern)
     use zygo_core::session_view::SessionView;
