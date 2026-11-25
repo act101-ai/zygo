@@ -28,19 +28,20 @@ The product is correct. DR-11 :147 says only that an EPIPE error gives `Failed`.
 
 ### Steps
 
-- [ ] **1. Add the foreign-reader test, red.** After `piped_send_after_the_child_closed_stdin_fails`, add a `#[cfg(unix)] #[test]` named `piped_send_then_read_fails_with_a_foreign_reader`. It holds the read end in a background process on purpose, then asserts the OLD single-send form:
+- [x] **1. Add the foreign-reader test, red.** After `piped_send_after_the_child_closed_stdin_fails`, add a `#[cfg(unix)] #[test]` named `piped_send_then_read_fails_with_a_foreign_reader`. It holds the read end in a background process on purpose, then asserts the OLD single-send form:
   ```rust
   let mut p = sh("sleep 30 <&0 >/dev/null 2>&1 & exec 0<&-; printf 'closed\\n'");
   assert_eq!(p.read_line(16).unwrap(), b"closed");
   assert!(matches!(p.send(b"x\n"), Err(RunError::Failed)));
   ```
   Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-work --locked --test decision_git piped_send_then_read_fails_with_a_foreign_reader`. Check: it fails at the `send` assertion (the write succeeds because `sleep` holds the read end). This proves the old assertion is wrong and does not depend on timing.
-- [ ] **2. Make it green with the send-then-read assertion.** Replace the last line of the new test with:
+  Result (red): `panicked at crates/zygo-work/tests/decision_git.rs:468:5: assertion failed: matches!(p.send(b"x\n"), Err(RunError::Failed))`.
+- [x] **2. Make it green with the send-then-read assertion.** Replace the last line of the new test with:
   ```rust
   let r = p.send(b"x\n").and_then(|()| p.read_line(16).map(drop));
   assert!(matches!(r, Err(RunError::Failed)));
   ```
   Run the same command. Check: it passes, and it returns at once (the `sleep 30` dies with the process group when `p` drops).
-- [ ] **3. Fix the original test.** In `piped_send_after_the_child_closed_stdin_fails`, replace `assert!(matches!(p.send(b"x\n"), Err(RunError::Failed)));` with the same two lines as step 2. Check: `grep -n 'matches!(p.send(' crates/zygo-work/tests/decision_git.rs` prints nothing.
-- [ ] **4. Run the acceptance.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-work --locked --test decision_git` → all pass. Check: `git diff --stat` lists only `crates/zygo-work/tests/decision_git.rs`; the Rust lines added contain no `sleep` and no `Instant`/`Duration` read (the only `sleep` is in the shell script string, as the foreign reader).
-- [ ] **5. Commit.** `FX-5: piped send tests assert send-then-read fails`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.
+- [x] **3. Fix the original test.** In `piped_send_after_the_child_closed_stdin_fails`, replace `assert!(matches!(p.send(b"x\n"), Err(RunError::Failed)));` with the same two lines as step 2. Check: `grep -n 'matches!(p.send(' crates/zygo-work/tests/decision_git.rs` prints nothing.
+- [x] **4. Run the acceptance.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-work --locked --test decision_git` → all pass. Check: `git diff --stat` lists only `crates/zygo-work/tests/decision_git.rs`; the Rust lines added contain no `sleep` and no `Instant`/`Duration` read (the only `sleep` is in the shell script string, as the foreign reader).
+- [x] **5. Commit.** `FX-5: piped send tests assert send-then-read fails`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.
