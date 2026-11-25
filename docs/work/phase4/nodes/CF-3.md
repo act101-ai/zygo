@@ -498,3 +498,20 @@ pub const GENERATED_BY: &str = "crates/zygo-core/tests/conformance.rs (ZYGO_WRIT
 | score table (K§6.2.6 item 3; K§11 item 6 example numbers) | `render_markdown_golden_fixtures`, `render_json_spec_example_values` |
 | criteria list after the outputs | `render_markdown_golden_fixtures` |
 | write mode (K§6.2.5) | `render_compare_write_mode_writes_both` |
+
+## Round 2
+
+Review findings, each fixed test first (the test failed, or for F6 the compiler warned, before the fix).
+
+- [x] **F1. Backslash kept in table cells** — `0b1ddc69`. `esc` writes `\` as `\\`, then `|` as `\|`. Test `render_markdown_backslash_kept`: the reason `a\|b` renders as `a\\\|b`; the row keeps 5 unescaped `|`.
+- [x] **F2. Raw HTML escaped** — `6c51e56f`. `&`, `<`, `>` become `&amp;`, `&lt;`, `&gt;` in each input text of a table cell (capability, cell text, client name) and of a list line (rollup heading, bar failing ids, exceptions, criteria heading, ids, reasons). Not escaped: the URL in the cell URL position (table escape only) and evidence text inside a code span (a code span shows entities literally). Test `render_markdown_html_escaped`.
+- [x] **F3. Backtick in evidence** — `fdcb1b8c`. `code_span` uses a fence one backtick longer than the longest run inside, with a space inside the fence when the text begins or ends with a backtick. Test `render_markdown_evidence_backtick_span` builds the `Resolved` by hand: an evidence text with a backtick would need a file of that name in the fixture repository to resolve.
+- [x] **F4. One weights constant** — `0e0d728a`. `derive::WEIGHTS: [u32; 3] = [3, 2, 1]` (core, standard, extra); `scores` and the JSON `weights` read it. Test `render_json_weights_match_derive` (failed to compile before the constant).
+- [x] **F5. JSON golden file** — `9abc8342`. `fixtures/expected-conformance.json`, written from `json_of(&render_input())` and checked by hand against the K§6.2.6 example keys and the values of `expected-conformance.md`. Test `render_json_golden_fixture` (CR LF → LF, as the Markdown golden test). It passes under `-p zygo-core` and under `--workspace` (`preserve_order`, `arbitrary_precision`).
+- [x] **F6. compare_or_write called; module allow dropped** — `bf8c09ac`. With the allow removed, only `compare_or_write` warned (never used). Test `render_compare_or_write_env_entry` calls it on a temp root with the correct files; it does not set or remove `ZYGO_WRITE_CONFORMANCE` and passes with and without `ZYGO_WRITE_CONFORMANCE=1`. No item-level allow is needed.
+
+Acceptance after round 2: exit 0; `render_` count 22; `conformance` 106 passed. `cargo test -p zygo-core --locked` green; `cargo build --workspace --locked` green.
+
+### Test logic edits
+
+- `render_markdown_pipe_escaped_one_row` (F1): the `unescaped` closure counted a `|` as escaped when any `\` came before it. It is now the shared function `unescaped`, which counts a `|` as escaped only when an odd number of `\` come before it. `render_markdown_backslash_kept` uses it too. The assertion (5 unescaped `|`) is unchanged.
