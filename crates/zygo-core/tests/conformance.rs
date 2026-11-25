@@ -782,3 +782,24 @@ fn check_3_reads_the_resolved_evidence() {
     assert_eq!(items(&f), set(&[3]));
     assert!(f[0].text.contains("stub: does not count"), "{f:?}");
 }
+
+/// A copy of the fixture repository with each `(path, text)` of `files` written into it.
+fn repo_with(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let d = copy_repo();
+    for (p, t) in files {
+        let f = d.path().join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, t).unwrap();
+    }
+    d
+}
+
+#[test]
+fn check_3_bom_trivial_fixture_not_evidence() {
+    let d = repo_with(&[]);
+    std::fs::write(d.path().join("fixtures/alpha/bom.json"), b"\xEF\xBB\xBF{}").unwrap();
+    std::fs::write(d.path().join("fixtures/alpha/bom-list.json"), b"\xEF\xBB\xBF [ ]\n").unwrap();
+    for e in ["fixture:fixtures/alpha/bom.json", "fixture:fixtures/alpha/bom-list.json"] {
+        assert!(evidence(d.path(), e, "Alpha").unwrap_err().contains("trivial"), "{e}");
+    }
+}

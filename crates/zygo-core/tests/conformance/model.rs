@@ -497,7 +497,9 @@ fn evidence_in(root: &Path, e: &str, client_name: &str, cache: &mut ReachCache) 
                 return Err(fail(format!("{rel} is not a regular file of more than 2 bytes")));
             }
             let bytes = read_capped_bytes(&full, rel).map_err(fail)?;
-            let squeezed: Vec<u8> = bytes.into_iter().filter(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n')).collect();
+            // A leading UTF-8 byte order mark (U+FEFF) is not content.
+            let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+            let squeezed: Vec<u8> = bytes.iter().copied().filter(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n')).collect();
             if squeezed == b"{}" || squeezed == b"[]" {
                 return Err(fail(format!("{rel} is trivial")));
             }
