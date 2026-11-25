@@ -389,7 +389,8 @@ fn launch_definition_and_job_absent_read_as_none_and_are_not_written() {
 #[test] // M§6: up copies the loadout pane name into the fresh member record
 fn member_name_fresh_member_takes_the_plan_pane_name() {
     let pp = |name: Option<&str>| PlanPane { kind: PlanKind::Agent(Agent::ClaudeCode), name: name.map(String::from), cwd: "/srv/app".into(),
-        profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None };
+        profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None,
+        job: None, pool: false, definition: None };
     let lead = zygo_workspace::up::testing::fresh_member(Agent::ClaudeCode, &pp(Some("lead")));
     assert_eq!(lead.name.as_deref(), Some("lead"));
     assert_eq!(lead.valid_name(), Some("lead"));
@@ -483,7 +484,8 @@ fn member_name_of_the_wrong_json_type_reads_as_none() {
 #[test] // M§6, ML-3 review round 1: the panes[] entry of a loadout up takes the name of an agent pane; a shell pane and an AU98 pane get none
 fn member_name_loadout_pane_entry_takes_the_name_of_an_agent_pane_only() {
     let pp = |kind: PlanKind, server: Option<&str>| PlanPane { kind, name: Some("lead".into()), cwd: "/srv/app".into(),
-        profile: None, args: vec![], yolo: false, passthrough: false, server: server.map(String::from), compact: None, config_dir: None };
+        profile: None, args: vec![], yolo: false, passthrough: false, server: server.map(String::from), compact: None, config_dir: None,
+        job: None, pool: false, definition: None };
     let entry = |p: &PlanPane| zygo_workspace::up::testing::loadout_pane(p);
     let agent = entry(&pp(PlanKind::Agent(Agent::ClaudeCode), Some("https://zygo.example")));
     assert_eq!((agent.kind, agent.name.as_deref(), agent.valid_name()), (PaneKind::ClaudeCode, Some("lead"), Some("lead")));
