@@ -1133,6 +1133,21 @@ fn client_name(a: Agent) -> &'static str {
     }
 }
 
+/// The grade files in `dir`: exactly `<client id>.toml` for each client in `Agent::ALL`, in that order. Other
+/// .toml files in the folder are not grade files.
+pub fn grade_files(dir: &Path) -> Result<Vec<GradeFile>, String> {
+    Agent::ALL
+        .iter()
+        .map(|a| {
+            let path = dir.join(format!("{}.toml", a.as_str()));
+            if !path.is_file() {
+                return Err(format!("{}: no grade file for client `{}`", path.display(), a.as_str()));
+            }
+            GradeFile::load(&path).map_err(|e| format!("{}: {e}", path.display()))
+        })
+        .collect()
+}
+
 /// One `Client` per `Agent::ALL`, its version the built-in minimum in `crates/zygo-config/data/agents.toml`.
 pub fn clients(root: &Path) -> Result<Vec<Client>, String> {
     let path = root.join("crates/zygo-config/data/agents.toml");

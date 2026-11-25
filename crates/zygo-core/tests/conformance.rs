@@ -1765,30 +1765,57 @@ fn render_compare_write_mode_writes_both() {
     assert_eq!(render::compare_or_write_mode(&file, &md, &json, true).unwrap_err().item, 10);
 }
 
-/// K§6.2.5 on the repository: check items 1-9 on `docs/conformance/`, then the generator and item 10.
-#[test]
-fn conformance_tree() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let dir = root.join("docs/conformance");
+/// Check items 1-9 on the registry and grade files in `dir`, evidence resolved against `root`.
+fn tree_check(root: &Path, dir: &Path) -> (Registry, Vec<GradeFile>, Vec<Client>, Resolved) {
     let reg = Registry::load(&dir.join("capabilities.toml")).unwrap_or_else(|e| panic!("capabilities.toml: {e}"));
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "toml") && p.file_name().is_some_and(|n| n != "capabilities.toml"))
-        .collect();
-    paths.sort();
-    let grades: Vec<GradeFile> =
-        paths.iter().map(|p| GradeFile::load(p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))).collect();
-    let clients = clients(&root).unwrap();
-    let resolved = resolve(&root, &grades);
-    let faults = check(&root, &reg, &grades, &clients, &resolved);
+    let grades = grade_files(dir).unwrap_or_else(|e| panic!("{e}"));
+    let clients = clients(root).unwrap();
+    let resolved = resolve(root, &grades);
+    let faults = check(root, &reg, &grades, &clients, &resolved);
     assert!(
         faults.is_empty(),
         "{}",
         faults.iter().map(|f| format!("item {}: {}", f.item, f.text)).collect::<Vec<_>>().join("\n")
     );
+    (reg, grades, clients, resolved)
+}
+
+/// A copy of `docs/conformance/` in a temporary folder.
+fn conformance_copy() -> tempfile::TempDir {
+    let from = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance");
+    let d = tempfile::tempdir().unwrap();
+    for e in std::fs::read_dir(&from).unwrap() {
+        let e = e.unwrap();
+        std::fs::copy(e.path(), d.path().join(e.file_name())).unwrap();
+    }
+    d
+}
+
+/// Another .toml file in the folder (CC-15's `boundary-exceptions.toml`) is not a grade file.
+#[test]
+fn tree_reads_only_the_client_grade_files() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let d = conformance_copy();
+    std::fs::write(d.path().join("boundary-exceptions.toml"), "[[exception]]\npath = \"x\"\nwhy = \"y\"\n").unwrap();
+    let (_, grades, _, _) = tree_check(&root, d.path());
+    let ids: Vec<&str> = grades.iter().map(|g| g.client.as_str()).collect();
+    assert_eq!(ids, ["claude-code", "opencode"]);
+}
+
+/// A client with no `<client id>.toml` is a clear failure.
+#[test]
+fn tree_missing_client_grade_file_refused() {
+    let d = conformance_copy();
+    std::fs::remove_file(d.path().join("opencode.toml")).unwrap();
+    let e = grade_files(d.path()).unwrap_err();
+    assert!(e.contains("opencode.toml") && e.contains("no grade file for client `opencode`"), "{e}");
+}
+
+/// K§6.2.5 on the repository: check items 1-9 on `docs/conformance/`, then the generator and item 10.
+#[test]
+fn conformance_tree() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let (reg, grades, clients, resolved) = tree_check(&root, &root.join("docs/conformance"));
     let md = render::markdown(&reg, &grades, &clients, &resolved);
     let json = render::json(&reg, &grades, &clients, &resolved);
     if let Err(f) = render::compare_or_write(&root, &md, &json) {
