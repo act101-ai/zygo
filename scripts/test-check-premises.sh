@@ -600,4 +600,41 @@ ln -s ../../../fixtures/opencode/help.txt "$D/scripts/premises/live/link.txt"
 run "$D"
 expect_fail "scripts/premises/live/link.txt is a symlink; a symlink in the scan scope is not scanned and is not evidence"
 
+LIVE=scripts/premises/live-claude.sh
+CASE="a forbidden name in a live script"
+D=$(mk live_name)
+printf '%s\n' '# owner alice' >> "$D/$LIVE"
+run_names "$D" alice
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $LIVE:$(wc -l <"$D/$LIVE" | tr -d ' ')"
+
+CASE="an API key in a live script"
+D=$(mk live_key)
+printf '%s\n' '# key sk-ant-test' >> "$D/$LIVE"
+run "$D"
+expect_fail "forbidden content (API key): $LIVE:$(wc -l <"$D/$LIVE" | tr -d ' '):# key sk-ant-test"
+
+CASE="an address at example.invalid"
+D=$(mk mail_invalid)
+printf '%s\n' 'user.email=x@example.invalid, <y@example.invalid>' 'z@example.invalid' > "$D/fixtures/codex/mail.txt"
+run "$D"
+expect_ok
+
+CASE="an address at example.invalidz.com"
+D=$(mk mail_invalidz)
+printf '%s\n' 'x@example.invalidz.com' > "$D/fixtures/codex/mail.txt"
+run "$D"
+expect_fail "forbidden content (e-mail address): fixtures/codex/mail.txt:1:x@example.invalidz.com"
+
+CASE="an address at sub.example.invalid.evil.com"
+D=$(mk mail_evil)
+printf '%s\n' 'x@sub.example.invalid.evil.com' > "$D/fixtures/codex/mail.txt"
+run "$D"
+expect_fail "forbidden content (e-mail address): fixtures/codex/mail.txt:1:x@sub.example.invalid.evil.com"
+
+CASE="a real address beside one at example.invalid"
+D=$(mk mail_mixed)
+printf '%s\n' 'x@example.invalid y@example.com' > "$D/fixtures/codex/mail.txt"
+run "$D"
+expect_fail "forbidden content (e-mail address): fixtures/codex/mail.txt:1:x@example.invalid y@example.com"
+
 echo "test-check-premises: ok ($N cases)"
