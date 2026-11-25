@@ -1579,3 +1579,24 @@ fn repo_root_is_none_for_a_non_utf8_top() {
     assert_eq!(code, 2, "{err}");
     assert_eq!(st.last().view.expect("view.json was written").repo_root, None);
 }
+
+// ---- OS-9: the launcher copies `[results] shape` into view.json (output shaping O§9, O§11) ----
+
+#[test]
+fn view_shape_of_the_user_config_reaches_the_view() {
+    let fx = fx();
+    let st = refused(&fx);
+    let mut o = opts(&fx, "dump", &[]);
+    o.top = Some(None); // the test hook in place of the 2 s `checkout`
+    let (code, err) = run(&st, o);
+    assert_eq!(code, 2, "{err}");
+    assert!(st.last().view.expect("view.json was written").shape, "the default");
+    fx.config("[results]\nshape = false\n");
+    let st = refused(&fx);
+    let mut o = opts(&fx, "dump", &[]);
+    o.top = Some(None);
+    let (code, err) = run(&st, o);
+    assert_eq!(code, 2, "{err}");
+    // The serde default is `true`: a `false` read means the file holds `"shape": false`.
+    assert!(!st.last().view.expect("view.json was written").shape);
+}
