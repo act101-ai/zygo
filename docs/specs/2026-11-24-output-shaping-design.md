@@ -357,7 +357,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 
 | Shaper | Cases |
 |---|---|
-| clean | `cargo test --color always` (passing); `git clone --progress` stderr with `\r` progress; `git diff --color` with a CRLF file (must stay byte-equal except the color codes) |
+| clean | `cargo test --color always -- --color always` (passing; the part after `--` colors libtest stdout); `git clone --progress --no-local` stderr with `\r` progress (a clone from a local path prints no progress without `--no-local`); `git diff --color=always` with a CRLF file (must stay byte-equal except the color codes) |
 | dedup | a real build log with a repeated warning; an output that already has a line ending in ` [repeated 4 times]` (no change) |
 | libtest | `cargo test` of a scratch crate, all passing (≥ 100 tests); the same crate with 2 failing tests, one with `--nocapture` output; a test that crashes with a signal; a compile error |
 | pytest | a scratch project: all passing; 2 failing with `-v`; a collection error |
@@ -579,4 +579,5 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-24 | O§6.5 item 3 | author's call (OS-2 review round 1) | the column check reads `PRAGMA table_xinfo` so a generated column counts as present |
+| 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give or record the required bytes; the row now names `-- --color always` (colors libtest stdout), `--no-local` (a local clone prints no `\r` progress) and `git diff --color=always` (the recorded command) (found in phase3 OS-17). |
 | 2026-11-24 | O§8.1 | operator | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |
