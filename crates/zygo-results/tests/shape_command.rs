@@ -412,3 +412,77 @@ fn bare_shell_stage_is_unsure() {
         assert!(!fp(c), "file printer: {c:?}");
     }
 }
+
+// OS-40 review round 1
+
+#[test]
+fn r1_newline_after_pipe_continues_the_pipeline() {
+    all_fp(&["echo 'cat f' |\n  bash", "echo 'cat f' | # c\n bash"]);
+}
+
+#[test]
+fn r1_multiline_pipeline_list_name() {
+    assert_eq!(parse("echo hi |\n  ls -la").name, "other");
+    assert_eq!(
+        parse("ls -la |\n  grep x").name,
+        parse("ls -la | grep x").name
+    );
+}
+
+#[test]
+fn r1_backtick_redirect_is_a_file_printer() {
+    assert!(fp("echo \"bt:`<f`\""));
+}
+
+#[test]
+fn r1_fd0_redirect_substitution_is_a_file_printer() {
+    assert!(fp("echo \"$(0<f)\""));
+}
+
+#[test]
+fn r1_newline_before_redirect_substitution_is_a_file_printer() {
+    assert!(fp("echo \"$(\n<f)\""));
+}
+
+#[test]
+fn r1_eval_double_dash() {
+    assert!(fp("eval -- 'cat f'"));
+}
+
+#[test]
+fn r1_builtin_is_a_wrapper() {
+    assert!(fp("builtin eval 'cat f'"));
+}
+
+#[test]
+fn r1_shell_c_flag_only_in_leading_options() {
+    assert!(fp("echo 'cat f' | bash -s -- -force"));
+    all_fp(&["bash -c 'cat f'", "bash -xc 'cat f'"]);
+    assert!(!fp("bash -c 'true'"));
+    assert!(!fp("bash -xc 'true'"));
+}
+
+#[test]
+fn r1_redirect_only_stage_is_a_file_printer() {
+    all_fp(&["<f", "<s.sh | bash"]);
+}
+
+#[test]
+fn r1_timeout_long_kill_after() {
+    assert!(fp("timeout --kill-after 5 10 cat f"));
+}
+
+#[test]
+fn r1_eval_pipe_into_bash() {
+    assert!(fp("eval \"echo 'cat f' | bash\""));
+}
+
+#[test]
+fn r1_shell_option_arguments_before_c() {
+    all_fp(&[
+        "bash -o pipefail -c 'cat f'",
+        "bash -O extglob -c 'cat f'",
+        "zsh +o nomatch -c 'cat f'",
+    ]);
+    assert!(!fp("bash -o pipefail -c 'true'"));
+}
