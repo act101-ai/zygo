@@ -217,7 +217,7 @@ Session text (T, SX nodes):
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
 | WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
-| RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | PLANNED | implementation | plan 6d70796 · PR #38 |
+| RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | IN-PROGRESS | implementation | .worktrees/phase3/RT-1-node · PR #38 |
 | RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
 | SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | TODO | implementation | — |
 | SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | TODO | implementation | — |
@@ -360,3 +360,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | WD-1 planned (7e304a9): 6 steps; contract change Read::Absent { full_ref: Option<String> } (read_at needs it, R§7.4); lead's call: SystemGit reuses repo_file::git_out (now pub(crate)), GitOut widened to ExitStatus, no copy · PR #36 |
 | 2026-11-24 | WD-1 done (repo definition reader; review round 1 fixed 8) · PR #36 |
 | 2026-11-24 | RT-1 planned (6d70796): 11 steps, 10 first_started_at tests · PR #38 |
+| 2026-11-24 | RT-1 in progress: node worktree .worktrees/phase3/RT-1-node, branch phase3/RT-1--RT-1 · PR #38 |
