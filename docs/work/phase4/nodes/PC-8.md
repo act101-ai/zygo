@@ -137,3 +137,16 @@ Round 1, 2026-11-25, on `phase-4--PC-8`:
   check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW15-bash PW15-tool PW15-slash PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)
   ```
 
+Round 2, 2026-11-25, on `phase-4--PC-8`:
+
+- R1 (tests at 71212a21, before the fix), non-stopping copy of the harness: 58, 59, 61, 62, 63, 64 each exit 0 (expected 1). 57 and 60 pass.
+- R3 (fix at 7f318ec5): `sh scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (64 cases)`; `dash scripts/test-check-premises.sh` → exit 0, `test-check-premises: ok (64 cases)`; `sh scripts/premises/ver_test.sh` → exit 0, `ver tests: ok (53)`.
+- Acceptance → exit 0:
+  ```
+  test-check-premises: ok (64 cases)
+  check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW15-bash PW15-tool PW15-slash PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)
+  check-premises: note: N2_FORBIDDEN_NAMES not set; name scan skipped
+  check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW15-bash PW15-tool PW15-slash PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)
+  ```
+- `N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh` → exit 0, `check-premises: ok (P1 … PW16)`.
+
