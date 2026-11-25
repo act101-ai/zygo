@@ -105,7 +105,19 @@ fn limit(ctx: &LaunchCtx, model: &str) -> Value {
     json!({ "context": context, "output": facts.map_or(0, |f| f.max_output_tokens) })
 }
 
-fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery) -> Value {
+/// The provider key as a reference to the session's `token` file (§8.7, premise PO1): OpenCode
+/// reads the file when it loads its config, so the token is in no environment row. OpenCode matches
+/// `{file:…}` on the raw config text, so the path uses `/` and may hold no `{`, `}` or `"`.
+fn token_ref(ctx: &LaunchCtx) -> anyhow::Result<String> {
+    let t = ctx.session_dir.token();
+    let p = t.to_str().ok_or_else(|| anyhow!("cannot use the session directory path: it is not valid UTF-8"))?.replace('\\', "/");
+    if p.contains(['{', '}', '"']) {
+        bail!("cannot reference the session token file {p}: its path holds {{, }} or \"");
+    }
+    Ok(format!("{{file:{p}}}"))
+}
+
+fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str) -> Value {
     let c = &ctx.config;
     let mut headers = Map::new();
     headers.insert("X-Zygo-Session".into(), json!(ctx.session));
@@ -155,11 +167,12 @@ fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery) -> Value {
         "$schema": "https://opencode.ai/config.json",
         "model": format!("zygo/{}", c.main_role),
         "small_model": format!("zygo/{small}"),
+        "enabled_providers": ["zygo"],
         "provider": { "zygo": {
             "npm": "@ai-sdk/anthropic",
             "options": {
                 "baseURL": format!("{}/anthropic/v1", ctx.proxy_url.as_str().trim_end_matches('/')),
-                "apiKey": ctx.token,
+                "apiKey": key,
                 "headers": headers,
             },
             "models": models,
@@ -438,7 +451,8 @@ impl AgentAdapter for OpenCode {
     fn build(&self, ctx: &LaunchCtx) -> anyhow::Result<ChildSpec> {
         let zygo = self.zygo.to_str().filter(|z| !z.is_empty()).ok_or_else(|| anyhow!("cannot find the path of the running zygo binary"))?;
         ctx.session_dir.root.to_str().ok_or_else(|| anyhow!("cannot use the session directory path: it is not valid UTF-8"))?;
-        let dir = ctx.session_dir.root.join("opencode");
+        let key = token_ref(ctx)?;
+        let dir =ctx.session_dir.root.join("opencode");
         std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
         let path = serde_json::to_string(zygo)?;
         let plugins = dir.join("plugins");
@@ -455,7 +469,7 @@ impl AgentAdapter for OpenCode {
         if d.partial {
             lines.push("plugins: partial".into());
         }
-        let cfg = inline_config(ctx, zygo, &d);
+        let cfg = inline_config(ctx, zygo, &d, &key);
         let mut args = ctx.args.clone();
         if ctx.yolo
             && let Some(name) = place_auto(&mut args)

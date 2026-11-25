@@ -40,7 +40,7 @@ Premise check (execute-work §3.1) at `40732c74` (`origin/phase-4`).
 
 **Code, test first.**
 
-- [ ] 5. In `crates/zygo-launch/tests/opencode.rs` write the failing tests:
+- [x] 5. In `crates/zygo-launch/tests/opencode.rs` write the failing tests:
       ```rust
       #[test]
       fn opencode_token_is_only_a_file_reference() {
@@ -75,12 +75,12 @@ Premise check (execute-work §3.1) at `40732c74` (`origin/phase-4`).
           }
       }
       ```
-      `fn files_under(dir: &Path) -> Vec<PathBuf>` is a test helper: recursive `read_dir`, regular files only. In `inline_config_values` (`:321`) the key assert becomes the `want` form above (`format!("{{file:{}}}", …)` of `c.session_dir.token()`).
-- [ ] 6. Run `cargo test -p zygo-launch --locked --test opencode` → FAIL: the three new tests and `inline_config_values` (the key is the token, no `enabled_providers`, no refusal).
-- [ ] 7. In `crates/zygo-launch/src/opencode.rs` add `fn token_ref(ctx: &LaunchCtx) -> anyhow::Result<String>`: `ctx.session_dir.token()` as UTF-8 (`build` already refuses a non-UTF-8 root, `:440`), each `\` replaced by `/`; `bail!` with "cannot reference the session token file <path>: its path holds {, } or \"" when it holds `{`, `}` or `"`; returns `format!("{{file:{p}}}")`. Change `inline_config` to `fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str) -> Value`: the provider's key field is `key`, and the config gets the top-level `"enabled_providers": ["zygo"]`. In `build`, call `token_ref(ctx)?` before `inline_config` and pass it. Doc comment on `token_ref`: §8.7, PO1. Nothing else changes; this file no longer reads `ctx.token`.
-- [ ] 8. Run `cargo test -p zygo-launch --locked --test opencode` → PASS, with `inline_config_validates_against_the_pinned_schema` and `inline_config_matches_the_fixture_shape` unchanged and green.
-- [ ] 9. In `crates/zygo-launch/tests/stub_launch.rs`, `opencode_child_environment_flags_and_inline_config_match_the_spec` (`#[ignore]` for timing; run locally): the key assert at `:601` becomes the `{file:…}` form of `sd.join("token")` (`/` separators); add `assert_eq!(cfg["enabled_providers"], json!(["zygo"]));`; the comment at `:612` becomes "C3, A-10.2: the token is only in the `token` file of the session dir"; `:614` becomes `assert!(e.iter().all(|(_, v)| !v.contains(token)), "env");` (no exception). Run `cargo test -p zygo-launch --locked --test stub_launch -- --ignored --exact opencode_child_environment_flags_and_inline_config_match_the_spec` → 1 passed. Run `cargo test -p zygo-launch --locked --test premise` → PASS (`enabled_providers` is a top-level key of the pinned schema).
-- [ ] 10. Commit the code and tests.
+      `files_under` is the file's existing helper (`fn files_under(dir: &Path) -> BTreeMap<String, String>`: relative path to text); the loop is `for (rel, text) in files_under(…) { assert!(!text.contains(&c.token), "{rel}") }` (a second helper of that name does not compile). In `inline_config_values` (`:321`) the key assert becomes the `want` form above (`format!("{{file:{}}}", …)` of `c.session_dir.token()`).
+- [x] 6. Run `cargo test -p zygo-launch --locked --test opencode` → FAIL: the three new tests and `inline_config_values` (the key is the token, no `enabled_providers`, no refusal).
+- [x] 7. In `crates/zygo-launch/src/opencode.rs` add `fn token_ref(ctx: &LaunchCtx) -> anyhow::Result<String>`: `ctx.session_dir.token()` as UTF-8 (`build` already refuses a non-UTF-8 root, `:440`), each `\` replaced by `/`; `bail!` with "cannot reference the session token file <path>: its path holds {, } or \"" when it holds `{`, `}` or `"`; returns `format!("{{file:{p}}}")`. Change `inline_config` to `fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str) -> Value`: the provider's key field is `key`, and the config gets the top-level `"enabled_providers": ["zygo"]`. In `build`, call `token_ref(ctx)?` right after the UTF-8 check of the root (so nothing is written before a refusal) and pass it to `inline_config`. Doc comment on `token_ref`: §8.7, PO1. Nothing else changes; this file no longer reads `ctx.token`.
+- [x] 8. Run `cargo test -p zygo-launch --locked --test opencode` → PASS, with `inline_config_validates_against_the_pinned_schema` and `inline_config_matches_the_fixture_shape` unchanged and green.
+- [x] 9. In `crates/zygo-launch/tests/stub_launch.rs`, `opencode_child_environment_flags_and_inline_config_match_the_spec` (`#[ignore]` for timing; run locally): the key assert at `:601` becomes the `{file:…}` form of `sd.join("token")` (`/` separators); add `assert_eq!(cfg["enabled_providers"], json!(["zygo"]));`; the comment at `:612` becomes "C3, A-10.2: the token is only in the `token` file of the session dir"; `:614` becomes `assert!(e.iter().all(|(_, v)| !v.contains(token)), "env");` (no exception). Run `cargo test -p zygo-launch --locked --test stub_launch -- --ignored --exact opencode_child_environment_flags_and_inline_config_match_the_spec` → 1 passed. Run `cargo test -p zygo-launch --locked --test premise` → PASS (`enabled_providers` is a top-level key of the pinned schema).
+- [x] 10. Commit the code and tests.
 
 **Spec text (author's call; operator decision 2026-11-25).**
 

@@ -598,7 +598,9 @@ fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
     assert_eq!(cfg["model"], "zygo/lead");
     assert_eq!(cfg["provider"]["zygo"]["npm"], "@ai-sdk/anthropic");
     assert_eq!(cfg["provider"]["zygo"]["options"]["baseURL"], format!("{url}/anthropic/v1"));
-    assert_eq!(cfg["provider"]["zygo"]["options"]["apiKey"], token);
+    let key = format!("{{file:{}}}", sd.join("token").to_str().unwrap().replace('\\', "/"));
+    assert_eq!(cfg["provider"]["zygo"]["options"]["apiKey"], key.as_str());
+    assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
     assert_eq!(
         cfg["provider"]["zygo"]["options"]["headers"],
         json!({"X-Zygo-Session": e["ZYGO_SESSION"], "X-Zygo-Agent-Version": "1.18.16", "X-Zygo-Repo": "example.com/acme/widgets", "X-Zygo-Work": "branch:main"})
@@ -608,10 +610,10 @@ fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
     assert_eq!(cfg["agent"]["build"]["permission"], json!({"edit": "deny"})); // lead guard, §8.3: build maps to main_role lead
     assert_eq!(cfg["mcp"]["zygo"], json!({"type": "local", "command": [rig.zygo.to_string_lossy(), "mcp", "--agent", "opencode"]}));
     assert!(r.cap.ocdir.contains_key("plugins/zygo.js") && r.cap.ocdir.contains_key("skills/zygo-zygo-cli/SKILL.md"));
-    // C3: the token is only in the `token` file of the session dir and in the inline config row
+    // C3, A-10.2: the token is only in the `token` file of the session dir
     let leaks: Vec<&String> = r.cap.session.iter().filter(|(k, v)| *k != "token" && v.contains(token)).map(|(k, _)| k).collect();
     assert!(leaks.is_empty(), "{leaks:?}");
-    assert!(e.iter().all(|(k, v)| k == "OPENCODE_CONFIG_CONTENT" || !v.contains(token)));
+    assert!(e.iter().all(|(_, v)| !v.contains(token)), "env");
     assert!(r.cap.argv.iter().all(|a| !a.contains(token)) && !r.stderr.contains(token));
     let hit: Vec<&String> = r.cap.session.iter().chain(e.iter()).filter(|(_, t)| t.contains("denied-value-")).map(|(k, _)| k).collect();
     assert!(hit.is_empty(), "{hit:?}");

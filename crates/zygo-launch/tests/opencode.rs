@@ -318,7 +318,8 @@ fn inline_config_values() {
     let p = &cfg["provider"]["zygo"];
     assert_eq!(p["npm"], "@ai-sdk/anthropic");
     assert_eq!(p["options"]["baseURL"], "http://127.0.0.1:4/anthropic/v1");
-    assert_eq!(p["options"]["apiKey"], c.token.as_str());
+    let want = format!("{{file:{}}}", c.session_dir.token().to_str().unwrap().replace('\\', "/"));
+    assert_eq!(p["options"]["apiKey"], want.as_str());
     assert_eq!(p["options"]["headers"], json!({"X-Zygo-Session": "S1", "X-Zygo-Agent-Version": "1.18.16"}));
     let roles: BTreeSet<&str> = c.config.roles.keys().map(String::as_str).collect();
     let keys: BTreeSet<&str> = p["models"].as_object().unwrap().keys().map(String::as_str).collect();
@@ -335,6 +336,39 @@ fn inline_config_values() {
     let h = built(&c).1["provider"]["zygo"]["options"]["headers"].clone();
     assert_eq!(h["X-Zygo-Repo"], "example.invalid/a/b");
     assert_eq!(h["X-Zygo-Work"], "src:7");
+}
+
+#[test]
+fn opencode_token_is_only_a_file_reference() {
+    let fx = fx();
+    let c = ctx(&fx, |c| c.token = format!("oc1-{}-{}", "probe", 7)); // distinct from any path text
+    let (spec, cfg) = built(&c);
+    let want = format!("{{file:{}}}", c.session_dir.token().to_str().unwrap().replace('\\', "/"));
+    assert_eq!(cfg["provider"]["zygo"]["options"]["apiKey"], want.as_str());
+    assert!(spec.env.iter().all(|(_, v)| !v.contains(&c.token)), "env");
+    assert!(spec.args.iter().all(|a| !a.contains(&c.token)), "args");
+    for (rel, text) in files_under(&c.session_dir.root.join("opencode")) {
+        assert!(!text.contains(&c.token), "{rel}");
+    }
+}
+
+#[test]
+fn inline_config_limits_providers_to_zygo() {
+    let fx = fx();
+    let (_, cfg) = built(&ctx(&fx, |_| {}));
+    assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
+    assert_eq!(cfg["provider"].as_object().unwrap().keys().collect::<Vec<_>>(), ["zygo"]);
+}
+
+#[test]
+fn a_token_path_that_breaks_the_file_reference_is_refused() {
+    let bad: &[&str] = if cfg!(windows) { &["a}b", "a{b"] } else { &["a}b", "a{b", "a\"b"] };
+    for b in bad {
+        let fx = fx();
+        let c = ctx(&fx, |c| c.session_dir = SessionDir::new(fx.root.join(b)));
+        let e = oc().build(&c).err().expect(b).to_string();
+        assert!(e.contains("cannot reference the session token file"), "{e}");
+    }
 }
 
 #[test]
