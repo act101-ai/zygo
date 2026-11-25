@@ -4,12 +4,15 @@
   "enabled_providers": [
     "zygo"
   ],
-  "disabled_providers": [],
+  "disabled_providers": [
+    "amazon-bedrock",
+    "google"
+  ],
   "provider": {
     "zygo": {
       "npm": "@ai-sdk/anthropic",
       "options": {
-        "baseURL": "http://127.0.0.1:55778/v1",
+        "baseURL": "http://127.0.0.1:57243/v1",
         "apiKey": "{file:/tmp/run/sess dir/token}"
       },
       "models": {

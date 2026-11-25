@@ -7,9 +7,13 @@
 #      the token file; the zygo mock accepts only it, so an accepted x-api-key came from the {file:} read.
 # PO2: with enabled_providers = ["zygo"] only zygo/ models list and no request goes to the vendor mock,
 #      while the control (no enabled_providers) lists catalog, env-key/stored-login and config providers.
-#      A project config and a user config.json both set disabled_providers = ["zygo"]; the inline
-#      disabled_providers = [] cancels them (arrays replace on merge), and a control without it shows they
-#      are read.
+#      The user config.json and the project opencode.json both disable zygo and one more provider. The
+#      script plants the inline disabled_providers that zygo computes for them (crates/zygo-launch/src/
+#      opencode.rs user_disabled: the union of the lists without "zygo", config.json first), which replaces
+#      the earlier lists (arrays replace on merge): zygo/lead lists and answers. Two controls, each with
+#      "zygo" in only one of the two files (the other sets no disabled_providers) and no inline
+#      disabled_providers, list no model, so each file is read. A third control (zygo in the user list, a
+#      project list without it) lists zygo/lead: a later list replaces an earlier one.
 # Isolation: env -i, a scratch HOME, XDG_* and TMPDIR, two mocks (zygo: only the session key; vendor: only
 # the dummy key; any other key aborts), HTTP(S)_PROXY at a closed local port so that no request reaches
 # a real host. /tmp/opencode (OpenCode's temp folder without TMPDIR) is recorded before and after.
@@ -63,15 +67,20 @@ mkdir -p "$SD"
 (umask 077 && printf '%s' "$SESSION_KEY" >"$SD/token")
 chmod 600 "$SD/token"
 # A user config with a vendor provider at the vendor mock, a stored openai login, and disabled_providers
-# ["zygo"] in the user config.json and in the project config.
+# in the user config.json and in the project config (dis_files).
 mkdir -p "$H/.config/opencode" "$H/.local/share/opencode" "$H/.local/state"
 cat >"$H/.config/opencode/opencode.json" <<J
 {"\$schema": "https://opencode.ai/config.json",
  "provider": {"anthropic": {"options": {"baseURL": "$VENDOR_URL/vendor/v1", "apiKey": "$DUMMY_KEY"},
    "models": {"probe-model": {"name": "probe-model"}}}}}
 J
-echo '{"disabled_providers": ["zygo"]}' >"$H/.config/opencode/config.json"
-echo '{"$schema": "https://opencode.ai/config.json", "disabled_providers": ["zygo"]}' >"$R/opencode.json"
+dis_files() { # <user config.json list> <project opencode.json list>; "-": the file sets no disabled_providers
+  if [ "$1" = - ]; then echo '{}'; else echo "{\"disabled_providers\": $1}"; fi >"$H/.config/opencode/config.json"
+  if [ "$2" = - ]; then echo '{"$schema": "https://opencode.ai/config.json"}'
+  else echo "{\"\$schema\": \"https://opencode.ai/config.json\", \"disabled_providers\": $2}"; fi >"$R/opencode.json"
+}
+USER_DIS='["amazon-bedrock", "zygo"]' PROJ_DIS='["zygo", "google"]'
+ZDIS='["amazon-bedrock", "google"]' # what zygo computes for USER_DIS and PROJ_DIS
 (umask 077 && printf '{"openai": {"type": "api", "key": "%s"}}\n' "$DUMMY_KEY" >"$H/.local/share/opencode/auth.json")
 chmod 600 "$H/.local/share/opencode/auth.json"
 KEYREF="{file:$SD/token}" # the key field: a reference to the key file, not the key
@@ -83,8 +92,8 @@ inline() { # [<more keys>]: the inline config
    "models": {"lead": {"limit": {"context": 200000, "output": 4000}}}}}}
 J
 }
-ON=$(inline ', "enabled_providers": ["zygo"], "disabled_providers": []')
-OFF=$(inline ', "disabled_providers": []')
+ON=$(inline ', "enabled_providers": ["zygo"], "disabled_providers": '"$ZDIS")
+OFF=$(inline ', "disabled_providers": '"$ZDIS")
 NODIS=$(inline ', "enabled_providers": ["zygo"]')
 echo "$ON" >"$RUN/inline-on.json"
 echo "$OFF" >"$RUN/inline-off.json"
@@ -102,9 +111,15 @@ oc_bounded() { # <seconds> <out> <ON|OFF> <args>: oc with a time bound (a stuck 
   pkill -P $p 2>/dev/null || true; kill $p 2>/dev/null || true; wait $p 2>/dev/null || true
   aborted
 }
+dis_files '["amazon-bedrock", "zygo"]' -
+oc NODIS models >"$RUN/models-nodis-user.txt" 2>"$RUN/models-nodis-user.err" || true
+dis_files - '["zygo", "google"]'
+oc NODIS models >"$RUN/models-nodis-project.txt" 2>"$RUN/models-nodis-project.err" || true
+dis_files '["amazon-bedrock", "zygo"]' '["google"]'
+oc NODIS models >"$RUN/models-nodis-replace.txt" 2>"$RUN/models-nodis-replace.err" || true
+dis_files "$USER_DIS" "$PROJ_DIS"
 oc ON models >"$RUN/models-on.txt" 2>"$RUN/models-on.err" || true
 oc OFF models >"$RUN/models-off.txt" 2>"$RUN/models-off.err" || true
-oc NODIS models >"$RUN/models-nodis.txt" 2>"$RUN/models-nodis.err" || true
 mark() { ls "$RUN/$1" | grep -c '^[0-9].*\.json$' || true; }
 marks() { echo "$(mark rec) $(mark rec-vendor)"; }
 m0=$(marks); oc_bounded 60 "$RUN/run-po1.out" ON run -m zygo/lead "tracer-po1"
@@ -142,7 +157,7 @@ fi
 # key. No exclusion: the token file is expected in the list and removed from it only in the check.
 grep -rlF -- "$SESSION_KEY" "$RUN" "$TMPD" 2>/dev/null | sed "s|^$RUN/||" | sort -u >"$RUN/key-files.txt" || true
 
-python3 -I - "$RUN" "$SESSION_KEY" "$DUMMY_KEY" >"$RUN/result.json" <<'PY'
+USER_DIS="$USER_DIS" PROJ_DIS="$PROJ_DIS" python3 -I - "$RUN" "$SESSION_KEY" "$DUMMY_KEY" >"$RUN/result.json" <<'PY'
 import json, os, sys
 run, skey, dkey = sys.argv[1:4]
 marks = [tuple(map(int, l.split())) for l in open(run + "/marks.txt").read().splitlines()]
@@ -157,7 +172,9 @@ on_inline = open(run + "/inline-on.json").read()
 po1_recs = between(zrecs, 0, 0, 1)
 po1_hit = [r for r in po1_recs if r["method"] == "POST" and r["path"].split("?")[0] == "/v1/messages"
            and r["credential_headers"] == ["x-api-key"] and r["reply"] != "401-no-credential"]
-on, off, nodis = lines("models-on.txt"), lines("models-off.txt"), lines("models-nodis.txt")
+on, off = lines("models-on.txt"), lines("models-off.txt")
+nodis_user, nodis_project = lines("models-nodis-user.txt"), lines("models-nodis-project.txt")
+nodis_replace = lines("models-nodis-replace.txt")
 on_vendor = [r for r in vrecs if r["seq"] <= marks[2][1]]
 off_vendor = between(vrecs, 1, 2, 3)
 key_files = lines("key-files.txt")
@@ -180,19 +197,22 @@ po1["pass"] = (po1["session key differs from the vendor dummy key"] and not po1[
     and key_files == ["sess dir/token"]
     and po1["/tmp/opencode before"] == po1["/tmp/opencode after"]
     and po1["/tmp/opencode entries changed during the run"] == 0)
-po2 = {"user config.json and project opencode.json": "both set disabled_providers [\"zygo\"]",
+po2 = {"user config.json disabled_providers": json.loads(os.environ["USER_DIS"]),
+       "project opencode.json disabled_providers": json.loads(os.environ["PROJ_DIS"]),
+       "inline disabled_providers (the value zygo computes for these files, planted by the script)": json.loads(on_inline)["disabled_providers"],
        "ON: models": on, "ON: every model is zygo/": bool(on) and all(l.startswith("zygo/") for l in on),
        "ON: zygo/lead answered (the PO1 run, same ON config)": po1["run output has the scripted reply text"],
        "ON: requests to the vendor mock": [view(r) for r in on_vendor],
        "ON: anthropic/probe-model run output (first 300 chars)": open(run + "/run-po2-on.out").read()[:300],
-       "control without the inline disabled_providers []: models": nodis,
-       "control without the inline disabled_providers []: lists no zygo/ model": not any(l.startswith("zygo/") for l in nodis),
+       "control: user config.json [\"amazon-bedrock\",\"zygo\"], project sets none, no inline disabled_providers: models": nodis_user,
+       "control: user config.json sets none, project [\"zygo\",\"google\"], no inline disabled_providers: models": nodis_project,
+       "control: user config.json [\"amazon-bedrock\",\"zygo\"], project [\"google\"], no inline disabled_providers: models": nodis_replace,
        "OFF: lists anthropic/probe-model": "anthropic/probe-model" in off,
        "OFF: lists an openai/ model": any(l.startswith("openai/") for l in off),
        "OFF: model count": len(off),
        "OFF: requests to the vendor mock": [view(r) for r in off_vendor]}
 po2["pass"] = (po2["ON: every model is zygo/"] and "zygo/lead" in on and po2["ON: zygo/lead answered (the PO1 run, same ON config)"]
-               and not on_vendor and po2["control without the inline disabled_providers []: lists no zygo/ model"]
+               and not on_vendor and not nodis_user and not nodis_project and "zygo/lead" in nodis_replace
                and po2["OFF: lists anthropic/probe-model"] and po2["OFF: lists an openai/ model"] and bool(off_vendor))
 print(json.dumps({"PO1": po1, "PO2": po2}, indent=1))
 PY

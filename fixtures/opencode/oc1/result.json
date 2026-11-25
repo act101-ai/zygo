@@ -33,8 +33,8 @@
       "sess dir/token"
     ],
     "TMPDIR (run folder tmp/) entries": [
-      ".b9ff72adfbbebbb2-00000000.dylib",
-      ".b9ff72afe2bf6f8a-00000000.dylib",
+      ".b9ff72fde2bf5fca-00000000.dylib",
+      ".b9ff72fdeffeeff2-00000000.dylib",
       "opencode"
     ],
     "/tmp/opencode before": "present, mtime 1795634435",
@@ -44,16 +44,30 @@
     "pass": true
   },
   "PO2": {
-    "user config.json and project opencode.json": "both set disabled_providers [\"zygo\"]",
+    "user config.json disabled_providers": [
+      "amazon-bedrock",
+      "zygo"
+    ],
+    "project opencode.json disabled_providers": [
+      "zygo",
+      "google"
+    ],
+    "inline disabled_providers (the value zygo computes for these files, planted by the script)": [
+      "amazon-bedrock",
+      "google"
+    ],
     "ON: models": [
       "zygo/lead"
     ],
     "ON: every model is zygo/": true,
     "ON: zygo/lead answered (the PO1 run, same ON config)": true,
     "ON: requests to the vendor mock": [],
-    "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_dc82c07a\"\n  }\n}\n",
-    "control without the inline disabled_providers []: models": [],
-    "control without the inline disabled_providers []: lists no zygo/ model": true,
+    "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_57d7be83\"\n  }\n}\n",
+    "control: user config.json [\"amazon-bedrock\",\"zygo\"], project sets none, no inline disabled_providers: models": [],
+    "control: user config.json sets none, project [\"zygo\",\"google\"], no inline disabled_providers: models": [],
+    "control: user config.json [\"amazon-bedrock\",\"zygo\"], project [\"google\"], no inline disabled_providers: models": [
+      "zygo/lead"
+    ],
     "OFF: lists anthropic/probe-model": true,
     "OFF: lists an openai/ model": true,
     "OFF: model count": 73,
