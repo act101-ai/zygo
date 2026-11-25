@@ -853,6 +853,58 @@ fn check_3_cfg_attr_path_resolved_per_platform() {
     assert_eq!(ev("test:crates/demo/tests/p5/win2.rs::w").unwrap(), ["windows"]);
 }
 
+/// `tests/sub/f.rs` loaded by two `mod`s: by `#[path]` (module folder `tests/sub`, `first` cfg) and as `mod f;`
+/// in an inline `#[path = "sub"] mod m` (module folder `tests/sub/f`, `second` cfg). Its `mod g;` loads
+/// `tests/sub/g.rs` in the first folder and `tests/sub/f/g.rs` in the second.
+fn two_module_folders(first: &str, second: &str) -> tempfile::TempDir {
+    let root = format!("#[cfg({first})]\n#[path = \"sub/f.rs\"]\nmod fa;\n#[cfg({second})]\n#[path = \"sub\"]\nmod m {{\n    mod f;\n}}\n");
+    repo_with(&[
+        ("crates/demo/tests/two.rs", &root),
+        ("crates/demo/tests/sub/f.rs", "mod g;\n"),
+        ("crates/demo/tests/sub/g.rs", "#[test]\nfn in_a() {}\n"),
+        ("crates/demo/tests/sub/f/g.rs", "#[test]\nfn in_b() {}\n"),
+    ])
+}
+
+#[test]
+fn check_3_file_in_two_module_folders_windows_first() {
+    let d = two_module_folders("windows", "target_os = \"linux\"");
+    let ev = |e: &str| evidence(d.path(), e, "Alpha").map(|e| e.platforms);
+    assert_eq!(ev("test:crates/demo/tests/sub/g.rs::in_a").unwrap(), ["windows"]);
+    assert_eq!(ev("test:crates/demo/tests/sub/f/g.rs::in_b").unwrap(), ["linux"]);
+}
+
+#[test]
+fn check_3_file_in_two_module_folders_linux_first() {
+    let d = two_module_folders("target_os = \"linux\"", "windows");
+    let ev = |e: &str| evidence(d.path(), e, "Alpha").map(|e| e.platforms);
+    assert_eq!(ev("test:crates/demo/tests/sub/g.rs::in_a").unwrap(), ["linux"]);
+    assert_eq!(ev("test:crates/demo/tests/sub/f/g.rs::in_b").unwrap(), ["windows"]);
+}
+
+#[test]
+fn check_3_mod_cycle_through_parent_folder_ends() {
+    // f.rs loads itself through `..`: the module folder `tests/cyc/../cyc` is `tests/cyc`, a known visit.
+    let d = repo_with(&[
+        ("crates/demo/tests/cyc.rs", "#[cfg(unix)]\n#[path = \"cyc/f.rs\"]\nmod f;\n"),
+        ("crates/demo/tests/cyc/f.rs", "#[path = \"../cyc/f.rs\"]\nmod again;\n#[test]\nfn t() {}\n"),
+    ]);
+    assert_eq!(evidence(d.path(), "test:crates/demo/tests/cyc/f.rs::t", "Alpha").unwrap().platforms, ["linux", "macos"]);
+}
+
+#[test]
+fn check_3_test_root_also_mod_target_reaches_its_modules() {
+    // tests/m2.rs is a test target (module folder tests/) and `mod m2;` of tests/root2.rs (module folder tests/m2).
+    let d = repo_with(&[
+        ("crates/demo/tests/root2.rs", "mod m2;\n"),
+        ("crates/demo/tests/m2.rs", "#![cfg(windows)]\n#[test]\nfn t() {}\nmod m3;\n"),
+        ("crates/demo/tests/m2/m3.rs", "#[test]\nfn t3() {}\n"),
+    ]);
+    let ev = |e: &str| evidence(d.path(), e, "Alpha").map(|e| e.platforms);
+    assert_eq!(ev("test:crates/demo/tests/m2.rs::t").unwrap(), ["windows"]);
+    assert_eq!(ev("test:crates/demo/tests/m2/m3.rs::t3").unwrap(), ["windows"]);
+}
+
 #[test]
 fn check_3_test_file_without_crate_manifest_not_evidence() {
     let d = repo_with(&[]);

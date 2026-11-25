@@ -658,10 +658,30 @@ fn mod_decls(items: &[syn::Item], file_dir: &Path, dir: &Path, top: bool, outer:
     }
 }
 
+/// A module folder in one spelling: canonical when it exists, else with `.` and `..` resolved on the text, so
+/// that a walk through `..` or a link revisits a known folder and ends.
+fn folder_key(dir: &Path) -> PathBuf {
+    dir.canonicalize().unwrap_or_else(|_| {
+        let mut out = PathBuf::new();
+        for c in dir.components() {
+            match c {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    })
+}
+
 /// Walk a crate's test targets (`tests/*.rs`, `tests/*/main.rs`) and its crate roots (`src/lib.rs`,
 /// `src/main.rs`) through each `mod` declaration. A file that cannot be read or parsed adds no module.
+/// A visit is a file in one module folder: a file that two `mod`s load with different module folders is
+/// walked once per folder, each with its own targets, so the modules under one folder get only its targets.
 fn reach(crate_dir: &Path) -> Reach {
-    let mut reach = Reach::new();
+    let mut visits: HashMap<(PathBuf, PathBuf), Result<Targets, String>> = HashMap::new();
     let mut queue: Vec<(PathBuf, PathBuf, Result<Targets, String>)> = Vec::new();
     let mut roots = vec![crate_dir.join("src/lib.rs"), crate_dir.join("src/main.rs")];
     for e in std::fs::read_dir(crate_dir.join("tests")).into_iter().flatten().flatten() {
@@ -672,15 +692,17 @@ fn reach(crate_dir: &Path) -> Reach {
             roots.push(p);
         }
     }
+    // A visit in the same folder merges its targets by union; the walk ends when no visit grows.
     let mut merge = |file: PathBuf, dir: PathBuf, t: Result<Targets, String>, queue: &mut Vec<_>| {
-        let new = match (reach.get(&file), t) {
+        let key = (file, folder_key(&dir));
+        let new = match (visits.get(&key), t) {
             (None, t) => t,
             (Some(Ok(old)), Ok(t)) if or(*old, t) != *old => Ok(or(*old, t)),
             (Some(Err(_)), Ok(t)) => Ok(t),
             _ => return,
         };
-        queue.push((file.clone(), dir, new.clone()));
-        reach.insert(file, new);
+        queue.push((key.0.clone(), key.1.clone(), new.clone()));
+        visits.insert(key, new);
     };
     for r in roots.into_iter().filter(|r| r.is_file()) {
         if let Ok(c) = r.canonicalize() {
@@ -705,6 +727,16 @@ fn reach(crate_dir: &Path) -> Reach {
                 merge(c, sub, d.cfg, &mut queue);
             }
         }
+    }
+    // A file compiles on the union of the targets of its visits; an `Ok` visit outweighs an `Err` one.
+    let mut reach = Reach::new();
+    for ((file, _), t) in visits {
+        let new = match (reach.remove(&file), t) {
+            (None, t) | (Some(Err(_)), t) => t,
+            (Some(Ok(old)), Ok(t)) => Ok(or(old, t)),
+            (Some(Ok(old)), Err(_)) => Ok(old),
+        };
+        reach.insert(file, new);
     }
     reach
 }
