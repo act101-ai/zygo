@@ -233,7 +233,7 @@ Session text (T, SX nodes):
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | TODO | implementation | — |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
 | ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6 | TODO | implementation | — |
-| MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | TODO | judgment | — |
+| MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | IN-PROGRESS | judgment | .worktrees/phase3/MS-5-node · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | TODO | implementation | — |
 | OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | TODO | implementation | — |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | TODO | implementation | — |
