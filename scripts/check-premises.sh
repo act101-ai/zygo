@@ -1,8 +1,10 @@
 #!/bin/sh
 # Checks docs/premises.md, the premise fixtures and the spec notes (node N2); rows and agent versions are driven by data (K§6.2.5, node PC-1).
 # Prints the first failing item and exits 1; exits 0 when all items pass.
+# It also scans for forbidden content (N38): fixtures/, the live scripts (scripts/premises/live*.sh),
+# scripts/premises/live/, docs/live-checks.md and the spec and conformance lines naming N38.
 # N2_FORBIDDEN_NAMES (optional, space-separated, given at run time, never written here): words
-# that must not appear as whole words (any case) in fixtures/ or docs/premises.md, such as the
+# that must not appear as whole words (any case) in that scope or docs/premises.md, such as the
 # operator's user name.
 set -uf
 cd "$(dirname "$0")/.." || exit 1
@@ -204,9 +206,12 @@ done
 nontrivial fixtures/act-lite/status.json || nontrivial fixtures/act-lite/languages.json ||
   fail "required file fixtures/act-lite/status.json or fixtures/act-lite/languages.json is missing"
 
-# Forbidden content under fixtures/: credentials, machine paths, e-mail addresses.
-# Scope (N38): fixtures, the live scripts and their helpers, docs/live-checks.md (each when it
-# exists); scan_notes applies the same patterns to the spec and conformance lines naming N38.
+# Forbidden content (credentials, machine paths, e-mail addresses, names).
+# Scope (N38): fixtures/, the live scripts (scripts/premises/live*.sh), scripts/premises/live/,
+# docs/live-checks.md (each when it exists), and the lines of the spec and docs/conformance.md that
+# name N38 (NOTES; scan and name_scan read them too). The live scripts' helpers (lib.sh,
+# workspace_lib.sh) are not scanned here; tests/forbidden_content.rs (every tracked file) covers them. Every grep
+# reads files as text (-a), so a hit in a binary file is a line with its content.
 # A path in the scope that holds whitespace would be split and not scanned, and one that holds
 # ':' could pass for a grep hit line of another file, so either fails.
 SCOPE=fixtures
@@ -260,17 +265,20 @@ for f in $VERBATIM; do
   [ "$got" = "$pin" ] && [ "$want" = "$pin" ] ||
     fail "verbatim file $f (sha256 $got) and its source file $src (sha256 ${want:-<none>}) must both give the pinned sha256 $pin"
 done
-# VX: the ERE ^(<path>|<path>):<digits>: for the list (a grep -n hit line of exactly that file), dots escaped.
+# VX: the ERE ^(<path>|<path>):<digits>: for the list (a grep -n hit line of exactly that file), dots
+# escaped. It is always applied case-sensitively, so only the exact path is exempt.
 VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
-NOTES=$( (grep -nH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
+NOTES=$( (grep -anH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
 # scan <ERE> <exempt ERE> <label> [i] [<drop sed -E script>]: the first line that matches and is not
-# exempt fails; i: any case. <drop sed -E script>: applied to a hit line, which fails only when the
-# ERE still matches the result; the message shows the line as written.
+# exempt fails; i: the ERE matches any case (the exempt ERE never does). <drop sed -E script>:
+# applied to a hit line, which fails only when the ERE still matches the result; the message shows
+# the line as written. A NUL in a hit line becomes a blank first (read stops at a NUL); both are
+# outside every character class of the rules and of the drop script.
 scan() {
-  o=-E; [ "${4:-}" != i ] || o=-iE
+  o=-aE; [ "${4:-}" != i ] || o=-aiE
   # shellcheck disable=SC2086
-  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -v $o -- "${2:-^\$}" |
-    while IFS= read -r ln; do
+  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -av -E -- "${2:-^\$}" |
+    tr '\000' ' ' | while IFS= read -r ln; do
       [ -z "${5:-}" ] || printf '%s\n' "$ln" | sed -E "$5" | grep -q $o -- "$1" || continue
       printf '%s\n' "$ln"
     done | head -n 1)
@@ -316,7 +324,7 @@ name_scan() {
   wc=${3:-A-Za-z0-9_}
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
   # shellcheck disable=SC2086
-  hit=$( (grep -rniE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -iE -- "$rx") | grep -v -E -- "${4:-^\$}" | head -n 1)
+  hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | head -n 1)
   [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | head -n 1 | cut -d: -f1-2)"
 }
 for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"; done
