@@ -79,10 +79,11 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2, PC-10 | TODO | implementation | — |
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | TODO | implementation | — |
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | TODO | implementation | — |
-| PC-7 | `docs/premises.md` and `docs/live-checks.md`: `Codex` headers, rows PC1-PC16, LC-CX1, Codex method lines | PC-1, PC-3, PC-4, PC-5, PC-6, OC-1 | TODO | mechanical | — |
+| PC-7 | `docs/premises.md` and `docs/live-checks.md`: `Codex` headers, rows PC1-PC16, LC-CX1, Codex method lines | PC-1, PC-3, PC-4, PC-5, PC-6, OC-1, PC-11 | TODO | mechanical | — |
 | PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | DONE | implementation | PR #127 merged 73a4ff40; acceptance exit 0 on merged tree (test-check-premises 99 cases); CI run 45704926916 green (ubuntu, macos, windows) |
-| PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | TODO | mechanical | — |
-| PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | TODO | implementation | — |
+| PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | DONE | mechanical | PR #136 merged 256e5cae; acceptance exit 0 on merged tree (ver_test 62, test-check-premises 102); CI run 45716799629 green (ubuntu, macos, windows) |
+| PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | DONE | implementation | PR #141 merged a1c0ce8a; acceptance exit 0 on merged tree (scrub 70, lib 156, mock 56); CI run 45716982108 green (ubuntu, macos, windows) |
+| PC-11 | Scrub: platformOs, login shell and macOS writable roots in Codex captures; namespace tool descriptions; re-scrub committed Codex fixtures | PC-3, PC-4, PC-5, PC-6 | TODO | implementation | — |
 | RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | TODO | judgment | — |
 | RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | TODO | judgment | — |
 | RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | TODO | judgment | — |
@@ -131,3 +132,6 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | PC-10 added (author's call): Codex fixtures leaked the host timezone and OS (PC-3 review F4) and scrub mis-mapped double-slash scratch paths (PC-6); PC-3..PC-6 captures re-taken after it. |
 | 2026-11-25 | PC-8 DONE: gate 3 rounds; round 1 F1-F5, round 2 G1-G7, round 3 H1-H4 fixed, H5 recorded (nodes/PC-8.md); PR #127 merged 73a4ff40. |
 | 2026-11-25 | CF-4 DONE: operator stop (A-1.2/A-10.2 passthrough excepted; OpenCode A-1.4 bar exception; OpenCode A-1.2/A-1.3/A-10.2 fixed by OC-1); gate 3 rounds, findings fixed/recorded (nodes/CF-4.md); lead's calls: OpenCode A-1.3 met, A-1 key-helper reading (K-D18); PR #104 merged 278f2cd4. |
+| 2026-11-25 | PC-10 DONE: gate 3 rounds; TZ=UTC, OS and timezone scrub, daemon-socket guard, leftover-process check, refused-path records, second mock key; limits recorded (nodes/PC-10.md); PR #141 merged a1c0ce8a. |
+| 2026-11-25 | PC-9 DONE: gate 2 rounds + nit round; evidence paths must be plain repo paths (no symlinked dir), ver_test copies cited evidence; G5 case-variant limit recorded (nodes/PC-9.md); PR #136 merged 256e5cae. |
+| 2026-11-25 | PC-11 added (author's call): Codex captures keep platformOs, the login shell, macOS writable roots and namespace tool descriptions (PC-3 review G3); scrub and re-scrub in place before PC-7. |
