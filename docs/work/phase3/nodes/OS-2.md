@@ -279,7 +279,7 @@ Cycle A: the `readbacks` table, the row types, the ten-column insert, prune.
 
 Cycle B: the column check on old databases, the seam, the seven-column fallback.
 
-- [ ] **B1 — failing tests, cycle B.** Append to `tests/store.rs`:
+- [x] **B1 — failing tests, cycle B.** Append to `tests/store.rs`:
 
   ```rust
   #[test] // O§6.5 item 3; O§16 item 15 "a full open then adds the three columns"; old rows read the new columns as null
@@ -352,9 +352,9 @@ Cycle B: the column check on old databases, the seam, the seven-column fallback.
   }
   ```
 
-- [ ] **B2 — run and see it fail.** `cargo test -p zygo-usage --test store -- readbacks_schema` → does not compile: no function `open_with_column_check`. (With a stub that calls `open`, `…old_database_gets_three_columns…` fails on `TRIM_TEN` and `…seven_column_database…` fails with `table trims has no column named result_id`.)
+- [x] **B2 — run and see it fail.** `cargo test -p zygo-usage --test store -- readbacks_schema` → does not compile: no function `open_with_column_check`. (With a stub that calls `open`, `…old_database_gets_three_columns…` fails on `TRIM_TEN` and `…seven_column_database…` fails with `table trims has no column named result_id`.)
 
-- [ ] **B3 — store: the column check and the seam.** In `crates/zygo-usage/src/store.rs`:
+- [x] **B3 — store: the column check and the seam.** In `crates/zygo-usage/src/store.rs`:
   - Add near `SCHEMA_VERSION`:
 
     ```rust
@@ -393,7 +393,7 @@ Cycle B: the column check on old databases, the seam, the seven-column fallback.
   - `pub fn open(path: &Path) -> Result<Store>`: `let checked = TRIM_COLUMNS_CHECKED.lock().unwrap_or_else(|e| e.into_inner()).contains(path); Store::open_full(path, if checked { None } else { Some(&[] as &[&str]) })`. Doc: `/// The full open: creates the file and the schema, and adds each missing `trims` column one time per process for this path (O§6.5 item 3). The launcher and the CLI use it; the hook and the MCP server use `open_bounded` (OS-3).`
   - `#[doc(hidden)] pub fn open_with_column_check(path: &Path, report_missing: &[&str]) -> Result<Store>`: `Store::open_full(path, Some(report_missing))`. Doc: `/// `open`, with the column check always run and each name of `report_missing` treated as missing (O§16 item 15).`
 
-- [ ] **B4 — store: the seven-column fallback.** In `insert_trim`, convert the byte counts first (`let (stored, view) = (i64::try_from(t.stored_bytes)?, i64::try_from(t.view_bytes)?);`), then:
+- [x] **B4 — store: the seven-column fallback.** In `insert_trim`, convert the byte counts first (`let (stored, view) = (i64::try_from(t.stored_bytes)?, i64::try_from(t.view_bytes)?);`), then:
 
   ```rust
   match self.conn.prepare_cached(INSERT_TRIM) {
@@ -408,9 +408,9 @@ Cycle B: the column check on old databases, the seam, the seven-column fallback.
   ```
   with `const INSERT_TRIM_SEVEN: &str = "INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";` next to `INSERT_TRIM`. Doc on `insert_trim`: `/// Ten columns; on a table without the new columns, the seven old ones (O§6.5 item 4).`
 
-- [ ] **B5 — run and see it pass.** `cargo test -p zygo-usage --test store -- readbacks_schema` → 11 tests pass. Mutation spot checks (revert each after): (a) make the fallback guard `Err(_)` → `readbacks_schema_insert_trim_fallback_keeps_other_errors` fails, and (b) drop the `duplicate column name` arm (return every `ALTER` error) → `readbacks_schema_injected_missing_column_is_success` fails.
+- [x] **B5 — run and see it pass.** `cargo test -p zygo-usage --test store -- readbacks_schema` → 11 tests pass. Mutation spot checks (revert each after): (a) make the fallback guard `Err(_)` → `readbacks_schema_insert_trim_fallback_keeps_other_errors` fails, and (b) drop the `duplicate column name` arm (return every `ALTER` error) → `readbacks_schema_injected_missing_column_is_success` fails.
 
-- [ ] **B6 — commit.** Same six paths as A9; message `OS-2: add missing trims columns on the full open; seven-column insert fallback` with the two trailers, each on its own line. No Claude attribution.
+- [x] **B6 — commit.** Same six paths as A9; message `OS-2: add missing trims columns on the full open; seven-column insert fallback` with the two trailers, each on its own line. No Claude attribution.
 
 Verification.
 

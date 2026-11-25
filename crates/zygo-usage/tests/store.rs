@@ -734,3 +734,79 @@ fn readbacks_schema_prune_deletes_old_readbacks_and_keeps_new() {
     s.prune(0).unwrap(); // 0 keeps everything
     assert_eq!(survivors(&t.db(), "readbacks"), ["new"]);
 }
+
+#[test] // O§6.5 item 3; O§16 item 15 "a full open then adds the three columns"; old rows read the new columns as null
+fn readbacks_schema_old_database_gets_three_columns_and_old_rows_read_null() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    assert_eq!(cols(&t.db(), "trims"), TRIM_SEVEN);
+    assert!(!tables(&t.db()).iter().any(|n| n == "readbacks"));
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);
+    assert!(tables(&t.db()).iter().any(|n| n == "readbacks"));
+    assert_eq!(ten_cols(&t.db(), "S1"), (5, "S1".into(), None, "Bash".into(), "head".into(), 1000, 100, None, None, None));
+}
+
+#[test] // O§10 "Two full opens add a column at once"; O§16 item 15: an injected missing column gets "duplicate column name" and succeeds
+fn readbacks_schema_injected_missing_column_is_success() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    drop(Store::open(&t.db()).unwrap()); // adds the three columns
+    let s = Store::open_with_column_check(&t.db(), &["shaper"]).unwrap();
+    assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);
+    s.insert_trim(&TrimRow { shaper: Some("size".into()), ..trim("S2", 6, 10, 1) }).unwrap();
+    assert_eq!(ten_cols(&t.db(), "S2").9.as_deref(), Some("size"));
+}
+
+#[test] // O§6.5 item 4, O§10 "Database without the new columns (hook insert)"; item 3 "one time per process"
+fn readbacks_schema_insert_trim_on_seven_column_database_writes_seven_columns() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    drop(Store::open(&t.db()).unwrap());
+    drop_new_trim_columns(&t.db());
+    let s = Store::open(&t.db()).unwrap(); // this process checked this path already: no second check
+    assert_eq!(cols(&t.db(), "trims"), TRIM_SEVEN);
+    s.insert_trim(&TrimRow { result_id: Some(RID.into()), command: Some("cargo test".into()), shaper: Some("libtest".into()), ..trim("S2", 6, 2000, 200) }).unwrap();
+    assert_eq!(count(&t.db(), "trims"), 2);
+    let row: (i64, String, Option<String>, String, String, i64, i64) = Connection::open(t.db()).unwrap()
+        .query_row("SELECT ts, session, agent_id, tool, kind, stored_bytes, view_bytes FROM trims WHERE session = 'S2'", [], |r|
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))).unwrap();
+    assert_eq!(row, (6, "S2".into(), None, "Bash".into(), "head".into(), 2000, 200));
+}
+
+#[test] // review focus 21: no ALTER (no schema write) when the columns exist; the seam always checks
+fn readbacks_schema_column_check_writes_no_schema_when_columns_exist() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let v = pragma(&t.db(), "schema_version");
+    drop(Store::open_with_column_check(&t.db(), &[]).unwrap()); // the check runs; nothing is missing
+    assert_eq!(pragma(&t.db(), "schema_version"), v);
+    drop_new_trim_columns(&t.db());
+    drop(Store::open_with_column_check(&t.db(), &[]).unwrap()); // the seam checks a path already checked
+    assert_eq!(cols(&t.db(), "trims"), TRIM_TEN);
+}
+
+#[test] // review focus 21: the fallback hides no error other than a missing column
+fn readbacks_schema_insert_trim_fallback_keeps_other_errors() {
+    let t = Tmp::new();
+    let s = Store::open(&t.db()).unwrap();
+    Connection::open(t.db()).unwrap().execute_batch("DROP TABLE trims").unwrap();
+    let e = s.insert_trim(&trim("S1", 1, 10, 1)).err().expect("a missing table is not a missing column").to_string();
+    assert!(e.contains("no such table: trims"), "{e}");
+    // A prepare error that a seven-column insert would not meet (the `Store` opens after the table exists, so the
+    // error comes from prepare, not from a re-prepare at execute): the fallback must not write the row.
+    let g = Tmp::new();
+    Connection::open(g.db()).unwrap().execute_batch("CREATE TABLE trims (ts INTEGER NOT NULL, session TEXT NOT NULL, agent_id TEXT, tool TEXT NOT NULL, kind TEXT NOT NULL, stored_bytes INTEGER NOT NULL, view_bytes INTEGER NOT NULL, result_id TEXT GENERATED ALWAYS AS ('x') VIRTUAL, command TEXT, shaper TEXT)").unwrap();
+    let e = Store::open(&g.db()).unwrap().insert_trim(&trim("S1", 1, 10, 1)).err().expect("a generated column is not a missing column").to_string();
+    assert!(e.contains("cannot INSERT into generated column"), "{e}");
+    assert_eq!(count(&g.db(), "trims"), 0);
+}
+
+#[test] // O§6.5 preamble, O-C8: the read-only open of each binary still opens the database, before and after the full open
+fn readbacks_schema_open_read_only_opens_old_and_migrated_database() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    assert_eq!(Store::open_read_only(&t.db()).unwrap().bytes_trimmed("S1").unwrap(), 900);
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(Store::open_read_only(&t.db()).unwrap().bytes_trimmed("S1").unwrap(), 900);
+}
