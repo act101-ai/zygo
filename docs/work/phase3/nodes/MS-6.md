@@ -47,7 +47,7 @@ Produces (exact; `crates/zygo-mail-sync/src/registry.rs`, module `zygo_mail_sync
 
 Steps:
 
-- [ ] 1. Create `crates/zygo-mail-sync/tests/registry.rs`. Header: `//! MS-6: registry and ack files, member cache (mail sync design S§6.1, S§7.3, S§7.4, S-C5, S-C8; S§19 #12). No test uses wall-clock time; mode and link tests are cfg(unix).` Imports `serde_json::json`, `std::collections::{BTreeMap, BTreeSet}`, `std::fs`, `tempfile::TempDir`, `ulid::Ulid`, `zygo_core::paths::Paths`, `zygo_mail_sync::{address::Address, registry::*, state::SyncPaths}`. Helpers, copied from `tests/state.rs:14-33`, `:65-67`: `paths`, `setup` (ws id `0123456789abcdef`), `u(n) = Ulid::from_parts(n, n as u128)`; plus:
+- [x] 1. Create `crates/zygo-mail-sync/tests/registry.rs`. Header: `//! MS-6: registry and ack files, member cache (mail sync design S§6.1, S§7.3, S§7.4, S-C5, S-C8; S§19 #12). No test uses wall-clock time; mode and link tests are cfg(unix).` Imports `serde_json::json`, `std::collections::{BTreeMap, BTreeSet}`, `std::fs`, `tempfile::TempDir`, `ulid::Ulid`, `zygo_core::paths::Paths`, `zygo_mail_sync::{address::Address, registry::*, state::SyncPaths}`. Helpers, copied from `tests/state.rs:14-33`, `:65-67`: `paths`, `setup` (ws id `0123456789abcdef`), `u(n) = Ulid::from_parts(n, n as u128)`; plus:
   ```rust
   const IDN: &str = "0123456789abcdef0123456789abcdef";
   fn j(v: serde_json::Value) -> Vec<u8> { serde_json::to_vec(&v).unwrap() }
@@ -58,7 +58,7 @@ Steps:
   fn ack(host: &str, ids: &[String]) -> Vec<u8> { j(json!({"version":1,"host":host,"identity":IDN,"imported":ids})) }
   fn ids(n: u64) -> Vec<String> { (1..=n).map(|i| u(i).to_string()).collect() }
   ```
-- [ ] 2. Add the registry tests (S§7.3 Validation, S-C5):
+- [x] 2. Add the registry tests (S§7.3 Validation, S-C5):
   ```rust
   #[test] fn registry_valid_file_parses() {
       let m = vec!["alice".to_string(), "bob".into()];
@@ -113,9 +113,9 @@ Steps:
       assert_eq!(pr("b", &r.to_bytes()), Ok(r));
   }
   ```
-- [ ] 3. Run `cargo test -p zygo-mail-sync --test registry`: it fails to compile (`unresolved import zygo_mail_sync::registry::…`).
-- [ ] 4. In `crates/zygo-mail-sync/src/state.rs`, change `fn read_regular` (`:161`) and `fn valid_identity` (`:178`) to `pub(crate) fn`. No other change.
-- [ ] 5. Write `src/registry.rs`: module doc (S§6.1, S§7.3, S§7.4, S-C5, S-C8; "a refused ack counts as empty: the caller uses `parse_ack(..).map(|a| a.imported).unwrap_or_default()` and the prune removes nothing for that host"), `Check`, `Registry`, `Ack`, the four constants, `parse_registry`, `Registry::to_bytes`. Private serde types `#[derive(Serialize, Deserialize)] struct RegistryFile { version: u32, host: String, identity: String, members: Vec<String> }` and `AckFile { version: u32, host: String, identity: String, imported: Vec<String> }` (field order = key order). A private `fn head(fh: &str, mode: &str, size: u64, bytes: &[u8], max: u64) -> Result<serde_json::Value, Check>` shared by both parsers:
+- [x] 3. Run `cargo test -p zygo-mail-sync --test registry`: it fails to compile (`unresolved import zygo_mail_sync::registry::…`).
+- [x] 4. In `crates/zygo-mail-sync/src/state.rs`, change `fn read_regular` (`:161`) and `fn valid_identity` (`:178`) to `pub(crate) fn`. No other change.
+- [x] 5. Write `src/registry.rs`: module doc (S§6.1, S§7.3, S§7.4, S-C5, S-C8; "a refused ack counts as empty: the caller uses `parse_ack(..).map(|a| a.imported).unwrap_or_default()` and the prune removes nothing for that host"), `Check`, `Registry`, `Ack`, the four constants, `parse_registry`, `Registry::to_bytes`. Private serde types `#[derive(Serialize, Deserialize)] struct RegistryFile { version: u32, host: String, identity: String, members: Vec<String> }` and `AckFile { version: u32, host: String, identity: String, imported: Vec<String> }` (field order = key order). A private `fn head(fh: &str, mode: &str, size: u64, bytes: &[u8], max: u64) -> Result<serde_json::Value, Check>` shared by both parsers:
   ```rust
   if mode != "100644" { return Err(Check("mode")) }
   if size > max || bytes.len() as u64 > max { return Err(Check("size")) }
@@ -124,8 +124,8 @@ Steps:
   Ok(v)
   ```
   Then `serde_json::from_value::<RegistryFile>` (`Err` → `json`); a private `fn owner(fh: &str, host: &str, identity: &str) -> Result<(), Check>`: `host != fh || !valid_mail_host(host)` → `host`; `!crate::state::valid_identity(identity.as_bytes())` → `identity`. Then `members.len() > MEMBERS_MAX` → `members`; any `!valid_member_name(n)` → `member`.
-- [ ] 6. Run `cargo test -p zygo-mail-sync --test registry`: the 10 registry tests pass.
-- [ ] 7. Add the ack tests (S§7.4 Validation):
+- [x] 6. Run `cargo test -p zygo-mail-sync --test registry`: the 10 registry tests pass.
+- [x] 7. Add the ack tests (S§7.4 Validation):
   ```rust
   #[test] fn ack_valid_file_parses() {
       let a = pa("b", &ack("b", &[u(2).to_string(), u(1).to_string(), u(1).to_string()])).unwrap();
@@ -166,10 +166,10 @@ Steps:
   }
   ```
   (`…FAVX` is 27 characters; `…FAU` has the excluded letter `U`.)
-- [ ] 8. Run `cargo test -p zygo-mail-sync --test registry`: it fails to compile (`parse_ack`, `Ack::to_bytes` missing).
-- [ ] 9. Add `parse_ack` and `Ack::to_bytes` to `src/registry.rs`: `head(.., ACK_MAX)`, `AckFile`, `owner`, then `imported.len() > ACK_ENTRIES_MAX` → `entries`; each entry `crate::address::ulid_file(&format!("{e}.json"))`, `None` → `entry`.
-- [ ] 10. Run `cargo test -p zygo-mail-sync --test registry`: the 17 tests pass.
-- [ ] 11. Add the member cache tests (S§7.3 Member cache, S-C8):
+- [x] 8. Run `cargo test -p zygo-mail-sync --test registry`: it fails to compile (`parse_ack`, `Ack::to_bytes` missing).
+- [x] 9. Add `parse_ack` and `Ack::to_bytes` to `src/registry.rs`: `head(.., ACK_MAX)`, `AckFile`, `owner`, then `imported.len() > ACK_ENTRIES_MAX` → `entries`; each entry `crate::address::ulid_file(&format!("{e}.json"))`, `None` → `entry`.
+- [x] 10. Run `cargo test -p zygo-mail-sync --test registry`: the 17 tests pass.
+- [x] 11. Add the member cache tests (S§7.3 Member cache, S-C8):
   ```rust
   fn cache() -> MemberCache {
       MemberCache { hosts: BTreeMap::from([("b".into(), vec!["bob".into(), "carol".into()]), ("c".into(), vec!["dave".into()])]) }
@@ -225,8 +225,8 @@ Steps:
       assert!(!c.knows(&a("eve", "b")));
   }
   ```
-- [ ] 12. Run `cargo test -p zygo-mail-sync --test registry`: it fails to compile (`MemberCache`, `write_cache`, `read_cache` missing).
-- [ ] 13. Add the cache to `src/registry.rs`: `write_cache` = `zygo_workspace::mail::ensure_mail_root(&sp.mail)?` then `write_atomic(&sp.members, &serde_json::to_vec(c).map_err(std::io::Error::other)?)` (doc: the caller holds `mail/sync/lock`, S§15). `read_cache` = `crate::state::read_regular(&sp.members)`, then `serde_json::from_slice::<MemberCache>`; any `Err` or `None` → `MemberCache::default()`; then `retain` hosts that pass `valid_mail_host` and names that pass `valid_member_name`, and drop a host left with no names. `addresses` and `knows` as the Produces line and the tests fix.
-- [ ] 14. Run `cargo test -p zygo-mail-sync --test registry`: the 23 tests pass (20 on a non-unix target).
-- [ ] 15. Run the floor for this crate: `cargo fmt --all -- --check`, `cargo clippy -p zygo-mail-sync --all-targets --locked -- -D warnings`, `cargo test -p zygo-mail-sync --locked`: all exit 0 (the `state` tests still pass after step 4).
-- [ ] 16. Commit `crates/zygo-mail-sync/src/registry.rs`, `crates/zygo-mail-sync/src/state.rs`, `crates/zygo-mail-sync/tests/registry.rs` with `git commit -m "MS-6: registry and ack files, member cache" -m "<trailers>"`, where `<trailers>` is the `Zygo-Session` and `Zygo-Work` lines that the implement brief gives; `git log -1 --stat` shows those three files only.
+- [x] 12. Run `cargo test -p zygo-mail-sync --test registry`: it fails to compile (`MemberCache`, `write_cache`, `read_cache` missing).
+- [x] 13. Add the cache to `src/registry.rs`: `write_cache` = `zygo_workspace::mail::ensure_mail_root(&sp.mail)?` then `write_atomic(&sp.members, &serde_json::to_vec(c).map_err(std::io::Error::other)?)` (doc: the caller holds `mail/sync/lock`, S§15). `read_cache` = `crate::state::read_regular(&sp.members)`, then `serde_json::from_slice::<MemberCache>`; any `Err` or `None` → `MemberCache::default()`; then `retain` hosts that pass `valid_mail_host` and names that pass `valid_member_name`, and drop a host left with no names. `addresses` and `knows` as the Produces line and the tests fix.
+- [x] 14. Run `cargo test -p zygo-mail-sync --test registry`: the 23 tests pass (20 on a non-unix target).
+- [x] 15. Run the floor for this crate: `cargo fmt --all -- --check`, `cargo clippy -p zygo-mail-sync --all-targets --locked -- -D warnings`, `cargo test -p zygo-mail-sync --locked`: all exit 0 (the `state` tests still pass after step 4).
+- [x] 16. Commit `crates/zygo-mail-sync/src/registry.rs`, `crates/zygo-mail-sync/src/state.rs`, `crates/zygo-mail-sync/tests/registry.rs` with `git commit -m "MS-6: registry and ack files, member cache" -m "<trailers>"`, where `<trailers>` is the `Zygo-Session` and `Zygo-Work` lines that the implement brief gives; `git log -1 --stat` shows those three files only.
