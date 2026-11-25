@@ -3,9 +3,11 @@
 # and OpenCode give a hook for a failed and a passing Bash call, what the model then sees, and how much
 # text an agent adds around a result_view reply.
 # Usage: sh scripts/premises/live-shaping.sh po1|po2|po3|po4
-#   po1 (Claude Code): a Bash call that prints out-line and err-line and exits 3, three times; the
+#   po1 (Claude Code): three Bash calls that print out-line and err-line and exit 3; the
 #     PostToolUseFailure hook answers nothing, updatedToolOutput as a string, then as a Bash-shaped object.
-#     Writes fixtures/claude-code/hooks/PostToolUseFailure-Bash-output-main.json (OS-23).
+#     Then a 4th Bash call, `cd scratch && cargo test`, on a crate with 2 failing tests; the hook answers
+#     nothing, and the LIVE PO1 line reports its outcome. Writes
+#     fixtures/claude-code/hooks/PostToolUseFailure-Bash-output-main.json (OS-23).
 #   po2 (Claude Code): the same lines with exit 0; a PostToolUse rewrite sets stdout to a tracer and stderr
 #     to "". Writes fixtures/claude-code/requests/po2-result.json (OS-24).
 #   po3 (OpenCode): the same lines with exit 0; a probe plugin records tool.execute.after. Writes
@@ -17,11 +19,13 @@
 #   not produce is removed. Every other capture (result records, hook inputs, request bodies, SSE replies)
 #   stays in the run folder in the scratch folder; their paths are printed at the end.
 # Run by hand only, by the operator, with claude and opencode on PATH; never from a test or CI (O-C7).
+# po1 also needs rustup on PATH with the toolchain of rust-toolchain.toml (`rustup which cargo` in the repo
+# root finds its cargo).
 #
 # What this run does to the machine: a temporary HOME and config folder in the scratch folder, the dummy
 # key and the mock upstream of lib.sh: no login is read, no model request leaves the machine, nothing
 # under the real HOME is written. OpenCode fetches its provider package from the package registry into
-# the temporary HOME.
+# the temporary HOME. po1 puts the bin folder of that toolchain first on the isolated PATH.
 case "$#:${1:-}" in
   1:po1 | 1:po2 | 1:po3 | 1:po4) MODE=$1 ;;
   *) echo "usage: live-shaping.sh po1|po2|po3|po4"; exit 2 ;;
@@ -131,6 +135,15 @@ po1_verdict() {
       + "; cases that replace the text the model sees: " + (if $r == "" then "none" else $r end)
       + "; failed calls hooked: \(.calls | length)"' "$1"
 }
+# po1_cargo <po1-cargo-test-hook.json>: the cargo-test clause of the LIVE PO1 line (a report, not a rule):
+# not hooked, or hooked with the first line of the field error and whether it holds a test result line
+po1_cargo() {
+  if [ ! -f "$1" ]; then echo "cargo-test call: not hooked"; return 0; fi
+  jq -r '(.error // "" | if type == "string" then . else tojson end) as $e
+    | "cargo-test call: hooked, " + ($e | split("\n")[0])
+      + ", test result " + (if ($e | contains("test result:")) then "present" else "absent" end)' "$1" \
+    || echo "cargo-test call: hooked, hook input not readable"
+}
 
 # --- OpenCode helpers -----------------------------------------------------------------------
 # oc_setup [<mcp json>]: the probe plugin and opencode.json (provider on the mock) in the run's HOME
@@ -183,12 +196,15 @@ part_po1() {
  {"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "cargo-test", "output": {}}]
 J
   # cargo for the cargo-test call: the isolated PATH (TOOL_PATH, lib.sh) holds no cargo
-  _cg=$(rustup which cargo 2>/dev/null || command -v cargo) || { echo "live: cargo is not on PATH"; exit 1; }
+  # rustup which reads rust-toolchain.toml of the current folder: run it in the repo root
+  _cg=$(cd "$REPO_DIR" && rustup which cargo 2>/dev/null) ||
+    { echo "live: rustup which cargo found no cargo for rust-toolchain.toml; rustup must be on PATH" >&2; exit 1; }
   case "$(dirname "$_cg")" in
     *"'"* | *" "*) echo "live: a path holds a single quote or a space; this script cannot use it"; exit 1 ;;
   esac
   TOOL_PATH="$(dirname "$_cg"):$TOOL_PATH"
   echo "live: cargo $_cg"
+  "$_cg" --version >&2
   hook_settings "$RUN/hooks" "$RUN/responses.json" >"$RUN/settings.json"
   start_mock "$RUN/rules.json"
   po1_crate "$R"
@@ -243,7 +259,7 @@ PY
   # shellcheck disable=SC2046
   kept "$RUN/po1-result.json" $(jq -r '.calls[].request_file // empty' "$RUN/po1-result.json")
   _v=$(po1_verdict "$RUN/po1-result.json")
-  result PO1 "${_v%% *}" "${_v#* }"
+  result PO1 "${_v%% *}" "${_v#* }; $(po1_cargo "$RUN/po1-cargo-test-hook.json")"
 }
 
 # --- PO2 (Claude Code): updatedToolOutput with stderr "" removes the stderr the model sees ----------
