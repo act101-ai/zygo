@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
@@ -403,3 +402,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | MS-24 DONE: SP2 verified on github.com and gitlab.com with well-known private repos; both private probes fail with `could not read Username` (in PRIVATE_TEXT); result for MS-25 · PR #130 |
 | 2026-11-25 | OS-21 done: go test fixtures (passing-verbose, failing-parallel, panic) captured from a scratch module; round 2 kept the full panic trace in must_keep and a fail_fetch log line right after its CONT. |
 | 2026-11-25 | OS-12 DONE: merged 6e1b9387 5ff2466e; clean removes CSI, 8-bit CSI, OSC (OSC 8 keeps text) and CR overwrites, line count kept. Review F4 (`ESC ( B` leaves `B`) and F5 (`ESC ESC [31m` leaves `[31m`) to FX-16; O§7.4 rewritten, pending ratification · PR #132 |
+| 2026-11-25 | OS-13 DONE: dedup step folds runs of equal consecutive lines, lossless. Review round 2 added 5 edge-input tests; F1 (expand count limit) rejected, needs an operator-approved threshold; F3 rejected · PR #139 |

@@ -78,6 +78,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | DONE | lookup | 6a93103b · SP2 verified (git 2.50.1) ; floor n/a (docs only) · PR #130 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | DONE | implementation | d0ca20df 3c6b5aa9 22ca6760 · shaping_fixtures 22 passed ; floor green · PR #131 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | DONE | implementation | 6e1b9387 5ff2466e · shape_clean 23 passed ; floor green · PR #132 |
+| OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | DONE | implementation | PR #139; node 492ed380, c842cfab; acc 15/15 |
 
 ## Log
 
