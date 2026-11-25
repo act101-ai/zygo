@@ -150,3 +150,40 @@ fn input_duplicate_registry_id_refused() {
     let dup = dup.replace("\"A-3\"", "\"A-4\"").replace("A-3.9", "A-3.1");
     assert!(Registry::parse(&(text("registry.toml") + &dup)).unwrap_err().contains("A-3.1"));
 }
+
+#[test]
+fn check_cfg_unix_test_counts_with_platform() {
+    let p = |f: &str| evidence(&repo(), &format!("test:crates/demo/tests/ev.rs::{f}")).unwrap().platforms;
+    assert_eq!(p("unix_only"), ["unix"]);
+    assert_eq!(p("in_windows_mod"), ["windows"]);
+    assert!(p("in_cfg_test_mod").is_empty());
+    assert!(p("plain").is_empty());
+}
+
+#[test]
+fn check_tokio_multi_thread_test_counts() {
+    for f in ["tokio_multi", "tokio_plain"] {
+        assert_eq!(evidence(&repo(), &format!("test:crates/demo/tests/ev.rs::{f}")), Ok(Evidence { platforms: vec![] }));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn input_evidence_link_leaving_repo_refused() {
+    let (d, out) = (copy_repo(), tempfile::tempdir().unwrap());
+    std::fs::write(out.path().join("x.json"), "{\"outside\": true}\n").unwrap();
+    std::fs::copy(repo().join("crates/demo/tests/ev.rs"), out.path().join("ev.rs")).unwrap();
+    std::os::unix::fs::symlink(out.path().join("x.json"), d.path().join("fixtures/beta/out.json")).unwrap();
+    std::os::unix::fs::symlink(out.path().join("ev.rs"), d.path().join("crates/demo/tests/link.rs")).unwrap();
+    assert!(evidence(d.path(), "fixture:fixtures/beta/out.json").unwrap_err().contains("leaves the repository"));
+    assert!(evidence(d.path(), "test:crates/demo/tests/link.rs::plain").unwrap_err().contains("leaves the repository"));
+}
+
+#[cfg(unix)]
+#[test]
+fn check_3_symlink_fixture_not_evidence() {
+    let d = copy_repo();
+    std::os::unix::fs::symlink("capture.json", d.path().join("fixtures/beta/link.json")).unwrap();
+    assert!(evidence(d.path(), "fixture:fixtures/beta/link.json").is_err());
+    assert!(evidence(d.path(), "fixture:fixtures/beta/capture.json").is_ok());
+}

@@ -245,8 +245,154 @@ fn parse_evidence(e: &str) -> Result<Ev<'_>, String> {
 }
 
 pub fn evidence(root: &Path, e: &str) -> Result<Evidence, String> {
-    let _ev = parse_evidence(e)?;
-    todo!()
+    let ev = parse_evidence(e)?;
+    let rel = match ev {
+        Ev::Test { path, .. } | Ev::Fixture { path } => path,
+        Ev::Premise { file, .. } => file,
+    };
+    let full = root.join(rel);
+    let canon = full.canonicalize().map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
+    let canon_root = root.canonicalize().map_err(|err| format!("evidence `{e}`: {}: {err}", root.display()))?;
+    if !canon.starts_with(&canon_root) {
+        return Err(format!("evidence `{e}`: {rel} leaves the repository"));
+    }
+    let read = |p: &Path| std::fs::read_to_string(p).map_err(|err| format!("evidence `{e}`: {rel}: {err}"));
+    match ev {
+        Ev::Test { func, .. } => {
+            let file = syn::parse_file(&read(&canon)?).map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
+            let mut found = Vec::new();
+            find_tests(&file.items, func, &mut Vec::new(), &mut found);
+            let (attrs, platforms) = match found.len() {
+                0 => return Err(format!("evidence `{e}`: no test fn `{func}` in {rel}")),
+                1 => found.remove(0),
+                _ => return Err(format!("evidence `{e}`: ambiguous, {rel} has {} test fns `{func}`", found.len())),
+            };
+            if attrs.iter().any(is_ignore) {
+                return Err(format!("evidence `{e}`: test fn `{func}` is ignored"));
+            }
+            Ok(Evidence { platforms })
+        }
+        Ev::Fixture { .. } => {
+            let meta = std::fs::symlink_metadata(&full).map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
+            if meta.file_type().is_symlink() {
+                return Err(format!("evidence `{e}`: {rel} is a symbolic link"));
+            }
+            if !meta.is_file() || meta.len() <= 2 {
+                return Err(format!("evidence `{e}`: {rel} is not a regular file of more than 2 bytes"));
+            }
+            let bytes = std::fs::read(&full).map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
+            let squeezed: Vec<u8> = bytes.into_iter().filter(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n')).collect();
+            if squeezed == b"{}" || squeezed == b"[]" {
+                return Err(format!("evidence `{e}`: {rel} is trivial"));
+            }
+            Ok(Evidence { platforms: vec![] })
+        }
+        Ev::Premise { file, id } => {
+            let text = read(&canon)?;
+            let head = format!("| {id} |");
+            let rows: Vec<&str> = text.lines().filter(|l| l.trim_start_matches(' ').starts_with(&head)).collect();
+            let [row] = rows[..] else {
+                return Err(format!("evidence `{e}`: {file} has {} rows `{id}`, not one", rows.len()));
+            };
+            let want = if file == "docs/premises.md" { "verified" } else { "pass" };
+            let cells = split_row(row);
+            let got = cells.get(6).map(|c| c.trim()).unwrap_or("");
+            if got != want {
+                return Err(format!("evidence `{e}`: the result of `{id}` is `{got}`, not `{want}`"));
+            }
+            Ok(Evidence { platforms: vec![] })
+        }
+    }
+}
+
+/// Split a table row on each `|` not preceded by `\`.
+fn split_row(row: &str) -> Vec<&str> {
+    let mut cells = Vec::new();
+    let (mut start, mut prev) = (0, '\0');
+    for (i, c) in row.char_indices() {
+        if c == '|' && prev != '\\' {
+            cells.push(&row[start..i]);
+            start = i + 1;
+        }
+        prev = c;
+    }
+    cells.push(&row[start..]);
+    cells
+}
+
+/// The text of each `#[cfg(…)]` in `attrs`, leaving out a bare `test`.
+fn cfgs(attrs: &[syn::Attribute], out: &mut Vec<String>) {
+    for a in attrs {
+        if let syn::Meta::List(l) = &a.meta {
+            if l.path.is_ident("cfg") {
+                let t = l.tokens.to_string();
+                if t != "test" {
+                    out.push(t);
+                }
+            }
+        }
+    }
+}
+
+fn path_is(p: &syn::Path, want: &[&str]) -> bool {
+    p.segments.len() == want.len() && p.segments.iter().zip(want).all(|(s, w)| s.ident == w)
+}
+
+/// Push each test fn named `func` in `items` and in inline modules, with its attributes and platforms.
+fn find_tests(items: &[syn::Item], func: &str, stack: &mut Vec<String>, found: &mut Vec<(Vec<syn::Attribute>, Vec<String>)>) {
+    for item in items {
+        match item {
+            syn::Item::Fn(f) if f.sig.ident == func => {
+                let is_test = f.attrs.iter().any(|a| path_is(a.path(), &["test"]) || path_is(a.path(), &["tokio", "test"]));
+                if is_test {
+                    let mut platforms = stack.clone();
+                    cfgs(&f.attrs, &mut platforms);
+                    found.push((f.attrs.clone(), platforms));
+                }
+            }
+            syn::Item::Mod(m) => {
+                if let Some((_, inner)) = &m.content {
+                    let depth = stack.len();
+                    cfgs(&m.attrs, stack);
+                    find_tests(inner, func, stack, found);
+                    stack.truncate(depth);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `#[ignore]` in any form, or a `cfg_attr(…)` whose tokens hold the ident `ignore`.
+fn is_ignore(a: &syn::Attribute) -> bool {
+    if path_is(a.path(), &["ignore"]) {
+        return true;
+    }
+    let syn::Meta::List(l) = &a.meta else { return false };
+    if !path_is(&l.path, &["cfg_attr"]) {
+        return false;
+    }
+    // The idents of the token text, string literals left out.
+    let text = l.tokens.to_string();
+    let mut plain = String::new();
+    let (mut in_str, mut esc) = (false, false);
+    for c in text.chars() {
+        if in_str {
+            match (esc, c) {
+                (true, _) => esc = false,
+                (false, '\\') => esc = true,
+                (false, '"') => in_str = false,
+                _ => {}
+            }
+            plain.push(' ');
+        } else if c == '"' {
+            in_str = true;
+            plain.push(' ');
+        } else {
+            plain.push(c);
+        }
+    }
+    plain.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == "ignore")
 }
 
 pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Client]) -> Vec<Fault> {

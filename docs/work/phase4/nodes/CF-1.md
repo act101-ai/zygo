@@ -193,7 +193,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
 
 - [x] **7. `parse`, `load`, `parse_evidence`.** Implement them by the rules above, with a private `fn valid_id(id: &str) -> bool` for the id pattern (no new dependency). Run the step 6 command → 7 pass. Commit `feat(conformance): registry and grade-file model with the input rules (CF-1)`.
 
-- [ ] **8. Failing evidence tests (K§11 item 2).**
+- [x] **8. Failing evidence tests (K§11 item 2).**
 
   ```rust
   #[test] fn check_cfg_unix_test_counts_with_platform() {
@@ -226,7 +226,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
   ```
   Run `cargo test -p zygo-core --test conformance -- check_cfg check_tokio input_evidence_link check_3_symlink` → each fails.
 
-- [ ] **9. `evidence`.** Implement it by the rules above (`syn::parse_file`, recursion into inline modules with a stack of `cfg` texts). Run the step 8 command → passes (on Windows the two `#[cfg(unix)]` tests do not exist). Commit `feat(conformance): evidence kinds test, fixture and premise (CF-1)`.
+- [x] **9. `evidence`.** Implement it by the rules above (`syn::parse_file`, recursion into inline modules with a stack of `cfg` texts). Run the step 8 command → passes (on Windows the two `#[cfg(unix)]` tests do not exist). Commit `feat(conformance): evidence kinds test, fixture and premise (CF-1)`.
 
 - [ ] **10. Failing check tests (items 1-9; K§11 item 1).** Each case changes one thing in `base()` and asserts the exact item set:
 
