@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "printf 'out-line\\n'; printf 'err-line\\n' >&2; exit 3",
+   "event" : "PostToolUseFailure",
+   "exit" : 3,
+   "source" : "the error field of the first Bash call of scripts/premises/live-shaping.sh po1 (fixtures/claude-code/hooks/PostToolUseFailure-Bash-output-main.json), Claude Code 2.1.332, mock upstream",
+   "tool" : "claude 2.1.332"
+}
