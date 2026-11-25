@@ -436,6 +436,27 @@ fn check_3_fixture_over_1_mib_not_evidence() {
 }
 
 #[test]
+fn check_7_version_line_after_the_first_heading_does_not_count() {
+    let (r, g, c) = base();
+    let d = copy_repo();
+    let p = d.path().join("docs/premises.md");
+    let text = std::fs::read_to_string(&p).unwrap().replace("Alpha: 1.0.0\n", "") + "Alpha: 1.0.0\n";
+    std::fs::write(&p, text).unwrap();
+    let f = check(d.path(), &r, &g, &c, &resolve(d.path(), &g));
+    assert_eq!(items(&f), set(&[7]));
+    assert!(f[0].text.contains("Alpha: 1.0.0"), "{f:?}");
+}
+
+#[test]
+fn input_evidence_path_with_colon_refused() {
+    for e in ["fixture:fixtures/beta/a:b.json", "test:crates/demo/tests/e:v.rs::plain"] {
+        assert!(evidence(&repo(), e, "Beta").unwrap_err().contains("not a plain repository-relative path"), "{e}");
+        let t = text("beta.toml").replace("fixture:fixtures/beta/capture.json", e);
+        assert!(GradeFile::parse(&t).unwrap_err().contains("not a plain repository-relative path"), "{e}");
+    }
+}
+
+#[test]
 fn check_valid_fixtures_pass() {
     let (r, g, c) = base();
     assert_eq!(check(&repo(), &r, &g, &c, &resolve(&repo(), &g)), vec![]);
