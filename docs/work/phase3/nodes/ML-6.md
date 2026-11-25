@@ -55,7 +55,7 @@ Unit: phase3:ML-6:plan
 
 **Steps**
 
-- [ ] **1. Write the failing tests.** Create `crates/zygo-workspace/tests/mail_wake.rs` with `#![cfg(unix)]` and the module doc `//! ML-6: the wake of an idle member (M§7.3, M§9, M§10, M§13 #5 #6).`. Fixture:
+- [x] **1. Write the failing tests.** Create `crates/zygo-workspace/tests/mail_wake.rs` with `#![cfg(unix)]` and the module doc `//! ML-6: the wake of an idle member (M§7.3, M§9, M§10, M§13 #5 #6).`. Fixture:
   ```rust
   const ID: &str = "0123456789abcdef"; const ELENA: &str = "kelena222"; const OTHER: &str = "kother222";
   const T0: u64 = 1_700_000_000; // 2023-11-14T22:13:20Z
@@ -98,9 +98,11 @@ Unit: phase3:ML-6:plan
 
   Check: `cargo test -p zygo-workspace --test mail_wake` fails to compile (no `mail::wake`, no `Store::live_session`).
 
-- [ ] **2. `Store::live_session`** in `crates/zygo-workspace/src/state.rs` (D1), after `live_launcher`: `pub fn live_session(&self, m: &MemberRecord) -> Option<PathBuf>`. Doc: `The live session folder of a member (D14): sessions/<pending.zygo_session> when live, else sessions/<zygo_session> when live; an id that fails valid_session_id is not looked up.` It is the rule of `down.rs:822`, with `self.sessions_dir` and `valid_session_id`. `down.rs` does not change.
+  Deviation (step 1): in `second_wake_inside_the_gap_is_skipped` the test removes `wake.json` before the `213503982334601d` case (`crates/zygo-workspace/tests/mail_wake.rs:286`). The wake of the text `x` case just before writes `woken_at` = `T0`, so without the remove the first huge-gap wake at `T0` is `Gap`, not `Woken`. The intent (huge gap: wake, then `Gap`, no panic) is kept.
 
-- [ ] **3. `wake.rs`.** Add `pub mod wake;` to `crates/zygo-workspace/src/mail/mod.rs`, and change its doc owner to `nodes ML-2, ML-4, ML-6`. Create `crates/zygo-workspace/src/mail/wake.rs` (doc: `//! The wake of an idle member after a send (M§7.3). Owner: node ML-6.`) with the Produced items and private consts `PANE_OPTION = "@zygo-pane"`, `WS_OPTION = "@zygo-ws"`, `STATUS_BOUND = 2 s`, `WAKE_FILE = "wake.json"`, `LOCK = "wake.lock"`.
+- [x] **2. `Store::live_session`** in `crates/zygo-workspace/src/state.rs` (D1), after `live_launcher`: `pub fn live_session(&self, m: &MemberRecord) -> Option<PathBuf>`. Doc: `The live session folder of a member (D14): sessions/<pending.zygo_session> when live, else sessions/<zygo_session> when live; an id that fails valid_session_id is not looked up.` It is the rule of `down.rs:822`, with `self.sessions_dir` and `valid_session_id`. `down.rs` does not change.
+
+- [x] **3. `wake.rs`.** Add `pub mod wake;` to `crates/zygo-workspace/src/mail/mod.rs`, and change its doc owner to `nodes ML-2, ML-4, ML-6`. Create `crates/zygo-workspace/src/mail/wake.rs` (doc: `//! The wake of an idle member after a send (M§7.3). Owner: node ML-6.`) with the Produced items and private consts `PANE_OPTION = "@zygo-pane"`, `WS_OPTION = "@zygo-ws"`, `STATUS_BOUND = 2 s`, `WAKE_FILE = "wake.json"`, `LOCK = "wake.lock"`.
   - `wake` runs these checks in this order. It returns at the first result:
     1. `ws.members.get(key)` is `None`, or `store.live_session(m)` is `None`: `NotLive`.
     2. `m.launch.events_off`, or `!probe.idle(&dir)`: `Busy`.
@@ -119,9 +121,11 @@ Unit: phase3:ML-6:plan
     - `idle(dir)`: `false` when `drain::hooks_off(&SessionDir::new(dir))` is true. Else read `activity::read` and the status from `SessionClient::from_session_dir(dir)` with `.timeout(STATUS_BOUND)` and `.status()` (each error becomes its text). Then `matches!(drain::idle(..), Idle::Idle | Idle::IdleRuleSkipped)`.
   - `after_send`: return at once when `keys` is empty. Get `gap` from `parse_duration(&cfg.wake_gap)`, else 30 s with the A7 line. Set `store = Store::open(paths, &ws.id)` and `mux = Tmux::new(tmux.to_path_buf(), ws.tmux_socket.clone())`. Call `wake(&store, ws, &mux, key, gap, &RealProbe)` for each key, in order. The outcomes are dropped: `wake` already logs `Failed`.
 
-- [ ] **4. Run the tests.** Run `cargo test -p zygo-workspace --test mail_wake -- --include-ignored`. Pass: all tests pass. The tmux test runs on tmux 3.2 or later, or prints `tmux tests skipped: …`. Then run `cargo test -p zygo-workspace --locked --no-fail-fast` and `cargo clippy -p zygo-workspace --all-targets --locked -- -D warnings`. Pass: both are green, and `down`, `state`, `mail_store` and `mail_names` do not change.
+- [x] **4. Run the tests.** Run `cargo test -p zygo-workspace --test mail_wake -- --include-ignored`. Pass: all tests pass. The tmux test runs on tmux 3.2 or later, or prints `tmux tests skipped: …`. Then run `cargo test -p zygo-workspace --locked --no-fail-fast` and `cargo clippy -p zygo-workspace --all-targets --locked -- -D warnings`. Pass: both are green, and `down`, `state`, `mail_store` and `mail_names` do not change.
 
-- [ ] **5. Commit** `ML-6: wake of an idle member after a send`, with the trailers `Zygo-Session:` and `Zygo-Work: phase3:ML-6`.
+  Deviation (step 4): `cargo clippy -p zygo-workspace --all-targets --locked -- -D warnings` fails on code outside Files that this node does not touch: `clippy::collapsible_if` in `crates/zygo-work/src/gate/transition.rs:158` (a dependency), and, with `--no-deps`, unused variables and a dead struct in `crates/zygo-workspace/tests/down.rs:419`, `:1674`, `:1688`, `:1703`. `cargo clippy -p zygo-workspace --lib --test mail_wake --locked --no-deps -- -D warnings` is clean. `cargo test -p zygo-workspace --locked --no-fail-fast` is green.
+
+- [x] **5. Commit** `ML-6: wake of an idle member after a send`, with the trailers `Zygo-Session:` and `Zygo-Work: phase3:ML-6`.
 
 **Spec coverage.**
 - M§7.3, the idle rule and the live launcher: step 3 items 1-2 and `RealProbe`; tests `busy…`, `…not_live…`, `wake_writes_no_activity_json`.
