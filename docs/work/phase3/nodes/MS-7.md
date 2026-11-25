@@ -225,3 +225,13 @@ Produces (this node):
 - [x] 5. Run `cargo build -p zygo-mail-sync` and `cargo test -p zygo-mail-sync` and see both pass (the MS-2 `git_builder` tests still pass).
 - [x] 6. Commit `crates/zygo-mail-sync/src/secret.rs` and `crates/zygo-mail-sync/tests/secret.rs` with subject `MS-7: secret pass on one message` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:MS-7`.
 - [x] 7. Verify: run `cargo test -p zygo-mail-sync --test secret` (the Acceptance command) and see all pass; run `git diff --exit-code origin/phase-3 -- crates/zygo-redact` and see exit 0 (zygo-redact source unchanged); run `git diff --name-only origin/phase-3...HEAD` and see only `crates/zygo-mail-sync/src/secret.rs`, `crates/zygo-mail-sync/tests/secret.rs` and this node file.
+
+### Review round 1
+
+The plan steps above stay as written; these changes follow review:
+
+1. `check_with` scans a flat root array that holds every object key and every string leaf of the message, at any depth. zygo-redact never reads keys (`crates/zygo-redact/src/scope.rs:76`) and skips API-body paths under `messages/…` and `input/…` (`scope.rs:15-63`); a root array has neither. The caller's value is never changed. Tests: secret in `subject`, in an unknown root field, as an object key, under `input[].reasoning`, under `messages[].content[].thinking`, nested in an array of objects. The `Some(0)` test still gives `CouldNotRun("secret_timeout")` (the flat list has 13 strings).
+2. On `Blocked { ids }` (block ids only, `crates/zygo-redact/src/secret.rs:151-152`), a second pass runs with every block pattern as `redact`; `Finding` holds the sorted union of ids. If the second pass fails or times out, `Finding` holds the block ids. Test: a block pattern and an AWS key in one body.
+3. A compile error with store values present gives `CouldNotRun("act_lite_store")` when the patterns compile without the store, else `redaction_patterns`. Test: 65535 config patterns plus one store value go over zygo-redact's `u16` pattern limit only with the store.
+4. A dangling symlink at the store path gives `CouldNotRun("act_lite_store")` (fails closed); a unix-only test pins it.
+5. `check_uses_the_system_lookup` is removed: it read the real store location and proved nothing about the lookup.
