@@ -167,3 +167,47 @@ fn fixture_cargo_color_has_no_esc() {
         assert!(out.lines().any(|o| o == l), "{l}");
     }
 }
+
+#[test]
+fn osc_terminator_within_4k_of_body_removes_the_whole_osc() {
+    // F1: the terminator must start within 4096 bytes after `ESC ]`.
+    for len in [4095, 4096] {
+        let body = "x".repeat(len);
+        color(&format!("a\x1b]{body}\x07b"), "ab");
+        color(&format!("a\x1b]{body}\x1b\\b"), "ab");
+    }
+}
+
+#[test]
+fn osc_terminator_past_4k_of_body_loses_only_esc_bracket() {
+    // F1: no terminator within 4096 bytes is an OSC with no terminator.
+    for len in [4097, 5000] {
+        let body = "x".repeat(len);
+        color(&format!("a\x1b]{body}\x07b"), &format!("a{body}\x07b"));
+        color(&format!("a\x1b]{body}\x1b\\b"), &format!("a{body}b"));
+    }
+    let run = "V".repeat(100_000);
+    color(&format!("x\x1b]0;{run}\x07end"), &format!("x0;{run}\x07end"));
+}
+
+#[test]
+fn osc_stops_at_carriage_return() {
+    // F2: an escape never takes `\r`.
+    let input = "a\x1b]0;t\rb\x07c\r\n";
+    assert_eq!(got(input, true), ("a0;t\rb\x07c\r\n".into(), vec![ColorCodesRemoved]));
+    assert_eq!(
+        got(input, false),
+        ("b\x07c\n".into(), vec![ColorCodesRemoved, ProgressLinesRemoved])
+    );
+}
+
+#[test]
+fn trailing_carriage_return_overwrites_nothing() {
+    // F3
+    assert_eq!(got("progress 100%\r", false), ("progress 100%".into(), vec![ProgressLinesRemoved]));
+    assert_eq!(
+        got("line one\r\r\nline two\r\n", false),
+        ("line one\nline two\n".into(), vec![ProgressLinesRemoved])
+    );
+    assert_eq!(got("a\rb\r\n", false), ("b\n".into(), vec![ProgressLinesRemoved]));
+}
