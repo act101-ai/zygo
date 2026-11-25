@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/2026-11-22-workspace-mail-design.md` M§8a items 1 and 2; `docs/specs/2026-11-18-zygo-design.md` §8.6
 **Files:** `crates/zygo-core/src/session_view.rs`, `crates/zygo-launch/src/launcher.rs`, `crates/zygo-hooks/src/lib.rs`, `crates/zygo-hooks/src/mail.rs`, `crates/zygo-hooks/src/workspace.rs`, `crates/zygo-hooks/tests/session_text.rs`
 **Consumes:** `Features.mail` (ML-1), `members` (ML-4), `Member.name` (ML-7)
-**Produces:** `zygo_core::session_view::SessionView.mail: bool` (`#[serde(default)]`; the launcher sets it from `features.mail`), `zygo_hooks::mail::session_item(ws: &zygo_workspace::state::Workspace, own_key: &str) -> String`
+**Produces:** `zygo_core::session_view::SessionView.mail: bool` (`#[serde(default)]`; the launcher sets it from `features.mail`), `zygo_hooks::mail::session_item(ws: &zygo_workspace::state::Workspace, own_key: &str) -> Option<String>` (None when own_key has no member record; review round 1, F1)
 **Acceptance:** `test "$(cargo test -q -p zygo-hooks --test session_text -- mail_item --list 2>/dev/null | grep -c ': test$')" -ge 5 && cargo test -p zygo-hooks --test session_text` → every count holds (at least 5 named `mail_item…` in zygo-hooks `session_text`; a count of 0 fails before any run), then all pass: a named member with `mail` on gets item 8 after the mechanics text and before the resume note, with its name, the workspace name and every member name read from `workspace.json` at this start (a member added while it was down is listed: M§13 #12, second half); a member with no name gets the no-name clause with its pane key; with `mail` off, or outside a workspace, there is no item 8; `mechanics` (the subagent text) has no item 8; each name passes `esc`; the item holds no subject or body text
 
 ## Plan
@@ -34,7 +34,7 @@ const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with ma
 
 ### Steps
 
-- [ ] 1. Test helpers in `crates/zygo-hooks/tests/session_text.rs`. Add `use zygo_hooks::mail;`, `use zygo_workspace::state::{MemberRecord, Workspace};` and, under `#[cfg(unix)]`, `use std::time::{Duration, SystemTime}; use zygo_core::paths::Paths; use zygo_workspace::state::{Phase, Store};`. Add:
+- [x] 1. Test helpers in `crates/zygo-hooks/tests/session_text.rs`. Add `use zygo_hooks::mail;`, `use zygo_workspace::state::{MemberRecord, Workspace};` and, under `#[cfg(unix)]`, `use std::time::{Duration, SystemTime}; use zygo_core::paths::Paths; use zygo_workspace::state::{Phase, Store};`. Add:
   ```rust
   const MAIL_TAIL: &str = /* the text above */;
   const WS_ID: &str = "0123456789abcdef";
@@ -58,7 +58,7 @@ const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with ma
   ```
   Check: the helpers compile once steps 2-9 exist (step 3).
 
-- [ ] 2. Write the 8 tests in `crates/zygo-hooks/tests/session_text.rs`:
+- [x] 2. Write the 8 tests in `crates/zygo-hooks/tests/session_text.rs`:
   ```rust
   #[test] // M§8a item 1
   fn mail_item_named_member_lists_every_member_name() {
@@ -135,17 +135,17 @@ const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with ma
   ```
   Check: the file holds 8 functions whose names start with `mail_item`.
 
-- [ ] 3. Run `cargo test -p zygo-hooks --test session_text`. Check: it fails to compile: no field `mail` on `SessionView`, unresolved `zygo_hooks::mail`.
+- [x] 3. Run `cargo test -p zygo-hooks --test session_text`. Check: it fails to compile: no field `mail` on `SessionView`, unresolved `zygo_hooks::mail`.
 
-- [ ] 4. In `crates/zygo-core/src/session_view.rs`, add to `SessionView` after `repo_root`, before `extra`: `#[serde(default)] pub mail: bool,` with a doc line (`[features] mail` of the launch, M§8, M§8a; `false` for a `view.json` without the field), and `mail: false,` in `impl Default for SessionView`. Check: `cargo test -p zygo-core --test core_basics` passes.
+- [x] 4. In `crates/zygo-core/src/session_view.rs`, add to `SessionView` after `repo_root`, before `extra`: `#[serde(default)] pub mail: bool,` with a doc line (`[features] mail` of the launch, M§8, M§8a; `false` for a `view.json` without the field), and `mail: false,` in `impl Default for SessionView`. Check: `cargo test -p zygo-core --test core_basics` passes.
 
-- [ ] 5. In `crates/zygo-launch/src/launcher.rs`, in the `SessionView` literal (now lines 589-612), add `mail: c.features.mail,` after `compact_tool: c.features.compact_tool,`. Check: `cargo build -p zygo-launch --tests` succeeds.
+- [x] 5. In `crates/zygo-launch/src/launcher.rs`, in the `SessionView` literal (now lines 589-612), add `mail: c.features.mail,` after `compact_tool: c.features.compact_tool,`. Check: `cargo build -p zygo-launch --tests` succeeds.
 
-- [ ] 6. Create `crates/zygo-hooks/src/mail.rs` with a module doc (M§8a; owner ML-9) and `pub fn session_item(ws: &zygo_workspace::state::Workspace, own_key: &str) -> String`, the text of "Fixed text" above, with `MAIL_TAIL` a private `const`; the own name is `ws.members.get(own_key).and_then(MemberRecord::valid_name)`; the list is `zygo_workspace::mail::names::members(ws)` filtered to `Some` names. Check: `cargo build -p zygo-hooks` succeeds after step 7.
+- [x] 6. Create `crates/zygo-hooks/src/mail.rs` with a module doc (M§8a; owner ML-9) and `pub fn session_item(ws: &zygo_workspace::state::Workspace, own_key: &str) -> String`, the text of "Fixed text" above, with `MAIL_TAIL` a private `const`; the own name is `ws.members.get(own_key).and_then(MemberRecord::valid_name)`; the list is `zygo_workspace::mail::names::members(ws)` filtered to `Some` names. Check: `cargo build -p zygo-hooks` succeeds after step 7.
 
-- [ ] 7. In `crates/zygo-hooks/src/lib.rs`, add `pub mod mail;` on the line before `pub mod pre_compact;`. Check: `cargo build -p zygo-hooks` succeeds.
+- [x] 7. In `crates/zygo-hooks/src/lib.rs`, add `pub mod mail;` on the line before `pub mod pre_compact;`. Check: `cargo build -p zygo-hooks` succeeds.
 
-- [ ] 8. In `crates/zygo-hooks/src/workspace.rs` `session_start`, replace the `let output = match inputs.and_then(note) { … };` block (lines 628-632) with:
+- [x] 8. In `crates/zygo-hooks/src/workspace.rs` `session_start`, replace the `let output = match inputs.and_then(note) { … };` block (lines 628-632) with:
   ```rust
   // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start.
   // A read error or no state gives no item and no line of its own (record_session's read writes the one line, C6).
@@ -159,13 +159,13 @@ const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with ma
   ```
   Update the doc comment above `session_start`: "the session text, an empty line, item 8 when `view.mail` is on and the state reads, then the note; empty parts are left out". Check: `cargo test -p zygo-hooks --test workspace` passes (no view in it sets `mail`, so its outputs do not change).
 
-- [ ] 9. Run `cargo test -p zygo-hooks --test session_text`. Check: all pass, the 8 `mail_item_*` among them.
+- [x] 9. Run `cargo test -p zygo-hooks --test session_text`. Check: all pass, the 8 `mail_item_*` among them.
 
-- [ ] 10. Run the Acceptance: `test "$(cargo test -q -p zygo-hooks --test session_text -- mail_item --list 2>/dev/null | grep -c ': test$')" -ge 5 && cargo test -p zygo-hooks --test session_text`. Check: exit 0 with a count of 8.
+- [x] 10. Run the Acceptance: `test "$(cargo test -q -p zygo-hooks --test session_text -- mail_item --list 2>/dev/null | grep -c ': test$')" -ge 5 && cargo test -p zygo-hooks --test session_text`. Check: exit 0 with a count of 8.
 
-- [ ] 11. Run `cargo test --workspace --locked --no-fail-fast`. Check: exit 0.
+- [x] 11. Run `cargo test --workspace --locked --no-fail-fast`. Check: exit 0.
 
-- [ ] 12. Commit the six files with `-m` only: subject `ML-9: session text item 8 (workspace mail)`, a blank line, then the `Zygo-Session:` and `Zygo-Work:` trailers that the implementation brief names, each on its own line. Check: `git show --stat HEAD` lists only the six files of **Files**.
+- [x] 12. Commit the six files with `-m` only: subject `ML-9: session text item 8 (workspace mail)`, a blank line, then the `Zygo-Session:` and `Zygo-Work:` trailers that the implementation brief names, each on its own line. Check: `git show --stat HEAD` lists only the six files of **Files**.
 
 ### Requirement map
 
@@ -188,3 +188,10 @@ const MAIL_TAIL: &str = "Send with mail_send (to a name, or `all`); read with ma
 - The launcher assignment has no test here: the launcher view tests in `crates/zygo-launch/tests/launcher.rs` (for example line 672) are `#[ignore = "timing: …"]` and that file is not in **Files**.
 - Spec gap, not decided here: M§8a gives no text for an empty member list (own member unnamed and no other named member); the plan prints ``Members: ``.`` with an empty pair of backticks.
 - The four state-backed tests are `#[cfg(unix)]` (Global constraints: tests that use workspace state); the Acceptance count of 5 holds on unix (8) but not on Windows (4).
+
+## Round 2
+
+- F1: `mail::session_item` returns `Option<String>`; `None` when `own_key` has no member record (no one can reach that pane by mail: `names::resolve`), so item 8 is left out. The `workspace.rs` caller uses `and_then`. Tests: `mail_item_absent_for_a_pane_with_no_member_record`, `mail_item_absent_at_session_start_for_a_pane_with_no_member_record`.
+- F2: test `mail_item_absent_when_workspace_state_is_unreadable`: a malformed `workspace.json` gives no item 8, the same text and resume note as with `mail` off, and one `errors.log` line for Claude Code (none for OpenCode).
+- F3: not added. The view is built inside `Session::run` (`crates/zygo-launch/src/launcher.rs`), after plugin sync and the session client and before the agent spawn; it has no seam a unit test reaches, and the view tests of `crates/zygo-launch/tests/launcher.rs` are `#[ignore = "timing: …"]`.
+- F4: the member list holds each name once, in key order of its first member. Test: `mail_item_lists_each_name_once`.
