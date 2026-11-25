@@ -515,6 +515,17 @@ add_row "$D" "$(row PC1 tmux 3.2 verified docs/../docs/premises.md)"
 run "$D"
 expect_fail "PC1: evidence path docs/../docs/premises.md is absolute or holds a '..' component"
 
+# PC-9 round 2 (F1): the last component is a regular file, but a directory on the path is a symlink
+# to a folder outside the tree; scripts/premises/ext is outside the forbidden-content scan scope.
+CASE="an evidence path through a symlinked directory"
+D=$(mk symdir)
+mkdir -p "$T/symdir_out"
+echo 'outside evidence' > "$T/symdir_out/ev.sh"
+ln -s "$T/symdir_out" "$D/scripts/premises/ext"
+add_row "$D" "$(row PC1 tmux 3.2 verified scripts/premises/ext/ev.sh)"
+run "$D"
+expect_fail "PC1: evidence path scripts/premises/ext/ev.sh passes through a symlink or resolves outside the repository"
+
 CASE="a joint agent with no header for the second"
 D=$(mk joint)
 evidence "$D"

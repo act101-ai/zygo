@@ -176,22 +176,30 @@ pcheck "P15 empty prerelease" 1 "live: opencode is 1.19.0-; the minimum is 1.18.
 # --- K: check-premises.sh agent rows at or above the header; act-lite exact ---------------------
 K=$T/k
 kmiss=""
-# kcopy <premises file>: copy into $K every path a table line of the file cites, as
-# check-premises.sh:161-165 reads evidence: `(fixtures|docs|scripts)/...`, no '..' component,
-# a regular file that is not a symlink. Any other path is skipped; check-premises reports it.
+# kcopy <premises file> <source root> <dest>: copy from <source root> into <dest> every path that a
+# table line of the file cites, by check-premises.sh's evidence rule (the TROWS table-line rule, the
+# Results loop's evidence path checks and nontrivial()): a table line has zero to three blanks before
+# "|"; a path is `(fixtures|docs|scripts)/...` with no '..' component, its directory resolves to the
+# same path under the source root's real path (no component is a symlink), and it is a regular file,
+# not a symlink. Any other path is skipped; check-premises reports it. A failed mkdir or cp prints
+# the path on stderr and returns 1.
 kcopy() {
-  grep -E '^[[:blank:]]*\|' "$1" | grep -oE '`(fixtures|docs|scripts)/[^` ]+`' | tr -d '`' >"$T/kcopy.txt"
+  kroot=$(cd -P "$2" && pwd -P) || { printf 'kcopy: no source root %s\n' "$2" >&2; return 1; }
+  grep -E '^ ? ? ?\|' "$1" | grep -oE '`(fixtures|docs|scripts)/[^` ]+`' | tr -d '`' >"$T/kcopy.txt"
   while IFS= read -r p; do
     case "$p" in .. | ../* | */.. | */../*) continue ;; esac
-    [ -f "$REPO/$p" ] && [ ! -L "$REPO/$p" ] || continue
-    mkdir -p "$K/$(dirname "$p")" && cp "$REPO/$p" "$K/$p"
+    kd=$(dirname "$p")
+    [ "$(cd -P "$kroot/$kd" 2>/dev/null && pwd -P)" = "$kroot/$kd" ] || continue
+    [ -f "$kroot/$p" ] && [ ! -L "$kroot/$p" ] || continue
+    { mkdir -p "$3/$kd" && cp "$kroot/$p" "$3/$p"; } 2>/dev/null ||
+      { printf 'kcopy: cannot copy %s\n' "$p" >&2; return 1; }
   done <"$T/kcopy.txt"
   return 0
 }
 for f in scripts/check-premises.sh scripts/premises/ver.sh docs/specs/2026-11-18-zygo-design.md docs/conformance.md; do
-  [ -f "$REPO/$f" ] || { kmiss=$f; break; }
+  [ -f "$REPO/$f" ] || { kmiss="$f missing"; break; }
 done
-[ -n "$kmiss" ] || [ -d "$REPO/fixtures" ] || kmiss=fixtures
+[ -n "$kmiss" ] || [ -d "$REPO/fixtures" ] || kmiss="fixtures missing"
 if [ -z "$kmiss" ]; then
   mkdir -p "$K/scripts/premises" "$K/docs/specs"
   cp "$REPO/scripts/check-premises.sh" "$K/scripts/"
@@ -199,12 +207,12 @@ if [ -z "$kmiss" ]; then
   cp "$REPO/docs/specs/2026-11-18-zygo-design.md" "$K/docs/specs/"
   cp "$REPO/docs/conformance.md" "$K/docs/"
   cp -R "$REPO/fixtures" "$K/"
-  kcopy "$REPO/docs/premises.md"
+  kcopy "$REPO/docs/premises.md" "$REPO" "$K" 2>"$T/kcopy.err" || kmiss="K setup: $(cat "$T/kcopy.err")"
 fi
 # kcase <case> <id> <agent> <old regex> <V> <want rc> <fixed text>
 kcase() {
   name="$1 $2 $3 version $5 -> exit $6"
-  if [ -n "$kmiss" ]; then no "$name" "$kmiss missing"; return; fi
+  if [ -n "$kmiss" ]; then no "$name" "$kmiss"; return; fi
   sed "s/^\(| $2 | [^|]* | $3 | \)$4 |/\1$5 |/" "$REPO/docs/premises.md" >"$K/docs/premises.md"
   c=$(grep -c "^| $2 | .* | $3 | $5 |" "$K/docs/premises.md")
   [ "$c" -eq 1 ] || { no "$name" "planted row count $c"; return; }
@@ -219,21 +227,76 @@ kcase K2 P1 'Claude Code' '2\.1\.328' 2.1.327 1 "P1: version '2.1.327' is below 
 kcase K3 P1 'Claude Code' '2\.1\.328' 2.1.33a 1 "P1: version '2.1.33a' is below the header's '2.1.328'"
 kcase K4 P4 OpenCode '1\.18\.16' 1.18.20 0 "check-premises: ok"
 kcase K5 P6b act-lite '1\.2\.3' 1.2.4 1 "P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite"
+# kfresh <case>: an empty folder $T/<case> for a kcopy case; prints its path. A K case reads only it.
+kfresh() { rm -rf "$T/$1"; mkdir -p "$T/$1" && printf '%s\n' "$T/$1"; }
 k6() {
   name="K6 kcopy copies the paths that table lines cite, and nothing outside the K tree"
-  if [ -n "$kmiss" ]; then no "$name" "$kmiss missing"; return; fi
+  if [ -n "$kmiss" ]; then no "$name" "$kmiss"; return; fi
+  KD=$(kfresh K6)
   {
     printf '%s\n' '| X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/sse.py` |'
     printf '%s\n' "| X2 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | \`scripts/../../${REPO##*/}/scripts/premises/sse.py\` |"
     printf '%s\n' 'Method text `scripts/premises/scrub.py`'
-  } >"$T/k6.md"
-  kcopy "$T/k6.md"
-  cmp -s "$REPO/scripts/premises/sse.py" "$K/scripts/premises/sse.py" || { no "$name" "sse.py not copied"; return; }
+  } >"$T/K6.md"
+  kcopy "$T/K6.md" "$REPO" "$KD" || { no "$name" "kcopy failed"; return; }
+  cmp -s "$REPO/scripts/premises/sse.py" "$KD/scripts/premises/sse.py" || { no "$name" "sse.py not copied"; return; }
   [ ! -e "$T/${REPO##*/}" ] || { no "$name" "a .. path was copied outside the K tree"; return; }
-  [ ! -e "$K/scripts/premises/scrub.py" ] || { no "$name" "a path outside a table line was copied"; return; }
+  [ ! -e "$KD/scripts/premises/scrub.py" ] || { no "$name" "a path outside a table line was copied"; return; }
   ok "$name"
 }
 k6
+
+# K7-K12 (round 2): kcopy's guards, on a scratch source tree S (kcopy reads no repo file here) and an
+# empty destination per case. S holds a regular file, a symlink to it, a directory, and a symlinked
+# directory whose target is outside S.
+S=$T/ksrc
+mkdir -p "$S/scripts/premises/dir" "$T/kout"
+printf 'ev\n' >"$S/scripts/premises/ev.sh"
+printf 'out\n' >"$T/kout/ev.sh"
+ln -s ev.sh "$S/scripts/premises/link.sh"
+ln -s "$T/kout" "$S/scripts/premises/ext"
+# kfiles <folder>: the files and symlinks under the folder, one line, sorted.
+kfiles() { (cd "$1" && find . ! -type d | sort | tr '\n' ' '); }
+# kguard <case> <title> <cited path>: a premises file whose one table row cites the path; kcopy must
+# return 0 and leave the case's folder empty.
+kguard() {
+  name="$1 kcopy does not copy $2"
+  KD=$(kfresh "$1")
+  printf '| X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `%s` |\n' "$3" >"$T/$1.md"
+  kcopy "$T/$1.md" "$S" "$KD" 2>"$T/$1.err" || { no "$name" "kcopy failed: $(cat "$T/$1.err")"; return; }
+  [ -z "$(kfiles "$KD")" ] || { no "$name" "copied: $(kfiles "$KD")"; return; }
+  ok "$name"
+}
+kguard K7 "a cited symlink file" scripts/premises/link.sh
+kguard K8 "a cited directory" scripts/premises/dir
+kguard K9 "a cited missing path" scripts/premises/none.sh
+kguard K10 "a cited file under a symlinked directory" scripts/premises/ext/ev.sh
+# K11: a table line has zero to three blanks before "|" (check-premises.sh, TROWS); a line with four
+# blanks or a tab before it is code, not a table line.
+name="K11 kcopy reads only lines with zero to three blanks before |"
+KD=$(kfresh K11)
+{
+  printf '   | X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/ev.sh` |\n'
+  printf '    | X2 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/dir/four.sh` |\n'
+  printf '\t| X3 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/dir/tab.sh` |\n'
+} >"$T/K11.md"
+printf 'four\n' >"$S/scripts/premises/dir/four.sh"
+printf 'tab\n' >"$S/scripts/premises/dir/tab.sh"
+if ! kcopy "$T/K11.md" "$S" "$KD"; then no "$name" "kcopy failed"
+elif [ "$(kfiles "$KD")" != "./scripts/premises/ev.sh " ]; then no "$name" "copied: $(kfiles "$KD")"
+else ok "$name"; fi
+rm -f "$S/scripts/premises/dir/four.sh" "$S/scripts/premises/dir/tab.sh"
+# K12: a failed copy fails kcopy with a message that names the path.
+name="K12 a failed copy fails kcopy and names the path"
+KD=$(kfresh K12)
+printf '| X1 | i | Claude Code | 2.1.328 | 2026-11-25 | verified | `scripts/premises/ev.sh` |\n' >"$T/K12.md"
+chmod a-w "$KD"
+kcopy "$T/K12.md" "$S" "$KD" 2>"$T/K12.err"
+rc=$?
+chmod u+w "$KD"
+if [ "$rc" -eq 0 ]; then no "$name" "kcopy exit 0"
+elif ! grep -qF 'kcopy: cannot copy scripts/premises/ev.sh' "$T/K12.err"; then no "$name" "stderr: $(cat "$T/K12.err")"
+else ok "$name"; fi
 
 # --- L (node PRB-1): a LIVE line names the agent version that pinned_agents found, never the pin ----
 # The fallback of each LIVE_VER site in the live scripts is LIVE_CC_VER or LIVE_OC_VER (both set by

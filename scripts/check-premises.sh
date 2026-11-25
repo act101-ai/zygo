@@ -27,6 +27,16 @@ nontrivial() {
   return 0
 }
 
+REAL=$(pwd -P)
+# in_repo <path>: true when the directory of the repository-relative <path> resolves to the same path
+# under the repository's real root (no component is a symlink), or does not exist (nontrivial then
+# reports the path).
+in_repo() {
+  edir=$(dirname "$1")
+  [ -d "$edir" ] || return 0
+  [ "$(cd -P "$REAL/$edir" 2>/dev/null && pwd -P)" = "$REAL/$edir" ]
+}
+
 [ -s "$P" ] || fail "$P is missing or empty"
 ! grep -q "$(printf '\r')" "$P" || fail "$P has CRLF line endings"
 [ -s "$SPEC" ] || fail "$SPEC is missing"
@@ -165,6 +175,7 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
   [ -n "$paths" ] || fail "$id: evidence names no path"
   while IFS= read -r f; do
     case "$f" in /* | .. | ../* | */.. | */../*) fail "$id: evidence path $f is absolute or holds a '..' component" ;; esac
+    in_repo "$f" || fail "$id: evidence path $f passes through a symlink or resolves outside the repository"
     nontrivial "$f" || fail "$id: evidence path $f is missing, not a regular file, or trivial"
   done <<EOF_PATHS
 $paths
