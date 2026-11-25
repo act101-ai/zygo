@@ -261,3 +261,10 @@ fn join_first_started_at_is_absent_for_a_replaced_record_and_kept_for_an_accepte
 - [x] **Step 10: run the acceptance check**: `env -u ZYGO_SESSION_DIR sh -c 'test "$(cargo test -q -p zygo-workspace -p zygo-hooks -p zygo -- first_started_at --list 2>/dev/null | grep -c ": test$")" -ge 6 && cargo test --locked -p zygo-workspace -p zygo-hooks -p zygo'` → exit 0; the count is 10 on unix (2 state, 3 hook, 5 zygo) and every test passes with no new `#[ignore]`.
 
 - [x] **Step 11: commit** the six files of the node (`crates/zygo-workspace/src/state.rs`, `crates/zygo-workspace/tests/state.rs`, `crates/zygo-hooks/src/workspace.rs`, `crates/zygo-hooks/tests/workspace.rs`, `crates/zygo/src/cmd/member.rs`, `docs/specs/2026-11-20-workspaces-design.md`) with message `RT-1: member record first_started_at, set by each commit of a pending start`, ending with two trailer lines: `Zygo-Session:` followed by the implementing session's id, and `Zygo-Work: phase3:RT-1`; no Claude attribution. Check: `git show --stat HEAD` lists exactly those six files.
+
+### Review round 1
+
+- Test gap closed: `undo_start_first_started_at_comes_back_after_a_replaced_start_that_never_spawns` (`crates/zygo/src/cmd/member.rs`) proves that a hand start which replaced a record with `first_started_at = Some(100)`, then `Exit::NotStarted` → `undo_start`, restores the old record with `Some(100)` (T§3.2 "a start that never spawns leaves no trace").
+- Refuted: hostile values for the u64 field. It has the same type and source as `pending.started_at`, and the spec fixes that type.
+- Refuted: `null` dropped on write. Produces fixes `skip_serializing_if = "Option::is_none"`, so `None` is absent by design.
+- Refuted: `up` forget deleting a record that holds the field. This is the pre-existing W§7.2 wording, not a change of this node; reported to the operator.

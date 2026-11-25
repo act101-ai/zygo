@@ -1756,4 +1756,19 @@ mod tests {
         assert!(!undo_start(&mut w, k, &written, Some(old.clone())));
         assert_eq!(w, before);
     }
+
+    #[test] // T§3.2 "a start that never spawns leaves no trace", T§7 item 4; RT-1 review round 1
+    fn undo_start_first_started_at_comes_back_after_a_replaced_start_that_never_spawns() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let mut old = rec(MemberState::Ended, Some("old"));
+        old.first_started_at = Some(100);
+        let mut w = ws_with(&[(k, old.clone())]);
+        join(&mut w, k, &Launch::new(Agent::ClaudeCode), &start(), None, &none).unwrap();
+        let written = w.members[k].clone();
+        assert_eq!(written.first_started_at, None); // the hand start replaced the record
+        assert!(undo_start(&mut w, k, &written, Some(old.clone())));
+        assert_eq!(w.members[k].first_started_at, Some(100));
+        assert_eq!(w.members[k], old);
+    }
 }
