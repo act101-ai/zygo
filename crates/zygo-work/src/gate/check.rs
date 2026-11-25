@@ -97,14 +97,17 @@ pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
         if let Proof::Rejected { reason } = &d.proof {
             if reason.is_empty() {
                 p.push(format!("{}: no reason", esc(&d.finding)));
-            } else if d.class != Class::None {
+            }
+            if d.class != Class::None {
                 p.push(format!("{}: class {} needs a record for the operator", esc(&d.finding), d.class.name()));
             }
         }
     }
+    // The records whose step 7 reached the status check: step 8 skips them.
+    let mut named = BTreeSet::new();
     for d in ds {
         if let Proof::Recorded { record } = &d.proof {
-            match recorded_why(req, d.class, record, &head, &base, git) {
+            match recorded_why(req, d.class, record, &head, &base, git, &mut named) {
                 Ok(None) => {}
                 Ok(Some(why)) => p.push(format!("{}: {why}", esc(&d.finding))),
                 Err(e) => p.git(e),
@@ -119,13 +122,6 @@ pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
             return p.0;
         }
     };
-    let named: BTreeSet<&str> = ds
-        .iter()
-        .filter_map(|d| match &d.proof {
-            Proof::Recorded { record } => Some(record.as_str()),
-            _ => None,
-        })
-        .collect();
     let ctx = RangeCtx { range, superseding: new_records(&log, &named, &head, &base, git, &mut p) };
     agent_changes(&log, &ctx, git, &mut p);
     p.0
@@ -137,11 +133,11 @@ fn decision_name(path: &str) -> Option<&str> {
 }
 
 /// D§9.4 step 8: each record of a path R touches that is valid at `head` and absent at `base` gives its `supersedes`
-/// to the returned set, and, with a stop class, must be `ratified` or `fixed`. A record a `recorded` entry names is
-/// skipped: step 7 gave its stop problem.
+/// to the returned set, and, with a stop class, must be `ratified` or `fixed`. A record whose `recorded` entry reached
+/// the status check of step 7 is skipped: step 7 gave its stop problem, or it passed.
 fn new_records(
     log: &[LogCommit],
-    named: &BTreeSet<&str>,
+    named: &BTreeSet<String>,
     head: &str,
     base: &str,
     git: &mut dyn VerdictGit,
@@ -176,16 +172,22 @@ fn new_records(
         }
         superseding.extend(new.supersedes.clone());
         let passes = matches!(new.status, Status::Ratified | Status::Fixed);
-        if new.class != Class::None && !passes && !named.contains(id.as_str()) {
+        if new.class != Class::None && !passes && !named.contains(id) {
             p.push(format!("{id}: class {} stops for the operator: ratify or overturn {id}", new.class.name()));
         }
     }
     superseding
 }
 
-/// An agent commit (D§5): one parent and a message line that starts with `Zygo-Session:`.
+/// An agent commit (D§5): one parent and a message line that starts with `Zygo-Session:`, after leading ASCII
+/// whitespace and in any ASCII case.
 fn agent_commit(c: &LogCommit) -> bool {
-    c.parents.len() == 1 && c.message.lines().any(|l| l.starts_with("Zygo-Session:"))
+    const KEY: &str = "Zygo-Session:";
+    c.parents.len() == 1
+        && c.message.lines().any(|l| {
+            let l = l.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+            l.get(..KEY.len()).is_some_and(|k| k.eq_ignore_ascii_case(KEY))
+        })
 }
 
 /// D§9.4 step 9: each record change of an agent commit, in log order, must be an agent transition of D§6.6.
@@ -195,13 +197,13 @@ fn agent_changes(log: &[LogCommit], ctx: &RangeCtx, git: &mut dyn VerdictGit, p:
         for (_, path) in &c.paths {
             let Some(name) = decision_name(path) else { continue };
             let Some(stem) = name.strip_suffix(".md") else { continue };
+            if name_kind(name) == NameKind::Other {
+                continue; // not a record name: agent_change ignores it, so no read and no count
+            }
             count += 1;
             if count > RECORD_CHANGES_MAX {
                 p.push("too many record changes".into());
                 return;
-            }
-            if name_kind(name) == NameKind::Other {
-                continue; // not a record name: agent_change ignores it, so no read
             }
             let change = version(git, &c.parents[0], name)
                 .and_then(|old| Ok(agent_change(stem, &old, &version(git, &c.id, name)?, ctx)));
@@ -233,7 +235,8 @@ fn version(git: &mut dyn VerdictGit, rev: &str, name: &str) -> Result<Version, G
     })
 }
 
-/// D§9.4 step 7: the first failing check of one `recorded` entry, in step order; `None` when it passes.
+/// D§9.4 step 7: the first failing check of one `recorded` entry, in step order; `None` when it passes. A record
+/// that reaches the status check goes into `reached`.
 fn recorded_why(
     req: &KeepRequest,
     class: Class,
@@ -241,6 +244,7 @@ fn recorded_why(
     head: &str,
     base: &str,
     git: &mut dyn VerdictGit,
+    reached: &mut BTreeSet<String>,
 ) -> Result<Option<String>, GitFail> {
     if record.is_empty() {
         return Ok(Some("no record".into()));
@@ -274,6 +278,7 @@ fn recorded_why(
             return Ok(Some(format!("{r} depends on {dep}, which is not a record at head")));
         }
     }
+    reached.insert(record.to_string());
     let stop = class != Class::None;
     Ok(match rec.status {
         Status::Open if !stop => None,

@@ -434,6 +434,7 @@ impl VerdictGit for ProcessGit {
         let args = [
             "log",
             "--no-renames",
+            "--diff-merges=first-parent",
             "--name-status",
             "-z",
             "--no-color",

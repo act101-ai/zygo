@@ -244,12 +244,11 @@ fn acceptance_8_head_already_in_head_skips_steps_5_to_9() {
     let fx = fixture();
     let h = code(&fx);
     git(&fx.w, &["merge", "-q", "--ff-only", "node"]);
-    // The entry would fail step 5 if it ran.
-    let ds = vec![fixed("R1-1", C40)];
-    assert_eq!(
-        keep(&fx, 1, Some(&h), None, Some(ds)),
-        s(&["head is already in HEAD: call before the merge, or give base"])
-    );
+    // R1-1 is in the node range and would pass step 5; R1-2 is outside it and would fail step 5 if it ran.
+    let ds = vec![fixed("R1-1", &h), fixed("R1-2", &fx.root)];
+    let p = keep(&fx, 1, Some(&h), None, Some(ds));
+    assert_eq!(p, s(&["head is already in HEAD: call before the merge, or give base"]));
+    assert!(!p.iter().any(|x| x.contains("not in the node range")));
 }
 
 #[test]
@@ -263,8 +262,10 @@ fn format_problems_12_gives_10_then_and_2_more() {
 fn format_problems_stays_within_4_kib() {
     let p = vec!["x".repeat(1000); 12];
     assert_eq!(format_problems(&p), format!("{}; and 8 more", vec!["x".repeat(1000); 4].join("; ")));
-    let one = format_problems(&["é".repeat(3000)]); // 6,000 bytes
-    assert!(one.len() <= 4096 && one.starts_with('é'));
+    // 6,000 bytes of a 3-byte char: byte 4,096 is inside a char, so the cut steps back to 4,095.
+    let one = format_problems(&["€".repeat(2000)]);
+    assert_eq!(one, "€".repeat(1365));
+    assert_eq!(one.len(), 4095);
 }
 
 // ---- cycle 2: steps 5 to 7 ----
@@ -460,4 +461,251 @@ fn acceptance_6_passes_with_no_problem() {
     let fx2 = fixture();
     let h = code(&fx2);
     assert_eq!(keep(&fx2, 1, Some(&h), None, Some(vec![])), Vec::<String>::new());
+}
+
+// ---- review round 1 ----
+
+fn rejected_no_reason(l: &str, class: Class) -> Disposition {
+    Disposition { finding: l.to_string(), class, proof: Proof::Rejected { reason: String::new() } }
+}
+
+/// In `fx.w`: branch `side` from `base` with a commit of `side.txt`; `w` goes back to `main` at `base`.
+fn side_branch(fx: &Fx) {
+    git(&fx.w, &["checkout", "-q", "-b", "side"]);
+    fs::write(fx.w.join("side.txt"), "s\n").unwrap();
+    git(&fx.w, &["add", "-A"]);
+    git(&fx.w, &["commit", "-q", "-m", "side"]);
+    git(&fx.w, &["checkout", "-q", "main"]);
+}
+
+/// In `fx.n`: merges `side` without committing, writes each file, commits the merge with `msg`; returns the full id.
+fn evil_merge(fx: &Fx, msg: &str, files: &[(&str, &str)]) -> String {
+    side_branch(fx);
+    git(&fx.n, &["merge", "-q", "--no-ff", "--no-commit", "side"]);
+    commit(&fx.n, msg, &files.iter().map(|(p, t)| (*p, Some(*t))).collect::<Vec<_>>())
+}
+
+#[test]
+fn record_added_in_a_merge_commit_stops_at_step_8() {
+    let fx = fixture();
+    code(&fx);
+    let n = record('N', &[("kind", "decision"), ("class", "contract")]);
+    let h = evil_merge(&fx, "merge side", &[(&path('N'), &n)]);
+    assert_eq!(
+        keep(&fx, 1, Some(&h), None, Some(vec![])),
+        vec![format!("{0}: class contract stops for the operator: ratify or overturn {0}", id('N'))]
+    );
+}
+
+#[test]
+fn merge_commits_and_commits_without_zygo_session_are_not_read_by_step_9() {
+    let fx = fixture();
+    code(&fx);
+    let h = evil_merge(&fx, &format!("merge side{AGENT}"), &[(&path('P'), &ratified_p())]);
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(vec![])), Vec::<String>::new());
+    let fx = fixture();
+    let h = commit(&fx.n, "ratify", &[(&path('P'), Some(&ratified_p()))]);
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(vec![])), Vec::<String>::new());
+}
+
+#[test]
+fn indented_or_lower_case_zygo_session_line_is_an_agent_commit() {
+    for msg in ["ratify\n\n    Zygo-Session: s", "ratify\n\nzygo-session: s"] {
+        let fx = fixture();
+        let h = commit(&fx.n, msg, &[(&path('P'), Some(&ratified_p()))]);
+        assert_eq!(
+            keep(&fx, 1, Some(&h), None, Some(vec![])),
+            vec![format!("{}: agent writes status ratified", id('P'))],
+            "{msg:?}"
+        );
+    }
+}
+
+#[test]
+fn step_7_early_stop_keeps_the_step_8_stop_problem() {
+    let fx = fixture();
+    let h = add(&fx, 'N', &[("kind", "decision"), ("class", "contract")]);
+    assert_eq!(
+        keep(&fx, 2, Some(&h), None, Some(vec![recorded("R2-1", Class::None, 'N')])),
+        vec![
+            "R2-1: recorded with class none needs round 3 or later".to_string(),
+            format!("{0}: class contract stops for the operator: ratify or overturn {0}", id('N')),
+        ]
+    );
+}
+
+#[test]
+fn rejected_stop_class_without_reason_gives_both_problems() {
+    let fx = fixture();
+    let h = code(&fx);
+    assert_eq!(
+        keep(&fx, 1, Some(&h), None, Some(vec![rejected_no_reason("R1-1", Class::Security)])),
+        s(&["R1-1: no reason", "R1-1: class security needs a record for the operator"])
+    );
+}
+
+#[test]
+fn label_with_a_control_character_is_escaped() {
+    let fx = fixture();
+    let h = code(&fx);
+    assert_eq!(
+        keep(&fx, 1, Some(&h), None, Some(vec![rejected("R1\u{7}1", Class::Security)])),
+        s(&["R1\\u{07}1: class security needs a record for the operator"])
+    );
+}
+
+#[test]
+fn rename_of_a_record_is_a_deleted_record() {
+    let fx = fixture();
+    let h = commit(&fx.n, &format!("mv{AGENT}"), &[(&path('P'), None), (&path('Q'), Some(&record('Q', &[])))]);
+    assert_eq!(keep(&fx, 1, Some(&h), None, Some(vec![])), vec![format!("{}: record deleted", id('P'))]);
+}
+
+#[test]
+fn base_that_is_no_commit() {
+    let fx = fixture();
+    let h = code(&fx);
+    assert_eq!(keep(&fx, 1, Some(&h), Some("nope"), Some(vec![])), s(&["no base commit"]));
+}
+
+#[test]
+fn base_that_is_not_an_ancestor_of_head() {
+    let fx = fixture();
+    let h = code(&fx);
+    fs::write(fx.w.join("b"), "b\n").unwrap();
+    git(&fx.w, &["add", "-A"]);
+    git(&fx.w, &["commit", "-q", "-m", "main"]);
+    let b = out(&fx.w, &["rev-parse", "HEAD"]);
+    assert_eq!(keep(&fx, 1, Some(&h), Some(&b), Some(vec![])), s(&["base is not an ancestor of head"]));
+}
+
+#[test]
+fn head_with_no_common_ancestor_with_head_ref() {
+    let fx = fixture();
+    let o = out(&fx.w, &["commit-tree", &format!("{}^{{tree}}", fx.base), "-m", "o"]);
+    assert_eq!(keep(&fx, 1, Some(&o), None, Some(vec![])), s(&["head has no common ancestor with HEAD: give base"]));
+}
+
+#[test]
+fn one_checkout_with_base_runs_steps_7_to_9() {
+    let fx = fixture();
+    add(&fx, 'R', &[]);
+    add(&fx, 'N', &[("kind", "decision"), ("class", "contract")]);
+    let h = commit(&fx.n, &format!("ratify{AGENT}"), &[(&path('P'), Some(&ratified_p()))]);
+    let ds = vec![recorded("R3-1", Class::None, 'R'), recorded("R3-2", Class::None, 'Z')];
+    let p = check_keep(&req(3, Some(&h), Some(&fx.base), Some(ds)), &mut far_git(&fx.n));
+    assert_eq!(p, vec![
+        format!("R3-2: {} is not at head", id('Z')),
+        format!("{0}: class contract stops for the operator: ratify or overturn {0}", id('N')),
+        format!("{}: agent writes status ratified", id('P')),
+    ]);
+    // Without base, the node checkout's HEAD is head.
+    let p = check_keep(&req(3, Some(&h), None, Some(vec![])), &mut far_git(&fx.n));
+    assert_eq!(p, s(&["head is already in HEAD: call before the merge, or give base"]));
+}
+
+#[test]
+fn acceptance_7_fixed_after_overturn_passes() {
+    let fx = fixture();
+    let stop: [(&str, &str); 2] = [("kind", "decision"), ("class", "security")];
+    add(&fx, 'S', &stop);
+    let review = [("reviewed", "2026-11-25"), ("review_note", "No.")];
+    let over = record('S', &[stop[0], stop[1], ("status", "overturned"), review[0], review[1]]);
+    commit(&fx.n, "overturn", &[(&path('S'), Some(&over))]);
+    let f = commit(&fx.n, &format!("revert the subject{AGENT}"), &[("src.txt", Some("0\n"))]);
+    let done = record('S', &[stop[0], stop[1], ("status", "fixed"), review[0], review[1], ("fixed_by", &f)]);
+    let h = commit(&fx.n, &format!("fixed{AGENT}"), &[(&path('S'), Some(&done))]);
+    let ds = vec![Disposition { finding: "R2-1".into(), class: Class::Security, proof: Proof::Fixed { commit: f.clone() } }];
+    assert_eq!(keep(&fx, 2, Some(&h), None, Some(ds.clone())), Vec::<String>::new());
+    let p = check_keep(&req(2, Some(&h), Some(&fx.base), Some(ds)), &mut far_git(&fx.n));
+    assert_eq!(p, Vec::<String>::new());
+}
+
+// ---- a stub VerdictGit: the limits and git failures without real git ----
+
+const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const H: &str = "cccccccccccccccccccccccccccccccccccccccc";
+const P1: &str = "dddddddddddddddddddddddddddddddddddddddd";
+
+/// Every rev is its own full id, every record is missing, the merge base is `B`, and `fail` names the step that fails.
+#[derive(Default)]
+struct Stub {
+    fail: Option<&'static str>,
+    too_large: bool,
+    log: Vec<LogCommit>,
+}
+
+impl Stub {
+    fn fails(&self, step: &'static str) -> Result<(), GitFail> {
+        match self.fail {
+            Some(f) if f == step => Err(GitFail::Failed { step, why: "timed out".into() }),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl VerdictGit for Stub {
+    fn commit(&mut self, rev: &str) -> Result<Option<String>, GitFail> {
+        self.fails("git cat-file")?;
+        Ok(Some(rev.to_string()))
+    }
+    fn record_blob(&mut self, _rev: &str, _name: &str) -> Result<Blob, GitFail> {
+        self.fails("git cat-file")?;
+        Ok(Blob::Missing)
+    }
+    fn merge_base(&mut self, _a: &str, _b: &str) -> Result<Option<String>, GitFail> {
+        self.fails("git merge-base")?;
+        Ok(Some(B.to_string()))
+    }
+    fn rev_list(&mut self, _base: &str, head: &str, _max: usize) -> Result<Option<Vec<String>>, GitFail> {
+        self.fails("git rev-list")?;
+        Ok((!self.too_large).then(|| vec![head.to_string()]))
+    }
+    fn log(&mut self, _base: &str, _head: &str) -> Result<Vec<LogCommit>, GitFail> {
+        Ok(self.log.clone())
+    }
+}
+
+/// The record id number `i` in Crockford base 32.
+fn nth_id(mut i: usize) -> String {
+    const D: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let mut u = vec![b'0'; 26];
+    for slot in u.iter_mut().rev() {
+        *slot = D[i % 32];
+        i /= 32;
+    }
+    format!("DDR-{}", String::from_utf8(u).unwrap())
+}
+
+/// One agent commit `H` (parent `P1`) that adds `records` record files and `others` other `.md` files.
+fn stub_log(records: usize, others: usize) -> Vec<LogCommit> {
+    let mut paths: Vec<(char, String)> = (0..records).map(|i| ('A', format!("docs/decisions/{}.md", nth_id(i)))).collect();
+    paths.extend((0..others).map(|i| ('A', format!("docs/decisions/notes-{i}.md"))));
+    vec![LogCommit { id: H.into(), parents: vec![P1.into()], message: "x\n\nZygo-Session: s\n".into(), paths }]
+}
+
+fn stub_keep(stub: &mut Stub) -> Vec<String> { check_keep(&req(1, Some(H), None, Some(vec![])), stub) }
+
+#[test]
+fn node_range_too_large() {
+    assert_eq!(stub_keep(&mut Stub { too_large: true, ..Stub::default() }), s(&["node range too large"]));
+}
+
+#[test]
+fn record_changes_over_1000_are_too_many() {
+    assert_eq!(stub_keep(&mut Stub { log: stub_log(1000, 0), ..Stub::default() }), Vec::<String>::new());
+    assert_eq!(stub_keep(&mut Stub { log: stub_log(1001, 0), ..Stub::default() }), s(&["too many record changes"]));
+}
+
+#[test]
+fn other_names_do_not_count_toward_the_record_change_limit() {
+    assert_eq!(stub_keep(&mut Stub { log: stub_log(1000, 5), ..Stub::default() }), Vec::<String>::new());
+}
+
+#[test]
+fn git_failures_give_cannot_check() {
+    for step in ["git cat-file", "git merge-base", "git rev-list"] {
+        let p = stub_keep(&mut Stub { fail: Some(step), ..Stub::default() });
+        assert_eq!(p, vec![format!("cannot check: {step} timed out")], "{step}");
+    }
 }
