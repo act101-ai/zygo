@@ -22,12 +22,17 @@ const VERSION: u32 = 1;
 /// The largest `workspace.json` that the reader reads: the value of the stdin bound of the HUD (AU24).
 const MAX_BYTES: u64 = 64 * 1024;
 
-/// The fields of `workspace.json` that the HUD reads (WS§7.2). Unknown fields are ignored (WS AU78).
+/// The two fields of `workspace.json` that the HUD reads (WS§7.2). Unknown fields are ignored (WS AU78).
 #[derive(Deserialize)]
 struct Marker {
     version: u32,
     phase: String,
-    /// Absent reads as `Null`.
+}
+
+/// The `members` field of `workspace.json`, parsed only for the start (T§2.2), so that a `members` value that does not
+/// parse never changes the phase. Absent reads as `Null`.
+#[derive(Deserialize)]
+struct Members {
     #[serde(default)]
     members: serde_json::Value,
 }
@@ -84,7 +89,17 @@ fn open(path: &Path) -> Option<File> {
 /// filter: the renderer has the rule for the phases that show.
 pub fn read(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>) -> Option<String> {
     let session_dir = env("ZYGO_SESSION_DIR").filter(|v| !v.is_empty()).map(PathBuf::from)?;
-    member_read(paths, &SessionView::load(&SessionDir::new(session_dir)).ok()?).phase
+    Some(member_marker(paths, &SessionView::load(&SessionDir::new(session_dir)).ok()?)?.0.phase)
+}
+
+/// The checked marker and the bytes of the `workspace.json` of the member session of `view`; `None` outside a
+/// workspace, for an id that fails `valid_ws_id` (no path is built), and for each failed read check.
+fn member_marker(paths: &Paths, view: &SessionView) -> Option<(Marker, Vec<u8>)> {
+    let ws_id = &view.workspace.as_ref()?.member.ws_id;
+    if !valid_ws_id(ws_id) {
+        return None;
+    }
+    read_marker(paths, ws_id)
 }
 
 /// The phase (H§7.6, AU25) and the run-time start (session run time design T§2.2) of the session of `view`, from one
@@ -94,16 +109,12 @@ pub fn member_read(paths: &Paths, view: &SessionView) -> MemberRead {
     let Some(workspace) = &view.workspace else {
         return MemberRead { phase: None, start: own };
     };
-    let member = &workspace.member;
-    if !valid_ws_id(&member.ws_id) {
-        return MemberRead::default();
-    }
-    let Some(marker) = read_marker(paths, &member.ws_id) else {
+    let Some((marker, bytes)) = member_marker(paths, view) else {
         return MemberRead::default();
     };
-    let start = match &marker.members {
-        serde_json::Value::Null => own,
-        serde_json::Value::Object(members) => match members.get(&member.pane) {
+    let start = match serde_json::from_slice::<Members>(&bytes).map(|m| m.members) {
+        Ok(serde_json::Value::Null) => own,
+        Ok(serde_json::Value::Object(members)) => match members.get(&workspace.member.pane) {
             None => own,
             Some(value) => Record::deserialize(value).ok().and_then(|r| record_start(&r, &view.session, own)),
         },
@@ -129,8 +140,9 @@ fn record_start(r: &Record, session: &str, own: Option<u64>) -> Option<u64> {
         .or(own)
 }
 
-/// The checked read of `paths.workspaces_dir()/<ws_id>/workspace.json`; the caller has checked `valid_ws_id`.
-fn read_marker(paths: &Paths, ws_id: &str) -> Option<Marker> {
+/// The checked read of `paths.workspaces_dir()/<ws_id>/workspace.json`, with its bytes; the caller has checked
+/// `valid_ws_id`.
+fn read_marker(paths: &Paths, ws_id: &str) -> Option<(Marker, Vec<u8>)> {
     let path = paths.workspaces_dir().join(ws_id).join(STATE_FILE);
     let file = open(&path)?;
     // The check is on the opened handle, not on the path: no other file can take its place after the check.
@@ -145,5 +157,5 @@ fn read_marker(paths: &Paths, ws_id: &str) -> Option<Marker> {
         return None;
     }
     let marker: Marker = serde_json::from_slice(&bytes).ok()?;
-    (marker.version == VERSION).then_some(marker)
+    (marker.version == VERSION).then_some((marker, bytes))
 }

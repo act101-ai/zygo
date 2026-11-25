@@ -497,3 +497,29 @@ fn start_rule_outside_a_workspace() {
     }
     assert!(!fx.paths().workspaces_dir().exists());
 }
+
+#[test] // rule 5 needs `pending.zygo_session == session`: a `pending` of another session gives the own start (rule 6)
+fn start_rule_pending_of_another_session_gives_the_own_start() {
+    let p = serde_json::json!({ "zygo_session": OTHER, "started_at": 1_750_000_000u64 });
+    assert_eq!(start_of(serde_json::json!({ "zygo_session": SID, "pending": p })), Some(OWN));
+}
+
+/// `read` (H§7.6, AU25) reads only `version` and `phase`: a `members` value that the start rule cannot parse does not
+/// change the phase.
+#[test]
+fn read_keeps_the_phase_when_members_does_not_parse() {
+    let fx = Fx::new();
+    fx.view(Some(ID));
+    // A duplicate `members` key.
+    let dup = br#"{"version":1,"phase":"draining","members":{},"members":{}}"#.to_vec();
+    // `members` nested 129 levels deep (serde_json's recursion limit is 128).
+    let deep = format!(r#"{{"version":1,"phase":"draining","members":{}{}}}"#, "[".repeat(129), "]".repeat(129)).into_bytes();
+    // Bytes that are not UTF-8 in a string under `members`.
+    let mut bad_utf8 = br#"{"version":1,"phase":"draining","members":{"kabcd2345":{"zygo_session":""#.to_vec();
+    bad_utf8.extend_from_slice(&[0xff, 0xfe]);
+    bad_utf8.extend_from_slice(br#""}}}"#);
+    for (name, body) in [("duplicate", dup), ("deep", deep), ("not utf-8", bad_utf8)] {
+        fx.state(ID, &body);
+        assert_eq!(fx.read(), Some("draining".into()), "{name}");
+    }
+}
