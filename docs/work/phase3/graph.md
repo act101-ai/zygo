@@ -195,8 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | DONE | implementation | a09ce9f ee1a671 3686f01 bca8cad def8f45 3b71a13 701d9e1 · shaping_fixtures 22 pass; floor green · PR #32 |
-| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | DONE | implementation | 96b5bf95 · acc: mail_sync_config 13 passed, zygo-config 258 passed 0 failed; floor green · PR #68 |
 | WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | DONE | implementation | 2d7c5e70 · definition_keys 11 passed, config_layers 90 passed · PR #58 |
@@ -216,7 +214,7 @@ Session text (T, SX nodes):
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | DONE | implementation | 821a1bb1 · shaping_fixtures 22 passed; floor green · PR #56 |
 | OS-20 | Capture pytest fixtures from a scratch project | OS-16 | DONE | implementation | bb01285a · shaping_fixtures 22 passed; floor green · PR #57 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
+| OS-22 | Premise script for PO1 to PO4 | OS-16 | DONE | implementation | 5e4cd273 · bash -n ok, lib.sh 2 · PR #60 |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
@@ -315,7 +313,7 @@ Session text (T, SX nodes):
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | TODO | implementation | — |
-| WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | TODO | mechanical | — |
+| WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 
 ## Log
 
@@ -389,4 +387,6 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-20 done: 3 pytest cases (passing 12 files, failing-verbose -v 2 failed, collection-error with --continue-on-collection-errors); review round 1 fixed floor-reachability and must_keep; PR #57 |
 | 2026-11-24 | WD-5 done: config keys job, pool, [workspace] pool, [limits] max_members (default 8); review round fixed .zygo.toml max_members invalidating the file (repo_file::from_text); floor green (ws 2681 passed); PR #58. |
 | 2026-11-24 | OS-40 done; O§7.1/O§7.2 command forms widened (pipeline newline, backtick/`0<`/`$(<f)`, `eval --`, `builtin` wrapper, `-c` option scan, redirect-only file printer); review: 6 confirmed fixed, 1 kept as safe; floor green (ws 2695 passed) |
+| 2026-11-24 | OS-22 done; scripts/premises/live-shaping.sh po1-po4 (mock upstream, scrub, stand-in MCP for PO4); publishes only the five OS-23..26 evidence files; review: 2 confirmed + 4 plausible fixed; not run live (operator only); floor green (ws 2670) |
+| 2026-11-24 | WD-24 DONE — hide_secrets scrubs pane job; two older field tests now cover job and name; W§12 scrub list names pane job and name (author's call); review F1, F2 fixed, F3 (loadout name is a table key, outside WD-24) dropped; floor 2681p 0f. |
 | 2026-11-24 | MS-3 done: mail sync config keys (host, sync_gap, mail.workspace.<n>.sync/remote), sync_for, form checks incl. W§5 workspace-name keys; review: 4 fixed, 2 dropped (unknown keys: crate norm; remote: pass-time per S§11, carried to MS-10). PR #68. |
