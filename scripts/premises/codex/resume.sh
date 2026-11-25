@@ -495,8 +495,9 @@ put(up, "summary.txt", "".join("%s=%s\n" % kv for kv in u.items()))
 # One UUID mapping over every output file (workspace, then update; files in name order), before
 # scrub: equal placeholders are equal ids across all of this part's fixtures. "uuid-NNNN" is not a
 # UUID, so scrub's per-file numbering leaves it alone. A UUID in the run folder's own path is left
-# as it is, so scrub still maps that path (to /tmp/run, /home/user, /repo).
-UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+# as it is, so scrub still maps that path (to /tmp/run, /home/user, /repo). The bounds are hex-only,
+# not \b, so an id behind a word prefix (Codex's msg_<uuid> item ids) is mapped too.
+UUID = re.compile(r"(?<![0-9A-Fa-f-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9A-Fa-f-])")
 keep = set(UUID.findall(run + " " + os.path.realpath(run)))
 umap = {}
 
