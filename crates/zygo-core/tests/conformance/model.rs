@@ -590,7 +590,9 @@ fn header_lines(path: &Path) -> Result<Vec<String>, String> {
     Ok(text.lines().take_while(|l| !l.starts_with("##")).map(|l| l.strip_suffix('\r').unwrap_or(l).to_string()).collect())
 }
 
-pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Client]) -> Vec<Fault> {
+/// Check items 1-9 (K§6.2.5). Item 3 reads `resolved`, the result of `resolve(root, grades)`, so the
+/// evidence is resolved once for the check and the generator.
+pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Client], resolved: &Resolved) -> Vec<Fault> {
     let mut faults = Vec::new();
     let mut fault = |item: u8, text: String| faults.push(Fault { item, text });
     let files_of = |id: &str| grades.iter().filter(|g| g.client == id).collect::<Vec<_>>();
@@ -627,9 +629,9 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
         }
     }
     // 3. each met grade has an item of evidence that counts
-    for x in resolve(root, grades).grade {
+    for x in &resolved.grade {
         if !x.evidence.iter().any(|e| e.result.is_ok()) {
-            let errs: Vec<String> = x.evidence.into_iter().filter_map(|e| e.result.err()).collect();
+            let errs: Vec<&str> = x.evidence.iter().filter_map(|e| e.result.as_ref().err().map(String::as_str)).collect();
             let why = if errs.is_empty() { "no evidence".to_string() } else { errs.join("; ") };
             fault(3, format!("client `{}`: met criterion `{}` has no evidence that counts: {why}", x.client, x.criterion));
         }

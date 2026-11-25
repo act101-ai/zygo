@@ -45,7 +45,7 @@ fn entry<'a>(g: &'a mut GradeFile, criterion: &str) -> &'a mut GradeEntry {
 fn with_evidence(ev: &[&str]) -> BTreeSet<u8> {
     let (r, mut g, c) = base();
     entry(&mut g[0], "A-3.1").evidence = ev.iter().map(|s| s.to_string()).collect();
-    items(&check(&repo(), &r, &g, &c))
+    items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g)))
 }
 
 fn copy_repo() -> tempfile::TempDir {
@@ -262,7 +262,7 @@ fn check_3_premise_of_another_client_not_evidence() {
     assert!(evidence(&repo(), "premise:docs/premises.md#Q1", "Beta").unwrap_err().contains("Alpha"));
     let (r, mut g, c) = base();
     entry(&mut g[1], "A-1.2").evidence = vec!["premise:docs/premises.md#Q1".into()];
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[3]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[3]));
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn check_3_premise_or_test_source_over_1_mib_not_evidence() {
     assert!(evidence(d.path(), "premise:docs/premises.md#Q1", "Alpha").unwrap_err().contains("1 MiB"));
     assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err().contains("1 MiB"));
     let (r, g, c) = base();
-    assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[3, 7]));
+    assert_eq!(items(&check(d.path(), &r, &g, &c, &resolve(d.path(), &g))), set(&[3, 7]));
 }
 
 #[test]
@@ -333,14 +333,14 @@ fn check_3_fixture_through_link_out_of_fixtures_not_evidence() {
 #[test]
 fn check_valid_fixtures_pass() {
     let (r, g, c) = base();
-    assert_eq!(check(&repo(), &r, &g, &c), vec![]);
+    assert_eq!(check(&repo(), &r, &g, &c, &resolve(&repo(), &g)), vec![]);
 }
 
 #[test]
 fn check_1_client_without_grade_file() {
     let (r, g, mut c) = base();
     c.push(client("gamma", "Gamma", "3.0.0"));
-    let f = check(&repo(), &r, &g, &c);
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
     assert_eq!(items(&f), set(&[1, 9]));
     assert!(f[0].text.contains("gamma"));
 }
@@ -352,17 +352,17 @@ fn check_1_grade_file_unknown_or_twice() {
     let mut x = g[1].clone();
     x.client = "delta".into();
     d.push(x);
-    assert_eq!(items(&check(&repo(), &r, &d, &c)), set(&[1]));
+    assert_eq!(items(&check(&repo(), &r, &d, &c, &resolve(&repo(), &d))), set(&[1]));
     let mut d = g.clone();
     d.push(g[0].clone());
-    assert_eq!(items(&check(&repo(), &r, &d, &c)), set(&[1]));
+    assert_eq!(items(&check(&repo(), &r, &d, &c, &resolve(&repo(), &d))), set(&[1]));
 }
 
 #[test]
 fn check_2_missing_grade() {
     let (r, mut g, c) = base();
     g[0].grade.retain(|e| e.criterion != "A-3.1");
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[2]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[2]));
 }
 
 #[test]
@@ -371,7 +371,7 @@ fn check_2_unknown_criterion() {
     let mut e = entry(&mut g[0], "A-1.1").clone();
     e.criterion = "A-9.1".into();
     g[0].grade.push(e);
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[2]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[2]));
 }
 
 #[test]
@@ -379,7 +379,7 @@ fn check_2_duplicate_grade() {
     let (r, mut g, c) = base();
     let e = entry(&mut g[0], "A-3.1").clone();
     g[0].grade.push(e);
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[2]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[2]));
 }
 
 #[test]
@@ -448,17 +448,17 @@ fn check_4_reason_and_core_na() {
     let (r, g0, c) = base();
     let mut g = g0.clone();
     entry(&mut g[0], "WA-2.1").reason = None;
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[4]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[4]));
     let mut g = g0.clone();
     entry(&mut g[1], "A-3.1").reason = Some(" ".into());
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[4]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[4]));
     let mut g = g0.clone();
     {
         let e = entry(&mut g[0], "A-1.1");
         e.status = Status::Na;
         e.reason = Some("x".into());
     }
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[4, 8]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[4, 8]));
 }
 
 #[test]
@@ -466,10 +466,10 @@ fn check_5_cell_url() {
     let (r, g0, c) = base();
     let mut g = g0.clone();
     g[0].cell.retain(|x| x.capability != "A-3");
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[5]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[5]));
     let mut g = g0.clone();
     g[0].cell.iter_mut().find(|x| x.capability == "A-3").unwrap().url = "http://example.com".into();
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[5]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[5]));
 }
 
 #[test]
@@ -484,7 +484,7 @@ fn check_6_bar_exception_faults() {
     for b in [x("gamma", "A-1.2", Some("operator")), x("alpha", "A-1.1", Some("operator")), x("beta", "A-3.1", Some("operator"))] {
         let mut r = r0.clone();
         r.bar_exception.push(b);
-        assert_eq!(items(&check(&repo(), &r, &g0, &c)), set(&[6]));
+        assert_eq!(items(&check(&repo(), &r, &g0, &c, &resolve(&repo(), &g0))), set(&[6]));
     }
     let mut g = g0.clone();
     {
@@ -496,7 +496,7 @@ fn check_6_bar_exception_faults() {
     for a in [None, Some(" ")] {
         let mut r = r0.clone();
         r.bar_exception.push(x("alpha", "A-1.2", a));
-        assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[6, 8]));
+        assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[6, 8]));
     }
 }
 
@@ -516,15 +516,15 @@ fn check_6_duplicate_or_reasonless_bar_exception() {
     }
     let mut r = r0.clone();
     r.bar_exception.push(x("r"));
-    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[]));
+    assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[]));
     r.bar_exception.push(x("again"));
-    let f = check(&repo(), &r, &g, &c);
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
     assert_eq!(items(&f), set(&[6]));
     assert!(f[0].text.contains("A-1.2"));
     for reason in ["", " "] {
         let mut r = r0.clone();
         r.bar_exception.push(x(reason));
-        assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[6]), "{reason:?}");
+        assert_eq!(items(&check(&repo(), &r, &g, &c, &resolve(&repo(), &g))), set(&[6]), "{reason:?}");
     }
 }
 
@@ -537,7 +537,7 @@ fn check_6_bar_exception_key_in_grade_file() {
 fn check_7_version_faults() {
     let (r, g, mut c) = base();
     c[0].version = "1.0.1".into();
-    let f = check(&repo(), &r, &g, &c);
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
     assert_eq!(items(&f), set(&[7]));
     assert!(f[0].text.contains("alpha"));
     let (_, _, c) = base();
@@ -549,7 +549,7 @@ fn check_7_version_faults() {
         let d = copy_repo();
         let p = d.path().join(file);
         std::fs::write(&p, std::fs::read_to_string(&p).unwrap().replace(from, to)).unwrap();
-        assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[7]), "{file} {from}");
+        assert_eq!(items(&check(d.path(), &r, &g, &c, &resolve(d.path(), &g))), set(&[7]), "{file} {from}");
     }
 }
 
@@ -559,14 +559,14 @@ fn check_7_grade_file_name_differs_from_client_name() {
     let mut g = g0.clone();
     g[0].name = "Beta".into();
     // The Alpha premise row Q1 no longer counts for a file named Beta (item 3).
-    let f = check(&repo(), &r, &g, &c);
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
     assert_eq!(items(&f), set(&[3, 7]));
     assert!(f.iter().any(|x| x.item == 7 && x.text.contains("alpha") && x.text.contains("Beta")));
     // The headers are built from the client's name: `Beta: 2.0.0` is in both files, `Alpha: 2.0.0` is not.
     let mut c2 = c.clone();
     c2[0].version = "2.0.0".into();
     g[0].version = "2.0.0".into();
-    let f = check(&repo(), &r, &g, &c2);
+    let f = check(&repo(), &r, &g, &c2, &resolve(&repo(), &g));
     assert_eq!(f.iter().filter(|x| x.item == 7).count(), 3, "{f:?}");
 }
 
@@ -575,12 +575,12 @@ fn check_5_duplicate_or_unknown_cell() {
     let (r, g0, c) = base();
     let mut g = g0.clone();
     g[0].cell.push(CellUrl { capability: "A-3".into(), url: "https://example.com/again".into() });
-    let f = check(&repo(), &r, &g, &c);
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
     assert_eq!(items(&f), set(&[5]));
     assert!(f[0].text.contains("A-3"));
     let mut g = g0.clone();
     g[0].cell.push(CellUrl { capability: "A-99".into(), url: "https://example.com/x".into() });
-    let f = check(&repo(), &r, &g, &c);
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
     assert_eq!(items(&f), set(&[5]));
     assert!(f[0].text.contains("A-99"));
 }
@@ -593,11 +593,11 @@ fn check_8_supported_client_below_bar() {
         e.status = Status::NotMet;
         e.reason = Some("no key helper".into());
     }
-    let f = check(&repo(), &r, &g, &c);
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
     assert_eq!(items(&f), set(&[8]));
     assert!(f[0].text.contains("A-1"));
     c[0].supported = false;
-    assert_eq!(check(&repo(), &r, &g, &c), vec![]);
+    assert_eq!(check(&repo(), &r, &g, &c, &resolve(&repo(), &g)), vec![]);
 }
 
 #[test]
@@ -614,7 +614,7 @@ fn check_8_registry_exception_meets_bar() {
         reason: "r".into(),
         approved: Some("operator 2026-11-25".into()),
     });
-    assert_eq!(check(&repo(), &r, &g, &c), vec![]);
+    assert_eq!(check(&repo(), &r, &g, &c, &resolve(&repo(), &g)), vec![]);
 }
 
 #[test]
@@ -622,9 +622,9 @@ fn check_9_fixtures_folder_missing_or_empty() {
     let (r, g, c) = base();
     let d = copy_repo();
     std::fs::remove_dir_all(d.path().join("fixtures/alpha")).unwrap();
-    assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[9]));
+    assert_eq!(items(&check(d.path(), &r, &g, &c, &resolve(d.path(), &g))), set(&[9]));
     std::fs::create_dir(d.path().join("fixtures/alpha")).unwrap();
-    assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[9]));
+    assert_eq!(items(&check(d.path(), &r, &g, &c, &resolve(d.path(), &g))), set(&[9]));
 }
 
 #[test]
@@ -638,4 +638,21 @@ fn check_clients_from_agent_all() {
         ]
     );
     assert!(clients(tempfile::tempdir().unwrap().path()).is_err());
+}
+
+#[test]
+fn check_3_reads_the_resolved_evidence() {
+    let (r, g, c) = base();
+    let mut res = resolve(&repo(), &g);
+    assert_eq!(check(&repo(), &r, &g, &c, &res), vec![]);
+    for x in &mut res.grade {
+        if (x.client.as_str(), x.criterion.as_str()) == ("alpha", "A-3.1") {
+            for e in &mut x.evidence {
+                e.result = Err("stub: does not count".into());
+            }
+        }
+    }
+    let f = check(&repo(), &r, &g, &c, &res);
+    assert_eq!(items(&f), set(&[3]));
+    assert!(f[0].text.contains("stub: does not count"), "{f:?}");
 }
