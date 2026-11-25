@@ -7,6 +7,7 @@ pub mod keys;
 pub mod layers;
 pub mod profile;
 pub mod repo_file;
+pub mod repo_def;
 pub mod schema;
 mod typed;
 
