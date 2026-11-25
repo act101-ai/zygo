@@ -1,10 +1,12 @@
 //! The public check of a remote (S§8.2): the URL map, the anonymous probe, the verdict lists and the 1 h cache.
 
-use crate::env::{Probe, Verdict};
+use crate::env::{Clock, Probe, Verdict};
 use crate::git::{has_text, sync_git};
+use crate::state::{load, save, PublicCache, SyncPaths};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use zygo_config::display::scrub_userinfo;
 use zygo_work::repo::{run_whole, RunError, Whole};
 
@@ -135,4 +137,70 @@ pub fn remote_urls(main_root: &Path, remote: &str, deadline: Instant) -> Result<
     let fetch = one(&["remote", "get-url", remote])?;
     let push = one(&["remote", "get-url", "--push", remote])?;
     Ok(if push == fetch { vec![fetch] } else { vec![fetch, push] })
+}
+
+/// S§8.2: how long a cached verdict stands, in seconds of the injected clock (1 h).
+const CACHE_SECS: u64 = 3600;
+
+/// S§8.2, S§13 limit 7: the verdict of the remote with fetch and push URLs `urls`, from the cache when it is under
+/// 1 h old and holds the same URLs, else from `probe` on each distinct `https` form. The caller holds
+/// `mail/sync/lock` (S§15: the pass under the lock is the only writer of `state.json`).
+pub fn check(sp: &SyncPaths, urls: &[String], probe: &dyn Probe, clock: &dyn Clock) -> Verdict {
+    let now = clock.now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let mut keys: Vec<String> = urls.iter()
+        .map(|u| hex::encode(Sha256::digest(scrub_userinfo(u).as_bytes()))).collect();
+    keys.sort();
+    keys.dedup();
+    let state = load(sp);
+    if let Ok(Some(c)) = state.as_ref().map(|s| s.public.as_ref()) {
+        if c.at <= now && now - c.at <= CACHE_SECS && c.url_sha256 == keys {
+            match c.verdict.as_str() {
+                "public" => return Verdict::Public,
+                "private" => return Verdict::Private,
+                "local" => return Verdict::Local,
+                "unknown" => return Verdict::Unknown("the last check, under 1 h ago, could not tell".into()),
+                _ => {}
+            }
+        }
+    }
+    let verdict = fold(urls, probe);
+    if let Ok(mut s) = state {
+        let name = match verdict {
+            Verdict::Public => "public",
+            Verdict::Private => "private",
+            Verdict::Local => "local",
+            Verdict::Unknown(_) => "unknown",
+        };
+        s.public = Some(PublicCache { url_sha256: keys, verdict: name.into(), at: now });
+        let _ = save(sp, &s); // a failed save leaves the verdict as it is
+    }
+    verdict
+}
+
+/// S§8.2 steps 1, 2 and 4: probe each distinct `https` form once; any `Public` wins, else the first `Unknown`,
+/// else any `Private`, else `Local`.
+fn fold(urls: &[String], probe: &dyn Probe) -> Verdict {
+    if urls.is_empty() {
+        return Verdict::Unknown("the remote has no URL".into());
+    }
+    let mut asked: Vec<String> = Vec::new();
+    let mut verdicts = Vec::new();
+    for u in urls {
+        match map_url(u) {
+            Mapped::Local => verdicts.push(Verdict::Local),
+            Mapped::Unknown => verdicts.push(Verdict::Unknown("the remote URL has no https form".into())),
+            Mapped::Https(h) if !asked.contains(&h) => {
+                verdicts.push(probe.probe(&h));
+                asked.push(h);
+            }
+            Mapped::Https(_) => {}
+        }
+    }
+    if verdicts.contains(&Verdict::Public) {
+        return Verdict::Public;
+    }
+    if let Some(u) = verdicts.iter().find(|v| matches!(v, Verdict::Unknown(_))) {
+        return u.clone();
+    }
+    if verdicts.contains(&Verdict::Private) { Verdict::Private } else { Verdict::Local }
 }
