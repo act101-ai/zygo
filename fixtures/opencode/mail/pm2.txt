@@ -1,0 +1,2 @@
+OpenCode 1.18.16
+2.3 ok OpenCode TUI, idle: the wake line typed with send-keys -l, then Enter: a request holds it within 90 s: yes
