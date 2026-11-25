@@ -19,6 +19,9 @@ cat >"$RUN/rules.json" <<'JSON'
  {"name": "pc6-spawn-a", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-a", "sse": "sse/pc6-spawn-a.sse", "times": 1},
  {"name": "pc6-spawn-b", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-b", "sse": "sse/pc6-spawn-b.sse", "times": 1},
  {"name": "pc6-spawn-c", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-c", "sse": "sse/pc6-spawn-c.sse", "times": 1},
+ {"name": "pc6-wait-a", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-a", "sse": "sse/pc6-wait.sse", "times": 1},
+ {"name": "pc6-wait-b", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-b", "sse": "sse/pc6-wait.sse", "times": 1},
+ {"name": "pc6-wait-c", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-c", "sse": "sse/pc6-wait.sse", "times": 1},
  {"name": "pc8-high", "path": "/v1/responses$", "body": "tracer-pc8-high-turn1", "sse": "sse/pc8-text.sse", "times": 1,
   "usage": {"input_tokens": 150000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 150010}},
  {"name": "pc9-call", "path": "/v1/responses$", "body": "tracer-pc9-call", "sse": "sse/pc9-call.sse", "times": 1},
@@ -375,6 +378,10 @@ pc6_runs="pc6-probe"
 if [ -z "$name" ]; then
   echo 'spawn tool: none found' >"$RUN/pc6-skip.txt"
 else
+  # The main agent's turn after the spawn: a sandboxed sleep, so codex exec does not end (and
+  # stop the subagent) before the subagent sends its first request. wait_agent needs the agent
+  # id, which is a fresh time-based UUID.
+  py sse-call "$RUN/sse/pc6-wait.sse" exec_command '{"cmd":"sleep 15","yield_time_ms":20000}' call_pc6_wait
   for _xr in a:pc6-probe b:explorer c:pc6-disc; do
     _x=${_xr%%:*} _role=${_xr#*:}
     py sse-call "$RUN/sse/pc6-spawn-$_x.sse" "$name" "{\"agent_type\":\"$_role\",\"message\":\"tracer-pc6-task-$_x\"}" "call_pc6_$_x"
