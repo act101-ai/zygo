@@ -40,22 +40,23 @@ Unit: phase3:ML-6:plan
   - `pub struct RealProbe;`
   - `pub fn wake(store: &Store, ws: &Workspace, mux: &dyn Multiplexer, key: &str, gap: Duration, probe: &dyn Probe) -> Outcome`
   - `pub fn after_send(paths: &Paths, ws: &Workspace, tmux: &Path, keys: &[String], cfg: &MailConfig)`
+  - Addition (review fix R4): `pub fn after_send_with<P: Probe + Sync, M: Multiplexer + Sync>(paths: &Paths, ws: &Workspace, keys: &[String], cfg: &MailConfig, mux: &M, probe: &P, now: SystemTime)`. `probe` gives the idle rule and `now` the clock (the clock of `probe` is not used). `after_send` calls it with `Tmux`, `RealProbe` and `SystemTime::now()`. For MS-13, which tests `after_send` with the injected clock and probe (`docs/work/phase3/nodes/MS-13.md:5,7`).
   - Their consumers are ML-11, ML-12, ML-18 and MS-13 (`after_send`). Each uses it by name only, so this signature matches them.
 
 **Existing code.** No code waits for, records or types a wake: `grep -rn -e wake.json -e WAKE_TEXT -e woken_at crates` finds nothing. Reused as they are: the AU26 rule (`drain::idle`, `hooks_off`), `Store::log_error`, `lock_file`, `write_atomic`, and the D14 live-folder rule (step 2 copies it into `Store`).
 
 **Author's decisions** (the spec leaves them open; each adds no gate):
-- A1. "The mail lock" is not defined in M§5. Plan: an fs4 lock on the file `mail/<key>/wake.lock`, taken with `lock_file(.., Duration::ZERO)` (one try, no wait). If another sender holds the lock, that sender is in its own wake of this pane now, so the result is `Gap`. The lock covers the steps from the read of `wake.json`, through the tmux checks and the two sends, to the write of `wake.json`.
+- A1. "The mail lock" is not defined in M§5. Plan: an fs4 lock on the file `mail/<key>/wake.lock`, taken with `lock_file(.., Duration::MAX)`, which waits until the lock is free (review fix R1). The waiter then reads `wake.json` and applies the `wake_gap` rule: a holder that woke the pane wrote `woken_at`, so the waiter gets `Gap` from that rule; a holder that failed before it wrote `woken_at` wrote nothing, so the waiter tries the wake. A held lock is not a skip rule of its own. The hold is bounded by the existing tmux call bounds; there is no new timeout. The lock covers the steps from the read of `wake.json`, through the tmux checks and the write of `wake.json`, to the two sends.
 - A2. `wake.json` is `{"woken_at":"<RFC 3339, UTC>"}` (the form of M§5 `sent_at`), written as compact JSON (`serde_json::to_vec`) with `write_atomic`. A file that is missing, cannot be read, is a link, does not parse or is not RFC 3339 is read as "no earlier wake", and the next wake writes a new file.
 - A3. "Within `wake_gap`" means the distance between `now` and `woken_at` in either direction is less than `gap`. A `woken_at` after `now` (a clock that went back) therefore blocks only for less than `gap`. The check only compares durations, so a very large `wake_gap` cannot overflow (ML-1 review note 6).
-- A4. `woken_at` is written only after `Woken`. When the Enter send fails, no `woken_at` is written, so a later wake can type the text again (`mux/mod.rs:409-411` says this can happen).
+- A4. `woken_at` is written under the lock after the pane checks pass and before the `send-keys -l` call (review fix R6). A wake whose text or Enter send then fails still counts for `wake_gap`, so the text is never typed twice inside the gap; the failure still writes its `errors.log` line and gives `Failed`.
 - A5. A member with `launch.events_off`, or whose session `settings.json` turns hooks off, is `Busy` (AU26 FIX-24). A key that is not in `ws.members` is `NotLive`.
 - A6. Only `Failed` writes a line to `errors.log`: `mail wake <key>: <error>`. The error text comes from tmux or the OS. No mail text goes into a tmux argument (M-C5), so the line cannot hold mail text. If `wake.json` cannot be written after a wake, the result is still `Woken`, with one line `mail wake <key>: wake.json not written: <error>`.
 - A7. `after_send` reads a `wake_gap` that does not parse as `30s` (the M§11 default) and writes one line: `mail wake: [mail] wake_gap "<esc(text)>" is not <n>s, <n>m, <n>h or <n>d; using 30s`. This follows the `drain_timeout` fallback (`down.rs:461-464`). The proxy status bound is 2 s, the drain's bound for the same AU26 read (`down.rs:89`).
 
 **Steps**
 
-- [ ] **1. Write the failing tests.** Create `crates/zygo-workspace/tests/mail_wake.rs` with `#![cfg(unix)]` and the module doc `//! ML-6: the wake of an idle member (M§7.3, M§9, M§10, M§13 #5 #6).`. Fixture:
+- [x] **1. Write the failing tests.** Create `crates/zygo-workspace/tests/mail_wake.rs` with `#![cfg(unix)]` and the module doc `//! ML-6: the wake of an idle member (M§7.3, M§9, M§10, M§13 #5 #6).`. Fixture:
   ```rust
   const ID: &str = "0123456789abcdef"; const ELENA: &str = "kelena222"; const OTHER: &str = "kother222";
   const T0: u64 = 1_700_000_000; // 2023-11-14T22:13:20Z
@@ -98,9 +99,17 @@ Unit: phase3:ML-6:plan
 
   Check: `cargo test -p zygo-workspace --test mail_wake` fails to compile (no `mail::wake`, no `Store::live_session`).
 
-- [ ] **2. `Store::live_session`** in `crates/zygo-workspace/src/state.rs` (D1), after `live_launcher`: `pub fn live_session(&self, m: &MemberRecord) -> Option<PathBuf>`. Doc: `The live session folder of a member (D14): sessions/<pending.zygo_session> when live, else sessions/<zygo_session> when live; an id that fails valid_session_id is not looked up.` It is the rule of `down.rs:822`, with `self.sessions_dir` and `valid_session_id`. `down.rs` does not change.
+  Deviation (step 1): in `second_wake_inside_the_gap_is_skipped` the test removes `wake.json` before the `213503982334601d` case (`crates/zygo-workspace/tests/mail_wake.rs:291`). The wake of the text `x` case just before writes `woken_at` = `T0`, so without the remove the first huge-gap wake at `T0` is `Gap`, not `Woken`. The intent (huge gap: wake, then `Gap`, no panic) is kept.
 
-- [ ] **3. `wake.rs`.** Add `pub mod wake;` to `crates/zygo-workspace/src/mail/mod.rs`, and change its doc owner to `nodes ML-2, ML-4, ML-6`. Create `crates/zygo-workspace/src/mail/wake.rs` (doc: `//! The wake of an idle member after a send (M§7.3). Owner: node ML-6.`) with the Produced items and private consts `PANE_OPTION = "@zygo-pane"`, `WS_OPTION = "@zygo-ws"`, `STATUS_BOUND = 2 s`, `WAKE_FILE = "wake.json"`, `LOCK = "wake.lock"`.
+  Deviation (step 1, found in step 4): the tests of `mail_wake.rs` run one at a time. `setup()` holds the test-only mutex `FORKS` (`crates/zygo-workspace/tests/mail_wake.rs:74`), as `serial()` in `tests/admin.rs` and `forks()` in `tests/mux.rs` do. Cause: the tmux test forks, and a child that has not yet run `exec` keeps an inherited `flock` held, so a parallel wake saw `WouldBlock` on `wake.lock` and gave `Gap` (`second_wake_inside_the_gap_is_skipped`, 1 failure in 78 runs; 0 in 300 runs without the tmux test; 0 in 300 runs with the mutex). No product code changed for this.
+
+  Note (review fix R1-R9): the fake multiplexer is `Sync` (`Mutex` for `calls`, a `Send + Sync` `on_send`), it records each `send_enter` with its time, and `pane_keys` makes `show_pane_option` give the key of the listed pane. The held-lock half of `wake_json_is_written_under_the_mail_lock` moved to `held_wake_lock_waits_then_follows_wake_json` (R1), and the Enter-error half of `tmux_error_logs_one_line_and_keeps_the_message` moved to `each_tmux_error_fails_with_one_line` (R6), because both now assert the opposite result. New tests: `held_wake_lock_waits_then_follows_wake_json` (R1), `pane_line_that_does_not_parse_fails` (R2), `slow_member_does_not_delay_another` (R3, `#[ignore = "timing: …"]`), `after_send_with_wakes_the_target_once` (R4), `invalid_key_builds_no_path` (R5), `each_tmux_error_fails_with_one_line` (R6), `gap_keeps_the_fraction_of_a_second` (R7), `live_session_prefers_pending_and_refuses_bad_ids` (R8), `missing_maildir_gives_not_live` (R9).
+
+- [x] **2. `Store::live_session`** in `crates/zygo-workspace/src/state.rs` (D1), after `live_launcher`: `pub fn live_session(&self, m: &MemberRecord) -> Option<PathBuf>`. Doc: `The live session folder of a member (D14): sessions/<pending.zygo_session> when live, else sessions/<zygo_session> when live; an id that fails valid_session_id is not looked up.` It is the rule of `down.rs:822`, with `self.sessions_dir` and `valid_session_id`. `down.rs` does not change.
+
+  Note (review fix R8): `live_session_prefers_pending_and_refuses_bad_ids` tests it: `pending` wins over `zygo_session` when both are live (as `down.rs:822`), and a live folder at `sessions/../x` is not found for the id `../x`. The code did not change.
+
+- [x] **3. `wake.rs`.** Add `pub mod wake;` to `crates/zygo-workspace/src/mail/mod.rs`, and change its doc owner to `nodes ML-2, ML-4, ML-6`. Create `crates/zygo-workspace/src/mail/wake.rs` (doc: `//! The wake of an idle member after a send (M§7.3). Owner: node ML-6.`) with the Produced items and private consts `PANE_OPTION = "@zygo-pane"`, `WS_OPTION = "@zygo-ws"`, `STATUS_BOUND = 2 s`, `WAKE_FILE = "wake.json"`, `LOCK = "wake.lock"`.
   - `wake` runs these checks in this order. It returns at the first result:
     1. `ws.members.get(key)` is `None`, or `store.live_session(m)` is `None`: `NotLive`.
     2. `m.launch.events_off`, or `!probe.idle(&dir)`: `Busy`.
@@ -119,9 +128,21 @@ Unit: phase3:ML-6:plan
     - `idle(dir)`: `false` when `drain::hooks_off(&SessionDir::new(dir))` is true. Else read `activity::read` and the status from `SessionClient::from_session_dir(dir)` with `.timeout(STATUS_BOUND)` and `.status()` (each error becomes its text). Then `matches!(drain::idle(..), Idle::Idle | Idle::IdleRuleSkipped)`.
   - `after_send`: return at once when `keys` is empty. Get `gap` from `parse_duration(&cfg.wake_gap)`, else 30 s with the A7 line. Set `store = Store::open(paths, &ws.id)` and `mux = Tmux::new(tmux.to_path_buf(), ws.tmux_socket.clone())`. Call `wake(&store, ws, &mux, key, gap, &RealProbe)` for each key, in order. The outcomes are dropped: `wake` already logs `Failed`.
 
-- [ ] **4. Run the tests.** Run `cargo test -p zygo-workspace --test mail_wake -- --include-ignored`. Pass: all tests pass. The tmux test runs on tmux 3.2 or later, or prints `tmux tests skipped: …`. Then run `cargo test -p zygo-workspace --locked --no-fail-fast` and `cargo clippy -p zygo-workspace --all-targets --locked -- -D warnings`. Pass: both are green, and `down`, `state`, `mail_store` and `mail_names` do not change.
+  Notes (review fixes, changes to the order above):
+  - Review fix R5 (item 1): the key must pass `valid_pane_key` (`identity.rs:58`, as `mail/store.rs:31`) before any path is built; else `NotLive`.
+  - Review fix R9 (between items 1 and 2): when `mail/<key>/` is not a folder (for example after `forget-pane`), the result is `NotLive`, and no folder or file is created. `remove_pane`, `sweep` and `write_atomic` are not changed.
+  - Review fix R1 (item 3): the lock is taken with `lock_file(.., Duration::MAX)`, which waits (A1). A held lock no longer gives `Gap`.
+  - Review fix R2 (item 6): a line that `parse_pane_line` refuses gives `Failed("pane list line not read: <parse error>")` with one `errors.log` line, as a tmux error does.
+  - Review fix R6 (items 8 and 9 change places): `wake.json` is written before `send_keys_literal` (A4); a write error keeps the A6 line and the wake goes on.
+  - Review fix R7 (item 9): `woken_at` keeps the full precision of `now` in RFC 3339 (no `replace_nanosecond(0)`); a whole second still prints as `…:20Z`.
+  - Review fix R3 (`after_send`): each key's wake runs on its own thread in `std::thread::scope`, and all are joined. A forked child that holds another key's inherited lock until its `exec` now makes a wake wait (R1), not skip.
+  - Review fix R4 (`after_send`): the body moved to `after_send_with` (see Interfaces); `after_send` builds `Tmux` and calls it with `RealProbe` and `SystemTime::now()`. `after_send_with` reads the clock once, before the threads start.
 
-- [ ] **5. Commit** `ML-6: wake of an idle member after a send`, with the trailers `Zygo-Session:` and `Zygo-Work: phase3:ML-6`.
+- [x] **4. Run the tests.** Run `cargo test -p zygo-workspace --test mail_wake -- --include-ignored`. Pass: all tests pass. The tmux test runs on tmux 3.2 or later, or prints `tmux tests skipped: …`. Then run `cargo test -p zygo-workspace --locked --no-fail-fast` and `cargo clippy -p zygo-workspace --all-targets --locked -- -D warnings`. Pass: both are green, and `down`, `state`, `mail_store` and `mail_names` do not change.
+
+  Deviation (step 4): `cargo clippy -p zygo-workspace --all-targets --locked -- -D warnings` fails on code outside Files that this node does not touch: `clippy::collapsible_if` in `crates/zygo-work/src/gate/transition.rs:158` (a dependency), and, with `--no-deps`, unused variables and a dead struct in `crates/zygo-workspace/tests/down.rs:419`, `:1674`, `:1688`, `:1703`. `cargo clippy -p zygo-workspace --lib --test mail_wake --locked --no-deps -- -D warnings` is clean. `cargo test -p zygo-workspace --locked --no-fail-fast` is green.
+
+- [x] **5. Commit** `ML-6: wake of an idle member after a send`, with the trailers `Zygo-Session:` and `Zygo-Work: phase3:ML-6`.
 
 **Spec coverage.**
 - M§7.3, the idle rule and the live launcher: step 3 items 1-2 and `RealProbe`; tests `busy…`, `…not_live…`, `wake_writes_no_activity_json`.
