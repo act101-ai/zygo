@@ -2093,3 +2093,95 @@ fn mail_opencode_request_text_holds_the_line_while_new_is_not_empty() {
     }
     assert_eq!(ss_text(&f, &oc_start(), &missing), base(&f));
 }
+
+/// Child half of `mail_unreadable_folder_changes_no_decision`: one hook call as the binary runs it, so its stderr line
+/// can be read. `ZYGO_ML10_CHILD` is the fixture's temp root and `ZYGO_ML10_EVENT` the event (`stop`, `prompt` or
+/// `session-start`); an `Err` fails the child. It prints `OUT=<JSON string of the output text>` (`""` for none). In a
+/// normal run it returns at once.
+#[test]
+fn mail_hook_child() {
+    let Some(root) = std::env::var_os("ZYGO_ML10_CHILD") else { return };
+    let event = std::env::var("ZYGO_ML10_EVENT").unwrap();
+    let root = PathBuf::from(root);
+    let paths = paths(&root);
+    let dir = SessionDir::new(paths.sessions_dir.join(SID));
+    let zygo = root.join("missing");
+    let sd = dir.root.clone().into_os_string();
+    let env = |k: &str| if k == "ZYGO_SESSION_DIR" { Some(sd.clone()) } else { None };
+    let out = match event.as_str() {
+        "stop" | "prompt" => {
+            let payload = if event == "stop" { fixture("Stop-main") } else { ups("hello") };
+            workspace::run(&event, &serde_json::to_vec(&payload).unwrap(), &paths, &env, &zygo).unwrap().unwrap_or_default()
+        }
+        "session-start" => {
+            let input = match SessionView::load(&dir).unwrap().agent {
+                Agent::ClaudeCode => ss(AS1),
+                Agent::OpenCode => oc_start(),
+            };
+            let mut printed = Vec::new();
+            match session_start::run_member(&input, &dir, &paths, &zygo, &mut printed).unwrap() {
+                HookOutput::None if printed.is_empty() => String::new(),
+                HookOutput::None => context(&serde_json::from_slice(&printed).unwrap()),
+                HookOutput::Json(v) => context(&v),
+                HookOutput::Text(t) => t,
+            }
+        }
+        e => panic!("unknown event {e}"),
+    };
+    println!("OUT={}", serde_json::to_string(&out).unwrap());
+}
+
+/// Runs `mail_hook_child` for `event` on the fixture `f`; asserts it exits 0 and returns the `OUT=` text (libtest
+/// prints it after `test mail_hook_child ... ` on the same line) and the
+/// stderr lines that start with `zygo hook: `.
+fn child(f: &Fx, event: &str) -> (String, Vec<String>) {
+    let out = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "mail_hook_child", "--nocapture", "--test-threads=1"])
+        .env("ZYGO_ML10_CHILD", f.t.path())
+        .env("ZYGO_ML10_EVENT", event)
+        .env_remove("ZYGO_SESSION_DIR")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let line = stdout.lines().find_map(|l| l.split_once("OUT=").map(|(_, t)| t)).unwrap_or_else(|| panic!("no OUT= line: {stdout}"));
+    let text: String = serde_json::from_str(line).unwrap();
+    let err = String::from_utf8(out.stderr).unwrap().lines().filter(|l| l.starts_with("zygo hook: ")).map(String::from).collect();
+    (text, err)
+}
+
+/// `put_new(f, 2)`, then the mail folder of `f` to mode `0o000`.
+fn lock_mail(f: &Fx) -> PathBuf {
+    put_new(f, 2);
+    let m = mail_dir(&f.paths, ID);
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o000)).unwrap();
+    m
+}
+
+#[test] // M-C1, M§10 "Hook cannot read `mail/`", M§13 #9, C6; ML-10 D4
+fn mail_unreadable_folder_changes_no_decision() {
+    let _s = serial();
+    // Claude Code
+    let f = fx(Agent::ClaudeCode);
+    let m = lock_mail(&f);
+    set_act(&f, true, 1);
+    let stop = child(&f, "stop");
+    let stop_bt = bt(&f);
+    set_act(&f, false, 0);
+    let prompt = child(&f, "prompt");
+    let prompt_bt = bt(&f);
+    let start = child(&f, "session-start");
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!((stop.0.as_str(), stop.1.len()), ("", 1), "{stop:?}");
+    assert_eq!(stop_bt, (false, 0));
+    assert_eq!((prompt.0.as_str(), prompt.1.len()), ("", 1), "{prompt:?}");
+    assert_eq!(prompt_bt, (true, 0));
+    assert_eq!((start.0, start.1.len()), (base(&f), 1), "{:?}", start.1);
+    // OpenCode
+    let o = fx(Agent::OpenCode);
+    let m = lock_mail(&o);
+    let start = child(&o, "session-start");
+    fs::set_permissions(&m, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!((start.0, start.1.len()), (base(&o), 1), "{:?}", start.1);
+}
