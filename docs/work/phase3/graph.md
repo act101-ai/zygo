@@ -243,7 +243,7 @@ Session text (T, SX nodes):
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | TODO | implementation | — |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | TODO | implementation | — |
-| MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | TODO | judgment | — |
+| MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | IN-PROGRESS | judgment | .worktrees/phase3/MS-8-node · PR #73 |
 | MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | TODO | judgment | — |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
