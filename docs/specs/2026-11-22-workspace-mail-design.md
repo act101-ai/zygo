@@ -174,6 +174,8 @@ kind = "claude-code"
 name = "elena"          # M§6
 ```
 
+Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-workspace table `[mail.workspace.<name>]` (keys `sync`, `remote`, `host`); their forms and defaults are in `docs/specs/2026-11-24-mail-sync-design.md` S§11.
+
 ## 12. Alternatives rejected
 
 - **A supervisor daemon that owns messages and wakes** (an earlier zygo draft): rejected by W-G6 and A2; the hooks and the sender's own process cover delivery.
@@ -209,3 +211,4 @@ name = "elena"          # M§6
 |---|---|---|---|
 | 2026-11-24 | M§6 | author's call | A name of pane-key form is reserved so `mail_send`'s `to` stays unambiguous (ML-1 review). |
 | 2026-11-24 | M-C3, M§5 | author's call | link, not rename, so a delivery or read never replaces an existing message (ML-2 review) |
+| 2026-11-24 | M§11 | mail sync design S§16 | Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11). |
