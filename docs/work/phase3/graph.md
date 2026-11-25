@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-2 | Record set: directory reader, set checks and the dependency graph | DR-1 | DONE | implementation | 7e67ae4 d4007c2 168426f · decision_set 20/20 · PR #20 |
 | DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | DONE | implementation | 683c800 46baa07 2334e49 f1ffb87 0b60e99 · decision_cli 17p/0f/6i, cli_surface 20p/0f/3i; floor green; decision check 0 · PR #22 |
 | DR-4 | `zygo decision new`: write a record template | DR-3 | DONE | implementation | f0d049d beeaa1d 3965c61 · decision_new 12p/0f/1i; floor green · PR #25 |
 | DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | DONE | judgment | 397edc5 aba92f9 d3e3ff7 0db609f 4f86964 2b072a7 · decision_verbs 25p/0f; floor green · PR #29 |
@@ -226,7 +225,7 @@ Session text (T, SX nodes):
 | MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | TODO | implementation | — |
 | OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
-| OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | TODO | implementation | — |
+| OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | DONE | implementation | b834d51 · results 54p/0f; floor green · PR #45 |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | TODO | implementation | — |
@@ -378,6 +377,7 @@ Session text (T, SX nodes):
 | 2026-11-24 | FX-2 added (20347a0): found in RT-1's CI (ubuntu run 45530476489), edit.rs:297 lock still held after apply; a child forked by another thread keeps the flock past the close; Held guard unlocks on drop; fork test; no production impact; 5 steps |
 | 2026-11-24 | FX-2 in progress: node branch `phase3/FX-2--FX-2`, worktree `.worktrees/phase3/FX-2-node` · PR #42 |
 | 2026-11-24 | FX-2 done: decision lock unlocked before close so a child's inherited descriptor cannot keep it; review round 1 (2 confirmed, 3 refuted); floor 2593 passed 0 failed · PR #42 |
+| 2026-11-24 | OS-14 DONE: `size_view` and `shaped_view` in zygo-results view.rs; review round 1 (0 confirmed; F1 empty steps and F2 empty text refuted, spec O§7.3 line 227 and O§7.8); floor green (ws 2596/0) · PR #45 |
 | 2026-11-24 | RT-1 planned (6d70796): 11 steps, 10 first_started_at tests · PR #38 |
 | 2026-11-24 | RT-1 in progress: node worktree .worktrees/phase3/RT-1-node, branch phase3/RT-1--RT-1 · PR #38 |
 | 2026-11-24 | RT-1 done (7efa8d9 441e170 ff23c48): member record first_started_at; review round 1: 1 confirmed, 3 refuted; floor 2529 passed, 0 failed · PR #38 |

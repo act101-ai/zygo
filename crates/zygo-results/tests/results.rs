@@ -3,6 +3,7 @@ use std::time::{Duration, SystemTime};
 use zygo_config::ResultsConfig;
 use zygo_results::kind::{sniff, tree, Kind};
 use zygo_results::{is_id, sweep, view, Store, Stored};
+use zygo_results::shape::Step;
 
 fn put(tool: &str, text: &str) -> (tempfile::TempDir, Stored) {
     let t = tempfile::tempdir().unwrap();
@@ -188,6 +189,48 @@ fn view_of_bytes_that_are_not_utf8_does_not_panic() {
     let t = tempfile::tempdir().unwrap();
     let s = Store::put(&t.path().join("results"), "Bash", None, b"ok\xff\xfe\nrest\n").unwrap();
     assert!(view(&s, &ResultsConfig::default()).contains('\u{fffd}'));
+}
+
+#[test]
+fn shaped_view_is_the_marker_line_then_the_text() {
+    let (_t, s) = put("Bash", &rows(200));                               // 200 lines, 3092 bytes
+    let v = view::shaped_view(&[Step::ColorCodesRemoved, Step::RepeatedLinesCounted], "x", &s);
+    assert_eq!(v, format!("[zygo shaped this output: color codes removed, repeated lines counted. The full output (200 lines, 3092 bytes) is saved as result {}; read it with result_view, result_search or result_tree.]\nx", s.id));
+}
+
+#[test]
+fn shaped_view_lists_steps_in_order_and_keeps_the_raw_numbers() {
+    let (_t, s) = put("Bash", &rows(200));
+    let all = [Step::ColorCodesRemoved, Step::ProgressLinesRemoved, Step::RepeatedLinesCounted, Step::PassedTestsHidden,
+        Step::BuildProgressHidden, Step::DiffFilesListed, Step::JsonOutlined, Step::LogErrorsKept];
+    let shaped = "row 1 payload\nrow 200 payload\n";                    // shorter than the raw text
+    let v = view::shaped_view(&all, shaped, &s);
+    let (first, rest) = v.split_once('\n').unwrap();
+    assert_eq!(first, format!("[zygo shaped this output: color codes removed, progress lines removed, repeated lines counted, passed tests hidden, build progress hidden, diff files listed, json outlined, log errors kept. The full output (200 lines, 3092 bytes) is saved as result {}; read it with result_view, result_search or result_tree.]", s.id));
+    assert_eq!(rest, shaped);                                           // the text follows unchanged
+}
+
+#[test]
+fn size_view_of_a_shorter_text_keeps_the_raw_numbers_within_the_cap() {
+    let raw: String = (0..300).map(|_| format!("{}\n", "x".repeat(399))).collect();     // 300 lines, 120000 bytes
+    let (_t, s) = put("Bash", &raw);
+    let shaped: String = (0..260).map(|_| format!("{}\n", "y".repeat(399))).collect();  // 104000 bytes
+    let v = view::size_view(&shaped, &s, &ResultsConfig::default());
+    assert!(v.len() <= view::VIEW_CAP_BYTES, "{}", v.len());
+    assert!(v.starts_with(&"y".repeat(399)) && !v.contains(&"x".repeat(399)));
+    assert!(v.ends_with(&marker(&s)) && marker(&s).contains("300 lines, 120000 bytes"));
+    let cfg = ResultsConfig { head_lines: 2, tail_lines: 1, ..ResultsConfig::default() };
+    let (_t, s) = put("Bash", &rows(10));
+    assert_eq!(view::size_view("a\nb\nc\nd\n", &s, &cfg), format!("a\nb\n{}\nd", marker(&s)));
+}
+
+#[test]
+fn view_equals_size_view_of_the_stored_text() {
+    for tool in ["Bash", "Read"] {
+        let (_t, s) = put(tool, &rows(200));
+        let cfg = ResultsConfig::default();
+        assert_eq!(view(&s, &cfg), view::size_view(&s.text(), &s, &cfg), "{tool}");
+    }
 }
 
 #[test]
