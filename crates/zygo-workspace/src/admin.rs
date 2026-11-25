@@ -776,8 +776,8 @@ fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Re
     Ok(format!("zygo: forgot {label}"))
 }
 
-/// `zygo ws forget-pane <key>` (W§12, D18-D20): the workspace named `name`, else the one of the checkout of `cwd`.
-/// Exit 0 with `zygo: forgot pane <key> of <name>` on `out`, or exit 1 with one line on `err`.
+/// `zygo ws forget-pane <key>` (W§12, D18-D20): the workspace named `name`, else the one of the checkout of `cwd`. It
+/// removes the member record, the pane caches and the maildir `mail/<key>/` (M§5). Exit 0 with `zygo: forgot pane <key> of <name>` on `out`, or exit 1 with one line on `err`.
 pub fn forget_pane(
     paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str, out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
@@ -928,6 +928,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     for (sub, _) in PANE_CACHES {
         has_cache |= pane_cache(paths, &id, sub, key).map_err(|r| cannot(&r))?.is_some();
     }
+    let has_mail = pane_maildir(paths, &id, key).map_err(|r| cannot(&r))?.is_some();
     if cur.members.contains_key(key) {
         // D18-D20: the live check under `lock`, on the record as read there; the record and `panes[].kind` in one write.
         let mut live = false;
@@ -962,7 +963,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             Err(StateError::Busy) => return Err(format!("zygo: workspace {label} is busy; try again")),
             Err(e) => return Err(format!("zygo: {e}")),
         }
-    } else if !has_cache {
+    } else if !has_cache && !has_mail {
         return Err(format!("zygo: {label} has no member record for pane {key}"));
     }
     fire(store.dir(), "forget_pane_before_cache").map_err(|e| cannot(&e))?;
@@ -977,6 +978,14 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         if let Err(e) = removed {
             first.get_or_insert(cannot(&e));
         }
+    }
+    // M§5: mail/<key>/ after the record (no send can target the key now) and after the caches; tried also after a cache error.
+    let removed = pane_maildir(paths, &id, key).and_then(|entry| match entry {
+        Some(entry) => mail_store::remove_pane(&mail_dir(paths, &id), key).map_err(|e| format!("{}: {e}", entry.display())),
+        None => Ok(()),
+    });
+    if let Err(e) = removed {
+        first.get_or_insert(cannot(&e));
     }
     match first {
         Some(e) => Err(e),
@@ -1005,6 +1014,26 @@ pub fn pane_cache(paths: &Paths, id: &str, sub: &str, key: &str) -> Result<Optio
         }
     }
     let entry = at.join(key);
+    match fs::symlink_metadata(&entry) {
+        Ok(_) => Ok(Some(entry)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", entry.display())),
+    }
+}
+
+/// M§5: `<workspaces_dir>/<id>/mail/<key>` of one pane, `mail/` checked with `symlink_metadata`. `Ok(Some(path))`
+/// when `<key>` exists (a link there is removed as a link); `Ok(None)` when `mail/` or `<key>` is missing or `mail/`
+/// is not a folder; `Err(reason)` for a link at `mail/` (it is not followed) or a part that cannot be read.
+fn pane_maildir(paths: &Paths, id: &str, key: &str) -> Result<Option<PathBuf>, String> {
+    let mail = mail_dir(paths, id);
+    match fs::symlink_metadata(&mail) {
+        Ok(m) if m.file_type().is_symlink() => return Err(format!("{} is a link; it is not followed", mail.display())),
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", mail.display())),
+    }
+    let entry = mail.join(key);
     match fs::symlink_metadata(&entry) {
         Ok(_) => Ok(Some(entry)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

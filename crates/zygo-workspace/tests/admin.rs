@@ -2017,3 +2017,102 @@ fn mail_list_rows_show_the_workspace_unread_total() {
     assert!(rows[1].to_string().ends_with("  clients -  unread -"), "{}", rows[1]);
     assert!(rows[2].to_string().ends_with("  clients -  unread 0"), "{}", rows[2]);
 }
+
+#[test] // M§5: `zygo ws forget` deletes mail/
+fn mail_forget_leaves_no_mail_folder() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let one = |ws: &mut Workspace| {
+        ws.members.insert("kaaaaaaaa".into(), member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")));
+    };
+    ws_state(&p, ID, "app", &t.join("r/app"), one);
+    ws_state(&p, OTHER, "other", &t.join("r/other"), one);
+    mail_to(&p, ID, "kaaaaaaaa", 2);
+    mail_to(&p, OTHER, "kaaaaaaaa", 1);
+    assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert!(fs::symlink_metadata(mail_dir(&p, ID)).is_err());
+    assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err());
+    assert_eq!(mail_store::unread(&mail_dir(&p, OTHER), "kaaaaaaaa").unwrap(), 1);
+}
+
+#[test] // M§5, W§5, AU84: a key that fails ^k[a-z2-7]{8}$ exits 1 before any path is built
+fn mail_forget_pane_refuses_a_key_of_bad_form_and_deletes_nothing() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, id, store, plain, .. } = pane_setup();
+    let m = mail_dir(&p, &id);
+    mail_to(&p, &id, "kaaaaaaaa", 1);
+    fs::create_dir_all(m.join("k/aaaaaaa")).unwrap();
+    fs::write(m.join("k/aaaaaaa/keep"), "k").unwrap();
+    fs::create_dir_all(m.join("kAAAAAAAA/new")).unwrap();
+    fs::create_dir_all(store.dir().join("x")).unwrap(); // what mail/../x names
+    fs::write(store.dir().join("x/keep"), "k").unwrap();
+    let before = snapshot_tree(td.path());
+    for bad in ["../x", "k/aaaaaaa", "kAAAAAAAA"] {
+        assert_eq!(pane_run(&p, &tmux, Some("app"), &plain, bad), (1, String::new(), format!("zygo: invalid pane key {bad}\n")));
+    }
+    assert_eq!(snapshot_tree(td.path()), before);
+}
+
+#[test] // M§5: `zygo ws forget-pane <key>` deletes mail/<key>/ and keeps the other maildirs
+fn mail_forget_pane_removes_only_that_maildir() {
+    let _s = serial();
+    let PaneSetup { td: _td, p, tmux, id, store, plain, .. } = pane_setup();
+    let m = mail_dir(&p, &id);
+    mail_to(&p, &id, "kaaaaaaaa", 1);
+    mail_to(&p, &id, "kbbbbbbbb", 2);
+    fs::create_dir_all(m.join("sync")).unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(m.join("kbbbbbbbb")).is_err());
+    assert!(!store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb"));
+    assert_eq!(mail_store::unread(&m, "kaaaaaaaa").unwrap(), 1);
+    assert!(m.join("sync").is_dir());
+    // A maildir with no member record and no cache is removed too (a second run after a failed removal).
+    mail_to(&p, &id, "kyyyyyyyy", 1);
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kyyyyyyyy"),
+        (0, "zygo: forgot pane kyyyyyyyy of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(m.join("kyyyyyyyy")).is_err());
+    assert_eq!(mail_store::unread(&m, "kaaaaaaaa").unwrap(), 1);
+}
+
+#[test] // M§5: mail/<key> that is a link is removed as a link; the folder it points to is kept
+fn mail_forget_pane_removes_a_linked_maildir_as_a_link() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, id, plain, .. } = pane_setup();
+    let outside = td.path().join("outside");
+    fs::create_dir_all(outside.join("new")).unwrap();
+    fs::write(outside.join("new/keep.json"), "k").unwrap();
+    fs::create_dir_all(mail_dir(&p, &id)).unwrap();
+    std::os::unix::fs::symlink(&outside, mail_dir(&p, &id).join("kbbbbbbbb")).unwrap();
+    let before = snapshot_tree(&outside);
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(mail_dir(&p, &id).join("kbbbbbbbb")).is_err());
+    assert_eq!(snapshot_tree(&outside), before);
+}
+
+#[test] // M§5, Round 2 R4 pattern: a link at mail/ is not followed; nothing is written or deleted
+fn mail_forget_pane_refuses_a_linked_mail_folder() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, id, store, plain, .. } = pane_setup();
+    let outside = td.path().join("outside");
+    fs::create_dir_all(outside.join("kbbbbbbbb/new")).unwrap();
+    fs::write(outside.join("kbbbbbbbb/new/keep.json"), "k").unwrap();
+    std::os::unix::fs::symlink(&outside, mail_dir(&p, &id)).unwrap();
+    let before = snapshot_tree(&outside);
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (1, String::new(), format!("zygo: cannot forget pane kbbbbbbbb of app: {} is a link; it is not followed\n", mail_dir(&p, &id).display()))
+    );
+    assert_eq!(snapshot_tree(&outside), before);
+    assert!(store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb")); // nothing written
+    assert!(cache(&p, &id).join("results/kbbbbbbbb/r1").exists()); // nothing deleted
+}
