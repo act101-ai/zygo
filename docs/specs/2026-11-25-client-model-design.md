@@ -509,7 +509,7 @@ Stream obligations (Messages SSE → Responses SSE):
 5. An upstream error before or during the stream gives `response.failed` with an error `code` and `message`. Each stream ends with exactly one terminal event.
 6. `ping` is dropped. An upstream event of unknown type is dropped. An upstream event whose JSON does not parse ends the stream with `response.failed`.
 7. A non-streaming request gets one Response object with the same content.
-8. The §10.2.6 bounds hold: a held partial event is bounded by `HOLD_MAX` (`translate/sse.rs:9`); no buffer grows with the response.
+8. The §10.2.6 bounds hold: a held partial event is bounded by `HOLD_MAX` (`crates/zygo-proxy/src/tee.rs:22`); no buffer grows with the response.
 
 #### 6.4.4 Context-limit errors
 
@@ -580,7 +580,7 @@ The status surface is a descriptor fact (concern 1); A-9 and A-22 grade it.
 
 ### 6.7 Hostile input at the new boundaries
 
-- **Responses requests.** The body limit and the idle bound of `routes.rs:73-74` apply. `serde_json` depth limit applies. Unknown item types and missing fields fail closed (K§6.4.3 item 9). A zygo-marked reasoning value from the client is untrusted: it must decode, fit a size bound, and name a provider and model of the session's candidates, else it is dropped with an adjustment code; it never selects a provider. `previous_response_id` is refused. Header values other than identity are attribution only.
+- **Responses requests.** The body limit and the idle bound of `read_body` (`crates/zygo-proxy/src/routes.rs:74-76`) apply. `serde_json` depth limit applies. Unknown item types and missing fields fail closed (K§6.4.3 item 9). A zygo-marked reasoning value from the client is untrusted: it must decode, fit a size bound, and name a provider and model of the session's candidates, else it is dropped with an adjustment code; it never selects a provider. `previous_response_id` is refused. Header values other than identity are attribution only.
 - **Upstream streams.** Bounded holds; unknown events dropped; unparsable events end the stream with `response.failed`.
 - **Hook input from Codex.** Read under the existing hook bounds. A body that is not a JSON object, an unknown event, or an unknown tool name gives no output (C6). Paths in tool input go through the existing guard rules.
 - **Project Codex files.** Read by the §8.4 safe-read rule at preflight. Their content only decides K-D13; zygo never copies them.
