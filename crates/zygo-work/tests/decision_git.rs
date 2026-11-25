@@ -110,6 +110,8 @@ struct Calls {
     runs: Vec<(&'static str, Instant)>,
     /// Every request written to the `--batch` process.
     sent: Vec<Vec<u8>>,
+    /// The `--batch` processes dropped.
+    drops: usize,
 }
 
 struct Stub {
@@ -147,6 +149,10 @@ struct Canned {
     log: Rc<RefCell<Calls>>,
     data: Vec<u8>,
     at: usize,
+}
+
+impl Drop for Canned {
+    fn drop(&mut self) { self.log.borrow_mut().drops += 1; }
 }
 
 impl BatchIo for Canned {
@@ -216,12 +222,36 @@ fn each_call_gets_min_of_step_and_total_deadline() {
 #[test]
 fn fifth_process_is_refused_with_no_run() {
     let base = format!("{}\n", hex('a'));
-    let Rig { mut g, log, .. } = rig(vec![ok(&base), ok(&base), ok(&base), ok(&base)], Vec::new());
-    for _ in 0..4 {
-        assert_eq!(g.merge_base("a", "b"), Ok(Some(hex('a'))));
-    }
+    let canned = format!("{} commit 0\n\n", hex('a')).into_bytes();
+    let Rig { mut g, log, .. } = rig(vec![ok(&base), ok(""), ok("")], canned);
+    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
+    assert_eq!(g.merge_base("a", "b"), Ok(Some(hex('a'))));
+    assert_eq!(g.rev_list("a", "b", 10), Ok(Some(vec![])));
+    assert_eq!(g.log("a", "b"), Ok(vec![]));
     assert_eq!(g.merge_base("a", "b"), Err(failed("git merge-base", "more than 4 git processes")));
+    assert_eq!(g.log("a", "b"), Err(failed("git log", "more than 4 git processes")));
     assert_eq!(log.borrow().runs.len(), 4);
+}
+
+#[test]
+fn second_merge_base_is_refused_with_no_run() {
+    let base = format!("{}\n", hex('a'));
+    let Rig { mut g, log, .. } = rig(vec![ok(&base), ok(&base)], Vec::new());
+    assert_eq!(g.merge_base("a", "b"), Ok(Some(hex('a'))));
+    assert_eq!(g.merge_base("a", "b"), Err(failed("git merge-base", "more than 4 git processes")));
+    assert_eq!(log.borrow().runs.len(), 1);
+}
+
+#[test]
+fn over_10_s_in_all_refuses_merge_base_rev_list_and_log() {
+    let canned = format!("{} commit 0\n\n", hex('a')).into_bytes();
+    let Rig { mut g, t0, clock, log } = rig(Vec::new(), canned);
+    assert_eq!(g.commit("a"), Ok(Some(hex('a'))));
+    clock.set(t0 + S(10));
+    assert_eq!(g.merge_base("a", "b"), Err(failed("git merge-base", "over 10 s in all")));
+    assert_eq!(g.rev_list("a", "b", 10), Err(failed("git rev-list", "over 10 s in all")));
+    assert_eq!(g.log("a", "b"), Err(failed("git log", "over 10 s in all")));
+    assert_eq!(log.borrow().runs.len(), 1);
 }
 
 #[test]
@@ -233,10 +263,10 @@ fn runner_timeout_names_the_step() {
 #[test]
 fn merge_base_exit_status_is_judged_with_its_output() {
     let w = |ok: bool, err: &[u8]| Ok(Whole { ok, out: Vec::new(), err: err.to_vec() });
-    let Rig { mut g, .. } = rig(vec![w(false, b""), w(true, b""), w(false, b"fatal: Not a valid object name nope\n")], Vec::new());
-    assert_eq!(g.merge_base("a", "b"), Ok(None));
-    assert_eq!(g.merge_base("a", "b"), Err(failed("git merge-base", "bad output")));
-    assert_eq!(g.merge_base("a", "b"), Err(failed("git merge-base", "failed: fatal: Not a valid object name nope")));
+    let one = |r| rig(vec![r], Vec::new()).g.merge_base("a", "b");
+    assert_eq!(one(w(false, b"")), Ok(None));
+    assert_eq!(one(w(true, b"")), Err(failed("git merge-base", "bad output")));
+    assert_eq!(one(w(false, b"fatal: Not a valid object name nope\n")), Err(failed("git merge-base", "failed: fatal: Not a valid object name nope")));
 }
 
 #[test]
@@ -249,16 +279,35 @@ fn bad_revision_or_name_runs_nothing() {
 }
 
 #[test]
+fn range_shaped_revision_runs_nothing() {
+    let Rig { mut g, log, .. } = rig(Vec::new(), Vec::new());
+    assert_eq!(g.rev_list("x.", "y", 10), Err(failed("git rev-list", "bad revision")));
+    assert_eq!(g.log("x", "y."), Err(failed("git log", "bad revision")));
+    assert_eq!(g.merge_base("a..b", "c"), Err(failed("git merge-base", "bad revision")));
+    assert_eq!(g.commit("a..b"), Ok(None));
+    assert_eq!(g.record_blob("a...b", "A.md"), Ok(Blob::Missing));
+    assert!(log.borrow().runs.is_empty());
+}
+
+#[test]
 fn log_output_parses_into_commits() {
     let (a, b, m, p1, p2) = (hex('a'), hex('b'), hex('c'), hex('d'), hex('e'));
     let out = format!("{a}\0{p1}\0del\n\0\nD\0docs/decisions/A.md\0{m}\0{p1} {p2}\0merge\n\0{b}\0\0\0\nM\0docs/decisions/B.md\0A\0docs/other\0");
-    let Rig { mut g, .. } = rig(vec![ok(&out), ok(&out[1..])], Vec::new());
+    let Rig { mut g, .. } = rig(vec![ok(&out)], Vec::new());
     assert_eq!(g.log("x", "y").unwrap(), vec![
         LogCommit { id: a, parents: vec![p1.clone()], message: "del\n".into(), paths: vec![('D', "docs/decisions/A.md".into())] },
         LogCommit { id: m, parents: vec![p1, p2], message: "merge\n".into(), paths: vec![] },
         LogCommit { id: b, parents: vec![], message: String::new(), paths: vec![('M', "docs/decisions/B.md".into())] },
     ]);
-    assert_eq!(g.log("x", "y"), Err(failed("git log", "bad output")));
+    assert_eq!(rig(vec![ok(&out[1..])], Vec::new()).g.log("x", "y"), Err(failed("git log", "bad output")));
+}
+
+#[test]
+fn log_output_without_the_closing_nul_is_bad_output() {
+    let out = format!("{}\0{}\0msg\0\nA\0docs/decisions/DD", hex('a'), hex('b'));
+    assert_eq!(rig(vec![ok(&out)], Vec::new()).g.log("x", "y"), Err(failed("git log", "bad output")));
+    let out = format!("{}\0{}\0msg", hex('a'), hex('b'));
+    assert_eq!(rig(vec![ok(&out)], Vec::new()).g.log("x", "y"), Err(failed("git log", "bad output")));
 }
 
 #[test]
@@ -291,6 +340,115 @@ fn a_failed_batch_stays_failed_with_one_process() {
     assert_eq!(g.commit("a"), e);
     assert_eq!(g.record_blob("a", &rec('A')), e.map(|_: Option<String>| Blob::Missing));
     assert_eq!(log.borrow().runs.iter().filter(|r| r.0 == "cat-file").count(), 1);
+    assert_eq!(log.borrow().drops, 1);
+}
+
+#[test]
+fn too_much_drops_the_batch_and_later_reads_start_no_process() {
+    let canned = format!("{} commit {}\n", hex('a'), 16 * 1024 * 1024 + 1).into_bytes();
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.commit("a"), Err(GitFail::TooMuch));
+    assert_eq!(log.borrow().drops, 1);
+    assert_eq!(g.commit("b"), Err(GitFail::TooMuch));
+    assert_eq!(g.record_blob("a", "A.md"), Err(GitFail::TooMuch));
+    assert_eq!(log.borrow().runs.len(), 1);
+    assert_eq!(log.borrow().sent.len(), 1);
+}
+
+/// A raw tree with regular entries `A.md` (id `aa…`) and `B.md` (id `bb…`).
+fn tree_ab() -> Vec<u8> {
+    let mut t = b"100644 A.md\0".to_vec();
+    t.extend_from_slice(&[0xaa; 20]);
+    t.extend_from_slice(b"100644 B.md\0");
+    t.extend_from_slice(&[0xbb; 20]);
+    t
+}
+
+/// The `--batch` reply of one object.
+fn reply(id: char, kind: &str, body: &[u8]) -> Vec<u8> {
+    let mut r = format!("{} {kind} {}\n", hex(id), body.len()).into_bytes();
+    r.extend_from_slice(body);
+    r.push(b'\n');
+    r
+}
+
+#[test]
+fn record_blob_reads_and_counts_each_tree_once() {
+    let tree = tree_ab();
+    // tree + A + B = exactly 16 MiB; a second count of the tree goes past it.
+    let a = vec![b'x'; 16 * 1024 * 1024 - tree.len() - 1];
+    let mut canned = reply('c', "tree", &tree);
+    canned.extend(reply('a', "blob", &a));
+    canned.extend(reply('b', "blob", b"y"));
+    // 3 objects read; 2,045 more fit in 2,048, and the next is too much.
+    canned.extend(format!("{} commit 0\n\n", hex('d')).repeat(2_045).into_bytes());
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.record_blob("r", "A.md"), Ok(Blob::Data(a)));
+    assert_eq!(g.record_blob("r", "B.md"), Ok(Blob::Data(b"y".to_vec())));
+    assert_eq!(&log.borrow().sent[..3], [b"r:docs/decisions\n".to_vec(), format!("{}\n", hex('a')).into_bytes(),
+        format!("{}\n", hex('b')).into_bytes()]);
+    for _ in 0..2_045 {
+        assert_eq!(g.commit("d"), Ok(Some(hex('d'))));
+    }
+    assert_eq!(g.commit("d"), Err(GitFail::TooMuch));
+}
+
+#[test]
+fn record_blob_malformed_tree_is_bad_output() {
+    let Rig { mut g, .. } = rig(Vec::new(), reply('c', "tree", b"100644 A.md"));
+    assert_eq!(g.record_blob("r", "A.md"), Err(failed("git cat-file", "bad output")));
+}
+
+#[test]
+fn record_blob_id_that_is_not_a_blob_is_bad_output() {
+    let mut canned = reply('c', "tree", &tree_ab());
+    canned.extend(reply('a', "tree", b""));
+    let Rig { mut g, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.record_blob("r", "A.md"), Err(failed("git cat-file", "bad output")));
+}
+
+#[test]
+fn record_blob_tree_bytes_count_toward_16_mib() {
+    let tree = tree_ab();
+    let mut canned = reply('c', "tree", &tree);
+    canned.extend(format!("{} blob {}\n", hex('a'), 16 * 1024 * 1024 - tree.len() + 1).into_bytes());
+    let Rig { mut g, log, .. } = rig(Vec::new(), canned);
+    assert_eq!(g.record_blob("r", "A.md"), Err(GitFail::TooMuch));
+    assert_eq!(log.borrow().drops, 1);
+}
+
+// ---- Piped: line, end-of-output and closed-stdin failures (no wall-clock wait) ----
+
+#[cfg(unix)]
+fn sh(script: &str) -> zygo_work::repo::Piped {
+    let mut c = Command::new("sh");
+    c.args(["-c", script]);
+    run_piped(c, far()).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_read_line_past_max_fails() {
+    let mut p = sh("printf 'abcdefgh\\n'");
+    assert!(matches!(p.read_line(4), Err(RunError::Failed)));
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_end_of_output_fails() {
+    let mut p = sh("printf 'ab\\nc'");
+    assert_eq!(p.read_line(16).unwrap(), b"ab");
+    assert!(matches!(p.read_line(16), Err(RunError::Failed)));
+    assert!(matches!(p.read_exact(2), Err(RunError::Failed)));
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_send_after_the_child_closed_stdin_fails() {
+    // The child closes its stdin, then says so; it exits at once.
+    let mut p = sh("exec 0<&-; printf 'closed\\n'");
+    assert_eq!(p.read_line(16).unwrap(), b"closed");
+    assert!(matches!(p.send(b"x\n"), Err(RunError::Failed)));
 }
 
 // ---- real git: PD1 and the tree entry modes (D§6.8) ----
@@ -304,7 +462,38 @@ impl GitRunner for Far {
     fn now(&self) -> Instant { Instant::now() + S(3600) }
 }
 
-fn far_git(root: &Path) -> ProcessGit { ProcessGit::with_runner(root, Box::new(Far(ProcessRunner))) }
+/// [`Far`] with `HOME`, `XDG_CONFIG_HOME` (and `USERPROFILE`) set to an empty temp dir on each command, so no
+/// developer `~/.gitconfig` reaches a real-git test.
+struct Iso {
+    far: Far,
+    home: TempDir,
+}
+
+impl Iso {
+    fn isolate(&self, mut cmd: Command) -> Command {
+        cmd.env("HOME", self.home.path()).env("XDG_CONFIG_HOME", self.home.path());
+        if cfg!(windows) {
+            cmd.env("USERPROFILE", self.home.path());
+        }
+        cmd
+    }
+}
+
+impl GitRunner for Iso {
+    fn run(&mut self, cmd: Command, deadline: Instant) -> Result<Whole, RunError> {
+        let cmd = self.isolate(cmd);
+        self.far.run(cmd, deadline)
+    }
+    fn batch(&mut self, cmd: Command, deadline: Instant) -> Result<Box<dyn BatchIo>, RunError> {
+        let cmd = self.isolate(cmd);
+        self.far.batch(cmd, deadline)
+    }
+    fn now(&self) -> Instant { self.far.now() }
+}
+
+fn far_git(root: &Path) -> ProcessGit {
+    ProcessGit::with_runner(root, Box::new(Iso { far: Far(ProcessRunner), home: TempDir::new().unwrap() }))
+}
 
 struct Fx {
     base: String,
@@ -389,9 +578,8 @@ fn docs_decisions_as_a_blob_is_missing() {
 #[test]
 fn rev_list_over_max_is_none() {
     let (_t, w, fx) = fixture();
-    let mut g = far_git(&w);
-    assert_eq!(g.rev_list(&fx.base, &fx.c2, 1), Ok(None));
-    assert_eq!(g.rev_list(&fx.base, &fx.c2, 2).unwrap().unwrap().len(), 2);
+    assert_eq!(far_git(&w).rev_list(&fx.base, &fx.c2, 1), Ok(None));
+    assert_eq!(far_git(&w).rev_list(&fx.base, &fx.c2, 2).unwrap().unwrap().len(), 2);
 }
 
 #[test]
@@ -409,4 +597,23 @@ fn merge_base_of_unrelated_histories_is_none() {
     let o = out(&w, &["commit-tree", &format!("{}^{{tree}}", fx.base), "-m", "o"]);
     let mut g = far_git(&w);
     assert_eq!(g.merge_base(&fx.base, &o), Ok(None));
+}
+
+#[test]
+fn log_lists_an_added_gitlink_under_ignore_submodules_all() {
+    let (_t, w, fx) = fixture();
+    git(&w, &["config", "diff.ignoreSubmodules", "all"]);
+    let mut g = far_git(&w);
+    let c2 = g.log(&fx.c1, &fx.c2).unwrap();
+    assert_eq!(c2.len(), 1);
+    assert!(c2[0].paths.contains(&('A', format!("docs/decisions/{}", rec('S')))), "{:?}", c2[0].paths);
+}
+
+#[test]
+fn log_parses_under_a_utf16_log_output_encoding() {
+    let (_t, w, fx) = fixture();
+    git(&w, &["config", "i18n.logOutputEncoding", "UTF-16"]);
+    let mut g = far_git(&w);
+    let c = g.log(&fx.base, &fx.c2).unwrap();
+    assert_eq!(c.iter().map(|c| c.message.as_str()).collect::<Vec<_>>(), ["c2\n\nZygo-Session: s\n", "c1\n"]);
 }

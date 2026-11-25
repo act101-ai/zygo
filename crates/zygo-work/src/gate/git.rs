@@ -1,5 +1,6 @@
 //! The verdict git reader (D§9.4): one `git cat-file --batch`, one `git merge-base`, one `git rev-list` and one
 //! `git log`, each bounded, behind an injectable runner (D§17).
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -131,10 +132,13 @@ pub struct ProcessGit {
     root: PathBuf,
     runner: Box<dyn GitRunner>,
     first: Option<Instant>,
-    started: usize,
+    /// The steps whose one process has started.
+    started: Vec<&'static str>,
     batch: Option<Result<Box<dyn BatchIo>, GitFail>>,
     objects: usize,
     bytes: u64,
+    /// The reply to `<rev>:docs/decisions`, by rev: each tree is read and counted once.
+    trees: HashMap<String, Reply>,
 }
 
 impl ProcessGit {
@@ -143,13 +147,22 @@ impl ProcessGit {
     }
 
     pub fn with_runner(root: &Path, runner: Box<dyn GitRunner>) -> ProcessGit {
-        ProcessGit { root: root.to_path_buf(), runner, first: None, started: 0, batch: None, objects: 0, bytes: 0 }
+        ProcessGit {
+            root: root.to_path_buf(),
+            runner,
+            first: None,
+            started: Vec::new(),
+            batch: None,
+            objects: 0,
+            bytes: 0,
+            trees: HashMap::new(),
+        }
     }
 
     /// The deadline of the next git process of `step`: `min(now + GIT_STEP, first start + GIT_TOTAL)`. Refused, with no
-    /// process counted, when `GIT_PROCESSES` have started or the total time is over.
+    /// process counted, when a process of `step` or `GIT_PROCESSES` have started, or the total time is over.
     fn deadline(&mut self, step: &'static str) -> Result<Instant, GitFail> {
-        if self.started == GIT_PROCESSES {
+        if self.started.contains(&step) || self.started.len() == GIT_PROCESSES {
             return Err(fail(step, "more than 4 git processes"));
         }
         let now = self.runner.now();
@@ -157,7 +170,7 @@ impl ProcessGit {
         if now >= end {
             return Err(fail(step, "over 10 s in all"));
         }
-        self.started += 1;
+        self.started.push(step);
         Ok((now + GIT_STEP).min(end))
     }
 
@@ -255,10 +268,15 @@ fn exit_why(err: &[u8]) -> String {
     format!("failed: {}", &line[..cut])
 }
 
-/// A revision git may take as one argument: 1 to 256 printable ASCII bytes, no space, no leading `-`.
+/// A revision git may take as one argument: 1 to 256 printable ASCII bytes, no space, no leading `-`, and not a range:
+/// no `..` and no trailing `.` (which would make `<base>..<head>` into `<base>...<head>`).
 fn good_rev(rev: &str) -> bool {
     let b = rev.as_bytes();
-    (1..=256).contains(&b.len()) && b[0] != b'-' && b.iter().all(|c| (0x21..=0x7e).contains(c))
+    (1..=256).contains(&b.len())
+        && b[0] != b'-'
+        && b.iter().all(|c| (0x21..=0x7e).contains(c))
+        && !rev.contains("..")
+        && !rev.ends_with('.')
 }
 
 /// A file name in one tree: 1 to 255 bytes, no `/`, `\n` or NUL.
@@ -273,11 +291,13 @@ fn hex_id(b: &[u8]) -> Option<String> {
 }
 
 /// `--format=%H%x00%P%x00%B --name-status -z` output (git 2.50: `<H>\0<P>\0<B>\0\n<S>\0<path>\0…<H>\0…`; the first
-/// status of a commit has a leading `\n`, and a commit with no paths is followed directly by the next id).
+/// status of a commit has a leading `\n`, and a commit with no paths is followed directly by the next id). Output
+/// that does not end with its closing NUL is malformed.
 fn parse_log(out: &[u8]) -> Option<Vec<LogCommit>> {
     let mut t = out.split(|&b| b == 0).peekable();
     let mut v = Vec::new();
-    while let Some(id) = t.next() {
+    loop {
+        let id = t.next()?;
         if id.is_empty() && t.peek().is_none() {
             break; // the NUL that ends the output
         }
@@ -350,13 +370,18 @@ impl VerdictGit for ProcessGit {
         if !good_rev(rev) || !good_name(name) {
             return Ok(Blob::Missing);
         }
-        // The tree is read and its entry mode decides: a link or submodule is never read as a blob (D§6.8).
-        let Reply::Object { id, kind, body } = self.ask(&format!("{rev}:docs/decisions"))? else { return Ok(Blob::Missing) };
+        // The tree is read and its entry mode decides: a link or submodule is never read as a blob (D§6.8). Each
+        // rev's tree is read, and counted toward the caps, once.
+        if !self.trees.contains_key(rev) {
+            let r = self.ask(&format!("{rev}:docs/decisions"))?;
+            self.trees.insert(rev.to_string(), r);
+        }
+        let Some(Reply::Object { id, kind, body }) = self.trees.get(rev) else { return Ok(Blob::Missing) };
         if kind != "tree" {
             return Ok(Blob::Missing);
         }
         let bad = || fail(CAT_FILE, "bad output");
-        let (mode, raw) = match find_entry(&body, name.as_bytes(), id.len() / 2).ok_or_else(bad)? {
+        let (mode, raw) = match find_entry(body, name.as_bytes(), id.len() / 2).ok_or_else(bad)? {
             None => return Ok(Blob::Missing),
             Some(entry) => entry,
         };
@@ -413,6 +438,8 @@ impl VerdictGit for ProcessGit {
             "-z",
             "--no-color",
             "--no-show-signature",
+            "--ignore-submodules=none",
+            "--encoding=UTF-8",
             "--format=%H%x00%P%x00%B",
             &range,
             "--",
