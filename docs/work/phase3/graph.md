@@ -227,7 +227,7 @@ Session text (T, SX nodes):
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
-| MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
+| MS-7 | Secret pass on one message | MS-2 | IN-PROGRESS | implementation | .worktrees/phase3/MS-7-node · PR #61 |
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
 | OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
