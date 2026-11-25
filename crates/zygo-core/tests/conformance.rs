@@ -412,6 +412,29 @@ fn check_3_fixture_through_link_out_of_fixtures_not_evidence() {
     assert!(e.contains("leaves fixtures/"), "{e}");
 }
 
+// Unix only, for the reason given above `input_evidence_link_leaving_repo_refused`.
+#[cfg(unix)]
+#[test]
+fn check_3_fixture_through_dir_link_inside_fixtures_not_evidence() {
+    let d = copy_repo();
+    // The link and its target are both in fixtures/: a link in any component is refused, not only the last.
+    std::os::unix::fs::symlink("../alpha", d.path().join("fixtures/beta/dl")).unwrap();
+    std::os::unix::fs::symlink("capture.json", d.path().join("fixtures/beta/link.json")).unwrap();
+    assert!(evidence(d.path(), "fixture:fixtures/alpha/a.json", "Beta").is_ok());
+    for (e, link) in [("fixture:fixtures/beta/dl/a.json", "fixtures/beta/dl"), ("fixture:fixtures/beta/link.json", "fixtures/beta/link.json")] {
+        let err = evidence(d.path(), e, "Beta").unwrap_err();
+        assert!(err.contains(&format!("{link} is a symbolic link")), "{err}");
+    }
+}
+
+#[test]
+fn check_3_fixture_over_1_mib_not_evidence() {
+    let d = copy_repo();
+    std::fs::write(d.path().join("fixtures/beta/big.json"), format!("[{}]", "1,".repeat(1 << 19))).unwrap();
+    let e = evidence(d.path(), "fixture:fixtures/beta/big.json", "Beta").unwrap_err();
+    assert!(e.contains("fixtures/beta/big.json") && e.contains("1 MiB"), "{e}");
+}
+
 #[test]
 fn check_valid_fixtures_pass() {
     let (r, g, c) = base();

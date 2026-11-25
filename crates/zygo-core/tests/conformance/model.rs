@@ -142,16 +142,23 @@ pub struct Fault {
 /// The largest input file the check reads: registry, grade file, premise file, test source.
 const READ_MAX: u64 = 1 << 20;
 
+/// Read a file of at most `READ_MAX` bytes; an `Err` text starts with `<shown>: `.
+fn read_capped_bytes(path: &Path, shown: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|f| f.take(READ_MAX + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("{shown}: {e}"))?;
+    if bytes.len() as u64 > READ_MAX {
+        return Err(format!("{shown}: the file is over 1 MiB"));
+    }
+    Ok(bytes)
+}
+
 /// Read a UTF-8 file of at most `READ_MAX` bytes; an `Err` text starts with `<path>: `.
 fn read_capped(path: &Path) -> Result<String, String> {
-    use std::io::Read;
-    let err = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
-    let mut bytes = Vec::new();
-    std::fs::File::open(path).and_then(|f| f.take(READ_MAX + 1).read_to_end(&mut bytes)).map_err(|e| err(&e))?;
-    if bytes.len() as u64 > READ_MAX {
-        return Err(err(&"the file is over 1 MiB"));
-    }
-    String::from_utf8(bytes).map_err(|e| err(&e))
+    let shown = path.display().to_string();
+    String::from_utf8(read_capped_bytes(path, &shown)?).map_err(|e| format!("{shown}: {e}"))
 }
 
 /// At most 300 characters of an error text from a parser, so that a long input line does not fill the report.
@@ -474,14 +481,22 @@ fn evidence_in(root: &Path, e: &str, client_name: &str, cache: &mut ReachCache) 
             if !canon.starts_with(&canon_fixtures) {
                 return Err(fail(format!("{rel} leaves fixtures/ through a link")));
             }
-            let meta = std::fs::symlink_metadata(&full).map_err(|err| fail(format!("{rel}: {err}")))?;
-            if meta.file_type().is_symlink() {
-                return Err(fail(format!("{rel} is a symbolic link")));
+            // A link in any component, not only the last, is refused.
+            let mut at = root.to_path_buf();
+            let mut shown = String::new();
+            for c in rel.split('/') {
+                at.push(c);
+                shown = if shown.is_empty() { c.to_string() } else { format!("{shown}/{c}") };
+                let meta = std::fs::symlink_metadata(&at).map_err(|err| fail(format!("{shown}: {err}")))?;
+                if meta.file_type().is_symlink() {
+                    return Err(fail(format!("{shown} is a symbolic link")));
+                }
             }
+            let meta = std::fs::metadata(&full).map_err(|err| fail(format!("{rel}: {err}")))?;
             if !meta.is_file() || meta.len() <= 2 {
                 return Err(fail(format!("{rel} is not a regular file of more than 2 bytes")));
             }
-            let bytes = std::fs::read(&full).map_err(|err| fail(format!("{rel}: {err}")))?;
+            let bytes = read_capped_bytes(&full, rel).map_err(fail)?;
             let squeezed: Vec<u8> = bytes.into_iter().filter(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n')).collect();
             if squeezed == b"{}" || squeezed == b"[]" {
                 return Err(fail(format!("{rel} is trivial")));
