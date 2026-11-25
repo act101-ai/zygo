@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use zygo_core::hook::{error_line, HookInput, HookOutput};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
@@ -12,7 +12,7 @@ use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;
 use zygo_core::Agent;
 
-use crate::session_text::build;
+use crate::session_text::{build, mechanics};
 use crate::workspace;
 
 pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
@@ -21,21 +21,45 @@ pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
 }
 
 pub fn run_in(input: &HookInput, dir: &SessionDir) -> anyhow::Result<HookOutput> {
-    // Subagents get the role prompt and the mechanics through `--agents` (§8.5).
+    // T§6.3 item 2: one branch for every input with `agent_id`; the member part never runs for it.
     if input.has_agent_id {
-        return Ok(HookOutput::None);
+        return subagent(input, dir);
     }
     let v = SessionView::load(dir)?;
     Ok(output(v.agent, text_of(dir, &v)))
 }
 
+/// T§6.3 item 2: the output for an input with `agent_id`. A `zygo-` agent type (the rule of
+/// `zygo_work::hooks::is_zygo`) gets nothing: its `--agents` prompt holds the mechanics text (§8.5). Any other
+/// subagent gets the mechanics text on `SubagentStart`; a missing or non-string `agent_type` is not `zygo-`. Any
+/// other event (a subagent `SessionStart` with `source: "compact"`) gets nothing; T§9.2 owns that copy.
+fn subagent(input: &HookInput, dir: &SessionDir) -> anyhow::Result<HookOutput> {
+    let zygo = input.raw.get("agent_type").and_then(Value::as_str).is_some_and(|t| t.starts_with("zygo-"));
+    if zygo || input.event.as_deref() != Some("SubagentStart") {
+        return Ok(HookOutput::None);
+    }
+    let v = SessionView::load(dir)?;
+    Ok(HookOutput::Json(json!({"hookSpecificOutput": {"hookEventName": "SubagentStart",
+        "additionalContext": mechanics_with_overrides(dir, &v)}})))
+}
+
 /// The session text of `v` with the overrides of the session folder applied.
 fn text_of(dir: &SessionDir, v: &SessionView) -> String {
+    build(&with_overrides(dir, v))
+}
+
+/// `mechanics(v)` with the `results` and `work_units` overrides of the session folder applied (T-C5).
+pub fn mechanics_with_overrides(dir: &SessionDir, v: &SessionView) -> String {
+    mechanics(&with_overrides(dir, v))
+}
+
+/// A copy of `v` with the `results` and `work_units` overrides of the session folder applied.
+fn with_overrides(dir: &SessionDir, v: &SessionView) -> SessionView {
     let mut v = v.clone();
     let ov = Overrides::load(dir);
     v.results = ov.results.unwrap_or(v.results);
     v.work_units = ov.work_units.unwrap_or(v.work_units);
-    build(&v)
+    v
 }
 
 /// The hook output of `text` for `agent`.
@@ -65,7 +89,7 @@ pub fn run_member(
     input: &HookInput, dir: &SessionDir, paths: &Paths, zygo: &Path, out: &mut dyn Write,
 ) -> anyhow::Result<HookOutput> {
     if input.has_agent_id {
-        return Ok(HookOutput::None);
+        return subagent(input, dir);
     }
     let member = input.cli_event.as_deref() == Some("member");
     if member && let Err(e) = workspace::check_folder(dir) {
