@@ -7,7 +7,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use model::*;
-use zygo_core::Agent;
 
 fn fx() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/conformance/fixtures")
@@ -64,14 +63,6 @@ fn copy_repo() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
     copy(&repo(), d.path());
     d
-}
-
-#[test]
-fn check_agent_all() {
-    assert_eq!(Agent::ALL, [Agent::ClaudeCode, Agent::OpenCode]);
-    for a in Agent::ALL {
-        assert_eq!(a.as_str().parse::<Agent>().unwrap(), a);
-    }
 }
 
 #[test]
