@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | DONE | implementation | 683c800 46baa07 2334e49 f1ffb87 0b60e99 · decision_cli 17p/0f/6i, cli_surface 20p/0f/3i; floor green; decision check 0 · PR #22 |
 | DR-4 | `zygo decision new`: write a record template | DR-3 | DONE | implementation | f0d049d beeaa1d 3965c61 · decision_new 12p/0f/1i; floor green · PR #25 |
 | DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | DONE | judgment | 397edc5 aba92f9 d3e3ff7 0db609f 4f86964 2b072a7 · decision_verbs 25p/0f; floor green · PR #29 |
 | DR-6 | `zygo decision review`: the phase-end review | DR-5 | DONE | implementation | 732af80 82d2e65 cb609a4 · decision_review 21/0; floor green · PR #34 |
@@ -233,7 +232,7 @@ Session text (T, SX nodes):
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
-| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | TODO | implementation | — |
+| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
 | MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
@@ -378,4 +377,5 @@ Session text (T, SX nodes):
 | 2026-11-24 | FX-2 in progress: node branch `phase3/FX-2--FX-2`, worktree `.worktrees/phase3/FX-2-node` · PR #42 |
 | 2026-11-24 | FX-2 done: decision lock unlocked before close so a child's inherited descriptor cannot keep it; review round 1 (2 confirmed, 3 refuted); floor 2593 passed 0 failed · PR #42 |
 | 2026-11-24 | OS-14 DONE: `size_view` and `shaped_view` in zygo-results view.rs; review round 1 (0 confirmed; F1 empty steps and F2 empty text refuted, spec O§7.3 line 227 and O§7.8); floor green (ws 2596/0) · PR #45 |
+| 2026-11-24 | SX-2 done: `subagent_text()` in crates/zygo-hooks/src/session_start.rs prints mechanics only for an opencode `--event subagent`; review round 1 (2 confirmed, fixed: CLI test, doc sentence); floor green · PR #47 |
 | 2026-11-24 | OS-2 DONE: `readbacks` table; three `trims` columns added on the full open; seven-column insert fallback; round 1 fixed 2 (`table_xinfo`, `open` doc), O§6.5 item 3 rewritten (author's call); floor green · PR #49 |
