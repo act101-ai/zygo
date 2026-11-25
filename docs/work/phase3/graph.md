@@ -324,6 +324,7 @@ Session text (T, SX nodes):
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
+| FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
 
 ## Log
 
@@ -367,3 +368,6 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-1 done: mechanics text on SubagentStart for non-zygo subagents; review round 1 (3 confirmed, 1 refuted); floor 2570 passed 0 failed · PR #39 |
 | 2026-11-24 | OS-16 planned (6ba122f): 6 test-first tasks; mod common { pub mod shaping; } per test binary; scripts/fixtures/ created; ZYGO_FIXTURES_DIR redirect; scrub order run dir, HOME, user, host. PR #32. |
 | 2026-11-24 | OS-16 done: shaping fixture harness and capture script; review round 1 (10 confirmed); floor 2582 passed 0 failed · PR #32 |
+| 2026-11-24 | FX-1 added (b5acf60): found in the RT-1 floor, a 24-min hang of git_runner stream_stop_kills_the_process_group; root cause Darwin FIFO lost wakeup; git_runner and decision_git kill tests use an anonymous pipe; tests only; 8 steps |
+| 2026-11-24 | FX-1 in progress: node branch `phase3/FX-1--FX-1`, worktree `.worktrees/phase3/FX-1-node` · PR #40 |
+| 2026-11-24 | FX-1 done: pipe replaces FIFO in the two process-group kill tests; review round 1 (0 confirmed, 4 refuted); floor 2570 passed 0 failed · PR #40 |
