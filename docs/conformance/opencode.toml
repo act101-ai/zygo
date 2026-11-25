@@ -374,7 +374,7 @@ reason = "limits.subagent_max_turns reaches only Claude Code (maxTurns in claude
 [[grade]]
 criterion = "A-21.1"
 status = "met"
-evidence = ["test:crates/zygo-launch/tests/opencode.rs::launch_sets_the_opencode_environment", "test:crates/zygo-launch/tests/premise.rs::opencode_inline_config_keys_flags_and_env_are_in_the_pinned_schema", "test:crates/zygo-launch/tests/stub_launch.rs::launch_leaves_the_users_own_files_untouched"]
+evidence = ["test:crates/zygo-launch/tests/opencode.rs::launch_sets_the_opencode_environment", "test:crates/zygo-launch/tests/stub_launch.rs::opencode_child_environment_flags_and_inline_config_match_the_spec", "test:crates/zygo-launch/tests/premise.rs::opencode_inline_config_keys_flags_and_env_are_in_the_pinned_schema", "test:crates/zygo-launch/tests/stub_launch.rs::launch_leaves_the_users_own_files_untouched"]
 
 [[grade]]
 criterion = "A-21.2"

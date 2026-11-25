@@ -398,4 +398,4 @@ approved = "operator 2026-11-25, docs/specs/2026-11-25-client-model-design.md K-
 client = "opencode"
 criterion = "A-1.4"
 reason = "OpenCode has no key-helper command: it reads the session token through the {file:} reference in provider.zygo.options.apiKey (base spec 8.7, PO1), so no key-helper command runs in any shell; a core criterion cannot be n/a"
-approved = "approved by the operator 2026-11-25, docs/work/phase4/nodes/CF-4.md step 7 decision (c)"
+approved = "operator 2026-11-25, docs/specs/2026-11-25-client-model-design.md K-D18"
