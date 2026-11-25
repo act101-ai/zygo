@@ -65,10 +65,10 @@ fn saved_launch(l: &Launch) -> zygo_workspace::state::Launch {
 /// sets `CLAUDE_CONFIG_DIR` in `env` (the flag wins).
 fn set_config_dir(env: &mut Env, d: &str, cwd: &Path) -> Result<(), String> {
     const VAR: &str = "CLAUDE_CONFIG_DIR";
-    let home = env.get(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).filter(|h| h.is_absolute());
-    let dir = match zygo_workspace::pool::tilde(d, home.or_else(std::env::home_dir).as_deref()) {
+    let home = zygo_workspace::pool::home_in(|k| env.get(k).map(|v| v.to_os_string()));
+    let dir = match zygo_workspace::pool::tilde(d, home.as_deref()) {
         Some(Ok(h)) => h,
-        Some(Err(_)) => return Err(format!("zygo claude: --config-dir {d}: no home directory")),
+        Some(Err(e)) => return Err(format!("zygo claude: --config-dir {d}: {e}")),
         None => cwd.join(d),
     };
     if !dir.is_dir() {

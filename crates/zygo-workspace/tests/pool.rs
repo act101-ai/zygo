@@ -95,3 +95,119 @@ fn mode_000_files_change_nothing() {
     }
     assert_eq!(list(d.path()).unwrap(), vec![d.path().join("a"), d.path().join("b")]);
 }
+
+// Fix round 1.
+
+#[test]
+fn tilde_strips_every_leading_separator() {
+    let h = tempfile::tempdir().unwrap();
+    assert_eq!(tilde("~//x", Some(h.path())), Some(Ok(h.path().join("x"))));
+    assert_eq!(tilde("~///", Some(h.path())), Some(Ok(h.path().to_path_buf())));
+    assert_eq!(tilde("~/", Some(h.path())), Some(Ok(h.path().to_path_buf())));
+    assert_eq!(tilde("~", None), Some(Err("no home directory".into())));
+}
+
+#[cfg(windows)]
+#[test]
+fn tilde_refuses_a_rest_with_a_prefix_or_root() {
+    let h = tempfile::tempdir().unwrap();
+    assert_eq!(tilde("~/\\x", Some(h.path())), Some(Ok(h.path().join("x"))));
+    assert_eq!(tilde("~/C:\\x", Some(h.path())), Some(Err("must be absolute after ~ expansion".into())));
+    assert_eq!(tilde("~/C:x", Some(h.path())), Some(Err("must be absolute after ~ expansion".into())));
+}
+
+#[test]
+fn home_uses_an_absolute_variable_else_the_os_home() {
+    let h = tempfile::tempdir().unwrap();
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let abs = h.path().as_os_str().to_os_string();
+    assert_eq!(home_in(|k| (k == var).then(|| abs.clone())), Some(h.path().to_path_buf()));
+    assert_eq!(home_in(|k| (k == var).then(|| "rel".into())), std::env::home_dir());
+    assert_eq!(home(), home_in(|k| std::env::var_os(k)));
+}
+
+#[test]
+fn list_is_in_byte_order_of_name() {
+    let d = tempfile::tempdir().unwrap();
+    let want = ["10", "9", "Cap", "a", "\u{e9}"];
+    for s in ["a", "\u{e9}", "Cap", "9", "10"] {
+        std::fs::create_dir(d.path().join(s)).unwrap();
+    }
+    assert_eq!(list(d.path()).unwrap(), want.iter().map(|s| d.path().join(s)).collect::<Vec<_>>());
+}
+
+#[test]
+fn shared_lines_escape_the_directory_and_the_names() {
+    let p = PathBuf::from("/p/a\nb");
+    let dir_of = vec![("w\u{1b}[31m".to_string(), p.clone()), ("w2".to_string(), p)];
+    assert_eq!(shared_lines(&dir_of), vec!["pool: /p/a\\nb is shared by w\\u{1b}[31m, w2".to_string()]);
+}
+
+/// Restores a mode on drop, so the temp directory can be removed.
+#[cfg(unix)]
+struct Mode(PathBuf, u32);
+
+#[cfg(unix)]
+impl Drop for Mode {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+    }
+}
+
+#[cfg(unix)]
+fn chmod(p: &Path, m: u32) -> Mode {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+    Mode(p.to_path_buf(), 0o755)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_without_search_permission_is_not_readable() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir(d.path().join("a")).unwrap();
+    let _m = chmod(d.path(), 0o444);
+    assert_eq!(list(d.path()), Err("not readable (PermissionDenied)".into()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pool_under_a_mode_000_parent_is_not_readable() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("q/pool/a")).unwrap();
+    let _m = chmod(&d.path().join("q"), 0o000);
+    let r = list(&d.path().join("q/pool"));
+    assert!(r.as_ref().is_err_and(|e| e.starts_with("not readable")), "{r:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn links_to_directories_are_followed_and_broken_links_skipped() {
+    use std::os::unix::fs::symlink;
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path();
+    std::fs::create_dir(p.join("a")).unwrap();
+    symlink(p.join("a"), p.join("l")).unwrap();
+    symlink(p.join("nowhere"), p.join("dangling")).unwrap();
+    symlink(p.join("loop1"), p.join("loop2")).unwrap();
+    symlink(p.join("loop2"), p.join("loop1")).unwrap();
+    std::fs::write(p.join("f"), "").unwrap();
+    symlink(p.join("f"), p.join("g")).unwrap();
+    assert_eq!(list(p).unwrap(), vec![p.join("a"), p.join("l")]);
+}
+
+#[cfg(unix)]
+#[test]
+fn two_links_to_one_directory_are_shared() {
+    use std::os::unix::fs::symlink;
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir(d.path().join("a")).unwrap();
+    symlink(d.path().join("a"), d.path().join("l")).unwrap();
+    let dirs = list(d.path()).unwrap();
+    let n = names(&["m1", "m2"]);
+    let dir_of: Vec<(String, PathBuf)> =
+        n.iter().zip(assign(&n, dirs.len())).map(|(m, i)| (m.clone().unwrap(), dirs[i].clone())).collect();
+    assert_eq!(dir_of[1].1, d.path().join("l"));
+    assert_eq!(shared_lines(&dir_of), vec![format!("pool: {} is shared by m1, m2", d.path().join("a").display())]);
+}
