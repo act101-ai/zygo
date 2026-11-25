@@ -20,6 +20,13 @@ if env | grep -q '^N2_AGENTS='; then
   echo "premises: N2_AGENTS comes from the environment; only the runner sets it (unset N2_AGENTS)"
   exit 1
 fi
+# N2_TEST_ROOT (PC-10) narrows the daemon and process checks to lib_test.sh's folder. Only a
+# lib_test.sh child script sets it, as a shell variable: one from the environment is refused, and
+# codex_record fails while it is set (isolation.txt: test_root=set).
+if env | grep -q '^N2_TEST_ROOT='; then
+  echo "premises: N2_TEST_ROOT comes from the environment; only lib_test.sh's child scripts set it (unset N2_TEST_ROOT)"
+  exit 1
+fi
 CLAUDE_BIN="" OPENCODE_BIN="" CODEX_BIN=""
 for _n2_a in ${N2_AGENTS:-claude opencode}; do
   case "$_n2_a" in
@@ -104,8 +111,12 @@ PY
 # while the mock of an earlier start_mock still runs: stop_mock first.
 # MOCK_ALT_KEY (PC-10, optional): a second credential the mock accepts like the dummy key; each
 # request record then says which one it carried ("credential": "primary" or "alt", never a
-# value). A part sets it, built at run time (never a literal in the repo), before start_mock.
+# value). A part sets it as a shell variable, built at run time (never a literal in the repo),
+# before start_mock; one from the environment is refused.
 start_mock() {
+  if env | grep -q '^MOCK_ALT_KEY='; then
+    echo "premises: start_mock: MOCK_ALT_KEY comes from the environment; the part sets it (unexported) at run time"; exit 1
+  fi
   if [ -n "${MOCK_PID:-}" ] && kill -0 "$MOCK_PID" 2>/dev/null; then
     echo "premises: start_mock: the mock (pid $MOCK_PID) still runs; stop_mock first"; exit 1
   fi
@@ -224,53 +235,118 @@ CX_HOME="" CODEX_EXE="" CODEX_VERSION="" CODEX_ENV=""
 #   RUST_BACKTRACE  a backtrace on a Codex panic (stderr only).
 EXTRA_ENV_ALLOW="RUST_LOG RUST_BACKTRACE"
 
-# n2_procs <daemon|left>: scan the process table (ps) and print one "premises: ..." line per finding;
-# exit 1 when there is one or when ps fails. daemon: each process whose program file name holds
-# "codex" and whose arguments hold the word app-server, unless its command line holds this run
-# folder; and each socket under /private/tmp/codex-daemon-<uid> or /tmp/codex-daemon-<uid>. left:
-# each process whose command line holds this run folder, except this shell and its parents. No
-# process is stopped. N2_TEST_ROOT (lib_test.sh only): only processes whose command line holds it
-# are scanned, and the daemon folders are looked up under it.
+# n2_procs <daemon|left>: scan the processes (ps; the working folder from /proc/<pid>/cwd, else
+# lsof) and the daemon socket folders; print one "premises: ..." line per finding and return 1 when
+# there is one, or when ps fails or the working folders cannot be read (fail closed). A process is
+# "of this run" when its command line holds the run folder or its working folder is inside it.
+#   daemon (codex_env, run_codex): each process whose program file name holds "codex" and whose
+#     arguments hold the word app-server and that is not of this run (another session's too: one
+#     real run at a time); each socket under /private/tmp/codex-daemon-<uid> or /tmp/codex-daemon-
+#     <uid> (it may be stale; it is never deleted); a daemon folder that cannot be read.
+#   left (codex_record): each process of this run, except this shell and its parents; and the
+#     same socket and folder findings (a socket that appeared during the part).
+# No process is stopped and no file is removed. N2_TEST_ROOT (lib_test.sh only): only processes
+# whose command line or working folder holds it are scanned; the daemon folders are under it.
 n2_procs() {
-  _p_ps=$(ps -A -ww -o pid= -o ppid= -o args=) || { echo "premises: ps failed; codex not started"; exit 1; }
+  _p_ps=$(ps -A -ww -o pid= -o ppid= -o args=) || { echo "premises: ps failed; codex not started"; return 1; }
   printf '%s\n' "$_p_ps" | N2_P_MODE=$1 N2_P_RUN=$RUN N2_P_SELF=$$ N2_P_ROOT=${N2_TEST_ROOT:-} python3 -I -c '
-import os, stat, sys
+import os, shutil, stat, subprocess, sys
 e = os.environ
 mode, run, root = e["N2_P_MODE"], e["N2_P_RUN"], e["N2_P_ROOT"]
-runs = {run.rstrip("/") + "/", os.path.realpath(run).rstrip("/") + "/"}
+pre, post = ("premises: ", "; codex not started") if mode == "daemon" else ("premises: codex_record: ", "")
+def forms(p):
+    return {p.rstrip("/") + "/", os.path.realpath(p).rstrip("/") + "/"}
+def under(p, bases):
+    return bool(p) and any((p.rstrip("/") + "/").startswith(b) for b in bases)
+runs, roots = forms(run), (forms(root) if root else set())
 procs = {}
 for line in sys.stdin:
     t = line.split(None, 2)
     if len(t) == 3 and t[0].isdigit() and t[1].isdigit():
         procs[int(t[0])] = (int(t[1]), t[2].rstrip("\n"))
-skip, p = {os.getpid(), os.getppid()}, int(e["N2_P_SELF"])
+me = os.getpid()
+skip, p = {me, os.getppid()}, int(e["N2_P_SELF"])
 while p in procs and p not in skip:
     skip.add(p)
     p = procs[p][0]
-out = []
-for pid, (_, args) in sorted(procs.items()):
-    if pid in skip or (root and root not in args):
+def cwds(pids):
+    """pid -> working folder; None when neither /proc nor lsof can tell."""
+    if not pids:
+        return {}
+    if os.path.isdir("/proc/self/fd"):
+        out = {}
+        for pid in pids:
+            try:
+                out[pid] = os.readlink("/proc/%d/cwd" % pid)
+            except OSError:
+                pass
+        return out
+    lsof = shutil.which("lsof")
+    if not lsof:
+        return None
+    try:
+        r = subprocess.run([lsof, "-n", "-P", "-a", "-d", "cwd", "-p", ",".join(map(str, sorted(pids))), "-F", "pn"],
+                           capture_output=True, text=True, errors="replace")
+    except OSError:
+        return None
+    out, pid = {}, None
+    for line in r.stdout.splitlines():
+        if line[:1] == "p":
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line[:1] == "n" and pid is not None:
+            out[pid] = line[1:]
+    return out
+cand = {}
+for pid, (pp, args) in procs.items():
+    if pid in skip or pp == me:
         continue
-    words = args.split()
-    ours = any(r in args for r in runs)
-    if mode == "daemon" and not ours and "app-server" in words[1:] and "codex" in os.path.basename(words[0]).lower():
-        out.append("premises: a codex app-server runs outside this run folder (pid %d, %s); codex not started; it is left running" % (pid, words[0]))
-    elif mode == "left" and ours:
-        out.append("premises: codex_record: a process of this run folder still runs (pid %d, %s); stop it (TUI runs pass --no-daemon)" % (pid, words[0]))
-if mode == "daemon":
-    seen = set()
-    for d in ("/private/tmp", "/tmp"):
-        d = "%s%s/codex-daemon-%d" % (root, d, os.getuid())
-        if os.path.realpath(d) in seen:
-            continue
-        seen.add(os.path.realpath(d))
-        for dp, _, fs in os.walk(d):
-            if any(stat.S_ISSOCK(os.lstat(os.path.join(dp, f)).st_mode) for f in fs):
-                out.append("premises: %s holds a socket (a Codex daemon); codex not started" % d)
-                break
+    words = args.split() or ["?"]
+    if mode == "daemon" and not ("app-server" in words[1:] and "codex" in os.path.basename(words[0]).lower()):
+        continue
+    if mode == "daemon" and any(r in args for r in runs):
+        continue
+    cand[pid] = (args, words[0])
+cw = cwds(set(cand))
+out = []
+if cw is None:
+    out.append(pre + "the working folders of processes cannot be read (no /proc, no lsof)" + post)
+    cw = {}
+for pid, (args, argv0) in sorted(cand.items()):
+    cwd = cw.get(pid, "")
+    if roots and not (any(r in args for r in roots) or under(cwd, roots)):
+        continue
+    if mode == "daemon":
+        if not under(cwd, runs):
+            out.append("premises: a codex app-server runs outside this run folder (pid %d, %s); codex not started; it is left running" % (pid, argv0))
+    elif any(r in args for r in runs):
+        out.append(pre + "a process of this run folder still runs (pid %d, %s); stop it (TUI runs pass --no-daemon)" % (pid, argv0))
+    elif under(cwd, runs):
+        out.append(pre + "a process with its cwd in this run folder still runs (pid %d, %s); stop it (TUI runs pass --no-daemon)" % (pid, argv0))
+seen = set()
+for d in ("/private/tmp", "/tmp"):
+    d = "%s%s/codex-daemon-%d" % (root.rstrip("/"), d, os.getuid())
+    if os.path.realpath(d) in seen:
+        continue
+    seen.add(os.path.realpath(d))
+    errs = []
+    for dp, _, fs in os.walk(d, onerror=errs.append):
+        for f in sorted(fs):
+            q = os.path.join(dp, f)
+            try:
+                st = os.lstat(q)
+            except FileNotFoundError:
+                continue
+            except OSError as x:
+                errs.append(x)
+                continue
+            if stat.S_ISSOCK(st.st_mode):
+                out.append(pre + "%s is a socket (a Codex daemon, or a stale socket of one; not deleted)%s" % (q, post))
+    for x in errs:
+        if not isinstance(x, FileNotFoundError):
+            out.append(pre + "cannot read %s (%s)%s" % (x.filename or d, x.strerror, post))
 for o in out:
     print(o)
-sys.exit(1 if out else 0)' || exit 1
+sys.exit(1 if out else 0)'
 }
 
 # n2_realpath <path>: the real path (the path need not exist).
@@ -397,8 +473,8 @@ codex_env() {
   n2_extra_check
   [ -n "${MOCK_URL:-}" ] && [ -n "${MOCK_PID:-}" ] || { echo "premises: codex_env needs start_mock first"; exit 1; }
   n2_plain MOCK_URL "$MOCK_URL"
-  n2_procs daemon
   codex_exe
+  n2_procs daemon || exit 1
   n2_plain CODEX_EXE "$CODEX_EXE"
   if n2_under_fold "$CODEX_EXE" "$OWNER_HOME/.codex"; then echo "premises: the codex executable is under ~/.codex"; exit 1; fi
   mkdir -p "$CX_HOME" "$RUN/tmp" "$H/.local/state"
@@ -425,14 +501,28 @@ codex_env() {
   CODEX_VERSION=$_cx_v
 }
 
-# run_codex <codex args>: codex_env, then codex isolated in the run's repo; returns codex's status.
-# Each run first writes its line to a file of its own in $RUN/cx-used.d (also from a subshell).
+# n2_daemon_flag <codex args>: exit 1 unless the run cannot start the shared daemon: the first
+# argument is exec or app-server, or an argument is --no-daemon, --help, -h, --version or -V. A
+# TUI run (plain codex, resume, ...) must pass --no-daemon.
+n2_daemon_flag() {
+  case "${1:-}" in exec | app-server) return 0 ;; esac
+  for _df_a in "$@"; do
+    case "$_df_a" in --no-daemon | --help | -h | --version | -V) return 0 ;; esac
+  done
+  echo "premises: run_codex: 'codex${1:+ $1}' is a TUI run; pass --no-daemon"; exit 1
+}
+
+# run_codex <codex args>: n2_daemon_flag, codex_env, then codex isolated in the run's repo (the
+# daemon check again right before it starts); returns codex's status. Each run first writes its
+# line to a file of its own in $RUN/cx-used.d (also from a subshell).
 run_codex() {
+  n2_daemon_flag "$@"
   codex_env
   mkdir -p "$RUN/cx-used.d"
   _cx_rec=$(mktemp "$RUN/cx-used.d/XXXXXX") || exit 1
   printf '%s\n' "$CODEX_VERSION $MOCK_URL $CODEX_EXE $CODEX_ENV $EXTRA_ENV" >"$_cx_rec"
   _cx_rc=0
+  n2_procs daemon || exit 1
   # shellcheck disable=SC2086
   (cd "$R" && $CODEX_ENV $EXTRA_ENV "$CODEX_EXE" "$@") || _cx_rc=$?
   check_abort
@@ -455,19 +545,27 @@ run_codex() {
 #   env_names=<names>     the sorted names of every variable handed to codex
 #   proxy=mock            HTTPS_PROXY, HTTP_PROXY and ALL_PROXY each equal that run's MOCK_URL
 #                         (else other)
-# Any value other than scratch, outside-owner-home or mock, more than one version, or a version
-# below CODEX_MIN (or not x.y.z), is written, named on stdout, and codex_record exits 1.
+#   daemon=none           n2_procs left found no process of this run and no daemon socket (else
+#                         found; each finding is named on stdout)
+#   test_root=none        N2_TEST_ROOT is not set (else set: a lib_test.sh run, not a capture)
+# Any value other than scratch, outside-owner-home, mock or none, more than one version, or a
+# version below CODEX_MIN (or not x.y.z), is written, named on stdout, and codex_record exits 1.
+# codex_record also exits 1 when a file in the run folder (the codex copies aside) holds a
+# <timezone> element whose value is not UTC or Etc/UTC (TZ=UTC did not hold); it names the file
+# and the value.
 codex_record() {
   case "$1" in '' | *[!A-Za-z0-9_-]*) echo "premises: bad part name '$1'"; exit 1 ;; esac
   [ -n "$(ls -A "$RUN/cx-used.d" 2>/dev/null)" ] || { echo "premises: codex_record: no codex run in this run folder"; exit 1; }
-  n2_procs left
+  _cx_dm=$(n2_procs left) && _cx_d=none || _cx_d=found
+  [ -z "$_cx_dm" ] || printf '%s\n' "$_cx_dm"
   _cx_out="$CODEX_FX/runs/$1"
   rm -rf "$_cx_out"
   mkdir -p "$_cx_out"
   if [ -e "$RUN/rec/connect.txt" ]; then scrub "$RUN/rec/connect.txt" >"$_cx_out/connect.txt"; else : >"$_cx_out/connect.txt"; fi
-  python3 -I - "$_cx_out/isolation.txt" "$RUN" "$OWNER_HOME" "$RUN/cx-used.d" "$CODEX_MIN" <<'PY'
-import os, sys, unicodedata
-out, run, home, used, cmin = sys.argv[1:6]
+  python3 -I - "$_cx_out/isolation.txt" "$RUN" "$OWNER_HOME" "$RUN/cx-used.d" "$CODEX_MIN" "$_cx_d" "${N2_TEST_ROOT:+set}" <<'PY'
+import os, re, sys, unicodedata
+out, run, home, used, cmin, daemon, troot = sys.argv[1:8]
+troot = troot or "none"
 rp = os.path.realpath
 def under(p, b):
     return bool(p) and bool(b) and rp(p).startswith(rp(b).rstrip("/") + "/")
@@ -527,12 +625,26 @@ for v in versions:
         bad.append("codex version '%s' is not x.y.z" % v)
     elif vt(v) < vt(cmin):
         bad.append("codex %s is below the minimum %s" % (v, cmin))
+if troot != "none":
+    bad.append("N2_TEST_ROOT is set (a lib_test.sh run, not a capture)")
+TZ = re.compile(r"(?:<|\\u003[cC])timezone(?:>|\\u003[eE])([^<\\\n]{1,200})(?:<|\\u003[cC])/timezone")
+for dp, dn, fs in os.walk(run):
+    dn[:] = sorted(x for x in dn if not x.startswith("codex-pkg."))
+    for fn in sorted(fs):
+        q = os.path.join(dp, fn)
+        if os.path.islink(q) or not os.path.isfile(q):
+            continue
+        with open(q, "rb") as fh:
+            text = fh.read().decode("utf-8", "replace")
+        for m in TZ.finditer(text):
+            if m.group(1) not in ("UTC", "Etc/UTC"):
+                bad.append("%s holds <timezone>%s</timezone>, not UTC" % (os.path.relpath(q, run), m.group(1)))
 with open(out, "w") as f:
-    f.write("home=%s\ncodex_home=%s\ncodex_version=%s\nrun_versions=%s\ncodex_exe=%s\nenv_names=%s\nproxy=%s\n"
-            % (h, ch, ",".join(versions), ",".join(runs), exe, " ".join(sorted(names)), proxy))
+    f.write("home=%s\ncodex_home=%s\ncodex_version=%s\nrun_versions=%s\ncodex_exe=%s\nenv_names=%s\nproxy=%s\ndaemon=%s\ntest_root=%s\n"
+            % (h, ch, ",".join(versions), ",".join(runs), exe, " ".join(sorted(names)), proxy, daemon, troot))
 for b in dict.fromkeys(bad):
     print("premises: codex_record: " + b)
-sys.exit(1 if bad else 0)
+sys.exit(1 if bad or daemon != "none" else 0)
 PY
 }
 

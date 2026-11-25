@@ -31,9 +31,10 @@ Usage: mock_upstream.py --dir <record dir> --rules <rules.json> [--port-file <fi
   verbatim with port "?". Neither gets a <nnnn>.json record or a credential check. An http or
   https absolute URI to the mock's own address (127.0.0.1, localhost or [::1] with the mock's
   port) is served as an origin request to its path.
-  <path> (PC-10): the absolute URI's path with each query value and the fragment dropped
-  ("/a?k=&j"; "/" when empty); "?" for a target that is not an absolute URI, a line cut off at
-  64 KiB, or a path with a byte outside visible ASCII. Every line ends " refused".
+  <path> (PC-10): the absolute URI's path with the whole query and the fragment dropped ("/" when
+  empty), each segment that looks like a token (sk-..., 16+ hex digits, 20+ base64 characters with
+  a digit and a letter, bot<digits>:...) as "?"; "?" for a target that is not an absolute URI, a
+  line cut off at 64 KiB, or a path with a byte outside visible ASCII. Every line ends " refused".
 
 Rule (JSON list, first match wins):
   {"name": "...", "sse": "<file>" | "json": "<file>", "status": <int, default 200>,
@@ -162,15 +163,15 @@ def target_line(target):
     return host, port, scheme, rest
 
 
+TOKEN_SEG = re.compile(r"sk-.*|bot[0-9]+:.*|[0-9A-Fa-f]{16,}|(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9+_=-]{20,}")
+
+
 def path_text(scheme, rest):
     """The recorded path of a refused request-target (see the module text)."""
     if not scheme or not re.fullmatch(r"[!-~]*", rest):
         return "?"
-    path, _, query = rest.partition("#")[0].partition("?")
-    path = path or "/"
-    if _:
-        path += "?" + "&".join(k + ("=" if eq else "") for k, eq, _v in (q.partition("=") for q in query.split("&")))
-    return path
+    path = re.split(r"[?#]", rest, maxsplit=1)[0] or "/"
+    return "/".join("?" if TOKEN_SEG.fullmatch(g) else g for g in path.split("/"))
 
 
 def default_json(model):

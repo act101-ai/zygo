@@ -8,6 +8,7 @@ and the secret parts that must be gone.
 import getpass
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -98,6 +99,34 @@ CASES += [
     ("a parenthesis that is not a user agent", "see note (Mac OS 27.2.1; arm64) and x/y (b 2)",
      "see note (Mac OS 27.2.1; arm64) and x/y (b 2)", []),
 ]
+# PC-10 review round 1, F4: more OS forms (a user agent with macOS, a distribution name, a Windows
+# edition, no blank before the parenthesis, a browser's Macintosh text), JSON os_type / os_version
+# values, and uname -a lines. F3: a <timezone> other than UTC (a backstop; TZ=UTC is the fix).
+CASES += [
+    ("user agent, macos lower case", "codex/1.0 (macOS 15.1; arm64) t", "codex/1.0 (os omitted) t", ["15.1", "arm64"]),
+    ("user agent, arch linux", "codex/1.0 (Arch Linux Rolling Release; x86_64) t", "codex/1.0 (os omitted) t",
+     ["Rolling", "x86_64"]),
+    ("user agent, ubuntu with arch", "codex/1.0 (Ubuntu 22.04.5 LTS; aarch64)", "codex/1.0 (os omitted)", ["22.04", "aarch64"]),
+    ("user agent, windows edition", "codex/1.0 (Windows 10 Pro 10.0.19045; x86_64)", "codex/1.0 (os omitted)",
+     ["19045", "Pro"]),
+    ("user agent, no blank", "x/1.0(Mac OS 27.2.1; arm64) t", "x/1.0(os omitted) t", ["27.2.1", "arm64"]),
+    ("browser user agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+     "Mozilla/5.0 (os omitted) AppleWebKit/537.36", ["10_15_7", "Intel"]),
+    ("macintosh text alone", "platform Macintosh; Intel Mac OS X 10_15_7 end", "platform (os omitted) end",
+     ["10_15_7", "Intel"]),
+    ("json os_type and os_version", '{"os_type":"Mac OS","os_version":"27.2.1","x":1}',
+     '{"os_type":"(os omitted)","os_version":"(os omitted)","x":1}', ["Mac OS", "27.2.1"]),
+    ("nested json os_version", '{\\"os_version\\": \\"6.8.0\\"}', '{\\"os_version\\": \\"(os omitted)\\"}', ["6.8.0"]),
+    ("uname -a, darwin", "Darwin zzbox.local 25.2.0 Darwin Kernel Version 25.2.0: Tue Oct 1; root:xnu-123/RELEASE_ARM64_T6041 arm64",
+     "(os omitted)", ["25.2.0", "zzbox", "arm64"]),
+    ("uname -a, linux", "Linux zzbox 6.8.0-49-generic #49-Ubuntu SMP PREEMPT_DYNAMIC Thu x86_64 x86_64 GNU/Linux",
+     "(os omitted)", ["6.8.0", "zzbox", "x86_64"]),
+    ("prose with linux and a version", "Linux and 2.0 support", "Linux and 2.0 support", []),
+    ("timezone other than utc", "<timezone>America/Los_Angeles</timezone>", "<timezone>(omitted)</timezone>",
+     ["Los_Angeles"]),
+    ("timezone utc kept", "<timezone>UTC</timezone> <timezone>Etc/UTC</timezone>",
+     "<timezone>UTC</timezone> <timezone>Etc/UTC</timezone>", []),
+]
 # T8: the macOS LocalHostName and ComputerName, when scutil gives them (4 characters or more).
 for k in ("LocalHostName", "ComputerName"):
     try:
@@ -186,11 +215,35 @@ def main():
         want = "/tmp/run/tmp/x.txt /home/user/.codex/a /repo/b\n"
         if got != want:
             bad.append("double-slash run paths: got %r" % (got,))
+        # F4: os_type / os_version as keys of a captured JSON object.
+        t = os.path.join(d, "os.json")
+        with open(t, "w") as f:
+            json.dump({"client": {"os_type": "Mac OS", "os_version": "27.2.1", "os_arch": "arm64", "k": "v"}}, f)
+        with tempfile.TemporaryDirectory() as run:
+            got = json.loads(subprocess.run([sys.executable, "-I", SCRUB, run, t], check=True,
+                                            capture_output=True, text=True).stdout)
+        want = {"client": {"os_type": "(os omitted)", "os_version": "(os omitted)", "os_arch": "(os omitted)", "k": "v"}}
+        if got != want:
+            bad.append("json os keys: got %r" % (got,))
+        # F9: Claude's dashed form of a run path that holds "//" (so "--").
+        with tempfile.TemporaryDirectory() as run:
+            rr = os.path.realpath(run)
+            head, tail = os.path.split(rr)
+            dbl = head + "//" + tail
+            alt = dbl[len("/private"):] if dbl.startswith("/private/") else dbl
+            dash = lambda x: re.sub(r"[^A-Za-z0-9]", "-", x)
+            t = os.path.join(d, "dash.txt")
+            with open(t, "w") as f:
+                f.write(dash(dbl + "/repo") + " " + dash(alt + "/home") + " " + dash(alt) + "-x\n")
+            got = subprocess.run([sys.executable, "-I", SCRUB, dbl, t], check=True,
+                                 capture_output=True, text=True).stdout
+        if got != "-repo -home-user -tmp-run-x\n":
+            bad.append("dashed run paths with --: got %r" % (got,))
     for b in bad:
         print("scrub test fail: " + b)
     if bad:
         sys.exit(1)
-    print("scrub tests: ok (%d)" % (len(CASES) + 4))
+    print("scrub tests: ok (%d)" % (len(CASES) + 6))
 
 
 main()

@@ -270,15 +270,22 @@ def run(m):
     refused("M18", "GET ws://127.0.0.1:%d/v1/models HTTP/1.1\r\nHost: x\r\n\r\n" % m.port,
             "127.0.0.1:%d GET /v1/models refused" % m.port)
 
-    # M26 (PC-10): the recorded path keeps query names, drops query values and the fragment; a
-    # path to another local port is recorded with its path; a path with a byte outside visible
-    # ASCII is ?.
+    # M26 (PC-10; review round 1, F5): the recorded path drops the whole query and the fragment; a
+    # path to another local port is recorded with its path; a segment that looks like a token
+    # (sk-..., long hex, long base64 with a digit, bot<digits>:...) is ?; a path with a byte outside
+    # visible ASCII is ?.
     refused("M26 query", "GET http://example.invalid/a/b?token=s3cret&x&y=2#frag HTTP/1.1\r\nHost: x\r\n\r\n",
-            "example.invalid:80 GET /a/b?token=&x&y= refused")
+            "example.invalid:80 GET /a/b refused")
+    tokens = ["sk" + "-abcd1234", "0123456789abcdef0123", "QUJDREVGR0hJSktMTU5PUFFS", "bot" + "123456:ABCdef"]
+    for i, tok in enumerate(tokens):
+        refused("M26 token %d" % i, "GET http://example.invalid/v1/%s/send HTTP/1.1\r\nHost: x\r\n\r\n" % tok,
+                "example.invalid:80 GET /v1/?/send refused")
+    refused("M26 plain segments", "GET http://example.invalid/v1/chat-completions-streaming/x1 HTTP/1.1\r\nHost: x\r\n\r\n",
+            "example.invalid:80 GET /v1/chat-completions-streaming/x1 refused")
     refused("M26 other port", "POST http://127.0.0.1:1/some/path HTTP/1.1\r\nHost: x\r\ncontent-length: 0\r\n\r\n",
             "127.0.0.1:1 POST /some/path refused")
     refused("M26 query only", "GET http://example.invalid?k=v HTTP/1.1\r\nHost: x\r\n\r\n",
-            "example.invalid:80 GET /?k= refused")
+            "example.invalid:80 GET / refused")
     refused("M26 byte", "GET http://example.invalid/\xe9 HTTP/1.1\r\nHost: x\r\n\r\n",
             "example.invalid:80 GET ? refused")
 
