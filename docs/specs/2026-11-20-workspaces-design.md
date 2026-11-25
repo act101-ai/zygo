@@ -522,6 +522,7 @@ User config only (AU10, AU22). Schema additions in `crates/zygo-config/src/schem
 default_loadout = "solo"        # built-in
 drain_block_dispatch = true     # OP6
 drain_timeout = "10m"           # AU4; <n>s | <n>m | <n>h
+pool = "~/.claude-interns"      # optional; config-directory pool (workspace definition design R§9.5); absolute after ~ expansion
 
 [loadout.pair]
 [[loadout.pair.window]]
@@ -529,6 +530,7 @@ name = "agents"
 layout = "main-vertical"        # even-horizontal | even-vertical | main-horizontal | main-vertical | tiled | a tmux layout string
 [[loadout.pair.window.pane]]
 kind = "claude-code"            # claude-code | opencode | shell
+job = "worker"                  # orchestrator | worker; optional; absent: no job (R§9.3)
 profile = "cheap"               # model profile (§11); optional
 args = ["--model", "lead"]      # agent arguments after `--`; optional
 yolo = false                    # optional
@@ -536,6 +538,7 @@ passthrough = false             # claude-code only; optional
 server = "https://zygo.example" # optional; as `--server`; no user info (AU98)
 compact = "600k"                # optional; as `--compact` (text, parsed by parse_window)
 config_dir = "~/.claude-work"   # claude-code only; optional; as `--config-dir`
+pool = false                    # claude-code only; optional; not with config_dir (R§9.5)
 [[loadout.pair.window.pane]]
 kind = "shell"
 cwd = "branch:feature-x"        # optional; default the main worktree
@@ -545,7 +548,8 @@ cwd = "branch:feature-x"        # optional; default the main worktree
 - `cwd`: an absolute path, a path relative to the main worktree, or `branch:<name>`. `branch:` resolves to the worktree that has that branch checked out (`git worktree list --porcelain`). No such worktree: the main worktree and one warning line. zygo does not create worktrees.
 - Built-in `solo`: one window, one `claude-code` pane, no arguments, main worktree.
 - Agent pane fields map to `LaunchOpts` as AU45 says. A field that is not set takes the default of `zygo claude` or `zygo opencode`.
-- `zygo config check` validates loadouts in two places. `crates/zygo-config/src/check.rs`: a known `kind`; `passthrough` and `config_dir` only with `claude-code`; at least one pane per window; `default_loadout` names a loadout; a missing `profile` is a warning (the launch continues without it, as today). `crates/zygo/src/cmd/config.rs`, for `claude-code` and `opencode` panes (the checks that need the compact parser, AU30 or AU98, which `zygo-config` does not depend on, AU103): a `compact` that the launch refuses is an error, `on` included, as `zygo claude` and `zygo opencode` refuse it (`crates/zygo/src/cmd/claude.rs:32-34`, `crates/zygo/src/cmd/opencode.rs:32-34`); a `server` with user info is an error (AU98); `args` that AU30 would remove, taken relative to the pane's folder, give one warning that names each removed argument and never its value (W§12); a `--settings` is not reported (AU59). The `compact` error line shows the value as `zygo config show` shows that field (W§12: the rule for one argument); no other check line prints a config value.
+- `job` and `pool` (workspace definition design R§9.3, R§9.5). A pane with no `job` has no job; zygo does not guess one. A pane with `pool = true` takes its config directory from `[workspace] pool` at a fresh build and runs in passthrough; with no `[workspace] pool` it starts as any other pane. The pane key `name` is defined in the workspace mail design (M§6).
+- `zygo config check` validates loadouts in two places. `crates/zygo-config/src/check.rs`: a known `kind`; `passthrough`, `config_dir` and `pool` only with `claude-code`; `pool` and `config_dir` not both set; `job` is `orchestrator` or `worker`; at most one pane with `job = "orchestrator"` per loadout; at least one pane per window; `default_loadout` names a loadout; `[workspace] pool` absolute after the `~` expansion; a missing `profile` is a warning (the launch continues without it, as today). `crates/zygo/src/cmd/config.rs`, for `claude-code` and `opencode` panes (the checks that need the compact parser, AU30 or AU98, which `zygo-config` does not depend on, AU103): a `compact` that the launch refuses is an error, `on` included, as `zygo claude` and `zygo opencode` refuse it (`crates/zygo/src/cmd/claude.rs:32-34`, `crates/zygo/src/cmd/opencode.rs:32-34`); a `server` with user info is an error (AU98); `args` that AU30 would remove, taken relative to the pane's folder, give one warning that names each removed argument and never its value (W§12); a `--settings` is not reported (AU59). The `compact` error line shows the value as `zygo config show` shows that field (W§12: the rule for one argument); no other check line prints a config value.
 - `[loadout]` and `[workspace]` in `.zygo.toml` are ignored by the existing filter, with its existing warning (`repo_file.rs:218-228`, `crates/zygo-config/src/layers.rs:461-469`). In the team layer zygo drops them with `zygo: [loadout] and [workspace] are read from user config only; ignored`.
 - The builder confirms how an older zygo treats the new tables in a shared user config.
 
@@ -1060,3 +1064,4 @@ None. The operator decided OP11 (slash commands), OP12 (saved overrides) and OP1
 | 2026-11-23 | AU30 (short clusters) | author's call (node FIX-32) | whole-branch review B1: OpenCode reads a short cluster by the yargs-parser rule, not Commander's; `-mc` was saved as `-m` with the value `c` and resumed with `--session` |
 | 2026-11-23 | AU34, W§8.2 step 4 | author's call (node FIX-32) | whole-branch review B3: `ws run` resumed a conversation whose launcher was live (W-C9); the callback now checks the live launcher in its locked write and stops the launch with `StopLaunch` |
 | 2026-11-23 | W§9.3 step 2 | author's call (node FIX-33) | CI: runner-inherited pipes reached the detached child. |
+| 2026-11-24 | W§11 | operator for the keys (workspace definition design R§9.3, R§9.5); author's call for the config check rules (R§9.1, R§9.5); node WD-5 | Workspace definition design R§14 row W§11: pane keys `job` and `pool`, key `[workspace] pool`, and their `config check` rules. |

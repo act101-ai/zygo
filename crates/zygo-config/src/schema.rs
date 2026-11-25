@@ -600,11 +600,19 @@ impl Default for NavigationConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LimitsConfig {
     /// 0 = no cap.
     pub subagent_max_turns: u32,
+    /// The most agent panes a repository loadout may start, 1-32 (R§9.4); built-in, team and user layers only.
+    pub max_members: u32,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        LimitsConfig { subagent_max_turns: 0, max_members: MAX_MEMBERS_DEFAULT }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -701,6 +709,13 @@ pub const BUILTIN_LOADOUT: &str = "solo";
 /// The values of `loadout.<name>.window.pane.kind` (W§11); `config check` refuses any other value.
 pub const LOADOUT_KINDS: [&str; 3] = ["claude-code", "opencode", "shell"];
 
+/// The values of `loadout.<name>.window.pane.job` (workspace definition design R§9.3); `config check` refuses any other
+/// value.
+pub const JOBS: [&str; 2] = ["orchestrator", "worker"];
+
+/// `[limits] max_members` when no layer sets it (R§9.4).
+pub const MAX_MEMBERS_DEFAULT: u32 = 8;
+
 /// `[workspace]` (workspaces design W§11, AU10). User config only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -711,11 +726,19 @@ pub struct WorkspaceConfig {
     pub drain_block_dispatch: bool,
     /// How long a drain waits (AU4), in the form [`parse_duration`] reads.
     pub drain_timeout: String,
+    /// The config-directory pool (R§9.5); `~` expanded as `--config-dir` does; absolute after that.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
 }
 
 impl Default for WorkspaceConfig {
     fn default() -> Self {
-        WorkspaceConfig { default_loadout: BUILTIN_LOADOUT.into(), drain_block_dispatch: true, drain_timeout: "10m".into() }
+        WorkspaceConfig {
+            default_loadout: BUILTIN_LOADOUT.into(),
+            drain_block_dispatch: true,
+            drain_timeout: "10m".into(),
+            pool: None,
+        }
     }
 }
 
@@ -747,6 +770,9 @@ pub struct LoadoutPane {
     /// The member name (M§6); config check applies zygo_core::ids::valid_member_name and uniqueness in the loadout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// One of [`JOBS`] (R§9.3); absent: no job.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     pub args: Vec<String>,
@@ -760,6 +786,8 @@ pub struct LoadoutPane {
     /// Only with `kind = "claude-code"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_dir: Option<String>,
+    /// The config directory from `[workspace] pool` (R§9.5). Only with `kind = "claude-code"`; not with `config_dir`.
+    pub pool: bool,
     /// Absolute, relative to the main worktree, or `branch:<name>` for the worktree that has that branch checked out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,

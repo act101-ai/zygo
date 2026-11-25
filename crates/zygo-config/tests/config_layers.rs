@@ -1584,7 +1584,7 @@ cwd = "branch:feature-x"
 #[test]
 fn workspace_and_loadout_defaults() {
     let c = Config::default();
-    assert_eq!(c.workspace, WorkspaceConfig { default_loadout: "solo".into(), drain_block_dispatch: true, drain_timeout: "10m".into() });
+    assert_eq!(c.workspace, WorkspaceConfig { default_loadout: "solo".into(), drain_block_dispatch: true, drain_timeout: "10m".into(), pool: None });
     assert_eq!(parse_duration(&c.workspace.drain_timeout), Some(std::time::Duration::from_secs(600)));
     assert!(c.loadout.is_empty());
     assert_eq!((BUILTIN_LOADOUT, LOADOUT_KINDS), ("solo", ["claude-code", "opencode", "shell"]));
@@ -1593,7 +1593,7 @@ fn workspace_and_loadout_defaults() {
     assert_eq!(cfg("[workspace]\ndrain_timeout = \"30s\"\n").workspace, WorkspaceConfig { drain_timeout: "30s".into(), ..c.workspace.clone() });
     assert_eq!(
         LoadoutPane::default(),
-        LoadoutPane { kind: String::new(), name: None, profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, cwd: None }
+        LoadoutPane { kind: String::new(), name: None, job: None, profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None, pool: false, cwd: None }
     );
     assert_eq!(LoadoutWindow::default(), LoadoutWindow { name: None, layout: None, pane: vec![] });
     let m = load(&ctx(None, None, None)).unwrap();
@@ -1610,9 +1610,9 @@ fn loadout_parses_as_w11_writes_it() {
     assert_eq!(m.config.workspace, WorkspaceConfig::default());
     assert_eq!(m.config.loadout.keys().collect::<Vec<_>>(), ["pair"]);
     let agent = LoadoutPane {
-        kind: "claude-code".into(), name: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
+        kind: "claude-code".into(), name: None, job: None, profile: Some("cheap".into()), args: vec!["--model".into(), "lead".into()], yolo: false,
         passthrough: false, server: Some("https://zygo.example".into()), compact: Some("600k".into()),
-        config_dir: Some("~/.claude-work".into()), cwd: None,
+        config_dir: Some("~/.claude-work".into()), pool: false, cwd: None,
     };
     let shell = LoadoutPane { kind: "shell".into(), cwd: Some("branch:feature-x".into()), ..LoadoutPane::default() };
     let window = LoadoutWindow { name: Some("agents".into()), layout: Some("main-vertical".into()), pane: vec![agent, shell] };
