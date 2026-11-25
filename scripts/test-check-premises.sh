@@ -21,7 +21,7 @@ fail() {
 }
 
 # mk <name>: a copy tree $T/<name> with the script, its helpers, the fixtures and the documents
-# it reads, at the same relative paths, and an empty fixtures/codex; prints its path.
+# it reads, at the same relative paths, and fixtures/codex (made when the tree has none); prints its path.
 mk() {
     d="$T/$1"
     mkdir -p "$d/scripts" "$d/docs/specs"
@@ -57,10 +57,12 @@ add_lines() {
         mv "$d/docs/premises.md.new" "$d/docs/premises.md"
 }
 
-# add_row <dir> <row>: inserts the row after the row that starts `| PW16 |`. The row goes through
-# the environment (not awk -v), so its backslashes stay as written.
+# add_row <dir> <row>: inserts the row after the last row of the Results table (from the header row
+# "| Id | Item |" to the first line that is not a table line). The row goes through the environment
+# (not awk -v), so its backslashes stay as written.
 add_row() {
-    L="$2" awk '{ print } /^\| PW16 \|/ { print ENVIRON["L"] }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+    L="$2" awk 'NR == FNR { if ($0 ~ /^\| Id \| Item \|/) t = 1; else if (t && $0 ~ /^ ? ? ?\|/) last = FNR; else t = 0; next }
+        { print } FNR == last { print ENVIRON["L"] }' "$1/docs/premises.md" "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
         mv "$1/docs/premises.md.new" "$1/docs/premises.md"
     [ "$(grep -cxF -- "$2" "$1/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
 }
@@ -86,8 +88,9 @@ sha() {
 SPIN=f26f028ad94a1e2a28e9dad1f80832ab196a8e080bd3a7d7a32e6428a15e0611
 CPIN=52fb96b1ff79a51bf9ce31695a4a22d4e80f57591d91bad5747b657f4e612bac
 
-# pin_codex <dir> <file>: the real Codex schema is not in this tree, so in the copy's script the
-# pinned Codex hash becomes the file's sha256, and the copy's Codex source file gives the same hash.
+# pin_codex <dir> <file>: a case plants its own Codex schema in place of the real one, so in the
+# copy's script the pinned Codex hash becomes the file's sha256, and the copy's Codex source file
+# gives the same hash.
 pin_codex() {
     h=$(sha "$2")
     edit "$1/scripts/check-premises.sh" "s/$CPIN/$h/"
@@ -747,6 +750,7 @@ expect_fail "forbidden content (e-mail address): $MAILF:1:x@EXAMPLE.INVALID"
 
 CASE="G5: a directory at the Codex verbatim path"
 D=$(mk g5_dir)
+rm -f "$D/$CSCH"
 mkdir "$D/$CSCH"
 printf '%s\n' 'owner alice' > "$D/$CSCH/a"
 printf 'sha256: %s\n' "$CPIN" > "$D/$CSRC"
@@ -755,6 +759,7 @@ expect_fail "verbatim file $CSCH is not a regular file"
 
 CASE="G5: an empty directory at the Codex verbatim path"
 D=$(mk g5_emptydir)
+rm -f "$D/$CSCH"
 mkdir "$D/$CSCH"
 printf 'sha256: %s\n' "$(printf '' | { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; } | cut -d' ' -f1)" > "$D/$CSRC"
 run "$D"
@@ -762,6 +767,7 @@ expect_fail "verbatim file $CSCH is not a regular file"
 
 CASE="G6: a dangling symlink at the Codex verbatim path"
 D=$(mk g6_dangle)
+rm -f "$D/$CSCH"
 ln -s "$T/none.json" "$D/$CSCH"
 printf 'sha256: %s\n' "$CPIN" > "$D/$CSRC"
 run "$D"
@@ -866,12 +872,13 @@ run_names "$D" alice
 expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
 
 # The exemption is the exact path, also for a rule that matches any case: a case variant of the
-# Codex verbatim path is scanned. On a case-insensitive file system the variant is the verbatim file,
-# so its hash is pinned here (pin_codex) and the hash check passes; on a case-sensitive one the hash
+# Codex verbatim path is scanned. The real schema is removed first. On a case-insensitive file system
+# the variant is the verbatim file, so its hash is pinned here (pin_codex) and the hash check passes; on a case-sensitive one the hash
 # check does not see it. Either way only the exact-path exemption decides the result.
 CASE="H2: a case variant of the Codex verbatim path with a Windows home path"
 D=$(mk h2_case)
 UCSCH=fixtures/codex/CONFIG.schema.json
+rm -f "$D/$CSCH"   # else a case-insensitive file system keeps the real file's lower-case name
 printf '%s\n' 'C:\Users\bob' > "$D/$UCSCH"
 pin_codex "$D" "$D/$UCSCH"
 run "$D"
