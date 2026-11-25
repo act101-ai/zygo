@@ -201,32 +201,37 @@ fn stream_runs_in_its_own_process_group() {
     assert_eq!(pid, pgid);
 }
 
-/// After `Flow::Stop` the whole process group is gone, proven with no timer: a grandchild holds the only write end
-/// of a FIFO, and a blocking read of the FIFO ends (EOF) only when that grandchild is dead. A runner that kills only
-/// the leader makes the read hang until the CI job timeout; it cannot pass. `sleep 1000000` is the blocker that Stop
-/// must kill, not a wait of the test.
+/// After `Flow::Stop` the whole process group is gone, proven with no timer: the leader and a grandchild hold the
+/// only write ends of a pipe (fd 3), and a blocking read of the pipe ends (EOF) only when both are dead. A runner that
+/// kills only the leader makes the read hang until the CI job timeout; it cannot pass. An anonymous pipe, not a FIFO:
+/// on macOS a reader blocked on a FIFO can miss the wakeup when the last writer closes, and hang with no writer left.
+/// `sleep 1000000` is the blocker that Stop must kill, not a wait of the test.
 #[cfg(unix)]
 #[test]
 fn stream_stop_kills_the_process_group() {
     use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::io::AsRawFd;
-    let t = TempDir::new().unwrap();
-    let fifo = t.path().join("f");
-    assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
-    // Read end first and non-blocking, so the grandchild's open for writing does not wait.
-    let mut rd = fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&fifo).unwrap();
+    use std::os::unix::process::CommandExt;
+    let (mut rd, wr) = std::io::pipe().unwrap(); // both ends close-on-exec
+    let w = wr.as_raw_fd();
     let mut c = Command::new("sh");
-    // The grandchild opens the FIFO, then prints `go`; then it and the leader block.
-    c.args(["-c", "( exec 3>\"$1\"; printf 'go\\000'; exec sleep 1000000 ) & exec sleep 1000000", "sh"]).arg(&fifo);
+    // The grandchild prints `go` once it runs; then it and the leader block, each holding fd 3.
+    c.args(["-c", "( printf 'go\\000'; exec sleep 1000000 ) & exec sleep 1000000"]);
+    // SAFETY: only async-signal-safe calls between fork and exec.
+    unsafe {
+        c.pre_exec(move || {
+            let r = if w == 3 { libc::fcntl(3, libc::F_SETFD, 0) } else { libc::dup2(w, 3) };
+            if r == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
+        });
+    }
     let mut seen = Vec::new();
     let r = run_stream(c, far(), &mut |e| {
         seen.push(e.to_vec());
         Flow::Stop
     });
+    drop(wr); // the test's own write end, else the read below never ends
     assert_eq!(r, Ok(Streamed::Stopped));
     assert_eq!(seen, [b"go".to_vec()]);
-    assert_eq!(unsafe { libc::fcntl(rd.as_raw_fd(), libc::F_SETFL, 0) }, 0); // now blocking
     let mut rest = Vec::new();
     assert_eq!(rd.read_to_end(&mut rest).unwrap(), 0);
 }
