@@ -18,7 +18,7 @@ use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 
 use crate::identity::{valid_name, valid_pane_key, valid_ws_id, workspace_id};
-use crate::mail::names;
+use crate::mail::{mail_dir, names, store as mail_store};
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
 use crate::repair::check_saved_socket;
@@ -132,6 +132,8 @@ pub struct ListRow {
     pub agents: Option<(usize, usize, usize)>,
     /// Attached clients, only for a session of this workspace.
     pub clients: Option<u32>,
+    /// Unread messages over all member records (M§9); `None` when the state or a member's maildir cannot be read.
+    pub unread: Option<usize>,
 }
 
 impl fmt::Display for ListRow {
@@ -139,7 +141,8 @@ impl fmt::Display for ListRow {
         let root = self.main_root.as_ref().map_or_else(|| "-".to_string(), |p| esc(&p.to_string_lossy()));
         let agents = self.agents.map_or_else(|| "-".to_string(), |(r, s, d)| format!("{r}/{s}/{d}"));
         let clients = self.clients.map_or_else(|| "-".to_string(), |n| n.to_string());
-        write!(f, "{}  {root}  {}  agents {agents}  clients {clients}", esc(&self.name), self.state)
+        let unread = self.unread.map_or_else(|| "-".to_string(), |n| n.to_string());
+        write!(f, "{}  {root}  {}  agents {agents}  clients {clients}  unread {unread}", esc(&self.name), self.state)
     }
 }
 
@@ -245,7 +248,7 @@ fn list_by(
         let ws = match r {
             Ok(ws) => ws,
             Err(_) => {
-                rows.push(ListRow { id: id.clone(), name: id, main_root: None, state: ListState::Unreadable, agents: None, clients: None });
+                rows.push(ListRow { id: id.clone(), name: id, main_root: None, state: ListState::Unreadable, agents: None, clients: None, unread: None });
                 continue;
             }
         };
@@ -275,7 +278,9 @@ fn list_by(
             };
             (state, clients)
         };
-        rows.push(ListRow { id, name: ws.name.clone(), main_root: Some(ws.main_root.clone()), state, agents: Some(agents), clients });
+        let mail = mail_dir(paths, &id);
+        let unread = ws.members.keys().map(|k| mail_store::unread(&mail, k).ok()).sum::<Option<usize>>();
+        rows.push(ListRow { id, name: ws.name.clone(), main_root: Some(ws.main_root.clone()), state, agents: Some(agents), clients, unread });
     }
     rows
 }
@@ -386,8 +391,9 @@ fn state_word(s: MemberState) -> &'static str {
     }
 }
 
-/// `zygo workspace` (W§12, D12, D13): the workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`. The text has
-/// no trailing new line; an `Err` text has no `zygo: ` prefix.
+/// `zygo workspace` (W§12, D12, D13): the workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`. Each member
+/// line ends with its unread count when it is not zero (M§9). The text has no trailing new line; an `Err` text has no
+/// `zygo: ` prefix.
 pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyhow::Result<String> {
     let (id, by_env) = match zygo_workspace {
         Some(v) => {
@@ -414,9 +420,15 @@ pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyh
         Err(e) => bail!("{e}"),
     };
     let mut lines = vec![format!("workspace {}: {}", esc(&ws.name), phase_word(ws.phase))];
+    let mail = mail_dir(paths, &id);
     for (key, m) in &ws.members {
         let session = m.agent_session.as_deref().map_or_else(|| "-".to_string(), esc);
-        lines.push(format!("{key} {} {} {session}", m.launch.kind.as_str(), state_word(m.state)));
+        let unread = match mail_store::unread(&mail, key) {
+            Ok(0) => String::new(),
+            Ok(n) => format!(" unread {n}"),
+            Err(_) => " unread -".to_string(),
+        };
+        lines.push(format!("{key} {} {} {session}{unread}", m.launch.kind.as_str(), state_word(m.state)));
     }
     if ws.members.is_empty() {
         lines.push("no members".to_string());

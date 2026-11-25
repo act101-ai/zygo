@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -22,7 +22,7 @@ use zygo_core::paths::Paths;
 use zygo_core::Agent;
 use zygo_workspace::admin::{self, ListRow, ListState};
 use zygo_workspace::identity::workspace_id;
-use zygo_workspace::mail::mail_dir;
+use zygo_workspace::mail::{mail_dir, store as mail_store, Message};
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
@@ -231,6 +231,14 @@ fn result(p: &Paths, id: &str, key: &str) -> PathBuf {
     d
 }
 
+/// Delivers `n` messages to `mail/<key>/new` of workspace `id` (M§5 send).
+fn mail_to(p: &Paths, id: &str, key: &str, n: usize) {
+    for i in 0..n {
+        let m = Message::new("cli", "x", &format!("s{i}"), "b", SystemTime::now()).unwrap();
+        mail_store::deliver(&mail_dir(p, id), key, "x", &m, 500).unwrap();
+    }
+}
+
 fn repair_line(id: &str, reason: &str) -> String {
     format!("zygo: workspace {id} not forgotten: {reason}; its state cannot be read, so repair it with zygo up --reset in its checkout\n")
 }
@@ -348,29 +356,30 @@ fn states(rows: &[ListRow]) -> Vec<(String, ListState)> { rows.iter().map(|r| (r
 #[test] // D10: the `ls` line and the state words
 fn list_display() {
     let _s = serial();
-    let row = |name: &str, root: Option<&str>, state, agents, clients| ListRow {
+    let row = |name: &str, root: Option<&str>, state, agents, clients, unread: Option<usize>| ListRow {
         id: "0123456789abcdef".into(),
         name: name.into(),
         main_root: root.map(PathBuf::from),
         state,
         agents,
         clients,
+        unread,
     };
     assert_eq!(
-        row("app", Some("/srv/app"), ListState::Up, Some((1, 2, 0)), Some(1)).to_string(),
-        "app  /srv/app  up  agents 1/2/0  clients 1"
+        row("app", Some("/srv/app"), ListState::Up, Some((1, 2, 0)), Some(1), Some(3)).to_string(),
+        "app  /srv/app  up  agents 1/2/0  clients 1  unread 3"
     );
     assert_eq!(
-        row("app", Some("/srv/a\nb"), ListState::StoppedTmuxGone, Some((0, 0, 3)), None).to_string(),
-        "app  /srv/a\\nb  stopped (tmux gone)  agents 0/0/3  clients -"
+        row("app", Some("/srv/a\nb"), ListState::StoppedTmuxGone, Some((0, 0, 3)), None, Some(0)).to_string(),
+        "app  /srv/a\\nb  stopped (tmux gone)  agents 0/0/3  clients -  unread 0"
     );
     assert_eq!(
-        row("0123456789abcdef", None, ListState::Unreadable, None, None).to_string(),
-        "0123456789abcdef  -  unreadable  agents -  clients -"
+        row("0123456789abcdef", None, ListState::Unreadable, None, None, None).to_string(),
+        "0123456789abcdef  -  unreadable  agents -  clients -  unread -"
     );
     assert_eq!(
-        row("app", Some("/srv/app"), ListState::Unknown("tmux timed out"), Some((0, 1, 0)), None).to_string(),
-        "app  /srv/app  unknown (tmux timed out)  agents 0/1/0  clients -"
+        row("app", Some("/srv/app"), ListState::Unknown("tmux timed out"), Some((0, 1, 0)), None, None).to_string(),
+        "app  /srv/app  unknown (tmux timed out)  agents 0/1/0  clients -  unread -"
     );
     for (s, w) in [
         (ListState::Down, "down"),
@@ -1947,4 +1956,64 @@ fn rename_member_reports_an_invalid_state() {
         )
     );
     assert_eq!(state_bytes(&p, ID), before);
+}
+
+// ---- ML-14: unread counts and maildir removal (M§5, M§9) ----
+
+#[test] // M§9: `zygo workspace` shows the unread count per member
+fn mail_status_shows_the_unread_count_per_member() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    ws_state(&p, ID, "app", &t.join("r/app"), |ws| {
+        ws.phase = Phase::Up;
+        ws.members = [
+            ("kaaaaaaaa", member(Agent::ClaudeCode, MemberState::Running, Some("c-1"))),
+            ("kbbbbbbbb", member(Agent::OpenCode, MemberState::Resumable, None)),
+            ("kcccccccc", member(Agent::ClaudeCode, MemberState::Ended, Some("c-3"))),
+        ]
+        .into_iter()
+        .map(|(k, m)| (k.to_string(), m))
+        .collect();
+    });
+    mail_to(&p, ID, "kaaaaaaaa", 2);
+    mail_to(&p, ID, "kzzzzzzzz", 1); // no member record: not shown
+    fs::write(mail_dir(&p, ID).join("kcccccccc"), "").unwrap(); // not a folder: the count cannot be read
+    assert_eq!(
+        admin::status(&p, &plain, Some(OsStr::new(ID))).unwrap(),
+        "workspace app: up\nkaaaaaaaa claude-code running c-1 unread 2\nkbbbbbbbb opencode resumable -\nkcccccccc claude-code ended c-3 unread -"
+    );
+}
+
+#[test] // M§9: each `ls` row shows the workspace total of unread messages
+fn mail_list_rows_show_the_workspace_unread_total() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let two = |ws: &mut Workspace| {
+        ws.members.insert("kaaaaaaaa".into(), member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")));
+        ws.members.insert("kbbbbbbbb".into(), member(Agent::OpenCode, MemberState::Resumable, Some("o-2")));
+    };
+    ws_state(&p, ID, "app", &t.join("r/app"), two);
+    ws_state(&p, OTHER, "other", &t.join("r/other"), two);
+    ws_state(&p, "2000000000000002", "third", &t.join("r/third"), two);
+    raw_invalid_name(&p);
+    mail_to(&p, ID, "kaaaaaaaa", 2);
+    mail_to(&p, ID, "kbbbbbbbb", 3);
+    mail_to(&p, ID, "kzzzzzzzz", 4); // no member record: not counted
+    mail_to(&p, "2000000000000002", "kaaaaaaaa", 1);
+    fs::write(mail_dir(&p, "2000000000000002").join("kbbbbbbbb"), "").unwrap(); // one count cannot be read
+    let (rows, calls, _) = fake_list(&p, vec![], true);
+    assert!(calls.is_empty(), "{calls:?}");
+    assert_eq!(
+        rows.iter().map(|r| (r.name.as_str(), r.unread)).collect::<Vec<_>>(),
+        [("app", Some(5)), ("e100000000000001", None), ("other", Some(0)), ("third", None)]
+    );
+    assert!(rows[0].to_string().ends_with("  clients -  unread 5"), "{}", rows[0]);
+    assert!(rows[1].to_string().ends_with("  clients -  unread -"), "{}", rows[1]);
+    assert!(rows[2].to_string().ends_with("  clients -  unread 0"), "{}", rows[2]);
 }
