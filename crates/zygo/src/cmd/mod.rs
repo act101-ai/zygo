@@ -225,6 +225,9 @@ pub(crate) struct Launch {
     /// Claude Code config directory (sets CLAUDE_CONFIG_DIR)
     #[arg(long)]
     pub(crate) config_dir: Option<String>,
+    /// Member name in a workspace pane (M§6)
+    #[arg(long)]
+    pub(crate) name: Option<String>,
     /// Arguments passed to the agent
     #[arg(last = true)]
     pub(crate) rest: Vec<String>,
@@ -240,6 +243,8 @@ pub(crate) struct LaunchOpenCode {
     pub(crate) compact: Option<String>,
     #[arg(long)]
     pub(crate) yolo: bool,
+    #[arg(long)]
+    pub(crate) name: Option<String>,
     #[arg(last = true)]
     pub(crate) rest: Vec<String>,
 }
@@ -358,7 +363,7 @@ enum Cmd {
     Attach(attach::AttachArgs),
     /// Loadouts and their source
     Loadout(loadout::LoadoutArgs),
-    /// Decision records: ls, show, deps, check
+    /// Decision records: new, ls, show, deps, check
     // `-h`/`--help` reach `decision::run_in` in any position, which prints the usage line.
     #[command(disable_help_flag = true)]
     Decision {
@@ -603,8 +608,8 @@ pub fn run() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{verb_tokens, Cli};
-    use clap::Parser;
+    use super::{verb_tokens, Cli, Cmd};
+    use clap::{CommandFactory, Parser};
 
     fn v(s: &[&str]) -> Vec<String> {
         s.iter().map(|t| t.to_string()).collect()
@@ -655,5 +660,16 @@ mod tests {
         assert!(Cli::try_parse_from(["zygo", "compact", "600k", "--session", "S1"]).is_ok());
         assert!(Cli::try_parse_from(["zygo", "compact", "600k", "--session", "S1", "--save"]).is_err());
         assert!(Cli::try_parse_from(["zygo", "compact", "600k", "--session"]).is_err());
+    }
+
+    #[test] // M§6: `--name <n>` on both launch verbs; DR-4 carried item: the help names `new`
+    fn launch_name_parses_for_both_agents_and_help_lists_decision_new() {
+        let Cmd::Claude(l) = Cli::try_parse_from(["zygo", "claude", "--name", "elena", "--", "-p"]).unwrap().command else { panic!() };
+        assert_eq!((l.name.as_deref(), l.rest.clone()), (Some("elena"), vec!["-p".to_string()]));
+        let Cmd::Opencode(a) = Cli::try_parse_from(["zygo", "opencode", "--name", "elena"]).unwrap().command else { panic!() };
+        assert_eq!(a.name.as_deref(), Some("elena"));
+        let Cmd::Claude(l) = Cli::try_parse_from(["zygo", "claude"]).unwrap().command else { panic!() };
+        assert_eq!(l.name, None);
+        assert!(Cli::command().render_help().to_string().contains("Decision records: new, ls, show, deps, check"));
     }
 }
