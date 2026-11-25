@@ -304,6 +304,38 @@ fn update_keeps_unknown_fields() {
     assert_eq!(after["members"][KEY]["interrupted"][0]["depth"], json!(2));
 }
 
+#[test] // T§4, T§7 item 5, W AU78: a member record of an older zygo has no first_started_at; a write keeps every field
+fn first_started_at_absent_in_an_old_record_reads_as_none_and_a_write_keeps_every_field() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let v = serde_json::to_value(full()).unwrap(); // every member field set; no first_started_at key
+    assert!(v["members"][KEY].get("first_started_at").is_none());
+    put(&store, &v);
+    assert_eq!(store.read().unwrap().unwrap().members[KEY].first_started_at, None);
+    store.update(S5, &mut |ws| { ws.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert_eq!(after["phase"], json!("down"));
+    assert_eq!(after["members"][KEY], v["members"][KEY]); // every other field unchanged, no key added
+}
+
+#[test] // T§3.2, T§7 item 5, W§7.2: MemberRecord::new has none; a set value is written as Unix seconds and kept by a write
+fn first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write() {
+    assert_eq!(MemberRecord::new(Agent::ClaudeCode).first_started_at, None);
+    assert!(serde_json::to_value(MemberRecord::new(Agent::OpenCode)).unwrap().get("first_started_at").is_none());
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut v = serde_json::to_value(full()).unwrap();
+    v["members"][KEY]["first_started_at"] = json!(1_700_000_100u64);
+    put(&store, &v);
+    assert_eq!(store.read().unwrap().unwrap().members[KEY].first_started_at, Some(1_700_000_100));
+    store.update(S5, &mut |ws| { ws.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert_eq!(after["members"][KEY]["first_started_at"], json!(1_700_000_100u64));
+    assert_eq!(after["members"][KEY], v["members"][KEY]);
+    let m: MemberRecord = serde_json::from_value(v["members"][KEY].clone()).unwrap();
+    assert_eq!(m, MemberRecord { first_started_at: Some(1_700_000_100), ..full().members[KEY].clone() });
+}
+
 #[test] // AU29, W§18 #11 first half; W§10: a state that does not parse is not changed
 fn update_changes_no_file_it_cannot_read() {
     let t = TempDir::new().unwrap();
