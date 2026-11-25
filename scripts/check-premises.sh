@@ -232,19 +232,27 @@ VX="^($(printf '%s' "$VERBATIM" | sed 's/[.]/\\./g; s/ /|/g')):[0-9]+:"
 # Scope (N38): fixtures, the live scripts and their helpers, docs/live-checks.md (each when it
 # exists); scan_notes applies the same patterns to the spec and conformance lines naming N38.
 SCOPE=fixtures
+set +f   # the live*.sh glob needs globbing (set -f at the top)
 for f in scripts/premises/live scripts/premises/live*.sh docs/live-checks.md; do
   [ -e "$f" ] && SCOPE="$SCOPE $f"
 done
+set -f
 # grep -r does not follow symlinks on macOS, so a symlink in the scope is neither scanned nor evidence.
 # shellcheck disable=SC2086
 lnk=$(find $SCOPE -type l 2>/dev/null | head -n 1)
 [ -z "$lnk" ] || fail "$lnk is a symlink; a symlink in the scan scope is not scanned and is not evidence"
 NOTES=$( (grep -nH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
-# scan <ERE> <exempt ERE> <label> [i]: the first line that matches and is not exempt fails; i: any case.
+# scan <ERE> <exempt ERE> <label> [i] [<drop ERE>]: the first line that matches and is not exempt
+# fails; i: any case. <drop ERE> (one group): in a hit line each match of it is replaced by its group
+# 1, and the line fails only when the ERE still matches; the message shows the line as written.
 scan() {
   o=-E; [ "${4:-}" != i ] || o=-iE
   # shellcheck disable=SC2086
-  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -v $o -- "${2:-^\$}" | head -n 1)
+  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -v $o -- "${2:-^\$}" |
+    while IFS= read -r ln; do
+      [ -z "${5:-}" ] || printf '%s\n' "$ln" | sed -E "s/$5/\\1/g" | grep -q $o -- "$1" || continue
+      printf '%s\n' "$ln"
+    done | head -n 1)
   [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
 }
 # L: the left edge of a key or id: line start, a non-word character, or a JSON backslash escape
@@ -258,7 +266,9 @@ scan "$XK"'[^"'"'"'\\[:space:]]' "$XK"'\[omitted\]' 'x-api-key value' i
 scan '/Users/' "$VX" 'macOS home path'
 scan '/private/var/' '' 'temporary path'
 scan '/var/folders/' '' 'temporary path'
-scan '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '' 'e-mail address'
+# An address at exactly the reserved domain example.invalid (RFC 2606; the live scripts' git test
+# identity) is not a leak (K§11 item 10): "@example.invalid" followed by a non-domain character or end.
+scan '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}' '' 'e-mail address' '' '@example\.invalid([^A-Za-z0-9.-]|$)'
 scan 'sk-ant-o' '' 'claude.ai login token'
 scan "${L}sk-[A-Za-z0-9_-]{20,}" '' 'API key'
 scan 'sk-(proj|svcacct|admin)-' '' 'OpenAI key'

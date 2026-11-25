@@ -866,7 +866,7 @@ P4-3 (Codex premises):
 
 8. `sh scripts/check-premises.sh` passes with the `Codex: 0.172.0` header and the PC rows, with no Codex client in `Agent::ALL`; it fails when a required existing id (for example `Q7`) is removed.
 9. Each PC row has a date, a result and fixture paths that pass the `nontrivial` rule.
-10. No fixture holds a token, a key form, a user name or a home path (`scrub.py` pass).
+10. No fixture holds a token, a key form, a user name, a home path or an e-mail address (`scrub.py` pass). An address at exactly the reserved domain `example.invalid` (RFC 2606) is exempt: it can never resolve or belong to anyone.
 
 P4-4 (proxy; a Claude Code session; Codex request bodies from `fixtures/codex/requests/`; a mock upstream):
 
@@ -943,3 +943,4 @@ P4-11 (client updates):
 - 2026-11-25: approved by the operator (instruction to plan and build); new row order P4-1 to P4-11 (K§6.9); the Codex client gets its own design (P4-7); the fixes of the spec audit (lead rulings C1-C3, I4-I15, M16, M17).
 - 2026-11-25: K-C7, K-D3 and K§11 items 23-24 amended (lead): the test-edit proof is per node against its layer's parent, with listed test logic edits, because declared mechanical rewrites cannot be met at P4-6's scale. K§6.1.4 gets an exception list (operator, K-D53).
 - 2026-11-25: K§6.2.4 amended (lead): failing core capability matches the bar sentence: an ungraded or n/a core criterion fails (CF-2 review F4).
+- 2026-11-25: K§11 item 10 amended (author's call): the e-mail rule exempts the reserved domain example.invalid (RFC 2606); the live scripts use it as a git test identity.
