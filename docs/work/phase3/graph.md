@@ -201,7 +201,6 @@ Session text (T, SX nodes):
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | DONE | judgment | 2fc1f821, 64486e85, 0bfa1c6d · admin 16/0 (7 rename_member), zygo lib 228/0 ; floor green · PR #107 |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | DONE | implementation | ed8193ef, 4bed6315 · session_text 43/0 (13 mail_item) ; floor green · PR #106 |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | DONE | implementation | 0128c7fa, 63b94dd8 · statusline_mail 7/0, statusline_render 30/0 ; floor green · PR #108 |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
@@ -226,7 +225,7 @@ Session text (T, SX nodes):
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
-| MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | TODO | judgment | — |
+| MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | TODO | implementation | — |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
@@ -397,4 +396,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | MS-9 DONE (e7987782 f30700e9 bec4c680): outbox kept: send rules, secret pass, refuse with notice, counts, sweep; round-2 review fixes applied; outbox 29/0; floor green · PR #111 |
 | 2026-11-25 | WD-7 DONE: `Merged::with_definition` adds the approved definition as the `workspace-files` source; a second call replaces the first. Review round 2: 5 findings fixed · PR #112 |
 | 2026-11-25 | MS-11 DONE: identity registry/ack checks and moved-workspace scan; review: 7 findings fixed; F1 (no cap on registry/ack file count) to operator as a proposed rule; F9 (twin false positive after crash at tip) is a contract note for MS-13 · PR #113 |
+| 2026-11-25 | MS-12 done: import checks (reader-equal json), crash-safe delivery via incoming/, torn staged files re-imported, per-target inbox room; S§8.5 step 5 and Candidates rewritten (author's call). |
 | 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
