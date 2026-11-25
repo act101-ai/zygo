@@ -188,9 +188,10 @@ impl Store {
         Ok(Store { conn })
     }
 
-    /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): busy timeout `bound` for each
-    /// statement and no retry loop; no directory, file, schema or column is created (O§6.5 item 3), so the open takes no
-    /// write lock. A database of another schema version is an error.
+    /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): `bound` is the busy timeout of each
+    /// lock wait, with no retry loop (SQLite's own WAL-read retry is not governed by the busy timeout). No database file,
+    /// directory, schema or column is created (O§6.5 item 3), so the open takes no write lock; SQLite may create the `-wal`
+    /// and `-shm` side files of an existing WAL database on first read. A database of another schema version is an error.
     pub fn open_bounded(path: &Path, bound: Duration) -> Result<Store> {
         let conn = Connection::open_with_flags(
             path,

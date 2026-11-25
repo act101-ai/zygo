@@ -888,3 +888,16 @@ fn open_bounded_rejects_another_schema_version() {
     let e = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).err().expect("another schema version must fail").to_string();
     assert!(e.contains('2') && e.contains('1'), "{e}");
 }
+
+#[test]
+fn open_bounded_leaves_the_journal_mode_unchanged() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    let mode = |db: &Path| Connection::open(db).unwrap().query_row("PRAGMA journal_mode", [], |r| r.get::<_, String>(0)).unwrap();
+    let before = mode(&t.db());
+    assert_eq!(before, "delete");
+    let s = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap();
+    s.insert_trim(&trim("S3", 7, 3000, 300)).unwrap();
+    drop(s);
+    assert_eq!(mode(&t.db()), before);
+}

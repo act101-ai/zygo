@@ -3,7 +3,7 @@
 **Spec:** `docs/specs/2026-11-24-output-shaping-design.md` O§7.11 "Bound", O-C10, O§6.5 item 3 (no `ALTER` in a bounded open), O§8.4 (busy store with the bound passed as 0)
 **Files:** `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs`
 **Consumes:** `Store::insert_trim` (OS-2), `Store::open_with_column_check` (OS-2)
-**Produces:** `HOOK_DB_BOUND` (const), `HOOK_DB_BOUND: Duration = Duration::from_millis(100)`, `Store::open_bounded(path: &Path, bound: Duration) -> anyhow::Result<Store>` (busy timeout = `bound` for each statement, no retry loop, no `PRAGMA table_info`, no `ALTER`, creates no directory or file)
+**Produces:** `HOOK_DB_BOUND` (const), `HOOK_DB_BOUND: Duration = Duration::from_millis(100)`, `Store::open_bounded(path: &Path, bound: Duration) -> anyhow::Result<Store>` (busy timeout = `bound` for each lock wait (SQLite's own WAL-read retry is not governed by it), no retry loop, no `PRAGMA table_info`, no `ALTER`, creates no database file or directory (SQLite may create the `-wal`/`-shm` side files of an existing WAL database on first read))
 **Acceptance:** `test "$(cargo test -q -p zygo-usage --test store -- open_bounded --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-usage --test store` → every count holds (at least 4 named `open_bounded…` in zygo-usage `store`; a count of 0 fails before any run), then all pass, including new tests: `open_bounded(.., Duration::ZERO)` gives `busy_timeout_ms() == 0` and `open_bounded(.., HOOK_DB_BOUND)` gives 100; with a second connection holding `BEGIN IMMEDIATE`, `insert_trim` through `open_bounded(.., Duration::ZERO)` returns a busy error (no clock read in any assertion); `open_bounded` on a seven-column database leaves `PRAGMA table_info(trims)` at seven columns and its `insert_trim` writes a row; `open_bounded` on a missing path is an error and creates no file
 
 ## Plan
@@ -38,7 +38,7 @@ Item 21 (graph `## Review focus`): "The hook adding a column (write lock on ever
 
 - a bounded open that waits longer than `bound`: the busy timeout equals `bound` (`open_bounded_sets_busy_timeout_to_the_bound`: 0 and 100), and with the write lock held and `bound` 0 the insert returns `SQLITE_BUSY` (`open_bounded_insert_is_busy_at_bound_zero_under_a_held_write_lock`); the open takes no write lock, so it cannot wait at all (`open_bounded_opens_under_a_held_write_lock`);
 - the hook adding a column: `open_bounded_on_seven_column_database_adds_no_column` (seven columns and `PRAGMA schema_version` unchanged after the open and an insert);
-- the fallback hiding another error: the busy error of the insert reaches the caller as `ErrorCode::DatabaseBusy`, not a seven-column write (same busy test: zero rows after the lock is released).
+- the fallback hiding another error: the busy error comes at `step`, and the fallback sees only `prepare` errors, so the busy test cannot prove this; it is proved by the OS-2 test `readbacks_schema_insert_trim_fallback_keeps_other_errors`.
 
 ### Interfaces
 
@@ -51,7 +51,7 @@ Consumes (current signatures, `crates/zygo-usage/src/store.rs`):
 Produces:
 
 - `pub const HOOK_DB_BOUND: Duration = Duration::from_millis(100);` in `crates/zygo-usage/src/store.rs` (O-C10, O§7.11).
-- `pub fn open_bounded(path: &Path, bound: Duration) -> anyhow::Result<Store>` on `impl Store` in `crates/zygo-usage/src/store.rs`: busy timeout = `bound` for each statement, no retry loop, no `PRAGMA table_info`, no `ALTER`, creates no directory or file; an error for a missing path or a `user_version` other than `SCHEMA_VERSION`.
+- `pub fn open_bounded(path: &Path, bound: Duration) -> anyhow::Result<Store>` on `impl Store` in `crates/zygo-usage/src/store.rs`: busy timeout = `bound` for each lock wait (SQLite's own WAL-read retry is not governed by it), no retry loop, no `PRAGMA table_info`, no `ALTER`, creates no database file or directory (SQLite may create the `-wal`/`-shm` side files of an existing WAL database on first read); an error for a missing path or a `user_version` other than `SCHEMA_VERSION`.
 
 ### Steps
 
@@ -140,9 +140,10 @@ Produces:
   and in `impl Store`, after `open_read_only` (`:172-185`), add
 
   ```rust
-  /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): busy timeout `bound` for each
-  /// statement and no retry loop; no directory, file, schema or column is created (O§6.5 item 3), so the open takes no
-  /// write lock. A database of another schema version is an error.
+  /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): `bound` is the busy timeout of each
+  /// lock wait, with no retry loop (SQLite's own WAL-read retry is not governed by the busy timeout). No database file,
+  /// directory, schema or column is created (O§6.5 item 3), so the open takes no write lock; SQLite may create the `-wal`
+  /// and `-shm` side files of an existing WAL database on first read. A database of another schema version is an error.
   pub fn open_bounded(path: &Path, bound: Duration) -> Result<Store>
   ```
 
@@ -155,3 +156,4 @@ Produces:
 - [x] 6. Run `cargo clippy --locked -p zygo-usage --all-targets -- -D warnings` → no warning; and `cargo test --locked -p zygo-usage` → all pass.
 
 - [x] 7. Commit `crates/zygo-usage/src/store.rs`, `crates/zygo-usage/tests/store.rs` and this node file (ticked steps) with message `OS-3: bounded usage-store open` and the trailer `Zygo-Session:` with the implementing session's id and the trailer `Zygo-Work: phase3:OS-3`, each on its own line at the end; no Claude attribution.
+- [x] 8. Review fix (F1): add `open_bounded_leaves_the_journal_mode_unchanged` to `crates/zygo-usage/tests/store.rs`: on the rollback-journal `old_db` fixture, `PRAGMA journal_mode` reads `delete` before and after `open_bounded(.., HOOK_DB_BOUND)` and one `insert_trim`; seen failing with a temporary `journal_mode = WAL` in `open_bounded`. Commit as `OS-3: review fixes`.
