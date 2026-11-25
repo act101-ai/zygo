@@ -201,7 +201,6 @@ Session text (T, SX nodes):
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | DONE | judgment | 2384d84a · branch 36/36; floor green · PR #74 |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | WD-6 | The repository loadout from `[members]`, with the default set | WD-4, WD-5 | DONE | implementation | 3e0d705e, 6613f8d9 · repo_def_loadout 12/0 ; floor green · PR #109 |
@@ -273,7 +272,7 @@ Session text (T, SX nodes):
 | FX-8 | zygo usage reads summary and savings from one snapshot | OS-8 | DONE | implementation | 4636d2ee, 73cffb55 · report_snapshot 1/0, usage_doctor 45/0 ; floor green · PR #105 |
 | FX-9 | OpenCode session text item 8 fixed at SessionStart, not rebuilt per request | ML-9, ML-10, MS-16, WD-18, SX-10 | TODO | judgment | — |
 | FX-10 | HUD spec lists the member name and unread mail segments and the ✉ glyph | ML-15, RT-3 | TODO | mechanical | — |
-| FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | TODO | implementation | — |
+| FX-11 | zygo doctor icon line shows the ✉ mail glyph | ML-15, RT-3 | DONE | implementation | 1921d4ca, a7ac8924 · usage_doctor 45/0, statusline_render 37/0 ; floor green · PR #122 |
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | TODO | implementation | — |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
@@ -400,3 +399,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-14 done: unread counts in zygo workspace, zygo ls and up; forget-pane removes mail/<key>/ (file, folder or link); FX-12 (HUD count) and FX-13 (maildir lifecycle) added from review. Floor green · PR #116. |
 | 2026-11-25 | OS-9 DONE (80d820d0 04a9d343): `[results] shape` (default true) in config, the session view and the launcher; trim passes it on; review round 2 fixed 2 test gaps; floor green · PR #117 |
 | 2026-11-25 | RT-3 DONE (fab29ce1 72c3d03a da38c41a): run-time HUD segment in compact and verbose with its width order; collect reads workspace.json once via member_read; review round 2 fixed 2; FX-11 widened to add the 󰅐 clock glyph to the doctor table. Floor green · PR #118 |
+| 2026-11-25 | FX-11 DONE: the doctor icon line holds 21 glyphs, adding mail (U+2709) and clock (U+F0150); mail follows reflection, clock sits between trimmed and truncation. FX-10 must add the H§6.5 Mail row after Reflection · PR #122 |

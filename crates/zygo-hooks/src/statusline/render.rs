@@ -173,9 +173,8 @@ struct Glyphs {
     threshold: &'static str,
     cache: &'static str,
     trimmed: &'static str,
-    /// Not in `table`: the doctor icon line keeps its 19 glyphs.
     mail: &'static str,
-    /// The run time (T§2.4). Not in `table`, as `mail`.
+    /// The run time (T§2.4).
     clock: &'static str,
 }
 
@@ -223,11 +222,12 @@ const PLAIN: Glyphs = Glyphs {
     clock: "run",
 };
 
-const fn table(g: &Glyphs) -> [(&'static str, &'static str); 19] {
+const fn table(g: &Glyphs) -> [(&'static str, &'static str); 21] {
     [
         ("stripe", STRIPE),
         ("logo", g.logo),
         ("reflection", g.reflection),
+        ("mail", g.mail),
         ("branch", g.branch),
         ("github", g.github),
         ("work-graph", g.graph),
@@ -243,12 +243,13 @@ const fn table(g: &Glyphs) -> [(&'static str, &'static str); 19] {
         ("notional", NOTIONAL),
         ("cache", g.cache),
         ("trimmed", g.trimmed),
+        ("clock", g.clock),
         ("truncation", TRUNCATION),
     ]
 }
 
-static NERD_TABLE: [(&str, &str); 19] = table(&NERD);
-static PLAIN_TABLE: [(&str, &str); 19] = table(&PLAIN);
+static NERD_TABLE: [(&str, &str); 21] = table(&NERD);
+static PLAIN_TABLE: [(&str, &str); 21] = table(&PLAIN);
 
 /// The (name, glyph) table of a set, in the order of H§6.5, for the `zygo doctor` icon test line (AU2). A use that
 /// has no glyph in the plain set has an empty glyph there.
