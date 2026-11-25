@@ -276,4 +276,83 @@ awk '{ printf "%s\r\n", $0 }' "$D/docs/premises.md" > "$D/docs/premises.md.new" 
 run "$D"
 expect_fail "docs/premises.md has CRLF line endings"
 
+CASE="a duplicate of a required id in a second table"
+D=$(mk dupq7)
+printf '\n%s\n' '| Name | Value |' '|---|---|' '| Q7 | x |' >> "$D/docs/premises.md"
+[ "$(grep -c '^| Q7 |' "$D/docs/premises.md")" -eq 2 ] || fail "planted change did not apply"
+run "$D"
+expect_fail "Q7: expected exactly one row, found 2"
+
+CASE="a results-like row in a later table"
+D=$(mk late)
+printf '\n%s\n' '| Name | Value |' '|---|---|' '| PC5 | x |' >> "$D/docs/premises.md"
+run "$D"
+expect_fail "docs/premises.md:$(lnof "$D" '| PC5 | x |'): row 'PC5' is outside the Results table"
+
+CASE="an empty Agent cell"
+D=$(mk noagent)
+evidence "$D"
+add_row "$D" "$(row PC1 '' 3.2 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: the Agent cell is empty"
+
+CASE="an empty Version cell"
+D=$(mk nover)
+evidence "$D"
+add_row "$D" "$(row PC1 tmux '' verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: the Version cell is empty"
+
+CASE="empty Agent and Version cells"
+D=$(mk noagentver)
+evidence "$D"
+add_row "$D" "$(row PC1 '' '' verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: the Agent cell is empty"
+
+CASE="a result that is not verified or failed"
+D=$(mk badresult)
+evidence "$D"
+add_row "$D" "$(row PC1 tmux 3.2 passed fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: result 'passed' is not verified or failed"
+
+# hdr_twice <dir> <first> <second>: inserts both header lines after the `tmux: ` line, in that order.
+hdr_twice() {
+    awk -v a="$2" -v b="$3" '{ print } /^tmux: / { print a; print b }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+        mv "$1/docs/premises.md.new" "$1/docs/premises.md"
+    [ "$(grep -c '^Codex: ' "$1/docs/premises.md")" -eq 2 ] || fail "planted change did not apply"
+}
+
+CASE="the same header line twice"
+D=$(mk hdrsame)
+evidence "$D"
+hdr_twice "$D" 'Codex: 0.172.0' 'Codex: 0.172.0'
+add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_ok
+
+CASE="a second header line with another version"
+D=$(mk hdrconflict)
+evidence "$D"
+hdr_twice "$D" 'Codex: 0.172.0' 'Codex: 0.100.0'
+add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "docs/premises.md:$(grep -nx 'Codex: 0\.100\.0' "$D/docs/premises.md" | cut -d: -f1): header 'Codex: 0.100.0' differs from the first header line 'Codex: 0.172.0'"
+
+CASE="extra blanks at the ends of cells"
+D=$(mk blanks)
+evidence "$D"
+add_row "$D" '| PC1   | Test row |   tmux   |   3.2   |   2026-11-25   |   verified   | `fixtures/codex/pc1.txt` |'
+run "$D"
+expect_ok
+
+CASE="a header value with blanks at its end"
+D=$(mk hdrblanks)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0   '
+add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_ok
+
 echo "test-check-premises: ok ($N cases)"

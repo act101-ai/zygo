@@ -29,34 +29,46 @@ nontrivial() {
 ! grep -q "$(printf '\r')" "$P" || fail "$P has CRLF line endings"
 [ -s "$SPEC" ] || fail "$SPEC is missing"
 
-# HDR: one "name<TAB>value" line per "<Name>: <value>" header line before the first "## ", the
-# value trimmed at its ends. A row's agent needs a value that is a bare dotted version.
+# HDR: one "name<TAB>value<TAB>line" line per "<Name>: <value>" header line before the first "## ",
+# the value trimmed at its ends. A row's agent needs a value that is a bare dotted version.
 HDR=$(awk '/^## /{exit}
   /^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]:/ {
-    i = index($0, ":"); v = substr($0, i + 1); gsub(/^[ \t]+|[ \t]+$/, "", v); print substr($0, 1, i - 1) "\t" v
+    i = index($0, ":"); v = substr($0, i + 1); gsub(/^[ \t]+|[ \t]+$/, "", v); print substr($0, 1, i - 1) "\t" v "\t" NR
   }' "$P")
+# A name given again must have the same value as its first header line.
+dup=$(printf '%s\n' "$HDR" | awk -F'\t' '$1 in v && v[$1] != $2 { print $3 "\t" $1 ": " $2 "\t" $1 ": " v[$1]; exit } !($1 in v) { v[$1] = $2 }')
+TAB=$(printf '\t')
+if [ -n "$dup" ]; then
+  IFS=$TAB read -r ln h1 h0 <<EOF_DUP
+$dup
+EOF_DUP
+  fail "$P:$ln: header '$h1' differs from the first header line '$h0'"
+fi
 
 # version_of <name>: the header value for that name (the first line wins), or nothing.
 version_of() { printf '%s\n' "$HDR" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit }'; }
 
-# ROWS: "line<TAB>id" for every row of the Results table (its header row starts "| Id | Item |";
-# it ends at the first line that does not start with optional blanks and "|"), the Id cell
-# trimmed at its ends, in file order. The separator row right after the header row is skipped.
-ROWS=$(awk -F'|' '
+# TROWS: "line<TAB>id<TAB>r|o" for every table line of the file (it starts with optional blanks
+# and "|"), the first cell trimmed at its ends, in file order; r marks a row of the Results table
+# (its header row starts "| Id | Item |"; it ends at the first line that does not start with
+# optional blanks and "|"), o any other table line. The Results header and separator rows are left out.
+TROWS=$(awk -F'|' '
   !t && /^\| Id \| Item \|/ { t = 1; next }
   t == 1 { t = 2; if ($0 ~ /^[ \t]*\|[-:| \t]*$/) next }
-  t == 2 { if ($0 !~ /^[ \t]*\|/) exit; id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id }
+  t == 2 && $0 !~ /^[ \t]*\|/ { t = 3 }
+  /^[ \t]*\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
 ' "$P")
+# ROWS: "line<TAB>id" for every row of the Results table.
+ROWS=$(printf '%s\n' "$TROWS" | awk -F'\t' '$3 == "r" { print $1 "\t" $2 }')
 [ -n "$ROWS" ] || fail "$P has no Results table (a header row '| Id | Item |' and its rows)"
-TAB=$(printf '\t')
 while IFS=$TAB read -r ln id; do
   printf '%s\n' "$id" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]*$' ||
     fail "$P:$ln: row id '$id' is empty or not of the form [A-Za-z0-9][A-Za-z0-9-]*"
 done <<EOF_ROWS
 $ROWS
 EOF_ROWS
-IDLIST=$(printf '%s\n' "$ROWS" | cut -f2)
-# rows_of <id>: how many rows of the Results table have that id.
+IDLIST=$(printf '%s\n' "$TROWS" | cut -f2)
+# rows_of <id>: how many table lines of the whole file have that id as their first cell.
 rows_of() { printf '%s\n' "$IDLIST" | grep -cxF -- "$1"; }
 CHECKED=""
 
@@ -71,6 +83,13 @@ for id in $IDS $WIDS; do
   n=$(rows_of "$id")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
 done
+
+# A table line outside the Results table whose first cell has the form of a premise id
+# (capital letters, then a digit: P1, P6a, Q7, PW15-bash, PC1) is a Results row in the wrong place.
+out=$(printf '%s\n' "$TROWS" | awk -F'\t' '$3 == "o" && $2 ~ /^[A-Z]+[0-9][A-Za-z0-9-]*$/ { print $1 "\t" $2; exit }')
+if [ -n "$out" ]; then
+  fail "$P:${out%%"$TAB"*}: row '${out#*"$TAB"}' is outside the Results table"
+fi
 
 # Each entry is "line:id"; an id holds no blank and no colon (checked above).
 for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
@@ -87,6 +106,8 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
   echo "$date" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || fail "$id: date '$date' is not YYYY-MM-DD"
 
   # Agent and Version may each list several values joined by " + ", in the same order.
+  [ -n "$agent" ] || fail "$id: the Agent cell is empty"
+  [ -n "$ver" ] || fail "$id: the Version cell is empty"
   na=$(echo "$agent" | awk -F' [+] ' '{print NF}')
   nv=$(echo "$ver" | awk -F' [+] ' '{print NF}')
   [ "$na" -eq "$nv" ] || fail "$id: $na agent(s) but $nv version(s)"
