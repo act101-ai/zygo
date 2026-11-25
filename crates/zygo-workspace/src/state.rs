@@ -99,6 +99,9 @@ pub struct MemberRecord {
     pub zygo_session: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Pending>,
+    /// Unix time (seconds) of the first committed start of this record (W§7.2, W AU92 as amended by T§3.2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_started_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_session: Option<String>,
     pub state: MemberState,
@@ -296,6 +299,7 @@ impl MemberRecord {
         MemberRecord {
             zygo_session: None,
             pending: None,
+            first_started_at: None,
             agent_session: None,
             state: MemberState::Ended,
             launch: Launch::new(kind),
