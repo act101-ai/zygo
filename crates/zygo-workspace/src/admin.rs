@@ -824,7 +824,8 @@ fn rename_run(
         if let Some(m) = c.members.get_mut(key) {
             m.name = Some(new_name.to_string());
         }
-        if let Some(p) = c.panes.iter_mut().find(|p| p.key == key) {
+        // A shell pane has no name (`up.rs`, `forget_pane`); only the record is renamed then.
+        if let Some(p) = c.panes.iter_mut().find(|p| p.key == key && p.kind != PaneKind::Shell) {
             p.name = Some(new_name.to_string());
         }
         Ok(())
@@ -842,27 +843,35 @@ fn rename_run(
     }
 }
 
+/// The line of a workspace that is not there: `no workspace named <name>`, else `no_folder` (W§12).
+fn not_found(name: Option<&str>, no_folder: &str) -> String {
+    name.map_or_else(|| no_folder.to_string(), |n| format!("zygo: no workspace named {}", esc(n)))
+}
+
+/// The line of a state folder that is a link (Round 2 R1).
+fn link_line(id: &str) -> String {
+    format!("zygo: the state folder of workspace {id} is a link; it is not changed")
+}
+
 /// The workspace of `ws forget-pane` and `ws name` (W§12): the one named `name`, else the one of the checkout of `cwd`;
 /// `no_folder` is the line when `cwd` has none.
 fn pane_workspace(paths: &Paths, name: Option<&str>, cwd: &Path, no_folder: &str) -> Result<Workspace, String> {
-    let not_found = || name.map_or_else(|| no_folder.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
-    let link = |id: &str| format!("zygo: the state folder of workspace {id} is a link; it is not changed");
     Ok(match name {
         Some(n) => match find(paths, n, true).map_err(|e| e.message)? {
             Found::Readable(ws) => *ws,
             Found::Invalid(id) => match read_capped(&Store::open(paths, &id)) {
                 Ok(Some(ws)) => ws,
-                Ok(None) => return Err(not_found()),
+                Ok(None) => return Err(not_found(name, no_folder)),
                 Err(e) => return Err(format!("zygo: {e}")),
             },
-            Found::Link(id) => return Err(link(&id)),
+            Found::Link(id) => return Err(link_line(&id)),
         },
         None => {
             let (co, _, _) = find_checkout(cwd, GIT_BOUND).map_err(|_| no_folder.to_string())?;
             let id = workspace_id(&co.common_dir);
             match state_kind(paths, &id) {
                 Kind::Real => {}
-                Kind::Link => return Err(link(&id)),
+                Kind::Link => return Err(link_line(&id)),
                 Kind::Missing | Kind::Other => return Err(no_folder.into()),
             }
             match read_capped(&Store::open(paths, &id)) {
@@ -879,8 +888,6 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     if !valid_pane_key(key) {
         return Err(format!("zygo: invalid pane key {}", esc(key)));
     }
-    let not_found = || name.map_or_else(|| NO_FOLDER.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
-    let link = |id: &str| format!("zygo: the state folder of workspace {id} is a link; it is not changed");
     let ws = pane_workspace(paths, name, cwd, NO_FOLDER)?;
     let (id, label) = (ws.id.clone(), ws.name.clone());
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget pane {key} of {label}: {e}");
@@ -889,8 +896,8 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     // Round 2 R1: `op_lock` creates and chmods its folder, so the folder is checked again right before it.
     match state_kind(paths, &id) {
         Kind::Real => {}
-        Kind::Link => return Err(link(&id)),
-        Kind::Missing | Kind::Other => return Err(not_found()),
+        Kind::Link => return Err(link_line(&id)),
+        Kind::Missing | Kind::Other => return Err(not_found(name, NO_FOLDER)),
     }
     let _op = match store.op_lock() {
         Ok(l) => l,
@@ -899,7 +906,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     };
     let cur = match read_capped(&store) {
         Ok(Some(ws)) => ws,
-        Ok(None) => return Err(not_found()),
+        Ok(None) => return Err(not_found(name, NO_FOLDER)),
         Err(StateError::Newer { .. }) => return Err(NEWER.into()),
         Err(e) => return Err(format!("zygo: {e}")),
     };

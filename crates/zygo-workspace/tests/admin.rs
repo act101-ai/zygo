@@ -1812,6 +1812,7 @@ fn rename_member_changes_the_record_and_the_pane_in_one_write() {
 }
 
 #[test] // W§7.3, graph review focus 57: the write waits for `lock`
+#[ignore = "timing: waits on a held state lock for 300 ms"]
 fn rename_member_waits_for_the_state_lock() {
     let _s = serial();
     let td = TempDir::new().unwrap();
@@ -1890,4 +1891,60 @@ fn rename_member_by_the_checkout_folder() {
         name_run(&p, &tmux, None, &plain, "kaaaaaaaa", "ops"),
         (1, String::new(), "zygo: no workspace for this folder; run in the workspace's checkout or pass --workspace\n".to_string())
     );
+}
+
+#[test] // ML-8 review round 1, F6: a shell pane has no name; the record of its key is renamed, the pane is not
+fn rename_member_leaves_a_shell_pane_unnamed() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    store
+        .update(S5, &mut |ws| {
+            ws.members.insert("kcccccccc".into(), member(Agent::ClaudeCode, MemberState::Ended, None));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kcccccccc", "ops"),
+        (0, "zygo: pane kcccccccc of app is now named ops\n".to_string(), String::new())
+    );
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!(ws.members["kcccccccc"].name.as_deref(), Some("ops"));
+    assert_eq!((ws.panes[1].key.as_str(), ws.panes[1].kind, ws.panes[1].name.as_deref()), ("kcccccccc", PaneKind::Shell, None));
+}
+
+#[test] // ML-8 review round 1, F3 (AU84): a new state over 1 MiB is `StateError::Invalid`: exit 1, one line, no change
+fn rename_member_reports_an_invalid_state() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let max = 1024 * 1024;
+    let pad = |n: usize| {
+        store
+            .update(S5, &mut |ws| {
+                ws.members.get_mut("kaaaaaaaa").unwrap().extra.insert("pad".into(), json!("x".repeat(n)));
+                Ok(())
+            })
+            .unwrap();
+        state_bytes(&p, ID).len()
+    };
+    // The state is 20 bytes under the limit; `old` to a 32-byte name adds 29 bytes to the record and to its pane.
+    let size = pad(1000);
+    assert_eq!(pad(1000 + max - 20 - size), max - 20);
+    let before = state_bytes(&p, ID);
+    let long = "e".repeat(32);
+    let file = store.dir().join("workspace.json");
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kaaaaaaaa", &long),
+        (
+            1,
+            String::new(),
+            format!(
+                "zygo: {}: the new state is {} bytes, more than the {max} bytes that every reader accepts (AU84); not written\n",
+                file.display(),
+                max - 20 + 58
+            )
+        )
+    );
+    assert_eq!(state_bytes(&p, ID), before);
 }

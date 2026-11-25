@@ -215,3 +215,12 @@ Steps:
 - [x] 10. In `ws.rs`, add to `WsCmd` after `ForgetPane` (`ws.rs:56-61`): `/// Name one member of a workspace; mail stays in its pane-key folder` `Name { key: String, name: String, /// Workspace name; default: the workspace of this folder  #[arg(long)] workspace: Option<String> }`. In `dispatch` add the arm `WsCmd::Name { key, name, workspace }`: `cwd` as the `ForgetPane` arm does it (`ws.rs:82-89`, keyed on `workspace`), then `admin::rename_member(&paths, &tmux_program(), workspace.as_deref(), &cwd, &key, &name, &mut std::io::stdout().lock(), &mut std::io::stderr().lock())`. Add `zygo ws name <key> <name> [--workspace <w>]` to the module doc at `ws.rs:1`. Check: `cargo build -p zygo` passes.
 - [x] 11. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test admin -- rename_member --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-workspace --test admin && cargo test -p zygo --lib`. Check: the count is 5; all pass, `ws_name_parses_key_name_and_workspace` among them.
 - [x] 12. Commit `crates/zygo/src/cmd/ws.rs`, message `ML-8: zygo ws name` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists that one file.
+
+## Round 2
+
+- [x] F1: `hand_join` (`crates/zygo/src/cmd/member.rs`) keeps a `ws name` made after the marker was read: with no `--name`, a kept record whose valid name under `lock` is not the marker name keeps its name. Test `hand_join_keeps_a_rename_made_after_the_marker_was_read`.
+- [x] F6: `rename_member` sets no name on a shell pane. Test `rename_member_leaves_a_shell_pane_unnamed`.
+- [x] F7: `forget_pane_run` and `pane_workspace` share `not_found` and `link_line`; no line changed (forget_pane tests pass with `--include-ignored`).
+- [x] F4: `rename_member_waits_for_the_state_lock` is `#[ignore]` as a timing test.
+- [x] F3: test `rename_member_reports_an_invalid_state` (a new state over 1 MiB, `StateError::Invalid`). `Busy` is not tested (needs the 5 s bound); `Ok(None)` is not tested (no hook between the lookup and the lock).
+- F2: not tested. `dispatch` reads `Paths::from_env`, and the binary tests in `crates/zygo/tests/` are outside this node's files.
