@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
-| DR-8 | Session view `repo_root`, written by the launcher | DR-1 | DONE | mechanical | c806e21 88441c1 · repo_root 2/2 core, 3/3 launcher · PR #19 |
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | DONE | mechanical | 34a088d fb104db · dispositions 4 tests · PR #18 |
 | DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | DONE | judgment | 9efee7e 281dd03 · decision_transition 45/45 · PR #21 |
 | DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | DONE | judgment | 52a5006 b306476 5e3b797 196e814 0add171 · decision_git 33/33; floor green · PR #35 |
@@ -218,7 +217,7 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | DONE | mechanical | 5bcdc27 · check-premises exit 0; floor green (ws 2592/0) · PR #44 |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
-| MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | TODO | implementation | — |
+| MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | DONE | implementation | e1dd701 · git_builder 13p; floor green · PR #48 |
 | OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | DONE | implementation | b834d51 · results 54p/0f; floor green · PR #45 |
@@ -385,3 +384,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | RT-1 planned (6d70796): 11 steps, 10 first_started_at tests · PR #38 |
 | 2026-11-24 | RT-1 in progress: node worktree .worktrees/phase3/RT-1-node, branch phase3/RT-1--RT-1 · PR #38 |
 | 2026-11-24 | RT-1 done (7efa8d9 441e170 ff23c48): member record first_started_at; review round 1: 1 confirmed, 3 refuted; floor 2529 passed, 0 failed · PR #38 |
+| 2026-11-24 | MS-2 done: zygo-mail-sync crate with hardened git calls and test seams, 13 empty module files; review round 1 (5 confirmed, fixed; S-C4 rewritten for fetch.writeCommitGraph=false); floor green · PR #48 |

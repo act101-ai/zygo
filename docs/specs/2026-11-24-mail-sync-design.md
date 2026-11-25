@@ -45,7 +45,7 @@ This spec covers three items:
 - **S-C1** M-C1 to M-C6 apply. C6 applies to each new hook branch: a sync error never changes a hook decision.
 - **S-C2** Mail is content (M-C2). No subject, body, address, host name, member name or path that holds one goes into a log, `workspace.json`, a usage row, a commit message or a ref name **(lead)**. A log line names ULIDs, pattern ids, check names, blob ids and counts only.
 - **S-C3** zygo writes only `refs/heads/zygo/<x>` on the remote. A force push goes only to that branch, only with the lease of S§9 **(operator)**.
-- **S-C4** Every git call is built by the hardened builder `git_command` (`crates/zygo-plugins/src/sync.rs:32-58`: no repository hooks, no fsmonitor, no LFS filter, no `ext::` transport, `GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`), plus `-c gc.auto=0 -c maintenance.auto=false` on each call **(lead)**. Each call runs under the runner of S§8.7, with a deadline.
+- **S-C4** Every git call is built by the hardened builder `git_command` (`crates/zygo-plugins/src/sync.rs:32-58`: no repository hooks, no fsmonitor, no LFS filter, no `ext::` transport, `GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`), plus `-c gc.auto=0 -c maintenance.auto=false -c fetch.writeCommitGraph=false` on each call **(lead)**. Each call runs under the runner of S§8.7, with a deadline.
 - **S-C5** All content from the remote is untrusted: names, paths, modes, sizes, JSON and identities. zygo validates it before use, and never writes a file at a path that the remote chose (S§6.3).
 - **S-C6** Only user config turns sync on (M§11, AU10, AU22). `.zygo.toml` and the team layer cannot.
 - **S-C7** Trust boundary: each person with write access to the remote can send mail to, and wake, a member that syncs, and can delete or forge files on the side branch. Each person with read access can read all synced mail. The opt-in (S-G6) is the operator's consent to both.
@@ -548,3 +548,7 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - **SP4** `commit-tree` with `-c commit.gpgSign=false` does not sign or prompt when the user's config has `commit.gpgSign = true`.
 - **SP5** A user's plain `git fetch` (default refspec) after a prune updates `refs/remotes/<remote>/<branch>` with no error, and `git pull` on a work branch is not affected.
 - **SP6** `-c gc.auto=0 -c maintenance.auto=false` on `fetch`, `commit-tree` and `push` stops each automatic `gc` and `maintenance run --auto` in the pinned git version (test 2 shows it).
+
+## Change log
+
+- 2026-11-24 · S-C4 · author's call (MS-2 review) · fetch.writeCommitGraph=true in user config made a sync fetch write commit-graph files, against S-G2; the override list gains -c fetch.writeCommitGraph=false.
