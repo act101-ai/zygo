@@ -32,7 +32,7 @@ Module includes (a subdirectory of `tests/` is not a test target):
 
 Commits: each commit message starts with `FX-6:` and ends with the `Zygo-Session` and `Zygo-Work` trailers that the brief gives, each on its own line. No Claude attribution.
 
-- [ ] 1. Write the failing test. Create `crates/zygo/tests/dead_port/mod.rs` with the old algorithm, so that the red result comes from behavior and not from a compile error:
+- [x] 1. Write the failing test. Create `crates/zygo/tests/dead_port/mod.rs` with the old algorithm, so that the red result comes from behavior and not from a compile error:
 
 ```rust
 //! A loopback port that refuses every connection (FX-6).
@@ -64,9 +64,9 @@ fn closed_port_refuses_and_no_port_0_bind_gets_it() { // FX-6, CI run 4555759167
 
   The uncommitted `closed_port_refuses_and_no_bind_can_take_it` from the first plan is replaced by this test: its `AddrInUse` assertion cannot hold for port 1, because no socket holds port 1 (on macOS a bind of `127.0.0.1:1` gives `PermissionDenied`, measured).
 
-- [ ] 2. See it fail: `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --lib -- cmd::compact::tests::closed_port_refuses_and_no_port_0_bind_gets_it`. The connect assertion passes (the freed port refuses). The test fails at the `port < 1024` assertion, because the old algorithm gives a port from the ephemeral range. That is the cause of the CI flake.
+- [x] 2. See it fail: `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --lib -- cmd::compact::tests::closed_port_refuses_and_no_port_0_bind_gets_it`. The connect assertion passes (the freed port refuses). The test fails at the `port < 1024` assertion, because the old algorithm gives a port from the ephemeral range. That is the cause of the CI flake.
 
-- [ ] 3. Implement. Replace the body of `crates/zygo/tests/dead_port/mod.rs` with this text (the uncommitted held-socket version from the first plan goes). The signatures do not change:
+- [x] 3. Implement. Replace the body of `crates/zygo/tests/dead_port/mod.rs` with this text (the uncommitted held-socket version from the first plan goes). The signatures do not change:
 
 ```rust
 //! A loopback port that refuses every connection and that no other test can get (FX-6, CI run 45557591675): port 1.
@@ -86,7 +86,7 @@ pub fn closed_url() -> String {
 }
 ```
 
-- [ ] 4. See it pass: run the command from step 2. The test passes. Commit `crates/zygo/tests/dead_port/mod.rs` and `crates/zygo/src/cmd/compact.rs`.
+- [x] 4. See it pass: run the command from step 2. The test passes. Commit `crates/zygo/tests/dead_port/mod.rs` and `crates/zygo/src/cmd/compact.rs`.
 
 - [ ] 5. Change `dead_session` in `crates/zygo/src/cmd/compact.rs:188-198` so that it writes `super::dead_port::closed_url()` to `sd.url()`. Delete the bind, `local_addr` and `drop` lines (193-195). The doc line becomes ``/// A session dir `id` whose url is the closed port of `dead_port`.`` Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --locked --lib -- cmd::compact cmd::status cmd::verbs`. All tests pass, `unreachable_is_compact_failed` too. Commit.
 

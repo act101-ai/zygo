@@ -126,6 +126,10 @@ pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/dead_port/mod.rs"]
+mod dead_port;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -320,4 +324,13 @@ pub(crate) mod tests {
         assert!(e.downcast_ref::<CompactFailed>().is_some(), "{e}");
         assert_eq!(e.to_string(), "compact failed: bad: one\\ntwo\\u{1b}[31m");
     } // mutation: `esc` removed from `CompactFailed`'s Display
+
+    #[test]
+    fn closed_port_refuses_and_no_port_0_bind_gets_it() { // FX-6, CI run 45557591675
+        let port = super::dead_port::closed_port();
+        let e = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::ConnectionRefused, "{e}");
+        assert!(port < 1024, "{port} is in an ephemeral range, so a parallel `127.0.0.1:0` bind can get it");
+        assert_eq!(super::dead_port::closed_port(), port);
+    }
 }
