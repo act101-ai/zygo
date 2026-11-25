@@ -603,8 +603,10 @@ fn au67_repair_reads_nothing_and_the_taken_back_plan_reads_once() {
     assert_eq!(f.git.reads(), 1);
 }
 
-#[test] // R§10 AU67 row: the repair of a repository build with the session present reads nothing and keeps the panes
-fn au67_repair_with_the_session_present_reads_nothing() {
+#[test] // R§10 AU67 row: with the session present, the repair of a repository build stops at its first tmux write (the
+// stand-in answers "no server running" to `set-environment -r`, `mux/tmux.rs:376`); it reads nothing before it stops
+// and keeps the panes. A repair that completes is not driven: no stand-in answers the session setup.
+fn au67_repair_with_the_session_present_reads_nothing_before_it_stops() {
     let _g = serial();
     let mut f = fx(&[(WS, b"version = 1\n")]);
     let pin = f.approve();
@@ -618,13 +620,31 @@ fn au67_repair_with_the_session_present_reads_nothing() {
     f.o.tmux = answer_tmux(&f.t);
     fs::write(f.t.join("exists-zygo-app"), "").unwrap();
     fs::write(f.t.join("ws-zygo-app"), f.id()).unwrap();
-    let (code, _, err) = f.up();
-    assert_ne!(code, 0, "{err}");
+    assert_eq!(f.up(), gone());
+    let log = tmux_log(&f.t);
+    assert!(log.last().is_some_and(|l| l.contains("set-environment -r")), "{log:?}");
     assert!(f.git.calls().is_empty(), "{:?}", f.git.calls());
     let ws = f.store.read().unwrap().unwrap();
     assert_eq!(ws.phase, Phase::Building);
     assert_eq!(ws.panes.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), ["kaaaaaaaa"]);
     assert!(ws.members["kaaaaaaaa"].launch.definition.is_some());
+}
+
+#[test] // R§10 `zygo up --all` row: a user `default_loadout = "repository"` with no user table plans `solo` and one line
+fn up_all_with_a_repository_default_plans_solo() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    f.approve();
+    f.o.config.workspace.default_loadout = "repository".into();
+    f.o.default_loadout_set = true;
+    saved(&f.store, &f.c, vec![], vec![], vec![]);
+    set(&f.store, |w| w.phase = Phase::Up);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let _ = up::testing::run_all_with(&f.o, &mut out, &mut err);
+    let err = text(err);
+    assert!(err.starts_with("zygo: up --all reads no repository workspace files; using solo\n"), "{err}");
+    assert!(f.git.calls().is_empty(), "{:?}", f.git.calls());
+    assert_eq!(f.planned().loadout, "solo");
 }
 
 #[test] // R§10: a read that fails is unread: the line and `solo` by default; exit 1 and no write when explicit

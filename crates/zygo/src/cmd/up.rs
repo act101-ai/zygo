@@ -48,21 +48,12 @@ pub fn run(a: &UpArgs) -> i32 {
             return ExitCode::ConfigInvalid as i32;
         }
     };
-    // R§9.4, R§12: the team layer gives `[limits] max_members` only. A team layer that cannot be read refuses as the
-    // launch commands do (`zygo-launch/src/launcher.rs:286-304`): exit 12 when unreachable, else 1; a team-merged
-    // config that does not load is exit 11.
+    // R§9.4, R§12: the team layer gives `[limits] max_members` only.
     let verb = VerbCtx { slash: false, save: false, session_dir: SessionDir::from_env(), paths: paths.clone() };
-    let team = match super::verbs::team(&verb, "up") {
-        Ok(None) => None,
-        Ok(Some(t)) => match zygo_config::load(&LoadContext { paths: paths.clone(), repo: None, team: Some(t) }) {
-            Ok(m) => Some(m.config),
-            Err(e) => {
-                print_err(&format!("zygo up: {}\n", zygo_core::esc(&e.to_string())));
-                return ExitCode::ConfigInvalid as i32;
-            }
-        },
-        Err(e) => return super::finish(Err(e)),
-    };
+    let (config, lines) = with_team(&verb, merged.config.clone());
+    for l in &lines {
+        print_err(&format!("{l}\n"));
+    }
     let cwd = match cwd_or_exit() {
         Ok(d) => d,
         Err(code) => return code,
@@ -73,7 +64,7 @@ pub fn run(a: &UpArgs) -> i32 {
     };
     let opts = UpOpts {
         default_loadout_set: default_loadout_set(&merged),
-        ..opts(a, cwd, zygo, paths, with_team_max_members(merged.config, team.as_ref()), &|k| std::env::var_os(k))
+        ..opts(a, cwd, zygo, paths, config, &|k| std::env::var_os(k))
     };
     if a.all { up::up_all(&opts) } else { up::up(&opts) }
 }
@@ -81,6 +72,28 @@ pub fn run(a: &UpArgs) -> i32 {
 /// R§10 `up` row: true when the user config file sets `[workspace] default_loadout` (as `definition_lines`,
 /// `cmd/doctor.rs`).
 fn default_loadout_set(m: &Merged) -> bool { m.source_of("workspace.default_loadout") == Layer::User }
+
+/// R§9.4, R§12: `user` with the team `[limits] max_members`, and the lines `run` prints on stderr: the team-merged
+/// warnings, as the launcher prints them (`zygo-launch/src/launcher.rs:306-308`); or, when the team layer cannot be
+/// read or the team-merged config does not load, one line, and the user config only (as `zygo doctor`,
+/// `cmd/doctor.rs:414-426`): `up` needs no team server.
+fn with_team(verb: &VerbCtx, user: Config) -> (Config, Vec<String>) {
+    let why = match super::verbs::team(verb, "up") {
+        Ok(None) => return (user, vec![]),
+        Ok(Some(t)) => match zygo_config::load(&LoadContext { paths: verb.paths.clone(), repo: None, team: Some(t) }) {
+            Ok(m) => {
+                let lines = m.warnings.iter().map(|w| format!("zygo: {w}")).collect();
+                return (with_team_max_members(user, Some(&m.config)), lines);
+            }
+            Err(e) => e.to_string(),
+        },
+        Err(e) => {
+            let s = e.to_string();
+            s.strip_prefix("zygo up: ").unwrap_or(&s).to_string()
+        }
+    };
+    (user, vec![format!("zygo up: team config not read ({}); [limits] max_members from user config", zygo_core::esc(&why))])
+}
 
 /// R§9.4, R§12: `user` with `[limits] max_members` from the team-merged config `team` (which has the user layer over
 /// the team layer); every other key stays user-only (D3, AU10, AU22).
@@ -117,7 +130,7 @@ fn opts(a: &UpArgs, cwd: PathBuf, zygo: PathBuf, paths: Paths, config: Config, e
 mod tests {
     use std::ffi::OsString;
 
-    use super::{default_loadout_set, opts, with_team_max_members, UpArgs};
+    use super::{default_loadout_set, opts, with_team, with_team_max_members, UpArgs};
 
     /// D8 (M1 review round 3, F3): `zygo up` gives the library `ZYGO_SESSION` as it is. An empty value is `Some("")`:
     /// the library counts it as set for each "inside an agent" decision (AU64, AU95; `zygo-workspace/src/env.rs:62`,
@@ -150,9 +163,9 @@ mod tests {
         assert!(default_loadout_set(&m()));
     }
 
-    /// R§9.4, R§12: `zygo up` reads a team `[limits] max_members`; the user layer wins over the team layer
-    /// (`zygo-config/src/layers.rs:27-28`); every other key stays user-only (D3, AU10, AU22). Kills: `up` loading with
-    /// `team: None` only, and `up` taking other team keys.
+    /// R§9.4, R§12: the helper takes `[limits] max_members` from a team-merged config; the user layer wins over the
+    /// team layer (`zygo-config/src/layers.rs:27-28`); every other key stays user-only (D3, AU10, AU22). Kills: the
+    /// helper taking other team keys or ignoring the team value.
     #[test]
     fn team_max_members_only() {
         let t = tempfile::tempdir().unwrap();
@@ -168,5 +181,39 @@ mod tests {
         std::fs::write(&paths.config_file, "[limits]\nmax_members = 6\n").unwrap();
         let c = with_team_max_members(load(None), Some(&load(Some(team))));
         assert_eq!(c.limits.max_members, 6);
+    }
+
+    /// R§9.4, R§12, R5: the team read of `run`, driven through the session `team.toml` of `verbs::team`. A team
+    /// `max_members` is taken, with the team-merged warnings as the launcher prints them; a team layer that cannot be
+    /// read or loaded gives the user config and one line (as `zygo doctor`). Kills: `run` loading with `team: None`
+    /// only, a refusal on a team error, and dropped team warnings.
+    #[test]
+    fn team_read_of_run() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = crate::cmd::verbs::tests::sd(t.path());
+        let ctx = crate::cmd::compact::tests::ctx(t.path(), Some(&dir));
+        let user = || zygo_config::load(&zygo_config::LoadContext { paths: ctx.paths.clone(), repo: None, team: None }).unwrap().config;
+        let default = user().limits.max_members;
+        // No team layer: the user config, no line.
+        assert_eq!(with_team(&ctx, user()).1, Vec::<String>::new());
+        // A team value, and the AU22 warning of a team `[loadout]`.
+        std::fs::write(dir.join("team.toml"), "[limits]\nmax_members = 4\n[loadout.x]\n").unwrap();
+        let (c, lines) = with_team(&ctx, user());
+        assert_eq!(c.limits.max_members, 4);
+        assert_eq!(lines, ["zygo: [loadout] and [workspace] are read from user config only; ignored"]);
+        // A team layer that cannot be read.
+        std::fs::write(dir.join("team.toml"), "[limits\n").unwrap();
+        let (c, lines) = with_team(&ctx, user());
+        assert_eq!(c.limits.max_members, default);
+        assert_eq!(
+            lines,
+            ["zygo up: team config not read (cannot read team.toml: not valid TOML); [limits] max_members from user config"]
+        );
+        // A team layer that does not load.
+        std::fs::write(dir.join("team.toml"), "[limits]\nmax_members = \"x\"\n").unwrap();
+        let (c, lines) = with_team(&ctx, user());
+        assert_eq!(c.limits.max_members, default);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("zygo up: team config not read (") && lines[0].ends_with("); [limits] max_members from user config"), "{lines:?}");
     }
 }

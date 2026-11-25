@@ -61,6 +61,7 @@ const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update
 const AU98: &str = "zygo: --server holds user info; this agent is not saved by the workspace";
 const NEW_SERVER: &str =
     "zygo: started a new tmux server from inside a zygo agent; its panes have no provider keys from the environment";
+const UP_ALL_NO_REPOSITORY: &str = "zygo: up --all reads no repository workspace files; using solo";
 const LOADOUT_IGNORED: &str = "zygo: --loadout applies only with --reset or to a new workspace; restoring the saved layout";
 
 /// The inputs of `zygo up` for one workspace. `tmux_env` is `$TMUX`, `zygo_session` is `ZYGO_SESSION` and `vars` is
@@ -802,8 +803,13 @@ fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Re
     {
         return user(n);
     }
-    // R§10 `zygo up --all` row (AU10): no default-branch read; the user default, else `solo`.
+    // R§10 `zygo up --all` row (AU10): no default-branch read; the user default, else `solo`. A user default
+    // `repository` with no user table (the early return above takes one) plans `solo` with one line.
     if !repo_read {
+        if name == Some(REPOSITORY_LOADOUT) {
+            say(err, UP_ALL_NO_REPOSITORY);
+            return user(BUILTIN_LOADOUT);
+        }
         return user(name.unwrap_or(BUILTIN_LOADOUT));
     }
     let git: &dyn GitRunner = match &opts.git {
