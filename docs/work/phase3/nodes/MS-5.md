@@ -53,7 +53,7 @@ Produces (exact; all in `crates/zygo-mail-sync/src/state.rs`, module `zygo_mail_
 
 Steps:
 
-- [ ] 1. Create `crates/zygo-mail-sync/tests/state.rs` with the header and helpers:
+- [x] 1. Create `crates/zygo-mail-sync/tests/state.rs` with the header and helpers:
   ```rust
   //! MS-5: the sync state files (mail sync design S§5, S§7.5, S§8.3, S§8.4, S§8.5, S§15; S§16 W§7.1, M-C4).
   //! No test depends on wall-clock time.
@@ -87,7 +87,9 @@ Steps:
   fn u(n: u64) -> Ulid { Ulid::from_parts(n, n as u128) }
   ```
 
-- [ ] 2. Add test `sync_paths_follow_w71` (S§5, S§6.3, S§15, W§7.1 as amended):
+  Difference: the `use` lines are in rustfmt order (`sha2` before `std`), and both new files (`tests/state.rs`, `src/state.rs`) are formatted with plain `rustfmt` (the repo has no `rustfmt.toml`), so long lines of the plan's snippets are wrapped. No behaviour change.
+
+- [x] 2. Add test `sync_paths_follow_w71` (S§5, S§6.3, S§15, W§7.1 as amended):
   ```rust
   let t = TempDir::new().unwrap();
   let p = paths(t.path());
@@ -110,7 +112,7 @@ Steps:
   assert!(!zygo_workspace::identity::valid_pane_key("outbox") && !zygo_workspace::identity::valid_pane_key("sync"));
   ```
 
-- [ ] 3. Add test `write_atomic_replaces_0600_in_0700_folders` (W-C4, M-C4, S§16 M-C4):
+- [x] 3. Add test `write_atomic_replaces_0600_in_0700_folders` (W-C4, M-C4, S§16 M-C4):
   ```rust
   let (_t, sp) = setup();
   let f = sp.sync.join("x");
@@ -125,7 +127,7 @@ Steps:
   assert_eq!((mode(&sp.outbox), mode(&sp.outbox_tmp)), (0o700, 0o700));
   ```
 
-- [ ] 4. Add test `write_atomic_refuses_a_linked_folder` (M-C4 through `ensure_mail_root`):
+- [x] 4. Add test `write_atomic_refuses_a_linked_folder` (M-C4 through `ensure_mail_root`):
   ```rust
   let (t, sp) = setup();
   let real = t.path().join("elsewhere");
@@ -137,7 +139,7 @@ Steps:
   assert_eq!(names(&real), Vec::<String>::new());
   ```
 
-- [ ] 5. Add test `make_identity_writes_32_hex_once` (S§5 Identity, S§7.5):
+- [x] 5. Add test `make_identity_writes_32_hex_once` (S§5 Identity, S§7.5):
   ```rust
   let (_t, sp) = setup();
   assert_eq!(identity(&sp).unwrap(), None);
@@ -157,7 +159,7 @@ Steps:
   assert_eq!(fs::read_to_string(&sp.identity).unwrap(), format!("{fixed}\n"));
   ```
 
-- [ ] 6. Add test `identity_refuses_a_bad_file` (author's call above):
+- [x] 6. Add test `identity_refuses_a_bad_file` (author's call above):
   ```rust
   let (_t, sp) = setup();
   fs::create_dir_all(&sp.sync).unwrap();
@@ -169,7 +171,7 @@ Steps:
   }
   ```
 
-- [ ] 7. Add test `imported_append_adds_27_bytes_and_load_reads_back` (S§8.5, S§13 limit 6):
+- [x] 7. Add test `imported_append_adds_27_bytes_and_load_reads_back` (S§8.5, S§13 limit 6):
   ```rust
   let (_t, sp) = setup();
   assert!(imported_load(&sp).unwrap().is_empty()); // no file yet
@@ -186,7 +188,7 @@ Steps:
   assert_eq!(imported_load(&sp).unwrap().len(), 3);
   ```
 
-- [ ] 8. Add test `imported_load_ignores_a_torn_last_line` (S§8.5; review focus item 17):
+- [x] 8. Add test `imported_load_ignores_a_torn_last_line` (S§8.5; review focus item 17):
   ```rust
   let (_t, sp) = setup();
   fs::create_dir_all(&sp.sync).unwrap();
@@ -208,7 +210,7 @@ Steps:
   assert_eq!(imported_load(&sp).unwrap(), [u(1), u(2), u(4)].into_iter().collect::<HashSet<_>>());
   ```
 
-- [ ] 9. Add test `state_round_trip_holds_no_url` (S§8.2 cache, S§8.3 last paragraph, S§7.5 blob ids, W-C7, S-C2):
+- [x] 9. Add test `state_round_trip_holds_no_url` (S§8.2 cache, S§8.3 last paragraph, S§7.5 blob ids, W-C7, S-C2):
   ```rust
   let (_t, sp) = setup();
   let url = "https://user:pw@example.com/team/repo.git";
@@ -230,7 +232,7 @@ Steps:
   assert_eq!(names(&sp.sync), ["state.json"]);
   ```
 
-- [ ] 10. Add test `load_gives_default_for_missing_or_bad_file` (S§8.3; author's call above):
+- [x] 10. Add test `load_gives_default_for_missing_or_bad_file` (S§8.3; author's call above):
   ```rust
   let (_t, sp) = setup();
   assert_eq!(load(&sp), State::default());
@@ -244,7 +246,7 @@ Steps:
   assert_eq!(load(&sp), State { last_ok: Some(5), ..State::default() });
   ```
 
-- [ ] 11. Add test `take_again_is_true_once_after_mark_again` (S§8.3 steps 2, 4, 17):
+- [x] 11. Add test `take_again_is_true_once_after_mark_again` (S§8.3 steps 2, 4, 17):
   ```rust
   let (_t, sp) = setup();
   assert!(!take_again(&sp).unwrap());
@@ -261,7 +263,7 @@ Steps:
   assert!(!take_again(&sp).unwrap());
   ```
 
-- [ ] 12. Add test `last_start_round_trip` (S§8.4; the value is a parameter, no clock read):
+- [x] 12. Add test `last_start_round_trip` (S§8.4; the value is a parameter, no clock read):
   ```rust
   let (_t, sp) = setup();
   assert_eq!(read_last_start(&sp), None);
@@ -278,11 +280,11 @@ Steps:
   }
   ```
 
-- [ ] 13. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync --test state`; see it fail to compile on the missing `SyncPaths`, `write_atomic`, `identity`, `make_identity`, `PublicCache`, `State`, `load`, `save`, `imported_load`, `imported_append`, `mark_again`, `take_again`, `read_last_start`, `write_last_start`.
+- [x] 13. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync --test state`; see it fail to compile on the missing `SyncPaths`, `write_atomic`, `identity`, `make_identity`, `PublicCache`, `State`, `load`, `save`, `imported_load`, `imported_append`, `mark_again`, `take_again`, `read_last_start`, `write_last_start`.
 
-- [ ] 14. In `crates/zygo-mail-sync/src/state.rs`, write the module doc comment: the sync state files of one workspace (S§5, S§15): `mail/outbox/` (with `tmp/`, `refused/`), `mail/sync/` (`identity`, `state.json`, `members.json`, `imported`, `incoming/`, `lock`, `again`, `last_start`) and the worktree `<workspace_cache_dir>/<id>/mail-sync/`; every write is atomic, files `0600`, folders `0700` (W-C4, M-C4); no file holds a URL or mail content (W-C7, S-C2). Then add `SyncPaths` and `SyncPaths::new` exactly as in Produces (paths built with `PathBuf::join`, `mail` from `zygo_workspace::mail::mail_dir`).
+- [x] 14. In `crates/zygo-mail-sync/src/state.rs`, write the module doc comment: the sync state files of one workspace (S§5, S§15): `mail/outbox/` (with `tmp/`, `refused/`), `mail/sync/` (`identity`, `state.json`, `members.json`, `imported`, `incoming/`, `lock`, `again`, `last_start`) and the worktree `<workspace_cache_dir>/<id>/mail-sync/`; every write is atomic, files `0600`, folders `0700` (W-C4, M-C4); no file holds a URL or mail content (W-C7, S-C2). Then add `SyncPaths` and `SyncPaths::new` exactly as in Produces (paths built with `PathBuf::join`, `mail` from `zygo_workspace::mail::mail_dir`).
 
-- [ ] 15. In `state.rs`, add `write_atomic` and its private error map. Bodies:
+- [x] 15. In `state.rs`, add `write_atomic` and its private error map. Bodies:
   ```rust
   /// W-C4, M-C4: makes `path`'s folder (and its parents) `0700`, then writes `bytes` to a `0600` temp file in it,
   /// syncs it and renames it over `path` (`zygo_core::session_dir::write_atomic`).
@@ -302,11 +304,11 @@ Steps:
   }
   ```
 
-- [ ] 16. In `state.rs`, add the identity functions: a private `fn valid_identity(s: &str) -> bool` (exactly 32 bytes, each `0-9` or `a-f`); `identity` reads `sp.identity` as text: `NotFound` → `Ok(None)`; the text without one trailing `\n` passes `valid_identity` → `Ok(Some(text))`; else `Err(io::Error::new(io::ErrorKind::InvalidData, "mail/sync/identity is not 32 lower-case hex characters"))`; any other read error is returned. `make_identity`: `if let Some(v) = identity(sp)? { return Ok(v) }`, then `let v = format!("{:032x}", rand::random::<u128>());`, `write_atomic(&sp.identity, v.as_bytes())?`, `Ok(v)`. Doc comments cite S§5 Identity and S§7.5 (random, `0600`, per workspace, not a secret; made at the first sync; `--new-identity` deletes the file first).
+- [x] 16. In `state.rs`, add the identity functions: a private `fn valid_identity(s: &str) -> bool` (exactly 32 bytes, each `0-9` or `a-f`); `identity` reads `sp.identity` as text: `NotFound` → `Ok(None)`; the text without one trailing `\n` passes `valid_identity` → `Ok(Some(text))`; else `Err(io::Error::new(io::ErrorKind::InvalidData, "mail/sync/identity is not 32 lower-case hex characters"))`; any other read error is returned. `make_identity`: `if let Some(v) = identity(sp)? { return Ok(v) }`, then `let v = format!("{:032x}", rand::random::<u128>());`, `write_atomic(&sp.identity, v.as_bytes())?`, `Ok(v)`. Doc comments cite S§5 Identity and S§7.5 (random, `0600`, per workspace, not a secret; made at the first sync; `--new-identity` deletes the file first).
 
-- [ ] 17. In `state.rs`, add `PublicCache` and `State` with the derives and `#[serde(default)]` of Produces, each field documented with its spec source (S§8.2 cache: `url_sha256` = SHA-256 hex of each URL without user info, `verdict`, `at` = Unix seconds of the injected clock; S§8.3 `last_ok`, `last_error` = check name only; S§7.5 `pushed`, `pending`; S§6.6 `ci_note_shown`). `load`: `fs::read(&sp.state).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()`. `save`: `write_atomic(&sp.state, &serde_json::to_vec_pretty(s).map_err(io::Error::other)?)`.
+- [x] 17. In `state.rs`, add `PublicCache` and `State` with the derives and `#[serde(default)]` of Produces, each field documented with its spec source (S§8.2 cache: `url_sha256` = SHA-256 hex of each URL without user info, `verdict`, `at` = Unix seconds of the injected clock; S§8.3 `last_ok`, `last_error` = check name only; S§7.5 `pushed`, `pending`; S§6.6 `ci_note_shown`). `load`: `fs::read(&sp.state).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()`. `save`: `write_atomic(&sp.state, &serde_json::to_vec_pretty(s).map_err(io::Error::other)?)`.
 
-- [ ] 18. In `state.rs`, add `imported_load` and `imported_append`. Bodies (the torn-line rule, S§8.5):
+- [x] 18. In `state.rs`, add `imported_load` and `imported_append`. Bodies (the torn-line rule, S§8.5):
   ```rust
   /// S§8.5: each ULID in the imported log. Only `\n`-ended lines count: the bytes after the last `\n` are a torn
   /// entry from a crash and are ignored; a line that is not a ULID is skipped. No file: an empty set.
@@ -347,11 +349,11 @@ Steps:
   }
   ```
 
-- [ ] 19. In `state.rs`, add the marks: `mark_again` = `write_atomic(&sp.again, b"")` (S§8.3 step 2); `take_again` = `fs::remove_file(&sp.again)`: `Ok` → `Ok(true)`, `NotFound` → `Ok(false)`, other error returned (S§8.3 steps 4 and 17; the holder clears and looks with one call); `read_last_start` = `fs::read_to_string(&sp.last_start).ok()?.trim().parse::<u64>().ok()`; `write_last_start` = `write_atomic(&sp.last_start, unix.to_string().as_bytes())` (S§8.4: its own file, atomic, the hook path is its only writer). The `use` lines: `std::collections::{BTreeMap, HashSet}`, `std::fs::{self, OpenOptions}`, `std::io::{self, Read, Seek, SeekFrom, Write}`, `std::path::{Path, PathBuf}`, `serde::{Deserialize, Serialize}`, `ulid::Ulid`, `zygo_core::paths::Paths`.
+- [x] 19. In `state.rs`, add the marks: `mark_again` = `write_atomic(&sp.again, b"")` (S§8.3 step 2); `take_again` = `fs::remove_file(&sp.again)`: `Ok` → `Ok(true)`, `NotFound` → `Ok(false)`, other error returned (S§8.3 steps 4 and 17; the holder clears and looks with one call); `read_last_start` = `fs::read_to_string(&sp.last_start).ok()?.trim().parse::<u64>().ok()`; `write_last_start` = `write_atomic(&sp.last_start, unix.to_string().as_bytes())` (S§8.4: its own file, atomic, the hook path is its only writer). The `use` lines: `std::collections::{BTreeMap, HashSet}`, `std::fs::{self, OpenOptions}`, `std::io::{self, Read, Seek, SeekFrom, Write}`, `std::path::{Path, PathBuf}`, `serde::{Deserialize, Serialize}`, `ulid::Ulid`, `zygo_core::paths::Paths`.
 
-- [ ] 20. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync --test state`; pass = all 11 tests pass (steps 2 to 12), with no warning from `zygo-mail-sync`.
+- [x] 20. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync --test state`; pass = all 11 tests pass (steps 2 to 12), with no warning from `zygo-mail-sync`.
 
-- [ ] 21. In `docs/specs/2026-11-20-workspaces-design.md` W§7.1, rewrite the table to its final text by inserting two rows right after the row `` | `…/<id>/errors.log` | One line per failed hook or snapshot write. At most 64 KiB. | ``:
+- [x] 21. In `docs/specs/2026-11-20-workspaces-design.md` W§7.1, rewrite the table to its final text by inserting two rows right after the row `` | `…/<id>/errors.log` | One line per failed hook or snapshot write. At most 64 KiB. | ``:
   ```
   | `…/<id>/mail/outbox/` | Messages to remote addresses that wait for a push; `refused/` holds the ones the secret pass refused, `tmp/` partial writes (mail sync design S§5, S§8.3 step 11). Folders `0700`, files `0600`. |
   | `…/<id>/mail/sync/` | Mail sync state (mail sync design S§15): `identity` (S§7.5), `state.json` and `members.json` (S§8.3, S§7.3), `imported` and `incoming/` (S§8.5), `lock` and `again` (S§8.3), `last_start` (S§8.4). Folders `0700`, files `0600`. |
@@ -365,8 +367,9 @@ Steps:
   | 2026-11-24 | W§7.1 | author's call (node MS-5) | Mail sync design S§16 row W§7.1: the sync keeps its state in `mail/outbox/` and `mail/sync/` and its side-branch worktree in the cache root `$HOME/.cache/zygo/workspaces/<id>/mail-sync/`. |
   ```
 
-- [ ] 22. Check the spec edit: `grep -c 'mail/outbox/\|mail/sync/\|/mail-sync/' docs/specs/2026-11-20-workspaces-design.md` → 4 (three table rows and the change-log row; 0 before the edit); `git diff --stat docs/specs/2026-11-20-workspaces-design.md` → 4 insertions, 0 deletions.
+- [x] 22. Check the spec edit: `grep -c 'mail/outbox/\|mail/sync/\|/mail-sync/' docs/specs/2026-11-20-workspaces-design.md` → 4 (three table rows and the change-log row; 0 before the edit); `git diff --stat docs/specs/2026-11-20-workspaces-design.md` → 4 insertions, 0 deletions.
 
-- [ ] 23. Run the acceptance and the rest: `env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync --test state && env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync`; pass = all tests pass, `git_builder` among them. Then `env -u ZYGO_SESSION_DIR cargo build --workspace --locked`; pass = it builds with no warning from `zygo-mail-sync`.
+- [x] 23. Run the acceptance and the rest: `env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync --test state && env -u ZYGO_SESSION_DIR cargo test -p zygo-mail-sync`; pass = all tests pass, `git_builder` among them. Then `env -u ZYGO_SESSION_DIR cargo build --workspace --locked`; pass = it builds with no warning from `zygo-mail-sync`.
 
-- [ ] 24. Commit `crates/zygo-mail-sync/src/state.rs`, `crates/zygo-mail-sync/tests/state.rs` and `docs/specs/2026-11-20-workspaces-design.md` with the message `MS-5: sync state files: paths, identity, state.json, imported log, marks`, then a blank line, then the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementing brief, each on its own line. No attribution lines.
+- [x] 24. Commit `crates/zygo-mail-sync/src/state.rs`, `crates/zygo-mail-sync/tests/state.rs` and `docs/specs/2026-11-20-workspaces-design.md` with the message `MS-5: sync state files: paths, identity, state.json, imported log, marks`, then a blank line, then the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementing brief, each on its own line. No attribution lines.
+  Difference: the commit also holds this node file (the ticked plan and these notes), as the implementing brief lists it among the files.
