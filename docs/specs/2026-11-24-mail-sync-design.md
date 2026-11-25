@@ -261,7 +261,7 @@ Why no wakeup is lost: each starter writes the mark (step 2) before it tries the
 
 The second and later passes have their own 120 s deadline. A sync runs passes while marks keep coming; it ends at the first look that finds no mark.
 
-`mail/sync/state.json` records `last_ok`, `last_error` (check name only), the public-check cache, and the own blob ids, for `zygo mail ls`, S§8.2 and S§7.5.
+`mail/sync/state.json` records `last_ok`, `last_error` (check name only), the public-check cache, and the own blob ids, for `zygo mail ls`, S§8.2 and S§7.5. One rule set holds at read and at write: the value rules that keep URLs, credentials and content out of the file (S-C2, W-C7), as the writer applies them (`check_state`, `crates/zygo-mail-sync/src/state.rs`). At read, a missing file is the empty state; a link, a read error, a file that is not a JSON object, or a file that holds any value outside those rules is an error, never a default, so the S§7.5 twin check never runs on a guessed state; the file is left as it is. At write, a value outside those rules is refused and nothing is written. Thus every state that is read can be written back.
 
 Reasons **(author)**:
 
@@ -552,3 +552,4 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 ## Change log
 
 - 2026-11-24 · S-C4 · author's call (MS-2 review) · fetch.writeCommitGraph=true in user config made a sync fetch write commit-graph files, against S-G2; the override list gains -c fetch.writeCommitGraph=false.
+- 2026-11-25 · S§8.3 · author's call · load/save disagree on a bad entry: a state.json with one value outside the rules loaded, and then every later save failed, so the pass could never write its state again; the read now refuses such a file as it refuses a non-object.

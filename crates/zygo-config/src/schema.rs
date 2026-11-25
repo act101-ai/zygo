@@ -670,18 +670,44 @@ impl Default for UpdateConfig {
     }
 }
 
+/// `[mail.workspace.<name>]` (mail sync design S§11): the per-workspace mail sync keys. `sync` turns sync on for that
+/// workspace; `remote` defaults to `origin`; `host` overrides `[mail] host`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailSyncWorkspace {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+}
+
 /// `[mail]` (workspace mail design M§11). User config only; `keep` and `wake_gap` in the form [`parse_duration`] reads.
+/// `host`, `sync_gap` and `workspace` are mail sync design S§11; `sync_gap` takes `<n>s`, `<n>m` or `<n>h`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MailConfig {
     pub keep: String,
     pub max_unread: u32,
     pub wake_gap: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub sync_gap: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub workspace: BTreeMap<String, MailSyncWorkspace>,
 }
 
 impl Default for MailConfig {
     fn default() -> Self {
-        MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into() }
+        MailConfig {
+            keep: "30d".into(),
+            max_unread: 500,
+            wake_gap: "30s".into(),
+            host: None,
+            sync_gap: "60s".into(),
+            workspace: BTreeMap::new(),
+        }
     }
 }
 
@@ -701,6 +727,73 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
     }
     let n: u64 = std::str::from_utf8(digits).ok()?.parse().ok()?;
     n.checked_mul(scale).map(Duration::from_secs)
+}
+
+/// The mail host form (mail sync design S§5, S§11): `^[a-z0-9][a-z0-9-]{0,31}$`.
+pub fn valid_mail_host(s: &str) -> bool {
+    let b = s.as_bytes();
+    let lower_digit = |c: &u8| c.is_ascii_lowercase() || c.is_ascii_digit();
+    matches!(b.first(), Some(c) if lower_digit(c))
+        && b.len() <= 32
+        && b[1..].iter().all(|c| lower_digit(c) || *c == b'-')
+}
+
+/// The mail sync branch form (mail sync design S§11): `^zygo/[a-z0-9][a-z0-9-]{0,31}$`.
+pub fn valid_sync_branch(s: &str) -> bool {
+    s.strip_prefix("zygo/").is_some_and(valid_mail_host)
+}
+
+/// `[mail] sync_gap` (mail sync design S§11, S§8.4): [`parse_duration`] without the `d` unit.
+pub(crate) fn parse_sync_gap(s: &str) -> Option<Duration> {
+    if s.ends_with('d') {
+        return None;
+    }
+    parse_duration(s)
+}
+
+/// The mail sync settings of one workspace, resolved by [`sync_for`] (mail sync design S§11, S§7.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncSettings {
+    pub branch: String,
+    pub remote: String,
+    pub host: String,
+    pub sync_gap: Duration,
+}
+
+/// Why [`sync_for`] gives no mail sync for a workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncOff {
+    /// No `[mail.workspace.<name>] sync` key (S-G6).
+    NotOn,
+    /// Neither the workspace `host` nor `[mail] host` is set (S§7.1).
+    NoHost,
+    /// The host in force fails [`valid_mail_host`].
+    BadHost,
+    /// `sync` fails [`valid_sync_branch`].
+    BadBranch,
+    /// `[mail] sync_gap` is not `<n>s`, `<n>m` or `<n>h`.
+    BadGap,
+}
+
+/// The mail sync settings of workspace `ws_name` (mail sync design S§11, S§7.1). Checks in order: not on, branch form,
+/// host present (workspace `host`, else `[mail] host`), host form, `sync_gap` form. `remote` defaults to `origin`.
+pub fn sync_for(cfg: &Config, ws_name: &str) -> Result<SyncSettings, SyncOff> {
+    let ws = cfg.mail.workspace.get(ws_name).ok_or(SyncOff::NotOn)?;
+    let branch = ws.sync.as_ref().ok_or(SyncOff::NotOn)?;
+    if !valid_sync_branch(branch) {
+        return Err(SyncOff::BadBranch);
+    }
+    let host = ws.host.as_ref().or(cfg.mail.host.as_ref()).ok_or(SyncOff::NoHost)?;
+    if !valid_mail_host(host) {
+        return Err(SyncOff::BadHost);
+    }
+    let sync_gap = parse_sync_gap(&cfg.mail.sync_gap).ok_or(SyncOff::BadGap)?;
+    Ok(SyncSettings {
+        branch: branch.clone(),
+        remote: ws.remote.clone().unwrap_or_else(|| "origin".into()),
+        host: host.clone(),
+        sync_gap,
+    })
 }
 
 /// The loadout that needs no config (workspaces design W§11, AU45): one `claude-code` pane in the main worktree.
