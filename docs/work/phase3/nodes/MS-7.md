@@ -47,7 +47,7 @@ Produces (this node):
 
 ### Steps
 
-- [ ] 1. Write the failing tests in the new file `crates/zygo-mail-sync/tests/secret.rs`. Secret strings are built with `concat` so no literal key is in the repository (as `crates/zygo-redact/tests/secret.rs:168`). Shared helpers:
+- [x] 1. Write the failing tests in the new file `crates/zygo-mail-sync/tests/secret.rs`. Secret strings are built with `concat` so no literal key is in the repository (as `crates/zygo-redact/tests/secret.rs:168`). Shared helpers:
 
   ```rust
   //! MS-7: the secret pass on one message (S§8.6, S-G4, S§19 #4 and #5). No test depends on wall-clock time.
@@ -198,8 +198,8 @@ Produces (this node):
   ```
 
   The last test only proves that `check` is wired to the store read and the redact run; it reads the real `ACT_CONFIG_DIR` location and never writes there.
-- [ ] 2. Run `cargo test -p zygo-mail-sync --test secret` and see it fail to compile: `unresolved imports zygo_mail_sync::secret::{check, check_with, Outcome}`.
-- [ ] 3. Implement `crates/zygo-mail-sync/src/secret.rs`: module doc `//! The secret pass on one message before it leaves the machine (S§8.6, S-G4).`; the `Outcome` enum and the two functions with the exact signatures in Interfaces; `pub fn check(..) -> Outcome { check_with(msg, redaction, main_root, policy, &Lookup::system()) }`. Body of `check_with`, in this order (S§8.6 "Pattern set", "Run", "Three results"):
+- [x] 2. Run `cargo test -p zygo-mail-sync --test secret` and see it fail to compile: `unresolved imports zygo_mail_sync::secret::{check, check_with, Outcome}`.
+- [x] 3. Implement `crates/zygo-mail-sync/src/secret.rs`: module doc `//! The secret pass on one message before it leaves the machine (S§8.6, S-G4).`; the `Outcome` enum and the two functions with the exact signatures in Interfaces; `pub fn check(..) -> Outcome { check_with(msg, redaction, main_root, policy, &Lookup::system()) }`. Body of `check_with`, in this order (S§8.6 "Pattern set", "Run", "Three results"):
 
   ```rust
   let stored = match read_with(main_root, lookup) {
@@ -221,7 +221,7 @@ Produces (this node):
   ```
 
   No error text, store value or message text goes into `Outcome` or any output (S-C2, C3).
-- [ ] 4. Run `cargo test -p zygo-mail-sync --test secret` and see all 12 tests pass.
-- [ ] 5. Run `cargo build -p zygo-mail-sync` and `cargo test -p zygo-mail-sync` and see both pass (the MS-2 `git_builder` tests still pass).
-- [ ] 6. Commit `crates/zygo-mail-sync/src/secret.rs` and `crates/zygo-mail-sync/tests/secret.rs` with subject `MS-7: secret pass on one message` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:MS-7`.
-- [ ] 7. Verify: run `cargo test -p zygo-mail-sync --test secret` (the Acceptance command) and see all pass; run `git diff --exit-code origin/phase-3 -- crates/zygo-redact` and see exit 0 (zygo-redact source unchanged); run `git diff --name-only origin/phase-3...HEAD` and see only `crates/zygo-mail-sync/src/secret.rs`, `crates/zygo-mail-sync/tests/secret.rs` and this node file.
+- [x] 4. Run `cargo test -p zygo-mail-sync --test secret` and see all 12 tests pass.
+- [x] 5. Run `cargo build -p zygo-mail-sync` and `cargo test -p zygo-mail-sync` and see both pass (the MS-2 `git_builder` tests still pass).
+- [x] 6. Commit `crates/zygo-mail-sync/src/secret.rs` and `crates/zygo-mail-sync/tests/secret.rs` with subject `MS-7: secret pass on one message` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:MS-7`.
+- [x] 7. Verify: run `cargo test -p zygo-mail-sync --test secret` (the Acceptance command) and see all pass; run `git diff --exit-code origin/phase-3 -- crates/zygo-redact` and see exit 0 (zygo-redact source unchanged); run `git diff --name-only origin/phase-3...HEAD` and see only `crates/zygo-mail-sync/src/secret.rs`, `crates/zygo-mail-sync/tests/secret.rs` and this node file.
