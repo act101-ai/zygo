@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
@@ -401,5 +400,6 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-12 DONE: merged 6e1b9387 5ff2466e; clean removes CSI, 8-bit CSI, OSC (OSC 8 keeps text) and CR overwrites, line count kept. Review F4 (`ESC ( B` leaves `B`) and F5 (`ESC ESC [31m` leaves `[31m`) to FX-16; O§7.4 rewritten, pending ratification · PR #132 |
 | 2026-11-25 | ML-17 DONE: PM1-PM3 verified live (Claude Code 2.1.332, OpenCode 1.18.16, macOS); fixtures and premises rows added; live-checks entry added; check-premises has no PM arm (needs operator approval); run by the lead under the operator's instruction · PR #134 |
 | 2026-11-25 | DR-15 DONE: PD2 and PD3 verified live on Claude Code 2.1.332 (mock upstream, stub zygo MCP); review fixes: chunked delivery, raw-byte check, limits stated; run by the lead under the operator's instruction · PR #133 |
+| 2026-11-25 | SX-9 DONE: live premises ST1-ST4 verified; review findings F1-F3 fixed in round 2; OpenCode ran on glm/Z.AI, not OpenRouter (deviation in nodes/SX-9.md) · PR #135 |
 | 2026-11-25 | OS-27 DONE: 22 shaping-off goldens (19 hook_stdout, 3 stored); review F1–F4, F6 fixed; F5 rejected (.gitattributes outside node files, no golden holds `\r`) · PR #140 |
 | 2026-11-25 | OS-13 DONE: dedup step folds runs of equal consecutive lines, lossless. Review round 2 added 5 edge-input tests; F1 (expand count limit) rejected, needs an operator-approved threshold; F3 rejected · PR #139 |
