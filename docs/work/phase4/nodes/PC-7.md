@@ -8,7 +8,7 @@
 
 ## Planning notes
 
-- Each row's date, result and paths come from "Observed" in `nodes/PC-3.md` to `nodes/PC-6.md`; PC1 to PC16 map to those nodes as their contracts list.
+- Each row's date, result and paths come from the `- PCn: <result> <date>: <paths>` lines of "Observed" in `nodes/PC-3.md` to `nodes/PC-6.md`; PC1 to PC16 map to those nodes as their contracts list. The PC16 row states the scope recorded in PC-6 (the client default against the mock; the measurement under a zygo launch is P4-9 and P4-11).
 - `LC-CX1` is owner-run: its row is `not run: owner-run (K§6.3.7 PC16)` until the operator runs it (`docs/live-checks.md` "Method": live checks run by hand only).
 - The "Method" section of `docs/premises.md` gains the Codex lines: `CODEX_HOME`, `HTTPS_PROXY` at the mock, no login (K§6.3.7).
 - Phase 3 adds a section to `docs/live-checks.md` (K§6.9). The two edits are in different places; a conflict at the phase 3 merge is resolved by keeping both.
