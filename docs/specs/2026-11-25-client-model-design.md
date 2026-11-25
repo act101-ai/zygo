@@ -1,11 +1,11 @@
 # zygo: client model, conformance score, Codex and update notices — design
 
-**Status:** proposed 2026-11-25
+**Status:** approved by the operator 2026-11-25 (instruction to plan and build)
 **Date:** 2026-11-25
-**Release:** phase 4 (roadmap items P4-1 to P4-7, `docs/roadmap/phase-4.md`)
+**Release:** phase 4 (roadmap items P4-1 to P4-11, `docs/roadmap/phase-4.md`)
 **Base specs:** `docs/specs/2026-11-18-zygo-design.md` (`§n`; C3, C5, C6, C9, §3, §7.6, §8, §10.2, §12.2). Also cited: `docs/specs/2026-11-20-workspaces-design.md` (`W§n`, `AUn`), `docs/specs/2026-11-21-auto-update-design.md` (`U`), `docs/specs/2026-11-21-statusline-hud-design.md` (`H§n`), `docs/specs/2026-11-24-decision-records-design.md` (the DDR rule, P3-8). `K§n` is a section of this document.
 
-Each decision has a mark. **(operator)**: the operator made the decision (the request of 2026-11-25 and the two additions of the same day, quoted in K§1). **(author)**: the author made it; the operator can change it before approval. Code references are `file:line` at commit `bf3726bd` (branch `phase-4`, equal to `main`).
+Each decision has a mark. **(operator)**: the operator made the decision (the request of 2026-11-25, the two additions of the same day, and the decisions of 2026-11-25 on approval and row order, quoted in K§1). **(lead)**: the lead ruled it after the audit of this spec (2026-11-25). **(author)**: the author made it; the operator can change it. Code references are `file:line` at commit `bf3726bd` (branch `phase-4`, equal to `main`).
 
 ---
 
@@ -26,6 +26,8 @@ Two additions of 2026-11-25 **(operator)**:
 > "we need to produce a feature matrix, a rollup, and a score for each client."
 
 > "we want background update checks and post to the hud when there's an update."
+
+Decisions of 2026-11-25 **(operator)**: the spec is approved, with the instruction to plan and build. Row order: (a) one plan for the rows that start now (conformance, Codex premises, proxy Responses route); (b) a plan for the client contract; (c) the client-contract build, after phase 3 merges; (d) the Codex client gets its own design document, designed against the built contract; (e) a plan for the Codex client; (f) its build; (g) the background update row is opportunistic and is dispatched in parallel as soon as phase 3 is complete. K§6.9 and the roadmap give the rows.
 
 On the updates of the wrapped clients **(operator)**:
 
@@ -63,7 +65,7 @@ Groundwork that exists: `RequestCtx.dialect` is "the client's dialect" (`crates/
 - **K-G5** The generator gives three outputs for each client: a feature matrix, a rollup and a score (K§6.2.6) **(operator)**. They are in `docs/conformance.md` and in a machine-readable `docs/conformance.json`. CI fails when either file is out of date.
 - **K-G6** `zygo codex` launches Codex CLI through the zygo proxy, with the zygo session features that Codex allows. Each gap is a graded criterion.
 - **K-G7** The proxy serves the OpenAI Responses API as a client dialect, with streaming, to each upstream dialect.
-- **K-G8** A live zygo session checks for a new zygo release in the background and shows it on the HUD until the running version is current **(operator)**. For each client, exactly one party tells the user about a new client release: the client or zygo **(operator)** (K§6.5).
+- **K-G8** A live zygo session checks for a new zygo release in the background and shows it on the HUD until the running version is current **(operator)**. For client releases, zygo never doubles a client's own notice by default **(operator; wording by the lead)**: zygo's flag is off for a client that announces its own updates. A user who turns off the client's own notice can turn on zygo's flag for that client (K§6.5.4).
 
 ## 3. Non-goals
 
@@ -71,7 +73,7 @@ Groundwork that exists: `RequestCtx.dialect` is "the client's dialect" (`crates/
 - The Grok CLI and Pi **(author)**.
 - A change to a capability standard that makes a client score higher **(author)**. The split of a standard into criteria (K§6.2.2) restates the standard; it adds no requirement.
 - The `POST /openai/v1/chat/completions` client route and the `openai-chat` client pair of §7.6 v2. Codex 0.172.0 accepts only `wire_api = "responses"` (K§8, alternative 7). The route keeps its `404 zygo_route_not_in_v1` **(author)**.
-- A change of behavior for Claude Code or OpenCode in P4-4 (K-D3).
+- A change of behavior for Claude Code or OpenCode in P4-6 (K-D3).
 - An install during a session. A background check never prompts and never installs (U "Prompt": hooks run the absolute binary path; at `bf3726bd` that is `crates/zygo-launch/src/claude_code.rs:76` (`current_exe`) and `:463`, `:528` (the quoted path in each hook command); U's `:38` is stale).
 - A change to the start check of the auto-update design (U). It keeps its prompt, its skips and its 24 h rule.
 
@@ -83,7 +85,7 @@ Groundwork that exists: `RequestCtx.dialect` is "the client's dialect" (`crates/
 - **K-C4** C9: a client has a grade for each criterion before its launcher is built. K-D5 enforces this with the compiler and the conformance test.
 - **K-C5** Tests never run a real `claude`, `opencode` or `codex` binary. Launch tests use the stub agents. No test uses the operator's OpenAI or ChatGPT login, and no step runs `codex login` **(operator rule, project memory; K-D14)**.
 - **K-C6** No CI test measures wall-clock time or has a deadline **(project rule)**.
-- **K-C7** P4-4 changes no behavior. The proof is the existing test suites, which pass with no edit except moved paths and imports (K-D3).
+- **K-C7** P4-6 changes no behavior. The proof is the existing test suites. No assertion and no expected value changes. Test edits are limited to moved paths, imports, type paths and constructors (`Agent`, `PaneKind`, `Plugins`: 64 `PaneKind::` uses under `crates/*/tests`, `Plugins::` at `crates/zygo-launch/tests/opencode.rs:239`, `:853`, `:1003`, `:1048`). Each edited test line is in the PR and is checked at the review gate and by `scripts/check-test-edits.sh` (K§11) **(lead)**.
 - **K-C8** The minimum Codex version is 0.172.0 **(author)**.
 
 ## 5. Terms
@@ -102,9 +104,9 @@ Groundwork that exists: `RequestCtx.dialect` is "the client's dialect" (`crates/
 
 ## 6. Decided approach
 
-### 6.1 Client contract (P4-4)
+### 6.1 Client contract (P4-6)
 
-The `file:line` sites below are at `bf3726bd`. P4-4 takes the inventory again at its own base commit (K§6.9).
+The `file:line` sites below are at `bf3726bd`. P4-6 takes the inventory again at its own base commit (K§6.9).
 
 #### 6.1.1 Layers and crate layout
 
@@ -146,13 +148,15 @@ Client facts are read in each of these crates. Only `zygo-core` is below all of 
                                    tool-name parse, harness spans)
 ```
 
-- **Lower layer** `crates/zygo-core/src/client/`. `mod.rs` holds `Agent` (moved from `lib.rs:20-53`; `zygo_core::Agent` stays as a re-export), `Agent::ALL`, `Agent::spec() -> &'static ClientSpec`, and `FromStr`/`as_str` built from the specs. Each `<client>.rs` holds one `ClientSpec` constant and the pure functions it points to. These functions take and give `serde_json::Value`, `&str` and `&[String]` only, so `zygo-core` needs no new dependency.
-- **Upper layer** `crates/zygo-launch/src/client/`. `mod.rs` holds `adapter_for(agent, zygo) -> Box<dyn AgentAdapter>`. Each `<client>/` folder holds that client's adapter, moved from `claude_code.rs` and `opencode.rs`, and its assets (`assets/opencode-plugin.js` moves to `client/opencode/`).
+- **Lower layer** `crates/zygo-core/src/client/`. `mod.rs` holds the client kind, `Agent::ALL`, `Agent::spec() -> &'static ClientSpec`, and `FromStr`/`as_str` built from the specs. Each `<client>.rs` holds one `ClientSpec` constant and the pure functions it points to. These functions take and give `serde_json::Value`, `&str` and `&[String]` only, so `zygo-core` needs no new dependency.
+- **The kind is opaque outside `zygo_core::client` (compiler enforcement)** **(lead)**. `Agent` becomes a public struct around a private enum (`pub struct Agent(Kind)`; `enum Kind` is private to the module). Outside the module there is no variant path and no per-client constant. Code gets a client from `Agent::ALL`, from `Agent::from_str(id)` (config, environment, state files, tests) or from a value it was given. `Agent == Agent` compares two clients; nothing outside the module can name one. So a branch on a specific client does not compile outside the module. The only way left to name a client is its id as a string, and the check of K§6.1.4 covers that. The only matches on `Kind` are in `client/mod.rs`. Serde keeps the id strings, so state files, `ZYGO_AGENT` and the usage store keep their values.
+- **Upper layer** `crates/zygo-launch/src/client/`. `mod.rs` holds `adapter_for(agent, zygo) -> Box<dyn AgentAdapter>` as a table keyed by client id, because it cannot match the private kind. A test fails when a client of `Agent::ALL` has no row or two rows. Each `<client>/` folder holds that client's adapter, moved from `claude_code.rs` and `opencode.rs`, and its assets (`assets/opencode-plugin.js` moves to `client/opencode/`).
 - **CLI shim** `crates/zygo/src/cmd/client/<client>.rs`, moved from `cmd/claude.rs` and `cmd/opencode.rs`. It is the clap options struct and its conversion to `LaunchOpts`. It stays in the binary crate because clap is a dependency of that crate only (`crates/zygo/Cargo.toml:24`).
+- **Stub agent** `crates/zygo-launch/tests/stub_agent/`: each client adds its stub behavior (what it records of its environment, arguments and config files), which the A-21.1 launch test runs.
 
 `Dialect` (`crates/zygo-config/src/schema.rs:182-188`) moves to `zygo-core`, and `zygo-config` re-exports it with the same serde names, so a descriptor can name its proxy dialect **(author)**.
 
-`Agent` keeps its name. A rename to `Client` would touch each of the 35 files and the serialized `ZYGO_AGENT` value (§8.4) for no gain **(author)**.
+`Agent` keeps its name and its serialized ids **(author)**: a rename to `Client` adds churn at each use site for no gain.
 
 #### 6.1.2 The descriptor (`ClientSpec`)
 
@@ -160,13 +164,13 @@ The descriptor answers the concerns that the trait does not cover today. Each co
 
 | # | Concern | Descriptor content | Replaces |
 |---|---|---|---|
-| 1 | Identity and updates | id (`claude-code`), display name, program name, CLI verb, install hint, minimum version (= the pinned version of the grade file), `supported` flag (K-D9), `announces_own_updates` fact and release source (K§6.5.4), status surface (`statusLine` command, or none) | `lib.rs:28-53`, `builtin.rs:50-55` and `data/agents.toml`, `member.rs:688-691`, `config.rs:82-86`, `doctor.rs:192` |
+| 1 | Identity and updates | id (`claude-code`), display name, program name, CLI verb, install hint, minimum version (= the pinned version of the grade file), `supported` flag (K-D9), `announces_own_updates` fact and release source (K§6.5.4), status surface (`statusLine` command, or none) | `lib.rs:28-53`, `builtin.rs:50-55` and `data/agents.toml`, `member.rs:509-514`, `config.rs:82-86`, `doctor.rs:192` |
 | 2 | Hook input | a function that turns the client's hook JSON into the common form (Claude Code: identity) | `hook.rs:23`, `hook_opencode.rs` |
 | 3 | Hook output | a function that renders a common reply (context text, deny, block) in the client's shape | `session_start.rs:42-49`, `workspace.rs:630-643` |
 | 4 | Session text delivery | the mode (at session start by hook; per request by plugin; at launch in config), the model alias table for the alias sentence (§8.6 item 5), whether a prompt can be blocked while stopping | `session_text.rs:83`, `workspace.rs:290`, `:621` |
 | 5 | MCP tool naming | a function from a model-visible tool name to (server, tool); whether the `compact` tool is listed | `zygo-work/src/hooks.rs:369-373`, `zygo-mcp/src/tools/mod.rs:21` |
 | 6 | Plugin delivery form | the form name only; the delivery itself is an adapter method (K§6.1.3) | `launcher.rs:519-547`, `snapshot.rs:264-266`, `adapter.rs:74-77` |
-| 7 | Argument grammar and session flags | the flag table, the subcommand rule, the session-flag names, the insertion point of session arguments, the "bare" rule | `args.rs:356-360`, `:402-406`, `:507`, `:595-611`, `:652-656`, `launcher.rs:733-736`, `member.rs:189`, `:509-514` |
+| 7 | Argument grammar and session flags | the flag table, the subcommand rule, the session-flag names, the insertion point of session arguments, the "bare" rule | `args.rs:356-360`, `:402-406`, `:507`, `:595-611`, `:652-656`, `launcher.rs:733-736`, `member.rs:189`, `:688-691` |
 | 8 | Workspace resume and turn events | the resume kind (pre-assign or capture), whether a config folder is saved for resume (AU61), the turn events that the client gives, the pane-kind id | `member.rs:65`, `:76-79`, `state.rs:209-218`, `up.rs:677-679`, `snapshot.rs:262-264`, `ws.rs:207-245`, `schema.rs:680`, `check.rs:171`, `loadout.rs:328` |
 | 9 | Proxy client facts | the client dialect, the request-class and compaction header names (none for a client without them), whether the window rewrite is armed, the passthrough credential type name, the cache-marker default, the harness span rule for redaction, whether requests carry a per-agent id | `window.rs:131`, `passthrough.rs:33-43`, `schema.rs:468`, `content.rs:262`, `harness.rs:45`, `join.rs:16` |
 | 10 | Compaction | whether the window can change in a live session, and the refusal text when it cannot | `compact.rs:61` |
@@ -182,24 +186,26 @@ The trait keeps its methods (`adapter.rs:20-55`). It gains the behavior that nee
 - `prepare_resume(...)`: the resume preparation of `ws.rs:218-245` (the saved config folder of AU61, the program folder of OpenCode).
 - `env_rows(...)`: the client's set rows, after the common denylist and the descriptor's denylist rows.
 
-#### 6.1.4 The boundary check
+#### 6.1.4 The boundary check **(lead: compiler first; author: the scanner rules)**
 
-A Rust test, `crates/zygo-core/tests/client_boundary.rs`, scans `crates/*/src/**/*.rs` **(author)**. It fails on each of these outside the allowlist:
+With the kind opaque (K§6.1.1), the compiler refuses a branch on a specific client outside `zygo_core::client`. One test, `crates/zygo-core/tests/client_boundary.rs`, covers the one way left: a client named by a string.
 
-- a path `Agent::<Variant>` (a match arm, a comparison, a `matches!`, a construction);
-- a string literal equal to a client id (`"claude-code"`, `"opencode"`, `"codex"`).
+- It parses each `crates/*/src/**/*.rs` file with `syn` (a dev-dependency of `zygo-core`) and walks each token, also the token streams inside macro calls (`format!`, `json!`, `matches!`), so a literal inside a macro is seen. Comments are not tokens, so they are never flagged.
+- It flags each string literal (normal, raw or byte string) whose whole value equals a registered name: each client's id, program name, CLI verb and config folder name, read from `Agent::ALL` at test time. A new client's names are so covered with no edit to the test. A literal that only contains a name (`"zygo claude: …"`, `"Claude attribution"`) is not flagged.
+- Literals are allowed only in the descriptor files `crates/zygo-core/src/client/` (the fields that hold the id, program, verb and folder names), in `crates/zygo-launch/src/client/` and in `crates/zygo/src/cmd/client/`. Each other site reads the descriptor field (for example the OpenCode program folder link of `crates/zygo/src/cmd/ws.rs:282`, `:470`).
+- Skipped: each item with a `#[cfg(test)]` attribute (any item, not only a `mod`), and `crates/*/tests/`.
+- Wire formats are not client branches. A `zygo-proxy` stage that keys on `Dialect` (the usage parse in the tee, the window-rewrite format, cache-marker placement) is allowed. Client policy (`insert_markers.<client>`, redaction spans, which clients get the window rewrite) reads the descriptor (K§6.4.2) **(lead)**.
+- Output: each violation as `file:line:column` and the literal.
 
-The allowlist is: `crates/zygo-core/src/client/`, `crates/zygo-launch/src/client/`, `crates/zygo/src/cmd/client/`, and the one `Cmd` enum and its dispatch in `crates/zygo/src/cmd/mod.rs` (one variant per client is the CLI surface). The scan of a file stops at its first line `#[cfg(test)]` that a `mod` line follows (the repository's form for inline test modules, for example `crates/zygo/src/cmd/member.rs:958`). Files under `crates/*/tests/` are not scanned. The test lists each violation as `file:line`.
-
-### 6.2 Conformance: registry, grades, score, bar (P4-1)
+### 6.2 Conformance: registry, grades, score, bar (P4-2)
 
 #### 6.2.1 Files and owners
 
 | File | Content | Owner (the one writer) |
 |---|---|---|
-| `docs/conformance/capabilities.toml` | the capability registry: id, name, standard text, tier, criteria | edited by hand in a PR; a change of standard text or tier stops for the operator (DDR class, P3-8) |
-| `docs/conformance/<client-id>.toml` | one grade file per client: pinned version, one grade per criterion, one documentation URL per capability, bar exceptions | edited by hand in the PR that changes the client |
-| `docs/conformance.md` | the generated matrix, scores and bar | written only by the generator (K-D10); a hand edit fails the check |
+| `docs/conformance/capabilities.toml` | the capability registry: id, name, standard text, tier, criteria, and the bar exceptions | edited by hand in a PR; a change of standard text, tier or bar exception stops for the operator (DDR class, P3-8) |
+| `docs/conformance/<client-id>.toml` | one grade file per client: pinned version, one grade per criterion, one documentation URL per capability; no bar exception | edited by hand in the PR that changes the client |
+| `docs/conformance.md`, `docs/conformance.json` | the generated feature matrix, rollup and score | written only by the generator (K-D10); a hand edit fails the check |
 
 #### 6.2.2 Registry form
 
@@ -242,79 +248,86 @@ The migration of A-1 to A-21, WA-1 and WA-2 **(author)**. Each criterion restate
 | A-21 Tests | core | .1 A stub-agent launch test on Linux, macOS and Windows asserts the environment, the flags and the generated config. .2 A premise test finds each setting key, flag and environment row that zygo writes in the pinned `--help`, schema or capture. |
 | WA-1 Resume | standard | .1 zygo has the client's session id (pre-assigned or captured) before the first turn ends. .2 A resume by that id reopens the conversation in a new zygo session. |
 | WA-2 Turn signals | standard | .1 Turn start. .2 Turn end, also for a turn that the user interrupts. .3 Subagent start, for each subagent. .4 Subagent end, for each subagent. .5 A dispatch block can refuse a subagent call. |
-| A-22 Update notices (new, K-D5 union rule: K§6.5; added to the registry by P4-7, with the feature) | extra | .1 A newer zygo release that the background check found shows on the client's status surface, or in `zygo status` and the launcher's exit line when the client has no surface. .2 The descriptor's `announces_own_updates` fact is measured by a premise under a zygo launch. .3 A newer client release reaches the user from exactly one party: the client (fact true) or zygo (flag on). |
+| A-22 Update notices (new, K-D5 union rule: K§6.5; added to the registry by P4-10; A-22.2 and A-22.3 are `not-met` with a reason until P4-11) | extra | .1 A newer zygo release that the background check found shows on the client's status surface, or in `zygo status` and the launcher's exit line when the client has no surface. .2 The descriptor's `announces_own_updates` fact is measured by a premise under a zygo launch. .3 A newer client release reaches the user from exactly one party: the client (fact true) or zygo (flag on). |
 
 A-22 is `extra`, not part of A-13 (core) **(author)**: the operator named A-13 as an example, but a notice is not needed to run a session, and a core criterion that waits for a live check would put both shipped clients below the bar.
 
-#### 6.2.3 Grade file form
+#### 6.2.3 Grade file and evidence form
 
 ```toml
-client = "codex"                     # an Agent id
-name = "Codex"                       # the display name in docs/premises.md and docs/live-checks.md headers
-version = "0.172.0"                  # the pinned minimum
+client = "claude-code"               # a client id of Agent::ALL
+name = "Claude Code"                 # the display name in the docs/premises.md and docs/live-checks.md headers
+version = "2.1.328"                  # the pinned minimum
 
 [[cell]]
 capability = "A-1"
-url = "https://…"                    # the client's documentation page for the feature
+url = "https://code.claude.com/docs/en/llm-gateway"
 
 [[grade]]
-criterion = "A-1.1"
+criterion = "A-1.2"
 status = "met"
-evidence = ["premise:PC1", "fixture:fixtures/codex/requests/pc1-0001.json",
-            "test:crates/zygo-launch/tests/stub_launch.rs::codex_base_url"]
+evidence = ["premise:docs/premises.md#Q7", "test:crates/zygo-launch/tests/stub_launch.rs::<fn>"]
 
 [[grade]]
-criterion = "A-15.1"
-status = "not-met"
-reason = "tool hooks carry no agent id, so the main loop cannot be told from a subagent"
-
-[[bar_exception]]
 criterion = "A-1.4"
-reason = "…"
+status = "not-met"
+reason = "PowerShell needs & before a quoted path; zygo writes the double-quoted form"
+```
+
+A bar exception is a registry entry, never a grade-file entry **(lead)**. A registry change already stops for the operator.
+
+```toml
+# docs/conformance/capabilities.toml
+[[bar_exception]]
+client = "claude-code"
+criterion = "A-1.4"
+reason = "Windows without Git Bash runs the key helper in PowerShell (docs/conformance.md, Windows shell note)"
 approved = "operator 2026-11-25, docs/specs/2026-11-25-client-model-design.md K-D18"
 ```
 
-Evidence kinds **(author)**:
+Evidence kinds **(author; lead rulings I4, I5)**:
 
-- `test:<path>::<fn>`: the file exists under `crates/` and holds `fn <fn>(` with `#[test]` or `#[tokio::test]` within the 3 lines above it. The path makes the check exact and cheap.
+- `test:<path>::<fn>`: the file exists under `crates/` and, parsed with `syn`, holds `fn <fn>` with `#[test]`, `#[tokio::test]` or `#[tokio::test(…)]` among its attributes. A test with `#[ignore]` (any form) is not evidence. A test under a `#[cfg(…)]` (on the function or an enclosing module) counts, and the generator records its platforms (for example `unix`, `windows`) next to the evidence. Timing tests are never in CI (project rule), so a criterion that only an ignored or timing test proves uses premise evidence.
 - `fixture:<path>`: a regular file under `fixtures/`, not a symbolic link, more than 2 bytes and not `{}` or `[]` (the `nontrivial` rule of `scripts/check-premises.sh:20-27`).
-- `premise:<id>`: exactly one row `| <id> |` in `docs/premises.md` or `docs/live-checks.md`, with result `verified`.
+- `premise:<file>#<id>`: `<file>` is `docs/premises.md` or `docs/live-checks.md`; that file has exactly one row `| <id> |`; its result is exactly `verified` (`docs/premises.md`) or `pass` (`docs/live-checks.md`). Any other result (`failed`, `observed`, `not run: …`) does not count. The file name removes id collisions between the two files.
 
 #### 6.2.4 Derived values
 
-- **Cell (K-D7).** All applicable criteria met: `full`. Some met: `partial`, and the text of each unmet criterion is the "what is missing". None met: `none`, and the reasons are the "why". All criteria `n/a`: the cell is `n/a` and leaves the score.
-- **Score (K-D8).** Weight: core 3, standard 2, extra 1. Cell value = met ÷ applicable criteria. Score = Σ(weight × cell value) ÷ Σ(weight), over cells with one applicable criterion or more, as a percent rounded down to an integer. The same formula per tier gives the breakdown.
-- **Bar (K-D9).** A client meets the bar when each criterion of each core capability is `met`, or is `not-met` with a `bar_exception`. A core criterion is never `n/a`. A **failing core capability** is a core capability with a criterion that is `not-met` and has no exception.
-- **Rollup.** For each client, for each tier and for the total: the count of `full`, `partial`, `none` and `n/a` cells; the count of criteria `met` and of criteria applicable (not `n/a`); and the bar verdict, `meets bar` or `below bar` with the id of each failing core capability.
+- **Cell (K-D7).** Cell value = criteria met ÷ applicable criteria (criteria that are not `n/a`). All applicable criteria met: `full`. Some met: `partial`, and the text of each unmet criterion is the "what is missing". None met: `none`, and the reasons are the "why". All criteria `n/a`: the cell is `n/a`.
+- **Score (K-D8)** **(lead)**. Tier score = the mean of the cell values over the tier's cells that have one applicable criterion or more. A tier with no such cell shows `n/a` and leaves the weights. Total score = Σ(weight × tier score) ÷ Σ(weight) over the tiers that are not `n/a`; weights core 3, standard 2, extra 1. Each score shows as a percent rounded down to an integer; the rounding is the last step, on unrounded values.
+- **Bar (K-D9).** A client meets the bar when each criterion of each core capability is `met`, or is `not-met` with a registry bar exception for that client. A core criterion is never `n/a`. A **failing core capability** is a core capability with a criterion that is `not-met` and has no exception.
+- **Rollup.** For each client, for each tier and for the total: the count of `full`, `partial`, `none` and `n/a` cells; the count of criteria `met` and of criteria applicable; and the bar verdict, `meets bar` or `below bar` with the id of each failing core capability.
 
 #### 6.2.5 The check and the generator
 
-One Rust integration test, `crates/zygo-core/tests/conformance.rs`, is the check and the generator **(author)**. `zygo-core` gets `toml` as a dev-dependency only. It runs in `cargo test --workspace`, so on the three CI systems (`.github/workflows/ci.yml:34-45`) and in the release job (`release.yml:30`), with no new CI step. The test fails when:
+One Rust integration test, `crates/zygo-core/tests/conformance.rs`, is the check and the generator **(author)**. `zygo-core` gets `toml` and `syn` as dev-dependencies only. It runs in `cargo test --workspace`, so on the three CI systems (`.github/workflows/ci.yml:34-45`) and in the release job (`release.yml:30`), with no new CI step. The test fails when:
 
-1. a variant of `Agent::ALL` has no grade file, or a grade file names no variant;
+1. a client of `Agent::ALL` has no grade file, or a grade file names no client of `Agent::ALL`;
 2. a grade file lacks a grade for a criterion of the registry, or has a grade for an unknown criterion, or has one twice (K-D5);
-3. a `met` grade has no evidence, or an evidence item is not found (K§6.2.3);
+3. a `met` grade has no evidence that counts by K§6.2.3 (an ignored test, a missing function, a missing fixture, or a premise row that is absent or not `verified`/`pass` does not count);
 4. a `not-met` or `n/a` grade has no reason, or a core criterion is `n/a`;
 5. a cell lacks an `https://` URL;
-6. a `bar_exception` names a criterion that is `met`, or a criterion of a non-core capability, or has no `approved` text;
-7. the grade file `version` differs from the client's built-in minimum version (`crates/zygo-config/data/agents.toml` until P4-4 moves it into the descriptor), from the `<name>: <version>` header of `docs/premises.md`, or from the `<name>: <version> or later` header of `docs/live-checks.md`;
-8. a supported client does not meet the bar (K-D9). Until P4-4 adds the descriptor's `supported` flag, each variant of `Agent::ALL` counts as supported (each has a CLI subcommand today);
-9. a fixtures folder `fixtures/<client-id>/` is missing or empty;
+6. a registry bar exception names a client not in `Agent::ALL`, a criterion that is `met` for that client, a criterion of a non-core capability, or has no `approved` text; or a grade file holds a `bar_exception` key (an unknown key);
+7. for a client of `Agent::ALL`, the grade file `version` differs from the client's built-in minimum version (`crates/zygo-config/data/agents.toml` until P4-6 moves it into the descriptor), from the `<name>: <version>` header of `docs/premises.md`, or from the `<name>: <version> or later` header of `docs/live-checks.md`. The existing test `minimum_agent_versions_match_premises` (`crates/zygo-config/tests/builtin.rs:223`) already checks the first two for both clients; P4-2 keeps it, and P4-6 makes it read `Agent::ALL`;
+8. a supported client does not meet the bar (K-D9). Until P4-6 adds the descriptor's `supported` flag, each client of `Agent::ALL` counts as supported (each has a CLI subcommand today);
+9. a fixtures folder `fixtures/<client-id>/` of a client of `Agent::ALL` is missing or empty;
 10. `docs/conformance.md` or `docs/conformance.json` differs from the generated text. Line ends are compared after CR LF becomes LF.
 
 With `ZYGO_WRITE_CONFORMANCE=1` in its environment, the test writes both files and passes item 10. The Markdown file starts with a line that names the generator and says that a hand edit fails the check; the JSON file has the same text in a `generated_by` key.
 
 Input rules for the files, which the test treats as hostile **(author)**: TOML with unknown keys refused; an id that does not match `^(A|WA)-[0-9]+(\.[0-9]+)?$` refused; an evidence path that is absolute, holds `..`, or leaves the repository after link resolution refused; a reason or URL with a line break, or over 300 characters, refused; the generator escapes `|` in each text it puts in a table.
 
-`scripts/check-conformance.sh` and `scripts/test-check-conformance.sh` are deleted. `scripts/check-premises.sh` reads the client names and versions from the grade files (the `name =` and `version =` lines) in place of `:32-44` and the `case` at `:82` **(author)**.
+`scripts/check-conformance.sh` and `scripts/test-check-conformance.sh` are deleted.
+
+`scripts/check-premises.sh` becomes driven by data, not by a fixed list or by the client enum **(lead)**. It takes the names and versions from the header lines of `docs/premises.md` itself (each `<Name>: <version>` line before the first `##` heading), in place of `:32-44` and the `case` at `:82`. Each header name uses the minimum rule, except `act-lite` (exact) and `tmux` (minimum with one letter), as today. It checks each row of the table, not a fixed id list, and it still requires the ids of its lists today (`P1` … `Q7`, `PW1` … `PW16`), so it never passes on a table that lost rows. A `Codex: 0.172.0` header and the PC rows so pass before the Codex client exists. The conformance test compares versions only for clients of `Agent::ALL` (item 7).
 
 #### 6.2.6 The three outputs: feature matrix, rollup, score
 
 The generator gives three named outputs **(operator)**, each from the K§6.2.4 rules. Each is in both files.
 
-1. **Feature matrix.** Capability × client. One row per capability, grouped by tier (core, then standard, then extra), registry order inside a tier. One column per client, in `Agent::ALL` order. A cell is the derived grade and the URL: `full <url>`; `partial (missing: <id> <text>; …) <url>`; `none (<id>: <reason>; …) <url>`; `n/a (<reason>)`. Rows per capability keep the table readable as clients are added (today's form has one row per client and 22 columns).
+1. **Feature matrix.** Capability × client. One row per capability, grouped by tier (core, then standard, then extra), registry order inside a tier. One column per client, in `Agent::ALL` order. A cell is the derived grade and the URL: `full <url>`; `partial (missing: <id> <text>; …) <url>`; `none (<id>: <reason>; …) <url>`; `n/a (<reason>)`. Rows per capability keep the table readable as clients are added (today `docs/conformance.md` has two tables with one row per client: 22 columns for A-1 to A-21 at `:8-11`, and 3 columns for WA-1 and WA-2 at `:17-20`).
 2. **Rollup.** One table per client, with one row per tier and one total row: full, partial, none, n/a, criteria met / applicable. Under it, the bar verdict: `meets bar` or `below bar: <failing core capability ids>`; the bar exceptions with reason and approval; and the release state (`supported`, `meets bar, not released`, `below bar`).
-3. **Score.** One table: client, total score, core, standard and extra sub-scores, each a percent by K-D8.
+3. **Score.** One table: client, total score, core, standard and extra tier scores, each a percent by K§6.2.4, or `n/a` for a tier with no applicable cell.
 
 After the three outputs, `docs/conformance.md` lists, per client, each unmet criterion with its reason, each `n/a` with its reason, and the evidence of each met criterion.
 
@@ -323,45 +336,50 @@ After the three outputs, `docs/conformance.md` lists, per client, each unmet cri
 ```json
 {
   "generated_by": "crates/zygo-core/tests/conformance.rs (ZYGO_WRITE_CONFORMANCE=1); do not edit",
-  "tiers": {"core": 3, "standard": 2, "extra": 1},
+  "weights": {"core": 3, "standard": 2, "extra": 1},
   "clients": [{
-    "id": "codex", "name": "Codex", "version": "0.172.0", "supported": false,
-    "matrix": {"A-1": {"tier": "core", "grade": "partial", "url": "https://…",
-                        "missing": [{"criterion": "A-1.4", "text": "…", "reason": "…"}], "na": []}},
-    "rollup": {"core":  {"full": 7, "partial": 1, "none": 0, "na": 0, "met": 21, "applicable": 22},
-               "standard": {…}, "extra": {…}, "total": {…},
-               "bar": {"verdict": "below bar", "failing": ["A-1"], "exceptions": []},
-               "release": "below bar"},
-    "score": {"total": 74, "core": 95, "standard": 61, "extra": 50}
+    "id": "claude-code", "name": "Claude Code", "version": "2.1.328", "supported": true,
+    "matrix": {"A-1": {"tier": "core", "grade": "partial", "value": 0.75, "url": "https://code.claude.com/docs/en/llm-gateway",
+                       "missing": [{"criterion": "A-1.4", "text": "…", "reason": "…"}], "na": []}},
+    "rollup": {"core":     {"full": 7, "partial": 1, "none": 0, "na": 0, "met": 19, "applicable": 20},
+               "standard": {"…": "…"}, "extra": {"…": "…"}, "total": {"…": "…"},
+               "bar": {"verdict": "meets bar", "failing": [], "exceptions": ["A-1.4"]},
+               "release": "supported"},
+    "score": {"total": 89, "core": 96, "standard": 75, "extra": 94}
   }]
 }
 ```
 
+The numbers are an example that follows K§6.2.4: core = (7 × 1 + 0.75) ÷ 8 = 0.96875 → 96; standard = 0.75 (12 cells whose values sum to 9) → 75; extra = (5/6 + 1 + 1) ÷ 3 = 0.944 → 94; total = (3 × 0.96875 + 2 × 0.75 + 1 × 0.944) ÷ 6 = 0.8918 → 89. Each cell also carries its `value`, so a reader can recompute each score.
+
 The JSON file is a repository file, not a `zygo` command output, because the grade files are not in the binary and the data changes only with a commit **(author)**. Keys are written in a fixed order, so the file is byte-stable.
 
-#### 6.2.7 Release gate for a client below the bar (P4-4)
+#### 6.2.7 Release gate for a client below the bar (P4-6)
 
-A client with `supported = false` in its descriptor **(author)**:
+A client with `supported = false` in its descriptor **(author; lead ruling I14: at launch, for each entry point)**:
 
-- is hidden from `zygo --help`, and its subcommand exits 2 with `zygo <verb>: <name> is below the conformance bar; see docs/conformance.md` unless `ZYGO_PREVIEW_CLIENT=<client-id>` is in the environment;
-- is not listed by `zygo doctor` (§8.1 A-13 report), by `docs/install.md`, or by the installers.
+- The gate is in the launcher, before the proxy session is created, so it holds for each entry point that starts a client: `zygo <verb>`, `zygo ws run` (a member pane, so also `zygo up`). The loadout check (`crates/zygo-config/src/check.rs`, run by `zygo config check` and `zygo up`) reports a pane of that kind as an error with the same text. The launch exits 2 (a pane takes the `ws run` failure path) with `zygo: <name> is below the conformance bar; see docs/conformance.md`, unless `ZYGO_PREVIEW_CLIENT=<client-id>` is set.
+- The client is hidden from `zygo --help` and is not listed by `zygo doctor` (§8.1 A-13 report), `docs/install.md` or the installers.
+- The gate function takes the descriptor and its `supported` value as input, so its tests use a real client (Codex) with both values and never pass on an empty set.
 
 Check item 8 forbids `supported = true` below the bar. A client that meets the bar can stay unreleased; the document shows `meets bar, not released`.
 
-### 6.3 Codex client (P4-2, P4-5, P4-6)
+### 6.3 Codex client: requirements for its own design (P4-7)
+
+The Codex client gets its own design document (P4-7), designed against the built client contract **(operator)**. This section and the Codex parts of K§6.4 (the Codex client policy rows of K§6.4.2 and the arming rule of K§6.4.5) are the input to that design and stay its requirements. The premises of K§6.3.7 are built now (P4-3); the rest is built after the Codex design (P4-9).
 
 #### 6.3.1 Launch: `zygo codex`
 
 `zygo codex [--profile <p>] [--server <url>] [--compact <w>] [--yolo] [-- <codex args>]` runs the §8.2 sequence. The adapter adds this **(author unless marked)**:
 
-1. **Preflight.** It reads the project Codex files (`.codex/config.toml` and each hook file that PC4 names, from the working directory up to the repository root) by the safe-read rule of §8.4. It records each hook that zygo did not write, for K-D13.
+1. **Preflight.** It first finds the effective working directory: the value of `-C`/`--cd` in the user's arguments (the last one, as Codex reads them), else the launch directory **(lead)**. From there up to the repository root it reads the project Codex files (`.codex/config.toml` and each hook file that PC4 names) by the safe-read rule of §8.4. It records each hook that zygo did not write, for K-D13.
 2. **Per-session `CODEX_HOME`** = `$ZYGO_SESSION_DIR/codex-home/` (`0700`) **(K-D11)**. It holds:
    - `config.toml`: `model_provider = "zygo"`; `[model_providers.zygo]` with `wire_api = "responses"`, `base_url = "<proxy>/openai/v1"`, `auth.command` / `auth.args` = `zygo hook token` (the key helper; `ModelProviderAuthInfo` in the pinned schema), `http_headers` with the A-2 headers, `supports_websockets = false`, and `capabilities.remote_compaction = false` (so Codex compacts by a normal model request); `model = "<main_role>"`; `model_context_window` and `model_auto_compact_token_limit` (§10.2.5 rule); `[mcp_servers.zygo]` = `zygo mcp --agent codex`; `shell_environment_policy` that keeps the §8.4 denylist out of tool shells; `developer_instructions` (K§6.3.3); `compact_prompt` (A-18); the status-line items (A-9); the skills paths of the plugin snapshot (A-11). zygo does not set `check_for_update_on_startup`, so Codex keeps its own update notice (K§6.5.4);
    - `agents/zygo-<role>.toml`: one per enabled role except `main_role`, with `model = "<role>"`, the description, and `developer_instructions` = role prompt + one space + the mechanics text (§8.5 rule); and the overrides of the built-in roles: `explorer` → `read`, `worker` → `code`, `default` → `code` (§8.5: a subagent with no model is `code`);
    - the model catalog file (A-3) with one entry per role;
    - `hooks.json` (K§6.3.2), and the trust records of K-D13 when PC4 allows them;
    - `sessions`: a link (a symbolic link; a directory junction on Windows) to the shared store `<state_dir>/codex/sessions/` (K-D22).
-3. **Precedence.** The keys that route traffic (`model_provider`, the `model_providers.zygo` table, `mcp_servers.zygo`) are also passed as `-c key=value` arguments, so a project `.codex/config.toml` cannot outrank them (PC3) (K-D23). No argument holds the token.
+3. **Precedence** **(lead)**. Every key that zygo owns is passed as a `-c key=value` argument, not only the routing keys, so a project `.codex/config.toml` cannot override any of them (CLI overrides outrank project config: PC3). `config.toml` in `CODEX_HOME` holds the same keys, so the session folder shows the whole config. Settings that are files (the agent files, `hooks.json`, the model catalog) cannot go by `-c`; PC3 measures whether a project file overrides them, and A-5.3 is graded by what is true. No argument holds the token. On Windows, when the command line would pass 32,000 characters (the `developer_instructions` text is the large one), the launch exits 2 with `zygo codex: the session text is too long for the Windows command line`.
 4. **Environment.** The common denylist (§8.4), plus the Codex rows: each `CODEX_*` variable (K-D29). Then `CODEX_HOME` and the §8.4 `ZYGO_*` rows, with `ZYGO_AGENT=codex`.
 5. **Run** `codex` with the user's arguments after the inserted ones. A resume inserts `resume <id>` first (descriptor concern 7).
 6. **Exit.** As §8.2. When a Codex session id is known, zygo prints `zygo codex -- resume <id>`.
@@ -399,7 +417,7 @@ zygo never trusts a hook that it did not write. The order:
 
 The grade file grades branch 1 or 2 as the normal launch. Branch 3 is a known limit in the generated document.
 
-#### 6.3.7 Premises (P4-2, K-D14)
+#### 6.3.7 Premises (P4-3, K-D14)
 
 Each provisional Codex grade becomes measured by a premise row in `docs/premises.md` (`PCn`) with fixtures under `fixtures/codex/`. The method is the existing one (`docs/premises.md` "Method"): Codex runs under `env -i` with a temporary `HOME` and `CODEX_HOME`, a dummy key built at run time, and `base_url` = `scripts/premises/mock_upstream.py` directly, with no zygo between. `mock_upstream.py` gains a `/v1/responses` SSE answer and a `/v1/models` answer. `HTTPS_PROXY` points at the mock, which refuses and records each `CONNECT`, so a request to any other host is seen and fails. No run uses an OpenAI or ChatGPT login. No step runs `codex login`.
 
@@ -407,7 +425,7 @@ Each provisional Codex grade becomes measured by a premise row in `docs/premises
 |---|---|---|
 | PC1 | The provider table routes each model request to `base_url` with the key-helper bearer; the paths Codex calls; each other host it tries (with `CONNECT` records); processes left after exit | A-1, A-10 |
 | PC2 | `http_headers` and `env_http_headers` reach each request | A-2 |
-| PC3 | `CODEX_HOME` replaces `~/.codex`; `-c` outranks a project `.codex/config.toml` for the K§6.3.1 step-3 keys | A-5 |
+| PC3 | `CODEX_HOME` replaces `~/.codex`; `-c` outranks a project `.codex/config.toml` for each key zygo owns; whether project agent files or hooks override zygo's files; `-C`/`--cd` sets the directory whose `.codex/` Codex reads | A-5, K-D13 |
 | PC4 | Where hook trust is kept; whether records written before launch are honored; which hook sources load; the effect of `--dangerously-bypass-hook-trust` | K-D13 |
 | PC5 | Hook events, matchers, payload fields (`session_id`, `agent_id`, tool names for shell, `apply_patch`, MCP and subagent spawn) and output shapes (context, deny, block, result replacement) | A-7, A-8, A-15, A-19, WA-2 |
 | PC6 | Agent TOML files load; the model name each sends; built-in role overrides; whether a subagent request carries a marker | A-4, A-14, A-20, K§6.4.5 |
@@ -422,11 +440,11 @@ Each provisional Codex grade becomes measured by a premise row in `docs/premises
 | PC15 | `skills` paths load a skill folder | A-11 |
 | PC16 | Under a zygo launch, `check_for_update_on_startup` is in effect at its default (`true`) and Codex requests its release source at start (a `CONNECT` record); the owner-run live check LC-CX1 sees the notice text against a real newer release | A-22.2, K§6.5.4 |
 
-`docs/premises.md` and `docs/live-checks.md` get the header line `Codex: 0.172.0` (and `Codex: 0.172.0 or later`). The premise test (`crates/zygo-launch/tests/premise.rs`) gains a Codex part: each key zygo writes is in `fixtures/codex/config.schema.json` (from the pinned schema, `rust-v0.172.0` tag), each flag in `fixtures/codex/help.txt`. The premise harness also runs the generated config once with `--strict-config`. The launch does not pass `--strict-config`, because a project config with a key newer than the pin would then stop the launch **(author)**.
+`docs/premises.md` and `docs/live-checks.md` get the header line `Codex: 0.172.0` (and `Codex: 0.172.0 or later`). The premise check is driven by data (K§6.2.5), so the header and the PC rows pass before the Codex client exists; the grade file `docs/conformance/codex.toml` comes with the Codex client (P4-9), in the same row as its `Agent` entry (check item 1). The premise test (`crates/zygo-launch/tests/premise.rs`) gains a Codex part: each key zygo writes is in `fixtures/codex/config.schema.json` (from the pinned schema, `rust-v0.172.0` tag), each flag in `fixtures/codex/help.txt`. The premise harness also runs the generated config once with `--strict-config`. The launch does not pass `--strict-config`, because a project config with a key newer than the pin would then stop the launch **(author)**.
 
 #### 6.3.8 Provisional Codex grades
 
-From research on Codex CLI 0.172.0 (its `--help`, `codex features list`, the pinned config schema and the vendor configuration, hooks and subagent pages). Not measured. Each grade is replaced by the PC premises before P4-6.
+From research on Codex CLI 0.172.0 (its `--help`, `codex features list`, the pinned config schema and the vendor configuration, hooks and subagent pages). Not measured. Each grade is replaced by the PC premises before P4-9.
 
 | Cell | Provisional | Basis |
 |---|---|---|
@@ -450,12 +468,12 @@ From research on Codex CLI 0.172.0 (its `--help`, `codex features list`, the pin
 | A-18 | partial | `compact_prompt` is static, so A-18.2 is not met |
 | A-19 | partial | subagent events with `agent_id`; no agent id on tool hooks (A-19.1) |
 | A-20 | none or partial | no per-agent tool removal or turn cap seen; PC6 decides |
-| A-21 | full | stub launch test and premise test (built in P4-5) |
+| A-21 | full | stub launch test and premise test (built in P4-9) |
 | WA-1 | full or partial | capture, `codex resume <id>`; PC10 decides |
 | WA-2 | partial | `Interrupt` gives a turn end on Esc; spawn tool name from PC5 |
 | A-22 | partial | no custom status-line text (A-22.1 by `zygo status` and the exit line); `check_for_update_on_startup` defaults to `true` (A-22.2, A-22.3 after PC16) |
 
-### 6.4 Proxy: the Responses client dialect (P4-3, K-D12)
+### 6.4 Proxy: the Responses client dialect (P4-4, K-D12)
 
 #### 6.4.1 Routes
 
@@ -467,25 +485,46 @@ Stage 1 is the existing identity rule (`crates/zygo-proxy/src/identity.rs:22-35`
 
 #### 6.4.2 Pipeline
 
-The stages run on the client's body, with `ctx.dialect = Openai`, as they run on an Anthropic body today. Translation is per candidate at forward time, as today (`forward.rs`). Each stage states which (client dialect, upstream dialect) pairs it acts on. A table test covers each pair for each stage. Each stage that cannot act on a pair is a graded criterion, not a hidden gap.
+The proxy accepts a route by dialect, not by client **(lead)**. A Responses request from any session is served; so the Responses-route tests in P4-4 use an existing client's session (a Claude Code session), and the Codex client policy rows come with the Codex build (P4-9).
+
+The stages run on the client's body, with `ctx.dialect = Openai`. Translation is per candidate at forward time (`forward.rs:784-800`). Two kinds of rule apply **(lead)**:
+
+- **Wire format, keyed by `Dialect`** (a proxy concept; K§6.1.4 allows it): the usage parse in the tee, the window-rewrite format, and cache-marker placement in the body built for the upstream.
+- **Client policy, keyed by client through the descriptor**: `[cache] insert_markers.<client>`, the redaction harness spans, and whether the window rewrite is armed for the client.
 
 | Stage | Responses client obligation |
 |---|---|
 | Identity, body limit | unchanged |
 | Resolution (§7.4) | `model` is a role, custom role or model id, as for Messages |
-| Redaction (§16) | the secret pass on each text; the content pass on `input` (`Layout::Input`), with the Codex harness spans of PC13 skipped |
-| Cache markers (§10.4) | toward an Anthropic upstream: on the translated Messages body, by `[cache] insert_markers.codex` (default `true`: Codex sends no Anthropic markers); toward a Responses upstream: `prompt_cache_key` passes |
-| Window (§10.2) | the rewrite edits `response.completed` usage when armed (K§6.4.5) |
-| Usage (§14) | measured from the upstream stream before any rewrite, as today |
+| Redaction (§16) | the secret pass on each text; the content pass on `input` (`Layout::Input`, `crates/zygo-redact/src/content.rs:195-205`); harness spans by client policy (Codex: PC13, in P4-9) |
+| Cache markers (§10.4) | placed at forward time on the body built for the upstream (`forward.rs:788-797`), only for an Anthropic upstream, by `insert_markers.<client>` (Codex default `true`, in P4-9: Codex sends no Anthropic markers). A Responses upstream gets no markers: OpenAI caches prompts by itself, and `prompt_cache_key` passes. A chat upstream gets none, as today. This is a change for the Responses client only: the Anthropic client keeps its stage at request time (`cache.rs:33-40`) |
+| Window (§10.2) | the rewrite edits the usage of the last usage event in the stream that the tee sees (K§6.4.5), when armed by client policy |
+| Usage (§14) | the tee parses usage per upstream stream dialect (C3 below) |
 | Attribution (A-2) | unchanged |
+
+**The tee and the stream order (C3)** **(lead)**. Today the tee parses only Anthropic events (`message_start`, `message_delta`: `crates/zygo-proxy/src/tee.rs:69-80`). That is enough today, because a non-Anthropic upstream stream is first mapped to Messages events and then goes through the tee (`forward.rs:1098-1110`). The order per pair for a Responses client:
+
+| Upstream | Stream order | What the tee parses and rewrites |
+|---|---|---|
+| Anthropic | upstream Messages SSE → tee → Messages-to-Responses encoder → client | Messages events (as today) |
+| chat | upstream chat SSE → existing chat-to-Messages mapper → tee → encoder → client | Messages events (as today) |
+| Responses | upstream Responses SSE → tee → client (same dialect, no encoder) | Responses `response.completed` `response.usage` (new) |
+
+So the tee gains one parser: Responses `response.completed`. Without it the same-dialect path records no usage. A non-streaming same-dialect response is measured from the `usage` object of the Responses JSON body; the translated non-streaming paths are measured as today, on the Messages form. The encoder always runs after the tee, so a rewrite made on a Messages `message_delta` reaches the client inside `response.completed`.
 
 #### 6.4.3 Translation pairs
 
 Messages is the pivot **(author, K-D21)**:
 
-- **Responses client → Responses upstream: same dialect, no pivot.** The body goes as received, except: `model` := the candidate's `upstream_model`; `store` := `false`; `include` keeps `reasoning.encrypted_content`; the stage edits. Custom tools (the freeform `apply_patch`) and reasoning items pass natively. A reasoning item reaches only the provider and upstream model that made it; else it is dropped with an adjustment code. The proxy marks each returned reasoning item so it can check this on the next request (encoding left to the builder; the existing `zygo1:` form of §7.6 is the model).
+- **Responses client → Responses upstream: same dialect, no pivot.** The body goes as received, except: `model` := the candidate's `upstream_model`; `store` := `false`; `include` keeps `reasoning.encrypted_content`; the stage edits. Custom tools (the freeform `apply_patch`) and reasoning items pass natively. Reasoning bytes pass unchanged, with no zygo mark **(lead)**. A candidate change between turns can so send another provider's reasoning item; the upstream's error then reaches Codex by K§6.4.4.
 - **Responses client → Anthropic upstream.** New request translator Responses → Messages. New response translator Messages SSE (and JSON) → Responses SSE (and JSON).
 - **Responses client → chat upstream.** Responses → Messages (new) → chat (existing `translate/chat.rs`); chat SSE → Messages SSE (existing `translate/sse.rs`) → Responses SSE (new). Two linear passes (K-C2).
+
+Top-level request fields **(lead)**. Each top-level field is in exactly one list; an unknown field gives `400 zygo_bad_request` that names it:
+
+- **Mapped:** `model`, `instructions`, `input`, `tools`, `tool_choice`, `parallel_tool_calls`, `max_output_tokens`, `temperature`, `top_p`, `reasoning`, `stream`, `text` (only `text.format` of type `text` and `text.verbosity`; another format → 400 toward a non-Responses upstream).
+- **Safe to ignore** (used by the proxy or dropped toward a non-Responses upstream; passed toward a Responses upstream, with `store` forced to `false`): `store`, `include`, `prompt_cache_key`, `metadata`, `service_tier`, `user`, `safety_identifier`, `stream_options`, `truncation` (only `"disabled"`).
+- **Refused** (K-D31): `previous_response_id`, `background`, `conversation`, `prompt` (a stored prompt) → `400 zygo_bad_request` "zygo keeps no response state; send the full input with store=false".
 
 Request obligations (Responses → Messages). Exact field mapping is left to the builder; acceptance tests check each line:
 
@@ -493,33 +532,34 @@ Request obligations (Responses → Messages). Exact field mapping is left to the
 2. `message` items map by role; `input_text`, `input_image`, `input_file` map to text, image and document blocks (§7.6 document rule).
 3. `function_call` items become `tool_use` blocks (consecutive calls in one assistant message); `function_call_output` items become `tool_result` blocks (consecutive outputs in one user message). `call_id` is kept as the tool-use id.
 4. `custom_tool_call` and its output map the same way, with input `{"input": "<text>"}`. A `custom` tool definition becomes a function tool with one string parameter `input`; adjustment code `custom_tool_as_function`.
-5. `reasoning` items with a zygo mark decode to `thinking` blocks for the same provider and model; others are dropped with an adjustment code.
+5. `reasoning` items with a zygo mark (made by the encoder of this path) decode to `thinking` or `redacted_thinking` blocks for the same provider and model; others are dropped with an adjustment code.
 6. Hosted tools and their items (web search, local shell, and the like) are dropped with an adjustment code each.
 7. `tool_choice`, `parallel_tool_calls`, `max_output_tokens`, `temperature`, `top_p`, `reasoning.effort` map by the §7.6 model facts. `max_tokens` is set from the catalog when the client gives none.
-8. `previous_response_id` set, `background: true`, or a `conversation` reference → `400 zygo_bad_request` "zygo keeps no response state; send the full input with store=false" (K-C1, K-D31).
+8. The top-level field lists above apply.
 9. An `input` item of an unknown `type`, or a known item with a missing required field → `400 zygo_bad_request` that names the type. It is never dropped in silence.
-10. `store`, `include`, `prompt_cache_key`, `metadata`, `service_tier`, `user` are used by the proxy or dropped; they never reach an Anthropic upstream.
+10. Ignored fields never reach an Anthropic or chat upstream.
 
 Stream obligations (Messages SSE → Responses SSE):
 
 1. The stream starts with `response.created` then `response.in_progress`, with a proxy-made id (`resp_<ULID>`), `model` = the name the client sent, `status = "in_progress"`.
-2. Each content block becomes one output item: text → a `message` item with an `output_text` part (`output_item.added`, `content_part.added`, `output_text.delta`…, `output_text.done`, `content_part.done`, `output_item.done`); `tool_use` → a `function_call` item (`output_item.added`, `function_call_arguments.delta`…, `function_call_arguments.done`, `output_item.done` with the whole `arguments` string); `thinking` → a `reasoning` item with a summary and a zygo-marked `encrypted_content` that holds the thinking text and signature.
-3. `sequence_number` rises by one per event from 0. `output_index` and item ids are consistent across an item's events.
-4. `message_delta` and `message_stop` become one terminal event: `response.completed` with `usage` (`input_tokens` = input + cache read + cache write; `input_tokens_details.cached_tokens` = cache read; `output_tokens`; `total_tokens`), or `response.incomplete` with reason `max_output_tokens` for `stop_reason = "max_tokens"`.
-5. An upstream error before or during the stream gives `response.failed` with an error `code` and `message`. Each stream ends with exactly one terminal event.
-6. `ping` is dropped. An upstream event of unknown type is dropped. An upstream event whose JSON does not parse ends the stream with `response.failed`.
-7. A non-streaming request gets one Response object with the same content.
-8. The §10.2.6 bounds hold: a held partial event is bounded by `HOLD_MAX` (`crates/zygo-proxy/src/tee.rs:22`); no buffer grows with the response.
+2. Each content block becomes one output item: text → a `message` item with an `output_text` part (`output_item.added`, `content_part.added`, `output_text.delta`…, `output_text.done`, `content_part.done`, `output_item.done`); `tool_use` → a `function_call` item (`output_item.added`, `function_call_arguments.delta`…, `function_call_arguments.done`, `output_item.done` with the whole `arguments` string); `thinking` → a `reasoning` item with a summary and a zygo-marked `encrypted_content` that holds the thinking text and signature; `redacted_thinking` → a `reasoning` item with no summary and a zygo-marked `encrypted_content` that holds the redacted data **(lead)**.
+3. `server_tool_use` and `*_tool_result` blocks: the request translation removes server tools (§7.6), so an upstream should not send them; if one comes, it is dropped from the stream with the adjustment code `server_tool_dropped` **(lead)**.
+4. `sequence_number` rises by one per event from 0. `output_index` and item ids are consistent across an item's events.
+5. `message_delta` and `message_stop` become one terminal event: `response.completed` with `usage` (`input_tokens` = input + cache read + cache write; `input_tokens_details.cached_tokens` = cache read; `output_tokens`; `total_tokens`), or `response.incomplete` with reason `max_output_tokens` for `stop_reason = "max_tokens"`.
+6. An upstream error **before the first byte** to the client keeps its HTTP status, with an OpenAI error body (K§6.4.4). An upstream error **after the stream started** gives `response.failed` with an error `code` and `message` **(lead)**. Each started stream ends with exactly one terminal event.
+7. `ping` is dropped. An upstream event of unknown type is dropped. An upstream event whose JSON does not parse ends a started stream with `response.failed`.
+8. A non-streaming request gets one Response object with the same content, or the upstream status with an OpenAI error body.
+9. The §10.2.6 bounds hold: a held partial event is bounded by `HOLD_MAX` (`crates/zygo-proxy/src/tee.rs:22`); no buffer grows with the response.
 
-#### 6.4.4 Context-limit errors
+#### 6.4.4 Errors before the stream
 
-An upstream refusal for an over-long prompt reaches a Responses client in the shape that PC14 records, so Codex runs its own recovery. Other upstream errors keep their status and get the OpenAI error shape (§7.6 rule, client side).
+An upstream error before the first byte to the client keeps its HTTP status and gets the OpenAI error body (`errors.rs:34-41`) **(lead)**. An over-long prompt reaches a Responses client in the shape that PC14 records, so Codex runs its own recovery. `response.failed` is used only after the stream started (K§6.4.3 stream obligation 6).
 
 #### 6.4.5 Window rewrite for a Responses client
 
-When the descriptor arms the rewrite (K§6.3.4), the tee works in whole SSE lines and rewrites the `usage` of `response.completed`, by the §10.2.2 formula with the Responses fields. Trigger 0 (safety) and trigger 2 (the `compact` tool, matched by the PC9 name in a `function_call` item) act on each request. Trigger 1 (soft window at end of turn) needs a main-loop marker: it is armed only when PC6 finds a request marker for subagent calls; else A-16.1 relies on the launch-time limit.
+When client policy arms the rewrite (Codex: K§6.3.4, in P4-9), the tee works in whole SSE lines and rewrites the usage it parses (K§6.4.2): the Messages `message_delta` usage for Anthropic and chat upstreams (the encoder then carries it into `response.completed`), or the Responses `response.completed` usage for a Responses upstream. The formula is §10.2.2 with the Responses field names. Trigger 0 (safety) and trigger 2 (the `compact` tool, matched by the PC9 name in a tool call) act on each request. Trigger 1 (soft window at end of turn) needs a main-loop marker: it is armed only when PC6 finds a request marker for subagent calls; else A-16.1 relies on the launch-time limit.
 
-### 6.5 Update notices (P4-7)
+### 6.5 Update notices (P4-10)
 
 #### 6.5.1 What exists
 
@@ -534,16 +574,21 @@ The start check of U runs before a launch in `zygo claude`, `zygo opencode` and 
 - **Result.** The thread writes `checked_at` and, on success, `latest` through the state owner (K§6.5.3). It never prompts and never installs. A failed check writes `checked_at` (as U does) and one session-log line `update check: failed: <reason>`; it shows nothing on the HUD.
 - **Start check unchanged.** A later `zygo claude` within 24 h of a background check does not prompt, as U says today. The HUD and the exit line carry the notice in that window.
 
-#### 6.5.3 The one owner of the throttle state
+#### 6.5.3 The one owner of the throttle state **(author; lead ruling I12)**
 
-`update.json` gets one owner: a module `zygo_core::update_state` **(author)**. It holds the file's path rule, its read (bounded to 4 KiB; a missing, large or unparsable file is an empty state), its atomic write (the U temporary-file and rename form, `update.rs:251-275`), and a try-lock on `<cache_dir>/update.lock` (`fs4`, already a `zygo-core` dependency). The start check, the background check and every reader use only this module. A writer that cannot take the lock skips that tick; it never waits. New fields are additive: `clients.<client-id>.checked_at` and `clients.<client-id>.latest` (K§6.5.4). The U fields keep their meaning.
+A module `zygo_core::update_state` owns two files and one lock. The start check, the background check and each reader use only this module.
+
+- `<cache_dir>/update.json`: the U file, with its U fields (`checked_at`, `latest`, `skip`). No new field goes in it, because an older binary rewrites it with the U fields only (`update.rs:251-275`).
+- `<cache_dir>/update-clients.json`: the client results (`<client-id>.checked_at`, `<client-id>.latest`). Only the new module writes it, so an older binary cannot erase it.
+- `<cache_dir>/update.lock`: a blocking lock (`fs4`, already a `zygo-core` dependency) with a 500 ms timeout. A writer that does not get it in time skips that write. The lock is never held during a GET or a prompt. A writer reads, does the GET (or asks), then takes the lock, reads the file again, changes only its own keys, keeps each key it does not know, writes (the U temporary file and rename form) and lets the lock go.
+- Reads are bounded to 4 KiB; a missing, large or unparsable file is an empty state.
 
 #### 6.5.4 New releases of the wrapped clients **(operator: the flag and its default; author: the rest)**
 
 - **Fact.** Each descriptor declares `announces_own_updates`: under a zygo launch, the client shows its own update notice by default. It is a measured premise with a fixture, per client, because a zygo setting could hide the notice. At `bf3726bd` zygo sets no update option for any client (no `autoupdate`, `DISABLE_AUTOUPDATER` or `check_for_update_on_startup` in `crates/zygo-launch/src`; grep). Expected values, not yet measured: Claude Code `true`; OpenCode `true` (its `autoupdate` defaults on); Codex `true` (`check_for_update_on_startup`, "Defaults to `true`", pinned schema; K§6.3.1 keeps it unset). If zygo's launch hides a client's notice, that client's fact is `false`.
-- **Flag.** zygo's per-client flag `announce_client_updates` defaults to NOT `announces_own_updates`, so zygo fills a gap and never doubles a notice **(author's reading of the operator)**. The user config overrides it per client: `[update.clients.<client-id>] announce = true | false` (user config only, under the `[update]` table that `layers.rs:68` already drops from team and repository layers) **(author)**.
+- **Flag.** zygo's per-client flag `announce_client_updates` defaults to NOT `announces_own_updates`, so zygo fills a gap and never doubles a notice by default **(author's reading of the operator)**. A user who turns off the client's own notice can turn on zygo's flag for that client. The user config overrides it per client: `[update.clients.<client-id>] announce = true | false` (user config only, under the `[update]` table that `layers.rs:68` already drops from team and repository layers) **(author)**.
 - **Release source.** A descriptor may declare one release source: one HTTPS URL and the JSON field or text rule that gives the latest version. Proposed, each verified by its client's premise before use: Claude Code `https://registry.npmjs.org/@anthropic-ai/claude-code/latest` (field `version`); OpenCode `https://registry.npmjs.org/opencode-ai/latest` (field `version`); Codex `https://registry.npmjs.org/@openai/codex/latest` (field `version`). A flag that is on for a client with no release source is a `zygo config check` error, and no check runs for that client.
-- **Check.** When a client's flag is on, the K§6.5.2 thread also checks that client's release source, with the same tick, the same 24 h throttle (per client, in `clients.<id>`), the same lock, the same opt-outs, the same 2 s limit, no system proxy, no header but a generic `User-Agent`, and a body read bounded to 64 KiB. A version that does not parse as semver is ignored and logged.
+- **Check.** When a client's flag is on, the K§6.5.2 thread also checks that client's release source, with the same tick, the same 24 h throttle (per client, in `update-clients.json`), the same lock, the same opt-outs, the same 2 s limit, no system proxy, no header but a generic `User-Agent`, and a body read bounded to 64 KiB. A version that does not parse as semver is ignored and logged.
 - **Notice.** `<client> <new> available (zygo graded <pinned>)`, where `<pinned>` is the descriptor's minimum version (= the grade file's pin, check item 7).
 - **Ungraded notice, with no network.** Whatever the flag, when the running client version (the launcher's `agent_version`, recorded in the session view) is newer than the pinned version, zygo can say `<client> <running> ungraded`. This is a local comparison. It shows in `zygo status`, `zygo doctor` and the verbose HUD only; the compact HUD leaves it out, because a pin is a minimum and most users run a newer version, so a permanent compact segment would be noise **(author)**.
 
@@ -557,7 +602,8 @@ The status surface is a descriptor fact (concern 1); A-9 and A-22 grade it.
 | `zygo status` (each client; the only in-session surface for OpenCode and Codex) | one line | one line | one line |
 | Launcher exit line (each client, when stderr is a TTY) | `zygo <new> is available (you have <cur>); run zygo update` | `<client> <new> is available (zygo graded <pinned>)` | none |
 
-- **HUD segment 16** (an addition to H§6.2) **(author)**: after segment 15, color `33`, escaped (H-C6). It shows while `update.json` `latest` is newer than the running zygo version and is not the `skip` version. "Running" is the launcher's version, which the launcher writes into the session view as an additive field; a hook binary replaced by `zygo update` in another terminal still compares against the session that runs. Under width pressure it is the first segment removed (H§6.7 lists gain it first). The hook reads `update.json` through `zygo_core::update_state` (a bounded file read, no network), inside the H-C2 deadline of 3 s, read on each call like the trimmed count (H§7.7).
+- **HUD segment 16** (an addition to H§6.2) **(author; lead ruling M17)**: after segment 15, color `33`, escaped (H-C6). Compact: on the compact line. Verbose: at the end of row 1 (the work and model row). It shows while `update.json` `latest` is newer than the running zygo version and is not the `skip` version, or while a client update is pending (flag on). "Running" is the launcher's version, which the launcher writes into the session view as an additive field; a hook binary replaced by `zygo update` in another terminal still compares against the session that runs. When both a zygo update and a client update are pending, compact shows the zygo update only (`update <new>`), and verbose shows both, zygo first: `update <new> — run zygo update · <client> <new> available (zygo graded <pinned>)`. Under width pressure it is the first segment removed (each H§6.7 drop list gains it first; verbose removes the client part before the zygo part). The hook reads both files through `zygo_core::update_state` (bounded file reads, no network), inside the H-C2 deadline of 3 s, on each call like the trimmed count (H§7.7).
+
 - **Codex.** Codex 0.172.0 shows only built-in status-line items, and its status-line provider is experimental (`codex features list`: `tui_extensions_statusline experimental false`). So a Codex user sees zygo's notice in `zygo status` and in the exit line. The session text is not used: it is model context, and an update notice is for the user (§8.6, C7 spirit) **(author)**.
 
 #### 6.5.6 Base-spec amendment (§3)
@@ -568,42 +614,56 @@ The status surface is a descriptor fact (concern 1); A-9 and A-22 grade it.
 
 | State | Owner | Created | Removed |
 |---|---|---|---|
-| Capability registry | the registry file; changed by PR; standard or tier change stops for the operator | P4-1 | never |
+| Capability registry | the registry file; changed by PR; standard or tier change stops for the operator | P4-2 | never |
 | Grade file per client | the client's PRs | with the client's `Agent` variant | with the variant |
 | `docs/conformance.md`, `docs/conformance.json` | the conformance test (generator) | `ZYGO_WRITE_CONFORMANCE=1` run | never by hand |
 | Per-session `CODEX_HOME` | the Codex adapter | at launch, in the session folder | with the session folder, by the §10.1 sweep |
 | Codex hook trust records | the Codex adapter, inside `CODEX_HOME` | at launch | with `CODEX_HOME` |
 | Shared Codex session store `<state_dir>/codex/sessions/` | Codex writes it; zygo makes the folder and the link | first `zygo codex` launch | never by zygo (the user's conversations, as `~/.codex/sessions`) |
 | Codex session id of a member | the member record (existing `agent_session`) | `SessionStart` hook | `ws forget`, `ws forget-pane` |
-| `<cache_dir>/update.json` and `update.lock` (throttle, `latest`, `skip`, per-client results) | `zygo_core::update_state` (K§6.5.3); writers: the start check and the background check | first check | never (a cache file; deleting it only resets the throttle) |
+| `<cache_dir>/update.json` (U fields), `update-clients.json` (client results), `update.lock` | `zygo_core::update_state` (K§6.5.3); writers: the start check and the background check | first check | never (cache files; deleting them only resets the throttle) |
 | Running zygo version and client version of a session | the launcher, in the session view (additive fields) | at launch | with the session folder |
 
 ### 6.7 Hostile input at the new boundaries
 
-- **Responses requests.** The body limit and the idle bound of `read_body` (`crates/zygo-proxy/src/routes.rs:74-76`) apply. `serde_json` depth limit applies. Unknown item types and missing fields fail closed (K§6.4.3 item 9). A zygo-marked reasoning value from the client is untrusted: it must decode, fit a size bound, and name a provider and model of the session's candidates, else it is dropped with an adjustment code; it never selects a provider. `previous_response_id` is refused. Header values other than identity are attribution only.
-- **Upstream streams.** Bounded holds; unknown events dropped; unparsable events end the stream with `response.failed`.
+- **Responses requests.** The body limit and the idle bound of `read_body` (`crates/zygo-proxy/src/routes.rs:74-76`) apply. `serde_json` depth limit applies. Unknown top-level fields, unknown item types and missing fields fail closed (K§6.4.3). On the translated paths, a zygo-marked reasoning value from the client is untrusted: it must decode, fit a size bound, and name a provider and model of the session's candidates, else it is dropped with an adjustment code; it never selects a provider. `previous_response_id` is refused. Header values other than identity are attribution only.
+- **Upstream streams.** Bounded holds; unknown events dropped; an unparsable event ends a started stream with `response.failed`; an error before the first byte keeps its status (K§6.4.4).
 - **Hook input from Codex.** Read under the existing hook bounds. A body that is not a JSON object, an unknown event, or an unknown tool name gives no output (C6). Paths in tool input go through the existing guard rules.
 - **Project Codex files.** Read by the §8.4 safe-read rule at preflight. Their content only decides K-D13; zygo never copies them.
 - **Grade and registry files.** K§6.2.5 input rules.
-- **`update.json`.** A local file that another process may write. Read bounded to 4 KiB; a file that is large, not JSON, or holds a version that is not semver is an empty state. The HUD escapes each value (H-C6).
+- **`update.json`, `update-clients.json`.** Local files that another process may write. Read bounded to 4 KiB; a file that is large, not JSON, or holds a version that is not semver is an empty state. The HUD escapes each value (H-C6).
 - **Release sources.** Each answer is untrusted: 2 s limit, body bounded to 64 KiB, the version must parse as semver (the U `VERSION_RULE`, `update.rs:13`), else the answer is ignored and logged. A source answer never selects a download; `zygo update` keeps its own checksum path (U).
 
 ### 6.8 Flows walked
 
 1. **`zygo codex` launch.** CLI shim → preview gate (K§6.2.7) → §8.2 steps 1-2 (config, profile, proxy session, session folder, `token` and `url` files) → `adapter_for(Agent::Codex)` → preflight (project files, trust branch) → build (`CODEX_HOME`, `-c` keys, environment) → plugin delivery (skills paths) → run `codex` → exit (session end, resume line).
 2. **A streamed request to an Anthropic upstream.** Codex runs `zygo hook token` (key helper), sends `POST <proxy>/openai/v1/responses` with the bearer and `X-Zygo-*` headers → identity → body read → resolution of `model` (a role) → redaction on `input` → candidates → forward: Responses → Messages, cache markers, `POST /v1/messages` → the tee measures usage from the Messages SSE → encoder Messages SSE → Responses SSE (rewrite of `response.completed` when armed) → Codex.
-3. **A hook call.** Codex runs `zygo hook <name> --agent codex` with JSON on stdin → `crates/zygo/src/cmd/hook.rs` takes the agent → `HookInput::parse(Agent::Codex, …)` calls the descriptor's input function → the common handler → the descriptor's output function → stdout. Any fault: one stderr line, exit 0 (`hook.rs:77-92`, C6).
+3. **A hook call.** Codex runs `zygo hook <name> --agent codex` with JSON on stdin → `crates/zygo/src/cmd/hook.rs` takes the agent → `HookInput::parse(Agent::Codex, …)` calls the descriptor's input function → the common handler → the descriptor's output function → stdout. Any fault: one stderr line, exit 0 (`crates/zygo-core/src/hook.rs:76-92`, C6).
 4. **Resume.** Plain: `zygo codex -- resume <id>` → a new zygo session and `CODEX_HOME` whose `sessions` links to the shared store → Codex finds the rollout. Member: `zygo up` → `ws run` → `adapter_for` → `has_session_arg` false → `resume_args(id)` from the member record → the same path.
-5. **Background update notice.** `zygo claude` (or `ws run`) starts the child → the update thread waits 60 s → tick: opt-outs off, `update_state` try-lock taken, 24 h passed → one GET (2 s) → `update.json` written → the next `zygo hook statusline` run reads `update.json` and the session view, sees `latest` > running version and not `skip` → segment 16 → at child exit the launcher prints the exit line. A Codex or OpenCode user runs `zygo status` and sees the same line. A failed GET: one session-log line, no segment.
-6. **A fourth client, from this document only.** (a) Add the variant and `client/<id>.rs` in `zygo-core`; the exhaustive match in `Agent::spec()` fails to compile until the descriptor exists. (b) Add `client/<id>/` in `zygo-launch`; `adapter_for` fails to compile until the adapter exists. (c) Add `cmd/client/<id>.rs` and the `Cmd` variant. (d) `cargo test` fails: no grade file, no fixtures folder, version headers missing (K§6.2.5 items 1, 7, 9). (e) Write premises and fixtures, then the grade file with evidence. (f) Run the generator. (g) Set `supported = true` only when the bar is met. The boundary test fails if any step put a branch outside the client modules.
+5. **Background update notice.** `zygo claude` (or `ws run`) starts the child → the update thread waits 60 s → tick: opt-outs off, 24 h passed by a read of `update.json` → one GET (2 s, no lock held) → lock taken (500 ms bound), `update.json` read again, `checked_at` and `latest` written, lock released → the next `zygo hook statusline` run reads `update.json` and the session view, sees `latest` > running version and not `skip` → segment 16 → at child exit the launcher prints the exit line. A Codex or OpenCode user runs `zygo status` and sees the same line. A failed GET: one session-log line, no segment.
+6. **A fourth client, from this document only.** (a) Add the private `Kind` variant and `client/<id>.rs` in `zygo-core`; the exhaustive match in `Agent::spec()` fails to compile until the descriptor exists. (b) Add `client/<id>/` in `zygo-launch`; `adapter_for` fails to compile until the adapter exists. (c) Add `cmd/client/<id>.rs` and the `Cmd` variant. (c2) Add the client's stub behavior to `crates/zygo-launch/tests/stub_agent/` and its stub launch test (A-21.1); the `adapter_for` table test fails until the adapter row exists. (d) `cargo test` fails: no grade file, no fixtures folder, version headers missing (K§6.2.5 items 1, 7, 9). (e) Write premises and fixtures, then the grade file with evidence. (f) Run the generator. (g) Set `supported = true` only when the bar is met. The boundary test fails if any step put a branch outside the client modules.
 
-### 6.9 Order against phase 3 **(author; input from the lead, 2026-11-25)**
+### 6.9 Order against phase 3 and row order **(operator: row order; lead: the phase 3 facts)**
 
 Phase 3 still runs on `origin/phase-3` and is not in `main`; `phase-4` branched from `main` (`bf3726bd`). Phase 3 changes many of the client-branch sites of K§1 (`session_start.rs`, the status-line `render.rs` and `phase.rs`, `opencode-plugin.js`, `cmd/member.rs`, the workspace hooks, the Claude Code launch, the trim hook per client). It does not change `crates/zygo-proxy/src` (only `tests/serve.rs`), `scripts/check-conformance.sh`, `scripts/check-premises.sh` or `docs/conformance.md`; it adds a section to `docs/live-checks.md`.
 
-- **Starts at approval, in parallel with phase 3, based on `phase-4`:** P4-1 (registry, rubric, grade files, generator, three outputs, bar), P4-2 (Codex premises and fixtures), P4-3 (proxy Responses client dialect). P4-1 needs no client contract: it reads the client list from `Agent::ALL`, the minimum versions from `crates/zygo-config/data/agents.toml`, and counts each variant as supported (K§6.2.5 items 7, 8). P4-2 changes `docs/live-checks.md` only by its own rows and header line.
-- **Waits until phase 3 merges into `main` and `phase-4` takes it:** P4-4 (client contract), then P4-5 and P4-6 (Codex client and grade), and P4-7 (update notices: it shares the status-line segment order and drop lists with phase 3's HUD work).
-- **The inventory of K§1 is evidence of the pattern, not the work list.** P4-4 starts by taking the inventory again at its base commit (the grep of K§1 item 2), because phase 3 adds client-specific branches. Each site found is moved behind the contract or named in the P4-4 plan with its concern.
+| Row | Work | Depends | When |
+|---|---|---|---|
+| P4-1 | One plan for the rows that start now: P4-2, P4-3, P4-4 | approval | now |
+| P4-2 | Conformance: registry, rubric, grade files for Claude Code and OpenCode, generator, the three outputs, bar | P4-1 | now, parallel with phase 3 |
+| P4-3 | Codex premises and fixtures (K§6.3.7), with the data-driven premise check | P4-1 | now, parallel with phase 3 |
+| P4-4 | Proxy Responses client route (K§6.4), tested with an existing client's session | P4-1, P4-3 (captured Codex requests) | now, parallel with phase 3 |
+| P4-5 | Plan the client contract | approval | now; its inventory is taken again by P4-6 |
+| P4-6 | Build the client contract (K§6.1, K§6.2.7); add capabilities or criteria for the client-facing features of phase 3 (output shaping, mail wake and delivery, the run-time status line) by the union rule **(lead, I13)** | phase 3 merged into `main` and taken by `phase-4`; P4-2, P4-5 | after phase 3 |
+| P4-7 | Codex client design document, against the built contract; K§6.3 and the Codex parts of K§6.4 are its requirements | P4-3, P4-4, P4-6 | after P4-6 |
+| P4-8 | Plan the Codex client | P4-7 | |
+| P4-9 | Build the Codex client: its `Agent` entry, grade file `codex.toml`, Codex client-policy rows in the proxy, the bar decision, release listing when it meets the bar | P4-8 | |
+| P4-10 | Background zygo update check, HUD segment 16, `zygo status` and exit lines, `update_state` (K§6.5.2, K§6.5.3, K§6.5.5 for zygo's own releases); A-22 added with A-22.1 graded | phase 3 complete (shared status-line segment order); P4-2 | opportunistic: dispatched in parallel as soon as phase 3 is complete **(operator)** |
+| P4-11 | Client update announcements (K§6.5.4): `announces_own_updates` facts and premises, the flag, release sources; A-22.2 and A-22.3 graded | P4-6 (descriptor), P4-10 | after both |
+
+P4-10 is split from P4-11 **(author)** so the opportunistic row needs no client contract: zygo's own update check reads no client fact. The Codex fact (PC16) is measured in P4-3 and set in the Codex descriptor in P4-9.
+
+The inventory of K§1 is evidence of the pattern, not the work list. P4-6 starts by taking the inventory again at its base commit (the grep of K§1 item 2), because phase 3 adds client-specific branches. Each site found is moved behind the contract or named in the P4-6 plan with its concern.
 
 ---
 
@@ -612,16 +672,16 @@ Phase 3 still runs on `origin/phase-3` and is not in `main`; `phase-4` branched 
 | Id | Decision | Mark | Reason |
 |---|---|---|---|
 | K-D0 | Add Codex support; a clear client model; a maintained feature-matrix conformance score; each client graded on each feature any client supports; a rubric; measured, scored, "found wanting, but sufficient" | operator | the request of 2026-11-25 |
-| K-D1 | One client contract in two layers (K§6.1.1); the 11 concerns of K§6.1.2 plus the adapter of K§6.1.3; the boundary test of K§6.1.4 | author | the crate direction forces two layers; the test keeps branches from returning |
-| K-D2 | A client = a descriptor module, an adapter folder, a CLI shim, a fixtures folder, a grade file. §8.8 is superseded by K§6.8 flow 6 | author | the compiler and the tests list each missing piece; §8.8 missed three pieces |
-| K-D3 | P4-4 moves Claude Code and OpenCode onto the contract with no behavior change; the existing tests pass with only path and import edits | author | a refactor proven by unchanged tests |
+| K-D1 | One client contract in two layers (K§6.1.1); the kind is opaque outside `zygo_core::client`, so the compiler refuses a branch on a specific client; the literal check of K§6.1.4 covers names in strings | lead (compiler first); author (layers, concerns) | the crate direction forces two layers; a compile error cannot be skipped |
+| K-D2 | A client = a descriptor module, an adapter folder, a CLI shim, its stub-agent behavior, a fixtures folder, a grade file. §8.8 is superseded by K§6.8 flow 6 | author | the compiler and the tests list each missing piece; §8.8 missed three pieces |
+| K-D3 | P4-6 moves Claude Code and OpenCode onto the contract with no behavior change; no assertion or expected value changes; test edits only for paths, imports, type paths and constructors (K-C7) | lead | the old rule "tests unchanged" could not pass: 64 `PaneKind::` and 4 `Plugins::` test uses |
 | K-D4 | One registry file with criteria (K§6.2.2) | author | machine-checkable rubric |
 | K-D5 | Union rule: a zygo feature that any client supports is a capability with a rubric, and each client gets a grade; a client with a missing grade fails the check. A new descriptor concern or adapter method also needs a capability that names it | operator intent; mechanics author | "all clients get graded" |
-| K-D6 | Per-client grade file with measured evidence (K§6.2.3) | author | evidence that a test can find |
+| K-D6 | Per-client grade file with measured evidence (K§6.2.3): `premise:<file>#<id>` counts only when `verified` or `pass`; an ignored test is not evidence; a cfg-limited test counts with its platforms | author; lead (I4, I5) | evidence that a test can find, with no id collision |
 | K-D7 | Cell grade derived from criteria | author | no free-text grade |
-| K-D8 | Weighted score: core 3, standard 2, extra 1; rounded down | author | a transport gap must weigh more than a status gap; rounding down never inflates |
+| K-D8 | Score: cell value = met ÷ applicable; tier score = mean of cell values; total = weighted mean of the tiers (core 3, standard 2, extra 1), an empty tier `n/a`; rounded down last | author; lead (formula) | a transport gap weighs more than a status gap; rounding down never inflates |
 | K-D9 | Bar: each core criterion met (or excepted). Core set: A-1, A-2, A-5, A-6, A-8, A-10, A-13, A-21. A-2 is added to the brief's set because the proxy refuses a request with no `X-Zygo-Session` (`crates/zygo-proxy/src/identity.rs:31`). Enforcement: the `supported` flag and check item 8 (K§6.2.7) | author | the simplest gate that the existing `cargo test` runs; no build features |
-| K-D10 | The generator and check is one Rust test (K§6.2.5); it replaces `check-conformance.sh` and the hardcoded versions | author | TOML in shell is fragile; the scripts run in no CI job today |
+| K-D10 | The generator and check is one Rust test (K§6.2.5); it replaces `check-conformance.sh`; `check-premises.sh` becomes driven by data | author; lead (premise check by data) | TOML in shell is fragile; the scripts run in no CI job today; a premises header must not need an enum client |
 | K-D11 | `zygo codex` with a per-session `CODEX_HOME` (K§6.3.1) | author | A-5 needs a per-session mechanism; hooks and agents need files |
 | K-D12 | The proxy serves the Responses API as a client dialect (K§6.4) | author | Codex speaks only Responses |
 | K-D13 | Hook trust order (K§6.3.6) | author | zygo never trusts a hook it did not write |
@@ -629,15 +689,15 @@ Phase 3 still runs on `origin/phase-3` and is not in `main`; `phase-4` branched 
 | K-D15 | Non-goals of K§3 | author | scope |
 | K-D16 | Codex ships when it meets the bar; workspace support graded | author | "found wanting, but sufficient" |
 | K-D17 | `Dialect` moves to `zygo-core`, re-exported by `zygo-config` | author | the descriptor names the proxy dialect; core is the only crate below the proxy |
-| K-D18 | Bar exceptions: a `not-met` core criterion with an operator-approved exception counts for the bar, not for the score. Approval of this spec approves one: Claude Code A-1.4 (Windows PowerShell: `docs/conformance.md` "Windows shell for the generated commands") | author; the operator approves with this spec | Claude Code ships today with that gap; a strict bar would mark it unsupported; an exception keeps the gap visible |
-| K-D19 | `supported` flag and preview gate (K§6.2.7) | author | a below-bar client can be built and tested before release |
+| K-D18 | Bar exceptions live in the registry, not in grade files; a `not-met` core criterion with an operator-approved exception counts for the bar, not for the score. Approval of this spec approves one: Claude Code A-1.4 (Windows PowerShell: `docs/conformance.md` "Windows shell for the generated commands") | operator (approval of this spec); lead (place) | a registry change already stops for the operator; Claude Code ships today with that gap |
+| K-D19 | `supported` flag and a gate at launch for each entry point (K§6.2.7) | author; lead (each entry point) | a below-bar client can be built and tested before release, and no path starts it by mistake |
 | K-D20 | The CLI shim stays in the `zygo` crate under `cmd/client/` | author | clap is a dependency of the binary crate only |
-| K-D21 | Messages is the translation pivot; same-dialect pairs pass through | author | two new translators, not four; native custom tools and reasoning to OpenAI upstreams |
+| K-D21 | Messages is the translation pivot; same-dialect pairs pass through, reasoning bytes unchanged and unmarked | author; lead (no mark) | two new translators, not four; native custom tools and reasoning to OpenAI upstreams |
 | K-D22 | Codex rollouts go to one shared zygo-owned store through a link in each `CODEX_HOME`; when PC10 fails, WA-1.2 is `not-met` and zygo prints no resume line | author | a resume needs the rollout in the new session's `CODEX_HOME` |
-| K-D23 | Routing keys are also passed by `-c` | author | a project config must not outrank the transport (A-5.3) |
+| K-D23 | Every key zygo owns is passed by `-c`; the preflight reads the directory that `-C`/`--cd` names | lead | a project config must not override any zygo key (A-5.3 graded by what is true) |
 | K-D24 | No lead guard on Codex while hooks cannot tell the main loop from a subagent | author | a guard that refuses subagent edits breaks §8.3 |
-| K-D25 | Codex premises run against `mock_upstream.py` directly, as the existing method | author | the premises need no proxy work, so P4-2 runs before P4-3; it tests the client, not zygo |
-| K-D26 | P4-1 grades the criteria as written; each derived cell that differs from today's hand grade is listed in the PR with its reason, and that PR stops for the operator | author | the new rubric may raise or lower a grade; the operator sees each change |
+| K-D25 | Codex premises run against `mock_upstream.py` directly, as the existing method | author | the premises need no proxy work, so P4-3 runs before P4-4; it tests the client, not zygo |
+| K-D26 | P4-2 grades the criteria as written; each derived cell that differs from today's hand grade is listed in the PR with its reason, and that PR stops for the operator | author | the new rubric may raise or lower a grade; the operator sees each change |
 | K-D27 | Client environment denylist rows are a descriptor concern; Codex denies `CODEX_*` for its own child only | author | removing `CODEX_*` from a Claude Code child would change its behavior |
 | K-D28 | Evidence `test:` items name the file and the function | author | an exact, cheap check |
 | K-D29 | The machine-readable output is `docs/conformance.json`, a generated repository file | author | the grade files are not in the binary; the data changes only with a commit; a file needs no command |
@@ -647,7 +707,7 @@ Phase 3 still runs on `origin/phase-3` and is not in `main`; `phase-4` branched 
 | K-D33 | The generator gives a feature matrix, a rollup and a score per client (K§6.2.6) | operator | the addition of 2026-11-25 |
 | K-D34 | A background check during a session; a HUD post when an update exists | operator | the addition of 2026-11-25 |
 | K-D35 | The background check is a thread in the launcher process, first tick at 60 s, then hourly, gated by the shared 24 h throttle; no prompt, no install | author | the launcher lives for the session (W-G6 holds); hooks run the absolute binary path, so an install mid-session would mix versions |
-| K-D36 | `zygo_core::update_state` is the one owner of `update.json`, with a try-lock | author | the start check, the background check and the HUD read one state; concurrent sessions never wait |
+| K-D36 | `zygo_core::update_state` owns `update.json`, `update-clients.json` and `update.lock`: a blocking lock with a 500 ms timeout, never held during a GET or a prompt; writers keep unknown keys | lead | concurrent sessions never lose a write; older binaries cannot erase client data |
 | K-D37 | The background check ignores the U skips for a session, a pane, a non-TTY and `-p`; it keeps the two opt-outs | author | those skips exist because the start check prompts; member sessions must also learn of updates |
 | K-D38 | A per-client `announce_client_updates` flag in the contract; default = NOT `announces_own_updates` | operator (the flag and the default rule); author (the reading "fill the gap, never double") | the addition on client updates |
 | K-D39 | `[update.clients.<id>] announce` overrides the flag, user config only | author | the `[update]` table is already user-only (`layers.rs:68`) |
@@ -655,6 +715,14 @@ Phase 3 still runs on `origin/phase-3` and is not in `main`; `phase-4` branched 
 | K-D41 | `<client> <running> ungraded` from a local comparison only; verbose HUD, `zygo status`, `zygo doctor`; not the compact HUD | author | no network; a pin is a minimum, so the compact HUD would show it nearly always |
 | K-D42 | Update notices are capability A-22 (extra), not criteria of A-13 (core) | author | a notice is not needed to run a session; a core criterion waiting on a live check would put the shipped clients below the bar |
 | K-D43 | Codex and OpenCode users see the notice in `zygo status` and the launcher exit line, never in the session text | author | the session text is model context; the notice is for the user |
+| K-D45 | The spec is approved, with the instruction to plan and build; rows in the order of K§6.9 | operator | the decision of 2026-11-25 |
+| K-D46 | The Codex client gets its own design document against the built contract; K§6.3 and the Codex parts of K§6.4 are its requirements | operator | the decision of 2026-11-25 |
+| K-D47 | The proxy accepts a route by dialect; wire format keys on `Dialect`, client policy on the descriptor | lead | build order: the route and its tests come before the Codex client exists |
+| K-D48 | The tee parses usage per upstream stream dialect; cache markers are placed at forward time, only for an Anthropic upstream | lead | the same-dialect path would record no usage; markers belong to the body sent |
+| K-D49 | Unknown top-level Responses fields are refused, except a named ignore list; `redacted_thinking` and `server_tool_use` have rules | lead | no field is dropped in silence |
+| K-D50 | An upstream error before the first byte keeps its status with an OpenAI body; `response.failed` only after the stream started | lead | the client sees the real status |
+| K-D51 | P4-6 adds capabilities or criteria for the client-facing features of phase 3 by the union rule | lead | phase 3 adds client features that no capability grades yet |
+| K-D52 | P4-10 (zygo's own updates) is split from P4-11 (client updates) | author | the opportunistic row needs no client contract |
 | K-D44 | The HUD compares `latest` with the launcher's version, recorded in the session view | author | a binary replaced in another terminal must not hide the notice for a session that still runs the old version |
 
 ---
@@ -675,96 +743,96 @@ Phase 3 still runs on `origin/phase-3` and is not in `main`; `phase-4` branched 
 12. **Translate Responses → Responses through the Messages pivot.** Rejected. It loses custom tools (the freeform `apply_patch`) and native reasoning.
 13. **Shell scripts as generator, or a `cargo xtask`.** Rejected. TOML in shell is fragile, and the scripts run in no CI job. An xtask adds a workspace member and a CI step; the Rust test runs in the existing CI on three systems.
 14. **A cargo feature per below-bar client.** Rejected. It splits the CI test matrix; the runtime gate is simpler.
-15. **Capture Codex premises through the zygo proxy.** Rejected. It makes premises depend on P4-3 and mixes zygo's behavior into a client observation.
+15. **Capture Codex premises through the zygo proxy.** Rejected. It makes premises depend on P4-4 and mixes zygo's behavior into a client observation.
 16. **A daemon or a timer service for update checks.** Rejected. W-G6: no daemon; the launcher already lives for the session.
 17. **A network check in the status-line hook.** Rejected. The hook has a 3 s deadline (H-C2) and runs every 30 s; a file read is enough.
 18. **The update notice in the session text or in a `UserPromptSubmit` context.** Rejected. That text reaches the model, not the user, and costs tokens each turn.
 19. **Install in the background, apply at the next launch.** Rejected. U decided a prompt before an install; a silent install changes that approved design.
 20. **Disable each client's own update notice and let zygo announce all.** Rejected. It changes client behavior that users know, and zygo would need each client's release source for every user.
 21. **`zygo doctor --conformance` for the machine-readable form.** Rejected. The binary does not hold the grade files; a generated JSON file next to the Markdown needs no new command.
+22. **A text-only scanner as the main boundary check.** Rejected. It has misses (macros, raw strings, `cfg(test)` on items that are not modules) and false positives; an opaque kind makes the compiler refuse the branch.
+23. **A try-lock, or a lock held over the GET.** Rejected. A try-lock loses writes when two sessions write together; a lock held over a 2 s GET or a prompt blocks the other writers.
+24. **A zygo mark on same-dialect reasoning.** Rejected. It changes bytes that the upstream made, for a case (a provider change between turns) that the upstream already reports as an error.
 
 ## 9. Files to create or change
 
-P4-1:
+Planning rows (P4-1, P4-5, P4-8) write work-graph files under `docs/work/` only.
 
-- `docs/conformance/capabilities.toml` (new): the registry.
+P4-2 (conformance):
+
+- `docs/conformance/capabilities.toml` (new): the registry, with the Claude Code A-1.4 bar exception.
 - `docs/conformance/claude-code.toml`, `docs/conformance/opencode.toml` (new): grades, from today's `docs/conformance.md` evidence.
-- `crates/zygo-core/tests/conformance.rs` (new): check and generator; `crates/zygo-core/Cargo.toml`: `toml` dev-dependency.
-- `crates/zygo-core/src/lib.rs`: `Agent::ALL` (P4-4 moves it to `client/mod.rs`).
+- `crates/zygo-core/tests/conformance.rs` (new): check and generator; `crates/zygo-core/Cargo.toml`: `toml` and `syn` dev-dependencies.
+- `crates/zygo-core/src/lib.rs`: `Agent::ALL` (P4-6 moves it to `client/mod.rs`).
 - `docs/conformance.md`, `docs/conformance.json`: generated.
 - `scripts/check-conformance.sh`, `scripts/test-check-conformance.sh`: deleted.
-- `scripts/check-premises.sh`: names and versions from the grade files.
-- `docs/specs/2026-11-18-zygo-design.md`: notes on §8.1 (the registry is the list) and §8.8 (superseded by K§6.8 flow 6).
+- `docs/specs/2026-11-18-zygo-design.md`: the §8.1 note (the registry is the list).
 
-P4-2:
+P4-3 (Codex premises):
 
-- `scripts/premises/run-codex.sh` (new), `scripts/premises/mock_upstream.py` (Responses and `CONNECT`).
-- `fixtures/codex/` (new): help, schema, requests, hooks, workspace captures.
-- `docs/premises.md`, `docs/live-checks.md`: `Codex` header lines, PC rows.
+- `scripts/check-premises.sh`: driven by data (K§6.2.5).
+- `scripts/premises/run-codex.sh` (new), `scripts/premises/mock_upstream.py` (Responses answers and `CONNECT` records).
+- `fixtures/codex/` (new): help, schema, requests, hooks, workspace and update captures.
+- `docs/premises.md`, `docs/live-checks.md`: `Codex` header lines, PC rows, LC-CX1.
 
-P4-3:
+P4-4 (proxy):
 
 - `crates/zygo-proxy/src/routes.rs`: the two routes.
 - `crates/zygo-proxy/src/translate/responses_client.rs` (new): Responses → Messages request; Messages → Responses response and SSE.
-- `crates/zygo-proxy/src/pipeline.rs`, `forward.rs`, `cache.rs`, `window.rs`, `redact_stage.rs`, `tee.rs`, `errors.rs`: per-pair behavior of K§6.4.2.
+- `crates/zygo-proxy/src/tee.rs`: the Responses `response.completed` usage parser and rewrite.
+- `crates/zygo-proxy/src/forward.rs`: per-pair stream order (K§6.4.2), markers on the Anthropic upstream body for a Responses client, errors before the first byte.
+- `crates/zygo-proxy/src/pipeline.rs`, `cache.rs`, `window.rs`, `redact_stage.rs`, `errors.rs`: the per-pair rules of K§6.4.2.
 - `crates/zygo-proxy/src/models.rs`: the OpenAI models list.
-- `crates/zygo-proxy/tests/` (new tests): K§11 proxy items.
+- `crates/zygo-proxy/tests/` (new tests): the P4-4 acceptance items.
 
-P4-4:
+P4-6 (client contract, after phase 3; file list taken again at its base commit, K§6.9):
 
-- `crates/zygo-core/src/client/mod.rs` (new): `Agent`, `ALL`, `DEFAULT`, `spec()`, `FromStr`, `as_str`.
-- `crates/zygo-core/src/client/claude_code.rs`, `opencode.rs` (new): descriptors and pure functions; `hook_opencode.rs` moves into `opencode.rs`.
-- `crates/zygo-core/src/lib.rs`: re-export `Agent` and `Dialect`; remove the moved code.
-- `crates/zygo-core/src/hook.rs`: normalization through the descriptor.
-- `crates/zygo-core/src/session_view.rs`: `Agent::DEFAULT`.
+- `crates/zygo-core/src/client/mod.rs` (new): opaque `Agent`, private `Kind`, `ALL`, `DEFAULT`, `spec()`, `FromStr`, `as_str`.
+- `crates/zygo-core/src/client/claude_code.rs`, `opencode.rs` (new): descriptors and pure functions, `supported = true`; `hook_opencode.rs` moves into `opencode.rs`.
+- `crates/zygo-core/src/lib.rs`, `hook.rs`, `session_view.rs`: re-exports, normalization through the descriptor, `Agent::DEFAULT`.
 - `crates/zygo-core/tests/client_boundary.rs` (new): K§6.1.4.
-- `crates/zygo-core/src/client/*.rs`: `supported = true` for both; `crates/zygo-core/tests/conformance.rs`: items 7 and 8 read the descriptor.
-- `crates/zygo/src/cmd/mod.rs`, `doctor.rs`: the preview gate of K§6.2.7 and the doctor list from the registry.
-- `crates/zygo-config/src/schema.rs`: `Dialect` re-export; marker defaults and `LOADOUT_KINDS` from the registry.
-- `crates/zygo-config/src/builtin.rs`, `check.rs`: minimum version and kinds from the registry; delete `crates/zygo-config/data/agents.toml`.
-- `crates/zygo-redact/src/content.rs`, `harness.rs`: span rule from the descriptor.
-- `crates/zygo-proxy/src/window.rs`, `passthrough.rs`, `cache.rs`: proxy facts from the descriptor.
-- `crates/zygo-plugins/src/snapshot.rs`: no client branch.
-- `crates/zygo-work/src/hooks.rs`, `join.rs`: tool naming and per-agent id from the descriptor.
-- `crates/zygo-workspace/src/args.rs`: flag tables move to the descriptors; the walk stays and reads them.
-- `crates/zygo-workspace/src/state.rs`, `up.rs`, `snapshot.rs`, `loadout.rs`: `PaneKind::Agent(Agent)`.
-- `crates/zygo-hooks/src/session_start.rs`, `session_text.rs`, `workspace.rs`: output and delivery from the descriptor.
-- `crates/zygo-mcp/src/tools/mod.rs`: compact tool from the descriptor.
-- `crates/zygo-launch/src/client/mod.rs` (new): `adapter_for`.
-- `crates/zygo-launch/src/client/claude_code/`, `client/opencode/` (moved from `claude_code.rs`, `opencode.rs`, `assets/opencode-plugin.js`).
-- `crates/zygo-launch/src/adapter.rs`: new methods; remove `Plugins`.
-- `crates/zygo-launch/src/launcher.rs`, `env.rs`: no client branch.
-- `crates/zygo/src/cmd/client/claude_code.rs`, `opencode.rs` (moved from `cmd/claude.rs`, `cmd/opencode.rs`).
-- `crates/zygo/src/cmd/mod.rs`, `ws.rs`, `member.rs`, `config.rs`, `doctor.rs`, `compact.rs`, `hook.rs`, `loadout.rs`: registry calls.
+- `crates/zygo-core/tests/conformance.rs`: items 7 and 8 read the descriptor; `crates/zygo-config/tests/builtin.rs`: `minimum_agent_versions_match_premises` reads `Agent::ALL`.
+- `crates/zygo-config/src/schema.rs`, `builtin.rs`, `check.rs`: `Dialect` re-export, defaults and kinds from the registry, the loadout gate; delete `crates/zygo-config/data/agents.toml`.
+- `crates/zygo-redact/src/content.rs`, `harness.rs`; `crates/zygo-proxy/src/window.rs`, `passthrough.rs`, `cache.rs`; `crates/zygo-plugins/src/snapshot.rs`; `crates/zygo-work/src/hooks.rs`, `join.rs`; `crates/zygo-workspace/src/args.rs`, `state.rs`, `up.rs`, `snapshot.rs`, `loadout.rs`; `crates/zygo-hooks/src/session_start.rs`, `session_text.rs`, `workspace.rs`; `crates/zygo-mcp/src/tools/mod.rs`: read the descriptor.
+- `crates/zygo-launch/src/client/mod.rs` (new): the `adapter_for` table and its test; `client/claude_code/`, `client/opencode/` (moved, with `assets/opencode-plugin.js`).
+- `crates/zygo-launch/src/adapter.rs`, `launcher.rs`, `env.rs`: new methods, the launch gate, no client branch; remove `Plugins`.
+- `crates/zygo/src/cmd/client/claude_code.rs`, `opencode.rs` (moved); `crates/zygo/src/cmd/mod.rs`, `ws.rs`, `member.rs`, `config.rs`, `doctor.rs`, `compact.rs`, `hook.rs`, `loadout.rs`: registry calls, hidden help for an unsupported client.
+- Test files: only the edits of K-C7; `scripts/check-test-edits.sh` (new).
+- `docs/conformance/capabilities.toml`, each grade file: the capabilities or criteria for the phase 3 client features (K-D51).
+- `docs/specs/2026-11-18-zygo-design.md`: the §8.4 and §8.8 notes (K§12).
 
-P4-5:
+P4-7 (Codex design):
+
+- `docs/specs/<date>-codex-client-design.md` (new): designed against the built contract, with K§6.3 and the Codex parts of K§6.4 as requirements.
+
+P4-9 (Codex client):
 
 - `crates/zygo-core/src/client/codex.rs` (new), `crates/zygo-launch/src/client/codex/` (new), `crates/zygo/src/cmd/client/codex.rs` (new), `crates/zygo/src/cmd/mod.rs` (`Cmd::Codex`).
-- `crates/zygo-launch/tests/stub_agent/stub.rs`, `harness.rs`, `stub_launch.rs`, `premise.rs`: Codex parts; `crates/zygo-launch/tests/codex.rs` (new).
-- `docs/conformance/codex.toml` (new): grades, `supported = false` until P4-6.
-
-P4-6:
-
-- `docs/conformance/codex.toml`: measured grades.
-- `crates/zygo-core/src/client/codex.rs`: `supported = true` when the bar is met.
+- Codex client policy: `insert_markers.codex` default, redaction spans, window arming.
+- `crates/zygo-launch/tests/stub_agent/`, `stub_launch.rs`, `premise.rs`, `codex.rs` (new): Codex parts.
+- `docs/conformance/codex.toml` (new) in the same commit as the `Agent` entry; `supported` set by the bar.
 - `docs/install.md`, `scripts/install.sh`, `scripts/install.ps1`: Codex listed when supported.
 - `docs/conformance.md`, `docs/conformance.json`: generated.
 
-P4-7:
+P4-10 (zygo's own updates):
 
-- `crates/zygo-core/src/update_state.rs` (new): the one owner of `update.json` and `update.lock` (K§6.5.3).
-- `crates/zygo/src/cmd/update.rs`: the start check uses `update_state`; the release check (`check_latest`, `latest`, `release_base`) moves to `crates/zygo-launch/src/update_check.rs` (new), so the launcher can call it.
-- `crates/zygo-launch/src/update_check.rs` (new): the background thread, the zygo check and the client checks.
+- `crates/zygo-core/src/update_state.rs` (new): K§6.5.3.
+- `crates/zygo/src/cmd/update.rs`: the start check uses `update_state`; the release check (`check_latest`, `latest`, `release_base`) moves to `crates/zygo-launch/src/update_check.rs` (new), with the background thread.
 - `crates/zygo-launch/src/launcher.rs`: records the running zygo and client versions in the session view; prints the exit line.
-- `crates/zygo-core/src/session_view.rs`: two additive optional fields (running zygo version, client version).
-- `crates/zygo-core/src/client/*.rs`: `announces_own_updates`, release source, status surface.
-- `crates/zygo-config/src/schema.rs`, `check.rs`: `[update.clients.<id>] announce`; the check error for a client with no release source.
+- `crates/zygo-core/src/session_view.rs`: two additive optional fields.
 - `crates/zygo-hooks/src/statusline/data.rs`, `render.rs`, `width.rs`: segment 16 and its drop order.
-- `crates/zygo/src/cmd/status.rs`, `doctor.rs`: the update and ungraded lines.
-- `scripts/premises/`, `fixtures/claude-code/update/`, `fixtures/opencode/update/` (new): the `announces_own_updates` premises (PU1 Claude Code, PU2 OpenCode; Codex is PC16).
-- `docs/premises.md`, `docs/live-checks.md`: PU rows; live checks LC-CC1, LC-OC1, LC-CX1 (owner-run: a real newer release shows the client's own notice).
-- `docs/conformance/capabilities.toml` and each grade file: A-22.
-- `docs/specs/2026-11-18-zygo-design.md` (§3), `docs/specs/2026-11-21-statusline-hud-design.md` (H§6.2, H§6.7), `docs/specs/2026-11-21-auto-update-design.md` (a note: the background check shares the state): amendment notes, K§12.
+- `crates/zygo/src/cmd/status.rs`, `doctor.rs`: the update line.
+- `docs/conformance/capabilities.toml`, each grade file: A-22.
+- `docs/specs/2026-11-18-zygo-design.md` (§3 unchanged in P4-10), `docs/specs/2026-11-21-statusline-hud-design.md` (H§6.2, H§6.7), `docs/specs/2026-11-21-auto-update-design.md`: amendment notes.
+
+P4-11 (client updates):
+
+- `crates/zygo-core/src/client/*.rs`: `announces_own_updates`, release source.
+- `crates/zygo-launch/src/update_check.rs`: client checks into `update-clients.json`.
+- `crates/zygo-config/src/schema.rs`, `check.rs`: `[update.clients.<id>] announce`; the error for a client with no release source.
+- `crates/zygo/src/cmd/status.rs`, `doctor.rs`, statusline: the client and ungraded lines.
+- `scripts/premises/`, `fixtures/claude-code/update/`, `fixtures/opencode/update/` (new): PU1, PU2; `docs/premises.md`, `docs/live-checks.md`: PU rows, LC-CC1, LC-OC1.
+- `docs/specs/2026-11-18-zygo-design.md`: the §3 amendment (K§6.5.6).
 
 ## 10. Left to the builder
 
@@ -782,76 +850,83 @@ P4-7:
 
 Each item is decided by a test or a command.
 
-P4-1:
+P4-2 (conformance):
 
-1. `conformance` passes; with a planted fault it fails for each item 1-10 of K§6.2.5 (one unit case per item).
-2. A unit case with a two-capability registry gives the K§6.2.4 score, tier breakdown and bar.
+1. `conformance` passes; with a planted fault it fails for each item 1-10 of K§6.2.5 (one unit case per item), including: an evidence test with `#[ignore]`; a `premise:` row whose result is `failed`; a premise id that is in the other file only; a `bar_exception` key in a grade file.
+2. A `#[cfg(unix)]` evidence test counts, and the generated document shows `unix` next to it; a `#[tokio::test(flavor = "multi_thread")]` test counts.
 3. `docs/conformance.md` and `docs/conformance.json` equal the generator output; CI fails when either does not.
-4. **Feature matrix.** For a fixture registry and two fixture grade files, the matrix rows come grouped core, standard, extra, in registry order inside a tier; each cell text is `full <url>`, `partial (missing: …) <url>`, `none (…) <url>` or `n/a (…)` as K§6.2.6 states; the JSON `matrix` holds the same grades.
-5. **Rollup.** For the same fixtures, each tier row and the total row give the expected full / partial / none / n/a counts and met / applicable counts; a client with one unmet core criterion and no exception shows `below bar` with that capability id; with an exception it shows `meets bar`.
-6. **Score.** For the same fixtures, the total and each tier sub-score equal the K-D8 values computed by hand in the test, rounded down; a capability with only `n/a` criteria leaves both numerator and denominator.
-7. `sh scripts/check-premises.sh` passes with versions read from the grade files.
+4. **Feature matrix.** For a fixture registry and two fixture grade files, the matrix rows come grouped core, standard, extra, in registry order inside a tier; each cell text is `full <url>`, `partial (missing: …) <url>`, `none (…) <url>` or `n/a (…)`; the JSON `matrix` holds the same grades and values.
+5. **Rollup.** For the same fixtures, each tier row and the total row give the expected full / partial / none / n/a counts and met / applicable counts; a client with one unmet core criterion and no registry exception shows `below bar` with that capability id; with an exception it shows `meets bar`.
+6. **Score.** For the same fixtures, each tier score is the mean of its cell values and the total is the weighted mean of the tiers, rounded down last, equal to values computed by hand in the test; a tier with no applicable cell shows `n/a` and leaves the total's weights; the K§6.2.6 example numbers come out as written.
+7. `minimum_agent_versions_match_premises` (`crates/zygo-config/tests/builtin.rs:223`) passes unchanged.
 
-P4-2:
+P4-3 (Codex premises):
 
-8. Each PC row in `docs/premises.md` has a date, result and fixture paths that pass the `nontrivial` rule; `check-premises.sh` passes.
-9. No fixture holds a token, a key form, a user name or a home path (`scrub.py` pass).
+8. `sh scripts/check-premises.sh` passes with the `Codex: 0.172.0` header and the PC rows, with no Codex client in `Agent::ALL`; it fails when a required existing id (for example `Q7`) is removed.
+9. Each PC row has a date, a result and fixture paths that pass the `nontrivial` rule.
+10. No fixture holds a token, a key form, a user name or a home path (`scrub.py` pass).
 
-P4-3 (proxy tests with a mock upstream; Codex request bodies from `fixtures/codex/requests/`):
+P4-4 (proxy; a Claude Code session; Codex request bodies from `fixtures/codex/requests/`; a mock upstream):
 
-10. Each captured Codex request translates to a valid Messages request; each obligation line 1-10 of K§6.4.3 has a case.
-11. A Messages SSE fixture with text, tool use and thinking gives the event sequence of stream obligations 1-4, with rising `sequence_number`.
-12. An upstream error mid-stream gives one `response.failed` and no other terminal event.
-13. A tool call round trip (call, output, next request) keeps `call_id`.
-14. A thinking round trip to the same provider keeps the signature; to another provider it is dropped with its code.
-15. Responses → Responses: the upstream body equals the client body except `model`, `store`, `include` and stage edits.
-16. Responses → chat: a captured request reaches the chat mock, and its stream returns as Responses SSE.
-17. `previous_response_id`, an unknown item type, and a bad identity each give the stated status in the OpenAI error shape.
-18. Redaction acts on a Responses `input` body and skips the PC13 spans.
-19. With the rewrite armed, `response.completed` usage follows §10.2.2; with it off, the bytes pass unchanged.
-20. `GET /openai/v1/models` gives the role list; `POST /openai/v1/chat/completions` stays `404 zygo_route_not_in_v1`.
+11. Each captured Codex request translates to a valid Messages request; each request obligation 1-10 of K§6.4.3 has a case.
+12. An unknown top-level field gives 400 that names it; each field of the ignore list is accepted; each refused field gives the stated 400.
+13. A Messages SSE fixture with text, tool use, thinking and redacted thinking gives the event sequence of stream obligations 1-5, with rising `sequence_number`; a `server_tool_use` block is dropped with `server_tool_dropped`.
+14. An upstream `529` before the first byte gives `529` with an OpenAI error body and no SSE; an upstream error after the first event gives one `response.failed` and no other terminal event.
+15. A tool call round trip (call, output, next request) keeps `call_id`.
+16. A thinking round trip to the same provider keeps the signature; to another provider it is dropped with its code.
+17. Responses → Responses: the upstream body equals the client body except `model`, `store`, `include` and stage edits; reasoning items are byte-equal; the usage store row has the token counts of the upstream `response.completed` (non-zero in the fixture), and a non-streaming request records the counts of the JSON body's `usage`.
+18. Responses → chat: a captured request reaches the chat mock, and its stream returns as Responses SSE with usage recorded.
+19. Responses → Anthropic with `insert_markers` on for the session's client: the upstream body has the markers; Responses → Responses: no `cache_control` anywhere.
+20. Redaction acts on a Responses `input` body.
+21. With the rewrite armed for the test session, `response.completed` usage follows §10.2.2 for an Anthropic upstream and for a Responses upstream; unarmed, the bytes pass unchanged.
+22. `GET /openai/v1/models` gives the role list; `POST /openai/v1/chat/completions` stays `404 zygo_route_not_in_v1`.
 
-P4-4:
+P4-6 (client contract):
 
-21. `cargo test --workspace --locked` passes on Linux, macOS and Windows CI.
-22. `git diff -M <P4-4 base> -- 'crates/*/tests'` shows only renames and `use`/path lines.
-23. `client_boundary` passes on the tree, and fails on a test input that holds `Agent::ClaudeCode` in a non-allowlisted file and on one that holds the literal `"opencode"`.
-24. `stub_launch` asserts byte-equal generated settings and inline config for both clients against the output at the P4-4 base commit (the existing assertions, unchanged).
-25. A state file with `"kind": "claude-code"` reads into `PaneKind::Agent(Agent::ClaudeCode)` and writes back the same bytes.
-26. The preview gate: `zygo codex` is absent until P4-5; a test client with `supported = false` exits 2 with the K§6.2.7 text and runs with `ZYGO_PREVIEW_CLIENT` set (CLI test with the stub).
+23. `cargo test --workspace --locked` passes on Linux, macOS and Windows CI.
+24. `scripts/check-test-edits.sh <P4-6 base>` passes: for each changed line under `crates/*/tests` and in each `#[cfg(test)]` module, the removed line, after the PR's declared rewrite table (type paths, constructors, imports, moved paths), equals the added line; any other change (an assertion, an expected value) fails it. A rewrite rule may match only a path of identifiers (`Agent::ClaudeCode`, `PaneKind::OpenCode`, `Plugins::Delivered`, a `use` path); the script refuses a rule whose pattern holds a digit, a quote or an operator, so a rule cannot turn a value change into a match. Every edited test line is listed in the PR.
+25. A file outside `zygo_core::client` that names a client variant does not compile (a `trybuild` compile-fail case).
+26. `client_boundary` passes on the tree, and fails on test inputs that hold `"opencode"` as a plain literal, inside `format!`, as a raw string, and in a non-module item without `#[cfg(test)]`; it does not fail on `"zygo claude: …"` or a comment.
+27. The `adapter_for` table test fails when a client has no row.
+28. `stub_launch` asserts byte-equal generated settings and inline config for both clients against the output at the P4-6 base commit (the existing assertions).
+29. A state file with `"kind": "claude-code"` reads into the pane kind of that client and writes back the same bytes.
+30. The registry has at least one capability or criterion for each of output shaping, mail wake and delivery, and the run-time status line, each graded for each client (K-D51); `conformance` passes.
 
-P4-5:
+P4-9 (Codex client; at the commit that adds Codex with `supported = false`, and as permanent tests that set the flag):
 
-27. The Codex stub launch test on the three systems asserts: the `CODEX_HOME` tree and modes; each `config.toml` key; the `-c` arguments; no token in arguments, environment or files except `token`; no `CODEX_*` from the parent environment; the hooks and agent files; the `sessions` link.
-28. The premise test finds each written key in `fixtures/codex/config.schema.json` and each flag in `fixtures/codex/help.txt`.
-29. Each Codex hook fixture parses to the common form; each reply renders in the PC5 shape; a non-object body and an unknown event give no output and exit 0.
-30. A workspace stub test captures the Codex session id and builds `resume <id>`.
-31. The K-D13 branch is chosen from planted project files (none, a hook file, a config hook) as stated.
-32. `client_boundary` and `conformance` pass with Codex added.
+31. With `supported = false`: `zygo codex`, `zygo ws run` for a Codex pane and the loadout check each refuse with the K§6.2.7 text; with `ZYGO_PREVIEW_CLIENT=codex` each runs; the gate test runs the Codex descriptor with both flag values.
+32. The Codex stub launch test on the three systems asserts: the `CODEX_HOME` tree and modes; each owned key both in `config.toml` and as `-c`; no token in arguments, environment or files except `token`; no `CODEX_*` from the parent environment; the hooks and agent files; the `sessions` link.
+33. A planted `-C <dir>` with `<dir>/.codex/hooks.json` selects K-D13 branch 3; without `-C` the same file in another directory has no effect; the three branches are chosen from planted files as stated.
+34. The premise test finds each written key in `fixtures/codex/config.schema.json` and each flag in `fixtures/codex/help.txt`.
+35. Each Codex hook fixture parses to the common form; each reply renders in the PC5 shape; a non-object body and an unknown event give no output and exit 0.
+36. A workspace stub test captures the Codex session id and builds `resume <id>`.
+37. `codex.toml` is in the same commit as the Codex `Agent` entry; each Codex grade cites counting evidence; `client_boundary` and `conformance` pass.
+38. If the bar is met: `supported = true`, `zygo doctor` lists Codex, `docs/install.md` names it. If not: the generated document shows `below bar`, and the row ends with the unmet core criteria listed for the operator.
 
-P4-6:
+P4-10 (zygo's own updates; fixture server as in `crates/zygo/tests/update.rs`; the tick and the clock are injected, K-C6):
 
-33. Each Codex grade cites measured evidence; `conformance` passes.
-34. If the bar is met: `supported = true`, `zygo doctor` lists Codex, `docs/install.md` names it. If not: the generated document shows `below bar`, and P4-6 ends with the unmet core criteria listed for the operator.
+39. One tick with a stale throttle makes one GET and writes `checked_at` and `latest`; a second tick within 24 h makes none.
+40. Two writers: one holds the lock; the other waits and then writes, or skips after 500 ms; neither holds the lock during its GET (a GET that the fixture server holds open does not block the other writer's lock); a key that the module does not know survives a write.
+41. An older-form write of `update.json` (the U fields only) leaves `update-clients.json` unchanged.
+42. The tick runs with `ZYGO_SESSION` and `ZYGO_WORKSPACE` set, off a TTY and with `-p`; it does not run with `[update] check = false` or `ZYGO_NO_UPDATE_CHECK=1`.
+43. The tick never prompts and never writes the binary (the test binary path is unchanged after a tick that finds a newer version).
+44. A failed GET writes `checked_at`, one session-log line, and no segment.
+45. The status line with `latest` newer than the session view's version shows segment 16: compact `update <new>`, verbose at the end of row 1; equal, older, or equal to `skip`: no segment; a 5 KiB or non-JSON file: no segment and no error output.
+46. Under width pressure, segment 16 is removed first.
+47. `zygo status` prints the update line; the launcher prints the exit line when stderr is a TTY and not otherwise.
 
-P4-7 (fixture server as in `crates/zygo/tests/update.rs`; no real clock wait: the tick and the clock are injected, K-C6):
+P4-11 (client updates):
 
-35. One tick with a stale throttle makes one GET and writes `checked_at` and `latest`; a second tick within 24 h makes none; two launchers with one shared state make one GET (the second fails the try-lock or sees the fresh `checked_at`).
-36. The tick runs with `ZYGO_SESSION` and `ZYGO_WORKSPACE` set, off a TTY and with `-p`; it does not run with `[update] check = false` or `ZYGO_NO_UPDATE_CHECK=1`.
-37. The tick never prompts and never writes the binary (the test binary path is unchanged after a tick that finds a newer version).
-38. A failed GET writes `checked_at`, one session-log line, and no segment.
-39. The status line with `update.json` `latest` newer than the session view's version shows segment 16 (compact and verbose texts); equal, older, or equal to `skip`: no segment; an `update.json` of 5 KiB or non-JSON: no segment and no error output.
-40. Under width pressure, segment 16 is removed first.
-41. `zygo status` prints the update line; the launcher prints the exit line when stderr is a TTY and not otherwise.
-42. With a client flag on, a fixture release source makes one GET per 24 h per client; the HUD and `zygo status` show `<client> <new> available (zygo graded <pinned>)`; with the flag off (default when the fact is `true`) no client GET happens.
-43. `[update.clients.codex] announce = true` in user config turns the flag on; the same key in a repository or team layer has no effect (`layers.rs:68`); `announce = true` for a client with no release source is a `zygo config check` error.
-44. A session view with a client version newer than the descriptor pin gives `<client> <running> ungraded` in `zygo status`, `zygo doctor` and the verbose HUD, not in the compact HUD; no network call happens (the fixture server sees no request).
-45. `grep -rnE 'autoupdate|DISABLE_AUTOUPDATER|check_for_update_on_startup' crates/zygo-launch/src` finds nothing (zygo hides no client notice); each PU/PC16 premise row is `verified` and A-22.2 cites it.
+48. With a client flag on, a fixture release source makes one GET per 24 h per client; the HUD and `zygo status` show `<client> <new> available (zygo graded <pinned>)`; with the flag off (the default when the fact is `true`) no client GET happens.
+49. With a zygo update and a client update both pending: compact shows the zygo update only; verbose shows both, zygo first; under width pressure the client part goes first.
+50. `[update.clients.codex] announce = true` in user config turns the flag on; the same key in a repository or team layer has no effect (`layers.rs:68`); `announce = true` for a client with no release source is a `zygo config check` error.
+51. A session view with a client version newer than the descriptor pin gives `<client> <running> ungraded` in `zygo status`, `zygo doctor` and the verbose HUD, not in the compact HUD; the fixture server sees no request.
+52. `grep -rnE 'autoupdate|DISABLE_AUTOUPDATER|check_for_update_on_startup' crates/zygo-launch/src` finds nothing; each PU and PC16 premise row is `verified` and A-22.2 cites it.
 
 ## 12. Base-spec changes
 
-- **§3** (zygo design): the "Nothing phones home" exception widens as K§6.5.6 states.
-- **§8.1**: the capability list is `docs/conformance/capabilities.toml`; A-22 is added; the cell form and C9 stand.
+- **§3** (zygo design): the "Nothing phones home" exception widens as K§6.5.6 states (P4-11).
+- **§8.1**: the capability list is `docs/conformance/capabilities.toml` (P4-2); A-22 is added (P4-10); the phase 3 client features are added (P4-6); the cell form and C9 stand.
 - **§8.4**: `ZYGO_AGENT` takes each registry id (`claude-code`, `opencode`, `codex`); each client adds its own denylist rows.
 - **§8.8**: superseded by K§6.8 flow 6.
 - **§7.6 v2**: the Responses client route is built (K§6.4); the chat client route and the `openai-chat` client pair stay v2.
@@ -861,5 +936,6 @@ P4-7 (fixture server as in `crates/zygo/tests/update.rs`; no real clock wait: th
 ## Change log
 
 - 2026-11-25: first version.
-- 2026-11-25: the operator's two additions: the three conformance outputs (K§6.2.6) and update notices (K§6.5, P4-7), with the operator's answer on client updates.
-- 2026-11-25: order against phase 3 (K§6.9); items renumbered in causal order (conformance P4-1, Codex premises P4-2, proxy P4-3, client contract P4-4, Codex client P4-5, Codex grade P4-6, update notices P4-7).
+- 2026-11-25: the operator's two additions: the three conformance outputs (K§6.2.6) and update notices (K§6.5, then P4-7), with the operator's answer on client updates.
+- 2026-11-25: order against phase 3 (K§6.9); items renumbered in causal order (then: conformance P4-1, Codex premises P4-2, proxy P4-3, client contract P4-4, Codex client P4-5, Codex grade P4-6, update notices P4-7).
+- 2026-11-25: approved by the operator (instruction to plan and build); new row order P4-1 to P4-11 (K§6.9); the Codex client gets its own design (P4-7); the fixes of the spec audit (lead rulings C1-C3, I4-I15, M16, M17).
