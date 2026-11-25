@@ -1,0 +1,81 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.0.3, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /repo
+collecting ... collected 50 items
+
+tests/test_calc.py::test_add[0] PASSED                                   [  2%]
+tests/test_calc.py::test_add[1] PASSED                                   [  4%]
+tests/test_calc.py::test_add[2] PASSED                                   [  6%]
+tests/test_calc.py::test_add[3] PASSED                                   [  8%]
+tests/test_calc.py::test_add[4] PASSED                                   [ 10%]
+tests/test_calc.py::test_add[5] PASSED                                   [ 12%]
+tests/test_calc.py::test_add[6] PASSED                                   [ 14%]
+tests/test_calc.py::test_add[7] PASSED                                   [ 16%]
+tests/test_calc.py::test_add[8] PASSED                                   [ 18%]
+tests/test_calc.py::test_add[9] PASSED                                   [ 20%]
+tests/test_calc.py::test_add[10] PASSED                                  [ 22%]
+tests/test_calc.py::test_add[11] PASSED                                  [ 24%]
+tests/test_calc.py::test_add[12] PASSED                                  [ 26%]
+tests/test_calc.py::test_add[13] PASSED                                  [ 28%]
+tests/test_calc.py::test_add[14] PASSED                                  [ 30%]
+tests/test_calc.py::test_add[15] PASSED                                  [ 32%]
+tests/test_calc.py::test_add[16] PASSED                                  [ 34%]
+tests/test_calc.py::test_add[17] PASSED                                  [ 36%]
+tests/test_calc.py::test_add[18] PASSED                                  [ 38%]
+tests/test_calc.py::test_add[19] PASSED                                  [ 40%]
+tests/test_calc.py::test_double[0] PASSED                                [ 42%]
+tests/test_calc.py::test_double[1] PASSED                                [ 44%]
+tests/test_calc.py::test_double[2] PASSED                                [ 46%]
+tests/test_calc.py::test_double[3] PASSED                                [ 48%]
+tests/test_calc.py::test_double[4] PASSED                                [ 50%]
+tests/test_calc.py::test_double[5] PASSED                                [ 52%]
+tests/test_calc.py::test_double[6] PASSED                                [ 54%]
+tests/test_calc.py::test_double[7] PASSED                                [ 56%]
+tests/test_calc.py::test_double[8] PASSED                                [ 58%]
+tests/test_calc.py::test_double[9] PASSED                                [ 60%]
+tests/test_calc.py::test_double[10] PASSED                               [ 62%]
+tests/test_calc.py::test_double[11] PASSED                               [ 64%]
+tests/test_calc.py::test_double[12] PASSED                               [ 66%]
+tests/test_calc.py::test_double[13] PASSED                               [ 68%]
+tests/test_calc.py::test_double[14] PASSED                               [ 70%]
+tests/test_calc.py::test_double[15] PASSED                               [ 72%]
+tests/test_calc.py::test_double[16] PASSED                               [ 74%]
+tests/test_calc.py::test_double[17] PASSED                               [ 76%]
+tests/test_calc.py::test_double[18] PASSED                               [ 78%]
+tests/test_calc.py::test_double[19] PASSED                               [ 80%]
+tests/test_calc.py::test_total FAILED                                    [ 82%]
+tests/test_text.py::test_upper[apple] PASSED                             [ 84%]
+tests/test_text.py::test_upper[fig] PASSED                               [ 86%]
+tests/test_text.py::test_upper[pear] PASSED                              [ 88%]
+tests/test_text.py::test_upper[plum] PASSED                              [ 90%]
+tests/test_text.py::test_upper[kiwi] PASSED                              [ 92%]
+tests/test_text.py::test_upper[lime] PASSED                              [ 94%]
+tests/test_text.py::test_upper[date] PASSED                              [ 96%]
+tests/test_text.py::test_upper[yuzu] PASSED                              [ 98%]
+tests/test_text.py::test_plural FAILED                                   [100%]
+
+=================================== FAILURES ===================================
+__________________________________ test_total __________________________________
+
+    def test_total():
+>       assert add(2, 3) == 6
+E       assert 5 == 6
+E        +  where 5 = add(2, 3)
+
+tests/test_calc.py:19: AssertionError
+_________________________________ test_plural __________________________________
+
+    def test_plural():
+>       assert "pear".upper() == "PEARS"
+E       AssertionError: assert 'PEAR' == 'PEARS'
+E         
+E         - PEARS
+E         ?     -
+E         + PEAR
+
+tests/test_text.py:10: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_calc.py::test_total - assert 5 == 6
+FAILED tests/test_text.py::test_plural - AssertionError: assert 'PEAR' == 'PE...
+========================= 2 failed, 48 passed in 0.02s =========================
