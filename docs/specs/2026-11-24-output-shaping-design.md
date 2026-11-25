@@ -385,6 +385,8 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 | diff, json, log | view ≤ 8 KiB | each `must_keep` line is in the view |
 | none | 0 (no change) | the hook output is empty |
 
+A case whose raw text has no runner summary line (O§7.6), such as the libtest compile error, is checked against the `none` row: the hook makes no change, so the model gets each `must_keep` line in the raw text.
+
 ### 8.3 The never-worse check
 
 **(author)** A CI test, over every case and over a fixed list of built inputs (empty output; one line; 3 equal blank lines; a lone `ESC`; an OSC with no end; a 5 MiB output; a `test result:` line with no tests; a command that is not a string; a command with an unclosed quote; a 10,000-deep JSON array; a 400,000-character line):
@@ -392,7 +394,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 1. The hook does not panic, and its exit code is 0.
 2. The view is empty (no change) or `raw_bytes − view_bytes ≥ 256` with the row's numbers.
 3. When there is a view, its marker names a result id, and `Store::get` of that id gives the raw text byte for byte.
-4. Each `must_keep` line is in the view (O-C9).
+4. Each `must_keep` line is in the view, when there is a view (O-C9).
 5. Each line that a runner view hides matches one of the hidden forms of its runner's row (O§7.6), or belongs to a passed go test by the go test rules. The test checks this line by line against the raw text.
 6. Above 4 MiB, the view equals the §10.1 size view of the raw text.
 
@@ -580,4 +582,5 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 |---|---|---|---|
 | 2026-11-24 | O§6.5 item 3 | author's call (OS-2 review round 1) | the column check reads `PRAGMA table_xinfo` so a generated column counts as present |
 | 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give or record the required bytes; the row now names `-- --color always` (colors libtest stdout), `--no-local` (a local clone prints no `\r` progress) and `git diff --color=always` (the recorded command) (found in phase3 OS-17). |
+| 2026-11-24 | O§8.2, O§8.3 | author's call | A case with no runner summary (libtest compile error, O§8.1) gets no change by O§7.6, so it cannot meet the 30 % failing floor or hold must_keep lines in a view; it is checked against the none row (found in phase3 OS-19). |
 | 2026-11-24 | O§8.1 | operator | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |
