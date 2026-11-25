@@ -127,10 +127,10 @@ impl GitRunner for Cnt {
             return Err("tool not found".into());
         }
         let mut o = SystemGit.git(top, args, Instant::now() + Duration::from_secs(600))?;
-        if let Some((n, bytes)) = self.swap {
-            if self.roots() >= n && args.len() >= 2 && args[0] == "cat-file" && args[1] == "blob" {
-                o.stdout = bytes.to_vec();
-            }
+        if let Some((n, bytes)) = self.swap
+            && self.roots() >= n && args.len() >= 2 && args[0] == "cat-file" && args[1] == "blob"
+        {
+            o.stdout = bytes.to_vec();
         }
         Ok(o)
     }
@@ -160,7 +160,7 @@ fn one_read_per_use_and_never_a_mix() {
     let r = Cnt { swap: Some((2, B.as_bytes())), ..Cnt::default() };
     let Use::Approved { full_ref, pin, files, def } = repo_def::check_default(&f.c, ID, &s, &r) else { panic!() };
     assert_eq!((r.reads(), r.blobs()), (1, 1));
-    assert_eq!((full_ref.as_str(), pin.clone()), (MAIN, Pin { commit: head(&f.c), digest: d(A) }));
+    assert_eq!((full_ref.as_str(), pin.clone()), (MAIN, Pin::new(head(&f.c), d(A))));
     assert_eq!(files.workspace.as_deref(), Some(A.as_bytes()));
     assert_eq!(def, parsed(A));
     let Use::NotApproved { digest, def, files, .. } = repo_def::check_default(&f.c, ID, &s, &r) else { panic!() };
@@ -213,17 +213,17 @@ fn pinned_gone_unread_and_other_digest() {
     // A commit that the clone does not have, as after a force-push and gc.
     commit_files(&f.w, &[(".zygo/workspace.toml", B.as_bytes())]);
     let gone = git(&f.w, &["rev-parse", "HEAD"]);
-    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin { commit: gone, digest: d(B) }, &s, &Cnt::default()), PinnedUse::Gone);
+    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin::new(gone, d(B)), &s, &Cnt::default()), PinnedUse::Gone);
     let fail = Cnt { fail: true, ..Cnt::default() };
-    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin { commit: c.clone(), digest: d(A) }, &s, &fail),
+    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin::new(c.clone(), d(A)), &s, &fail),
                PinnedUse::Unread { why: "git ls-tree: tool not found".into() });
     // Both digests are stored; the read at c gives d(A), so a pin of d(B) at c is not approved.
-    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin { commit: c.clone(), digest: d(B) }, &s, &Cnt::default()), PinnedUse::NotApproved);
+    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin::new(c.clone(), d(B)), &s, &Cnt::default()), PinnedUse::NotApproved);
     // The seed commit has no .zygo/ (Read::Absent): never Approved.
     let seed = git(&f.c, &["rev-parse", &format!("{MAIN}~1")]);
-    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin { commit: seed, digest: d(A) }, &s, &Cnt::default()), PinnedUse::NotApproved);
+    assert_eq!(repo_def::check_pinned(&f.c, ID, &Pin::new(seed, d(A)), &s, &Cnt::default()), PinnedUse::NotApproved);
     // The other id is not approved.
-    assert_eq!(repo_def::check_pinned(&f.c, ID2, &Pin { commit: c, digest: d(A) }, &s, &Cnt::default()), PinnedUse::NotApproved);
+    assert_eq!(repo_def::check_pinned(&f.c, ID2, &Pin::new(c, d(A)), &s, &Cnt::default()), PinnedUse::NotApproved);
 }
 
 #[test] // R§18 item 6; R§7.4: one read per pinned use; the def applied is the read checked
@@ -232,7 +232,7 @@ fn pinned_one_read_per_use_and_never_a_mix() {
     let s = store(&f);
     repo_def::approve_workspace_in(&s, ID, &d(A)).unwrap();
     repo_def::approve_workspace_in(&s, ID, &d(B)).unwrap();
-    let pin = Pin { commit: head(&f.c), digest: d(A) };
+    let pin = Pin::new(head(&f.c), d(A));
     let r = Cnt { swap: Some((2, B.as_bytes())), ..Cnt::default() };
     assert_eq!(repo_def::check_pinned(&f.c, ID, &pin, &s, &r), PinnedUse::Approved { def: parsed(A) });
     assert_eq!((r.roots(), r.blobs()), (1, 1));
@@ -246,7 +246,7 @@ fn pinned_invalid_is_not_approved() {
     let f = fx(&[(".zygo", b"x")]);
     let s = store(&f);
     repo_def::approve_workspace_in(&s, ID, &d(A)).unwrap();
-    let pin = Pin { commit: head(&f.c), digest: d(A) };
+    let pin = Pin::new(head(&f.c), d(A));
     assert_eq!(repo_def::check_pinned(&f.c, ID, &pin, &s, &Cnt::default()), PinnedUse::NotApproved);
 }
 
@@ -256,7 +256,7 @@ fn pinned_commit_not_an_oid_is_unread() {
     let s = store(&f);
     repo_def::approve_workspace_in(&s, ID, &d(A)).unwrap();
     let r = Cnt::default();
-    let pin = Pin { commit: "not-a-sha".into(), digest: d(A) };
+    let pin = Pin::new("not-a-sha".into(), d(A));
     assert!(matches!(repo_def::check_pinned(&f.c, ID, &pin, &s, &r), PinnedUse::Unread { .. }));
     assert!(r.calls.borrow().is_empty());
 }
