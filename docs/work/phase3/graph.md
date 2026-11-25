@@ -201,7 +201,6 @@ Session text (T, SX nodes):
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | DONE | implementation | 0128c7fa, 63b94dd8 · statusline_mail 7/0, statusline_render 30/0 ; floor green · PR #108 |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
 | MS-8 | Public check: URL map, anonymous probe, verdict lists, cache | MS-5 | DONE | judgment | 8d5f951f · public 36/36; floor green · PR #73 |
 | MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | DONE | judgment | 2384d84a · branch 36/36; floor green · PR #74 |
@@ -219,7 +218,7 @@ Session text (T, SX nodes):
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | DONE | judgment | f5a7e8cd f97e8031 bce0413f · repo_def_apply 18/0, config_layers 90/0 (16 ignored) ; floor green · PR #112 |
-| WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3 | TODO | implementation | — |
+| WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | DONE | implementation | 8c8dd676, 7b189dbd, a08afc56 · loadout 15/0, state 43/0 ; floor green · PR #115 |
 | RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | DONE | implementation | fab29ce1, 72c3d03a, da38c41a · zygo-hooks 247/0 ; floor green · PR #118 |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
@@ -397,4 +396,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | MS-11 DONE: identity registry/ack checks and moved-workspace scan; review: 7 findings fixed; F1 (no cap on registry/ack file count) to operator as a proposed rule; F9 (twin false positive after crash at tip) is a contract note for MS-13 · PR #113 |
 | 2026-11-25 | MS-12 done: import checks (reader-equal json), crash-safe delivery via incoming/, torn staged files re-imported, per-target inbox room; S§8.5 step 5 and Candidates rewritten (author's call). |
 | 2026-11-25 | WD-17 DONE: `zygo doctor` prints the workspace-files, pool, shared-pool and member-maximum lines; it finds the checkout the same way `up` does. 2 rounds, 9 findings: 5 fixed, 1 closed by a fix, 1 carried forward, 2 dropped · PR #119 |
+| 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
 | 2026-11-25 | RT-3 DONE (fab29ce1 72c3d03a da38c41a): run-time HUD segment in compact and verbose with its width order; collect reads workspace.json once via member_read; review round 2 fixed 2; FX-11 widened to add the 󰅐 clock glyph to the doctor table. Floor green · PR #118 |
