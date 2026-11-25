@@ -61,7 +61,7 @@ The tree test fails check item 8 for both clients until the operator decides eac
 - **BLOCKED(operator: bar exception claude-code A-1.2).** In passthrough (base spec §12.3), the session token is in the `ANTHROPIC_CUSTOM_HEADERS` environment row as `X-Zygo-Token`. `stub_launch.rs::claude_code_session_token_stays_in_the_token_file_and_in_passthrough_in_settings_and_custom_headers` (`:542-576`) asserts this. A-1.2 allows only the `token` file and "the `0600` passthrough files of §12.3", and an environment row is not a file. If the operator reads A-1.2 as allowing every §12.3 carrier, that is a change of standard text, and it also stops for the operator (K§6.2.1).
 - **BLOCKED(operator: bar exception claude-code A-10.2).** The same passthrough row puts the session token in the client's environment. Outside passthrough the token is not in the environment (same test).
 - **BLOCKED(operator: bar exception opencode A-1.2).** At `16481ba8`, zygo wrote the session token as `provider.zygo.options.apiKey` inside the `OPENCODE_CONFIG_CONTENT` environment row (base spec §8.7 before OC-1). Void since OC-1 (`53eabe25`): `apiKey` is a `{file:…}` reference to the token file (`crates/zygo-launch/src/opencode.rs:113-127` `token_ref`, `:185`).
-- **BLOCKED(operator: bar exception opencode A-1.3).** At `16481ba8`, zygo wrote no `enabled_providers` key, so OpenCode's own provider logins and other providers stayed selectable. Void since OC-1 (`53eabe25`): the inline config sets `enabled_providers = ["zygo"]` and the computed `disabled_providers` (`src/opencode.rs:179-180`, `:606-619` `user_disabled`).
+- **BLOCKED(operator: bar exception opencode A-1.3).** At `16481ba8`, zygo wrote no `enabled_providers` key, so OpenCode's own provider logins and other providers stayed selectable. Void since OC-1 (`53eabe25`): the inline config sets `enabled_providers = ["zygo"]` and the computed `disabled_providers` (`src/opencode.rs:179-180`, `:606-618` `user_disabled`).
 - **BLOCKED(operator: bar exception opencode A-1.4).** There is no key-helper command to run in any shell (see A-1.2). A core criterion cannot be `n/a` (check item 4), so it is `not-met`.
 - **BLOCKED(operator: bar exception opencode A-10.2).** The token is in the client's environment through `OPENCODE_CONFIG_CONTENT` (same evidence as OpenCode A-1.2; base spec §8.4 names it as an "Accepted limit").
 
@@ -269,6 +269,8 @@ Bar, as graded:
 - OpenCode is below the bar on A-1 (A-1.2, A-1.3, A-1.4) and A-10 (A-10.2).
 - Each other core criterion of both clients is met: A-1.1, A-1.3 (Claude Code), A-2.1 to A-2.4, A-5.1 to A-5.3, A-6.1, A-8.1, A-8.2, A-10.1, A-13.1, A-13.2, A-21.1 and A-21.2.
 
+After step 7 (operator decisions of 2026-11-25), Claude Code A-1.2, A-10.2 and OpenCode A-1.2, A-1.3, A-10.2 are met, and OpenCode A-1.4 has an approved exception. The generated scores: Claude Code 96 / 96 / 96 / 94, OpenCode 84 / 96 / 76 / 66 (total, core, standard, extra); both clients meet the bar.
+
 ### Differences from today's hand grades (pull request body, K-D26)
 
 Grade changed:
@@ -327,7 +329,7 @@ Found with `git grep -n -e check-conformance -e test-check-conformance` and `git
 | `scripts/check-premises.sh:146` greps `docs/conformance.md` for lines that name `N38` | No generated text names `N38`. Step 13 runs `sh scripts/check-premises.sh`. |
 | `scripts/premises/ver_test.sh:179-188` and `scripts/premises/live-selftest.sh:242` copy `docs/conformance.md` | Unchanged. The file still exists. |
 | `crates/zygo-launch/tests/stub_agent/harness.rs:21` (comment: "versions pinned in `docs/conformance.md`") | Unchanged. The rollup headings of the generated file hold `Claude Code 2.1.328` and `OpenCode 1.18.16`. |
-| `docs/roadmap/phase-5.md:77` cites `docs/conformance.md:31`, `:34` (the old evidence lines) | The cited lines move. The file is outside Files, so this is reported to the lead and not changed here. |
+| `docs/roadmap/phase-5.md:77` cites `docs/conformance.md:31`, `:34` (the old evidence lines) | The generated file no longer holds the name forms. Step 13 cites base spec `:480` (Claude Code) and premise P5, `docs/premises.md:29` (OpenCode). |
 
 ### Steps
 
@@ -417,10 +419,10 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   2. `git rm scripts/check-conformance.sh scripts/test-check-conformance.sh`.
 
   Check: the same `git grep` prints nothing, and `test ! -e scripts/check-conformance.sh && test ! -e scripts/test-check-conformance.sh` exits 0. Commit the CI paths and the deletion together: `ci: run the conformance check on registry, grade, output and live-check changes; remove the conformance scripts`.
-- [ ] 12. **Acceptance.** Run the Acceptance command of the contract; each command exits 0. Then:
+- [x] 12. **Acceptance.** Run the Acceptance command of the contract; each command exits 0. Then:
   - `git diff --exit-code origin/phase-4 -- crates/zygo-config/tests/builtin.rs` exits 0, so `builtin.rs` is unchanged (K§11 item 7);
   - `cargo test --workspace --locked --no-fail-fast` is green, `forbidden_content` included.
-- [ ] 13. **Other readers.** `sh scripts/check-premises.sh` prints `check-premises: ok`.
+- [x] 13. **Other readers.** `sh scripts/check-premises.sh` prints `check-premises: ok`.
 - [ ] 14. **Deliver.** Push. Move the pull request out of draft. The body keeps the three lists and adds the final scores and bar lines. CI is green on ubuntu, macOS and Windows. The pull request does not merge without the operator (K-D26).
 
 ### Author's checks (§3.3)

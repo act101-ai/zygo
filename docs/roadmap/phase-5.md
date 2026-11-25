@@ -74,7 +74,7 @@ Code outside `zygo-mcp` also depends on the tool names:
 - The proxy finds a `compact` call by its name `mcp__<server>__compact` (`crates/zygo-proxy/src/window.rs:93-99`).
 - The Claude Code launch adds `PreToolUse` hooks for `mcp__zygo__work_begin` and `mcp__zygo__work_verdict` (`crates/zygo-launch/src/claude_code.rs:483-484`). The OpenCode plugin runs the `work` hook after each tool (`crates/zygo-launch/assets/opencode-plugin.js:183`).
 - The session text names `result_view`, `result_search` and `result_tree` (`crates/zygo-hooks/src/session_text.rs:9`); the pre-compact text names `result_view` (`crates/zygo-hooks/src/pre_compact.rs:76`).
-- The model-visible name form differs per client: Claude Code `mcp__<server>__<tool>`, OpenCode `<server>_<tool>` (`docs/conformance.md:31`, `:34`).
+- The model-visible name form differs per client: Claude Code `mcp__<server>__<tool>`, OpenCode `<server>_<tool>` (Claude Code: `docs/specs/2026-11-18-zygo-design.md:480`; OpenCode: premise P5, `docs/premises.md:29`, tool `zygo_probe_tool`).
 - `compact` keeps its name, because act-lite's skills call a tool of that name (§15.4, `docs/specs/2026-11-18-zygo-design.md:745`).
 
 The plugin system for skills and plugins (§15, `docs/specs/2026-11-18-zygo-design.md:708-781`; crate `crates/zygo-plugins`):
