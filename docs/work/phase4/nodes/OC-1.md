@@ -6,4 +6,92 @@
 **Produces:** `opencode_token_is_only_a_file_reference()` (the `#[test]` in `crates/zygo-launch/tests/opencode.rs`: no env value and no config content handed to OpenCode holds the token; `provider.zygo.options.apiKey` is a `{file:…}` reference to the session's `token` file), `inline_config_limits_providers_to_zygo()` (the `#[test]`: `enabled_providers` is `["zygo"]`), `PO1` and `PO2` (the `docs/premises.md` rows: `{file:…}` in `options.apiKey` from `OPENCODE_CONFIG_CONTENT`; `enabled_providers` hides the vendor providers), evidence that CF-4 cites for OpenCode A-1.2, A-1.3, A-10.2
 **Acceptance:** `cargo test -p zygo-launch --locked --no-fail-fast && cargo test -p zygo-launch --locked --test opencode -- --exact opencode_token_is_only_a_file_reference inline_config_limits_providers_to_zygo 2>&1 | grep -q 'test result: ok. 2 passed' && cargo test -p zygo-launch --locked --test stub_launch -- --ignored --exact opencode_child_environment_flags_and_inline_config_match_the_spec 2>&1 | grep -q 'test result: ok. 1 passed' && grep -Eq '^\| PO1 \|.*\| verified \|' docs/premises.md && grep -Eq '^\| PO2 \|.*\| verified \|' docs/premises.md && sh scripts/check-premises.sh` → every command exits 0: the zygo-launch tests pass; the two named tests run and pass (the token is in no env value and no config content handed to OpenCode, `apiKey` references the session's `0600` `token` file, the config limits providers to zygo's); the stub-agent launch shows the same on a real session directory; both premise rows are verified on the pinned OpenCode
 
+## Planning notes
+
+Premise check (execute-work §3.1) at `40732c74` (`origin/phase-4`).
+
+- **Pinned version.** OpenCode minimum 1.18.16: `docs/premises.md:8` (header `OpenCode: 1.18.16`), `crates/zygo-config/data/agents.toml:5-6` (`min_version = "1.18.16"`), held equal by `minimum_agent_versions_match_premises` (`crates/zygo-config/tests/builtin.rs:223-232`).
+- **Repo evidence for the two mechanisms: none.** `fixtures/opencode/` holds no capture of `{file:…}` or of `enabled_providers`; no `docs/premises.md` row names either. `fixtures/opencode/config-schema.json` (the live schema, retrieved 2026-11-18, not the pinned binary) lists top-level `enabled_providers` ("When set, ONLY these providers will be enabled"; marked `deprecated`, as `provider` itself is) and names `{file:…}` only in a TLS description. A schema is not a capture, so the plan starts with one (steps 1-4).
+- **Upstream source at tag `v1.18.16`** (`gh api repos/anomalyco/opencode/contents/packages/opencode/src/<file>?ref=v1.18.16`; `sst/opencode` redirects there). It tells the capture what to look for; it does not replace the capture.
+  - `config/config.ts:468-475`: `OPENCODE_CONFIG_CONTENT` goes through `loadConfig(text, { dir: ctx.directory, source })`, which calls `ConfigVariable.substitute` on the raw text before the JSON parse (`config.ts:213-227`). It is the last layer merged before the account config.
+  - `config/variable.ts:34-91`: `{env:…}` first, then each `{file:<path>}` (regex `\{file:[^}]+\}`): `~/` expands to the home folder, a relative path resolves against `dir`, the file text is trimmed and inserted JSON-escaped; a missing file is a config error (`bad file reference`). The match runs on the raw JSON text, so a `\` of a Windows path is seen doubled and a `}` ends the match. So zygo writes the path with `/` separators and refuses a path that holds `{`, `}` or `"`.
+  - `config/config.ts:45-50`: arrays replace on merge, except `instructions` (concatenated), so the inline `enabled_providers` replaces a user or project value.
+  - `provider/provider.ts:1388-1395, 1611-1616`: `isProviderAllowed` drops every provider not in `enabled_providers` (and any in `disabled_providers`) after the catalog, environment-key, stored-login (`auth.all()`, `:1536`) and config providers are gathered.
+- **Token file.** `SessionDir::token()` is `<session dir>/token` (`crates/zygo-core/src/session_dir.rs:54-56`); `write_token` sets mode `0600` before any byte is written (`session_dir.rs:115-132`; tested at `crates/zygo-core/tests/core_basics.rs:56,76`); the launcher writes it in `session_dir::open` (`crates/zygo-launch/src/session_dir.rs:45`). Claude Code's key helper `zygo hook token` reads the same file through `SessionDir::from_env()` and `read_token` (`crates/zygo-hooks/src/token.rs:5-11`). OpenCode reuses `ctx.session_dir.token()`. OpenCode sees the same absolute path, because the child runs as the same user with `ZYGO_SESSION_DIR` set to that root.
+- **Config in the environment or in a file.** Keep `OPENCODE_CONFIG_CONTENT`. Reason: its precedence over the user and project configs is verified (`docs/premises.md` P4, `fixtures/opencode/config-precedence.json`), it is substituted like a file (`config.ts:468-475`), and once the key is a `{file:…}` reference the env row holds a path, not the token, so A-10.2 holds. A 0600 `opencode.json` in `OPENCODE_CONFIG_DIR` has no precedence evidence (directory configs load before the inline one, `config.ts:440-466`) and would need its own capture for no gain.
+- **Other token paths.** `ctx.token` occurs once in `crates/zygo-launch/src/opencode.rs` (`:162`). The env rows are `OPENCODE_CONFIG_CONTENT` and `OPENCODE_CONFIG_DIR` only (`:472`); the generated plugin (`assets/opencode-plugin.js`) gets the zygo path, not the token. The stub-agent test today allows the token in exactly that one env row (`crates/zygo-launch/tests/stub_launch.rs:612-614`).
+- **Spec text that states the old form.** Base spec §7.2 "Session token" (the OpenCode provider key, `docs/specs/2026-11-18-zygo-design.md:226`), §8.4 "Set" accepted limit ("and OpenCode's inline config, §8.7", `:380`), §8.7 bullets 1-2 (`:409-410`: the provider key is the session token). K§12 lists base-spec changes (`docs/specs/2026-11-25-client-model-design.md:928-936`). Step 11 rewrites them as final text with change-log lines (author's call, citing the operator decision of 2026-11-25).
+- **Premise capture against a real binary: needed.** OpenCode 1.18.16 from npm into the scratch directory; never the owner's `~/.opencode/bin/opencode`, and never the owner's config, data or login files. The harness `scripts/premises/lib.sh` already gives `env -i`, a scratch `HOME` and `XDG_*`, and a mock that accepts only the run-time dummy key (`lib.sh:47-93`); `HTTP_PROXY`/`HTTPS_PROXY` at a closed local port keep every real host out. A stub run comes first (step 2).
+- **Residuals, not in this node.** (a) An OpenCode console account with an active org loads its config after the inline one (`config.ts:477-500`) and could override `enabled_providers`; this needs the owner's console login in OpenCode's data folder. (b) A user or project `disabled_providers` that names `zygo` disables zygo's provider (`provider.ts:1393`): the launch fails visibly and no request goes elsewhere. Both belong to CF-4's A-1.3 and A-5.3 reasons, not to code here.
+- If PO1 or PO2 is not `verified` on 1.18.16, stop: set `BLOCKED(premise: PO<n> <result>)` with the fixture; the operator decides (a higher minimum or another mechanism). No code step runs before both pass.
+
 ## Plan
+
+**Interfaces (as they exist now):**
+- Consumes: — (from the code: `SessionDir::token(&self) -> PathBuf`, `crates/zygo-core/src/session_dir.rs:54`; `fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery) -> Value`, `crates/zygo-launch/src/opencode.rs:108`)
+- Produces: `opencode_token_is_only_a_file_reference()`, `inline_config_limits_providers_to_zygo()` (tests in `crates/zygo-launch/tests/opencode.rs`); `docs/premises.md` rows `PO1`, `PO2`
+
+**Premise capture (gate).**
+
+- [ ] 1. Write `scripts/premises/run-opencode-oc1.sh`. It sources `lib.sh`, runs `new_run OC1`, makes a text-reply rule with `steps.py` and starts the mock with it (as `run-opencode.sh:60-67`). Layout: the key file `"$RUN/sess dir/token"` holds `$DUMMY_KEY`, mode 600 (the space in the path is on purpose). User config `$H/.config/opencode/opencode.json`: provider `anthropic` with `options.baseURL` = `$MOCK_URL/vendor/v1`, the dummy key, and one model `probe-model`. `$H/.local/share/opencode/auth.json`: an `openai` entry of type `api` with the dummy key, mode 600. Inline config `ON`: `$schema`, `model` = `zygo/lead`, `enabled_providers` = `["zygo"]`, provider `zygo` (`npm` `@ai-sdk/anthropic`, `options.baseURL` = `$MOCK_URL/v1`, the key field = the text `{file:` + `$RUN/sess dir/token` + `}`, one model `lead`). Inline `OFF`: `ON` without `enabled_providers`. `oc()` as `run-opencode.sh:46-52` (no `OPENCODE_CONFIG_DIR`), plus `OPENAI_API_KEY` = the dummy key, `HTTP_PROXY` and `HTTPS_PROXY` = `http://127.0.0.1:9`, `NO_PROXY` = `127.0.0.1,localhost`. Runs: `oc models` under ON and under OFF; `oc_bounded 60` of `run -m zygo/lead "tracer-po1"` under ON; `oc_bounded 60` of `run -m anthropic/probe-model "tracer-po2"` under ON and under OFF. Before any run the script exits 1 unless `"$OPENCODE_BIN" --version` under the same `env -i` prints `1.18.16`. With `OC1_STUB=1` it skips the version check and the result checks, writes no fixture, and checks isolation only: each `HOME` and `XDG_*` value the stub saw is under `$N2_SCRATCH`, and neither inline text contains `$DUMMY_KEY`. Result checks print `PO1: pass|fail <why>` and `PO2: …` and exit 1 on any fail. PO1: the inline text holds no `$DUMMY_KEY`, and a recorded POST to `/v1/messages` carries `x-api-key` equal to `$DUMMY_KEY` with reply 200 (the mock answers 401 and aborts on any other key, `lib.sh:87-93`). PO2: under ON each non-empty line of `models` starts with `zygo/` and no request path starts with `/vendor/`; under OFF `models` lists `anthropic/probe-model` and an `openai/` model, and a request path starts with `/vendor/` (the control is live). Scrubbed outputs go to `fixtures/opencode/oc1/` (`result.json`, `models-on.txt`, `models-off.txt`, the PO1 request) through `scrub` and `sed "s/$DUMMY_KEY/[omitted]/g"`, as `run-opencode.sh:161-168`.
+- [ ] 2. Stub run. A scratch dir `stub-bin/` holds `opencode` (prints `1.18.16` for `--version`; else appends `env` to `$N2_SCRATCH/stub-env.txt` and exits 0) and `claude` (exits 0). Run `OC1_STUB=1 PATH="<stub-bin>:/usr/bin:/bin" sh scripts/premises/run-opencode-oc1.sh` → exit 0, isolation lines pass.
+- [ ] 3. Real run. `env -i PATH=/usr/bin:/bin:<node dir> HOME=<scratch>/npm-home NPM_CONFIG_USERCONFIG=/dev/null npm install --prefix <scratch>/oc-1.18.16 opencode-ai@1.18.16`; then `PATH="<scratch>/oc-1.18.16/node_modules/.bin:<stub-bin>:/usr/bin:/bin" sh scripts/premises/run-opencode-oc1.sh` (the stub `claude` only satisfies `lib.sh:11`) → `PO1: pass`, `PO2: pass`, exit 0. Never in CI (K-C5).
+- [ ] 4. Add rows `PO1` and `PO2` to the Results table of `docs/premises.md`: Agent `OpenCode`, Version `1.18.16`, the run date, `verified`, Evidence = the `fixtures/opencode/oc1/` files with the observed facts and `scripts/premises/run-opencode-oc1.sh`. PO1 item: "OpenCode reads a provider's `options.apiKey` given as `{file:<absolute path>}` in `OPENCODE_CONFIG_CONTENT`; the config text holds no key (§8.7)". PO2 item: "`enabled_providers = [\"zygo\"]` drops the catalog, environment-key, stored-login and config providers: only `zygo/` models list and no request goes to another provider (§8.7, K A-1.3)". Run `sh scripts/check-premises.sh` and `N2_FORBIDDEN_NAMES=<owner user name> sh scripts/check-premises.sh` → exit 0. Commit the script, fixtures and rows. If a row is not `verified`, stop as the planning notes say.
+
+**Code, test first.**
+
+- [ ] 5. In `crates/zygo-launch/tests/opencode.rs` write the failing tests:
+      ```rust
+      #[test]
+      fn opencode_token_is_only_a_file_reference() {
+          let fx = fx();
+          let c = ctx(&fx, |c| c.token = format!("oc1-{}-{}", "probe", 7)); // distinct from any path text
+          let (spec, cfg) = built(&c);
+          let want = format!("{{file:{}}}", c.session_dir.token().to_str().unwrap().replace('\\', "/"));
+          assert_eq!(cfg["provider"]["zygo"]["options"]["apiKey"], want.as_str());
+          assert!(spec.env.iter().all(|(_, v)| !v.contains(&c.token)), "env");
+          assert!(spec.args.iter().all(|a| !a.contains(&c.token)), "args");
+          for f in files_under(&c.session_dir.root.join("opencode")) {
+              assert!(!std::fs::read(&f).unwrap().windows(c.token.len()).any(|w| w == c.token.as_bytes()), "{}", f.display());
+          }
+      }
+
+      #[test]
+      fn inline_config_limits_providers_to_zygo() {
+          let fx = fx();
+          let (_, cfg) = built(&ctx(&fx, |_| {}));
+          assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
+          assert_eq!(cfg["provider"].as_object().unwrap().keys().collect::<Vec<_>>(), ["zygo"]);
+      }
+
+      #[test]
+      fn a_token_path_that_breaks_the_file_reference_is_refused() {
+          let bad: &[&str] = if cfg!(windows) { &["a}b", "a{b"] } else { &["a}b", "a{b", "a\"b"] };
+          for b in bad {
+              let fx = fx();
+              let c = ctx(&fx, |c| c.session_dir = SessionDir::new(fx.root.join(b)));
+              let e = oc().build(&c).err().expect(b).to_string();
+              assert!(e.contains("cannot reference the session token file"), "{e}");
+          }
+      }
+      ```
+      `fn files_under(dir: &Path) -> Vec<PathBuf>` is a test helper: recursive `read_dir`, regular files only. In `inline_config_values` (`:321`) the key assert becomes the `want` form above (`format!("{{file:{}}}", …)` of `c.session_dir.token()`).
+- [ ] 6. Run `cargo test -p zygo-launch --locked --test opencode` → FAIL: the three new tests and `inline_config_values` (the key is the token, no `enabled_providers`, no refusal).
+- [ ] 7. In `crates/zygo-launch/src/opencode.rs` add `fn token_ref(ctx: &LaunchCtx) -> anyhow::Result<String>`: `ctx.session_dir.token()` as UTF-8 (`build` already refuses a non-UTF-8 root, `:440`), each `\` replaced by `/`; `bail!` with "cannot reference the session token file <path>: its path holds {, } or \"" when it holds `{`, `}` or `"`; returns `format!("{{file:{p}}}")`. Change `inline_config` to `fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str) -> Value`: the provider's key field is `key`, and the config gets the top-level `"enabled_providers": ["zygo"]`. In `build`, call `token_ref(ctx)?` before `inline_config` and pass it. Doc comment on `token_ref`: §8.7, PO1. Nothing else changes; this file no longer reads `ctx.token`.
+- [ ] 8. Run `cargo test -p zygo-launch --locked --test opencode` → PASS, with `inline_config_validates_against_the_pinned_schema` and `inline_config_matches_the_fixture_shape` unchanged and green.
+- [ ] 9. In `crates/zygo-launch/tests/stub_launch.rs`, `opencode_child_environment_flags_and_inline_config_match_the_spec` (`#[ignore]` for timing; run locally): the key assert at `:601` becomes the `{file:…}` form of `sd.join("token")` (`/` separators); add `assert_eq!(cfg["enabled_providers"], json!(["zygo"]));`; the comment at `:612` becomes "C3, A-10.2: the token is only in the `token` file of the session dir"; `:614` becomes `assert!(e.iter().all(|(_, v)| !v.contains(token)), "env");` (no exception). Run `cargo test -p zygo-launch --locked --test stub_launch -- --ignored --exact opencode_child_environment_flags_and_inline_config_match_the_spec` → 1 passed. Run `cargo test -p zygo-launch --locked --test premise` → PASS (`enabled_providers` is a top-level key of the pinned schema).
+- [ ] 10. Commit the code and tests.
+
+**Spec text (author's call; operator decision 2026-11-25).**
+
+- [ ] 11. `docs/specs/2026-11-18-zygo-design.md`:
+      - §7.2 "Session token", in the parenthesis after `zygo hook token`: the OpenCode part becomes "OpenCode provider `options.apiKey` = `{file:<$ZYGO_SESSION_DIR/token>}`, which OpenCode reads from that file when it loads its config (§8.7)".
+      - §8.4 "Set": "Accepted limit: tools run as the same user and can read that file (and OpenCode's inline config, §8.7)." becomes "Accepted limit: tools run as the same user and can read that file."
+      - §8.7 bullet 1, appended: "The inline config holds no secret: the provider key names the token file, so the token is in no environment row (premise PO1)."
+      - §8.7 bullet 2: the `options.apiKey` clause becomes "`options.apiKey` = `{file:<path>}`, the absolute path of `$ZYGO_SESSION_DIR/token` (`0600`, §8.4) with `/` as the separator, because OpenCode substitutes the raw config text; a path that holds `{`, `}` or `\"` stops the launch", and the bullet gets "`enabled_providers = [\"zygo\"]`: OpenCode drops every other provider, from its catalog, an environment key or a stored login, so no model request goes to a vendor host (premise PO2)."
+      - Change log row: `| 2026-11-25 | §7.2, §8.4, §8.7 | operator (OpenCode A-1.2, A-1.3, A-10.2 fixed in code, 2026-11-25); author's call (text, node OC-1) | The inline config carried the session token in OPENCODE_CONFIG_CONTENT and left the vendor providers on; the provider key now names the token file and enabled_providers keeps only zygo. |`
+      `docs/specs/2026-11-25-client-model-design.md`: K§12 gets, after the §7.6 v2 line, "- **§7.2, §8.4, §8.7** (OC-1, operator 2026-11-25): OpenCode's provider key is a `{file:…}` reference to the session's `token` file, the inline config holds no token, and `enabled_providers = [\"zygo\"]`."; change log "- 2026-11-25: K§12 gets the OC-1 base-spec change (operator: OpenCode A-1.2, A-1.3, A-10.2 fixed in code before CF-4)." Commit.
+
+**Verification.**
+
+- [ ] 12. Run the node's Acceptance → every command exits 0. Then `cargo test --workspace --locked --no-fail-fast` → green (the verification floor; CI on ubuntu, macOS and Windows covers the `/` separator form of step 7).
