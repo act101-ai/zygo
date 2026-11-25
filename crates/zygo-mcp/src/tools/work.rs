@@ -260,7 +260,6 @@ mod tests {
     use serde_json::json;
     use zygo_config::Features;
     use zygo_core::session_dir::SessionDir;
-use zygo_core::session_view::SessionView;
     use zygo_core::Agent;
     use zygo_usage::{Filter, Store, WorkUnitRow};
 
