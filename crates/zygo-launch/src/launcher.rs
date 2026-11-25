@@ -601,6 +601,7 @@ impl Session<'_> {
             work_units: c.features.work_units,
             results: c.features.results,
             compact_tool: c.features.compact_tool,
+            mail: c.features.mail,
             navigation,
             trim_threshold_bytes: c.results.trim_threshold_bytes,
             head_lines: c.results.head_lines,

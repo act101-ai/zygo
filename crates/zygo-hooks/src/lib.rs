@@ -1,4 +1,5 @@
 pub mod session_start;
+pub mod mail;
 pub mod pre_compact;
 pub mod prompt;
 pub mod role_guard;
