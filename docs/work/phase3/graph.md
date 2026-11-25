@@ -223,7 +223,7 @@ Session text (T, SX nodes):
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | TODO | implementation | — |
-| OS-20 | Capture pytest fixtures from a scratch project | OS-16 | TODO | implementation | — |
+| OS-20 | Capture pytest fixtures from a scratch project | OS-16 | IN-PROGRESS | implementation | .worktrees/phase3/OS-20-node · PR #57 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
