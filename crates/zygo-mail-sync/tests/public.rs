@@ -96,6 +96,13 @@ fn private_gitlab_not_found_or_no_permission() {
     assert_private("remote: The project you were looking for could not be found or you don't have permission to view it.");
 }
 
+/// Review round 1, F5: a control byte in git's stderr reaches the reason escaped (`zygo_core::esc`).
+#[test]
+fn classify_reason_escapes_control_bytes() {
+    assert_eq!(classify(&fail("fatal: \x1b[31mboom\x07")),
+        Verdict::Unknown("git ls-remote failed: fatal: \\u{1b}[31mboom\\u{07}".into()));
+}
+
 const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 #[test]
@@ -134,13 +141,42 @@ mod unix {
 
     /// Runs `git <args>` in `dir` and asserts it succeeds.
     fn git(dir: &std::path::Path, args: &[&str]) {
-        let s = std::process::Command::new("git").current_dir(dir).args(args).status().unwrap();
+        let mut c = std::process::Command::new("git");
+        c.current_dir(dir).args(args);
+        // the variables `zygo_plugins::sync::git_command` removes, so a git run that hosts this test does not leak in
+        for k in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+            "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"] {
+            c.env_remove(k);
+        }
+        for (k, _) in std::env::vars_os() {
+            if k.to_str().is_some_and(|k| k.to_ascii_uppercase().starts_with("GIT_CONFIG")) { c.env_remove(k); }
+        }
+        let s = c.status().unwrap();
         assert!(s.success(), "git {args:?}");
     }
 
     #[test]
     fn ls_remote_closed_port_is_unknown() {
         assert!(matches!(LsRemote.probe("https://127.0.0.1:1/p"), Verdict::Unknown(_)));
+    }
+
+    /// Review round 1, F2: the verdict of `LsRemote` is `classify` of a real git run (git refuses `http`, so no
+    /// connection is made; a 401 needs TLS, which this crate's tests do not have).
+    #[test]
+    fn ls_remote_reason_comes_from_git_stderr() {
+        assert_eq!(LsRemote.probe("http://127.0.0.1:1/r"),
+            Verdict::Unknown("git ls-remote failed: fatal: transport 'http' not allowed".into()));
+    }
+
+    /// Review round 1, F9: a remote name that starts with `-` is a name, never an option.
+    #[test]
+    fn remote_urls_reads_no_option_from_the_name() {
+        let t = tempfile::TempDir::new().unwrap();
+        let d = t.path();
+        git(d, &["init", "-q"]);
+        git(d, &["config", "remote.--push.url", "https://h/p"]);
+        assert_eq!(remote_urls(d, "--push", far()), Ok(vec!["https://h/p".to_string()]));
     }
 
     #[test]
@@ -296,6 +332,54 @@ mod unix {
         assert_eq!(seen(&f).len(), 1);
     }
 
+    /// Review round 1, F1: each verdict is saved by its name and comes back from the cache within 1 h, though the
+    /// probe would now answer otherwise.
+    fn cached(first: Verdict, name: &str, again: Verdict) {
+        let (_t, sp) = setup();
+        let f = fake(&[("https://h/p", first.clone())]);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0)), first);
+        assert_eq!(load(&sp).unwrap().public.unwrap().verdict, name);
+        let g = fake(&[("https://h/p", Verdict::Public)]);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &g, &at(59)), again);
+        assert!(seen(&g).is_empty());
+    }
+
+    #[test]
+    fn cached_public_comes_back() {
+        let (_t, sp) = setup();
+        let f = fake(&[("https://h/p", Verdict::Public)]);
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(0)), Verdict::Public);
+        assert_eq!(load(&sp).unwrap().public.unwrap().verdict, "public");
+        let g = fake(&[]); // would answer Private
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &g, &at(59)), Verdict::Public);
+        assert!(seen(&g).is_empty());
+    }
+
+    #[test]
+    fn cached_private_comes_back() { cached(Verdict::Private, "private", Verdict::Private); }
+
+    #[test]
+    fn cached_unknown_comes_back() {
+        cached(Verdict::Unknown("x".into()), "unknown",
+            Verdict::Unknown("the last check, under 1 h ago, could not tell".into()));
+    }
+
+    /// A local URL needs no probe, so the cached `local` is shown with a cache entry for an `https` URL: the probe
+    /// would answer `Private`.
+    #[test]
+    fn cached_local_comes_back() {
+        let (_t, sp) = setup();
+        let f = fake(&[]);
+        assert_eq!(check(&sp, &urls(&["/srv/r.git"]), &f, &at(0)), Verdict::Local);
+        assert_eq!(load(&sp).unwrap().public.unwrap().verdict, "local");
+        let mut s = load(&sp).unwrap();
+        s.public = Some(zygo_mail_sync::state::PublicCache { url_sha256: vec![sha("https://h/p")], verdict: "local".into(),
+            at: 1_800_000_000 });
+        save(&sp, &s).unwrap();
+        assert_eq!(check(&sp, &urls(&["https://h/p"]), &f, &at(59)), Verdict::Local);
+        assert!(seen(&f).is_empty());
+    }
+
     #[test]
     fn unreadable_state_runs_the_probe_and_writes_nothing() {
         let (_t, sp) = setup();
@@ -311,11 +395,15 @@ mod unix {
     fn check_keeps_the_other_state_fields() {
         let (_t, sp) = setup();
         let f = fake(&[]);
-        save(&sp, &State { last_ok: Some(5), ci_note_shown: true, ..Default::default() }).unwrap();
+        let blob = "0123456789abcdef0123456789abcdef01234567".to_string();
+        let own = || [("registry/host1.json".to_string(), blob.clone())].into_iter().collect::<std::collections::BTreeMap<_, _>>();
+        save(&sp, &State { last_ok: Some(5), ci_note_shown: true, pushed: own(), pending: own(), ..Default::default() }).unwrap();
         check(&sp, &urls(&["https://h/p"]), &f, &at(0));
         let s = load(&sp).unwrap();
         assert_eq!(s.last_ok, Some(5));
         assert!(s.ci_note_shown);
+        assert_eq!(s.pushed, own());
+        assert_eq!(s.pending, own());
         assert!(s.public.is_some());
     }
 }

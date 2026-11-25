@@ -87,7 +87,7 @@ pub fn classify(w: &Whole) -> Verdict {
     }
     let err = String::from_utf8_lossy(&w.err);
     match err.lines().map(str::trim).find(|l| !l.is_empty()) {
-        Some(line) => Verdict::Unknown(format!("git ls-remote failed: {}", scrub_userinfo(line))),
+        Some(line) => Verdict::Unknown(format!("git ls-remote failed: {}", zygo_core::esc(&scrub_userinfo(line)))),
         None => Verdict::Unknown("git ls-remote failed".into()),
     }
 }
@@ -132,8 +132,8 @@ pub fn remote_urls(main_root: &Path, remote: &str, deadline: Instant) -> Result<
         }
         Ok(url.to_string())
     };
-    let fetch = one(&["remote", "get-url", remote])?;
-    let push = one(&["remote", "get-url", "--push", remote])?;
+    let fetch = one(&["remote", "get-url", "--", remote])?;
+    let push = one(&["remote", "get-url", "--push", "--", remote])?;
     Ok(if push == fetch { vec![fetch] } else { vec![fetch, push] })
 }
 
@@ -141,8 +141,9 @@ pub fn remote_urls(main_root: &Path, remote: &str, deadline: Instant) -> Result<
 const CACHE_SECS: u64 = 3600;
 
 /// S§8.2, S§13 limit 7: the verdict of the remote with fetch and push URLs `urls`, from the cache when it is under
-/// 1 h old and holds the same URLs, else from `probe` on each distinct `https` form. The caller holds
-/// `mail/sync/lock` (S§15: the pass under the lock is the only writer of `state.json`).
+/// 1 h old and holds the same URLs, else from `probe` on each distinct `https` form. `check` loads and saves
+/// `state.json` under the caller's lock (S§15: the pass under the lock is the only writer of `state.json`); a caller
+/// that holds a `State` must load it again after `check`.
 pub fn check(sp: &SyncPaths, urls: &[String], probe: &dyn Probe, clock: &dyn Clock) -> Verdict {
     let now = clock.now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let mut keys: Vec<String> = urls.iter()
