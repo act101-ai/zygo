@@ -1,15 +1,15 @@
 //! Import (mail sync design S§8.5): candidates, checks, crash-safe delivery, finish incoming. S-C5: every remote
 //! name, mode, size and JSON value is checked before use; a file path holds only a local pane key and a ULID.
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::io::Read;
 use std::path::Path;
 use std::time::Instant;
 
-use serde::Deserialize;
 use ulid::Ulid;
-use zygo_work::repo::Flow;
+use zygo_work::repo::{Flow, RunError};
 use zygo_workspace::identity::valid_pane_key;
 use zygo_workspace::mail::store::{deliver_staged, unread, write_synced};
-use zygo_workspace::mail::{ensure_mail_root, BODY_MAX, SUBJECT_MAX};
+use zygo_workspace::mail::{ensure_mail_root, Message, BODY_MAX, SUBJECT_MAX};
 
 use crate::address::{self, ulid_file};
 use crate::branch::{self, BranchError, Entry};
@@ -38,16 +38,14 @@ pub struct Imported {
     pub left: usize,
 }
 
-/// The seven message fields the checks read; unknown keys are ignored, a duplicate key is an error.
-#[derive(Deserialize)]
-struct Fields {
-    version: u64,
-    id: String,
-    from: String,
-    to: String,
-    sent_at: String,
-    subject: String,
-    body: String,
+/// The `json` check: `bytes` parse as the maildir reader's message type, so every value, unknown keys included, is
+/// parsed as the reader parses it (a number out of range, a lone surrogate or bytes that are not UTF-8 are refused).
+/// A duplicate field is an error. Only an object is a message: serde reads a struct from an array too.
+fn parse_message(bytes: &[u8]) -> Result<Message, &'static str> {
+    if bytes.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
+        return Err("json");
+    }
+    serde_json::from_slice(bytes).map_err(|_| "json")
 }
 
 /// S§8.5 "Checks" on one entry of folder `folder`: the name of the first failed check (`mode`, `name`, `size`,
@@ -61,11 +59,7 @@ pub fn check_message(folder: &str, file: &str, mode: &str, kind: &str, size: u64
     if size > MESSAGE_MAX {
         return Err("size");
     }
-    // serde reads a struct from an array too: only an object is a message.
-    if bytes.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
-        return Err("json");
-    }
-    let m: Fields = serde_json::from_slice(bytes).map_err(|_| "json")?;
+    let m = parse_message(bytes)?;
     if m.version != 1 {
         return Err("version");
     }
@@ -92,7 +86,9 @@ pub fn check_message(folder: &str, file: &str, mode: &str, kind: &str, size: u64
 
 /// S§8.5 step 5: finishes each staged delivery in `incoming/` (`<pane key>.<ULID>.json`): the ULID goes into the
 /// imported log when it is not there, then the file moves into `new/` (the inbox check passed before it was
-/// staged). Returns the count of files moved into `new/`. Other names and links are left alone; a file whose finish
+/// staged). A file whose ULID is not in the log may be torn by a crash during its write: unless its bytes parse as
+/// a message whose `id` is the file's ULID, it is deleted and not logged, and the next pass imports the branch copy
+/// again. A file whose ULID is in the log was synced before the append. Returns the count of files moved into `new/`. Other names and links are left alone; a file whose finish
 /// fails stays for the next pass. `Err` only when `incoming/` or the imported log cannot be read.
 pub fn finish_incoming(sp: &SyncPaths, mail_dir: &Path) -> std::io::Result<usize> {
     let entries = match std::fs::read_dir(&sp.incoming) {
@@ -111,6 +107,15 @@ pub fn finish_incoming(sp: &SyncPaths, mail_dir: &Path) -> std::io::Result<usize
             continue;
         }
         if !seen.contains(&id) {
+            let mut bytes = Vec::new();
+            let read = std::fs::File::open(e.path()).and_then(|f| f.take(MESSAGE_MAX + 1).read_to_end(&mut bytes));
+            if read.is_err() {
+                continue;
+            }
+            if !parse_message(&bytes).is_ok_and(|m| m.id == id.to_string()) {
+                let _ = std::fs::remove_file(e.path());
+                continue;
+            }
             if imported_append(sp, id).is_err() {
                 continue;
             }
@@ -132,20 +137,32 @@ struct Candidate {
 }
 
 /// The candidates of S§8.5 for each own host and target, in that order: entries `<folder>/<ULID>.json` not in
-/// `own_ack`, each ULID once, at most [`CANDIDATE_CAP`]. Adds 1 to `left` when the reading stopped early.
+/// `own_ack`, each ULID once, at most [`CANDIDATE_CAP`]. A folder's reading also stops at its target's inbox room
+/// (`max_unread` less its unread count, over all own hosts); a candidate already in the imported log (`seen`) takes
+/// no room. Adds 1 to `left` for each folder stopped at its room, and once when the whole reading stopped early. A
+/// stop at the deadline is normal and writes no line.
 #[allow(clippy::too_many_arguments)]
 fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], own_ack: &BTreeSet<Ulid>,
-    deadline: Instant, left: &mut usize, log: &mut dyn FnMut(&str)) -> Vec<Candidate> {
+    seen: &HashSet<Ulid>, mail_dir: &Path, max_unread: u32, deadline: Instant, left: &mut usize,
+    log: &mut dyn FnMut(&str)) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
     let mut ids = HashSet::new();
+    let mut rooms: HashMap<&str, usize> = HashMap::new();
     for host in own_hosts {
         for t in targets {
             let folder = format!("{}@{}", t.name, host);
             if !valid_pane_key(&t.pane_key) || address::parse(&folder).is_none() {
                 continue;
             }
+            let room = rooms.entry(t.pane_key.as_str()).or_insert_with(|| {
+                unread(mail_dir, &t.pane_key).map_or(0, |n| (max_unread as usize).saturating_sub(n))
+            });
+            if *room == 0 {
+                *left += 1;
+                continue;
+            }
             let prefix = format!("{folder}/");
-            let mut full = false;
+            let (mut full, mut no_room) = (false, false);
             let r = branch::ls(wt, tip, Some(&prefix), deadline, &mut |e| {
                 let Some(id) = e.path.strip_prefix(&prefix).filter(|n| !n.contains('/')).and_then(ulid_file) else {
                     return Flow::Go;
@@ -157,12 +174,25 @@ fn candidates(wt: &Path, tip: &str, own_hosts: &[String], targets: &[Target], ow
                     full = true;
                     return Flow::Stop;
                 }
+                if !seen.contains(&id) {
+                    if *room == 0 {
+                        no_room = true;
+                        return Flow::Stop;
+                    }
+                    *room -= 1;
+                }
                 ids.insert(id);
                 out.push(Candidate { id, key: t.pane_key.clone(), folder: folder.clone(), entry: e });
                 Flow::Go
             });
-            if r.is_err() {
-                log("mail sync: import: ls-tree");
+            match r {
+                Err(BranchError::Git(RunError::TimedOut, _)) => {}
+                Err(_) => log("mail sync: import: ls-tree"),
+                Ok(_) if no_room && !full => {
+                    *left += 1;
+                    continue;
+                }
+                Ok(_) => {}
             }
             if r.is_err() || full {
                 *left += 1;
@@ -187,7 +217,7 @@ pub fn run(sp: &SyncPaths, mail_dir: &Path, wt: &Path, tip: &str, own_hosts: &[S
         out.left = 1;
         return Ok(out);
     };
-    for c in candidates(wt, tip, own_hosts, targets, own_ack, deadline, &mut out.left, log) {
+    for c in candidates(wt, tip, own_hosts, targets, own_ack, &seen, mail_dir, max_unread, deadline, &mut out.left, log) {
         if Instant::now() >= deadline {
             out.left += 1;
             break;

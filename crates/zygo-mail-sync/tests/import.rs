@@ -390,11 +390,108 @@ fn a_passed_deadline_or_a_bad_target_reads_nothing() {
     let res = run(&sp, &sp.mail, &m.wt, &t, &["b".into()], &bob(), &BTreeSet::new(), 5000, Instant::now(), &NoSeam,
         &mut |l| lines.push(l.to_string()));
     assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
-    assert_eq!(lines, ["mail sync: import: ls-tree"]);
+    assert!(lines.is_empty(), "{lines:?}"); // stopping at the deadline is normal: no error line
     for (targets, host) in [(vec![Target { name: "bob".into(), pane_key: "../x".into() }], "b"),
         (vec![Target { name: "cli".into(), pane_key: KEY.into() }], "b"), (bob(), "B!")] {
         let res = run(&sp, &sp.mail, &m.wt, &t, &[host.into()], &targets, &BTreeSet::new(), 5000, far(), &NoSeam, &mut |_| {});
         assert_eq!(res, Ok(Imported::default()));
     }
     assert!(!sp.mail.join(KEY).exists() && !sp.incoming.exists());
+}
+
+// Round 2, fix 1: the json check refuses what the maildir reader refuses.
+#[test]
+fn check_message_refuses_values_the_reader_refuses() {
+    let m = msg(u(1), "bob@b");
+    for extra in [&br#""x":1e400,"#[..], br#""x":"\ud800","#, b"\"x\":\"\xff\","] {
+        let mut b = b"{".to_vec();
+        b.extend_from_slice(extra);
+        b.extend_from_slice(&m[1..]);
+        // The json check refuses exactly what the reader refuses. This build of serde_json has `arbitrary_precision`
+        // (from zygo-proxy), so the reader keeps `1e400` as its digits and accepts it; the other two it refuses.
+        let reader = serde_json::from_slice::<zygo_workspace::mail::Message>(&b).is_ok();
+        assert_eq!(check(u(1), &b).is_ok(), reader, "{:?}", String::from_utf8_lossy(&b));
+        if extra != br#""x":1e400,"# {
+            assert_eq!(check(u(1), &b), Err("json"), "{:?}", String::from_utf8_lossy(&b));
+        }
+    }
+}
+
+#[test]
+fn a_delivered_message_reads_back_through_the_store() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    let b = odd(u(1));
+    let f = tree_literally(&m.root, &[("100644", file(u(1)).as_bytes(), &blob(&m.root, &b))]);
+    let t = tip(&m, &[("bob@b", f)]);
+    assert_eq!(go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam).0.unwrap().delivered, [(KEY.to_string(), u(1))]);
+    let got = zygo_workspace::mail::store::read(&sp.mail, KEY, 10).unwrap();
+    assert_eq!(got.len(), 1);
+    let g = &got[0];
+    assert_eq!((g.version, g.id.as_str(), g.from.as_str(), g.to.as_str(), g.sent_at.as_str(), g.subject.as_str(), g.body.as_str()),
+        (1, u(1).to_string().as_str(), "alice@a", "bob@b", "2026-11-25T10:00:00Z", "s", "b"));
+    assert_eq!(g.extra.get("x-extra"), Some(&serde_json::json!([1, {"k": null}])));
+}
+
+// Round 2, fix 2: a staged file torn by a crash during its write is deleted and imported again.
+#[test]
+fn finish_incoming_deletes_a_torn_staged_file() {
+    let full = msg(u(1), "bob@b");
+    for torn in [Vec::new(), full[..full.len() / 2].to_vec()] {
+        let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+        let t = tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+        for d in [&sp.mail, &sp.sync, &sp.incoming] {
+            zygo_workspace::mail::ensure_mail_root(d).unwrap();
+        }
+        staged(&sp, &format!("{KEY}.{}.json", u(1)), &torn);
+        assert_eq!(finish_incoming(&sp, &sp.mail).unwrap(), 0, "{}", torn.len());
+        assert_eq!(names(&sp.incoming), Vec::<String>::new());
+        assert!(!imported_load(&sp).unwrap().contains(&u(1)));
+        assert!(!new_dir(&sp).exists());
+        let (res, lines) = go(&m, &sp, &t, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+        assert_eq!(res, Ok(Imported { delivered: vec![(KEY.into(), u(1))], acked: vec![u(1)], left: 0 }));
+        assert!(lines.is_empty());
+        assert_eq!(names(&new_dir(&sp)), [file(u(1))]);
+        assert_eq!(fs::read(new_dir(&sp).join(file(u(1)))).unwrap(), full);
+    }
+}
+
+// Round 2, fix 3: one full inbox with a backlog does not stop import for the other members.
+#[test]
+fn a_full_inbox_with_a_backlog_does_not_stop_the_others() {
+    const CAROL: &str = "kcccccccc";
+    let targets = vec![Target { name: "bob".into(), pane_key: KEY.into() }, Target { name: "carol".into(), pane_key: CAROL.into() }];
+    // bob's inbox room (max_unread 3) and the bob messages then delivered
+    for (bob_unread, bob_got) in [(3u64, 0u64), (2, 1)] {
+        let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+        let ids: Vec<Ulid> = (1..=CANDIDATE_CAP as u64 + 1).map(u).collect();
+        let bs = blobs(&m, &ids.iter().map(|id| msg(*id, "bob@b")).collect::<Vec<_>>());
+        let fs_: Vec<String> = ids.iter().map(|id| file(*id)).collect();
+        let e: Vec<(&str, &[u8], &str)> = fs_.iter().zip(&bs).map(|(n, b)| ("100644", n.as_bytes(), b.as_str())).collect();
+        let carol: Vec<Ulid> = (1001..=1003).map(u).collect();
+        let t = tip(&m, &[("bob@b", tree_literally(&m.root, &e)), ("carol@b", folder(&m, "carol@b", &carol))]);
+        fs::create_dir_all(new_dir(&sp)).unwrap();
+        for n in 0..bob_unread {
+            fs::write(new_dir(&sp).join(file(u(9000 + n))), b"{}").unwrap();
+        }
+        let mut lines = Vec::new();
+        let res = run(&sp, &sp.mail, &m.wt, &t, &["b".into()], &targets, &BTreeSet::new(), 3, far(), &NoSeam,
+            &mut |l| lines.push(l.to_string())).unwrap();
+        let mut want: Vec<(String, Ulid)> = (1..=bob_got).map(|n| (KEY.to_string(), u(n))).collect();
+        want.extend(carol.iter().map(|id| (CAROL.to_string(), *id)));
+        assert_eq!(res.delivered, want, "bob room {}", 3 - bob_unread);
+        assert!(res.left >= 1);
+        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!(names(&sp.mail.join(CAROL).join("new")).len(), 3);
+    }
+}
+
+// Round 2, fix 4: a real ls-tree failure (not the deadline) is logged.
+#[test]
+fn a_failed_ls_tree_is_logged() {
+    let r = Remote::new(); let m = Machine::new(&r); let sp = sync_paths(&m);
+    tip(&m, &[("bob@b", folder(&m, "bob@b", &[u(1)]))]);
+    let missing = "0123456789abcdef0123456789abcdef01234567";
+    let (res, lines) = go(&m, &sp, missing, &["b"], &BTreeSet::new(), 5000, &NoSeam);
+    assert_eq!(res, Ok(Imported { delivered: vec![], acked: vec![], left: 1 }));
+    assert_eq!(lines, ["mail sync: import: ls-tree"]);
 }
