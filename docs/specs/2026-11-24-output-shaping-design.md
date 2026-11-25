@@ -234,7 +234,7 @@ Build order **(operator)**: steps 1-2, then step 4, then step 3. The work graph 
 
 ### 7.4 Clean
 
-- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), and any other `ESC` plus its next character. A lone `ESC` at the end is removed. OSC 8 hyperlinks keep their visible text.
+- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), and any other escape sequence: `ESC`, then any intermediate bytes `0x20-0x2F`, then one final byte `0x30-0x7E` (for example `ESC ( B`, which libtest writes after each color code); an `ESC` followed by any other byte is removed alone. A lone `ESC` at the end, or a sequence cut off by the end of the text, is removed to the end. OSC 8 hyperlinks keep their visible text.
 - Unless O§7.3 "text that the model may reuse" applies: `\r\n` becomes `\n`; in each line, a `\r` overwrites, so only the text after the last `\r` is kept. This removes progress bars and spinners.
 - Clean removes no line.
 
@@ -579,3 +579,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give the required bytes; the row now names `-- --color always` and `--no-local` (found while planning phase3 OS-17). |
+| 2026-11-24 | O§7.4 | author's call | Removing `ESC` plus one character left a stray byte from `ESC ( B` (`okB.`); clean now removes the whole sequence (found in phase3 OS-17). |
