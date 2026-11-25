@@ -493,6 +493,7 @@ expect_fail "PC1: agent 'Cursor' $NOHDR"
 
 CASE="a forbidden name only in the verbatim schema"
 D=$(mk names_verbatim)
+grep -qiw alice "$D/fixtures/claude-code/settings-schema.json" || fail "the copied schema does not hold alice"
 run_names "$D" alice
 expect_ok
 
@@ -532,5 +533,69 @@ add_header "$D" '    Cursor: 1.0'
 add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_fail "PC1: agent 'Cursor' $NOHDR"
+
+# Review round 1 (PC-8).
+CASE="an indented line in the middle of the Results table"
+D=$(mk indentmid)
+L='    | PC9 | indented |' awk '{ print } /^\| Q7 \|/ { print ENVIRON["L"] }' "$D/docs/premises.md" > "$D/docs/premises.md.new" &&
+    mv "$D/docs/premises.md.new" "$D/docs/premises.md"
+[ "$(grep -c '^    | PC9 |' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
+run "$D"
+expect_fail "docs/premises.md:$(lnof "$D" "$(grep '^| PW6 |' "$D/docs/premises.md")"): row 'PW6' is outside the Results table"
+
+# sha <file>: its sha256 in lower-case hex.
+sha() {
+    { if command -v shasum >/dev/null 2>&1; then shasum -a 256; else sha256sum; fi; } <"$1" | awk '{ print tolower($1) }'
+}
+SCH=fixtures/claude-code/settings-schema.json
+SRC=fixtures/claude-code/settings-schema.source.txt
+CSCH=fixtures/codex/config.schema.json
+CSRC=fixtures/codex/config.schema.source.txt
+
+CASE="a name appended to the verbatim schema"
+D=$(mk verb_append)
+WANT=$(sha "$D/$SCH")
+printf '%s\n' 'owner alice' >> "$D/$SCH"
+run_names "$D" alice
+expect_fail "verbatim file $SCH: sha256 $(sha "$D/$SCH") differs from $WANT in $SRC"
+
+CASE="a verbatim schema with no source file"
+D=$(mk verb_nosrc)
+rm "$D/$SRC"
+run "$D"
+expect_fail "verbatim file $SCH has no source file $SRC"
+
+CASE="the Codex verbatim schema with a matching source hash"
+D=$(mk verb_codex)
+printf '%s\n' '{ "description": "owner alice" }' > "$D/$CSCH"
+printf 'source: test\nsha256: %s\n' "$(sha "$D/$CSCH")" > "$D/$CSRC"
+run_names "$D" alice
+expect_ok
+
+CASE="the Codex verbatim schema with a mismatching source hash"
+D=$(mk verb_codex_bad)
+printf '%s\n' '{ "description": "owner alice" }' > "$D/$CSCH"
+OTHER=$(sha "$D/$SRC")
+printf 'source: test\nsha256: %s\n' "$OTHER" > "$D/$CSRC"
+run_names "$D" alice
+expect_fail "verbatim file $CSCH: sha256 $(sha "$D/$CSCH") differs from $OTHER in $CSRC"
+
+CASE="a path that only starts with a verbatim path"
+D=$(mk verb_prefix)
+printf '%s\n' 'owner alice' > "$D/$SCH:x"
+run_names "$D" alice
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $SCH:x"
+
+CASE="a symlink under fixtures"
+D=$(mk link_fixture)
+ln -s ../opencode/help.txt "$D/fixtures/codex/link.txt"
+run "$D"
+expect_fail "fixtures/codex/link.txt is a symlink; a symlink in the scan scope is not scanned and is not evidence"
+
+CASE="a symlink under the live scripts"
+D=$(mk link_live)
+ln -s ../../../fixtures/opencode/help.txt "$D/scripts/premises/live/link.txt"
+run "$D"
+expect_fail "scripts/premises/live/link.txt is a symlink; a symlink in the scan scope is not scanned and is not evidence"
 
 echo "test-check-premises: ok ($N cases)"
