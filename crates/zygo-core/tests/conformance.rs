@@ -4,7 +4,6 @@
 mod model;
 #[path = "conformance/derive.rs"]
 mod derive;
-#[allow(dead_code)] // CF-4 calls render::compare_or_write
 #[path = "conformance/render.rs"]
 mod render;
 
@@ -1625,6 +1624,18 @@ fn render_compare_planted_difference_is_item_10() {
     std::fs::remove_file(dir.path().join("docs/conformance.json")).unwrap();
     let f = render::compare_or_write_mode(dir.path(), &md, &json, false).unwrap_err();
     assert!(f.item == 10 && f.text.contains("docs/conformance.json"));
+}
+
+/// The public entry: it reads `ZYGO_WRITE_CONFORMANCE` but this test never sets or removes it. With the correct
+/// files the result is `Ok` in both modes, because write mode writes the same bytes.
+#[test]
+fn render_compare_or_write_env_entry() {
+    let x = render_input();
+    let (md, json) = (md_of(&x), json_of(&x));
+    let dir = docs_root(&md, &json);
+    assert_eq!(render::compare_or_write(dir.path(), &md, &json), Ok(()));
+    assert_eq!(std::fs::read_to_string(dir.path().join("docs/conformance.md")).unwrap(), md);
+    assert_eq!(std::fs::read_to_string(dir.path().join("docs/conformance.json")).unwrap(), json);
 }
 
 #[test]
