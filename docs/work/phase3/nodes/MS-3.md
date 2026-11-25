@@ -298,7 +298,7 @@ Steps:
 
 - [x] 13. Run `cargo test -p zygo-config --test mail_sync_config`; see all 11 tests pass.
 
-- [ ] 14. (Not done: the implementing brief forbids spec edits; the M§11 change note is left to the lead.) In `docs/specs/2026-11-22-workspace-mail-design.md` M§11: after the TOML block (line 175), add the line `Mail sync between machines adds \`[mail] host\`, \`[mail] sync_gap\` and the per-workspace table \`[mail.workspace.<name>]\` (keys \`sync\`, \`remote\`, \`host\`); their forms and defaults are in \`docs/specs/2026-11-24-mail-sync-design.md\` S§11.` and append to the change log table the row `| 2026-11-24 | M§11 | mail sync design S§16 | Gains \`host\`, \`sync_gap\` and \`[mail.workspace.<name>]\` (S§11). |`.
+- [x] 14. In `docs/specs/2026-11-22-workspace-mail-design.md` M§11: after the TOML block (line 175), add the line `Mail sync between machines adds \`[mail] host\`, \`[mail] sync_gap\` and the per-workspace table \`[mail.workspace.<name>]\` (keys \`sync\`, \`remote\`, \`host\`); their forms and defaults are in \`docs/specs/2026-11-24-mail-sync-design.md\` S§11.` and append to the change log table the row `| 2026-11-24 | M§11 | mail sync design S§16 | Gains \`host\`, \`sync_gap\` and \`[mail.workspace.<name>]\` (S§11). |`.
 
 - [x] 15. Run the acceptance: `cargo test -p zygo-config --test mail_sync_config && cargo test -p zygo-config`; see all pass, with the `typed.rs` `differential` test and the ML-1 tests in `config_layers.rs` among them. Then `cargo build --workspace` to confirm that no other crate builds a `MailConfig` literal.
 
