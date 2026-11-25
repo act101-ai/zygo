@@ -194,7 +194,6 @@ Session text (T, SX nodes):
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
-| OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
@@ -402,4 +401,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-12 DONE: `zygo up` checks and assigns the config-directory pool round-robin; members run in passthrough; user-loadout job/pool values pass config check. Review round 2 moved the pool line after the step-8 write and added tests. FX-15 added (doctor pool filter) · PR #125 |
 | 2026-11-25 | FX-15 DONE: doctor pool lines use the `zygo up` member filter (server user info skipped via has_user_info) and its kept member names (agent kinds, valid_member_name, first holder); review F1 fixed in round 2; F2/F3 to operator report · PR #129 |
 | 2026-11-25 | MS-24 DONE: SP2 verified on github.com and gitlab.com with well-known private repos; both private probes fail with `could not read Username` (in PRIVATE_TEXT); result for MS-25 · PR #130 |
+| 2026-11-25 | OS-21 done: go test fixtures (passing-verbose, failing-parallel, panic) captured from a scratch module; round 2 kept the full panic trace in must_keep and a fail_fetch log line right after its CONT. |
 | 2026-11-25 | OS-12 DONE: merged 6e1b9387 5ff2466e; clean removes CSI, 8-bit CSI, OSC (OSC 8 keeps text) and CR overwrites, line count kept. Review F4 (`ESC ( B` leaves `B`) and F5 (`ESC ESC [31m` leaves `[31m`) to FX-16; O§7.4 rewritten, pending ratification · PR #132 |
