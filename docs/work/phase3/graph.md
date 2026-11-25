@@ -215,7 +215,7 @@ Session text (T, SX nodes):
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
 | MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
-| WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | TODO | judgment | — |
+| WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | PLANNED | judgment | plan 7e304a9 · PR #36 |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
 | RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | TODO | implementation | — |
 | RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
@@ -355,3 +355,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | MS-1 done (e7d5023 821a65f 7017674 ab87c30): run_whole/run_stream public in zygo-work; review 4 fixed (stream deadline, leader exit, panic guard, 2-entry memory), 2 refuted; floor green · PR #33 |
 | 2026-11-24 | DR-6 planned (897ee78): 10 steps; tty checks stdin and stdout; USAGE line unchanged, review added later with new/ratify/overturn · PR #34 |
 | 2026-11-24 | DR-6 done (732af80 82d2e65 cb609a4): zygo decision review; tty needs stdin and stdout; USAGE lists review; review 4 fixed (usage, over-limit text re-asked, cycle re-queue, HashSet), 3 refuted; floor green · PR #34 |
+| 2026-11-24 | WD-1 planned (7e304a9): 6 steps; contract change Read::Absent { full_ref: Option<String> } (read_at needs it, R§7.4); lead's call: SystemGit reuses repo_file::git_out (now pub(crate)), GitOut widened to ExitStatus, no copy · PR #36 |
