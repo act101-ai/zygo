@@ -169,7 +169,7 @@ Other callers of `trim_in` keep their signature: `crates/zygo-launch/tests/openc
   MSG
   ```
 
-- [ ] **Step 8: Write the failing lock test.** In `crates/zygo-hooks/tests/hooks_basic.rs`, add `use std::time::Duration;` to the imports. Add this test after the other `trim_row…` tests:
+- [x] **Step 8: Write the failing lock test.** In `crates/zygo-hooks/tests/hooks_basic.rs`, add `use std::time::Duration;` to the imports. Add this test after the other `trim_row…` tests:
 
   ```rust
   #[test] fn trim_row_not_written_under_write_lock_with_bound_zero() {   // O§7.11, O§10, O§16 item 15; O§8.4: no clock
@@ -194,23 +194,23 @@ Other callers of `trim_in` keep their signature: `crates/zygo-launch/tests/openc
 
   The decision does not depend on a wall-clock wait. With `busy_timeout(0)`, SQLite returns `SQLITE_BUSY` at once on the write. The reads of `open_bounded` (`user_version`) do not wait on a WAL writer.
 
-- [ ] **Step 9: Run the lock test and see it fail.** Run `cargo test -p zygo-hooks --test hooks_basic -- trim_row_not_written`. It fails to compile: `cannot find function trim_in_with in module trim` and `cannot find struct TrimOpts in module trim`.
+- [x] **Step 9: Run the lock test and see it fail.** Run `cargo test -p zygo-hooks --test hooks_basic -- trim_row_not_written`. It fails to compile: `cannot find function trim_in_with in module trim` and `cannot find struct TrimOpts in module trim`.
 
-- [ ] **Step 10: Add `TrimOpts` and `trim_in_with` in `crates/zygo-hooks/src/trim.rs`.**
+- [x] **Step 10: Add `TrimOpts` and `trim_in_with` in `crates/zygo-hooks/src/trim.rs`.**
   1. Add `use std::time::Duration;`.
   2. Add `TrimOpts` and its `Default`, exactly as in **Produces**.
   3. Rename the body of `trim_in` to `pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: &TrimOpts) -> anyhow::Result<HookOutput>`, with the doc line of `trim_in`. In it, replace `zygo_usage::store::HOOK_DB_BOUND` with `opts.db_bound`.
   4. Add a new `pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::Result<HookOutput>` with the body `trim_in_with(input, dir, usage_db, &TrimOpts::default())`.
 
-- [ ] **Step 11: Run the lock test and see it pass.** Run `cargo test -p zygo-hooks --test hooks_basic -- trim_row_not_written`. It passes. Then run it 20 times as a stability check with no timing: `for i in $(seq 20); do cargo test -q -p zygo-hooks --test hooks_basic -- trim_row_not_written || break; done`. Every run passes.
+- [x] **Step 11: Run the lock test and see it pass.** Run `cargo test -p zygo-hooks --test hooks_basic -- trim_row_not_written`. It passes. Then run it 20 times as a stability check with no timing: `for i in $(seq 20); do cargo test -q -p zygo-hooks --test hooks_basic -- trim_row_not_written || break; done`. Every run passes.
 
-- [ ] **Step 12: Run the acceptance check and the lint.**
+- [x] **Step 12: Run the acceptance check and the lint.**
   ```sh
   test "$(cargo test -q -p zygo-hooks --test hooks_basic -- trim_row --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-hooks --test hooks_basic && cargo test -p zygo --test hook_trim
   ```
   The count is 4, then all pass. Also run `cargo test -p zygo-launch --test opencode` (it calls `trim_in` and asserts the view only) and `cargo clippy -p zygo-hooks -p zygo --tests -- -D warnings`. Both are clean.
 
-- [ ] **Step 13: Commit.**
+- [x] **Step 13: Commit.**
   ```sh
   git add crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/hooks_basic.rs
   git commit -F - <<'MSG'

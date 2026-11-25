@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use serde_json::{json, Value};
 use zygo_core::hook::{guarded, HookInput, HookOutput};
 use zygo_core::overrides::Overrides;
@@ -377,7 +378,7 @@ fn trim_guard(e: &Env, b: &[u8]) -> (String, i32) { guarded(&|b| trim::trim_in(&
     let o = updated(&out(run_trim(&bash(&lines(5000)), &e)));
     let view = o["stdout"].as_str().unwrap();
     let id = marker_id(view);
-    assert_eq!(result_ids(&e), [id.clone()]);
+    assert_eq!(result_ids(&e), std::slice::from_ref(&id));
     assert_eq!(trim_rows(&e), [("sess-1".to_string(), "Bash".to_string(), 105000, view.len() as i64, Some(id), None, Some("size".to_string()))]);
 }
 #[test] fn trim_row_on_97d8767_database_writes_seven_columns() {    // O§6.5 items 3-4, O§16 item 15
@@ -400,6 +401,24 @@ fn trim_guard(e: &Env, b: &[u8]) -> (String, i32) { guarded(&|b| trim::trim_in(&
     assert!(o["stdout"].as_str().unwrap().contains("[zygo trimmed this output:"));
     assert_eq!(result_ids(&e).len(), 1);
     assert!(!db(&e).parent().unwrap().exists());
+}
+#[test] fn trim_row_not_written_under_write_lock_with_bound_zero() {   // O§7.11, O§10, O§16 item 15; O§8.4: no clock
+    let e = env(true); usage_ready(&e);
+    let input = parse(&bytes(&bash(&lines(5000)))).unwrap();
+    let lock = rusqlite::Connection::open(db(&e)).unwrap();
+    lock.execute_batch("BEGIN IMMEDIATE").unwrap();                     // a second connection holds the write lock
+    let locked = out(trim::trim_in_with(&input, &e.dir, &db(&e), &trim::TrimOpts { db_bound: Duration::ZERO }));
+    lock.execute_batch("ROLLBACK").unwrap();
+    drop(lock);
+    assert!(trim_rows(&e).is_empty());                                 // no row
+    let free = out(trim::trim_in(&input, &e.dir, &db(&e)));
+    let id_of = |s: &str| marker_id(updated(s)["stdout"].as_str().unwrap());
+    let (a, b) = (id_of(&locked), id_of(&free));
+    assert_ne!(a, b);
+    assert_eq!(locked.replace(&a, &b), free);                          // same hook output as with no lock, up to the result id
+    assert_eq!(trim_rows(&e).len(), 1);
+    assert_eq!(trim_rows(&e)[0].4.as_deref(), Some(b.as_str()));
+    assert_eq!(result_ids(&e).len(), 2);                               // both results stored
 }
 #[test] fn trim_result_store_failure_error_is_fixed_text() {
     let e = env(true);
