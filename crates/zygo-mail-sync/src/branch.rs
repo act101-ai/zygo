@@ -215,8 +215,19 @@ pub fn cat(wt: &Path, blob: &str, max: u64, deadline: Instant) -> Result<Vec<u8>
 /// S§6.1, S§8.3 step 7: whether `tip` has `ZYGO-MAIL` as a `100644` blob that holds exactly [`MARKER`].
 pub fn has_marker(wt: &Path, tip: &str, deadline: Instant) -> Result<bool, BranchError> {
     oid(tip)?;
-    let _ = (wt, deadline);
-    Err(BranchError::Io("not built".into()))
+    let mut found = None;
+    ls(wt, tip, Some("ZYGO-MAIL"), deadline, &mut |e| {
+        if e.path == "ZYGO-MAIL" {
+            found = Some(e);
+        }
+        Flow::Go
+    })?;
+    match found {
+        Some(e) if e.mode == "100644" && e.kind == "blob" && e.size == Some(MARKER.len() as u64) => {
+            Ok(cat(wt, &e.id, MARKER.len() as u64, deadline)? == MARKER)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// S§6.3 use, S§6.5: the tree of `base` with `changes`, committed in the worktree's own index with `parent` (none: a

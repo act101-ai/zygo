@@ -150,3 +150,78 @@ fn ensure_worktree_makes_a_deleted_folder_again() {
     assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c);
     assert_eq!(names(&m.wt), [".git"]);
 }
+
+#[test]
+fn ls_passes_hostile_names_as_data() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let root = &m.root;
+    let b = blob(root, b"1\n");
+    let long = [b'x'; 300];
+    let inner = tree_literally(root, &[("100644", b"..", &b), ("100644", b"a\tb", &b), ("100644", b"a\nb", &b),
+        ("100644", &long, &b), ("100644", b"\xff\xfe", &b)]);
+    let top = tree_literally(root, &[("100644", b"ZYGO-MAIL", &b), ("40000", b"bob@b", &inner)]);
+    let c = commit_tree(root, &top, None);
+    assert_eq!(ensure_worktree(root, &m.wt, &c, far()), Ok(()));
+    let paths: Vec<String> = entries(&m.wt, &c, Some("bob@b/")).into_iter().map(|e| e.path).collect();
+    assert_eq!(paths, ["bob@b/..".to_string(), "bob@b/a\tb".into(), "bob@b/a\nb".into(),
+        format!("bob@b/{}", "x".repeat(300))]);
+    assert_eq!(names(&m.wt), [".git"]);
+}
+
+#[test]
+fn ls_lists_the_top_level_and_stops_on_request() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let mark = blob(&m.root, b"1\n");
+    let msg = blob(&m.root, b"{}\n");
+    let dir = tree_literally(&m.root, &[("100644", b"01ARZ3NDEKTSV4RRFFQ69G5FAV.json", &msg)]);
+    let top = tree_literally(&m.root, &[("100644", b"ZYGO-MAIL", &mark), ("40000", b"bob@b", &dir)]);
+    let c = commit_tree(&m.root, &top, Some(&rt));
+    let all = entries(&m.wt, &c, None);
+    assert_eq!(all.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), ["ZYGO-MAIL", "bob@b"]);
+    assert_eq!((all[1].kind.as_str(), all[1].size), ("tree", None));
+    let mut calls = 0;
+    let end = ls(&m.wt, &c, None, far(), &mut |_| {
+        calls += 1;
+        Flow::Stop
+    });
+    assert_eq!(end, Ok(zygo_work::repo::Streamed::Stopped));
+    assert_eq!(calls, 1);
+    let missing = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(ls(&m.wt, missing, None, far(), &mut |_| Flow::Go), Err(BranchError::Git(RunError::Failed, "ls-tree")));
+}
+
+#[test]
+fn cat_returns_bytes_up_to_max() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let b = blob(&m.root, b"0123456789");
+    assert_eq!(cat(&m.root, &b, 10, far()), Ok(b"0123456789".to_vec()));
+    assert_eq!(cat(&m.root, &b, 9, far()), Err(BranchError::Refused("too large")));
+}
+
+#[test]
+fn has_marker_needs_the_marker_blob() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    assert_eq!(has_marker(&m.wt, &rt, far()), Ok(true));
+    let root = &m.root;
+    let one = blob(root, b"1\n");
+    let two = blob(root, b"2\n");
+    let extra = blob(root, b"1\n\n");
+    let sub = tree_literally(root, &[("100644", b"x", &one)]);
+    let trees = [
+        tree_literally(root, &[("100644", b"other", &one)]),
+        tree_literally(root, &[("100644", b"ZYGO-MAIL", &two)]),
+        tree_literally(root, &[("100644", b"ZYGO-MAIL", &extra)]),
+        tree_literally(root, &[("120000", b"ZYGO-MAIL", &one)]),
+        tree_literally(root, &[("40000", b"ZYGO-MAIL", &sub)]),
+    ];
+    for t in trees {
+        let c = commit_tree(root, &t, None);
+        assert_eq!(has_marker(&m.wt, &c, far()), Ok(false), "tree {t}");
+    }
+}
