@@ -1246,3 +1246,44 @@ fn check_8_core_ungraded_with_exception_is_below_bar() {
     assert!(f.iter().any(|x| x.item == 2 && x.text.contains("A-1.2")), "{f:?}");
     assert!(f.iter().any(|x| x.item == 8 && x.text.ends_with("below the bar: A-1")), "{f:?}");
 }
+
+/// Alpha with A-1.2 graded twice, not-met and n/a in the order given, and an approved exception for alpha A-1.2.
+fn duplicate_not_met_na(not_met_first: bool) -> (Registry, Vec<GradeFile>, Vec<Client>) {
+    let (mut r, mut g, c) = base();
+    r.bar_exception.push(exception("alpha", "A-1.2"));
+    let at = g[0].grade.iter().position(|x| x.criterion == "A-1.2").unwrap();
+    let mut not_met = g[0].grade.remove(at);
+    not_met.status = Status::NotMet;
+    not_met.evidence = vec![];
+    not_met.reason = Some("no key helper".into());
+    let na = GradeEntry { status: Status::Na, reason: Some("not here".into()), ..not_met.clone() };
+    let pair = if not_met_first { [not_met, na] } else { [na, not_met] };
+    for (i, e) in pair.into_iter().enumerate() {
+        g[0].grade.insert(at + i, e);
+    }
+    (r, g, c)
+}
+
+#[test]
+fn derive_duplicate_grades_order_independent() {
+    let (r, a, _) = duplicate_not_met_na(true);
+    let (_, b, _) = duplicate_not_met_na(false);
+    assert_eq!(derive::cell(&r, &a[0], "A-1"), derive::cell(&r, &b[0], "A-1"));
+    assert_eq!(derive::bar(&r, &a[0]), derive::bar(&r, &b[0]));
+    // not-met wins over n/a, and the first not-met entry keeps its reason
+    assert_eq!(
+        derive::cell(&r, &b[0], "A-1").missing,
+        vec![Unmet { criterion: "A-1.2".into(), text: "The credential is the session token.".into(), reason: Some("no key helper".into()) }]
+    );
+    assert!(derive::bar(&r, &b[0]).meets);
+}
+
+#[test]
+fn check_8_duplicate_grades_order_independent() {
+    let (r, a, c) = duplicate_not_met_na(true);
+    let (_, b, _) = duplicate_not_met_na(false);
+    let fa = items(&check(&repo(), &r, &a, &c, &resolve(&repo(), &a)));
+    let fb = items(&check(&repo(), &r, &b, &c, &resolve(&repo(), &b)));
+    assert_eq!(fa, fb);
+    assert!(!fb.contains(&8), "{fb:?}");
+}
