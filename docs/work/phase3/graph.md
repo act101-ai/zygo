@@ -33,7 +33,7 @@ Decision records (D):
 - No record text, finding text, label or disposition reason in the usage store, a log or a session file; no hook reads a record file; the slash form reads none; the verdict check is in the MCP tool — `docs/specs/2026-11-24-decision-records-design.md` D-C1, D-C2, D§3, D§10.1
 - The record file is the only owner of a record's state (no index); a record is never deleted or renamed; an agent never writes an operator key or status — D-C3, D-C4, D-C5
 - Record id `^DDR-[0-9A-HJKMNP-TV-Z]{26}$`; file `docs/decisions/<id>.md`; TOML front matter between `+++` lines; zygo edits with `toml_edit` and keeps unknown keys, comments and the body byte-equal — D§6.1, D§6.2
-- Bounds: each git process 2 s; one verdict at most 4 git processes and 10 s; `--batch` at most 2,048 objects and 16 MiB; node range at most 10,000 commits; at most 1,000 record changes read; record file at most 64 KiB, front matter closed within 8 KiB; directory at most 10,000 entries; `work_verdict` arguments at most 256 KiB, `dispositions` at most 256 entries, `finding` 1–200 bytes, `reason` 1–2,000 bytes; `title` 1–120 bytes; `unit` at most 128 bytes; `depends_on` at most 64 ids; `review_note` at most 2,000 bytes; `promotion` at most 500 bytes; `<problems>` at most 10 then `; and <n> more`, at most 4 KiB; `show` at most 50 commits, `review` at most 20 — D-C6, D§9.3, D§10.1, D§11.2
+- Bounds: each git process 2 s; one verdict at most 4 git processes and 10 s; `--batch` at most 2,048 objects and 16 MiB; node range at most 10,000 commits; at most 1,000 record changes read; record file at most 64 KiB, front matter closed within 8 KiB; directory at most 10,000 entries; `work_verdict` arguments at most 256 KiB, `dispositions` at most 256 entries, `finding` 1–200 characters, `reason` 1–2,000 characters; `title` 1–120 bytes; `unit` at most 128 bytes; `depends_on` at most 64 ids; `review_note` at most 2,000 bytes; `promotion` at most 500 bytes; `<problems>` at most 10 then `; and <n> more`, at most 4 KiB; `show` at most 50 commits, `review` at most 20 — D-C6, D§9.3, D§10.1, D§11.2
 - The `dispositions` guard follows the §13.4 levels and §13.5 resolution, default `enforce` — D-C7, D§9.3
 - Text from a record or from git is printed one line at a time through `zygo_core::esc` — D§10.1
 - Not a security boundary against an agent that runs as the same OS user; no code or text claims more — D-C9
@@ -191,13 +191,11 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| OS-22 | Premise script for PO1 to PO4 | OS-16 | DONE | implementation | 5e4cd273 · bash -n ok, lib.sh 2 · PR #60 |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | DONE | judgment | adb3069b · cargo test -p zygo-config --test repo_def_shape 12 passed; floor green · PR #72 |
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
@@ -208,7 +206,7 @@ Session text (T, SX nodes):
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-40 | Command parse: more wrappers and file printers, eval, `$(<f)`, bare shell stage | OS-11 | DONE | implementation | 5ba7eb02 · shape_command 43 passed · PR #59 |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| WD-3 | Workspace approvals in `approvals.toml` | WD-2 | TODO | judgment | — |
+| WD-3 | Workspace approvals in `approvals.toml` | WD-2 | DONE | judgment | aad86d39 · acc 9+2/0; floor green · PR #88 |
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | DONE | implementation | 0f925e1c · acc 18/0; floor green ws 2967/0 · PR #89 |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
@@ -391,4 +389,6 @@ Session text (T, SX nodes):
 | 2026-11-24 | FX-6 DONE: dead-port helpers point at fixed port 1 via shared `tests/dead_port`; plan revised after macOS bound-not-listening connect timed out; review found the same race in update.rs, fixed; floor: workspace 2671 passed, 0 failed · PR #65 |
 | 2026-11-25 | MS-26 done; state::load now refuses values check_state refuses (InvalidData, file unchanged); review: 2 test gaps closed (probe beside fresh cache; public without verdict); floor ws 2944/0. |
 | 2026-11-25 | DR-16 DONE: unreadable docs/decisions has its own DirError::Unreadable and line "cannot read docs/decisions"; review: 2 test gaps closed (operator verbs with docs at 000; new writes nothing); floor ws 2949/0 · PR #84 |
+| 2026-11-25 | DR-13 DONE: work_verdict head/base/dispositions + dispositions guard (monitor/notify/enforce); review: short id shadowed by a ref now refused, config warning shown, dispatch tests; bounds header bytes→characters (D§9.2); floor ws 2966/0 · PR #85 |
+| 2026-11-25 | WD-3 DONE: workspace approvals in approvals.toml (repo_def::store; [[workspace]] id+digest; plugin approvals still parse); review: F2 fixed (failed rename drops temp file), F1 refuted (per-section read by design), F3-F5 to operator (approve.rs protocol); floor ws 2961/0 · PR #88 |
 | 2026-11-25 | ML-4 DONE: member names + mail::send by name/key/all (names::resolve; reserved cli/zygo). Review: F1 fixed (SendReport; delivers past a refused target), F3 fixed (limits once, before resolve), F5 fixed (reserved name test), F4 refuted, F2 consumers fixed; floor ws 2967/0 · PR #89 |

@@ -61,15 +61,22 @@ impl Problems {
     }
 }
 
+/// D§9.4 steps 1, 4, 5: the full id that git resolved for the hex the caller gave is that commit only when it starts
+/// with that hex. git tries refs before an object prefix, so a ref named like a short id resolves to another commit.
+pub fn names_commit(given: &str, full: &str) -> bool {
+    full.starts_with(given)
+}
+
 /// The D§9.4 problems of one keep; empty when the keep passes.
 pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
     let mut p = Problems::default();
     // Step 1: head.
     let head = match &req.head {
         None => none(&mut p, "no head commit"),
-        Some(h) => match git.commit(h) {
-            Ok(Some(id)) => Some(id),
-            Ok(None) => none(&mut p, "no head commit"),
+        Some(h) => match resolve(git, h) {
+            Ok(Resolved::Commit(id)) => Some(id),
+            Ok(Resolved::Missing) => none(&mut p, "no head commit"),
+            Ok(Resolved::Ref) => none(&mut p, &shadowed("head", h)),
             Err(e) => failed(&mut p, e),
         },
     };
@@ -86,9 +93,15 @@ pub fn check_keep(req: &KeepRequest, git: &mut dyn VerdictGit) -> Vec<String> {
     // Steps 5 to 7, each in entry order: one problem per entry.
     for d in ds {
         if let Proof::Fixed { commit } = &d.proof {
-            match in_range(commit, &range, git) {
-                Ok(true) => {}
-                Ok(false) => p.push(format!("{}: commit {} is not in the node range", esc(&d.finding), esc(commit))),
+            let label = esc(&d.finding);
+            if commit.is_empty() {
+                p.push(format!("{label}: no commit"));
+                continue;
+            }
+            match resolve(git, commit) {
+                Ok(Resolved::Commit(c)) if range.contains(&c) => {}
+                Ok(Resolved::Ref) => p.push(format!("{label}: {}", shadowed("commit", commit))),
+                Ok(_) => p.push(format!("{label}: commit {} is not in the node range", esc(commit))),
                 Err(e) => p.git(e),
             }
         }
@@ -215,12 +228,26 @@ fn agent_changes(log: &[LogCommit], ctx: &RangeCtx, git: &mut dyn VerdictGit, p:
     }
 }
 
-/// D§9.4 step 5: `commit` resolves and its full id is in R.
-fn in_range(commit: &str, range: &BTreeSet<String>, git: &mut dyn VerdictGit) -> Result<bool, GitFail> {
-    if commit.is_empty() {
-        return Ok(false);
-    }
-    Ok(git.commit(commit)?.is_some_and(|c| range.contains(&c)))
+/// What `<rev>^{commit}` gives for a hex the caller named.
+enum Resolved {
+    Commit(String),
+    Missing,
+    /// A ref of the same name resolved to a commit whose id does not start with the hex.
+    Ref,
+}
+
+/// D§9.4 steps 1, 4, 5: resolve `rev`, refusing a ref that shadows the short id.
+fn resolve(git: &mut dyn VerdictGit, rev: &str) -> Result<Resolved, GitFail> {
+    Ok(match git.commit(rev)? {
+        Some(id) if names_commit(rev, &id) => Resolved::Commit(id),
+        Some(_) => Resolved::Ref,
+        None => Resolved::Missing,
+    })
+}
+
+/// The `cannot check` problem of a shadowed `key` (D§9.4 steps 1, 4, 5).
+fn shadowed(key: &str, rev: &str) -> String {
+    format!("cannot check: {key} {} is a ref name, not a commit id", esc(rev))
 }
 
 /// The record file `name` at `rev` (D§9.4 steps 7 to 9).
@@ -318,9 +345,10 @@ fn node_range(
 ) -> Option<(String, BTreeSet<String>)> {
     let base = match &req.base {
         Some(b) => {
-            let b = match git.commit(b) {
-                Ok(Some(b)) => b,
-                Ok(None) => return none(p, "no base commit"),
+            let b = match resolve(git, b) {
+                Ok(Resolved::Commit(id)) => id,
+                Ok(Resolved::Missing) => return none(p, "no base commit"),
+                Ok(Resolved::Ref) => return none(p, &shadowed("base", b)),
                 Err(e) => return failed(p, e),
             };
             match git.merge_base(&b, head) {

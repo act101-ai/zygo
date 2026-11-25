@@ -1152,7 +1152,7 @@ fn lacks_trailers(text: &str, unit_open: bool) -> bool {
 }
 
 /// The levels in force: config, then each session override alone, clamped to `min_level` (M7). Also feeds the begin hook's `levels` line.
-pub(crate) fn policy(m: &Merged, sd: &SessionDir, top: &Path) -> Policy {
+pub fn policy(m: &Merged, sd: &SessionDir, top: &Path) -> Policy {
     let mut cur = m.clone();
     for (g, l) in Overrides::load(sd).guards {
         let Ok(l) = l.parse::<Level>() else { continue };
