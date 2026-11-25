@@ -220,7 +220,7 @@ Session text (T, SX nodes):
 | RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | TODO | implementation | — |
 | RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
 | SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | DONE | implementation | 6a979de 346fa1a · subagent_text 10 pass (9 subagent_start, 1 main_compact); floor green · PR #39 |
-| SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | IN-PROGRESS | implementation | .worktrees/phase3/SX-3-node · PR #41 |
+| SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | DONE | implementation | 530b14d 08c2e37 b669a74 · reinject pre_compact 10 pass; floor green · PR #41 |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | TODO | mechanical | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
@@ -369,3 +369,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-16 done: shaping fixture harness and capture script; review round 1 (10 confirmed); floor 2582 passed 0 failed · PR #32 |
 | 2026-11-24 | SX-3 planned (65accaf): 7 steps · PR #41 |
 | 2026-11-24 | SX-3 in progress: node branch `phase3/SX-3--SX-3` at d55d51c, worktree `.worktrees/phase3/SX-3-node` · PR #41 |
+| 2026-11-24 | SX-3 done: pre-compact sets reinject/<agent_id> (0600 in 0700 dir) for a non-zygo subagent; review round 1 (4 confirmed, 4 refuted); floor 2602 passed 0 failed · PR #41 |
