@@ -300,7 +300,7 @@ PY
 
 if [ "${1:-}" = --selfcheck ]; then
   set -eu
-  PY=$(mktemp -d)
+  PY=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX")
   trap 'rm -rf "$PY"' EXIT
   hud_py "$PY"
   cat >"$PY/hud_an_test.py" <<'PY'
