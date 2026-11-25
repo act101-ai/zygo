@@ -613,11 +613,12 @@ fn bind_note(c: &Ctx, id: &str) {
 }
 
 /// The member part of `SessionStart` (W§9.1, W§9.4, AU60, AU92, AU104; D11) for the main loop of a member view;
-/// `text` is the session text. The output is `text`, an empty line, then the note (the note alone when `text` is
-/// empty). Claude Code: the whole hook output is written to `out` and flushed first (a write error returns `Err` with
-/// nothing written to any file), then the member record is written (D8, D9), then the note inputs are removed from the
-/// view when it held them; the result is `None`. OpenCode adds the session text to every model request, so the result
-/// is `Some(output)` and nothing is written: the plugin's `session` call owns the record and the note rule (D10).
+/// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on, the
+/// state reads and holds a record for the pane, then the note; empty parts are left out. Claude Code: the whole hook
+/// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
+/// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
+/// is `None`. OpenCode adds the session text to every model request, so the result is `Some(output)` and nothing is
+/// written: the plugin's `session` call owns the record and the note rule (D10).
 pub fn session_start(
     payload: &Value, dir: &SessionDir, view: &SessionView, paths: &Paths, zygo: &Path, out: &mut dyn Write, text: &str,
 ) -> anyhow::Result<Option<String>> {
@@ -625,11 +626,15 @@ pub fn session_start(
     let log = matches!(view.agent, Agent::ClaudeCode);
     let Some(c) = ctx_of("session-start", dir, view.clone(), paths, log) else { return Ok(Some(text.to_string())) };
     let inputs = view.workspace.as_ref().and_then(|w| w.resume_note.as_ref());
-    let output = match inputs.and_then(note) {
-        Some(n) if text.is_empty() => n,
-        Some(n) => format!("{text}\n\n{n}"),
-        None => text.to_string(),
-    };
+    // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start.
+    // A read error or no state gives no item and no line of its own (record_session's read writes the one line, C6).
+    let item = if view.mail { c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item(&ws, &c.pane)) } else { None };
+    let output = [Some(text.to_string()), item, inputs.and_then(note)]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     match view.agent {
         Agent::ClaudeCode => {
             let rendered = HookOutput::Json(
