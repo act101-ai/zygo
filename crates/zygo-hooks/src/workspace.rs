@@ -22,13 +22,14 @@ use std::time::Duration;
 use anyhow::{anyhow, bail};
 use serde_json::{json, Value};
 use zygo_core::esc;
-use zygo_core::hook::{slash_dispatch, HookOutput, SlashDispatch};
+use zygo_core::hook::{error_line, slash_dispatch, HookOutput, SlashDispatch};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::{ResumeNote, SessionView};
 use zygo_core::Agent;
 use zygo_workspace::activity::{self, Activity};
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
+use zygo_workspace::mail::{mail_dir, store};
 use zygo_workspace::snapshot;
 use zygo_workspace::state::{MemberRecord, MemberState, Phase, StateError, Store};
 
@@ -232,6 +233,23 @@ pub fn mark_busy(paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, bound: D
     }
 }
 
+/// The number of unread messages of the member (M§7, ML-2 `store::unread`), counted from the names in `new/` with no
+/// message opened. A read error writes one stderr line and counts as 0, so no hook decision changes (M-C1, M§10, C6;
+/// ML-10 D4). A member with `[features] mail` off (`view.mail`) has no mail tools: 0, and `mail/` is not read (M§7.1,
+/// M§7.2, M§8; ML-10 review R1).
+fn unread_mail(c: &Ctx) -> usize {
+    if !c.view.mail {
+        return 0;
+    }
+    match store::unread(&mail_dir(c.paths, &c.ws_id), &c.pane) {
+        Ok(n) => n,
+        Err(e) => {
+            error_line(&format!("workspace hook {}: {e}", c.event));
+            0
+        }
+    }
+}
+
 /// The main loop: the input object has no `agent_id` key (W§9.1, the test of W§8.3; D5).
 fn main_loop(p: &Value) -> bool {
     !p.as_object().is_some_and(|o| o.contains_key("agent_id"))
@@ -239,8 +257,9 @@ fn main_loop(p: &Value) -> bool {
 
 /// `zygo hook workspace --event <event>` (W§9.1, D4, D5). It checks the event, then reads `ZYGO_SESSION_DIR`
 /// through `env` (none or empty: nothing), then parses the input; a prompt line that `zygo hook prompt` consumes ends
-/// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2 and a
-/// Claude Code `prompt` the block JSON of AU86; every other call gives `None`. The dispatcher is the one that the
+/// here (D4, R1); then the session folder, the view and the marker. `pre-tool` can give the deny JSON of W§9.2, a
+/// Claude Code `prompt` the block JSON of AU86 or the mail delivery line (M§7.2), and a Claude Code `stop` the mail
+/// block JSON of M§7.1; every other call gives `None`. The dispatcher is the one that the
 /// `zygo` binary registers (`slash_dispatch`).
 pub fn run(
     event: &str, stdin: &[u8], paths: &Paths, env: &dyn Fn(&str) -> Option<OsString>, zygo: &Path,
@@ -295,12 +314,37 @@ pub fn run_with(
             }
             if main {
                 change(&c, &mut start_turn);
+                // M§7.2, ML-10 D3: a Claude Code prompt adds the delivery line; the OpenCode plugin drops this output
+                // and gets the line from the per-request session text.
+                if matches!(c.view.agent, Agent::ClaudeCode) {
+                    let n = unread_mail(&c);
+                    if n > 0 {
+                        let line = crate::mail::delivery_line(n);
+                        return Ok(Some(
+                            json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}})
+                                .to_string(),
+                        ));
+                    }
+                }
             }
         }
-        "stop" if main => change(&c, &mut |a| {
-            a.busy = false;
-            a.tools_running = 0;
-        }),
+        "stop" if main => {
+            // M§7.1, ML-10 D1, D2: a Claude Code `Stop` that is not already a forced continuation blocks once while
+            // `new/` holds mail, and changes nothing in `activity.json`; every other main-loop stop clears. M§9, ML-10
+            // review R3: no block while the phase is `draining` or `stopping`, so `down` does not wait for the mail.
+            if payload.get("hook_event_name").and_then(Value::as_str) == Some("Stop")
+                && payload.get("stop_hook_active") == Some(&Value::Bool(false))
+            {
+                let n = unread_mail(&c);
+                if n > 0 && !matches!(c.store.phase_unlocked(), Some(Phase::Draining | Phase::Stopping)) {
+                    return Ok(Some(crate::mail::stop_block(n)));
+                }
+            }
+            change(&c, &mut |a| {
+                a.busy = false;
+                a.tools_running = 0;
+            })
+        }
         // W§9.1 names no `busy` change for `SessionEnd`.
         "session-end" if main => change(&c, &mut |a| a.tools_running = 0),
         // D5, D8-D10: `session` changes nothing in `activity.json`; it commits and records (one write), then applies
@@ -614,7 +658,8 @@ fn bind_note(c: &Ctx, id: &str) {
 
 /// The member part of `SessionStart` (W§9.1, W§9.4, AU60, AU92, AU104; D11) for the main loop of a member view;
 /// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on, the
-/// state reads and holds a record for the pane, then the note; empty parts are left out. Claude Code: the whole hook
+/// state reads and holds a record for the pane, then the note, then the mail delivery line when `view.mail` is on and
+/// `new/` holds mail (M§7.2); empty parts are left out. Claude Code: the whole hook
 /// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
 /// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
 /// is `None`. OpenCode adds the session text to every model request, so the result is `Some(output)` and nothing is
@@ -629,7 +674,12 @@ pub fn session_start(
     // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start.
     // A read error or no state gives no item and no line of its own (record_session's read writes the one line, C6).
     let item = if view.mail { c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item(&ws, &c.pane)) } else { None };
-    let output = [Some(text.to_string()), item, inputs.and_then(note)]
+    // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
+    let line = match unread_mail(&c) {
+        0 => None,
+        n => Some(crate::mail::delivery_line(n)),
+    };
+    let output = [Some(text.to_string()), item, inputs.and_then(note), line]
         .into_iter()
         .flatten()
         .filter(|s| !s.is_empty())

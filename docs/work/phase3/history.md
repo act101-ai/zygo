@@ -85,6 +85,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | DONE | implementation | PR #139; node 492ed380, c842cfab; acc 15/15 |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | DONE | judgment | 0ea6c6c4, da13fbda, 38457d6f · acc 11/11 · PR #145 |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | DONE | judgment | 4cf4c8c1, f313648b, 845cb854 · acc 22/22 · PR #143 |
+| ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | DONE | judgment | 5f0212b1, 3643f93d, 1efbd8a3, bc17d413, 9946594d, 9fe2d6ef, 9a57d777, 68c3fa62 · acc 14 mail_ tests, 26/26 · PR #144 |
 
 ## Log
 
