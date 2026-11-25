@@ -39,36 +39,37 @@ fn reason(u: &Unmet) -> &str {
     u.reason.as_deref().unwrap_or("no grade")
 }
 
-/// Each `\` as `\\`, then each `|` as `\|`, so a text stays inside its table cell and keeps its backslashes.
-fn esc(s: &str) -> String {
-    s.replace('\\', r"\\").replace('|', r"\|")
+/// An input text as Markdown source that shows it literally: each ASCII punctuation character is backslash-escaped
+/// (CommonMark allows it for all of them) and nothing else changes. In a table GFM first turns `\|` into `|`, so a
+/// cell keeps one column. The one rule for each text the Markdown takes from input, in and out of tables.
+fn md_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_punctuation() {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
-/// Each `&`, `<` and `>` as an entity, so raw HTML in an input text shows as text.
-fn html(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+/// A link destination: each UTF-8 byte not in `A-Za-z0-9-._~:/?#@!$&'*+,;=%` as `%XX`. Left out are, among others,
+/// `(`, `)`, `[`, `]`, `<`, `>`, `\`, `|`, space and backtick, so the destination cannot end early or split a cell.
+fn link_dest(url: &str) -> String {
+    let keep = |b: u8| b.is_ascii_alphanumeric() || b"-._~:/?#@!$&'*+,;=%".contains(&b);
+    url.bytes().map(|b| if keep(b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
-/// An input text for a table cell: HTML-escaped, then table-escaped.
-fn td(s: &str) -> String {
-    esc(&html(s))
-}
-
-/// An input text for a list line or heading: each `\` as `\\`, then HTML-escaped.
-fn li(s: &str) -> String {
-    html(&s.replace('\\', r"\\"))
-}
-
-/// The cell text of K§6.2.6 item 1, ready for its table cell (the URL is table-escaped only).
+/// The cell text of K§6.2.6 item 1, ready for its table cell; the URL is a link `[md_text(url)](link_dest(url))`.
 fn cell_text(cell: &Cell, url: &str) -> String {
     let join = |parts: Vec<String>| parts.join("; ");
     let head = match cell.grade {
         Grade::Full => "full".to_string(),
-        Grade::Partial => format!("partial (missing: {})", join(cell.missing.iter().map(|u| format!("{} {}", td(&u.criterion), td(&u.text))).collect())),
-        Grade::None => format!("none ({})", join(cell.missing.iter().map(|u| format!("{}: {}", td(&u.criterion), td(reason(u)))).collect())),
-        Grade::Na => return format!("n/a ({})", join(cell.na.iter().map(|u| td(reason(u))).collect())),
+        Grade::Partial => format!("partial (missing: {})", join(cell.missing.iter().map(|u| format!("{} {}", md_text(&u.criterion), md_text(&u.text))).collect())),
+        Grade::None => format!("none ({})", join(cell.missing.iter().map(|u| format!("{}: {}", md_text(&u.criterion), md_text(reason(u)))).collect())),
+        Grade::Na => return format!("n/a ({})", join(cell.na.iter().map(|u| md_text(reason(u))).collect())),
     };
-    if url.is_empty() { head } else { format!("{head} {}", esc(url)) }
+    if url.is_empty() { head } else { format!("{head} [{}]({})", md_text(url), link_dest(url)) }
 }
 
 /// `unix` for linux and macos; `None` (no limit) for all three or none; else the names in the given order.
@@ -109,35 +110,35 @@ fn rollup_block(reg: &Registry, c: &Client, g: &GradeFile) -> String {
     let r = derive::rollup(reg, g, c.supported);
     let header: Vec<String> = ["Tier", "full", "partial", "none", "n/a", "met / applicable"].map(String::from).to_vec();
     let rows = [("core", &r.core), ("standard", &r.standard), ("extra", &r.extra), ("total", &r.total)].map(|(w, n)| counts_row(w, n)).to_vec();
-    let bar = if r.bar.meets { "meets bar".to_string() } else { format!("below bar: {}", li(&r.bar.failing.join(", "))) };
+    let bar = if r.bar.meets { "meets bar".to_string() } else { format!("below bar: {}", r.bar.failing.iter().map(|id| md_text(id)).collect::<Vec<_>>().join(", ")) };
     let exceptions = if r.bar.exceptions.is_empty() {
         "none".to_string()
     } else {
         let text = |id: &String| {
             let e = reg.bar_exception.iter().find(|b| b.client == g.client && &b.criterion == id && !blank(&b.approved));
-            let t = e.map_or(id.clone(), |e| format!("{id}: {} (approved: {})", e.reason, e.approved.as_deref().unwrap_or_default()));
-            li(&t)
+            let approved = |e: &BarException| md_text(e.approved.as_deref().unwrap_or_default());
+            e.map_or(md_text(id), |e| format!("{}: {} (approved: {})", md_text(id), md_text(&e.reason), approved(e)))
         };
         r.bar.exceptions.iter().map(text).collect::<Vec<_>>().join("; ")
     };
     format!(
         "### {} {}\n\n{}\n\n- Bar: {bar}\n- Bar exceptions: {exceptions}\n- Release: {}",
-        li(&c.name),
-        li(&g.version),
+        md_text(&c.name),
+        md_text(&g.version),
         table(&header, rows),
         r.release
     )
 }
 
 fn criteria_block(reg: &Registry, c: &Client, g: &GradeFile, res: &Resolved) -> String {
-    let mut lines = vec![format!("### {}", li(&c.name)), String::new()];
+    let mut lines = vec![format!("### {}", md_text(&c.name)), String::new()];
     for (cap, _) in ordered(reg) {
         let cell = derive::cell(reg, g, &cap.id);
         for cr in &cap.criterion {
             let line = if let Some(u) = cell.missing.iter().find(|u| u.criterion == cr.id) {
-                format!("- {} not met: {}", li(&cr.id), li(reason(u)))
+                format!("- {} not met: {}", md_text(&cr.id), md_text(reason(u)))
             } else if let Some(u) = cell.na.iter().find(|u| u.criterion == cr.id) {
-                format!("- {} n/a: {}", li(&cr.id), li(reason(u)))
+                format!("- {} n/a: {}", md_text(&cr.id), md_text(reason(u)))
             } else {
                 let items: Vec<String> = res
                     .get(&g.client, &cr.id)
@@ -150,7 +151,7 @@ fn criteria_block(reg: &Registry, c: &Client, g: &GradeFile, res: &Resolved) -> 
                     })
                     .collect();
                 let text = if items.is_empty() { "no evidence that counts".to_string() } else { items.join(", ") };
-                format!("- {} met: {text}", li(&cr.id))
+                format!("- {} met: {text}", md_text(&cr.id))
             };
             lines.push(line);
         }
@@ -164,11 +165,11 @@ pub fn markdown(reg: &Registry, grades: &[GradeFile], clients: &[Client], res: &
     let caps = ordered(reg);
     let mut blocks = vec![format!("Generated by {GENERATED_BY}."), "# Conformance".into(), "## Feature matrix".into()];
     let mut header: Vec<String> = vec!["Capability".into(), "Tier".into()];
-    header.extend(gc.iter().map(|(c, _)| td(&c.name)));
+    header.extend(gc.iter().map(|(c, _)| md_text(&c.name)));
     let rows = caps
         .iter()
         .map(|(cap, word)| {
-            let mut r = vec![td(&format!("{} {}", cap.id, cap.name)), word.to_string()];
+            let mut r = vec![md_text(&format!("{} {}", cap.id, cap.name)), word.to_string()];
             r.extend(gc.iter().map(|(_, g)| cell_text(&derive::cell(reg, g, &cap.id), url_of(g, &cap.id))));
             r
         })
@@ -182,7 +183,7 @@ pub fn markdown(reg: &Registry, grades: &[GradeFile], clients: &[Client], res: &
         .iter()
         .map(|(c, g)| {
             let s = derive::scores(reg, g);
-            vec![td(&c.name), percent(s.total), percent(s.core), percent(s.standard), percent(s.extra)]
+            vec![md_text(&c.name), percent(s.total), percent(s.core), percent(s.standard), percent(s.extra)]
         })
         .collect();
     blocks.push(table(&header, rows));

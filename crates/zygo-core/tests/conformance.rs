@@ -1333,19 +1333,19 @@ fn render_markdown_golden_fixtures() {
 #[test]
 fn render_markdown_four_cell_forms() {
     let md = md_of(&render_input());
-    assert_eq!(row(&md, "| A-1 "), "| A-1 Transport | core | partial (missing: A-1.2 The credential is the session token.) https://example.com/alpha/transport | full https://example.com/beta/transport |");
-    assert_eq!(row(&md, "| A-3 "), "| A-3 Model list | standard | full https://example.com/alpha/models | none (A-3.1: Beta has no model picker) https://example.com/beta/models |");
-    assert_eq!(row(&md, "| WA-2 "), "| WA-2 Turn signals | extra | n/a (Alpha has no turn events) | full https://example.com/beta/turns |");
+    assert_eq!(row(&md, r"| A\-1 "), r"| A\-1 Transport | core | partial (missing: A\-1\.2 The credential is the session token\.) [https\:\/\/example\.com\/alpha\/transport](https://example.com/alpha/transport) | full [https\:\/\/example\.com\/beta\/transport](https://example.com/beta/transport) |");
+    assert_eq!(row(&md, r"| A\-3 "), r"| A\-3 Model list | standard | full [https\:\/\/example\.com\/alpha\/models](https://example.com/alpha/models) | none (A\-3\.1: Beta has no model picker) [https\:\/\/example\.com\/beta\/models](https://example.com/beta/models) |");
+    assert_eq!(row(&md, r"| WA\-2 "), r"| WA\-2 Turn signals | extra | n/a (Alpha has no turn events) | full [https\:\/\/example\.com\/beta\/turns](https://example.com/beta/turns) |");
     use Status::{Met as M, Na as X, NotMet as N};
     let md = md_of(&synth_input(&[(Tier::Standard, &[M, N, N][..]), (Tier::Standard, &[N, N][..]), (Tier::Extra, &[X, X][..])]));
-    assert_eq!(row(&md, "| A-1 "), "| A-1 c | standard | partial (missing: A-1.2 t1.2; A-1.3 t1.3) https://example.com/1 |");
-    assert_eq!(row(&md, "| A-2 "), "| A-2 c | standard | none (A-2.1: r2.1; A-2.2: r2.2) https://example.com/2 |");
-    assert_eq!(row(&md, "| A-3 "), "| A-3 c | extra | n/a (r3.1; r3.2) |");
+    assert_eq!(row(&md, r"| A\-1 "), r"| A\-1 c | standard | partial (missing: A\-1\.2 t1\.2; A\-1\.3 t1\.3) [https\:\/\/example\.com\/1](https://example.com/1) |");
+    assert_eq!(row(&md, r"| A\-2 "), r"| A\-2 c | standard | none (A\-2\.1: r2\.1; A\-2\.2: r2\.2) [https\:\/\/example\.com\/2](https://example.com/2) |");
+    assert_eq!(row(&md, r"| A\-3 "), r"| A\-3 c | extra | n/a (r3\.1; r3\.2) |");
     let mut x = synth_input(&[(Tier::Standard, &[N][..])]);
     x.1[0].grade.clear(); // ungraded
     let md = md_of(&x);
-    assert_eq!(row(&md, "| A-1 "), "| A-1 c | standard | none (A-1.1: no grade) https://example.com/1 |");
-    assert!(md.contains("- A-1.1 not met: no grade\n"));
+    assert_eq!(row(&md, r"| A\-1 "), r"| A\-1 c | standard | none (A\-1\.1: no grade) [https\:\/\/example\.com\/1](https://example.com/1) |");
+    assert!(md.contains("- A\\-1\\.1 not met: no grade\n"));
 }
 
 #[test]
@@ -1353,13 +1353,13 @@ fn render_markdown_rows_by_tier_columns_by_client() {
     use Status::Met as M;
     let md = md_of(&synth_input(&[(Tier::Extra, &[M][..]), (Tier::Core, &[M][..]), (Tier::Standard, &[M][..]), (Tier::Core, &[M][..])]));
     let pos = |id: &str| md.find(&format!("| {id} c |")).unwrap();
-    assert!(pos("A-2") < pos("A-4") && pos("A-4") < pos("A-3") && pos("A-3") < pos("A-1"));
-    assert!(md.contains("- A-1.1 met: no evidence that counts\n"));
+    assert!(pos(r"A\-2") < pos(r"A\-4") && pos(r"A\-4") < pos(r"A\-3") && pos(r"A\-3") < pos(r"A\-1"));
+    assert!(md.contains("- A\\-1\\.1 met: no evidence that counts\n"));
     let mut x = render_input();
     x.2.reverse();
     let md = md_of(&x);
     assert!(md.lines().any(|l| l == "| Capability | Tier | Beta | Alpha |"));
-    assert!(md.find("### Beta 2.0.0").unwrap() < md.find("### Alpha 1.0.0").unwrap());
+    assert!(md.find(r"### Beta 2\.0\.0").unwrap() < md.find(r"### Alpha 1\.0\.0").unwrap());
     assert!(md.find("| Beta | 66%").unwrap() < md.find("| Alpha | 70%").unwrap());
 }
 
@@ -1372,13 +1372,13 @@ fn render_markdown_platform_text_and_unix_shown() {
     assert_eq!(p(&["linux"]), Some("linux".to_string()));
     assert_eq!(p(&["macos", "windows"]), Some("macos, windows".to_string()));
     let md = md_of(&render_input());
-    assert!(md.contains("- WA-2.1 met: `test:crates/demo/tests/ev.rs::unix_only` (unix)\n"));
-    assert!(md.contains("- A-1.1 met: `test:crates/demo/tests/ev.rs::plain`\n"));
+    assert!(md.contains("- WA\\-2\\.1 met: `test:crates/demo/tests/ev.rs::unix_only` (unix)\n"));
+    assert!(md.contains("- A\\-1\\.1 met: `test:crates/demo/tests/ev.rs::plain`\n"));
     let (r, mut g, c) = base();
     entry(&mut g[1], "WA-2.1").evidence = vec!["test:crates/demo/tests/ev.rs::in_windows_mod".into(), "fixture:fixtures/beta/capture.json".into()];
     let res = resolve(&repo(), &g);
     assert!(render::markdown(&r, &g, &c, &res).contains(
-        "- WA-2.1 met: `test:crates/demo/tests/ev.rs::in_windows_mod` (windows), `fixture:fixtures/beta/capture.json`\n"
+        "- WA\\-2\\.1 met: `test:crates/demo/tests/ev.rs::in_windows_mod` (windows), `fixture:fixtures/beta/capture.json`\n"
     ));
 }
 
@@ -1391,12 +1391,12 @@ fn render_markdown_pipe_escaped_one_row() {
     x.0.capability[1].name = "Model|list".into();
     x.2[1].name = "Be|ta".into();
     let md = md_of(&x);
-    let line = row(&md, "| A-3 ");
-    assert_eq!(line, r"| A-3 Model\|list | standard | full https://example.com/alpha/models | none (A-3.1: a\|b) https://example.com/x\|y |");
+    let line = row(&md, r"| A\-3 ");
+    assert_eq!(line, r"| A\-3 Model\|list | standard | full [https\:\/\/example\.com\/alpha\/models](https://example.com/alpha/models) | none (A\-3\.1: a\|b) [https\:\/\/example\.com\/x\|y](https://example.com/x%7Cy) |");
     assert_eq!(unescaped(line), 5);
     assert!(md.lines().any(|l| l == r"| Capability | Tier | Alpha | Be\|ta |"));
     assert!(md.lines().any(|l| l == r"| Be\|ta | 66% | 100% | 0% | 100% |"));
-    assert!(md.contains("- A-3.1 not met: a|b\n")); // outside a table: as written
+    assert!(md.contains("- A\\-3\\.1 not met: a\\|b\n")); // outside a table: md_text too, shows `a|b`
 }
 
 /// The `|` of `l` that are cell borders: a `|` is escaped only when an odd number of `\` come before it.
@@ -1409,8 +1409,8 @@ fn render_markdown_backslash_kept() {
     let mut x = render_input();
     entry(&mut x.1[1], "A-3.1").reason = Some(r"a\|b".into());
     let md = md_of(&x);
-    let line = row(&md, "| A-3 ");
-    assert_eq!(line, r"| A-3 Model list | standard | full https://example.com/alpha/models | none (A-3.1: a\\\|b) https://example.com/beta/models |");
+    let line = row(&md, r"| A\-3 ");
+    assert_eq!(line, r"| A\-3 Model list | standard | full [https\:\/\/example\.com\/alpha\/models](https://example.com/alpha/models) | none (A\-3\.1: a\\\|b) [https\:\/\/example\.com\/beta\/models](https://example.com/beta/models) |");
     assert_eq!(unescaped(line), 5);
 }
 
@@ -1418,10 +1418,11 @@ fn render_markdown_backslash_kept() {
 fn render_markdown_backslash_kept_in_lists() {
     let mut x = render_input();
     entry(&mut x.1[1], "A-3.1").reason = Some(r"a\|b".into());
-    assert!(md_of(&x).contains("- A-3.1 not met: a\\\\|b\n"));
+    assert!(md_of(&x).contains("- A\\-3\\.1 not met: a\\\\\\|b\n"));
 }
 
-/// Raw HTML from input text is shown as text, in table cells and list lines; a URL is not changed.
+/// Raw HTML from input text is shown as text, in table cells and list lines (md_text); a URL destination keeps
+/// `?`, `=` and `&`.
 #[test]
 fn render_markdown_html_escaped() {
     let mut x = render_input();
@@ -1429,10 +1430,10 @@ fn render_markdown_html_escaped() {
     entry(&mut x.1[0], "WA-2.1").reason = Some("<!--".into());
     x.1[1].cell.iter_mut().find(|c| c.capability == "A-3").unwrap().url = "https://example.com/m?a=1&b=2".into();
     let md = md_of(&x);
-    assert_eq!(row(&md, "| A-3 "), "| A-3 Model list | standard | full https://example.com/alpha/models | none (A-3.1: &lt;details&gt;) https://example.com/m?a=1&b=2 |");
-    assert_eq!(row(&md, "| WA-2 "), "| WA-2 Turn signals | extra | n/a (&lt;!--) | full https://example.com/beta/turns |");
-    assert!(md.contains("- A-3.1 not met: &lt;details&gt;\n"));
-    assert!(md.contains("- WA-2.1 n/a: &lt;!--\n"));
+    assert_eq!(row(&md, r"| A\-3 "), r"| A\-3 Model list | standard | full [https\:\/\/example\.com\/alpha\/models](https://example.com/alpha/models) | none (A\-3\.1: \<details\>) [https\:\/\/example\.com\/m\?a\=1\&b\=2](https://example.com/m?a=1&b=2) |");
+    assert_eq!(row(&md, r"| WA\-2 "), r"| WA\-2 Turn signals | extra | n/a (\<\!\-\-) | full [https\:\/\/example\.com\/beta\/turns](https://example.com/beta/turns) |");
+    assert!(md.contains("- A\\-3\\.1 not met: \\<details\\>\n"));
+    assert!(md.contains("- WA\\-2\\.1 n/a: \\<\\!\\-\\-\n"));
     assert!(!md.contains("<details>") && !md.contains("<!--"));
 }
 
@@ -1448,7 +1449,79 @@ fn render_markdown_evidence_backtick_span() {
     ];
     let res = Resolved { grade: vec![ResolvedGrade { file: 0, client: "alpha".into(), criterion: "A-1.1".into(), evidence }] };
     let md = render::markdown(&r, &g, &c, &res);
-    assert!(md.contains("- A-1.1 met: ``fixture:a`b``, ``` `x`` ```\n"), "{md}");
+    assert!(md.contains("- A\\-1\\.1 met: ``fixture:a`b``, ``` `x`` ```\n"), "{md}");
+}
+
+/// The md_text rule: CommonMark lets any ASCII punctuation character be backslash-escaped, and the reader then
+/// sees it literally; md_text escapes each one (``!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~``) and nothing else, with no
+/// HTML entities. In a table GFM first turns `\|` into `|`, so the cell keeps one column. Each case is
+/// (input, rendered source), put in a reason, a capability name, a client version and an exception approval.
+#[test]
+fn render_markdown_hostile_text_literal() {
+    let cases: &[(&str, &str)] = &[
+        (r"\", r"\\"),
+        (r"\|", r"\\\|"),
+        ("|", r"\|"),
+        ("`", r"\`"),
+        ("a`b", r"a\`b"),
+        ("<img src=x>", r"\<img src\=x\>"),
+        ("&amp;", r"\&amp\;"),
+        ("&lt;b&gt;", r"\&lt\;b\&gt\;"),
+        ("<!--", r"\<\!\-\-"),
+        ("*x*", r"\*x\*"),
+        ("_y_", r"\_y\_"),
+        ("~~s~~", r"\~\~s\~\~"),
+        ("[x](y)", r"\[x\]\(y\)"),
+        ("![i](https://e/i.png)", r"\!\[i\]\(https\:\/\/e\/i\.png\)"),
+        ("# h", r"\# h"),
+        ("- l", r"\- l"),
+        ("1. n", r"1\. n"),
+        ("x #", r"x \#"),
+        (r"t\", r"t\\"),
+        ("é漢", "é漢"),
+    ];
+    for (input, want) in cases {
+        let mut x = render_input();
+        entry(&mut x.1[1], "A-3.1").reason = Some(input.to_string());
+        x.0.capability[1].name = input.to_string();
+        x.1[1].version = input.to_string();
+        x.0.bar_exception[0].approved = Some(input.to_string());
+        let md = md_of(&x);
+        let a3 = format!(
+            r"| A\-3 {want} | standard | full [https\:\/\/example\.com\/alpha\/models](https://example.com/alpha/models) | none (A\-3\.1: {want}) [https\:\/\/example\.com\/beta\/models](https://example.com/beta/models) |"
+        );
+        assert_eq!(row(&md, r"| A\-3 "), a3, "input {input:?}");
+        assert!(md.contains(&format!("\n- A\\-3\\.1 not met: {want}\n")), "input {input:?}");
+        assert!(md.contains(&format!("\n### Beta {want}\n")), "input {input:?}");
+        assert!(md.contains(&format!("\n- Bar exceptions: A\\-1\\.2: r (approved: {want})\n")), "input {input:?}");
+    }
+}
+
+/// The URL rule: a cell URL is `[md_text(url)](dest)`, where dest percent-encodes (%XX on UTF-8 bytes) each byte
+/// not in `A-Za-z0-9-._~:/?#@!$&'*+,;=%`. A link text cannot hold another link.
+#[test]
+fn render_markdown_url_link() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "https://ex.com/u<img src=x onerror=alert(1)>",
+            r"https\:\/\/ex\.com\/u\<img src\=x onerror\=alert\(1\)\>",
+            "https://ex.com/u%3Cimg%20src=x%20onerror=alert%281%29%3E",
+        ),
+        ("https://ex.com/u<https://evil>", r"https\:\/\/ex\.com\/u\<https\:\/\/evil\>", "https://ex.com/u%3Chttps://evil%3E"),
+        ("https://ex.com/u&amp;", r"https\:\/\/ex\.com\/u\&amp\;", "https://ex.com/u&amp;"),
+        (r"https://ex.com/u\", r"https\:\/\/ex\.com\/u\\", "https://ex.com/u%5C"),
+        ("https://ex.com/a|b", r"https\:\/\/ex\.com\/a\|b", "https://ex.com/a%7Cb"),
+        ("https://ex.com/é", r"https\:\/\/ex\.com\/é", "https://ex.com/%C3%A9"),
+    ];
+    for (url, text, dest) in cases {
+        let mut x = render_input();
+        x.1[1].cell.iter_mut().find(|c| c.capability == "A-1").unwrap().url = url.to_string();
+        let md = md_of(&x);
+        let want = format!(
+            r"| A\-1 Transport | core | partial (missing: A\-1\.2 The credential is the session token\.) [https\:\/\/example\.com\/alpha\/transport](https://example.com/alpha/transport) | full [{text}]({dest}) |"
+        );
+        assert_eq!(row(&md, r"| A\-1 "), want, "url {url:?}");
+    }
 }
 
 #[test]
@@ -1461,8 +1534,8 @@ fn render_markdown_below_bar_rollup() {
     }
     let res = resolve(&repo(), &g);
     let md = render::markdown(&r, &g, &c, &res);
-    assert!(md.contains("### Alpha 1.0.0\n"));
-    assert!(md.contains("- Bar: below bar: A-1\n- Bar exceptions: none\n- Release: below bar\n"));
+    assert!(md.contains("### Alpha 1\\.0\\.0\n"));
+    assert!(md.contains("- Bar: below bar: A\\-1\n- Bar exceptions: none\n- Release: below bar\n"));
 }
 
 fn jv(s: &str) -> serde_json::Value {
@@ -1502,7 +1575,7 @@ fn render_json_matrix_matches_markdown() {
             assert_eq!(m["value"].as_f64(), cell.value);
             assert_eq!(m["missing"].as_array().unwrap().len(), cell.missing.len());
             assert_eq!(m["na"].as_array().unwrap().len(), cell.na.len());
-            let md_cell = row(&md, &format!("| {} ", cap.id)).split(" | ").nth(2 + i).unwrap();
+            let md_cell = row(&md, &format!("| {} ", cap.id.replace('-', r"\-"))).split(" | ").nth(2 + i).unwrap();
             assert!(md_cell.starts_with(&format!("{word} ")), "{md_cell}");
         }
     }
@@ -1620,7 +1693,8 @@ fn render_compare_crlf_equal() {
 fn render_compare_planted_difference_is_item_10() {
     let x = render_input();
     let (md, json) = (md_of(&x), json_of(&x));
-    let planted = md.replacen("full https://example.com/beta/transport", "full https://example.com/beta/transporT", 1);
+    let planted = md.replacen("](https://example.com/beta/transport)", "](https://example.com/beta/transporT)", 1);
+    assert_ne!(planted, md);
     for (m, j, path) in [(planted.as_str(), json.as_str(), "docs/conformance.md"), (md.as_str(), &json.replacen("\"meets bar\"", "\"below bar\"", 1)[..], "docs/conformance.json")] {
         let dir = docs_root(m, j);
         let f = render::compare_or_write_mode(dir.path(), &md, &json, false).unwrap_err();
