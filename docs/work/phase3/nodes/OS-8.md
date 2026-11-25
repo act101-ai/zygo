@@ -1,7 +1,7 @@
 # OS-8 — `zygo usage` prints the net figures, breakdown and ratio
 
 **Spec:** `docs/specs/2026-11-24-output-shaping-design.md` O§6.6, O§6.2 (names), O§6.3 rule "Prices", O-C5, O§10 row "Config does not load in `zygo usage`", O§16 item 15 (`zygo usage` part)
-**Files:** `crates/zygo/src/cmd/usage.rs`, `crates/zygo/tests/usage_doctor.rs`
+**Files:** `crates/zygo/src/cmd/usage.rs`, `crates/zygo/tests/usage_doctor.rs`, `crates/zygo/Cargo.toml`, `Cargo.lock`, `docs/specs/2026-11-24-output-shaping-design.md`
 **Consumes:** `Store::savings` (OS-7), `Savings` (OS-7), `SavingsKey` (OS-7), `Rates` (OS-6)
 **Produces:** —
 **Acceptance:** `test "$(cargo test -q -p zygo --test usage_doctor -- savings --list 2>/dev/null | grep -c ': test$')" -ge 6 && cargo test -p zygo --test usage_doctor` → every count holds (at least 6 named `savings…` in zygo `usage_doctor`; a count of 0 fails before any run), then all pass: the existing H§14 item 18 test keeps every assertion, except that `compaction signals: 0` is asserted present, not at `at + 2`; the existing full-output tests in `usage_doctor.rs` gain the O§6.6 block and change no other line; on a fixture database the lines after `tokens trimmed (estimate)` equal the O§6.6 block line for line; a negative amount prints `≈-$`; unpriced requests add ` (<n> requests had no price)`; a config that does not load prints `estimated spend avoided: unknown (config does not load)` and every other line; a database built from the `97d8767` schema exits 0 and prints `bytes read back: 0` and `-` keys; a tool, command or model name with a control character passes through `esc`
@@ -20,8 +20,8 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
 - No code maps the catalog to `Rates`: the only `Rates` values are in `crates/zygo-usage/tests/{carry,savings}.rs`. The nearest code, `list_prices` (`crates/zygo-proxy/src/forward.rs:201-205`), is private and reads the built-in catalog only. OS-8 adds the map in `usage.rs`.
 - `base(ctx, verb, None, None)` (`crates/zygo/src/cmd/verbs.rs:130`) loads the merged config (built-in rows included); a user file that does not parse is an `Err` (`crates/zygo-config/src/layers.rs:447-453`). `usage.rs:52` already uses it for `--sync`.
 - Seeded `RequestRow`s in `usage_doctor.rs` (`req`, line 33) have `status` 0, so `Store::savings` gives them no carry (`savings.rs:66`: `status BETWEEN 200 AND 299`): spend `≈$0.0000`, no unpriced count.
-- `crates/zygo` has no `rusqlite` dependency (`crates/zygo/Cargo.toml:10-44`). The `97d8767` database (Acceptance) can only be built with it, so step 1 adds one dev-dependency line in `crates/zygo/Cargo.toml`, a file outside **Files**.
-- The O§6.6 sample block cannot come from any database: its key lines sum to `≈$0.1070`, not `≈$0.1146`, and the `Read` key's `-4300` bytes need a read-back of at least 4,300 bytes, more than the 4,000 bytes read back in total. The fixture (step 3) reproduces the block's first four lines exactly (O§6.3 worked example totals), the key names, views and read-backs of each key, and the order; its key bytes and dollars are the ones its rows give.
+- `crates/zygo` has no `rusqlite` dependency (`crates/zygo/Cargo.toml:10-44`). The `97d8767` database (Acceptance) can only be built with it, so step 1 adds one dev-dependency line (controller approved 2026-11-25; `Cargo.toml` and `Cargo.lock` added to **Files**).
+- The O§6.6 sample block as first written could come from no database (its key amounts summed to `≈$0.1070`, not its total `≈$0.1146`; its `Read` key kept out `-4300` bytes with 4,000 bytes read back in all). This plan commit replaces its key lines with the figures of the step-3 fixture and records it in the spec's change log (controller's call 2026-11-25). Step 3 compares against the corrected block, line for line.
 - No Review focus item names OS-8 (`docs/work/phase3/graph.md` "Review focus").
 
 **Decisions (author, from the spec text):**
@@ -52,7 +52,7 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
   ```
   Check: `cargo test -p zygo --test usage_doctor --no-run` builds.
 
-- [ ] **3. Test `savings_usage_prints_o66_block`** (O§6.6, O§6.3 worked example; negative amount). Rows of the worked example (`crates/zygo-usage/tests/savings.rs` `worked_example`) in session `S`; 14 trims at ts 100 summing 40,000 bytes; 3 read-backs at ts 155 summing 4,000 bytes.
+- [ ] **3. Test `savings_usage_prints_o66_block`** (O§6.6 block, line for line as corrected in this node's plan commit; O§6.3 worked example; negative amount). Rows of the worked example (`crates/zygo-usage/tests/savings.rs` `worked_example`) in session `S`; 14 trims at ts 100 summing 40,000 bytes; 3 read-backs at ts 155 summing 4,000 bytes.
   ```rust
   let d = TempDir::new().unwrap();
   let p = paths(d.path());
@@ -206,4 +206,4 @@ Acceptance changed 2026-11-25 (controller's call): O§6.6 puts the block after `
 
 - [ ] **18. Lint and crate tests:** `cargo clippy -p zygo --tests --locked -- -D warnings` → no warning; `cargo test -p zygo --locked` → all pass.
 
-- [ ] **19. Commit** `crates/zygo/src/cmd/usage.rs`, `crates/zygo/tests/usage_doctor.rs`, `crates/zygo/Cargo.toml` with `-m "OS-8: zygo usage prints the net figures, breakdown and ratio"` and the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementer's brief. Check: `git show --stat HEAD` lists the three files only.
+- [ ] **19. Commit** `crates/zygo/src/cmd/usage.rs`, `crates/zygo/tests/usage_doctor.rs`, `crates/zygo/Cargo.toml` and `Cargo.lock` (when step 1 changed it) with `-m "OS-8: zygo usage prints the net figures, breakdown and ratio"` and the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementer's brief. Check: `git show --stat HEAD` lists no other file.
