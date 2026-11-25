@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo_config::repo_def::GitRunner;
-use zygo_config::Config;
+use zygo_config::repo_def::{apply_to_config, check_default, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
+use zygo_config::{Config, BUILTIN_LOADOUT};
 use zygo_core::esc;
 use zygo_core::paths::Paths;
 use zygo_work::repo::{checkout, Checkout};
@@ -687,6 +687,8 @@ fn fresh_member(agent: zygo_core::Agent, pp: &PlanPane) -> MemberRecord {
     m.launch.server = pp.server.clone();
     m.launch.compact = pp.compact.clone();
     m.launch.config_dir = pp.config_dir.clone();
+    m.launch.job = pp.job.clone();
+    m.launch.definition = pp.definition.clone();
     let f = filter_from(agent, &pp.args, &pp.cwd);
     m.launch.args = f.kept;
     m.dropped_flags = f.dropped_flags;
@@ -752,12 +754,89 @@ struct Report {
 
 fn kind_name(m: &MemberRecord) -> &'static str { m.launch.kind.as_str() }
 
-/// The loadout plan (W§8.1 step 7, first case).
-fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut Report, err: &mut dyn Write) -> Result<Plan, Exit> {
-    let plan = loadout::resolve(&opts.config, opts.loadout.as_deref(), &t.main_root, &t.worktrees).map_err(|e| Exit {
+/// R§10 `up` row: the workspace files are not approved.
+fn not_approved_line(full_ref: &str, digest: &str) -> String {
+    format!(
+        "zygo: this repository's workspace files ({}, digest {}) are not approved on this machine; nothing from them was applied; see zygo workspace approve",
+        esc(full_ref),
+        short(digest)
+    )
+}
+
+/// R§10 `up` row: the workspace files are invalid (an invalid read has no digest).
+fn invalid_line(full_ref: &str, why: &str) -> String {
+    format!("zygo: this repository's workspace files ({}) are invalid ({}); nothing from them was applied", esc(full_ref), esc(why))
+}
+
+/// R§10 `up` row: the workspace files could not be read.
+fn unread_line(why: &str) -> String {
+    format!("zygo: this repository's workspace files are unread ({}); nothing from them was applied", esc(why))
+}
+
+/// R§9.4: the agent panes of the repository loadout against `[limits] max_members`, before any write.
+fn check_max(plan: &loadout::Plan, max: u32) -> Result<(), Exit> {
+    let n = plan.windows.iter().flat_map(|w| &w.panes).filter(|p| matches!(p.kind, PlanKind::Agent(_))).count();
+    if n > max as usize {
+        return Err(fail(format!(
+            "zygo: this repository's workspace files start {n} agents; [limits] max_members is {max}; nothing started"
+        )));
+    }
+    Ok(())
+}
+
+/// The loadout of W§8.1 step 7, first case (R§10 `up` row): `--loadout`; else `[workspace] default_loadout` when the
+/// user config file sets it; else `repository` when the default branch has an approved `.zygo/workspace.toml`; else
+/// `solo`. The repository plan comes from one checked read (R§7.3) and each pane gets its pin (R§7.4). A choice by
+/// `--loadout repository` or a user `default_loadout = "repository"` refuses where the default choice plans `solo`.
+fn choose(opts: &UpOpts, t: &Target, err: &mut dyn Write) -> Result<loadout::Plan, Exit> {
+    let resolve_err = |e: LoadoutError| Exit {
         code: if matches!(e, LoadoutError::Unknown { .. }) { 2 } else { 1 },
         message: format!("zygo: {e}"),
-    })?;
+    };
+    let user = |name: &str| loadout::resolve(&opts.config, Some(name), &t.main_root, &t.worktrees).map_err(resolve_err);
+    let name = opts.loadout.as_deref().or(opts.default_loadout_set.then_some(opts.config.workspace.default_loadout.as_str()));
+    let explicit = name.is_some();
+    if let Some(n) = name
+        && (n != REPOSITORY_LOADOUT || opts.config.loadout.contains_key(REPOSITORY_LOADOUT))
+    {
+        return user(n);
+    }
+    let git: &dyn GitRunner = match &opts.git {
+        Some(g) => g.as_ref(),
+        None => &SystemGit,
+    };
+    let line = match check_default(&t.main_root, &t.id, &opts.paths.approvals_file, git) {
+        Use::Approved { pin, def, .. } if def.workspace.is_some() => {
+            let mut cfg = opts.config.clone();
+            if apply_to_config(&mut cfg, &def).loadout_shadowed {
+                return user(REPOSITORY_LOADOUT);
+            }
+            let plan = loadout::resolve_repository(&cfg.loadout[REPOSITORY_LOADOUT], &pin, &t.main_root, &t.worktrees)
+                .map_err(resolve_err)?;
+            check_max(&plan, opts.config.limits.max_members)?;
+            return Ok(plan);
+        }
+        Use::Approved { full_ref, .. } if explicit => {
+            format!("zygo: this repository's workspace files at {} have no .zygo/workspace.toml; nothing started", esc(&full_ref))
+        }
+        Use::NotApproved { full_ref, digest, def, .. } if explicit || def.workspace.is_some() => {
+            not_approved_line(&full_ref, &digest)
+        }
+        Use::Invalid { full_ref, why, .. } => invalid_line(full_ref.as_deref().unwrap_or_default(), &why),
+        Use::Unread { why } => unread_line(&why),
+        Use::Absent { full_ref } if explicit => format!("zygo: this repository has no workspace files at {}", esc(&full_ref)),
+        Use::Approved { .. } | Use::NotApproved { .. } | Use::Absent { .. } => return user(BUILTIN_LOADOUT),
+    };
+    if explicit {
+        return Err(fail(line));
+    }
+    say(err, &line);
+    user(BUILTIN_LOADOUT)
+}
+
+/// The loadout plan (W§8.1 step 7, first case).
+fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut Report, err: &mut dyn Write) -> Result<Plan, Exit> {
+    let plan = choose(opts, t, err)?;
     for w in &plan.warnings {
         say(err, &format!("zygo: {w}"));
     }
