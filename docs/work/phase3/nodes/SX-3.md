@@ -55,7 +55,7 @@ pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<H
 
 ### Steps
 
-- [ ] **Step 1: write the tests.** Create `crates/zygo-hooks/tests/reinject.rs`:
+- [x] **Step 1: write the tests.** Create `crates/zygo-hooks/tests/reinject.rs`:
 
   ```rust
   //! SX-3: `zygo hook pre-compact` sets the per-subagent re-inject flag (session text design T§9.2 item 1, T§14
@@ -172,9 +172,11 @@ pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<H
 
   Check: `grep -c '^fn pre_compact' crates/zygo-hooks/tests/reinject.rs` → 6. `grep -nE "Instant|SystemTime|sleep|Command::new" crates/zygo-hooks/tests/reinject.rs` → only the one `Command::new(std::env::current_exe()…)`.
 
-- [ ] **Step 2: run it red.** `cargo test -p zygo-hooks --test reinject` → it does not compile: `no method named \`reinject\`` (E0599) and `cannot find function \`run_with\`` / `\`flag_path\`` in module `pre_compact` (E0425).
+- [x] **Step 2: run it red.** `cargo test -p zygo-hooks --test reinject` → it does not compile: `no method named \`reinject\`` (E0599) and `cannot find function \`run_with\`` / `\`flag_path\`` in module `pre_compact` (E0425).
 
-- [ ] **Step 3: add the signatures.** In `crates/zygo-core/src/session_dir.rs`, after `work()` (`:77-79`), add `reinject()` with the doc line of Interfaces. In `crates/zygo-hooks/src/pre_compact.rs`, change the import to `std::path::{Path, PathBuf}`, then add `flag_path` with its full body and `run_with` with the body `run_in(dir)` only (no flag yet):
+  Observed: does not compile, 14 errors: 10 × E0599 `no method named \`reinject\``, 2 × E0425 `run_with`, 2 × E0425 `flag_path`.
+
+- [x] **Step 3: add the signatures.** In `crates/zygo-core/src/session_dir.rs`, after `work()` (`:77-79`), add `reinject()` with the doc line of Interfaces. In `crates/zygo-hooks/src/pre_compact.rs`, change the import to `std::path::{Path, PathBuf}`, then add `flag_path` with its full body and `run_with` with the body `run_in(dir)` only (no flag yet):
 
   ```rust
   pub fn flag_path(dir: &SessionDir, agent_id: &str) -> Option<PathBuf> {
@@ -186,7 +188,9 @@ pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<H
 
   Check: `cargo test -p zygo-hooks --test reinject` compiles. `pre_compact_sub_prints_text_and_creates_flag` fails on `metadata(&f).unwrap()` (NotFound). `pre_compact_flag_create_failure_still_prints_text` fails on `err.starts_with` (stderr empty). The other 4 pass. 4 passed, 2 failed, 1 ignored.
 
-- [ ] **Step 4: create the flag.** In `pre_compact.rs`, import `serde_json::Value` and `zygo_core::hook::error_line`. Then add:
+  Observed: 4 passed, 2 failed, 1 ignored. `pre_compact_sub_prints_text_and_creates_flag` panicked at `reinject.rs:56` (metadata unwrap); `pre_compact_flag_create_failure_still_prints_text` panicked at `reinject.rs:120` (`err.starts_with`).
+
+- [x] **Step 4: create the flag.** In `pre_compact.rs`, import `serde_json::Value` and `zygo_core::hook::error_line`. Then add:
 
   ```rust
   pub fn run(input: &HookInput) -> anyhow::Result<HookOutput> {
@@ -220,8 +224,16 @@ pub fn run_with(input: &HookInput, dir: Option<&SessionDir>) -> anyhow::Result<H
 
   Check: `cargo test -p zygo-hooks --test reinject` → 6 passed, 0 failed, 1 ignored. Mutations: remove `!zygo &&` → `pre_compact_zygo_type_creates_no_flag` fails; use `dir.reinject().join(id)` in place of `flag_path` → `pre_compact_bad_agent_id_creates_no_file` fails; make the error branch return `Err` → `pre_compact_flag_create_failure_still_prints_text` fails.
 
-- [ ] **Step 5: run the crate's tests and lints.** `cargo test -p zygo-hooks --locked --no-fail-fast` → all pass, and the `pre_compact_*` tests of `tests/session_text.rs` are unchanged. `cargo clippy -p zygo-core -p zygo-hooks --tests --locked` → no warning in `session_dir.rs`, `pre_compact.rs` or `tests/reinject.rs`. `cargo fmt --check -p zygo-core -p zygo-hooks` → clean.
+  Observed: 6 passed, 0 failed, 1 ignored. Mutations (each restored, none committed): remove `!zygo &&` → only `pre_compact_zygo_type_creates_no_flag` fails; `Some(d.reinject().join(id))` for `flag_path` → only `pre_compact_bad_agent_id_creates_no_file` fails; error branch returns `Err` → only `pre_compact_flag_create_failure_still_prints_text` fails (child output `("", 0)`).
 
-- [ ] **Step 6: commit.** `git add crates/zygo-core/src/session_dir.rs crates/zygo-hooks/src/pre_compact.rs crates/zygo-hooks/tests/reinject.rs && git commit` with the subject `SX-3: pre-compact sets the re-inject flag for a non-zygo subagent`, a blank line, then `Zygo-Session: <id of the implementing session>` and `Zygo-Work: phase3:SX-3`, each on its own line. No Claude attribution. Check: `git show --stat HEAD` lists only those 3 files.
+- [x] **Step 5: run the crate's tests and lints.** `cargo test -p zygo-hooks --locked --no-fail-fast` → all pass, and the `pre_compact_*` tests of `tests/session_text.rs` are unchanged. `cargo clippy -p zygo-core -p zygo-hooks --tests --locked` → no warning in `session_dir.rs`, `pre_compact.rs` or `tests/reinject.rs`. `cargo fmt --check -p zygo-core -p zygo-hooks` → clean.
 
-- [ ] **Step 7: verify (node Acceptance).** `test "$(cargo test -q -p zygo-hooks --test reinject -- pre_compact --list 2>/dev/null | grep -c ': test$')" -ge 5 && cargo test -p zygo-hooks --test reinject -- pre_compact` → exit 0. The count is 6, and the run shows 6 passed, 0 failed, 0 ignored (the filter excludes `child_flag_blocked`). CI repeats it on ubuntu, macOS and Windows through `cargo test --workspace`.
+  Observed: zygo-hooks all suites ok (lib 19, hooks_basic 55, reinject 6, session_text 31, statusline_data 5, statusline_phase 9, statusline_render 25, statusline_team 0, subagent_text 10, workspace 9; 0 failed). zygo-core ok (3, 24, 5, 1, 1; 0 failed). Clippy: no warning in the 3 files (2 pre-existing warnings in `crates/zygo-work/src/gate/transition.rs:10,158`). Deviation: `cargo fmt --check` is not clean, and was not clean before this node: the repo has no `rustfmt.toml`, CI has no fmt step, and default rustfmt also flags untouched files (`hook.rs`, `overrides.rs`, `paths.rs`, …) and the existing lines of `session_dir.rs`/`pre_compact.rs`. The new code follows the existing 120-column style; no reformat.
+
+- [x] **Step 6: commit.** `git add crates/zygo-core/src/session_dir.rs crates/zygo-hooks/src/pre_compact.rs crates/zygo-hooks/tests/reinject.rs && git commit` with the subject `SX-3: pre-compact sets the re-inject flag for a non-zygo subagent`, a blank line, then `Zygo-Session: <id of the implementing session>` and `Zygo-Work: phase3:SX-3`, each on its own line. No Claude attribution. Check: `git show --stat HEAD` lists only those 3 files.
+
+  Observed: commit `530b14d`; `git show --stat HEAD` lists only the 3 files.
+
+- [x] **Step 7: verify (node Acceptance).** `test "$(cargo test -q -p zygo-hooks --test reinject -- pre_compact --list 2>/dev/null | grep -c ': test$')" -ge 5 && cargo test -p zygo-hooks --test reinject -- pre_compact` → exit 0. The count is 6, and the run shows 6 passed, 0 failed, 0 ignored (the filter excludes `child_flag_blocked`). CI repeats it on ubuntu, macOS and Windows through `cargo test --workspace`.
+
+  Observed: count 6; `test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out` (the filtered one is `child_flag_blocked`); exit 0.
