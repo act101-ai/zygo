@@ -1220,3 +1220,29 @@ fn check_8_duplicate_grade_any_met_no_item_8() {
     assert_eq!(items(&f), set(&[2]), "{f:?}");
 }
 
+#[test]
+fn check_8_core_na_with_exception_is_below_bar() {
+    let (mut r, mut g, c) = base();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::Na;
+        e.evidence = vec![];
+        e.reason = Some("x".into());
+    }
+    r.bar_exception.push(exception("alpha", "A-1.2"));
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
+    assert_eq!(items(&f), set(&[4, 8]), "{f:?}");
+    assert!(f.iter().any(|x| x.item == 4 && x.text.contains("core criterion `A-1.2` is n/a")), "{f:?}");
+    assert!(f.iter().any(|x| x.item == 8 && x.text.ends_with("below the bar: A-1")), "{f:?}");
+}
+
+#[test]
+fn check_8_core_ungraded_with_exception_is_below_bar() {
+    let (mut r, mut g, c) = base();
+    g[0].grade.retain(|e| e.criterion != "A-1.2");
+    r.bar_exception.push(exception("alpha", "A-1.2"));
+    let f = check(&repo(), &r, &g, &c, &resolve(&repo(), &g));
+    assert_eq!(items(&f), set(&[2, 8]), "{f:?}");
+    assert!(f.iter().any(|x| x.item == 2 && x.text.contains("A-1.2")), "{f:?}");
+    assert!(f.iter().any(|x| x.item == 8 && x.text.ends_with("below the bar: A-1")), "{f:?}");
+}
