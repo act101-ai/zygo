@@ -34,7 +34,7 @@ fn req(s: &str, ts: i64, role: &str, model: &str, t: [u64; 4], usd: f64, adj: &[
     RequestRow { ts, session: s.into(), role_served: Some(role.into()), model: model.into(), input_tokens: t[0], output_tokens: t[1],
         cache_read_tokens: t[2], cache_write_tokens: t[3], estimated_usd: usd, adjustments: adj.iter().map(|a| a.to_string()).collect(),
         compaction, ..Default::default() } }
-fn trim(s: &str, ts: i64, stored: u64, view: u64) -> TrimRow { TrimRow { ts, session: s.into(), tool: "Bash".into(), kind: "head".into(), stored_bytes: stored, view_bytes: view, agent_id: None } }
+fn trim(s: &str, ts: i64, stored: u64, view: u64) -> TrimRow { TrimRow { ts, session: s.into(), tool: "Bash".into(), kind: "head".into(), stored_bytes: stored, view_bytes: view, agent_id: None, result_id: None, command: None, shaper: None } }
 fn unit(s: &str, u: &str, at: i64, g: &str, l: &str, n: u32) -> WorkUnitRow { WorkUnitRow { unit: u.into(), round: 1, session: s.into(), agent_id: "main".into(),
     began_at: at, guard_events: BTreeMap::from([(g.to_string(), BTreeMap::from([(l.to_string(), n)]))]), ..Default::default() } }
 /// S1: two `code`/`m-a` requests, S2: one `lead`/`m-b`; returns the UTC midnight of 2026-11-18.

@@ -145,7 +145,7 @@ Worked example (test catalog row: `input` 4, `cache_read` 0.4, `cache_write_5m` 
    CREATE INDEX IF NOT EXISTS readbacks_session ON readbacks(session);
    CREATE INDEX IF NOT EXISTS readbacks_ts ON readbacks(ts);
    ```
-3. **Three nullable columns on `trims`:** `result_id TEXT`, `command TEXT`, `shaper TEXT`. They are added by the full open `Store::open` only, one time per process: it reads `PRAGMA table_info(trims)` and runs `ALTER TABLE trims ADD COLUMN` for each missing column. A "duplicate column name" error (a concurrent process added it first) is success. Processes that use the full open run one time per launch or command: the launcher (which already opens the store at launch to prune it, §14) and the CLI. The hook and the MCP server's read-back write use the bounded open (O§7.11), which never adds a column.
+3. **Three nullable columns on `trims`:** `result_id TEXT`, `command TEXT`, `shaper TEXT`. They are added by the full open `Store::open` only, one time per process: it reads `PRAGMA table_xinfo(trims)` and runs `ALTER TABLE trims ADD COLUMN` for each missing column. A "duplicate column name" error (a concurrent process added it first) is success. Processes that use the full open run one time per launch or command: the launcher (which already opens the store at launch to prune it, §14) and the CLI. The hook and the MCP server's read-back write use the bounded open (O§7.11), which never adds a column.
 4. **Writes.** `TrimRow` gets `result_id`, `command` and `shaper` as `Option<String>`, with `#[serde(default)]`. `insert_trim` (`store.rs:232-245`) writes ten columns. When the insert fails with "no such column" (a database that no new full open has touched yet: a session launched by an older binary, whose hooks now run the new one), it inserts the seven old columns. An older binary's insert names its own seven columns, so the new columns are null in its rows.
 5. **Reads.** A reader checks `PRAGMA table_info(trims)` and `sqlite_master` first. A missing column reads as null; a missing `readbacks` table reads as no rows. So a new `zygo usage` works on a database that only an older binary has opened.
 6. `prune` (`store.rs:272-284`) also deletes `readbacks` rows older than the cutoff. `replace_requests` (`zygo usage --sync`) does not touch `trims` or `readbacks`.
@@ -573,3 +573,9 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 - **PO2** Claude Code 2.1.328: a Bash `updatedToolOutput` with `stderr` set to `""` removes the original stderr from what the model sees (Q4, `docs/premises.md:35`, verified `stdout` only). Result decides O§7.8.
 - **PO3** OpenCode 1.18.16 (the version of Q7, `docs/premises.md:38`): `tool.execute.after` for `bash` gives stdout and stderr together in `output.output`.
 - **PO4** On both agents, the text that the model sees for a `result_view` reply is the reply text plus at most a fixed wrapper, so the reply's byte count is the read-back size within that wrapper.
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-24 | O§6.5 item 3 | author's call (OS-2 review round 1) | the column check reads `PRAGMA table_xinfo` so a generated column counts as present |
