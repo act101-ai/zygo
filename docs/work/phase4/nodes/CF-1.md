@@ -3,7 +3,7 @@
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.2.1, K§6.2.2 (form only), K§6.2.3, K§6.2.5 items 1-9 and input rules, K§9 (P4-2), K§11 items 1 (items 1-9) and 2; K-D5, K-D6, K-D28
 **Files:** `crates/zygo-core/src/lib.rs`, `crates/zygo-core/Cargo.toml`, `Cargo.toml`, `Cargo.lock`, `crates/zygo-core/tests/conformance.rs` (new), `crates/zygo-core/tests/conformance/model.rs` (new), `crates/zygo-core/tests/conformance/fixtures/` (new)
 **Consumes:** —
-**Produces:** `zygo_core::Agent::ALL: [Agent; 2]`, `model::Registry::load(path: &Path) -> Result<Registry, String>`, `model::GradeFile::load(path: &Path) -> Result<GradeFile, String>`, `model::Client { id: String, name: String, version: String, supported: bool }`, `model::evidence(root: &Path, e: &str) -> Result<Evidence, String>` (`Evidence.platforms: Vec<String>`), `model::check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Client]) -> Vec<Fault>` (`Fault { item: u8, text: String }`)
+**Produces:** `zygo_core::Agent::ALL: [Agent; 2]`, `model::Registry::load(path: &Path) -> Result<Registry, String>`, `model::GradeFile::load(path: &Path) -> Result<GradeFile, String>`, `model::Client { id: String, name: String, version: String, supported: bool }`, `model::evidence(root: &Path, e: &str) -> Result<Evidence, String>` (`Evidence.platforms: Vec<String>`), `model::check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Client]) -> Vec<Fault>` (`Fault { item: u8, text: String }`), `model::clients(root: &Path) -> Result<Vec<Client>, String>`
 **Acceptance:** `test "$(cargo test -q -p zygo-core --test conformance -- check_ input_ --list 2>/dev/null | grep -c ': test$')" -ge 19 && cargo test -p zygo-core --test conformance --locked -- check_ input_` → at least 19 tests named `check_…` or `input_…` (a count of 0 fails before any run), then all pass on ubuntu, macOS and Windows CI: one planted-fault case per check item 1-9; the K§11 item 1 cases (an evidence test with `#[ignore]`, a `premise:` row whose result is `failed`, a premise id that is in the other file only, a `bar_exception` key in a grade file); the two K§11 item 2 cases (`#[cfg(unix)]` counts with platform `unix`; `#[tokio::test(flavor = "multi_thread")]` counts); at least 5 `input_` cases for the K§6.2.5 input rules
 
 ## Planning notes
@@ -361,7 +361,7 @@ The names `CellUrl`, `GradeEntry` and `Status` keep `Cell` and `Grade` free for 
 
 - [x] **13. `clients`.** Implement it by the rule above. Run the step 12 command → passes. Commit `feat(conformance): client list from Agent::ALL (CF-1)`.
 
-- [ ] **14. Verification.** Run the Acceptance command:
+- [x] **14. Verification.** Run the Acceptance command:
   `test "$(cargo test -q -p zygo-core --test conformance -- check_ input_ --list 2>/dev/null | grep -c ': test$')" -ge 19 && cargo test -p zygo-core --test conformance --locked -- check_ input_`
   → exits 0; the count is 34 on Linux and macOS (25 `check_` and 7 `input_` tests, plus the 2 `#[cfg(unix)]` ones) and 32 on Windows. The symbolic-link cases of review focus 1 and 2 run only on unix (a Windows link needs a privilege the CI runner does not give). Then `cargo test -p zygo-core --locked` and `cargo test -p zygo-config --test builtin --locked -- --exact minimum_agent_versions_match_premises` → both exit 0 (K§11 item 7: `builtin.rs` is not changed). Then `cargo test --workspace --locked --no-fail-fast` → exits 0. Check `git diff --stat origin/phase-4` lists only the node's Files. No test sleeps, reads a clock or starts a process.
 
