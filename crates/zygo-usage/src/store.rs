@@ -109,7 +109,8 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 
 impl Store {
     /// The full open: creates the file and the schema, and adds each missing `trims` column one time per process for
-    /// this path (O§6.5 item 3). The trim hook does not use it; it uses [`Store::open_bounded`] (O§7.11).
+    /// this path (O§6.5 item 3). The trim hook and the MCP server's read-back write do not use it; they use
+    /// [`Store::open_bounded`] (O§7.11).
     pub fn open(path: &Path) -> Result<Store> {
         let checked = TRIM_COLUMNS_CHECKED.lock().unwrap_or_else(|e| e.into_inner()).contains(path);
         Store::open_full(path, if checked { None } else { Some(&[] as &[&str]) })
