@@ -325,6 +325,7 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
+| FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 | FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
 
 ## Log
@@ -375,3 +376,6 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-8 DONE: P3-15 section copied into docs/live-checks.md from T§12.2; round 1 fixed 4 findings (Results row, mktemp, step 7 ids, backup delete), T§12.2 rewritten (author's call) · PR #44 |
 | 2026-11-24 | FX-3 added: CI BrokenPipe flake on PRs #41 and #42 (statusline_without_a_session_dir_prints_nothing); the hook exits before it reads stdin (H§6.8, AU24, PH11), so the test write gets EPIPE; fix in test helpers (common::feed_stdin); tests only; 9 steps |
 | 2026-11-24 | FX-3 DONE: `feed_stdin` tolerates BrokenPipe in three zygo test helpers; the new test fails first, with no clock; review 0 confirmed (hang-on-regression trade-off kept under focus 75); floor green (ws 2593/0) · PR #46 |
+| 2026-11-24 | FX-2 added (20347a0): found in RT-1's CI (ubuntu run 45530476489), edit.rs:297 lock still held after apply; a child forked by another thread keeps the flock past the close; Held guard unlocks on drop; fork test; no production impact; 5 steps |
+| 2026-11-24 | FX-2 in progress: node branch `phase3/FX-2--FX-2`, worktree `.worktrees/phase3/FX-2-node` · PR #42 |
+| 2026-11-24 | FX-2 done: decision lock unlocked before close so a child's inherited descriptor cannot keep it; review round 1 (2 confirmed, 3 refuted); floor 2593 passed 0 failed · PR #42 |
