@@ -123,7 +123,7 @@ pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: 
     if !ov.results.unwrap_or(sv.results) || text.len() as u64 <= threshold {
         return Ok(HookOutput::None);
     }
-    let cfg = ResultsConfig { trim_threshold_bytes: threshold, head_lines: sv.head_lines, tail_lines: sv.tail_lines };
+    let cfg = ResultsConfig { trim_threshold_bytes: threshold, head_lines: sv.head_lines, tail_lines: sv.tail_lines, shape: sv.shape };
     // The marker length does not depend on the id's value, so a placeholder id sizes the view.
     let preview = Stored { id: "0".repeat(26), tool: tool.clone(), bytes: text.len() as u64, lines: text.lines().count() as u64,
         kind: Kind::Text, created_at: 0, session: None, data: text.as_bytes().to_vec() };

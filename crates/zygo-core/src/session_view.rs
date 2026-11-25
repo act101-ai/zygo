@@ -27,6 +27,9 @@ pub struct SessionView {
     pub head_lines: u32,
     #[serde(default = "default_tail_lines")]
     pub tail_lines: u32,
+    /// `[results] shape` of the launch (output shaping O§9, O§11); `true` for a `view.json` without the field.
+    #[serde(default = "default_true")]
+    pub shape: bool,
     /// The status line style the launcher took from the user config (`statusline.style`):
     /// `compact` or `verbose`. A `view.json` without the field reads as `compact`.
     #[serde(default = "default_statusline_style")]
@@ -72,6 +75,7 @@ impl Default for SessionView {
             trim_threshold_bytes: default_trim_threshold(),
             head_lines: default_head_lines(),
             tail_lines: default_tail_lines(),
+            shape: default_true(),
             statusline_style: default_statusline_style(),
             workspace: None,
             repo_root: None,
