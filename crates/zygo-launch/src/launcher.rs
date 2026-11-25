@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use zygo_config::profile::{requested, select, validate, Profile};
 use zygo_config::keys::default_store;
+use zygo_config::repo_def::{check_default, short, GitRunner, SystemGit, Use};
 use zygo_config::{load, Dialect, LoadContext, Merged};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -30,6 +31,7 @@ use zygo_usage::Store;
 use zygo_work::current::{resolve_noted, stderr_lines};
 use zygo_work::repo::{checkout, repository_id};
 use zygo_work::WorkItem;
+use zygo_workspace::identity::workspace_id;
 
 use crate::adapter::{AgentAdapter, LaunchCtx, Plugins};
 use crate::env::{child_env, Env};
@@ -158,6 +160,9 @@ pub struct LaunchOpts {
     /// `Some`: the repository top level in place of the `checkout` call; `Some(None)`: no repository.
     #[cfg(feature = "test-hooks")]
     pub top: Option<Option<PathBuf>>,
+    /// `Some`: the git runner of the workspace-files read (R§8) in place of `SystemGit`.
+    #[cfg(feature = "test-hooks")]
+    pub definition_git: Option<Arc<dyn GitRunner + Send + Sync>>,
 }
 
 impl LaunchOpts {
@@ -186,6 +191,8 @@ impl LaunchOpts {
             serve_bounds: None,
             #[cfg(feature = "test-hooks")]
             top: None,
+            #[cfg(feature = "test-hooks")]
+            definition_git: None,
         }
     }
 }
@@ -260,7 +267,7 @@ impl Launcher {
             buf: opts.stderr.clone(),
         };
         let search = opts.env.get("PATH").map(OsStr::to_os_string);
-        let top = launch_top(&opts);
+        let (top, common_dir) = launch_checkout(&opts);
         let cfg = match load_cfg(&opts, LoadContext { paths: opts.paths.clone(), repo: top.clone(), team: None }) {
             Ok(c) => c,
             Err(e) => {
@@ -328,10 +335,16 @@ impl Launcher {
         let mut cfg = cfg;
         let mut profile = None;
         let known = known_plugins(&selection(&cfg, None), &zygo_plugins::store::state(&opts.paths.plugin_store));
-        let name = requested(&cfg, opts.profile.as_deref());
-        match (name, select(&cfg, opts.profile.as_deref())) {
-            (Some(n), None) => out.line(&format!("zygo: profile {n} not found; launching without it")),
-            (_, Some(p)) => {
+        // R§8 "Passthrough": no profile from any source, and no read.
+        let name = if opts.passthrough { None } else { requested(&cfg, opts.profile.as_deref()) };
+        if let Some(n) = name {
+            if !cfg.config.profile.contains_key(&n) {
+                match repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref()) {
+                    Ok(m) => cfg = m,
+                    Err(line) => out.line(&line),
+                }
+            }
+            if let Some(p) = select(&cfg, Some(&n)) {
                 let c = &cfg.config;
                 match validate(&p, &c.role, &c.main_role, &c.catalog.view(), Dialect::Anthropic, &known) {
                     Err(v) => out.line(&format!("zygo: {v}; launching without the profile")),
@@ -344,7 +357,6 @@ impl Launcher {
                     },
                 }
             }
-            (None, None) => {}
         }
         let cfg = Arc::new(cfg);
 
@@ -825,12 +837,54 @@ fn heartbeat_every(#[allow(unused_variables)] opts: &LaunchOpts) -> Duration {
     HEARTBEAT_EVERY
 }
 
-fn launch_top(#[allow(unused_variables)] opts: &LaunchOpts) -> Option<PathBuf> {
+/// The checkout's top level and git common dir (§8.2 step 1); the test hook `top` gives no common dir.
+fn launch_checkout(#[allow(unused_variables)] opts: &LaunchOpts) -> (Option<PathBuf>, Option<PathBuf>) {
     #[cfg(feature = "test-hooks")]
     if let Some(t) = &opts.top {
-        return t.clone();
+        return (t.clone(), None);
     }
-    checkout(&opts.cwd, Instant::now() + BOUND).map(|c| c.top)
+    checkout(&opts.cwd, Instant::now() + BOUND).map_or((None, None), |c| (Some(c.top), Some(c.common_dir)))
+}
+
+/// The git runner of the workspace-files read: the test hook, else `SystemGit`.
+fn definition_git(#[allow(unused_variables)] opts: &LaunchOpts) -> Arc<dyn GitRunner + Send + Sync> {
+    #[cfg(feature = "test-hooks")]
+    if let Some(g) = &opts.definition_git {
+        return g.clone();
+    }
+    Arc::new(SystemGit)
+}
+
+/// R§8 "When the launcher reads": one default-branch read and check (R§7.3) for profile `n`, which neither the user
+/// nor the team config has. `Ok`: `cfg` with the approved definition added (`Merged::with_definition`). `Err`: the one
+/// line printed in place of the profile.
+fn repository_profile(
+    opts: &LaunchOpts,
+    cfg: &Merged,
+    n: &str,
+    top: Option<&Path>,
+    common_dir: Option<&Path>,
+) -> Result<Merged, String> {
+    let not_found = format!("zygo: profile {n} not found; launching without it");
+    let (Some(top), Some(cd)) = (top, common_dir) else {
+        return Err(not_found);
+    };
+    match check_default(top, &workspace_id(cd), &opts.paths.approvals_file, definition_git(opts).as_ref()) {
+        Use::Approved { def, .. } if def.profiles.contains_key(n) => Ok(cfg.with_definition(&def)),
+        Use::NotApproved { digest, def, .. } if def.profiles.contains_key(n) => Err(format!(
+            "zygo: profile {n} is in this repository's workspace files, which are not approved on this machine (digest {}); launching without it; see zygo workspace approve",
+            short(&digest)
+        )),
+        Use::Invalid { why, .. } => Err(format!(
+            "zygo: profile {n}: this repository's workspace files are invalid ({}); launching without it",
+            zygo_core::esc(&why)
+        )),
+        Use::Unread { why } => Err(format!(
+            "zygo: profile {n}: this repository's workspace files were not read ({}); launching without it",
+            zygo_core::esc(&why)
+        )),
+        _ => Err(not_found),
+    }
 }
 
 fn serve_bounds(#[allow(unused_variables)] opts: &LaunchOpts) -> Bounds {
