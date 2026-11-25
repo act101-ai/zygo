@@ -296,7 +296,7 @@ Evidence kinds **(author; lead rulings I4, I5)**:
 
 - **Cell (K-D7).** Cell value = criteria met ÷ applicable criteria (criteria that are not `n/a`). All applicable criteria met: `full`. Some met: `partial`, and the text of each unmet criterion is the "what is missing". None met: `none`, and the reasons are the "why". All criteria `n/a`: the cell is `n/a`.
 - **Score (K-D8)** **(lead)**. Tier score = the mean of the cell values over the tier's cells that have one applicable criterion or more. A tier with no such cell shows `n/a` and leaves the weights. Total score = Σ(weight × tier score) ÷ Σ(weight) over the tiers that are not `n/a`; weights core 3, standard 2, extra 1. Each score shows as a percent rounded down to an integer; the rounding is the last step, on unrounded values.
-- **Bar (K-D9).** A client meets the bar when each criterion of each core capability is `met`, or is `not-met` with a registry bar exception for that client. A core criterion is never `n/a`. A **failing core capability** is a core capability with a criterion that is `not-met` and has no exception.
+- **Bar (K-D9).** A client meets the bar when each criterion of each core capability is `met`, or is `not-met` with a registry bar exception for that client. A core criterion is never `n/a`. A **failing core capability** is a core capability with a criterion that is neither `met` nor `not-met` with a registry bar exception for that client.
 - **Rollup.** For each client, for each tier and for the total: the count of `full`, `partial`, `none` and `n/a` cells; the count of criteria `met` and of criteria applicable; and the bar verdict, `meets bar` or `below bar` with the id of each failing core capability.
 
 #### 6.2.5 The check and the generator
@@ -942,3 +942,4 @@ P4-11 (client updates):
 - 2026-11-25: order against phase 3 (K§6.9); items renumbered in causal order (then: conformance P4-1, Codex premises P4-2, proxy P4-3, client contract P4-4, Codex client P4-5, Codex grade P4-6, update notices P4-7).
 - 2026-11-25: approved by the operator (instruction to plan and build); new row order P4-1 to P4-11 (K§6.9); the Codex client gets its own design (P4-7); the fixes of the spec audit (lead rulings C1-C3, I4-I15, M16, M17).
 - 2026-11-25: K-C7, K-D3 and K§11 items 23-24 amended (lead): the test-edit proof is per node against its layer's parent, with listed test logic edits, because declared mechanical rewrites cannot be met at P4-6's scale. K§6.1.4 gets an exception list (operator, K-D53).
+- 2026-11-25: K§6.2.4 amended (lead): failing core capability matches the bar sentence: an ungraded or n/a core criterion fails (CF-2 review F4).
