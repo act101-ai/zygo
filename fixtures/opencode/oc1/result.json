@@ -1,0 +1,62 @@
+{
+  "PO1": {
+    "inline config holds the key": false,
+    "inline apiKey": "{file:/tmp/run/sess dir/token}",
+    "requests of the zygo/lead run": [
+      {
+        "seq": 1,
+        "method": "POST",
+        "path": "/v1/messages",
+        "credential_headers": [
+          "x-api-key"
+        ],
+        "reply": "default"
+      },
+      {
+        "seq": 2,
+        "method": "POST",
+        "path": "/v1/messages",
+        "credential_headers": [
+          "x-api-key"
+        ],
+        "reply": "po1-00"
+      }
+    ],
+    "a POST /v1/messages with x-api-key accepted (the mock aborts on any key but the dummy)": true,
+    "mock ABORT file": false,
+    "run output has the scripted reply text": true,
+    "pass": true
+  },
+  "PO2": {
+    "ON: models": [
+      "zygo/lead"
+    ],
+    "ON: every model is zygo/": true,
+    "ON: requests to /vendor/": [],
+    "ON: anthropic/probe-model run output (first 300 chars)": "\u001b[91m\u001b[1mError: \u001b[0m{\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_f8d35585\"\n  }\n}\n",
+    "OFF: lists anthropic/probe-model": true,
+    "OFF: lists an openai/ model": true,
+    "OFF: model count": 73,
+    "OFF: requests to /vendor/": [
+      {
+        "seq": 3,
+        "method": "POST",
+        "path": "/vendor/v1/messages",
+        "credential_headers": [
+          "x-api-key"
+        ],
+        "reply": "default"
+      },
+      {
+        "seq": 4,
+        "method": "POST",
+        "path": "/vendor/v1/messages",
+        "credential_headers": [
+          "x-api-key"
+        ],
+        "reply": "default"
+      }
+    ],
+    "pass": true
+  }
+}

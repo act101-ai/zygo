@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "zygo/lead",
+  "enabled_providers": [
+    "zygo"
+  ],
+  "provider": {
+    "zygo": {
+      "npm": "@ai-sdk/anthropic",
+      "options": {
+        "baseURL": "http://127.0.0.1:63910/v1",
+        "apiKey": "{file:/tmp/run/sess dir/token}"
+      },
+      "models": {
+        "lead": {
+          "limit": {
+            "context": 200000,
+            "output": 4000
+          }
+        }
+      }
+    }
+  }
+}
