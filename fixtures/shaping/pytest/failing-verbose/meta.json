@@ -4,6 +4,6 @@
    "command" : "pytest -v",
    "event" : "PostToolUseFailure",
    "exit" : 1,
-   "source" : "the passing project plus test_total (assert add(2, 3) == 6) and test_plural (assert \"pear\".upper() == \"PEARS\"); COLUMNS=80, run by capture-shaping.sh in /repo",
+   "source" : "scratch pytest project: tests/test_calc.py (test_add and test_double, each parametrized over range(20)) and tests/test_text.py (test_upper over 8 words), plus test_total (assert add(2, 3) == 6) and test_plural (assert \"pear\".upper() == \"PEARS\"); COLUMNS=80, run by capture-shaping.sh in /repo",
    "tool" : "pytest 9.0.3"
 }

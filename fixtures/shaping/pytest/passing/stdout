@@ -1,9 +1,19 @@
 ============================= test session starts ==============================
 platform darwin -- Python 3.14.6, pytest-9.0.3, pluggy-1.6.0
 rootdir: /repo
-collected 48 items
+collected 128 items
 
-tests/test_calc.py ........................................              [ 83%]
+tests/test_calc.py ........................................              [ 31%]
+tests/test_mod01.py ........                                             [ 37%]
+tests/test_mod02.py ........                                             [ 43%]
+tests/test_mod03.py ........                                             [ 50%]
+tests/test_mod04.py ........                                             [ 56%]
+tests/test_mod05.py ........                                             [ 62%]
+tests/test_mod06.py ........                                             [ 68%]
+tests/test_mod07.py ........                                             [ 75%]
+tests/test_mod08.py ........                                             [ 81%]
+tests/test_mod09.py ........                                             [ 87%]
+tests/test_mod10.py ........                                             [ 93%]
 tests/test_text.py ........                                              [100%]
 
-============================== 48 passed in 0.02s ==============================
+============================= 128 passed in 0.04s ==============================

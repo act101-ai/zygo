@@ -1,2 +1,3 @@
+==================================== ERRORS ====================================
 ____________________ ERROR collecting tests/test_broken.py _____________________
-E   ModuleNotFoundError: No module named 'missingdep'
+ERROR tests/test_broken.py

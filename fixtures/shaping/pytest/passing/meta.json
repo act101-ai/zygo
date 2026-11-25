@@ -4,6 +4,6 @@
    "command" : "pytest",
    "event" : "PostToolUse",
    "exit" : 0,
-   "source" : "scratch pytest project: tests/test_calc.py (test_add and test_double, each parametrized over range(20)) and tests/test_text.py (test_upper over 8 words); COLUMNS=80, run by capture-shaping.sh in /repo",
+   "source" : "scratch pytest project: tests/test_calc.py (test_add and test_double, each parametrized over range(20)), tests/test_text.py (test_upper over 8 words) and tests/test_mod01.py to tests/test_mod10.py (test_square, each parametrized over range(8)); COLUMNS=80, run by capture-shaping.sh in /repo",
    "tool" : "pytest 9.0.3"
 }
