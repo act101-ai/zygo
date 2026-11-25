@@ -2059,3 +2059,37 @@ fn mail_prompt_adds_the_line_and_the_stopping_block_wins() {
     assert_eq!(ws(&o, "prompt", oc("ses_A")).unwrap(), None); // D3
     assert_eq!(bt(&o), (true, 0));
 }
+
+#[test] // M§7.2, M§8a, W§9.4; ML-10 D5
+fn mail_session_start_line_follows_the_resume_note() {
+    let _s = serial();
+    let f = fx_note();
+    let mut v = SessionView::load(&f.dir).unwrap();
+    v.mail = true;
+    v.save(&f.dir).unwrap();
+    let store = ws_state(&f, Phase::Up, rec_pending());
+    let missing = f.t.path().join("missing");
+    put_new(&f, 2);
+    let item = mail::session_item(&store.read().unwrap().unwrap(), KEY).unwrap();
+    assert_eq!(ss_text(&f, &ss(AS1), &missing), format!("{}\n\n{item}\n\n{I1}\n{U12}\n\n{L2}", base(&f)));
+    // No mail: no line.
+    let g = fx_note();
+    ws_state(&g, Phase::Up, rec_pending());
+    let missing = g.t.path().join("missing");
+    assert_eq!(ss_text(&g, &ss(AS1), &missing), format!("{}\n\n{I1}\n{U12}", base(&g)));
+}
+
+#[test] // M§7.2, AU104; ML-10 D5
+fn mail_opencode_request_text_holds_the_line_while_new_is_not_empty() {
+    let _s = serial();
+    let f = fx(Agent::OpenCode);
+    let missing = f.t.path().join("missing");
+    let new = put_new(&f, 2);
+    for _ in 0..2 {
+        assert_eq!(ss_text(&f, &oc_start(), &missing), format!("{}\n\n{L2}", base(&f)));
+    }
+    for e in entries(&new) {
+        fs::remove_file(new.join(e)).unwrap();
+    }
+    assert_eq!(ss_text(&f, &oc_start(), &missing), base(&f));
+}

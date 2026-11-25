@@ -653,7 +653,8 @@ fn bind_note(c: &Ctx, id: &str) {
 
 /// The member part of `SessionStart` (W§9.1, W§9.4, AU60, AU92, AU104; D11) for the main loop of a member view;
 /// `text` is the session text. The output is the session text, an empty line, item 8 when `view.mail` is on, the
-/// state reads and holds a record for the pane, then the note; empty parts are left out. Claude Code: the whole hook
+/// state reads and holds a record for the pane, then the note, then the mail delivery line while `new/` holds mail
+/// (M§7.2); empty parts are left out. Claude Code: the whole hook
 /// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
 /// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
 /// is `None`. OpenCode adds the session text to every model request, so the result is `Some(output)` and nothing is
@@ -668,7 +669,12 @@ pub fn session_start(
     // M§8a item 1: item 8 after the mechanics text, before the resume note, from `workspace.json` read at this start.
     // A read error or no state gives no item and no line of its own (record_session's read writes the one line, C6).
     let item = if view.mail { c.store.read().ok().flatten().and_then(|ws| crate::mail::session_item(&ws, &c.pane)) } else { None };
-    let output = [Some(text.to_string()), item, inputs.and_then(note)]
+    // M§7.2, ML-10 D5: the mail delivery line comes after the resume note while `new/` holds mail.
+    let line = match unread_mail(&c) {
+        0 => None,
+        n => Some(crate::mail::delivery_line(n)),
+    };
+    let output = [Some(text.to_string()), item, inputs.and_then(note), line]
         .into_iter()
         .flatten()
         .filter(|s| !s.is_empty())
