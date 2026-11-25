@@ -80,7 +80,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | TODO | implementation | — |
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | TODO | implementation | — |
 | PC-7 | `docs/premises.md` and `docs/live-checks.md`: `Codex` headers, rows PC1-PC16, LC-CX1, Codex method lines | PC-1, PC-3, PC-4, PC-5, PC-6, OC-1 | TODO | mechanical | — |
-| PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | TODO | implementation | — |
+| PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | DONE | implementation | PR #127 merged 73a4ff40; acceptance exit 0 on merged tree (test-check-premises 99 cases); CI run 45704926916 green (ubuntu, macos, windows) |
 | PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | TODO | mechanical | — |
 | PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | TODO | implementation | — |
 | RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | TODO | judgment | — |
@@ -129,3 +129,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | PC-2 DONE: gate 3 rounds; round 1 F1-F11, round 2 G1-G10, round 3 H1-H7 fixed, thin-launcher limit recorded (nodes/PC-2.md); PR #126 merged 1206befa. |
 | 2026-11-25 | PC-9 added (author's call): ver_test.sh K1/K4 fail since OC-1's PO1 evidence path. |
 | 2026-11-25 | PC-10 added (author's call): Codex fixtures leaked the host timezone and OS (PC-3 review F4) and scrub mis-mapped double-slash scratch paths (PC-6); PC-3..PC-6 captures re-taken after it. |
+| 2026-11-25 | PC-8 DONE: gate 3 rounds; round 1 F1-F5, round 2 G1-G7, round 3 H1-H4 fixed, H5 recorded (nodes/PC-8.md); PR #127 merged 73a4ff40. |

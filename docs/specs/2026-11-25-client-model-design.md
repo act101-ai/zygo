@@ -866,7 +866,7 @@ P4-3 (Codex premises):
 
 8. `sh scripts/check-premises.sh` passes with the `Codex: 0.172.0` header and the PC rows, with no Codex client in `Agent::ALL`; it fails when a required existing id (for example `Q7`) is removed.
 9. Each PC row has a date, a result and fixture paths that pass the `nontrivial` rule.
-10. No fixture holds a token, a key form, a user name or a home path (`scrub.py` pass).
+10. No fixture holds a token, a key form, a user name, a home path or an e-mail address (`scrub.py` pass). An address `<local>@example.invalid` at exactly the reserved domain (RFC 2606) is exempt, where `<local>` is only letters, digits, `.`, `_` and `-` and is not part of a percent hack or bang path: it can never resolve or belong to anyone. A verbatim upstream file (the Claude Code settings schema, the Codex `config.schema.json`) is exempt, at its exact path (case-sensitive), from the home-path rules (macOS and Windows), the bearer rule and the `N2_FORBIDDEN_NAMES` name scan only, and only while it is a regular file whose sha256 equals the value pinned in `scripts/check-premises.sh` and its source file gives the same value; a new upstream copy needs a reviewed change to the check. The host-name scan and every other rule still cover the verbatim files. Every scanned file is read as text, also a binary one. A path in the scanned scope that holds whitespace or `:` fails, because the scan could not read it or name it.
 
 P4-4 (proxy; a Claude Code session; Codex request bodies from `fixtures/codex/requests/`; a mock upstream):
 
@@ -948,4 +948,7 @@ P4-11 (client updates):
 - 2026-11-25: the K§12 OC-1 line names `disabled_providers = []` (OC-1 review round 2).
 - 2026-11-25: the K§12 OC-1 line: the inline `disabled_providers` keeps the user's lists without `zygo` (OC-1 review round 3).
 - 2026-11-25: K§6.3.7 amended (operator): the proxy variables: HTTP_PROXY and ALL_PROXY too, so plain-HTTP and SOCKS-aware clients also reach the mock.
+- 2026-11-25: K§11 item 10 amended (author's call): the e-mail rule exempts the reserved domain example.invalid (RFC 2606); the live scripts use it as a git test identity.
+- 2026-11-25: K§11 item 10 amended (author's call): the verbatim files' sha256 values are pinned in the check; the example.invalid exemption takes only a plain local part; a scanned path that holds whitespace or `:` fails (PC-8 review round 2).
+- 2026-11-25: K§11 item 10 amended (author's call): the verbatim-file exemption names its rules exactly (home paths, bearer, `N2_FORBIDDEN_NAMES`) and is exact-path and case-sensitive; binary files are scanned as text (PC-8 review round 3).
 - 2026-11-25: the K§6.3.7 PC16 row states what P4-3 measures (author's call, PC-6 review round 1 F3): Codex's own default against the mock with no zygo between (K-D25), the release-source request against a control run with the key `false` and the `exec` runs; the measurement under a zygo launch is P4-9's and P4-11's. K§11 item 52 is unchanged.
