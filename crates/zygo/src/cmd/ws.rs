@@ -619,10 +619,35 @@ mod tests {
         assert_eq!(program_folder(&p, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap(), dir); // again: the link is replaced
     }
 
+    /// D4: the exec failure path. `relaunch` sets `ZYGO_RELAUNCHED`, so std points the process-wide `environ` at a
+    /// temporary copy during the `exec` and frees it after the failure; a parallel test that spawns `git` by `PATH`
+    /// then reads a freed `PATH` (FX-7). The child test runs the `exec` in its own process, with one test thread.
     #[cfg(unix)]
     #[test]
-    fn relaunch_returns_the_exec_error() { // D4: the exec failure path
+    fn relaunch_returns_the_exec_error() {
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cmd::ws::tests::relaunch_exec_error_in_child", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("ZYGO_TEST_CHILD", "cmd::ws::tests::relaunch_exec_error_in_child")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(o.status.success(), "{text}");
+        assert!(text.contains("test result: ok. 1 passed"), "{text}");
+        assert!(text.contains("child ran: relaunch_exec_error_in_child"), "{text}");
+    }
+
+    /// The child of `relaunch_returns_the_exec_error`: the failed `exec` swaps `environ`, so it runs alone. Outside
+    /// its parent (`--include-ignored`) it does nothing.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "child process of relaunch_returns_the_exec_error"]
+    fn relaunch_exec_error_in_child() {
+        if std::env::var("ZYGO_TEST_CHILD").as_deref() != Ok("cmd::ws::tests::relaunch_exec_error_in_child") {
+            return;
+        }
         let e = super::relaunch(Path::new("/nonexistent/zygo-m5"), &[OsString::from("ws")]);
         assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+        println!("child ran: relaunch_exec_error_in_child");
     }
 }
