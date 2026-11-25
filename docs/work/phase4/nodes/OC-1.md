@@ -94,4 +94,4 @@ Premise check (execute-work §3.1) at `40732c74` (`origin/phase-4`).
 
 **Verification.**
 
-- [ ] 12. Run the node's Acceptance → every command exits 0. Then `cargo test --workspace --locked --no-fail-fast` → green (the verification floor; CI on ubuntu, macOS and Windows covers the `/` separator form of step 7).
+- [x] 12. Run the node's Acceptance → every command exits 0. Then `cargo test --workspace --locked --no-fail-fast` → green (the verification floor; CI on ubuntu, macOS and Windows covers the `/` separator form of step 7).
