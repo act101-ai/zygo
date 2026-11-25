@@ -196,7 +196,6 @@ Session text (T, SX nodes):
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
-| OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | DONE | judgment | 6bb2ad8b · savings 17/17; floor green · PR #71 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-40 | Command parse: more wrappers and file printers, eval, `$(<f)`, bare shell stage | OS-11 | DONE | implementation | 5ba7eb02 · shape_command 43 passed · PR #59 |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
@@ -228,7 +227,7 @@ Session text (T, SX nodes):
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
 | ML-14 | Unread counts in `zygo workspace`, `zygo ls` and `up`; `forget-pane` removes the maildir | ML-2, ML-8 | TODO | judgment | — |
-| MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | TODO | judgment | — |
+| MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | DONE | judgment | 39e9eb0e 64419fc6 bad0bc1c · registry 27/0; floor green · PR #99 |
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | TODO | lookup | — |
 | OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | TODO | mechanical | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
@@ -394,3 +393,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | FX-7 added from the zygo lib flake triage (`ws p=2977 f=1`): a failed exec in the test process frees the swapped environ, so parallel git spawns lose PATH; fix runs it in a child process. Files-overlap edges: ML-7 and WD-14 on FX-7. |
 | 2026-11-25 | FX-7 DONE: exec-failure relaunch test runs in a child process; flake 7/20 before, 0/20 after. Review F1 fixed: child tests in ws.rs and down.rs do nothing unless their parent ran them (--include-ignored 2/20 to 0/20); down.rs added to Files. |
 | 2026-11-25 | WD-4 DONE: checked use of the workspace definition (repo_def::check; one read, digest, store lookup per use; Pin). Review: F1, F3 fixed with tests; F2 refuted (contract: NotApproved has no why); floor ws 3017/0 · PR #98 |
+| 2026-11-25 | MS-6 DONE: registry and ack files, validation, member cache; review 5 minor: F1 fixed (typed parse, no Value tree), F3 part (limits pub), F5 tests; F4 refuted; F2 (members.json read uncapped) to operator; MS-13/MS-14 notes carried; floor ws 3035/0 · PR #99 |

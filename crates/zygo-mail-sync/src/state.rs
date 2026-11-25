@@ -158,7 +158,7 @@ fn open_regular(path: &Path) -> io::Result<Option<File>> {
 }
 
 /// The bytes of the regular file `path` (`open_regular`); `Ok(None)` when it does not exist.
-fn read_regular(path: &Path) -> io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_regular(path: &Path) -> io::Result<Option<Vec<u8>>> {
     let Some(mut f) = open_regular(path)? else {
         return Ok(None);
     };
@@ -175,7 +175,7 @@ fn strip_eol(s: &[u8]) -> &[u8] {
 }
 
 /// Exactly 32 characters, each `0-9` or `a-f`.
-fn valid_identity(s: &[u8]) -> bool {
+pub(crate) fn valid_identity(s: &[u8]) -> bool {
     s.len() == 32 && s.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
