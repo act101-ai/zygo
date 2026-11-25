@@ -1,7 +1,7 @@
 //! `zygo work [<id>|clear]` (§17.1): show, set or clear the current work item; `zygo work report` (§13.6).
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use zygo_config::{LoadContext, WorkConfig};
@@ -64,7 +64,20 @@ fn map_err(e: anyhow::Error) -> anyhow::Error {
     if e.downcast_ref::<current::UsageError>().is_some() { UsageError(msg).into() } else { anyhow::anyhow!(msg) }
 }
 
-fn run(cwd: &Path, cfg: &WorkConfig, db: &Path, args: &[String], err: &mut dyn Write) -> Result<String> {
+/// The repository top whose decision records `work report` counts: looked up only for the CLI form of `report`
+/// (the slash form reads no record, D-C2).
+fn records_root(slash: bool, args: &[String], find: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
+    if !slash && args.first().is_some_and(|a| a == "report") { find() } else { None }
+}
+
+fn run(
+    cwd: &Path,
+    cfg: &WorkConfig,
+    db: &Path,
+    records_in: Option<&Path>,
+    args: &[String],
+    err: &mut dyn Write,
+) -> Result<String> {
     match parse(args)? {
         Action::Report { unit, since } => {
             let since = match since {
@@ -73,7 +86,7 @@ fn run(cwd: &Path, cfg: &WorkConfig, db: &Path, args: &[String], err: &mut dyn W
                 })?),
                 None => None,
             };
-            zygo_work::report::report(db, unit.as_deref(), since)
+            zygo_work::report::report(db, records_in, unit.as_deref(), since)
         }
         Action::Show => {
             let (item, notes) = current::resolve_noted(cwd, cfg);
@@ -100,7 +113,8 @@ pub fn verb(ctx: &VerbCtx, args: &[String]) -> Result<String> {
     let cwd = std::env::current_dir()?;
     let merged = zygo_config::load(&LoadContext { paths: ctx.paths.clone(), repo: Some(cwd.clone()), team: None })
         .map_err(|e| anyhow::anyhow!("zygo work: {e}"))?;
-    run(&cwd, &merged.config.work, &ctx.paths.usage_db, args, &mut std::io::stderr())
+    let records = records_root(ctx.slash, args, super::status::repo_top);
+    run(&cwd, &merged.config.work, &ctx.paths.usage_db, records.as_deref(), args, &mut std::io::stderr())
 }
 
 #[cfg(test)]
@@ -135,11 +149,11 @@ mod tests {
         let cfg = WorkConfig::default();
         let mut err = Vec::new();
         for a in [v(&["clear"]), v(&["x"])] {
-            let e = run(d, &cfg, Path::new("unused.db"), &a, &mut err).unwrap_err();
+            let e = run(d, &cfg, Path::new("unused.db"), None, &a, &mut err).unwrap_err();
             assert!(e.to_string().contains("zygo work: not in a git repository"));
             assert!(e.downcast_ref::<UsageError>().is_some());
         }
-        assert_eq!(run(d, &cfg, Path::new("unused.db"), &[], &mut err).unwrap(), "no current work item");
+        assert_eq!(run(d, &cfg, Path::new("unused.db"), None, &[], &mut err).unwrap(), "no current work item");
         assert!(err.is_empty());
     }
 
@@ -151,7 +165,7 @@ mod tests {
         let st = std::process::Command::new("git").args(["init", "-q"]).current_dir(d).status().unwrap();
         assert!(st.success());
         let cfg = WorkConfig { sources: vec!["github".into()] };
-        let e = run(d, &cfg, Path::new("unused.db"), &v(&["a b"]), &mut Vec::new()).unwrap_err();
+        let e = run(d, &cfg, Path::new("unused.db"), None, &v(&["a b"]), &mut Vec::new()).unwrap_err();
         assert!(e.to_string().contains("no work source accepts"), "{e}");
         assert!(e.downcast_ref::<UsageError>().is_some());
     }
@@ -161,10 +175,29 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let db = t.path().join("usage.db");
         let cfg = WorkConfig::default();
-        assert_eq!(run(t.path(), &cfg, &db, &v(&["report"]), &mut Vec::new()).unwrap(), "no work units");
-        let e = run(t.path(), &cfg, &db, &v(&["report", "--since", "1d"]), &mut Vec::new()).unwrap_err();
+        assert_eq!(run(t.path(), &cfg, &db, None, &v(&["report"]), &mut Vec::new()).unwrap(), "no work units");
+        let top = t.path().join("repo");
+        std::fs::create_dir_all(top.join("docs")).unwrap();
+        std::fs::write(top.join("docs/decisions"), "x").unwrap();
+        assert_eq!(
+            run(t.path(), &cfg, &db, Some(&top), &v(&["report"]), &mut Vec::new()).unwrap(),
+            "no work units\n\ndecision records: docs/decisions is not a directory"
+        );
+        let e = run(t.path(), &cfg, &db, None, &v(&["report", "--since", "1d"]), &mut Vec::new()).unwrap_err();
         assert!(e.downcast_ref::<UsageError>().is_some());
         assert!(e.to_string().contains("--since takes a date YYYY-MM-DD"), "{e}");
+    }
+
+    #[test]
+    fn records_only_for_the_cli_report() {
+        // D§9.5, D-C2
+        let top = || Some(PathBuf::from("/r"));
+        assert_eq!(records_root(false, &v(&["report"]), top), Some(PathBuf::from("/r")));
+        assert_eq!(records_root(false, &v(&["report", "beads:bd-a1b2"]), top), Some(PathBuf::from("/r")));
+        assert_eq!(records_root(false, &v(&["report"]), || None), None); // outside a repository, or git failed
+        assert_eq!(records_root(true, &v(&["report"]), || unreachable!()), None); // slash form: no lookup
+        assert_eq!(records_root(false, &v(&["clear"]), || unreachable!()), None);
+        assert_eq!(records_root(false, &[], || unreachable!()), None);
     }
 
     #[test]
