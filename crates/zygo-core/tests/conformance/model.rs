@@ -556,15 +556,35 @@ struct ModDecl {
     cfg: Result<Targets, String>,
 }
 
-/// The value of an unconditional `#[path = "…"]`.
-fn path_attr(attrs: &[syn::Attribute]) -> Option<String> {
-    attrs.iter().find_map(|a| match &a.meta {
-        syn::Meta::NameValue(nv) if path_is(&nv.path, &["path"]) => match &nv.value {
-            syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Some(s.value()),
-            _ => None,
-        },
-        _ => None,
-    })
+/// The `#[path = "…"]` value of a `mod` on each CI target, `cfg_attr(<p>, path = "…")` included (the first
+/// that applies wins), grouped: each distinct value (`None` for no path) with the targets where it applies.
+fn path_choices(attrs: &[syn::Attribute]) -> Result<Vec<(Option<String>, Targets)>, String> {
+    let mut per: [Option<String>; 3] = Default::default();
+    for a in applied(attrs)? {
+        let syn::Meta::NameValue(nv) = &a.meta else { continue };
+        if !path_is(&nv.path, &["path"]) {
+            continue;
+        }
+        let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value else { continue };
+        let on = when(&a.conds)?;
+        for (slot, on) in per.iter_mut().zip(on) {
+            if on && slot.is_none() {
+                *slot = Some(s.value());
+            }
+        }
+    }
+    let mut out: Vec<(Option<String>, Targets)> = Vec::new();
+    for (i, p) in per.into_iter().enumerate() {
+        match out.iter_mut().find(|(q, _)| *q == p) {
+            Some((_, t)) => t[i] = true,
+            None => {
+                let mut t = [false; 3];
+                t[i] = true;
+                out.push((p, t));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Push each `mod <name>;` of `items` and of their inline modules. `file_dir` is the folder of the file,
@@ -576,21 +596,28 @@ fn mod_decls(items: &[syn::Item], file_dir: &Path, dir: &Path, top: bool, outer:
         let syn::Item::Mod(m) = item else { continue };
         let cfg = outer.clone().and_then(|o| Ok(and(o, cfg_targets(&m.attrs)?)));
         let name = m.ident.unraw().to_string();
-        let path = path_attr(&m.attrs);
-        match (&m.content, path) {
-            (Some((_, inner)), path) => {
-                let sub = dir.join(path.unwrap_or(name));
-                mod_decls(inner, file_dir, &sub, false, &cfg, out);
-            }
-            (None, Some(p)) => {
-                let f = if top { file_dir.join(&p) } else { dir.join(&p) };
-                let owned = f.parent().map(Path::to_path_buf).unwrap_or_default();
-                out.push(ModDecl { candidates: vec![(f, owned)], cfg });
-            }
-            (None, None) => {
-                let sub = dir.join(&name);
-                let candidates = vec![(dir.join(format!("{name}.rs")), sub.clone()), (sub.join("mod.rs"), sub)];
-                out.push(ModDecl { candidates, cfg });
+        // Each file the `mod` can load is walked with the targets limited to where that path applies.
+        let (choices, cfg) = match path_choices(&m.attrs) {
+            Ok(c) => (c, cfg),
+            Err(e) => (vec![(None, EVERY)], Err(e)),
+        };
+        for (path, on) in choices {
+            let cfg = cfg.clone().map(|c| and(c, on));
+            match (&m.content, path) {
+                (Some((_, inner)), path) => {
+                    let sub = dir.join(path.unwrap_or_else(|| name.clone()));
+                    mod_decls(inner, file_dir, &sub, false, &cfg, out);
+                }
+                (None, Some(p)) => {
+                    let f = if top { file_dir.join(&p) } else { dir.join(&p) };
+                    let owned = f.parent().map(Path::to_path_buf).unwrap_or_default();
+                    out.push(ModDecl { candidates: vec![(f, owned)], cfg });
+                }
+                (None, None) => {
+                    let sub = dir.join(&name);
+                    let candidates = vec![(dir.join(format!("{name}.rs")), sub.clone()), (sub.join("mod.rs"), sub)];
+                    out.push(ModDecl { candidates, cfg });
+                }
             }
         }
     }

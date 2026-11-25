@@ -837,3 +837,17 @@ fn check_3_file_inner_cfg_limits_targets() {
     assert_eq!(ev("test:crates/demo/tests/in3/m4.rs::t4").unwrap(), ["windows"]);
     assert_eq!(ev("test:crates/demo/tests/attr.rs::t").unwrap(), ["windows"]);
 }
+
+#[test]
+fn check_3_cfg_attr_path_resolved_per_platform() {
+    // A `tests/*.rs` file is a test target of its own on every platform, so the module files sit in a subfolder.
+    let d = repo_with(&[
+        ("crates/demo/tests/root5.rs", "#[path = \"p5/m.rs\"]\nmod m;\n"),
+        ("crates/demo/tests/p5/m.rs", "#[cfg_attr(windows, path = \"win2.rs\")]\nmod plat;\n"),
+        ("crates/demo/tests/p5/plat.rs", "#[test]\nfn t() {}\n"),
+        ("crates/demo/tests/p5/win2.rs", "#[test]\nfn w() {}\n"),
+    ]);
+    let ev = |e: &str| evidence(d.path(), e, "Alpha").map(|e| e.platforms);
+    assert_eq!(ev("test:crates/demo/tests/p5/plat.rs::t").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("test:crates/demo/tests/p5/win2.rs::w").unwrap(), ["windows"]);
+}
