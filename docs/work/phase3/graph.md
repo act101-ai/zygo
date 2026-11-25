@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
-| DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | DONE | judgment | 9efee7e 281dd03 · decision_transition 45/45 · PR #21 |
 | DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | DONE | judgment | 52a5006 b306476 5e3b797 196e814 0add171 · decision_git 33/33; floor green · PR #35 |
 | DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | DONE | judgment | e0e426b 05c4148 43c44e7 7acba21 · decision_verdict 41/41; floor green · PR #37 |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
@@ -236,7 +235,7 @@ Session text (T, SX nodes):
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | WD-3 | Workspace approvals in `approvals.toml` | WD-2 | TODO | judgment | — |
-| SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | IN-PROGRESS | implementation | .worktrees/phase3/SX-6-node · PR #54 |
+| SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
 | ML-4 | Address resolution and the send operation | ML-2, ML-3 | TODO | implementation | — |
 | ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | TODO | implementation | — |
 | ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8 | TODO | implementation | — |
@@ -385,3 +384,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | RT-1 done (7efa8d9 441e170 ff23c48): member record first_started_at; review round 1: 1 confirmed, 3 refuted; floor 2529 passed, 0 failed · PR #38 |
 | 2026-11-24 | MS-2 done: zygo-mail-sync crate with hardened git calls and test seams, 13 empty module files; review round 1 (5 confirmed, fixed; S-C4 rewritten for fetch.writeCommitGraph=false); floor green · PR #48 |
 | 2026-11-24 | OS-2 DONE: `readbacks` table; three `trims` columns added on the full open; seven-column insert fallback; round 1 fixed 2 (`table_xinfo`, `open` doc), O§6.5 item 3 rewritten (author's call); floor green · PR #49 |
+| 2026-11-24 | SX-6 DONE: the OpenCode plugin transform calls `--event subagent` for non-main `zygo/` models (T§7.2 item 1); review round 1 fixed 4 (anthropic case, per-call stdin, malformed model, missing output.system); floor: workspace 2652 passed, 0 failed · PR #54 |
