@@ -235,3 +235,4 @@ The plan steps above stay as written; these changes follow review:
 3. A compile error with store values present gives `CouldNotRun("act_lite_store")` when the patterns compile without the store, else `redaction_patterns`. Test: 65535 config patterns plus one store value go over zygo-redact's `u16` pattern limit only with the store.
 4. A dangling symlink at the store path gives `CouldNotRun("act_lite_store")` (fails closed); a unix-only test pins it.
 5. `check_uses_the_system_lookup` is removed: it read the real store location and proved nothing about the lookup.
+6. On an `Ok` redact result, `Finding` comes from the match counts (ids with a count above zero), not from `changed`: a match whose replacement equals the original text is still a finding. Test: ids `a` then `a]` and the body `[REDACTED:a]]`.

@@ -222,3 +222,19 @@ fn compile_failure_caused_by_the_store_is_a_store_failure() {
     };
     assert_eq!(check_with(&msg("the build is green"), &cfg, &root, &far(), &lookup), Outcome::CouldNotRun("act_lite_store"));
 }
+
+/// A match whose replacement equals the matched text is still a finding. With ids `a` then `a]`, zygo-redact's
+/// placeholder regex takes `[REDACTED:a]` out of `[REDACTED:a]]`, so the `a]` match is not wholly inside it,
+/// and its replacement `[REDACTED:a]]` is the original text (`changed` is false, the count is 1).
+#[test]
+fn match_with_unchanged_replacement_is_a_finding() {
+    let (_t, root, lookup) = fixture();
+    let cfg = RedactionConfig {
+        pattern: vec![
+            RedactionPattern { id: "a".into(), pattern: "zq-never-zq".into(), action: Action::Redact, description: "d".into() },
+            RedactionPattern { id: "a]".into(), pattern: r"\[REDACTED:a\]\]".into(), action: Action::Redact, description: "d".into() },
+        ],
+        ..Default::default()
+    };
+    assert_eq!(check_with(&msg("[REDACTED:a]]"), &cfg, &root, &far(), &lookup), Outcome::Finding(vec!["a]".to_string()]));
+}

@@ -42,8 +42,11 @@ pub fn check_with(msg: &Value, redaction: &RedactionConfig, main_root: &Path, po
     flatten(msg, &mut strings);
     let flat = Value::Array(strings);
     match run(&flat, &compiled, policy) {
-        Ok(f) if !f.changed => Outcome::Clear,
-        Ok(f) => Outcome::Finding(f.counts.into_keys().collect()),
+        // Any match is a finding, even one whose replacement equals the original text (`changed` is false).
+        Ok(f) => match matched_ids(f) {
+            ids if ids.is_empty() => Outcome::Clear,
+            ids => Outcome::Finding(ids),
+        },
         Err(RedactError::Blocked { ids }) => {
             // `Blocked` names only block ids; a second pass with every pattern as `redact` names the rest.
             let mut all: BTreeSet<String> = ids.into_iter().collect();
@@ -54,7 +57,7 @@ pub fn check_with(msg: &Value, redaction: &RedactionConfig, main_root: &Path, po
             // A failed or timed-out second pass still leaves the block ids: a finding stays a finding.
             if let Ok(c) = compile_with_store(&as_redact, &stored) {
                 if let Ok(f) = run(&flat, &c, policy) {
-                    all.extend(f.counts.into_keys());
+                    all.extend(matched_ids(f));
                 }
             }
             Outcome::Finding(all.into_iter().collect())
@@ -77,6 +80,11 @@ fn flatten(v: &Value, out: &mut Vec<Value>) {
         }
         _ => {}
     }
+}
+
+/// The ids with a match count above zero, sorted (`counts` is a `BTreeMap`).
+fn matched_ids(f: Findings) -> Vec<String> {
+    f.counts.into_iter().filter(|(_, n)| *n > 0).map(|(id, _)| id).collect()
 }
 
 /// One redact run on a copy of `flat` with a fresh cache.
