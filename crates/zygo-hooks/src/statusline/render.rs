@@ -83,7 +83,7 @@ pub struct HudData {
     pub phase: Option<String>,
     /// The member name of `view.json`, checked at the read (M§6, M§9a).
     pub member_name: Option<String>,
-    /// The count of `*.json` names in `mail/<pane key>/new/` (M§9a).
+    /// The store's unread count: regular `<ULID>.json` files in `mail/<pane key>/new/` (M§9a).
     pub unread: Option<usize>,
     /// Seconds since the start of session run time design T§2.2 (`now.saturating_sub(start)`); `None` with no start.
     pub run_time: Option<u64>,
