@@ -466,9 +466,10 @@ pub(crate) fn undo_start(ws: &mut Workspace, key: &str, written: &MemberRecord, 
 
 /// The exit write (D5, AU60, AU92, H1 seam b-d). It changes a record only when its `pending` or its `zygo_session`
 /// names `zygo_session`; it gives `false` with the record unchanged otherwise. `NotStarted` removes that `pending`.
-/// Other exits commit that `pending` when no hook did (its `agent_session` only when set and not the user's own session
-/// argument, which only a hook commits; never a stored id replaced with none) and set the state; `closed_units`,
-/// `interrupted`, `clean_stop`, `saved_for` and `note_pending` stay.
+/// Other exits commit that `pending` when no hook did (setting `first_started_at` from its `started_at` when absent or 0
+/// and that time is not 0, T§3.2; its `agent_session` only when set and not the user's own session argument, which only
+/// a hook commits; never a stored id replaced with none) and set the state; `closed_units`, `interrupted`, `clean_stop`,
+/// `saved_for` and `note_pending` stay.
 pub(crate) fn record_exit(rec: &mut MemberRecord, zygo_session: &str, exit: Exit) -> bool {
     let names = |r: &MemberRecord| r.pending.as_ref().is_some_and(|p| p.zygo_session == zygo_session);
     if exit == Exit::NotStarted {
@@ -481,6 +482,9 @@ pub(crate) fn record_exit(rec: &mut MemberRecord, zygo_session: &str, exit: Exit
     if names(rec)
         && let Some(p) = rec.pending.take()
     {
+        if rec.first_started_at.unwrap_or(0) == 0 && p.started_at != 0 {
+            rec.first_started_at = Some(p.started_at);
+        }
         rec.zygo_session = Some(p.zygo_session);
         // Review round 3, finding 6: a typed id that the agent never confirmed is not saved.
         if p.agent_session.is_some() && !p.own_session {
@@ -1092,6 +1096,55 @@ mod tests {
         }
     }
 
+    #[test] // T§3.2 (W AU92 addition), T§5 "Commit without the lock", T§7 item 4; graph review focus 59
+    fn record_exit_first_started_at_is_set_by_the_exit_commit() {
+        for exit in [Exit::Ended, Exit::Resumable { failed_fast: false }, Exit::Resumable { failed_fast: true }] {
+            let mut r = base(); // pending S1, started_at 1; no first_started_at
+            assert!(record_exit(&mut r, "S1", exit));
+            assert_eq!((r.pending.is_none(), r.zygo_session.as_deref(), r.first_started_at), (true, Some("S1"), Some(1)), "{exit:?}");
+            let mut r = MemberRecord { first_started_at: Some(0), ..base() }; // 0 counts as absent
+            assert!(record_exit(&mut r, "S1", exit));
+            assert_eq!(r.first_started_at, Some(1), "{exit:?}");
+        }
+    }
+
+    #[test] // T§3.2 "never changed after it is set", W AU92; graph review focus 59
+    fn record_exit_first_started_at_is_kept_by_a_later_commit_and_after_a_hook_commit() {
+        let mut r = MemberRecord { first_started_at: Some(100), ..base() }; // a later start: pending started_at 1
+        assert!(record_exit(&mut r, "S1", Exit::Ended));
+        assert_eq!((r.zygo_session.as_deref(), r.first_started_at), (Some("S1"), Some(100)));
+        // a hook already committed S1 and set the field: the exit takes no pending and keeps it
+        let mut r = base();
+        r.pending = None;
+        r.zygo_session = Some("S1".into());
+        r.first_started_at = Some(7);
+        assert!(record_exit(&mut r, "S1", Exit::Ended));
+        assert_eq!((r.state, r.first_started_at), (MemberState::Ended, Some(7)));
+    }
+
+    #[test] // T§3.2, T§2.2 (0 is unknown), T§7 item 4; graph review focus 60
+    fn record_exit_first_started_at_stays_absent_for_a_zero_start_until_a_later_nonzero_commit() {
+        let mut r = base();
+        r.pending.as_mut().unwrap().started_at = 0;
+        assert!(record_exit(&mut r, "S1", Exit::Ended));
+        assert_eq!((r.pending.is_none(), r.first_started_at), (true, None));
+        // the next start writes pending (the start write never sets the field), then its exit commit sets it
+        record_start_fields(&mut r, &Start { zygo_session: "S2".into(), started_at: 50, ..start() });
+        assert_eq!(r.first_started_at, None);
+        assert!(record_exit(&mut r, "S2", Exit::Ended));
+        assert_eq!(r.first_started_at, Some(50));
+    }
+
+    #[test] // T§3.2 "a start that never spawns leaves no trace", T§7 item 4; graph review focus 59
+    fn record_exit_first_started_at_not_started_leaves_it_unchanged() {
+        let mut r = base();
+        assert!(record_exit(&mut r, "S1", Exit::NotStarted));
+        assert_eq!((r.pending.is_none(), r.zygo_session.as_deref(), r.first_started_at), (true, Some("Z0"), None));
+        let mut r = MemberRecord { first_started_at: Some(5), ..base() };
+        assert!(record_exit(&mut r, "S1", Exit::NotStarted));
+        assert_eq!(r.first_started_at, Some(5));
+    }
+
     #[cfg(unix)]
     #[test]
     fn effective_config_dir_is_absolute_or_none() {
@@ -1379,6 +1432,28 @@ mod tests {
         let mut w = ws_with(&[]);
         w.phase = Phase::Draining;
         assert!(join(&mut w, k, &l, &start(), None, &none).is_ok());
+    }
+
+    #[test] // T§3.2 "a hand start that replaces the record", T§5 hand start row, W§8.4; graph review focus 60
+    fn join_first_started_at_is_absent_for_a_replaced_record_and_kept_for_an_accepted_resume() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let l = Launch::new(Agent::ClaudeCode);
+        // replaced: an ended record with no own session argument is removed and made again
+        let mut old = rec(MemberState::Ended, Some("old"));
+        old.first_started_at = Some(100);
+        let mut w = ws_with(&[(k, old)]);
+        join(&mut w, k, &l, &start(), None, &none).unwrap();
+        assert_eq!((w.members[k].first_started_at, w.members[k].pending.as_ref().map(|p| p.started_at)), (None, Some(7)));
+        let mut m = w.members[k].clone();
+        assert!(record_exit(&mut m, "S1", Exit::Ended)); // its first commit sets it from this start
+        assert_eq!(m.first_started_at, Some(7));
+        // kept: the accepted resume of the saved conversation keeps the field
+        let mut keep = rec(MemberState::Resumable, Some("abc"));
+        keep.first_started_at = Some(100);
+        let mut w = ws_with(&[(k, keep)]);
+        join(&mut w, k, &l, &Start { agent_session: None, ..start() }, Some("abc"), &none).unwrap();
+        assert_eq!((w.members[k].agent_session.as_deref(), w.members[k].first_started_at), (Some("abc"), Some(100)));
     }
 
     #[test]
