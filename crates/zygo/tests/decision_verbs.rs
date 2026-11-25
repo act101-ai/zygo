@@ -189,7 +189,7 @@ fn lock_fails(top: &Path, l: &Path) {
     assert_eq!(fs::read(&target).unwrap(), b"");
 }
 
-const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes]\n";
+const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes] | review [--kind <k>] [--unit <prefix>]\n";
 struct Ran { code: i32, out: String, err: String }
 /// `run_in` with `top`, today TODAY, stdin `input`, and `env` for ZYGO_SESSION_DIR; no git, no clock, no process env.
 fn go(top: &Path, env: &dyn Fn(&str) -> Option<OsString>, input: &mut dyn BufRead, args: &[&str]) -> Ran {
