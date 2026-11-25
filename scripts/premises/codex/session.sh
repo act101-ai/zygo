@@ -24,6 +24,9 @@ cat >"$RUN/rules.json" <<'JSON'
  {"name": "pc6-wait-c", "path": "/v1/responses$", "model": "^gpt-mock$", "body": "tracer-pc6-main-c", "sse": "sse/pc6-wait.sse", "times": 1},
  {"name": "pc8-high", "path": "/v1/responses$", "body": "tracer-pc8-high-turn1", "sse": "sse/pc8-text.sse", "times": 1,
   "usage": {"input_tokens": 150000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 150010}},
+ {"name": "pc8-live-low", "path": "/v1/responses$", "body": "tracer-pc8-live-low-turn1", "sse": "sse/pc8-live-call.sse", "times": 1},
+ {"name": "pc8-live-high", "path": "/v1/responses$", "body": "tracer-pc8-live-high-turn1", "sse": "sse/pc8-live-call.sse", "times": 1,
+  "usage": {"input_tokens": 150000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 150010}},
  {"name": "pc9-call", "path": "/v1/responses$", "body": "tracer-pc9-call", "sse": "sse/pc9-call.sse", "times": 1},
  {"name": "pc9-done", "path": "/v1/responses$", "body": "tracer-pc9-call", "sse": "sse/pc9-done.sse"},
  {"name": "pc11-reply", "path": "/v1/responses$", "body": "tracer-pc11-turn", "sse": "sse/pc11-text.sse"}
@@ -218,26 +221,105 @@ def agents(models_out, marker_out, runs):
     lines(marker_out, marker)
 
 
+def meta(r):
+    """The x-codex-turn-metadata header as a dict ({} when absent or not JSON)."""
+    try:
+        m = json.loads((r.get("headers") or {}).get("x-codex-turn-metadata") or "{}")
+    except ValueError:
+        return {}
+    return m if isinstance(m, dict) else {}
+
+
 def compaction(out, caps):
+    """Per record: the request kind and history from the turn metadata, the compact_prompt tracer,
+    the turn tracer, and whether the input carries a tool output. Per capture: compaction requests
+    by request_kind (or a /responses/compact path) and by the tracer; the condition (cold_resume
+    when a request resumes the session, else live); and whether a compaction came before the next
+    request (turn 2 on a cold resume, the tool-output follow-up in a live session)."""
     rows = []
     for capture, cap in pairs(caps):
-        n = 0
-        for r in recs(cap):
+        n = n_prompt = 0
+        cold = False
+        first_comp = nxt = None
+        rs = recs(cap)
+        for i, r in enumerate(rs):
             b = body(r)
-            text = json.dumps(b)
-            prompt = "tracer-pc8-compact-prompt" in text
+            m = meta(r)
+            prompt = "tracer-pc8-compact-prompt" in json.dumps(b)
             texts = user_texts(b)
-            m = re.search(r"tracer-pc8-(?:low|high)-(turn1|turn2)", texts[-1]) if texts else None
+            t = re.search(r"tracer-pc8-(?:live-)?(?:low|high)-(turn1|turn2)", texts[-1]) if texts else None
             items = b.get("input") if isinstance(b.get("input"), list) else []
             types = [(it.get("type") or ("message" if "role" in it else "?")) if isinstance(it, dict) else "?"
                      for it in items]
-            rows.append("%s %s %s %s model=%s compact_prompt=%s turn=%s input_items=%d item_types=%s" % (
-                capture, r["_seq"], r.get("method"), r.get("path"), b.get("model") or "none",
-                "yes" if prompt else "no", m.group(1) if m else "none", len(items), ",".join(types) or "none"))
-            if "/responses/compact" in str(r.get("path", "")) or prompt:
-                n += 1
-        rows.append("%s: compaction_requests=%d" % (capture, n))
+            tool_out = "function_call_output" in types
+            kind = m.get("request_kind") or "none"
+            comp = kind == "compaction" or "/responses/compact" in str(r.get("path", ""))
+            cold = cold or m.get("history_initialization") == "cold_resume"
+            rows.append("%s %s %s %s model=%s request_kind=%s history=%s compact_prompt=%s turn=%s tool_output=%s input_items=%d item_types=%s" % (
+                capture, r["_seq"], r.get("method"), r.get("path"), b.get("model") or "none", kind,
+                m.get("history_initialization") or "none", "yes" if prompt else "no", t.group(1) if t else "none",
+                "yes" if tool_out else "no", len(items), ",".join(types) or "none"))
+            n += comp
+            n_prompt += prompt
+            if comp and first_comp is None:
+                first_comp = i
+            if nxt is None and i > 0 and not comp and ((t and t.group(1) == "turn2") or tool_out):
+                nxt = i
+        before = "yes" if first_comp is not None and nxt is not None and first_comp < nxt else "no"
+        rows.append("%s: compaction_requests=%d compact_prompt_requests=%d condition=%s next_request=%s compacted_before_next=%s" % (
+            capture, n, n_prompt, "cold_resume" if cold else ("live" if rs else "none"),
+            ("turn2" if cold else "tool_followup") if nxt is not None else "absent", before))
     lines(out, rows)
+
+
+def roles(tools_json, out):
+    """The roles the spawn tool's agent_type description lists: <role>: model=<model or inherited>
+    description=<first line>."""
+    rows = []
+    for e in load(tools_json):
+        props = (e.get("parameters") or {}).get("properties") or {}
+        if not str(e.get("name") or "").startswith("spawn") or "agent_type" not in props:
+            continue
+        d = str(props["agent_type"].get("description") or "")
+        for name, text in re.findall(r"(?m)^([A-Za-z0-9_.-]+): \{\n(.*?)\n\}", d, re.S):
+            mm = re.search(r"model is set to `([^`]+)`", text)
+            rows.append("%s: model=%s description=%s" % (name, mm.group(1) if mm else "inherited",
+                                                        text.strip().splitlines()[0] if text.strip() else ""))
+        break
+    lines(out, rows)
+
+
+def toml_pub(src, out):
+    """A scrubbed config.toml with a table repeated with the same text dropped (scrub can map two
+    project paths to one), then checked: tomllib when present, else no [table] header twice."""
+    with open(src) as f:
+        text = f.read()
+    blocks, cur = [], []
+    for line in text.splitlines(True):
+        if re.match(r"\s*\[", line) and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(line)
+    blocks.append(cur)
+    seen, keep = set(), []
+    for bl in blocks:
+        key = "".join(bl).strip()
+        if re.match(r"\[[^\[]", key) and key in seen:
+            continue
+        seen.add(key)
+        keep.append("".join(bl))
+    res = "".join(keep)
+    try:
+        import tomllib
+        tomllib.loads(res)
+    except ImportError:
+        heads = re.findall(r"(?m)^\s*\[([^\[\]]+)\]\s*$", res)
+        dup = sorted({h for h in heads if heads.count(h) > 1})
+        if dup:
+            sys.exit("session: %s: a repeated table: %s" % (out, ", ".join(dup)))
+    except ValueError as e:
+        sys.exit("session: %s does not parse: %s" % (out, e))
+    write(out, res)
 
 
 def mcp(out, tools_json, name, cap):
@@ -250,28 +332,39 @@ def mcp(out, tools_json, name, cap):
 def skills(out, cap):
     r = first_request(cap)
     text = json.dumps(body(r)) if r is not None else ""
-    seen = lambda s: "seen" if s in text else "absent"
+    # A whole token: pc15-home is not seen inside tracer-pc15-home-desc.
+    seen = lambda s: "seen" if re.search(r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])" % re.escape(s), text) else "absent"
     lines(out, ["%s: name=%s description=%s body=%s" % (loc, seen("pc15-" + loc), seen("tracer-pc15-%s-desc" % loc),
                                                          seen("tracer-pc15-%s-body" % loc))
                 for loc in ("home", "repo", "path")])
 
 
-def status(out, pane, exit_file):
+def status_row(pane, exit_file):
+    """(status row, exit): the last non-blank row of the pane, or the row above the key-hint footer
+    ("? for shortcuts") when the last row is that footer; the TUI's exit status, or running."""
     with open(pane, encoding="utf-8", errors="replace") as f:
         rows = [l for l in f.read().splitlines() if l.strip()]
-    # The status line is the last non-blank row, or the row above the key-hint footer when the
-    # last row is that footer ("? for shortcuts").
     if len(rows) > 1 and "? for shortcuts" in rows[-1]:
         rows.pop()
-    row = rows[-1].strip() if rows else ""
     try:
         with open(exit_file) as f:
             ex = f.read().strip()
     except OSError:
         ex = "running"
+    return (rows[-1].strip() if rows else ""), ex
+
+
+def status(out, pane, exit_file, control_pane, control_exit):
+    """The configured run (tui.status_line = ["model-with-reasoning"]) against the control run (no
+    status_line key: Codex's default items)."""
+    row, ex = status_row(pane, exit_file)
+    crow, cex = status_row(control_pane, control_exit)
+    shown = lambda r, s: "yes" if s in r else "no"
     lines(out, ["configured=model-with-reasoning", "status_row=%s" % row,
-                "model_shown=%s" % ("yes" if "gpt-mock" in row else "no"),
-                "dir_shown=%s" % ("yes" if "/repo" in row else "no"), "tui_exit=%s" % ex])
+                "model_shown=%s" % shown(row, "gpt-mock"), "dir_shown=%s" % shown(row, "/repo"),
+                "tui_exit=%s" % ex, "control=default", "control_row=%s" % crow,
+                "control_model_shown=%s" % shown(crow, "gpt-mock"), "control_dir_shown=%s" % shown(crow, "/repo"),
+                "control_tui_exit=%s" % cex, "differs=%s" % ("yes" if row != crow else "no")])
 
 
 cmd, a = sys.argv[1], sys.argv[2:]
@@ -295,6 +388,10 @@ elif cmd == "skills":
     skills(*a)
 elif cmd == "status":
     status(*a)
+elif cmd == "roles":
+    roles(*a)
+elif cmd == "toml-pub":
+    toml_pub(*a)
 else:
     sys.exit("pc5.py: unknown command " + cmd)
 PY
@@ -347,6 +444,9 @@ pub_reqs() {
   done
 }
 py() { python3 -I "$RUN/pc5.py" "$@"; }
+# pub_config <config.toml> <dest>: pub, with a table that scrub made a repeat of another dropped
+# (two project paths become one /repo); the copy must parse (toml-pub).
+pub_config() { pub "$1" "$RUN/pub-config.tmp"; mkdir -p "$(dirname "$2")"; py toml-pub "$RUN/pub-config.tmp" "$2"; }
 # skill_md <file> <loc>: a SKILL.md for pc15-<loc>.
 skill_md() {
   mkdir -p "$(dirname "$1")"
@@ -393,7 +493,9 @@ fi
 set --
 for _r in $pc6_runs; do set -- "$@" "$_r=$RUN/cap/$_r"; done
 py agents "$RUN/pc6-models.txt" "$RUN/pc6-marker.txt" "$@"
-pub "$C6/config.toml" "$FX/config.toml"
+py roles "$RUN/pc6-tools.json" "$RUN/pc6-roles.txt"
+pub_config "$C6/config.toml" "$FX/config.toml"
+pub "$RUN/pc6-roles.txt" "$FX/roles.txt"
 pub "$C6/roles/pc6-probe.toml" "$FX/role-pc6-probe.toml"
 pub "$C6/roles/explorer.toml" "$FX/role-explorer.toml"
 pub "$C6/agents/pc6-disc.toml" "$FX/pc6-disc.toml"
@@ -406,22 +508,33 @@ for _r in $pc6_runs; do
   pub_reqs "$_r" "$FX"
 done
 
-# --- PC8: auto compaction, low against a raised usage ---
+# --- PC8: auto compaction, low against a raised usage, on a cold resume and in a live session ---
 FX=$CODEX_FX/compaction
-py sse-text "$RUN/sse/pc8-text.sse" tracer-pc8-reply
-for _c in low high; do
-  cx_home "pc8-$_c" 'model_context_window = 200000
+PC8_TOP='model_context_window = 200000
 model_auto_compact_token_limit = 100000
-compact_prompt = "tracer-pc8-compact-prompt"' ""
+compact_prompt = "tracer-pc8-compact-prompt"'
+py sse-text "$RUN/sse/pc8-text.sse" tracer-pc8-reply
+# Cold resume: turn 2 is a new process (exec resume --last).
+for _c in low high; do
+  cx_home "pc8-$_c" "$PC8_TOP" ""
   exec_run "pc8-$_c-1" exec --json "tracer-pc8-$_c-turn1"
   exec_run "pc8-$_c-2" exec resume --last "tracer-pc8-$_c-turn2"
   take "pc8-$_c"
 done
-py compaction "$RUN/compaction.txt" "pc8-low=$RUN/cap/pc8-low" "pc8-high=$RUN/cap/pc8-high"
-pub "$RUN/cx-pc8-high/config.toml" "$FX/config.toml"
+# Live session: one process; turn 1's first reply is a shell call (with the raised usage in the
+# high case), so Codex's next request in the same process carries the tool output.
+py sse-call "$RUN/sse/pc8-live-call.sse" exec_command '{"cmd":"echo tracer-pc8-live-cmd"}' call_pc8_live
+for _c in low high; do
+  cx_home "pc8-live-$_c" "$PC8_TOP" ""
+  exec_run "pc8-live-$_c" exec --json "tracer-pc8-live-$_c-turn1"
+  take "pc8-live-$_c"
+done
+py compaction "$RUN/compaction.txt" "pc8-low=$RUN/cap/pc8-low" "pc8-high=$RUN/cap/pc8-high" \
+  "pc8-live-low=$RUN/cap/pc8-live-low" "pc8-live-high=$RUN/cap/pc8-live-high"
+pub_config "$RUN/cx-pc8-high/config.toml" "$FX/config.toml"
 pub "$RUN/compaction.txt" "$FX/compaction.txt"
-pub_reqs pc8-low "$FX"
-pub_reqs pc8-high "$FX"
+for _r in pc8-low pc8-high pc8-live-low pc8-live-high; do pub_reqs "$_r" "$FX"; done
+for _r in pc8-live-low pc8-live-high; do pub "$RUN/out/$_r.jsonl" "$FX/exec-$_r.jsonl"; done
 
 # --- PC9: an MCP server named zygo with a tool named compact ---
 FX=$CODEX_FX/mcp
@@ -443,7 +556,7 @@ if [ -n "$name" ]; then
   pc9_runs="$pc9_runs pc9-call" pc9_cap=$RUN/cap/pc9-call
 fi
 py mcp "$RUN/mcp.txt" "$RUN/pc9-tools.json" "$name" "$pc9_cap"
-pub "$RUN/cx-pc9/config.toml" "$FX/config.toml"
+pub_config "$RUN/cx-pc9/config.toml" "$FX/config.toml"
 pub "$RUN/pc9-tools.json" "$FX/tools.json"
 pub "$RUN/mcp.txt" "$FX/mcp.txt"
 for _r in $pc9_runs; do
@@ -462,7 +575,7 @@ skill_md "$RUN/skills-extra/pc15-path/SKILL.md" path
 exec_run pc15 exec --json tracer-pc15-turn
 take pc15
 py skills "$RUN/skills.txt" "$RUN/cap/pc15"
-pub "$CX_HOME/config.toml" "$FX/config.toml"
+pub_config "$CX_HOME/config.toml" "$FX/config.toml"
 pub "$CX_HOME/skills/pc15-home/SKILL.md" "$FX/SKILL-home.md"
 pub "$R/.agents/skills/pc15-repo/SKILL.md" "$FX/SKILL-repo.md"
 pub "$RUN/skills-extra/pc15-path/SKILL.md" "$FX/SKILL-path.md"
@@ -485,78 +598,101 @@ SOCK=$RUN/s
 tm() { LC_ALL=C "$TMUX_BIN" -S "$SOCK" -f /dev/null "$@"; }
 tm_kill() { tm kill-server 2>/dev/null || true; }
 n2_trap_chain tm_kill
-cx_home pc11 'check_for_update_on_startup = false' '[tui]
-status_line = ["model-with-reasoning"]
-show_tooltips = false'
 py sse-text "$RUN/sse/pc11-text.sse" tracer-pc11-reply
 # q <NAME> <value>: NAME='value'; a value that holds a quote ends the part.
 q() { case "$2" in *"'"*) echo "session: $1 holds a quote"; exit 1 ;; esac; printf "%s='%s'\n" "$1" "$2"; }
-{
-  q PREMISES_DIR "$PREMISES_DIR"
-  echo 'N2_AGENTS=codex'
-  q N2_SCRATCH "$N2_SCRATCH"
-  # shellcheck disable=SC2016
-  echo '. "$PREMISES_DIR/lib.sh"'
-  q RUN "$RUN"; q H "$H"; q R "$R"; q CX_HOME "$CX_HOME"; q MOCK_URL "$MOCK_URL"; q MOCK_PID "$MOCK_PID"
-  # shellcheck disable=SC2016
-  # A refusal (codex_env or run_codex exits before Codex ends) leaves pc11-refused and its
-  # "premises:" lines in pc11-pre.txt or the pane; the part then prints them and exits 1.
-  # shellcheck disable=SC2016
-  echo 'trap '\''[ -e "$RUN/pc11-exit" ] || : >"$RUN/pc11-refused"'\'' EXIT'
-  # --no-daemon: else the TUI starts a managed app-server daemon (from CODEX_HOME/packages, with a
-  # socket under /tmp/codex-daemon-<uid>) that outlives the run.
-  echo 'set -- --no-daemon'
-  # The checks run_codex makes, first with their output in a file (the pane closes on a refusal).
-  # shellcheck disable=SC2016
-  echo '{ n2_daemon_flag "$@"; codex_env; n2_procs daemon || exit 1; } >"$RUN/pc11-pre.txt" 2>&1'
-  # shellcheck disable=SC2016
-  echo 'rc=0; run_codex "$@" || rc=$?; echo "$rc" >"$RUN/pc11-exit"'
-} >"$RUN/pc11-tui.sh"
-rm -f "$RUN/pc11-exit" "$RUN/pc11-refused" "$RUN/pane.txt"
-tm new-session -d -s pc11 -x 250 -y 50 /bin/sh "$RUN/pc11-tui.sh"
-# pane_wait <text> <polls>: up to <polls> captures of the pane, 0.5 s apart, into $RUN/pane.txt; 0
-# when one holds <text>, 1 when the TUI ended, a capture failed or the polls ran out.
+# pane_wait <text> <polls>: up to <polls> captures of session $TS's pane, 0.5 s apart, into
+# $RUN/pane.txt; 0 when one holds <text>, 1 when the TUI ended, a capture failed or the polls ran out.
 pane_wait() {
   _i=0
   while [ "$_i" -lt "$2" ]; do
     _i=$((_i + 1))
-    tm capture-pane -p -t =pc11: >"$RUN/pane.tmp" 2>/dev/null || return 1
+    tm capture-pane -p -t "=$TS:" >"$RUN/pane.tmp" 2>/dev/null || return 1
     mv "$RUN/pane.tmp" "$RUN/pane.txt"
     sleep 0.5
     ! grep -qF -- "$1" "$RUN/pane.txt" || return 0
-    [ ! -e "$RUN/pc11-exit" ] || return 1
+    [ ! -e "$RUN/$TS-exit" ] || return 1
   done
   return 1
 }
 # keep <file>: the last capture as <file> (none yet: nothing).
 keep() { [ ! -e "$RUN/pane.txt" ] || cp "$RUN/pane.txt" "$1"; }
-# send <text>: the text as typed, then Enter.
-send() { tm send-keys -t =pc11: -l "$1" 2>/dev/null || true; sleep 0.5; tm send-keys -t =pc11: Enter 2>/dev/null || true; }
-pane_wait gpt-mock 60 || true
-keep "$RUN/pane-start.txt"
-send tracer-pc11-turn
-pane_wait tracer-pc11-reply 120 || true
-keep "$RUN/pane-turn.txt"
-send /statusline
-pane_wait tracer-none 4 || true
-keep "$RUN/pane-statusline.txt"
-for _k in Escape C-c C-c; do tm send-keys -t =pc11: "$_k" 2>/dev/null || true; sleep 0.5; done
-_i=0
-while [ ! -e "$RUN/pc11-exit" ] && [ "$_i" -lt 20 ]; do _i=$((_i + 1)); sleep 0.5; done
-tm_kill
-if [ -e "$RUN/pc11-refused" ]; then
-  echo "session: pc11: the TUI run was refused before Codex ended:"
-  cat "$RUN/pc11-pre.txt" 2>/dev/null || true
-  grep -h '^premises:' "$RUN"/pane*.txt 2>/dev/null | sort -u || true
-  exit 1
-fi
-take pc11
-pub "$RUN/cx-pc11/config.toml" "$FX/config.toml"
-for _p in start turn statusline; do
-  if [ -e "$RUN/pane-$_p.txt" ]; then pub "$RUN/pane-$_p.txt" "$FX/pane-$_p.txt"; else echo '(no capture)' >"$FX/pane-$_p.txt"; fi
-  ! grep -qE '/Users/|/var/folders/|/private/var/' "$FX/pane-$_p.txt" || { echo "session: pc11: a pane capture holds a machine path"; exit 1; }
-done
-py status "$FX/status.txt" "$FX/pane-turn.txt" "$RUN/pc11-exit"
+# key <key>: one key to the pane, then 0.5 s. send <text>: the text as typed, then Enter.
+key() { tm send-keys -t "=$TS:" "$1" 2>/dev/null || true; sleep 0.5; }
+send() { tm send-keys -t "=$TS:" -l "$1" 2>/dev/null || true; sleep 0.5; key Enter; }
+# tui_run <tag> <full: 1|0>: the TUI with this CX_HOME in session <tag> of the private server; one
+# turn (tracer-pc11-turn), captured as $RUN/<tag>-start.txt and <tag>-turn.txt; full: then
+# /statusline (<tag>-statusline.txt) and the warnings view, F2 (<tag>-warnings.txt). Then quit,
+# kill the server, take the records as capture <tag>. A refusal ends the part (exit 1).
+tui_run() {
+  TS=$1
+  {
+    q PREMISES_DIR "$PREMISES_DIR"
+    echo 'N2_AGENTS=codex'
+    q N2_SCRATCH "$N2_SCRATCH"
+    # shellcheck disable=SC2016
+    echo '. "$PREMISES_DIR/lib.sh"'
+    q RUN "$RUN"; q H "$H"; q R "$R"; q CX_HOME "$CX_HOME"; q MOCK_URL "$MOCK_URL"; q MOCK_PID "$MOCK_PID"
+    # A refusal (codex_env or run_codex exits before Codex ends) leaves <tag>-refused and its
+    # "premises:" lines in <tag>-pre.txt or the pane; the part then prints them and exits 1.
+    echo "trap '[ -e \"\$RUN/$TS-exit\" ] || : >\"\$RUN/$TS-refused\"' EXIT"
+    # --no-daemon: else the TUI starts a managed app-server daemon (from CODEX_HOME/packages, with
+    # a socket under /tmp/codex-daemon-<uid>) that outlives the run.
+    echo 'set -- --no-daemon'
+    # The checks run_codex makes, first with their output in a file (the pane closes on a refusal).
+    echo "{ n2_daemon_flag \"\$@\"; codex_env; n2_procs daemon || exit 1; } >\"\$RUN/$TS-pre.txt\" 2>&1"
+    echo "rc=0; run_codex \"\$@\" || rc=\$?; echo \"\$rc\" >\"\$RUN/$TS-exit\""
+  } >"$RUN/$TS-tui.sh"
+  rm -f "$RUN/$TS-exit" "$RUN/$TS-refused" "$RUN/pane.txt"
+  tm new-session -d -s "$TS" -x 250 -y 50 /bin/sh "$RUN/$TS-tui.sh"
+  pane_wait gpt-mock 60 || true
+  keep "$RUN/$TS-start.txt"
+  send tracer-pc11-turn
+  pane_wait tracer-pc11-reply 120 || true
+  keep "$RUN/$TS-turn.txt"
+  if [ "$2" = 1 ]; then
+    send /statusline
+    pane_wait tracer-none 4 || true
+    keep "$RUN/$TS-statusline.txt"
+    key Escape
+    key F2
+    pane_wait tracer-none 4 || true
+    keep "$RUN/$TS-warnings.txt"
+  fi
+  key Escape; key C-c; key C-c
+  _i=0
+  while [ ! -e "$RUN/$TS-exit" ] && [ "$_i" -lt 20 ]; do _i=$((_i + 1)); sleep 0.5; done
+  tm_kill
+  if [ -e "$RUN/$TS-refused" ]; then
+    echo "session: $TS: the TUI run was refused before Codex ended:"
+    cat "$RUN/$TS-pre.txt" 2>/dev/null || true
+    grep -h '^premises:' "$RUN/pane.txt" "$RUN/$TS"-*.txt 2>/dev/null | sort -u || true
+    exit 1
+  fi
+  take "$TS"
+}
+# pub_pane <capture file> <dest>: pub, or "(no capture)" when the file was never written; a
+# scrubbed capture that still holds a machine path ends the part.
+pub_pane() {
+  if [ -e "$1" ]; then pub "$1" "$2"; else echo '(no capture)' >"$2"; fi
+  ! grep -qE '/Users/|/var/folders/|/private/var/' "$2" || { echo "session: pc11: a pane capture holds a machine path"; exit 1; }
+}
+# The configured run, then the control run (no status_line key: Codex's default items).
+cx_home pc11 'check_for_update_on_startup = false' '[tui]
+status_line = ["model-with-reasoning"]
+show_tooltips = false'
+tui_run pc11 1
+cx_home pc11-default 'check_for_update_on_startup = false' '[tui]
+show_tooltips = false'
+tui_run pc11-default 0
+pub_config "$RUN/cx-pc11/config.toml" "$FX/config.toml"
+pub_config "$RUN/cx-pc11-default/config.toml" "$FX/config-default.toml"
+for _p in start turn statusline; do pub_pane "$RUN/pc11-$_p.txt" "$FX/pane-$_p.txt"; done
+pub_pane "$RUN/pc11-warnings.txt" "$FX/warnings.txt"
+pub_pane "$RUN/pc11-default-turn.txt" "$FX/pane-default-turn.txt"
+pub_reqs pc11 "$FX"
+pub_reqs pc11-default "$FX"
+py status "$FX/status.txt" "$FX/pane-turn.txt" "$RUN/pc11-exit" "$FX/pane-default-turn.txt" "$RUN/pc11-default-exit"
 
 stop_mock
 codex_record session
