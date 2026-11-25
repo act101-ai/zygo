@@ -239,7 +239,7 @@ Session text (T, SX nodes):
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | TODO | judgment | — |
-| WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | TODO | judgment | — |
+| WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | IN-PROGRESS | judgment | .worktrees/phase3/WD-9-node · PR #70 |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | judgment | — |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
