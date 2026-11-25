@@ -1,0 +1,20 @@
+# RS-3 — `POST /openai/v1/responses` route, test harness, request side of the forward step, errors before the first byte, redaction
+
+**Spec:** docs/specs/2026-11-25-client-model-design.md K§6.4.1 (first item; identity and error shape), K§6.4.2 (stage table rows identity, resolution, redaction, attribution), K§6.4.3 (the request side of Responses → Anthropic and Responses → chat), K§6.4.4, K§6.7 (Responses requests), K§11 items 12 (at the route), 14 (the before-the-first-byte half) and 20; K-D47, K-D50
+**Files:** `crates/zygo-proxy/src/routes.rs`, `crates/zygo-proxy/src/pipeline.rs`, `crates/zygo-proxy/src/forward.rs`, `crates/zygo-proxy/src/errors.rs`, `crates/zygo-proxy/src/redact_stage.rs`, `crates/zygo-proxy/tests/support/responses.rs` (new), `crates/zygo-proxy/tests/responses_route.rs` (new)
+**Consumes:** `check_fields` (RS-1), `request` (RS-1), `fixtures/codex/requests/` (PC-3), `fixtures/codex/errors/` (PC-3)
+**Produces:** `pipeline::ModelRoute::Responses`, `support::Harness::start(upstream: Dialect, agent: Agent, extra_toml: &str) -> Harness` (proxy on a `ManualClock`, one session of `agent`, one mock upstream of dialect `upstream`), `Harness::post(&self, path: &str, body: &Value) -> (StatusCode, HeaderMap, Bytes)`, `Harness::get(&self, path: &str) -> (StatusCode, HeaderMap, Bytes)`, `Harness::upstream_bodies(&self) -> Vec<Value>`, `Harness::reply_with(&self, status: u16, content_type: &str, body: Vec<u8>)`, `Harness::usage_rows(&self) -> Vec<RequestRow>`
+**Acceptance:** `test "$(cargo test -q -p zygo-proxy --test responses_route -- --list 2>/dev/null | grep -c ': test$')" -ge 7 && cargo test -p zygo-proxy --locked` → at least 7 tests in `responses_route` (a count of 0 fails), then every `zygo-proxy` test target passes on ubuntu, macOS and Windows CI: a missing or wrong `X-Zygo-Session` or bearer → the identity error in the OpenAI error shape; an unknown and a refused top-level field → 400 in the OpenAI shape before any upstream request (K§11 item 12 at the route); a captured Codex request reaches an Anthropic mock as a Messages body and a chat mock as a chat body (seen by `upstream_bodies`); an upstream `529` before the first byte on a streaming request → `529`, an OpenAI error body and no SSE bytes (K§11 item 14, first half); an over-long-prompt upstream error reaches the client in the PC14 shape; redaction acts on a Responses `input` body: the planted secret is absent from the upstream body (K§11 item 20)
+
+## Planning notes
+
+- Route by dialect: a Responses request from any session is served (K-D47). Tests use a Claude Code session (K§6.4.2).
+- Request side at forward time: `attempt_body` (`forward.rs:779-831`) translates when the candidate dialect differs from the client's. For this client it chains `request` (RS-1), then for a chat candidate the existing Messages → chat translator. The response side of a 2xx answer (the encoder, the stream order, the non-streaming form) is RS-4; until RS-4 merges, a 2xx answer on this route gives a `zygo_` error, and no test here claims it. The same-dialect body (Responses upstream) is RS-5. The tests of this node use upstream error answers, so the request a mock receives is seen without a 2xx path.
+- Redaction already picks `Layout::Input` for `Dialect::Openai` (`redact_stage.rs:191`); this node proves it on the route and edits the stage only if the route needs it.
+- `upstream_path(route, d)` (`forward.rs:182-188`) and `ModelRoute::client_path` / `upstream_path` (`:166-179`) gain the `Responses` arm.
+- `tests/support/responses.rs` is included by each Responses test file with `#[path = "support/responses.rs"] mod support;`, the form of `crates/zygo-launch/tests/premise.rs:4-5`; `tests/support/` holds no `main.rs`, so Cargo builds no target from it. Later RS nodes that change it depend on this node through their edges.
+- Test hooks: the proxy's `test-hooks` feature (`crates/zygo-proxy/Cargo.toml:40-43`) and `ManualClock`; no sleep, no wall-clock bound (Global constraints).
+
+## Plan
+
+Written when the node starts.
