@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "git clone --progress --no-local src dst",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch repo of 2,000 one-line files, cloned with --no-local, run by capture-shaping.sh in /repo",
+   "tool" : "git 2.50.1"
+}
