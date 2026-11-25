@@ -1,0 +1,4 @@
+Claude Code 2.1.332 + OpenCode 1.18.16
+3.1 ok one request holds the wake line and the SessionStart additionalContext line: yes
+3.2 ok one request holds the wake line and the UserPromptSubmit additionalContext line: yes
+3.3 ok one request holds the wake line and the line pushed in experimental.chat.system.transform: yes
