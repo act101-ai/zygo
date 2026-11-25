@@ -77,6 +77,10 @@ impl SessionDir {
     pub fn work(&self) -> PathBuf {
         self.root.join("work")
     }
+    /// Per-subagent re-inject flags (session text design T§9.2): directory 0700, files 0600.
+    pub fn reinject(&self) -> PathBuf {
+        self.root.join("reinject")
+    }
     /// Turn and subagent state of a workspace member (workspaces design W§9.1).
     pub fn activity_json(&self) -> PathBuf {
         self.root.join("activity.json")
