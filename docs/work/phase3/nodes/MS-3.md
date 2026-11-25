@@ -44,7 +44,7 @@ All are `Severity::Error`. The four texts are private `const`s in `check.rs`.
 
 Steps:
 
-- [ ] 1. Create `crates/zygo-config/tests/mail_sync_config.rs` with the helpers and constants:
+- [x] 1. Create `crates/zygo-config/tests/mail_sync_config.rs` with the helpers and constants:
   ```rust
   //! MS-3: mail sync config keys, forms and per-workspace resolution (mail sync design S§11, S§7.1, S-C6, S-G6;
   //! S§19 #7 config parts, #25).
@@ -113,7 +113,7 @@ Steps:
   }
   ```
 
-- [ ] 2. Add test `defaults_and_the_s11_example` (S§11; `config show` source, S§11 last bullets):
+- [x] 2. Add test `defaults_and_the_s11_example` (S§11; `config show` source, S§11 last bullets):
   ```rust
   let d = MailConfig::default();
   assert_eq!((d.host.clone(), d.sync_gap.as_str(), d.workspace.clone()), (None, "60s", BTreeMap::new()));
@@ -134,7 +134,7 @@ Steps:
       branch: "zygo/mail".into(), remote: "origin".into(), host: "studio-2".into(), sync_gap: Duration::from_secs(60) }));
   ```
 
-- [ ] 3. Add tests `valid_mail_host_edges` and `valid_sync_branch_edges` (S§5 Host form, S§11 `sync` form):
+- [x] 3. Add tests `valid_mail_host_edges` and `valid_sync_branch_edges` (S§5 Host form, S§11 `sync` form):
   ```rust
   #[test]
   fn valid_mail_host_edges() {
@@ -162,7 +162,7 @@ Steps:
   }
   ```
 
-- [ ] 4. Add test `check_refuses_forms_at_the_edges` (S§19 #7: `sync = "main"`; S§11, S§7.1 forms through `config check` and `sync_for`):
+- [x] 4. Add test `check_refuses_forms_at_the_edges` (S§19 #7: `sync = "main"`; S§11, S§7.1 forms through `config check` and `sync_for`):
   ```rust
   let user = "[mail]\nhost = \"a\"\n[mail.workspace.zygo]\nsync = \"main\"\n";
   assert_eq!(violations(user), [format!("Error mail.workspace.zygo.sync: {SYNC_FORM}")]);
@@ -187,7 +187,7 @@ Steps:
   assert_eq!(sync(odd, "my ws"), Err(SyncOff::BadBranch));
   ```
 
-- [ ] 5. Add test `check_names_mail_host_when_sync_has_no_host` (S§7.1, S§19 #7):
+- [x] 5. Add test `check_names_mail_host_when_sync_has_no_host` (S§7.1, S§19 #7):
   ```rust
   let user = "[mail.workspace.zygo]\nsync = \"zygo/mail\"\n";
   assert_eq!(violations(user), [format!("Error mail.host: {NO_HOST}")]);
@@ -204,7 +204,7 @@ Steps:
   assert_eq!(violations("[mail]\nhost = \"a\"\n"), Vec::<String>::new());
   ```
 
-- [ ] 6. Add test `workspace_host_overrides_mail_host` (S§7.1):
+- [x] 6. Add test `workspace_host_overrides_mail_host` (S§7.1):
   ```rust
   let user = "[mail]\nhost = \"a\"\n[mail.workspace.zygo]\nsync = \"zygo/mail\"\nhost = \"b\"\n[mail.workspace.other]\nsync = \"zygo/x\"\n";
   let c = loaded(user).config;
@@ -222,7 +222,7 @@ Steps:
   assert_eq!(violations(ok), [format!("Error mail.host: {HOST_FORM}")]);
   ```
 
-- [ ] 7. Add tests `remote_defaults_to_origin`, `no_sync_key_is_not_on` and `sync_gap_forms` (S§11, S-G6, S§8.4):
+- [x] 7. Add tests `remote_defaults_to_origin`, `no_sync_key_is_not_on` and `sync_gap_forms` (S§11, S-G6, S§8.4):
   ```rust
   #[test]
   fn remote_defaults_to_origin() {
@@ -259,7 +259,7 @@ Steps:
   }
   ```
 
-- [ ] 8. Add tests `team_layer_drops_mail_sync_keys` and `repo_file_drops_mail_sync_keys` (S§19 #25, S-C6, S§11 first paragraph):
+- [x] 8. Add tests `team_layer_drops_mail_sync_keys` and `repo_file_drops_mail_sync_keys` (S§19 #25, S-C6, S§11 first paragraph):
   ```rust
   #[test]
   fn team_layer_drops_mail_sync_keys() {
@@ -288,18 +288,24 @@ Steps:
   }
   ```
 
-- [ ] 9. In `crates/zygo-config/tests/config_layers.rs:1723` (test `mail_defaults_match_m11`), change the literal to `MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into(), host: None, sync_gap: "60s".into(), workspace: BTreeMap::new() }` (`BTreeMap` is already imported at `config_layers.rs:1`). No other line of that file changes.
+- [x] 9. In `crates/zygo-config/tests/config_layers.rs:1723` (test `mail_defaults_match_m11`), change the literal to `MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into(), host: None, sync_gap: "60s".into(), workspace: BTreeMap::new() }` (`BTreeMap` is already imported at `config_layers.rs:1`). No other line of that file changes.
 
-- [ ] 10. Run `cargo test -p zygo-config --test mail_sync_config`; see it fail to compile on the missing `MailSyncWorkspace`, `SyncSettings`, `SyncOff`, `sync_for`, `valid_mail_host`, `valid_sync_branch` and the missing `MailConfig` fields.
+- [x] 10. Run `cargo test -p zygo-config --test mail_sync_config`; see it fail to compile on the missing `MailSyncWorkspace`, `SyncSettings`, `SyncOff`, `sync_for`, `valid_mail_host`, `valid_sync_branch` and the missing `MailConfig` fields.
 
-- [ ] 11. In `crates/zygo-config/src/schema.rs`: add `MailSyncWorkspace` before `MailConfig`, the three `MailConfig` fields and their defaults, `valid_mail_host`, `valid_sync_branch`, `parse_sync_gap` (after `parse_duration`), `SyncSettings`, `SyncOff` and `sync_for`, with the signatures, derives, serde attributes and check order in Produces. Extend the `MailConfig` doc comment: `host`, `sync_gap` and `workspace` are mail sync design S§11; `sync_gap` takes `<n>s`, `<n>m` or `<n>h`.
+- [x] 11. In `crates/zygo-config/src/schema.rs`: add `MailSyncWorkspace` before `MailConfig`, the three `MailConfig` fields and their defaults, `valid_mail_host`, `valid_sync_branch`, `parse_sync_gap` (after `parse_duration`), `SyncSettings`, `SyncOff` and `sync_for`, with the signatures, derives, serde attributes and check order in Produces. Extend the `MailConfig` doc comment: `host`, `sync_gap` and `workspace` are mail sync design S§11; `sync_gap` takes `<n>s`, `<n>m` or `<n>h`.
 
-- [ ] 12. In `crates/zygo-config/src/check.rs`: extend the `use crate::schema::{…}` line (`check.rs:7`) with `parse_sync_gap, valid_mail_host, valid_sync_branch`; add the four private message `const`s (texts as in the `config check` rules above); add rules 1-4 after `check.rs:118`, in that order, through the existing `e` closure, with workspace paths from `join(&["mail", "workspace", name.as_str()])`.
+- [x] 12. In `crates/zygo-config/src/check.rs`: extend the `use crate::schema::{…}` line (`check.rs:7`) with `parse_sync_gap, valid_mail_host, valid_sync_branch`; add the four private message `const`s (texts as in the `config check` rules above); add rules 1-4 after `check.rs:118`, in that order, through the existing `e` closure, with workspace paths from `join(&["mail", "workspace", name.as_str()])`.
 
-- [ ] 13. Run `cargo test -p zygo-config --test mail_sync_config`; see all 11 tests pass.
+- [x] 13. Run `cargo test -p zygo-config --test mail_sync_config`; see all 11 tests pass.
 
-- [ ] 14. In `docs/specs/2026-11-22-workspace-mail-design.md` M§11: after the TOML block (line 175), add the line `Mail sync between machines adds \`[mail] host\`, \`[mail] sync_gap\` and the per-workspace table \`[mail.workspace.<name>]\` (keys \`sync\`, \`remote\`, \`host\`); their forms and defaults are in \`docs/specs/2026-11-24-mail-sync-design.md\` S§11.` and append to the change log table the row `| 2026-11-24 | M§11 | mail sync design S§16 | Gains \`host\`, \`sync_gap\` and \`[mail.workspace.<name>]\` (S§11). |`.
+- [ ] 14. (Not done: the implementing brief forbids spec edits; the M§11 change note is left to the lead.) In `docs/specs/2026-11-22-workspace-mail-design.md` M§11: after the TOML block (line 175), add the line `Mail sync between machines adds \`[mail] host\`, \`[mail] sync_gap\` and the per-workspace table \`[mail.workspace.<name>]\` (keys \`sync\`, \`remote\`, \`host\`); their forms and defaults are in \`docs/specs/2026-11-24-mail-sync-design.md\` S§11.` and append to the change log table the row `| 2026-11-24 | M§11 | mail sync design S§16 | Gains \`host\`, \`sync_gap\` and \`[mail.workspace.<name>]\` (S§11). |`.
 
-- [ ] 15. Run the acceptance: `cargo test -p zygo-config --test mail_sync_config && cargo test -p zygo-config`; see all pass, with the `typed.rs` `differential` test and the ML-1 tests in `config_layers.rs` among them. Then `cargo build --workspace` to confirm that no other crate builds a `MailConfig` literal.
+- [x] 15. Run the acceptance: `cargo test -p zygo-config --test mail_sync_config && cargo test -p zygo-config`; see all pass, with the `typed.rs` `differential` test and the ML-1 tests in `config_layers.rs` among them. Then `cargo build --workspace` to confirm that no other crate builds a `MailConfig` literal.
 
-- [ ] 16. Commit `crates/zygo-config/src/schema.rs`, `crates/zygo-config/src/check.rs`, `crates/zygo-config/tests/mail_sync_config.rs`, `crates/zygo-config/tests/config_layers.rs` and `docs/specs/2026-11-22-workspace-mail-design.md` with the message `MS-3: mail sync config keys, forms and per-workspace resolution`, then a blank line, then the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementing brief, each on its own line. No attribution lines.
+- [x] 16. Commit `crates/zygo-config/src/schema.rs`, `crates/zygo-config/src/check.rs`, `crates/zygo-config/tests/mail_sync_config.rs`, `crates/zygo-config/tests/config_layers.rs` and `docs/specs/2026-11-22-workspace-mail-design.md` with the message `MS-3: mail sync config keys, forms and per-workspace resolution`, then a blank line, then the trailers `Zygo-Session: <session>` and `Zygo-Work: <unit>` from the implementing brief, each on its own line. No attribution lines.
+
+Ran (implementation, round 1):
+- Step 10: `env -u ZYGO_SESSION_DIR cargo test --locked -p zygo-config --test mail_sync_config` failed to compile on the missing `MailSyncWorkspace`, `SyncSettings`, `SyncOff`, `sync_for`, `valid_mail_host`, `valid_sync_branch` and the `MailConfig` fields `host`, `sync_gap`, `workspace`.
+- Step 13: the same command: 11 passed, 0 failed.
+- Step 15: `env -u ZYGO_SESSION_DIR cargo test --locked -p zygo-config`: all pass (config_layers 90 passed, 16 ignored; mail_sync_config 11 passed; no failures). `cargo build --locked --workspace`: ok.
+- `cargo clippy --locked -p zygo-config --all-targets`: no finding on a changed line. `cargo fmt --check`: the default 100-column width rewraps the whole crate (no `rustfmt.toml`); the changed lines keep the crate's existing wide style.

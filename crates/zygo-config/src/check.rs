@@ -4,7 +4,13 @@ use std::fmt;
 use zygo_core::ids::{reserved_member_name, valid_member_name};
 
 use crate::layers::{join, seg};
-use crate::schema::{parse_duration, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
+use crate::schema::{parse_duration, parse_sync_gap, valid_mail_host, valid_sync_branch, BUILTIN_LOADOUT, Config, KeyRef, JOBS, LOADOUT_KINDS, Reasoning, STATUSLINE_STYLES};
+
+const MAIL_HOST_FORM: &str = "must match ^[a-z0-9][a-z0-9-]{0,31}$";
+const MAIL_SYNC_FORM: &str = "must match ^zygo/[a-z0-9][a-z0-9-]{0,31}$";
+const MAIL_SYNC_GAP_FORM: &str = "must be <n>s, <n>m or <n>h";
+/// Mail sync design S§7.1.
+const MAIL_NO_HOST: &str = "set [mail] host to turn on mail sync; zygo does not publish the system host name";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -115,6 +121,26 @@ pub fn check(cfg: &Config) -> Vec<Violation> {
         if parse_duration(text).is_none() {
             e(format!("mail.{key}"), "must be <n>s, <n>m, <n>h or <n>d".into());
         }
+    }
+    if cfg.mail.host.as_deref().is_some_and(|h| !valid_mail_host(h)) {
+        e("mail.host".into(), MAIL_HOST_FORM.into());
+    }
+    if parse_sync_gap(&cfg.mail.sync_gap).is_none() {
+        e("mail.sync_gap".into(), MAIL_SYNC_GAP_FORM.into());
+    }
+    let mut sync_without_host = false;
+    for (name, ws) in &cfg.mail.workspace {
+        let path = join(&["mail", "workspace", name.as_str()]);
+        if ws.sync.as_deref().is_some_and(|b| !valid_sync_branch(b)) {
+            e(format!("{path}.sync"), MAIL_SYNC_FORM.into());
+        }
+        if ws.host.as_deref().is_some_and(|h| !valid_mail_host(h)) {
+            e(format!("{path}.host"), MAIL_HOST_FORM.into());
+        }
+        sync_without_host |= ws.sync.is_some() && ws.host.is_none();
+    }
+    if cfg.mail.host.is_none() && sync_without_host {
+        e("mail.host".into(), MAIL_NO_HOST.into());
     }
     let code_ok = regex::Regex::new("^[a-z0-9_]{1,64}$").expect("static pattern");
     for (i, r) in cfg.schema_rule.iter().enumerate() {

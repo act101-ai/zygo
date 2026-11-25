@@ -1720,7 +1720,7 @@ const MAIL_TEAM: &str = "config: [mail] in team config ignored; only user config
 
 #[test]
 fn mail_defaults_match_m11() {
-    let d = MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into() };
+    let d = MailConfig { keep: "30d".into(), max_unread: 500, wake_gap: "30s".into(), host: None, sync_gap: "60s".into(), workspace: BTreeMap::new() };
     assert_eq!(MailConfig::default(), d);
     assert_eq!(Config::default().mail, d);
     assert_eq!(cfg("").mail, d);
