@@ -31,6 +31,24 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   - `check-premises: ok`
   - `<id>: version '<v>' is below the header's '<want>' for <name>, or not a dotted number`
   - `<id>: version '<v>' differs from the header's '<want>' for act-lite`
+- Failure messages of the file and row checks (each printed after `check-premises: `; `<P>` is `docs/premises.md`, `<ln>` a line number of it):
+  - `<P> is missing or empty`
+  - `<P> has CRLF line endings`
+  - `<P>:<ln>: header '<Name>: <value>' differs from the first header line '<Name>: <value>'`
+  - `<P> has no Results table (a header row '| Id | Item |' and its rows)`
+  - `<P>:<ln>: row id '<id>' is empty or not of the form [A-Za-z0-9][A-Za-z0-9-]*`
+  - `<id>: expected exactly one row, found <n>`
+  - `<P>:<ln>: row '<id>' is outside the Results table`
+  - `<id>: date '<date>' is not YYYY-MM-DD`
+  - `<id>: the Agent cell is empty`
+  - `<id>: the Version cell is empty`
+  - `<id>: <na> agent(s) but <nv> version(s)`
+  - `<id>: agent '<a>' has no header line '<a>: <version>' before the first '## ' of <P>`
+  - `<id>: header '<a>: <want>': header version must be a bare dotted version`
+  - `<id>: version '<v>' is below the header's '<want>' for tmux, or not a dotted number with at most one letter after it`
+  - `<id>: result '<result>' is not verified or failed`
+  - `<id>: evidence names no path`
+  - `<id>: evidence path <f> is missing, not a regular file, or trivial`
 
 ### Steps
 
@@ -63,7 +81,7 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   | 3 | a failed PC row needs no note | as 2, with the result `failed` | `expect_ok` |
   | 4 | Q7 removed | `sed '/^| Q7 |/d'` | `expect_fail "Q7: expected exactly one row, found 0"` |
   | 5 | PW15 removed | `sed '/^| PW15 |/d'` (it keeps `PW15-bash` and the other two) | `expect_fail "PW15: expected exactly one row, found 0"` |
-  | 6 | an agent with no header line | `add_row` ROW(`PC1`, `Cursor`, `1.0.0`, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: agent 'Cursor' has no header line 'Cursor: <version>'"` |
+  | 6 | an agent with no header line | `add_row` ROW(`PC1`, `Cursor`, `1.0.0`, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: agent 'Cursor' has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"` |
   | 7 | Codex below its header (minimum rule) | `add_header 'Codex: 0.172.0'`; `add_row` ROW(`PC1`, `Codex`, `0.171.9`, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: version '0.171.9' is below the header's '0.172.0' for Codex, or not a dotted number"` |
   | 8 | Codex above its header | as 7, with the version `0.173.0` | `expect_ok` |
   | 9 | act-lite differs (exact rule) | change the `P6b` row version from `1.2.3` to `1.2.4` (sed script below) | `expect_fail "P6b: version '1.2.4' differs from the header's '1.2.3' for act-lite"` |
@@ -72,6 +90,29 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   | 12 | PW15-bash gets the row checks | change the date cell of the `PW15-bash` row from `2026-11-23` to `2026-11-3` (sed script below) | `expect_fail "PW15-bash: date '2026-11-3' is not YYYY-MM-DD"` |
   | 13 | the Codex schema is verbatim | `printf '%s\n' '"/Users/alice/x"' > fixtures/codex/config.schema.json` | `expect_ok` |
   | 14 | the same text in another file | the same line in `fixtures/codex/other.json` | `RC` is 1, and `OUT` starts with `check-premises: forbidden content (macOS home path): fixtures/codex/other.json:` |
+  | 15 | a row with an empty Id | `add_row` ROW(``, `tmux`, `3.2`, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "docs/premises.md:<ln>: row id '' is empty or not of the form [A-Za-z0-9][A-Za-z0-9-]*"` |
+  | 16 | a row with no blank after the first bar | `add_row` `\|PC9 \| … \|` with evidence `fixtures/codex/empty.json` | `expect_fail "PC9: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"` |
+  | 17 | a row with a blank before the first bar | `add_row` ` \| PC9 \| … \|`, the same evidence | as 16 |
+  | 18 | an Id with an inner space | `add_row` ROW(`P 1`, `tmux`, `3.2`, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "docs/premises.md:<ln>: row id 'P 1' is empty or not of the form [A-Za-z0-9][A-Za-z0-9-]*"` |
+  | 19 | a failed P row with no base-spec note | `P2` result `verified` → `failed` | `expect_fail "P2: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, P2: …)*"` |
+  | 20 | a W§17 result that differs | `PW11` result `verified` → `failed` | `expect_fail "PW11: the W§17 row has no 'Result 2026-11-22: failed'"` |
+  | 21 | a duplicate id | the `PW15-bash` row twice | `expect_fail "PW15-bash: expected exactly one row, found 2"` |
+  | 22 | a header line after the first ## | ROW(`PC1`, `Codex`, …); `Codex: 0.172.0` appended at the end of the file | `expect_fail "PC1: agent 'Codex' has no header line 'Codex: <version>' before the first '## ' of docs/premises.md"` |
+  | 23 | a header value with extra words | `Claude Code: 2.1.328` → `Claude Code: 2.1.328 or later` | `expect_fail "P1: header 'Claude Code: 2.1.328 or later': header version must be a bare dotted version"` |
+  | 24 | another table after the Results table | a `\| Name \| Value \|` table with the row `\| foo \| bar \|` appended | `expect_ok` |
+  | 25 | CRLF line endings | every line ends in CR LF | `expect_fail "docs/premises.md has CRLF line endings"` |
+  | 26 | a duplicate of a required id in a second table | a `\| Name \| Value \|` table with the row `\| Q7 \| x \|` appended | `expect_fail "Q7: expected exactly one row, found 2"` |
+  | 27 | a results-like row in a later table | as 26, with the row `\| PC5 \| x \|` | `expect_fail "docs/premises.md:<ln>: row 'PC5' is outside the Results table"` |
+  | 28 | an empty Agent cell | `add_row` ROW(`PC1`, ``, `3.2`, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: the Agent cell is empty"` |
+  | 29 | an empty Version cell | `add_row` ROW(`PC1`, `tmux`, ``, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: the Version cell is empty"` |
+  | 30 | empty Agent and Version cells | `add_row` ROW(`PC1`, ``, ``, `verified`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: the Agent cell is empty"` |
+  | 31 | a result that is not verified or failed | `add_row` ROW(`PC1`, `tmux`, `3.2`, `passed`, `fixtures/codex/pc1.txt`) | `expect_fail "PC1: result 'passed' is not verified or failed"` |
+  | 32 | the same header line twice | `Codex: 0.172.0` twice after `tmux: `; ROW(`PC1`, `Codex`, `0.172.0`, `verified`, `fixtures/codex/pc1.txt`) | `expect_ok` |
+  | 33 | a second header line with another version | `Codex: 0.172.0` then `Codex: 0.100.0` after `tmux: `; the row of 32 | `expect_fail "docs/premises.md:<ln>: header 'Codex: 0.100.0' differs from the first header line 'Codex: 0.172.0'"` |
+  | 34 | extra blanks at the ends of cells | `add_row` `\| PC1   \| Test row \|   tmux   \|   3.2   \|   2026-11-25   \|   verified   \| …` | `expect_ok` |
+  | 35 | a header value with blanks at its end | `add_header 'Codex: 0.172.0   '`; the row of 32 | `expect_ok` |
+
+  `<ln>` is the line number of the planted line in the copy.
 
   The sed scripts, exactly (BRE; `|` is a plain character in a BRE):
   - case 9: `s/^\(| P6b | [^|]* | act-lite | \)1\.2\.3 |/\11.2.4 |/` (the same form as `scripts/premises/ver_test.sh:195`);
@@ -83,12 +124,13 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
 
 - [x] 3. Change `scripts/check-premises.sh`:
   - Delete `header()`, `V_CC` … `V_TM`, their four `fail`s and `version_of()` (`:31-49`).
-  - Add `HDR`: each `<Name>: <version>` line before the first `^## ` line of `$P`, stored as a `name<TAB>version` line. A header line matches the ERE `^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]: *[^ ]+ *$`. The prose line at `:3` does not match, because its name part holds a comma. Drop trailing spaces. When a name is given twice, the first one wins (as `head -n 1` does today).
-  - Add `version_of <name>`: prints the version for that name from `HDR`, or nothing.
-  - Add `ROWS`: for each line of `$P` that starts with `| `, except the line whose first cell is `Id`, the first cell with its spaces removed, in file order.
-  - Before the row loop, add `for id in $IDS $WIDS` with the count check that is at `:59-60` today. The message is `"$id: expected exactly one row, found $n"`.
-  - The row loop (`:58`) runs `for id in $ROWS` and keeps its own count check, which catches an unlisted id that appears twice.
-  - Unknown agent (`:79`): change the message to `"$id: agent '$a' has no header line '$a: <version>'"`.
+  - Add `HDR`: each header line before the first `^## ` line of `$P`, stored as a `name<TAB>value<TAB>line` line. A header line matches the ERE `^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]:`; the name is the text before the first `:`, the value the text after it, trimmed of blanks and tabs at both ends. The prose line at `:3` does not match, because its name part holds a comma. A name given again with the same value is accepted (the first line wins); with another value the check fails. A value that a row uses must match the ERE `^[0-9]+(\.[0-9]+)*$` (bare dotted version).
+  - Add `version_of <name>`: prints the value of the first header line for that name from `HDR`, or nothing.
+  - Add `TROWS`: for each table line of `$P` (ERE `^[ \t]*\|`), `line<TAB>id<TAB>r|o`, where `id` is the first cell trimmed at both ends, `r` marks a row of the Results table (from the header row that starts `| Id | Item |`, its separator row skipped, to the first line that is not a table line), and `o` any other table line. `ROWS` is the `r` lines as `line<TAB>id`. Each `ROWS` id must match the ERE `^[A-Za-z0-9][A-Za-z0-9-]*$`.
+  - Before the row loop, add `for id in $IDS $WIDS` with the count check that is at `:59-60` today. The count is over the first cells of all table lines of the file (`TROWS`), not only the Results table. The message is `"$id: expected exactly one row, found $n"`.
+  - After that loop, fail on the first `o` line whose first cell matches the premise-id ERE `^[A-Z]+[0-9][A-Za-z0-9-]*$` (a Results row outside the Results table).
+  - The row loop (`:58`) runs over `ROWS` and keeps its own count check, which catches an unlisted id that appears twice. It fails on an empty Agent cell or an empty Version cell (after trimming) before it splits them on ` + `.
+  - Unknown agent (`:79`): change the message to `"$id: agent '$a' has no header line '$a: <version>' before the first '## ' of docs/premises.md"`.
   - Version rule (`:81-85`):
     - `act-lite`: exact, with the same message as today.
     - `tmux`: no change.
@@ -101,7 +143,7 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
   - Ok line (`:213`): `check-premises: ok (<ROWS joined by one space>)`.
   - Header comment, line 2: add `; rows and agent versions are driven by data (K§6.2.5, node PC-1)`.
 
-- [x] 4. Run `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (14 cases)`.
+- [x] 4. Run `sh scripts/test-check-premises.sh` → exit 0, last line `test-check-premises: ok (35 cases)` (14 after round 1, 25 after round 2, 35 after round 3).
 
 - [x] 5. Run `sh scripts/check-premises.sh` on the real tree → exit 0, last line `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW15-bash PW15-tool PW15-slash PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)`.
 
@@ -124,3 +166,14 @@ Safety: run only `scripts/check-premises.sh`, `scripts/test-check-premises.sh` a
 4. Review focus 5: `Q7` removed (case 4), a `PW` id removed (case 5), an agent with no header line (case 6).
 5. Proportion: the plan gives signatures, texts and cases. It leaves the bodies to the implementer.
 6. Live code: every line cited above was read at 9595de88. No helper other than `header()` parses the header block, and this node replaces `header()`.
+
+## Round 3
+
+- [x] I1: a duplicate or unlisted row outside the first Results table escaped the check. Ids are now counted over every table line of the file, and a premise-id row outside the Results table fails (cases 26, 27). Fix: 7de5d9e7.
+- [x] I2: empty Agent and Version cells passed. Each now fails when empty after trimming (cases 28-30). Fix: 7de5d9e7.
+- [x] M16: a result value that is not `verified` or `failed` fails (case 31). Fix: 7de5d9e7.
+- [x] M14: a header line given twice with the same value passes, the first line wins (case 32). Fix: 7de5d9e7.
+- [x] M18: blanks at the ends of cells (case 34) and of a header value (case 35) are trimmed. Fix: 7de5d9e7.
+- [x] A second header line for the same name with another version fails (case 33). Fix: 7de5d9e7.
+- [x] Plan text: step 3 (ERE, `TROWS`, the empty-cell and outside-row checks), the failure messages, cases 15-35 and the count (35) match the code. Fix: this commit.
+- [x] Graph state of PC-1 set to IN-PROGRESS (DONE means merged into `phase-4`).
