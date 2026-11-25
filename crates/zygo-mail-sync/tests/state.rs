@@ -386,36 +386,8 @@ fn good_state() -> State {
     }
 }
 
-#[test]
-fn state_round_trip_holds_no_url() {
-    let (_t, sp) = setup();
-    let s = good_state();
-    let h = s.public.as_ref().unwrap().url_sha256[0].clone();
-    save(&sp, &s).unwrap();
-    assert_eq!(load(&sp).unwrap(), s);
-    let text = fs::read_to_string(&sp.state).unwrap();
-    assert!(text.contains(&h), "{text}");
-    for no in ["https://", "example.com", "user", "pw@"] {
-        assert!(!text.contains(no), "{no:?} in {text}");
-    }
-    assert_mode(&sp.state, 0o600);
-    assert_mode(&sp.sync, 0o700);
-    assert_eq!(names(&sp.sync), ["state.json"]);
-    // every verdict of S§8.2 is kept
-    for v in ["public", "private", "local", "unknown"] {
-        let mut s = good_state();
-        s.public.as_mut().unwrap().verdict = v.into();
-        save(&sp, &s).unwrap();
-        assert_eq!(load(&sp).unwrap(), s, "{v}");
-    }
-}
-
-#[test]
-fn save_refuses_a_value_outside_the_spec() {
-    let (_t, sp) = setup();
-    save(&sp, &good_state()).unwrap();
-    let before = fs::read(&sp.state).unwrap();
-    let mut bad: Vec<(&str, State)> = Vec::new();
+fn bad_states() -> Vec<(&'static str, State)> {
+    let mut bad: Vec<(&'static str, State)> = Vec::new();
     let mut s = good_state();
     s.last_error = Some("https://u:tok@h/x".into());
     bad.push(("last_error url", s));
@@ -458,6 +430,39 @@ fn save_refuses_a_value_outside_the_spec() {
         s.pending.insert(k.into(), v.into());
         bad.push(("pending", s));
     }
+    bad
+}
+
+#[test]
+fn state_round_trip_holds_no_url() {
+    let (_t, sp) = setup();
+    let s = good_state();
+    let h = s.public.as_ref().unwrap().url_sha256[0].clone();
+    save(&sp, &s).unwrap();
+    assert_eq!(load(&sp).unwrap(), s);
+    let text = fs::read_to_string(&sp.state).unwrap();
+    assert!(text.contains(&h), "{text}");
+    for no in ["https://", "example.com", "user", "pw@"] {
+        assert!(!text.contains(no), "{no:?} in {text}");
+    }
+    assert_mode(&sp.state, 0o600);
+    assert_mode(&sp.sync, 0o700);
+    assert_eq!(names(&sp.sync), ["state.json"]);
+    // every verdict of S§8.2 is kept
+    for v in ["public", "private", "local", "unknown"] {
+        let mut s = good_state();
+        s.public.as_mut().unwrap().verdict = v.into();
+        save(&sp, &s).unwrap();
+        assert_eq!(load(&sp).unwrap(), s, "{v}");
+    }
+}
+
+#[test]
+fn save_refuses_a_value_outside_the_spec() {
+    let (_t, sp) = setup();
+    save(&sp, &good_state()).unwrap();
+    let before = fs::read(&sp.state).unwrap();
+    let bad = bad_states();
     for (what, s) in &bad {
         let e = save(&sp, s).unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{what}: {s:?}");
@@ -510,6 +515,27 @@ fn load_refuses_a_bad_file_and_leaves_it() {
         );
         assert_eq!(fs::read_to_string(&sp.state).unwrap(), bad);
     }
+}
+
+#[test]
+fn load_refuses_a_value_outside_the_spec() {
+    let (_t, sp) = setup();
+    fs::create_dir_all(&sp.sync).unwrap();
+    for (what, s) in bad_states() {
+        let bytes = serde_json::to_vec_pretty(&s).unwrap();
+        fs::write(&sp.state, &bytes).unwrap();
+        let e = load(&sp).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::InvalidData, "{what}: {s:?}");
+        assert_eq!(
+            fs::read(&sp.state).unwrap(),
+            bytes,
+            "{what}: the file is unchanged"
+        );
+    }
+    fs::write(&sp.state, serde_json::to_vec_pretty(&good_state()).unwrap()).unwrap();
+    let s = load(&sp).unwrap();
+    assert_eq!(s, good_state());
+    save(&sp, &s).unwrap();
 }
 
 #[test]
