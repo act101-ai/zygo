@@ -1,9 +1,9 @@
 # MS-4 — Address grammar and the ULID file form
 
 **Spec:** `docs/specs/2026-11-24-mail-sync-design.md` S§5 (Address, Local address), S§7.2, S§8.5 "Checks" (name form `^[0-9A-HJKMNP-TV-Z]{26}\.json$`); S§16 (M§6)
-**Files:** `crates/zygo-mail-sync/src/address.rs`, `crates/zygo-mail-sync/tests/address.rs`, `docs/specs/2026-11-22-workspace-mail-design.md` (S§16 change note: M§6 gains the address grammar and the reserved name zygo)
-**Consumes:** `valid_mail_host` (MS-3); the member name form and the reserved names cli and all: `valid_member_name` (ML-1), `RESERVED_MEMBER_NAMES` (ML-1); zygo_core::ids::reserved_member_name (existing, crates/zygo-core/src/ids.rs:11)
-**Produces:** `zygo_mail_sync::address::Address { pub name: String, pub host: String }`, `zygo_mail_sync::address::parse(s: &str) -> Option<Address>`, `zygo_mail_sync::address::To` (enum: `Local(String)`, `Remote(Address)`, `All`), `zygo_mail_sync::address::AddrError` (enum: `Reserved`, `BadForm`), `zygo_mail_sync::address::resolve_to(s: &str, own_hosts: &[String]) -> Result<To, AddrError>`, `zygo_mail_sync::address::RESERVED: [&str; 3]`, `zygo_mail_sync::address::ulid_file(name: &str) -> Option<ulid::Ulid>`
+**Files:** `crates/zygo-mail-sync/src/address.rs`, `crates/zygo-mail-sync/tests/address.rs`, `docs/specs/2026-11-22-workspace-mail-design.md` (S§16 change note: M§6 gains the address grammar and the reserved name zygo), `crates/zygo-core/src/ids.rs`, `crates/zygo-core/tests/core_basics.rs`, `crates/zygo-config/tests/config_layers.rs` (review round 1: `zygo` joins `RESERVED_MEMBER_NAMES`)
+**Consumes:** `valid_mail_host` (MS-3); the member name form and the reserved names all, cli and zygo: `valid_member_name` (ML-1), `RESERVED_MEMBER_NAMES` (ML-1, extended to `[&str; 3]` by this node, review round 1); zygo_core::ids::reserved_member_name (existing, crates/zygo-core/src/ids.rs:11)
+**Produces:** `zygo_mail_sync::address::Address { pub name: String, pub host: String }`, `zygo_mail_sync::address::parse(s: &str) -> Option<Address>`, `zygo_mail_sync::address::To` (enum: `Local(String)`, `Remote(Address)`, `All`; `Local` holds either a member name or a pane key, and callers tell them apart with `zygo_core::ids::reserved_member_name` (the pane-key form `^k[a-z2-7]{8}$`)), `zygo_mail_sync::address::AddrError` (enum: `Reserved`, `BadForm`), `zygo_mail_sync::address::resolve_to(s: &str, own_hosts: &[String]) -> Result<To, AddrError>`, `zygo_mail_sync::address::RESERVED` (re-export of `zygo_core::ids::RESERVED_MEMBER_NAMES`, `[&str; 3]`), `zygo_core::ids::RESERVED_MEMBER_NAMES: [&str; 3] = ["all", "cli", "zygo"]`, `zygo_mail_sync::address::ulid_file(name: &str) -> Option<ulid::Ulid>`
 **Acceptance:** `cargo test -p zygo-mail-sync --test address` → all pass: a bare name is `Local`; `<name>@<own host>` is `Local(<name>)`; `<name>@<other host>` is `Remote`; `all` is `All`; `cli@<host>` and `zygo@<host>` are `Reserved`; a name or host outside its form is `BadForm`; `ulid_file` accepts Crockford ULID names only (no `I`, `L`, `O`, `U`, no lower case, no other suffix).
 
 ## Plan
@@ -20,14 +20,14 @@ Premise check (live code at origin/phase-3, ac931a1d):
 Consumes (live):
 - `pub fn valid_mail_host(s: &str) -> bool` (`crates/zygo-config/src/schema.rs:733`, MS-3): true exactly for `^[a-z0-9][a-z0-9-]{0,31}$`.
 - `pub fn valid_member_name(s: &str) -> bool` (`crates/zygo-core/src/ids.rs:19`, ML-1): true exactly for `^[a-z][a-z0-9-]{0,31}$` and not `reserved_member_name`.
-- `pub const RESERVED_MEMBER_NAMES: [&str; 2] = ["all", "cli"];` (`crates/zygo-core/src/ids.rs:7`, ML-1).
+- `pub const RESERVED_MEMBER_NAMES: [&str; 2] = ["all", "cli"];` (`crates/zygo-core/src/ids.rs:7`, ML-1); review round 1 makes it `[&str; 3] = ["all", "cli", "zygo"]`.
 - `pub fn reserved_member_name(s: &str) -> bool` (`crates/zygo-core/src/ids.rs:11`, added by the ML-1 review; not in ML-1's Produces line, so the contract names it as existing code): in `RESERVED_MEMBER_NAMES`, or of pane-key form `^k[a-z2-7]{8}$`.
 - `ulid::Ulid` (crate `ulid` 3.0.0): `pub struct Ulid(pub u128)`, `Ulid::from_string(&str) -> Result<Ulid, DecodeError>`, `Display` as 26 upper-case Crockford characters.
 
 Produces (exact, all in `crates/zygo-mail-sync/src/address.rs`):
-- `pub const RESERVED: [&str; 3] = ["all", "cli", "zygo"];`
+- `pub use zygo_core::ids::RESERVED_MEMBER_NAMES as RESERVED;` (`["all", "cli", "zygo"]`; was its own `pub const` before review round 1)
 - `#[derive(Debug, Clone, PartialEq, Eq)] pub struct Address { pub name: String, pub host: String }`
-- `#[derive(Debug, Clone, PartialEq, Eq)] pub enum To { Local(String), Remote(Address), All }`
+- `#[derive(Debug, Clone, PartialEq, Eq)] pub enum To { Local(String), Remote(Address), All }`: `Local` holds either a member name or a pane key; callers tell them apart with `zygo_core::ids::reserved_member_name` (the pane-key form `^k[a-z2-7]{8}$`).
 - `#[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum AddrError { Reserved, BadForm }`
 - `pub fn parse(s: &str) -> Option<Address>`: `Some` exactly when `s` is `<name>@<host>` (split at the first `@`), `valid_member_name(name)`, `name` not in `RESERVED`, and `valid_mail_host(host)` (which refuses a second `@`).
 - `pub fn resolve_to(s: &str, own_hosts: &[String]) -> Result<To, AddrError>`, in this order:
@@ -207,3 +207,11 @@ Author's checks:
 ### Departure
 
 - Step 9, `cargo fmt --all -- --check`: the expected "no format diff" does not hold against the live code. The repository has no `rustfmt.toml`, and the check reports differences in 295 files at the base (ac931a1d plus this node), most of them in files this node does not change. CI runs no format check (`.github/workflows/ci.yml:45` runs `cargo test --workspace --locked --no-fail-fast` only), and the phase 2 ledger already records this (`docs/work/phase2/graph.md:138`). `address.rs` and `tests/address.rs` keep the repository's existing wide-line style and the test text of steps 1-4 as written; they are not reformatted.
+
+### Review round 1
+
+- F1 (scope change): M§6 and S§7.2 reserve `zygo`, but `RESERVED_MEMBER_NAMES` (`crates/zygo-core/src/ids.rs:7`) held only `all` and `cli`, so config check accepted a loadout pane named `zygo`. The core list is now `["all", "cli", "zygo"]`, and `address::RESERVED` is a `pub use` re-export of it, not a second list. The re-export keeps the name in this node's Produces line; no other node's contract names `address::RESERVED`. Files gain `crates/zygo-core/src/ids.rs`, `crates/zygo-core/tests/core_basics.rs` (the ML-1 test of the list, now 3 names, and `reserved_member_name("zygo")`) and `crates/zygo-config/tests/config_layers.rs` (`mail_check_refuses_bad_pane_names`: a pane `name = "zygo"` is reserved). `tests/address.rs` compares `RESERVED` with `RESERVED_MEMBER_NAMES` in full. No existing test used a member named `zygo`.
+- F2: `To::Local` documents that it holds a member name or a pane key; Produces says the same.
+- F3: the M§6 change-log row cites "mail sync design S§16", as the M§11 row above it does.
+- F5: new tests `a_pane_key_with_a_host_is_bad_form` (`kabcdefgh@studio-2` → `BadForm`) and `a_name_that_is_also_an_own_host_is_local` (`b@b` with own host `b` → `Local("b")`). The address test count is now 13.
+- F4: no change; the step 9 Departure stands.

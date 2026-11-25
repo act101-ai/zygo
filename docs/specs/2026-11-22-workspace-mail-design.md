@@ -220,4 +220,4 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-24 | M§6 | author's call | A name of pane-key form is reserved so `mail_send`'s `to` stays unambiguous (ML-1 review). |
 | 2026-11-24 | M-C3, M§5 | author's call | link, not rename, so a delivery or read never replaces an existing message (ML-2 review) |
 | 2026-11-24 | M§11 | mail sync design S§16 | Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11). |
-| 2026-11-25 | M§6 | author's call (S§16) | Gains the address grammar (S§7.2) and the reserved name `zygo`, the sender of the S§8.6 refused-message notice, which has no inbox. |
+| 2026-11-25 | M§6 | mail sync design S§16 | Gains the address grammar (S§7.2) and the reserved name `zygo`, the sender of the S§8.6 refused-message notice, which has no inbox. |

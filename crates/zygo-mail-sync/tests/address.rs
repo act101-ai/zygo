@@ -22,7 +22,7 @@ const GOOD: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 #[test]
 fn reserved_names_are_all_cli_and_zygo() {
     assert_eq!(RESERVED, ["all", "cli", "zygo"]);
-    assert_eq!(&RESERVED[..2], &RESERVED_MEMBER_NAMES[..]);
+    assert_eq!(RESERVED, RESERVED_MEMBER_NAMES);
 }
 
 #[test]
@@ -48,6 +48,17 @@ fn another_host_address_is_remote() {
     let name = format!("a{}", "b".repeat(31));
     let host = "0".repeat(32);
     assert_eq!(resolve_to(&format!("{name}@{host}"), &own()), remote(&name, &host));
+}
+
+#[test]
+fn a_pane_key_with_a_host_is_bad_form() {
+    assert_eq!(resolve_to("kabcdefgh@studio-2", &own()), Err(AddrError::BadForm));
+}
+
+#[test]
+fn a_name_that_is_also_an_own_host_is_local() {
+    let own = vec!["b".to_string()];
+    assert_eq!(resolve_to("b@b", &own), local("b"));
 }
 
 #[test]

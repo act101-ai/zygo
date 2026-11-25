@@ -3,8 +3,8 @@
 use zygo_config::valid_mail_host;
 use zygo_core::ids::{reserved_member_name, valid_member_name, RESERVED_MEMBER_NAMES};
 
-/// Names no address may take (S§7.2; S§16 M§6): `zygo` is the sender of the S§8.6 notice and has no inbox.
-pub const RESERVED: [&str; 3] = ["all", "cli", "zygo"];
+/// Names no address may take (S§7.2; S§16 M§6): the core list of reserved member names.
+pub use zygo_core::ids::RESERVED_MEMBER_NAMES as RESERVED;
 
 /// A member on a host of the side branch, `<name>@<host>` (S§5 Address).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +16,8 @@ pub struct Address {
 /// Where a `to` value sends a message (S§7.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum To {
+    /// A member name or a pane key; callers tell them apart with `zygo_core::ids::reserved_member_name`
+    /// (the pane-key form `^k[a-z2-7]{8}$`).
     Local(String),
     Remote(Address),
     All,

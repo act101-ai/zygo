@@ -1,4 +1,4 @@
-use zygo_core::ids::{ulid, valid_member_name, RESERVED_MEMBER_NAMES};
+use zygo_core::ids::{reserved_member_name, ulid, valid_member_name, RESERVED_MEMBER_NAMES};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -586,10 +586,11 @@ fn valid_member_name_accepts_the_m6_grammar() {
 
 #[test]
 fn valid_member_name_refuses_others_and_the_reserved() {
-    assert_eq!(RESERVED_MEMBER_NAMES, ["all", "cli"]);
+    assert_eq!(RESERVED_MEMBER_NAMES, ["all", "cli", "zygo"]);
+    assert!(reserved_member_name("zygo")); // M§6, mail sync design S§7.2
     let long = format!("a{}", "b".repeat(32));
     assert_eq!(long.len(), 33);
-    for bad in ["Elena", "1a", "-a", long.as_str(), "all", "cli", "", "a_b", "a.b", "a b", "é", "a/b"] {
+    for bad in ["Elena", "1a", "-a", long.as_str(), "all", "cli", "zygo", "", "a_b", "a.b", "a b", "é", "a/b"] {
         assert!(!valid_member_name(bad), "{bad:?}");
     }
 }
