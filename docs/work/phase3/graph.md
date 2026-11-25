@@ -198,7 +198,6 @@ Session text (T, SX nodes):
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| OS-5 | MCP result tools record one read-back row per successful reply | OS-3 | DONE | implementation | aa64beea · acc readbacks 8/zygo-mcp 72/mcp_stdio 4 · PR #96 |
 | OS-8 | `zygo usage` prints the net figures, breakdown and ratio | OS-7 | DONE | implementation | a7e1fa29 1773594e e906160f · usage_doctor 45/0, savings 8; floor green · PR #101 |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
@@ -225,7 +224,7 @@ Session text (T, SX nodes):
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | TODO | judgment | — |
-| WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | TODO | implementation | — |
+| WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | DONE | implementation | 8c8dd676, 7b189dbd, a08afc56 · loadout 15/0, state 43/0 ; floor green · PR #115 |
 | RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | TODO | implementation | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | TODO | judgment | — |
@@ -398,3 +397,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-9 done (ed8193ef 4bed6315): session text item 8; review 1 important (no-record pane told it is reachable; item now omitted) + 2 test gaps, dup names fixed; FX-9 added (OpenCode per-request rebuild). Floor green. PR #106. |
 | 2026-11-25 | ML-15 done (0128c7fa 63b94dd8): HUD member name + unread mail; review 2 important (mail scan starved git/status workers: fixed; width rule kept) + 2 test gaps fixed; FX-10 (HUD spec), FX-11 (doctor ✉) added. Floor green. PR #108. |
 | 2026-11-25 | WD-8 done: `state::Launch` gains `job` and `definition`; review found `Pin` dropped unknown keys (AU78), fixed with `Pin.extra` and `Pin::new` · PR #110 |
+| 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
