@@ -143,6 +143,64 @@ fn input_duplicate_registry_id_refused() {
 }
 
 #[test]
+fn input_criterion_outside_its_capability_refused() {
+    let e = Registry::parse(&text("registry.toml").replace("\"A-3.1\"", "\"A-7.1\"")).unwrap_err();
+    assert!(e.contains("A-7.1"), "{e}");
+    let e = Registry::parse(&text("registry.toml").replace("\"A-3.1\"", "\"WA-3.1\"")).unwrap_err();
+    assert!(e.contains("WA-3.1"), "{e}");
+    let e = Registry::parse(&text("registry.toml").replace("\"A-3.1\"", "\"A-3\"").replace("id = \"A-3\"\n", "id = \"A-30\"\n")).unwrap_err();
+    assert!(e.contains("A-3"), "{e}");
+    let e = Registry::parse(&text("registry.toml").replace("id = \"A-3\"\n", "id = \"A-3.5\"\n")).unwrap_err();
+    assert!(e.contains("A-3.5"), "{e}");
+    let e = GradeFile::parse(&text("alpha.toml").replace("capability = \"A-3\"", "capability = \"A-3.1\"")).unwrap_err();
+    assert!(e.contains("A-3.1"), "{e}");
+}
+
+#[test]
+fn input_empty_registry_or_capability_refused() {
+    assert!(Registry::parse("capability = []\n").is_err());
+    assert!(Registry::parse("").is_err());
+    let t = "[[capability]]\nid = \"A-1\"\nname = \"n\"\ntier = \"core\"\nstandard = \"s\"\ncriterion = []\n";
+    assert!(Registry::parse(t).unwrap_err().contains("A-1"));
+}
+
+#[test]
+fn input_control_characters_refused() {
+    for bad in ["\\u0000", "\\u0007", "\\t", "\\u2028", "\\u2029", "\\u0085", "\\u001b"] {
+        let reg = text("registry.toml");
+        let grade = text("alpha.toml");
+        for t in [
+            reg.replace("Turn start.", &format!("Turn{bad}start.")),
+            reg.replace("zygo sees each turn.", &format!("zygo{bad}sees")),
+            reg.replace("\"Turn signals\"", &format!("\"Turn{bad}signals\"")),
+            reg.clone() + &format!("\n[[bar_exception]]\nclient = \"alpha\"\ncriterion = \"A-1.2\"\nreason = \"r\"\napproved = \"op{bad}x\"\n"),
+            reg.clone() + &format!("\n[[bar_exception]]\nclient = \"alpha\"\ncriterion = \"A-1.2\"\nreason = \"r{bad}x\"\napproved = \"op\"\n"),
+        ] {
+            assert!(Registry::parse(&t).is_err(), "{bad}: {t}");
+        }
+        for t in [
+            grade.replace("Alpha has no turn events", &format!("Alpha{bad}has")),
+            grade.replace("alpha/models", &format!("alpha/{bad}models")),
+            grade.replace("name = \"Alpha\"", &format!("name = \"Al{bad}pha\"")),
+            grade.replace("#Q1", &format!("#Q{bad}1")),
+        ] {
+            assert!(GradeFile::parse(&t).is_err(), "{bad}: {t}");
+        }
+    }
+}
+
+#[test]
+fn input_file_over_1_mib_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let pad = format!("# {}\n", "x".repeat(1 << 20));
+    for name in ["registry.toml", "alpha.toml"] {
+        std::fs::write(d.path().join(name), text(name) + &pad).unwrap();
+    }
+    assert!(Registry::load(&d.path().join("registry.toml")).unwrap_err().contains("1 MiB"));
+    assert!(GradeFile::load(&d.path().join("alpha.toml")).unwrap_err().contains("1 MiB"));
+}
+
+#[test]
 fn check_cfg_unix_test_counts_with_platform() {
     let p = |f: &str| evidence(&repo(), &format!("test:crates/demo/tests/ev.rs::{f}")).unwrap().platforms;
     assert_eq!(p("unix_only"), ["unix"]);

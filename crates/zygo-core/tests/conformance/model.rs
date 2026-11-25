@@ -106,10 +106,33 @@ pub struct Fault {
     pub text: String,
 }
 
+/// The largest input file the check reads: registry, grade file, premise file, test source.
+const READ_MAX: u64 = 1 << 20;
+
+/// Read a UTF-8 file of at most `READ_MAX` bytes; an `Err` text starts with `<path>: `.
+fn read_capped(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let err = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    let mut bytes = Vec::new();
+    std::fs::File::open(path).and_then(|f| f.take(READ_MAX + 1).read_to_end(&mut bytes)).map_err(|e| err(&e))?;
+    if bytes.len() as u64 > READ_MAX {
+        return Err(err(&"the file is over 1 MiB"));
+    }
+    String::from_utf8(bytes).map_err(|e| err(&e))
+}
+
 /// Read `path`, then `parse`; an `Err` text starts with `<path>: `.
 fn load_with<T>(path: &Path, parse: fn(&str) -> Result<T, String>) -> Result<T, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = read_capped(path)?;
     parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// A text the generator prints: no control character, U+2028 or U+2029.
+fn need_text(what: &str, text: &str) -> Result<(), String> {
+    match text.chars().find(|&c| c.is_control() || c == '\u{2028}' || c == '\u{2029}') {
+        Some(c) => Err(format!("{what} `{}` holds the character U+{:04X}", text.escape_debug(), c as u32)),
+        None => Ok(()),
+    }
 }
 
 /// `^(A|WA)-[0-9]+(\.[0-9]+)?$`
@@ -126,6 +149,18 @@ fn valid_id(id: &str) -> bool {
 
 fn need_id(what: &str, id: &str) -> Result<(), String> {
     if valid_id(id) { Ok(()) } else { Err(format!("{what} `{id}` is not an id of the form A-n, A-n.m, WA-n or WA-n.m")) }
+}
+
+/// A capability id: `A-n` or `WA-n`, no `.`.
+fn need_cap_id(what: &str, id: &str) -> Result<(), String> {
+    need_id(what, id)?;
+    if id.contains('.') { Err(format!("{what} `{id}` is a criterion id, not a capability id")) } else { Ok(()) }
+}
+
+/// A criterion id: `A-n.m` or `WA-n.m`.
+fn need_criterion_id(what: &str, id: &str) -> Result<(), String> {
+    need_id(what, id)?;
+    if id.contains('.') { Ok(()) } else { Err(format!("{what} `{id}` is a capability id, not a criterion id")) }
 }
 
 /// A one-line text of at most 300 characters.
@@ -146,22 +181,39 @@ impl Registry {
 
     pub fn parse(text: &str) -> Result<Registry, String> {
         let reg: Registry = toml::from_str(text).map_err(|e| e.to_string())?;
+        if reg.capability.is_empty() {
+            return Err("the registry has no capability".into());
+        }
         let mut seen = BTreeSet::new();
         for cap in &reg.capability {
-            need_id("capability.id", &cap.id)?;
+            need_cap_id("capability.id", &cap.id)?;
+            need_text("capability.name", &cap.name)?;
+            need_text("capability.standard", &cap.standard)?;
             if !seen.insert(cap.id.as_str()) {
                 return Err(format!("capability id `{}` is given twice", cap.id));
             }
+            if cap.criterion.is_empty() {
+                return Err(format!("capability `{}` has no criterion", cap.id));
+            }
             for c in &cap.criterion {
-                need_id("criterion.id", &c.id)?;
+                need_criterion_id("criterion.id", &c.id)?;
+                if c.id.rsplit_once('.').map(|(head, _)| head) != Some(cap.id.as_str()) {
+                    return Err(format!("criterion id `{}` is not of the form `{}.<n>`", c.id, cap.id));
+                }
+                need_text("criterion.text", &c.text)?;
                 if !seen.insert(c.id.as_str()) {
                     return Err(format!("criterion id `{}` is given twice", c.id));
                 }
             }
         }
         for b in &reg.bar_exception {
-            need_id("bar_exception.criterion", &b.criterion)?;
+            need_criterion_id("bar_exception.criterion", &b.criterion)?;
+            need_text("bar_exception.client", &b.client)?;
             need_line("bar_exception.reason", &b.reason)?;
+            need_text("bar_exception.reason", &b.reason)?;
+            if let Some(a) = &b.approved {
+                need_text("bar_exception.approved", a)?;
+            }
         }
         Ok(reg)
     }
@@ -174,14 +226,19 @@ impl GradeFile {
 
     pub fn parse(text: &str) -> Result<GradeFile, String> {
         let g: GradeFile = toml::from_str(text).map_err(|e| e.to_string())?;
+        need_text("client", &g.client)?;
+        need_text("name", &g.name)?;
+        need_text("version", &g.version)?;
         for c in &g.cell {
-            need_id("cell.capability", &c.capability)?;
+            need_cap_id("cell.capability", &c.capability)?;
             need_line("cell.url", &c.url)?;
+            need_text("cell.url", &c.url)?;
         }
         for e in &g.grade {
-            need_id("grade.criterion", &e.criterion)?;
+            need_criterion_id("grade.criterion", &e.criterion)?;
             if let Some(r) = &e.reason {
                 need_line("grade.reason", r)?;
+                need_text("grade.reason", r)?;
             }
             for ev in &e.evidence {
                 parse_evidence(ev)?;
@@ -212,7 +269,8 @@ fn need_rel(e: &str, path: &str) -> Result<(), String> {
 }
 
 fn parse_evidence(e: &str) -> Result<Ev<'_>, String> {
-    let bad = |why: &str| Err(format!("evidence `{e}`: {why}"));
+    let bad = |why: &str| Err(format!("evidence `{}`: {why}", e.escape_debug()));
+    need_text("evidence", e)?;
     if let Some(rest) = e.strip_prefix("test:") {
         let Some((path, func)) = rest.rsplit_once("::") else { return bad("no `::<fn>`") };
         need_rel(e, path)?;
