@@ -104,7 +104,7 @@ fn input_evidence_path_absolute_or_dotdot_refused() {
     ] {
         let t = text("alpha.toml").replace("\"test:crates/demo/tests/ev.rs::plain\"", &format!("'{bad}'"));
         assert!(GradeFile::parse(&t).is_err(), "{bad}");
-        assert!(evidence(&repo(), bad).is_err(), "{bad}");
+        assert!(evidence(&repo(), bad, "Alpha").is_err(), "{bad}");
     }
 }
 
@@ -200,22 +200,104 @@ fn input_file_over_1_mib_refused() {
     assert!(GradeFile::load(&d.path().join("alpha.toml")).unwrap_err().contains("1 MiB"));
 }
 
+const EVERY: [&str; 3] = ["linux", "macos", "windows"];
+
 #[test]
 fn check_cfg_unix_test_counts_with_platform() {
-    let p = |f: &str| evidence(&repo(), &format!("test:crates/demo/tests/ev.rs::{f}")).unwrap().platforms;
-    assert_eq!(p("unix_only"), ["unix"]);
+    let p = |f: &str| evidence(&repo(), &format!("test:crates/demo/tests/ev.rs::{f}"), "Alpha").unwrap().platforms;
+    assert_eq!(p("unix_only"), ["linux", "macos"]);
     assert_eq!(p("in_windows_mod"), ["windows"]);
-    assert!(p("in_cfg_test_mod").is_empty());
-    assert!(p("plain").is_empty());
+    assert_eq!(p("in_cfg_test_mod"), EVERY);
+    assert_eq!(p("plain"), EVERY);
 }
 
 #[test]
 fn check_tokio_multi_thread_test_counts() {
     for f in ["tokio_multi", "tokio_plain"] {
-        assert_eq!(evidence(&repo(), &format!("test:crates/demo/tests/ev.rs::{f}")), Ok(Evidence { platforms: vec![] }));
+        let e = evidence(&repo(), &format!("test:crates/demo/tests/ev.rs::{f}"), "Alpha");
+        assert_eq!(e, Ok(Evidence { platforms: EVERY.map(String::from).to_vec() }));
     }
 }
 
+#[test]
+fn check_cfg_predicates_evaluated_for_the_ci_targets() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(d.path().join("crates/x")).unwrap();
+    let src = [
+        "#[cfg(any())] mod never { #[test] fn dead() {} }",
+        "#[cfg(all(test, unix))] #[test] fn both() {}",
+        "#[cfg(target_os = \"windows\")] #[test] fn tos() {}",
+        "#[cfg_attr(unix, test)] fn ca() {}",
+        "#[cfg_attr(feature = \"x\", test)] fn ca_feature() {}",
+        "#[cfg(feature = \"x\")] #[test] fn feature() {}",
+        "#[cfg(miri)] #[test] fn miri() {}",
+        "#[test] #[cfg_attr(miri, ignore)] fn miri_ignore() {}",
+        "#[cfg(test)] #[cfg(unix)] #[test] fn two() {}",
+        "#[cfg(not(windows))] #[test] fn not_windows() {}",
+        "#[cfg(any(target_os = \"linux\", target_family = \"windows\"))] #[test] fn mix() {}",
+        "#[cfg(target_os = \"freebsd\")] #[test] fn bsd() {}",
+        "#[cfg(all())] mod always { #[cfg(target_os = \"macos\")] mod mac { #[tokio::test] async fn deep() {} } }",
+    ]
+    .join("\n");
+    std::fs::write(d.path().join("crates/x/t.rs"), src).unwrap();
+    let ev = |f: &str| evidence(d.path(), &format!("test:crates/x/t.rs::{f}"), "Alpha").map(|e| e.platforms);
+    assert_eq!(ev("both").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("tos").unwrap(), ["windows"]);
+    assert_eq!(ev("ca").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("two").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("not_windows").unwrap(), ["linux", "macos"]);
+    assert_eq!(ev("mix").unwrap(), ["linux", "windows"]);
+    assert_eq!(ev("deep").unwrap(), ["macos"]);
+    for f in ["dead", "bsd"] {
+        assert!(ev(f).unwrap_err().contains("never runs in CI"), "{f}");
+    }
+    for f in ["feature", "ca_feature", "miri", "miri_ignore"] {
+        assert!(ev(f).unwrap_err().contains("not provable"), "{f}");
+    }
+}
+
+#[test]
+fn check_3_premise_of_another_client_not_evidence() {
+    assert!(evidence(&repo(), "premise:docs/premises.md#Q1", "Alpha").is_ok());
+    assert!(evidence(&repo(), "premise:docs/premises.md#Q1", "Beta").unwrap_err().contains("Alpha"));
+    let (r, mut g, c) = base();
+    entry(&mut g[1], "A-1.2").evidence = vec!["premise:docs/premises.md#Q1".into()];
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[3]));
+}
+
+#[test]
+fn check_3_premise_or_test_source_over_1_mib_not_evidence() {
+    let d = copy_repo();
+    let pad = |p: &Path, line: &str| {
+        let t = std::fs::read_to_string(p).unwrap() + &line.repeat((1 << 20) / line.len() + 1);
+        std::fs::write(p, t).unwrap();
+    };
+    pad(&d.path().join("docs/premises.md"), "<!-- padding -->\n");
+    pad(&d.path().join("crates/demo/tests/ev.rs"), "// padding\n");
+    assert!(evidence(d.path(), "premise:docs/premises.md#Q1", "Alpha").unwrap_err().contains("1 MiB"));
+    assert!(evidence(d.path(), "test:crates/demo/tests/ev.rs::plain", "Alpha").unwrap_err().contains("1 MiB"));
+    let (r, g, c) = base();
+    assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[3, 7]));
+}
+
+#[test]
+fn check_resolve_holds_met_evidence_with_platforms() {
+    let (_, g, _) = base();
+    let res = resolve(&repo(), &g);
+    let met: Vec<(&str, &str)> = res.grade.iter().map(|x| (x.client.as_str(), x.criterion.as_str())).collect();
+    assert_eq!(met, [("alpha", "A-1.1"), ("alpha", "A-1.2"), ("alpha", "A-3.1"), ("beta", "A-1.1"), ("beta", "A-1.2"), ("beta", "WA-2.1")]);
+    let wa = res.get("beta", "WA-2.1").unwrap();
+    assert_eq!(wa.file, 1);
+    assert_eq!(wa.evidence[0].text, "test:crates/demo/tests/ev.rs::unix_only");
+    assert_eq!(wa.evidence[0].result, Ok(Evidence { platforms: vec!["linux".into(), "macos".into()] }));
+    assert!(res.get("alpha", "WA-2.1").is_none());
+    let mut bad = g.clone();
+    entry(&mut bad[0], "A-1.1").evidence.push("test:crates/demo/tests/ev.rs::nope".into());
+    let res = resolve(&repo(), &bad);
+    assert!(res.get("alpha", "A-1.1").unwrap().evidence[1].result.as_ref().unwrap_err().contains("no test fn"));
+}
+
+// Symbolic-link cases run only on unix: making a link on Windows needs a privilege the CI runner does not give.
 #[cfg(unix)]
 #[test]
 fn input_evidence_link_leaving_repo_refused() {
@@ -224,17 +306,28 @@ fn input_evidence_link_leaving_repo_refused() {
     std::fs::copy(repo().join("crates/demo/tests/ev.rs"), out.path().join("ev.rs")).unwrap();
     std::os::unix::fs::symlink(out.path().join("x.json"), d.path().join("fixtures/beta/out.json")).unwrap();
     std::os::unix::fs::symlink(out.path().join("ev.rs"), d.path().join("crates/demo/tests/link.rs")).unwrap();
-    assert!(evidence(d.path(), "fixture:fixtures/beta/out.json").unwrap_err().contains("leaves the repository"));
-    assert!(evidence(d.path(), "test:crates/demo/tests/link.rs::plain").unwrap_err().contains("leaves the repository"));
+    assert!(evidence(d.path(), "fixture:fixtures/beta/out.json", "Beta").unwrap_err().contains("leaves the repository"));
+    assert!(evidence(d.path(), "test:crates/demo/tests/link.rs::plain", "Beta").unwrap_err().contains("leaves the repository"));
 }
 
+// Unix only, for the reason given above `input_evidence_link_leaving_repo_refused`.
 #[cfg(unix)]
 #[test]
 fn check_3_symlink_fixture_not_evidence() {
     let d = copy_repo();
     std::os::unix::fs::symlink("capture.json", d.path().join("fixtures/beta/link.json")).unwrap();
-    assert!(evidence(d.path(), "fixture:fixtures/beta/link.json").is_err());
-    assert!(evidence(d.path(), "fixture:fixtures/beta/capture.json").is_ok());
+    assert!(evidence(d.path(), "fixture:fixtures/beta/link.json", "Beta").is_err());
+    assert!(evidence(d.path(), "fixture:fixtures/beta/capture.json", "Beta").is_ok());
+}
+
+// Unix only, for the reason given above `input_evidence_link_leaving_repo_refused`.
+#[cfg(unix)]
+#[test]
+fn check_3_fixture_through_link_out_of_fixtures_not_evidence() {
+    let d = copy_repo();
+    std::os::unix::fs::symlink(d.path().join("crates/demo"), d.path().join("fixtures/beta/dl")).unwrap();
+    let e = evidence(d.path(), "fixture:fixtures/beta/dl/tests/ev.rs", "Beta").unwrap_err();
+    assert!(e.contains("leaves fixtures/"), "{e}");
 }
 
 #[test]

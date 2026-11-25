@@ -100,6 +100,39 @@ pub struct Evidence {
     pub platforms: Vec<String>,
 }
 
+/// The evidence of each `met` grade, resolved against the repository once, so that the check (item 3)
+/// and the generator read the same result with no file system.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    /// One entry per `met` grade, in grade-file order, then grade order.
+    pub grade: Vec<ResolvedGrade>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedGrade {
+    /// The index of the grade file in the `grades` given to `resolve`.
+    pub file: usize,
+    pub client: String,
+    pub criterion: String,
+    /// Each evidence item of the grade, in file order.
+    pub evidence: Vec<ResolvedEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedEvidence {
+    /// The evidence string as written in the grade file.
+    pub text: String,
+    /// `Ok` when the item counts by K§6.2.3, with the CI targets it runs on; else why it does not count.
+    pub result: Result<Evidence, String>,
+}
+
+impl Resolved {
+    /// The first resolved `met` grade of `client` for `criterion`.
+    pub fn get(&self, client: &str, criterion: &str) -> Option<&ResolvedGrade> {
+        self.grade.iter().find(|x| x.client == client && x.criterion == criterion)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fault {
     pub item: u8,
@@ -303,63 +336,115 @@ fn parse_evidence(e: &str) -> Result<Ev<'_>, String> {
     }
 }
 
-pub fn evidence(root: &Path, e: &str) -> Result<Evidence, String> {
+/// Resolve the evidence of each `met` grade of `grades` (K§6.2.3). A `premise:` row counts for the
+/// grade file's `name`; check item 7 holds that name equal to the client's name.
+pub fn resolve(root: &Path, grades: &[GradeFile]) -> Resolved {
+    let mut grade = Vec::new();
+    for (file, g) in grades.iter().enumerate() {
+        for e in g.grade.iter().filter(|e| e.status == Status::Met) {
+            let evidence = e
+                .evidence
+                .iter()
+                .map(|text| ResolvedEvidence { text: text.clone(), result: evidence(root, text, &g.name) })
+                .collect();
+            grade.push(ResolvedGrade { file, client: g.client.clone(), criterion: e.criterion.clone(), evidence });
+        }
+    }
+    Resolved { grade }
+}
+
+/// The CI targets, in canonical order: `Evidence.platforms` is the subset where a test compiles.
+const TARGETS: [&str; 3] = ["linux", "macos", "windows"];
+
+/// For each of `TARGETS`, whether a cfg predicate holds there.
+type Targets = [bool; 3];
+
+const EVERY: Targets = [true; 3];
+
+fn names(t: Targets) -> Vec<String> {
+    TARGETS.iter().zip(t).filter(|(_, on)| *on).map(|(n, _)| n.to_string()).collect()
+}
+
+fn and(a: Targets, b: Targets) -> Targets {
+    [a[0] && b[0], a[1] && b[1], a[2] && b[2]]
+}
+
+fn or(a: Targets, b: Targets) -> Targets {
+    [a[0] || b[0], a[1] || b[1], a[2] || b[2]]
+}
+
+/// Whether `e` counts as evidence for the client named `client_name`, and on which CI targets.
+/// A `fixture:` or `premise:` item holds on every target.
+pub fn evidence(root: &Path, e: &str, client_name: &str) -> Result<Evidence, String> {
     let ev = parse_evidence(e)?;
+    let fail = |why: String| format!("evidence `{e}`: {why}");
     let rel = match ev {
         Ev::Test { path, .. } | Ev::Fixture { path } => path,
         Ev::Premise { file, .. } => file,
     };
     let full = root.join(rel);
-    let canon = full.canonicalize().map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
-    let canon_root = root.canonicalize().map_err(|err| format!("evidence `{e}`: {}: {err}", root.display()))?;
+    let canon = full.canonicalize().map_err(|err| fail(format!("{rel}: {err}")))?;
+    let canon_root = root.canonicalize().map_err(|err| fail(format!("{}: {err}", root.display())))?;
     if !canon.starts_with(&canon_root) {
-        return Err(format!("evidence `{e}`: {rel} leaves the repository"));
+        return Err(fail(format!("{rel} leaves the repository")));
     }
-    let read = |p: &Path| std::fs::read_to_string(p).map_err(|err| format!("evidence `{e}`: {rel}: {err}"));
+    let every = Evidence { platforms: names(EVERY) };
     match ev {
         Ev::Test { func, .. } => {
-            let file = syn::parse_file(&read(&canon)?).map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
+            let text = read_capped(&canon).map_err(fail)?;
+            let file = syn::parse_file(&text).map_err(|err| fail(format!("{rel}: {err}")))?;
             let mut found = Vec::new();
             find_tests(&file.items, func, &mut Vec::new(), &mut found);
-            let (attrs, platforms) = match found.len() {
-                0 => return Err(format!("evidence `{e}`: no test fn `{func}` in {rel}")),
+            let found = match found.len() {
+                0 => return Err(fail(format!("no test fn `{func}` in {rel}"))),
                 1 => found.remove(0),
-                _ => return Err(format!("evidence `{e}`: ambiguous, {rel} has {} test fns `{func}`", found.len())),
+                n => return Err(fail(format!("ambiguous, {rel} has {n} test fns `{func}`"))),
             };
-            if attrs.iter().any(is_ignore) {
-                return Err(format!("evidence `{e}`: test fn `{func}` is ignored"));
+            let (targets, ignored) = found.map_err(fail)?;
+            if ignored {
+                return Err(fail(format!("test fn `{func}` is ignored")));
             }
-            Ok(Evidence { platforms })
+            if targets == [false; 3] {
+                return Err(fail(format!("test fn `{func}` compiles on no CI target, so it never runs in CI")));
+            }
+            Ok(Evidence { platforms: names(targets) })
         }
         Ev::Fixture { .. } => {
-            let meta = std::fs::symlink_metadata(&full).map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
+            let canon_fixtures = root.join("fixtures").canonicalize().map_err(|err| fail(format!("fixtures/: {err}")))?;
+            if !canon.starts_with(&canon_fixtures) {
+                return Err(fail(format!("{rel} leaves fixtures/ through a link")));
+            }
+            let meta = std::fs::symlink_metadata(&full).map_err(|err| fail(format!("{rel}: {err}")))?;
             if meta.file_type().is_symlink() {
-                return Err(format!("evidence `{e}`: {rel} is a symbolic link"));
+                return Err(fail(format!("{rel} is a symbolic link")));
             }
             if !meta.is_file() || meta.len() <= 2 {
-                return Err(format!("evidence `{e}`: {rel} is not a regular file of more than 2 bytes"));
+                return Err(fail(format!("{rel} is not a regular file of more than 2 bytes")));
             }
-            let bytes = std::fs::read(&full).map_err(|err| format!("evidence `{e}`: {rel}: {err}"))?;
+            let bytes = std::fs::read(&full).map_err(|err| fail(format!("{rel}: {err}")))?;
             let squeezed: Vec<u8> = bytes.into_iter().filter(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n')).collect();
             if squeezed == b"{}" || squeezed == b"[]" {
-                return Err(format!("evidence `{e}`: {rel} is trivial"));
+                return Err(fail(format!("{rel} is trivial")));
             }
-            Ok(Evidence { platforms: vec![] })
+            Ok(every)
         }
         Ev::Premise { file, id } => {
-            let text = read(&canon)?;
+            let text = read_capped(&canon).map_err(fail)?;
             let head = format!("| {id} |");
             let rows: Vec<&str> = text.lines().filter(|l| l.trim_start_matches(' ').starts_with(&head)).collect();
             let [row] = rows[..] else {
-                return Err(format!("evidence `{e}`: {file} has {} rows `{id}`, not one", rows.len()));
+                return Err(fail(format!("{file} has {} rows `{id}`, not one", rows.len())));
             };
-            let want = if file == "docs/premises.md" { "verified" } else { "pass" };
             let cells = split_row(row);
-            let got = cells.get(6).map(|c| c.trim()).unwrap_or("");
-            if got != want {
-                return Err(format!("evidence `{e}`: the result of `{id}` is `{got}`, not `{want}`"));
+            let cell = |i: usize| cells.get(i).map(|c| c.trim()).unwrap_or("");
+            if cell(3) != client_name {
+                return Err(fail(format!("row `{id}` is for `{}`, not `{client_name}`", cell(3))));
             }
-            Ok(Evidence { platforms: vec![] })
+            let want = if file == "docs/premises.md" { "verified" } else { "pass" };
+            if cell(6) != want {
+                return Err(fail(format!("the result of `{id}` is `{}`, not `{want}`", cell(6))));
+            }
+            Ok(every)
         }
     }
 }
@@ -379,79 +464,120 @@ fn split_row(row: &str) -> Vec<&str> {
     cells
 }
 
-/// The text of each `#[cfg(…)]` in `attrs`, leaving out a bare `test`.
-fn cfgs(attrs: &[syn::Attribute], out: &mut Vec<String>) {
-    for a in attrs {
-        if let syn::Meta::List(l) = &a.meta {
-            if l.path.is_ident("cfg") {
-                let t = l.tokens.to_string();
-                if t != "test" {
-                    out.push(t);
-                }
+fn path_is(p: &syn::Path, want: &[&str]) -> bool {
+    p.segments.len() == want.len() && p.segments.iter().zip(want).all(|(s, w)| s.ident == w)
+}
+
+fn is_test_attr(p: &syn::Path) -> bool {
+    path_is(p, &["test"]) || path_is(p, &["tokio", "test"])
+}
+
+/// The CI targets where a cfg predicate holds. Only `unix`, `windows`, `test` (true), `target_os`,
+/// `target_family`, `not`, `all` and `any` are provable; any other predicate is refused.
+fn eval_cfg(m: &syn::Meta) -> Result<Targets, String> {
+    let name = |p: &syn::Path| p.get_ident().map(|i| i.to_string()).unwrap_or_else(|| "a path".into());
+    let unprovable = |p: &syn::Path| Err(format!("the cfg predicate `{}` is not provable on the CI targets", name(p)));
+    match m {
+        syn::Meta::Path(p) => match name(p).as_str() {
+            "unix" => Ok([true, true, false]),
+            "windows" => Ok([false, false, true]),
+            "test" => Ok(EVERY),
+            _ => unprovable(p),
+        },
+        syn::Meta::NameValue(nv) => {
+            let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value else { return unprovable(&nv.path) };
+            let v = s.value();
+            match name(&nv.path).as_str() {
+                "target_os" => Ok(TARGETS.map(|t| t == v)),
+                "target_family" => Ok([v == "unix", v == "unix", v == "windows"]),
+                _ => unprovable(&nv.path),
+            }
+        }
+        syn::Meta::List(l) => {
+            let args = l
+                .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                .map_err(|e| format!("the cfg predicate `{}(…)` is not readable: {e}", name(&l.path)))?;
+            match name(&l.path).as_str() {
+                "all" => args.iter().try_fold(EVERY, |acc, m| Ok(and(acc, eval_cfg(m)?))),
+                "any" => args.iter().try_fold([false; 3], |acc, m| Ok(or(acc, eval_cfg(m)?))),
+                "not" if args.len() == 1 => eval_cfg(&args[0]).map(|t| t.map(|b| !b)),
+                _ => unprovable(&l.path),
             }
         }
     }
 }
 
-fn path_is(p: &syn::Path, want: &[&str]) -> bool {
-    p.segments.len() == want.len() && p.segments.iter().zip(want).all(|(s, w)| s.ident == w)
+/// The predicate of each `#[cfg(…)]` in `attrs`, evaluated.
+fn cfg_targets(attrs: &[syn::Attribute]) -> Result<Targets, String> {
+    let mut t = EVERY;
+    for a in attrs.iter().filter(|a| path_is(a.path(), &["cfg"])) {
+        let pred: syn::Meta = a.parse_args().map_err(|e| format!("a cfg is not readable: {e}"))?;
+        t = and(t, eval_cfg(&pred)?);
+    }
+    Ok(t)
 }
 
-/// Push each test fn named `func` in `items` and in inline modules, with its attributes and platforms.
-fn find_tests(items: &[syn::Item], func: &str, stack: &mut Vec<String>, found: &mut Vec<(Vec<syn::Attribute>, Vec<String>)>) {
+/// A test fn found: the CI targets where it is a test and compiles, and whether it is ignored on one.
+type Found = Result<(Targets, bool), String>;
+
+/// `Some` when `f` is a test fn (`#[test]`, `#[tokio::test]`, or either inside `#[cfg_attr(<pred>, …)]`).
+fn test_fn(f: &syn::ItemFn, outer: Targets) -> Option<Found> {
+    let direct = f.attrs.iter().any(|a| is_test_attr(a.path()));
+    let mut via = Vec::new(); // the predicates of the cfg_attr that make it a test
+    let mut ignore_via = Vec::new(); // the predicates of the cfg_attr that ignore it
+    for a in f.attrs.iter().filter(|a| path_is(a.path(), &["cfg_attr"])) {
+        let parsed = a.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated);
+        let Ok(list) = parsed else {
+            return Some(Err("a cfg_attr is not readable".into()));
+        };
+        let mut list = list.into_iter();
+        let Some(pred) = list.next() else { continue };
+        for m in list {
+            if is_test_attr(m.path()) {
+                via.push(pred.clone());
+            } else if path_is(m.path(), &["ignore"]) {
+                ignore_via.push(pred.clone());
+            }
+        }
+    }
+    if !direct && via.is_empty() {
+        return None;
+    }
+    Some((|| {
+        let mut test = if direct { EVERY } else { [false; 3] };
+        for p in &via {
+            test = or(test, eval_cfg(p)?);
+        }
+        let targets = and(and(test, outer), cfg_targets(&f.attrs)?);
+        let mut ignored = f.attrs.iter().any(|a| path_is(a.path(), &["ignore"]));
+        for p in &ignore_via {
+            ignored |= eval_cfg(p)? != [false; 3];
+        }
+        Ok((targets, ignored))
+    })())
+}
+
+/// Push each test fn named `func` in `items` and in inline modules; `stack` holds the targets of the enclosing modules.
+fn find_tests(items: &[syn::Item], func: &str, stack: &mut Vec<Result<Targets, String>>, found: &mut Vec<Found>) {
     for item in items {
         match item {
             syn::Item::Fn(f) if f.sig.ident == func => {
-                let is_test = f.attrs.iter().any(|a| path_is(a.path(), &["test"]) || path_is(a.path(), &["tokio", "test"]));
-                if is_test {
-                    let mut platforms = stack.clone();
-                    cfgs(&f.attrs, &mut platforms);
-                    found.push((f.attrs.clone(), platforms));
+                let outer = stack.iter().try_fold(EVERY, |acc, t| t.clone().map(|t| and(acc, t)));
+                match outer {
+                    Ok(outer) => found.extend(test_fn(f, outer)),
+                    Err(e) => found.extend(test_fn(f, EVERY).map(|_| Err(e))),
                 }
             }
             syn::Item::Mod(m) => {
                 if let Some((_, inner)) = &m.content {
-                    let depth = stack.len();
-                    cfgs(&m.attrs, stack);
+                    stack.push(cfg_targets(&m.attrs));
                     find_tests(inner, func, stack, found);
-                    stack.truncate(depth);
+                    stack.pop();
                 }
             }
             _ => {}
         }
     }
-}
-
-/// `#[ignore]` in any form, or a `cfg_attr(…)` whose tokens hold the ident `ignore`.
-fn is_ignore(a: &syn::Attribute) -> bool {
-    if path_is(a.path(), &["ignore"]) {
-        return true;
-    }
-    let syn::Meta::List(l) = &a.meta else { return false };
-    if !path_is(&l.path, &["cfg_attr"]) {
-        return false;
-    }
-    // The idents of the token text, string literals left out.
-    let text = l.tokens.to_string();
-    let mut plain = String::new();
-    let (mut in_str, mut esc) = (false, false);
-    for c in text.chars() {
-        if in_str {
-            match (esc, c) {
-                (true, _) => esc = false,
-                (false, '\\') => esc = true,
-                (false, '"') => in_str = false,
-                _ => {}
-            }
-            plain.push(' ');
-        } else if c == '"' {
-            in_str = true;
-            plain.push(' ');
-        } else {
-            plain.push(c);
-        }
-    }
-    plain.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|w| w == "ignore")
 }
 
 fn blank(s: &Option<String>) -> bool {
@@ -460,7 +586,7 @@ fn blank(s: &Option<String>) -> bool {
 
 /// The header lines of a premise file: each line before the first that starts with `##`, a line-end `\r` removed.
 fn header_lines(path: &Path) -> Result<Vec<String>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = read_capped(path)?;
     Ok(text.lines().take_while(|l| !l.starts_with("##")).map(|l| l.strip_suffix('\r').unwrap_or(l).to_string()).collect())
 }
 
@@ -501,13 +627,11 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
         }
     }
     // 3. each met grade has an item of evidence that counts
-    for g in grades {
-        for e in g.grade.iter().filter(|e| e.status == Status::Met) {
-            let errs: Vec<String> = e.evidence.iter().map(|x| evidence(root, x)).filter_map(Result::err).collect();
-            if errs.len() == e.evidence.len() {
-                let why = if errs.is_empty() { "no evidence".to_string() } else { errs.join("; ") };
-                fault(3, format!("client `{}`: met criterion `{}` has no evidence that counts: {why}", g.client, e.criterion));
-            }
+    for x in resolve(root, grades).grade {
+        if !x.evidence.iter().any(|e| e.result.is_ok()) {
+            let errs: Vec<String> = x.evidence.into_iter().filter_map(|e| e.result.err()).collect();
+            let why = if errs.is_empty() { "no evidence".to_string() } else { errs.join("; ") };
+            fault(3, format!("client `{}`: met criterion `{}` has no evidence that counts: {why}", x.client, x.criterion));
         }
     }
     // 4. a reason for each not-met or n/a grade; no n/a on a core criterion
