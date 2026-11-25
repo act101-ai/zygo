@@ -62,7 +62,7 @@ Cases (each starts `D=$(mk <dir>)`; the dir name is free):
 
 Steps:
 
-- [ ] 1. Add `run_names` and cases 51-56 to `scripts/test-check-premises.sh` as in Cases above. Commit `test(premises): PC-8 failing cases for the verbatim name scan and indented rows`.
+- [x] 1. Add `run_names` and cases 51-56 to `scripts/test-check-premises.sh` as in Cases above. Commit `test(premises): PC-8 failing cases for the verbatim name scan and indented rows`.
 - [ ] 2. Run `sh scripts/test-check-premises.sh` → exit 1, first line `test-check-premises: FAIL a forbidden name only in the verbatim schema: exit 1, expected 0`. The harness stops at the first failure; the before-fix results of 53 and 54 are the ones recorded in Planning notes (b). Record the output under `## Results`.
 - [ ] 3. In `scripts/check-premises.sh`, `name_scan` (`:251-261`): add the optional 4th argument `<exempt ERE>` and drop the matching hit lines before `head -n 1`, by the same form as `scan` (`grep -v -E -- "${4:-^\$}"`). Change the N2 call (`:262`) to `name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"`. The host-name call (`:279`) is unchanged. Update the comments: `:251` (the new argument), and `:207-209` so the verbatim files are said to be exempt from the path and bearer rules and from the N2_FORBIDDEN_NAMES scan.
 - [ ] 4. In `scripts/check-premises.sh`, `TROWS` (`:68-73`): replace `^[ \t]*\|` with `^ ? ? ?\|` at `:70` (separator: `/^ ? ? ?\|[-:| \t]*$/`), `:71` and `:72`. Update the comment `:64-67`: a table line starts with zero to three blanks and `|`; a line with four or more leading blanks or a leading tab is not a table line (Markdown renders it as code) and ends the Results table.

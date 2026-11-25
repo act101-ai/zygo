@@ -83,6 +83,13 @@ run() {
     N=$((N + 1))
 }
 
+# run_names <dir> <names>: as run, with N2_FORBIDDEN_NAMES set to the names for the script.
+run_names() {
+    OUT=$(N2_FORBIDDEN_NAMES="$2" sh "$1/scripts/check-premises.sh" 2>&1)
+    RC=$?
+    N=$((N + 1))
+}
+
 expect_ok() {
     [ "$RC" -eq 0 ] || fail "exit $RC, expected 0"
     case "$(printf '%s\n' "$OUT" | tail -n 1)" in
@@ -481,6 +488,48 @@ CASE="a joint agent with no header for the second"
 D=$(mk joint)
 evidence "$D"
 add_row "$D" "$(row PC1 'Claude Code + Cursor' '2.1.328 + 1.0' verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: agent 'Cursor' $NOHDR"
+
+CASE="a forbidden name only in the verbatim schema"
+D=$(mk names_verbatim)
+run_names "$D" alice
+expect_ok
+
+CASE="a forbidden name in another fixture"
+D=$(mk names_other)
+printf '%s\n' 'owner alice' > "$D/fixtures/codex/other.txt"
+run_names "$D" alice
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: fixtures/codex/other.txt:1"
+
+CASE="a row indented four blanks"
+D=$(mk indent4)
+evidence "$D"
+add_row "$D" '    | PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
+run "$D"
+expect_ok
+case "$OUT" in *' PC9'*) fail "ok line names PC9" ;; esac
+
+CASE="a row indented with a tab"
+D=$(mk indenttab)
+evidence "$D"
+add_row "$D" "$(printf '\t| PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |')"
+run "$D"
+expect_ok
+case "$OUT" in *' PC9'*) fail "ok line names PC9" ;; esac
+
+CASE="a row indented three blanks"
+D=$(mk indent3)
+evidence "$D"
+add_row "$D" '   | PC9 | Test row | tmux | 3.2 | 2026-11-25 | verified | `fixtures/codex/empty.json` |'
+run "$D"
+expect_fail "PC9: evidence path fixtures/codex/empty.json is missing, not a regular file, or trivial"
+
+CASE="a header line indented four blanks"
+D=$(mk hdrindent4)
+evidence "$D"
+add_header "$D" '    Cursor: 1.0'
+add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_fail "PC1: agent 'Cursor' $NOHDR"
 
