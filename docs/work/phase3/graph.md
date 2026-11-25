@@ -201,7 +201,6 @@ Session text (T, SX nodes):
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| MS-10 | Side branch plumbing: index-only worktree, fetch, bootstrap, commit, push | MS-5 | DONE | judgment | 2384d84a · branch 36/36; floor green · PR #74 |
 | OS-15 | Shaping pipeline: step order, reuse rule, byte bound | OS-13 | TODO | judgment | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | WD-6 | The repository loadout from `[members]`, with the default set | WD-4, WD-5 | DONE | implementation | 3e0d705e, 6613f8d9 · repo_def_loadout 12/0 ; floor green · PR #109 |
@@ -217,7 +216,7 @@ Session text (T, SX nodes):
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | DONE | judgment | f5a7e8cd f97e8031 bce0413f · repo_def_apply 18/0, config_layers 90/0 (16 ignored) ; floor green · PR #112 |
 | WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | DONE | implementation | 8c8dd676, 7b189dbd, a08afc56 · loadout 15/0, state 43/0 ; floor green · PR #115 |
-| RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | TODO | implementation | — |
+| RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | DONE | implementation | fab29ce1, 72c3d03a, da38c41a · zygo-hooks 247/0 ; floor green · PR #118 |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
@@ -399,4 +398,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
 | 2026-11-25 | ML-14 done: unread counts in zygo workspace, zygo ls and up; forget-pane removes mail/<key>/ (file, folder or link); FX-12 (HUD count) and FX-13 (maildir lifecycle) added from review. Floor green · PR #116. |
 | 2026-11-25 | OS-9 DONE (80d820d0 04a9d343): `[results] shape` (default true) in config, the session view and the launcher; trim passes it on; review round 2 fixed 2 test gaps; floor green · PR #117 |
+| 2026-11-25 | RT-3 DONE (fab29ce1 72c3d03a da38c41a): run-time HUD segment in compact and verbose with its width order; collect reads workspace.json once via member_read; review round 2 fixed 2; FX-11 widened to add the 󰅐 clock glyph to the doctor table. Floor green · PR #118 |
 | 2026-11-25 | WD-13 DONE: launcher reads a repo profile from the default branch only for a name in neither user nor team config; prints not-approved, invalid, not-read lines; passthrough: no profile from any source, one line. L6 (duplicate precedence sentence, base §11.1) left to WD-14 · PR #121 |

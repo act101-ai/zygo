@@ -355,6 +355,7 @@ fn slash_failure_blocks_with_compact_failed() {
 
 const HUD_LOGO: &str = "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}";
 const HUD_MODEL: &str = "\u{f4bc}";
+const HUD_CLOCK: &str = "\u{f0150}";
 
 /// The status line HUD of a live session (H§6, H§7): the served model, `ctx -/<window>` before the first request,
 /// the threshold mark, tokens and spend from the proxy. The cache is version 2 and holds data, not a line.
@@ -441,9 +442,10 @@ fn statusline_style_from_the_overrides_then_the_view() {
     rows(1);
     SessionView { session: id.clone(), statusline_style: "verbose".into(), ..Default::default() }.save(&sd).unwrap();
     let verbose = rows(2);
+    // Row 1 ends with the run time (session run time design T§2.4): the session started in this test, so `0m`.
     assert_eq!(
         verbose,
-        format!("{HUD_LOGO}  ENG-42   {HUD_MODEL} opus-5-5   local\nz\u{28e}\u{183}o  ctx -/1m ⇣800k   ↑ 0 in  ↓ 0 out   $0.00")
+        format!("{HUD_LOGO}  ENG-42   {HUD_MODEL} opus-5-5   local   {HUD_CLOCK} 0m\nz\u{28e}\u{183}o  ctx -/1m ⇣800k   ↑ 0 in  ↓ 0 out   $0.00")
     );
     std::fs::write(sd.overrides_json(), r#"{"statusline":"wide"}"#).unwrap();
     assert_eq!(rows(2), verbose);
