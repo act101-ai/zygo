@@ -1,0 +1,6 @@
+    group_test.go:24: fetch attempt 1: status 503
+    group_test.go:24: fetch attempt 2: status 503
+    group_test.go:24: fetch attempt 3: status 503
+    group_test.go:27: want status 200, got 503
+--- FAIL: TestGroup (0.00s)
+    --- FAIL: TestGroup/fail_fetch (0.03s)
