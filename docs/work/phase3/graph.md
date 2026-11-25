@@ -219,7 +219,7 @@ Session text (T, SX nodes):
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
 | RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | TODO | implementation | — |
 | RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
-| SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | TODO | implementation | — |
+| SX-1 | Claude Code subagent branch of `hook session-start`: mechanics text on `SubagentStart` for every non-`zygo-` subagent (T§6.3 item 2) | DR-1 | DONE | implementation | 6a979de 346fa1a · subagent_text 10 pass (9 subagent_start, 1 main_compact); floor green · PR #39 |
 | SX-3 | `hook pre-compact` sets `reinject/<agent_id>` for a non-`zygo-` subagent (T§9.2 item 1) | DR-1 | TODO | implementation | — |
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | TODO | mechanical | — |
@@ -363,5 +363,8 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-12 planned (1cffa68): 18 steps · PR #37 |
 | 2026-11-24 | DR-12 in progress: node branch `phase3/DR-12--DR-12` at 3374eea, worktree `.worktrees/phase3/DR-12-node` · PR #37 |
 | 2026-11-24 | DR-12 done: check_keep D§9.4 steps 1-9; review round 1 fixed 6 (merge paths, session line, stop problems); floor 2560/0 · PR #37 |
+| 2026-11-24 | SX-1 planned (cf52550): 7 steps · PR #39 |
+| 2026-11-24 | SX-1 in progress: node branch `phase3/SX-1--SX-1` at 0f7034f, worktree `.worktrees/phase3/SX-1-node` · PR #39 |
+| 2026-11-24 | SX-1 done: mechanics text on SubagentStart for non-zygo subagents; review round 1 (3 confirmed, 1 refuted); floor 2570 passed 0 failed · PR #39 |
 | 2026-11-24 | FX-1 added (b5acf60): found in the RT-1 floor, a 24-min hang of git_runner stream_stop_kills_the_process_group; root cause Darwin FIFO lost wakeup; git_runner and decision_git kill tests use an anonymous pipe; tests only; 8 steps |
 | 2026-11-24 | FX-1 in progress: node branch `phase3/FX-1--FX-1`, worktree `.worktrees/phase3/FX-1-node` · PR #40 |
