@@ -1,7 +1,7 @@
 # ML-8 — `zygo ws name <key> <name>`
 
 **Spec:** `docs/specs/2026-11-22-workspace-mail-design.md` M§6 (last paragraph); `docs/specs/2026-11-20-workspaces-design.md` W§12, AU84
-**Files:** `crates/zygo/src/cmd/ws.rs`, `crates/zygo-workspace/src/admin.rs`, `crates/zygo-workspace/tests/admin.rs`
+**Files:** `crates/zygo/src/cmd/ws.rs`, `crates/zygo-workspace/src/admin.rs`, `crates/zygo-workspace/tests/admin.rs`, `crates/zygo/src/cmd/member.rs` (review round 1, F1: `hand_join` keeps a rename made after the marker read)
 **Consumes:** `MemberRecord.name` (ML-3), `Pane.name` (ML-3), `valid_member_name` (ML-1)
 **Produces:** `zygo_workspace::admin::rename_member(paths: &Paths, workspace: Option<&str>, cwd: &Path, key: &str, new_name: &str, out: &mut dyn Write, err: &mut dyn Write) -> i32`, `cmd::ws::WsCmd::Name { key: String, name: String, workspace: Option<String> }`
 **Acceptance:** `test "$(cargo test -q -p zygo-workspace --test admin -- rename_member --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-workspace --test admin && cargo test -p zygo --lib` → every count holds (at least 4 named `rename_member…` in zygo-workspace `admin`; a count of 0 fails before any run), then all pass: the record's `name` and the `panes[]` entry change in one write under `lock`; `mail/<key>/` is not moved; an invalid key, an invalid or reserved name, or a name another member holds exits 1 with one line and changes nothing; an unknown key exits 1
@@ -40,7 +40,7 @@ Review focus: graph line 56 (reserved names refused) is step 1 test `rename_memb
 
 Steps:
 
-- [ ] 1. In `crates/zygo-workspace/tests/admin.rs`, add `use zygo_workspace::mail::mail_dir;` to the imports and, at the end of the file, these helpers and tests:
+- [x] 1. In `crates/zygo-workspace/tests/admin.rs`, add `use zygo_workspace::mail::mail_dir;` to the imports and, at the end of the file, these helpers and tests:
   ```rust
   // ---- ML-8: `zygo ws name` ----
 
@@ -182,19 +182,19 @@ Steps:
       );
   }
   ```
-- [ ] 2. Run `cargo test -p zygo-workspace --test admin -- rename_member`. Check: build fails with E0425, no function `rename_member` in `admin`.
-- [ ] 3. In `crates/zygo-workspace/src/admin.rs`, move the block `let ws = match name { … };` (`admin.rs:787-812`) into `fn pane_workspace(paths: &Paths, name: Option<&str>, cwd: &Path, no_folder: &str) -> Result<Workspace, String>`, with its own `not_found` and `link` closures as at `admin.rs:785-786` and `no_folder` in place of `NO_FOLDER`. In `forget_pane_run` replace the block with `let ws = pane_workspace(paths, name, cwd, NO_FOLDER)?;` and keep `not_found` and `link` (used at `admin.rs:820-821`). Check: `cargo build -p zygo-workspace` passes; `forget_pane_run` gives the same lines.
-- [ ] 4. In `admin.rs`, add `use zygo_core::ids::valid_member_name;`, `use crate::mail::names;`, the const `NO_FOLDER_WS: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --workspace";`, and `pub fn rename_member(paths: &Paths, tmux: &Path, workspace: Option<&str>, cwd: &Path, key: &str, new_name: &str, out: &mut dyn Write, err: &mut dyn Write) -> i32`, doc `/// zygo ws name <key> <name> (M§6, W§7.3)`. It prints the `Ok` line on `out` (exit 0) or the `Err` line on `err` (exit 1), as `forget_pane` (`admin.rs:766-779`). The body of its `fn rename_run(..) -> Result<String, String>`:
+- [x] 2. Run `cargo test -p zygo-workspace --test admin -- rename_member`. Check: build fails with E0425, no function `rename_member` in `admin`.
+- [x] 3. In `crates/zygo-workspace/src/admin.rs`, move the block `let ws = match name { … };` (`admin.rs:787-812`) into `fn pane_workspace(paths: &Paths, name: Option<&str>, cwd: &Path, no_folder: &str) -> Result<Workspace, String>`, with its own `not_found` and `link` closures as at `admin.rs:785-786` and `no_folder` in place of `NO_FOLDER`. In `forget_pane_run` replace the block with `let ws = pane_workspace(paths, name, cwd, NO_FOLDER)?;` and keep `not_found` and `link` (used at `admin.rs:820-821`). Check: `cargo build -p zygo-workspace` passes; `forget_pane_run` gives the same lines.
+- [x] 4. In `admin.rs`, add `use zygo_core::ids::valid_member_name;`, `use crate::mail::names;`, the const `NO_FOLDER_WS: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --workspace";`, and `pub fn rename_member(paths: &Paths, tmux: &Path, workspace: Option<&str>, cwd: &Path, key: &str, new_name: &str, out: &mut dyn Write, err: &mut dyn Write) -> i32`, doc `/// zygo ws name <key> <name> (M§6, W§7.3)`. It prints the `Ok` line on `out` (exit 0) or the `Err` line on `err` (exit 1), as `forget_pane` (`admin.rs:766-779`). The body of its `fn rename_run(..) -> Result<String, String>`:
   1. `!valid_pane_key(key)`: `Err("zygo: invalid pane key <esc(key)>")`.
   2. `!valid_member_name(new_name)`: `Err` of the bad-name line of the Author's calls.
   3. `let ws = pane_workspace(paths, workspace, cwd, NO_FOLDER_WS)?;` `label = ws.name`.
   4. `Store::open(paths, &ws.id).update_existing(snapshot::OP_WAIT, ..)`; in the closure: no `c.members[key]` → `bail!("zygo: {label} has no member record for pane {key}")`; `names::members(c)` has a target with `t.key != key` and `t.name == Some(new_name)` → `bail!("zygo: name {new_name} belongs to pane {}; nothing changed", t.key)`; else set `c.members[key].name` and the `name` of the `c.panes` entry with `p.key == key` (when there is one) to `Some(new_name)`.
   5. `Ok(Some(w))`: `snapshot::after_write(paths, &Tmux::new(tmux.to_path_buf(), w.tmux_socket.clone()), &ws.id, snapshot::OP_WAIT)`, result ignored as at `admin.rs:866`; `Ok("zygo: pane {key} of {label} is now named {new_name}")`. `Ok(None)`: `Err("zygo: no workspace named <esc(label)>")`. `Err(StateError::Refused(e))`: `Err(e.to_string())`. `Err(StateError::Busy)`: `Err("zygo: workspace {label} is busy; try again")`. Other `Err(e)`: `Err("zygo: {e}")`.
   Check: `cargo build -p zygo-workspace` passes.
-- [ ] 5. Run `cargo test -p zygo-workspace --test admin -- rename_member --include-ignored`. Check: 5 passed, 0 failed.
-- [ ] 6. Run `cargo test -p zygo-workspace --test admin -- forget_pane --include-ignored`. Check: all pass (the move of step 3 changed no `forget-pane` line).
-- [ ] 7. Commit `crates/zygo-workspace/src/admin.rs` and `crates/zygo-workspace/tests/admin.rs`, message `ML-8: zygo_workspace::admin::rename_member` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
-- [ ] 8. In the `tests` module of `crates/zygo/src/cmd/ws.rs` (`ws.rs:485`), add:
+- [x] 5. Run `cargo test -p zygo-workspace --test admin -- rename_member --include-ignored`. Check: 5 passed, 0 failed.
+- [x] 6. Run `cargo test -p zygo-workspace --test admin -- forget_pane --include-ignored`. Check: all pass (the move of step 3 changed no `forget-pane` line).
+- [x] 7. Commit `crates/zygo-workspace/src/admin.rs` and `crates/zygo-workspace/tests/admin.rs`, message `ML-8: zygo_workspace::admin::rename_member` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
+- [x] 8. In the `tests` module of `crates/zygo/src/cmd/ws.rs` (`ws.rs:485`), add:
   ```rust
   #[test] // M§6: `zygo ws name <key> <name> [--workspace <w>]`
   fn ws_name_parses_key_name_and_workspace() {
@@ -211,7 +211,16 @@ Steps:
       assert!(Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa"]).is_err());
   }
   ```
-- [ ] 9. Run `cargo test -p zygo --lib ws_name_parses`. Check: build fails with E0599, no variant `Name` on `WsCmd`.
-- [ ] 10. In `ws.rs`, add to `WsCmd` after `ForgetPane` (`ws.rs:56-61`): `/// Name one member of a workspace; mail stays in its pane-key folder` `Name { key: String, name: String, /// Workspace name; default: the workspace of this folder  #[arg(long)] workspace: Option<String> }`. In `dispatch` add the arm `WsCmd::Name { key, name, workspace }`: `cwd` as the `ForgetPane` arm does it (`ws.rs:82-89`, keyed on `workspace`), then `admin::rename_member(&paths, &tmux_program(), workspace.as_deref(), &cwd, &key, &name, &mut std::io::stdout().lock(), &mut std::io::stderr().lock())`. Add `zygo ws name <key> <name> [--workspace <w>]` to the module doc at `ws.rs:1`. Check: `cargo build -p zygo` passes.
-- [ ] 11. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test admin -- rename_member --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-workspace --test admin && cargo test -p zygo --lib`. Check: the count is 5; all pass, `ws_name_parses_key_name_and_workspace` among them.
-- [ ] 12. Commit `crates/zygo/src/cmd/ws.rs`, message `ML-8: zygo ws name` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists that one file.
+- [x] 9. Run `cargo test -p zygo --lib ws_name_parses`. Check: build fails with E0599, no variant `Name` on `WsCmd`.
+- [x] 10. In `ws.rs`, add to `WsCmd` after `ForgetPane` (`ws.rs:56-61`): `/// Name one member of a workspace; mail stays in its pane-key folder` `Name { key: String, name: String, /// Workspace name; default: the workspace of this folder  #[arg(long)] workspace: Option<String> }`. In `dispatch` add the arm `WsCmd::Name { key, name, workspace }`: `cwd` as the `ForgetPane` arm does it (`ws.rs:82-89`, keyed on `workspace`), then `admin::rename_member(&paths, &tmux_program(), workspace.as_deref(), &cwd, &key, &name, &mut std::io::stdout().lock(), &mut std::io::stderr().lock())`. Add `zygo ws name <key> <name> [--workspace <w>]` to the module doc at `ws.rs:1`. Check: `cargo build -p zygo` passes.
+- [x] 11. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test admin -- rename_member --list 2>/dev/null | grep -c ': test$')" -ge 4 && cargo test -p zygo-workspace --test admin && cargo test -p zygo --lib`. Check: the count is 5; all pass, `ws_name_parses_key_name_and_workspace` among them.
+- [x] 12. Commit `crates/zygo/src/cmd/ws.rs`, message `ML-8: zygo ws name` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-8:implement`, each on its own line. Check: `git show --stat HEAD` lists that one file.
+
+## Round 2
+
+- [x] F1: `hand_join` (`crates/zygo/src/cmd/member.rs`) keeps a `ws name` made after the marker was read: with no `--name`, a kept record whose valid name under `lock` is not the marker name keeps its name. Test `hand_join_keeps_a_rename_made_after_the_marker_was_read`.
+- [x] F6: `rename_member` sets no name on a shell pane. Test `rename_member_leaves_a_shell_pane_unnamed`.
+- [x] F7: `forget_pane_run` and `pane_workspace` share `not_found` and `link_line`; no line changed (forget_pane tests pass with `--include-ignored`).
+- [x] F4: `rename_member_waits_for_the_state_lock` is `#[ignore]` as a timing test.
+- [x] F3: test `rename_member_reports_an_invalid_state` (a new state over 1 MiB, `StateError::Invalid`). `Busy` is not tested (needs the 5 s bound); `Ok(None)` is not tested (no hook between the lookup and the lock).
+- F2: not tested. `dispatch` reads `Paths::from_env`, and the binary tests in `crates/zygo/tests/` are outside this node's files.
