@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 
 use semver::Version;
 use zygo_config::keys::{default_store, error_kind, resolve_with, SecretStore};
-use zygo_config::repo_def::{check_default, repository_loadout, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT};
+use zygo_config::repo_def::{
+    check_default, repository_loadout, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT,
+};
 use zygo_config::{load, KeyRef, Layer, LoadContext, LoadoutPane, Merged, BUILTIN_LOADOUT};
 use zygo_core::exit::ExitCode;
 use zygo_core::paths::Paths;
@@ -20,12 +22,12 @@ use zygo_plugins::select::selection;
 use zygo_plugins::snapshot::missing_commands;
 use zygo_plugins::store::{state, ManifestState};
 use zygo_work::policy::Policy;
-use zygo_work::repo::checkout;
 use zygo_workspace::identity::workspace_id;
 use zygo_workspace::loadout::builtin_solo;
 use zygo_workspace::mux::tmux::Tmux;
-use zygo_workspace::pool;
 use zygo_workspace::mux::{Multiplexer, MuxError, MIN_VERSION};
+use zygo_workspace::pool;
+use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
 use super::status::repo_top;
 use super::verbs::VerbCtx;
@@ -247,13 +249,19 @@ pub fn report(env: &Env, merged: &Merged) -> Vec<String> {
     out
 }
 
-/// R§10 `zygo doctor`: the workspace files of the default branch (only in a checkout), the member maximum of their
+/// R§10 `zygo doctor`: the workspace files of the default branch (only where `zygo up` finds a checkout), the member maximum of their
 /// repository loadout, the `[workspace] pool` directory, and the pool directories that the loadout `zygo up` would
 /// choose shares. Never fails: each case is a line. R-C6: the pool is listed by names and types only, no file opened.
 pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn GitRunner) -> Vec<String> {
     let mut out = Vec::new();
-    let found = checkout(cwd, Instant::now() + Duration::from_secs(2))
-        .map(|co| check_default(&co.top, &workspace_id(&co.common_dir), approvals, git));
+    // The checkout of `zygo up` (a bare repository's folder and `.git` give the main worktree); an `Err` is up's
+    // "not a repository": no workspace-files line.
+    let found = find_checkout(cwd, GIT_BOUND)
+        .ok()
+        .map(|(co, ..)| check_default(&co.top, &workspace_id(&co.common_dir), approvals, git));
+    // R§10 `up` row: `[workspace] default_loadout` chooses only when the user config file sets it.
+    let user_default =
+        (merged.source_of("workspace.default_loadout") == Layer::User).then_some(&merged.config.workspace.default_loadout);
     let c12 = |c: &str| c.get(..12).unwrap_or(c).to_string();
     let def = match &found {
         None => None,
@@ -278,8 +286,11 @@ pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn
             None
         }
     };
-    // A user `[loadout.repository]` is used in place of the repository one (R§10 `up` row).
-    if let Some(lo) = def.and_then(repository_loadout).filter(|_| !merged.config.loadout.contains_key(REPOSITORY_LOADOUT)) {
+    // R§9.4 applies to the repository loadout only: not when the user chooses another loadout, and not when a user
+    // `[loadout.repository]` is used in its place (R§10 `up` row).
+    let repository_chosen = user_default.is_none_or(|n| n == REPOSITORY_LOADOUT);
+    let used = repository_chosen && !merged.config.loadout.contains_key(REPOSITORY_LOADOUT);
+    if let Some(lo) = def.and_then(repository_loadout).filter(|_| used) {
         let n = lo.window.iter().flat_map(|w| &w.pane).filter(|p| p.kind != "shell").count();
         let m = merged.config.limits.max_members;
         if n > m as usize {
@@ -308,8 +319,8 @@ pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn
         Some(Use::Approved { def, .. }) => Some(def),
         _ => None,
     };
-    let name = if merged.source_of("workspace.default_loadout") == Layer::User {
-        merged.config.workspace.default_loadout.clone()
+    let name = if let Some(n) = user_default {
+        n.clone()
     } else if approved.is_some_and(|d| d.workspace.is_some()) {
         REPOSITORY_LOADOUT.to_string()
     } else {
