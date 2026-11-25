@@ -1,4 +1,4 @@
-//! `ls`, `workspace`, `ws forget`, `ws forget-pane`. Owner: node W8 (W§12).
+//! `ls`, `workspace`, `ws forget`, `ws forget-pane`, `ws name`. Owner: node W8 (W§12); `ws name`: node ML-8 (M§6).
 //!
 //! The library reads no process environment: the tmux program, `$TMUX` and `ZYGO_WORKSPACE` come in as inputs, and
 //! `forget` and `forget_pane` write their lines to the writers they are given.
@@ -14,9 +14,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use zygo_core::esc;
+use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 
 use crate::identity::{valid_name, valid_pane_key, valid_ws_id, workspace_id};
+use crate::mail::names;
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
 use crate::repair::check_saved_socket;
@@ -32,6 +34,7 @@ const WS_OPTION: &str = "@zygo-ws";
 const NEWER: &str = "zygo: workspace state is from a newer zygo; run zygo update";
 const NO_STATUS: &str = "no workspace for this session or folder";
 const NO_FOLDER: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --name";
+const NO_FOLDER_WS: &str = "zygo: no workspace for this folder; run in the workspace's checkout or pass --workspace";
 /// The largest state file that W8 reads (Round 2 R6).
 const STATE_MAX: u64 = 1024 * 1024;
 
@@ -778,13 +781,73 @@ pub fn forget_pane(
     }
 }
 
-fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str) -> Result<String, String> {
+/// zygo ws name <key> <name> (M§6, W§7.3)
+#[allow(clippy::too_many_arguments)]
+pub fn rename_member(
+    paths: &Paths, tmux: &Path, workspace: Option<&str>, cwd: &Path, key: &str, new_name: &str, out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    match rename_run(paths, tmux, workspace, cwd, key, new_name) {
+        Ok(line) => {
+            say(out, &line);
+            0
+        }
+        Err(line) => {
+            say(err, &line);
+            1
+        }
+    }
+}
+
+fn rename_run(
+    paths: &Paths, tmux: &Path, workspace: Option<&str>, cwd: &Path, key: &str, new_name: &str,
+) -> Result<String, String> {
     if !valid_pane_key(key) {
         return Err(format!("zygo: invalid pane key {}", esc(key)));
     }
-    let not_found = || name.map_or_else(|| NO_FOLDER.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
+    if !valid_member_name(new_name) {
+        return Err(format!(
+            "zygo: bad name `{}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key",
+            esc(new_name)
+        ));
+    }
+    let ws = pane_workspace(paths, workspace, cwd, NO_FOLDER_WS)?;
+    let label = ws.name;
+    // W§7.3: the record and its `panes[]` entry in one write under `lock`; `mail/<key>/` stays (M§6).
+    let written = Store::open(paths, &ws.id).update_existing(snapshot::OP_WAIT, &mut |c| {
+        if !c.members.contains_key(key) {
+            bail!("zygo: {label} has no member record for pane {key}");
+        }
+        if let Some(t) = names::members(c).into_iter().find(|t| t.key != key && t.name.as_deref() == Some(new_name)) {
+            bail!("zygo: name {new_name} belongs to pane {}; nothing changed", t.key);
+        }
+        if let Some(m) = c.members.get_mut(key) {
+            m.name = Some(new_name.to_string());
+        }
+        if let Some(p) = c.panes.iter_mut().find(|p| p.key == key) {
+            p.name = Some(new_name.to_string());
+        }
+        Ok(())
+    });
+    match written {
+        Ok(Some(w)) => {
+            let mux = Tmux::new(tmux.to_path_buf(), w.tmux_socket.clone());
+            let _ = snapshot::after_write(paths, &mux, &ws.id, snapshot::OP_WAIT);
+            Ok(format!("zygo: pane {key} of {label} is now named {new_name}"))
+        }
+        Ok(None) => Err(format!("zygo: no workspace named {}", esc(&label))),
+        Err(StateError::Refused(e)) => Err(e.to_string()),
+        Err(StateError::Busy) => Err(format!("zygo: workspace {label} is busy; try again")),
+        Err(e) => Err(format!("zygo: {e}")),
+    }
+}
+
+/// The workspace of `ws forget-pane` and `ws name` (W§12): the one named `name`, else the one of the checkout of `cwd`;
+/// `no_folder` is the line when `cwd` has none.
+fn pane_workspace(paths: &Paths, name: Option<&str>, cwd: &Path, no_folder: &str) -> Result<Workspace, String> {
+    let not_found = || name.map_or_else(|| no_folder.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
     let link = |id: &str| format!("zygo: the state folder of workspace {id} is a link; it is not changed");
-    let ws = match name {
+    Ok(match name {
         Some(n) => match find(paths, n, true).map_err(|e| e.message)? {
             Found::Readable(ws) => *ws,
             Found::Invalid(id) => match read_capped(&Store::open(paths, &id)) {
@@ -795,21 +858,30 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             Found::Link(id) => return Err(link(&id)),
         },
         None => {
-            let (co, _, _) = find_checkout(cwd, GIT_BOUND).map_err(|_| NO_FOLDER.to_string())?;
+            let (co, _, _) = find_checkout(cwd, GIT_BOUND).map_err(|_| no_folder.to_string())?;
             let id = workspace_id(&co.common_dir);
             match state_kind(paths, &id) {
                 Kind::Real => {}
                 Kind::Link => return Err(link(&id)),
-                Kind::Missing | Kind::Other => return Err(NO_FOLDER.into()),
+                Kind::Missing | Kind::Other => return Err(no_folder.into()),
             }
             match read_capped(&Store::open(paths, &id)) {
                 Ok(Some(ws)) => ws,
-                Ok(None) => return Err(NO_FOLDER.into()),
+                Ok(None) => return Err(no_folder.into()),
                 Err(StateError::Newer { .. }) => return Err(NEWER.into()),
                 Err(e) => return Err(format!("zygo: {e}")),
             }
         }
-    };
+    })
+}
+
+fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str) -> Result<String, String> {
+    if !valid_pane_key(key) {
+        return Err(format!("zygo: invalid pane key {}", esc(key)));
+    }
+    let not_found = || name.map_or_else(|| NO_FOLDER.to_string(), |n| format!("zygo: no workspace named {}", esc(n)));
+    let link = |id: &str| format!("zygo: the state folder of workspace {id} is a link; it is not changed");
+    let ws = pane_workspace(paths, name, cwd, NO_FOLDER)?;
     let (id, label) = (ws.id.clone(), ws.name.clone());
     let cannot = |e: &dyn fmt::Display| format!("zygo: cannot forget pane {key} of {label}: {e}");
     let store = Store::open(paths, &id);

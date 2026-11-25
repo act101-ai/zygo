@@ -22,6 +22,7 @@ use zygo_core::paths::Paths;
 use zygo_core::Agent;
 use zygo_workspace::admin::{self, ListRow, ListState};
 use zygo_workspace::identity::workspace_id;
+use zygo_workspace::mail::mail_dir;
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
@@ -1749,4 +1750,144 @@ fn au54_forget_pane_with_a_quoted_saved_socket_removes_the_record_and_the_snapsh
     assert!(lines[0].ends_with(&format!("snapshot: {}", AU54.trim_start_matches("zygo: "))), "{lines:?}");
     assert!(!store.dir().join("snapshot.pending").exists());
     assert!(tmux_log(t).is_empty(), "{:?}", tmux_log(t));
+}
+
+// ---- ML-8: `zygo ws name` ----
+
+fn name_run(p: &Paths, tmux: &Path, ws: Option<&str>, cwd: &Path, key: &str, name: &str) -> (i32, String, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = admin::rename_member(p, tmux, ws, cwd, key, name, &mut out, &mut err);
+    (code, text(out), text(err))
+}
+
+/// Workspace `app` (id `ID`, phase down): `kaaaaaaaa` named `old` with a pane, `kbbbbbbbb` named `bob` with no
+/// pane, a shell pane `kcccccccc` with no record; record and pane of `kaaaaaaaa` carry an unknown field (AU78).
+fn name_setup(t: &Path, id: &str, root: &Path) -> (Paths, PathBuf, Store) {
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let store = ws_state(&p, id, "app", root, |ws| {
+        let mut a = member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1"));
+        a.name = Some("old".into());
+        a.extra.insert("future".into(), json!(1));
+        let mut b = member(Agent::ClaudeCode, MemberState::Resumable, Some("c-2"));
+        b.name = Some("bob".into());
+        ws.members.insert("kaaaaaaaa".into(), a);
+        ws.members.insert("kbbbbbbbb".into(), b);
+        let mut pa = pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, root);
+        pa.name = Some("old".into());
+        pa.extra.insert("future".into(), json!(2));
+        ws.panes = vec![pa, pane("kcccccccc", 0, 1, PaneKind::Shell, root)];
+    });
+    (p, tmux, store)
+}
+
+#[test] // M§6: the record and the panes[] entry in one write; mail stays in mail/<key>/; W§7.3 pending check; AU78
+fn rename_member_changes_the_record_and_the_pane_in_one_write() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let inbox = mail_dir(&p, ID).join("kaaaaaaaa/new");
+    fs::create_dir_all(&inbox).unwrap();
+    fs::write(inbox.join("m1.json"), "{}").unwrap();
+    fs::write(store.dir().join("snapshot.pending"), "").unwrap();
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kaaaaaaaa", "elena"),
+        (0, "zygo: pane kaaaaaaaa of app is now named elena\n".to_string(), String::new())
+    );
+    let ws = store.read().unwrap().unwrap();
+    let a = &ws.members["kaaaaaaaa"];
+    assert_eq!((a.name.as_deref(), a.extra.get("future")), (Some("elena"), Some(&json!(1))));
+    assert_eq!((ws.panes[0].name.as_deref(), ws.panes[0].extra.get("future")), (Some("elena"), Some(&json!(2))));
+    assert_eq!(ws.members["kbbbbbbbb"].name.as_deref(), Some("bob"));
+    assert!(inbox.join("m1.json").exists());
+    assert!(!mail_dir(&p, ID).join("elena").exists());
+    assert!(!store.dir().join("snapshot.pending").exists()); // W§7.3 check ran
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kbbbbbbbb", "ops"),
+        (0, "zygo: pane kbbbbbbbb of app is now named ops\n".to_string(), String::new())
+    ); // a member with no panes[] entry: the record only
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!(ws.members["kbbbbbbbb"].name.as_deref(), Some("ops"));
+    assert_eq!((ws.panes.len(), ws.panes[1].name.as_deref()), (2, None));
+}
+
+#[test] // W§7.3, graph review focus 57: the write waits for `lock`
+fn rename_member_waits_for_the_state_lock() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let held = hold(store.dir().join("lock"));
+    let t0 = Instant::now();
+    let h = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        drop(held);
+    });
+    assert_eq!(name_run(&p, &tmux, Some("app"), Path::new(""), "kaaaaaaaa", "elena").0, 0);
+    assert!(t0.elapsed() >= Duration::from_millis(300));
+    h.join().unwrap();
+    assert_eq!(store.read().unwrap().unwrap().members["kaaaaaaaa"].name.as_deref(), Some("elena"));
+}
+
+#[test] // M§6, AU84, graph review focus 56: bad key, bad or reserved name, a held name: exit 1, one line, no change
+fn rename_member_refuses_bad_values_and_changes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, _store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let before = state_bytes(&p, ID);
+    let bad = |n: &str| format!("zygo: bad name `{n}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key\n");
+    let long = "a".repeat(33);
+    for (key, name, line) in [
+        ("k$", "elena", "zygo: invalid pane key k$\n".to_string()),
+        ("kaaaaaaaa", "Elena", bad("Elena")),
+        ("kaaaaaaaa", "", bad("")),
+        ("kaaaaaaaa", "9lives", bad("9lives")),
+        ("kaaaaaaaa", long.as_str(), bad(&long)),
+        ("kaaaaaaaa", "a\u{1b}", bad("a\\u{1b}")),
+        ("kaaaaaaaa", "all", bad("all")),
+        ("kaaaaaaaa", "cli", bad("cli")),
+        ("kaaaaaaaa", "zygo", bad("zygo")),
+        ("kaaaaaaaa", "kbbbbbbbb", bad("kbbbbbbbb")),
+        ("kaaaaaaaa", "bob", "zygo: name bob belongs to pane kbbbbbbbb; nothing changed\n".to_string()),
+    ] {
+        assert_eq!(name_run(&p, &tmux, Some("app"), Path::new(""), key, name), (1, String::new(), line), "{key} {name:?}");
+        assert_eq!(state_bytes(&p, ID), before, "{key} {name:?}");
+    }
+}
+
+#[test] // M§6: a key with no member record, a panes[] entry with no record, an unknown workspace: exit 1, no change
+fn rename_member_unknown_key_or_workspace_exits_1() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, _store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let before = state_bytes(&p, ID);
+    for (ws, key, line) in [
+        ("app", "kzzzzzzzz", "zygo: app has no member record for pane kzzzzzzzz\n"),
+        ("app", "kcccccccc", "zygo: app has no member record for pane kcccccccc\n"),
+        ("nosuch", "kaaaaaaaa", "zygo: no workspace named nosuch\n"),
+    ] {
+        assert_eq!(name_run(&p, &tmux, Some(ws), Path::new(""), key, "elena"), (1, String::new(), line.to_string()), "{ws} {key}");
+        assert_eq!(state_bytes(&p, ID), before);
+    }
+}
+
+#[test] // M§6, W§12: no --workspace: the workspace of the checkout of cwd
+#[ignore = "timing: git under the fixed 5 s forget-pane git bound"]
+fn rename_member_by_the_checkout_folder() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let r = canon(&repo(t, "app"));
+    let id = workspace_id(&r.join(".git"));
+    let (p, tmux, store) = name_setup(t, &id, &r);
+    assert_eq!(
+        name_run(&p, &tmux, None, &r, "kaaaaaaaa", "elena"),
+        (0, "zygo: pane kaaaaaaaa of app is now named elena\n".to_string(), String::new())
+    );
+    assert_eq!(store.read().unwrap().unwrap().members["kaaaaaaaa"].name.as_deref(), Some("elena"));
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    assert_eq!(
+        name_run(&p, &tmux, None, &plain, "kaaaaaaaa", "ops"),
+        (1, String::new(), "zygo: no workspace for this folder; run in the workspace's checkout or pass --workspace\n".to_string())
+    );
 }
