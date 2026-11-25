@@ -200,7 +200,6 @@ Session text (T, SX nodes):
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
-| WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | DONE | judgment | af19550d e91ef159 6971ba06 · repo_def_check 9/0; floor green · PR #98 |
 | WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | DONE | judgment | 0d97709b · pool 16/16; floor green · PR #70 |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
 | ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | DONE | judgment | 2fc1f821, 64486e85, 0bfa1c6d · admin 16/0 (7 rename_member), zygo lib 228/0 ; floor green · PR #107 |
@@ -222,7 +221,7 @@ Session text (T, SX nodes):
 | OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | TODO | mechanical | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
-| WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | TODO | judgment | — |
+| WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | DONE | judgment | f5a7e8cd f97e8031 bce0413f · repo_def_apply 18/0, config_layers 90/0 (16 ignored) ; floor green · PR #112 |
 | WD-10 | Plan panes carry `job`, `pool` and the pin; `Source::Repository` | WD-6, ML-3, WD-8 | DONE | implementation | 8c8dd676, 7b189dbd, a08afc56 · loadout 15/0, state 43/0 ; floor green · PR #115 |
 | RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | TODO | implementation | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
@@ -397,4 +396,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-15 done (0128c7fa 63b94dd8): HUD member name + unread mail; review 2 important (mail scan starved git/status workers: fixed; width rule kept) + 2 test gaps fixed; FX-10 (HUD spec), FX-11 (doctor ✉) added. Floor green. PR #108. |
 | 2026-11-25 | WD-8 done: `state::Launch` gains `job` and `definition`; review found `Pin` dropped unknown keys (AU78), fixed with `Pin.extra` and `Pin::new` · PR #110 |
 | 2026-11-25 | MS-9 DONE (e7987782 f30700e9 bec4c680): outbox kept: send rules, secret pass, refuse with notice, counts, sweep; round-2 review fixes applied; outbox 29/0; floor green · PR #111 |
+| 2026-11-25 | WD-7 DONE: `Merged::with_definition` adds the approved definition as the `workspace-files` source; a second call replaces the first. Review round 2: 5 findings fixed · PR #112 |
 | 2026-11-25 | WD-10 done: plan panes carry job, pool and the definition pin; Source::Repository; list labels repository as workspace-files only when the definition added it (CLI passes false until WD-16). WD-12 contract note: job/pool from user loadouts are unchecked. |
