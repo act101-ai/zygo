@@ -147,7 +147,7 @@ PATH="$HOME/.opencode/bin:$PATH" sh scripts/premises/live-attribution.sh [login 
 
 ## P3-15 (session text after a compaction and in subagents)
 
-Node SX-8; `docs/specs/2026-11-24-session-text-design.md` T§12.2 (ST1, ST2, ST3, ST4 of T§12.1). The text below is a copy of T§12.2; T§12.2 is the authority, and a change there is copied here. Results go to the `docs/premises.md` "Results" table (rows ST1 to ST4) as T§12.1 "How a result enters the repository" says; this file gets no row.
+Node SX-8; `docs/specs/2026-11-24-session-text-design.md` T§12.2 (ST1, ST2, ST3, ST4 of T§12.1). The text below is a copy of T§12.2; T§12.2 is the authority, and a change there is copied here. Results go to the `docs/premises.md` "Results" table (rows ST1 to ST4) as T§12.1 "How a result enters the repository" says, and a dated row goes to the "Results" table of this file, as for the other checks.
 
 Run on your own machine with your normal Claude Code and OpenCode logins. It runs no zygo and no CI job; from this repository it uses only `scripts/premises/scrub.py`. Claude Code runs once in print mode on Haiku with no compaction: about 5 model requests, about 80,000 input tokens in all (each request sends the whole context again; most of it is a cache read). OpenCode runs three short turns and one compaction on the models you pick.
 
@@ -158,7 +158,7 @@ What it leaves on your machine, and how to remove it (step 8): Claude Code write
 1. Make a scratch folder with the probe hook, its settings file and a one-agent plugin:
 
 ```sh
-S=$(mktemp -d -t p315) && cd "$S" && git init -q
+S=$(mktemp -d "${TMPDIR:-/tmp}/p315.XXXXXX") && cd "$S" && git init -q
 cat > probe.py <<'EOF'
 import json, sys
 d = json.load(sys.stdin)
@@ -236,7 +236,7 @@ python3 -I scripts/premises/scrub.py "$S" "$S/oc.jsonl" > fixtures/opencode/live
 claude --version; opencode --version
 ```
 
-7. Send the three files and the two version lines to the lead.
+7. Send the three files, the two version lines, the MAIN and SUB model ids chosen in step 4, and whether the subagent's answer was shown in step 5 (yes or no) to the lead.
 
 8. Remove what the check left. Close every Claude Code session first, because `~/.claude.json` is shared:
 
@@ -246,6 +246,8 @@ cp ~/.claude.json ~/.claude.json.bak-p315
 python3 -I -c 'import json,os; p=os.path.expanduser("~/.claude.json"); d=json.load(open(p)); r=[k for k in list(d.get("projects",{})) if "p315" in k]; [d["projects"].pop(k) for k in r]; json.dump(d,open(p,"w"),indent=2); print("removed", r)'
 rm -rf "$S"
 ```
+
+Once Claude Code starts normally, delete `~/.claude.json.bak-p315`.
 
 The OpenCode session stays in OpenCode's data folder; delete it from OpenCode's session list if you want it gone.
 

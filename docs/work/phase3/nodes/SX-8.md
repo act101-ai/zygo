@@ -29,3 +29,11 @@ Docs only. One file changes: `docs/live-checks.md`. No code, no test file, no ch
 - [x] 5. Verification: `N2_FORBIDDEN_NAMES="$(id -un)" sh scripts/check-premises.sh` exits 0 and prints `check-premises: ok (P1 P2 P3 P4 P5 P6a P6b Q1 Q2 Q3 Q4 Q5 Q6 Q7 PW6 PW11 PW15 PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16)` (the scan covers `docs/live-checks.md` through `SCOPE`, `scripts/check-premises.sh`; the name scan reads the account name at run time).
 - [x] 6. Check only one file changed: `git diff --name-only origin/phase-3` prints exactly two paths: `docs/live-checks.md` and `docs/work/phase3/nodes/SX-8.md` (this plan and its checkboxes).
 - [x] 7. Commit `docs/live-checks.md` alone, message `SX-8: live-checks section P3-15 (T§12.2)`, with the trailers `Zygo-Session:` (followed by the implementer's own session id) and `Zygo-Work: phase3:SX-8`, each on its own line; no Claude attribution.
+
+### Review round 1
+
+- F1 fixed: the P3-15 intro of `docs/live-checks.md` sends results to the `docs/premises.md` Results table (ST1 to ST4) and a dated row to this file's `## Results` table.
+- F2 fixed: step 1 uses `mktemp -d "${TMPDIR:-/tmp}/p315.XXXXXX"` (works on GNU and BSD); the step 8 `*p315*` and `"p315" in k` filters still match, in T§12.2 and the copy.
+- F3 fixed: step 7 also sends the MAIN and SUB ids of step 4 and whether the subagent's answer was shown in step 5, in T§12.2 and the copy.
+- F4 fixed: step 8 says to delete `~/.claude.json.bak-p315` once Claude Code starts normally, in T§12.2 and the copy; the spec change log records F2-F4.
+- F5 refuted: `#P3-15` is the plan's id for "heading starts with `## P3-15 `", not a rendered link.
