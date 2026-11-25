@@ -2,10 +2,10 @@
 
 <!-- work-graph -->
 
-**Goal:** Build the phase 4 rows that start now (P4-2 conformance, P4-3 Codex premises, P4-4 proxy Responses client route) as the approved client-model spec specifies.
-**Authority:** `docs/specs/2026-11-25-client-model-design.md` (K§n), approved by the operator 2026-11-25: K§6.2 and K§11 items 1-7 (P4-2, CF nodes); K§6.3.7, K§6.2.5 (premise check) and K§11 items 8-10 (P4-3, PC nodes); K§6.4, K§6.7 and K§11 items 11-22 (P4-4, RS nodes); K§9, K§12 (BS node); base spec `docs/specs/2026-11-18-zygo-design.md` (§n); order of work `docs/roadmap/phase-4.md` and K§6.9. P4-5 and later rows are not in this graph.
+**Goal:** Build the phase 4 rows that start now (P4-2 conformance, P4-3 Codex premises, P4-4 proxy Responses client route), and P4-6 (the client contract, after phase 3 merges into `main`), as the approved client-model spec specifies.
+**Authority:** `docs/specs/2026-11-25-client-model-design.md` (K§n), approved by the operator 2026-11-25: K§6.2 and K§11 items 1-7 (P4-2, CF nodes); K§6.3.7, K§6.2.5 (premise check) and K§11 items 8-10 (P4-3, PC nodes); K§6.4, K§6.7 and K§11 items 11-22 (P4-4, RS nodes); K§9, K§12 (BS node); K§6.1, K§6.2.7, K§6.9, K§9 (P4-6), K§12 (§8.1 phase 3 features, §8.4, §8.8), K-C7 and K-D3 (amended, lead, 2026-11-25), K-D51, K-D53 and K§11 items 23-30 (P4-6, CC nodes; planned by P4-5); base spec `docs/specs/2026-11-18-zygo-design.md` (§n); order of work `docs/roadmap/phase-4.md` and K§6.9. P4-7 and later rows are not in this graph.
 **Run:** parallel=3 · worktrees=.worktrees/phase4/ · disk-per-node=—
-**Workflows:** (1) Review gate per node: each node gets its own gate of up to 3 rounds; after round 3 each finding has exactly one disposition: fixed with a commit, rejected with a reason, or recorded with a DDR id (`docs/specs/2026-11-24-decision-records-design.md`); a node passes only when no finding is of a class that stops for the operator — operator, `docs/roadmap/phase-4.md` "Plan of work" item 3. (2) Stacked pull requests: each node is one layer of a GitHub stacked pull request (https://docs.github.com/en/pull-requests/get-started/about-stacked-prs) whose trunk is the rendezvous branch `phase-4`; a node branches from the top of the open stack, so its dependencies are always below it; the controller merges a stack, or its bottom part, into `phase-4` once every layer in it has passed its review gate and its CI is green (`gh stack link --base phase-4 …`; `gh stack merge <pr> --merge --yes`); a node is DONE when its layer merges into `phase-4`; `phase-4` reaches `main` only on the operator's word; K-D26's operator stop on CF-4 still applies — operator, 2026-11-25 ("in the future i prefer you use stacked prs instead of this slow process"), replacing the rule of 2026-11-24 ("we PR after every row, including planning"; "each row merges to that branch so you can be autonomous"; `docs/roadmap/phase-4.md` "Plan of work" item 4). (3) No timing tests in CI (Global constraints) — operator, 2026-11-24 (release v0.2.1 failure, run 45356193851). (4) Stub agents only; the Codex premises run the real `codex` binary only against the mock (Global constraints) — operator rule 2026-11-19; K-C5, K-D14, K§6.3.7. (5) No Claude attribution (Global constraints) — operator, 2026-11-19. (6) Run settings `parallel=3`, `worktrees=.worktrees/phase4/` (`.worktrees/` is ignored at `.gitignore:2`) — operator, P4-1 brief, 2026-11-25.
+**Workflows:** (1) Review gate per node: each node gets its own gate of up to 3 rounds; after round 3 each finding has exactly one disposition: fixed with a commit, rejected with a reason, or recorded with a DDR id (`docs/specs/2026-11-24-decision-records-design.md`); a node passes only when no finding is of a class that stops for the operator — operator, `docs/roadmap/phase-4.md` "Plan of work" item 3. (2) Stacked pull requests: each node is one layer of a GitHub stacked pull request (https://docs.github.com/en/pull-requests/get-started/about-stacked-prs) whose trunk is the rendezvous branch `phase-4`; a node branches from the top of the open stack, so its dependencies are always below it; the controller merges a stack, or its bottom part, into `phase-4` once every layer in it has passed its review gate and its CI is green (`gh stack link --base phase-4 …`; `gh stack merge <pr> --merge --yes`); a node is DONE when its layer merges into `phase-4`; `phase-4` reaches `main` only on the operator's word; K-D26's operator stop on CF-4 still applies, and so does K§6.2.1's operator stop on CC-12 (new registry standard text and tier) — operator, 2026-11-25 ("in the future i prefer you use stacked prs instead of this slow process"), replacing the rule of 2026-11-24 ("we PR after every row, including planning"; "each row merges to that branch so you can be autonomous"; `docs/roadmap/phase-4.md` "Plan of work" item 4). (3) No timing tests in CI (Global constraints) — operator, 2026-11-24 (release v0.2.1 failure, run 45356193851). (4) Stub agents only; the Codex premises run the real `codex` binary only against the mock (Global constraints) — operator rule 2026-11-19; K-C5, K-D14, K§6.3.7. (5) No Claude attribution (Global constraints) — operator, 2026-11-19. (6) Run settings `parallel=3`, `worktrees=.worktrees/phase4/` (`.worktrees/` is ignored at `.gitignore:2`) — operator, P4-1 brief, 2026-11-25.
 
 To continue in any session: "resume the work in `docs/work/phase4/graph.md`".
 
@@ -28,6 +28,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 - An upstream error before the first byte keeps its HTTP status with an OpenAI error body; `response.failed` only after the stream started; each started stream ends with exactly one terminal event — K§6.4.4, K-D50
 - Registry and grade files are hostile input (the K§6.2.5 input rules); a bar exception lives only in the registry; a change of standard text, tier or bar exception stops for the operator — K§6.2.1, K§6.2.5, K-D18
 - P4-2 grades the criteria as written; each derived cell that differs from today's hand grade is listed in the pull request with its reason, and that pull request stops for the operator: CF-4's layer does not merge without the operator — K-D26
+- P4-6 adds registry entries for the phase 3 client features (K-D51); new standard text and its tier stop for the operator: CC-12's layer does not merge without the operator — K§6.2.1
+- A change to the boundary-check exception list (`docs/conformance/boundary-exceptions.toml`) stops for the operator — K§6.1.4, K-D53 (operator, 2026-11-25)
 - Codex minimum version 0.172.0 — K§4 K-C8
 - Codex premises run against `mock_upstream.py` directly, with no zygo between, under `env -i` with a temporary `HOME` and `CODEX_HOME`, a dummy key built at run time, and `HTTPS_PROXY` at the mock, which refuses and records each `CONNECT` — K§6.3.7, K-D25
 - The base spec's `docs/premises.md` method holds for every fixture: `scrub.py` hygiene, no token, key form, user name or home path — K§11 item 10; `docs/premises.md` "Method"
@@ -39,6 +41,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 - Premises, local: `sh scripts/check-premises.sh` → exit 0 (with `N2_FORBIDDEN_NAMES` set at run time for the fixture nodes) — `docs/premises.md` "Method"; K§6.2.5
 - Conformance outputs, after CF-4: `ZYGO_WRITE_CONFORMANCE=1 cargo test -p zygo-core --test conformance --locked` leaves `git diff --exit-code docs/conformance.md docs/conformance.json` clean — K§6.2.5 item 10
 - Live check LC-CX1: owner-run only, never by an agent, never in CI — K§6.3.7 (PC16); `docs/live-checks.md` "Method"
+- Test edits, each P4-6 node after CC-2: `sh scripts/check-test-edits.sh <parent> <node file>` → exit 0, `<parent>` from the `Parent:` line of the node's plan (the parent of its layer) — K§4 K-C7 (amended), K§11 item 24
 
 ## Review focus
 
@@ -55,6 +58,11 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 11. Same-dialect passthrough that re-serializes reasoning items or drops `include` entries — reasoning items byte-equal; `store` is `false`; the usage row has the `response.completed` counts; a mapped chat stream (chat upstream to a Messages client) is never parsed as Responses lines — test in RS-5 — K§6.4.3, K§6.4.2 (C3)
 12. Cache markers added to a Responses or chat upstream body, or to the Anthropic client's own request stage twice — markers only on the Anthropic upstream body of a Responses client; no `cache_control` anywhere toward a Responses upstream — tests in RS-6, RS-5 — K§6.4.2 cache row, K-D48
 13. Window rewrite applied after the encoder, or on an unarmed session — the tee rewrites the Messages `message_delta` before the encoder, or the Responses `response.completed` usage on the same-dialect path; unarmed bytes pass unchanged — test in RS-7 — K§6.4.5, K§6.4.2
+14. A test edit that changes behavior while the check passes: a changed literal, a removed or renamed test function, an added `#[ignore]`, a `#[cfg(test)]` module moved to another file, a listed delta that differs from the real one — each fails unless listed exactly; a doc-comment or type-path edit passes — test in CC-2 — K-C7 (amended), K§11 item 24
+15. A state file whose pane kind is `"opencode"`, `"shell"` or unknown — the first two read and write back byte-equal; the unknown one is refused as at the base — test in CC-8 — K§6.1.2 (`PaneKind`), K§11 item 29
+16. A client name that escapes the boundary check: inside `format!` or `json!`, as a raw or byte string, in a non-module item with no `#[cfg(test)]` — flagged; a name inside a longer literal or a comment — not flagged; the guard passes only through its exception entry, and a planted literal elsewhere still fails — test in CC-15 — K§6.1.4, K§11 item 26
+17. A launch path that skips the preview gate: `zygo ws run` for a member pane, the loadout check, `ZYGO_PREVIEW_CLIENT` set to another client's id — refused with the K§6.2.7 text — test in CC-11 — K§6.2.7
+18. An `adapter_for` table with a client of `Agent::ALL` missing, or a client with two rows — the table test fails — test in CC-9 — K§6.1.1, K§11 item 27
 
 ## Nodes
 
@@ -80,6 +88,23 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-7 | Window rewrite for a Responses client, Anthropic and Responses upstreams | RS-5 | TODO | judgment | — |
 | RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | TODO | implementation | — |
 | BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8 | TODO | mechanical | — |
+| CC-0 | Take `main` (with phase 3) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1 | BLOCKED(operator: phase 3 merged into main) | implementation | — |
+| CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
+| CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
+| CC-3 | Core client module `zygo_core::client`: descriptor type, concerns 1 and 2, `Agent::ALL`/`DEFAULT`/`spec()`, `Dialect` in core, minimum version from the descriptor | CC-1, CC-2, CF-4 | TODO | judgment | — |
+| CC-4 | Proxy, redaction, usage and work-join client facts (concern 9) read the descriptor | CC-3, RS-6, RS-7 | TODO | judgment | — |
+| CC-5 | MCP tool naming and `compact` tool listing (concern 5) read the descriptor | CC-4 | TODO | implementation | — |
+| CC-6 | Hook output and session text delivery (concerns 3, 4) read the descriptor | CC-5 | TODO | implementation | — |
+| CC-7 | Argument grammar and session flags (concern 7) read the descriptor | CC-6 | TODO | implementation | — |
+| CC-8 | Pane kind, resume kind, turn events, workspace definition kinds (concern 8); `PaneKind` = `Agent(Agent)` or `Shell` | CC-7 | TODO | judgment | — |
+| CC-9 | Launch layer: `adapter_for` registry, adapters under `client/`, plugin delivery and env rows (concerns 6, 11), `Plugins` removed | CC-8 | TODO | judgment | — |
+| CC-10 | CLI shims under `cmd/client/`; binary-crate client sites read the registry (concern 10) | CC-9 | TODO | implementation | — |
+| CC-11 | Preview gate at launch for every entry point, loadout check, hidden help and doctor (K§6.2.7) | CC-10 | TODO | judgment | — |
+| CC-12 | Phase 3 client features in the registry: output shaping, mail wake and delivery, run-time status line (K-D51; PR stops for the operator) | CC-1, CF-4 | TODO | judgment | — |
+| CC-13 | Sweep the `Agent::` variant paths left in tests | CC-11 | TODO | mechanical | — |
+| CC-14 | Opaque client kind `pub struct Agent(Kind)` and the `trybuild` compile-fail cases | CC-13 | TODO | judgment | — |
+| CC-15 | Boundary check `client_boundary` (K§6.1.4) with its exception list | CC-14 | TODO | judgment | — |
+| CC-16 | Base-spec notes: §8.1 (phase 3 features), §8.4 (`ZYGO_AGENT` ids, client denylist rows), §8.8 (superseded) | BS-1, CC-12, CC-15 | TODO | mechanical | — |
 
 ## Log
 
@@ -87,3 +112,5 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 |------|-------|
 | 2026-11-25 | Graph created from `docs/specs/2026-11-25-client-model-design.md` (P4-1): 19 nodes for P4-2, P4-3, P4-4 at base `ec17582b`. |
 | 2026-11-25 | Audit round 1: 18 findings fixed as the coordinator ruled; RS-3 split into RS-3 and RS-4 (RS renumbered to RS-8); 20 nodes; Workflows (2) now stacked PRs (operator, 2026-11-25). |
+| 2026-11-25 | P4-5: 16 nodes CC-0 to CC-15 for P4-6 (K§6.1, K§6.2.7, K§11 items 23-30); CC-0 blocked until the operator merges phase 3 into `main`; 36 nodes. |
+| 2026-11-25 | Audit of the CC nodes (3 critical, 6 important, 5 minor) fixed as ruled: K-C7, K-D3, items 23-24 amended (lead); boundary exception list (operator, K-D53); CC-13 split (sweep, opaque kind); 17 CC nodes, 37 nodes. |

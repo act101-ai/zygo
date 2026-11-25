@@ -85,7 +85,7 @@ Groundwork that exists: `RequestCtx.dialect` is "the client's dialect" (`crates/
 - **K-C4** C9: a client has a grade for each criterion before its launcher is built. K-D5 enforces this with the compiler and the conformance test.
 - **K-C5** Tests never run a real `claude`, `opencode` or `codex` binary. Launch tests use the stub agents. No test uses the operator's OpenAI or ChatGPT login, and no step runs `codex login` **(operator rule, project memory; K-D14)**.
 - **K-C6** No CI test measures wall-clock time or has a deadline **(project rule)**.
-- **K-C7** P4-6 changes no behavior. The proof is the existing test suites. No assertion and no expected value changes. Test edits are limited to moved paths, imports, type paths and constructors (`Agent`, `PaneKind`, `Plugins`: 64 `PaneKind::` uses under `crates/*/tests`, `Plugins::` at `crates/zygo-launch/tests/opencode.rs:239`, `:853`, `:1003`, `:1048`). Each edited test line is in the PR and is checked at the review gate and by `scripts/check-test-edits.sh` (K§11) **(lead)**.
+- **K-C7** P4-6 changes no behavior. The proof is the existing test suites, checked for each P4-6 node against its own diff: `scripts/check-test-edits.sh <parent> <node file>`, where `<parent>` is the parent of the node's layer (the top of the stack below it), not a fixed base. In each test file and each `#[cfg(test)]` module that exists at `<parent>`, the check fails when a test function is removed or renamed, when `#[ignore]` is added, or when the multiset of string, char and number literals changes, unless the node file lists that exact change under a "Test logic edits" heading with its spec reason. Type paths, imports and constructors change identifiers, not literals, so they pass with no rule table. The review gate checks each listed edit **(lead, 2026-11-25, amended)**. Reason for the amendment: the first rule ("tests change only by declared mechanical rewrites") cannot be met: at the scale of P4-6 (hundreds of type-path uses), rewrite rules that compose cannot be ordered, substring patterns collide, import lines are new lines, and K§9 itself requires test logic edits (check item 7 of K§6.2.5 reads the descriptor; `minimum_agent_versions_match_premises` reads `Agent::ALL`).
 - **K-C8** The minimum Codex version is 0.172.0 **(author)**.
 
 ## 5. Terms
@@ -194,6 +194,7 @@ With the kind opaque (K§6.1.1), the compiler refuses a branch on a specific cli
 - It flags each string literal (normal, raw or byte string) whose whole value equals a registered name: each client's id, program name, CLI verb and config folder name, read from `Agent::ALL` at test time. A new client's names are so covered with no edit to the test. A literal that only contains a name (`"zygo claude: …"`, `"Claude attribution"`) is not flagged.
 - Literals are allowed only in the descriptor files `crates/zygo-core/src/client/` (the fields that hold the id, program, verb and folder names), in `crates/zygo-launch/src/client/` and in `crates/zygo/src/cmd/client/`. Each other site reads the descriptor field (for example the OpenCode program folder link of `crates/zygo/src/cmd/ws.rs:282`, `:470`).
 - Skipped: each item with a `#[cfg(test)]` attribute (any item, not only a `mod`), and `crates/*/tests/`.
+- **Exception list** **(operator, 2026-11-25)**. `docs/conformance/boundary-exceptions.toml` lists the places where a literal equals a registered name but does not branch on a client. Each entry names a file, or a file and an item, with a reason and its approval; the test does not flag a literal inside an entry's file or item. A change to the list stops for the operator, as a bar exception does (K§6.2.1). The first entry is the no-attribution guard, `crates/zygo-work/src/guards.rs` item `claude_attribution` (the `"claude"` literals at about `:1047`-`:1059` at `c21b32e0`): they match attribution text and do not branch on a client.
 - Wire formats are not client branches. A `zygo-proxy` stage that keys on `Dialect` (the usage parse in the tee, the window-rewrite format, cache-marker placement) is allowed. Client policy (`insert_markers.<client>`, redaction spans, which clients get the window rewrite) reads the descriptor (K§6.4.2) **(lead)**.
 - Output: each violation as `file:line:column` and the literal.
 
@@ -674,7 +675,7 @@ The inventory of K§1 is evidence of the pattern, not the work list. P4-6 starts
 | K-D0 | Add Codex support; a clear client model; a maintained feature-matrix conformance score; each client graded on each feature any client supports; a rubric; measured, scored, "found wanting, but sufficient" | operator | the request of 2026-11-25 |
 | K-D1 | One client contract in two layers (K§6.1.1); the kind is opaque outside `zygo_core::client`, so the compiler refuses a branch on a specific client; the literal check of K§6.1.4 covers names in strings | lead (compiler first); author (layers, concerns) | the crate direction forces two layers; a compile error cannot be skipped |
 | K-D2 | A client = a descriptor module, an adapter folder, a CLI shim, its stub-agent behavior, a fixtures folder, a grade file. §8.8 is superseded by K§6.8 flow 6 | author | the compiler and the tests list each missing piece; §8.8 missed three pieces |
-| K-D3 | P4-6 moves Claude Code and OpenCode onto the contract with no behavior change; no assertion or expected value changes; test edits only for paths, imports, type paths and constructors (K-C7) | lead | the old rule "tests unchanged" could not pass: 64 `PaneKind::` and 4 `Plugins::` test uses |
+| K-D3 | P4-6 moves Claude Code and OpenCode onto the contract with no behavior change; the proof is K-C7: each node's own diff is checked for removed or renamed tests, added `#[ignore]` and changed literals, and each test logic edit is listed in its node with its spec reason and checked at the review gate | lead (2026-11-25, amended) | the first rule ("tests change only by declared mechanical rewrites") cannot be met: at the scale of P4-6 (hundreds of type-path uses), rewrite rules that compose cannot be ordered, substring patterns collide, import lines are new lines, and K§9 itself requires test logic edits (check item 7 of K§6.2.5 reads the descriptor; `minimum_agent_versions_match_premises` reads `Agent::ALL`) |
 | K-D4 | One registry file with criteria (K§6.2.2) | author | machine-checkable rubric |
 | K-D5 | Union rule: a zygo feature that any client supports is a capability with a rubric, and each client gets a grade; a client with a missing grade fails the check. A new descriptor concern or adapter method also needs a capability that names it | operator intent; mechanics author | "all clients get graded" |
 | K-D6 | Per-client grade file with measured evidence (K§6.2.3): `premise:<file>#<id>` counts only when `verified` or `pass`; an ignored test is not evidence; a cfg-limited test counts with its platforms | author; lead (I4, I5) | evidence that a test can find, with no id collision |
@@ -724,6 +725,7 @@ The inventory of K§1 is evidence of the pattern, not the work list. P4-6 starts
 | K-D51 | P4-6 adds capabilities or criteria for the client-facing features of phase 3 by the union rule | lead | phase 3 adds client features that no capability grades yet |
 | K-D52 | P4-10 (zygo's own updates) is split from P4-11 (client updates) | author | the opportunistic row needs no client contract |
 | K-D44 | The HUD compares `latest` with the launcher's version, recorded in the session view | author | a binary replaced in another terminal must not hide the notice for a session that still runs the old version |
+| K-D53 | The boundary check has an exception list (K§6.1.4); a change to it stops for the operator; the first entry is the no-attribution guard | operator, 2026-11-25 | the guard matches attribution text and does not branch on a client |
 
 ---
 
@@ -797,7 +799,7 @@ P4-6 (client contract, after phase 3; file list taken again at its base commit, 
 - `crates/zygo-launch/src/client/mod.rs` (new): the `adapter_for` table and its test; `client/claude_code/`, `client/opencode/` (moved, with `assets/opencode-plugin.js`).
 - `crates/zygo-launch/src/adapter.rs`, `launcher.rs`, `env.rs`: new methods, the launch gate, no client branch; remove `Plugins`.
 - `crates/zygo/src/cmd/client/claude_code.rs`, `opencode.rs` (moved); `crates/zygo/src/cmd/mod.rs`, `ws.rs`, `member.rs`, `config.rs`, `doctor.rs`, `compact.rs`, `hook.rs`, `loadout.rs`: registry calls, hidden help for an unsupported client.
-- Test files: only the edits of K-C7; `scripts/check-test-edits.sh` (new).
+- Test files: the edits that K-C7 allows, and the test logic edits listed in their node (check item 7 reads the descriptor; `minimum_agent_versions_match_premises` reads `Agent::ALL`); `scripts/check-test-edits.sh` (new).
 - `docs/conformance/capabilities.toml`, each grade file: the capabilities or criteria for the phase 3 client features (K-D51).
 - `docs/specs/2026-11-18-zygo-design.md`: the §8.4 and §8.8 notes (K§12).
 
@@ -883,8 +885,8 @@ P4-4 (proxy; a Claude Code session; Codex request bodies from `fixtures/codex/re
 
 P4-6 (client contract):
 
-23. `cargo test --workspace --locked` passes on Linux, macOS and Windows CI.
-24. `scripts/check-test-edits.sh <P4-6 base>` passes: for each changed line under `crates/*/tests` and in each `#[cfg(test)]` module, the removed line, after the PR's declared rewrite table (type paths, constructors, imports, moved paths), equals the added line; any other change (an assertion, an expected value) fails it. A rewrite rule may match only a path of identifiers (`Agent::ClaudeCode`, `PaneKind::OpenCode`, `Plugins::Delivered`, a `use` path); the script refuses a rule whose pattern holds a digit, a quote or an operator, so a rule cannot turn a value change into a match. Every edited test line is listed in the PR.
+23. `cargo test --workspace --locked` passes on Linux, macOS and Windows CI at the top of each P4-6 layer.
+24. For each P4-6 node, `scripts/check-test-edits.sh <parent> <node file>` passes, `<parent>` the parent of the node's layer: in each test file and each `#[cfg(test)]` module that exists at `<parent>`, no test function is removed or renamed, no `#[ignore]` is added, and the multiset of string, char and number literals is unchanged, except each change that the node file lists under "Test logic edits" with its spec reason. The review gate checks each listed edit (K-C7).
 25. A file outside `zygo_core::client` that names a client variant does not compile (a `trybuild` compile-fail case).
 26. `client_boundary` passes on the tree, and fails on test inputs that hold `"opencode"` as a plain literal, inside `format!`, as a raw string, and in a non-module item without `#[cfg(test)]`; it does not fail on `"zygo claude: …"` or a comment.
 27. The `adapter_for` table test fails when a client has no row.
@@ -939,3 +941,4 @@ P4-11 (client updates):
 - 2026-11-25: the operator's two additions: the three conformance outputs (K§6.2.6) and update notices (K§6.5, then P4-7), with the operator's answer on client updates.
 - 2026-11-25: order against phase 3 (K§6.9); items renumbered in causal order (then: conformance P4-1, Codex premises P4-2, proxy P4-3, client contract P4-4, Codex client P4-5, Codex grade P4-6, update notices P4-7).
 - 2026-11-25: approved by the operator (instruction to plan and build); new row order P4-1 to P4-11 (K§6.9); the Codex client gets its own design (P4-7); the fixes of the spec audit (lead rulings C1-C3, I4-I15, M16, M17).
+- 2026-11-25: K-C7, K-D3 and K§11 items 23-24 amended (lead): the test-edit proof is per node against its layer's parent, with listed test logic edits, because declared mechanical rewrites cannot be met at P4-6's scale. K§6.1.4 gets an exception list (operator, K-D53).
