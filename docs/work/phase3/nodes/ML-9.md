@@ -10,7 +10,7 @@
 
 ### Contract as the code has it now (origin/phase-3 c44b6b6a)
 
-**Consumes:**
+**Consumed:**
 - `zygo_config::Features.mail: bool` (default `true`) — `crates/zygo-config/src/features.rs:16` (ML-1)
 - `zygo_workspace::mail::names::members(ws: &Workspace) -> Vec<Target>` (key order; `Target { key: String, name: Option<String> }`, `name` = `MemberRecord::valid_name`) — `crates/zygo-workspace/src/mail/names.rs:16` (ML-4)
 - `zygo_workspace::state::MemberRecord::valid_name(&self) -> Option<&str>` — `crates/zygo-workspace/src/state.rs:344` (ML-3)
@@ -18,7 +18,7 @@
 - `zygo_workspace::state::{Workspace, Store}`; `Store::read(&self) -> Result<Option<Workspace>, StateError>` — `state.rs:466`; `zygo_core::esc(s: &str) -> String` — `crates/zygo-core/src/text.rs:4`
 - `zygo_hooks::workspace::session_start(payload: &Value, dir: &SessionDir, view: &SessionView, paths: &Paths, zygo: &Path, out: &mut dyn Write, text: &str) -> anyhow::Result<Option<String>>` — `crates/zygo-hooks/src/workspace.rs:621` (signature unchanged)
 
-**Produces:**
+**Produced:**
 - `zygo_core::session_view::SessionView.mail: bool` — `#[serde(default)]`; `SessionView::default()` has `false`; the launcher sets it to `c.features.mail`
 - `zygo_hooks::mail::session_item(ws: &zygo_workspace::state::Workspace, own_key: &str) -> String` — new module `crates/zygo-hooks/src/mail.rs` (ML-10 and WD-18 add to it)
 
