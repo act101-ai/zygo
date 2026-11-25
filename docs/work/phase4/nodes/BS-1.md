@@ -4,7 +4,7 @@
 **Files:** `docs/specs/2026-11-18-zygo-design.md`
 **Consumes:** `docs/conformance/capabilities.toml` (CF-4), `models::list_openai` (RS-7)
 **Produces:** —
-**Acceptance:** `grep -q 'docs/conformance/capabilities.toml' docs/specs/2026-11-18-zygo-design.md && grep -q 'K§6.4' docs/specs/2026-11-18-zygo-design.md && sh scripts/check-premises.sh && cargo test --workspace --locked --no-fail-fast` → every command exits 0, on ubuntu, macOS and Windows CI for the cargo run (the base spec is read by tests; `.github/workflows/ci.yml:14`)
+**Acceptance:** `grep -q 'docs/conformance/capabilities.toml' docs/specs/2026-11-18-zygo-design.md && test "$(grep -c '2026-11-25-client-model-design.md' docs/specs/2026-11-18-zygo-design.md)" -ge 2 && sh scripts/check-premises.sh && cargo test --workspace --locked --no-fail-fast` → every command exits 0 (the base spec names the client-model spec 0 times at `ec17582b`; each note cites it), on ubuntu, macOS and Windows CI for the cargo run (the base spec is read by tests; `.github/workflows/ci.yml:14`)
 
 ## Planning notes
 
