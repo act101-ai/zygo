@@ -184,7 +184,7 @@ export const ZygoPlugin = async ({ directory }) => {
     },
     // T§7.2 item 1: every `zygo/` model; the main role as today, any other role (or no main role) `--event subagent`.
     "experimental.chat.system.transform": async (input, output) => {
-      if (!input.model || input.model.providerID !== "zygo") return;
+      if (!input.model || input.model.providerID !== "zygo" || !output || !Array.isArray(output.system)) return;
       const role = process.env.ZYGO_MAIN_ROLE;
       const extra = role && input.model.id === role ? [] : ["--event", "subagent"];
       const text = await run("session-start", { input, output }, extra);

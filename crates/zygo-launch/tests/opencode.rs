@@ -668,6 +668,12 @@ struct NodeRun {
 
 #[cfg(unix)]
 fn node_run(fx: &Fx, name: &str, mode: &str, role: Option<&str>, big: bool) -> NodeRun {
+    node_run_edge(fx, name, mode, role, big, None)
+}
+
+/// [node_run]; with `edge`, the driver makes only the one transform call of that `EDGE` case.
+#[cfg(unix)]
+fn node_run_edge(fx: &Fx, name: &str, mode: &str, role: Option<&str>, big: bool, edge: Option<&str>) -> NodeRun {
     use std::os::unix::fs::PermissionsExt;
     let dir = fx.root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
@@ -677,6 +683,7 @@ d=$(dirname "$0")
 echo "$*" >> "$d/calls.txt"
 if [ "$STUB_MODE" = noread ]; then exit 0; fi
 cat > "$d/stdin-$2.json"
+{ cat "$d/stdin-$2.json"; echo; } >> "$d/stdin-$2.jsonl"
 if [ "$STUB_MODE" = fail ]; then exit 1; fi
 case "$2:$STUB_MODE" in
   guard:deny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R1"}}' ;;
@@ -695,12 +702,25 @@ esac
         r#"import { ZygoPlugin } from "./plugin.mjs";
 const h = await ZygoPlugin({ directory: "/r" });
 const res = {};
+const EDGE = {
+  "no-model": [{}, { system: [] }],
+  "null-model": [{ model: null }, { system: [] }],
+  "no-id": [{ model: { providerID: "zygo" } }, { system: [] }],
+  "no-system": [{ model: { id: "read", providerID: "zygo" } }, {}],
+};
+if (process.env.EDGE) {
+  const [input, out] = EDGE[process.env.EDGE];
+  try { await h["experimental.chat.system.transform"](input, out); res.threw = null; } catch (e) { res.threw = e.message; }
+  res.out = out;
+  console.log(JSON.stringify(res));
+  process.exit(0);
+}
 try { await h["tool.execute.before"]({ tool: "bash" }, { args: { command: "x" } }); res.threw = null; } catch (e) { res.threw = e.message; }
 const after = { output: process.env.BIG ? "y".repeat(1 << 20) : "orig" };
 await h["tool.execute.after"]({ tool: "bash", args: {} }, after);
 res.after = process.env.BIG ? after.output.length : after.output;
 res.system = {};
-for (const [id, p] of [["lead", "zygo"], ["code", "zygo"], ["read", "zygo"], ["lead", "other"]]) {
+for (const [id, p] of [["lead", "zygo"], ["code", "zygo"], ["read", "zygo"], ["lead", "anthropic"]]) {
   const out = { system: [] };
   await h["experimental.chat.system.transform"]({ model: { id, providerID: p } }, out);
   res.system[id + "/" + p] = out.system;
@@ -720,6 +740,9 @@ console.log(JSON.stringify(res));
     };
     if big {
         cmd.env("BIG", "1");
+    }
+    if let Some(e) = edge {
+        cmd.env("EDGE", e);
     }
     let out = cmd.output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -750,7 +773,7 @@ fn plugin_behaves_under_node() {
     assert_eq!(sys(&v, "lead/zygo"), json!(["TEXT"]));
     assert_eq!(sys(&v, "code/zygo"), json!(["TEXTsubagent"]));
     assert_eq!(sys(&v, "read/zygo"), json!(["TEXTsubagent"]));
-    assert_eq!(sys(&v, "lead/other"), json!([]));
+    assert_eq!(sys(&v, "lead/anthropic"), json!([]));
     assert_eq!(v["compact"], json!(["KEEP"]));
     let calls: Vec<&str> = r.calls.lines().collect();
     assert_eq!(&calls[..3], ["hook guard --agent opencode", "hook trim --agent opencode", "hook work --agent opencode"]);
@@ -766,7 +789,7 @@ fn plugin_behaves_under_node() {
         assert_eq!(v["threw"], Value::Null, "{mode}");
         assert_eq!(v["after"], "orig", "{mode}");
         assert_eq!(v["compact"], json!([]), "{mode}");
-        for k in ["lead/zygo", "code/zygo", "read/zygo", "lead/other"] {
+        for k in ["lead/zygo", "code/zygo", "read/zygo", "lead/anthropic"] {
             assert_eq!(sys(&v, k), json!([]), "{mode} {k}");
         }
     }
@@ -795,6 +818,13 @@ fn session_starts(r: &NodeRun) -> Vec<&str> {
     r.calls.lines().filter(|l| l.starts_with("hook session-start")).collect()
 }
 
+/// Every `session-start` call's stdin, one record per call (the stub appends each to `stdin-session-start.jsonl`).
+#[cfg(unix)]
+fn session_start_stdins(r: &NodeRun) -> Vec<Value> {
+    let text = std::fs::read_to_string(r.dir.join("stdin-session-start.jsonl")).unwrap_or_default();
+    text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
 // T§7.2 item 1, T§17 check 10
 #[cfg(unix)]
 #[test]
@@ -809,8 +839,12 @@ fn subagent_transform_other_zygo_role_calls_event_subagent() {
     assert_eq!(v["system"]["code/zygo"], json!(["TEXTsubagent"]));
     assert_eq!(v["system"]["read/zygo"], json!(["TEXTsubagent"]));
     assert_eq!(session_starts(&r)[1..], [SUB_CALL, SUB_CALL]);
-    let stdin: Value = serde_json::from_slice(&std::fs::read(r.dir.join("stdin-session-start.json")).unwrap()).unwrap();
-    assert_eq!(stdin, json!({"input": {"model": {"id": "read", "providerID": "zygo"}}, "output": {"system": []}, "cwd": "/r"}));
+    let stdins = session_start_stdins(&r);
+    assert_eq!(stdins.len(), 3);
+    for id in ["code", "read"] {
+        let want = json!({"input": {"model": {"id": id, "providerID": "zygo"}}, "output": {"system": []}, "cwd": "/r"});
+        assert_eq!(stdins.iter().filter(|s| **s == want).count(), 1, "{id}");
+    }
 }
 
 // T§7.2 item 1, T§17 check 10
@@ -832,13 +866,13 @@ fn subagent_transform_main_role_calls_without_event() {
 #[cfg(unix)]
 #[test]
 #[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
-fn subagent_transform_other_provider_calls_nothing() {
-    if no_node("subagent_transform_other_provider_calls_nothing") {
+fn subagent_transform_anthropic_provider_calls_nothing() {
+    if no_node("subagent_transform_anthropic_provider_calls_nothing") {
         return;
     }
     let fx = fx();
     let r = node_run(&fx, "sx-other", "ok", Some("lead"), false);
-    assert_eq!(r.result.clone().unwrap()["system"]["lead/other"], json!([]));
+    assert_eq!(r.result.clone().unwrap()["system"]["lead/anthropic"], json!([]));
     assert_eq!(session_starts(&r), [MAIN_CALL, SUB_CALL, SUB_CALL]);
 }
 
@@ -857,9 +891,59 @@ fn subagent_transform_unset_main_role_calls_event_subagent() {
         for k in ["lead/zygo", "code/zygo", "read/zygo"] {
             assert_eq!(v["system"][k], json!(["TEXTsubagent"]), "{name} {k}");
         }
-        assert_eq!(v["system"]["lead/other"], json!([]), "{name}");
+        assert_eq!(v["system"]["lead/anthropic"], json!([]), "{name}");
         assert_eq!(session_starts(&r), [SUB_CALL, SUB_CALL, SUB_CALL], "{name}");
     }
+}
+
+// T§7.2 item 1 (SX-6 review round 1, item 3): a missing or null `input.model` is not a `zygo/` model
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_missing_or_null_model_calls_nothing() {
+    if no_node("subagent_transform_missing_or_null_model_calls_nothing") {
+        return;
+    }
+    let fx = fx();
+    for edge in ["no-model", "null-model"] {
+        let r = node_run_edge(&fx, &format!("sx-{edge}"), "ok", Some("lead"), false, Some(edge));
+        let v = r.result.clone().unwrap();
+        assert_eq!(v["threw"], Value::Null, "{edge}");
+        assert_eq!(v["out"], json!({"system": []}), "{edge}");
+        assert_eq!(r.calls, "", "{edge}");
+    }
+}
+
+// T§7.2 item 1 (SX-6 review round 1, item 3): a `zygo` model with no id is not the main role
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_zygo_model_without_id_calls_event_subagent() {
+    if no_node("subagent_transform_zygo_model_without_id_calls_event_subagent") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run_edge(&fx, "sx-no-id", "ok", Some("lead"), false, Some("no-id"));
+    let v = r.result.clone().unwrap();
+    assert_eq!(v["threw"], Value::Null);
+    assert_eq!(v["out"], json!({"system": ["TEXTsubagent"]}));
+    assert_eq!(session_starts(&r), [SUB_CALL]);
+}
+
+// T-C1 (SX-6 review round 1, item 4): no `output.system` array, no zygo process and no throw
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_without_system_array_calls_nothing() {
+    if no_node("subagent_transform_without_system_array_calls_nothing") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run_edge(&fx, "sx-no-system", "ok", Some("lead"), false, Some("no-system"));
+    let v = r.result.clone().unwrap();
+    assert_eq!(v["threw"], Value::Null);
+    assert_eq!(v["out"], json!({}));
+    assert_eq!(r.calls, "");
 }
 
 // ---- Task 4: delivery ----
