@@ -1,0 +1,4 @@
+models_requests=6 /v1/models?client_version=0.172.0
+b: models_request=1 listed=yes driver=0
+c: models_request=2 listed=no driver=0
+d: models_request=0 listed=yes driver=0

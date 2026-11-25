@@ -1,0 +1,4 @@
+helper_runs=3
+requests=4
+with_bearer=4
+no_credential=0

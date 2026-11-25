@@ -150,10 +150,12 @@ except BrokenPipeError:
 PY
 
 # models_run <variant>: codex app-server with the variant's config; the driver's status is kept.
+# b and c use the key helper: in the first real run (0.172.0) only the provider with an auth
+# command sent GET /v1/models; the env_key providers sent none.
 models_run() {
   _p3_v=$1
   CX_HOME=$RUN/cx-models-$_p3_v
-  if [ "$_p3_v" = d ]; then cx_config "$_p3_v" "$CX_HOME" catalog; else cx_config "$_p3_v" "$CX_HOME"; fi
+  if [ "$_p3_v" = d ]; then cx_config "$_p3_v" "$CX_HOME" catalog; else cx_config "$_p3_v" "$CX_HOME" helper; fi
   mkfifo "$RUN/rpc-$_p3_v.in"
   python3 -I "$RUN/rpc.py" "$RUN/rpc-$_p3_v.in" "$RUN/rpc-$_p3_v.out" "$RUN/rpc-$_p3_v.done" &
   _p3_dpid=$!
@@ -300,6 +302,15 @@ def text_of(x):
         if t:
             return t
     return json.dumps(x)
+# The run paths get scrub's names before a line is cut: a cut path no longer matches scrub's rule.
+RP = []
+for sub, repl in (("repo", "/repo"), ("home", "/home/user"), ("", "/tmp/run")):
+    p = os.path.realpath(os.path.join(run, sub)) if sub else os.path.realpath(run)
+    RP += [(p, repl)] + [("/" + p[len("/private/"):], repl)] * p.startswith("/private/")
+def local(t):
+    for a, b in RP:
+        t = t.replace(a, b)
+    return t
 lines, tracer, before = [], "none", 0
 ft = found.get("first-turn")
 if ft is None:
@@ -309,7 +320,7 @@ else:
     k = next((i for i, x in enumerate(its) if "pc3-turn-b" in json.dumps(x)), len(its))
     before = k
     for i, x in enumerate(its[:k]):
-        first = (text_of(x).splitlines() or [""])[0][:120]
+        first = (local(text_of(x)).splitlines() or [""])[0][:120]
         lines.append("%d %s %s %s" % (i, x.get("type", "-"), x.get("role", "-"), first))
         if tracer == "none" and "pc3-agents-tracer" in json.dumps(x):
             tracer = str(i)
