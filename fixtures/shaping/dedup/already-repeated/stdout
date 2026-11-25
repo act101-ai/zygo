@@ -1,0 +1,7 @@
+poll: start
+poll: queue empty
+poll: queue empty
+poll: queue empty
+poll: queue empty
+poll: queue empty
+poll: queue empty [repeated 4 times]
