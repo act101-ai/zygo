@@ -101,8 +101,9 @@ evidence = ["test:crates/zygo-launch/tests/claude_code.rs::settings_env_agents_a
 
 [[grade]]
 criterion = "A-1.2"
-status = "not-met"
-reason = "In passthrough (base spec 12.3) the session token is also in the ANTHROPIC_CUSTOM_HEADERS environment row as X-Zygo-Token (stub_launch.rs claude_code_session_token_stays_in_the_token_file...); the criterion allows only the token file and the 0600 passthrough files"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::claude_code_flags_settings_agents_and_mcp_match_the_spec", "test:crates/zygo-hooks/tests/hooks_basic.rs::token_prints_file_content", "test:crates/zygo-launch/tests/stub_launch.rs::claude_code_session_token_stays_in_the_token_file_and_in_passthrough_in_settings_and_custom_headers", "test:crates/zygo-proxy/tests/passthrough.rs::unit_outbound_headers"]
+reason = "apiKeyHelper is zygo hook token, which prints the token file; outside passthrough the token is in no argument, environment row or other file; in passthrough the X-Zygo-Token header goes only to zygo's proxy, which strips x-zygo-* (base spec 12.3, 12.4)"
 
 [[grade]]
 criterion = "A-1.3"
@@ -251,8 +252,9 @@ evidence = ["test:crates/zygo-launch/tests/launcher.rs::denylist_removes_provide
 
 [[grade]]
 criterion = "A-10.2"
-status = "not-met"
-reason = "In passthrough (base spec 12.3) the session token is in the client's environment: ANTHROPIC_CUSTOM_HEADERS holds X-Zygo-Token (stub_launch.rs claude_code_session_token_stays_in_the_token_file...); outside passthrough it is not"
+status = "met"
+evidence = ["test:crates/zygo-launch/tests/stub_launch.rs::claude_code_session_token_stays_in_the_token_file_and_in_passthrough_in_settings_and_custom_headers", "test:crates/zygo-proxy/tests/passthrough.rs::unit_outbound_headers"]
+reason = "Outside passthrough no environment row holds the token; in passthrough only ANTHROPIC_CUSTOM_HEADERS holds it, as X-Zygo-Token for zygo's proxy, which strips x-zygo-* before upstream (base spec 12.3, 12.4)"
 
 [[grade]]
 criterion = "A-11.1"

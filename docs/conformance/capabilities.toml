@@ -10,7 +10,7 @@ text = "Each model request goes to the proxy at the client dialect's prefix."
 
 [[capability.criterion]]
 id = "A-1.2"
-text = "The credential is the session token, got through the client's key helper; the token is in no argument, no environment row and no file except the session's `token` file (and the `0600` passthrough files of §12.3)."
+text = "The credential is the session token, got through the client's key helper; the token is in no argument, no environment row and no file except the session's `token` file (and the `0600` passthrough files of §12.3); passthrough excepted (§12.3)."
 
 [[capability.criterion]]
 id = "A-1.3"
@@ -184,7 +184,7 @@ text = "The §8.4 denylist, with the client's rows, is applied to the client's e
 
 [[capability.criterion]]
 id = "A-10.2"
-text = "The session token is not in the client's environment."
+text = "The session token is not in the client's environment, passthrough excepted (§12.3)."
 
 [[capability]]
 id = "A-11"
@@ -393,3 +393,9 @@ client = "claude-code"
 criterion = "A-1.4"
 reason = "Windows without Git Bash runs the key helper in PowerShell, which needs & before a quoted path; zygo writes the double-quoted path, and CI runs the command only in Git Bash"
 approved = "operator 2026-11-25, docs/specs/2026-11-25-client-model-design.md K-D18"
+
+[[bar_exception]]
+client = "opencode"
+criterion = "A-1.4"
+reason = "OpenCode has no key-helper command: it reads the session token through the {file:} reference in provider.zygo.options.apiKey (base spec 8.7, PO1), so no key-helper command runs in any shell; a core criterion cannot be n/a"
+approved = "approved by the operator 2026-11-25, docs/work/phase4/nodes/CF-4.md step 7 decision (c)"

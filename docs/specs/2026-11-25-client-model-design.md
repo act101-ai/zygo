@@ -226,7 +226,7 @@ The migration of A-1 to A-21, WA-1 and WA-2 **(author)**. Each criterion restate
 
 | Cap. | Tier | Criteria |
 |---|---|---|
-| A-1 Transport | core | .1 Each model request goes to the proxy at the client dialect's prefix. .2 The credential is the session token, got through the client's key helper; the token is in no argument, no environment row and no file except the session's `token` file (and the `0600` passthrough files of §12.3). .3 The client's own login and provider selection are off: no model request goes to a vendor host and no login prompt shows (passthrough excepted). .4 The key-helper command runs in each shell that the client uses on Linux, macOS and Windows. |
+| A-1 Transport | core | .1 Each model request goes to the proxy at the client dialect's prefix. .2 The credential is the session token, got through the client's key helper; the token is in no argument, no environment row and no file except the session's `token` file (and the `0600` passthrough files of §12.3); passthrough excepted (§12.3). .3 The client's own login and provider selection are off: no model request goes to a vendor host and no login prompt shows (passthrough excepted). .4 The key-helper command runs in each shell that the client uses on Linux, macOS and Windows. |
 | A-2 Attribution | core | .1 `X-Zygo-Session` on each request. .2 `X-Zygo-Agent-Version` on each request. .3 `X-Zygo-Repo` on each request when the session has a repository id. .4 `X-Zygo-Work` on each request when a work item is set. |
 | A-3 Model list | standard | .1 The picker shows the session's role list. .2 The default model is a role. .3 Each model alias of the client resolves to a role. |
 | A-4 Subagent roles | standard | .1 Each built-in subagent maps to a role. .2 One `zygo-<role>` subagent exists per enabled role, with model `<role>`. |
@@ -235,7 +235,7 @@ The migration of A-1 to A-21, WA-1 and WA-2 **(author)**. Each criterion restate
 | A-7 Result trimming | standard | .1 Shell tool output over the threshold reaches the model as the §10.1 view. .2 File-read text output over the threshold, the same. .3 Search and listing tool output, the same. .4 Web-fetch output, the same (`n/a` for a client with no such tool). .5 The view takes the place of the tool's output in the tool's own result, not of an error or a feedback message. |
 | A-8 Session context | core | .1 The §8.6 session text reaches the main loop at each session start (new, cleared, resumed). .2 The mechanics text (§8.6 item 7) reaches each `zygo-<role>` subagent. |
 | A-9 Status | extra | .1 to .5: the profile, the work item, the context use, the compaction override and the session savings show on the client's status surface, or in `zygo status` when the client has no surface (the OpenCode precedent, `docs/conformance.md` evidence for A-9). .6 Each status command that zygo writes runs in each shell the client uses. |
-| A-10 Secrets hygiene | core | .1 The §8.4 denylist, with the client's rows, is applied to the client's environment. .2 The session token is not in the client's environment. |
+| A-10 Secrets hygiene | core | .1 The §8.4 denylist, with the client's rows, is applied to the client's environment. .2 The session token is not in the client's environment, passthrough excepted (§12.3). |
 | A-11 Skills and plugins | standard | .1 The skills of the session's plugin snapshot load. .2 The other parts of each snapshot plugin (commands, agents, hooks, MCP servers) load in the client's form. |
 | A-12 Model profile | standard | .1 `--profile <name>` applies through the session (§11). |
 | A-13 Version | core | .1 The descriptor holds a minimum version. .2 `zygo doctor` reports the installed version against it. |
@@ -947,3 +947,4 @@ P4-11 (client updates):
 - 2026-11-25: K§12 gets the OC-1 base-spec change (operator: OpenCode A-1.2, A-1.3, A-10.2 fixed in code before CF-4).
 - 2026-11-25: the K§12 OC-1 line names `disabled_providers = []` (OC-1 review round 2).
 - 2026-11-25: the K§12 OC-1 line: the inline `disabled_providers` keeps the user's lists without `zygo` (OC-1 review round 3).
+- 2026-11-25: K§6.2.2 A-1.2, A-10.2 — passthrough excepted (§12.3); approved by the operator 2026-11-25.

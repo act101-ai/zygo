@@ -60,10 +60,16 @@ The tree test fails check item 8 for both clients until the operator decides eac
 
 - **BLOCKED(operator: bar exception claude-code A-1.2).** In passthrough (base spec §12.3), the session token is in the `ANTHROPIC_CUSTOM_HEADERS` environment row as `X-Zygo-Token`. `stub_launch.rs::claude_code_session_token_stays_in_the_token_file_and_in_passthrough_in_settings_and_custom_headers` (`:542-576`) asserts this. A-1.2 allows only the `token` file and "the `0600` passthrough files of §12.3", and an environment row is not a file. If the operator reads A-1.2 as allowing every §12.3 carrier, that is a change of standard text, and it also stops for the operator (K§6.2.1).
 - **BLOCKED(operator: bar exception claude-code A-10.2).** The same passthrough row puts the session token in the client's environment. Outside passthrough the token is not in the environment (same test).
-- **BLOCKED(operator: bar exception opencode A-1.2).** OpenCode has no key helper. zygo writes the session token as `provider.zygo.options.apiKey` inside the `OPENCODE_CONFIG_CONTENT` environment row (`crates/zygo-launch/src/opencode.rs:162`; base spec §8.7). `opencode.rs::launch_sets_the_opencode_environment` (`crates/zygo-launch/tests/opencode.rs:1183-1188`) asserts this.
-- **BLOCKED(operator: bar exception opencode A-1.3).** The inline config sets `model` and `small_model` to `zygo/<role>` (`src/opencode.rs:156-157`), and the preflight stops conflicting user keys. But zygo writes no `enabled_providers` key, although the pinned schema has one (`fixtures/opencode/config-schema.json`). OpenCode's own provider logins (`opencode providers`, alias `auth`, `fixtures/opencode/help.txt:14`) and its other providers stay selectable, so a model request can go to a vendor host.
+- **BLOCKED(operator: bar exception opencode A-1.2).** At `16481ba8`, zygo wrote the session token as `provider.zygo.options.apiKey` inside the `OPENCODE_CONFIG_CONTENT` environment row (base spec §8.7 before OC-1). Void since OC-1 (`53eabe25`): `apiKey` is a `{file:…}` reference to the token file (`crates/zygo-launch/src/opencode.rs:113-127` `token_ref`, `:185`).
+- **BLOCKED(operator: bar exception opencode A-1.3).** At `16481ba8`, zygo wrote no `enabled_providers` key, so OpenCode's own provider logins and other providers stayed selectable. Void since OC-1 (`53eabe25`): the inline config sets `enabled_providers = ["zygo"]` and the computed `disabled_providers` (`src/opencode.rs:179-180`, `:606-619` `user_disabled`).
 - **BLOCKED(operator: bar exception opencode A-1.4).** There is no key-helper command to run in any shell (see A-1.2). A core criterion cannot be `n/a` (check item 4), so it is `not-met`.
 - **BLOCKED(operator: bar exception opencode A-10.2).** The token is in the client's environment through `OPENCODE_CONFIG_CONTENT` (same evidence as OpenCode A-1.2; base spec §8.4 names it as an "Accepted limit").
+
+**Operator decisions, 2026-11-25** (step 7 applies them):
+
+- (a) Claude Code A-1.2 and A-10.2: criterion text changed. A-1.2 ends "…passthrough files of §12.3); passthrough excepted (§12.3)." and A-10.2 is "The session token is not in the client's environment, passthrough excepted (§12.3)." (K§6.2.2 and `capabilities.toml`, with a K change-log line). Both are graded again by the new text: met.
+- (b) OpenCode A-1.2, A-1.3 and A-10.2: fixed in code by OC-1 (merged `53eabe25`). Graded again from the merged code, the tests that are not ignored and premises PO1 and PO2 (`verified`): met.
+- (c) OpenCode A-1.4: approved as a bar exception, "approved by the operator 2026-11-25". Claude Code A-1.4 stays the K-D18 exception.
 
 For each line, the operator's decision is one of three:
 
@@ -379,7 +385,7 @@ Each commit message ends with the two trailers `Zygo-Session: <the implementer's
   1. Push the branch.
   2. Open the pull request as a draft. Its body holds "Stops for the operator", "Differences from today's hand grades" and "Judgment calls", verbatim. It also says that CI is red on `conformance_tree` item 8 alone until the decisions land.
   3. The controller sets CF-4 to `BLOCKED(operator: bar exception …)`, with one line per stop.
-- [ ] 7. **Apply each decision in `docs/conformance/capabilities.toml`.**
+- [x] 7. **Apply each decision in `docs/conformance/capabilities.toml`.**
   - An approved exception: add one `[[bar_exception]]` after the A-1.4 entry, in the order of "Stops". `client` and `criterion` are the stop's; `reason` is that grade's reason in the table, verbatim; `approved` is the operator's approval text, verbatim (who, date, where it is recorded).
   - A code fix: no registry change here. The grade stays `not-met` until the fix node lands. Then its test becomes the `met` evidence, and the cell changes are added to the pull request body.
   - A changed criterion text: replace that `text`, then grade the criterion again by the new text with evidence by K§6.2.3.
