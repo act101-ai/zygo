@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
-| SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
@@ -402,3 +401,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-12 DONE: `zygo up` checks and assigns the config-directory pool round-robin; members run in passthrough; user-loadout job/pool values pass config check. Review round 2 moved the pool line after the step-8 write and added tests. FX-15 added (doctor pool filter) · PR #125 |
 | 2026-11-25 | FX-15 DONE: doctor pool lines use the `zygo up` member filter (server user info skipped via has_user_info) and its kept member names (agent kinds, valid_member_name, first holder); review F1 fixed in round 2; F2/F3 to operator report · PR #129 |
 | 2026-11-25 | MS-24 DONE: SP2 verified on github.com and gitlab.com with well-known private repos; both private probes fail with `could not read Username` (in PRIVATE_TEXT); result for MS-25 · PR #130 |
+| 2026-11-25 | SX-9 DONE: live premises ST1-ST4 verified; review findings F1-F3 fixed in round 2; OpenCode ran on glm/Z.AI, not OpenRouter (deviation in nodes/SX-9.md) · PR #135 |
