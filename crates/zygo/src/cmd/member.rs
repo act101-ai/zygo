@@ -58,6 +58,9 @@ pub struct MemberCtx {
 pub struct HandJoin {
     pub own_session: Option<String>,
     pub name: Option<String>,
+    /// The marker name chosen before the lock (`MemberCtx.name`); the locked write gives the record the same name
+    /// (AU58; ML-7 review round 1, F4).
+    pub marker: Option<String>,
 }
 
 /// The line of a `--name` outside a pane of a workspace (M§6).
@@ -75,7 +78,8 @@ fn name_taken_line(n: &str, key: &str) -> String {
 
 /// The refusal of the start write of a hand start: the reason of the not-saved line (a v1 launch), or the line of a
 /// launch that stops (`StopLaunch`).
-enum HandErr {
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HandErr {
     NotSaved(String),
     Stop(String),
 }
@@ -248,7 +252,12 @@ impl Callback {
                     return Err(anyhow::Error::new(StopLaunch(line)));
                 }
                 Err(HandErr::NotSaved(reason)) => {
-                    print_err(&format!("{NOT_SAVED}{reason}\n"));
+                    let line = format!("{NOT_SAVED}{reason}");
+                    print_err(&format!("{line}\n"));
+                    // ML-7 review round 1, F1: `--name` asks for a named member or nothing.
+                    if h.name.is_some() {
+                        return Err(anyhow::Error::new(StopLaunch(line)));
+                    }
                     return Err(anyhow::Error::new(NotMember(reason)));
                 }
             },
@@ -306,32 +315,21 @@ impl Callback {
 
     /// The start write of a hand start (W§8.4, M3 D2): [`join`] under `lock` with the 5 s bound of launchers, so the
     /// phase, AU94 and W-C9 are checked again in the same lock. `Err` holds the reason of the not-saved line: the
-    /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`. A `--name`
-    /// that another key holds under `lock` is `HandErr::Stop` with its line (M§6); else `join` runs and the record
-    /// gets the `--name` value when there is one.
+    /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`. The write is
+    /// [`hand_join`]: a marker name that another key holds under `lock` is `HandErr::Stop` with its line (M§6).
     fn hand_write(&self, start: &Start, h: &HandJoin) -> Result<Workspace, HandErr> {
         let sessions = self.paths.sessions_dir.clone();
         let live = |r: &MemberRecord| live_session(&sessions, r);
-        let mut refused: Option<String> = None;
-        let mut stop: Option<String> = None;
+        let mut refused: Option<HandErr> = None;
         let mut previous: Option<MemberRecord> = None;
         let written = self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
-            if let Some(n) = h.name.as_deref()
-                && let Some(holder) = name_holder(ws, &self.pane, n)
-            {
-                let line = name_taken_line(n, &holder);
-                stop = Some(line.clone());
-                anyhow::bail!(line);
-            }
             previous = ws.members.get(&self.pane).cloned();
-            join(ws, &self.pane, &self.launch, start, h.own_session.as_deref(), &live).map_err(|reason| {
-                refused = Some(reason.clone());
-                anyhow::anyhow!(reason)
-            })?;
-            if let (Some(n), Some(rec)) = (h.name.as_ref(), ws.members.get_mut(&self.pane)) {
-                rec.name = Some(n.clone());
-            }
-            Ok(())
+            hand_join(ws, &self.pane, &self.launch, start, h, &live).map_err(|e| {
+                let (HandErr::Stop(line) | HandErr::NotSaved(line)) = &e;
+                let err = anyhow::anyhow!(line.clone());
+                refused = Some(e);
+                err
+            })
         });
         if written.as_ref().is_ok_and(Option::is_some) {
             *self.previous.lock().unwrap_or_else(|e| e.into_inner()) = previous;
@@ -339,8 +337,7 @@ impl Callback {
         match written {
             Ok(Some(ws)) => Ok(ws),
             Ok(None) => Err(HandErr::NotSaved(format!("no workspace state for {}", self.ws_id))),
-            Err(StateError::Refused(_)) if stop.is_some() => Err(HandErr::Stop(stop.unwrap_or_default())),
-            Err(StateError::Refused(_)) if refused.is_some() => Err(HandErr::NotSaved(refused.unwrap_or_default())),
+            Err(StateError::Refused(_)) if refused.is_some() => Err(refused.unwrap_or(HandErr::NotSaved(String::new()))),
             Err(e) => Err(HandErr::NotSaved(format!("could not write the member record: {}", zygo_core::esc(&e.to_string())))),
         }
     }
@@ -831,14 +828,11 @@ pub(crate) fn conflict(
     }
 }
 
-/// The key of another member that holds the member name `name` (M§6): the first record of `ws.members`, else the first
-/// entry of `ws.panes`, with a key other than `key` whose stored name passes the grammar (AU84) and equals `name`.
+/// The key of another member that holds the member name `name` (M§6): the first record of `ws.members` with a key
+/// other than `key` whose stored name passes the grammar (AU84) and equals `name`. The record owns the name, as mail
+/// resolves it and `forget-pane` removes it; a `ws.panes` entry holds none (ML-7 review round 1, F2).
 pub(crate) fn name_holder(ws: &Workspace, key: &str, name: &str) -> Option<String> {
-    ws.members
-        .iter()
-        .find(|(k, r)| k.as_str() != key && r.valid_name() == Some(name))
-        .map(|(k, _)| k.clone())
-        .or_else(|| ws.panes.iter().find(|p| p.key != key && p.valid_name() == Some(name)).map(|p| p.key.clone()))
+    ws.members.iter().find(|(k, r)| k.as_str() != key && r.valid_name() == Some(name)).map(|(k, _)| k.clone())
 }
 
 /// The record of `key` that [`join`] keeps: the accepted resume only, whose `agent_session` is `own` and whose kind is
@@ -846,6 +840,26 @@ pub(crate) fn name_holder(ws: &Workspace, key: &str, name: &str) -> Option<Strin
 pub(crate) fn kept<'a>(ws: &'a Workspace, key: &str, kind: Agent, own: Option<&str>) -> Option<&'a MemberRecord> {
     let own = own?;
     ws.members.get(key).filter(|r| r.agent_session.as_deref() == Some(own) && r.launch.kind == kind)
+}
+
+/// The locked write of a hand start (M3 D2, M§6), in the closure of [`Callback::hand_write`]: a marker name
+/// (`h.marker`, chosen before the lock) that another key holds is `HandErr::Stop` with its line; then [`join`], whose
+/// refusal is `HandErr::NotSaved`; then the record's name is the marker name, so the record and the view agree
+/// (AU58; ML-7 review round 1, F4). An `Err` leaves `ws` unchanged.
+pub(crate) fn hand_join(
+    ws: &mut Workspace, key: &str, launch: &zygo_workspace::state::Launch, start: &Start, h: &HandJoin,
+    live: &dyn Fn(&MemberRecord) -> Option<String>,
+) -> Result<(), HandErr> {
+    if let Some(n) = h.marker.as_deref()
+        && let Some(holder) = name_holder(ws, key, n)
+    {
+        return Err(HandErr::Stop(name_taken_line(n, &holder)));
+    }
+    join(ws, key, launch, start, h.own_session.as_deref(), live).map_err(HandErr::NotSaved)?;
+    if let Some(rec) = ws.members.get_mut(key) {
+        rec.name = h.marker.clone();
+    }
+    Ok(())
 }
 
 /// The one start write of a hand start (D2, W§8.4), in the closure of the callback's locked write: the phase must be
@@ -896,6 +910,9 @@ pub(crate) fn join(
 pub(crate) enum HandStart {
     /// Not a member: a v1 launch.
     V1,
+    /// Not a member after a printed line (the not-saved line or the AU98 line): a v1 launch, or with `--name` exit 1
+    /// with that one line (ML-7 review round 1, F3).
+    V1Said,
     /// A member with its pane key.
     Member(Box<MemberCtx>),
     /// AU94 or W-C9 refuses: print the line, exit 1, start nothing.
@@ -911,7 +928,7 @@ fn not_saved(reason: &str) {
 /// tmux program and is called only after the `ZYGO_SESSION`, `TMUX`, `TMUX_PANE` and `ZYGO_WORKSPACE` checks (D8). A
 /// failure before the pane is known as a workspace pane is a silent v1 launch, except a state whose `tmux_socket`
 /// fails AU54 or is not the socket of `$TMUX`, and a socket of `$TMUX` that fails AU54 or AU62; later failures print
-/// the not-saved line (paths and ids escaped, C6). Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
+/// the not-saved line (paths and ids escaped, C6) and give `HandStart::V1Said`. Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
 pub(crate) fn hand_start(
     launch: zygo_workspace::state::Launch, name: Option<String>, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths,
     tmux: &dyn Fn() -> PathBuf,
@@ -935,7 +952,7 @@ pub(crate) fn hand_start(
         && let Err(e) = repair::check_saved_socket(ws)
     {
         not_saved(e.to_string().trim_start_matches("zygo: "));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     if let Ok(Some(ws)) = &read
         && ws.tmux_socket.as_deref() != Some(sock.as_path())
@@ -946,35 +963,35 @@ pub(crate) fn hand_start(
             zygo_core::esc(&a),
             zygo_core::esc(&sock.display().to_string())
         ));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     // FIX-30 (AU54): the socket of `$TMUX` before its first use (AU62, then `display` at the next lines). A saved
     // socket reaches here only when it equals `sock` and passed the check above; this one matters for a state that is
     // missing or cannot be read.
     if check_path(&sock).is_err() {
         not_saved(UNSAFE_PATH_MESSAGE.trim_start_matches("zygo: "));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     if let Err(t) = up::socket_is_private(&sock, false) {
         not_saved(&zygo_core::esc(&t));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     let mux = Tmux::new(tmux, Some(sock));
     let Ok(answer) = mux.display(pane, "#{session_name} #{@zygo-ws}") else { return HandStart::V1 };
     let Some((session, _)) = workspace_of(&answer, &ws_var) else { return HandStart::V1 };
     if launch.server.as_deref().is_some_and(args::has_user_info) {
         print_err(&format!("{AU98_LINE}\n"));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     let ws = match read {
         Ok(Some(ws)) => ws,
         Ok(None) => {
             not_saved(&format!("no workspace state for {id}"));
-            return HandStart::V1;
+            return HandStart::V1Said;
         }
         Err(e) => {
             not_saved(&zygo_core::esc(&e.to_string()));
-            return HandStart::V1;
+            return HandStart::V1Said;
         }
     };
     if ws.tmux_session != session {
@@ -983,13 +1000,13 @@ pub(crate) fn hand_start(
             zygo_core::esc(&ws.tmux_session),
             zygo_core::esc(&session)
         ));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     let key = match snapshot::assign_key(&store, &mux, pane) {
         Ok(k) => k,
         Err(e) => {
             not_saved(&zygo_core::esc(&e.to_string()));
-            return HandStart::V1;
+            return HandStart::V1Said;
         }
     };
     let own = own_session(launch.kind, &launch.args);
@@ -1010,7 +1027,7 @@ pub(crate) fn hand_start(
         pane: key,
         store,
         launch,
-        hand: Some(HandJoin { own_session: own, name }),
+        hand: Some(HandJoin { own_session: own, name, marker: marker.clone() }),
         name: marker,
     }))
 }
@@ -1038,7 +1055,8 @@ pub(crate) fn launch_hand(
             print_err(&format!("{NAME_NEEDS_PANE}\n"));
             1
         }
-        HandStart::V1 => Launcher::run(adapter(std::env::current_exe().unwrap_or_default()).as_ref(), opts).code,
+        HandStart::V1Said if named => 1,
+        HandStart::V1 | HandStart::V1Said => Launcher::run(adapter(std::env::current_exe().unwrap_or_default()).as_ref(), opts).code,
         HandStart::Member(m) => {
             let zygo = zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize));
             run_wrapped(adapter(zygo).as_ref(), opts, &m).code
@@ -1405,7 +1423,8 @@ mod tests {
         r
     }
 
-    #[test] // M§6, AU84: a name held by another key's record or pane entry; its own key and a bad stored name hold none
+    #[test] // M§6, AU84: a name held by another key's record; its own key, a bad stored name and a pane entry with no
+    // record hold none (ML-7 review round 1, F2: the owner of a name is the record, as mail reads it)
     fn name_holder_reads_other_keys_by_au84() {
         let mut a = rec(MemberState::Ended, None);
         a.name = Some("elena".into());
@@ -1416,8 +1435,38 @@ mod tests {
         assert_eq!(name_holder(&w, "kbbbbbbbb", "elena"), Some("kaaaaaaaa".to_string()));
         assert_eq!(name_holder(&w, "kaaaaaaaa", "elena"), None);
         assert_eq!(name_holder(&w, "kaaaaaaaa", "x_y"), None);
-        assert_eq!(name_holder(&w, "kaaaaaaaa", "ops"), Some("kcccccccc".to_string()));
+        assert_eq!(name_holder(&w, "kaaaaaaaa", "ops"), None);
         assert_eq!(name_holder(&w, "kcccccccc", "ops"), None);
+    }
+
+    #[test] // ML-7 review round 1, F4 (AU58): the locked write gives the record the marker name chosen before the lock
+    fn hand_join_writes_the_marker_member_name_to_a_replaced_record() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let l = Launch::new(Agent::ClaudeCode);
+        let h = |name: Option<&str>, marker: Option<&str>| HandJoin {
+            own_session: None,
+            name: name.map(String::from),
+            marker: marker.map(String::from),
+        };
+        // `kept` is none: `join` makes a new record, which gets the marker name.
+        let mut w = ws_with(&[]);
+        hand_join(&mut w, k, &l, &start(), &h(None, Some("elena")), &none).unwrap();
+        assert_eq!(w.members[k].name.as_deref(), Some("elena"));
+        // A marker with no name: the record has none, also when the replaced record had one.
+        let mut old = rec(MemberState::Ended, None);
+        old.name = Some("ops".into());
+        let mut w = ws_with(&[(k, old)]);
+        hand_join(&mut w, k, &l, &start(), &h(None, None), &none).unwrap();
+        assert_eq!(w.members[k].name, None);
+        // A marker name another key holds under the lock stops the launch and changes nothing.
+        let mut other = rec(MemberState::Ended, None);
+        other.name = Some("elena".into());
+        let mut w = ws_with(&[("kbbbbbbbb", other)]);
+        let before = w.clone();
+        let e = hand_join(&mut w, k, &l, &start(), &h(None, Some("elena")), &none).unwrap_err();
+        assert_eq!(e, HandErr::Stop("zygo: name elena belongs to pane kbbbbbbbb; nothing started".into()));
+        assert_eq!(w, before);
     }
 
     #[test] // the record that `join` keeps: the accepted resume only (review round 2, finding 6(b))

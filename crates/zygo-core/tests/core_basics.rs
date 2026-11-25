@@ -375,6 +375,18 @@ fn session_view_member_name_is_optional_and_round_trips() {
     assert_eq!(json["workspace"]["member"], serde_json::json!({"ws_id": "w1", "pane": "p1", "name": "elena"}));
 }
 
+#[test] // ML-7 review round 1, F5 (AU78): a member name that is not a string reads as none; the view still loads
+fn session_view_member_name_that_is_not_a_string_reads_as_none() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let mut json = serde_json::to_value(SessionView::default()).unwrap();
+    json["workspace"] = serde_json::json!({"member": {"ws_id": "w1", "pane": "p1", "name": 5}});
+    std::fs::write(d.view_json(), serde_json::to_vec(&json).unwrap()).unwrap();
+    let m = SessionView::load(&d).unwrap().workspace.unwrap().member;
+    assert_eq!((m.ws_id.as_str(), m.pane.as_str(), m.name), ("w1", "p1", None));
+}
+
 #[test]
 fn session_view_save_keeps_unknown_top_level_fields() { // H1 attempt-2 review round 1, F4 (AU78 pattern)
     use zygo_core::session_view::SessionView;

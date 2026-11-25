@@ -1857,6 +1857,42 @@ fn the_callback_refuses_a_member_name_taken_since_the_check() {
     assert!(member(&h, &key).is_none());
 }
 
+#[test] // ML-7 review round 1, F1: with `--name`, a callback refusal stops the launch; no v1 launch
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn a_callback_refusal_with_member_name_exits_1_and_starts_nothing() {
+    let Some(h) = Harness::new() else { return };
+    let mut before = Vec::new();
+    let (o, out, key) = refused_in_callback(&h, &["claude", "--name", "elena"], &mut |h, _| {
+        h.store(WS_ID)
+            .update_existing(Duration::from_secs(5), &mut |w| {
+                w.phase = Phase::Stopping;
+                Ok(())
+            })
+            .unwrap();
+        before = state_bytes(h);
+    });
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    let want = format!("{NOT_SAVED}a member starts only in phase up or draining, not stopping\n");
+    assert_eq!(text(&o.stderr).matches(&want).count(), 1, "{}", text(&o.stderr));
+    assert!(!out.join("argv.json").exists());
+    assert_eq!(state_bytes(&h), before);
+    assert!(member(&h, &key).is_none());
+}
+
+#[test] // ML-7 review round 1, F3: with `--name`, a not-saved line of the hand start is the one line
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn member_name_after_a_not_saved_line_prints_only_that_line() {
+    let Some(h) = Harness::new() else { return };
+    workspace_session(&h, Some(KEY2), Some(WS_ID));
+    let pane = split(&h, "=zygo-app:", "cat");
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = Guarded::spawn(hand(&h, &pane, &["claude", "--name", "elena"], &pairs(&env))).output("hand start");
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o.stderr));
+    assert_eq!(text(&o.stderr), format!("{NOT_SAVED}no workspace state for {WS_ID}\n"));
+    assert!(!out.join("argv.json").exists());
+    assert!(!h.store(WS_ID).dir().exists());
+}
+
 #[test] // M§6: `--name` outside a pane of a workspace exits 1 with one line and starts nothing
 fn member_name_outside_a_workspace_pane_exits_1_and_starts_nothing() {
     let h = Harness::no_tmux();
