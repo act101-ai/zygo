@@ -578,4 +578,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
-| 2026-11-24 | O§8.1 | author's call | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |
+| 2026-11-24 | O§8.1 | operator | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |
