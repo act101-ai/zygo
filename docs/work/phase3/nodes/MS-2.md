@@ -35,7 +35,7 @@ Produces (this node):
 
 ### Steps
 
-- [ ] **1. Crate skeleton.** Root `Cargo.toml`: add `"crates/zygo-mail-sync",` to `members` after `"crates/zygo-workspace",`, and `zygo-mail-sync = { path = "crates/zygo-mail-sync" }` to `[workspace.dependencies]` after the `zygo-workspace` line. New `crates/zygo-mail-sync/Cargo.toml`:
+- [x] **1. Crate skeleton.** Root `Cargo.toml`: add `"crates/zygo-mail-sync",` to `members` after `"crates/zygo-workspace",`, and `zygo-mail-sync = { path = "crates/zygo-mail-sync" }` to `[workspace.dependencies]` after the `zygo-workspace` line. New `crates/zygo-mail-sync/Cargo.toml`:
 
   ```toml
   [package]
@@ -90,7 +90,7 @@ Produces (this node):
 
   Create each of the 15 module files empty (`env.rs` and `git.rs` too, for now). Check: `cargo build -p zygo-mail-sync` succeeds, and `git diff Cargo.lock` adds only the `[[package]] name = "zygo-mail-sync"` entry (no version change of another package).
 
-- [ ] **2. Write the failing tests** in `crates/zygo-mail-sync/tests/git_builder.rs`. The file starts with `#![cfg(unix)]` (review focus 54: on Windows the crate compiles and its tests compile to nothing; S§3 OP5). Helpers as in `crates/zygo-work/tests/git_runner.rs:14`: `fn far() -> Instant { Instant::now() + Duration::from_secs(3600) }`, and `fn init() -> TempDir` that makes a `TempDir` and runs `run(t.path(), &["init", "-q"], far())`, asserting `Ok(w)` with `w.ok`.
+- [x] **2. Write the failing tests** in `crates/zygo-mail-sync/tests/git_builder.rs`. The file starts with `#![cfg(unix)]` (review focus 54: on Windows the crate compiles and its tests compile to nothing; S§3 OP5). Helpers as in `crates/zygo-work/tests/git_runner.rs:14`: `fn far() -> Instant { Instant::now() + Duration::from_secs(3600) }`, and `fn init() -> TempDir` that makes a `TempDir` and runs `run(t.path(), &["init", "-q"], far())`, asserting `Ok(w)` with `w.ok`.
 
   ```rust
   use std::collections::BTreeMap;
@@ -206,9 +206,9 @@ Produces (this node):
   }
   ```
 
-- [ ] **3. Run and see it fail.** `cargo test -p zygo-mail-sync --test git_builder` → compile error: unresolved imports `zygo_mail_sync::env::*` and `zygo_mail_sync::git::*`.
+- [x] **3. Run and see it fail.** `cargo test -p zygo-mail-sync --test git_builder` → compile error: unresolved imports `zygo_mail_sync::env::*` and `zygo_mail_sync::git::*`.
 
-- [ ] **4. `crates/zygo-mail-sync/src/env.rs`** (the S-C9 seams; S§18 leaves their form free). Exact items:
+- [x] **4. `crates/zygo-mail-sync/src/env.rs`** (the S-C9 seams; S§18 leaves their form free). Exact items:
   - `pub trait Clock { fn now(&self) -> SystemTime; }`
   - `#[derive(Debug, Clone, Copy, Default)] pub struct SystemClock;` with `impl Clock` returning `SystemTime::now()`.
   - `#[derive(Debug, Clone, PartialEq, Eq)] pub enum Verdict { Public, Private, Local, Unknown(String) }` (S§8.2 results; `Unknown` carries the reason).
@@ -221,14 +221,22 @@ Produces (this node):
 
   A one-line `///` doc on each item names its S§ source. No production `Probe` or `Spawner` here (MS-8 `LsRemote`, MS-16 `ChildSpawner`).
 
-- [ ] **5. `crates/zygo-mail-sync/src/git.rs`** (S-C4, S§8.7):
+- [x] **5. `crates/zygo-mail-sync/src/git.rs`** (S-C4, S§8.7):
   - `pub fn sync_git(cwd: &Path) -> Command`: `zygo_plugins::sync::git_command(cwd)` then `.args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])`.
   - `pub fn run(cwd: &Path, args: &[&str], deadline: Instant) -> Result<Whole, RunError>`: `sync_git(cwd)` plus `args`, through `zygo_work::repo::run_whole`.
   - `pub fn stream(cwd: &Path, args: &[&str], deadline: Instant, each: &mut dyn FnMut(&[u8]) -> Flow) -> Result<Streamed, RunError>`: `sync_git(cwd)` plus `args`, through `zygo_work::repo::run_stream`.
   - `pub fn has_text(hay: &[u8], needles: &[&str]) -> bool`: true when some non-empty needle occurs in `hay` under ASCII case folding (git runs with `LC_ALL=C`, `crates/zygo-plugins/src/sync.rs:48`); `hay` need not be UTF-8; an empty needle matches nothing (`<[u8]>::windows(0)` would panic).
 
-- [ ] **6. Run and see it pass.** `cargo test -p zygo-mail-sync --locked --test git_builder` → 9 passed, 0 failed.
+- [x] **6. Run and see it pass.** `cargo test -p zygo-mail-sync --locked --test git_builder` → 9 passed, 0 failed.
 
-- [ ] **7. Workspace and the unchanged builder.** `cargo test --workspace --locked --no-run` → builds every crate and test (the Windows build is proved by the `windows-latest` CI job of the pull request). `git diff --exit-code origin/phase-3 -- crates/zygo-plugins` → exit 0 (`git_command` and its tests `crates/zygo-plugins/tests/sync.rs:66`, `:116` unchanged). `cargo test -p zygo-plugins --locked --test sync` → all pass.
+- [x] **7. Workspace and the unchanged builder.** `cargo test --workspace --locked --no-run` → builds every crate and test (the Windows build is proved by the `windows-latest` CI job of the pull request). `git diff --exit-code origin/phase-3 -- crates/zygo-plugins` → exit 0 (`git_command` and its tests `crates/zygo-plugins/tests/sync.rs:66`, `:116` unchanged). `cargo test -p zygo-plugins --locked --test sync` → all pass.
 
-- [ ] **8. Commit** `Cargo.toml`, `Cargo.lock`, and every file under `crates/zygo-mail-sync/`, message `MS-2: zygo-mail-sync crate, hardened git calls and test seams`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:MS-2`.
+- [x] **8. Commit** `Cargo.toml`, `Cargo.lock`, and every file under `crates/zygo-mail-sync/`, message `MS-2: zygo-mail-sync crate, hardened git calls and test seams`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:MS-2`.
+
+### Review round 1
+
+- [x] **F1** (S-G2) A sync fetch wrote commit-graph files when user config set `fetch.writeCommitGraph=true`. Test `sync_fetch_writes_no_commit_graph` failed first; `sync_git` now adds `-c fetch.writeCommitGraph=false`; `sync_git_is_git_command_plus_the_maintenance_overrides` expects the three overrides. Spec S-C4 and the change log updated (SP6 names only the gc and maintenance flags, so it is unchanged; S§17 lists no overrides).
+- [x] **F2** `Clock`, `Probe`, `Spawner` and `Seam` are `Send + Sync`; the `Count` fake uses `Arc<AtomicUsize>`; compile-time test `env_is_send_and_sync`.
+- [x] **F3** The `SystemClock.now()` call with no assertion is removed from `production_seams_are_inert`.
+- [x] **F4** `tempfile` moved from `[dev-dependencies]` to `[dependencies]` (workspace version).
+- [x] **F5** Tests `run_non_zero_exit_gives_stdout_and_stderr` (`git rev-parse --git-dir no-such-ref`: `.git` on stdout, exit 128, message on stderr) and `stream_past_deadline_times_out`.
