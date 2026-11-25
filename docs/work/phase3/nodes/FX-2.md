@@ -31,7 +31,7 @@ Without the fix, the new test's child keeps a copy of every descriptor of the te
 
 ### Steps
 
-- [ ] **1. Add the failing-first test** in `crates/zygo-work/src/decisions/edit.rs` `mod tests`, directly after `the_record_is_locked_from_the_re_read_to_the_rename` (after line 299):
+- [x] **1. Add the failing-first test** in `crates/zygo-work/src/decisions/edit.rs` `mod tests`, directly after `the_record_is_locked_from_the_re_read_to_the_rename` (after line 299):
   ```rust
       /// D§11.3: the lock is released when `apply` returns, even while a child process forked by another thread still
       /// holds a copy of the lock file's descriptor (from fork to exec every spawned child holds one; O_CLOEXEC closes it
@@ -70,8 +70,8 @@ Without the fix, the new test's child keeps a copy of every descriptor of the te
       }
   ```
   The cleanup (close, `waitpid`) runs before the asserts, so a red run leaves no child process.
-- [ ] **2. See it fail red (observe only; do not commit).** `cargo test -p zygo-work --locked --lib decisions::edit::tests::the_lock_is_released_while_a_forked_child_holds_the_descriptor -- --exact` → FAILED with `the lock is still held through the child's copy of the descriptor`. A run of the whole `decisions::edit` filter at this point may also fail sibling tests (the child holds their descriptors); that is expected and is why step 3 comes before any commit. Then confirm `pgrep -fl zygo_work` lists no leftover test process.
-- [ ] **3. Add the guard.** In `crates/zygo-work/src/decisions/edit.rs` insert above line 146 (the doc comment of `lock`):
+- [x] **2. See it fail red (observe only; do not commit).** `cargo test -p zygo-work --locked --lib decisions::edit::tests::the_lock_is_released_while_a_forked_child_holds_the_descriptor -- --exact` → FAILED with `the lock is still held through the child's copy of the descriptor`. A run of the whole `decisions::edit` filter at this point may also fail sibling tests (the child holds their descriptors); that is expected and is why step 3 comes before any commit. Then confirm `pgrep -fl zygo_work` lists no leftover test process.
+- [x] **3. Add the guard.** In `crates/zygo-work/src/decisions/edit.rs` insert above line 146 (the doc comment of `lock`):
   ```rust
   /// The held lock of [`lock`]. Drop unlocks before the close: a close releases a `flock` only with the last descriptor
   /// of the open file, and a child process spawned by another thread holds a copy until its exec.
@@ -85,9 +85,16 @@ Without the fix, the new test's child keeps a copy of every descriptor of the te
 
   ```
   then change line 148 to `fn lock(path: &Path) -> Result<Held, EditError> {` and line 164 `Ok(f)` to `Ok(Held(f))`. The existing doc comment of `lock` (lines 146-147) must sit directly above `fn lock`, not above `struct Held`: inserting the struct at line 148 as the triage copy does would join both doc comments onto `Held`. So insert the struct and `impl` above line 146, and change only the signature line. `apply_with` keeps `let _lock = lock(lock_file)?;` unchanged.
-- [ ] **4. See it pass.** `cargo test -p zygo-work --locked --lib decisions::edit` → all pass, the new test among them. Then `cargo test -p zygo-work --locked --lib` → all pass (siblings no longer affected). `cargo clippy -p zygo-work --locked --all-targets -- -D warnings` → clean. `git diff --stat` lists only `edit.rs` and this node file. `git diff crates/zygo-work/src/decisions/edit.rs | grep -nE "sleep|Instant|SystemTime|Duration|retry"` → no output. Windows: the test is `#[cfg(unix)]` and the guard has no platform code; the windows-latest CI job is the check.
-- [ ] **5. Commit** test and fix together: `FX-2: unlock the decision writer lock before the close`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:FX-2`, each on its own line; no attribution. Push the node branch.
+- [x] **4. See it pass.** `cargo test -p zygo-work --locked --lib decisions::edit` → all pass, the new test among them. Then `cargo test -p zygo-work --locked --lib` → all pass (siblings no longer affected). `cargo clippy -p zygo-work --locked --all-targets -- -D warnings` → clean. `git diff --stat` lists only `edit.rs` and this node file. `git diff crates/zygo-work/src/decisions/edit.rs | grep -nE "sleep|Instant|SystemTime|Duration|retry"` → no output. Windows: the test is `#[cfg(unix)]` and the guard has no platform code; the windows-latest CI job is the check.
+- [x] **5. Commit** test and fix together: `FX-2: unlock the decision writer lock before the close`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:FX-2`, each on its own line; no attribution. Push the node branch.
 
 ### Notes for review
 
 - The test's `libc::pipe` ends are not close-on-exec (macOS has no `pipe2`). A child that another test thread spawns between `pipe` and the parent's `close(fds[1])` inherits the write end; the forked child then waits until that sibling child exits too. That wait is bounded by the sibling's own lifetime and no zygo-work lib test spawns a long-lived child (`grep -rn "Command::new" crates/zygo-work/src` → only `sources.rs:50`). Kept as triage wrote it.
+
+### Results (round 1)
+
+- Red (step 2, test alone, before the guard): `test decisions::edit::tests::the_lock_is_released_while_a_forked_child_holds_the_descriptor ... FAILED`, panicked at `crates/zygo-work/src/decisions/edit.rs:335:9`: `the lock is still held through the child's copy of the descriptor`; `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out`. No test process left after the run (`ps -axo pid,ppid,command | grep deps/zygo_work-` → none).
+- Green (step 4): `cargo test -p zygo-work --locked --lib decisions::edit` → `test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out`. `cargo test -p zygo-work --locked --lib` → `test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`. No test process left after the runs.
+- `git diff --stat` before the commit: only `edit.rs` (48 insertions, 2 deletions) and this node file. The clock/retry grep on the `edit.rs` diff → no output.
+- `cargo clippy -p zygo-work --locked --all-targets -- -D warnings` → 2 errors, both in `crates/zygo-work/src/gate/transition.rs` (`clippy::large_enum_variant` at line 10, `clippy::collapsible_if` at line 158). That file is outside this node and unchanged by it; `edit.rs` has no clippy finding. Reported, not fixed here.

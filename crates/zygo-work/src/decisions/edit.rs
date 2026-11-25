@@ -143,9 +143,19 @@ pub fn lock_path(common_dir: &Path) -> PathBuf {
     common_dir.join("zygo-decisions.lock")
 }
 
+/// The held lock of [`lock`]. Drop unlocks before the close: a close releases a `flock` only with the last descriptor
+/// of the open file, and a child process spawned by another thread holds a copy until its exec.
+struct Held(fs::File);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 /// Opens or creates `path` (no link followed, a FIFO does not block, never truncated; its parent is not created) and
 /// locks it exclusively. A failure is `Io` with `zygo decision: cannot write <path>: <error>`.
-fn lock(path: &Path) -> Result<fs::File, EditError> {
+fn lock(path: &Path) -> Result<Held, EditError> {
     let fail = |e: std::io::Error| EditError::Io(format!("zygo decision: cannot write {}: {e}", path.display()));
     let mut o = fs::OpenOptions::new();
     o.read(true).write(true).create(true).truncate(false);
@@ -161,7 +171,7 @@ fn lock(path: &Path) -> Result<fs::File, EditError> {
     }
     let f = o.open(path).map_err(fail)?;
     f.lock().map_err(fail)?;
-    Ok(f)
+    Ok(Held(f))
 }
 
 /// [`apply`] with test seams: `before_read` called after the lock is taken and before the re-read, `before_rename`
@@ -297,6 +307,42 @@ mod tests {
         assert!(File::open(&l).unwrap().try_lock().is_ok()); // released after the rename
         assert_eq!(fs::read(&l).unwrap(), b""); // never written
         assert_eq!(names(p.parent().unwrap()), vec![format!("{ID}.md")]); // nothing else in the records directory
+    }
+
+    /// D§11.3: the lock is released when `apply` returns, even while a child process forked by another thread still
+    /// holds a copy of the lock file's descriptor (from fork to exec every spawned child holds one; O_CLOEXEC closes it
+    /// only at exec). A close releases a `flock` only with the last descriptor of the open file; an unlock releases it.
+    #[cfg(unix)]
+    #[test]
+    fn the_lock_is_released_while_a_forked_child_holds_the_descriptor() {
+        let t = tempfile::tempdir().unwrap();
+        let (p, l) = put(t.path());
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let mut child = 0;
+        let mut hook = || {
+            child = unsafe { libc::fork() };
+            if child == 0 {
+                // The child: only async-signal-safe calls; it waits until the parent closes the write end.
+                let mut b = 0u8;
+                unsafe {
+                    libc::close(fds[1]);
+                    libc::read(fds[0], (&mut b as *mut u8).cast(), 1);
+                    libc::_exit(0);
+                }
+            }
+        };
+        let o = Outcome::Overturn { reason: "x".into() };
+        let r = apply_with(&p, &l, OPEN.as_bytes(), &o, "2026-12-01", &mut || {}, &mut hook);
+        let free = File::open(&l).unwrap().try_lock().is_ok();
+        unsafe {
+            libc::close(fds[1]);
+            libc::waitpid(child, std::ptr::null_mut(), 0);
+            libc::close(fds[0]);
+        }
+        assert!(child > 0);
+        assert_eq!(r, Ok(()));
+        assert!(free, "the lock is still held through the child's copy of the descriptor");
     }
 
     /// D§14 "the write of an outcome fails": a failed rename is `Io`, the record is unchanged and no `.tmp` is left.
