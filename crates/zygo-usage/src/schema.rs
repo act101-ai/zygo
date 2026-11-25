@@ -39,7 +39,10 @@ CREATE TABLE IF NOT EXISTS trims (
     tool TEXT NOT NULL,
     kind TEXT NOT NULL,
     stored_bytes INTEGER NOT NULL,
-    view_bytes INTEGER NOT NULL
+    view_bytes INTEGER NOT NULL,
+    result_id TEXT,
+    command TEXT,
+    shaper TEXT
 );
 CREATE TABLE IF NOT EXISTS work_units (
     unit TEXT NOT NULL,
@@ -75,6 +78,16 @@ CREATE TABLE IF NOT EXISTS upstream_errors (
 );
 CREATE INDEX IF NOT EXISTS upstream_errors_session_ts ON upstream_errors(session, ts);
 CREATE INDEX IF NOT EXISTS upstream_errors_ts ON upstream_errors(ts);
+CREATE TABLE IF NOT EXISTS readbacks (
+    ts INTEGER NOT NULL,
+    session TEXT NOT NULL,   -- the trim's session (O§6.4 key)
+    read_in TEXT NOT NULL,   -- the reading session (carry context)
+    result_id TEXT NOT NULL,
+    tool TEXT NOT NULL,      -- result_view | result_search | result_tree
+    bytes INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS readbacks_session ON readbacks(session);
+CREATE INDEX IF NOT EXISTS readbacks_ts ON readbacks(ts);
 ";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -127,6 +140,31 @@ pub struct TrimRow {
     pub kind: String,
     pub stored_bytes: u64,
     pub view_bytes: u64,
+    /// The stored result's id (O§7.9).
+    #[serde(default)]
+    pub result_id: Option<String>,
+    /// The O§7.2 command name; null for a tool other than Bash.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// The last step that changed the text (O§7.9).
+    #[serde(default)]
+    pub shaper: Option<String>,
+}
+
+/// One successful reply of `result_view`, `result_search` or `result_tree` (O§6.4). Every timestamp is Unix seconds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReadbackRow {
+    /// Unix seconds.
+    pub ts: i64,
+    /// The session whose hook stored the result (O§6.4 key).
+    pub session: String,
+    /// The reading session (the carry context).
+    pub read_in: String,
+    pub result_id: String,
+    /// `result_view`, `result_search` or `result_tree`.
+    pub tool: String,
+    /// The reply's byte count.
+    pub bytes: u64,
 }
 
 /// One agent's span on a work unit and round. Every timestamp is Unix seconds.
