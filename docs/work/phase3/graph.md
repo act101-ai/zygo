@@ -213,7 +213,7 @@ Session text (T, SX nodes):
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | TODO | implementation | — |
-| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | IN-PROGRESS | judgment | .worktrees/phase3/MS-1-node · PR #33 |
+| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
 | WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | TODO | judgment | — |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
@@ -352,3 +352,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | ML-16 done (a8add6a 3b33343 957db39): live selftest ok (76); review 10 confirmed, fixed; floor green. PR #26. |
 | 2026-11-24 | DR-5 round 2 (0db609f 4f86964 2b072a7): Windows os error 33 fixed with a sidecar writer lock at <git common dir>/zygo-decisions.lock; lock span tested both ends; failure-path tests. Review: 4 fixed, 1 refuted (shared-repo write access, same as zygo-work). PR #29. |
 | 2026-11-24 | MS-1 planned (454e92e): 15 steps; run_whole uses the cut mode with no cut for the process group · PR #33 |
+| 2026-11-24 | MS-1 done (e7d5023 821a65f 7017674 ab87c30): run_whole/run_stream public in zygo-work; review 4 fixed (stream deadline, leader exit, panic guard, 2-entry memory), 2 refuted; floor green · PR #33 |

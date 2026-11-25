@@ -54,18 +54,18 @@ All commands run in `/Users/kagemartin/Work/zygo/.worktrees/phase3/MS-1`. Each c
 
 **Part A — move the shared parts of the runner (no behaviour change).**
 
-- [ ] **Step 1 — baseline.** Run `cargo test -p zygo-work`. Result: all pass. Write down the pass count.
-- [ ] **Step 2 — extract three private functions in `crates/zygo-work/src/repo.rs`.** Move code out of `run_bounded_out` (`repo.rs:75-163`) into these, and make `run_bounded_out` call them; its signature and results do not change. Add `use std::process::{Child, ChildStderr, ChildStdout, ExitStatus};` to the `std::process` import.
+- [x] **Step 1 — baseline.** Run `cargo test -p zygo-work`. Result: all pass. Write down the pass count.
+- [x] **Step 2 — extract three private functions in `crates/zygo-work/src/repo.rs`.** Move code out of `run_bounded_out` (`repo.rs:75-163`) into these, and make `run_bounded_out` call them; its signature and results do not change. Add `use std::process::{Child, ChildStderr, ChildStdout, ExitStatus};` to the `std::process` import.
   - `fn spawn_piped(mut cmd: Command, deadline: Instant, group: bool) -> Result<(Child, ChildStdout, ChildStderr), RunError>`: the body of `repo.rs:76-89` (deadline check before spawn → `TimedOut`; stdin null, stdout and stderr piped; `#[cfg(unix)] if group { process_group(0) }`; spawn error → `NotRun`; missing pipe → kill, wait, `Failed`). Add `#[cfg(not(unix))] let _ = group;` so Windows builds with no unused-variable warning. `run_bounded_out` calls it with `group = cut.is_some()`.
   - `fn drain_err(mut err: ChildStderr) -> mpsc::Receiver<Vec<u8>>`: the thread of `repo.rs:105-111` (keeps `64 * 1024` bytes, drains the rest, sends the buffer).
   - `fn wait_bounded(child: &mut Child, deadline: Instant, group: bool) -> Result<Option<ExitStatus>, RunError>`: the `'wait` block of `repo.rs:112-156`, with `cut.is_some()` replaced by `group`, `break 'wait Some(s)` replaced by `return Ok(Some(s))`, the plain loop's `break Some(s)` / `break None` replaced by `return Ok(Some(s))` / `return Ok(None)`, and `kill_tree(&mut child)` replaced by `kill_tree(child)`. The `'wait` label and its `#[cfg_attr(not(unix), allow(unused_labels))]` go away; the `Err(_) => break` of the unix loop still leaves that inner loop for the plain loop. Keep the comments of the moved lines.
   - Check: `cargo build -p zygo-work` has no warning that names `repo.rs`.
-- [ ] **Step 3 — run the guard.** Run `cargo test -p zygo-work`. Result: all pass, same count as step 1.
-- [ ] **Step 4 — commit.** `git add crates/zygo-work/src/repo.rs && git commit -m "MS-1: move spawn, stderr drain and wait out of run_bounded_out"` (plus trailers).
+- [x] **Step 3 — run the guard.** Run `cargo test -p zygo-work`. Result: all pass, same count as step 1.
+- [x] **Step 4 — commit.** `git add crates/zygo-work/src/repo.rs && git commit -m "MS-1: move spawn, stderr drain and wait out of run_bounded_out"` (plus trailers).
 
 **Part B — whole mode.**
 
-- [ ] **Step 5 — write the failing whole-mode tests.** Create `crates/zygo-work/tests/git_runner.rs` with exactly this content:
+- [x] **Step 5 — write the failing whole-mode tests.** Create `crates/zygo-work/tests/git_runner.rs` with exactly this content:
 
 ```rust
 //! MS-1: the bounded git runner, whole mode and stream mode (S§8.7). No test waits on wall-clock time.
@@ -191,8 +191,8 @@ fn whole_runs_in_its_own_process_group() {
 }
 ```
 
-- [ ] **Step 6 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` / `private` for `run_whole`, `RunError`, `Whole`.
-- [ ] **Step 7 — implement whole mode in `crates/zygo-work/src/repo.rs`.**
+- [x] **Step 6 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` / `private` for `run_whole`, `RunError`, `Whole`.
+- [x] **Step 7 — implement whole mode in `crates/zygo-work/src/repo.rs`.**
   - `pub(crate) enum RunError` (`repo.rs:26`) → `pub enum RunError`. Leave `pub(crate) fn reason` as it is.
   - After `struct Ran` add:
     ```rust
@@ -210,12 +210,12 @@ fn whole_runs_in_its_own_process_group() {
         run_bounded_out(cmd, deadline, Some(WHOLE)).map(|Ran { ok, out, err, .. }| Whole { ok, out, err })
     }
     ```
-- [ ] **Step 8 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: 4 tests pass on any OS, 6 on unix (`whole_zero_exit_gives_stdout_and_empty_stderr`, `whole_non_zero_exit_gives_stdout_and_stderr`, `whole_non_zero_exit_keeps_64_kib_of_stderr`, `whole_past_deadline_times_out_with_no_spawn`, `whole_runs_with_stdin_null`, `whole_runs_in_its_own_process_group`). Then `cargo test -p zygo-work`: all pass.
-- [ ] **Step 9 — commit.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: pub RunError, Whole and run_whole"` (plus trailers).
+- [x] **Step 8 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: 4 tests pass on any OS, 6 on unix (`whole_zero_exit_gives_stdout_and_empty_stderr`, `whole_non_zero_exit_gives_stdout_and_stderr`, `whole_non_zero_exit_keeps_64_kib_of_stderr`, `whole_past_deadline_times_out_with_no_spawn`, `whole_runs_with_stdin_null`, `whole_runs_in_its_own_process_group`). Then `cargo test -p zygo-work`: all pass.
+- [x] **Step 9 — commit.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: pub RunError, Whole and run_whole"` (plus trailers).
 
 **Part C — stream mode.**
 
-- [ ] **Step 10 — write the failing stream-mode tests.** In `crates/zygo-work/tests/git_runner.rs`, change the import line to `use zygo_work::repo::{run_stream, run_whole, Flow, RunError, Streamed, Whole};` and append:
+- [x] **Step 10 — write the failing stream-mode tests.** In `crates/zygo-work/tests/git_runner.rs`, change the import line to `use zygo_work::repo::{run_stream, run_whole, Flow, RunError, Streamed, Whole};` and append:
 
 ```rust
 /// Every entry `run_stream` passes, with `Flow::Go`.
@@ -330,8 +330,8 @@ fn stream_stop_kills_the_process_group() {
 }
 ```
 
-- [ ] **Step 11 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` for `run_stream`, `Flow`, `Streamed`.
-- [ ] **Step 12 — implement stream mode in `crates/zygo-work/src/repo.rs`.** Add `use std::io::BufRead;`. Add after `run_whole`:
+- [x] **Step 11 — see it fail.** Run `cargo test -p zygo-work --test git_runner`. Result: compile error `unresolved imports` for `run_stream`, `Flow`, `Streamed`.
+- [x] **Step 12 — implement stream mode in `crates/zygo-work/src/repo.rs`.** Add `use std::io::BufRead;`. Add after `run_whole`:
   ```rust
   /// What the [`run_stream`] callback wants next.
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +358,28 @@ fn stream_stop_kills_the_process_group() {
   2. Reader thread with `let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1);`: on `std::io::BufReader::new(out)`, loop `read_until(0, &mut entry)`; `Ok(0)` or `Err(_)` → end; an entry that ends in `0` → pop the NUL and `tx.send(entry)`, end when the send fails (receiver dropped after Stop); an entry with no trailing NUL → end without sending.
   3. Loop on `rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))`: `Ok(e)` → if `each(&e) == Flow::Stop` { `stop(&mut child); return Ok(Streamed::Stopped)` }; `Err(RecvTimeoutError::Timeout)` → `stop(&mut child); return Err(RunError::TimedOut)`; `Err(RecvTimeoutError::Disconnected)` → leave the loop.
   4. `let status = wait_bounded(&mut child, deadline, true)?; let ok = status.is_none_or(|s| s.success());` then `err` as `run_bounded_out` does (`erx.recv_timeout(left).unwrap_or_default()` only when `!ok`); return `Ok(Streamed::Done { ok, err })`.
-- [ ] **Step 13 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: all pass — 9 tests on any OS, 13 on unix (step 8's plus `stream_passes_each_nul_ended_entry_of_ls_tree_once`, `stream_non_zero_exit_gives_stderr`, `stream_stop_returns_stopped_after_one_entry`, `stream_past_deadline_times_out_with_no_spawn`, `stream_runs_with_stdin_null`, `stream_runs_in_its_own_process_group`, `stream_stop_kills_the_process_group`). If `stream_stop_kills_the_process_group` hangs, the group was not killed: fix `stop`, do not add a timeout. Then run `pgrep -f "sleep 1000000"`: no process.
-- [ ] **Step 14 — acceptance.** Run `cargo test -p zygo-work --test git_runner && cargo test -p zygo-work`. Result: all pass; the zygo-work pass count is step 1's plus the new tests. Run `cargo build --workspace`: no error (callers of `run_bounded`, `git_run` and `hud_git_with` still compile). For each Windows target that `rustup target list --installed` lists, also run `cargo check -p zygo-work --tests --target` with that target; with none listed, the windows-latest CI job is the check.
-- [ ] **Step 15 — commit and push.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: Flow, Streamed and run_stream"` (plus trailers), then `git push`.
+- [x] **Step 13 — see it pass.** Run `cargo test -p zygo-work --test git_runner`. Result: all pass — 9 tests on any OS, 13 on unix (step 8's plus `stream_passes_each_nul_ended_entry_of_ls_tree_once`, `stream_non_zero_exit_gives_stderr`, `stream_stop_returns_stopped_after_one_entry`, `stream_past_deadline_times_out_with_no_spawn`, `stream_runs_with_stdin_null`, `stream_runs_in_its_own_process_group`, `stream_stop_kills_the_process_group`). If `stream_stop_kills_the_process_group` hangs, the group was not killed: fix `stop`, do not add a timeout. Then run `pgrep -f "sleep 1000000"`: no process.
+- [x] **Step 14 — acceptance.** Run `cargo test -p zygo-work --test git_runner && cargo test -p zygo-work`. Result: all pass; the zygo-work pass count is step 1's plus the new tests. Run `cargo build --workspace`: no error (callers of `run_bounded`, `git_run` and `hud_git_with` still compile). For each Windows target that `rustup target list --installed` lists, also run `cargo check -p zygo-work --tests --target` with that target; with none listed, the windows-latest CI job is the check.
+- [x] **Step 15 — commit and push.** `git add crates/zygo-work/src/repo.rs crates/zygo-work/tests/git_runner.rs && git commit -m "MS-1: Flow, Streamed and run_stream"` (plus trailers), then `git push`.
+
+### Implementation notes
+
+- Worked in the node worktree `/Users/kagemartin/Work/zygo/.worktrees/phase3/MS-1-node` (branch `phase3/MS-1--MS-1`), not the `.../phase3/MS-1` path the steps name, per the brief.
+- The plan's test code compiled as written; no change to it.
+- New `pub` structs and enums are laid out one field or variant per line, to match the existing style of `repo.rs` (`Ran`, `RunError`); the signatures are the plan's.
+- Baseline `cargo test -p zygo-work` (step 1): 287 passed, 20 ignored. After step 14: 300 passed (287 + 13 in `git_runner`), 20 ignored.
+- Mutation check of `stream_stop_kills_the_process_group`: with `stop` changed to kill only the leader, the test hung until an outer 30 s `timeout`; with the group kill it passes. `pgrep -f "sleep 1000000"` after the run: no process.
+- Windows: no Windows target is installed (`rustup target list --installed` lists only `aarch64-apple-darwin`), so `cargo check --target x86_64-pc-windows-gnu` was not run; the windows-latest CI job is the check. Cfg review: `spawn_piped` has `#[cfg(not(unix))] let _ = group;`; `stop` falls to `kill_tree` on Windows; `wait_bounded` reads `group` in `cfg!(windows) && group`; every test that uses `libc`, `sh`, `mkfifo` or `PGID`/`pid_and_pgid` is `#[cfg(unix)]`.
+
+### Review round 1
+
+All in `run_stream` (`crates/zygo-work/src/repo.rs`); each test was written first and seen to fail, except F4's tail test, which confirms behaviour that was already correct.
+
+- **F1 (high) — deadline not enforced while entries keep coming.** Fixed: the deadline is checked on every loop turn and again in `hand` before each entry goes to the callback; on expiry the group is stopped and the run gives `Err(RunError::TimedOut)`. Test `stream_deadline_while_entries_flow`: an endless `printf 'a\000'` loop; the callback spins to the deadline and returns `Go`, and returns `Stop` if it ever gets an entry after the deadline, so a regression fails at once (`Ok(Stopped)`) instead of hanging. Deviation from the brief: the deadline is 250 ms, not 1 ms. With 1 ms the deadline passed before `sh` wrote its first entry, the callback never ran, and the test passed on the old code (20 of 20 runs). The 250 ms only lets the first entry arrive so the check can detect the bug; correct code passes under any load.
+- **F2 (medium) — leader exits while a background child holds stdout.** Fixed: each loop turn checks the leader without reaping it (`leader_exited`: unix `exited_unreaped`, a `waitid` error counts as exited; Windows `try_wait`), and `recv_timeout` waits at most `TICK` (10 ms, as in `wait_bounded`). Once the leader has exited, `wait_bounded(.., true)` kills the group and reaps the leader (as whole mode does), the entries still in the pipe go to the callback, and the run gives `Done { ok, err }` with the leader's status. Test `stream_leader_exit_with_child_holding_stdout` (unix): `printf 'a\000'; sleep 30 & exit 0` → `Done { ok: true, .. }`, entries `[b"a"]`. Old code: failed at the 20 s deadline.
+- **F3 (medium-low) — a panicking callback leaves the group alive.** Fixed: the new guard `Running { child, armed }` kills the group and reaps the child (`stop`) on drop. It is disarmed after `wait_bounded`, which reaps on every path. Test `stream_callback_panic_kills_group` (unix): the callback records the shell's PID and panics, inside `catch_unwind`; then `libc::kill(pid, 0) == -1` with `ESRCH`. Old code: `kill` returned 0.
+- **F4 (memory) — up to three entries held.** Fixed: the channel is `sync_channel(0)` (rendezvous), so at most two entries exist: the one in the callback and the one the reader is reading or holds while it waits to send. The doc comment says this. No entry-length cap (the spec fixes no value). Test `stream_drops_last_piece_without_nul` (unix): `printf 'a\000b'` → entries `[b"a"]`, `Done { ok: true, .. }`. This passed before the change too: the tail was already dropped.
+- **F5 — whole mode buffers stdout unbounded.** Refuted: this is the spec design (S§8.7 whole mode). Consumers such as DR-11 must apply their cap knowing that git output is fully buffered.
+- **F6 — the FIFO test hangs on regression.** Accepted at plan time.
+
+Results: `cargo test -p zygo-work --test git_runner` 17 passed (13 + 4); `cargo test -p zygo-work` 304 passed, 20 ignored. After the runs `pgrep -fl "sleep (1000|30)"` found no process. Clippy reports no warning in the changed files. No Windows target is installed, so the Windows path was reviewed by reading: `leader_exited` has a `#[cfg(not(unix))]` body; `Running` and `hand` use only `stop`, which is portable; the four new tests are `#[cfg(unix)]`.
