@@ -137,7 +137,7 @@ Steps:
 
 - [x] 3. Run `cargo test -p zygo-workspace --test mux -- send_keys --include-ignored`. Check: it fails to compile with E0599 `no method named send_keys_literal` / `send_enter` for `Tmux`, and E0432 for `CONTROL_TEXT_MESSAGE`.
 
-- [ ] 4. In `crates/zygo-workspace/src/mux/mod.rs`, after `check_window_name` (`:265`), add:
+- [x] 4. In `crates/zygo-workspace/src/mux/mod.rs`, after `check_window_name` (`:265`), add:
   ```rust
   /// The refusal of a send-keys text that holds a control character (M-C5, W-C8): a newline would submit the line and
   /// an escape would reach the terminal.
@@ -161,7 +161,7 @@ Steps:
   ```
   Check: `cargo build -p zygo-workspace` fails only with E0046 (missing `send_keys_literal`, `send_enter`) in `impl Multiplexer for Tmux`.
 
-- [ ] 5. In `crates/zygo-workspace/src/mux/tmux.rs`, add `check_keys_text, check_pane` to the `use super::{..}` list (`:16-20`), and after `switch_client` (`:507-510`) in `impl Multiplexer for Tmux` add:
+- [x] 5. In `crates/zygo-workspace/src/mux/tmux.rs`, add `check_keys_text, check_pane` to the `use super::{..}` list (`:16-20`), and after `switch_client` (`:507-510`) in `impl Multiplexer for Tmux` add:
   ```rust
   fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), MuxError> {
       check_pane(pane)?;
@@ -176,10 +176,10 @@ Steps:
   ```
   Check: `cargo build -p zygo-workspace` succeeds with no warning.
 
-- [ ] 6. Implement the two operations in the test fakes. In `crates/zygo-workspace/tests/snapshot.rs`, after `switch_client` (`:215`) in `impl Multiplexer for Fake`: `fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { self.other("send_keys_literal") }` and `fn send_enter(&self, _: &str) -> Result<(), MuxError> { self.other("send_enter") }`. In `crates/zygo-workspace/tests/admin.rs`, after `switch_client` (`:320`) in `impl Multiplexer for ListFake`: `fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { self.other() }` and `fn send_enter(&self, _: &str) -> Result<(), MuxError> { self.other() }`. Check: `cargo test -p zygo-workspace --no-run` compiles every test target.
+- [x] 6. Implement the two operations in the test fakes. In `crates/zygo-workspace/tests/snapshot.rs`, after `switch_client` (`:215`) in `impl Multiplexer for Fake`: `fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { self.other("send_keys_literal") }` and `fn send_enter(&self, _: &str) -> Result<(), MuxError> { self.other("send_enter") }`. In `crates/zygo-workspace/tests/admin.rs`, after `switch_client` (`:320`) in `impl Multiplexer for ListFake`: `fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { self.other() }` and `fn send_enter(&self, _: &str) -> Result<(), MuxError> { self.other() }`. Check: `cargo test -p zygo-workspace --no-run` compiles every test target.
 
-- [ ] 7. Run `cargo test -p zygo-workspace --test mux -- send_keys --include-ignored`. Check: 4 passed, 0 failed; on a host without tmux 3.2 or later the live test prints `tmux tests skipped: <reason>` and returns.
+- [x] 7. Run `cargo test -p zygo-workspace --test mux -- send_keys --include-ignored`. Check: 4 passed, 0 failed; on a host without tmux 3.2 or later the live test prints `tmux tests skipped: <reason>` and returns.
 
-- [ ] 8. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test mux -- send_keys --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-workspace --test mux --test snapshot --test admin -- --include-ignored`, then `cargo fmt --check -p zygo-workspace` and `cargo clippy -p zygo-workspace --all-targets -- -D warnings`. Check: the count is 4; all three targets pass; fmt and clippy report nothing.
+- [x] 8. Run the Acceptance: `test "$(cargo test -q -p zygo-workspace --test mux -- send_keys --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-workspace --test mux --test snapshot --test admin -- --include-ignored`, then `cargo fmt --check -p zygo-workspace` and `cargo clippy -p zygo-workspace --all-targets -- -D warnings`. Check: the count is 4; all three targets pass; fmt and clippy report nothing.
 
-- [ ] 9. Commit `crates/zygo-workspace/src/mux/mod.rs`, `src/mux/tmux.rs`, `tests/mux.rs`, `tests/snapshot.rs`, `tests/admin.rs` with the message `ML-5: send_keys_literal and send_enter` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-5:implement`, each on its own line. Check: `git show --stat HEAD` lists those five files only.
+- [x] 9. Commit `crates/zygo-workspace/src/mux/mod.rs`, `src/mux/tmux.rs`, `tests/mux.rs`, `tests/snapshot.rs`, `tests/admin.rs` with the message `ML-5: send_keys_literal and send_enter` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-5:implement`, each on its own line. Check: `git show --stat HEAD` lists those five files only.

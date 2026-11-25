@@ -14,9 +14,9 @@ use zygo_config::repo_file::kill_group;
 use crate::identity::{valid_pane_key, valid_ws_id};
 
 use super::{
-    check_name, check_session, check_window_name, format_escape, is_gone_message, is_no_target_message, parse_version,
-    session_target, window_target, HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split, BOUND,
-    PANE_FORMAT,
+    check_keys_text, check_name, check_pane, check_session, check_window_name, format_escape, is_gone_message,
+    is_no_target_message, parse_version, session_target, window_target, HookScope, Multiplexer, MuxError, NewSession,
+    NewWindow, SessionAnswer, Split, BOUND, PANE_FORMAT,
 };
 
 /// How often the runner checks for the exit.
@@ -507,5 +507,16 @@ impl Multiplexer for Tmux {
     fn switch_client(&self, session: &str) -> Result<(), MuxError> {
         check_session(session)?;
         self.run(&["switch-client", "-t", &session_target(session)])
+    }
+
+    fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), MuxError> {
+        check_pane(pane)?;
+        check_keys_text(text)?;
+        self.run(&["send-keys", "-t", pane, "-l", "--", text])
+    }
+
+    fn send_enter(&self, pane: &str) -> Result<(), MuxError> {
+        check_pane(pane)?;
+        self.run(&["send-keys", "-t", pane, "Enter"])
     }
 }

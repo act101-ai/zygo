@@ -264,6 +264,27 @@ pub(crate) fn check_window_name(name: &str) -> Result<(), MuxError> {
     Ok(())
 }
 
+/// The refusal of a send-keys text that holds a control character (M-C5, W-C8): a newline would submit the line and
+/// an escape would reach the terminal.
+pub const CONTROL_TEXT_MESSAGE: &str = "send-keys text holds a control character";
+
+/// `Err(Failed)` with [`CONTROL_TEXT_MESSAGE`] when `text` holds a character for which `char::is_control` is true.
+pub(crate) fn check_keys_text(text: &str) -> Result<(), MuxError> {
+    if text.chars().any(char::is_control) {
+        return Err(MuxError::Failed { message: CONTROL_TEXT_MESSAGE.into() });
+    }
+    Ok(())
+}
+
+/// `Err(Failed)` with `invalid tmux pane id: {pane:?}` unless `pane` is `%` and one or more ASCII digits (M-C5), so
+/// a target holds no session, window, flag or format.
+pub(crate) fn check_pane(pane: &str) -> Result<(), MuxError> {
+    if !pane.strip_prefix('%').is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())) {
+        return Err(MuxError::Failed { message: format!("invalid tmux pane id: {pane:?}") });
+    }
+    Ok(())
+}
+
 /// `Err(Failed)` unless `name` is a tmux option, hook or environment name that tmux cannot read as a flag: not empty,
 /// not starting with `-`, and only `[A-Za-z0-9_@-]` (W3 round 2 M2).
 pub(crate) fn check_name(name: &str) -> Result<(), MuxError> {
@@ -381,6 +402,13 @@ pub trait Multiplexer {
     fn attach(&self, session: &str) -> Result<i32, MuxError>;
     /// `switch-client -t =<s>:`.
     fn switch_client(&self, session: &str) -> Result<(), MuxError>;
+    /// `send-keys -t <pane> -l -- <text>`: types `text` literally into the pane (M§7.3 step 2). A pane that is not
+    /// `%<digits>` or a text with a control character gives `Failed` before any spawn (M-C5). A missing pane:
+    /// `NoTarget`.
+    fn send_keys_literal(&self, pane: &str, text: &str) -> Result<(), MuxError>;
+    /// `send-keys -t <pane> Enter` (M§7.3 step 2). A pane that is not `%<digits>` gives `Failed` before any spawn. A
+    /// missing pane: `NoTarget`.
+    fn send_enter(&self, pane: &str) -> Result<(), MuxError>;
 }
 
 /// The oldest tmux that workspaces support (AU7).
