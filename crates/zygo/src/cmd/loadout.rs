@@ -768,6 +768,7 @@ mod tests {
         let u = |n: u32| Some(format!("u:SECRET{n}@h.example.invalid"));
         let p = LoadoutPane {
             kind: "u:SECRET0@h.example.invalid".into(), profile: u(3), server: u(7), compact: u(4), config_dir: u(5), cwd: u(6),
+            name: u(8), job: u(9),
             ..pane(&[])
         };
         let mut l = Loadout { window: vec![LoadoutWindow { name: u(1), layout: u(2), pane: vec![p] }] };
@@ -776,7 +777,10 @@ mod tests {
         let w = &l.window[0];
         let p = &w.pane[0];
         assert_eq!(p.kind, G);
-        assert_eq!([&w.name, &w.layout, &p.profile, &p.server, &p.compact, &p.config_dir, &p.cwd], [&g; 7]);
+        assert_eq!(
+            [&w.name, &w.layout, &p.profile, &p.server, &p.compact, &p.config_dir, &p.cwd, &p.name, &p.job],
+            [&g; 9]
+        );
         // a profile name with an `@` and no `:` before it stays
         assert_eq!(shown_field("me@work"), "me@work");
     }
@@ -843,14 +847,15 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let p = LoadoutPane {
             cwd: Some("https://u:pa SECRET1@h.example.invalid".into()), profile: Some("x https://u:SECRET2@h".into()),
-            compact: Some("https://u:pa SECRET3@h".into()), config_dir: Some("API_KEY=SECRET4".into()), ..pane(&[])
+            compact: Some("https://u:pa SECRET3@h".into()), config_dir: Some("API_KEY=SECRET4".into()),
+            name: Some("u:pa SECRET10@h".into()), job: Some("x https://u:SECRET11@h".into()), ..pane(&[])
         };
         let mut l = Loadout { window: vec![LoadoutWindow { name: Some("u:pa SECRET5@h".into()), layout: Some("{\"k\":\"SECRET6\"}".into()), pane: vec![p] }] };
         hide_secrets(&mut l, &base(t.path()));
         let w = &l.window[0];
         let p = &w.pane[0];
         let g = Some(G.to_string());
-        assert_eq!([&w.name, &p.cwd, &p.profile, &p.compact], [&g; 4]);
+        assert_eq!([&w.name, &p.cwd, &p.profile, &p.compact, &p.name, &p.job], [&g; 6]);
         assert_eq!(p.config_dir.as_deref(), Some("API_KEY=<value not shown>"));
         assert_eq!(w.layout.as_deref(), Some(H));
         // the same function for an argument and a field
