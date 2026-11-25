@@ -235,7 +235,7 @@ Session text (T, SX nodes):
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
 | OS-22 | Premise script for PO1 to PO4 | OS-16 | TODO | implementation | — |
 | WD-2 | Typed shapes, allow-list validation and digest of the workspace files; PR3 | WD-1 | TODO | judgment | — |
-| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | TODO | implementation | — |
+| SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | PLANNED | implementation | — |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
 | MS-7 | Secret pass on one message | MS-2 | TODO | implementation | — |
