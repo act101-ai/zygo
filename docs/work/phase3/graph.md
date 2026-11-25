@@ -202,7 +202,7 @@ Session text (T, SX nodes):
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | DONE | mechanical | 34a088d fb104db · dispositions 4 tests · PR #18 |
 | DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | DONE | judgment | 9efee7e 281dd03 · decision_transition 45/45 · PR #21 |
 | DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | DONE | judgment | 52a5006 b306476 5e3b797 196e814 0add171 · decision_git 33/33; floor green · PR #35 |
-| DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | TODO | judgment | — |
+| DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | PLANNED | judgment | plan 1cffa68 · PR #37 |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
@@ -357,3 +357,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-6 done (732af80 82d2e65 cb609a4): zygo decision review; tty needs stdin and stdout; USAGE lists review; review 4 fixed (usage, over-limit text re-asked, cycle re-queue, HashSet), 3 refuted; floor green · PR #34 |
 | 2026-11-24 | DR-11 planned (4e482f0); contract: one persistent `--batch` process (D§9.4), `run_piped` replaces the stdin form; author's call · PR #35 |
 | 2026-11-24 | DR-11 done (52a5006 b306476 5e3b797 196e814 0add171): VerdictGit: 1 `--batch`, run_piped; review 8 fixed (tree cache/rev, 1 proc/kind, log `--ignore-submodules=none --encoding=UTF-8`, range revs, closing NUL, test HOME+tests); F5 (2 s bound runs idle): spec gap; floor green · PR #35 |
+| 2026-11-24 | DR-12 planned (1cffa68): 18 steps · PR #37 |
