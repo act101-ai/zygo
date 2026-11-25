@@ -1,5 +1,6 @@
 pub mod clean;
 pub mod command;
+pub mod dedup;
 
 /// Raw text above this size gets only the size view (O§7.3).
 pub const SHAPE_MAX_BYTES: usize = 4 * 1024 * 1024;
