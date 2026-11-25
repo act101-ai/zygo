@@ -83,6 +83,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | DONE | mechanical | e02fc394, d8c6c053 · acc PD2/PD3 rows = 2, LIVE PD2 verified (513 chunks, raw bytes equal), LIVE PD3 verified ; floor green · PR #133 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | DONE | mechanical | a300fa02, 875d61fe · acc 4/4 ST verified · PR #135 |
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | DONE | implementation | PR #139; node 492ed380, c842cfab; acc 15/15 |
+| ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | DONE | judgment | 4cf4c8c1, f313648b, 845cb854 · acc 22/22 · PR #143 |
 
 ## Log
 

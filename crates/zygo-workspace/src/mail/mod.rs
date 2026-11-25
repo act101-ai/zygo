@@ -1,6 +1,7 @@
-//! Workspace mail: the message file and the maildir store (M§5). Owner: nodes ML-2, ML-4.
+//! Workspace mail: the message file and the maildir store (M§5). Owner: nodes ML-2, ML-4, ML-6.
 pub mod names;
 pub mod store;
+pub mod wake;
 
 use std::fmt;
 use std::path::PathBuf;
