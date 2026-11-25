@@ -78,8 +78,10 @@ pc6_mark() {
 pc6_used() { find "$RUN/cx-used.d" -type f 2>/dev/null | wc -l | tr -d ' '; }
 
 # pc6_wait <name> <polls> <used before> <output file>: wait for CX_PID up to <polls> 0.5 s polls,
-# then kill this run folder's Codex (_rc=killed); else _rc = its status. A run with no new
-# cx-used.d record was refused by the harness (codex_env, in the background subshell): exit 1.
+# then kill this run folder's Codex (_rc=killed); else _rc = its status. The harness refused the
+# run (in the background subshell) when it left no new cx-used.d record (n2_daemon_flag, codex_env)
+# or its output holds a "premises:" line (also run_codex's daemon check after the record; Codex
+# never prints one): exit 1.
 pc6_wait() {
   _i=0 _rc=""
   while kill -0 "$CX_PID" 2>/dev/null; do
@@ -91,8 +93,9 @@ pc6_wait() {
   wait "$CX_PID" || _w=$?
   [ -n "$_rc" ] || _rc=$_w
   check_abort
-  if [ "$(pc6_used)" -le "$3" ]; then
-    echo "codex resume: run $1: the harness refused it before Codex started: $(tr -d '\r' <"$4" | grep -a '^premises:' | tail -n 1)"
+  _why=$(tr -d '\r' <"$4" | grep -a '^premises:' | tail -n 1) || true
+  if [ "$(pc6_used)" -le "$3" ] || [ -n "$_why" ]; then
+    echo "codex resume: run $1: the harness refused it before Codex started: $_why"
     exit 1
   fi
 }
