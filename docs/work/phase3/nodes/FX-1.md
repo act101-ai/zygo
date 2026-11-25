@@ -23,7 +23,7 @@ Both tests kill a process group, then do a blocking read on a named FIFO whose o
 
 ### Steps
 
-- [ ] **1. Change `stream_stop_kills_the_process_group`** (`crates/zygo-work/tests/git_runner.rs:204-232`). Apply the triage diff (`proposed-fix.diff` in the triage scratchpad; it applies to blob `fc15fbb`). The result:
+- [x] **1. Change `stream_stop_kills_the_process_group`** (`crates/zygo-work/tests/git_runner.rs:204-232`). Apply the triage diff (`proposed-fix.diff` in the triage scratchpad; it applies to blob `fc15fbb`). The result:
   ```rust
   /// After `Flow::Stop` the whole process group is gone, proven with no timer: the leader and a grandchild hold the
   /// only write ends of a pipe (fd 3), and a blocking read of the pipe ends (EOF) only when both are dead. A runner that
@@ -61,9 +61,9 @@ Both tests kill a process group, then do a blocking read on a named FIFO whose o
   }
   ```
   `w == 3` needs `F_SETFD 0` because `dup2(3, 3)` does not clear close-on-exec.
-- [ ] **2. See it pass.** `cargo test -p zygo-work --locked --test git_runner` → all pass.
-- [ ] **3. Prove it still catches a leak (manual, not a CI test; leaves no change).** In `crates/zygo-work/src/repo.rs:113` replace `zygo_config::repo_file::kill_tree(child);` with `let _ = child.kill(); let _ = child.wait(); // MUTANT: leader only` (the triage `proposed-fix-with-mutant.diff` hunk). Build first (`cargo test -p zygo-work --locked --test git_runner --no-run`), then run `cargo test -p zygo-work --locked --test git_runner -- --exact stream_stop_kills_the_process_group` in the background. Expected: the test does not finish, and `pgrep -fl "sleep 1000000"` shows the grandchild alive (the leader is gone). Then kill the test process, `pkill -f "sleep 1000000"`, `git checkout -- crates/zygo-work/src/repo.rs`, and confirm `git diff --exit-code crates/zygo-work/src` exits 0 and `pgrep -f "sleep 1000000"` finds nothing. Record the result in this file under "Mutant checks".
-- [ ] **4. Change `piped_drop_kills_the_process_group`** (`crates/zygo-work/tests/decision_git.rs:83-103`) with the same pattern. The result:
+- [x] **2. See it pass.** `cargo test -p zygo-work --locked --test git_runner` → all pass.
+- [x] **3. Prove it still catches a leak (manual, not a CI test; leaves no change).** In `crates/zygo-work/src/repo.rs:113` replace `zygo_config::repo_file::kill_tree(child);` with `let _ = child.kill(); let _ = child.wait(); // MUTANT: leader only` (the triage `proposed-fix-with-mutant.diff` hunk). Build first (`cargo test -p zygo-work --locked --test git_runner --no-run`), then run `cargo test -p zygo-work --locked --test git_runner -- --exact stream_stop_kills_the_process_group` in the background. Expected: the test does not finish, and `pgrep -fl "sleep 1000000"` shows the grandchild alive (the leader is gone). Then kill the test process, `pkill -f "sleep 1000000"`, `git checkout -- crates/zygo-work/src/repo.rs`, and confirm `git diff --exit-code crates/zygo-work/src` exits 0 and `pgrep -f "sleep 1000000"` finds nothing. Record the result in this file under "Mutant checks".
+- [x] **4. Change `piped_drop_kills_the_process_group`** (`crates/zygo-work/tests/decision_git.rs:83-103`) with the same pattern. The result:
   ```rust
   /// Dropping `Piped` kills the whole process group, proven with no timer as in git_runner.rs
   /// `stream_stop_kills_the_process_group`: the leader and a grandchild hold the only write ends of a pipe (fd 3), and a
@@ -96,11 +96,23 @@ Both tests kill a process group, then do a blocking read on a named FIFO whose o
   }
   ```
   The old test had no doc comment; the new one gets one so the reason for the pipe stays next to the code.
-- [ ] **5. See it pass.** `cargo test -p zygo-work --locked --test decision_git` → all pass.
-- [ ] **6. Prove it still catches a leak (manual; leaves no change).** Same mutant as step 3 (`Piped`'s drop reaches `stop` through `Running::drop`, `repo.rs:131-133`). Run `cargo test -p zygo-work --locked --test decision_git -- --exact piped_drop_kills_the_process_group` in the background; expect no finish and the grandchild alive in `pgrep -fl "sleep 1000000"`. Kill the test and the grandchild, restore `repo.rs` with `git checkout --`, confirm `git diff --exit-code crates/zygo-work/src` exits 0 and no `sleep 1000000` is left. Record under "Mutant checks".
-- [ ] **7. Run the acceptance.** `cargo test -p zygo-work --locked --test git_runner --test decision_git` → all pass. `grep -c mkfifo crates/zygo-work/tests/git_runner.rs crates/zygo-work/tests/decision_git.rs` → `0` for both. `git diff --stat` lists only the two test files and this node file. Windows: both tests keep `#[cfg(unix)]`, so `pre_exec`, `libc` and `CommandExt` do not compile there; the windows-latest CI job is the check.
-- [ ] **8. Commit.** `FX-1: anonymous pipe in place of a FIFO in the process-group kill tests`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.
+- [x] **5. See it pass.** `cargo test -p zygo-work --locked --test decision_git` → all pass.
+- [x] **6. Prove it still catches a leak (manual; leaves no change).** Same mutant as step 3 (`Piped`'s drop reaches `stop` through `Running::drop`, `repo.rs:131-133`). Run `cargo test -p zygo-work --locked --test decision_git -- --exact piped_drop_kills_the_process_group` in the background; expect no finish and the grandchild alive in `pgrep -fl "sleep 1000000"`. Kill the test and the grandchild, restore `repo.rs` with `git checkout --`, confirm `git diff --exit-code crates/zygo-work/src` exits 0 and no `sleep 1000000` is left. Record under "Mutant checks".
+- [x] **7. Run the acceptance.** `cargo test -p zygo-work --locked --test git_runner --test decision_git` → all pass. `grep -c mkfifo crates/zygo-work/tests/git_runner.rs crates/zygo-work/tests/decision_git.rs` → `0` for both. `git diff --stat` lists only the two test files and this node file. Windows: both tests keep `#[cfg(unix)]`, so `pre_exec`, `libc` and `CommandExt` do not compile there; the windows-latest CI job is the check.
+- [x] **8. Commit.** `FX-1: anonymous pipe in place of a FIFO in the process-group kill tests`, with the brief's `Zygo-Session` and `Zygo-Work` trailers, no attribution. Push the node branch.
 
 ### Mutant checks
 
-(filled in at steps 3 and 6)
+Mutant (both checks): `crates/zygo-work/src/repo.rs:113` `zygo_config::repo_file::kill_tree(child);` replaced by
+`let _ = child.kill(); let _ = child.wait(); // MUTANT: leader only`. No `sleep 1000000` ran before either check.
+
+- **Step 3, `stream_stop_kills_the_process_group`:** with the mutant, the single test (`--exact`) printed `running 1 test`
+  and did not finish; the test binary was still running after 7 s (the unmutated test takes about 0.25 s for the whole
+  file). `pgrep -fl "sleep 1000000"` showed exactly one process, the grandchild: parent 1 (orphaned), process group that
+  of the killed leader; the leader `sleep` was gone. Killed the test binary, its `cargo` and the grandchild;
+  `git checkout -- crates/zygo-work/src/repo.rs`; `git diff --exit-code crates/zygo-work/src` exit 0; `pgrep -f
+  "sleep 1000000"` found nothing.
+- **Step 6, `piped_drop_kills_the_process_group`:** the same result. `running 1 test`, no finish after 6 s, exactly one
+  `sleep 1000000` alive (parent 1, the leader's process group), the leader gone. The same cleanup; `git diff --exit-code
+  crates/zygo-work/src` exit 0; no `sleep 1000000` left.
+- Without the mutant, both tests pass: `git_runner` 17 passed, `decision_git` 34 passed.
