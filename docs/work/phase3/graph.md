@@ -222,7 +222,7 @@ Session text (T, SX nodes):
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | DONE | implementation | b834d51 · results 54p/0f; floor green · PR #45 |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | TODO | implementation | — |
-| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
+| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | IN-PROGRESS | implementation | .worktrees/phase3/OS-18-node · PR #55 |
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | TODO | implementation | — |
 | OS-20 | Capture pytest fixtures from a scratch project | OS-16 | TODO | implementation | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
