@@ -643,6 +643,18 @@ impl Store {
         })
     }
 
+    /// The live session folder of a member (D14): `sessions/<pending.zygo_session>` when live, else
+    /// `sessions/<zygo_session>` when live; an id that fails `valid_session_id` is not looked up.
+    pub fn live_session(&self, m: &MemberRecord) -> Option<PathBuf> {
+        let pending = m.pending.as_ref().map(|p| p.zygo_session.as_str());
+        pending
+            .into_iter()
+            .chain(m.zygo_session.as_deref())
+            .filter(|id| valid_session_id(id))
+            .map(|id| self.sessions_dir.join(id))
+            .find(|d| session_dir::live(d))
+    }
+
     /// Adds the line `<unix seconds> <text>` to `errors.log`. The caller has no place to report a failure of the
     /// log, so every error is ignored. A link or an entry that is not a regular file at `errors.log` is not written
     /// or followed, and the rewrite reads at most [`ERRORS_LOG_MAX`] bytes, the newest ones (FIX-17 Round 2 F3, F4).
