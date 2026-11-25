@@ -1394,11 +1394,25 @@ fn render_markdown_pipe_escaped_one_row() {
     let md = md_of(&x);
     let line = row(&md, "| A-3 ");
     assert_eq!(line, r"| A-3 Model\|list | standard | full https://example.com/alpha/models | none (A-3.1: a\|b) https://example.com/x\|y |");
-    let unescaped = |l: &str| l.match_indices('|').filter(|(i, _)| !l[..*i].ends_with('\\')).count();
     assert_eq!(unescaped(line), 5);
     assert!(md.lines().any(|l| l == r"| Capability | Tier | Alpha | Be\|ta |"));
     assert!(md.lines().any(|l| l == r"| Be\|ta | 66% | 100% | 0% | 100% |"));
     assert!(md.contains("- A-3.1 not met: a|b\n")); // outside a table: as written
+}
+
+/// The `|` of `l` that are cell borders: a `|` is escaped only when an odd number of `\` come before it.
+fn unescaped(l: &str) -> usize {
+    l.match_indices('|').filter(|(i, _)| l[..*i].chars().rev().take_while(|&c| c == '\\').count() % 2 == 0).count()
+}
+
+#[test]
+fn render_markdown_backslash_kept() {
+    let mut x = render_input();
+    entry(&mut x.1[1], "A-3.1").reason = Some(r"a\|b".into());
+    let md = md_of(&x);
+    let line = row(&md, "| A-3 ");
+    assert_eq!(line, r"| A-3 Model list | standard | full https://example.com/alpha/models | none (A-3.1: a\\\|b) https://example.com/beta/models |");
+    assert_eq!(unescaped(line), 5);
 }
 
 #[test]

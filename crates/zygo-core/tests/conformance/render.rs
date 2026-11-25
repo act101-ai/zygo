@@ -39,9 +39,9 @@ fn reason(u: &Unmet) -> &str {
     u.reason.as_deref().unwrap_or("no grade")
 }
 
-/// Each `|` as `\|`, so a text stays inside its table cell.
+/// Each `\` as `\\`, then each `|` as `\|`, so a text stays inside its table cell and keeps its backslashes.
 fn esc(s: &str) -> String {
-    s.replace('|', r"\|")
+    s.replace('\\', r"\\").replace('|', r"\|")
 }
 
 /// The cell text of K§6.2.6 item 1.
