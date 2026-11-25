@@ -79,6 +79,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | DONE | mechanical | 339e7e04, d58c0c2e · acc check-premises: ok, LIVE PM1/PM2/PM3 verified ; floor green · PR #134 |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | DONE | implementation | d0ca20df 3c6b5aa9 22ca6760 · shaping_fixtures 22 passed ; floor green · PR #131 |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | DONE | implementation | 6e1b9387 5ff2466e · shape_clean 23 passed ; floor green · PR #132 |
+| DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | DONE | mechanical | e02fc394, d8c6c053 · acc PD2/PD3 rows = 2, LIVE PD2 verified (513 chunks, raw bytes equal), LIVE PD3 verified ; floor green · PR #133 |
 
 ## Log
 
