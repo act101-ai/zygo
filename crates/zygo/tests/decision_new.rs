@@ -14,7 +14,7 @@ mod common;
 
 const C40: &str = "6e7fe2f0c1d2e3f4a5b6c7d8e9f0011223344556";
 const BODY: &str = "\n## Choice\n\nC.\n\n## Alternatives rejected\n\nA.\n\n## Evidence\n\nE.\n\n## Cost to reverse\n\nR.\n";
-const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check\n";
+const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title <t> --unit <u> --round <n> --role <r> [--class <c>] [--depends-on <id>]... [--supersedes <id>] | ls [--status <s>] [--kind <k>] [--unit <prefix>] [--pending] | show <id> | deps <id> | check | ratify <id> [--note <text>] [--promote adr|spec|rule --as <text>] [--yes] | overturn <id> --reason <text> [--yes] | review [--kind <k>] [--unit <prefix>]\n";
 fn id(n: u32) -> String { format!("DDR-01JDQ2Y7Z8K4M5N6P7Q8R{n:05}") }
 fn md(n: u32) -> String { format!("{}.md", id(n)) }
 /// A valid open decision titled `T` with id `rid` and `depends_on` of `deps`.
@@ -47,12 +47,12 @@ fn go_head(top: &Path, head: Option<&str>, env: &dyn Fn(&str) -> Option<OsString
     let list = |_: &Path, _: &str, _: usize| Ok(vec![]);
     let head = |p: &Path| { assert_eq!(p, top); head.map(str::to_string) };
     let today = || "2026-11-24".to_string();
-    let t = || Some(top.to_path_buf());
+    let t = || Some((top.to_path_buf(), top.join(".git")));
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     let mut input = std::io::empty();
     let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty: false };
-    let code = run_in(&Repo { top: &t, commits: &list, head: &head, today: &today, usage_db: db }, env, &args, &mut io);
+    let code = run_in(&Repo { checkout: &t, commits: &list, head: &head, today: &today, usage_db: db }, env, &args, &mut io);
     Ran { code, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
 }
 fn run(top: &Path, args: &[&str]) -> Ran { go(top, &|_| None, &top.join("none.db"), args) }

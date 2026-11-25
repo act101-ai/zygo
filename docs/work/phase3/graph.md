@@ -195,27 +195,27 @@ Session text (T, SX nodes):
 | DR-2 | Record set: directory reader, set checks and the dependency graph | DR-1 | DONE | implementation | 7e67ae4 d4007c2 168426f · decision_set 20/20 · PR #20 |
 | DR-3 | `zygo decision` verb: `ls`, `show`, `deps`, `check` and the slash form | DR-2 | DONE | implementation | 683c800 46baa07 2334e49 f1ffb87 0b60e99 · decision_cli 17p/0f/6i, cli_surface 20p/0f/3i; floor green; decision check 0 · PR #22 |
 | DR-4 | `zygo decision new`: write a record template | DR-3 | DONE | implementation | f0d049d beeaa1d 3965c61 · decision_new 12p/0f/1i; floor green · PR #25 |
-| DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | TODO | judgment | — |
-| DR-6 | `zygo decision review`: the phase-end review | DR-5 | TODO | implementation | — |
+| DR-5 | Operator verbs `ratify` and `overturn`: byte-preserving outcome writes | DR-4 | DONE | judgment | 397edc5 aba92f9 d3e3ff7 0db609f 4f86964 2b072a7 · decision_verbs 25p/0f; floor green · PR #29 |
+| DR-6 | `zygo decision review`: the phase-end review | DR-5 | DONE | implementation | 732af80 82d2e65 cb609a4 · decision_review 21/0; floor green · PR #34 |
 | DR-7 | `zygo work report`: the two record lines | DR-2, DR-3, RT-2 | TODO | implementation | — |
 | DR-8 | Session view `repo_root`, written by the launcher | DR-1 | DONE | mechanical | c806e21 88441c1 · repo_root 2/2 core, 3/3 launcher · PR #19 |
 | DR-9 | The `dispositions` guard key, default `enforce` | DR-1 | DONE | mechanical | 34a088d fb104db · dispositions 4 tests · PR #18 |
 | DR-10 | Agent transitions: the D§6.6 rule for one record change | DR-1 | DONE | judgment | 9efee7e 281dd03 · decision_transition 45/45 · PR #21 |
-| DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | TODO | judgment | — |
-| DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | TODO | judgment | — |
+| DR-11 | Verdict git reader: four bounded git processes behind an injectable trait (PD1) | DR-10, MS-1 | DONE | judgment | 52a5006 b306476 5e3b797 196e814 0add171 · decision_git 33/33; floor green · PR #35 |
+| DR-12 | Keep check: the D§9.4 steps over the node range | DR-11 | DONE | judgment | e0e426b 05c4148 43c44e7 7acba21 · decision_verdict 41/41; floor green · PR #37 |
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
 | ML-1 | Mail config keys, the loadout pane `name` and the member-name grammar | DR-9, DR-8 | DONE | implementation | c3c7337 da263a1 · config_layers 90p/0f/16i, core_basics 24p/0f/3i; floor green · PR #23 |
 | ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | DONE | judgment | 2550471 e7fed8c 24c9124 · mail_store 38p/0f/0i; floor green · PR #24 |
-| ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | TODO | implementation | — |
+| ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | DONE | implementation | a8add6a 3b33343 957db39 · live selftest ok (76); floor green · PR #26 |
 | OS-1 | Result meta records the session that stored it | DR-1 | DONE | implementation | 7d285bd f733e6c 8a21ec2 · results 50p/0f, hooks_basic 55p/0f; floor green · PR #27 |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | IN-PROGRESS | implementation | .worktrees/phase3/OS-16-node · PR #32 |
-| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | TODO | judgment | — |
+| MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
 | MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
-| WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | TODO | judgment | — |
+| WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | TODO | implementation | — |
 | RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | TODO | implementation | — |
 | RT-2 | Run-time start rule, `<form>` text, and the `runtime:` line of `zygo status` | ML-1, WD-5 | TODO | implementation | — |
@@ -224,7 +224,7 @@ Session text (T, SX nodes):
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | SX-8 | `docs/live-checks.md` section P3-15 (T§12.2) | DR-1 | TODO | mechanical | — |
 | ML-17 | Live premises PM1-PM3 recorded (operator run) | ML-16 | TODO | mechanical | — |
-| MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2 | TODO | implementation | — |
+| MS-2 | zygo-mail-sync crate: hardened git calls and test seams | MS-1, ML-2, DR-5 | TODO | implementation | — |
 | OS-2 | Usage store: `readbacks` table and three additive `trims` columns | OS-1 | TODO | judgment | — |
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | TODO | judgment | — |
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | TODO | implementation | — |
@@ -283,7 +283,7 @@ Session text (T, SX nodes):
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | TODO | judgment | — |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | TODO | judgment | — |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | TODO | judgment | — |
-| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10 | TODO | implementation | — |
+| MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5 | TODO | implementation | — |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | TODO | implementation | — |
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
 | WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | TODO | judgment | — |
@@ -343,8 +343,23 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-1 planned (149d9ed); Files += zygo-hooks/tests/hooks_basic.rs for the trim_session test. PR #27. |
 | 2026-11-24 | DR-4 done: zygo decision new. Round 1, 6 confirmed: --help as title, fill marker in TOML comment, no ## Finding for stop class, 3 test gaps, git test isolation; top-level help (cmd/mod.rs:361) omits `new`, carried to first of ML-7/ML-12/MS-17/WD-14 to edit it. 3 rejected. PR #25. |
 | 2026-11-24 | OS-1 done: result meta records the session (`Store::put` takes `session: Option<&str>`, trim passes it). Review 4 findings: 3 fixed; 1 rejected (non-string session; no writer produces one, O-C8 fixes the type). PR #27. |
+| 2026-11-24 | DR-5 planned (d6efc16): 11 steps, two test-first cycles; Files widened (zygo-work Cargo.toml, Cargo.lock, decision_cli/decision_new USAGE); MS-2 and MS-16 now depend on DR-5 (Cargo.lock overlap). PR #29. |
 | 2026-11-24 | OS-6 planned (9f6b378): 6 steps, 13 tests. PR #30. |
 | 2026-11-24 | OS-6 done (32286a7 2ac0b35): carry 19p/0f; review 5 confirmed, fixed; floor green. PR #30. |
+| 2026-11-24 | DR-5 done (397edc5 aba92f9 d3e3ff7): ratify and overturn, byte-preserving writes; decision_verbs 22p/0f. Review round 1, 6 findings: 4 fixed (record lock, mixed line endings refused, empty texts in allowed, test gaps); 2 refuted. Floor green. PR #29. |
 | 2026-11-24 | OS-10 planned: 5 steps, 3 tests (Step/Shaper as_str, byte bounds); no collision in zygo-results · PR #31 |
 | 2026-11-24 | OS-10 done: Step/Shaper/SHAPE_MAX_BYTES/MIN_SAVING_BYTES in zygo-results::shape; 0 confirmed findings (1 refuted); note to OS-28: cast before subtracting u64 bytes · PR #31 |
+| 2026-11-24 | ML-16 done (a8add6a 3b33343 957db39): live selftest ok (76); review 10 confirmed, fixed; floor green. PR #26. |
+| 2026-11-24 | DR-5 round 2 (0db609f 4f86964 2b072a7): Windows os error 33 fixed with a sidecar writer lock at <git common dir>/zygo-decisions.lock; lock span tested both ends; failure-path tests. Review: 4 fixed, 1 refuted (shared-repo write access, same as zygo-work). PR #29. |
+| 2026-11-24 | MS-1 planned (454e92e): 15 steps; run_whole uses the cut mode with no cut for the process group · PR #33 |
+| 2026-11-24 | MS-1 done (e7d5023 821a65f 7017674 ab87c30): run_whole/run_stream public in zygo-work; review 4 fixed (stream deadline, leader exit, panic guard, 2-entry memory), 2 refuted; floor green · PR #33 |
+| 2026-11-24 | DR-6 planned (897ee78): 10 steps; tty checks stdin and stdout; USAGE line unchanged, review added later with new/ratify/overturn · PR #34 |
+| 2026-11-24 | DR-6 done (732af80 82d2e65 cb609a4): zygo decision review; tty needs stdin and stdout; USAGE lists review; review 4 fixed (usage, over-limit text re-asked, cycle re-queue, HashSet), 3 refuted; floor green · PR #34 |
+| 2026-11-24 | DR-11 planned (4e482f0); contract: one persistent `--batch` process (D§9.4), `run_piped` replaces the stdin form; author's call · PR #35 |
+| 2026-11-24 | DR-11 done (52a5006 b306476 5e3b797 196e814 0add171): VerdictGit: 1 `--batch`, run_piped; review 8 fixed (tree cache/rev, 1 proc/kind, log `--ignore-submodules=none --encoding=UTF-8`, range revs, closing NUL, test HOME+tests); F5 (2 s bound runs idle): spec gap; floor green · PR #35 |
+| 2026-11-24 | WD-1 planned (7e304a9): 6 steps; contract change Read::Absent { full_ref: Option<String> } (read_at needs it, R§7.4); lead's call: SystemGit reuses repo_file::git_out (now pub(crate)), GitOut widened to ExitStatus, no copy · PR #36 |
+| 2026-11-24 | WD-1 done (repo definition reader; review round 1 fixed 8) · PR #36 |
+| 2026-11-24 | DR-12 planned (1cffa68): 18 steps · PR #37 |
+| 2026-11-24 | DR-12 in progress: node branch `phase3/DR-12--DR-12` at 3374eea, worktree `.worktrees/phase3/DR-12-node` · PR #37 |
+| 2026-11-24 | DR-12 done: check_keep D§9.4 steps 1-9; review round 1 fixed 6 (merge paths, session line, stop problems); floor 2560/0 · PR #37 |
 | 2026-11-24 | OS-16 planned (6ba122f): 6 test-first tasks; mod common { pub mod shaping; } per test binary; scripts/fixtures/ created; ZYGO_FIXTURES_DIR redirect; scrub order run dir, HOME, user, host. PR #32. |
