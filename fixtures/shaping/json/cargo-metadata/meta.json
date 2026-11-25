@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "cargo metadata --format-version 1",
+   "event" : "PostToolUse",
+   "exit" : 0,
+   "source" : "scratch workspace: library crates member-1 to member-24, each made with cargo new --lib --vcs none (edition 2024); member-N for N from 2 to 24 has the dependency member-(N-1) = { path = \"../member-(N-1)\" }, a chain from member-24 down to member-1; root Cargo.toml is [workspace] with resolver = \"2\" and members = [\"member-*\"]; no registry dependencies, run by capture-shaping.sh in /repo",
+   "tool" : "cargo 1.98.0"
+}

@@ -351,7 +351,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 **(author)**
 
 - **Place.** `fixtures/shaping/<shaper>/<case>/`, with `meta.json`, `stdout`, `stderr`, `must_keep` and `view`. `meta.json`: `{ "command": …, "exit": <int>, "event": "PostToolUse" | "PostToolUseFailure", "agent": "claude-code" | "opencode", "tool": "<program> <version>", "captured_on": "<date>", "source": "<what was run, where>" }`. `view` is the expected view, with the id written as 26 `0` characters.
-- **`must_keep`** **(lead)**: the lines of the raw text, one per line, that each view of this case must hold: for each failing test, its name line and each line of its assertion or panic text; for a log, each `ERROR` line; for a diff, each `diff --git` line. The person who captures the case writes it by reading the raw output. A case whose `meta.json` has a failing test (exit not 0, or a runner summary with failures) and an empty `must_keep` fails the CI test.
+- **`must_keep`** **(lead)**: the lines of the raw text, one per line, that each view of this case must hold: for each failing test, its name line and each line of its assertion or panic text; for a log, each `ERROR` line; for a diff, each `diff --git` line; when the output is over the threshold, only those of the file sections that the diff view (O§7.7) shows whole under the cap. The person who captures the case writes it by reading the raw output. A case whose `meta.json` has a failing test (exit not 0, or a runner summary with failures) and an empty `must_keep` fails the CI test.
 - **Byte-exact.** `.gitattributes` gets `fixtures/shaping/** -text`. The current rule `* text=auto eol=lf` would change `\r\n` in a capture.
 - **Real output.** Each case is the output of a real run, not typed by hand. The required cases:
 
@@ -382,7 +382,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 | dedup | 50 % on the repeated-warning case | O§7.5 expansion gives the cleaned text |
 | libtest, passing | 80 % | each `test result:` line is in the view |
 | libtest, pytest, go test, failing | 30 % | each `must_keep` line is in the view |
-| diff, json, log | view ≤ 8 KiB | each `must_keep` line that the case marks as within the cap is in the view |
+| diff, json, log | view ≤ 8 KiB | each `must_keep` line is in the view |
 | none | 0 (no change) | the hook output is empty |
 
 A case whose raw text has no runner summary line (O§7.6), such as the libtest compile error, is checked against the `none` row: the hook makes no change, so the model gets each `must_keep` line in the raw text.
@@ -583,3 +583,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-24 | O§6.5 item 3 | author's call (OS-2 review round 1) | the column check reads `PRAGMA table_xinfo` so a generated column counts as present |
 | 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give or record the required bytes; the row now names `-- --color always` (colors libtest stdout), `--no-local` (a local clone prints no `\r` progress) and `git diff --color=always` (the recorded command) (found in phase3 OS-17). |
 | 2026-11-24 | O§8.2, O§8.3 | author's call | A case with no runner summary (libtest compile error, O§8.1) gets no change by O§7.6, so it cannot meet the 30 % failing floor or hold must_keep lines in a view; it is checked against the none row (found in phase3 OS-19). |
+| 2026-11-24 | O§8.1 | operator | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |

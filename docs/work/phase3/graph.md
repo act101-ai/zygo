@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | DONE | implementation | a8add6a 3b33343 957db39 · live selftest ok (76); floor green · PR #26 |
 | OS-1 | Result meta records the session that stored it | DR-1 | DONE | implementation | 7d285bd f733e6c 8a21ec2 · results 50p/0f, hooks_basic 55p/0f; floor green · PR #27 |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
@@ -216,7 +215,7 @@ Session text (T, SX nodes):
 | OS-11 | Command parse: segments, file printers, stored name, runners, reuse text | OS-10 | DONE | judgment | 3ae61ee · shape_command 18 passed; floor green · PR #53 |
 | OS-14 | Size view over any text, and the shaped marker | OS-1, OS-10 | DONE | implementation | b834d51 · results 54p/0f; floor green · PR #45 |
 | OS-17 | Capture clean and dedup fixtures from real command output | OS-16 | DONE | implementation | 40f864d 2311dca d0cfe8a · acceptance 22p/0f, 5 cases; floor green (ws 2626p/0f) · PR #52 |
-| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | TODO | implementation | — |
+| OS-18 | Capture diff, json and log fixtures from real command output | OS-16 | DONE | implementation | 0c6335f1 · shaping_fixtures 22 passed; floor green · PR #55 |
 | OS-19 | Capture libtest fixtures from a scratch crate | OS-16 | DONE | implementation | 821a1bb1 · shaping_fixtures 22 passed; floor green · PR #56 |
 | OS-20 | Capture pytest fixtures from a scratch project | OS-16 | TODO | implementation | — |
 | OS-21 | Capture go test fixtures from a scratch module | OS-16 | TODO | implementation | — |
@@ -388,4 +387,5 @@ Session text (T, SX nodes):
 | 2026-11-24 | SX-6 DONE: the OpenCode plugin transform calls `--event subagent` for non-main `zygo/` models (T§7.2 item 1); review round 1 fixed 4 (anthropic case, per-call stdin, malformed model, missing output.system); floor: workspace 2652 passed, 0 failed · PR #54 |
 | 2026-11-24 | OS-19 done: 4 libtest cases (passing 120, failing-nocapture, signal-crash SIGABRT, compile-error); failing cases labeled opencode; O§8.2/O§8.3 item 4: a case with no runner summary is checked against the none row (author's call); PR #56 |
 | 2026-11-24 | FX-6, WD-23, WD-24 added: FX-6 dead-port test helpers (CI run 45557591675); WD-23 config check refuses job on a non-agent pane (operator, R§9.1); WD-24 job through hide_secrets (W§12). Files-overlap edges: ML-7 on FX-6, WD-16 on WD-24, WD-23 on MS-3. |
+| 2026-11-24 | OS-18 DONE: diff, json and log fixtures; operator ratified the O§8.1 diff must_keep rule; review round 1 fixed 6 findings; floor: workspace 2652 passed, 0 failed · PR #55 |
 | 2026-11-24 | OS-3 DONE: bounded usage-store open `open_bounded` + `HOOK_DB_BOUND`; node head c403338f; review 3 findings fixed; floor green: workspace 2677 passed, 0 failed · PR #64 |
