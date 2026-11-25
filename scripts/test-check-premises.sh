@@ -15,8 +15,8 @@ RC=0
 N=0
 
 fail() {
-    echo "test-check-premises: FAIL $CASE: $1" >&2
-    echo "$OUT" >&2
+    printf '%s\n' "test-check-premises: FAIL $CASE: $1" >&2
+    printf '%s\n' "$OUT" >&2
     exit 1
 }
 
@@ -41,16 +41,26 @@ edit() {
     sed "$2" "$1" > "$1.new" && mv "$1.new" "$1"
 }
 
-# add_header <dir> <line>: inserts the line after the header line that starts `tmux: `.
+# add_header <dir> <line>: inserts the line after the header line that starts `tmux: `. The line goes
+# through the environment (not awk -v), so its backslashes stay as written.
 add_header() {
-    awk -v l="$2" '{ print } /^tmux: / { print l }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+    L="$2" awk '{ print } /^tmux: / { print ENVIRON["L"] }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
         mv "$1/docs/premises.md.new" "$1/docs/premises.md"
     [ "$(grep -cxF -- "$2" "$1/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
 }
 
-# add_row <dir> <row>: inserts the row after the row that starts `| PW16 |`.
+# add_lines <dir> <line>...: inserts the lines, in order, after the header line that starts `tmux: `.
+add_lines() {
+    d=$1
+    shift
+    L=$(printf '%s\n' "$@") awk '{ print } /^tmux: / { print ENVIRON["L"] }' "$d/docs/premises.md" > "$d/docs/premises.md.new" &&
+        mv "$d/docs/premises.md.new" "$d/docs/premises.md"
+}
+
+# add_row <dir> <row>: inserts the row after the row that starts `| PW16 |`. The row goes through
+# the environment (not awk -v), so its backslashes stay as written.
 add_row() {
-    awk -v l="$2" '{ print } /^\| PW16 \|/ { print l }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+    L="$2" awk '{ print } /^\| PW16 \|/ { print ENVIRON["L"] }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
         mv "$1/docs/premises.md.new" "$1/docs/premises.md"
     [ "$(grep -cxF -- "$2" "$1/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
 }
@@ -66,8 +76,9 @@ evidence() {
     echo '{}' > "$1/fixtures/codex/empty.json"
 }
 
+# run <dir>: runs the copy's script; N2_FORBIDDEN_NAMES is cleared, so no case inherits it from the caller.
 run() {
-    OUT=$(sh "$1/scripts/check-premises.sh" 2>&1)
+    OUT=$(unset N2_FORBIDDEN_NAMES; sh "$1/scripts/check-premises.sh" 2>&1)
     RC=$?
     N=$((N + 1))
 }
@@ -354,5 +365,123 @@ add_header "$D" 'Codex: 0.172.0   '
 add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
 run "$D"
 expect_ok
+
+NOHDR="has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"
+
+CASE="a date cell with a backslash sequence"
+D=$(mk datebs)
+evidence "$D"
+add_row "$D" '| PC1 | Test row | tmux | 3.2 | 2026-11-2\0065 | verified | `fixtures/codex/pc1.txt` |'
+run "$D"
+expect_fail "PC1: date '2026-11-2\0065' is not YYYY-MM-DD"
+
+CASE="a result cell with a backslash sequence"
+D=$(mk resultbs)
+evidence "$D"
+add_row "$D" '| PC1 | Test row | tmux | 3.2 | 2026-11-25 | verifie\0144 | `fixtures/codex/pc1.txt` |'
+run "$D"
+expect_fail "PC1: result 'verifie\0144' is not verified or failed"
+
+CASE="a version cell with a backslash sequence"
+D=$(mk verbs)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(row PC1 Codex '0.172.\060' verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: version '0.172.\060' is below the header's '0.172.0' for Codex, or not a dotted number"
+
+CASE="an Item cell with a backslash n"
+D=$(mk itembn)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" '| PC1 | Codex writes `a\nb` | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
+run "$D"
+expect_ok
+
+CASE="an Item cell with a backslash c"
+D=$(mk itembc)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" '| PC1 | Codex reads `\c` | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
+run "$D"
+expect_ok
+
+CASE="a header value with a tab"
+D=$(mk hdrtab)
+evidence "$D"
+H=$(printf 'Codex: 0.172.0\tjunk')
+add_header "$D" "$H"
+add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "docs/premises.md:$(lnof "$D" "$H"): the value of a header line holds a tab"
+
+CASE="a header line in a backtick fence"
+D=$(mk hdrfence)
+evidence "$D"
+add_lines "$D" '```text' 'Cursor: 1.0' '```'
+[ "$(grep -cx 'Cursor: 1\.0' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
+add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: agent 'Cursor' $NOHDR"
+
+CASE="a header line in a tilde fence"
+D=$(mk hdrtilde)
+evidence "$D"
+add_lines "$D" '~~~' 'Cursor: 1.0' '~~~'
+[ "$(grep -cx 'Cursor: 1\.0' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
+add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: agent 'Cursor' $NOHDR"
+
+CASE="a header line in an HTML comment"
+D=$(mk hdrcomment)
+evidence "$D"
+add_lines "$D" '<!--' 'Cursor: 1.0' '-->'
+[ "$(grep -cx 'Cursor: 1\.0' "$D/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
+add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: agent 'Cursor' $NOHDR"
+
+CASE="no ## line"
+D=$(mk noh2)
+edit "$D/docs/premises.md" 's/^## /### /'
+[ "$(grep -c '^## ' "$D/docs/premises.md")" -eq 0 ] || fail "planted change did not apply"
+run "$D"
+expect_fail "docs/premises.md has no '## ' line (the header lines end at the first one)"
+
+CASE="a second Results table"
+D=$(mk results2)
+printf '\n%s\n' '| Id | Item | Agent |' '|---|---|---|' '| foo1 | x | nobody |' >> "$D/docs/premises.md"
+run "$D"
+expect_fail "docs/premises.md:$(lnof "$D" '| Id | Item | Agent |'): a second Results table header row '| Id | Item |'"
+
+CASE="an escaped pipe in a cell"
+D=$(mk escpipe)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" '| PC1 | Codex pipes a \| b | Codex | 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |'
+run "$D"
+expect_ok
+
+CASE="a tab at the end of a cell"
+D=$(mk celltab)
+evidence "$D"
+add_header "$D" 'Codex: 0.172.0'
+add_row "$D" "$(printf '| PC1 | Test row | Codex\t| 0.172.0 | 2026-11-25 | verified | `fixtures/codex/pc1.txt` |')"
+run "$D"
+expect_ok
+
+CASE="an evidence path with a .. component"
+D=$(mk dotdot)
+add_row "$D" "$(row PC1 tmux 3.2 verified docs/../docs/premises.md)"
+run "$D"
+expect_fail "PC1: evidence path docs/../docs/premises.md is absolute or holds a '..' component"
+
+CASE="a joint agent with no header for the second"
+D=$(mk joint)
+evidence "$D"
+add_row "$D" "$(row PC1 'Claude Code + Cursor' '2.1.328 + 1.0' verified fixtures/codex/pc1.txt)"
+run "$D"
+expect_fail "PC1: agent 'Cursor' $NOHDR"
 
 echo "test-check-premises: ok ($N cases)"

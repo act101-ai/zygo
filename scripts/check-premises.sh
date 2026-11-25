@@ -15,7 +15,7 @@ WSPEC=docs/specs/2026-11-20-workspaces-design.md
 WIDS="PW6 PW11 PW15 PW1 PW2 PW3 PW4 PW5 PW7 PW9 PW10 PW16"
 WSKIP=""
 
-fail() { echo "check-premises: $*"; exit 1; }
+fail() { printf '%s\n' "check-premises: $*"; exit 1; }
 
 # nontrivial <path>: a regular file (not a symlink) of more than 2 bytes that is not {} or [].
 nontrivial() {
@@ -28,13 +28,26 @@ nontrivial() {
 [ -s "$P" ] || fail "$P is missing or empty"
 ! grep -q "$(printf '\r')" "$P" || fail "$P has CRLF line endings"
 [ -s "$SPEC" ] || fail "$SPEC is missing"
+grep -q '^## ' "$P" || fail "$P has no '## ' line (the header lines end at the first one)"
 
 # HDR: one "name<TAB>value<TAB>line" line per "<Name>: <value>" header line before the first "## ",
-# the value trimmed at its ends. A row's agent needs a value that is a bare dotted version.
-HDR=$(awk '/^## /{exit}
+# the value trimmed of blanks and tabs at its ends. Lines in a fenced code block (``` or ~~~, up to
+# three blanks before it) or an HTML comment (<!-- to -->) are skipped. A value that still holds a
+# tab fails (it would split the record). A row's agent needs a value that is a bare dotted version.
+HDR=$(awk '
+  { s = $0; sub(/^ ? ? ?/, "", s); f3 = substr(s, 1, 3) }
+  fence != "" { if (f3 == fence) fence = ""; next }
+  cmt { if (index($0, "-->")) cmt = 0; next }
+  f3 == "```" || f3 == "~~~" { fence = f3; next }
+  index($0, "<!--") { if (!index(substr($0, index($0, "<!--") + 4), "-->")) cmt = 1; next }
+  /^## / { exit }
   /^[A-Za-z][A-Za-z0-9 ._-]*[A-Za-z0-9]:/ {
-    i = index($0, ":"); v = substr($0, i + 1); gsub(/^[ \t]+|[ \t]+$/, "", v); print substr($0, 1, i - 1) "\t" v "\t" NR
-  }' "$P")
+    i = index($0, ":"); v = substr($0, i + 1); gsub(/^[ \t]+|[ \t]+$/, "", v)
+    if (index(v, "\t")) { bad = NR; exit }
+    out = out substr($0, 1, i - 1) "\t" v "\t" NR "\n"
+  }
+  END { if (bad) { print bad; exit 3 } printf "%s", out }' "$P")
+[ $? -ne 3 ] || fail "$P:$HDR: the value of a header line holds a tab"
 # A name given again must have the same value as its first header line.
 dup=$(printf '%s\n' "$HDR" | awk -F'\t' '$1 in v && v[$1] != $2 { print $3 "\t" $1 ": " $2 "\t" $1 ": " v[$1]; exit } !($1 in v) { v[$1] = $2 }')
 TAB=$(printf '\t')
@@ -46,7 +59,7 @@ EOF_DUP
 fi
 
 # version_of <name>: the header value for that name (the first line wins), or nothing.
-version_of() { printf '%s\n' "$HDR" | awk -F'\t' -v n="$1" '$1 == n { print $2; exit }'; }
+version_of() { printf '%s\n' "$HDR" | N="$1" awk -F'\t' '$1 == ENVIRON["N"] { print $2; exit }'; }
 
 # TROWS: "line<TAB>id<TAB>r|o" for every table line of the file (it starts with optional blanks
 # and "|"), the first cell trimmed at its ends, in file order; r marks a row of the Results table
@@ -58,6 +71,9 @@ TROWS=$(awk -F'|' '
   t == 2 && $0 !~ /^[ \t]*\|/ { t = 3 }
   /^[ \t]*\|/ { id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id); print NR "\t" id "\t" (t == 2 ? "r" : "o") }
 ' "$P")
+# The file has one Results table: a second header row "| Id | Item |" fails.
+res2=$(awk '/^\| Id \| Item \|/ { if (n++) { print NR; exit } }' "$P")
+[ -z "$res2" ] || fail "$P:$res2: a second Results table header row '| Id | Item |'"
 # ROWS: "line<TAB>id" for every row of the Results table.
 ROWS=$(printf '%s\n' "$TROWS" | awk -F'\t' '$3 == "r" { print $1 "\t" $2 }')
 [ -n "$ROWS" ] || fail "$P has no Results table (a header row '| Id | Item |' and its rows)"
@@ -72,7 +88,15 @@ IDLIST=$(printf '%s\n' "$TROWS" | cut -f2)
 rows_of() { printf '%s\n' "$IDLIST" | grep -cxF -- "$1"; }
 CHECKED=""
 
-trim() { sed 's/^ *//; s/ *$//'; }
+trim() { sed 's/^[[:blank:]]*//; s/[[:blank:]]*$//'; }
+# cells <from> [<to>]: cells <from> to <to> (default: the last cell) of $row, joined by "|". An
+# escaped "\|" is a literal "|" inside a cell, not a cell border.
+cells() {
+  printf '%s\n' "$row" | awk -F'|' -v a="$1" -v b="${2:-}" '{
+    p = "\001"; gsub(/\\[|]/, p); if (b == "") b = NF - 1
+    s = ""; for (i = a; i <= b; i++) s = s (i > a ? "|" : "") $i
+    gsub(p, "|", s); print s }'
+}
 
 # Spec sections: §19 is from "## 19." to "## 19a."; §19a is from "## 19a." to "## 20.".
 S19=$(awk '/^## 19\. /{f=1;next} /^## 19a\. /{f=0} f' "$SPEC")
@@ -97,24 +121,24 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
   n=$(rows_of "$id")
   [ "$n" -eq 1 ] || fail "$id: expected exactly one row, found $n"
   row=$(sed -n "${ln}p" "$P")
-  agent=$(echo "$row" | awk -F'|' '{print $4}' | trim)
-  ver=$(echo "$row" | awk -F'|' '{print $5}' | trim)
-  date=$(echo "$row" | awk -F'|' '{print $6}' | trim)
-  result=$(echo "$row" | awk -F'|' '{print $7}' | trim)
-  evidence=$(echo "$row" | awk -F'|' '{for(i=8;i<NF;i++) printf "%s|", $i}')
+  agent=$(cells 4 4 | trim)
+  ver=$(cells 5 5 | trim)
+  date=$(cells 6 6 | trim)
+  result=$(cells 7 7 | trim)
+  evidence=$(cells 8)
 
-  echo "$date" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || fail "$id: date '$date' is not YYYY-MM-DD"
+  printf '%s\n' "$date" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || fail "$id: date '$date' is not YYYY-MM-DD"
 
   # Agent and Version may each list several values joined by " + ", in the same order.
   [ -n "$agent" ] || fail "$id: the Agent cell is empty"
   [ -n "$ver" ] || fail "$id: the Version cell is empty"
-  na=$(echo "$agent" | awk -F' [+] ' '{print NF}')
-  nv=$(echo "$ver" | awk -F' [+] ' '{print NF}')
+  na=$(printf '%s\n' "$agent" | awk -F' [+] ' '{print NF}')
+  nv=$(printf '%s\n' "$ver" | awk -F' [+] ' '{print NF}')
   [ "$na" -eq "$nv" ] || fail "$id: $na agent(s) but $nv version(s)"
   i=1
   while [ "$i" -le "$na" ]; do
-    a=$(echo "$agent" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
-    v=$(echo "$ver" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
+    a=$(printf '%s\n' "$agent" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
+    v=$(printf '%s\n' "$ver" | awk -F' [+] ' -v i="$i" '{print $i}' | trim)
     want=$(version_of "$a")
     [ -n "$want" ] || fail "$id: agent '$a' has no header line '$a: <version>' before the first '## ' of $P"
     printf '%s\n' "$want" | grep -Eq '^[0-9]+(\.[0-9]+)*$' ||
@@ -134,9 +158,10 @@ for e in $(printf '%s\n' "$ROWS" | tr '\t' ':'); do
     *) fail "$id: result '$result' is not verified or failed" ;;
   esac
 
-  paths=$(echo "$evidence" | grep -oE '`(fixtures|docs|scripts)/[^` ]+`' | tr -d '`')
+  paths=$(printf '%s\n' "$evidence" | grep -oE '`(fixtures|docs|scripts)/[^` ]+`' | tr -d '`')
   [ -n "$paths" ] || fail "$id: evidence names no path"
   while IFS= read -r f; do
+    case "$f" in /* | .. | ../* | */.. | */../*) fail "$id: evidence path $f is absolute or holds a '..' component" ;; esac
     nontrivial "$f" || fail "$id: evidence path $f is missing, not a regular file, or trivial"
   done <<EOF_PATHS
 $paths
@@ -146,11 +171,11 @@ EOF_PATHS
   if [ "$result" = failed ]; then
     pat="\*\(Note [0-9]{4}-[0-9]{2}-[0-9]{2}, N2, $id: [^)]*\)\*"
     case "$id" in
-      P*) echo "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
-      Q*) echo "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
+      P*) printf '%s\n' "$S19" | grep -Eq "$pat" || fail "$id: failed, but spec §19 has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
+      Q*) printf '%s\n' "$S19A" | grep -Eq "$pat" || fail "$id: failed, but spec §19a has no dated note *(Note YYYY-MM-DD, N2, $id: …)*" ;;
     esac
     if [ "$id" = P6a ]; then
-      echo "$S105" | grep -Eq "$pat" || fail "P6a: failed, but spec §10.5 has no dated note amending the language list"
+      printf '%s\n' "$S105" | grep -Eq "$pat" || fail "P6a: failed, but spec §10.5 has no dated note amending the language list"
       nontrivial fixtures/act-lite/README.md || fail "P6a: failed, but fixtures/act-lite/README.md is missing or trivial"
       nontrivial fixtures/act-lite/languages.json || fail "P6a: failed, but fixtures/act-lite/languages.json is missing or trivial"
     fi
@@ -196,7 +221,7 @@ NOTES=$( (grep -nH 'N38' "$SPEC" docs/conformance.md 2>/dev/null) || true)
 scan() {
   o=-E; [ "${4:-}" != i ] || o=-iE
   # shellcheck disable=SC2086
-  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; echo "$NOTES" | grep $o -- "$1") | grep -v $o -- "${2:-^\$}" | head -n 1)
+  hit=$( (grep -rn $o -- "$1" $SCOPE 2>/dev/null; printf '%s\n' "$NOTES" | grep $o -- "$1") | grep -v $o -- "${2:-^\$}" | head -n 1)
   [ -z "$hit" ] || fail "forbidden content ($3): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
 }
 # L: the left edge of a key or id: line start, a non-word character, or a JSON backslash escape
@@ -231,7 +256,7 @@ name_scan() {
   wc=${3:-A-Za-z0-9_}
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
   # shellcheck disable=SC2086
-  hit=$( (grep -rniE -- "$rx" $SCOPE "$P" 2>/dev/null; echo "$NOTES" | grep -iE -- "$rx") | head -n 1)
+  hit=$( (grep -rniE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -iE -- "$rx") | head -n 1)
   [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | head -n 1 | cut -d: -f1-2)"
 }
 for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w"; done
@@ -258,5 +283,5 @@ EOF_HOSTS
 [ -n "${N2_FORBIDDEN_NAMES:-}" ] || echo "check-premises: note: N2_FORBIDDEN_NAMES not set; name scan skipped"
 
 [ -z "$WSKIP" ] || echo "check-premises: note: $WSPEC not found; W§17 result check skipped"
-echo "check-premises: ok ($CHECKED)"
+printf '%s\n' "check-premises: ok ($CHECKED)"
 exit 0
