@@ -419,3 +419,8 @@ Verification.
   Pass means: the count prints 11 (at least 7; it was 0 before this node), and the four test runs each end with `test result: ok` and 0 failed. A count below 7 fails before any run.
 - [x] **V2 — floor, affected crates.** `cargo test --locked -p zygo-usage -p zygo-hooks -p zygo-launch -p zygo-work -p zygo-proxy -p zygo-mcp` and `cargo test --locked -p zygo --test usage_doctor --test compact_cmd --test hook_trim` → all pass (the other `TrimRow` users and every full-open caller). Then `cargo test --workspace --locked --no-fail-fast` → no new failure against `origin/phase-3`. Never run the zygo binary with `ZYGO_SESSION_DIR` set (`env -u ZYGO_SESSION_DIR` if needed).
 - [x] **V3 — scope.** `git diff --name-only origin/phase-3...HEAD` lists only the six **Files** of this node plus this node file.
+
+### Review round 1
+
+- [x] **F3 — the column check reads `PRAGMA table_xinfo(trims)`.** `PRAGMA table_info` does not list generated (hidden) columns, so a generated `shaper` counted as missing. Tests first: `readbacks_schema_generated_column_counts_as_present` (`tests/store.rs`: `open` on a ten-column `trims` table with `shaper` generated keeps `PRAGMA schema_version`) and `readbacks_schema_missing_columns_see_generated_column` (`store.rs` unit test of `missing_trim_columns`, split out of `add_trim_columns` with no change in behavior). Only the unit test fails before the fix: SQLite rejects the duplicate `ALTER` at prepare, so `schema_version` does not change in either case.
+- [x] **F2-doc — the doc comment on `Store::open`** names no function that does not exist yet.

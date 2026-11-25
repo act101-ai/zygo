@@ -810,3 +810,13 @@ fn readbacks_schema_open_read_only_opens_old_and_migrated_database() {
     drop(Store::open(&t.db()).unwrap());
     assert_eq!(Store::open_read_only(&t.db()).unwrap().bytes_trimmed("S1").unwrap(), 900);
 }
+
+#[test] // review round 1 F3: a generated (hidden) `shaper` column is present; `open` runs no ALTER for it
+fn readbacks_schema_generated_column_counts_as_present() {
+    let t = Tmp::new();
+    Connection::open(t.db()).unwrap().execute_batch("CREATE TABLE trims (ts INTEGER NOT NULL, session TEXT NOT NULL, agent_id TEXT, tool TEXT NOT NULL, kind TEXT NOT NULL, stored_bytes INTEGER NOT NULL, view_bytes INTEGER NOT NULL, result_id TEXT, command TEXT, shaper TEXT GENERATED ALWAYS AS ('x') VIRTUAL)").unwrap();
+    drop(Store::open(&t.db()).unwrap()); // creates the other tables
+    let v = pragma(&t.db(), "schema_version");
+    drop(Store::open_with_column_check(&t.db(), &[]).unwrap());
+    assert_eq!(pragma(&t.db(), "schema_version"), v);
+}

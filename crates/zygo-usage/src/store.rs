@@ -75,15 +75,17 @@ fn sqlite_message(e: &rusqlite::Error) -> Option<&str> {
     match e { rusqlite::Error::SqliteFailure(_, Some(m)) => Some(m), _ => None }
 }
 
-/// Adds each `trims` column of `TRIM_COLUMNS` that `PRAGMA table_info(trims)` lacks, plus each name in
-/// `report_missing` (the O§16 item 15 seam). "duplicate column name" means another process added it first: success.
-fn add_trim_columns(conn: &Connection, report_missing: &[&str]) -> rusqlite::Result<()> {
-    let have: Vec<String> = conn.prepare("PRAGMA table_info(trims)")?
+/// The `TRIM_COLUMNS` entries that `PRAGMA table_xinfo(trims)` lacks (`table_info` hides generated columns), plus each name in `report_missing` (the O§16
+/// item 15 seam), in order.
+fn missing_trim_columns(conn: &Connection, report_missing: &[&str]) -> rusqlite::Result<Vec<(&'static str, &'static str)>> {
+    let have: Vec<String> = conn.prepare("PRAGMA table_xinfo(trims)")?
         .query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
-    for (name, ty) in TRIM_COLUMNS {
-        if have.iter().any(|h| h == name) && !report_missing.contains(&name) {
-            continue;
-        }
+    Ok(TRIM_COLUMNS.into_iter().filter(|(name, _)| !have.iter().any(|h| h == name) || report_missing.contains(name)).collect())
+}
+
+/// Adds each column of `missing_trim_columns`. "duplicate column name" means another process added it first: success.
+fn add_trim_columns(conn: &Connection, report_missing: &[&str]) -> rusqlite::Result<()> {
+    for (name, ty) in missing_trim_columns(conn, report_missing)? {
         match conn.execute_batch(&format!("ALTER TABLE trims ADD COLUMN {name} {ty}")) {
             Err(e) if !sqlite_message(&e).is_some_and(|m| m.starts_with("duplicate column name")) => return Err(e),
             _ => {}
@@ -103,7 +105,8 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 
 impl Store {
     /// The full open: creates the file and the schema, and adds each missing `trims` column one time per process for
-    /// this path (O§6.5 item 3). The launcher and the CLI use it; the hook and the MCP server use `open_bounded` (OS-3).
+    /// this path (O§6.5 item 3). The hook and the MCP server's read-back write move to the bounded open (O§7.11); until
+    /// then they call this open.
     pub fn open(path: &Path) -> Result<Store> {
         let checked = TRIM_COLUMNS_CHECKED.lock().unwrap_or_else(|e| e.into_inner()).contains(path);
         Store::open_full(path, if checked { None } else { Some(&[] as &[&str]) })
@@ -354,5 +357,18 @@ impl Store {
             rusqlite::params![verdict, session, unit, round],
         )?;
         Ok(n > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test] // review round 1 F3: `PRAGMA table_info` hides a generated column; the check must still see it
+    fn readbacks_schema_missing_columns_see_generated_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE trims (ts INTEGER NOT NULL, result_id TEXT, command TEXT, shaper TEXT GENERATED ALWAYS AS ('x') VIRTUAL)").unwrap();
+        assert_eq!(missing_trim_columns(&conn, &[]).unwrap(), []);
+        assert_eq!(missing_trim_columns(&conn, &["shaper"]).unwrap(), [("shaper", "TEXT")]);
     }
 }
