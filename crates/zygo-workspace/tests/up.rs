@@ -16,14 +16,16 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use zygo_config::{Config, Loadout, LoadoutPane, LoadoutWindow};
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
+use zygo_workspace::down::{self, DownOpts, DownTarget, ProcIdentity};
 use zygo_workspace::identity::workspace_id;
+use zygo_workspace::mail::{mail_dir, store as mail_store, Message};
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::mux::{Multiplexer, UnsafePath};
@@ -209,6 +211,20 @@ fn set(store: &Store, f: impl Fn(&mut Workspace)) {
 }
 
 fn read(store: &Store) -> Workspace { store.read().unwrap().unwrap() }
+
+/// Delivers `n` messages to `mail/<key>/new` of workspace `id` (M§5 send).
+fn mail_to(p: &Paths, id: &str, key: &str, n: usize) {
+    for i in 0..n {
+        let m = Message::new("cli", "x", &format!("s{i}"), "b", SystemTime::now()).unwrap();
+        mail_store::deliver(&mail_dir(p, id), key, "x", &m, 500).unwrap();
+    }
+}
+
+/// The AU18 probe of `down`: one namespace for this process and the server; the server's comm is tmux.
+fn same_ns(p: &str) -> Option<ProcIdentity> {
+    let comm = if p == "self" { "up-test" } else { "tmux: server" };
+    Some(ProcIdentity { mnt_ns: "mnt:[1]".into(), pid_ns: "pid:[1]".into(), comm: Some(comm.into()) })
+}
 
 fn lp(kind: &str) -> LoadoutPane { LoadoutPane { kind: kind.into(), ..LoadoutPane::default() } }
 
@@ -2785,4 +2801,84 @@ fn au54_up_all_skips_a_tmux_env_socket_with_a_quote() {
     assert_eq!(err, format!("zygo: app skipped: {reason}\nzygo: up --all found no workspace to restore\n"));
     assert_eq!(tmux_log(t), ["-u -V"]);
     assert_eq!(raw(&store), before);
+}
+
+// ---- ML-14: unread counts (M§9) ----
+
+#[test] // M§9, W§7.5, D23: the detached line ends with the member's unread count when it is not zero
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
+fn mail_up_detached_line_ends_with_the_unread_count() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![pane("kaaaaaaaa", 0, 0, PaneKind::Shell, &l.repo)],
+        vec![
+            ("keeeeeeee", member(Agent::ClaudeCode, MemberState::Resumable, Some("c-5"))),
+            ("kffffffff", member(Agent::OpenCode, MemberState::Resumable, Some("o-6"))),
+        ],
+    );
+    mail_to(&l.o.paths, &l.id, "keeeeeeee", 3);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(err.contains(
+        "zygo: claude-code agent session c-5 is detached (its pane was closed); resume it by hand or run zygo ws forget-pane keeeeeeee; unread 3\n"
+    ), "{err}");
+    assert!(err.contains(
+        "zygo: opencode agent session o-6 is detached (its pane was closed); resume it by hand or run zygo ws forget-pane kffffffff\n"
+    ), "{err}");
+    assert_eq!(mail_store::unread(&mail_dir(&l.o.paths, &l.id), "keeeeeeee").unwrap(), 3); // up reads no mail
+}
+
+#[test] // M§9: `down` does not wait for unread mail (it is durable)
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound"]
+fn mail_down_does_not_wait_for_unread_mail() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    // The mail goes to an agent member with a pane and a member record, as M§5 sends do.
+    let key = "kaaaaaaaa";
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![pane(key, 0, 0, PaneKind::ClaudeCode, &l.repo)],
+        vec![(key, member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")))],
+    );
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    let ws = read(&store);
+    assert_eq!(ws.phase, Phase::Up);
+    assert!(ws.members.contains_key(key) && ws.panes.iter().any(|p| p.key == key && p.kind == PaneKind::ClaudeCode), "{ws:?}");
+    mail_to(&l.o.paths, &l.id, key, 2);
+    let d = DownOpts {
+        target: DownTarget::Name("app".into()),
+        now: false,
+        timeout: None,
+        wait: false,
+        cwd: l.repo.clone(),
+        zygo: l.o.zygo.clone(),
+        tmux: l.o.tmux.clone(),
+        tmux_env: None,
+        tmux_pane: None,
+        zygo_session: None,
+        proc_probe: same_ns,
+        paths: l.o.paths.clone(),
+        config: Config::default(),
+    };
+    let (mut o2, mut e2) = (Vec::new(), Vec::new());
+    let code = down::run(&d, &mut o2, &mut e2);
+    let (o2, e2) = (text(o2), text(e2));
+    assert_eq!((code, o2.as_str()), (0, "zygo: app is down (0 agents saved)\n"), "{e2}");
+    let ws = read(&store);
+    assert_eq!(ws.phase, Phase::Down);
+    assert!(ws.members.contains_key(key), "{ws:?}");
+    let m = mail_dir(&l.o.paths, &l.id);
+    assert_eq!(mail_store::unread(&m, key).unwrap(), 2); // kept unread
+    assert_eq!(fs::read_dir(m.join(key).join("new")).unwrap().count(), 2); // still in new/
 }

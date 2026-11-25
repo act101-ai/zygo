@@ -18,7 +18,7 @@ use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 
 use crate::identity::{valid_name, valid_pane_key, valid_ws_id, workspace_id};
-use crate::mail::names;
+use crate::mail::{mail_dir, names, store as mail_store};
 use crate::mux::tmux::Tmux;
 use crate::mux::{check_path, session_target, Multiplexer, MuxError, SessionAnswer, BOUND, UNSAFE_PATH_MESSAGE};
 use crate::repair::check_saved_socket;
@@ -132,6 +132,8 @@ pub struct ListRow {
     pub agents: Option<(usize, usize, usize)>,
     /// Attached clients, only for a session of this workspace.
     pub clients: Option<u32>,
+    /// Unread messages over all member records (M§9); `None` when the state or a member's maildir cannot be read.
+    pub unread: Option<usize>,
 }
 
 impl fmt::Display for ListRow {
@@ -139,7 +141,8 @@ impl fmt::Display for ListRow {
         let root = self.main_root.as_ref().map_or_else(|| "-".to_string(), |p| esc(&p.to_string_lossy()));
         let agents = self.agents.map_or_else(|| "-".to_string(), |(r, s, d)| format!("{r}/{s}/{d}"));
         let clients = self.clients.map_or_else(|| "-".to_string(), |n| n.to_string());
-        write!(f, "{}  {root}  {}  agents {agents}  clients {clients}", esc(&self.name), self.state)
+        let unread = self.unread.map_or_else(|| "-".to_string(), |n| n.to_string());
+        write!(f, "{}  {root}  {}  agents {agents}  clients {clients}  unread {unread}", esc(&self.name), self.state)
     }
 }
 
@@ -245,7 +248,7 @@ fn list_by(
         let ws = match r {
             Ok(ws) => ws,
             Err(_) => {
-                rows.push(ListRow { id: id.clone(), name: id, main_root: None, state: ListState::Unreadable, agents: None, clients: None });
+                rows.push(ListRow { id: id.clone(), name: id, main_root: None, state: ListState::Unreadable, agents: None, clients: None, unread: None });
                 continue;
             }
         };
@@ -275,7 +278,9 @@ fn list_by(
             };
             (state, clients)
         };
-        rows.push(ListRow { id, name: ws.name.clone(), main_root: Some(ws.main_root.clone()), state, agents: Some(agents), clients });
+        let mail = mail_dir(paths, &id);
+        let unread = ws.members.keys().map(|k| mail_store::unread(&mail, k).ok()).sum::<Option<usize>>();
+        rows.push(ListRow { id, name: ws.name.clone(), main_root: Some(ws.main_root.clone()), state, agents: Some(agents), clients, unread });
     }
     rows
 }
@@ -386,8 +391,9 @@ fn state_word(s: MemberState) -> &'static str {
     }
 }
 
-/// `zygo workspace` (W§12, D12, D13): the workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`. The text has
-/// no trailing new line; an `Err` text has no `zygo: ` prefix.
+/// `zygo workspace` (W§12, D12, D13): the workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`. Each member
+/// line ends with its unread count when it is not zero (M§9). The text has no trailing new line; an `Err` text has no
+/// `zygo: ` prefix.
 pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyhow::Result<String> {
     let (id, by_env) = match zygo_workspace {
         Some(v) => {
@@ -414,9 +420,15 @@ pub fn status(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyh
         Err(e) => bail!("{e}"),
     };
     let mut lines = vec![format!("workspace {}: {}", esc(&ws.name), phase_word(ws.phase))];
+    let mail = mail_dir(paths, &id);
     for (key, m) in &ws.members {
         let session = m.agent_session.as_deref().map_or_else(|| "-".to_string(), esc);
-        lines.push(format!("{key} {} {} {session}", m.launch.kind.as_str(), state_word(m.state)));
+        let unread = match mail_store::unread(&mail, key) {
+            Ok(0) => String::new(),
+            Ok(n) => format!(" unread {n}"),
+            Err(_) => " unread -".to_string(),
+        };
+        lines.push(format!("{key} {} {} {session}{unread}", m.launch.kind.as_str(), state_word(m.state)));
     }
     if ws.members.is_empty() {
         lines.push("no members".to_string());
@@ -764,8 +776,8 @@ fn remove(paths: &Paths, store: &Store, id: &str, label: &str, op: OpLock) -> Re
     Ok(format!("zygo: forgot {label}"))
 }
 
-/// `zygo ws forget-pane <key>` (W§12, D18-D20): the workspace named `name`, else the one of the checkout of `cwd`.
-/// Exit 0 with `zygo: forgot pane <key> of <name>` on `out`, or exit 1 with one line on `err`.
+/// `zygo ws forget-pane <key>` (W§12, D18-D20): the workspace named `name`, else the one of the checkout of `cwd`. It
+/// removes the member record, the pane caches and the maildir `mail/<key>/` (M§5). Exit 0 with `zygo: forgot pane <key> of <name>` on `out`, or exit 1 with one line on `err`.
 pub fn forget_pane(
     paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str, out: &mut dyn Write, err: &mut dyn Write,
 ) -> i32 {
@@ -916,6 +928,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
     for (sub, _) in PANE_CACHES {
         has_cache |= pane_cache(paths, &id, sub, key).map_err(|r| cannot(&r))?.is_some();
     }
+    let has_mail = pane_maildir(paths, &id, key).map_err(|r| cannot(&r))?.is_some();
     if cur.members.contains_key(key) {
         // D18-D20: the live check under `lock`, on the record as read there; the record and `panes[].kind` in one write.
         let mut live = false;
@@ -950,7 +963,7 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
             Err(StateError::Busy) => return Err(format!("zygo: workspace {label} is busy; try again")),
             Err(e) => return Err(format!("zygo: {e}")),
         }
-    } else if !has_cache {
+    } else if !has_cache && !has_mail {
         return Err(format!("zygo: {label} has no member record for pane {key}"));
     }
     fire(store.dir(), "forget_pane_before_cache").map_err(|e| cannot(&e))?;
@@ -965,6 +978,21 @@ fn forget_pane_run(paths: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, k
         if let Err(e) = removed {
             first.get_or_insert(cannot(&e));
         }
+    }
+    // M§5: mail/<key>/ after the record and after the caches; tried also after a cache error. The record goes first, so
+    // a send that reads the state after it cannot resolve the key. A send that read the state earlier can still deliver
+    // (that race is tracked as its own node). A folder or a link is removed by `remove_pane` (a link as a link); any
+    // other entry, such as a regular file, is removed as itself, as `remove_tree` does.
+    let removed = pane_maildir(paths, &id, key).and_then(|entry| match entry {
+        Some(entry) => {
+            let plain = fs::symlink_metadata(&entry).is_ok_and(|m| !m.is_dir() && !m.file_type().is_symlink());
+            let gone = if plain { fs::remove_file(&entry) } else { mail_store::remove_pane(&mail_dir(paths, &id), key) };
+            gone.map_err(|e| format!("{}: {e}", entry.display()))
+        }
+        None => Ok(()),
+    });
+    if let Err(e) = removed {
+        first.get_or_insert(cannot(&e));
     }
     match first {
         Some(e) => Err(e),
@@ -993,6 +1021,26 @@ pub fn pane_cache(paths: &Paths, id: &str, sub: &str, key: &str) -> Result<Optio
         }
     }
     let entry = at.join(key);
+    match fs::symlink_metadata(&entry) {
+        Ok(_) => Ok(Some(entry)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", entry.display())),
+    }
+}
+
+/// M§5: `<workspaces_dir>/<id>/mail/<key>` of one pane, `mail/` checked with `symlink_metadata`. `Ok(Some(path))`
+/// when `<key>` exists (a link there is removed as a link); `Ok(None)` when `mail/` or `<key>` is missing or `mail/`
+/// is not a folder; `Err(reason)` for a link at `mail/` (it is not followed) or a part that cannot be read.
+fn pane_maildir(paths: &Paths, id: &str, key: &str) -> Result<Option<PathBuf>, String> {
+    let mail = mail_dir(paths, id);
+    match fs::symlink_metadata(&mail) {
+        Ok(m) if m.file_type().is_symlink() => return Err(format!("{} is a link; it is not followed", mail.display())),
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", mail.display())),
+    }
+    let entry = mail.join(key);
     match fs::symlink_metadata(&entry) {
         Ok(_) => Ok(Some(entry)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
