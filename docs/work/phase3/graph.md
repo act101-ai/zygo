@@ -201,7 +201,6 @@ Session text (T, SX nodes):
 | OS-13 | Dedup step: runs of equal consecutive lines, lossless | OS-12 | TODO | implementation | — |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | DONE | judgment | 2fc1f821, 64486e85, 0bfa1c6d · admin 16/0 (7 rename_member), zygo lib 228/0 ; floor green · PR #107 |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | DONE | implementation | ed8193ef, 4bed6315 · session_text 43/0 (13 mail_item) ; floor green · PR #106 |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | DONE | implementation | 0128c7fa, 63b94dd8 · statusline_mail 7/0, statusline_render 30/0 ; floor green · PR #108 |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
@@ -232,7 +231,7 @@ Session text (T, SX nodes):
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | TODO | judgment | — |
 | WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | TODO | judgment | — |
 | WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | TODO | judgment | — |
-| WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | TODO | implementation | — |
+| WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
@@ -398,3 +397,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-7 DONE: `Merged::with_definition` adds the approved definition as the `workspace-files` source; a second call replaces the first. Review round 2: 5 findings fixed · PR #112 |
 | 2026-11-25 | MS-11 DONE: identity registry/ack checks and moved-workspace scan; review: 7 findings fixed; F1 (no cap on registry/ack file count) to operator as a proposed rule; F9 (twin false positive after crash at tip) is a contract note for MS-13 · PR #113 |
 | 2026-11-25 | MS-12 done: import checks (reader-equal json), crash-safe delivery via incoming/, torn staged files re-imported, per-target inbox room; S§8.5 step 5 and Candidates rewritten (author's call). |
+| 2026-11-25 | WD-17 DONE: `zygo doctor` prints the workspace-files, pool, shared-pool and member-maximum lines; it finds the checkout the same way `up` does. 2 rounds, 9 findings: 5 fixed, 1 closed by a fix, 1 carried forward, 2 dropped · PR #119 |
