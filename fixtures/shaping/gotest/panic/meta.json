@@ -1,0 +1,9 @@
+{
+   "agent" : "claude-code",
+   "captured_on" : "2026-11-25",
+   "command" : "go test -v ./...",
+   "event" : "PostToolUseFailure",
+   "exit" : 1,
+   "source" : "scratch module example.com/gotestfix: packages parse (60 tests) and docs as in passing-verbose, package worker whose TestWorker starts a goroutine that panics on a nil job, run by capture-shaping.sh in /repo",
+   "tool" : "go 1.23.4"
+}

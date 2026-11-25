@@ -1,0 +1,310 @@
+?   	example.com/gotestfix/docs	[no test files]
+=== RUN   TestGroup
+=== RUN   TestGroup/pass_01
+=== PAUSE TestGroup/pass_01
+=== RUN   TestGroup/pass_02
+=== PAUSE TestGroup/pass_02
+=== RUN   TestGroup/pass_03
+=== PAUSE TestGroup/pass_03
+=== RUN   TestGroup/pass_04
+=== PAUSE TestGroup/pass_04
+=== RUN   TestGroup/pass_05
+=== PAUSE TestGroup/pass_05
+=== RUN   TestGroup/pass_06
+=== PAUSE TestGroup/pass_06
+=== RUN   TestGroup/pass_07
+=== PAUSE TestGroup/pass_07
+=== RUN   TestGroup/pass_08
+=== PAUSE TestGroup/pass_08
+=== RUN   TestGroup/pass_09
+=== PAUSE TestGroup/pass_09
+=== RUN   TestGroup/pass_10
+=== PAUSE TestGroup/pass_10
+=== RUN   TestGroup/pass_11
+=== PAUSE TestGroup/pass_11
+=== RUN   TestGroup/pass_12
+=== PAUSE TestGroup/pass_12
+=== RUN   TestGroup/fail_fetch
+=== PAUSE TestGroup/fail_fetch
+=== CONT  TestGroup/pass_01
+=== CONT  TestGroup/pass_08
+=== CONT  TestGroup/pass_05
+    group_test.go:15: pass_05: step 1 ok
+=== NAME  TestGroup/pass_08
+    group_test.go:15: pass_08: step 1 ok
+=== CONT  TestGroup/pass_04
+    group_test.go:15: pass_04: step 1 ok
+=== CONT  TestGroup/pass_03
+    group_test.go:15: pass_03: step 1 ok
+=== CONT  TestGroup/pass_02
+    group_test.go:15: pass_02: step 1 ok
+=== CONT  TestGroup/pass_07
+    group_test.go:15: pass_07: step 1 ok
+=== CONT  TestGroup/pass_06
+    group_test.go:15: pass_06: step 1 ok
+=== CONT  TestGroup/pass_11
+    group_test.go:15: pass_11: step 1 ok
+=== CONT  TestGroup/fail_fetch
+    group_test.go:22: fetch start
+=== CONT  TestGroup/pass_12
+    group_test.go:15: pass_12: step 1 ok
+=== CONT  TestGroup/pass_10
+    group_test.go:15: pass_10: step 1 ok
+=== CONT  TestGroup/pass_09
+    group_test.go:15: pass_09: step 1 ok
+=== NAME  TestGroup/pass_01
+    group_test.go:15: pass_01: step 1 ok
+=== NAME  TestGroup/fail_fetch
+    group_test.go:25: fetch attempt 1: status 503
+=== NAME  TestGroup/pass_04
+    group_test.go:15: pass_04: step 2 ok
+=== NAME  TestGroup/pass_03
+    group_test.go:15: pass_03: step 2 ok
+=== NAME  TestGroup/pass_05
+    group_test.go:15: pass_05: step 2 ok
+=== NAME  TestGroup/pass_01
+    group_test.go:15: pass_01: step 2 ok
+=== NAME  TestGroup/pass_11
+    group_test.go:15: pass_11: step 2 ok
+=== NAME  TestGroup/pass_02
+    group_test.go:15: pass_02: step 2 ok
+=== NAME  TestGroup/pass_09
+    group_test.go:15: pass_09: step 2 ok
+=== NAME  TestGroup/pass_07
+    group_test.go:15: pass_07: step 2 ok
+=== NAME  TestGroup/pass_08
+    group_test.go:15: pass_08: step 2 ok
+=== NAME  TestGroup/pass_12
+    group_test.go:15: pass_12: step 2 ok
+=== NAME  TestGroup/pass_10
+    group_test.go:15: pass_10: step 2 ok
+=== NAME  TestGroup/pass_06
+    group_test.go:15: pass_06: step 2 ok
+=== NAME  TestGroup/fail_fetch
+    group_test.go:25: fetch attempt 2: status 503
+=== NAME  TestGroup/pass_02
+    group_test.go:15: pass_02: step 3 ok
+=== NAME  TestGroup/pass_06
+    group_test.go:15: pass_06: step 3 ok
+=== NAME  TestGroup/pass_05
+    group_test.go:15: pass_05: step 3 ok
+=== NAME  TestGroup/pass_01
+    group_test.go:15: pass_01: step 3 ok
+=== NAME  TestGroup/pass_07
+    group_test.go:15: pass_07: step 3 ok
+=== NAME  TestGroup/pass_04
+    group_test.go:15: pass_04: step 3 ok
+=== NAME  TestGroup/pass_12
+    group_test.go:15: pass_12: step 3 ok
+=== NAME  TestGroup/pass_10
+    group_test.go:15: pass_10: step 3 ok
+=== NAME  TestGroup/pass_08
+    group_test.go:15: pass_08: step 3 ok
+=== NAME  TestGroup/pass_11
+    group_test.go:15: pass_11: step 3 ok
+=== NAME  TestGroup/pass_09
+    group_test.go:15: pass_09: step 3 ok
+=== NAME  TestGroup/pass_03
+    group_test.go:15: pass_03: step 3 ok
+=== NAME  TestGroup/fail_fetch
+    group_test.go:25: fetch attempt 3: status 503
+    group_test.go:28: want status 200, got 503
+--- FAIL: TestGroup (0.00s)
+    --- PASS: TestGroup/pass_12 (0.03s)
+    --- PASS: TestGroup/pass_03 (0.03s)
+    --- PASS: TestGroup/pass_01 (0.03s)
+    --- PASS: TestGroup/pass_10 (0.03s)
+    --- PASS: TestGroup/pass_09 (0.03s)
+    --- PASS: TestGroup/pass_05 (0.03s)
+    --- PASS: TestGroup/pass_02 (0.03s)
+    --- PASS: TestGroup/pass_07 (0.03s)
+    --- PASS: TestGroup/pass_04 (0.03s)
+    --- PASS: TestGroup/pass_08 (0.03s)
+    --- PASS: TestGroup/pass_06 (0.03s)
+    --- PASS: TestGroup/pass_11 (0.03s)
+    --- FAIL: TestGroup/fail_fetch (0.03s)
+FAIL
+FAIL	example.com/gotestfix/group	0.037s
+=== RUN   TestField001
+    parse_test.go:9: field 1 parsed
+--- PASS: TestField001 (0.00s)
+=== RUN   TestField002
+    parse_test.go:16: field 2 parsed
+--- PASS: TestField002 (0.00s)
+=== RUN   TestField003
+    parse_test.go:23: field 3 parsed
+--- PASS: TestField003 (0.00s)
+=== RUN   TestField004
+    parse_test.go:30: field 4 parsed
+--- PASS: TestField004 (0.00s)
+=== RUN   TestField005
+    parse_test.go:37: field 5 parsed
+--- PASS: TestField005 (0.00s)
+=== RUN   TestField006
+    parse_test.go:44: field 6 parsed
+--- PASS: TestField006 (0.00s)
+=== RUN   TestField007
+    parse_test.go:51: field 7 parsed
+--- PASS: TestField007 (0.00s)
+=== RUN   TestField008
+    parse_test.go:58: field 8 parsed
+--- PASS: TestField008 (0.00s)
+=== RUN   TestField009
+    parse_test.go:65: field 9 parsed
+--- PASS: TestField009 (0.00s)
+=== RUN   TestField010
+    parse_test.go:72: field 10 parsed
+--- PASS: TestField010 (0.00s)
+=== RUN   TestField011
+    parse_test.go:79: field 11 parsed
+--- PASS: TestField011 (0.00s)
+=== RUN   TestField012
+    parse_test.go:86: field 12 parsed
+--- PASS: TestField012 (0.00s)
+=== RUN   TestField013
+    parse_test.go:93: field 13 parsed
+--- PASS: TestField013 (0.00s)
+=== RUN   TestField014
+    parse_test.go:100: field 14 parsed
+--- PASS: TestField014 (0.00s)
+=== RUN   TestField015
+    parse_test.go:107: field 15 parsed
+--- PASS: TestField015 (0.00s)
+=== RUN   TestField016
+    parse_test.go:114: field 16 parsed
+--- PASS: TestField016 (0.00s)
+=== RUN   TestField017
+    parse_test.go:121: field 17 parsed
+--- PASS: TestField017 (0.00s)
+=== RUN   TestField018
+    parse_test.go:128: field 18 parsed
+--- PASS: TestField018 (0.00s)
+=== RUN   TestField019
+    parse_test.go:135: field 19 parsed
+--- PASS: TestField019 (0.00s)
+=== RUN   TestField020
+    parse_test.go:142: field 20 parsed
+--- PASS: TestField020 (0.00s)
+=== RUN   TestField021
+    parse_test.go:149: field 21 parsed
+--- PASS: TestField021 (0.00s)
+=== RUN   TestField022
+    parse_test.go:156: field 22 parsed
+--- PASS: TestField022 (0.00s)
+=== RUN   TestField023
+    parse_test.go:163: field 23 parsed
+--- PASS: TestField023 (0.00s)
+=== RUN   TestField024
+    parse_test.go:170: field 24 parsed
+--- PASS: TestField024 (0.00s)
+=== RUN   TestField025
+    parse_test.go:177: field 25 parsed
+--- PASS: TestField025 (0.00s)
+=== RUN   TestField026
+    parse_test.go:184: field 26 parsed
+--- PASS: TestField026 (0.00s)
+=== RUN   TestField027
+    parse_test.go:191: field 27 parsed
+--- PASS: TestField027 (0.00s)
+=== RUN   TestField028
+    parse_test.go:198: field 28 parsed
+--- PASS: TestField028 (0.00s)
+=== RUN   TestField029
+    parse_test.go:205: field 29 parsed
+--- PASS: TestField029 (0.00s)
+=== RUN   TestField030
+    parse_test.go:212: field 30 parsed
+--- PASS: TestField030 (0.00s)
+=== RUN   TestField031
+    parse_test.go:219: field 31 parsed
+--- PASS: TestField031 (0.00s)
+=== RUN   TestField032
+    parse_test.go:226: field 32 parsed
+--- PASS: TestField032 (0.00s)
+=== RUN   TestField033
+    parse_test.go:233: field 33 parsed
+--- PASS: TestField033 (0.00s)
+=== RUN   TestField034
+    parse_test.go:240: field 34 parsed
+--- PASS: TestField034 (0.00s)
+=== RUN   TestField035
+    parse_test.go:247: field 35 parsed
+--- PASS: TestField035 (0.00s)
+=== RUN   TestField036
+    parse_test.go:254: field 36 parsed
+--- PASS: TestField036 (0.00s)
+=== RUN   TestField037
+    parse_test.go:261: field 37 parsed
+--- PASS: TestField037 (0.00s)
+=== RUN   TestField038
+    parse_test.go:268: field 38 parsed
+--- PASS: TestField038 (0.00s)
+=== RUN   TestField039
+    parse_test.go:275: field 39 parsed
+--- PASS: TestField039 (0.00s)
+=== RUN   TestField040
+    parse_test.go:282: field 40 parsed
+--- PASS: TestField040 (0.00s)
+=== RUN   TestField041
+    parse_test.go:289: field 41 parsed
+--- PASS: TestField041 (0.00s)
+=== RUN   TestField042
+    parse_test.go:296: field 42 parsed
+--- PASS: TestField042 (0.00s)
+=== RUN   TestField043
+    parse_test.go:303: field 43 parsed
+--- PASS: TestField043 (0.00s)
+=== RUN   TestField044
+    parse_test.go:310: field 44 parsed
+--- PASS: TestField044 (0.00s)
+=== RUN   TestField045
+    parse_test.go:317: field 45 parsed
+--- PASS: TestField045 (0.00s)
+=== RUN   TestField046
+    parse_test.go:324: field 46 parsed
+--- PASS: TestField046 (0.00s)
+=== RUN   TestField047
+    parse_test.go:331: field 47 parsed
+--- PASS: TestField047 (0.00s)
+=== RUN   TestField048
+    parse_test.go:338: field 48 parsed
+--- PASS: TestField048 (0.00s)
+=== RUN   TestField049
+    parse_test.go:345: field 49 parsed
+--- PASS: TestField049 (0.00s)
+=== RUN   TestField050
+    parse_test.go:352: field 50 parsed
+--- PASS: TestField050 (0.00s)
+=== RUN   TestField051
+    parse_test.go:359: field 51 parsed
+--- PASS: TestField051 (0.00s)
+=== RUN   TestField052
+    parse_test.go:366: field 52 parsed
+--- PASS: TestField052 (0.00s)
+=== RUN   TestField053
+    parse_test.go:373: field 53 parsed
+--- PASS: TestField053 (0.00s)
+=== RUN   TestField054
+    parse_test.go:380: field 54 parsed
+--- PASS: TestField054 (0.00s)
+=== RUN   TestField055
+    parse_test.go:387: field 55 parsed
+--- PASS: TestField055 (0.00s)
+=== RUN   TestField056
+    parse_test.go:394: field 56 parsed
+--- PASS: TestField056 (0.00s)
+=== RUN   TestField057
+    parse_test.go:401: field 57 parsed
+--- PASS: TestField057 (0.00s)
+=== RUN   TestField058
+    parse_test.go:408: field 58 parsed
+--- PASS: TestField058 (0.00s)
+=== RUN   TestField059
+    parse_test.go:415: field 59 parsed
+--- PASS: TestField059 (0.00s)
+=== RUN   TestField060
+    parse_test.go:422: field 60 parsed
+--- PASS: TestField060 (0.00s)
+PASS
+ok  	example.com/gotestfix/parse	0.005s
+FAIL
