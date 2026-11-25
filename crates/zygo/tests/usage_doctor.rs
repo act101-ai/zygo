@@ -869,11 +869,12 @@ fn icon_lines(p: &Paths, vars: &[(&str, &str)]) -> Vec<String> {
     l.into_iter().filter(|x| x.starts_with("icons: ")).collect()
 }
 
-/// The Nerd glyphs of H§6.5, in its order: stripe, logo, reflection, branch, GitHub issue, work graph, bead, worktree,
-/// ahead, behind, model, profile, bar filled, bar empty, threshold, notional, cache, trimmed, truncation.
-const NERD_GLYPHS: [&str; 19] = ["\u{258c}", "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}", "z\u{28e}\u{183}o", "\u{e0a0}", "\u{f408}", "\u{25c6}",
+/// The Nerd glyphs of H§6.5, in its order: stripe, logo, reflection, mail, branch, GitHub issue, work graph, bead,
+/// worktree, ahead, behind, model, profile, bar filled, bar empty, threshold, notional, cache, trimmed, run time,
+/// truncation.
+const NERD_GLYPHS: [&str; 21] = ["\u{258c}", "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}", "z\u{28e}\u{183}o", "\u{2709}", "\u{e0a0}", "\u{f408}", "\u{25c6}",
     "\u{f41b}", "\u{f0645}", "\u{2191}", "\u{2193}", "\u{f4bc}", "\u{f0626}", "\u{25b0}", "\u{25b1}", "\u{21e3}", "\u{2248}", "\u{f01bc}",
-    "\u{2702}", "\u{2026}"];
+    "\u{2702}", "\u{f0150}", "\u{2026}"];
 
 /// H§14 #32, AU2: one line holds the Nerd glyphs of H§6.5 and names the active set.
 #[test]
