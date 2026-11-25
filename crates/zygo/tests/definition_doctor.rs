@@ -379,3 +379,132 @@ fn doctor_exits_0_with_invalid_files_and_a_broken_pool() {
     let pool_line = format!("pool: {}: not a directory", gone.display());
     assert!(stdout.lines().any(|l| l == pool_line), "{stdout}");
 }
+
+/// Stores the approval of the files on the default branch of the checkout `top`; returns their digest.
+fn approve_at(top: &Path, approvals: &Path) -> String {
+    let d = match check_default(top, &id(top), approvals, &SystemGit) {
+        Use::NotApproved { digest, .. } => digest,
+        other => panic!("not NotApproved: {other:?}"),
+    };
+    approve_workspace_in(approvals, &id(top), &d).unwrap();
+    d
+}
+
+/// F2: the checkout is found as `zygo up` finds it: a bare repository's folder gives its main worktree.
+#[test]
+fn approved_line_from_a_bare_repository_folder() {
+    let f = fx(&[(WS, MIN.as_bytes())]);
+    let (o, wt) = (f.root().join("o.git"), f.root().join("wt"));
+    git(&o, &["worktree", "add", "-q", wt.to_str().unwrap(), "main"]);
+    let d = approve_at(&wt, &f.approvals());
+    let want = format!(
+        "workspace files: refs/heads/main {} digest {}: approved",
+        &git(&wt, &["rev-parse", "refs/heads/main"])[..12],
+        &d[..12]
+    );
+    assert_eq!(definition_lines(&o, &merged(f.root(), ""), &f.approvals(), &SystemGit), vec![want]);
+}
+
+/// F2: `<clone>/.git` gives the clone.
+#[test]
+fn approved_line_from_the_git_directory() {
+    let f = fx(&[(WS, MIN.as_bytes())]);
+    let d = approve(&f);
+    assert_eq!(
+        definition_lines(&f.c.join(".git"), &merged(f.root(), ""), &f.approvals(), &SystemGit),
+        vec![appr(&f, &d)]
+    );
+}
+
+/// F3: a user `default_loadout` other than `repository`: `up` does not use the repository loadout, so no maximum line.
+#[test]
+fn no_member_maximum_line_when_the_user_chooses_another_loadout() {
+    let f = fx(&[(WS, MIN.as_bytes())]);
+    let d = approve(&f);
+    let m = merged(f.root(), "[limits]\nmax_members = 4\n[workspace]\ndefault_loadout = \"solo\"\n");
+    assert_eq!(lines(&f, &m), vec![appr(&f, &d)]);
+    // A user `default_loadout = "repository"` keeps it.
+    let m = merged(f.root(), "[limits]\nmax_members = 4\n[workspace]\ndefault_loadout = \"repository\"\n");
+    assert_eq!(lines(&f, &m), vec![appr(&f, &d), "workspace files: 5 agents; [limits] max_members is 4".to_string()]);
+}
+
+/// F4: a team-layer `default_loadout` is not the user's: the shared lines follow `repository`.
+#[test]
+fn team_default_loadout_does_not_choose() {
+    let f = fx(&[(WS, MIN.as_bytes())]);
+    let p = pool(f.root());
+    let d = approve(&f);
+    std::fs::write(f.root().join("config.toml"), pool_toml(&p)).unwrap();
+    let team: toml::Table = toml::from_str("[workspace]\ndefault_loadout = \"solo\"\n").unwrap();
+    let m = load(&LoadContext { paths: paths(f.root()), repo: None, team: Some(team) }).unwrap();
+    assert_eq!(lines(&f, &m), vec![
+        appr(&f, &d),
+        format!("pool: {}: 2 directories", p.display()),
+        format!("pool: {} is shared by orchestrator, worker-2, worker-4", p.join("a").display()),
+        format!("pool: {} is shared by worker-1, worker-3", p.join("b").display()),
+    ]);
+}
+
+/// F7a: a user loadout chosen by the user `default_loadout` gets its shared lines; F7b: an unnamed pool pane shows as
+/// `pane <i>`, its index among all panes of the loadout, from 1.
+#[test]
+fn shared_lines_of_a_user_loadout() {
+    let t = tempfile::tempdir().unwrap();
+    let (root, cwd) = (t.path().join("root"), t.path().join("cwd"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    let p = pool(&root);
+    let pane = |extra: &str| format!("[[loadout.mine.window.pane]]\n{extra}");
+    let user = format!(
+        "{}default_loadout = \"mine\"\n[[loadout.mine.window]]\n{}{}[[loadout.mine.window]]\n{}{}",
+        pool_toml(&p),
+        pane("kind = \"shell\"\n"),
+        pane("kind = \"claude-code\"\npool = true\n"),
+        pane("kind = \"claude-code\"\npool = true\n"),
+        pane("kind = \"claude-code\"\nname = \"n\"\npool = true\n"),
+    );
+    // Order: `n` (named) gets `a`, then pane 2 gets `b` and pane 3 gets `a`.
+    assert_eq!(definition_lines(&cwd, &merged(&root, &user), &root.join("approvals.toml"), &SystemGit), vec![
+        format!("pool: {}: 2 directories", p.display()),
+        format!("pool: {} is shared by pane 3, n", p.join("a").display()),
+    ]);
+}
+
+/// F5, R§18 item 23: a `git` whose `ls-tree` fails: `zygo doctor` prints the unread line and exits 0.
+#[cfg(unix)]
+#[test]
+fn doctor_exits_0_when_ls_tree_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fx(&[(WS, MIN.as_bytes())]);
+    let root = f.root().join("home");
+    let bin = f.root().join("bin");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(root.join("config.toml"), "").unwrap();
+    let real = PathBuf::from(git(f.root(), &["--exec-path"])).join("git");
+    assert!(real.is_file(), "no git in the exec-path: {}", real.display());
+    let script = format!(
+        "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = ls-tree ] && exit 1; done\nexec '{}' \"$@\"\n",
+        real.display()
+    );
+    let fake = bin.join("git");
+    std::fs::write(&fake, script).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_zygo"))
+        .arg("doctor")
+        .current_dir(&f.c)
+        .env("HOME", &root)
+        .env("LOCALAPPDATA", &root)
+        .env("APPDATA", &root)
+        .env("ZYGO_CONFIG", root.join("config.toml"))
+        .env("PATH", &bin)
+        .env_remove("ZYGO_SESSION")
+        .env_remove("ZYGO_SESSION_DIR")
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(o.status.code(), Some(0), "stdout: {stdout}\nstderr: {}", String::from_utf8_lossy(&o.stderr));
+    assert!(stdout.lines().any(|l| l == "workspace files: unread (git ls-tree: failed)"), "{stdout}");
+}
