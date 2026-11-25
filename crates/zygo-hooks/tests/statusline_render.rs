@@ -11,6 +11,7 @@ use zygo_hooks::statusline::render::{
 };
 use zygo_hooks::statusline::width::{cells, status_width, terminal_width, truncate, STATUS_INDENT, STATUS_RIGHT_GAP};
 use zygo_proxy::client::{SessionStatus, WindowArg};
+use zygo_hooks::statusline::render::run_time_text;
 
 // ---- the reference bytes of the spec (H§6.3 OP13 as amended by OP14; H§6.4 examples 1 and 3) ----
 
@@ -1118,4 +1119,35 @@ fn cells_and_truncation() {
     assert_eq!(truncate("日本語", 6), "日本語");
     assert_eq!(truncate("a日本語", 6), "a日本…");
     assert_eq!(truncate("", 6), "");
+}
+
+// ---- run time (session run time design T§2.3, T§7 items 1 and 3) ----
+
+#[test]
+fn run_time_format_t7_item_1() {
+    for (secs, want) in [
+        (0, "0m"),
+        (59, "0m"),
+        (60, "1m"),
+        (599, "9m"),
+        (600, "10m"),
+        (2820, "47m"),
+        (3599, "59m"),
+        (3600, "1h00m"),
+        (18720, "5h12m"),
+        (35999, "9h59m"),
+        (36000, "10h00m"),
+        (86399, "23h59m"),
+        (86400, "1d00h"),
+        (187200, "2d04h"),
+        (863999, "9d23h"),
+        (864000, "10d00h"),
+        (1062000, "12d07h"),
+        (8639999, "99d23h"),
+        (8640000, "100d00h"),
+    ] {
+        assert_eq!(run_time_text(secs), want, "{secs}");
+    }
+    // Every `u64` has a form; no cap, no panic.
+    assert_eq!(run_time_text(u64::MAX), "213503982334601d07h");
 }
