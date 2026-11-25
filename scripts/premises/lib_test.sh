@@ -3,13 +3,14 @@
 # kept and named after an error or a signal, never inherited and never exported; with live.sh's
 # live_traps and live_end, and under run-all.sh; the Codex helpers and run-codex.sh (node PC-2).
 # Usage: sh scripts/premises/lib_test.sh   ->  "lib tests: ok (<n>)", exit 0
+# LIB_TEST_SH: the shell the children run under (default dash when installed, else sh).
 # No agent, no network; not run by CI. Each child runs with PATH = a dir of stub claude, opencode
 # and codex programs and links to the few tools lib.sh needs, and TMPDIR = a dir of its own.
 set -u
 unset N2_SCRATCH N2_SCRATCH_OWN
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
-SH=$(command -v dash || command -v sh)
+SH=${LIB_TEST_SH:-$(command -v dash || command -v sh)}
 T=$(mktemp -d)
 trap 'chmod -R u+rwx "$T"; rm -rf "$T"' EXIT
 trap 'exit 130' INT
@@ -484,9 +485,9 @@ CP=$T/hX8/.local/bin:$T/cx8; XENV="$XENV HOME=$T/hX8"
 child $c 0 "new_run x; start_mock; $(mockrec X8); run_codex exec hi; stop_mock; codex_record base; exit 0"; run $c; killmock $c
 x8() {
   E=$T/keep-X8/x/home/stub-env.txt
-  [ "$(cat "$T/keep-X8/x/home/stub-exe.txt" 2>/dev/null)" = "$T/keep-X8/codex-pkg/bin/codex" ] ||
+  [ "$(cat "$T/keep-X8/x/home/stub-exe.txt" 2>/dev/null)" = "$T/keep-X8/x/codex-pkg/bin/codex" ] ||
     { why="stub-exe.txt: $(cat "$T/keep-X8/x/home/stub-exe.txt" 2>/dev/null)"; return 1; }
-  [ -f "$T/keep-X8/codex-pkg/codex-package.json" ] || { why="no codex-package.json in the copy"; return 1; }
+  [ -f "$T/keep-X8/x/codex-pkg/codex-package.json" ] || { why="no codex-package.json in the copy"; return 1; }
   python3 -I -c 'import os, sys
 b = os.path.realpath(sys.argv[2])
 sys.exit(any(os.path.realpath(p) == b or os.path.realpath(p).startswith(b + "/") for p in sys.argv[1].split(":")))' \
@@ -530,30 +531,39 @@ for w in CODEX_HOME=x PATH=x TERM=x TMPDIR=x MOCK_API_KEY=x HTTPS_PROXY= HTTP_PR
   res "X14 EXTRA_ENV may not set ${w%%=*}" 1 x14
   rm -rf "$T/keep-X14"
 done
-c=X14b; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='A=1 justaword'; run_codex exec hi"; run $c
+c=X14b; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='RUST_LOG=1 justaword'; run_codex exec hi"; run $c
 x14b() { out_has X14b "premises: EXTRA_ENV word 'justaword' is not NAME=value" && no_stub_env "$T/keep-X14b"; }
 res "X14b EXTRA_ENV words are NAME=value" 1 x14b
 
-# X15 (F1): a value under the owner's home is refused, except under the run folder. HOME=$T makes
-# the kept dir (and so the run folder) part of the owner's home.
+# X15 (F1, G2): an allowed name with a plain value runs; a value that names a path is refused
+# (review round 2: no /, \, ~ or .., so no path at all: absolute, relative or prefixed).
 c=X15; cxprep $c caller; XENV="$XENV HOME=$T"
-child $c 0 "new_run x; start_mock; $(mockrec X15); EXTRA_ENV=\"OK1=1 OK2=\$RUN/f\"; run_codex exec hi; EXTRA_ENV='BAD=/usr:$T/other-X15'; run_codex exec hi"
+child $c 0 "new_run x; start_mock; $(mockrec X15); EXTRA_ENV='RUST_LOG=codex_core=debug,info'; run_codex exec hi; EXTRA_ENV='RUST_LOG=/usr:$T/other-X15'; run_codex exec hi"
 run $c; killmock $c
 x15() {
-  out_has X15 "premises: EXTRA_ENV BAD points under the owner's home" || return 1
+  out_has X15 "premises: EXTRA_ENV RUST_LOG value may hold only A-Za-z0-9_.:@%+,=- and no ..: '/usr:$T/other-X15'" || return 1
   E=$T/keep-X15/x/home/stub-env.txt
-  [ "$(envval "$E" OK2)" = "$T/keep-X15/x/f" ] || { why="first run: OK2=$(envval "$E" OK2)"; return 1; }
-  ! grep -q '^BAD=' "$E" || { why="the second run started"; return 1; }
+  [ "$(envval "$E" RUST_LOG)" = "codex_core=debug,info" ] || { why="first run: RUST_LOG=$(envval "$E" RUST_LOG)"; return 1; }
 }
-res "X15 EXTRA_ENV values under the owner's home are refused, under the run folder allowed" 1 x15
-c=X15b; cxprep $c caller; mkdir -p "$T/hX15b"; XENV="$XENV HOME=$T/hX15b"
-child $c 0 "new_run x; EXTRA_ENV='A=~/x'; run_codex exec hi"; run $c
-res "X15b EXTRA_ENV value ~/... is under the owner's home" 1 out_has X15b "premises: EXTRA_ENV A points under the owner's home"
+res "X15 an EXTRA_ENV value with a path is refused, a plain value runs" 1 x15
+# X15b (F1, G2): relative, prefixed, home, backslash and .. values are refused before codex starts.
+for v in '../../../owner/.codex' 'x@/owner/.codex' '~x' 'a\b' 'a..b'; do
+  c=X15b; cxprep $c caller; mkdir -p "$T/hX15b"; XENV="$XENV HOME=$T/hX15b"
+  child $c 0 "new_run x; EXTRA_ENV='RUST_LOG=$v'; run_codex exec hi"; run $c
+  res "X15b EXTRA_ENV value '$v' is refused" 1 out_has X15b "premises: EXTRA_ENV RUST_LOG value may hold only A-Za-z0-9_.:@%+,=- and no ..: '$v'"
+  rm -rf "$T/keep-X15b"
+done
+# X15c (G2): a name that is not on the allow-list (EXTRA_ENV_ALLOW in lib.sh) is refused.
+for w in ZDOTDIR=x SHELL=zsh OK1=1; do
+  c=X15c; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='$w'; run_codex exec hi"; run $c
+  res "X15c EXTRA_ENV name ${w%%=*} is not on the allow-list" 1 out_has X15c "premises: EXTRA_ENV name ${w%%=*} is not in EXTRA_ENV_ALLOW"
+  rm -rf "$T/keep-X15c"
+done
 
-# X16, X17 (F2): codex_record derives each line from what the runs used (CX_USED): a HOME outside
+# X16, X17 (F2): codex_record derives each line from what the runs used ($RUN/cx-used): a HOME outside
 # the run folder or a proxy that is not the mock is written as such, and codex_record exits 1.
 c=X16; cxprep $c caller
-child $c 0 "new_run x; start_mock; $(mockrec X16); run_codex exec hi; stop_mock; CX_USED=\$(printf '%s\n' \"\$CX_USED\" | sed 's| HOME=[^ ]*| HOME=$T/elsewhere-X16|'); codex_record base"
+child $c 0 "new_run x; start_mock; $(mockrec X16); run_codex exec hi; stop_mock; sed 's| HOME=[^ ]*| HOME=$T/elsewhere-X16|' \"\$RUN/cx-used\" >\"\$RUN/u\"; mv \"\$RUN/u\" \"\$RUN/cx-used\"; codex_record base"
 run $c; killmock $c
 x16() {
   out_has X16 "premises: codex_record: HOME $T/elsewhere-X16 is not under the run folder" || return 1
@@ -561,7 +571,7 @@ x16() {
 }
 res "X16 codex_record records a HOME outside the run folder and exits 1" 1 x16
 c=X17; cxprep $c caller
-child $c 0 "new_run x; start_mock; $(mockrec X17); run_codex exec hi; stop_mock; CX_USED=\$(printf '%s\n' \"\$CX_USED\" | sed 's| HTTP_PROXY=[^ ]*| HTTP_PROXY=http://127.0.0.1:1|'); codex_record base"
+child $c 0 "new_run x; start_mock; $(mockrec X17); run_codex exec hi; stop_mock; sed 's| HTTP_PROXY=[^ ]*| HTTP_PROXY=http://127.0.0.1:1|' \"\$RUN/cx-used\" >\"\$RUN/u\"; mv \"\$RUN/u\" \"\$RUN/cx-used\"; codex_record base"
 run $c; killmock $c
 x17() {
   out_has X17 "premises: codex_record: HTTP_PROXY is not the mock" || return 1
@@ -569,23 +579,42 @@ x17() {
 }
 res "X17 codex_record records a proxy that is not the mock and exits 1" 1 x17
 
-# X18 (F3): a codex that is a #! script is refused before anything runs.
-c=X18; cxprep $c caller; mkbin "$T/cx18" 1; rm "$T/cx18/codex"
-printf '#!/bin/sh\nexec "$HOME/.codex/bin/codex" "$@"\n' >"$T/cx18/codex"; chmod +x "$T/cx18/codex"
-CP=$T/cx18; child $c 0 "new_run x; start_mock; $(mockrec X18); run_codex exec hi"; run $c; killmock $c
-x18() { out_has X18 "premises: codex at $T/cx18/codex is a script (#!), not the program itself" && no_stub_env "$T/keep-X18"; }
-res "X18 a codex that is a #! script is refused" 1 x18
+# X18 (F3, G1): the codex that runs must be a native program (Mach-O, ELF or PE magic bytes); a
+# script is refused before anything runs, with or without #!, after a BOM or a blank line.
+mkbin "$T/cx18" 1; rm "$T/cx18/codex"
+for k in shebang plain bom blank text; do
+  case $k in
+    shebang) printf '#!/bin/sh\nexec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    plain) printf 'exec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    bom) printf '\357\273\277#!/bin/sh\nexec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    blank) printf '\n#!/bin/sh\nexec "$HOME/.codex/bin/codex" "$@"\n' ;;
+    text) printf 'MZ' | cut -c1 ;;
+  esac >"$T/cx18/codex"
+  chmod +x "$T/cx18/codex"
+  c=X18; cxprep $c caller; CP=$T/cx18; child $c 0 "new_run x; start_mock; $(mockrec X18); run_codex exec hi"; run $c; killmock $c
+  x18() { out_has X18 "premises: codex at $T/cx18/codex is not a native program (Mach-O, ELF or PE)" && no_stub_env "$T/keep-X18"; }
+  res "X18 a codex that is not a native program is refused ($k)" 1 x18
+  rm -rf "$T/keep-X18"
+done
+# X18b (G1): ELF and PE magic pass the check (this machine cannot run them: codex --version fails).
+for k in elf pe; do
+  case $k in elf) printf '\177ELF\002\001\001' ;; pe) printf 'MZ\220\000' ;; esac >"$T/cx18/codex"
+  c=X18b; cxprep $c caller; CP=$T/cx18; child $c 0 "new_run x; start_mock; $(mockrec X18b); run_codex exec hi"; run $c; killmock $c
+  res "X18b $k magic passes the native check" 1 out_has X18b "premises: codex --version gave '', not x.y.z"
+  rm -rf "$T/keep-X18b"
+done
 
-# X19 (F3): a codex outside ~/.codex also runs from a scratch copy; PATH's first entry is that copy.
+# X19 (F3, G9): a codex outside ~/.codex also runs from a copy in the run folder; PATH's first entry is
+# that copy (each run folder has its own: no copy is shared between runs or processes).
 c=X19; cxprep $c caller
 child $c 0 "new_run x; start_mock; $(mockrec X19); run_codex exec hi; stop_mock; exit 0"; run $c; killmock $c
 x19() {
   E=$T/keep-X19/x/home/stub-env.txt
-  [ "$(cat "$T/keep-X19/x/home/stub-exe.txt" 2>/dev/null)" = "$T/keep-X19/codex-pkg/codex" ] ||
+  [ "$(cat "$T/keep-X19/x/home/stub-exe.txt" 2>/dev/null)" = "$T/keep-X19/x/codex-pkg/codex" ] ||
     { why="stub-exe.txt: $(cat "$T/keep-X19/x/home/stub-exe.txt" 2>/dev/null)"; return 1; }
-  [ "$(envval "$E" PATH | cut -d: -f1)" = "$T/keep-X19/codex-pkg" ] || { why="PATH=$(envval "$E" PATH)"; return 1; }
+  [ "$(envval "$E" PATH | cut -d: -f1)" = "$T/keep-X19/x/codex-pkg" ] || { why="PATH=$(envval "$E" PATH)"; return 1; }
 }
-res "X19 a codex outside ~/.codex runs from a scratch copy, first on PATH" 0 x19
+res "X19 a codex outside ~/.codex runs from a copy in the run folder, first on PATH" 0 x19
 
 # X20 (F4): a package whose copy holds a link out of the copy is refused and the copy removed.
 c=X20; cxprep $c caller
@@ -597,7 +626,7 @@ CP=$T/hX20/.local/bin:$T/cx8; XENV="$XENV HOME=$T/hX20"
 child $c 0 "new_run x; start_mock; $(mockrec X20); run_codex exec hi"; run $c; killmock $c
 x20() {
   out_has X20 "premises: the codex package copy holds a link out of it: owner" || return 1
-  [ -z "$(ls -A "$T/keep-X20" | grep '^codex-pkg')" ] || { why="left: $(ls -A "$T/keep-X20" | tr '\n' ' ')"; return 1; }
+  [ -z "$(ls -A "$T/keep-X20/x" | grep '^codex-pkg')" ] || { why="left: $(ls -A "$T/keep-X20/x" | tr '\n' ' ')"; return 1; }
   no_stub_env "$T/keep-X20" "$T/hX20"
 }
 res "X20 a package copy with a link out of it is refused and removed" 1 x20
@@ -642,22 +671,26 @@ c=X25; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X25); TERM
 x25() { out_has X25 "premises: TERM holds a blank or a glob character: 'xterm 256'" && no_stub_env "$T/keep-X25"; }
 res "X25 a blank in TERM is refused" 1 x25
 
-# X26 (F10): a half-made codex-pkg is replaced by a complete copy; no temporary copy is left.
-c=X26; cxprep $c caller; mkdir -p "$T/keep-X26/codex-pkg"; : >"$T/keep-X26/codex-pkg/codex"
+# X26 (F10, G5): a codex-pkg left in N2_SCRATCH (here a script) is never used: each codex_env
+# copies the program fresh into the run folder.
+c=X26; cxprep $c caller; mkdir -p "$T/keep-X26/codex-pkg"
+printf '#!/bin/sh\n: >"$HOME/X26-script-ran"\n' >"$T/keep-X26/codex-pkg/codex"; chmod +x "$T/keep-X26/codex-pkg/codex"
 child $c 0 "new_run x; start_mock; $(mockrec X26); run_codex exec hi; stop_mock; exit 0"; run $c; killmock $c
 x26() {
-  [ -f "$T/keep-X26/x/home/stub-env.txt" ] || { why="codex did not run"; return 1; }
-  [ "$(ls -A "$T/keep-X26" | grep -c '^codex-pkg')" = 1 ] || { why="left: $(ls -A "$T/keep-X26" | tr '\n' ' ')"; return 1; }
+  [ "$(cat "$T/keep-X26/x/home/stub-exe.txt" 2>/dev/null)" = "$T/keep-X26/x/codex-pkg/codex" ] || { why="codex did not run from the run folder's copy"; return 1; }
+  [ ! -e "$T/keep-X26/x/home/X26-script-ran" ] || { why="the old codex-pkg ran"; return 1; }
 }
-res "X26 a half-made codex-pkg is replaced" 0 x26
-c=X26b; cxprep $c caller; XENV="$XENV HOME=$T/hX8"
-CP=$T/hX8/.local/bin:$T/cx8; mkdir -p "$T/keep-X26b/codex-pkg/bin"
-child $c 0 "new_run x; start_mock; $(mockrec X26b); run_codex exec hi; stop_mock; exit 0"; run $c; killmock $c
+res "X26 an old codex-pkg in N2_SCRATCH is not used" 0 x26
+# X26b (G5): a copy changed after a run (here replaced by a script) is copied fresh for the next run.
+c=X26b; cxprep $c caller; XENV="$XENV HOME=$T/hX8"; CP=$T/hX8/.local/bin:$T/cx8
+child $c 0 "new_run x; start_mock; $(mockrec X26b); run_codex exec a; printf '#!/bin/sh\\n: >\"\$HOME/X26b-script-ran\"\\n' >\"\$CODEX_EXE\"; run_codex exec b; stop_mock; exit 0"
+run $c; killmock $c
 x26b() {
-  [ "$(cat "$T/keep-X26b/x/home/stub-exe.txt" 2>/dev/null)" = "$T/keep-X26b/codex-pkg/bin/codex" ] || { why="codex did not run from the copy"; return 1; }
-  [ -f "$T/keep-X26b/codex-pkg/codex-package.json" ] || { why="the package copy is not complete"; return 1; }
+  [ "$(cat "$T/keep-X26b/x/home/stub-args.txt" 2>/dev/null)" = "exec b" ] || { why="the second run did not run the stub: $(cat "$T/keep-X26b/x/home/stub-args.txt" 2>/dev/null)"; return 1; }
+  [ ! -e "$T/keep-X26b/x/home/X26b-script-ran" ] || { why="the changed copy ran"; return 1; }
+  [ -f "$T/keep-X26b/x/codex-pkg/codex-package.json" ] || { why="the package copy is not complete"; return 1; }
 }
-res "X26b a half-made package copy is replaced" 0 x26b
+res "X26b each run_codex copies the package fresh" 0 x26b
 
 # X27 (F11): N2_AGENTS from the environment is refused; only the runner's own setting counts.
 c=X27; prep $c own; ERR=$T/$c.err; XENV="N2_AGENTS=codex"; CP=$T/cxonly; child $c 0 'exit 0'; run $c
@@ -666,6 +699,49 @@ x27() {
   [ -z "$(ls -A "$T/tmp-X27")" ] || { why="$T/tmp-X27 holds: $(ls -A "$T/tmp-X27")"; return 1; }
 }
 res "X27 an exported N2_AGENTS is refused" 1 x27
+
+# --- Review round 2 (G1-G10) -------------------------------------------------------------------
+# X28 (G3): the owner's ~/.codex in another letter case is still the owner's ~/.codex (the checks
+# that keep a path out of it compare case-folded; macOS folders ignore case).
+c=X28; cxprep $c caller; mkdir -p "$T/hX28/.codex/scr"; XENV="CODEX_FX=$T/fx-$c HOME=$T/hX28 N2_SCRATCH=$T/HX28/.CODEX/scr"
+child $c 0 "new_run x; start_mock; $(mockrec X28); run_codex exec hi"; run $c; killmock $c
+x28() { out_has X28 'premises: the run folder is under ~/.codex' && no_stub_env "$T/hX28"; }
+res "X28 an N2_SCRATCH under an upper-cased ~/.codex is refused" 1 x28
+c=X28b; cxprep $c caller; mkdir -p "$T/hX28b/.codex"; XENV="$XENV HOME=$T/hX28b"
+child $c 0 "new_run x; start_mock; $(mockrec X28b); RUN='$T/HX28B/.CODEX/run'; mkdir -p \"\$RUN/home\"; H=\$RUN/home; CX_HOME=\$H/.codex; run_codex exec hi"
+run $c; killmock $c
+x28b() { out_has X28b 'premises: the run folder is under ~/.codex' && no_stub_env "$T/hX28b"; }
+res "X28b a run folder under an upper-cased ~/.codex is refused" 1 x28b
+
+# X29 (G4): a run_codex inside $(...) or a pipeline (a subshell) is in the record too: each run
+# appends its line to $RUN/cx-used, and codex_record reads that file.
+c=X29; cxprep $c caller
+child $c 0 "new_run x; start_mock; $(mockrec X29); EXTRA_ENV=RUST_LOG=trace; out=\$(run_codex exec a); EXTRA_ENV=RUST_BACKTRACE=1; run_codex exec b | cat >/dev/null; EXTRA_ENV=; stop_mock; codex_record base; exit 0"
+run $c; killmock $c
+x29() {
+  f=$T/fx-X29/runs/base/isolation.txt
+  grep -qx 'codex_version=0.172.0' "$f" 2>/dev/null || { why="isolation.txt: $(tr '\n' '|' <"$f" 2>/dev/null)"; return 1; }
+  grep -qx "env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH RUST_BACKTRACE RUST_LOG TERM TMPDIR XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME" "$f" ||
+    { why="isolation.txt: $(tr '\n' '|' <"$f")"; return 1; }
+}
+res "X29 runs in \$(...) and in a pipeline are recorded" 0 x29
+
+# X30 (G6): a second start_mock while the first mock runs is refused; the first mock is stopped.
+c=X30; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X30); start_mock; echo second >'$T/X30.second'"; run $c
+x30() {
+  grep -q '^premises: start_mock: the mock (pid [0-9]*) still runs; stop_mock first$' "$T/X30.out" || { why="stdout: $(tr '\n' '|' <"$T/X30.out")"; return 1; }
+  [ ! -e "$T/X30.second" ] || { why="the second start_mock went on"; return 1; }
+  ! alive "$T/X30.mock" || { why="the first mock still runs"; return 1; }
+}
+res "X30 a second start_mock is refused and the first mock stopped" 1 x30
+killmock X30
+
+# X21sh (G10): the mock trap path under /bin/sh (the other cases run under LIB_TEST_SH or dash).
+c=X21sh; cxprep $c caller; child $c 0 "new_run x; start_mock; $(mockrec X21sh); H='$T/elsewhere-X21sh'; run_codex exec hi"
+_sh=$SH; SH=/bin/sh; run $c; SH=$_sh
+x21sh() { [ -s "$T/X21sh.mock" ] || { why="no pid"; return 1; }; ! alive "$T/X21sh.mock" || { why="mock still runs"; return 1; }; }
+res "X21sh codex_env failing after start_mock stops the mock under /bin/sh" 1 x21sh
+killmock X21sh
 
 # --- B: codex/base.sh schema pin (F8) -------------------------------------------------------------
 # A copy of the part with lib.sh, ver.sh, scrub.py and mock_upstream.py; CODEX_FX holds a schema.
@@ -692,6 +768,49 @@ b2() {
 res "B2 a schema fixture that is not the pinned file fails" 1 b2
 c=B3; bprep $c; sed 's/^sha256: .*/sha256: 00/' "$SRC" >"$T/fx-$c/config.schema.source.txt"; brun $c
 res "B3 a source file with another sha256 fails" 1 out_has B3 "premises: config.schema.source.txt sha256 is '00', not the pinned $PIN"
+
+# B4, B5 (G7): the schema fetch goes to a temporary file in the run folder, removed on a signal or a
+# failed check; the fixture folder never holds a partial file. A local server stands in for the URL.
+cat >"$T/srv.py" <<'PY'
+import socket, sys, time
+mode, port_file, ready = sys.argv[1:4]
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(5)
+open(port_file, "w").write(str(s.getsockname()[1]))
+c, _ = s.accept(); c.recv(4096)
+if mode == "hang":
+    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n{\"partial\": ")
+    open(ready, "w").close()
+    time.sleep(30)
+else:
+    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+    c.close()
+PY
+# fprep <case> <hang|bad>: an empty CODEX_FX, a server, and a copy of base.sh that fetches from it.
+fprep() {
+  prep "$1" caller; ERR=$T/$1.err; mkdir -p "$T/fx-$1" "$T/$1-pd/codex"; XENV="$XENV CODEX_FX=$T/fx-$1"
+  cp "$T/B-pd/lib.sh" "$T/B-pd/ver.sh" "$T/B-pd/scrub.py" "$T/B-pd/mock_upstream.py" "$T/$1-pd/"
+  python3 -I "$T/srv.py" "$2" "$T/$1.port" "$T/$1.ready" & SRV=$!
+  waitready "$T/$1.port"; sleep 0.1
+  sed "s|^URL=.*|URL=http://127.0.0.1:$(cat "$T/$1.port")/s|" "$T/B-pd/codex/base.sh" >"$T/$1-pd/codex/base.sh"
+}
+# no_partial <case>: no file in CODEX_FX and no schema temporary in the run folder.
+no_partial() {
+  [ -z "$(ls -A "$T/fx-$1")" ] || { why="CODEX_FX holds: $(ls -A "$T/fx-$1" | tr '\n' ' ')"; return 1; }
+  [ -z "$(ls -A "$T/keep-$1/codex-base" 2>/dev/null | grep '^schema')" ] || { why="run folder holds: $(ls -A "$T/keep-$1/codex-base" | tr '\n' ' ')"; return 1; }
+}
+c=B4; fprep $c hang
+# shellcheck disable=SC2086
+perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/$c-pd/codex/base.sh" >"$T/$c.out" 2>"$T/$c.err" &
+bp=$!
+if waitready "$T/$c.ready"; then sleep 0.3; kill -s TERM -- "-$bp"; wait "$bp"; rc=$?; else NR=1; kill -s KILL -- "-$bp" 2>/dev/null; wait "$bp"; rc=$?; fi
+kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
+res "B4 a TERM during the schema fetch leaves no partial file" 143 no_partial B4
+c=B5; fprep $c bad
+# shellcheck disable=SC2086
+env PATH="$CP" TMPDIR="$T/tmp-$c" $XENV "$SH" "$T/$c-pd/codex/base.sh" >"$T/$c.out" 2>"$T/$c.err"; rc=$?
+kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
+b5() { grep -q "^premises: the fetched schema sha256 is [0-9a-f]*, not the pinned $PIN\$" "$T/B5.out" || { why="stdout: $(tr '\n' '|' <"$T/B5.out")"; return 1; }; no_partial B5; }
+res "B5 a fetched schema that is not the pinned file leaves no file" 1 b5
 
 # --- K: run-codex.sh --------------------------------------------------------------------------
 mkdir -p "$T/K-pd/codex"

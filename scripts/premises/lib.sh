@@ -85,7 +85,7 @@ new_run() {
   mkdir -p "$RUN/home/.claude" "$RUN/home/.config" "$RUN/home/.local/share" "$RUN/home/.cache" "$RUN/repo" "$RUN/rec"
   H="$RUN/home"
   R="$RUN/repo"
-  CX_HOME="$H/.codex" CX_RUN="" CX_USED=""
+  CX_HOME="$H/.codex"
   git -C "$R" init -q
   git -C "$R" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
   # Skip onboarding, approve the dummy key and trust the repo (interactive runs only need it).
@@ -100,8 +100,12 @@ json.dump({"hasCompletedOnboarding": True, "numStartups": 5, "theme": "dark",
 PY
 }
 
-# start_mock [rules.json]: start the mock for this run; sets MOCK_URL and MOCK_PID.
+# start_mock [rules.json]: start the mock for this run; sets MOCK_URL and MOCK_PID. Refused (exit 1)
+# while the mock of an earlier start_mock still runs: stop_mock first.
 start_mock() {
+  if [ -n "${MOCK_PID:-}" ] && kill -0 "$MOCK_PID" 2>/dev/null; then
+    echo "premises: start_mock: the mock (pid $MOCK_PID) still runs; stop_mock first"; exit 1
+  fi
   rm -f "$RUN/port"
   MOCK_KEY="$DUMMY_KEY" python3 -I "$PREMISES_DIR/mock_upstream.py" --dir "$RUN/rec" \
     ${1:+--rules "$1"} --port-file "$RUN/port" >"$RUN/mock.log" 2>&1 &
@@ -112,27 +116,29 @@ start_mock() {
   MOCK_URL="http://127.0.0.1:$(cat "$RUN/port")"
 }
 
-# n2_mock_trap: EXIT, HUP, INT, PIPE and TERM first stop the mock (n2_mock_kill), then run the trap
-# that was set before (lib.sh's n2_scratch_end, live.sh's live_end, a runner's own) with the same
-# status, or exit (128 + signal number for a signal). A trap that already calls n2_mock_kill is
-# kept. The traps are read with `trap >file` (dash prints none inside $(trap)); a trap command of
-# more than one line is not chained (none in this repo). A runner that sets a trap after start_mock
+# n2_trap_chain <command>: EXIT, HUP, INT, PIPE and TERM first run <command>, then the trap that
+# was set before (lib.sh's n2_scratch_end, live.sh's live_end, a runner's own) with the same status,
+# or exit (128 + signal number for a signal). A trap that already holds <command> is kept. The
+# traps are read with `trap >file` under $RUN (dash prints none inside $(trap)); a trap command of
+# more than one line is not chained (none in this repo). A runner that sets a trap after this
 # replaces the chain: call live_traps before start_mock.
-n2_mock_trap() {
+n2_trap_chain() {
   trap >"$RUN/.n2-traps"
   for _n2_s in EXIT HUP INT PIPE TERM; do
     _n2_q=$(sed -n "s/^trap -- \(.*\) \(SIG\)\{0,1\}$_n2_s\$/\1/p" "$RUN/.n2-traps")
     _n2_prev=""
     [ -z "$_n2_q" ] || eval "_n2_prev=$_n2_q"
-    case "$_n2_prev" in *n2_mock_kill*) continue ;; esac
+    case "$_n2_prev" in *"$1"*) continue ;; esac
     case "$_n2_s" in EXIT) _n2_def='exit $_n2_rc' ;; HUP) _n2_def='exit 129' ;; INT) _n2_def='exit 130' ;;
       PIPE) _n2_def='exit 141' ;; TERM) _n2_def='exit 143' ;; esac
     # The if keeps $? for the earlier trap: a bare (exit <status>) would end the trap under set -e.
     # shellcheck disable=SC2064
-    trap "_n2_rc=\$?; n2_mock_kill; if (exit \$_n2_rc); then ${_n2_prev:-$_n2_def}; else ${_n2_prev:-$_n2_def}; fi" "$_n2_s"
+    trap "_n2_rc=\$?; $1; if (exit \$_n2_rc); then ${_n2_prev:-$_n2_def}; else ${_n2_prev:-$_n2_def}; fi" "$_n2_s"
   done
   rm -f "$RUN/.n2-traps"
 }
+# n2_mock_trap: the traps first stop the mock (n2_mock_kill).
+n2_mock_trap() { n2_trap_chain n2_mock_kill; }
 
 stop_mock() {
   kill "$MOCK_PID" 2>/dev/null || true
@@ -184,23 +190,44 @@ scrub() {
 # --- Codex (node PC-2) ---------------------------------------------------------------------------
 # CODEX_MIN: the pinned version is a minimum (K-C8). CODEX_FX: the Codex fixture root.
 # CX_HOME: the CODEX_HOME of the next run_codex (new_run sets $H/.codex; a part may set another
-# folder under $RUN). CODEX_EXE and CODEX_VERSION are set once per process by codex_env.
-# CX_USED: one line per run_codex of this run folder ("<MOCK_URL> <CODEX_EXE> <CODEX_ENV words>
-# <EXTRA_ENV words>"); codex_record derives isolation.txt from it.
+# folder under $RUN). CODEX_EXE is set by each codex_env (a fresh copy in $RUN/codex-pkg);
+# CODEX_VERSION once per process. $RUN/cx-used: one line per run_codex of this run folder
+# ("<version> <MOCK_URL> <CODEX_EXE> <CODEX_ENV words> <EXTRA_ENV words>"), written to a file so a
+# run in a subshell ($(...), a pipeline) counts; codex_record derives isolation.txt from it.
 CODEX_MIN=0.172.0
 : "${CODEX_FX:=$REPO_DIR/fixtures/codex}"
-CX_HOME="" CX_RUN="" CX_USED="" CODEX_EXE="" CODEX_VERSION="" CODEX_ENV=""
-# CODEX_EXTRA_ALLOW: CODEX_* names EXTRA_ENV may set. Empty: no part needs one yet; a part that
-# does adds the name here with its reason (it must not move Codex's state out of the run folder).
-CODEX_EXTRA_ALLOW=""
+CX_HOME="" CODEX_EXE="" CODEX_VERSION="" CODEX_ENV=""
+# EXTRA_ENV_ALLOW: the only names EXTRA_ENV may set for a Codex run, each with its reason. A part
+# that needs another name adds it here with its reason (it must not move Codex's state, trust or
+# network out of the run folder or the mock).
+#   RUST_LOG        Codex's log filter (more log lines in the run's own CODEX_HOME/log).
+#   RUST_BACKTRACE  a backtrace on a Codex panic (stderr only).
+EXTRA_ENV_ALLOW="RUST_LOG RUST_BACKTRACE"
 
 # n2_realpath <path>: the real path (the path need not exist).
 n2_realpath() { python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
-# n2_under <path> <base>: 0 when the real path of <path> is under the real path of <base>/.
+# n2_under <path> <base>: 0 when the real path of <path> is under the real path of <base>/, letter
+# case and all. For a path that must be inside <base>: another case is refused (stricter).
 n2_under() {
   _u_p=$(n2_realpath "$1") && _u_b=$(n2_realpath "$2") || return 1
   case "$_u_p" in "$_u_b"/*) return 0 ;; esac
   return 1
+}
+# n2_under_fold <path> <base>: as n2_under, comparing case-folded real paths. For a path that must
+# stay out of <base> (the owner's ~/.codex): a macOS folder ignores letter case, so ~/.CODEX is
+# ~/.codex; on a case-sensitive file system this only refuses more.
+n2_under_fold() {
+  python3 -I -c 'import os, sys
+p, b = (os.path.realpath(a).casefold() for a in sys.argv[1:3])
+sys.exit(0 if p.startswith(b.rstrip("/") + "/") else 1)' "$1" "$2"
+}
+# n2_native <file>: 0 when the file starts with the magic bytes of a native program: Mach-O
+# (feedface, feedfacf, cafebabe, in either byte order), ELF (7f454c46) or PE ("MZ").
+n2_native() {
+  python3 -I -c 'import sys
+m = open(sys.argv[1], "rb").read(4)
+ok = {"feedface", "feedfacf", "cafebabe", "cefaedfe", "cffaedfe", "bebafeca", "7f454c46"}
+sys.exit(0 if m.hex() in ok or m[:2] == b"MZ" else 1)' "$1"
 }
 # n2_plain <name> <value>: exit 1 unless the value is one CODEX_ENV word (no blank, no glob, no
 # other shell character): CODEX_ENV is expanded unquoted.
@@ -210,31 +237,25 @@ n2_plain() {
   esac
 }
 
-# codex_exe: set CODEX_EXE, always a copy in $N2_SCRATCH/codex-pkg, so PATH's first entry is under
-# $N2_SCRATCH. A codex whose real file starts with "#!" (a wrapper script) is refused. When the real
-# path is under the owner's ~/.codex and its folder is named bin, the copy is the package folder
-# above bin/ (only under ~/.codex/packages); else the file alone. The copy is made under a temporary
-# name and renamed into place; a package copy that holds a symbolic link resolving outside the copy
-# is refused and deleted (links are kept as links, never followed). A complete copy (the
-# executable exists and is executable) is reused; any other codex-pkg is replaced.
+# codex_exe: set CODEX_EXE to a fresh copy in $RUN/codex-pkg, made on every call (nothing is reused
+# between runs or processes), so PATH's first entry is in the run folder. When the real path of
+# CODEX_BIN is under the owner's ~/.codex and its folder is named bin, the copy is the package
+# folder above bin/ (only under ~/.codex/packages); else the file alone. The copy is made under a
+# temporary name and renamed into place; a package copy that holds a symbolic link resolving
+# outside the copy is refused and deleted (links are kept as links, never followed). The copied
+# executable must be a native program (n2_native): a script, with or without #!, is refused.
 # Nothing else in ~/.codex is read.
 codex_exe() {
-  [ -z "$CODEX_EXE" ] || return 0
   _cx_real=$(n2_realpath "$CODEX_BIN")
-  if [ "$(head -c 2 "$_cx_real")" = '#!' ]; then
-    echo "premises: codex at $CODEX_BIN is a script (#!), not the program itself"; exit 1
-  fi
   _cx_dir=$(dirname "$_cx_real") _cx_pkg="" _cx_rel=${_cx_real##*/}
-  if n2_under "$_cx_real" "$OWNER_HOME/.codex" && [ "${_cx_dir##*/}" = bin ]; then
+  if n2_under_fold "$_cx_real" "$OWNER_HOME/.codex" && [ "${_cx_dir##*/}" = bin ]; then
     _cx_pkg=$(dirname "$_cx_dir")
-    n2_under "$_cx_pkg" "$OWNER_HOME/.codex/packages" ||
+    n2_under_fold "$_cx_pkg" "$OWNER_HOME/.codex/packages" ||
       { echo "premises: the codex package folder is not under ~/.codex/packages"; exit 1; }
     _cx_rel=bin/$_cx_rel
   fi
-  CODEX_EXE=$N2_SCRATCH/codex-pkg/$_cx_rel
-  [ ! -f "$CODEX_EXE" ] || [ ! -x "$CODEX_EXE" ] || return 0
-  rm -rf "$N2_SCRATCH/codex-pkg"
-  _cx_tmp=$(mktemp -d "$N2_SCRATCH/codex-pkg.XXXXXX") || exit 1
+  rm -rf "$RUN/codex-pkg"
+  _cx_tmp=$(mktemp -d "$RUN/codex-pkg.XXXXXX") || exit 1
   if [ -n "$_cx_pkg" ]; then
     cp -R "$_cx_pkg" "$_cx_tmp/p" || { rm -rf "$_cx_tmp"; exit 1; }
     _cx_link=$(python3 -I - "$_cx_tmp/p" <<'PY'
@@ -256,45 +277,36 @@ PY
   else
     mkdir "$_cx_tmp/p" && cp "$_cx_real" "$_cx_tmp/p/$_cx_rel" || { rm -rf "$_cx_tmp"; exit 1; }
   fi
-  mv "$_cx_tmp/p" "$N2_SCRATCH/codex-pkg" && rmdir "$_cx_tmp"
+  if [ -L "$_cx_tmp/p/$_cx_rel" ] || ! n2_native "$_cx_tmp/p/$_cx_rel"; then
+    rm -rf "$_cx_tmp"
+    echo "premises: codex at $CODEX_BIN is not a native program (Mach-O, ELF or PE)"; exit 1
+  fi
+  mv "$_cx_tmp/p" "$RUN/codex-pkg" && rmdir "$_cx_tmp"
+  CODEX_EXE=$RUN/codex-pkg/$_cx_rel
 }
 
 # n2_extra_check: each EXTRA_ENV word is NAME=value; no name codex_env sets or that moves Codex's
 # state, trust or network (PATH TERM HOME TMPDIR MOCK_API_KEY, any *_PROXY or NO_PROXY in either
 # case, SSL_CERT_*, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE, any XDG_*, any CODEX_* not in
-# CODEX_EXTRA_ALLOW); no value (or :,;= separated part) that starts with ~ or resolves under the
-# owner's home, except under the run folder.
+# EXTRA_ENV_ALLOW); then every name must be in EXTRA_ENV_ALLOW, and every value may hold only
+# A-Za-z0-9_.:@%+,=- and no "..": no /, \ or ~, so no value names a path.
 n2_extra_check() {
   for _cx_w in $EXTRA_ENV; do
-    _cx_n=${_cx_w%%=*}
+    _cx_n=${_cx_w%%=*} _cx_v=${_cx_w#*=}
     case "$_cx_w" in *=*) ;; *) _cx_n="" ;; esac
     case "$_cx_n" in '' | [0-9]* | *[!A-Za-z0-9_]*) echo "premises: EXTRA_ENV word '$_cx_w' is not NAME=value"; exit 1 ;; esac
     case "$(printf '%s' "$_cx_n" | tr a-z A-Z)" in
       PATH | TERM | HOME | TMPDIR | MOCK_API_KEY | *_PROXY | NO_PROXY | SSL_CERT_* | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | XDG_*)
         echo "premises: EXTRA_ENV may not set $_cx_n"; exit 1 ;;
       CODEX_*)
-        case " $CODEX_EXTRA_ALLOW " in *" $_cx_n "*) ;; *) echo "premises: EXTRA_ENV may not set $_cx_n"; exit 1 ;; esac ;;
+        case " $EXTRA_ENV_ALLOW " in *" $_cx_n "*) ;; *) echo "premises: EXTRA_ENV may not set $_cx_n"; exit 1 ;; esac ;;
+    esac
+    case " $EXTRA_ENV_ALLOW " in *" $_cx_n "*) ;; *) echo "premises: EXTRA_ENV name $_cx_n is not in EXTRA_ENV_ALLOW"; exit 1 ;; esac
+    case "$_cx_v" in
+      *[!A-Za-z0-9_.:@%+,=-]* | *..*)
+        printf '%s\n' "premises: EXTRA_ENV $_cx_n value may hold only A-Za-z0-9_.:@%+,=- and no ..: '$_cx_v'"; exit 1 ;;
     esac
   done
-  [ -n "$EXTRA_ENV" ] && [ -n "$OWNER_HOME" ] || return 0
-  # shellcheck disable=SC2086
-  _cx_n=$(python3 -I - "$OWNER_HOME" "$RUN" $EXTRA_ENV <<'PY'
-import os, re, sys
-home, run = (os.path.realpath(p) for p in sys.argv[1:3])
-def under(p, b):
-    return p == b or p.startswith(b.rstrip("/") + "/")
-for w in sys.argv[3:]:
-    n, _, v = w.partition("=")
-    for part in [v] + re.split(r"[:,;=]", v):
-        if part.startswith("~"):
-            print(n); sys.exit(0)
-        if part.startswith("/"):
-            p = os.path.realpath("/" + part.lstrip("/"))
-            if home != "/" and under(p, home) and not under(p, run):
-                print(n); sys.exit(0)
-PY
-  ) || exit 1
-  [ -z "$_cx_n" ] || { echo "premises: EXTRA_ENV $_cx_n points under the owner's home"; exit 1; }
 }
 
 # codex_env: after new_run and start_mock. Checks the isolation (each failure prints its message
@@ -309,13 +321,13 @@ codex_env() {
   n2_plain RUN "$RUN"; n2_plain HOME "$H"; n2_plain CODEX_HOME "$CX_HOME"; n2_plain TERM "$_cx_term"
   n2_under "$H" "$RUN" || { echo "premises: codex HOME is not under the run folder"; exit 1; }
   n2_under "$CX_HOME" "$RUN" || { echo "premises: CODEX_HOME is not under the run folder"; exit 1; }
-  if n2_under "$RUN" "$OWNER_HOME/.codex"; then echo "premises: the run folder is under ~/.codex"; exit 1; fi
+  if n2_under_fold "$RUN" "$OWNER_HOME/.codex"; then echo "premises: the run folder is under ~/.codex"; exit 1; fi
   n2_extra_check
   [ -n "${MOCK_URL:-}" ] && [ -n "${MOCK_PID:-}" ] || { echo "premises: codex_env needs start_mock first"; exit 1; }
   n2_plain MOCK_URL "$MOCK_URL"
   codex_exe
   n2_plain CODEX_EXE "$CODEX_EXE"
-  if n2_under "$CODEX_EXE" "$OWNER_HOME/.codex"; then echo "premises: the codex executable is under ~/.codex"; exit 1; fi
+  if n2_under_fold "$CODEX_EXE" "$OWNER_HOME/.codex"; then echo "premises: the codex executable is under ~/.codex"; exit 1; fi
   mkdir -p "$CX_HOME" "$RUN/tmp" "$H/.local/state"
   if [ -e "$CX_HOME/config.toml" ]; then
     _cx_bu=$(sed -n 's/^[[:space:]]*base_url[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CX_HOME/config.toml")
@@ -337,15 +349,13 @@ codex_env() {
     ver_ge "$_cx_v" "$CODEX_MIN" || { echo "premises: codex $_cx_v is below the minimum $CODEX_MIN"; exit 1; }
     CODEX_VERSION=$_cx_v
   fi
-  CX_RUN=$RUN
 }
 
 # run_codex <codex args>: codex_env, then codex isolated in the run's repo; returns codex's status.
-# Each run adds its line to CX_USED.
+# Each run appends its line to $RUN/cx-used first (also from a subshell).
 run_codex() {
   codex_env
-  CX_USED="${CX_USED:+$CX_USED
-}$MOCK_URL $CODEX_EXE $CODEX_ENV $EXTRA_ENV"
+  printf '%s\n' "$CODEX_VERSION $MOCK_URL $CODEX_EXE $CODEX_ENV $EXTRA_ENV" >>"$RUN/cx-used"
   _cx_rc=0
   # shellcheck disable=SC2086
   (cd "$R" && $CODEX_ENV $EXTRA_ENV "$CODEX_EXE" "$@") || _cx_rc=$?
@@ -355,35 +365,39 @@ run_codex() {
 
 # codex_record <part>: after stop_mock. Replaces $CODEX_FX/runs/<part>/ with isolation.txt and
 # connect.txt (the scrubbed record of the proxy requests the mock refused; empty when none).
-# isolation.txt is derived from CX_USED (what every run_codex of this run folder handed to codex):
+# isolation.txt is derived from $RUN/cx-used (what every run_codex of this run folder handed to
+# codex, from any subshell):
 #   home=scratch          every HOME is under the run folder (else outside-run)
 #   codex_home=scratch    every CODEX_HOME is under the run folder (else outside-run)
-#   codex_version=<x.y.z>
-#   codex_exe=scratch     every executable is under $N2_SCRATCH (outside-owner-home: not under the
-#                         owner's home; else owner-home); never a path
+#   codex_version=<x.y.z> the version every run used (several: all of them, comma-separated)
+#   codex_exe=scratch     every executable is under the run folder (outside-owner-home: not under
+#                         the owner's home, case-folded; else owner-home); never a path
 #   env_names=<names>     the sorted names of every variable handed to codex
 #   proxy=mock            HTTPS_PROXY, HTTP_PROXY and ALL_PROXY each equal that run's MOCK_URL
 #                         (else other)
-# Any value other than scratch, outside-owner-home or mock is written, named on stdout, and
-# codex_record exits 1.
+# Any value other than scratch, outside-owner-home or mock, or more than one version, is written,
+# named on stdout, and codex_record exits 1.
 codex_record() {
   case "$1" in '' | *[!A-Za-z0-9_-]*) echo "premises: bad part name '$1'"; exit 1 ;; esac
-  [ -n "${CX_RUN:-}" ] && [ "$CX_RUN" = "$RUN" ] && [ -n "$CX_USED" ] || { echo "premises: codex_record: no codex run in this run folder"; exit 1; }
+  [ -s "$RUN/cx-used" ] || { echo "premises: codex_record: no codex run in this run folder"; exit 1; }
   _cx_out="$CODEX_FX/runs/$1"
   rm -rf "$_cx_out"
   mkdir -p "$_cx_out"
   if [ -e "$RUN/rec/connect.txt" ]; then scrub "$RUN/rec/connect.txt" >"$_cx_out/connect.txt"; else : >"$_cx_out/connect.txt"; fi
-  python3 -I - "$_cx_out/isolation.txt" "$RUN" "$N2_SCRATCH" "$OWNER_HOME" "$CODEX_VERSION" "$CX_USED" <<'PY'
+  python3 -I - "$_cx_out/isolation.txt" "$RUN" "$OWNER_HOME" "$RUN/cx-used" <<'PY'
 import os, sys
-out, run, scratch, home, version, used = sys.argv[1:7]
+out, run, home, used = sys.argv[1:5]
 rp = os.path.realpath
 def under(p, b):
     return bool(p) and bool(b) and rp(p).startswith(rp(b).rstrip("/") + "/")
-bad, names, homes, cxhomes, exes, proxy = [], set(), [], [], [], "mock"
-for line in used.splitlines():
+def under_fold(p, b):
+    return bool(p) and bool(b) and rp(p).casefold().startswith(rp(b).casefold().rstrip("/") + "/")
+bad, names, versions, homes, cxhomes, exes, proxy = [], set(), [], [], [], [], "mock"
+for line in open(used).read().splitlines():
     if not line.strip():
         continue
-    mock, exe, *words = line.split()
+    version, mock, exe, *words = line.split()
+    versions.append(version)
     exes.append(exe)
     env = {}
     for w in words:
@@ -408,16 +422,19 @@ def where(label, values):
 h, ch = where("HOME", homes), where("CODEX_HOME", cxhomes)
 exe = "scratch"
 for e in exes:
-    if under(e, scratch):
+    if under(e, run):
         continue
-    if under(e, home):
+    if under_fold(e, home):
         exe = "owner-home"
         bad.append("the codex executable is under the owner's home")
     elif exe == "scratch":
         exe = "outside-owner-home"
+versions = list(dict.fromkeys(versions))
+if len(versions) > 1:
+    bad.append("more than one codex version: " + ",".join(versions))
 with open(out, "w") as f:
     f.write("home=%s\ncodex_home=%s\ncodex_version=%s\ncodex_exe=%s\nenv_names=%s\nproxy=%s\n"
-            % (h, ch, version, exe, " ".join(sorted(names)), proxy))
+            % (h, ch, ",".join(versions), exe, " ".join(sorted(names)), proxy))
 for b in dict.fromkeys(bad):
     print("premises: codex_record: " + b)
 sys.exit(1 if bad else 0)
