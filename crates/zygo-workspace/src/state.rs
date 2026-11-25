@@ -88,8 +88,27 @@ pub struct Pane {
     pub active: bool,
     pub cwd: PathBuf,
     pub kind: PaneKind,
+    /// The member name (M§6); checked at each read by [`Pane::valid_name`] (AU84).
+    #[serde(default, deserialize_with = "lenient_name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+/// A stored `name` (M§6): a string is kept as it is (its grammar is checked at each read, AU84); any other JSON value
+/// reads as none, so a bad `name` does not refuse the whole file.
+fn lenient_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
+}
+
+impl Pane {
+    /// The stored name only when it passes `zygo_core::ids::valid_member_name` (M§6, AU84); a name that fails reads as none.
+    pub fn valid_name(&self) -> Option<&str> {
+        self.name.as_deref().filter(|n| zygo_core::ids::valid_member_name(n))
+    }
 }
 
 /// One member of `members`, by pane key.
@@ -106,6 +125,9 @@ pub struct MemberRecord {
     pub agent_session: Option<String>,
     pub state: MemberState,
     pub launch: Launch,
+    /// The member name (M§6); checked at each read by [`MemberRecord::valid_name`] (AU84).
+    #[serde(default, deserialize_with = "lenient_name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,6 +191,12 @@ pub struct Launch {
     /// sets it from the arguments of that start; absent when false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub events_off: bool,
+    /// W§7.2 member.launch.job (R§9.3 effect 2): "orchestrator" or "worker"; absent for no job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<String>,
+    /// W§7.2 member.launch.definition = { commit, digest } (R§7.4): the pin of the approved read of the workspace files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<zygo_config::repo_def::Pin>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -288,6 +316,8 @@ impl Launch {
             config_dir: None,
             args: Vec::new(),
             events_off: false,
+            job: None,
+            definition: None,
             extra: Extra::new(),
         }
     }
@@ -303,6 +333,7 @@ impl MemberRecord {
             agent_session: None,
             state: MemberState::Ended,
             launch: Launch::new(kind),
+            name: None,
             config_dir: None,
             program: None,
             overrides: None,
@@ -315,6 +346,11 @@ impl MemberRecord {
             saved_for: None,
             extra: Extra::new(),
         }
+    }
+
+    /// The stored name only when it passes `zygo_core::ids::valid_member_name` (M§6, AU84); a name that fails reads as none.
+    pub fn valid_name(&self) -> Option<&str> {
+        self.name.as_deref().filter(|n| zygo_core::ids::valid_member_name(n))
     }
 }
 

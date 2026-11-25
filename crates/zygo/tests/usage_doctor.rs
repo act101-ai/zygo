@@ -20,7 +20,7 @@ use zygo_core::paths::Paths;
 use zygo_core::Agent;
 use zygo_plugins::sync::SyncOpts;
 use zygo_work::policy::Policy;
-use zygo_usage::{RedactionCount, RequestRow, Store, TrimRow, WorkUnitRow};
+use zygo_usage::{ReadbackRow, RedactionCount, RequestRow, Store, TrimRow, WorkUnitRow};
 use zygo_work::report::parse_since;
 use zygo_workspace::mux::MuxError;
 
@@ -51,6 +51,20 @@ fn seed(p: &Paths) -> i64 {
     b
 }
 fn run(p: &Paths, a: &[&str], env: Option<&str>) -> anyhow::Result<String> { usage::run(&ctx(p, false), &v(a), env) }
+/// The O§6.3 test row: input 4, cache_read 0.4, cache_write_5m 5, cache_write 8 USD per Mtok.
+const PRICED: &str = "[model.provider.price_usd_per_mtok]\ninput = 4.0\ncache_read = 0.4\ncache_write = 8.0\ncache_write_5m = 5.0";
+fn creq(s: &str, ts: i64, model: &str, provider: &str, cr: u64, cw: u64, compaction: bool) -> RequestRow {
+    RequestRow { ts, session: s.into(), agent: "claude-code".into(), route: "/anthropic/v1/messages".into(), model: model.into(),
+        provider: provider.into(), status: 200, input_tokens: 100, cache_read_tokens: cr, cache_write_tokens: cw, compaction,
+        request_class: compaction.then(|| "compaction".into()), ..Default::default() } }
+fn ktrim(s: &str, ts: i64, key: (&str, Option<&str>, Option<&str>), kept: u64, rid: &str) -> TrimRow {
+    TrimRow { ts, session: s.into(), tool: key.0.into(), kind: "shaped".into(), stored_bytes: kept + 100, view_bytes: 100,
+        agent_id: None, result_id: Some(rid.into()), command: key.1.map(Into::into), shaper: key.2.map(Into::into) } }
+fn rb(s: &str, ts: i64, bytes: u64, rid: &str) -> ReadbackRow {
+    ReadbackRow { ts, session: s.into(), read_in: s.into(), result_id: rid.into(), tool: "result_view".into(), bytes } }
+fn after_trimmed(out: &str) -> Vec<&str> { out.lines().skip_while(|l| !l.starts_with("tokens trimmed (estimate): ")).skip(1).collect() }
+fn spend_line(p: &Paths, a: &[&str]) -> String {
+    run(p, a, None).unwrap().lines().find(|l| l.starts_with("estimated spend avoided: ")).unwrap().to_string() }
 
 /// Held by every test that forks a process, from its first stub write or fork until its last program has ended, so no
 /// other test forks while a stub is open for writing (ETXTBSY).
@@ -66,8 +80,8 @@ fn stub(dir: &Path, name: &str, body: &str) {
     std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-const ALL: &str = "scope: all sessions\nrequests: 3\ntokens: 350 in, 70 out, 450 cache read, 50 cache write\ncache read share: 53%\nestimated cost: $0.0350\nbytes trimmed: 5500\ntokens trimmed (estimate): 1375\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2, scope enforce 1\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150\n  lead m-b: 1 requests, 200 in, 40 out, 0 cache read, 0 cache write, $0.0200";
-const S1: &str = "scope: session S1\nrequests: 2\ntokens: 150 in, 30 out, 450 cache read, 50 cache write\ncache read share: 69%\nestimated cost: $0.0150\nbytes trimmed: 4000\ntokens trimmed (estimate): 1000\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150";
+const ALL: &str = "scope: all sessions\nrequests: 3\ntokens: 350 in, 70 out, 450 cache read, 50 cache write\ncache read share: 53%\nestimated cost: $0.0350\nbytes trimmed: 5500\ntokens trimmed (estimate): 1375\nbytes read back: 0\ntokens kept out of context (estimate): 1375\nestimated spend avoided: ≈$0.0000\nviews: 2, read-backs: 0, view to read-back ratio: -\nby tool and command:\n  Bash - -: 2 views, 0 read-backs, 5500 bytes kept out, ≈$0.0000\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2, scope enforce 1\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150\n  lead m-b: 1 requests, 200 in, 40 out, 0 cache read, 0 cache write, $0.0200";
+const S1: &str = "scope: session S1\nrequests: 2\ntokens: 150 in, 30 out, 450 cache read, 50 cache write\ncache read share: 69%\nestimated cost: $0.0150\nbytes trimmed: 4000\ntokens trimmed (estimate): 1000\nbytes read back: 0\ntokens kept out of context (estimate): 1000\nestimated spend avoided: ≈$0.0000\nviews: 1, read-backs: 0, view to read-back ratio: -\nby tool and command:\n  Bash - -: 1 view, 0 read-backs, 4000 bytes kept out, ≈$0.0000\ncompaction signals: 1\ncompactions observed: 1\nguard events: claims notify 2\nby role and model:\n  code m-a: 2 requests, 150 in, 30 out, 450 cache read, 50 cache write, $0.0150";
 
 #[test]
 fn usage_report_all_sessions() {
@@ -94,7 +108,7 @@ fn usage_report_since_boundary() {
     let s = Store::open(&p.usage_db).unwrap();
     s.insert_request(&req("S3", b - 1, "code", "m-a", [7, 0, 0, 0], 0.0, &[], false)).unwrap();
     s.insert_request(&req("S3", b, "code", "m-a", [11, 0, 0, 0], 0.0, &[], false)).unwrap();
-    let want = "scope: since 2026-11-18\nrequests: 1\ntokens: 11 in, 0 out, 0 cache read, 0 cache write\ncache read share: 0%\nestimated cost: $0.0000\nbytes trimmed: 0\ntokens trimmed (estimate): 0\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model:\n  code m-a: 1 requests, 11 in, 0 out, 0 cache read, 0 cache write, $0.0000";
+    let want = "scope: since 2026-11-18\nrequests: 1\ntokens: 11 in, 0 out, 0 cache read, 0 cache write\ncache read share: 0%\nestimated cost: $0.0000\nbytes trimmed: 0\ntokens trimmed (estimate): 0\nbytes read back: 0\ntokens kept out of context (estimate): 0\nestimated spend avoided: ≈$0.0000\nviews: 0, read-backs: 0, view to read-back ratio: -\nby tool and command: none\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model:\n  code m-a: 1 requests, 11 in, 0 out, 0 cache read, 0 cache write, $0.0000";
     assert_eq!(run(&p, &["--since", "2026-11-18"], None).unwrap(), want);
     assert_eq!(run(&p, &["--since=2026-11-18"], None).unwrap(), want);
 }
@@ -114,7 +128,7 @@ fn usage_report_env_session_default() {
 fn usage_report_empty_store_creates_nothing() {
     let d = TempDir::new().unwrap();
     let p = paths(d.path());
-    let want = "scope: all sessions\nrequests: 0\ntokens: 0 in, 0 out, 0 cache read, 0 cache write\ncache read share: -\nestimated cost: $0.0000\nbytes trimmed: 0\ntokens trimmed (estimate): 0\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model: none";
+    let want = "scope: all sessions\nrequests: 0\ntokens: 0 in, 0 out, 0 cache read, 0 cache write\ncache read share: -\nestimated cost: $0.0000\nbytes trimmed: 0\ntokens trimmed (estimate): 0\nbytes read back: 0\ntokens kept out of context (estimate): 0\nestimated spend avoided: ≈$0.0000\nviews: 0, read-backs: 0, view to read-back ratio: -\nby tool and command: none\ncompaction signals: 0\ncompactions observed: 0\nguard events: none\nby role and model: none";
     assert_eq!(run(&p, &[], None).unwrap(), want);
     assert!(!p.usage_db.exists() && !p.data_dir.exists());
 }
@@ -131,12 +145,159 @@ fn h14_18_usage_keeps_bytes_and_adds_estimated_tokens() {
     let one = lines(&["--session", "S1"]);
     let at = one.iter().position(|l| l == "bytes trimmed: 92160").unwrap_or_else(|| panic!("{one:?}"));
     assert_eq!(one[at + 1], "tokens trimmed (estimate): 23040");
-    assert_eq!(one[at + 2], "compaction signals: 0");
+    assert!(has(&one, "compaction signals: 0"), "{one:?}");
     // 5 bytes are 2 estimated tokens: the estimate rounds up.
     let two = lines(&["--session", "S2"]);
     assert!(has(&two, "bytes trimmed: 5") && has(&two, "tokens trimmed (estimate): 2"), "{two:?}");
     let all = lines(&[]);
     assert!(has(&all, "bytes trimmed: 92165") && has(&all, "tokens trimmed (estimate): 23042"), "{all:?}");
+}
+
+#[test]
+fn savings_usage_prints_o66_block() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    std::fs::write(&p.config_file, cfg(&[("p1", PRICED)])).unwrap();
+    let s = Store::open(&p.usage_db).unwrap();
+    for (ts, cr, cw) in [(90, 10_000, 2_000), (110, 10_000, 12_000), (120, 22_000, 1_000), (130, 23_000, 1_000), (140, 24_000, 1_000),
+        (150, 25_000, 1_000), (160, 0, 27_000), (170, 27_000, 500), (180, 27_500, 100)] {
+        s.insert_request(&creq("S", ts, "m1", "p1", cr, cw, ts == 170)).unwrap();
+    }
+    let (lib, diff, size) = (("Bash", Some("cargo test"), Some("libtest")), ("Bash", Some("git diff"), Some("diff")), ("Read", None, Some("size")));
+    for (i, kept) in [5_000, 5_000, 5_000, 5_000, 5_000, 5_500].into_iter().enumerate() { s.insert_trim(&ktrim("S", 100, lib, kept, &format!("L{i}"))).unwrap(); }
+    for i in 0..3 { s.insert_trim(&ktrim("S", 100, diff, 3_000, &format!("D{i}"))).unwrap(); }
+    for i in 0..5 { s.insert_trim(&ktrim("S", 100, size, 100, &format!("Z{i}"))).unwrap(); }
+    for (rid, bytes) in [("L0", 1_000), ("L1", 1_000), ("Z0", 2_000)] { s.insert_readback(&rb("S", 155, bytes, rid)).unwrap(); }
+    let out = run(&p, &[], None).unwrap();
+    let b = after_trimmed(&out);
+    assert_eq!(b[..8], [
+        "bytes read back: 4000",
+        "tokens kept out of context (estimate): 9000",
+        "estimated spend avoided: ≈$0.1146",
+        "views: 14, read-backs: 3, view to read-back ratio: 4.67",
+        "by tool and command:",
+        "  Bash cargo test libtest: 6 views, 2 read-backs, 28500 bytes kept out, ≈$0.0888",
+        "  Bash git diff diff: 3 views, 0 read-backs, 9000 bytes kept out, ≈$0.0270",
+        "  Read - size: 5 views, 1 read-back, -1500 bytes kept out, ≈-$0.0012",
+    ], "{out}");
+    assert!(b[8].starts_with("compaction signals: "), "{out}");
+}
+
+#[test]
+fn savings_usage_rates_follow_catalog_provider_and_tier() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let p2 = |k: f64| format!("[model.provider.price_usd_per_mtok]\ninput = {:?}\ncache_read = {:?}\ncache_write = {:?}\ncache_write_5m = {:?}", 400.0 * k, 40.0 * k, 800.0 * k, 500.0 * k);
+    let long = format!("{PRICED}\nlong_context = {{ above = 5000, input = 40.0, output = 0.0, cache_read = 4.0, cache_write = 80.0 }}");
+    let write = |k: f64| std::fs::write(&p.config_file, cfg(&[("p0", ""), ("p1", &long), ("p2", &p2(k))])).unwrap();
+    write(1.0);
+    let s = Store::open(&p.usage_db).unwrap();
+    for (sess, prov, c) in [("A", "p2", 1_000), ("B", "", 1_000), ("C", "p0", 1_000), ("D", "p1", 3_000)] {
+        s.insert_request(&creq(sess, 20, "m1", prov, c, c, false)).unwrap();
+        s.insert_trim(&ktrim(sess, 10, ("Bash", None, None), 4_000_000, sess)).unwrap();
+    }
+    assert_eq!(spend_line(&p, &["--session", "A"]), "estimated spend avoided: ≈$500.0000");  // the named provider's cache_write_5m
+    assert_eq!(spend_line(&p, &["--session", "B"]), "estimated spend avoided: ≈$5.0000");    // no provider: first priced (p1)
+    assert_eq!(spend_line(&p, &["--session", "C"]), "estimated spend avoided: ≈$5.0000");    // p0 has no price: first priced (p1)
+    assert_eq!(spend_line(&p, &["--session", "D"]), "estimated spend avoided: ≈$80.0000");   // prompt 6100 > 5000: tier cache_write
+    write(2.0);
+    assert_eq!(spend_line(&p, &["--session", "A"]), "estimated spend avoided: ≈$1000.0000"); // O-C5: doubled catalog rates
+}
+
+#[test]
+fn savings_usage_names_unpriced_requests() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let s = Store::open(&p.usage_db).unwrap();
+    s.insert_request(&creq("E", 20, "m-none", "p1", 1_000, 1_000, false)).unwrap();
+    s.insert_request(&creq("E", 30, "m-none", "p1", 2_000, 1_000, false)).unwrap();
+    s.insert_trim(&ktrim("E", 10, ("Bash", None, None), 4_000, "E0")).unwrap();
+    assert_eq!(spend_line(&p, &[]), "estimated spend avoided: ≈$0.0000 (2 requests had no price)");
+}
+
+#[test]
+fn savings_usage_config_does_not_load_prints_unknown() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    seed(&p);
+    std::fs::write(&p.config_file, "[[model]\n").unwrap();
+    assert!(ALL.contains("\nestimated spend avoided: ≈$0.0000\n"));
+    let key = "\n  Bash - -: 2 views, 0 read-backs, 5500 bytes kept out, ≈$0.0000\n";
+    assert!(ALL.contains(key));
+    let want = ALL.replace("\nestimated spend avoided: ≈$0.0000\n", "\nestimated spend avoided: unknown (config does not load)\n")
+        .replace(key, "\n  Bash - -: 2 views, 0 read-backs, 5500 bytes kept out, unknown\n");
+    assert_eq!(run(&p, &[], None).unwrap(), want);
+}
+
+/// O§6.6 sign: a negative amount that rounds to zero at four decimals prints `≈$0.0000`, on the total and the key.
+#[test]
+fn savings_usage_negative_rounding_to_zero_has_no_sign() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    std::fs::write(&p.config_file, cfg(&[("p1", PRICED)])).unwrap();
+    let s = Store::open(&p.usage_db).unwrap();
+    s.insert_trim(&ktrim("S", 10, ("Bash", None, None), 4, "R0")).unwrap();
+    s.insert_readback(&rb("S", 15, 8, "R0")).unwrap();
+    s.insert_request(&creq("S", 20, "m1", "p1", 1_000, 1_000, false)).unwrap();
+    // trim 1 token × 5 − read-back 2 tokens × 5 USD per Mtok = −0.000005
+    let out = run(&p, &[], None).unwrap();
+    assert!(out.contains("\nestimated spend avoided: ≈$0.0000\n"), "{out}");
+    assert!(out.contains("\n  Bash - -: 1 view, 1 read-back, -4 bytes kept out, ≈$0.0000\n"), "{out}");
+}
+
+/// O§6.3 step 3: a prompt equal to `above` takes the base tier (`>`, as `Prices::cost`); a tier with no
+/// `cache_write_5m` writes at `cache_write`.
+#[test]
+fn savings_usage_rate_tier_boundary_and_no_5m_rate() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let long = format!("{PRICED}\nlong_context = {{ above = 5000, input = 40.0, output = 0.0, cache_read = 4.0, cache_write = 80.0 }}");
+    let no5m = "[model.provider.price_usd_per_mtok]\ninput = 4.0\noutput = 0.0\ncache_read = 0.4\ncache_write = 8.0";
+    std::fs::write(&p.config_file, cfg(&[("p1", &long), ("p3", no5m)])).unwrap();
+    let s = Store::open(&p.usage_db).unwrap();
+    for (sess, prov, c) in [("F", "p1", 2_450), ("G", "p3", 1_000)] {
+        s.insert_request(&creq(sess, 20, "m1", prov, c, c, false)).unwrap();
+        s.insert_trim(&ktrim(sess, 10, ("Bash", None, None), 4_000_000, sess)).unwrap();
+    }
+    assert_eq!(spend_line(&p, &["--session", "F"]), "estimated spend avoided: ≈$5.0000"); // prompt 5000 = above: base cache_write_5m
+    assert_eq!(spend_line(&p, &["--session", "G"]), "estimated spend avoided: ≈$8.0000"); // no cache_write_5m: cache_write
+}
+
+#[test]
+fn savings_usage_97d8767_database_prints_dash_keys() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    std::fs::create_dir_all(&p.data_dir).unwrap();
+    let c = rusqlite::Connection::open(&p.usage_db).unwrap();
+    c.execute_batch(zygo_usage::SCHEMA).unwrap();
+    c.execute_batch("DROP TABLE readbacks; ALTER TABLE trims DROP COLUMN result_id; ALTER TABLE trims DROP COLUMN command; \
+        ALTER TABLE trims DROP COLUMN shaper; PRAGMA user_version = 1").unwrap();
+    c.execute("INSERT INTO trims (ts, session, agent_id, tool, kind, stored_bytes, view_bytes) VALUES (5, 'S1', NULL, 'Bash', 'head', 1000, 100)", []).unwrap();
+    drop(c);
+    let before = std::fs::read(&p.usage_db).unwrap();
+    let out = run(&p, &[], None).unwrap(); // Ok is exit 0
+    assert_eq!(std::fs::read(&p.usage_db).unwrap(), before, "the database bytes changed");
+    let files: Vec<_> = std::fs::read_dir(&p.data_dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(files, [OsString::from("usage.db")]);
+    assert_eq!(after_trimmed(&out)[..6], [
+        "bytes read back: 0",
+        "tokens kept out of context (estimate): 225",
+        "estimated spend avoided: ≈$0.0000",
+        "views: 1, read-backs: 0, view to read-back ratio: -",
+        "by tool and command:",
+        "  Bash - -: 1 view, 0 read-backs, 900 bytes kept out, ≈$0.0000",
+    ], "{out}");
+}
+
+#[test]
+fn savings_usage_escapes_tool_command_shaper() {
+    let d = TempDir::new().unwrap();
+    let p = paths(d.path());
+    let s = Store::open(&p.usage_db).unwrap();
+    s.insert_trim(&ktrim("S1", 1, ("Bash\nforged: t", Some("c\u{1b}"), Some("s\nforged: s")), 4_000, "X0")).unwrap();
+    let out = run(&p, &[], None).unwrap();
+    assert!(!out.lines().any(|l| l.starts_with("forged:")), "{out}");
+    assert!(out.contains("\n  Bash\\nforged: t c\\u{1b} s\\nforged: s: 1 view, 0 read-backs, 4000 bytes kept out, ≈$0.0000\n"), "{out}");
 }
 
 #[test]
@@ -176,7 +337,7 @@ fn usage_report_escapes_role_and_model() {
     let out = run(&p, &[], None).unwrap();
     assert!(!out.lines().any(|l| l.starts_with("forged:")), "{out}");
     assert!(out.contains("code\\nforged: x\\u{1b}") && out.contains("m\\nforged: y"), "{out}");
-    assert_eq!(out.lines().count(), 12, "{out}");
+    assert_eq!(out.lines().count(), 17, "{out}");
 }
 
 #[test]
@@ -708,11 +869,12 @@ fn icon_lines(p: &Paths, vars: &[(&str, &str)]) -> Vec<String> {
     l.into_iter().filter(|x| x.starts_with("icons: ")).collect()
 }
 
-/// The Nerd glyphs of H§6.5, in its order: stripe, logo, reflection, branch, GitHub issue, work graph, bead, worktree,
-/// ahead, behind, model, profile, bar filled, bar empty, threshold, notional, cache, trimmed, truncation.
-const NERD_GLYPHS: [&str; 19] = ["\u{258c}", "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}", "z\u{28e}\u{183}o", "\u{e0a0}", "\u{f408}", "\u{25c6}",
+/// The Nerd glyphs of H§6.5, in its order: stripe, logo, reflection, mail, branch, GitHub issue, work graph, bead,
+/// worktree, ahead, behind, model, profile, bar filled, bar empty, threshold, notional, cache, trimmed, run time,
+/// truncation.
+const NERD_GLYPHS: [&str; 21] = ["\u{258c}", "\u{1d607}\u{1d606}\u{1d5f4}\u{1d5fc}", "z\u{28e}\u{183}o", "\u{2709}", "\u{e0a0}", "\u{f408}", "\u{25c6}",
     "\u{f41b}", "\u{f0645}", "\u{2191}", "\u{2193}", "\u{f4bc}", "\u{f0626}", "\u{25b0}", "\u{25b1}", "\u{21e3}", "\u{2248}", "\u{f01bc}",
-    "\u{2702}", "\u{2026}"];
+    "\u{2702}", "\u{f0150}", "\u{2026}"];
 
 /// H§14 #32, AU2: one line holds the Nerd glyphs of H§6.5 and names the active set.
 #[test]

@@ -27,6 +27,9 @@ pub struct SessionView {
     pub head_lines: u32,
     #[serde(default = "default_tail_lines")]
     pub tail_lines: u32,
+    /// `[results] shape` of the launch (output shaping O§9, O§11); `true` for a `view.json` without the field.
+    #[serde(default = "default_true")]
+    pub shape: bool,
     /// The status line style the launcher took from the user config (`statusline.style`):
     /// `compact` or `verbose`. A `view.json` without the field reads as `compact`.
     #[serde(default = "default_statusline_style")]
@@ -40,6 +43,9 @@ pub struct SessionView {
     /// path, or a `view.json` without the field (an older launcher).
     #[serde(default)]
     pub repo_root: Option<String>,
+    /// `[features] mail` of the launch (M§8, M§8a): item 8 of the session text; `false` for a `view.json` without the field.
+    #[serde(default)]
+    pub mail: bool,
     /// The top-level fields of `view.json` that this zygo does not know; a save puts them back, so a read, change and
     /// save of the view (the member hooks, H1) keeps the fields of a newer zygo (the AU78 pattern of `workspace.json`).
     /// `workspace`, its `member`, its `resume_note` and each `interrupted` entry keep theirs the same way (R5).
@@ -69,9 +75,11 @@ impl Default for SessionView {
             trim_threshold_bytes: default_trim_threshold(),
             head_lines: default_head_lines(),
             tail_lines: default_tail_lines(),
+            shape: default_true(),
             statusline_style: default_statusline_style(),
             workspace: None,
             repo_root: None,
+            mail: false,
             extra: UnknownFields::default(),
         }
     }
@@ -135,8 +143,20 @@ pub struct LegendEntry {
 pub struct Member {
     pub ws_id: String,
     pub pane: String,
+    /// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view. A value
+    /// that is not a string reads as none (AU78, ML-7 review round 1, F5).
+    #[serde(default, deserialize_with = "lenient_name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(flatten)]
     pub extra: UnknownFields,
+}
+
+/// A string is kept; any other JSON value reads as none (the form of `MemberRecord.name` in zygo-workspace).
+fn lenient_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

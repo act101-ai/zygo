@@ -261,7 +261,7 @@ Why no wakeup is lost: each starter writes the mark (step 2) before it tries the
 
 The second and later passes have their own 120 s deadline. A sync runs passes while marks keep coming; it ends at the first look that finds no mark.
 
-`mail/sync/state.json` records `last_ok`, `last_error` (check name only), the public-check cache, and the own blob ids, for `zygo mail ls`, S§8.2 and S§7.5.
+`mail/sync/state.json` records `last_ok`, `last_error` (check name only), the public-check cache, and the own blob ids, for `zygo mail ls`, S§8.2 and S§7.5. One rule set holds at read and at write: the value rules that keep URLs, credentials and content out of the file (S-C2, W-C7), as the writer applies them (`check_state`, `crates/zygo-mail-sync/src/state.rs`). At read, a missing file is the empty state; a link, a read error, a file that is not a JSON object, or a file that holds any value outside those rules is an error, never a default, so the S§7.5 twin check never runs on a guessed state; the file is left as it is. At write, a value outside those rules is refused and nothing is written. Thus every state that is read can be written back.
 
 Reasons **(author)**:
 
@@ -276,7 +276,7 @@ Reasons **(author)**:
 
 **(lead, author)** Each message is delivered once, by ULID. Two records say "delivered": the imported log (local, this workspace) and the own ack (on the branch).
 
-**Candidates.** For each own host (S§7.5) and each local member with a name: stream `git ls-tree -z -l <tip> -- <name>@<host>/` (a literal path; the address form has no glob character). An entry is a candidate when its ULID is not in the own ack. A candidate whose ULID is already in the imported log (a sender added it again after a prune, S§14) is not delivered; it is only added to the own ack, so a prune removes it again. Reading stops at 500 candidates in the pass, or at the deadline; git is then killed (S§8.7). The rest waits for the next pass. Thus a large or hostile backlog still gives 500 deliveries per pass **(lead)**.
+**Candidates.** For each own host (S§7.5) and each local member with a name: stream `git ls-tree -z -l <tip> -- <name>@<host>/` (a literal path; the address form has no glob character). An entry is a candidate when its ULID is not in the own ack. A candidate whose ULID is already in the imported log (a sender added it again after a prune, S§14) is not delivered; it is only added to the own ack, so a prune removes it again. Reading a folder also stops at its target's inbox room: `[mail] max_unread` less the files in the target's `new/`, shared by the target's folders on all own hosts. A candidate already in the imported log takes no room, and the folder of a target with no room is not read. Thus one full inbox does not stop import for the other members. Reading stops at 500 candidates in the pass, or at the deadline; git is then killed (S§8.7). The rest waits for the next pass. Thus a large or hostile backlog still gives 500 deliveries per pass **(lead)**.
 
 **Checks (S-C5).** A candidate is delivered only when:
 
@@ -295,7 +295,7 @@ A candidate that fails a check other than the full inbox is not delivered. It is
 3. Rename the incoming file to `mail/<pane key>/new/<ULID>.json` (M§5).
 4. Add the ULID to the own ack (pushed in step 13 of S§8.3).
 
-Step 5 of S§8.3 finishes each file left in `incoming/` by a crash: it appends the ULID to the log when it is not there, then renames the file into `new/`. `incoming/` is not swept. Thus a crash at any point gives one delivery: before step 2 the next pass completes it; after step 2 the log stops a second import.
+Step 5 of S§8.3 finishes each file left in `incoming/` by a crash. A file whose ULID is not in the log can be torn by a crash during step 1: unless its bytes parse as a message whose `id` is the file's ULID, it is deleted and not logged, and the next pass imports the branch copy again. Otherwise step 5 appends the ULID to the log when it is not there, then renames the file into `new/`. A file whose ULID is in the log was synced in step 1, before step 2. `incoming/` is not swept. Thus a crash at any point gives one delivery: before step 2 the next pass completes it; after step 2 the log stops a second import.
 
 A folder for a name that this workspace does not have is left alone. Its mail waits (S§13 limit 2).
 
@@ -552,3 +552,6 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 ## Change log
 
 - 2026-11-24 · S-C4 · author's call (MS-2 review) · fetch.writeCommitGraph=true in user config made a sync fetch write commit-graph files, against S-G2; the override list gains -c fetch.writeCommitGraph=false.
+- 2026-11-25 · S§8.3 · author's call · load/save disagree on a bad entry: a state.json with one value outside the rules loaded, and then every later save failed, so the pass could never write its state again; the read now refuses such a file as it refuses a non-object.
+- 2026-11-25 · S§8.5 · author's call · a file staged by a crash during the write is deleted and imported again, not delivered.
+- 2026-11-25 · S§8.5 · author's call · reading a folder stops at its target's inbox room, so one full inbox does not stop import for the others.

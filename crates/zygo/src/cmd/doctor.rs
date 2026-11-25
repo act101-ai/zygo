@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 
 use semver::Version;
 use zygo_config::keys::{default_store, error_kind, resolve_with, SecretStore};
-use zygo_config::{load, KeyRef, LoadContext, Merged};
+use zygo_config::repo_def::{
+    check_default, repository_loadout, short, GitRunner, SystemGit, Use, REPOSITORY_LOADOUT,
+};
+use zygo_config::{load, KeyRef, Layer, LoadContext, LoadoutPane, Merged, BUILTIN_LOADOUT};
 use zygo_core::exit::ExitCode;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -19,8 +22,13 @@ use zygo_plugins::select::selection;
 use zygo_plugins::snapshot::missing_commands;
 use zygo_plugins::store::{state, ManifestState};
 use zygo_work::policy::Policy;
+use zygo_workspace::args::has_user_info;
+use zygo_workspace::identity::workspace_id;
+use zygo_workspace::loadout::builtin_solo;
 use zygo_workspace::mux::tmux::Tmux;
 use zygo_workspace::mux::{Multiplexer, MuxError, MIN_VERSION};
+use zygo_workspace::pool;
+use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
 use super::status::repo_top;
 use super::verbs::VerbCtx;
@@ -242,6 +250,124 @@ pub fn report(env: &Env, merged: &Merged) -> Vec<String> {
     out
 }
 
+/// R§10 `zygo doctor`: the workspace files of the default branch (only where `zygo up` finds a checkout), the member maximum of their
+/// repository loadout, the `[workspace] pool` directory, and the pool directories that the loadout `zygo up` would
+/// choose shares. Never fails: each case is a line. R-C6: the pool is listed by names and types only, no file opened.
+pub fn definition_lines(cwd: &Path, merged: &Merged, approvals: &Path, git: &dyn GitRunner) -> Vec<String> {
+    let mut out = Vec::new();
+    // The checkout of `zygo up` (a bare repository's folder and `.git` give the main worktree); an `Err` is up's
+    // "not a repository": no workspace-files line.
+    let found = find_checkout(cwd, GIT_BOUND)
+        .ok()
+        .map(|(co, ..)| check_default(&co.top, &workspace_id(&co.common_dir), approvals, git));
+    // R§10 `up` row: `[workspace] default_loadout` chooses only when the user config file sets it.
+    let user_default =
+        (merged.source_of("workspace.default_loadout") == Layer::User).then_some(&merged.config.workspace.default_loadout);
+    let c12 = |c: &str| c.get(..12).unwrap_or(c).to_string();
+    let def = match &found {
+        None => None,
+        Some(Use::Approved { full_ref, pin, def, .. }) => {
+            out.push(format!("workspace files: {} {} digest {}: approved", esc(full_ref), c12(&pin.commit), short(&pin.digest)));
+            Some(def)
+        }
+        Some(Use::NotApproved { full_ref, files, digest, def }) => {
+            out.push(format!("workspace files: {} {} digest {}: not approved", esc(full_ref), c12(&files.commit), short(digest)));
+            Some(def)
+        }
+        Some(Use::Invalid { why, .. }) => {
+            out.push(format!("workspace files: invalid ({})", esc(why)));
+            None
+        }
+        Some(Use::Absent { .. }) => {
+            out.push("workspace files: none".to_string());
+            None
+        }
+        Some(Use::Unread { why }) => {
+            out.push(format!("workspace files: unread ({})", esc(why)));
+            None
+        }
+    };
+    // R§9.4 applies to the repository loadout only: not when the user chooses another loadout, and not when a user
+    // `[loadout.repository]` is used in its place (R§10 `up` row).
+    let repository_chosen = user_default.is_none_or(|n| n == REPOSITORY_LOADOUT);
+    let used = repository_chosen && !merged.config.loadout.contains_key(REPOSITORY_LOADOUT);
+    if let Some(lo) = def.and_then(repository_loadout).filter(|_| used) {
+        let n = lo.window.iter().flat_map(|w| &w.pane).filter(|p| p.kind != "shell").count();
+        let m = merged.config.limits.max_members;
+        if n > m as usize {
+            out.push(format!("workspace files: {n} agents; [limits] max_members is {m}"));
+        }
+    }
+    let Some(text) = &merged.config.workspace.pool else { return out };
+    let dir = match pool::expand(text, pool::home().as_deref()) {
+        Ok(d) => d,
+        Err(why) => {
+            out.push(format!("pool: {}: {}", esc(text), esc(&why)));
+            return out;
+        }
+    };
+    let shown = esc(&dir.to_string_lossy());
+    let dirs = match pool::list(&dir) {
+        Ok(d) => d,
+        Err(why) => {
+            out.push(format!("pool: {shown}: {}", esc(&why)));
+            return out;
+        }
+    };
+    out.push(format!("pool: {shown}: {} directories", dirs.len()));
+    // The loadout of `zygo up` with no `--loadout` (R§10 `up` row).
+    let approved = match &found {
+        Some(Use::Approved { def, .. }) => Some(def),
+        _ => None,
+    };
+    let name = if let Some(n) = user_default {
+        n.clone()
+    } else if approved.is_some_and(|d| d.workspace.is_some()) {
+        REPOSITORY_LOADOUT.to_string()
+    } else {
+        BUILTIN_LOADOUT.to_string()
+    };
+    let with = approved.map(|d| merged.with_definition(d));
+    let lo = match with.as_ref().unwrap_or(merged).config.loadout.get(&name) {
+        Some(lo) => lo.clone(),
+        None if name == BUILTIN_LOADOUT => builtin_solo(),
+        None => return out,
+    };
+    // The name `zygo up` keeps (loadout.rs:212-214): an agent pane's valid member name that no earlier agent pane holds.
+    let mut seen: Vec<String> = Vec::new();
+    let members: Vec<(usize, &LoadoutPane, Option<String>)> = lo
+        .window
+        .iter()
+        .flat_map(|w| &w.pane)
+        .enumerate()
+        .map(|(i, p)| {
+            let name = p.name.clone().filter(|n| {
+                p.kind.parse::<Agent>().is_ok()
+                    && zygo_core::ids::valid_member_name(n)
+                    && !seen.contains(n)
+            });
+            seen.extend(name.clone());
+            (i, p, name)
+        })
+        .filter(|(_, p, _)| {
+            p.pool && p.kind == "claude-code" && !p.server.as_deref().is_some_and(has_user_info)
+        })
+        .collect();
+    let names: Vec<Option<String>> = members.iter().map(|(_, _, n)| n.clone()).collect();
+    let dir_of: Vec<(String, PathBuf)> = members
+        .iter()
+        .zip(pool::assign(&names, dirs.len()))
+        .map(|((i, _, n), k)| {
+            (
+                n.clone().unwrap_or_else(|| format!("pane {}", i + 1)),
+                dirs[k].clone(),
+            )
+        })
+        .collect();
+    out.extend(pool::shared_lines(&dir_of));
+    out
+}
+
 /// The icon test line (AU2, H§14 #32): the icon set that the status line uses in this environment (`active`), the
 /// `ZYGO_NERD_FONT` value that selects the other set, and every Nerd glyph of H§6.5 in the order of its table. The
 /// glyphs are the Nerd ones with each set: a user who sees them all can use the Nerd set, and a user who sees boxes
@@ -325,7 +451,7 @@ pub fn run() -> i32 {
     let claude_config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()).map(PathBuf::from)
         .or_else(|| std::env::home_dir().map(|h| h.join(".claude")));
     let probe_path = search_path.clone();
-    let lines = report(
+    let mut lines = report(
         &Env {
             paths: &paths,
             repo: repo.as_deref(),
@@ -342,6 +468,9 @@ pub fn run() -> i32 {
         },
         &merged,
     );
+    if let Ok(cwd) = std::env::current_dir() {
+        lines.extend(definition_lines(&cwd, &merged, &paths.approvals_file, &SystemGit));
+    }
     print_out(&(lines.join("\n") + "\n"));
     0
 }

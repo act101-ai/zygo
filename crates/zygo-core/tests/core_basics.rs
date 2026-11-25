@@ -1,4 +1,4 @@
-use zygo_core::ids::{ulid, valid_member_name, RESERVED_MEMBER_NAMES};
+use zygo_core::ids::{reserved_member_name, ulid, valid_member_name, RESERVED_MEMBER_NAMES};
 use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
@@ -359,6 +359,34 @@ fn session_view_workspace_round_trips_and_is_none_for_an_old_file() {
     assert_eq!(m, ViewWorkspace { member, resume_note: None, ..Default::default() });
 }
 
+#[test] // M§9a: `name` on the member marker; a marker without it still loads
+fn session_view_member_name_is_optional_and_round_trips() {
+    use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let old: Member = serde_json::from_value(serde_json::json!({"ws_id": "w1", "pane": "p1"})).unwrap();
+    assert_eq!(old.name, None);
+    assert_eq!(serde_json::to_value(&old).unwrap(), serde_json::json!({"ws_id": "w1", "pane": "p1"}));
+    let named = Member { name: Some("elena".into()), ..old };
+    let v = SessionView { workspace: Some(ViewWorkspace { member: named.clone(), ..Default::default() }), ..Default::default() };
+    v.save(&d).unwrap();
+    assert_eq!(SessionView::load(&d).unwrap().workspace.unwrap().member, named);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(json["workspace"]["member"], serde_json::json!({"ws_id": "w1", "pane": "p1", "name": "elena"}));
+}
+
+#[test] // ML-7 review round 1, F5 (AU78): a member name that is not a string reads as none; the view still loads
+fn session_view_member_name_that_is_not_a_string_reads_as_none() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    let mut json = serde_json::to_value(SessionView::default()).unwrap();
+    json["workspace"] = serde_json::json!({"member": {"ws_id": "w1", "pane": "p1", "name": 5}});
+    std::fs::write(d.view_json(), serde_json::to_vec(&json).unwrap()).unwrap();
+    let m = SessionView::load(&d).unwrap().workspace.unwrap().member;
+    assert_eq!((m.ws_id.as_str(), m.pane.as_str(), m.name), ("w1", "p1", None));
+}
+
 #[test]
 fn session_view_save_keeps_unknown_top_level_fields() { // H1 attempt-2 review round 1, F4 (AU78 pattern)
     use zygo_core::session_view::SessionView;
@@ -586,10 +614,11 @@ fn valid_member_name_accepts_the_m6_grammar() {
 
 #[test]
 fn valid_member_name_refuses_others_and_the_reserved() {
-    assert_eq!(RESERVED_MEMBER_NAMES, ["all", "cli"]);
+    assert_eq!(RESERVED_MEMBER_NAMES, ["all", "cli", "zygo"]);
+    assert!(reserved_member_name("zygo")); // M§6, mail sync design S§7.2
     let long = format!("a{}", "b".repeat(32));
     assert_eq!(long.len(), 33);
-    for bad in ["Elena", "1a", "-a", long.as_str(), "all", "cli", "", "a_b", "a.b", "a b", "é", "a/b"] {
+    for bad in ["Elena", "1a", "-a", long.as_str(), "all", "cli", "zygo", "", "a_b", "a.b", "a b", "é", "a/b"] {
         assert!(!valid_member_name(bad), "{bad:?}");
     }
 }
@@ -603,4 +632,23 @@ fn valid_member_name_refuses_the_pane_key_form() {
     for ok in ["kabcdefg", "kabcdefg1"] {
         assert!(valid_member_name(ok), "{ok:?}");
     }
+}
+
+// ---- OS-9: session view `shape` (output shaping O§9, O§11) ----
+
+#[test]
+fn view_shape_absent_from_view_json_reads_true_and_false_round_trips() {
+    use zygo_core::session_view::SessionView;
+    let t = tempfile::tempdir().unwrap();
+    let d = SessionDir::new(t.path().to_path_buf());
+    // a view.json written before the field existed
+    std::fs::write(d.view_json(), br#"{"session":"s","agent":"claude-code","main_role":"m","effective_role":null,"role_prompt":null,"user_prompt":null,"profile":null,"profile_prompt":null,"work_item":null,"legend":[],"disabled_roles":[],"work_units":true,"results":true,"navigation":false}"#).unwrap();
+    let v = SessionView::load(&d).unwrap();
+    assert!(v.shape);
+    assert_eq!(v.extra, Default::default());
+    assert!(SessionView::default().shape);
+    SessionView { session: "s".into(), shape: false, ..Default::default() }.save(&d).unwrap();
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(d.view_json()).unwrap()).unwrap();
+    assert_eq!(raw["shape"], false);
+    assert!(!SessionView::load(&d).unwrap().shape);
 }

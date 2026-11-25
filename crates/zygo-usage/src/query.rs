@@ -40,7 +40,7 @@ pub struct Summary {
 }
 
 /// Reads a stored INTEGER as u64; a negative value is a conversion error, not a wrap.
-fn u64_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<u64> {
+pub(crate) fn u64_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<u64> {
     let v: i64 = r.get(i)?;
     u64::try_from(v).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(i, rusqlite::types::Type::Integer, Box::new(e))
@@ -140,67 +140,10 @@ impl Store {
     }
 
     pub fn summary(&self, f: &Filter) -> Result<Summary> {
-        let p = rusqlite::params![f.session, f.since];
-        let mut sum = Summary::default();
-        // One deferred read transaction: every part below reads the same snapshot.
+        // One deferred read transaction: every part reads the same snapshot.
         let tx = self.conn.unchecked_transaction()?;
-        tx.query_row(
-            "SELECT count(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0), COALESCE(SUM(estimated_usd),0.0), COALESCE(SUM(EXISTS (SELECT 1 FROM json_each(adjustments) WHERE value IN ('context_signal','context_safety','context_compact'))),0), COALESCE(SUM(compaction),0) FROM requests WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2)",
-            p,
-            |r| {
-                sum.requests = u64_at(r, 0)?;
-                sum.input_tokens = u64_at(r, 1)?;
-                sum.output_tokens = u64_at(r, 2)?;
-                sum.cache_read_tokens = u64_at(r, 3)?;
-                sum.cache_write_tokens = u64_at(r, 4)?;
-                sum.estimated_usd = r.get(5)?;
-                sum.compaction_signals = u64_at(r, 6)?;
-                sum.compactions_observed = u64_at(r, 7)?;
-                Ok(())
-            },
-        )?;
-        let denom = sum.input_tokens + sum.cache_read_tokens + sum.cache_write_tokens;
-        if denom > 0 {
-            sum.cache_read_share = sum.cache_read_tokens as f64 / denom as f64;
-        }
-        let mut groups = tx.prepare(
-            "SELECT COALESCE(role_served,''), model, count(*), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(estimated_usd) FROM requests WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2) GROUP BY COALESCE(role_served,''), model ORDER BY 1, 2",
-        )?;
-        sum.by_role_model = groups
-            .query_map(p, |r| {
-                Ok(RoleModel {
-                    role: r.get(0)?,
-                    model: r.get(1)?,
-                    requests: u64_at(r, 2)?,
-                    input_tokens: u64_at(r, 3)?,
-                    output_tokens: u64_at(r, 4)?,
-                    cache_read_tokens: u64_at(r, 5)?,
-                    cache_write_tokens: u64_at(r, 6)?,
-                    estimated_usd: r.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        sum.bytes_trimmed = tx.query_row(
-            "SELECT COALESCE(SUM(MAX(stored_bytes - view_bytes, 0)), 0) FROM trims WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2)",
-            p,
-            |r| u64_at(r, 0),
-        )?;
-        let mut q = tx.prepare(
-            "SELECT guard_events FROM work_units WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR began_at >= ?2)",
-        )?;
-        let blobs = q
-            .query_map(p, |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        drop((groups, q));
+        let sum = summary_in(&tx, f)?;
         tx.finish()?;
-        for b in blobs {
-            let m: BTreeMap<String, BTreeMap<String, u64>> = serde_json::from_str(&b)?;
-            for (guard, levels) in m {
-                for (level, n) in levels {
-                    *sum.guard_events.entry(guard.clone()).or_default().entry(level).or_default() += n;
-                }
-            }
-        }
         Ok(sum)
     }
 
@@ -210,6 +153,68 @@ impl Store {
         let mut q = self.conn.prepare_cached(BYTES_TRIMMED_SQL)?;
         Ok(q.query_row([session], |r| u64_at(r, 0))?)
     }
+}
+
+/// The `Summary` of `f`, read through `tx` (one snapshot).
+pub(crate) fn summary_in(tx: &rusqlite::Transaction<'_>, f: &Filter) -> Result<Summary> {
+    let p = rusqlite::params![f.session, f.since];
+    let mut sum = Summary::default();
+    tx.query_row(
+        "SELECT count(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(cache_write_tokens),0), COALESCE(SUM(estimated_usd),0.0), COALESCE(SUM(EXISTS (SELECT 1 FROM json_each(adjustments) WHERE value IN ('context_signal','context_safety','context_compact'))),0), COALESCE(SUM(compaction),0) FROM requests WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2)",
+        p,
+        |r| {
+            sum.requests = u64_at(r, 0)?;
+            sum.input_tokens = u64_at(r, 1)?;
+            sum.output_tokens = u64_at(r, 2)?;
+            sum.cache_read_tokens = u64_at(r, 3)?;
+            sum.cache_write_tokens = u64_at(r, 4)?;
+            sum.estimated_usd = r.get(5)?;
+            sum.compaction_signals = u64_at(r, 6)?;
+            sum.compactions_observed = u64_at(r, 7)?;
+            Ok(())
+        },
+    )?;
+    let denom = sum.input_tokens + sum.cache_read_tokens + sum.cache_write_tokens;
+    if denom > 0 {
+        sum.cache_read_share = sum.cache_read_tokens as f64 / denom as f64;
+    }
+    let mut groups = tx.prepare(
+        "SELECT COALESCE(role_served,''), model, count(*), SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(estimated_usd) FROM requests WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2) GROUP BY COALESCE(role_served,''), model ORDER BY 1, 2",
+    )?;
+    sum.by_role_model = groups
+        .query_map(p, |r| {
+            Ok(RoleModel {
+                role: r.get(0)?,
+                model: r.get(1)?,
+                requests: u64_at(r, 2)?,
+                input_tokens: u64_at(r, 3)?,
+                output_tokens: u64_at(r, 4)?,
+                cache_read_tokens: u64_at(r, 5)?,
+                cache_write_tokens: u64_at(r, 6)?,
+                estimated_usd: r.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    sum.bytes_trimmed = tx.query_row(
+        "SELECT COALESCE(SUM(MAX(stored_bytes - view_bytes, 0)), 0) FROM trims WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR ts >= ?2)",
+        p,
+        |r| u64_at(r, 0),
+    )?;
+    let mut q = tx.prepare(
+        "SELECT guard_events FROM work_units WHERE (?1 IS NULL OR session = ?1) AND (?2 IS NULL OR began_at >= ?2)",
+    )?;
+    let blobs = q
+        .query_map(p, |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for b in blobs {
+        let m: BTreeMap<String, BTreeMap<String, u64>> = serde_json::from_str(&b)?;
+        for (guard, levels) in m {
+            for (level, n) in levels {
+                *sum.guard_events.entry(guard.clone()).or_default().entry(level).or_default() += n;
+            }
+        }
+    }
+    Ok(sum)
 }
 
 #[cfg(test)]

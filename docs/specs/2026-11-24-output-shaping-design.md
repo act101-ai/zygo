@@ -59,7 +59,7 @@ The direction **(operator)**: zygo shapes output in the `PostToolUse` trim hook,
 - **Context.** One conversation that the model sees: the main loop of a zygo session, or one subagent. Key: `(session, agent_id)`, with `agent_id` null for the main loop.
 - **Event.** Something that changes the context size: a **trim** (a shaped or size view replaced the raw output) or a **read-back** (a reply of `result_view`, `result_search` or `result_tree`).
 - **Carrying request.** A request of the same context, at or after the event, before the context is cut (O§6.3).
-- **Segment.** A part of a command between `;`, `&&`, `||` and newline, after the shell-word split of O§7.2.
+- **Segment.** A part of a command between `;`, `&&`, `||` and newline, after the shell-word split of O§7.2. A newline after a `|`, with only blanks, comments and newlines between them, does not end the segment: the pipeline goes on to the next line.
 - **Shaper.** One step of the pipeline of O§7.3. **Runner view.** A shaper for one test runner.
 - **Blank line.** A line that is empty or holds only ASCII space (`0x20`) and tab (`0x09`).
 - **Raw text.** The text the hook measures and stores (O§7.2).
@@ -160,14 +160,14 @@ tokens kept out of context (estimate): 9000
 estimated spend avoided: ≈$0.1146
 views: 14, read-backs: 3, view to read-back ratio: 4.67
 by tool and command:
-  Bash cargo test libtest: 6 views, 2 read-backs, 31200 bytes kept out, ≈$0.0900
-  Bash git diff diff: 3 views, 0 read-backs, 9100 bytes kept out, ≈$0.0210
-  Read - size: 5 views, 1 read-back, -4300 bytes kept out, ≈-$0.0040
+  Bash cargo test libtest: 6 views, 2 read-backs, 28500 bytes kept out, ≈$0.0888
+  Bash git diff diff: 3 views, 0 read-backs, 9000 bytes kept out, ≈$0.0270
+  Read - size: 5 views, 1 read-back, -1500 bytes kept out, ≈-$0.0012
 ```
 
 - `views` = trim rows; `read-backs` = read-back rows; the view to read-back ratio = views ÷ read-backs, two decimals, `-` when there is no read-back. A low ratio shows that views hide text the agent needs.
 - A breakdown key is `tool`, `command` (`-` when null), `shaper` (`-` when null). A read-back takes the key of its trim (by `result_id`), else `- - -`. Rows are sorted by bytes kept out, largest first.
-- A negative amount prints the sign before `$`: `≈-$0.0040`.
+- A negative amount prints the sign before `$`: `≈-$0.0012`.
 - When some carrying requests had no price row: `estimated spend avoided: ≈$0.1146 (12 requests had no price)`.
 - When the config does not load: `estimated spend avoided: unknown (config does not load)`, and the other lines print.
 - The filter (`--session`, `--since`) selects events by their `session` (O§6.4 key for read-backs) and their own `ts`. The carrying requests of a selected event are read even when they are outside the filter: the figure belongs to the event.
@@ -197,9 +197,11 @@ The net figures are not in the status line:
 
 For the same reason, a Bash call is not shaped when its command may print a file **(lead)**. That is when the O§7.2 parse finds a file printer in any stage of any segment, at any depth:
 
-- file printers: `cat`, `head`, `tail`, `sed`, `awk`, `nl`, `bat`, `less`, `more`, `grep`, `rg`, `git show`, `git cat-file`;
-- places looked into: each segment and each pipeline stage; the string argument of `bash -c`, `sh -c`, `zsh -c` (parsed in turn); `( … )` subshells, `$( … )` and backticks; the command words after `xargs` and after `find … -exec` / `-execdir`;
-- a parse that is unsure (an unclosed quote, unbalanced brackets, a nesting deeper than 4, or a command over 4 KiB) counts as a file printer.
+- file printers: `cat`, `head`, `tail`, `sed`, `awk`, `nl`, `bat`, `less`, `more`, `grep`, `rg`, `git show`, `git cat-file`; and **(operator)** `egrep`, `fgrep`, `zcat`, `gawk`, `batcat`, `tac`, `git grep`, `git blame`, and `$(<f)`: a `$( … )` or backtick substitution whose text, after blanks and newlines, starts with one `<` or with `0<` (not `<<` or `<(`), which prints the file;
+- places looked into: each segment and each pipeline stage; the string argument of `bash -c`, `sh -c`, `zsh -c` (parsed in turn); **(operator)** the words after `eval` and one leading `--`, joined by single spaces (parsed in turn, as for `bash -c`); `( … )` subshells, `$( … )` and backticks; the command words after `xargs` and after `find … -exec` / `-execdir`;
+- a parse that is unsure (an unclosed quote, unbalanced brackets, a nesting deeper than 4, a command over 4 KiB, or **(operator)** a `bash`, `sh` or `zsh` stage after a `|` with no `-c` option, alone or in a cluster such as `-lc`, which runs a script that it reads from the pipe) counts as a file printer. The `-c` option is looked for among the leading options only: up to `--` or the first word that does not start with `-` or `+`; `-o`, `+o`, `-O` and `+O` take the next word.
+
+A stage made only of redirects, with an input redirect, prints that file in zsh (NULLCMD), so it is a file printer.
 
 Such a call keeps the §10.1 size view, with stdout only (as today). A pipeline such as `cargo test 2>&1 | tail -n 80` is thus not shaped: it is the cost of the rule, accepted because a missed file printer changes text the agent may edit.
 
@@ -207,7 +209,7 @@ Such a call keeps the §10.1 size view, with stdout only (as today). A pipeline 
 
 **(author)**
 
-- **Command.** `tool_input.command` when it is a string; else no command. Only its first 4 KiB is read. A shell-word split (single quotes, double quotes, backslash; it never fails) cuts it into segments, and each segment into pipeline stages at `|`. In a stage, leading `NAME=value` words and the wrappers `env`, `time`, `sudo`, `nice`, `command` are skipped. A program word is reduced to its base name.
+- **Command.** `tool_input.command` when it is a string; else no command. Only its first 4 KiB is read. A shell-word split (single quotes, double quotes, backslash; it never fails) cuts it into segments, and each segment into pipeline stages at `|`. In a stage, leading `NAME=value` words and the wrappers `env`, `time`, `sudo`, `nice`, `command`, `timeout`, `stdbuf`, `builtin` are skipped **(operator: `timeout`, `stdbuf`; author: `builtin`)**. A wrapper is skipped with its options and the argument of each option that takes one (`timeout -s KILL`, `stdbuf -o L`); after the options of `timeout`, its duration word is skipped too. A program word is reduced to its base name.
 - **Command name (stored).** From a closed list: `cargo`, `go`, `pytest`, `python`, `python3`, `uv`, `npm`, `pnpm`, `yarn`, `npx`, `node`, `make`, `just`, `git`, `gh`, `docker`, `kubectl`, `terraform`, `ls`, `find`, `tree`, `du`, `ps`, `cat`, `head`, `tail`, `sed`, `awk`, `grep`, `rg`, `jq`, `curl`. For `git`, `cargo`, `go`, `npm`, `pnpm`, `yarn`, `docker`, `kubectl` and `gh`, the next word is added when it is in that program's built-in subcommand list (for example `git diff`, `cargo test`); the builder writes these lists. The name is taken from the first segment that names a runner (O§7.6); else from the first segment whose first program is in the list; else `other`. So `cargo test || true` records `cargo test`, and `cd crates/x && git diff` records `git diff`. Nothing else of the command is stored (O-C2).
 - **Raw text, shaping on, Claude Code.** `stdout`; when `stderr` is not empty, then a newline if `stdout` is not empty and does not end in one, the line `[stderr]`, and `stderr`.
 - **Raw text, shaping on, OpenCode.** The plugin's `output.output` (`crates/zygo-core/src/hook_opencode.rs:42-49`), which holds both streams (premise PO3).
@@ -351,13 +353,13 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 **(author)**
 
 - **Place.** `fixtures/shaping/<shaper>/<case>/`, with `meta.json`, `stdout`, `stderr`, `must_keep` and `view`. `meta.json`: `{ "command": …, "exit": <int>, "event": "PostToolUse" | "PostToolUseFailure", "agent": "claude-code" | "opencode", "tool": "<program> <version>", "captured_on": "<date>", "source": "<what was run, where>" }`. `view` is the expected view, with the id written as 26 `0` characters.
-- **`must_keep`** **(lead)**: the lines of the raw text, one per line, that each view of this case must hold: for each failing test, its name line and each line of its assertion or panic text; for a log, each `ERROR` line; for a diff, each `diff --git` line. The person who captures the case writes it by reading the raw output. A case whose `meta.json` has a failing test (exit not 0, or a runner summary with failures) and an empty `must_keep` fails the CI test.
+- **`must_keep`** **(lead)**: the lines of the raw text, one per line, that each view of this case must hold: for each failing test, its name line and each line of its assertion or panic text; for a log, each `ERROR` line; for a diff, each `diff --git` line; when the output is over the threshold, only those of the file sections that the diff view (O§7.7) shows whole under the cap. The person who captures the case writes it by reading the raw output. A case whose `meta.json` has a failing test (exit not 0, or a runner summary with failures) and an empty `must_keep` fails the CI test.
 - **Byte-exact.** `.gitattributes` gets `fixtures/shaping/** -text`. The current rule `* text=auto eol=lf` would change `\r\n` in a capture.
 - **Real output.** Each case is the output of a real run, not typed by hand. The required cases:
 
 | Shaper | Cases |
 |---|---|
-| clean | `cargo test --color always` (passing); `git clone --progress` stderr with `\r` progress; `git diff --color` with a CRLF file (must stay byte-equal except the color codes) |
+| clean | `cargo test --color always -- --color always` (passing; the part after `--` colors libtest stdout); `git clone --progress --no-local` stderr with `\r` progress (a clone from a local path prints no progress without `--no-local`); `git diff --color=always` with a CRLF file (must stay byte-equal except the color codes) |
 | dedup | a real build log with a repeated warning; an output that already has a line ending in ` [repeated 4 times]` (no change) |
 | libtest | `cargo test` of a scratch crate, all passing (≥ 100 tests); the same crate with 2 failing tests, one with `--nocapture` output; a test that crashes with a signal; a compile error |
 | pytest | a scratch project: all passing; 2 failing with `-v`; a collection error |
@@ -382,8 +384,10 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 | dedup | 50 % on the repeated-warning case | O§7.5 expansion gives the cleaned text |
 | libtest, passing | 80 % | each `test result:` line is in the view |
 | libtest, pytest, go test, failing | 30 % | each `must_keep` line is in the view |
-| diff, json, log | view ≤ 8 KiB | each `must_keep` line that the case marks as within the cap is in the view |
+| diff, json, log | view ≤ 8 KiB | each `must_keep` line is in the view |
 | none | 0 (no change) | the hook output is empty |
+
+A case whose raw text has no runner summary line (O§7.6), such as the libtest compile error, is checked against the `none` row: the hook makes no change, so the model gets each `must_keep` line in the raw text.
 
 ### 8.3 The never-worse check
 
@@ -392,7 +396,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 1. The hook does not panic, and its exit code is 0.
 2. The view is empty (no change) or `raw_bytes − view_bytes ≥ 256` with the row's numbers.
 3. When there is a view, its marker names a result id, and `Store::get` of that id gives the raw text byte for byte.
-4. Each `must_keep` line is in the view (O-C9).
+4. Each `must_keep` line is in the view, when there is a view (O-C9).
 5. Each line that a runner view hides matches one of the hidden forms of its runner's row (O§7.6), or belongs to a passed go test by the go test rules. The test checks this line by line against the raw text.
 6. Above 4 MiB, the view equals the §10.1 size view of the raw text.
 
@@ -579,3 +583,9 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | Date | Section | Decided by | Reason |
 |---|---|---|---|
 | 2026-11-24 | O§6.5 item 3 | author's call (OS-2 review round 1) | the column check reads `PRAGMA table_xinfo` so a generated column counts as present |
+| 2026-11-24 | O§8.1 | author's call | The `clean` row's commands did not give or record the required bytes; the row now names `-- --color always` (colors libtest stdout), `--no-local` (a local clone prints no `\r` progress) and `git diff --color=always` (the recorded command) (found in phase3 OS-17). |
+| 2026-11-24 | O§8.2, O§8.3 | author's call | A case with no runner summary (libtest compile error, O§8.1) gets no change by O§7.6, so it cannot meet the 30 % failing floor or hold must_keep lines in a view; it is checked against the none row (found in phase3 OS-19). |
+| 2026-11-24 | O§8.1 | operator | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` holds each `diff --git` line, and over the threshold only those of the sections the diff view shows whole; a diff under the threshold gets no diff view (O§7.7), so all its `diff --git` lines stay (found in phase3 OS-18). |
+| 2026-11-24 | O§7.1, O§7.2 | operator | The parse missed commands that print a file: the wrappers `timeout` and `stdbuf`, the printers `egrep`, `fgrep`, `zcat`, `gawk`, `batcat`, `tac`, `git grep`, `git blame` and `$(<f)`, an `eval` string, and a shell that runs a script from a pipe; the lists and the unsure parse now hold them (found in phase3 OS-11 review). |
+| 2026-11-24 | O§7.1, glossary | author's call | review of OS-40: newline after a pipe, backtick and 0< substitutions, eval --, builtin, -c only among leading options (the arguments of `-o`, `+o`, `-O`, `+O` skipped), redirect-only stage in zsh |
+| 2026-11-25 | O§6.6 | author's call | the sample block's key amounts did not sum to its total, and its Read key kept out more bytes than were read back; replaced with figures a store can produce (OS-8). |

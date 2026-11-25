@@ -340,6 +340,15 @@ model = "x"
 [server]
 url = "http://x"
 token = "keychain:t"
+[mail]
+keep = "30d"
+max_unread = 500
+wake_gap = "30s"
+host = "h"
+sync_gap = "60s"
+[mail.workspace.x]
+sync = "zygo/mail"
+remote = "origin"
 "#.parse().unwrap();
         for (k, v) in extra { t.insert(k, v); }
         t

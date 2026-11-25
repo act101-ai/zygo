@@ -262,10 +262,15 @@ pub fn read_default_branch(repo: &Path) -> RepoFile {
         },
         Err(GitFail::Read(w)) => return RepoFile::Unread { why: format!("git show: {w}") },
     };
+    from_text(branch, &text)
+}
+
+/// The repository file read from `branch` with contents `text`: parsed, filtered to the kept tables and validated.
+pub fn from_text(branch: String, text: &str) -> RepoFile {
     let invalid = |why: String| RepoFile::Invalid { branch: branch.clone(), why };
     let parsed: Table = match text.parse() {
         Ok(t) => t,
-        Err(e) => return invalid(syntax_error(&text, e.message(), e.span())),
+        Err(e) => return invalid(syntax_error(text, e.message(), e.span())),
     };
     let mut table = Table::new();
     let mut ignored = Vec::new();
@@ -283,12 +288,15 @@ pub fn read_default_branch(repo: &Path) -> RepoFile {
     }
     let mut kept = table.clone();
     kept.remove("version");
-    // `load` drops `guards.min_level` with a warning; a bad value must not invalidate the file.
+    // `load` drops `guards.min_level` and `limits.max_members` with a warning; a bad value must not invalidate the file.
     if let Some(g) = kept.get_mut("guards").and_then(Value::as_table_mut) {
         g.remove("min_level");
     }
+    if let Some(l) = kept.get_mut("limits").and_then(Value::as_table_mut) {
+        l.remove("max_members");
+    }
     if let Err(e) = crate::typed::from_value::<Config>(Value::Table(kept)) {
-        return invalid(e.describe(Some(&text)));
+        return invalid(e.describe(Some(text)));
     }
     RepoFile::Found { branch, table, ignored }
 }

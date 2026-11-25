@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
+use zygo_config::repo_def::Pin;
+use zygo_workspace::loadout::{PaneKind as PlanKind, PlanPane};
 use zygo_workspace::state::*;
 
 const ID: &str = "0123456789abcdef";
@@ -125,9 +127,11 @@ fn enums_use_the_spec_words() {
 
 #[test] // AU78: every struct keeps the fields it does not know
 fn every_struct_keeps_unknown_fields() {
-    let mut v = serde_json::to_value(full()).unwrap();
+    let mut ws = full();
+    ws.members.get_mut(KEY).unwrap().launch.definition = Some(Pin::new(COMMIT.into(), DIGEST.into()));
+    let mut v = serde_json::to_value(ws).unwrap();
     for at in ["", "/windows/0", "/panes/0", "/members/kabcdefgh", "/members/kabcdefgh/pending", "/members/kabcdefgh/launch",
-        "/members/kabcdefgh/interrupted/0"] {
+        "/members/kabcdefgh/launch/definition", "/members/kabcdefgh/interrupted/0"] {
         v.pointer_mut(at).unwrap().as_object_mut().unwrap().insert("future".into(), json!({"n": [1, "x"]}));
     }
     let ws: Workspace = serde_json::from_value(v.clone()).unwrap();
@@ -334,6 +338,179 @@ fn first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write() {
     assert_eq!(after["members"][KEY], v["members"][KEY]);
     let m: MemberRecord = serde_json::from_value(v["members"][KEY].clone()).unwrap();
     assert_eq!(m, MemberRecord { first_started_at: Some(1_700_000_100), ..full().members[KEY].clone() });
+}
+
+const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+const DIGEST: &str = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+
+#[test] // R§7.4, R§9.3 effect 2, W§7.2: member.launch.job and member.launch.definition = { commit, digest } round-trip through a write
+fn launch_definition_and_job_set_are_written_and_kept_by_a_write() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut ws = full();
+    let m = ws.members.get_mut(KEY).unwrap();
+    m.launch.job = Some("worker".into());
+    m.launch.definition = Some(Pin::new(COMMIT.into(), DIGEST.into()));
+    let v = serde_json::to_value(&ws).unwrap();
+    assert_eq!(v["members"][KEY]["launch"]["job"], json!("worker"));
+    assert_eq!(v["members"][KEY]["launch"]["definition"], json!({"commit": COMMIT, "digest": DIGEST}));
+    put(&store, &v);
+    let read = store.read().unwrap().unwrap();
+    assert_eq!(read.members[KEY].launch.job, Some("worker".to_string()));
+    assert_eq!(read.members[KEY].launch.definition, Some(Pin::new(COMMIT.into(), DIGEST.into())));
+    assert!(read.members[KEY].launch.extra.is_empty()); // typed fields, not unknown keys
+    store.update(S5, &mut |w| { w.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert_eq!(after["members"][KEY], v["members"][KEY]);
+    assert_eq!(serde_json::from_value::<MemberRecord>(v["members"][KEY].clone()).unwrap(), ws.members[KEY]);
+}
+
+#[test] // R§9.3 effect 2 ("absent for no job"), W AU78: a record of an older zygo has neither key; it reads as None and a write adds neither
+fn launch_definition_and_job_absent_read_as_none_and_are_not_written() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let v = serde_json::to_value(full()).unwrap();
+    assert!(v["members"][KEY]["launch"].get("job").is_none());
+    assert!(v["members"][KEY]["launch"].get("definition").is_none());
+    put(&store, &v);
+    let read = store.read().unwrap().unwrap();
+    assert_eq!((read.members[KEY].launch.job.clone(), read.members[KEY].launch.definition.clone()), (None, None));
+    store.update(S5, &mut |w| { w.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert!(after["members"][KEY]["launch"].get("job").is_none());
+    assert!(after["members"][KEY]["launch"].get("definition").is_none());
+    assert_eq!(after["members"][KEY], v["members"][KEY]);
+    let l = Launch::new(Agent::OpenCode);
+    assert_eq!((l.job, l.definition), (None, None));
+    assert_eq!(serde_json::to_value(Launch::new(Agent::OpenCode)).unwrap(),
+        json!({"kind": "opencode", "passthrough": false, "yolo": false, "args": []}));
+}
+
+#[test] // M§6: up copies the loadout pane name into the fresh member record
+fn member_name_fresh_member_takes_the_plan_pane_name() {
+    let pp = |name: Option<&str>| PlanPane { kind: PlanKind::Agent(Agent::ClaudeCode), name: name.map(String::from), cwd: "/srv/app".into(),
+        profile: None, args: vec![], yolo: false, passthrough: false, server: None, compact: None, config_dir: None,
+        job: None, pool: false, definition: None };
+    let lead = zygo_workspace::up::testing::fresh_member(Agent::ClaudeCode, &pp(Some("lead")));
+    assert_eq!(lead.name.as_deref(), Some("lead"));
+    assert_eq!(lead.valid_name(), Some("lead"));
+    assert_eq!(lead.state, MemberState::Running);
+    assert_eq!(serde_json::to_value(&lead).unwrap()["name"], json!("lead"));
+    let none = zygo_workspace::up::testing::fresh_member(Agent::ClaudeCode, &pp(None));
+    assert_eq!((none.name.as_deref(), none.valid_name()), (None, None));
+    assert!(serde_json::to_value(&none).unwrap().get("name").is_none());
+    assert_eq!(MemberRecord::new(Agent::OpenCode).name, None);
+}
+
+#[test] // AU78, M§6: a workspace.json without `name` loads; a write keeps the name and every unknown field
+fn member_name_absent_reads_as_none_and_a_write_keeps_unknown_fields() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let mut v = doc();
+    v["panes"] = json!([{"key": KEY, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "claude-code", "title": "t"}]);
+    v["members"] = json!({KEY: {"state": "running", "launch": {"kind": "claude-code"}, "badge": [1]}});
+    put(&store, &v);
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!((ws.panes[0].name.as_deref(), ws.members[KEY].name.as_deref()), (None, None));
+    store.update(S5, &mut |ws| { ws.phase = Phase::Down; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert!(after["panes"][0].get("name").is_none());
+    assert!(after["members"][KEY].get("name").is_none());
+    store.update(S5, &mut |ws| {
+        ws.panes[0].name = Some("lead".into());
+        ws.members.get_mut(KEY).unwrap().name = Some("lead".into());
+        Ok(())
+    }).unwrap();
+    store.update(S5, &mut |ws| { ws.phase = Phase::Up; Ok(()) }).unwrap();
+    let after: Value = serde_json::from_slice(&raw(&store)).unwrap();
+    assert_eq!((&after["panes"][0]["name"], &after["members"][KEY]["name"]), (&json!("lead"), &json!("lead")));
+    assert_eq!(after["panes"][0]["title"], json!("t"));
+    assert_eq!(after["members"][KEY]["badge"], json!([1]));
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!((ws.panes[0].name.as_deref(), ws.members[KEY].valid_name()), (Some("lead"), Some("lead")));
+}
+
+#[test] // AU84, M§6: a stored name that fails the grammar loads but reads as no name
+fn member_name_that_fails_the_grammar_reads_as_no_name() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    let long_ok = "a".repeat(32);
+    let too_long = "a".repeat(33);
+    for (n, want) in [("lead-2", Some("lead-2")), (long_ok.as_str(), Some(long_ok.as_str())), ("Lead", None), ("9lead", None),
+        ("-lead", None), ("", None), ("lead_2", None), ("all", None), ("cli", None), ("kabcdefgh", None), (too_long.as_str(), None)] {
+        let mut v = doc();
+        v["members"] = json!({KEY: {"state": "running", "launch": {"kind": "claude-code"}, "name": n}});
+        put(&store, &v);
+        let ws = store.read().unwrap().unwrap(); // the file is not refused
+        assert_eq!(ws.members[KEY].name.as_deref(), Some(n), "{n:?}");
+        assert_eq!(ws.members[KEY].valid_name(), want, "{n:?}");
+    }
+}
+
+#[test] // AU84, M§6, ML-3 review round 1: a stored pane name that fails the grammar reads as no name through Pane::valid_name
+fn member_name_pane_valid_name_checks_the_grammar() {
+    for (n, want) in [("lead", Some("lead")), ("a/b", None), ("le\u{7}ad", None), ("lead\n", None), ("all", None)] {
+        assert_eq!(Pane { name: Some(n.into()), ..Pane::default() }.valid_name(), want, "{n:?}");
+    }
+    assert_eq!(Pane::default().valid_name(), None);
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    for n in ["a/b", "le\u{1b}ad"] {
+        let mut v = doc();
+        v["panes"] = json!([{"key": KEY, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "claude-code", "name": n}]);
+        put(&store, &v);
+        let ws = store.read().unwrap().unwrap(); // the file is not refused
+        assert_eq!((ws.panes[0].name.as_deref(), ws.panes[0].valid_name()), (Some(n), None), "{n:?}");
+    }
+}
+
+#[test] // AU84, ML-3 review round 1: a `name` of the wrong JSON type loads as no name; the file and the other fields stay
+fn member_name_of_the_wrong_json_type_reads_as_none() {
+    let t = TempDir::new().unwrap();
+    let store = Store::open(&paths(t.path()), ID);
+    for bad in [json!(5), json!(["a"]), json!({"a": 1}), json!(true), json!(null)] {
+        let mut v = doc();
+        v["panes"] = json!([{"key": KEY, "window": 0, "index": 2, "cwd": "/srv/app", "kind": "claude-code", "name": bad}]);
+        v["members"] = json!({KEY: {"state": "running", "launch": {"kind": "claude-code"}, "name": bad, "badge": [1]}});
+        put(&store, &v);
+        let ws = store.read().unwrap().unwrap();
+        let (pane, m) = (&ws.panes[0], &ws.members[KEY]);
+        assert_eq!((pane.name.as_deref(), pane.valid_name(), m.name.as_deref(), m.valid_name()), (None, None, None, None), "{bad}");
+        assert_eq!((pane.index, pane.kind, m.state), (2, PaneKind::ClaudeCode, MemberState::Running), "{bad}");
+        assert_eq!(m.extra.get("badge"), Some(&json!([1])), "{bad}");
+    }
+}
+
+#[test] // M§6, ML-3 review round 1: the panes[] entry of a loadout up takes the name of an agent pane; a shell pane and an AU98 pane get none
+fn member_name_loadout_pane_entry_takes_the_name_of_an_agent_pane_only() {
+    let pp = |kind: PlanKind, server: Option<&str>| PlanPane { kind, name: Some("lead".into()), cwd: "/srv/app".into(),
+        profile: None, args: vec![], yolo: false, passthrough: false, server: server.map(String::from), compact: None, config_dir: None,
+        job: None, pool: false, definition: None };
+    let entry = |p: &PlanPane| zygo_workspace::up::testing::loadout_pane(p);
+    let agent = entry(&pp(PlanKind::Agent(Agent::ClaudeCode), Some("https://zygo.example")));
+    assert_eq!((agent.kind, agent.name.as_deref(), agent.valid_name()), (PaneKind::ClaudeCode, Some("lead"), Some("lead")));
+    let shell = entry(&pp(PlanKind::Shell, None));
+    assert_eq!((shell.kind, shell.name), (PaneKind::Shell, None));
+    let au98 = entry(&pp(PlanKind::Agent(Agent::OpenCode), Some("https://u:p@zygo.example")));
+    assert_eq!((au98.kind, au98.name), (PaneKind::Shell, None));
+}
+
+#[test] // M§6, D18-D20, ML-3 review round 1: `ws forget-pane` drops the record and clears the name of its pane
+fn member_name_forget_pane_clears_the_pane_name() {
+    let t = TempDir::new().unwrap();
+    let p = paths(t.path());
+    let store = Store::open(&p, ID);
+    let mut v = doc();
+    v["phase"] = json!("down");
+    v["panes"] = json!([{"key": KEY, "window": 0, "index": 0, "cwd": "/srv/app", "kind": "claude-code", "name": "lead"}]);
+    v["members"] = json!({KEY: {"state": "resumable", "launch": {"kind": "claude-code"}, "name": "lead"}});
+    put(&store, &v);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = zygo_workspace::admin::forget_pane(&p, &t.path().join("no-tmux"), Some(ID), t.path(), KEY, &mut out, &mut err);
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
+    let ws = store.read().unwrap().unwrap();
+    assert!(ws.members.is_empty());
+    assert_eq!((ws.panes[0].kind, ws.panes[0].name.as_deref()), (PaneKind::Shell, None));
 }
 
 #[test] // AU29, W§18 #11 first half; W§10: a state that does not parse is not changed

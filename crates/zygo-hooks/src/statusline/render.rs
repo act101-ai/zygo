@@ -81,6 +81,12 @@ pub struct HudData {
     pub trimmed_bytes: Option<u64>,
     /// The workspace phase; only `building`, `draining`, `stopping` and `down` show (AU25).
     pub phase: Option<String>,
+    /// The member name of `view.json`, checked at the read (M§6, M§9a).
+    pub member_name: Option<String>,
+    /// The store's unread count: regular `<ULID>.json` files in `mail/<pane key>/new/` (M§9a).
+    pub unread: Option<usize>,
+    /// Seconds since the start of session run time design T§2.2 (`now.saturating_sub(start)`); `None` with no start.
+    pub run_time: Option<u64>,
     /// The host of `ZYGO_URL`, for the mode `serve <host>` (AU13).
     pub team_host: Option<String>,
 }
@@ -167,6 +173,9 @@ struct Glyphs {
     threshold: &'static str,
     cache: &'static str,
     trimmed: &'static str,
+    mail: &'static str,
+    /// The run time (T§2.4).
+    clock: &'static str,
 }
 
 const STRIPE: &str = "▌";
@@ -190,6 +199,8 @@ const NERD: Glyphs = Glyphs {
     threshold: "⇣",
     cache: "\u{f01bc}",
     trimmed: "✂",
+    mail: "\u{2709}",
+    clock: "\u{f0150}",
 };
 
 const PLAIN: Glyphs = Glyphs {
@@ -207,13 +218,16 @@ const PLAIN: Glyphs = Glyphs {
     threshold: "▼",
     cache: "cache",
     trimmed: "trim",
+    mail: "mail",
+    clock: "run",
 };
 
-const fn table(g: &Glyphs) -> [(&'static str, &'static str); 19] {
+const fn table(g: &Glyphs) -> [(&'static str, &'static str); 21] {
     [
         ("stripe", STRIPE),
         ("logo", g.logo),
         ("reflection", g.reflection),
+        ("mail", g.mail),
         ("branch", g.branch),
         ("github", g.github),
         ("work-graph", g.graph),
@@ -229,12 +243,13 @@ const fn table(g: &Glyphs) -> [(&'static str, &'static str); 19] {
         ("notional", NOTIONAL),
         ("cache", g.cache),
         ("trimmed", g.trimmed),
+        ("clock", g.clock),
         ("truncation", TRUNCATION),
     ]
 }
 
-static NERD_TABLE: [(&str, &str); 19] = table(&NERD);
-static PLAIN_TABLE: [(&str, &str); 19] = table(&PLAIN);
+static NERD_TABLE: [(&str, &str); 21] = table(&NERD);
+static PLAIN_TABLE: [(&str, &str); 21] = table(&PLAIN);
 
 /// The (name, glyph) table of a set, in the order of H§6.5, for the `zygo doctor` icon test line (AU2). A use that
 /// has no glyph in the plain set has an empty glyph there.
@@ -261,6 +276,19 @@ pub fn spend_text(spend_usd: Option<f64>, notional: Option<bool>, total: Option<
         format!("{}{}", amount(usd), if part { "+" } else { "" })
     };
     Some(if notional == Some(true) { format!("{NOTIONAL}{form}") } else { form })
+}
+
+// ---- run time (T§2.3) ----
+
+/// The run-time form of the HUD and of `zygo status` (session run time design T§2.3), `secs` = now − start (the
+/// caller gives 0 when start > now): `<m>m` below 1 hour, `<h>h<mm>m` below 1 day, else `<D>d<hh>h`. Floor at each
+/// unit; the second unit has two digits; no cap.
+pub fn run_time_text(secs: u64) -> String {
+    match secs {
+        0..3600 => format!("{}m", secs / 60),
+        3600..86400 => format!("{}h{:02}m", secs / 3600, secs % 3600 / 60),
+        _ => format!("{}d{:02}h", secs / 86400, secs % 86400 / 3600),
+    }
 }
 
 /// Whole cents first (half up), then the form: `<$0.01`, two decimals below $100.00, whole dollars (half up) from
@@ -304,6 +332,7 @@ struct Sgr {
 
 const EMPTY: Sgr = Sgr { intensity: Intensity::Normal, fg: Fg::Default };
 const DIM: Sgr = Sgr { intensity: Intensity::Dim, fg: Fg::Default };
+const BOLD: Sgr = Sgr { intensity: Intensity::Bold, fg: Fg::Default };
 
 const fn fg(code: u8) -> Sgr {
     Sgr { intensity: Intensity::Normal, fg: Fg::Basic(code) }
@@ -404,6 +433,10 @@ fn emit(mut runs: Vec<Run>, color: bool) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Seg {
     Phase,
+    /// The member name (M§9a).
+    Name,
+    /// The unread mail count (M§9a).
+    Mail,
     Work,
     Worktree,
     Git,
@@ -420,24 +453,34 @@ enum Seg {
     Spend,
     Cache,
     Trimmed,
+    /// The run time (session run time design T§2.4); a local segment.
+    RunTime,
     /// `stale`, `offline`, `suspended` or `ended`; only `stale` can be removed for width.
     Marker,
 }
 
 /// AU9, compact: one space inside a group, two between groups; the first group follows the logo after one space.
 const COMPACT: &[&[Seg]] = &[
-    &[Seg::Phase, Seg::Work, Seg::Worktree],
+    &[Seg::Phase, Seg::Name, Seg::Mail, Seg::Work, Seg::Worktree],
     &[Seg::Model, Seg::Profile],
     &[Seg::Ctx, Seg::Bar, Seg::Threshold],
     &[Seg::Tokens],
     &[Seg::Spend],
     &[Seg::Cache],
     &[Seg::Trimmed],
+    &[Seg::RunTime],
     &[Seg::Marker],
 ];
 /// AU9, verbose: two spaces after the logo or the reflection, three between groups, one inside a group.
-const ROW_1: &[&[Seg]] =
-    &[&[Seg::Phase], &[Seg::Work, Seg::Worktree, Seg::Git], &[Seg::Model], &[Seg::Profile], &[Seg::Mode]];
+const ROW_1: &[&[Seg]] = &[
+    &[Seg::Phase],
+    &[Seg::Name, Seg::Mail],
+    &[Seg::Work, Seg::Worktree, Seg::Git],
+    &[Seg::Model],
+    &[Seg::Profile],
+    &[Seg::Mode],
+    &[Seg::RunTime],
+];
 const ROW_2: &[&[Seg]] = &[
     &[Seg::Ctx, Seg::Bar, Seg::Percent, Seg::Threshold],
     &[Seg::Tokens],
@@ -451,6 +494,7 @@ const ROW_2: &[&[Seg]] = &[
 const COMPACT_DROPS: &[Seg] = &[
     Seg::Trimmed,
     Seg::Cache,
+    Seg::RunTime,
     Seg::Tokens,
     Seg::Threshold,
     Seg::Spend,
@@ -462,7 +506,7 @@ const COMPACT_DROPS: &[Seg] = &[
     Seg::Ctx,
     Seg::Work,
 ];
-const ROW_1_DROPS: &[Seg] = &[Seg::Mode, Seg::Profile, Seg::Effort, Seg::Git, Seg::Model, Seg::Worktree, Seg::Work];
+const ROW_1_DROPS: &[Seg] = &[Seg::Mode, Seg::RunTime, Seg::Profile, Seg::Effort, Seg::Git, Seg::Model, Seg::Worktree, Seg::Work];
 const ROW_2_DROPS: &[Seg] = &[
     Seg::Trimmed,
     Seg::Cache,
@@ -482,6 +526,7 @@ const MODEL_CELLS: usize = 24;
 const PROFILE_CELLS: usize = 16;
 const EFFORT_CELLS: usize = 8;
 const HOST_CELLS: usize = 32;
+const MEMBER_CELLS: usize = 32;
 
 /// Text from outside zygo: escaped (H-C6), then cut (AU19).
 fn name(text: &str, max: usize) -> String {
@@ -536,6 +581,22 @@ impl<'a> Hud<'a> {
             _ => return None,
         };
         Some(vec![run(sgr, format!("ws {phase}"))])
+    }
+
+    /// M§9a: bold, default foreground; hidden while the worktree segment shows the same name (M§13 #11).
+    fn member_name(&self, worktree_shown: bool) -> Option<Vec<Run>> {
+        let n = present(&self.d.member_name)?;
+        if worktree_shown && present(&self.d.worktree) == Some(n) {
+            return None;
+        }
+        Some(vec![run(BOLD, name(n, MEMBER_CELLS))])
+    }
+
+    /// M§9a, M§13 #10: yellow; nothing at zero; `99+` above 99.
+    fn mail(&self) -> Option<Vec<Run>> {
+        let n = self.d.unread.filter(|&n| n >= 1)?;
+        let count = if n > 99 { "99+".to_string() } else { n.to_string() };
+        Some(vec![run(fg(33), iconed(self.g.mail, &count))])
     }
 
     /// OP3, AU11 and the marker table of H§6.2.
@@ -698,6 +759,12 @@ impl<'a> Hud<'a> {
         Some(vec![run(DIM, text)])
     }
 
+    /// T§2.4: `󰅐 <form>` / `run <form>`, dim, the same text in both styles. A local segment (H AU20): `stale` does
+    /// not dim it and `ended` does not drop it.
+    fn run_time(&self) -> Option<Vec<Run>> {
+        Some(vec![run(DIM, iconed(self.g.clock, &run_time_text(self.d.run_time?)))])
+    }
+
     /// AU20: the marker and whether it is `stale`, the one marker that width can remove.
     fn marker(&self) -> Option<(Run, bool)> {
         match self.d.outcome {
@@ -715,6 +782,8 @@ impl<'a> Hud<'a> {
         match seg {
             // Never removed (H§6.7).
             Seg::Phase => self.phase(),
+            Seg::Name => self.member_name(!gone(Seg::Worktree)),
+            Seg::Mail => self.mail(),
             Seg::Marker => self.marker().filter(|(_, stale)| !(*stale && gone(Seg::Marker))).map(|(r, _)| vec![r]),
             _ if gone(seg) => None,
             Seg::Work => self.work(),
@@ -734,6 +803,7 @@ impl<'a> Hud<'a> {
             Seg::Spend => self.spend(),
             Seg::Cache => self.cache(),
             Seg::Trimmed => self.trimmed(),
+            Seg::RunTime => self.run_time(),
         }
     }
 

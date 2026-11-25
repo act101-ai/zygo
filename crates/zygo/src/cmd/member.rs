@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use zygo_core::ids::valid_member_name;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::{write_atomic, SessionDir};
 use zygo_core::session_view::Member;
@@ -47,12 +48,40 @@ pub struct MemberCtx {
     pub store: Store,
     pub launch: zygo_workspace::state::Launch,
     pub hand: Option<HandJoin>,
+    /// The member name of the marker (M§6, M§9a): `--name`, else the kept record's valid name; none for no name.
+    pub name: Option<String>,
 }
 
-/// What the callback of a hand start needs (M3 D1): the launch's own session argument (AU94).
+/// What the callback of a hand start needs (M3 D1): the launch's own session argument (AU94) and the `--name` value
+/// (M§6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandJoin {
     pub own_session: Option<String>,
+    pub name: Option<String>,
+    /// The marker name chosen before the lock (`MemberCtx.name`); the locked write gives the record the same name
+    /// (AU58; ML-7 review round 1, F4).
+    pub marker: Option<String>,
+}
+
+/// The line of a `--name` outside a pane of a workspace (M§6).
+const NAME_NEEDS_PANE: &str = "zygo: --name needs a pane of a workspace; nothing started";
+
+/// The line of a `--name` value that fails `valid_member_name` (M§6).
+fn bad_name_line(n: &str) -> String {
+    format!("zygo: bad --name value `{}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key", zygo_core::esc(n))
+}
+
+/// The line of a `--name` value that the member of pane `key` holds (M§6).
+fn name_taken_line(n: &str, key: &str) -> String {
+    format!("zygo: name {n} belongs to pane {key}; nothing started")
+}
+
+/// The refusal of the start write of a hand start: the reason of the not-saved line (a v1 launch), or the line of a
+/// launch that stops (`StopLaunch`).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HandErr {
+    NotSaved(String),
+    Stop(String),
 }
 
 /// The member wrapper (W§8.2 steps 4, 5 and 7): marks the launch as a member (AU102), pre-assigns a Claude Code
@@ -61,7 +90,7 @@ pub struct HandJoin {
 /// outcome is returned unchanged, so the agent's exit code stays.
 pub fn run_wrapped(adapter: &dyn AgentAdapter, mut opts: LaunchOpts, m: &MemberCtx) -> LaunchOutcome {
     let kind = adapter.agent();
-    opts.member = Some(Member { ws_id: m.ws_id.clone(), pane: m.pane.clone(), ..Default::default() });
+    opts.member = Some(Member { ws_id: m.ws_id.clone(), pane: m.pane.clone(), name: m.name.clone(), ..Default::default() });
     if opts.agent_session.is_none() && kind == Agent::ClaudeCode && !adapter.has_session_arg(&opts.args) {
         opts.agent_session = Some(AgentSession::Preassign(new_session_uuid()));
     }
@@ -218,8 +247,17 @@ impl Callback {
             }),
             Some(h) => match self.hand_write(&start, h) {
                 Ok(ws) => Ok(Some(ws)),
-                Err(reason) => {
-                    print_err(&format!("{NOT_SAVED}{reason}\n"));
+                Err(HandErr::Stop(line)) => {
+                    print_err(&format!("{line}\n"));
+                    return Err(anyhow::Error::new(StopLaunch(line)));
+                }
+                Err(HandErr::NotSaved(reason)) => {
+                    let line = format!("{NOT_SAVED}{reason}");
+                    print_err(&format!("{line}\n"));
+                    // ML-7 review round 1, F1: `--name` asks for a named member or nothing.
+                    if h.name.is_some() {
+                        return Err(anyhow::Error::new(StopLaunch(line)));
+                    }
                     return Err(anyhow::Error::new(NotMember(reason)));
                 }
             },
@@ -277,17 +315,20 @@ impl Callback {
 
     /// The start write of a hand start (W§8.4, M3 D2): [`join`] under `lock` with the 5 s bound of launchers, so the
     /// phase, AU94 and W-C9 are checked again in the same lock. `Err` holds the reason of the not-saved line: the
-    /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`.
-    fn hand_write(&self, start: &Start, h: &HandJoin) -> Result<Workspace, String> {
+    /// refusal of `join`, `no workspace state for <id>`, or `could not write the member record: <error>`. The write is
+    /// [`hand_join`]: a marker name that another key holds under `lock` is `HandErr::Stop` with its line (M§6).
+    fn hand_write(&self, start: &Start, h: &HandJoin) -> Result<Workspace, HandErr> {
         let sessions = self.paths.sessions_dir.clone();
         let live = |r: &MemberRecord| live_session(&sessions, r);
-        let mut refused: Option<String> = None;
+        let mut refused: Option<HandErr> = None;
         let mut previous: Option<MemberRecord> = None;
         let written = self.store.update_existing(WRAPPER_WAIT, &mut |ws| {
             previous = ws.members.get(&self.pane).cloned();
-            join(ws, &self.pane, &self.launch, start, h.own_session.as_deref(), &live).map_err(|reason| {
-                refused = Some(reason.clone());
-                anyhow::anyhow!(reason)
+            hand_join(ws, &self.pane, &self.launch, start, h, &live).map_err(|e| {
+                let (HandErr::Stop(line) | HandErr::NotSaved(line)) = &e;
+                let err = anyhow::anyhow!(line.clone());
+                refused = Some(e);
+                err
             })
         });
         if written.as_ref().is_ok_and(Option::is_some) {
@@ -295,9 +336,9 @@ impl Callback {
         }
         match written {
             Ok(Some(ws)) => Ok(ws),
-            Ok(None) => Err(format!("no workspace state for {}", self.ws_id)),
-            Err(StateError::Refused(_)) if refused.is_some() => Err(refused.unwrap_or_default()),
-            Err(e) => Err(format!("could not write the member record: {}", zygo_core::esc(&e.to_string()))),
+            Ok(None) => Err(HandErr::NotSaved(format!("no workspace state for {}", self.ws_id))),
+            Err(StateError::Refused(_)) if refused.is_some() => Err(refused.unwrap_or(HandErr::NotSaved(String::new()))),
+            Err(e) => Err(HandErr::NotSaved(format!("could not write the member record: {}", zygo_core::esc(&e.to_string())))),
         }
     }
 }
@@ -787,6 +828,45 @@ pub(crate) fn conflict(
     }
 }
 
+/// The key of another member that holds the member name `name` (M§6): the first record of `ws.members` with a key
+/// other than `key` whose stored name passes the grammar (AU84) and equals `name`. The record owns the name, as mail
+/// resolves it and `forget-pane` removes it; a `ws.panes` entry holds none (ML-7 review round 1, F2).
+pub(crate) fn name_holder(ws: &Workspace, key: &str, name: &str) -> Option<String> {
+    ws.members.iter().find(|(k, r)| k.as_str() != key && r.valid_name() == Some(name)).map(|(k, _)| k.clone())
+}
+
+/// The record of `key` that [`join`] keeps: the accepted resume only, whose `agent_session` is `own` and whose kind is
+/// `kind` (review round 2, finding 6(b)).
+pub(crate) fn kept<'a>(ws: &'a Workspace, key: &str, kind: Agent, own: Option<&str>) -> Option<&'a MemberRecord> {
+    let own = own?;
+    ws.members.get(key).filter(|r| r.agent_session.as_deref() == Some(own) && r.launch.kind == kind)
+}
+
+/// The locked write of a hand start (M3 D2, M§6), in the closure of [`Callback::hand_write`]: a marker name
+/// (`h.marker`, chosen before the lock) that another key holds is `HandErr::Stop` with its line; then [`join`], whose
+/// refusal is `HandErr::NotSaved`; then the record's name is the marker name, so the record and the view agree
+/// (AU58; ML-7 review round 1, F4), except that with no `--name` a kept record renamed under the lock keeps its name
+/// (ML-8 review round 1, F1). An `Err` leaves `ws` unchanged.
+pub(crate) fn hand_join(
+    ws: &mut Workspace, key: &str, launch: &zygo_workspace::state::Launch, start: &Start, h: &HandJoin,
+    live: &dyn Fn(&MemberRecord) -> Option<String>,
+) -> Result<(), HandErr> {
+    if let Some(n) = h.marker.as_deref()
+        && let Some(holder) = name_holder(ws, key, n)
+    {
+        return Err(HandErr::Stop(name_taken_line(n, &holder)));
+    }
+    // ML-8 review round 1, F1: with no `--name`, a kept record whose name under the lock is not the marker name was
+    // renamed by `ws name` after the marker was read; the rename wins.
+    let renamed = h.name.is_none()
+        && kept(ws, key, launch.kind, h.own_session.as_deref()).is_some_and(|r| r.valid_name() != h.marker.as_deref());
+    join(ws, key, launch, start, h.own_session.as_deref(), live).map_err(HandErr::NotSaved)?;
+    if !renamed && let Some(rec) = ws.members.get_mut(key) {
+        rec.name = h.marker.clone();
+    }
+    Ok(())
+}
+
 /// The one start write of a hand start (D2, W§8.4), in the closure of the callback's locked write: the phase must be
 /// `up` or `draining`; then [`conflict`]; then the record of `key` is kept for the accepted resume (`own` is its
 /// `agent_session` and its kind is the launch's kind) and replaced by a new one otherwise; then state `running`, and
@@ -804,8 +884,7 @@ pub(crate) fn join(
     if let Some(c) = conflict(ws, key, launch.kind, own, live) {
         return Err(c.reason(key));
     }
-    let keep = own.is_some()
-        && ws.members.get(key).is_some_and(|r| r.agent_session.as_deref() == own && r.launch.kind == launch.kind);
+    let keep = kept(ws, key, launch.kind, own).is_some();
     if !keep {
         ws.members.remove(key);
     }
@@ -836,6 +915,9 @@ pub(crate) fn join(
 pub(crate) enum HandStart {
     /// Not a member: a v1 launch.
     V1,
+    /// Not a member after a printed line (the not-saved line or the AU98 line): a v1 launch, or with `--name` exit 1
+    /// with that one line (ML-7 review round 1, F3).
+    V1Said,
     /// A member with its pane key.
     Member(Box<MemberCtx>),
     /// AU94 or W-C9 refuses: print the line, exit 1, start nothing.
@@ -851,9 +933,10 @@ fn not_saved(reason: &str) {
 /// tmux program and is called only after the `ZYGO_SESSION`, `TMUX`, `TMUX_PANE` and `ZYGO_WORKSPACE` checks (D8). A
 /// failure before the pane is known as a workspace pane is a silent v1 launch, except a state whose `tmux_socket`
 /// fails AU54 or is not the socket of `$TMUX`, and a socket of `$TMUX` that fails AU54 or AU62; later failures print
-/// the not-saved line (paths and ids escaped, C6). Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
+/// the not-saved line (paths and ids escaped, C6) and give `HandStart::V1Said`. Nothing is written before the pane key (W§7.4 step 4, AU79); the record is written by the callback.
 pub(crate) fn hand_start(
-    launch: zygo_workspace::state::Launch, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths, tmux: &dyn Fn() -> PathBuf,
+    launch: zygo_workspace::state::Launch, name: Option<String>, env: &dyn Fn(&str) -> Option<OsString>, paths: &Paths,
+    tmux: &dyn Fn() -> PathBuf,
 ) -> HandStart {
     if !cfg!(unix) || env("ZYGO_SESSION").is_some() {
         return HandStart::V1;
@@ -874,7 +957,7 @@ pub(crate) fn hand_start(
         && let Err(e) = repair::check_saved_socket(ws)
     {
         not_saved(e.to_string().trim_start_matches("zygo: "));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     if let Ok(Some(ws)) = &read
         && ws.tmux_socket.as_deref() != Some(sock.as_path())
@@ -885,35 +968,35 @@ pub(crate) fn hand_start(
             zygo_core::esc(&a),
             zygo_core::esc(&sock.display().to_string())
         ));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     // FIX-30 (AU54): the socket of `$TMUX` before its first use (AU62, then `display` at the next lines). A saved
     // socket reaches here only when it equals `sock` and passed the check above; this one matters for a state that is
     // missing or cannot be read.
     if check_path(&sock).is_err() {
         not_saved(UNSAFE_PATH_MESSAGE.trim_start_matches("zygo: "));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     if let Err(t) = up::socket_is_private(&sock, false) {
         not_saved(&zygo_core::esc(&t));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     let mux = Tmux::new(tmux, Some(sock));
     let Ok(answer) = mux.display(pane, "#{session_name} #{@zygo-ws}") else { return HandStart::V1 };
     let Some((session, _)) = workspace_of(&answer, &ws_var) else { return HandStart::V1 };
     if launch.server.as_deref().is_some_and(args::has_user_info) {
         print_err(&format!("{AU98_LINE}\n"));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     let ws = match read {
         Ok(Some(ws)) => ws,
         Ok(None) => {
             not_saved(&format!("no workspace state for {id}"));
-            return HandStart::V1;
+            return HandStart::V1Said;
         }
         Err(e) => {
             not_saved(&zygo_core::esc(&e.to_string()));
-            return HandStart::V1;
+            return HandStart::V1Said;
         }
     };
     if ws.tmux_session != session {
@@ -922,20 +1005,36 @@ pub(crate) fn hand_start(
             zygo_core::esc(&ws.tmux_session),
             zygo_core::esc(&session)
         ));
-        return HandStart::V1;
+        return HandStart::V1Said;
     }
     let key = match snapshot::assign_key(&store, &mux, pane) {
         Ok(k) => k,
         Err(e) => {
             not_saved(&zygo_core::esc(&e.to_string()));
-            return HandStart::V1;
+            return HandStart::V1Said;
         }
     };
     let own = own_session(launch.kind, &launch.args);
     if let Some(c) = conflict(&ws, &key, launch.kind, own.as_deref(), &|r| live_session(&paths.sessions_dir, r)) {
         return HandStart::Refused(c.line(&key));
     }
-    HandStart::Member(Box::new(MemberCtx { ws_id: id.to_string(), pane: key, store, launch, hand: Some(HandJoin { own_session: own }) }))
+    // M§6: a name that another key holds refuses after the W§8.4 checks and `conflict`.
+    if let Some(n) = name.as_deref()
+        && let Some(holder) = name_holder(&ws, &key, n)
+    {
+        return HandStart::Refused(name_taken_line(n, &holder));
+    }
+    // M§9a: the marker name is `--name`, else the name of the record that `join` keeps.
+    let marker =
+        name.clone().or_else(|| kept(&ws, &key, launch.kind, own.as_deref()).and_then(|r| r.valid_name().map(String::from)));
+    HandStart::Member(Box::new(MemberCtx {
+        ws_id: id.to_string(),
+        pane: key,
+        store,
+        launch,
+        hand: Some(HandJoin { own_session: own, name, marker: marker.clone() }),
+        name: marker,
+    }))
 }
 
 /// `zygo claude` and `zygo opencode` (W§8.4): the hand-start checks, then a v1 launch, the member wrapper, or the
@@ -944,10 +1043,25 @@ pub(crate) fn hand_start(
 /// this and makes no check when `ZYGO_WORKSPACE` is set, so a member's binary is never replaced before the read.
 pub(crate) fn launch_hand(
     adapter: &dyn Fn(PathBuf) -> Box<dyn AgentAdapter>, opts: LaunchOpts, launch: zygo_workspace::state::Launch,
+    name: Option<String>,
 ) -> i32 {
+    // M§6: the `--name` grammar first, before any tmux call or write.
+    if let Some(n) = name.as_deref()
+        && !valid_member_name(n)
+    {
+        print_err(&format!("{}\n", bad_name_line(n)));
+        return 1;
+    }
     let paths = opts.paths.clone();
-    match hand_start(launch, &|k| std::env::var_os(k), &paths, &tmux_program) {
-        HandStart::V1 => Launcher::run(adapter(std::env::current_exe().unwrap_or_default()).as_ref(), opts).code,
+    let named = name.is_some();
+    match hand_start(launch, name, &|k| std::env::var_os(k), &paths, &tmux_program) {
+        // M§6: `--name` asks for a named member or nothing.
+        HandStart::V1 if named => {
+            print_err(&format!("{NAME_NEEDS_PANE}\n"));
+            1
+        }
+        HandStart::V1Said if named => 1,
+        HandStart::V1 | HandStart::V1Said => Launcher::run(adapter(std::env::current_exe().unwrap_or_default()).as_ref(), opts).code,
         HandStart::Member(m) => {
             let zygo = zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize));
             run_wrapped(adapter(zygo).as_ref(), opts, &m).code
@@ -967,7 +1081,7 @@ mod tests {
     use zygo_core::Agent;
     use zygo_launch::env::Env;
     use zygo_launch::launcher::LaunchOutcome;
-    use zygo_workspace::state::{CompactOverride, Launch, MemberRecord, MemberState, Pending, Phase, Subagent};
+    use zygo_workspace::state::{CompactOverride, Launch, MemberRecord, MemberState, Pane, Pending, Phase, Subagent};
 
     fn out(code: i32, signal: Option<i32>, received: bool, ran: u64) -> LaunchOutcome {
         LaunchOutcome { code, signal, spawned: true, received, ran: Some(Duration::from_secs(ran)) }
@@ -1312,6 +1426,83 @@ mod tests {
         r.agent_session = agent.map(String::from);
         r.zygo_session = Some("01JZZZZZZZZZZZZZZZZZZZZZZZ".into());
         r
+    }
+
+    #[test] // M§6, AU84: a name held by another key's record; its own key, a bad stored name and a pane entry with no
+    // record hold none (ML-7 review round 1, F2: the owner of a name is the record, as mail reads it)
+    fn name_holder_reads_other_keys_by_au84() {
+        let mut a = rec(MemberState::Ended, None);
+        a.name = Some("elena".into());
+        let mut b = rec(MemberState::Ended, None);
+        b.name = Some("x_y".into());
+        let mut w = ws_with(&[("kaaaaaaaa", a), ("kbbbbbbbb", b)]);
+        w.panes.push(Pane { key: "kcccccccc".into(), name: Some("ops".into()), ..Default::default() });
+        assert_eq!(name_holder(&w, "kbbbbbbbb", "elena"), Some("kaaaaaaaa".to_string()));
+        assert_eq!(name_holder(&w, "kaaaaaaaa", "elena"), None);
+        assert_eq!(name_holder(&w, "kaaaaaaaa", "x_y"), None);
+        assert_eq!(name_holder(&w, "kaaaaaaaa", "ops"), None);
+        assert_eq!(name_holder(&w, "kcccccccc", "ops"), None);
+    }
+
+    #[test] // ML-7 review round 1, F4 (AU58): the locked write gives the record the marker name chosen before the lock
+    fn hand_join_writes_the_marker_member_name_to_a_replaced_record() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let l = Launch::new(Agent::ClaudeCode);
+        let h = |name: Option<&str>, marker: Option<&str>| HandJoin {
+            own_session: None,
+            name: name.map(String::from),
+            marker: marker.map(String::from),
+        };
+        // `kept` is none: `join` makes a new record, which gets the marker name.
+        let mut w = ws_with(&[]);
+        hand_join(&mut w, k, &l, &start(), &h(None, Some("elena")), &none).unwrap();
+        assert_eq!(w.members[k].name.as_deref(), Some("elena"));
+        // A marker with no name: the record has none, also when the replaced record had one.
+        let mut old = rec(MemberState::Ended, None);
+        old.name = Some("ops".into());
+        let mut w = ws_with(&[(k, old)]);
+        hand_join(&mut w, k, &l, &start(), &h(None, None), &none).unwrap();
+        assert_eq!(w.members[k].name, None);
+        // A marker name another key holds under the lock stops the launch and changes nothing.
+        let mut other = rec(MemberState::Ended, None);
+        other.name = Some("elena".into());
+        let mut w = ws_with(&[("kbbbbbbbb", other)]);
+        let before = w.clone();
+        let e = hand_join(&mut w, k, &l, &start(), &h(None, Some("elena")), &none).unwrap_err();
+        assert_eq!(e, HandErr::Stop("zygo: name elena belongs to pane kbbbbbbbb; nothing started".into()));
+        assert_eq!(w, before);
+    }
+
+    #[test] // ML-8 review round 1, F1 (M§6): a `ws name` between the marker read and the lock wins over the marker
+    fn hand_join_keeps_a_rename_made_after_the_marker_was_read() {
+        let k = "kaaaaaaaa";
+        let none = |_: &MemberRecord| None;
+        let l = Launch::new(Agent::ClaudeCode);
+        let mut kept_rec = rec(MemberState::Resumable, Some("abc"));
+        kept_rec.name = Some("elena".into());
+        let h = |name: Option<&str>| HandJoin {
+            own_session: Some("abc".into()),
+            name: name.map(String::from),
+            marker: Some(name.unwrap_or("old").into()),
+        };
+        let mut w = ws_with(&[(k, kept_rec.clone())]);
+        hand_join(&mut w, k, &l, &start(), &h(None), &none).unwrap();
+        assert_eq!(w.members[k].name.as_deref(), Some("elena"));
+        // With `--name`, the typed name is written, as before.
+        let mut w = ws_with(&[(k, kept_rec)]);
+        hand_join(&mut w, k, &l, &start(), &h(Some("ops")), &none).unwrap();
+        assert_eq!(w.members[k].name.as_deref(), Some("ops"));
+    }
+
+    #[test] // the record that `join` keeps: the accepted resume only (review round 2, finding 6(b))
+    fn kept_is_the_record_of_its_own_resume_only() {
+        let w = ws_with(&[("kaaaaaaaa", rec(MemberState::Resumable, Some("abc")))]);
+        assert!(kept(&w, "kaaaaaaaa", Agent::ClaudeCode, Some("abc")).is_some());
+        assert!(kept(&w, "kaaaaaaaa", Agent::ClaudeCode, None).is_none());
+        assert!(kept(&w, "kaaaaaaaa", Agent::ClaudeCode, Some("xyz")).is_none());
+        assert!(kept(&w, "kaaaaaaaa", Agent::OpenCode, Some("abc")).is_none());
+        assert!(kept(&w, "kbbbbbbbb", Agent::ClaudeCode, Some("abc")).is_none());
     }
 
     #[test]

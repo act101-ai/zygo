@@ -292,6 +292,10 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
             line(io.err, "zygo decision: docs/decisions is not a directory");
             return 1;
         }
+        Err(DirError::Unreadable) => {
+            line(io.err, "zygo decision: cannot read docs/decisions");
+            return 1;
+        }
         Err(DirError::TooMany) => {
             line(io.err, "zygo decision: more than 10,000 files in docs/decisions/");
             return 1;

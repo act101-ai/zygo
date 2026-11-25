@@ -28,3 +28,4 @@ libc.workspace = true
 [dev-dependencies]
 zygo-hooks = { path = ".", features = ["test-hooks"] }
 tempfile.workspace = true
+rusqlite.workspace = true

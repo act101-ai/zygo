@@ -222,10 +222,11 @@ Why: a resume that read the default branch again would give a running conversati
 - **Not a layer.** The approved repository profiles are added to `config.profile` after the merge of the layers, by a new step (`Merged::with_definition`), with the source `workspace-files` (R§10), which is not a value of `Layer` (`crates/zygo-config/src/layers.rs:16-24`): `Layer::Repository` stays the name of `.zygo.toml`. `Merged::apply_profile` (`layers.rs:669-683`) is not changed: a repository profile has no `features`, so it adds no key to layer 5. `load` (`layers.rs:424-532`) does not read `.zygo/`: the hooks call it (`crates/zygo-work/src/hooks.rs:53`, `crates/zygo-mcp/src/tool.rs:60`), and R-C8 keeps their git calls as they are.
 - **§11.2 selection.** By `--profile <name>`, by `[user] default_profile` (`zygo profile use <name>` can name a repository profile), or by a member's `profile` (R§6.2). The repository cannot set a default profile.
 - **§11.3 validation.** The same rules, by the proxy that will serve: each override key is a bundle role; each model is in the catalog and servable on the agent's dialect; each disabled role is a bundle role, listed once, and not `main_role`. In serve mode the server's catalog decides (§6.1). An invalid profile: the existing line, and the launch goes on without the profile (§11.3; `crates/zygo-launch/src/launcher.rs:331-332`).
-- **When the launcher reads.** Only when the requested profile name is in neither the user nor the team config (`launcher.rs:326-328`), so a launch with no repository profile makes no extra git call. A member with a pin reads its pin (R§7.4). Any other launch reads the default branch. Lines of the default-branch read, each once, in place of `profile <n> not found; launching without it`:
+- **When the launcher reads.** Only when the requested profile name is in neither the user nor the team config (`launcher.rs:326-328`), so a launch with no repository profile makes no extra git call. A member with a pin reads its pin (R§7.4). Any other launch reads the default branch. Lines of the default-branch read, each once, in place of `zygo: profile <n> not found; launching without it`:
   - not approved: `zygo: profile <n> is in this repository's workspace files, which are not approved on this machine (digest <12>); launching without it; see zygo workspace approve`;
-  - invalid: `zygo: profile <n>: this repository's workspace files are invalid (<why>); launching without it`.
-- **Passthrough.** A launch in passthrough sends no role names (§12.3), so a profile, from any source, does not apply to it (R§9.5).
+  - invalid: `zygo: profile <n>: this repository's workspace files are invalid (<why>); launching without it`;
+  - not read (R§6.1): `zygo: profile <n>: this repository's workspace files were not read (<why>); launching without it`.
+- **Passthrough.** A launch in passthrough sends no role names (§12.3), so a profile, from any source, does not apply to it (R§9.5). A requested profile name gives `zygo: profile <n> does not apply in passthrough`, nothing is read, and the launch goes on.
 - **§11.4 effects.** No change. The usage row records the profile name.
 
 ## 9. Members (P3-12)
@@ -238,7 +239,7 @@ Why: a resume that read the default branch again would give a running conversati
 - Layout: `layout` when set; else `main-vertical` when there is an orchestrator, else `tiled`.
 - Panes: the orchestrator first, then the other members in byte order of name. Each pane is one `[[loadout.repository.window.pane]]` entry with `name`, `kind`, `job`, `profile`, `pool` and `cwd` from the member, and every other W§11 field unset, so it takes the default of `zygo claude` or `zygo opencode` (AU45).
 
-The W§11 pane `name` key is owned by P3-1 (M§6); this spec uses it and does not define it **(lead: ruling 7)**. This spec adds two pane keys, in user loadouts too: `job` and `pool`. `zygo config check` (`crates/zygo-config/src/check.rs`) adds: `job` is `orchestrator` or `worker`; at most one orchestrator per loadout; `pool` only with `kind = "claude-code"`; `pool` and `config_dir` not both set.
+The W§11 pane `name` key is owned by P3-1 (M§6); this spec uses it and does not define it **(lead: ruling 7)**. This spec adds two pane keys, in user loadouts too: `job` and `pool`. `zygo config check` (`crates/zygo-config/src/check.rs`) adds five rules: `job` is `orchestrator` or `worker`; at most one orchestrator per loadout; `pool` only with `kind = "claude-code"`; `pool` and `config_dir` not both set; `job` only on an agent pane, `kind = "claude-code"` or `"opencode"` **(operator, 2026-11-24)**. **(author)** A pane with no `kind` is not an agent pane: a user loadout has no default kind, and `config check` refuses the missing `kind` as well. A `job` that the fifth rule refuses does not count toward the orchestrator limit, so a shell pane cannot take the orchestrator slot.
 
 `cwd` resolves as W§11 does (`crates/zygo-workspace/src/loadout.rs:116-128`): `branch:<name>` to the worktree that has the branch checked out, else the main worktree with one warning; a relative path under the main worktree. R§6.2 refuses an absolute path, `~` and `..`, so a repository file cannot name a folder outside the repository by its text. A link inside the checkout can still lead out; that is accepted, because the checkout is the user's own and an agent can change its folder anyway.
 
@@ -267,7 +268,7 @@ Why a fixed sentence and not a repository prompt: it makes `job` mean something 
 
 **(operator)** `[limits]` in user config sets a maximum member count that a repository file cannot exceed. **(author)** The rule:
 
-- `[limits] max_members`, an integer 1-32, default 8. Set by the built-in, team and user layers.
+- `[limits] max_members`, an integer 1-32, default 8. Set by the built-in, team and user layers. When `zygo up` cannot read the team layer, or the team-merged config does not load, it prints `zygo up: team config not read (<why>); [limits] max_members from user config` and goes on with the user config only.
 - `.zygo.toml` cannot set it. The repository-file load removes `limits.max_members` and prints `.zygo.toml: limits.max_members ignored; only user or team config may set it`, as it does for `guards.min_level` (`layers.rs:505-509`). Why not the "lower value" rule of the turn cap: a repository cannot raise the maximum by construction, a lower value from it has no use, and one rule needs fewer tests.
 - `zygo up` counts the agent panes of the repository loadout. Above `max_members`: exit 1 before any write, `zygo: this repository's workspace files start <n> agents; [limits] max_members is <m>; nothing started`.
 - It applies to the repository loadout only. A user loadout is the user's own.
@@ -314,7 +315,7 @@ pool = "~/.claude-interns"   # `~` expanded as --config-dir does; must be absolu
 | Entry point | Behavior |
 |---|---|
 | `zygo up` (W§8.1 step 7, a loadout plan: `--reset`, no state, or no pane) | The loadout: `--loadout <l>`; else `[workspace] default_loadout` when the user config file sets it; else `repository` when the default branch has `.zygo/workspace.toml`; else `solo`. A `repository` plan is made after step 3, when the checkout is known, and before step 8; each of its panes gets the pin (R§7.4). Chosen by the default and not approved, invalid or unread: plan `solo` and one line, `zygo: this repository's workspace files (<full ref>, digest <12>) are not approved on this machine; nothing from them was applied; see zygo workspace approve` (or `… are invalid (<why>) …`). Chosen by `--loadout repository`: the same cases exit 1 with the same line and start nothing; absent: exit 1, `zygo: this repository has no workspace files at <full ref>`. Then R§9.4 (the repository loadout only) and R§9.5 (any loadout plan with a pool member), all before any write. A user `[loadout.repository]` is the user's loadout; the repository one is then not used (user first, as for profiles). |
-| `zygo up` (a restore), `zygo up --all` | No default-branch read (AU10). Each resumed member uses its saved launch and its pin (R§7.4). |
+| `zygo up` (a restore), `zygo up --all` | No default-branch read (AU10). Each resumed member uses its saved launch and its pin (R§7.4). A workspace that `up --all` builds from a loadout takes the user `[workspace] default_loadout`, else `solo`; when that is `repository` and the user config has no `[loadout.repository]`, it plans `solo` and prints `zygo: up --all reads no repository workspace files; using solo`. |
 | Repair of a dead build (AU67) whose `loadout` is `repository` | Reads nothing. AU67 works from `panes[]` and the member records that step 8 wrote from the checked read; it does not resolve the loadout again. |
 | `zygo ws run` (start or resume of one pane) | The saved launch holds the profile name, the job, the config directory, `passthrough` and the pin. A repository profile resolves by the pinned read (R§7.4). |
 | `zygo claude`, `zygo opencode` (not a member) | R§8: a default-branch read only when the requested profile is not in user or team config. |
@@ -343,7 +344,7 @@ Two sessions at once: two `zygo workspace approve` runs take the approvals lock 
 | Approval write fails | Exit 1; the temp file is removed; nothing is stored. |
 | The pool directory is gone at a resume | The existing `--config-dir` rule (`claude.rs:80-82`): the launch fails and the pane opens a shell with the W§8.2 line. |
 | A pool directory's settings set a credential key | That member's launch exits 2 (§8.4); the other members start. |
-| `up` crashes during a repository build | AU67 repair from the saved records; no new read. |
+| `up` crashes during a repository build | AU67 repair from the saved records reads nothing. When the repair takes the plan back (no pane left), the loadout plan that follows is an R§10 `zygo up` choice and reads once; a kept member keeps its pin (R§7.4). |
 
 ## 12. Owners of state
 
@@ -485,3 +486,11 @@ Each check is a test in temp directories with temp git repositories (a bare "ori
 - **PR1** (live check by the operator, recorded in `docs/live-checks.md`; never in CI, never by an agent: owner login risk) On the pinned Claude Code, two pool members of one workspace, on two pool directories each logged in to another account, run in passthrough and each sends its own directory's login. If it fails, the pool does not give separate accounts, and the operator decides again on R§9.5.
 - **PR2** (live check by the operator) With `CLAUDE_CONFIG_DIR` set to a pool directory, zygo's `--settings` hooks, the status line and `--plugin-dir` act as with the default directory.
 - **PR3** (CI) `toml` 1.2.1 (`Cargo.toml:66`) ends a parse of 64 KiB of nested arrays and nested inline tables with an error or a value, and no stack overflow.
+
+## Change log
+
+- 2026-11-24 · R§9.1 · operator · config check refuses job on a non-agent pane, so a shell pane cannot take the orchestrator slot
+- 2026-11-25 · R§8 · author's call (node WD-13) · a named profile that does not apply is reported, as R§9.5 does for up; the not-read line of the launcher's read is listed with the other two; the not-found line is written in full
+- 2026-11-25 · R§11 · author's call (node WD-11) · the row "`up` crashes during a repository build" said "no new read", which disagreed with the R§10 `zygo up` row when the repair takes the plan back
+- 2026-11-25 · R§9.4 · author's call (node WD-11) · zygo up needs no team server; refusing would block restore and up --all offline
+- 2026-11-25 · R§10 · author's call (node WD-11) · the `up --all` row did not say which loadout a workspace with no pane gets; a user default `repository` with no read was an unknown loadout and the workspace was skipped

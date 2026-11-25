@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -22,6 +22,7 @@ use zygo_core::paths::Paths;
 use zygo_core::Agent;
 use zygo_workspace::admin::{self, ListRow, ListState};
 use zygo_workspace::identity::workspace_id;
+use zygo_workspace::mail::{mail_dir, store as mail_store, Message};
 use zygo_workspace::mux::testing::{require_tmux, PrivateServer};
 use zygo_workspace::mux::{HookScope, Multiplexer, MuxError, NewSession, NewWindow, SessionAnswer, Split};
 use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
@@ -230,6 +231,14 @@ fn result(p: &Paths, id: &str, key: &str) -> PathBuf {
     d
 }
 
+/// Delivers `n` messages to `mail/<key>/new` of workspace `id` (M§5 send).
+fn mail_to(p: &Paths, id: &str, key: &str, n: usize) {
+    for i in 0..n {
+        let m = Message::new("cli", "x", &format!("s{i}"), "b", SystemTime::now()).unwrap();
+        mail_store::deliver(&mail_dir(p, id), key, "x", &m, 500).unwrap();
+    }
+}
+
 fn repair_line(id: &str, reason: &str) -> String {
     format!("zygo: workspace {id} not forgotten: {reason}; its state cannot be read, so repair it with zygo up --reset in its checkout\n")
 }
@@ -318,6 +327,8 @@ impl Multiplexer for ListFake {
     fn kill_session(&self, _: &str) -> Result<(), MuxError> { self.other() }
     fn attach(&self, _: &str) -> Result<i32, MuxError> { self.other() }
     fn switch_client(&self, _: &str) -> Result<(), MuxError> { self.other() }
+    fn send_keys_literal(&self, _: &str, _: &str) -> Result<(), MuxError> { self.other() }
+    fn send_enter(&self, _: &str) -> Result<(), MuxError> { self.other() }
 }
 
 /// The rows of `admin::testing::list_by` with the fakes (one per socket) on one shared virtual clock, the calls in
@@ -345,29 +356,30 @@ fn states(rows: &[ListRow]) -> Vec<(String, ListState)> { rows.iter().map(|r| (r
 #[test] // D10: the `ls` line and the state words
 fn list_display() {
     let _s = serial();
-    let row = |name: &str, root: Option<&str>, state, agents, clients| ListRow {
+    let row = |name: &str, root: Option<&str>, state, agents, clients, unread: Option<usize>| ListRow {
         id: "0123456789abcdef".into(),
         name: name.into(),
         main_root: root.map(PathBuf::from),
         state,
         agents,
         clients,
+        unread,
     };
     assert_eq!(
-        row("app", Some("/srv/app"), ListState::Up, Some((1, 2, 0)), Some(1)).to_string(),
-        "app  /srv/app  up  agents 1/2/0  clients 1"
+        row("app", Some("/srv/app"), ListState::Up, Some((1, 2, 0)), Some(1), Some(3)).to_string(),
+        "app  /srv/app  up  agents 1/2/0  clients 1  unread 3"
     );
     assert_eq!(
-        row("app", Some("/srv/a\nb"), ListState::StoppedTmuxGone, Some((0, 0, 3)), None).to_string(),
-        "app  /srv/a\\nb  stopped (tmux gone)  agents 0/0/3  clients -"
+        row("app", Some("/srv/a\nb"), ListState::StoppedTmuxGone, Some((0, 0, 3)), None, Some(0)).to_string(),
+        "app  /srv/a\\nb  stopped (tmux gone)  agents 0/0/3  clients -  unread 0"
     );
     assert_eq!(
-        row("0123456789abcdef", None, ListState::Unreadable, None, None).to_string(),
-        "0123456789abcdef  -  unreadable  agents -  clients -"
+        row("0123456789abcdef", None, ListState::Unreadable, None, None, None).to_string(),
+        "0123456789abcdef  -  unreadable  agents -  clients -  unread -"
     );
     assert_eq!(
-        row("app", Some("/srv/app"), ListState::Unknown("tmux timed out"), Some((0, 1, 0)), None).to_string(),
-        "app  /srv/app  unknown (tmux timed out)  agents 0/1/0  clients -"
+        row("app", Some("/srv/app"), ListState::Unknown("tmux timed out"), Some((0, 1, 0)), None, None).to_string(),
+        "app  /srv/app  unknown (tmux timed out)  agents 0/1/0  clients -  unread -"
     );
     for (s, w) in [
         (ListState::Down, "down"),
@@ -1747,4 +1759,375 @@ fn au54_forget_pane_with_a_quoted_saved_socket_removes_the_record_and_the_snapsh
     assert!(lines[0].ends_with(&format!("snapshot: {}", AU54.trim_start_matches("zygo: "))), "{lines:?}");
     assert!(!store.dir().join("snapshot.pending").exists());
     assert!(tmux_log(t).is_empty(), "{:?}", tmux_log(t));
+}
+
+// ---- ML-8: `zygo ws name` ----
+
+fn name_run(p: &Paths, tmux: &Path, ws: Option<&str>, cwd: &Path, key: &str, name: &str) -> (i32, String, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = admin::rename_member(p, tmux, ws, cwd, key, name, &mut out, &mut err);
+    (code, text(out), text(err))
+}
+
+/// Workspace `app` (id `ID`, phase down): `kaaaaaaaa` named `old` with a pane, `kbbbbbbbb` named `bob` with no
+/// pane, a shell pane `kcccccccc` with no record; record and pane of `kaaaaaaaa` carry an unknown field (AU78).
+fn name_setup(t: &Path, id: &str, root: &Path) -> (Paths, PathBuf, Store) {
+    let p = paths(t);
+    let tmux = answer_tmux(t);
+    let store = ws_state(&p, id, "app", root, |ws| {
+        let mut a = member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1"));
+        a.name = Some("old".into());
+        a.extra.insert("future".into(), json!(1));
+        let mut b = member(Agent::ClaudeCode, MemberState::Resumable, Some("c-2"));
+        b.name = Some("bob".into());
+        ws.members.insert("kaaaaaaaa".into(), a);
+        ws.members.insert("kbbbbbbbb".into(), b);
+        let mut pa = pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, root);
+        pa.name = Some("old".into());
+        pa.extra.insert("future".into(), json!(2));
+        ws.panes = vec![pa, pane("kcccccccc", 0, 1, PaneKind::Shell, root)];
+    });
+    (p, tmux, store)
+}
+
+#[test] // M§6: the record and the panes[] entry in one write; mail stays in mail/<key>/; W§7.3 pending check; AU78
+fn rename_member_changes_the_record_and_the_pane_in_one_write() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let inbox = mail_dir(&p, ID).join("kaaaaaaaa/new");
+    fs::create_dir_all(&inbox).unwrap();
+    fs::write(inbox.join("m1.json"), "{}").unwrap();
+    fs::write(store.dir().join("snapshot.pending"), "").unwrap();
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kaaaaaaaa", "elena"),
+        (0, "zygo: pane kaaaaaaaa of app is now named elena\n".to_string(), String::new())
+    );
+    let ws = store.read().unwrap().unwrap();
+    let a = &ws.members["kaaaaaaaa"];
+    assert_eq!((a.name.as_deref(), a.extra.get("future")), (Some("elena"), Some(&json!(1))));
+    assert_eq!((ws.panes[0].name.as_deref(), ws.panes[0].extra.get("future")), (Some("elena"), Some(&json!(2))));
+    assert_eq!(ws.members["kbbbbbbbb"].name.as_deref(), Some("bob"));
+    assert!(inbox.join("m1.json").exists());
+    assert!(!mail_dir(&p, ID).join("elena").exists());
+    assert!(!store.dir().join("snapshot.pending").exists()); // W§7.3 check ran
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kbbbbbbbb", "ops"),
+        (0, "zygo: pane kbbbbbbbb of app is now named ops\n".to_string(), String::new())
+    ); // a member with no panes[] entry: the record only
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!(ws.members["kbbbbbbbb"].name.as_deref(), Some("ops"));
+    assert_eq!((ws.panes.len(), ws.panes[1].name.as_deref()), (2, None));
+}
+
+#[test] // W§7.3, graph review focus 57: the write waits for `lock`
+#[ignore = "timing: waits on a held state lock for 300 ms"]
+fn rename_member_waits_for_the_state_lock() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let held = hold(store.dir().join("lock"));
+    let t0 = Instant::now();
+    let h = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        drop(held);
+    });
+    assert_eq!(name_run(&p, &tmux, Some("app"), Path::new(""), "kaaaaaaaa", "elena").0, 0);
+    assert!(t0.elapsed() >= Duration::from_millis(300));
+    h.join().unwrap();
+    assert_eq!(store.read().unwrap().unwrap().members["kaaaaaaaa"].name.as_deref(), Some("elena"));
+}
+
+#[test] // M§6, AU84, graph review focus 56: bad key, bad or reserved name, a held name: exit 1, one line, no change
+fn rename_member_refuses_bad_values_and_changes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, _store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let before = state_bytes(&p, ID);
+    let bad = |n: &str| format!("zygo: bad name `{n}`: use ^[a-z][a-z0-9-]{{0,31}}$, not all, cli, zygo or a pane key\n");
+    let long = "a".repeat(33);
+    for (key, name, line) in [
+        ("k$", "elena", "zygo: invalid pane key k$\n".to_string()),
+        ("kaaaaaaaa", "Elena", bad("Elena")),
+        ("kaaaaaaaa", "", bad("")),
+        ("kaaaaaaaa", "9lives", bad("9lives")),
+        ("kaaaaaaaa", long.as_str(), bad(&long)),
+        ("kaaaaaaaa", "a\u{1b}", bad("a\\u{1b}")),
+        ("kaaaaaaaa", "all", bad("all")),
+        ("kaaaaaaaa", "cli", bad("cli")),
+        ("kaaaaaaaa", "zygo", bad("zygo")),
+        ("kaaaaaaaa", "kbbbbbbbb", bad("kbbbbbbbb")),
+        ("kaaaaaaaa", "bob", "zygo: name bob belongs to pane kbbbbbbbb; nothing changed\n".to_string()),
+    ] {
+        assert_eq!(name_run(&p, &tmux, Some("app"), Path::new(""), key, name), (1, String::new(), line), "{key} {name:?}");
+        assert_eq!(state_bytes(&p, ID), before, "{key} {name:?}");
+    }
+}
+
+#[test] // M§6: a key with no member record, a panes[] entry with no record, an unknown workspace: exit 1, no change
+fn rename_member_unknown_key_or_workspace_exits_1() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, _store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let before = state_bytes(&p, ID);
+    for (ws, key, line) in [
+        ("app", "kzzzzzzzz", "zygo: app has no member record for pane kzzzzzzzz\n"),
+        ("app", "kcccccccc", "zygo: app has no member record for pane kcccccccc\n"),
+        ("nosuch", "kaaaaaaaa", "zygo: no workspace named nosuch\n"),
+    ] {
+        assert_eq!(name_run(&p, &tmux, Some(ws), Path::new(""), key, "elena"), (1, String::new(), line.to_string()), "{ws} {key}");
+        assert_eq!(state_bytes(&p, ID), before);
+    }
+}
+
+#[test] // M§6, W§12: no --workspace: the workspace of the checkout of cwd
+#[ignore = "timing: git under the fixed 5 s forget-pane git bound"]
+fn rename_member_by_the_checkout_folder() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let r = canon(&repo(t, "app"));
+    let id = workspace_id(&r.join(".git"));
+    let (p, tmux, store) = name_setup(t, &id, &r);
+    assert_eq!(
+        name_run(&p, &tmux, None, &r, "kaaaaaaaa", "elena"),
+        (0, "zygo: pane kaaaaaaaa of app is now named elena\n".to_string(), String::new())
+    );
+    assert_eq!(store.read().unwrap().unwrap().members["kaaaaaaaa"].name.as_deref(), Some("elena"));
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    assert_eq!(
+        name_run(&p, &tmux, None, &plain, "kaaaaaaaa", "ops"),
+        (1, String::new(), "zygo: no workspace for this folder; run in the workspace's checkout or pass --workspace\n".to_string())
+    );
+}
+
+#[test] // ML-8 review round 1, F6: a shell pane has no name; the record of its key is renamed, the pane is not
+fn rename_member_leaves_a_shell_pane_unnamed() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    store
+        .update(S5, &mut |ws| {
+            ws.members.insert("kcccccccc".into(), member(Agent::ClaudeCode, MemberState::Ended, None));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kcccccccc", "ops"),
+        (0, "zygo: pane kcccccccc of app is now named ops\n".to_string(), String::new())
+    );
+    let ws = store.read().unwrap().unwrap();
+    assert_eq!(ws.members["kcccccccc"].name.as_deref(), Some("ops"));
+    assert_eq!((ws.panes[1].key.as_str(), ws.panes[1].kind, ws.panes[1].name.as_deref()), ("kcccccccc", PaneKind::Shell, None));
+}
+
+#[test] // ML-8 review round 1, F3 (AU84): a new state over 1 MiB is `StateError::Invalid`: exit 1, one line, no change
+fn rename_member_reports_an_invalid_state() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let (p, tmux, store) = name_setup(td.path(), ID, &td.path().join("r/app"));
+    let max = 1024 * 1024;
+    let pad = |n: usize| {
+        store
+            .update(S5, &mut |ws| {
+                ws.members.get_mut("kaaaaaaaa").unwrap().extra.insert("pad".into(), json!("x".repeat(n)));
+                Ok(())
+            })
+            .unwrap();
+        state_bytes(&p, ID).len()
+    };
+    // The state is 20 bytes under the limit; `old` to a 32-byte name adds 29 bytes to the record and to its pane.
+    let size = pad(1000);
+    assert_eq!(pad(1000 + max - 20 - size), max - 20);
+    let before = state_bytes(&p, ID);
+    let long = "e".repeat(32);
+    let file = store.dir().join("workspace.json");
+    assert_eq!(
+        name_run(&p, &tmux, Some("app"), Path::new(""), "kaaaaaaaa", &long),
+        (
+            1,
+            String::new(),
+            format!(
+                "zygo: {}: the new state is {} bytes, more than the {max} bytes that every reader accepts (AU84); not written\n",
+                file.display(),
+                max - 20 + 58
+            )
+        )
+    );
+    assert_eq!(state_bytes(&p, ID), before);
+}
+
+// ---- ML-14: unread counts and maildir removal (M§5, M§9) ----
+
+#[test] // M§9: `zygo workspace` shows the unread count per member
+fn mail_status_shows_the_unread_count_per_member() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let plain = t.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    ws_state(&p, ID, "app", &t.join("r/app"), |ws| {
+        ws.phase = Phase::Up;
+        ws.members = [
+            ("kaaaaaaaa", member(Agent::ClaudeCode, MemberState::Running, Some("c-1"))),
+            ("kbbbbbbbb", member(Agent::OpenCode, MemberState::Resumable, None)),
+            ("kcccccccc", member(Agent::ClaudeCode, MemberState::Ended, Some("c-3"))),
+        ]
+        .into_iter()
+        .map(|(k, m)| (k.to_string(), m))
+        .collect();
+    });
+    mail_to(&p, ID, "kaaaaaaaa", 2);
+    mail_to(&p, ID, "kzzzzzzzz", 1); // no member record: not shown
+    fs::write(mail_dir(&p, ID).join("kcccccccc"), "").unwrap(); // not a folder: the count cannot be read
+    assert_eq!(
+        admin::status(&p, &plain, Some(OsStr::new(ID))).unwrap(),
+        "workspace app: up\nkaaaaaaaa claude-code running c-1 unread 2\nkbbbbbbbb opencode resumable -\nkcccccccc claude-code ended c-3 unread -"
+    );
+}
+
+#[test] // M§9: each `ls` row shows the workspace total of unread messages
+fn mail_list_rows_show_the_workspace_unread_total() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let two = |ws: &mut Workspace| {
+        ws.members.insert("kaaaaaaaa".into(), member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")));
+        ws.members.insert("kbbbbbbbb".into(), member(Agent::OpenCode, MemberState::Resumable, Some("o-2")));
+    };
+    ws_state(&p, ID, "app", &t.join("r/app"), two);
+    ws_state(&p, OTHER, "other", &t.join("r/other"), two);
+    ws_state(&p, "2000000000000002", "third", &t.join("r/third"), two);
+    raw_invalid_name(&p);
+    mail_to(&p, ID, "kaaaaaaaa", 2);
+    mail_to(&p, ID, "kbbbbbbbb", 3);
+    mail_to(&p, ID, "kzzzzzzzz", 4); // no member record: not counted
+    mail_to(&p, "2000000000000002", "kaaaaaaaa", 1);
+    fs::write(mail_dir(&p, "2000000000000002").join("kbbbbbbbb"), "").unwrap(); // one count cannot be read
+    let (rows, calls, _) = fake_list(&p, vec![], true);
+    assert!(calls.is_empty(), "{calls:?}");
+    assert_eq!(
+        rows.iter().map(|r| (r.name.as_str(), r.unread)).collect::<Vec<_>>(),
+        [("app", Some(5)), ("e100000000000001", None), ("other", Some(0)), ("third", None)]
+    );
+    assert!(rows[0].to_string().ends_with("  clients -  unread 5"), "{}", rows[0]);
+    assert!(rows[1].to_string().ends_with("  clients -  unread -"), "{}", rows[1]);
+    assert!(rows[2].to_string().ends_with("  clients -  unread 0"), "{}", rows[2]);
+}
+
+#[test] // M§5: `zygo ws forget` deletes mail/
+fn mail_forget_leaves_no_mail_folder() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let one = |ws: &mut Workspace| {
+        ws.members.insert("kaaaaaaaa".into(), member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")));
+    };
+    ws_state(&p, ID, "app", &t.join("r/app"), one);
+    ws_state(&p, OTHER, "other", &t.join("r/other"), one);
+    mail_to(&p, ID, "kaaaaaaaa", 2);
+    mail_to(&p, OTHER, "kaaaaaaaa", 1);
+    assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert!(fs::symlink_metadata(mail_dir(&p, ID)).is_err());
+    assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err());
+    assert_eq!(mail_store::unread(&mail_dir(&p, OTHER), "kaaaaaaaa").unwrap(), 1);
+}
+
+#[test] // M§5, W§5, AU84: a key that fails ^k[a-z2-7]{8}$ exits 1 before any path is built
+fn mail_forget_pane_refuses_a_key_of_bad_form_and_deletes_nothing() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, id, store, plain, .. } = pane_setup();
+    let m = mail_dir(&p, &id);
+    mail_to(&p, &id, "kaaaaaaaa", 1);
+    fs::create_dir_all(m.join("k/aaaaaaa")).unwrap();
+    fs::write(m.join("k/aaaaaaa/keep"), "k").unwrap();
+    fs::create_dir_all(m.join("kAAAAAAAA/new")).unwrap();
+    fs::create_dir_all(store.dir().join("x")).unwrap(); // what mail/../x names
+    fs::write(store.dir().join("x/keep"), "k").unwrap();
+    let before = snapshot_tree(td.path());
+    for bad in ["../x", "k/aaaaaaa", "kAAAAAAAA"] {
+        assert_eq!(pane_run(&p, &tmux, Some("app"), &plain, bad), (1, String::new(), format!("zygo: invalid pane key {bad}\n")));
+    }
+    assert_eq!(snapshot_tree(td.path()), before);
+}
+
+#[test] // M§5: `zygo ws forget-pane <key>` deletes mail/<key>/ and keeps the other maildirs
+fn mail_forget_pane_removes_only_that_maildir() {
+    let _s = serial();
+    let PaneSetup { td: _td, p, tmux, id, store, plain, .. } = pane_setup();
+    let m = mail_dir(&p, &id);
+    mail_to(&p, &id, "kaaaaaaaa", 1);
+    mail_to(&p, &id, "kbbbbbbbb", 2);
+    fs::create_dir_all(m.join("sync")).unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(m.join("kbbbbbbbb")).is_err());
+    assert!(!store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb"));
+    assert_eq!(mail_store::unread(&m, "kaaaaaaaa").unwrap(), 1);
+    assert!(m.join("sync").is_dir());
+    // A maildir with no member record and no cache is removed too (a second run after a failed removal).
+    mail_to(&p, &id, "kyyyyyyyy", 1);
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kyyyyyyyy"),
+        (0, "zygo: forgot pane kyyyyyyyy of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(m.join("kyyyyyyyy")).is_err());
+    assert_eq!(mail_store::unread(&m, "kaaaaaaaa").unwrap(), 1);
+}
+
+#[test] // M§5: mail/<key> that is a link is removed as a link; the folder it points to is kept
+fn mail_forget_pane_removes_a_linked_maildir_as_a_link() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, id, plain, .. } = pane_setup();
+    let outside = td.path().join("outside");
+    fs::create_dir_all(outside.join("new")).unwrap();
+    fs::write(outside.join("new/keep.json"), "k").unwrap();
+    fs::create_dir_all(mail_dir(&p, &id)).unwrap();
+    std::os::unix::fs::symlink(&outside, mail_dir(&p, &id).join("kbbbbbbbb")).unwrap();
+    let before = snapshot_tree(&outside);
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(mail_dir(&p, &id).join("kbbbbbbbb")).is_err());
+    assert_eq!(snapshot_tree(&outside), before);
+}
+
+#[test] // M§5, Round 2 R4 pattern: a link at mail/ is not followed; nothing is written or deleted
+fn mail_forget_pane_refuses_a_linked_mail_folder() {
+    let _s = serial();
+    let PaneSetup { td, p, tmux, id, store, plain, .. } = pane_setup();
+    let outside = td.path().join("outside");
+    fs::create_dir_all(outside.join("kbbbbbbbb/new")).unwrap();
+    fs::write(outside.join("kbbbbbbbb/new/keep.json"), "k").unwrap();
+    std::os::unix::fs::symlink(&outside, mail_dir(&p, &id)).unwrap();
+    let before = snapshot_tree(&outside);
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (1, String::new(), format!("zygo: cannot forget pane kbbbbbbbb of app: {} is a link; it is not followed\n", mail_dir(&p, &id).display()))
+    );
+    assert_eq!(snapshot_tree(&outside), before);
+    assert!(store.read().unwrap().unwrap().members.contains_key("kbbbbbbbb")); // nothing written
+    assert!(cache(&p, &id).join("results/kbbbbbbbb/r1").exists()); // nothing deleted
+}
+
+#[test] // M§5: a regular file at mail/<key> is removed as a file; the other maildirs are kept
+fn mail_forget_pane_removes_a_file_at_the_maildir_path() {
+    let _s = serial();
+    let PaneSetup { td: _td, p, tmux, id, plain, .. } = pane_setup();
+    let m = mail_dir(&p, &id);
+    mail_to(&p, &id, "kaaaaaaaa", 1);
+    fs::write(m.join("kbbbbbbbb"), "not a maildir").unwrap();
+    assert_eq!(
+        pane_run(&p, &tmux, Some("app"), &plain, "kbbbbbbbb"),
+        (0, "zygo: forgot pane kbbbbbbbb of app\n".to_string(), String::new())
+    );
+    assert!(fs::symlink_metadata(m.join("kbbbbbbbb")).is_err());
+    assert_eq!(mail_store::unread(&m, "kaaaaaaaa").unwrap(), 1);
 }

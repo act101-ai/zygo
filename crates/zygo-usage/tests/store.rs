@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::BTreeMap, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use rusqlite::Connection;
 use zygo_usage::*;
 
@@ -791,13 +791,13 @@ fn readbacks_schema_insert_trim_fallback_keeps_other_errors() {
     let t = Tmp::new();
     let s = Store::open(&t.db()).unwrap();
     Connection::open(t.db()).unwrap().execute_batch("DROP TABLE trims").unwrap();
-    let e = s.insert_trim(&trim("S1", 1, 10, 1)).err().expect("a missing table is not a missing column").to_string();
+    let e = s.insert_trim(&trim("S1", 1, 10, 1)).expect_err("a missing table is not a missing column").to_string();
     assert!(e.contains("no such table: trims"), "{e}");
     // A prepare error that a seven-column insert would not meet (the `Store` opens after the table exists, so the
     // error comes from prepare, not from a re-prepare at execute): the fallback must not write the row.
     let g = Tmp::new();
     Connection::open(g.db()).unwrap().execute_batch("CREATE TABLE trims (ts INTEGER NOT NULL, session TEXT NOT NULL, agent_id TEXT, tool TEXT NOT NULL, kind TEXT NOT NULL, stored_bytes INTEGER NOT NULL, view_bytes INTEGER NOT NULL, result_id TEXT GENERATED ALWAYS AS ('x') VIRTUAL, command TEXT, shaper TEXT)").unwrap();
-    let e = Store::open(&g.db()).unwrap().insert_trim(&trim("S1", 1, 10, 1)).err().expect("a generated column is not a missing column").to_string();
+    let e = Store::open(&g.db()).unwrap().insert_trim(&trim("S1", 1, 10, 1)).expect_err("a generated column is not a missing column").to_string();
     assert!(e.contains("cannot INSERT into generated column"), "{e}");
     assert_eq!(count(&g.db(), "trims"), 0);
 }
@@ -819,4 +819,85 @@ fn readbacks_schema_generated_column_counts_as_present() {
     let v = pragma(&t.db(), "schema_version");
     drop(Store::open_with_column_check(&t.db(), &[]).unwrap());
     assert_eq!(pragma(&t.db(), "schema_version"), v);
+}
+
+// ---- OS-3: bounded open (O§7.11, O-C10) ----
+
+#[test]
+fn open_bounded_sets_busy_timeout_to_the_bound() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(store::HOOK_DB_BOUND, Duration::from_millis(100));
+    assert_eq!(Store::open_bounded(&t.db(), Duration::ZERO).unwrap().busy_timeout_ms().unwrap(), 0);
+    assert_eq!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_timeout_ms().unwrap(), 100);
+}
+
+#[test]
+fn open_bounded_opens_under_a_held_write_lock() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap(); // another process holds the write lock
+    // The open takes no write lock, so with bound 0 it still succeeds.
+    assert!(Store::open_bounded(&t.db(), Duration::ZERO).is_ok());
+    raw.execute_batch("ROLLBACK").unwrap();
+}
+
+#[test]
+fn open_bounded_insert_is_busy_at_bound_zero_under_a_held_write_lock() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let s = Store::open_bounded(&t.db(), Duration::ZERO).unwrap();
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let e = s.insert_trim(&trim("S1", 5, 1000, 100)).expect_err("a held write lock with bound 0 must fail the insert");
+    let code = e.downcast_ref::<rusqlite::Error>().and_then(|e| e.sqlite_error_code());
+    assert_eq!(code, Some(rusqlite::ErrorCode::DatabaseBusy), "{e}");
+    raw.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(count(&t.db(), "trims"), 0); // no row, also not through the seven-column fallback
+}
+
+#[test]
+fn open_bounded_on_seven_column_database_adds_no_column() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    let before = pragma(&t.db(), "schema_version");
+    let s = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap();
+    s.insert_trim(&trim("S2", 6, 2000, 200)).unwrap();
+    drop(s);
+    assert_eq!(cols(&t.db(), "trims"), TRIM_SEVEN);
+    assert_eq!(pragma(&t.db(), "schema_version"), before);
+    assert_eq!(count(&t.db(), "trims"), 2);
+}
+
+#[test]
+fn open_bounded_on_missing_path_is_an_error_and_creates_nothing() {
+    let t = Tmp::new();
+    assert!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).is_err());
+    assert!(!t.db().exists());
+    let deep = t.0.join("no").join("such").join("usage.db");
+    assert!(Store::open_bounded(&deep, store::HOOK_DB_BOUND).is_err());
+    assert!(!t.0.join("no").exists());
+}
+
+#[test]
+fn open_bounded_rejects_another_schema_version() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    Connection::open(t.db()).unwrap().execute_batch("PRAGMA user_version = 2").unwrap();
+    let e = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).err().expect("another schema version must fail").to_string();
+    assert!(e.contains('2') && e.contains('1'), "{e}");
+}
+
+#[test]
+fn open_bounded_leaves_the_journal_mode_unchanged() {
+    let t = Tmp::new();
+    old_db(&t.db());
+    let mode = |db: &Path| Connection::open(db).unwrap().query_row("PRAGMA journal_mode", [], |r| r.get::<_, String>(0)).unwrap();
+    let before = mode(&t.db());
+    assert_eq!(before, "delete");
+    let s = Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap();
+    s.insert_trim(&trim("S3", 7, 3000, 300)).unwrap();
+    drop(s);
+    assert_eq!(mode(&t.db()), before);
 }

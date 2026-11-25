@@ -1,5 +1,5 @@
-//! `zygo ws forget <name>`, `zygo ws forget-pane <key> [--name <name>]` and the hidden `zygo ws snapshot` (W§12,
-//! AU44). `zygo ws` does not sweep (AU71).
+//! `zygo ws forget <name>`, `zygo ws forget-pane <key> [--name <name>]`, `zygo ws name <key> <name> [--workspace <w>]`
+//! (M§6) and the hidden `zygo ws snapshot` (W§12, AU44). `zygo ws` does not sweep (AU71).
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -59,6 +59,14 @@ pub enum WsCmd {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Name one member of a workspace; mail stays in its pane-key folder
+    Name {
+        key: String,
+        name: String,
+        /// Workspace name; default: the workspace of this folder
+        #[arg(long)]
+        workspace: Option<String>,
+    },
 }
 
 /// The OP5 check first, for every subcommand, then the subcommand.
@@ -93,6 +101,26 @@ pub fn dispatch(args: WsArgs) -> i32 {
                 name.as_deref(),
                 &cwd,
                 &key,
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            )
+        }
+        WsCmd::Name { key, name, workspace } => {
+            let cwd = if workspace.is_some() {
+                std::path::PathBuf::new()
+            } else {
+                match cwd_or_exit() {
+                    Ok(d) => d,
+                    Err(code) => return code,
+                }
+            };
+            admin::rename_member(
+                &paths,
+                &tmux_program(),
+                workspace.as_deref(),
+                &cwd,
+                &key,
+                &name,
                 &mut std::io::stdout().lock(),
                 &mut std::io::stderr().lock(),
             )
@@ -253,7 +281,9 @@ fn launch_member(
     opts.agent_session = resumed.clone().map(AgentSession::Resume);
     opts.resume_note = resume_note(rec, resumed.as_deref());
     // D1: `ws run` writes only a record that exists (no hand join).
-    let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone(), hand: None };
+    // M§9a, AU84: the record's member name when it passes the grammar.
+    let name = rec.valid_name().map(String::from);
+    let ctx = MemberCtx { ws_id: ws_id.to_string(), pane: pane.to_string(), store, launch: rec.launch.clone(), hand: None, name };
     member::run_wrapped(adapter.as_ref(), opts, &ctx);
 }
 
@@ -426,6 +456,7 @@ pub(crate) fn launch_of(rec: &MemberRecord, resumed: bool) -> Launch {
         compact: effective_compact(rec),
         yolo: l.yolo,
         config_dir: if resumed { None } else { l.config_dir.clone() },
+        name: None,
         rest: l.args.clone(),
     }
 }
@@ -438,6 +469,7 @@ pub(crate) fn launch_open_code_of(rec: &MemberRecord) -> LaunchOpenCode {
         server: l.server.clone(),
         compact: effective_compact(rec),
         yolo: l.yolo,
+        name: None,
         rest: l.args.clone(),
     }
 }
@@ -619,10 +651,50 @@ mod tests {
         assert_eq!(program_folder(&p, "0123456789abcdef", "kaaaaaaaa", &saved).unwrap(), dir); // again: the link is replaced
     }
 
+    /// D4: the exec failure path. `relaunch` sets `ZYGO_RELAUNCHED`, so std points the process-wide `environ` at a
+    /// temporary copy during the `exec` and frees it after the failure; a parallel test that spawns `git` by `PATH`
+    /// then reads a freed `PATH` (FX-7). The child test runs the `exec` in its own process, with one test thread.
     #[cfg(unix)]
     #[test]
-    fn relaunch_returns_the_exec_error() { // D4: the exec failure path
+    fn relaunch_returns_the_exec_error() {
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cmd::ws::tests::relaunch_exec_error_in_child", "--ignored", "--nocapture", "--test-threads=1"])
+            .env("ZYGO_TEST_CHILD", "cmd::ws::tests::relaunch_exec_error_in_child")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(o.status.success(), "{text}");
+        assert!(text.contains("test result: ok. 1 passed"), "{text}");
+        assert!(text.contains("child ran: relaunch_exec_error_in_child"), "{text}");
+    }
+
+    /// The child of `relaunch_returns_the_exec_error`: the failed `exec` swaps `environ`, so it runs alone. Outside
+    /// its parent (`--include-ignored`) it does nothing.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "child process of relaunch_returns_the_exec_error"]
+    fn relaunch_exec_error_in_child() {
+        if std::env::var("ZYGO_TEST_CHILD").as_deref() != Ok("cmd::ws::tests::relaunch_exec_error_in_child") {
+            return;
+        }
         let e = super::relaunch(Path::new("/nonexistent/zygo-m5"), &[OsString::from("ws")]);
         assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+        println!("child ran: relaunch_exec_error_in_child");
+    }
+
+    #[test] // M§6: `zygo ws name <key> <name> [--workspace <w>]`
+    fn ws_name_parses_key_name_and_workspace() {
+        use clap::Parser;
+        use super::super::{Cli, Cmd};
+        let Cmd::Ws(WsArgs { sub: WsCmd::Name { key, name, workspace } }) =
+            Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa", "elena", "--workspace", "app"]).unwrap().command
+        else { panic!() };
+        assert_eq!((key.as_str(), name.as_str(), workspace.as_deref()), ("kaaaaaaaa", "elena", Some("app")));
+        let Cmd::Ws(WsArgs { sub: WsCmd::Name { workspace, .. } }) =
+            Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa", "elena"]).unwrap().command
+        else { panic!() };
+        assert_eq!(workspace, None);
+        assert!(Cli::try_parse_from(["zygo", "ws", "name", "kaaaaaaaa"]).is_err());
     }
 }

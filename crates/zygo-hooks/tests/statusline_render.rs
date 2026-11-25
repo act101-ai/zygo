@@ -11,6 +11,11 @@ use zygo_hooks::statusline::render::{
 };
 use zygo_hooks::statusline::width::{cells, status_width, terminal_width, truncate, STATUS_INDENT, STATUS_RIGHT_GAP};
 use zygo_proxy::client::{SessionStatus, WindowArg};
+use zygo_hooks::statusline::render::run_time_text;
+use zygo_core::paths::Paths;
+use zygo_core::session_dir::SessionDir;
+use zygo_core::session_view::SessionView;
+use zygo_hooks::statusline::data::collect;
 
 // ---- the reference bytes of the spec (H§6.3 OP13 as amended by OP14; H§6.4 examples 1 and 3) ----
 
@@ -83,6 +88,9 @@ fn data(v: &Value) -> HudData {
         effort: text(&v["stdin"]["effort"]),
         trimmed_bytes: v["trimmed_bytes"].as_u64(),
         phase: None,
+        member_name: None,
+        unread: None,
+        run_time: None,
         team_host: None,
     }
 }
@@ -805,6 +813,7 @@ fn the_glyph_table_names_each_icon_of_a_set() {
         ("stripe", "▌", "▌"),
         ("logo", LOGO, "zygo"),
         ("reflection", REFLECTION, ""),
+        ("mail", "\u{2709}", "mail"),
         ("branch", BRANCH, ""),
         ("github", "\u{f408}", ""),
         ("work-graph", "◆", "♦"),
@@ -820,11 +829,12 @@ fn the_glyph_table_names_each_icon_of_a_set() {
         ("notional", "≈", "≈"),
         ("cache", DB, "cache"),
         ("trimmed", "✂", "trim"),
+        ("clock", CLOCK, "run"),
         ("truncation", "…", "…"),
     ] {
         assert_eq!((n[name], p[name]), (nerd, plain), "{name}");
     }
-    assert_eq!(n.len(), 19);
+    assert_eq!(n.len(), 21);
 }
 
 // ---- segments ----
@@ -1118,4 +1128,273 @@ fn cells_and_truncation() {
     assert_eq!(truncate("日本語", 6), "日本語");
     assert_eq!(truncate("a日本語", 6), "a日本…");
     assert_eq!(truncate("", 6), "");
+}
+
+// ---- run time (session run time design T§2.3, T§7 items 1 and 3) ----
+
+#[test]
+fn run_time_format_t7_item_1() {
+    for (secs, want) in [
+        (0, "0m"),
+        (59, "0m"),
+        (60, "1m"),
+        (599, "9m"),
+        (600, "10m"),
+        (2820, "47m"),
+        (3599, "59m"),
+        (3600, "1h00m"),
+        (18720, "5h12m"),
+        (35999, "9h59m"),
+        (36000, "10h00m"),
+        (86399, "23h59m"),
+        (86400, "1d00h"),
+        (187200, "2d04h"),
+        (863999, "9d23h"),
+        (864000, "10d00h"),
+        (1062000, "12d07h"),
+        (8639999, "99d23h"),
+        (8640000, "100d00h"),
+    ] {
+        assert_eq!(run_time_text(secs), want, "{secs}");
+    }
+    // Every `u64` has a form; no cap, no panic.
+    assert_eq!(run_time_text(u64::MAX), "213503982334601d07h");
+}
+
+// ---- member name and unread mail (M§9a; M§13 #10, #11) ----
+
+fn mailed(name: Option<&str>, unread: Option<usize>) -> HudData {
+    HudData { member_name: name.map(str::to_string), unread, ..op13() }
+}
+
+#[test] // M§9a, H AU9 as amended: compact `[logo, phase, name, mail, work item, worktree]`; verbose `[phase], [name, mail], [work item, worktree, ahead/behind]`
+fn member_mail_groups_and_colors() {
+    let d = HudData { phase: Some("draining".into()), ..mailed(Some("ana"), Some(3)) };
+    let compact = render(&d, &nerd(C));
+    assert!(compact.starts_with(&format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m \x1b[31mws draining\x1b[0m \x1b[1mana\x1b[0m \x1b[33m✉ 3\x1b[0m \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m  \x1b[35m{CPU} opus-4.7")), "{compact:?}");
+    let verbose = render(&d, &nerd(V));
+    assert!(verbose.starts_with(&format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m  \x1b[31mws draining\x1b[0m   \x1b[1mana\x1b[0m \x1b[33m✉ 3\x1b[0m   \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m \x1b[36m↑1\x1b[0m   \x1b[35m{CPU} opus-4.7 · high")), "{verbose:?}");
+    let d = mailed(Some("ana"), Some(3));
+    assert!(compact_text(&d).starts_with(&format!("{LOGO} ana ✉ 3 {BRANCH} main {TREE} hud-work  {CPU} opus-4.7")));
+    assert!(verbose_text(&d).starts_with(&format!("{LOGO}  ana ✉ 3   {BRANCH} main {TREE} hud-work ↑1   {CPU}")));
+}
+
+#[test] // M§13 #10: `✉ 3` / `mail 3`, nothing at zero, `99+` above 99
+fn mail_count_forms() {
+    for (n, want) in [(1, "✉ 1"), (3, "✉ 3"), (99, "✉ 99"), (100, "✉ 99+"), (500, "✉ 99+")] {
+        assert!(compact_text(&mailed(None, Some(n))).starts_with(&format!("{LOGO} {want} {BRANCH} main")), "{n}");
+    }
+    assert_eq!(render(&mailed(None, Some(0)), &nerd(C)), op13_compact());
+    assert_eq!(render(&mailed(None, None), &nerd(C)), op13_compact());
+    let plain = render(&mailed(Some("ana"), Some(3)), &renv(C, IconSet::Plain, ColorMode::Off, 200));
+    assert!(plain.starts_with("zygo ana mail 3 main ⌂ hud-work  "), "{plain:?}");
+    let plain = render(&mailed(Some("ana"), Some(100)), &renv(V, IconSet::Plain, ColorMode::Off, 200));
+    assert!(plain.starts_with("zygo  ana mail 99+   main ⌂ hud-work ↑1   "), "{plain:?}");
+}
+
+#[test] // M§13 #11, H AU19, H-C6
+fn member_name_shows_once_escaped_and_cut() {
+    assert!(compact_text(&HudData { worktree: None, ..mailed(Some("ana"), None) }).starts_with(&format!("{LOGO} ana {BRANCH} main  ")));
+    // Equal to the worktree name: only the worktree segment shows it.
+    assert_eq!(render(&mailed(Some("hud-work"), None), &nerd(C)), op13_compact());
+    assert_eq!(render(&mailed(Some("hud-work"), None), &nerd(V)), op13_verbose());
+    // Width removes the worktree segment: the name shows in its place, once.
+    let narrow = render(&mailed(Some("hud-work"), None), &renv(C, IconSet::Nerd, ColorMode::Off, 20));
+    assert_eq!((narrow.matches("hud-work").count(), narrow.contains(TREE)), (1, false), "{narrow:?}");
+    assert_eq!(render(&mailed(Some(""), None), &nerd(C)), op13_compact());
+    let long = "a".repeat(40);
+    assert!(compact_text(&mailed(Some(&long), None)).starts_with(&format!("{LOGO} {}… {BRANCH} main", "a".repeat(31))));
+    let hostile = compact_text(&mailed(Some("ana\x1b[31m\n"), None));
+    assert!(hostile.starts_with(&format!("{LOGO} ana\\u{{1b}}[31m\\n {BRANCH} main")), "{hostile:?}");
+    // Escape first, then cut (AU19): 20 newlines are 40 cells of `\n`.
+    let lines = compact_text(&mailed(Some(&"\n".repeat(20)), None));
+    assert!(lines.starts_with(&format!("{LOGO} {}\\… {BRANCH} main", "\\n".repeat(15))), "{lines:?}");
+}
+
+#[test] // M§9a: neither segment is dropped for width
+fn member_mail_never_dropped_for_width() {
+    let d = mailed(Some("ana"), Some(3));
+    for width in [200, 115, 100, 80, 60, 40, 30, 20, 1] {
+        let c = strip(&render(&d, &renv(C, IconSet::Nerd, ColorMode::Ansi256, width)));
+        assert!(c.starts_with(&format!("▌▌▌ {LOGO} ana ✉ 3")), "{width}: {c}");
+        let v = strip(&render(&d, &renv(V, IconSet::Nerd, ColorMode::Ansi256, width)));
+        assert!(v.starts_with(&format!("▌▌▌ {LOGO}  ana ✉ 3")), "{width}: {v}");
+    }
+}
+
+// ---- run time segment (session run time design T§2.4, T§3.1, T§7 items 3, 6 and 7) ----
+
+/// A ULID whose time is 1_800_000_000_000 ms: the own start of a session outside a workspace is `OWN` (T§2.1).
+const SID: &str = "01MCC5RM000000000000000000";
+const OWN: u64 = 1_800_000_000;
+/// nf-md-clock_outline (T§2.4).
+const CLOCK: &str = "\u{f0150}";
+
+/// The run time that `collect` gives at `ZYGO_TEST_NOW` = `now` for the session `SID` outside a workspace
+/// (T§2.2 rule 1). No proxy: the run time is local.
+fn collected_run_time(now: u64) -> Option<u64> {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("sessions").join(SID);
+    let sd = SessionDir::new(dir.clone());
+    sd.create().unwrap();
+    SessionView { session: SID.into(), ..Default::default() }.save(&sd).unwrap();
+    let (cache_dir, data_dir) = (t.path().join("cache"), t.path().join("data"));
+    let paths = Paths {
+        config_file: t.path().join("config.toml"),
+        sessions_dir: t.path().join("sessions"),
+        marketplaces_dir: cache_dir.join("marketplaces"),
+        plugin_store: data_dir.join("plugins"),
+        approvals_file: data_dir.join("approvals.toml"),
+        usage_db: data_dir.join("usage.db"),
+        cache_dir,
+        data_dir,
+    };
+    let stdin = serde_json::json!({ "cwd": t.path() }).to_string().into_bytes();
+    let env = move |key: &str| (key == "ZYGO_TEST_NOW").then(|| OsString::from(now.to_string()));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    collect(Box::new(std::io::Cursor::new(stdin)), &dir, &paths, &env, deadline).run_time
+}
+
+/// The cells of the run-time run on row `row` of `s`: the clock, the space and `5h12m`.
+fn clock_cells(s: &str, row: usize) -> Vec<(usize, usize, char, Sty)> {
+    grid(s).into_iter().filter(|c| c.0 == row).skip_while(|c| c.2 != '\u{f0150}').take(7).collect()
+}
+
+#[test] // T§3.1 example note, T§7 item 6: OP13 compact gets `  󰅐 5h12m` after `✂ 23k`, in the same dim run
+fn run_time_segment_op13_compact_bytes() {
+    let run_time = collected_run_time(OWN + 18_720);
+    assert_eq!(run_time, Some(18_720));
+    let d = HudData { run_time, ..op13() };
+    assert_eq!(
+        render(&d, &nerd(C)),
+        format!(
+            "{STRIPE}\x1b[1;97m{LOGO}\x1b[0m \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m  \x1b[35m{CPU} opus-4.7\x1b[0m \x1b[36m{PROFILE} fast\x1b[0m  ctx 196k/\x1b[2m1m\x1b[0m \x1b[32m▰\x1b[2m▱▱▱▱\x1b[0m  \x1b[2m↑1.2m ↓48k\x1b[0m  \x1b[32m$3.41\x1b[0m  \x1b[2m{DB} 92%  ✂ 23k  {CLOCK} 5h12m\x1b[0m"
+        )
+    );
+    // Without a run time the bytes are the reference bytes (T§3.1 last row).
+    assert_eq!(render(&op13(), &nerd(C)), op13_compact());
+}
+
+#[test] // T§3.1 example note, T§7 item 6: OP13 verbose row 1 gets `   󰅐 5h12m` after `local`; row 2 does not change
+fn run_time_segment_op13_verbose_bytes() {
+    let d = HudData { run_time: collected_run_time(OWN + 18_720), ..op13() };
+    assert_eq!(
+        render(&d, &nerd(V)),
+        format!(
+            "{STRIPE}\x1b[1;97m{LOGO}\x1b[0m  \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m \x1b[36m↑1\x1b[0m   \x1b[35m{CPU} opus-4.7 · high\x1b[0m   \x1b[36m{PROFILE} fast\x1b[0m   \x1b[2mlocal   {CLOCK} 5h12m\x1b[0m\n{STRIPE}\x1b[2;37m{REFLECTION}\x1b[0m  ctx 196k/\x1b[2m1m\x1b[0m \x1b[32m▰▰\x1b[2m▱▱▱▱▱▱\x1b[0m 20%   \x1b[2m↑ 1.2m in  ↓ 48k out\x1b[0m   \x1b[32m$3.41\x1b[0m   \x1b[2mcache 92%   trimmed 23k tok\x1b[0m"
+        )
+    );
+    assert_eq!(render(&op13(), &nerd(V)), op13_verbose());
+}
+
+#[test] // T§3.1 example note, T§2.4 "Kind", H AU20: example 3 gets `  󰅐 5h12m` before `  stale`; a local segment
+fn run_time_segment_example_3_stale_bytes_and_a_local_run() {
+    let run_time = collected_run_time(OWN + 18_720);
+    let stale = HudData { run_time, ..stale_case() };
+    assert_eq!(
+        render(&stale, &nerd(C)),
+        format!(
+            "{STRIPE}\x1b[1;97m{LOGO}\x1b[0m \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m  \x1b[2m{CPU} opus-4.7\x1b[0m \x1b[36m{PROFILE} fast\x1b[0m  \x1b[2mctx 196k/1m ▰▱▱▱▱  ↑1.2m ↓48k  $3.41  {DB} 92%  ✂ 23k  {CLOCK} 5h12m  stale\x1b[0m"
+        )
+    );
+    // `stale` leaves the run-time run unchanged: same cells, style (dim, default) in both styles.
+    let fresh = HudData { run_time, ..op13() };
+    for (style, row) in [(C, 0), (V, 0)] {
+        let (f, s) = (clock_cells(&render(&fresh, &nerd(style)), row), clock_cells(&render(&stale, &nerd(style)), row));
+        assert_eq!(f.len(), 7, "{style:?}");
+        assert_eq!(f, s, "{style:?}");
+        assert_eq!((f[0].2, f[0].3), ('\u{f0150}', (2, None)), "{style:?}");
+    }
+    // With no status data the run time stays; `ended` does not drop it.
+    let offline = HudData { status: None, outcome: Outcome::Offline, run_time, ..op13() };
+    assert_eq!(
+        render(&offline, &nerd(C)),
+        format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m  \x1b[36m{PROFILE} fast\x1b[0m  \x1b[2m✂ 23k  {CLOCK} 5h12m\x1b[0m  \x1b[31moffline\x1b[0m")
+    );
+    let ended = HudData { outcome: Outcome::Ended, stale: true, profile: None, run_time, ..op13() };
+    assert_eq!(
+        render(&ended, &nerd(C)),
+        format!("{STRIPE}\x1b[1;97m{LOGO}\x1b[0m \x1b[1;34m{BRANCH} main\x1b[0m \x1b[38;5;172m{TREE} hud-work\x1b[0m  \x1b[2m✂ 23k  {CLOCK} 5h12m\x1b[0m  \x1b[31mended\x1b[0m")
+    );
+}
+
+#[test] // T§2.4 "Text", T§7 item 6: the plain set shows `run 5h12m`, the same text in compact and verbose
+fn run_time_segment_plain_set_shows_run() {
+    let d = HudData { run_time: collected_run_time(OWN + 18_720), ..op13() };
+    let plain = |style: Style, color: ColorMode| render(&d, &renv(style, IconSet::Plain, color, 200));
+    assert_eq!(plain(C, ColorMode::Off), format!("{}  run 5h12m", golden("compact-plain-nocolor")));
+    let reference = golden("verbose-plain-nocolor");
+    let (row_1, row_2) = reference.split_once('\n').unwrap();
+    assert_eq!(plain(V, ColorMode::Off), format!("{row_1}   run 5h12m\n{row_2}"));
+    assert!(plain(C, ColorMode::Ansi256).ends_with("\x1b[2mcache 92%  trim 23k  run 5h12m\x1b[0m"), "{:?}", plain(C, ColorMode::Ansi256));
+}
+
+#[test] // T§2.3, T§7 item 3: start > now gives `0m`
+fn run_time_segment_clock_behind_start_shows_0m() {
+    assert_eq!(collected_run_time(OWN - 1), Some(0));
+    assert_eq!(collected_run_time(OWN), Some(0));
+    let d = HudData { run_time: collected_run_time(OWN - 1), ..op13() };
+    assert!(compact_text(&d).ends_with(&format!("✂ 23k  {CLOCK} 0m")), "{}", compact_text(&d));
+    assert!(verbose_text(&d).contains(&format!("local   {CLOCK} 0m\n")), "{}", verbose_text(&d));
+}
+
+#[test] // T§2.4 "Width", H§6.7 as amended, T§7 item 7: compact removes the run time third, after trimmed and cache
+fn run_time_width_compact_goes_third_after_trimmed_and_cache() {
+    let d = HudData { run_time: Some(18_720), ..width_all() };
+    let at = |w: usize| strip(&render(&d, &renv(C, IconSet::Nerd, ColorMode::Ansi256, w as u16)));
+    let head = format!("▌▌▌ {LOGO}");
+    let (work, tree) = (format!(" {BRANCH} main"), format!(" {TREE} hud-work"));
+    let (model, profile) = (format!("{CPU} opus-4.7"), format!("{PROFILE} fast"));
+    let (ctx, bar, mark, tokens, spend) = ("ctx 196k/1m", "▰▰▱▱▱", "⇣600k", "↑1.2m ↓48k", "$3.41");
+    let (cache, trimmed, rt) = (format!("{DB} 92%"), "✂ 23k", format!("{CLOCK} 5h12m"));
+    // The Nerd clock counts 2 cells (H§6.7).
+    assert_eq!(cells(&rt), 8);
+    let steps = [
+        ("all", format!("{head}{work}{tree}  {model} {profile}  {ctx} {bar} {mark}  {tokens}  {spend}  {cache}  {trimmed}  {rt}  stale")),
+        ("trimmed", format!("{head}{work}{tree}  {model} {profile}  {ctx} {bar} {mark}  {tokens}  {spend}  {cache}  {rt}  stale")),
+        ("cache", format!("{head}{work}{tree}  {model} {profile}  {ctx} {bar} {mark}  {tokens}  {spend}  {rt}  stale")),
+        ("run time", format!("{head}{work}{tree}  {model} {profile}  {ctx} {bar} {mark}  {tokens}  {spend}  stale")),
+        ("tokens", format!("{head}{work}{tree}  {model} {profile}  {ctx} {bar} {mark}  {spend}  stale")),
+    ];
+    assert_eq!(at(200), steps[0].1);
+    for pair in steps.windows(2) {
+        let (before, (name, after)) = (&pair[0].1, &pair[1]);
+        // The row before this step fits at its own width; one cell less removes exactly this segment.
+        assert_eq!(&at(cells(before)), before, "before {name}");
+        assert_eq!(&at(cells(before) - 1), after, "{name}");
+    }
+    // T§7 item 7 in its own words: at the width that fits only without trimmed, cache and run time, tokens stay;
+    // one cell more keeps the run time.
+    let w = cells(&steps[2].1) - 1;
+    assert!(at(w).contains(tokens) && !at(w).contains(&rt), "{}", at(w));
+    assert!(at(w + 1).contains(tokens) && at(w + 1).contains(&rt), "{}", at(w + 1));
+}
+
+#[test] // T§2.4 "Width", H§6.7 as amended, T§7 item 7: verbose row 1 removes the run time second, after mode
+fn run_time_width_verbose_row_1_goes_second_after_mode() {
+    let d = HudData { run_time: Some(18_720), ..width_all() };
+    let at = |d: &HudData, w: usize| -> Vec<String> {
+        strip(&render(d, &renv(V, IconSet::Nerd, ColorMode::Ansi256, w as u16))).split('\n').map(str::to_string).collect()
+    };
+    let (work, tree) = (format!("{BRANCH} main"), format!("{TREE} hud-work"));
+    let (model, profile, rt) = (format!("{CPU} opus-4.7"), format!("{PROFILE} fast"), format!("{CLOCK} 5h12m"));
+    let h1 = format!("▌▌▌ {LOGO}");
+    let row1 = [
+        ("all", format!("{h1}  {work} {tree} ↑1   {model} · high   {profile}   local   {rt}")),
+        ("mode", format!("{h1}  {work} {tree} ↑1   {model} · high   {profile}   {rt}")),
+        ("run time", format!("{h1}  {work} {tree} ↑1   {model} · high   {profile}")),
+        ("profile", format!("{h1}  {work} {tree} ↑1   {model} · high")),
+    ];
+    assert_eq!(at(&d, 200)[0], row1[0].1);
+    // The run time is on row 1 only: row 2 is the row of the data without it.
+    assert_eq!(at(&d, 200)[1], at(&width_all(), 200)[1]);
+    for pair in row1.windows(2) {
+        let (before, (name, after)) = (&pair[0].1, &pair[1]);
+        assert_eq!(&at(&d, cells(before))[0], before, "before {name}");
+        assert_eq!(&at(&d, cells(before) - 1)[0], after, "{name}");
+    }
+    // T§7 item 7: the row 1 that fits only without mode and run time keeps profile.
+    let w = cells(&row1[1].1) - 1;
+    assert_eq!(at(&d, w)[0], row1[2].1);
+    assert!(at(&d, w)[0].ends_with(&profile));
 }
