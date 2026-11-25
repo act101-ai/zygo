@@ -645,17 +645,31 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
             }
         }
     }
-    // 5. an https cell url for each capability
+    // 5. one https cell url for each capability, and no cell for another capability
     for g in grades {
         for cap in &reg.capability {
-            if !g.cell.iter().any(|x| x.capability == cap.id && x.url.starts_with("https://")) {
+            let cells: Vec<&CellUrl> = g.cell.iter().filter(|x| x.capability == cap.id).collect();
+            if cells.len() > 1 {
+                fault(5, format!("client `{}`: capability `{}` has {} cells", g.client, cap.id, cells.len()));
+            } else if !cells.iter().any(|x| x.url.starts_with("https://")) {
                 fault(5, format!("client `{}`: capability `{}` has no https cell url", g.client, cap.id));
             }
         }
+        for x in &g.cell {
+            if !reg.capability.iter().any(|cap| cap.id == x.capability) {
+                fault(5, format!("client `{}`: cell for capability `{}`, which is not in the registry", g.client, x.capability));
+            }
+        }
     }
-    // 6. each bar exception: a known client, a core criterion not met, an approval
-    for b in &reg.bar_exception {
+    // 6. each bar exception: once per criterion, a reason, a known client, a core criterion not met, an approval
+    for (i, b) in reg.bar_exception.iter().enumerate() {
         let who = format!("bar exception `{}` `{}`", b.client, b.criterion);
+        if reg.bar_exception[..i].iter().any(|a| a.client == b.client && a.criterion == b.criterion) {
+            fault(6, format!("{who}: given twice"));
+        }
+        if b.reason.trim().is_empty() {
+            fault(6, format!("{who}: no reason"));
+        }
         if !clients.iter().any(|c| c.id == b.client) {
             fault(6, format!("{who}: client `{}` is not a client", b.client));
         }
@@ -672,17 +686,20 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
             fault(6, format!("{who}: not approved"));
         }
     }
-    // 7. the client version is the graded version and the pinned premise version
+    // 7. the client name and version are the graded ones and the pinned premise version
     let premises = header_lines(&root.join("docs/premises.md"));
     let live = header_lines(&root.join("docs/live-checks.md"));
     for c in clients {
         let [g] = files_of(&c.id)[..] else { continue };
+        if g.name != c.name {
+            fault(7, format!("client `{}`: graded name `{}` is not the client name `{}`", c.id, g.name, c.name));
+        }
         if g.version != c.version {
             fault(7, format!("client `{}`: graded version {} is not the client version {}", c.id, g.version, c.version));
         }
         for (file, lines, want) in [
-            ("docs/premises.md", &premises, format!("{}: {}", g.name, g.version)),
-            ("docs/live-checks.md", &live, format!("{}: {} or later", g.name, g.version)),
+            ("docs/premises.md", &premises, format!("{}: {}", c.name, g.version)),
+            ("docs/live-checks.md", &live, format!("{}: {} or later", c.name, g.version)),
         ] {
             match lines {
                 Err(e) => fault(7, format!("client `{}`: {e}", c.id)),
@@ -714,7 +731,7 @@ pub fn check(root: &Path, reg: &Registry, grades: &[GradeFile], clients: &[Clien
 fn failing_core(reg: &Registry, g: &GradeFile) -> Vec<String> {
     let ok = |criterion: &str| {
         g.grade.iter().any(|e| e.criterion == criterion && e.status == Status::Met)
-            || reg.bar_exception.iter().any(|b| b.client == g.client && b.criterion == criterion)
+            || reg.bar_exception.iter().any(|b| b.client == g.client && b.criterion == criterion && !blank(&b.approved))
     };
     reg.capability
         .iter()

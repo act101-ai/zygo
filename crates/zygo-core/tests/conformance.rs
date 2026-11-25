@@ -492,10 +492,39 @@ fn check_6_bar_exception_faults() {
         e.status = Status::NotMet;
         e.reason = Some("no helper".into());
     }
+    // An exception with no approval is a fault and does not count for the bar.
     for a in [None, Some(" ")] {
         let mut r = r0.clone();
         r.bar_exception.push(x("alpha", "A-1.2", a));
-        assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[6]));
+        assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[6, 8]));
+    }
+}
+
+#[test]
+fn check_6_duplicate_or_reasonless_bar_exception() {
+    let x = |reason: &str| BarException {
+        client: "alpha".into(),
+        criterion: "A-1.2".into(),
+        reason: reason.into(),
+        approved: Some("operator".into()),
+    };
+    let (r0, mut g, c) = base();
+    {
+        let e = entry(&mut g[0], "A-1.2");
+        e.status = Status::NotMet;
+        e.reason = Some("no helper".into());
+    }
+    let mut r = r0.clone();
+    r.bar_exception.push(x("r"));
+    assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[]));
+    r.bar_exception.push(x("again"));
+    let f = check(&repo(), &r, &g, &c);
+    assert_eq!(items(&f), set(&[6]));
+    assert!(f[0].text.contains("A-1.2"));
+    for reason in ["", " "] {
+        let mut r = r0.clone();
+        r.bar_exception.push(x(reason));
+        assert_eq!(items(&check(&repo(), &r, &g, &c)), set(&[6]), "{reason:?}");
     }
 }
 
@@ -522,6 +551,38 @@ fn check_7_version_faults() {
         std::fs::write(&p, std::fs::read_to_string(&p).unwrap().replace(from, to)).unwrap();
         assert_eq!(items(&check(d.path(), &r, &g, &c)), set(&[7]), "{file} {from}");
     }
+}
+
+#[test]
+fn check_7_grade_file_name_differs_from_client_name() {
+    let (r, g0, c) = base();
+    let mut g = g0.clone();
+    g[0].name = "Beta".into();
+    // The Alpha premise row Q1 no longer counts for a file named Beta (item 3).
+    let f = check(&repo(), &r, &g, &c);
+    assert_eq!(items(&f), set(&[3, 7]));
+    assert!(f.iter().any(|x| x.item == 7 && x.text.contains("alpha") && x.text.contains("Beta")));
+    // The headers are built from the client's name: `Beta: 2.0.0` is in both files, `Alpha: 2.0.0` is not.
+    let mut c2 = c.clone();
+    c2[0].version = "2.0.0".into();
+    g[0].version = "2.0.0".into();
+    let f = check(&repo(), &r, &g, &c2);
+    assert_eq!(f.iter().filter(|x| x.item == 7).count(), 3, "{f:?}");
+}
+
+#[test]
+fn check_5_duplicate_or_unknown_cell() {
+    let (r, g0, c) = base();
+    let mut g = g0.clone();
+    g[0].cell.push(CellUrl { capability: "A-3".into(), url: "https://example.com/again".into() });
+    let f = check(&repo(), &r, &g, &c);
+    assert_eq!(items(&f), set(&[5]));
+    assert!(f[0].text.contains("A-3"));
+    let mut g = g0.clone();
+    g[0].cell.push(CellUrl { capability: "A-99".into(), url: "https://example.com/x".into() });
+    let f = check(&repo(), &r, &g, &c);
+    assert_eq!(items(&f), set(&[5]));
+    assert!(f[0].text.contains("A-99"));
 }
 
 #[test]
