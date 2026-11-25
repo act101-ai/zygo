@@ -54,6 +54,11 @@ fn td(s: &str) -> String {
     esc(&html(s))
 }
 
+/// An input text for a list line or heading: each `\` as `\\`, then HTML-escaped.
+fn li(s: &str) -> String {
+    html(&s.replace('\\', r"\\"))
+}
+
 /// The cell text of K§6.2.6 item 1, ready for its table cell (the URL is table-escaped only).
 fn cell_text(cell: &Cell, url: &str) -> String {
     let join = |parts: Vec<String>| parts.join("; ");
@@ -104,35 +109,35 @@ fn rollup_block(reg: &Registry, c: &Client, g: &GradeFile) -> String {
     let r = derive::rollup(reg, g, c.supported);
     let header: Vec<String> = ["Tier", "full", "partial", "none", "n/a", "met / applicable"].map(String::from).to_vec();
     let rows = [("core", &r.core), ("standard", &r.standard), ("extra", &r.extra), ("total", &r.total)].map(|(w, n)| counts_row(w, n)).to_vec();
-    let bar = if r.bar.meets { "meets bar".to_string() } else { format!("below bar: {}", html(&r.bar.failing.join(", "))) };
+    let bar = if r.bar.meets { "meets bar".to_string() } else { format!("below bar: {}", li(&r.bar.failing.join(", "))) };
     let exceptions = if r.bar.exceptions.is_empty() {
         "none".to_string()
     } else {
         let text = |id: &String| {
             let e = reg.bar_exception.iter().find(|b| b.client == g.client && &b.criterion == id && !blank(&b.approved));
             let t = e.map_or(id.clone(), |e| format!("{id}: {} (approved: {})", e.reason, e.approved.as_deref().unwrap_or_default()));
-            html(&t)
+            li(&t)
         };
         r.bar.exceptions.iter().map(text).collect::<Vec<_>>().join("; ")
     };
     format!(
         "### {} {}\n\n{}\n\n- Bar: {bar}\n- Bar exceptions: {exceptions}\n- Release: {}",
-        html(&c.name),
-        html(&g.version),
+        li(&c.name),
+        li(&g.version),
         table(&header, rows),
         r.release
     )
 }
 
 fn criteria_block(reg: &Registry, c: &Client, g: &GradeFile, res: &Resolved) -> String {
-    let mut lines = vec![format!("### {}", html(&c.name)), String::new()];
+    let mut lines = vec![format!("### {}", li(&c.name)), String::new()];
     for (cap, _) in ordered(reg) {
         let cell = derive::cell(reg, g, &cap.id);
         for cr in &cap.criterion {
             let line = if let Some(u) = cell.missing.iter().find(|u| u.criterion == cr.id) {
-                format!("- {} not met: {}", html(&cr.id), html(reason(u)))
+                format!("- {} not met: {}", li(&cr.id), li(reason(u)))
             } else if let Some(u) = cell.na.iter().find(|u| u.criterion == cr.id) {
-                format!("- {} n/a: {}", html(&cr.id), html(reason(u)))
+                format!("- {} n/a: {}", li(&cr.id), li(reason(u)))
             } else {
                 let items: Vec<String> = res
                     .get(&g.client, &cr.id)
@@ -145,7 +150,7 @@ fn criteria_block(reg: &Registry, c: &Client, g: &GradeFile, res: &Resolved) -> 
                     })
                     .collect();
                 let text = if items.is_empty() { "no evidence that counts".to_string() } else { items.join(", ") };
-                format!("- {} met: {text}", html(&cr.id))
+                format!("- {} met: {text}", li(&cr.id))
             };
             lines.push(line);
         }

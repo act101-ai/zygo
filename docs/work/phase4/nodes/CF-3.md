@@ -510,7 +510,9 @@ Review findings, each fixed test first (the test failed, or for F6 the compiler 
 - [x] **F5. JSON golden file** — `9abc8342`. `fixtures/expected-conformance.json`, written from `json_of(&render_input())` and checked by hand against the K§6.2.6 example keys and the values of `expected-conformance.md`. Test `render_json_golden_fixture` (CR LF → LF, as the Markdown golden test). It passes under `-p zygo-core` and under `--workspace` (`preserve_order`, `arbitrary_precision`).
 - [x] **F6. compare_or_write called; module allow dropped** — `bf8c09ac`. With the allow removed, only `compare_or_write` warned (never used). Test `render_compare_or_write_env_entry` calls it on a temp root with the correct files; it does not set or remove `ZYGO_WRITE_CONFORMANCE` and passes with and without `ZYGO_WRITE_CONFORMANCE=1`. No item-level allow is needed.
 
-Acceptance after round 2: exit 0; `render_` count 22; `conformance` 106 passed. `cargo test -p zygo-core --locked` green; `cargo build --workspace --locked` green.
+- [x] **I1 (implementer-found). Backslash kept in list lines and headings** — commit "fix(conformance): keep backslashes in list lines and headings (CF-3 round 2)". Outside tables a `\` in input text was read as a Markdown escape (`a\|b` showed as `a|b`). `li` writes `\` as `\\`, then HTML-escapes, for each input text of a list line or heading (rollup heading, bar failing ids, exceptions, criteria heading, ids, reasons). Code spans and URLs are not changed. Test `render_markdown_backslash_kept_in_lists`: the reason `a\|b` renders as `a\\|b` in the criteria list.
+
+Acceptance after round 2: exit 0; `render_` count 23; `conformance` 107 passed. `cargo test -p zygo-core --locked` green; `cargo build --workspace --locked` green.
 
 ### Test logic edits
 

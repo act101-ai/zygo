@@ -1414,6 +1414,13 @@ fn render_markdown_backslash_kept() {
     assert_eq!(unescaped(line), 5);
 }
 
+#[test]
+fn render_markdown_backslash_kept_in_lists() {
+    let mut x = render_input();
+    entry(&mut x.1[1], "A-3.1").reason = Some(r"a\|b".into());
+    assert!(md_of(&x).contains("- A-3.1 not met: a\\\\|b\n"));
+}
+
 /// Raw HTML from input text is shown as text, in table cells and list lines; a URL is not changed.
 #[test]
 fn render_markdown_html_escaped() {
