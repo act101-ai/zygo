@@ -324,6 +324,7 @@ Session text (T, SX nodes):
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
+| FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | PLANNED | implementation | plan b5acf60 |
 
 ## Log
 
@@ -362,3 +363,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | DR-12 planned (1cffa68): 18 steps · PR #37 |
 | 2026-11-24 | DR-12 in progress: node branch `phase3/DR-12--DR-12` at 3374eea, worktree `.worktrees/phase3/DR-12-node` · PR #37 |
 | 2026-11-24 | DR-12 done: check_keep D§9.4 steps 1-9; review round 1 fixed 6 (merge paths, session line, stop problems); floor 2560/0 · PR #37 |
+| 2026-11-24 | FX-1 added (b5acf60): found in the RT-1 floor, a 24-min hang of git_runner stream_stop_kills_the_process_group; root cause Darwin FIFO lost wakeup; git_runner and decision_git kill tests use an anonymous pipe; tests only; 8 steps |
