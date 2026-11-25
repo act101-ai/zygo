@@ -1,4 +1,5 @@
 //! `zygo decision` (decision records design D§10.1): delegated decision records in `docs/decisions/`.
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, Write};
@@ -14,6 +15,7 @@ use zygo_work::decisions::graph::{count_in, dependents, inverse_of};
 use zygo_work::decisions::history::trailer_commits;
 use zygo_work::decisions::new::{self as new_rec, check_args, NewArgs};
 use zygo_work::decisions::record::{parse_record, read_bytes, Class, Kind, Record, Status, DIR};
+use zygo_work::decisions::review::Queue;
 use zygo_work::decisions::set::{read_dir, set_faults, DirError, RecordSet};
 use zygo_work::hooks::session_id;
 use zygo_work::repo;
@@ -26,13 +28,15 @@ const USAGE: &str = "zygo decision: usage: zygo decision new --kind <k> --title 
     | overturn <id> --reason <text> [--yes]";
 /// The commits `show` lists at most.
 const SHOW_COMMITS: usize = 50;
+/// The commits `review` lists at most per record (D§11.2 step 3).
+const REVIEW_COMMITS: usize = 20;
 
 /// The streams of one `zygo decision` run.
 pub struct DecisionIo<'a> {
     pub input: &'a mut dyn BufRead,
     pub out: &'a mut dyn Write,
     pub err: &'a mut dyn Write,
-    /// Whether stdin is a terminal.
+    /// Whether stdin and stdout are terminals.
     pub tty: bool,
 }
 
@@ -81,6 +85,8 @@ enum Sub {
     Deps(String),
     Check,
     Decide(DecideArgs),
+    /// `review [--kind <k>] [--unit <prefix>]` (D§11.2).
+    Review { kind: Option<Kind>, unit: Option<String> },
 }
 
 /// The arguments of `ratify` and `overturn` (D§10.1).
@@ -116,6 +122,18 @@ fn parse(args: &[String]) -> Option<Sub> {
         ("check", []) => Some(Sub::Check),
         ("ratify", [id, rest @ ..]) => parse_decide("ratify", id, rest).map(Sub::Decide),
         ("overturn", [id, rest @ ..]) => parse_decide("overturn", id, rest).map(Sub::Decide),
+        ("review", _) => {
+            let (mut kind, mut unit) = (None, None);
+            let mut it = rest.iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--kind" => kind = Some(Kind::parse(it.next()?)?),
+                    "--unit" => unit = Some(it.next()?.clone()),
+                    _ => return None,
+                }
+            }
+            Some(Sub::Review { kind, unit })
+        }
         _ => None,
     }
 }
@@ -236,10 +254,20 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         }
     }
     // D§11.1, D-C5: the operator verbs never run in an agent session.
-    if let Sub::Decide(a) = &sub
+    let operator_verb = match &sub {
+        Sub::Decide(a) => Some(a.verb),
+        Sub::Review { .. } => Some("review"),
+        _ => None,
+    };
+    if let Some(verb) = operator_verb
         && session_dir(env).is_some()
     {
-        line(io.err, &format!("zygo decision {}: run it in your own shell, not in an agent session", a.verb));
+        line(io.err, &format!("zygo decision {verb}: run it in your own shell, not in an agent session"));
+        return 2;
+    }
+    // D§11.1: `review` asks on a terminal.
+    if matches!(sub, Sub::Review { .. }) && !io.tty {
+        line(io.err, "zygo decision review: needs a terminal; use ratify or overturn with --yes in scripts");
         return 2;
     }
     let Some((top, common_dir)) = (repo.checkout)() else {
@@ -247,7 +275,7 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         return 2;
     };
     // D§14 row 1: no records directory, nothing to review.
-    if matches!(sub, Sub::Decide(_))
+    if operator_verb.is_some()
         && fs::symlink_metadata(top.join(DIR)).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
     {
         line(io.out, "no open records");
@@ -271,6 +299,7 @@ pub fn run_in(repo: &Repo, env: &dyn Fn(&str) -> Option<OsString>, args: &[Strin
         Sub::Deps(id) => deps(&set, &id, io),
         Sub::Check => check(&set, io),
         Sub::Decide(a) => decide(repo, &top, &lock_path(&common_dir), &set, &a, io),
+        Sub::Review { kind, unit } => review(repo, &top, &lock_path(&common_dir), &set, kind, unit.as_deref(), io),
     }
 }
 
@@ -389,6 +418,176 @@ fn decide(repo: &Repo, top: &Path, lock: &Path, set: &RecordSet, a: &DecideArgs,
     }
 }
 
+/// What the operator picks for one shown record.
+enum Pick {
+    Do(Outcome),
+    Skip,
+    Quit,
+}
+
+/// Prints `prompt` and reads one answer without its line end; `None` (after a newline) at EOF or a read error.
+fn ask(io: &mut DecisionIo, prompt: &str) -> Option<String> {
+    let _ = write!(io.out, "{prompt}");
+    let _ = io.out.flush();
+    let mut s = String::new();
+    match io.input.read_line(&mut s) {
+        Ok(n) if n > 0 => Some(s.trim_end_matches(['\n', '\r']).to_string()),
+        _ => {
+            let _ = writeln!(io.out);
+            None
+        }
+    }
+}
+
+/// Asks `prompt` until `take` accepts the answer; `None` at EOF or a read error.
+fn ask_until<T>(io: &mut DecisionIo, prompt: &str, take: impl Fn(String) -> Option<T>) -> Option<T> {
+    loop {
+        if let Some(v) = take(ask(io, prompt)?) {
+            return Some(v);
+        }
+    }
+}
+
+/// The D§11.3 outcome of one record: the action prompt, then its sub-prompts; an unknown action, a bad target and an
+/// empty promotion text or reason ask again; EOF quits.
+fn choose(io: &mut DecisionIo) -> Pick {
+    let non_empty = |s: String| (!s.is_empty()).then_some(s);
+    let picked = ask_until(io, "r ratify · p promote · o overturn · s skip · q quit ", |a| {
+        matches!(a.trim(), "r" | "p" | "o" | "s" | "q").then(|| a.trim().to_string())
+    });
+    let outcome = match picked.as_deref() {
+        Some("r") => ask(io, "note (empty for none): ").map(|note| Outcome::Ratify { note, promote: None }),
+        Some("p") => ask_until(io, "promote to adr, spec or rule: ", |t| Promotion::parse(t.trim())).and_then(|p| {
+            ask_until(io, "promotion text: ", non_empty).map(|t| Outcome::Ratify { note: String::new(), promote: Some((p, t)) })
+        }),
+        Some("o") => ask_until(io, "reason: ", non_empty).map(|reason| Outcome::Overturn { reason }),
+        Some("s") => return Pick::Skip,
+        _ => None,
+    };
+    outcome.map_or(Pick::Quit, Pick::Do)
+}
+
+/// The outcome counts and the written files of one `review`.
+#[derive(Default)]
+struct Tally {
+    ratified: usize,
+    promoted: usize,
+    overturned: usize,
+    skipped: usize,
+    files: Vec<String>,
+}
+
+/// D§11.2 step 3: the header, the record, its `depends_on` statuses and its commits.
+fn review_block(repo: &Repo, top: &Path, queue: &Queue, statuses: &HashMap<String, Status>, r: &Record, at: (usize, usize), io: &mut DecisionIo) {
+    let (i, n) = at;
+    let dependents = queue.dependents(&r.id);
+    line(io.out, &format!("[{i}/{n}] {} {} class {} dependents {dependents}", r.id, r.kind.name(), r.class.name()));
+    line(io.out, &r.title);
+    line(io.out, &format!("unit {} round {} role {} model {} date {}", r.unit, r.round, r.role, r.model, r.date));
+    if let Some(c) = queue.cause(&r.id) {
+        line(io.out, &format!("depends on overturned {c}"));
+    }
+    for d in &r.depends_on {
+        let status = match statuses.get(d) {
+            Some(Status::Overturned) => "(overturned)",
+            Some(s) => s.name(),
+            None => "missing",
+        };
+        line(io.out, &format!("depends_on {d} {status}"));
+    }
+    print_lines(io.out, r.body.as_bytes());
+    match (repo.commits)(top, &r.id, REVIEW_COMMITS) {
+        Ok(commits) => {
+            line(io.out, &format!("commits: {}", commits.len()));
+            for (hash, subject) in commits {
+                line(io.out, &format!("{hash} {subject}"));
+            }
+        }
+        Err(e) => line(io.err, &e),
+    }
+}
+
+/// D§11.2: each open record in dependents order, its outcome written (D§11.3, re-read first) before the next; at the
+/// end or at `q` the counts, the written files and the commit line. An outcome that cannot be written ends the review
+/// with exit 1; the outcomes before it stay written (D§14).
+fn review(repo: &Repo, top: &Path, lock: &Path, set: &RecordSet, kind: Option<Kind>, unit: Option<&str>, io: &mut DecisionIo) -> i32 {
+    for (name, _) in &set.malformed {
+        line(io.err, &format!("zygo decision: {name}: cannot be reviewed; zygo decision check names the fault"));
+    }
+    let mut queue = Queue::new(&set.valid, kind, unit);
+    let total = queue.remaining();
+    if total == 0 {
+        line(io.out, "no open records");
+        return 0;
+    }
+    let mut statuses: HashMap<String, Status> = set.valid.iter().map(|r| (r.id.clone(), r.status)).collect();
+    let (mut tally, mut shown_count) = (Tally::default(), 0);
+    let code = loop {
+        let Some(id) = queue.next() else { break 0 };
+        let path = top.join(DIR).join(format!("{id}.md"));
+        let Some((shown, r)) = read_bytes(&path).ok().and_then(|b| parse_record(&id, &b).ok().map(|r| (b, r))) else {
+            line(io.err, &format!("zygo decision: {id} is not a valid record"));
+            continue;
+        };
+        if r.status != Status::Open {
+            line(io.err, &format!("zygo decision: {id} is {}", r.status.name()));
+            continue;
+        }
+        shown_count += 1;
+        review_block(repo, top, &queue, &statuses, &r, (shown_count, total), io);
+        let outcome = match choose(io) {
+            Pick::Do(o) => o,
+            Pick::Skip => {
+                tally.skipped += 1;
+                continue;
+            }
+            Pick::Quit => break 0,
+        };
+        match apply(&path, lock, &shown, &outcome, &(repo.today)()) {
+            Ok(()) => {
+                let status = match &outcome {
+                    Outcome::Ratify { promote: Some(_), .. } => {
+                        tally.promoted += 1;
+                        Status::Ratified
+                    }
+                    Outcome::Ratify { promote: None, .. } => {
+                        tally.ratified += 1;
+                        Status::Ratified
+                    }
+                    Outcome::Overturn { .. } => {
+                        tally.overturned += 1;
+                        Status::Overturned
+                    }
+                };
+                statuses.insert(id.clone(), status);
+                tally.files.push(format!("{DIR}/{id}.md"));
+                if status == Status::Overturned {
+                    queue.overturned(&id, &set.valid);
+                }
+            }
+            Err(EditError::Changed) => {
+                line(io.err, &format!("{id} changed since it was shown; skipped"));
+                tally.skipped += 1;
+            }
+            Err(EditError::Refused(e)) => {
+                line(io.err, &e);
+                tally.skipped += 1;
+            }
+            Err(EditError::Io(e)) => {
+                line(io.err, &e);
+                break 1;
+            }
+        }
+    };
+    let Tally { ratified, promoted, overturned, skipped, files } = tally;
+    line(io.out, &format!("ratified {ratified}, promoted {promoted}, overturned {overturned}, skipped {skipped}"));
+    for f in files {
+        line(io.out, &f);
+    }
+    line(io.out, "commit these files; add a Zygo-Decision: line per id");
+    code
+}
+
 fn deps(set: &RecordSet, id: &str, io: &mut DecisionIo) -> i32 {
     malformed_lines(set, io);
     let Some(r) = find(set, id, io) else { return 1 };
@@ -434,7 +633,7 @@ pub fn run(args: &[String]) -> i32 {
         Err(code) => return code,
     };
     let stdin = std::io::stdin();
-    let tty = std::io::IsTerminal::is_terminal(&stdin);
+    let tty = std::io::IsTerminal::is_terminal(&stdin) && std::io::IsTerminal::is_terminal(&std::io::stdout());
     let (mut input, mut out, mut err) = (stdin.lock(), std::io::stdout().lock(), std::io::stderr().lock());
     let mut io = DecisionIo { input: &mut input, out: &mut out, err: &mut err, tty };
     let code = run_with(&cwd, &|k| std::env::var_os(k), args, &mut io);

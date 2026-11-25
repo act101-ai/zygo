@@ -102,7 +102,7 @@ The end, at the queue's end or at `q`: `ratified <a>, promoted <b>, overturned <
 
 ### Steps
 
-- [ ] **1. Write the failing `Queue` tests** in the new `crates/zygo/tests/decision_review.rs`. Header `//! DR-6: zygo decision review (D§11.1, D§11.2, D§11.3, D§10.1, D§14, D§17 #12, #13).` Fixtures: `C40`, `BODY`, `id(n)` and `text(rid, kind, status, title, unit, deps, extra, body)` as in `decision_cli.rs:9-18`; `TODAY = "2026-12-01"`; `RATIFIED = "reviewed = \"2026-11-30\"\nreview_note = \"\"\n"`. `fn graph(top: &Path) -> Vec<Record>` writes fixture G and returns `read_dir(top).unwrap().valid`:
+- [x] **1. Write the failing `Queue` tests** in the new `crates/zygo/tests/decision_review.rs`. Header `//! DR-6: zygo decision review (D§11.1, D§11.2, D§11.3, D§10.1, D§14, D§17 #12, #13).` Fixtures: `C40`, `BODY`, `id(n)` and `text(rid, kind, status, title, unit, deps, extra, body)` as in `decision_cli.rs:9-18`; `TODAY = "2026-12-01"`; `RATIFIED = "reviewed = \"2026-11-30\"\nreview_note = \"\"\n"`. `fn graph(top: &Path) -> Vec<Record>` writes fixture G and returns `read_dir(top).unwrap().valid`:
 
   | n | kind | status | unit | depends_on | step 2 count |
   |---|---|---|---|---|---|
@@ -119,10 +119,10 @@ The end, at the queue's end or at `q`: `ratified <a>, promoted <b>, overturned <
   - `queue_orders_by_dependents_then_id`: draining `Queue::new(&g, None, None)` gives ids `[1, 2, 5, 3, 4, 8]`. Before the drain, `remaining() == 6`, `dependents(&id(1)) == 3`, `dependents(&id(5)) == 1`.
   - `queue_filters_by_kind_and_unit_and_counts_over_all_records`: `Kind::Assumption` drains `[1]` with `dependents(&id(1)) == 3`. `Some("phase-3:N2")` drains `[4]`.
   - `overturned_moves_the_open_dependents_to_the_front_in_step_2_order`: `next` gives 1 and 2. `overturned(&id(2), &g)` makes the drain start with 3. On a new queue: `next` 1, `next` 2, `overturned(&id(1), &g)` drains `[3, 4, 5, 8]`; `cause(&id(3)) == Some(id(1))`, `cause(&id(5)) == None`. Overturning 5 moves nothing, because 7 is not queued and 8 depends only on a superseded record.
-- [ ] **2. Run** `cargo test -p zygo --locked --test decision_review`. Check: it fails to compile, because `decisions::review` does not exist.
-- [ ] **3. Implement** `review.rs` (Interface and algorithms above) and add `pub mod review;` to `decisions/mod.rs`.
-- [ ] **4. Run** the same command. Check: the three tests pass.
-- [ ] **5. Write the failing CLI tests** in the same file. Helpers: `go(top, env, tty, input: &mut dyn BufRead, args) -> Ran` as `decision_verbs.rs:195-203`, but with `tty` as given, `checkout` giving `(top, top/.git)` (created), and `commits` that asserts `limit == 20` and returns `[("a".repeat(40), "first")]` for `id(1)` and no commits for the others. `review(top, input: &str) -> Ran` = `go(top, &|_| None, true, &mut input.as_bytes(), &["review"])`. `headers(out)` = the lines that start with `[`. `Script { answers: VecDeque<String>, probe: PathBuf, seen: Vec<String>, edit: Option<(PathBuf, String)> }`: a `Read` that returns one answer per call (EOF when none are left). At each call it pushes the `status` of the record at `probe` (the `parse_record` of its bytes) to `seen`. At its first call it writes `edit`, if set. It is wrapped in `BufReader`, so that each prompt reads one answer.
+- [x] **2. Run** `cargo test -p zygo --locked --test decision_review`. Check: it fails to compile, because `decisions::review` does not exist.
+- [x] **3. Implement** `review.rs` (Interface and algorithms above) and add `pub mod review;` to `decisions/mod.rs`.
+- [x] **4. Run** the same command. Check: the three tests pass.
+- [x] **5. Write the failing CLI tests** in the same file. Helpers: `go(top, env, tty, input: &mut dyn BufRead, args) -> Ran` as `decision_verbs.rs:195-203`, but with `tty` as given, `checkout` giving `(top, top/.git)` (created), and `commits` that asserts `limit == 20` and returns `[("a".repeat(40), "first")]` for `id(1)` and no commits for the others. `review(top, input: &str) -> Ran` = `go(top, &|_| None, true, &mut input.as_bytes(), &["review"])`. `headers(out)` = the lines that start with `[`. `Script { answers: VecDeque<String>, probe: PathBuf, seen: Vec<String>, edit: Option<(PathBuf, String)> }`: a `Read` that returns one answer per call (EOF when none are left). At each call it pushes the `status` of the record at `probe` (the `parse_record` of its bytes) to `seen`. At its first call it writes `edit`, if set. It is wrapped in `BufReader`, so that each prompt reads one answer.
   - `review_exits_2_in_an_agent_session`: env `ZYGO_SESSION_DIR=<tmp>/session`, `tty` true. Result: `(2, "", "zygo decision review: run it in your own shell, not in an agent session\n")`. Every fixture file is byte-equal.
   - `review_without_a_terminal_exits_2`: `tty` false. Result: `(2, "", "zygo decision review: needs a terminal; use ratify or overturn with --yes in scripts\n")`.
   - `the_binary_refuses_without_a_terminal_and_in_a_session`: `Command::new(env!("CARGO_BIN_EXE_zygo"))`, `common::scratch_home`, `decision review`, `stdin(Stdio::null())`, `env_remove("ZYGO_SESSION_DIR")`. Result: exit 2, stderr is the terminal line. The same with `.env("ZYGO_SESSION_DIR", <tmp>)` (set on purpose) gives exit 2 and the session line. `mod common;`.
@@ -135,17 +135,27 @@ The end, at the queue's end or at `q`: `ratified <a>, promoted <b>, overturned <
   - `an_esc_in_a_title_prints_as_an_escape`: record 1 with the TOML title `"a\\u001bb"`, input `"q\n"`. The output holds the line `a\u{1b}b` (the escape as text), and `!out.contains('\u{1b}')`.
   - `failure_rows_of_d14`: (a) no `docs/decisions` → `(0, "no open records\n", "")`; (b) only records 6 and 7 → the same; (c) fixture G with `--kind compromise` → the same; (d) `docs/decisions` as a file → `(1, _, "zygo decision: docs/decisions is not a directory\n")`; (e) record 1 and a malformed `<id9>.md` (no `## Evidence`), input `"s\n"` → stderr is `zygo decision: <id9>.md: cannot be reviewed; zygo decision check names the fault\n` and there is one header; (f) `review --kind bogus` and `review --unit` → exit 2 with the USAGE line on stderr.
   - `a_write_failure_exits_1_and_keeps_earlier_outcomes` (`#[cfg(unix)]`, skipped as root as in `decision_verbs.rs:333`): records 1 and 5. Run 1 with input `"r\n\nq\n"` ratifies record 1. The test then sets `docs/decisions` to mode `0o500`. Run 2 with input `"o\nx\n"` shows record 5 first. Then the mode goes back to `0o700`. Run 2 result: exit 1, stderr starts with `zygo decision: cannot write ` and contains `docs/decisions`, and the output ends with `ratified 0, promoted 0, overturned 0, skipped 0\ncommit these files; add a Zygo-Decision: line per id\n`. File 1 stays ratified and file 5 is byte-equal.
-- [ ] **6. Run** `cargo test -p zygo --locked --test decision_review`. Check: the step 5 tests fail (`review` gives USAGE, exit 2). The step 1 tests pass.
-- [ ] **7. Implement** in `decision.rs`:
+- [x] **6. Run** `cargo test -p zygo --locked --test decision_review`. Check: the step 5 tests fail (`review` gives USAGE, exit 2). The step 1 tests pass.
+- [x] **7. Implement** in `decision.rs`:
   - `Sub::Review` and its parse (Interface).
   - The session refusal covers `Sub::Review` with the verb `review`. Directly after it, `Sub::Review` with `!io.tty` prints the terminal line and exits 2.
   - The D§14 row 1 check (`:250`) covers `Sub::Review` too.
   - The match arm `Sub::Review { kind, unit } => review(repo, &top, &lock_path(&common_dir), &set, kind, unit.as_deref(), io)`.
   - `review`: one stderr line per malformed file. Then `Queue::new(&set.valid, kind, unit)`. If it is empty, print `no open records` and exit 0. `statuses: HashMap<id, Status>` comes from `set.valid` and is updated after each write. Loop on `next()`: re-read with `read_bytes` + `parse_record` (that is `shown`). If it fails, print `zygo decision: <id> is not a valid record` on stderr and go on. If the status is no longer `open`, print `zygo decision: <id> is <status>` and go on. Else print the block (Interface), ask, build the `Outcome`, and call `apply(&path, lock, &shown, &o, &(repo.today)())`. `Ok` counts the outcome and records the path; after an overturn it calls `queue.overturned(&id, &set.valid)`. `Changed` prints `<id> changed since it was shown; skipped` and counts as skipped. `Refused(e)` prints `e` and counts as skipped. `Io(e)` prints `e`, then the end lines, and exits 1. Flush `io.out` before each read.
   - `run`: `tty = stdin.is_terminal() && stdout.is_terminal()`, and the `tty` doc becomes `/// Whether stdin and stdout are terminals.`
-- [ ] **8. Run** `cargo test -p zygo --locked --test decision_review`. Check: all pass. Then run `cargo clippy -p zygo -p zygo-work --all-targets --locked -- -D warnings`. Check: it is clean.
-- [ ] **9. Commit** the four Files with the message `DR-6: zygo decision review` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-6:code`.
+- [x] **8. Run** `cargo test -p zygo --locked --test decision_review`. Check: all pass. Then run `cargo clippy -p zygo -p zygo-work --all-targets --locked -- -D warnings`. Check: it is clean.
+- [x] **9. Commit** the four Files with the message `DR-6: zygo decision review` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:DR-6:code`.
 - [ ] **10. Final verification:** `cargo test -p zygo --locked --test decision_review` → all pass. `cargo test -p zygo-work --locked` → all pass. Also run `cargo test -p zygo --locked --test decision_verbs --test decision_cli --test decision_new`. Check: all pass, because `USAGE` did not change.
+
+### Implementation notes
+
+1. `Script` records the probe status only at a read that returns an answer. The EOF read at the end is not counted, so `seen` has the three entries that step 5 names.
+2. Prompts end with no newline, so in captured output a header line can start with the previous prompt's text. The test helper `headers` takes the text from the `[i/N]` marker, not from the start of the line.
+3. `ask` prints a newline at EOF, so the end lines start on their own line. The action prompt ends with one space (`… q quit `), as the `[y/N] ` prompt of `decide` does.
+4. A promotion writes an empty `review_note`. The `p` path asks for no note.
+5. `Queue::next` has `#[allow(clippy::should_implement_trait)]`, because Produces gives the name `next`.
+6. `review_shows_records_in_dependents_order` also asserts `depends_on <id6> superseded`.
+7. Step 8 clippy: `cargo clippy -p zygo -p zygo-work --all-targets --locked -- -D warnings` fails on code outside the Files: `crates/zygo-work/src/gate/transition.rs:10` (`large_enum_variant`), `:158` (`collapsible_if`) and `crates/zygo-work/tests/decision_record.rs:297` (`sliced_string_as_bytes`), with rustc 1.98.1. The DR-6 changes do not touch these files. With those three lints allowed, clippy is clean.
 
 ### Coverage
 
