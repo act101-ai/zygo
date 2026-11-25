@@ -1422,7 +1422,7 @@ fn render_markdown_backslash_kept_in_lists() {
 }
 
 /// Raw HTML from input text is shown as text, in table cells and list lines (md_text); a URL destination keeps
-/// `?`, `=` and `&`.
+/// `?` and `=`, and writes `&` as `&amp;` (decoded back to `&`).
 #[test]
 fn render_markdown_html_escaped() {
     let mut x = render_input();
@@ -1430,7 +1430,7 @@ fn render_markdown_html_escaped() {
     entry(&mut x.1[0], "WA-2.1").reason = Some("<!--".into());
     x.1[1].cell.iter_mut().find(|c| c.capability == "A-3").unwrap().url = "https://example.com/m?a=1&b=2".into();
     let md = md_of(&x);
-    assert_eq!(row(&md, r"| A\-3 "), r"| A\-3 Model list | standard | full [https\:\/\/example\.com\/alpha\/models](https://example.com/alpha/models) | none (A\-3\.1: \<details\>) [https\:\/\/example\.com\/m\?a\=1\&b\=2](https://example.com/m?a=1&b=2) |");
+    assert_eq!(row(&md, r"| A\-3 "), r"| A\-3 Model list | standard | full [https\:\/\/example\.com\/alpha\/models](https://example.com/alpha/models) | none (A\-3\.1: \<details\>) [https\:\/\/example\.com\/m\?a\=1\&b\=2](https://example.com/m?a=1&amp;b=2) |");
     assert_eq!(row(&md, r"| WA\-2 "), r"| WA\-2 Turn signals | extra | n/a (\<\!\-\-) | full [https\:\/\/example\.com\/beta\/turns](https://example.com/beta/turns) |");
     assert!(md.contains("- A\\-3\\.1 not met: \\<details\\>\n"));
     assert!(md.contains("- WA\\-2\\.1 n/a: \\<\\!\\-\\-\n"));
@@ -1498,7 +1498,7 @@ fn render_markdown_hostile_text_literal() {
 }
 
 /// The URL rule: a cell URL is `[md_text(url)](dest)`, where dest percent-encodes (%XX on UTF-8 bytes) each byte
-/// not in `A-Za-z0-9-._~:/?#@!$&'*+,;=%`. A link text cannot hold another link.
+/// not in `A-Za-z0-9-._~:/?#@!$'*+,;=%`, and writes `&` as `&amp;`. A link text cannot hold another link.
 #[test]
 fn render_markdown_url_link() {
     let cases: &[(&str, &str, &str)] = &[
@@ -1508,7 +1508,9 @@ fn render_markdown_url_link() {
             "https://ex.com/u%3Cimg%20src=x%20onerror=alert%281%29%3E",
         ),
         ("https://ex.com/u<https://evil>", r"https\:\/\/ex\.com\/u\<https\:\/\/evil\>", "https://ex.com/u%3Chttps://evil%3E"),
-        ("https://ex.com/u&amp;", r"https\:\/\/ex\.com\/u\&amp\;", "https://ex.com/u&amp;"),
+        // `&` as `&amp;` in dest: CommonMark entity decoding gives back the original `&`.
+        ("https://ex.com/u&amp;", r"https\:\/\/ex\.com\/u\&amp\;", "https://ex.com/u&amp;amp;"),
+        ("https://ex.com/?a=1&b=2", r"https\:\/\/ex\.com\/\?a\=1\&b\=2", "https://ex.com/?a=1&amp;b=2"),
         (r"https://ex.com/u\", r"https\:\/\/ex\.com\/u\\", "https://ex.com/u%5C"),
         ("https://ex.com/a|b", r"https\:\/\/ex\.com\/a\|b", "https://ex.com/a%7Cb"),
         ("https://ex.com/é", r"https\:\/\/ex\.com\/é", "https://ex.com/%C3%A9"),

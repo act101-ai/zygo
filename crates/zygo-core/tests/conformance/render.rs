@@ -55,9 +55,16 @@ fn md_text(s: &str) -> String {
 
 /// A link destination: each UTF-8 byte not in `A-Za-z0-9-._~:/?#@!$&'*+,;=%` as `%XX`. Left out are, among others,
 /// `(`, `)`, `[`, `]`, `<`, `>`, `\`, `|`, space and backtick, so the destination cannot end early or split a cell.
+/// Each `&` is written `&amp;`, so CommonMark entity decoding in the destination gives back the original `&`.
 fn link_dest(url: &str) -> String {
-    let keep = |b: u8| b.is_ascii_alphanumeric() || b"-._~:/?#@!$&'*+,;=%".contains(&b);
-    url.bytes().map(|b| if keep(b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+    let keep = |b: u8| b.is_ascii_alphanumeric() || b"-._~:/?#@!$'*+,;=%".contains(&b);
+    url.bytes()
+        .map(|b| match b {
+            b'&' => "&amp;".to_string(),
+            b if keep(b) => (b as char).to_string(),
+            b => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// The cell text of K§6.2.6 item 1, ready for its table cell; the URL is a link `[md_text(url)](link_dest(url))`.
