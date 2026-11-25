@@ -43,7 +43,7 @@ pub fn mechanics_with_overrides(dir: &SessionDir, v: &SessionView) -> String;
 
 ### Steps
 
-- [ ] **Step 1: write the tests.** Create `crates/zygo-hooks/tests/subagent_text.rs`. The constants `REDACT`, `ATTRIBUTION`, `STORE`, `NAV` and `TRAILER` are copied byte for byte from `crates/zygo-hooks/tests/session_text.rs:15-19` (the five sentences of `crates/zygo-hooks/src/session_text.rs:6-11`; the test pins them independently of the source).
+- [x] **Step 1: write the tests.** Create `crates/zygo-hooks/tests/subagent_text.rs`. The constants `REDACT`, `ATTRIBUTION`, `STORE`, `NAV` and `TRAILER` are copied byte for byte from `crates/zygo-hooks/tests/session_text.rs:15-19` (the five sentences of `crates/zygo-hooks/src/session_text.rs:6-11`; the test pins them independently of the source).
 
   ```rust
   use std::path::Path;
@@ -177,11 +177,11 @@ pub fn mechanics_with_overrides(dir: &SessionDir, v: &SessionView) -> String;
 
   Check: the file holds 6 test names that start `subagent_start` and 1 that starts `main_compact`; `grep -nE "Instant|SystemTime|sleep|Command::new" crates/zygo-hooks/tests/subagent_text.rs` shows only the one `Command::new(std::env::current_exe()…)`.
 
-- [ ] **Step 2: run it red.** `cargo test -p zygo-hooks --test subagent_text` → does not compile: `cannot find function \`mechanics_with_overrides\` in module \`session_start\`` (E0425).
+- [x] **Step 2: run it red.** `cargo test -p zygo-hooks --test subagent_text` → does not compile: `cannot find function \`mechanics_with_overrides\` in module \`session_start\`` (E0425).
 
-- [ ] **Step 3: add `mechanics_with_overrides`.** In `crates/zygo-hooks/src/session_start.rs`: import `use crate::session_text::{build, mechanics};`; add a private `fn with_overrides(dir: &SessionDir, v: &SessionView) -> SessionView` that holds the lines of `:34-37` (clone, `Overrides::load(dir)`, `results`, `work_units`) and returns the copy; `text_of` becomes `build(&with_overrides(dir, v))`; add `pub fn mechanics_with_overrides(dir: &SessionDir, v: &SessionView) -> String { mechanics(&with_overrides(dir, v)) }` with the doc line of Interfaces. Check: `cargo test -p zygo-hooks --test subagent_text` compiles; `subagent_start_claude_type_gets_mechanics`, `subagent_start_other_types_get_the_same` and `subagent_start_overrides_off_gives_redaction_and_attribution` fail on the `both(..)` assertion (left `""`), `subagent_start_unparseable_view_one_stderr_line` fails on the first `is_err()`; `subagent_start_zygo_type_gets_nothing`, `subagent_start_sub_session_start_compact_gets_nothing` and `main_compact_output_equals_startup` pass (they pin behavior that does not change).
+- [x] **Step 3: add `mechanics_with_overrides`.** In `crates/zygo-hooks/src/session_start.rs`: import `use crate::session_text::{build, mechanics};`; add a private `fn with_overrides(dir: &SessionDir, v: &SessionView) -> SessionView` that holds the lines of `:34-37` (clone, `Overrides::load(dir)`, `results`, `work_units`) and returns the copy; `text_of` becomes `build(&with_overrides(dir, v))`; add `pub fn mechanics_with_overrides(dir: &SessionDir, v: &SessionView) -> String { mechanics(&with_overrides(dir, v)) }` with the doc line of Interfaces. Check: `cargo test -p zygo-hooks --test subagent_text` compiles; `subagent_start_claude_type_gets_mechanics`, `subagent_start_other_types_get_the_same` and `subagent_start_overrides_off_gives_redaction_and_attribution` fail on the `both(..)` assertion (left `""`), `subagent_start_unparseable_view_one_stderr_line` fails on the first `is_err()`; `subagent_start_zygo_type_gets_nothing`, `subagent_start_sub_session_start_compact_gets_nothing` and `main_compact_output_equals_startup` pass (they pin behavior that does not change).
 
-- [ ] **Step 4: replace both early returns.** In `session_start.rs` add `use serde_json::Value;` (next to `json`) and:
+- [x] **Step 4: replace both early returns.** In `session_start.rs` add `use serde_json::Value;` (next to `json`) and:
 
   ```rust
   /// T§6.3 item 2: the output for an input with `agent_id`. A `zygo-` agent type (the rule of
@@ -201,8 +201,8 @@ pub fn mechanics_with_overrides(dir: &SessionDir, v: &SessionView) -> String;
 
   In `run_in` (`:25-27`) and `run_member` (`:67-69`) replace `return Ok(HookOutput::None);` by `return subagent(input, dir);`, and replace the `run_in` comment at `:24` by `// T§6.3 item 2: one branch for every input with \`agent_id\`; the member part never runs for it.` Check: `cargo test -p zygo-hooks --test subagent_text` → 7 passed, 0 failed, 1 ignored.
 
-- [ ] **Step 5: run the crate's tests.** `cargo test -p zygo-hooks --locked --no-fail-fast` → all pass (among them `session_start_skips_subagent_input` and the `run_member` tests of `tests/workspace.rs`); `cargo build --workspace --locked` → no warning from `crates/zygo-hooks/src/session_start.rs`.
+- [x] **Step 5: run the crate's tests.** `cargo test -p zygo-hooks --locked --no-fail-fast` → all pass (among them `session_start_skips_subagent_input` and the `run_member` tests of `tests/workspace.rs`); `cargo build --workspace --locked` → no warning from `crates/zygo-hooks/src/session_start.rs`.
 
-- [ ] **Step 6: commit.** `git add crates/zygo-hooks/src/session_start.rs crates/zygo-hooks/tests/subagent_text.rs && git commit` with subject `SX-1: mechanics text on SubagentStart for every non-zygo subagent`, a blank line, then the trailers `Zygo-Session: <id of the implementing session>` and `Zygo-Work: phase3:SX-1`, each on its own line; no Claude attribution. Check: `git show --stat HEAD` lists only those two files.
+- [x] **Step 6: commit.** `git add crates/zygo-hooks/src/session_start.rs crates/zygo-hooks/tests/subagent_text.rs && git commit` with subject `SX-1: mechanics text on SubagentStart for every non-zygo subagent`, a blank line, then the trailers `Zygo-Session: <id of the implementing session>` and `Zygo-Work: phase3:SX-1`, each on its own line; no Claude attribution. Check: `git show --stat HEAD` lists only those two files.
 
-- [ ] **Step 7: verify (node Acceptance).** `test "$(cargo test -q -p zygo-hooks --test subagent_text -- subagent_start --list 2>/dev/null | grep -c ': test$')" -ge 5 && test "$(cargo test -q -p zygo-hooks --test subagent_text -- main_compact --list 2>/dev/null | grep -c ': test$')" -ge 1 && cargo test -p zygo-hooks --test subagent_text -- subagent_start main_compact` → exit 0: the counts are 6 and 1, and the run shows 7 passed, 0 failed (CI repeats it on ubuntu, macOS and Windows through `cargo test --workspace`).
+- [x] **Step 7: verify (node Acceptance).** `test "$(cargo test -q -p zygo-hooks --test subagent_text -- subagent_start --list 2>/dev/null | grep -c ': test$')" -ge 5 && test "$(cargo test -q -p zygo-hooks --test subagent_text -- main_compact --list 2>/dev/null | grep -c ': test$')" -ge 1 && cargo test -p zygo-hooks --test subagent_text -- subagent_start main_compact` → exit 0: the counts are 6 and 1, and the run shows 7 passed, 0 failed (CI repeats it on ubuntu, macOS and Windows through `cargo test --workspace`).
