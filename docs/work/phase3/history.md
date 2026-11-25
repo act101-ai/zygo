@@ -73,6 +73,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | WD-8 | Member record fields `launch.job` and `launch.definition` | WD-4, ML-3 | DONE | mechanical | ef98f88f, 5a2d5117 · state 43/0, launch_definition 2 ; floor green · PR #110 |
 | ML-14 | Unread counts in `zygo workspace`, `zygo ls` and `up`; `forget-pane` removes the maildir | ML-2, ML-8 | DONE | judgment | d27a16f9, e898f769, af9ba2c7, e8ef03ca, 65cc6726, 79dd9dd3 · admin 49/0, up 72/0 ; floor green · PR #116 |
 | MS-6 | Registry and ack files, validation, member cache | MS-4, MS-5 | DONE | judgment | 39e9eb0e 64419fc6 bad0bc1c · registry 27/0; floor green · PR #99 |
+| OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | DONE | mechanical | 80d820d0, 04a9d343 · config_layers 93/0, core_basics 27/0, hooks_basic 60/0, launcher 14/0 ; floor green · PR #117 |
 
 ## Log
 

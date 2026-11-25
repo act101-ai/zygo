@@ -207,7 +207,6 @@ Session text (T, SX nodes):
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | TODO | implementation | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
 | MS-24 | Live premise SP2: anonymous probe on github.com and gitlab.com | MS-8 | TODO | lookup | — |
-| OS-9 | `[results] shape` in config and the session view | OS-4, ML-9, MS-3 | DONE | mechanical | 80d820d0, 04a9d343 · config_layers 93/0, core_basics 27/0, hooks_basic 60/0, launcher 14/0 ; floor green · PR #117 |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
 | WD-7 | Approved definition added to the merged config with source `workspace-files` | WD-6, MS-3 | DONE | judgment | f5a7e8cd f97e8031 bce0413f · repo_def_apply 18/0, config_layers 90/0 (16 ignored) ; floor green · PR #112 |
@@ -227,7 +226,7 @@ Session text (T, SX nodes):
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
-| WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | TODO | judgment | — |
+| WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
@@ -244,7 +243,7 @@ Session text (T, SX nodes):
 | OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | TODO | implementation | — |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
-| MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17 | TODO | implementation | — |
+| MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26 | TODO | mechanical | — |
 | OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37 | TODO | lookup | — |
@@ -272,6 +271,7 @@ Session text (T, SX nodes):
 | FX-12 | HUD unread count uses the store's definition (regular <ULID>.json files; missing new/ is 0) | ML-15, ML-2, FX-11 | DONE | implementation | 233290fe, 9335d48e · statusline_mail 9/0 ; floor green · PR #124 |
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | TODO | implementation | — |
+| FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -401,3 +401,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | WD-11 DONE: `up` reads definitions; a team config read failure degrades to the user config `max_members` with a printed line; `up --all` with a repository default prints the solo line. Round-3 non-blocking findings to FX-14 · PR #120 |
 | 2026-11-25 | WD-13 DONE: launcher reads a repo profile from the default branch only for a name in neither user nor team config; prints not-approved, invalid, not-read lines; passthrough: no profile from any source, one line. L6 (duplicate precedence sentence, base §11.1) left to WD-14 · PR #121 |
 | 2026-11-25 | FX-12 DONE: HUD unread counts only regular <ULID>.json files in new/; a missing new/ is 0, same as the mail store; review round 2 added I/L/O alphabet fixtures and narrowed the module doc · PR #124 |
+| 2026-11-25 | WD-12 DONE: `zygo up` checks and assigns the config-directory pool round-robin; members run in passthrough; user-loadout job/pool values pass config check. Review round 2 moved the pool line after the step-8 write and added tests. FX-15 added (doctor pool filter) · PR #125 |
