@@ -617,3 +617,24 @@ fn log_parses_under_a_utf16_log_output_encoding() {
     let c = g.log(&fx.base, &fx.c2).unwrap();
     assert_eq!(c.iter().map(|c| c.message.as_str()).collect::<Vec<_>>(), ["c2\n\nZygo-Session: s\n", "c1\n"]);
 }
+
+#[test]
+fn log_lists_the_paths_of_a_merge_against_its_first_parent() {
+    let (t, w, fx) = fixture();
+    let n = t.path().join("n");
+    git(&w, &["checkout", "-q", "-b", "side"]);
+    fs::write(w.join("side.txt"), "s\n").unwrap();
+    git(&w, &["add", "-A"]);
+    git(&w, &["commit", "-q", "-m", "side"]);
+    let side = out(&w, &["rev-parse", "HEAD"]);
+    git(&w, &["checkout", "-q", "main"]);
+    git(&n, &["merge", "-q", "--no-ff", "--no-commit", "side"]);
+    let d = format!("docs/decisions/{}", rec('M'));
+    fs::write(n.join(&d), "m\n").unwrap();
+    git(&n, &["add", &d]); // only the new file: the fixture's index-only entries of c2 stay as they are
+    git(&n, &["commit", "-q", "-m", "merge"]);
+    let m = out(&n, &["rev-parse", "HEAD"]);
+    assert_eq!(far_git(&w).log(&fx.c2, &m), Ok(vec![
+        LogCommit { id: m, parents: vec![fx.c2.clone(), side], message: "merge\n".into(), paths: vec![('A', d)] },
+    ]));
+}
