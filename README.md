@@ -59,8 +59,7 @@ On Windows, including Git Bash, set `ZYGO_NERD_FONT=1` after you install the fon
 
 - Anti-pattern: Full file reads to find one method pollutes the context window with irrelevant code
 - Anti-pattern: Random file chunk reads pollute the context window less, but repeated misses cause repeated LLM submissions, wasting tokens
-* Solution: Navigate your codebase and documentation following the structural tree.
-* Navigation is provided by the act-lite plugin (on by default). It needs the `act-lite` binary on `PATH`; the zygo installer runs act-lite's installer when it finds no navigation binary ([docs/install.md](docs/install.md#code-navigation)).
+* Solution: Navigate your codebase and documentation following the structural tree using act-lite.
 
 ### Tool Results Store
 
@@ -73,7 +72,7 @@ On Windows, including Git Bash, set `ZYGO_NERD_FONT=1` after you install the fon
 - Anti-pattern: Coding agent doesn't mark all segments for caching resulting in higher inference costs.
 - Anti-pattern: Coding agent sets cache expiry too short resulting in cache misses and higher costs.
 * Solution: zygo pins each model in a session to the first provider that serves it, so the provider-side prompt cache stays on one provider.
-* Solution: When a request carries no cache markers of its own, zygo marks the system prompt (last system block) and the tool definitions (last tool) with a 1-hour cache. This is on by default for OpenCode and off for Claude Code, which places its own markers (`[cache] insert_markers.<agent>`).
+* Solution: When a request carries no cache markers of its own, zygo marks the system prompt (last system block) and the tool definitions (last tool) with a 1-hour cache.
 
 ### Inline DLP
 
