@@ -1297,15 +1297,18 @@ fn launch_sets_the_opencode_environment() {
     assert!(tree.contains_key("plugins/zygo.js"), "{:?}", tree.keys());
     assert!(tree.contains_key("skills/zygo-zygo-cli/SKILL.md"));
     let cfg: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
-    let token = cfg["provider"]["zygo"]["options"]["apiKey"].as_str().unwrap();
-    assert!(token.len() > 8);
-    for (k, v) in &env {
-        assert!(k == "OPENCODE_CONFIG_CONTENT" || !v.contains(token), "{k}");
-    }
-    // C3: the token lives only in the session's `token` file, never in another file, argv or stderr.
+    // OC-1: apiKey is a `{file:}` reference to the session's `token` file, not the token.
+    let key = cfg["provider"]["zygo"]["options"]["apiKey"].as_str().unwrap();
+    assert_eq!(key, format!("{{file:{}/token}}", env["ZYGO_SESSION_DIR"].replace('\\', "/")));
+    // C3: the token lives only in the session's `token` file, never in another file, the environment, argv or stderr.
     let session: BTreeMap<String, String> = serde_json::from_slice(&std::fs::read(l.out.join("session.json")).unwrap()).unwrap();
     for f in ["token", "view.json", "session.log", "opencode/plugins/zygo.js", "opencode/skills/zygo-zygo-cli/SKILL.md"] {
         assert!(session.contains_key(f), "{f}: {:?}", session.keys());
+    }
+    let token = session["token"].trim();
+    assert!(token.len() > 8 && !key.contains(token));
+    for (k, v) in &env {
+        assert!(!v.contains(token), "{k}");
     }
     let leaks: Vec<&String> = session.iter().filter(|(k, v)| *k != "token" && v.contains(token)).map(|(k, _)| k).collect();
     assert!(leaks.is_empty(), "the token is in {leaks:?}");
