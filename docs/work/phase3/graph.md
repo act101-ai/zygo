@@ -198,7 +198,6 @@ Session text (T, SX nodes):
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
-| ML-5 | Multiplexer operations for the wake: literal keys and Enter | ML-3 | DONE | implementation | 867df914 · acc admin 34/mux 58/snapshot 41 · PR #94 |
 | ML-7 | Member name in the session view marker, hand start `--name` | ML-3, DR-3, DR-8, FX-6, FX-7 | DONE | implementation | dc966a4c 24e7af32 1d672c48 894a0435 · core_basics 26/0, zygo --lib 226/0, workspace_member --include-ignored 53/0 ; floor green · PR #103 |
 | MS-5 | Sync state files: paths, identity, state.json, imported log, marks | MS-2, WD-5 | DONE | judgment | 4aecace4 · state 18/18; floor green · PR #69 |
 | OS-4 | Trim hook writes `result_id` and `shaper`, opens the store bounded | OS-3 | DONE | implementation | 6c8e57d1 · acc hooks_basic 60 (5 trim_row)/hook_trim 6 · PR #95 |
@@ -209,7 +208,7 @@ Session text (T, SX nodes):
 | WD-4 | Checked use: one read, one digest, one store lookup per use; `Pin` | WD-3 | DONE | judgment | af19550d e91ef159 6971ba06 · repo_def_check 9/0; floor green · PR #98 |
 | WD-9 | Pool directory listing, assignment and shared lines | WD-5, ML-2 | DONE | judgment | 0d97709b · pool 16/16; floor green · PR #70 |
 | ML-6 | Wake of an idle member after a send | ML-4, ML-5, ML-17 | TODO | judgment | — |
-| ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | TODO | judgment | — |
+| ML-8 | `zygo ws name <key> <name>` | ML-5, ML-7 | DONE | judgment | 2fc1f821, 64486e85, 0bfa1c6d · admin 16/0 (7 rename_member), zygo lib 228/0 ; floor green · PR #107 |
 | ML-9 | Session text item 8 (workspace mail) at main-loop SessionStart | ML-4, ML-7, DR-8, RT-1 | TODO | implementation | — |
 | ML-15 | HUD segments: member name and unread mail | ML-7, RT-2 | DONE | implementation | 0128c7fa, 63b94dd8 · statusline_mail 7/0, statusline_render 30/0 ; floor green · PR #108 |
 | MS-4 | Address grammar and the ULID file form | MS-2, MS-3 | DONE | implementation | a0dd0435 · address 13/13; floor green · PR #76 |
@@ -396,4 +395,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-8 DONE: zygo usage prints savings lines (net figures, breakdown, ratio). Review: F1 fixed (amounts unknown when config does not load), F2 fixed (no sign on zero), F4 tests added, F3 to FX-8 (added: one read snapshot); floor ws 3016/0 · PR #101 |
 | 2026-11-25 | ML-7 DONE: member name in the session view marker; hand start takes `--name`. Review: 5 confirmed findings, all fixed. The DR-4 help line fix (top-level help omits `decision new`) landed · PR #103 |
 | 2026-11-25 | FX-8 DONE: zygo usage reads summary and savings in one read transaction via new `Store::report` (savings first). Review: F1 confirmed (test sees the defect only in savings-first order; documented on `Store::report`), F2 refuted (no seam to write mid-report without a timing test) |
+| 2026-11-25 | ML-8 DONE (2fc1f821 64486e85 0bfa1c6d): zygo ws name; review 1 important (hand-start rename race, fixed in hand_join) + 2 nits fixed; lock-wait test ignored as timing; floor green · PR #107 |
 | 2026-11-25 | ML-15 done (0128c7fa 63b94dd8): HUD member name + unread mail; review 2 important (mail scan starved git/status workers: fixed; width rule kept) + 2 test gaps fixed; FX-10 (HUD spec), FX-11 (doctor ✉) added. Floor green. PR #108. |
