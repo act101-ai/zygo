@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| ML-2 | Maildir store: message file, atomic send, read by rename, limits, sweep | DR-1 | DONE | judgment | 2550471 e7fed8c 24c9124 · mail_store 38p/0f/0i; floor green · PR #24 |
 | ML-16 | Live-check script for PM1-PM3 and acceptance #12 | DR-1 | DONE | implementation | a8add6a 3b33343 957db39 · live selftest ok (76); floor green · PR #26 |
 | OS-1 | Result meta records the session that stored it | DR-1 | DONE | implementation | 7d285bd f733e6c 8a21ec2 · results 50p/0f, hooks_basic 55p/0f; floor green · PR #27 |
 | OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
@@ -226,7 +225,7 @@ Session text (T, SX nodes):
 | SX-2 | OpenCode `session-start --event subagent`: mechanics text as plain text, no member part (T§7.2 item 2) | SX-1 | DONE | implementation | 9c8f2fb · subagent_text 4p, cli_surface 21p; floor green · PR #47 |
 | SX-9 | Live check P3-15, run by hand by the operator: evidence for ST1-ST4 | SX-8 | TODO | mechanical | — |
 | ML-3 | Member name in the plan, the member record and `panes[]` | ML-1, RT-1 | TODO | implementation | — |
-| MS-7 | Secret pass on one message | MS-2 | IN-PROGRESS | implementation | .worktrees/phase3/MS-7-node · PR #61 |
+| MS-7 | Secret pass on one message | MS-2 | DONE | implementation | abe0ce4b · secret 21 passed · PR #61 |
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
 | OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
@@ -385,3 +384,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-11 done: command parse (crates/zygo-results/src/shape/command.rs); review round 1 fixed 9 findings (A1-A5, C1, C2, C4; C3 refuted); floor: workspace 2657 passed, 0 failed · PR #53 |
 | 2026-11-24 | SX-6 DONE: the OpenCode plugin transform calls `--event subagent` for non-main `zygo/` models (T§7.2 item 1); review round 1 fixed 4 (anthropic case, per-call stdin, malformed model, missing output.system); floor: workspace 2652 passed, 0 failed · PR #54 |
 | 2026-11-24 | OS-19 done: 4 libtest cases (passing 120, failing-nocapture, signal-crash SIGABRT, compile-error); failing cases labeled opencode; O§8.2/O§8.3 item 4: a case with no runner summary is checked against the none row (author's call); PR #56 |
+| 2026-11-24 | MS-7 done; zygo_mail_sync::secret::check/check_with (Clear, Finding, CouldNotRun); scans every key and string leaf; block+redact ids unioned; finding on any match count; review: 3 confirmed + 3 fixed; floor green (ws 2691). |
