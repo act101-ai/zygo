@@ -189,7 +189,7 @@ fn member_name_snapshot_keeps_the_stored_pane_name_by_key() {
 
 - [x] 15. Commit the four source files and three test files with subject `ML-3: member name in the plan, the member record and panes[]` and two trailers, each on its own line at the end: `Zygo-Session:` with the id of the session that implements, and `Zygo-Work: phase3:ML-3`. No Claude attribution.
 
-- [ ] 16. Verify: run the Acceptance command from the contract and see every count hold and all tests pass:
+- [x] 16. Verify: run the Acceptance command from the contract and see every count hold and all tests pass:
 
 ```sh
 test "$(cargo test -q -p zygo-workspace --test loadout -- member_name --list 2>/dev/null | grep -c ': test$')" -ge 1 && test "$(cargo test -q -p zygo-workspace --test state -- member_name --list 2>/dev/null | grep -c ': test$')" -ge 3 && test "$(cargo test -q -p zygo-workspace --test snapshot -- member_name --list 2>/dev/null | grep -c ': test$')" -ge 1 && cargo test -p zygo-workspace --test loadout --test state --test snapshot
