@@ -126,7 +126,7 @@ fn token_ref(t: &Path) -> anyhow::Result<String> {
     Ok(format!("{{file:{p}}}"))
 }
 
-fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str) -> Value {
+fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str, disabled: &[String]) -> Value {
     let c = &ctx.config;
     let mut headers = Map::new();
     headers.insert("X-Zygo-Session".into(), json!(ctx.session));
@@ -177,7 +177,7 @@ fn inline_config(ctx: &LaunchCtx, zygo: &str, d: &Delivery, key: &str) -> Value 
         "model": format!("zygo/{}", c.main_role),
         "small_model": format!("zygo/{small}"),
         "enabled_providers": ["zygo"],
-        "disabled_providers": [],
+        "disabled_providers": disabled,
         "provider": { "zygo": {
             "npm": "@ai-sdk/anthropic",
             "options": {
@@ -479,7 +479,7 @@ impl AgentAdapter for OpenCode {
         if d.partial {
             lines.push("plugins: partial".into());
         }
-        let cfg = inline_config(ctx, zygo, &d, &key);
+        let cfg = inline_config(ctx, zygo, &d, &key, &user_disabled(ctx));
         let mut args = ctx.args.clone();
         if ctx.yolo
             && let Some(name) = place_auto(&mut args)
@@ -501,8 +501,7 @@ impl AgentAdapter for OpenCode {
     fn preflight(&self, ctx: &LaunchCtx) -> Result<(), Preflight> {
         let names = agent_names(ctx);
         for file in config_files(ctx) {
-            let Ok(text) = std::fs::read_to_string(&file) else { continue };
-            let Ok(v) = serde_json::from_str::<Value>(&strip_jsonc(&text)) else { continue };
+            let Some(v) = read_json(&file) else { continue };
             if let Some(key) = conflict(&v, &names) {
                 return Err(Preflight { file, key });
             }
@@ -560,12 +559,28 @@ fn write_file(dest: &Path, rel: &str, bytes: &[u8], exec: bool) -> anyhow::Resul
     Ok(())
 }
 
-/// The OpenCode config files that can set what zygo sets: the user's files, then every directory from `cwd` up to
-/// the first one with a `.git` entry.
+fn env_path(ctx: &LaunchCtx, n: &str) -> Option<PathBuf> {
+    ctx.env.get(n).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+fn home(ctx: &LaunchCtx) -> Option<PathBuf> {
+    env_path(ctx, "HOME").or_else(|| env_path(ctx, "USERPROFILE"))
+}
+
+/// OpenCode's global config folder (`Global.Path.config`).
+fn user_dir(ctx: &LaunchCtx) -> Option<PathBuf> {
+    env_path(ctx, "XDG_CONFIG_HOME").or_else(|| home(ctx).map(|h| h.join(".config"))).map(|c| c.join("opencode"))
+}
+
+/// The OpenCode JSON config files merged before the inline config (OpenCode 1.18.16 `config/config.ts:258-260`,
+/// `:401-410`, `:416-429`, `config/paths.ts` `directories()`): the global folder's `config.json`, `opencode.json` and
+/// `opencode.jsonc`; the `OPENCODE_CONFIG` file; in every directory from `cwd` up to the first one with a `.git`
+/// entry, `opencode.json(c)` and `.opencode/opencode.json(c)`; `~/.opencode/opencode.json(c)`. Not the launch
+/// environment's `OPENCODE_CONFIG_DIR`: zygo replaces it with its own folder (`build`).
 fn config_files(ctx: &LaunchCtx) -> Vec<PathBuf> {
-    let var = |n: &str| ctx.env.get(n).filter(|v| !v.is_empty()).map(PathBuf::from);
-    let user = var("XDG_CONFIG_HOME").or_else(|| var("HOME").or_else(|| var("USERPROFILE")).map(|h| h.join(".config"))).map(|c| c.join("opencode"));
-    let mut files: Vec<PathBuf> = user.into_iter().flat_map(|d| ["opencode.json", "opencode.jsonc"].map(|f| d.join(f))).collect();
+    let mut files: Vec<PathBuf> =
+        user_dir(ctx).into_iter().flat_map(|d| ["config.json", "opencode.json", "opencode.jsonc"].map(|f| d.join(f))).collect();
+    files.extend(env_path(ctx, "OPENCODE_CONFIG").map(|f| ctx.cwd.join(f)));
     let dirs: Vec<&Path> = match ctx.cwd.ancestors().position(|d| d.join(".git").exists()) {
         Some(i) => ctx.cwd.ancestors().take(i + 1).collect(),
         None => vec![ctx.cwd.as_path()],
@@ -573,7 +588,33 @@ fn config_files(ctx: &LaunchCtx) -> Vec<PathBuf> {
     for dir in dirs {
         files.extend(["opencode.json", "opencode.jsonc", ".opencode/opencode.json", ".opencode/opencode.jsonc"].map(|f| dir.join(f)));
     }
+    files.extend(home(ctx).into_iter().flat_map(|h| ["opencode.json", "opencode.jsonc"].map(|f| h.join(".opencode").join(f))));
     files
+}
+
+/// `file` as JSONC; `None` when it cannot be read or parsed (the preflight and the disabled list skip it).
+fn read_json(file: &Path) -> Option<Value> {
+    serde_json::from_str(&strip_jsonc(&std::fs::read_to_string(file).ok()?)).ok()
+}
+
+/// The legacy TOML `config` of OpenCode's global folder (`config/config.ts:262-276`) as a JSON value.
+fn legacy_toml(ctx: &LaunchCtx) -> Option<Value> {
+    let text = std::fs::read_to_string(user_dir(ctx)?.join("config")).ok()?;
+    serde_json::to_value(toml::from_str::<toml::Table>(&text).ok()?).ok()
+}
+
+/// The names in every `disabled_providers` that OpenCode merges before the inline config: the files of
+/// `config_files`, then the legacy TOML `config`; in that order, each name once, without `zygo` (§8.7).
+fn user_disabled(ctx: &LaunchCtx) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for v in config_files(ctx).iter().filter_map(|f| read_json(f)).chain(legacy_toml(ctx)) {
+        for p in v.get("disabled_providers").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            if p != "zygo" && !out.iter().any(|o| o == p) {
+                out.push(p.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// The first key of `v` that zygo sets (§8.7 preflight).

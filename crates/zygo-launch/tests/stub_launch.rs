@@ -612,7 +612,7 @@ fn opencode_child_environment_flags_and_inline_config_match_the_spec() {
         assert_eq!(key, format!("{{file:{}/token}}", e["ZYGO_SESSION_DIR"]));
     }
     assert_eq!(cfg["enabled_providers"], json!(["zygo"]));
-    assert_eq!(cfg["disabled_providers"], json!([])); // cancels a user or project disabled_providers (§8.7)
+    assert_eq!(cfg["disabled_providers"], json!([])); // the rig has no OpenCode config file (§8.7)
     let roles = zygo_config::builtin::defaults().role;
     assert_eq!(cfg["provider"]["zygo"]["models"].as_object().unwrap().keys().collect::<Vec<_>>(), roles.keys().collect::<Vec<_>>());
     assert_eq!(cfg["agent"]["build"]["permission"], json!({"edit": "deny"})); // lead guard, §8.3: build maps to main_role lead
