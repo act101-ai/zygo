@@ -237,10 +237,21 @@ fn text(d: &HudData, style: Style) -> String {
     render(d, &renv(style, ColorMode::Off))
 }
 
-/// The run-time segment that ends verbose row 1 (session run time design T§2.4): the session id is a real ULID, so
-/// the run time is `ZYGO_TEST_NOW` less its ULID time.
-fn run_time(d: &HudData) -> String {
-    format!("\u{f0150} {}", run_time_text(d.run_time.expect("the run time of a ULID session")))
+/// The ULID time of `id` in seconds, decoded here and not by the code under test: the first 10 Crockford base32
+/// digits hold the milliseconds.
+fn ulid_secs(id: &str) -> u64 {
+    const DIGITS: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let digit = |c: char| DIGITS.find(c.to_ascii_uppercase()).unwrap_or_else(|| panic!("not a ULID: {id}")) as u64;
+    id.chars().take(10).fold(0, |ms, c| ms * 32 + digit(c)) / 1000
+}
+
+/// The run-time segment that ends verbose row 1 (session run time design T§2.4). The session id is a real ULID and
+/// not a member, so the run time is `now` (the `ZYGO_TEST_NOW` of the run) less its ULID time (T§2.2 rule 1, T§2.3).
+fn run_time(d: &HudData, session: &str, now: u64) -> String {
+    assert_eq!(ulid_secs("01MCC5RM000000000000000000"), 1_800_000_000);
+    let want = now.saturating_sub(ulid_secs(session));
+    assert_eq!(d.run_time, Some(want), "{session} at {now}");
+    format!("\u{f0150} {}", run_time_text(want))
 }
 
 fn ansi(d: &HudData, style: Style) -> String {
@@ -314,8 +325,9 @@ fn h14_15_team_session_hud_shows_notional_spend_at_list_prices() {
         assert_eq!(sgr_before(&colored, "≈"), "\x1b[2m", "{colored:?}");
         assert!(colored.contains(&format!("≈\x1b[0m\x1b[32m{}\x1b[0m", &want["≈".len()..])), "{colored:?}");
     }
-    // Mode (verbose only): `serve` and the host of `ZYGO_URL`, then the run time.
-    assert!(text(&d, Style::Verbose).contains(&format!("  serve 127.0.0.1   {}\n", run_time(&d))), "{}", text(&d, Style::Verbose));
+    // Mode (verbose only): `serve` and the host of `ZYGO_URL`, then the run time (the first run of `fx` is at `T`).
+    let rt = run_time(&d, session, T);
+    assert!(text(&d, Style::Verbose).contains(&format!("  serve 127.0.0.1   {rt}\n")), "{}", text(&d, Style::Verbose));
 
     // Request 3: a model that the built-in catalog does not have. The server prices it in its own row only.
     up.set_usage(&TokenUsage { input: 40_000, output: 8_000, ..Default::default() });
@@ -344,7 +356,9 @@ fn h14_15_team_session_hud_shows_notional_spend_at_list_prices() {
     let d = lfx.run(local.url().as_str());
     assert_eq!(d.status.as_ref().and_then(|s| s.team_session), Some(false));
     let plain = text(&d, Style::Verbose);
-    assert!(plain.contains(&format!("  local   {}\n", run_time(&d))) && plain.contains("$0.00") && !plain.contains('≈') && !plain.contains("serve"), "{plain}");
+    // The first run of `lfx` is at `T`.
+    let rt = run_time(&d, &lg.session, T);
+    assert!(plain.contains(&format!("  local   {rt}\n")) && plain.contains("$0.00") && !plain.contains('≈') && !plain.contains("serve"), "{plain}");
 
     local.shutdown();
     server.shutdown();

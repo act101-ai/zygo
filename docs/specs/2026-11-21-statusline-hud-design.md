@@ -374,6 +374,7 @@ One outcome per condition. The conditions are independent; each row changes only
 | Git missing, not a repository, or git timeout | No ahead/behind, no worktree, no live branch. |
 | Usage store missing or busy, or `view.json` unreadable | No trimmed segment (`statusline.rs:160-164` gives `None`). |
 | Member, and `workspace.json` cannot be read (bad id, missing, not a regular file, above 64 KiB, does not parse, `version` not 1) | No run time segment. |
+| Member, `workspace.json` read, and its `members` is neither an object nor null (or absent), or `members.<pane>` does not decode as a member record (session run time design T§2.2) | The workspace phase shows as AU25 says; no run time segment. |
 | Not a member, and `view.session` is not a ULID | No run time segment. |
 | `ZYGO_WORK` empty or unset and no status `work` and no live branch | No work item segment. |
 | A new launch (also a workspace resume, which is a new zygo session, WS§8.2) | Tokens, spend, cache and trimmed start at 0 for this launch; the HUD shows this launch only. Until the first main-loop request, `used_context` is unknown: `ctx -/<window>` (AU7). |
@@ -744,3 +745,4 @@ Author's calls for the planner. WS node ids and HUD node ids refer to `docs/work
 | 2026-11-22 | H§3 (OpenCode bullet), H§8, H§14 #33 | operator, 2026-11-21 ("same as Claude Code"); built by HUD-11 | The `statusline` verb works the same in an OpenCode session as in a Claude Code session and does not read `ZYGO_AGENT`; the text that the session form exits 2 there is replaced. zygo still sets no OpenCode status surface. |
 | 2026-11-22 | H§6.6 (token counts and trimmed tokens) | operator | HUD numbers roll over to b after 999m |
 | 2026-11-25 | AU9, AU20, H§6.2, H§6.4 (example note, color table), H§6.5, H§6.6, H§6.7, H§6.8, H§7.6 | operator-approved session run time design T§3.1 (2026-11-24); built by RT-3 | The run time segment: its row, groups, color, glyph, form, place in the width order, missing-data rows and the one `workspace.json` read. |
+| 2026-11-25 | H§6.8 | author's call | The run time rows named only a `workspace.json` that cannot be read; a readable file whose `members` is not an object or whose pane record does not decode also gives no run time, and the phase still shows (`phase.rs` `member_read`). |

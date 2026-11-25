@@ -320,3 +320,8 @@ Steps:
   Check: `grep -c 'run time' docs/specs/2026-11-21-statusline-hud-design.md` is at least 9, and `grep -c 'U+F0150' docs/specs/2026-11-21-statusline-hud-design.md` is 1.
 
 - [x] 10. Acceptance: `cargo test --locked -p zygo-hooks` → all pass, with the 5 `run_time_segment…` and 2 `run_time_width…` tests of `statusline_render` and `collect_run_time_and_phase_come_from_one_member_read` of `statusline_phase` in the run, and `crates/zygo-hooks/tests/golden/` unchanged.
+
+### Round 2
+
+- [x] F2. `crates/zygo-hooks/tests/statusline_team.rs`: the helper `run_time` took the expected text from `d.run_time`, the value under test. It now decodes the ULID time of the test's own session id with a local Crockford decoder (no new dependency), computes `T - start`, asserts `d.run_time == Some(that)` and gives `󰅐 <run_time_text>` for the row-1 expectations.
+- [x] F4. `docs/specs/2026-11-21-statusline-hud-design.md` H§6.8: add the row for a readable `workspace.json` whose `members` is not an object or null, or whose pane record does not decode: the phase shows, no run time (`phase.rs` `member_read`; test `statusline_phase.rs` start rule for an undecodable record). Change log row added.
