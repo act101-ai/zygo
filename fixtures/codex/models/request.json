@@ -11,7 +11,7 @@
     "user-agent": "codex_exec/0.172.0 (Mac OS 27.2.1; arm64) xterm-256color (codex_exec; 0.172.0)",
     "accept": "*/*",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:57073"
+    "host": "127.0.0.1:57164"
   },
   "credential_headers": [
     "authorization"
