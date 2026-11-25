@@ -5,19 +5,17 @@
 # Usage: sh scripts/premises/live-shaping.sh po1|po2|po3|po4
 #   po1 (Claude Code): a Bash call that prints out-line and err-line and exits 3, three times; the
 #     PostToolUseFailure hook answers nothing, updatedToolOutput as a string, then as a Bash-shaped object.
-#     Writes fixtures/claude-code/hooks/PostToolUseFailure-Bash-output-main.json,
-#     fixtures/claude-code/requests/po1-result.json and po1-request-<none|string|object>.json.
+#     Writes fixtures/claude-code/hooks/PostToolUseFailure-Bash-output-main.json (OS-23).
 #   po2 (Claude Code): the same lines with exit 0; a PostToolUse rewrite sets stdout to a tracer and stderr
-#     to "". Writes fixtures/claude-code/hooks/PostToolUse-Bash-stderr-main.json,
-#     fixtures/claude-code/requests/po2-result.json and po2-request.json.
+#     to "". Writes fixtures/claude-code/requests/po2-result.json (OS-24).
 #   po3 (OpenCode): the same lines with exit 0; a probe plugin records tool.execute.after. Writes
-#     fixtures/opencode/plugin-hooks/tool.execute.after-bash-stderr.json and
-#     fixtures/opencode/requests/po3-request.json.
+#     fixtures/opencode/plugin-hooks/tool.execute.after-bash-stderr.json (OS-25).
 #   po4 (both agents): two result_view calls (lines 1-400 and 1-40) to a stdio MCP server named zygo.
-#     Writes fixtures/claude-code/requests/po4-readback.json, fixtures/opencode/requests/po4-readback.json
-#     and po4-request-<lines>.json beside each.
-#   po1, po2 and po3 also write their scripted SSE replies under fixtures/<agent>/sse. Every file is
-#   scrubbed (scripts/premises/scrub.py) and each path written is printed.
+#     Writes fixtures/claude-code/requests/po4-readback.json and fixtures/opencode/requests/po4-readback.json
+#     (OS-26).
+#   Each file written is scrubbed (scripts/premises/scrub.py), and its path is printed; a file the run did
+#   not produce is removed. Every other capture (result records, hook inputs, request bodies, SSE replies)
+#   stays in the run folder in the scratch folder; their paths are printed at the end.
 # Run by hand only, by the operator, with claude and opencode on PATH; never from a test or CI (O-C7).
 #
 # What this run does to the machine: a temporary HOME and config folder in the scratch folder, the dummy
@@ -39,7 +37,8 @@ case "$N2_SCRATCH$CLAUDE_BIN$OPENCODE_BIN$TOOL_PATH$PREMISES_DIR" in
 esac
 FXC="$REPO_DIR/fixtures/claude-code"
 FXO="$REPO_DIR/fixtures/opencode"
-mkdir -p "$FXC/hooks" "$FXC/requests" "$FXC/sse" "$FXO/plugin-hooks" "$FXO/requests" "$FXO/sse"
+mkdir -p "$FXC/hooks" "$FXC/requests" "$FXO/plugin-hooks" "$FXO/requests"
+KEPT=""   # captures left in the scratch folder (kept), printed at the end
 echo "live: Claude Code $LIVE_CC_VER, OpenCode $LIVE_OC_VER"
 
 # --- helpers --------------------------------------------------------------------------------
@@ -49,12 +48,14 @@ steps() {
   printf '%s\n' "$2" >"$RUN/steps-$1.json"
   python3 -I "$PREMISES_DIR/steps.py" "$RUN/sse" "$1" "$RUN/rules.json" "$RUN/steps-$1.json"
 }
-# wrote <src> <dest>: a scrubbed copy of <src> at <dest>, and its path; a missing <src> writes nothing
+# wrote <src> <dest>: a scrubbed copy of <src> at <dest>, and its path; a missing <src> removes <dest>
 wrote() {
-  if [ -z "$1" ] || [ ! -f "$1" ]; then echo "live: no ${1##*/}"; return 0; fi
+  if [ -z "$1" ] || [ ! -f "$1" ]; then rm -f "$2"; echo "live: no ${1##*/}; removed ${2#"$REPO_DIR"/}"; return 0; fi
   scrub "$1" >"$2"
   echo "wrote ${2#"$REPO_DIR"/}"
 }
+# kept <path>...: captures that stay in the scratch folder; an empty word is skipped
+kept() { for _k in "$@"; do [ -z "$_k" ] || KEPT="$KEPT $_k"; done; }
 # hook_files <dir> <name>: the hook input files <dir>/<nnnn>-<name>.json, in name order
 hook_files() { ls "$1" 2>/dev/null | grep -E "^[0-9]+-$2\\.json\$" | sed "s|^|$1/|" || true; }
 # seen_json <out> <tool_use_id>...: per id, the first recorded request that holds its tool_result block
@@ -121,7 +122,7 @@ export const PoProbe = async () => ({
   },
 });
 JS
-  jq -n --arg u "$MOCK_URL/v1" --arg k "$DUMMY_KEY" --argjson m "${1:-null}" '{model: "zygo/lead",
+  jq -n --arg u "$MOCK_URL/v1" --arg k "$DUMMY_KEY" --argjson m "${1:-null}" '{model: "zygo/lead", small_model: "zygo/lead",
     provider: {zygo: {npm: "@ai-sdk/anthropic", options: {baseURL: $u, apiKey: $k}, models: {lead: {limit: {context: 200000, output: 4000}}}}},
     permission: {edit: "deny", bash: "allow", task: "deny"}} + (if $m == null then {} else {mcp: $m} end)' >"$_ocd/opencode.json"
 }
@@ -138,7 +139,7 @@ CMD_BOTH="printf 'out-line\\n'; printf 'err-line\\n' >&2"
 # --- PO1 (Claude Code): the PostToolUseFailure input of a failed Bash call, and what replaces its text --
 part_po1() {
   live_run po1
-  steps po1 "$(jq -nc --arg c "$CMD_FAIL" '{trigger: "tracer-po1",
+  steps po1 "$(jq -nc --arg c "$CMD_FAIL" '{trigger: "tracer-po1", no_header: ["x-claude-code-agent-id"], extra: {body: "\"tools\": \\[\\{"},
     steps: ([range(3) | {tool: "Bash", input: {command: $c}}] + [{text: "po1 done"}])}')"
   cat >"$RUN/responses.json" <<'J'
 [{"event": "PostToolUseFailure", "tool": "^Bash$", "times": 1, "case": "none", "output": {}},
@@ -152,7 +153,7 @@ J
   run_claude -p "tracer-po1 run the command" --settings "$RUN/settings.json" --dangerously-skip-permissions \
     --tools Bash </dev/null >"$RUN/out.txt" 2>&1 || true
   stop_mock
-  publish_sse "$FXC/sse"
+  kept "$RUN/sse" "$RUN/hooks"
   _hk=$(hook_files "$RUN/hooks" PostToolUseFailure-Bash-main)
   wrote "$(printf '%s\n' "$_hk" | sed -n 1p)" "$FXC/hooks/PostToolUseFailure-Bash-output-main.json"
   _ids=$(for _f in $_hk; do jq -r '.tool_use_id // empty' "$_f" 2>/dev/null || true; done)
@@ -186,10 +187,8 @@ es = err if isinstance(err, str) else ("" if err is None else json.dumps(err))
 res = {"error_field": err, "out_line_at": es.find("out-line"), "err_line_at": es.find("err-line"), "calls": calls}
 json.dump(res, open(out, "w"), indent=1)
 PY
-  wrote "$RUN/po1-result.json" "$FXC/requests/po1-result.json"
-  jq -r '.calls[] | "\(.case) \(.request_file // "")"' "$RUN/po1-result.json" | while read -r _c _f; do
-    if [ -n "$_f" ]; then wrote "$_f" "$FXC/requests/po1-request-$_c.json" </dev/null; fi
-  done
+  # shellcheck disable=SC2046
+  kept "$RUN/po1-result.json" $(jq -r '.calls[].request_file // empty' "$RUN/po1-result.json")
   _v=$(jq -r '(.out_line_at >= 0 and .err_line_at >= 0) as $both
     | ([.calls[] | select(.replaced) | .case] | join(", ")) as $r
     | (if $both and $r != "" then "pass" else "fail" end)
@@ -203,7 +202,7 @@ PY
 # --- PO2 (Claude Code): updatedToolOutput with stderr "" removes the stderr the model sees ----------
 part_po2() {
   live_run po2
-  steps po2 "$(jq -nc --arg c "$CMD_BOTH" '{trigger: "tracer-po2",
+  steps po2 "$(jq -nc --arg c "$CMD_BOTH" '{trigger: "tracer-po2", no_header: ["x-claude-code-agent-id"], extra: {body: "\"tools\": \\[\\{"},
     steps: [{tool: "Bash", input: {command: $c}}, {text: "po2 done"}]}')"
   cat >"$RUN/responses.json" <<'J'
 [{"event": "PostToolUse", "tool": "^Bash$", "rewrite": [[["stdout"], "PO2-REPLACED-stdout"], [["stderr"], ""]]}]
@@ -213,9 +212,8 @@ J
   run_claude -p "tracer-po2 run the command" --settings "$RUN/settings.json" --dangerously-skip-permissions \
     --tools Bash </dev/null >"$RUN/out.txt" 2>&1 || true
   stop_mock
-  publish_sse "$FXC/sse"
   _hk=$(hook_files "$RUN/hooks" PostToolUse-Bash-main | sed -n 1p)
-  wrote "$_hk" "$FXC/hooks/PostToolUse-Bash-stderr-main.json"
+  kept "$RUN/sse" "$_hk"
   seen_json "$RUN/po2-seen.json" toolu_po2_00_bash
   python3 -I - "$RUN/po2-seen.json" "$RUN/po2-result.json" "$_hk" <<'PY'
 import json, sys
@@ -237,7 +235,7 @@ res["err_line_seen"] = "err-line" in (res["text"] or "")
 json.dump(res, open(out, "w"), indent=1)
 PY
   wrote "$RUN/po2-result.json" "$FXC/requests/po2-result.json"
-  wrote "$(jq -r '.request_file // ""' "$RUN/po2-result.json")" "$FXC/requests/po2-request.json"
+  kept "$(jq -r '.request_file // ""' "$RUN/po2-result.json")"
   _v=$(jq -r '(if .replaced and (.err_line_seen | not) then "pass" else "fail" end)
     + " the model saw the stdout tracer: \(if .replaced then "yes" else "no" end); the model saw err-line: \(if .err_line_seen then "yes" else "no" end)"' "$RUN/po2-result.json")
   result PO2 "${_v%% *}" "${_v#* }"
@@ -245,6 +243,8 @@ PY
 
 # --- PO3 (OpenCode): tool.execute.after for bash gives stdout and stderr together in output.output ----
 part_po3() {
+  # shellcheck disable=SC2034  # read by result (live.sh)
+  LIVE_VER=$LIVE_OC_VER   # the LIVE line names the OpenCode version
   live_run po3
   steps po3 "$(jq -nc --arg c "$CMD_BOTH" '{trigger: "tracer-po3", extra: {body: "\"tools\""},
     steps: [{tool: "bash", input: {command: $c, description: "po3"}}, {text: "po3 done"}]}')"
@@ -252,10 +252,9 @@ part_po3() {
   oc_setup
   oc_run "tracer-po3 run the command"
   stop_mock
-  publish_sse "$FXO/sse"
   wrote "$RUN/plog/tool.execute.after-bash.json" "$FXO/plugin-hooks/tool.execute.after-bash-stderr.json"
   seen_json "$RUN/po3-seen.json" toolu_po3_00_bash
-  wrote "$(jq -r '.[0].request_file // ""' "$RUN/po3-seen.json")" "$FXO/requests/po3-request.json"
+  kept "$RUN/sse" "$RUN/po3-seen.json" "$(jq -r '.[0].request_file // ""' "$RUN/po3-seen.json")"
   _v=$(jq -r '(.output.output // "" | if type == "string" then . else tojson end) as $o
     | ($o | index("out-line")) as $a | ($o | index("err-line")) as $b
     | (if $a != null and $b != null then "pass" else "fail" end)
@@ -311,7 +310,7 @@ for line in sys.stdin:
 PY
 }
 # po4_judge <id> <readback dest> <tool_use_id of lines 1-400> <tool_use_id of lines 1-40>: the readback
-# record, the request copies beside it (po4-request-<lines>.json), one LIVE line
+# record at <readback dest>, the request bodies kept in the scratch folder, one LIVE line
 po4_judge() {
   seen_json "$RUN/po4-seen.json" "$3" "$4"
   python3 -I - "$RUN/po4-seen.json" "$RUN/po4-readback.json" <<'PY'
@@ -339,9 +338,8 @@ for (lines, t), s in zip((("1-400", view(1, 400)), ("1-40", view(1, 40))), seen)
 json.dump(calls, open(out, "w"), indent=1)
 PY
   wrote "$RUN/po4-readback.json" "$2"
-  jq -r '.[] | "\(.lines) \(.request_file // "")"' "$RUN/po4-readback.json" | while read -r _l _f; do
-    if [ -n "$_f" ]; then wrote "$_f" "${2%/*}/po4-request-$_l.json" </dev/null; fi
-  done
+  # shellcheck disable=SC2046
+  kept "$RUN/po4-readback.json" $(jq -r '.[].request_file // empty' "$RUN/po4-readback.json")
   _v=$(jq -r '(length == 2 and all(.[]; .reply_found) and .[0].wrapper_bytes == .[1].wrapper_bytes) as $ok
     | (if $ok then "pass" else "fail" end) + " "
       + ([.[] | "lines \(.lines): reply \(.reply_bytes) bytes, seen \(.seen_bytes) bytes, reply found \(if .reply_found then "yes" else "no" end), wrapper \(.wrapper_bytes) bytes"]
@@ -351,17 +349,20 @@ PY
 part_po4() {
   live_run po4-cc
   rv_mcp
-  steps po4c "$(jq -nc '{trigger: "tracer-po4", steps: [
+  steps po4c "$(jq -nc '{trigger: "tracer-po4", no_header: ["x-claude-code-agent-id"], extra: {body: "\"tools\": \\[\\{"}, steps: [
     {tool: "mcp__zygo__result_view", input: {id: "01PO4000000000000000000000", lines: "1-400"}},
     {tool: "mcp__zygo__result_view", input: {id: "01PO4000000000000000000000", lines: "1-40"}},
     {text: "po4 done"}]}')"
-  jq -n --arg p "$(command -v python3)" --arg s "$RUN/rv_mcp.py" '{mcpServers: {zygo: {command: $p, args: ["-I", $s]}}}' >"$RUN/mcp.json"
+  # python3 through the isolated TOOL_PATH, as the OpenCode half starts it
+  jq -n --arg s "$RUN/rv_mcp.py" '{mcpServers: {zygo: {command: "python3", args: ["-I", $s]}}}' >"$RUN/mcp.json"
   start_mock "$RUN/rules.json"
   run_claude -p "tracer-po4 read the result" --mcp-config "$RUN/mcp.json" --strict-mcp-config \
     --dangerously-skip-permissions </dev/null >"$RUN/out.txt" 2>&1 || true
   stop_mock
   po4_judge PO4-CC "$FXC/requests/po4-readback.json" toolu_po4c_00_mcp__zygo__result_view toolu_po4c_01_mcp__zygo__result_view
 
+  # shellcheck disable=SC2034  # read by result (live.sh)
+  LIVE_VER=$LIVE_OC_VER   # the PO4-OC line names the OpenCode version
   live_run po4-oc
   rv_mcp
   steps po4o "$(jq -nc '{trigger: "tracer-po4", extra: {body: "\"tools\""}, steps: [
@@ -381,4 +382,5 @@ case $MODE in
   po3) part_po3 ;;
   po4) part_po4 ;;
 esac
+for _k in $KEPT; do echo "kept $_k"; done   # scratch captures (paths only)
 live_done "$REPO_DIR/fixtures"
