@@ -69,6 +69,31 @@ fn gone_tmux(dir: &Path) -> PathBuf {
     script(dir, "gtmux", &body)
 }
 
+const ANSWER_BODY: &str = r#"d='@D'
+printf '%s\036' "$*" >> "$d/tmux.log"
+sub=; tgt=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -V) echo 'tmux 3.4'; exit 0 ;;
+    -S|-t|-F|-s|-c|-x|-y|-n) [ "$1" = -t ] && tgt=$2; shift ;;
+    -*) ;;
+    *) [ -z "$sub" ] && sub=$1 ;;
+  esac
+  shift
+done
+s=${tgt#=}; s=${s%%:*}
+case "$sub" in
+  has-session) [ -f "$d/exists-$s" ] && exit 0; [ -f "$d/error-$s" ] && { echo 'permission denied' >&2; exit 1; } ;;
+  show-options) [ -f "$d/ws-$s" ] && { cat "$d/ws-$s"; exit 0; }; [ -f "$d/exists-$s" ] && exit 0 ;;
+  display-message) [ -f "$d/clients-$s" ] && { cat "$d/clients-$s"; exit 0; } ;;
+esac
+echo 'no server running on /tmp/zygo-none/s' >&2
+exit 1"#;
+
+/// The stand-in tmux of `tests/up_all.rs`: it logs each call and answers from the files `exists-<s>`, `error-<s>`,
+/// `ws-<s>` and `clients-<s>` of `dir`; every other call gets "no server running".
+fn answer_tmux(dir: &Path) -> PathBuf { script(dir, "atmux", &ANSWER_BODY.replace("@D", &dir.display().to_string())) }
+
 fn tmux_log(dir: &Path) -> Vec<String> {
     let s = fs::read_to_string(dir.join("tmux.log")).unwrap_or_default();
     s.split('\u{1e}').filter(|l| !l.is_empty()).map(str::to_string).collect()
@@ -190,6 +215,13 @@ impl Counting {
         self.calls.lock().unwrap().clear();
         self.phases.lock().unwrap().clear();
     }
+}
+
+/// A runner whose every call fails: the read is unread (R§10).
+struct Failing;
+
+impl GitRunner for Failing {
+    fn git(&self, _top: &Path, _args: &[&str], _deadline: Instant) -> Result<Output, String> { Err("failed".into()) }
 }
 
 // ---- the fixture ----
@@ -538,10 +570,22 @@ fn restore_and_up_all_make_no_read() {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let _ = up::testing::run_all_with(&f.o, &mut out, &mut err);
     assert!(f.git.calls().is_empty(), "{:?}", f.git.calls());
+    // R§10 `zygo up --all` row: a candidate with no pane plans the user default or `solo`, with no read.
+    set(&f.store, |w| {
+        w.phase = Phase::Up;
+        w.windows.clear();
+        w.panes.clear();
+        w.members.clear();
+    });
+    let _ = fs::remove_file(f.t.join("planned.json"));
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let _ = up::testing::run_all_with(&f.o, &mut out, &mut err);
+    assert!(f.git.calls().is_empty(), "{:?} {}", f.git.calls(), text(err));
+    assert_eq!(f.planned().loadout, "solo");
 }
 
 #[test] // R§10 AU67 row, R§11 "`up` crashes during a repository build": the repair reads nothing
-fn au67_repair_of_a_repository_build_reads_nothing() {
+fn au67_repair_reads_nothing_and_the_taken_back_plan_reads_once() {
     let _g = serial();
     let f = fx(&[(WS, b"version = 1\n")]);
     let pin = f.approve();
@@ -556,6 +600,63 @@ fn au67_repair_of_a_repository_build_reads_nothing() {
     let p = f.git.phases.lock().unwrap().clone();
     // The repair finished (phase `down`) before the first read; the read is the fresh plan that follows.
     assert!(!p.is_empty() && p.iter().all(|s| s == "down"), "{p:?}");
+    assert_eq!(f.git.reads(), 1);
+}
+
+#[test] // R§10 AU67 row: the repair of a repository build with the session present reads nothing and keeps the panes
+fn au67_repair_with_the_session_present_reads_nothing() {
+    let _g = serial();
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    let pin = f.approve();
+    saved_member(&f, pin);
+    set(&f.store, |w| {
+        w.phase = Phase::Building;
+        w.build_plan = Some(BuildPlan::Loadout);
+        w.fresh_members = vec!["kaaaaaaaa".into()];
+        w.loadout = "repository".into();
+    });
+    f.o.tmux = answer_tmux(&f.t);
+    fs::write(f.t.join("exists-zygo-app"), "").unwrap();
+    fs::write(f.t.join("ws-zygo-app"), f.id()).unwrap();
+    let (code, _, err) = f.up();
+    assert_ne!(code, 0, "{err}");
+    assert!(f.git.calls().is_empty(), "{:?}", f.git.calls());
+    let ws = f.store.read().unwrap().unwrap();
+    assert_eq!(ws.phase, Phase::Building);
+    assert_eq!(ws.panes.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(), ["kaaaaaaaa"]);
+    assert!(ws.members["kaaaaaaaa"].launch.definition.is_some());
+}
+
+#[test] // R§10: a read that fails is unread: the line and `solo` by default; exit 1 and no write when explicit
+fn unread_plans_solo_or_refuses() {
+    let _g = serial();
+    let line = "zygo: this repository's workspace files are unread (git symbolic-ref: failed); nothing from them was applied";
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    f.o.git = Some(Arc::new(Failing));
+    assert_eq!(f.up(), (1, String::new(), format!("{line}\n{GONE}")));
+    assert_eq!(f.planned().loadout, "solo");
+    let mut f = fx(&[(WS, b"version = 1\n")]);
+    f.o.git = Some(Arc::new(Failing));
+    f.o.loadout = Some("repository".into());
+    assert_eq!(f.up(), (1, String::new(), format!("{line}\n")));
+    assert!(!f.state_file().exists());
+    assert!(f.no_new_session());
+}
+
+#[test] // R§10 lines, `esc`: a ref with U+202E prints as `\u{202e}`, not the raw character
+fn line_escapes_the_ref() {
+    let _g = serial();
+    let f = fx(&[(WS, b"version = 1\n")]);
+    git(&f.w, &["checkout", "-q", "-b", "dev\u{202e}x", "main"]);
+    commit_files(&f.w, &[(WS, b"version = 1\nlayout = \"tiled\"\n")]);
+    git(&f.w, &["push", "-q", "origin", "dev\u{202e}x"]);
+    git(&f.c, &["fetch", "-q", "origin"]);
+    git(&f.c, &["remote", "set-head", "origin", "dev\u{202e}x"]);
+    let Use::NotApproved { digest, .. } = f.read() else { panic!("not approved") };
+    let (code, out, err) = f.up();
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert_eq!(err, format!("{}\n{GONE}", not_approved("refs/remotes/origin/dev\\u{202e}x", &digest)));
+    assert!(!err.contains('\u{202e}'));
 }
 
 #[test] // R§11 "agent edits `.zygo/` in a worktree": only the default branch counts

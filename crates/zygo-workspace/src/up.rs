@@ -788,7 +788,8 @@ fn check_max(plan: &loadout::Plan, max: u32) -> Result<(), Exit> {
 /// user config file sets it; else `repository` when the default branch has an approved `.zygo/workspace.toml`; else
 /// `solo`. The repository plan comes from one checked read (R§7.3) and each pane gets its pin (R§7.4). A choice by
 /// `--loadout repository` or a user `default_loadout = "repository"` refuses where the default choice plans `solo`.
-fn choose(opts: &UpOpts, t: &Target, err: &mut dyn Write) -> Result<loadout::Plan, Exit> {
+/// `repo_read` is false for `zygo up --all`, which makes no read.
+fn choose(opts: &UpOpts, t: &Target, repo_read: bool, err: &mut dyn Write) -> Result<loadout::Plan, Exit> {
     let resolve_err = |e: LoadoutError| Exit {
         code: if matches!(e, LoadoutError::Unknown { .. }) { 2 } else { 1 },
         message: format!("zygo: {e}"),
@@ -800,6 +801,10 @@ fn choose(opts: &UpOpts, t: &Target, err: &mut dyn Write) -> Result<loadout::Pla
         && (n != REPOSITORY_LOADOUT || opts.config.loadout.contains_key(REPOSITORY_LOADOUT))
     {
         return user(n);
+    }
+    // R§10 `zygo up --all` row (AU10): no default-branch read; the user default, else `solo`.
+    if !repo_read {
+        return user(name.unwrap_or(BUILTIN_LOADOUT));
     }
     let git: &dyn GitRunner = match &opts.git {
         Some(g) => g.as_ref(),
@@ -835,8 +840,10 @@ fn choose(opts: &UpOpts, t: &Target, err: &mut dyn Write) -> Result<loadout::Pla
 }
 
 /// The loadout plan (W§8.1 step 7, first case).
-fn loadout_plan(opts: &UpOpts, t: &Target, ws: Option<&Workspace>, report: &mut Report, err: &mut dyn Write) -> Result<Plan, Exit> {
-    let plan = choose(opts, t, err)?;
+fn loadout_plan(
+    opts: &UpOpts, t: &Target, ws: Option<&Workspace>, repo_read: bool, report: &mut Report, err: &mut dyn Write,
+) -> Result<Plan, Exit> {
+    let plan = choose(opts, t, repo_read, err)?;
     for w in &plan.warnings {
         say(err, &format!("zygo: {w}"));
     }
@@ -1046,9 +1053,12 @@ fn attach_step(
     }
 }
 
-/// W§8.1 steps 4-12 for one target, and 13 when `attach` (crate-private, for W8).
-pub(crate) fn up_target(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool) -> i32 {
-    match build(opts, target, out, err, attach) {
+/// W§8.1 steps 4-12 for one target, and 13 when `attach` (crate-private, for W8). `repo_read` is false for `--all`:
+/// its loadout choice makes no default-branch read (R§10).
+pub(crate) fn up_target(
+    opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool,
+) -> i32 {
+    match build(opts, target, out, err, attach, repo_read) {
         Ok(code) => code,
         Err(e) => {
             say(err, &e.message);
@@ -1057,7 +1067,7 @@ pub(crate) fn up_target(opts: &UpOpts, target: Target, out: &mut dyn Write, err:
     }
 }
 
-fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool) -> Result<i32, Exit> {
+fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write, attach: bool, repo_read: bool) -> Result<i32, Exit> {
     let id = target.id.clone();
     let name = target.name.clone();
     let session = format!("zygo-{name}");
@@ -1171,7 +1181,7 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
             }
             restore_plan(&store, cur, &mut report)
         }
-        _ => loadout_plan(opts, &target, ws.as_ref(), &mut report, err)?,
+        _ => loadout_plan(opts, &target, ws.as_ref(), repo_read, &mut report, err)?,
     };
     check_plan(&plan)?;
     check_separators(&opts.zygo, &id, &target.main_root, &plan, repaired)?;
@@ -1553,7 +1563,7 @@ fn run(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             say(err, &e.message);
             e.code
         }
-        Ok(t) => up_target(opts, t, out, err, true),
+        Ok(t) => up_target(opts, t, out, err, true, true),
     }
 }
 
@@ -1644,7 +1654,7 @@ fn run_all(opts: &UpOpts, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             continue;
         }
         // D7: `up_target` takes and releases its own `op.lock`.
-        if up_target(opts, target, out, err, false) == 0 {
+        if up_target(opts, target, out, err, false, false) == 0 {
             say(out, &format!("zygo: {name} is up"));
         } else {
             say(err, &format!("zygo: {name} skipped"));
