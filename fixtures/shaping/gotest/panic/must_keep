@@ -1,0 +1,7 @@
+=== RUN   TestWorker
+panic: worker: nil job
+goroutine 36 [running]:
+example.com/gotestfix/worker.TestWorker.func1()
+	/repo/worker/worker_test.go:17 +0x2c
+created by example.com/gotestfix/worker.TestWorker in goroutine 35
+	/repo/worker/worker_test.go:14 +0x70
