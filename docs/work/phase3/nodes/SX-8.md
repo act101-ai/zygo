@@ -8,7 +8,7 @@
 
 ## Plan
 
-Docs only. One file changes: `docs/live-checks.md`. No code, no test file, no change to `docs/work/phase3/graph.md`, the spec, `docs/premises.md` or `scripts/check-premises.sh` (T§12.1 items 2-4 belong to the node that records the results, after SX-9).
+Docs only. One file changes: `docs/live-checks.md`. No code, no test file, no change to `docs/work/phase3/graph.md`, the spec, `docs/premises.md` or `scripts/check-premises.sh` (T§12.1 items 1-5 belong to SX-10, after the operator runs the check in SX-9).
 
 "T§n" below is a section of `docs/specs/2026-11-24-session-text-design.md` (at `768bf48`). T§12.2 is the block from the line after the heading `### 12.2 Live check P3-15 (operator, by hand)` (line 267) up to the line before `## 13. Base-spec changes` (line 377): spec lines 269-375.
 
