@@ -195,10 +195,9 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | DONE | implementation | a09ce9f ee1a671 3686f01 bca8cad def8f45 3b71a13 701d9e1 · shaping_fixtures 22 pass; floor green · PR #32 |
 | MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
-| MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | TODO | implementation | — |
+| MS-3 | Mail sync config keys, forms and per-workspace resolution | ML-1, WD-5 | DONE | implementation | 96b5bf95 · acc: mail_sync_config 13 passed, zygo-config 258 passed 0 failed; floor green · PR #68 |
 | WD-1 | Git read of `.zygo/` from the default branch and at a pinned commit | DR-1 | DONE | judgment | 35ffa73 e7c51d9 · repo_def_read 27/27; floor green · PR #36 |
 | WD-5 | Config keys: pane `job`/`pool`, `[workspace] pool`, `[limits] max_members`, `.zygo.toml` filter, `config check` rules | DR-3, ML-1, RT-1 | DONE | implementation | 2d7c5e70 · definition_keys 11 passed, config_layers 90 passed · PR #58 |
 | RT-1 | Member record `first_started_at`, set by each commit of a pending start | DR-1 | DONE | implementation | 7efa8d9 441e170 ff23c48 · first_started_at 11 tests, 3 crates pass; floor green · PR #38 |
@@ -390,3 +389,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-20 done: 3 pytest cases (passing 12 files, failing-verbose -v 2 failed, collection-error with --continue-on-collection-errors); review round 1 fixed floor-reachability and must_keep; PR #57 |
 | 2026-11-24 | WD-5 done: config keys job, pool, [workspace] pool, [limits] max_members (default 8); review round fixed .zygo.toml max_members invalidating the file (repo_file::from_text); floor green (ws 2681 passed); PR #58. |
 | 2026-11-24 | OS-40 done; O§7.1/O§7.2 command forms widened (pipeline newline, backtick/`0<`/`$(<f)`, `eval --`, `builtin` wrapper, `-c` option scan, redirect-only file printer); review: 6 confirmed fixed, 1 kept as safe; floor green (ws 2695 passed) |
+| 2026-11-24 | MS-3 done: mail sync config keys (host, sync_gap, mail.workspace.<n>.sync/remote), sync_for, form checks incl. W§5 workspace-name keys; review: 4 fixed, 2 dropped (unknown keys: crate norm; remote: pass-time per S§11, carried to MS-10). PR #68. |
