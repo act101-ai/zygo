@@ -84,7 +84,7 @@ Premise check (execute-work §3.1) at `40732c74` (`origin/phase-4`).
 
 **Spec text (author's call; operator decision 2026-11-25).**
 
-- [ ] 11. `docs/specs/2026-11-18-zygo-design.md`:
+- [x] 11. `docs/specs/2026-11-18-zygo-design.md`:
       - §7.2 "Session token", in the parenthesis after `zygo hook token`: the OpenCode part becomes "OpenCode provider `options.apiKey` = `{file:<$ZYGO_SESSION_DIR/token>}`, which OpenCode reads from that file when it loads its config (§8.7)".
       - §8.4 "Set": "Accepted limit: tools run as the same user and can read that file (and OpenCode's inline config, §8.7)." becomes "Accepted limit: tools run as the same user and can read that file."
       - §8.7 bullet 1, appended: "The inline config holds no secret: the provider key names the token file, so the token is in no environment row (premise PO1)."

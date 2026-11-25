@@ -932,6 +932,7 @@ P4-11 (client updates):
 - **§8.4**: `ZYGO_AGENT` takes each registry id (`claude-code`, `opencode`, `codex`); each client adds its own denylist rows.
 - **§8.8**: superseded by K§6.8 flow 6.
 - **§7.6 v2**: the Responses client route is built (K§6.4); the chat client route and the `openai-chat` client pair stay v2.
+- **§7.2, §8.4, §8.7** (OC-1, operator 2026-11-25): OpenCode's provider key is a `{file:…}` reference to the session's `token` file, the inline config holds no token, and `enabled_providers = ["zygo"]`.
 - **H§6.2, H§6.7** (HUD design): segment 16 and its place first in each drop list.
 - **U** (auto-update design): the throttle state has one owner, `zygo_core::update_state`, shared with the background check; U's prompt, skips and rule are unchanged.
 
@@ -943,3 +944,4 @@ P4-11 (client updates):
 - 2026-11-25: approved by the operator (instruction to plan and build); new row order P4-1 to P4-11 (K§6.9); the Codex client gets its own design (P4-7); the fixes of the spec audit (lead rulings C1-C3, I4-I15, M16, M17).
 - 2026-11-25: K-C7, K-D3 and K§11 items 23-24 amended (lead): the test-edit proof is per node against its layer's parent, with listed test logic edits, because declared mechanical rewrites cannot be met at P4-6's scale. K§6.1.4 gets an exception list (operator, K-D53).
 - 2026-11-25: K§6.2.4 amended (lead): failing core capability matches the bar sentence: an ungraded or n/a core criterion fails (CF-2 review F4).
+- 2026-11-25: K§12 gets the OC-1 base-spec change (operator: OpenCode A-1.2, A-1.3, A-10.2 fixed in code before CF-4).
