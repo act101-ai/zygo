@@ -92,3 +92,61 @@ fn fetch_never_reads_the_remote_as_an_option() {
         Err(BranchError::Git(RunError::Failed, "fetch")));
     assert!(!r.dir.path().join("spy-ran").exists());
 }
+
+/// The entries that `ls` passes for `tip` under `prefix`.
+fn entries(wt: &std::path::Path, tip: &str, prefix: Option<&str>) -> Vec<Entry> {
+    let mut v = Vec::new();
+    let end = ls(wt, tip, prefix, far(), &mut |e| {
+        v.push(e);
+        Flow::Go
+    });
+    assert!(matches!(end, Ok(zygo_work::repo::Streamed::Done { ok: true, .. })), "{end:?}");
+    v
+}
+
+/// The author, committer and message of commit `c`, as `%an <%ae>|%cn <%ce>|%B`.
+fn who_and_message(cwd: &std::path::Path, c: &str) -> String {
+    git(cwd, &["log", "-1", "--format=%an <%ae>|%cn <%ce>|%B", c])
+}
+
+const FIXED: &str = "zygo <zygo@zygo.invalid>|zygo <zygo@zygo.invalid>|zygo mail [skip ci]\n";
+
+#[test]
+fn bootstrap_makes_one_marker_root_and_the_worktree() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let rt = bootstrap(&m.root, &m.wt, far()).unwrap();
+    let b = blob(&m.root, b"1\n");
+    assert_eq!(entries(&m.wt, &rt, None), vec![Entry {
+        mode: "100644".into(), kind: "blob".into(), id: b.clone(), size: Some(2), path: "ZYGO-MAIL".into(),
+    }]);
+    assert_eq!(cat(&m.wt, &b, 2, far()), Ok(b"1\n".to_vec()));
+    assert_eq!(git(&m.root, &["rev-list", "--parents", "-n1", &rt]), rt);
+    let mktree = git_in(&m.root, &["mktree"], format!("100644 blob {b}\tZYGO-MAIL\n").as_bytes());
+    assert_eq!(git(&m.root, &["rev-parse", &format!("{rt}^{{tree}}")]), mktree);
+    assert_eq!(who_and_message(&m.root, &rt), FIXED);
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), rt);
+    let list = git(&m.root, &["worktree", "list", "--porcelain"]);
+    assert!(list.contains(&format!("worktree {}\nHEAD {rt}\ndetached", m.wt.display())), "{list}");
+    // An existing worktree gets `update-ref`. Two bootstraps in one second make the same commit, so the worktree
+    // is first moved away from it, with no timing assumption.
+    let c = git(&m.root, &["rev-parse", "HEAD"]);
+    assert_eq!(ensure_worktree(&m.root, &m.wt, &c, far()), Ok(()));
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c);
+    let rt2 = bootstrap(&m.root, &m.wt, far()).unwrap();
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), rt2);
+    assert_eq!(names(&m.wt), [".git"]);
+}
+
+#[test]
+fn ensure_worktree_makes_a_deleted_folder_again() {
+    let r = Remote::new();
+    let m = Machine::new(&r);
+    let c = git(&m.root, &["rev-parse", "HEAD"]);
+    assert_eq!(ensure_worktree(&m.root, &m.wt, &c, far()), Ok(()));
+    std::fs::remove_dir_all(&m.wt).unwrap();
+    assert_eq!(ensure_worktree(&m.root, &m.wt, &c, far()), Ok(()));
+    assert!(std::fs::symlink_metadata(m.wt.join(".git")).unwrap().is_file());
+    assert_eq!(git(&m.wt, &["rev-parse", "HEAD"]), c);
+    assert_eq!(names(&m.wt), [".git"]);
+}

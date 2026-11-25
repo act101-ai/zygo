@@ -1,6 +1,7 @@
 //! The side branch plumbing (S§6): the detached, index-only worktree, fetch, bootstrap, tree reads, commit and push.
 //! Every git call goes through [`crate::git::run`] or [`crate::git::stream`] (S-C4), with a deadline. No function
 //! runs `worktree prune`, `merge`, `rebase` or `checkout` (S§6.3, S§12), and none writes git's stdin.
+use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
@@ -87,12 +88,55 @@ fn path_str(p: &Path) -> Result<&str, BranchError> {
     p.to_str().ok_or_else(|| BranchError::Io(format!("path is not UTF-8: {}", p.display())))
 }
 
+/// A local file error as `Io`.
+fn io(e: std::io::Error) -> BranchError { BranchError::Io(e.to_string()) }
+
+/// The folder of the worktree `wt` (`<workspace_cache_dir>/<id>/`), made when missing: it holds the temp files of
+/// [`write_object`].
+fn tmp_dir(wt: &Path) -> Result<&Path, BranchError> {
+    let p = wt.parent().ok_or_else(|| BranchError::Io(format!("no parent folder: {}", wt.display())))?;
+    std::fs::create_dir_all(p).map_err(io)?;
+    Ok(p)
+}
+
+/// Writes `bytes` as a git object of `kind` through a `0600` temp file in `tmp` (no stdin: the runner's is null)
+/// and `git hash-object -t <kind> -w --no-filters` in `cwd`; returns its id. The temp file is deleted on every path.
+fn write_object(cwd: &Path, tmp: &Path, kind: &str, bytes: &[u8], deadline: Instant) -> Result<String, BranchError> {
+    let mut f = tempfile::Builder::new().prefix(".zygo-object").tempfile_in(tmp).map_err(io)?;
+    f.write_all(bytes).and_then(|()| f.flush()).map_err(io)?;
+    let out = run_git(cwd, &["hash-object", "-t", kind, "-w", "--no-filters", "--", path_str(f.path())?],
+        "hash-object", deadline)?;
+    id_out(&out, "hash-object")
+}
+
+/// S§6.5: `commit-tree <tree> [-p <parent>]` in `cwd` as `zygo <zygo@zygo.invalid>`, unsigned, with
+/// [`COMMIT_MESSAGE`]; returns the commit.
+fn commit_tree(cwd: &Path, tree: &str, parent: Option<&str>, deadline: Instant) -> Result<String, BranchError> {
+    let mut args = vec!["-c", "user.name=zygo", "-c", "user.email=zygo@zygo.invalid", "-c", "commit.gpgSign=false",
+        "commit-tree", tree];
+    if let Some(p) = parent {
+        args.extend(["-p", p]);
+    }
+    args.extend(["-m", COMMIT_MESSAGE]);
+    let out = run_git(cwd, &args, "commit-tree", deadline)?;
+    id_out(&out, "commit-tree")
+}
+
 /// S§6.3 make/use: points the worktree `wt` at `commit`. An existing worktree (`wt/.git` a regular file) gets
 /// `update-ref --no-deref HEAD`; else `git worktree add --force --detach --no-checkout` runs in `main_root`.
 pub fn ensure_worktree(main_root: &Path, wt: &Path, commit: &str, deadline: Instant) -> Result<(), BranchError> {
     oid(commit)?;
-    let _ = (main_root, wt, deadline);
-    Err(BranchError::Io("not built".into()))
+    if std::fs::symlink_metadata(wt.join(".git")).is_ok_and(|m| m.is_file()) {
+        run_git(wt, &["update-ref", "--no-deref", "HEAD", commit], "update-ref", deadline)?;
+        return Ok(());
+    }
+    if let Some(p) = wt.parent() {
+        std::fs::create_dir_all(p).map_err(io)?;
+    }
+    let w = path_str(wt)?;
+    run_git(main_root, &["worktree", "add", "--force", "--detach", "--no-checkout", "--", w, commit], "worktree add",
+        deadline)?;
+    Ok(())
 }
 
 /// S§6.5: fetches `refs/heads/<branch>` into `refs/remotes/<remote>/<branch>` with no `FETCH_HEAD`. A remote
@@ -115,8 +159,14 @@ pub fn fetch(cwd: &Path, remote: &str, branch: &str, deadline: Instant) -> Resul
 /// S§6.4: makes the root commit whose tree is the one entry `ZYGO-MAIL` = [`MARKER`], points the worktree at it
 /// and returns it.
 pub fn bootstrap(main_root: &Path, wt: &Path, deadline: Instant) -> Result<String, BranchError> {
-    let _ = (main_root, wt, deadline);
-    Err(BranchError::Io("not built".into()))
+    let tmp = tmp_dir(wt)?;
+    let b = write_object(main_root, tmp, "blob", MARKER, deadline)?;
+    let mut t = b"100644 ZYGO-MAIL\0".to_vec();
+    t.extend(hex::decode(&b).map_err(|_| BranchError::Git(RunError::Failed, "hash-object"))?);
+    let tree = write_object(main_root, tmp, "tree", &t, deadline)?;
+    let root = commit_tree(main_root, &tree, None, deadline)?;
+    ensure_worktree(main_root, wt, &root, deadline)?;
+    Ok(root)
 }
 
 /// The entries of `tip` (at the top, or under `prefix`) to `each`, through `git ls-tree -z --long --full-tree`. An
@@ -124,15 +174,42 @@ pub fn bootstrap(main_root: &Path, wt: &Path, deadline: Instant) -> Result<Strin
 pub fn ls(wt: &Path, tip: &str, prefix: Option<&str>, deadline: Instant, each: &mut dyn FnMut(Entry) -> Flow)
     -> Result<Streamed, BranchError> {
     oid(tip)?;
-    let _ = (wt, prefix, deadline, each);
-    Err(BranchError::Io("not built".into()))
+    let mut args = vec!["ls-tree", "-z", "--long", "--full-tree", tip];
+    if let Some(p) = prefix {
+        args.extend(["--", p]);
+    }
+    let end = git::stream(wt, &args, deadline, &mut |e| match entry(e) {
+        Some(e) => each(e),
+        None => Flow::Go,
+    }).map_err(|e| BranchError::Git(e, "ls-tree"))?;
+    match end {
+        Streamed::Done { ok: false, .. } => Err(BranchError::Git(RunError::Failed, "ls-tree")),
+        end => Ok(end),
+    }
+}
+
+/// One `ls-tree -z --long` entry: split at its first tab, the left part exactly 4 fields (mode, kind, id, size or
+/// `-`), the rest a UTF-8 path. Anything else is `None`.
+fn entry(e: &[u8]) -> Option<Entry> {
+    let tab = e.iter().position(|&b| b == b'\t')?;
+    let left = std::str::from_utf8(&e[..tab]).ok()?;
+    let path = std::str::from_utf8(&e[tab + 1..]).ok()?;
+    let f: Vec<&str> = left.split_ascii_whitespace().collect();
+    let [mode, kind, id, size] = f[..] else { return None };
+    let size = if size == "-" { None } else { Some(size.parse().ok()?) };
+    Some(Entry { mode: mode.into(), kind: kind.into(), id: id.into(), size, path: path.into() })
 }
 
 /// The bytes of `blob`; a blob above `max` bytes is `Refused("too large")` before it is read.
 pub fn cat(wt: &Path, blob: &str, max: u64, deadline: Instant) -> Result<Vec<u8>, BranchError> {
     oid(blob)?;
-    let _ = (wt, max, deadline);
-    Err(BranchError::Io("not built".into()))
+    let out = run_git(wt, &["cat-file", "-s", blob], "cat-file", deadline)?;
+    let size: u64 = std::str::from_utf8(&out).ok().and_then(|s| s.trim_end().parse().ok())
+        .ok_or(BranchError::Git(RunError::Failed, "cat-file"))?;
+    if size > max {
+        return Err(BranchError::Refused("too large"));
+    }
+    run_git(wt, &["cat-file", "blob", blob], "cat-file", deadline)
 }
 
 /// S§6.1, S§8.3 step 7: whether `tip` has `ZYGO-MAIL` as a `100644` blob that holds exactly [`MARKER`].
