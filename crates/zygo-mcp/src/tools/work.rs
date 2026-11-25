@@ -29,18 +29,20 @@ pub fn tools(ctx: &McpCtx) -> Vec<Box<dyn Tool>> {
     vec![Box::new(WorkBegin), Box::new(verdict)]
 }
 
-/// The repository root (`None`: no root) -> the `dispositions` level of one keep.
-pub type LevelFn = dyn Fn(Option<&Path>) -> Level + Send + Sync;
+/// The repository root (`None`: no root) -> the `dispositions` level of one keep and the config warning line, if any.
+pub type LevelFn = dyn Fn(Option<&Path>) -> (Level, Option<String>) + Send + Sync;
 /// The repository root -> the git reader of one keep.
 pub type GitFn = dyn Fn(&Path) -> Box<dyn VerdictGit> + Send + Sync;
 /// The most bytes of the compact JSON of the arguments (D§9.2: 256 KiB).
 pub const ARGS_MAX: usize = 262_144;
 
 /// The `dispositions` level (D§9.3): config, `.zygo.toml` at `root`, the session override, clamped to `min_level`.
-/// A config that does not load gives `enforce`: a gate does not open on an error (D§9.4).
-pub fn dispositions_level(paths: &Paths, sd: &SessionDir, root: Option<&Path>) -> Level {
-    let (m, _) = hooks::session_config(paths, Some(sd), root.map(Path::to_path_buf));
-    m.map_or(Level::Enforce, |m| guards::policy(&m, sd, root.unwrap_or(&sd.root)).level(Guard::Dispositions))
+/// A config that does not load gives `enforce`: a gate does not open on an error (D§9.4). The second value is the
+/// warning line of a `team.toml` that was not used; the reply shows it.
+pub fn dispositions_level(paths: &Paths, sd: &SessionDir, root: Option<&Path>) -> (Level, Option<String>) {
+    let (m, warning) = hooks::session_config(paths, Some(sd), root.map(Path::to_path_buf));
+    let level = m.map_or(Level::Enforce, |m| guards::policy(&m, sd, root.unwrap_or(&sd.root)).level(Guard::Dispositions));
+    (level, warning)
 }
 
 const VERDICTS: [&str; 3] = ["keep", "discard", "rework"];
@@ -222,10 +224,14 @@ impl Tool for WorkVerdict {
         }
         // The guard (D§9.3): read the level per call, so a session override applies at the next keep.
         let root = SessionView::load(&self.session_dir).ok().and_then(|v| v.repo_root).map(PathBuf::from);
-        let level = (self.level)(root.as_deref());
+        let (level, warning) = (self.level)(root.as_deref());
+        let end = |text: String| match &warning {
+            Some(w) => format!("{text}\n{w}"),
+            None => text,
+        };
         if level == Level::Monitor {
             self.record(unit, round, verdict)?;
-            return Ok(Value::String(recorded));
+            return Ok(Value::String(end(recorded)));
         }
         let problems = match &root {
             None => vec!["cannot check: no repository root".to_string()],
@@ -235,13 +241,13 @@ impl Tool for WorkVerdict {
             }
         };
         if level == Level::Enforce && !problems.is_empty() {
-            return Err(ToolError::Failed(format!("zygo: keep refused: {}", format_problems(&problems))));
+            return Err(ToolError::Failed(end(format!("zygo: keep refused: {}", format_problems(&problems)))));
         }
         self.record(unit, round, verdict)?;
         if problems.is_empty() {
-            return Ok(Value::String(recorded));
+            return Ok(Value::String(end(recorded)));
         }
-        Ok(Value::String(format!("{recorded}\nzygo: dispositions: {}", format_problems(&problems))))
+        Ok(Value::String(end(format!("{recorded}\nzygo: dispositions: {}", format_problems(&problems)))))
     }
 }
 
@@ -264,7 +270,7 @@ mod tests {
     use zygo_usage::{Filter, Store, WorkUnitRow};
 
     fn test_tool(db: PathBuf, t: &tempfile::TempDir) -> WorkVerdict {
-        WorkVerdict::new(db, "S1".into(), SessionDir::new(t.path().join("s")), Box::new(|_| Level::Monitor), Box::new(|_| unreachable!()))
+        WorkVerdict::new(db, "S1".into(), SessionDir::new(t.path().join("s")), Box::new(|_| (Level::Monitor, None)), Box::new(|_| unreachable!()))
     }
 
     #[test]

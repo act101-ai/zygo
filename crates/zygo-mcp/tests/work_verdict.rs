@@ -153,11 +153,17 @@ struct H {
     calls: Arc<Mutex<Vec<String>>>,
     roots: Arc<Mutex<Vec<PathBuf>>>,
     levels_read: Arc<AtomicUsize>,
+    level_roots: Arc<Mutex<Vec<Option<PathBuf>>>>,
 }
 
 /// A temp dir; usage.db with a row for UNIT rounds 1 to 3 in session S1; a session dir whose view.json has
 /// `repo_root` = `root` (no view.json when `view` is false); the tool with a fixed level and a scripted git.
 fn harness(level: Level, script: Script, root: Option<&str>, view: bool) -> (WorkVerdict, H) {
+    harness_warned(level, None, script, root, view)
+}
+
+/// As [`harness`]; the level seam also returns `warning` (a config warning line).
+fn harness_warned(level: Level, warning: Option<&'static str>, script: Script, root: Option<&str>, view: bool) -> (WorkVerdict, H) {
     let t = tempfile::tempdir().unwrap();
     let db = t.path().join("usage.db");
     let store = Store::open(&db).unwrap();
@@ -175,22 +181,24 @@ fn harness(level: Level, script: Script, root: Option<&str>, view: bool) -> (Wor
     let calls = Arc::new(Mutex::new(Vec::new()));
     let roots = Arc::new(Mutex::new(Vec::new()));
     let levels_read = Arc::new(AtomicUsize::new(0));
-    let lr = levels_read.clone();
+    let level_roots = Arc::new(Mutex::new(Vec::new()));
+    let (lr, lroots) = (levels_read.clone(), level_roots.clone());
     let (rs, cs) = (roots.clone(), calls.clone());
     let tool = WorkVerdict::new(
         db.clone(),
         "S1".into(),
         sd,
-        Box::new(move |_| {
+        Box::new(move |r: Option<&Path>| {
             lr.fetch_add(1, Ordering::SeqCst);
-            level
+            lroots.lock().unwrap().push(r.map(Path::to_path_buf));
+            (level, warning.map(str::to_string))
         }),
         Box::new(move |root: &Path| {
             rs.lock().unwrap().push(root.to_path_buf());
             Box::new(Fake { s: script.clone(), calls: cs.clone() }) as Box<dyn VerdictGit>
         }),
     );
-    (tool, H { _t: t, db, calls, roots, levels_read })
+    (tool, H { _t: t, db, calls, roots, levels_read, level_roots })
 }
 
 fn at(level: Level, script: Script) -> (WorkVerdict, H) { harness(level, script, Some(ROOT_DIR), true) }
@@ -365,7 +373,9 @@ fn dispositions_level_resolution() {
         if let Some(l) = over {
             Overrides { guards: [("dispositions".to_string(), l.to_string())].into(), ..Default::default() }.save(&sd).unwrap();
         }
-        dispositions_level(&paths(d.path(), config), &sd, None)
+        let (level, warning) = dispositions_level(&paths(d.path(), config), &sd, None);
+        assert_eq!(warning, None);
+        level
     };
     assert_eq!(lvl("", None), Level::Enforce);
     assert_eq!(lvl("[guards]\ndispositions = \"notify\"\n", None), Level::Notify);
@@ -555,4 +565,96 @@ fn no_label_or_reason_is_stored() {
             assert!(!b.windows(s.len()).any(|w| w == s.as_bytes()), "{s} in {f:?}");
         }
     }
+}
+
+// ---- review round 1 ----
+
+/// Item 1: a ref named like a short `head` resolves to another commit; the keep is refused, nothing recorded.
+#[test]
+fn a_ref_that_shadows_a_short_head_refuses_at_enforce() {
+    let mut s = script();
+    s.commits.insert("abcdef1".into(), HEAD.into());
+    let (t, h) = at(Level::Enforce, s);
+    assert_eq!(
+        t.call(keep(1, json!({"head": "abcdef1", "dispositions": []}))),
+        Err(ToolError::Failed("zygo: keep refused: cannot check: head abcdef1 is a ref name, not a commit id".into()))
+    );
+    assert_eq!(verdict_of(&h, 1), None);
+}
+
+/// Item 2(b), the tool side: the level seam gets the session's repository root, or none.
+#[test]
+fn the_level_is_read_for_the_session_repository_root() {
+    let (t, h) = at(Level::Monitor, script());
+    assert!(t.call(keep(1, json!({"head": HEAD, "dispositions": []}))).is_ok());
+    assert_eq!(*h.level_roots.lock().unwrap(), vec![Some(PathBuf::from(ROOT_DIR))]);
+    let (t, h) = harness(Level::Monitor, script(), None, false);
+    assert!(t.call(keep(1, json!({"head": HEAD, "dispositions": []}))).is_ok());
+    assert_eq!(*h.level_roots.lock().unwrap(), vec![None]);
+}
+
+const TEAM_WARNING: &str = "team.toml not read (not valid TOML); user levels apply";
+
+/// Item 4: the config warning line ends the reply, after the recorded or refused text, at every level.
+#[test]
+fn the_config_warning_ends_the_reply() {
+    let w = Some(TEAM_WARNING);
+    let args = || keep(1, json!({"head": HEAD, "dispositions": []}));
+    let (t, _h) = harness_warned(Level::Monitor, w, script(), Some(ROOT_DIR), true);
+    assert_eq!(t.call(args()), Ok(json!(format!("recorded keep for {UNIT} round 1\n{TEAM_WARNING}"))));
+    let (t, _h) = harness_warned(Level::Enforce, w, script(), Some(ROOT_DIR), true);
+    assert_eq!(t.call(args()), Ok(json!(format!("recorded keep for {UNIT} round 1\n{TEAM_WARNING}"))));
+    let (t, h) = harness_warned(Level::Enforce, w, script(), None, true);
+    assert_eq!(
+        t.call(args()),
+        Err(ToolError::Failed(format!("zygo: keep refused: cannot check: no repository root\n{TEAM_WARNING}")))
+    );
+    assert_eq!(verdict_of(&h, 1), None);
+    let (t, _h) = harness_warned(Level::Notify, w, script(), None, true);
+    assert_eq!(
+        t.call(args()),
+        Ok(json!(format!("recorded keep for {UNIT} round 1\nzygo: dispositions: cannot check: no repository root\n{TEAM_WARNING}")))
+    );
+}
+
+/// Item 4: a `team.toml` that does not parse gives the warning; the level stays the user config's.
+#[test]
+fn dispositions_level_returns_the_team_warning() {
+    let d = tempfile::tempdir().unwrap();
+    let sd = SessionDir::new(d.path().join("s"));
+    sd.create().unwrap();
+    std::fs::write(sd.root.join(zygo_config::TEAM_FILE), "this is = = not toml").unwrap();
+    let got = dispositions_level(&paths(d.path(), "[guards]\ndispositions = \"notify\"\n"), &sd, None);
+    assert_eq!(got, (Level::Notify, Some(TEAM_WARNING.to_string())));
+}
+
+/// Item 2(b), the config side: `root` reaches the `.zygo.toml` read. That read runs git on the default branch, so
+/// this follows `crates/zygo-config/tests/config_layers.rs` (`repo_with`, `git`): isolated git, ignored for timing.
+#[test]
+#[ignore = "timing: git calls run under the 2 s production bound (GIT_BOUND)"]
+fn dispositions_level_reads_zygo_toml_at_the_root() {
+    let git = |dir: &Path, args: &[&str]| {
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "-C"])
+            .arg(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", null)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    let d = tempfile::tempdir().unwrap();
+    let repo = d.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join(".zygo.toml"), "version = 1\n[guards]\ndispositions = \"monitor\"\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "x"]);
+    let sd = SessionDir::new(d.path().join("s"));
+    sd.create().unwrap();
+    assert_eq!(dispositions_level(&paths(d.path(), ""), &sd, Some(&repo)).0, Level::Monitor);
+    assert_eq!(dispositions_level(&paths(d.path(), ""), &sd, None).0, Level::Enforce);
 }
