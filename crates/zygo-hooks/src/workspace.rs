@@ -380,7 +380,8 @@ fn log_state(c: &Ctx, e: &StateError) {
 
 /// The member record at a start, in one write (AU60, AU92, AU104, C8, W§7.4; D8, D9). No state writes nothing and
 /// makes no folder. Commit: a `pending` that names this zygo session moves into the record (its own agent session id
-/// when it has one), `note_pending` is cleared, and the values that `down` saved are cleared unless they were saved
+/// when it has one), `first_started_at` is set from `pending.started_at` when it is absent or 0 and that time is not 0
+/// (T§3.2), `note_pending` is cleared, and the values that `down` saved are cleared unless they were saved
 /// for this zygo session (`saved_for`). A record of another zygo session is not changed. Record: a payload id that
 /// differs from the stored one is written; no payload replaces a stored id with none. A record equal to the one read
 /// is not written. After a write the `snapshot.pending` check runs, and a changed id starts the same snapshot child
@@ -401,6 +402,9 @@ fn record_session(c: &Ctx, id: Option<&str>, zygo: &Path) {
         let before = m.agent_session.clone();
         match m.pending.clone() {
             Some(p) if p.zygo_session == session => {
+                if m.first_started_at.unwrap_or(0) == 0 && p.started_at != 0 {
+                    m.first_started_at = Some(p.started_at);
+                }
                 m.zygo_session = Some(p.zygo_session);
                 if let Some(a) = p.agent_session {
                     m.agent_session = Some(a);
