@@ -118,7 +118,8 @@ start_mock() {
 
 # n2_trap_chain <command>: EXIT, HUP, INT, PIPE and TERM first run <command>, then the trap that
 # was set before (lib.sh's n2_scratch_end, live.sh's live_end, a runner's own) with the same status,
-# or exit (128 + signal number for a signal). A trap that already holds <command> is kept. The
+# or exit (128 + signal number for a signal). The earlier trap is held once, in _n2_tp<n> (a chain
+# grows by one command per level). A chain that already holds <command> at any level is kept. The
 # traps are read with `trap >file` under $RUN (dash prints none inside $(trap)); a trap command of
 # more than one line is not chained (none in this repo). A runner that sets a trap after this
 # replaces the chain: call live_traps before start_mock.
@@ -128,15 +129,24 @@ n2_trap_chain() {
     _n2_q=$(sed -n "s/^trap -- \(.*\) \(SIG\)\{0,1\}$_n2_s\$/\1/p" "$RUN/.n2-traps")
     _n2_prev=""
     [ -z "$_n2_q" ] || eval "_n2_prev=$_n2_q"
-    case "$_n2_prev" in *"$1"*) continue ;; esac
+    _n2_all=$_n2_prev _n2_t=$_n2_prev
+    while _n2_v=$(printf '%s\n' "$_n2_t" | sed -n 's/.* n2_trap_run \$_n2_rc "\$\(_n2_tp[0-9]*\)"$/\1/p') && [ -n "$_n2_v" ]; do
+      eval "_n2_t=\${$_n2_v:-}"; _n2_all="$_n2_all
+$_n2_t"
+    done
+    case "$_n2_all" in *"$1"*) continue ;; esac
     case "$_n2_s" in EXIT) _n2_def='exit $_n2_rc' ;; HUP) _n2_def='exit 129' ;; INT) _n2_def='exit 130' ;;
       PIPE) _n2_def='exit 141' ;; TERM) _n2_def='exit 143' ;; esac
-    # The if keeps $? for the earlier trap: a bare (exit <status>) would end the trap under set -e.
+    _n2_tn=$((${_n2_tn:-0} + 1))
+    eval "_n2_tp$_n2_tn=\${_n2_prev:-\$_n2_def}"
     # shellcheck disable=SC2064
-    trap "_n2_rc=\$?; $1; if (exit \$_n2_rc); then ${_n2_prev:-$_n2_def}; else ${_n2_prev:-$_n2_def}; fi" "$_n2_s"
+    trap "_n2_rc=\$?; $1; n2_trap_run \$_n2_rc \"\$_n2_tp$_n2_tn\"" "$_n2_s"
   done
   rm -f "$RUN/.n2-traps"
 }
+# n2_trap_run <status> <command>: run the earlier trap with $? = <status>. The if sets $? (in each
+# branch, the condition's status): a bare (exit <status>) would end the trap under set -e.
+n2_trap_run() { if (exit "$1"); then eval "$2"; else eval "$2"; fi; }
 # n2_mock_trap: the traps first stop the mock (n2_mock_kill).
 n2_mock_trap() { n2_trap_chain n2_mock_kill; }
 
@@ -190,10 +200,11 @@ scrub() {
 # --- Codex (node PC-2) ---------------------------------------------------------------------------
 # CODEX_MIN: the pinned version is a minimum (K-C8). CODEX_FX: the Codex fixture root.
 # CX_HOME: the CODEX_HOME of the next run_codex (new_run sets $H/.codex; a part may set another
-# folder under $RUN). CODEX_EXE is set by each codex_env (a fresh copy in $RUN/codex-pkg);
-# CODEX_VERSION once per process. $RUN/cx-used: one line per run_codex of this run folder
-# ("<version> <MOCK_URL> <CODEX_EXE> <CODEX_ENV words> <EXTRA_ENV words>"), written to a file so a
-# run in a subshell ($(...), a pipeline) counts; codex_record derives isolation.txt from it.
+# folder under $RUN). Each codex_env sets CODEX_EXE (a fresh copy in its own $RUN/codex-pkg.XXXXXX)
+# and CODEX_VERSION (that copy's --version). $RUN/cx-used.d/: one file of one line per run_codex
+# of this run folder ("<version> <MOCK_URL> <CODEX_EXE> <CODEX_ENV words> <EXTRA_ENV words>"), so
+# a run in a subshell ($(...), a pipeline, a background job) counts and concurrent runs never share
+# a file; codex_record derives isolation.txt from them.
 CODEX_MIN=0.172.0
 : "${CODEX_FX:=$REPO_DIR/fixtures/codex}"
 CX_HOME="" CODEX_EXE="" CODEX_VERSION="" CODEX_ENV=""
@@ -213,21 +224,25 @@ n2_under() {
   case "$_u_p" in "$_u_b"/*) return 0 ;; esac
   return 1
 }
-# n2_under_fold <path> <base>: as n2_under, comparing case-folded real paths. For a path that must
-# stay out of <base> (the owner's ~/.codex): a macOS folder ignores letter case, so ~/.CODEX is
-# ~/.codex; on a case-sensitive file system this only refuses more.
+# n2_under_fold <path> <base>: as n2_under, comparing NFC-normalized, case-folded real paths. For a
+# path that must stay out of <base> (the owner's ~/.codex): a macOS folder ignores letter case and
+# the Unicode normalization form, so ~/.CODEX is ~/.codex and Jose+U+0301 is José; on a file system
+# that keeps them apart this only refuses more.
 n2_under_fold() {
-  python3 -I -c 'import os, sys
-p, b = (os.path.realpath(a).casefold() for a in sys.argv[1:3])
+  python3 -I -c 'import os, sys, unicodedata
+p, b = (unicodedata.normalize("NFC", os.path.realpath(a)).casefold() for a in sys.argv[1:3])
 sys.exit(0 if p.startswith(b.rstrip("/") + "/") else 1)' "$1" "$2"
 }
-# n2_native <file>: 0 when the file starts with the magic bytes of a native program: Mach-O
-# (feedface, feedfacf, cafebabe, in either byte order), ELF (7f454c46) or PE ("MZ").
+# n2_native <file>: 0 when `file -b` names an executable of this host's own format: Mach-O ...
+# executable on Darwin, ELF ... executable on Linux, PE32 on Windows (Cygwin, MinGW, MSYS). The
+# magic bytes alone are not enough: macOS answers ENOEXEC for a text file that starts with some of
+# them, and env then runs it with /bin/sh. Anything else (data, text, a script, a library) is refused.
 n2_native() {
-  python3 -I -c 'import sys
-m = open(sys.argv[1], "rb").read(4)
-ok = {"feedface", "feedfacf", "cafebabe", "cefaedfe", "cffaedfe", "bebafeca", "7f454c46"}
-sys.exit(0 if m.hex() in ok or m[:2] == b"MZ" else 1)' "$1"
+  _nv=$(file -b "$1" | head -n 1) || return 1
+  case "$(uname -s):$_nv" in
+    Darwin:Mach-O*executable* | Linux:ELF*executable* | CYGWIN*:PE32* | MINGW*:PE32* | MSYS*:PE32*) return 0 ;;
+  esac
+  return 1
 }
 # n2_plain <name> <value>: exit 1 unless the value is one CODEX_ENV word (no blank, no glob, no
 # other shell character): CODEX_ENV is expanded unquoted.
@@ -237,14 +252,14 @@ n2_plain() {
   esac
 }
 
-# codex_exe: set CODEX_EXE to a fresh copy in $RUN/codex-pkg, made on every call (nothing is reused
-# between runs or processes), so PATH's first entry is in the run folder. When the real path of
-# CODEX_BIN is under the owner's ~/.codex and its folder is named bin, the copy is the package
-# folder above bin/ (only under ~/.codex/packages); else the file alone. The copy is made under a
-# temporary name and renamed into place; a package copy that holds a symbolic link resolving
+# codex_exe: set CODEX_EXE to a fresh copy in a folder of its own, $RUN/codex-pkg.XXXXXX/p, made on
+# every call (nothing is reused between runs or processes, and no call removes another's copy), so
+# PATH's first entry is in the run folder. When the real path of CODEX_BIN is under the owner's
+# ~/.codex and its folder is named bin, the copy is the package folder above bin/ (only under
+# ~/.codex/packages); else the file alone. A package copy that holds a symbolic link resolving
 # outside the copy is refused and deleted (links are kept as links, never followed). The copied
-# executable must be a native program (n2_native): a script, with or without #!, is refused.
-# Nothing else in ~/.codex is read.
+# executable must be a native executable of this host (n2_native): a script, with or without #!,
+# is refused. Nothing else in ~/.codex is read.
 codex_exe() {
   _cx_real=$(n2_realpath "$CODEX_BIN")
   _cx_dir=$(dirname "$_cx_real") _cx_pkg="" _cx_rel=${_cx_real##*/}
@@ -254,7 +269,6 @@ codex_exe() {
       { echo "premises: the codex package folder is not under ~/.codex/packages"; exit 1; }
     _cx_rel=bin/$_cx_rel
   fi
-  rm -rf "$RUN/codex-pkg"
   _cx_tmp=$(mktemp -d "$RUN/codex-pkg.XXXXXX") || exit 1
   if [ -n "$_cx_pkg" ]; then
     cp -R "$_cx_pkg" "$_cx_tmp/p" || { rm -rf "$_cx_tmp"; exit 1; }
@@ -281,8 +295,7 @@ PY
     rm -rf "$_cx_tmp"
     echo "premises: codex at $CODEX_BIN is not a native program (Mach-O, ELF or PE)"; exit 1
   fi
-  mv "$_cx_tmp/p" "$RUN/codex-pkg" && rmdir "$_cx_tmp"
-  CODEX_EXE=$RUN/codex-pkg/$_cx_rel
+  CODEX_EXE=$_cx_tmp/p/$_cx_rel
 }
 
 # n2_extra_check: each EXTRA_ENV word is NAME=value; no name codex_env sets or that moves Codex's
@@ -314,11 +327,11 @@ n2_extra_check() {
 # (provider "mock", base_url at the mock) and refuses one whose base_url is not "$MOCK_URL/v1"
 # (after a mock restart, a part removes or rewrites its config.toml); sets CODEX_ENV: env -i with
 # scratch HOME, CODEX_HOME, XDG and TMPDIR folders, the dummy key as MOCK_API_KEY, and HTTPS_PROXY,
-# HTTP_PROXY and ALL_PROXY at the mock (K§6.3.7). Once per process: CODEX_VERSION >= CODEX_MIN.
+# HTTP_PROXY and ALL_PROXY at the mock (K§6.3.7), TERM the constant xterm-256color. Every call,
+# after its fresh copy: CODEX_VERSION (that copy's --version) >= CODEX_MIN.
 codex_env() {
   CX_HOME=${CX_HOME:-$H/.codex}
-  _cx_term=${TERM:-xterm-256color}
-  n2_plain RUN "$RUN"; n2_plain HOME "$H"; n2_plain CODEX_HOME "$CX_HOME"; n2_plain TERM "$_cx_term"
+  n2_plain RUN "$RUN"; n2_plain HOME "$H"; n2_plain CODEX_HOME "$CX_HOME"
   n2_under "$H" "$RUN" || { echo "premises: codex HOME is not under the run folder"; exit 1; }
   n2_under "$CX_HOME" "$RUN" || { echo "premises: CODEX_HOME is not under the run folder"; exit 1; }
   if n2_under_fold "$RUN" "$OWNER_HOME/.codex"; then echo "premises: the run folder is under ~/.codex"; exit 1; fi
@@ -333,29 +346,32 @@ codex_env() {
     _cx_bu=$(sed -n 's/^[[:space:]]*base_url[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CX_HOME/config.toml")
     [ "$_cx_bu" = "$MOCK_URL/v1" ] || { echo "premises: config.toml base_url is '${_cx_bu:-none}', not '$MOCK_URL/v1'"; exit 1; }
   else
+    # Written whole, then renamed: a concurrent run never reads a part of it.
+    _cx_cf=$(mktemp "$CX_HOME/config.toml.XXXXXX") || exit 1
     printf '%s\n' 'model = "gpt-mock"' 'model_provider = "mock"' '' \
       '[model_providers.mock]' 'name = "mock"' "base_url = \"$MOCK_URL/v1\"" 'env_key = "MOCK_API_KEY"' \
-      'wire_api = "responses"' >"$CX_HOME/config.toml"
+      'wire_api = "responses"' >"$_cx_cf"
+    mv -f "$_cx_cf" "$CX_HOME/config.toml"
   fi
-  CODEX_ENV="env -i PATH=$(dirname "$CODEX_EXE"):/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin TERM=$_cx_term HOME=$H CODEX_HOME=$CX_HOME XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share XDG_CACHE_HOME=$H/.cache XDG_STATE_HOME=$H/.local/state TMPDIR=$RUN/tmp MOCK_API_KEY=$DUMMY_KEY HTTPS_PROXY=$MOCK_URL HTTP_PROXY=$MOCK_URL ALL_PROXY=$MOCK_URL"
-  if [ -z "$CODEX_VERSION" ]; then
-    _cx_v=$($CODEX_ENV "$CODEX_EXE" --version | head -n 1)
-    _cx_v=${_cx_v##* }
-    case "$_cx_v" in
-      '' | *[!0-9.]* | .* | *. | *..* | *.*.*.*) echo "premises: codex --version gave '$_cx_v', not x.y.z"; exit 1 ;;
-      *.*.*) ;;
-      *) echo "premises: codex --version gave '$_cx_v', not x.y.z"; exit 1 ;;
-    esac
-    ver_ge "$_cx_v" "$CODEX_MIN" || { echo "premises: codex $_cx_v is below the minimum $CODEX_MIN"; exit 1; }
-    CODEX_VERSION=$_cx_v
-  fi
+  CODEX_ENV="env -i PATH=$(dirname "$CODEX_EXE"):/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin TERM=xterm-256color HOME=$H CODEX_HOME=$CX_HOME XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share XDG_CACHE_HOME=$H/.cache XDG_STATE_HOME=$H/.local/state TMPDIR=$RUN/tmp MOCK_API_KEY=$DUMMY_KEY HTTPS_PROXY=$MOCK_URL HTTP_PROXY=$MOCK_URL ALL_PROXY=$MOCK_URL"
+  _cx_v=$($CODEX_ENV "$CODEX_EXE" --version | head -n 1)
+  _cx_v=${_cx_v##* }
+  case "$_cx_v" in
+    '' | *[!0-9.]* | .* | *. | *..* | *.*.*.*) echo "premises: codex --version gave '$_cx_v', not x.y.z"; exit 1 ;;
+    *.*.*) ;;
+    *) echo "premises: codex --version gave '$_cx_v', not x.y.z"; exit 1 ;;
+  esac
+  ver_ge "$_cx_v" "$CODEX_MIN" || { echo "premises: codex $_cx_v is below the minimum $CODEX_MIN"; exit 1; }
+  CODEX_VERSION=$_cx_v
 }
 
 # run_codex <codex args>: codex_env, then codex isolated in the run's repo; returns codex's status.
-# Each run appends its line to $RUN/cx-used first (also from a subshell).
+# Each run first writes its line to a file of its own in $RUN/cx-used.d (also from a subshell).
 run_codex() {
   codex_env
-  printf '%s\n' "$CODEX_VERSION $MOCK_URL $CODEX_EXE $CODEX_ENV $EXTRA_ENV" >>"$RUN/cx-used"
+  mkdir -p "$RUN/cx-used.d"
+  _cx_rec=$(mktemp "$RUN/cx-used.d/XXXXXX") || exit 1
+  printf '%s\n' "$CODEX_VERSION $MOCK_URL $CODEX_EXE $CODEX_ENV $EXTRA_ENV" >"$_cx_rec"
   _cx_rc=0
   # shellcheck disable=SC2086
   (cd "$R" && $CODEX_ENV $EXTRA_ENV "$CODEX_EXE" "$@") || _cx_rc=$?
@@ -365,35 +381,47 @@ run_codex() {
 
 # codex_record <part>: after stop_mock. Replaces $CODEX_FX/runs/<part>/ with isolation.txt and
 # connect.txt (the scrubbed record of the proxy requests the mock refused; empty when none).
-# isolation.txt is derived from $RUN/cx-used (what every run_codex of this run folder handed to
+# isolation.txt is derived from $RUN/cx-used.d (what every run_codex of this run folder handed to
 # codex, from any subshell):
 #   home=scratch          every HOME is under the run folder (else outside-run)
 #   codex_home=scratch    every CODEX_HOME is under the run folder (else outside-run)
 #   codex_version=<x.y.z> the version every run used (several: all of them, comma-separated)
-#   codex_exe=scratch     every executable is under the run folder (outside-owner-home: not under
+#   run_versions=<list>   the version of each run, one per run_codex, sorted, comma-separated
+#   codex_exe=scratch     every file handed to env is in the run folder: a native executable of
+#                         this host (codex_env checks it with n2_native) copied there for that run.
+#                         It says nothing of what that program reads; reads of ~/.codex are kept
+#                         out by the scratch HOME and CODEX_HOME (outside-owner-home: not under
 #                         the owner's home, case-folded; else owner-home); never a path
 #   env_names=<names>     the sorted names of every variable handed to codex
 #   proxy=mock            HTTPS_PROXY, HTTP_PROXY and ALL_PROXY each equal that run's MOCK_URL
 #                         (else other)
-# Any value other than scratch, outside-owner-home or mock, or more than one version, is written,
-# named on stdout, and codex_record exits 1.
+# Any value other than scratch, outside-owner-home or mock, more than one version, or a version
+# below CODEX_MIN (or not x.y.z), is written, named on stdout, and codex_record exits 1.
 codex_record() {
   case "$1" in '' | *[!A-Za-z0-9_-]*) echo "premises: bad part name '$1'"; exit 1 ;; esac
-  [ -s "$RUN/cx-used" ] || { echo "premises: codex_record: no codex run in this run folder"; exit 1; }
+  [ -n "$(ls -A "$RUN/cx-used.d" 2>/dev/null)" ] || { echo "premises: codex_record: no codex run in this run folder"; exit 1; }
   _cx_out="$CODEX_FX/runs/$1"
   rm -rf "$_cx_out"
   mkdir -p "$_cx_out"
   if [ -e "$RUN/rec/connect.txt" ]; then scrub "$RUN/rec/connect.txt" >"$_cx_out/connect.txt"; else : >"$_cx_out/connect.txt"; fi
-  python3 -I - "$_cx_out/isolation.txt" "$RUN" "$OWNER_HOME" "$RUN/cx-used" <<'PY'
-import os, sys
-out, run, home, used = sys.argv[1:5]
+  python3 -I - "$_cx_out/isolation.txt" "$RUN" "$OWNER_HOME" "$RUN/cx-used.d" "$CODEX_MIN" <<'PY'
+import os, sys, unicodedata
+out, run, home, used, cmin = sys.argv[1:6]
 rp = os.path.realpath
 def under(p, b):
     return bool(p) and bool(b) and rp(p).startswith(rp(b).rstrip("/") + "/")
+def fold(p):
+    return unicodedata.normalize("NFC", rp(p)).casefold()
 def under_fold(p, b):
-    return bool(p) and bool(b) and rp(p).casefold().startswith(rp(b).casefold().rstrip("/") + "/")
+    return bool(p) and bool(b) and fold(p).startswith(fold(b).rstrip("/") + "/")
+def vt(v):
+    t = v.split(".")
+    return tuple(int(x) for x in t) if len(t) == 3 and all(x.isdigit() for x in t) else None
 bad, names, versions, homes, cxhomes, exes, proxy = [], set(), [], [], [], [], "mock"
-for line in open(used).read().splitlines():
+lines = []
+for n in sorted(os.listdir(used)):
+    lines += open(os.path.join(used, n)).read().splitlines()
+for line in lines:
     if not line.strip():
         continue
     version, mock, exe, *words = line.split()
@@ -429,12 +457,18 @@ for e in exes:
         bad.append("the codex executable is under the owner's home")
     elif exe == "scratch":
         exe = "outside-owner-home"
-versions = list(dict.fromkeys(versions))
+runs = sorted(versions, key=lambda v: (vt(v) or (), v))
+versions = list(dict.fromkeys(runs))
 if len(versions) > 1:
     bad.append("more than one codex version: " + ",".join(versions))
+for v in versions:
+    if vt(v) is None:
+        bad.append("codex version '%s' is not x.y.z" % v)
+    elif vt(v) < vt(cmin):
+        bad.append("codex %s is below the minimum %s" % (v, cmin))
 with open(out, "w") as f:
-    f.write("home=%s\ncodex_home=%s\ncodex_version=%s\ncodex_exe=%s\nenv_names=%s\nproxy=%s\n"
-            % (h, ch, ",".join(versions), exe, " ".join(sorted(names)), proxy))
+    f.write("home=%s\ncodex_home=%s\ncodex_version=%s\nrun_versions=%s\ncodex_exe=%s\nenv_names=%s\nproxy=%s\n"
+            % (h, ch, ",".join(versions), ",".join(runs), exe, " ".join(sorted(names)), proxy))
 for b in dict.fromkeys(bad):
     print("premises: codex_record: " + b)
 sys.exit(1 if bad else 0)
