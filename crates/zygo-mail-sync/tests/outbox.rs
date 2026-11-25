@@ -13,8 +13,8 @@ use zygo_mail_sync::outbox::{count, pending, refuse, refused_count, send_remote,
 use zygo_mail_sync::registry::{write_cache, MemberCache};
 use zygo_mail_sync::state::{save, PublicCache, State, SyncPaths};
 use zygo_redact::DeadlinePolicy;
-use zygo_workspace::mail::store::{deliver, list};
-use zygo_workspace::mail::Message;
+use zygo_workspace::mail::store::{deliver, list, FILE_MAX};
+use zygo_workspace::mail::{Message, BODY_MAX};
 
 const ID: &str = "0123456789abcdef";
 const KEY: &str = "kaaaaaaaa";
@@ -157,7 +157,7 @@ fn last_public_verdict_is_refused_and_the_others_send() {
         verdict(&f, v);
         send(&f, Some("alice"), &addr("bob", "b"), "hi").unwrap();
     }
-    assert_eq!(count(&f.sp), 3);
+    assert_eq!(count(&f.sp).unwrap(), 3);
 }
 
 #[test] // S§7.2 refusal 4 (as M§10), S§19 #21
@@ -195,7 +195,7 @@ fn clear_send_writes_one_0600_file_with_full_addresses() {
     assert_eq!((m.version, m.id.clone(), m.from.as_str(), m.to.as_str()), (1, id.to_string(), "alice@a", "bob@b"));
     assert_eq!((m.sent_at.as_str(), m.subject.as_str(), m.body.as_str()), ("2027-01-15T08:00:00Z", "status", "the build is green"));
     assert_eq!(fs::read_dir(&f.sp.outbox_tmp).unwrap().count(), 0);
-    assert_eq!((count(&f.sp), refused_count(&f.sp)), (1, 0));
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (1, 0));
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -212,7 +212,7 @@ fn failed_write_leaves_no_outbox_file() {
     let e = send(&f, Some("alice"), &addr("bob", "b"), "hi").unwrap_err();
     assert!(matches!(&e, SendError::Io(l) if l.starts_with("zygo: mail: ")), "{e:?}");
     assert_eq!(pending(&f.sp).unwrap(), vec![]);
-    assert_eq!(count(&f.sp), 0);
+    assert_eq!(count(&f.sp).unwrap(), 0);
 }
 
 #[test]
@@ -227,14 +227,14 @@ fn pending_is_ulid_ordered_regular_files_only() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(f.sp.refused.join(format!("{c}.json")), f.sp.outbox.join(format!("{c}.json"))).unwrap();
     assert_eq!(pending(&f.sp).unwrap(), vec![(a, f.sp.outbox.join(format!("{a}.json"))), (b, f.sp.outbox.join(format!("{b}.json")))]);
-    assert_eq!((count(&f.sp), refused_count(&f.sp)), (2, 1));
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (2, 1));
 }
 
 #[test]
 fn no_outbox_is_empty() {
     let f = fx();
     assert_eq!(pending(&f.sp).unwrap(), vec![]);
-    assert_eq!((count(&f.sp), refused_count(&f.sp)), (0, 0));
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 0));
 }
 
 fn aws_ids() -> Vec<String> { vec!["aws_access_key_id".to_string()] }
@@ -248,7 +248,7 @@ fn refuse_moves_the_file_and_notifies_the_sender_once() {
     refuse(&f.sp, id, &aws_ids(), &mut |to: &str, subject: &str, body: &str| {
         calls.push((to.into(), subject.into(), body.into()));
         Ok(())
-    }).unwrap();
+    }, now()).unwrap();
     assert_eq!(calls, vec![(
         "alice".to_string(),
         format!("not sent: {id}"),
@@ -256,7 +256,7 @@ fn refuse_moves_the_file_and_notifies_the_sender_once() {
     )]);
     assert_eq!(fs::read(f.sp.refused.join(format!("{id}.json"))).unwrap(), before);
     assert_eq!(pending(&f.sp).unwrap(), vec![]);
-    assert_eq!((count(&f.sp), refused_count(&f.sp)), (0, 1));
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
     #[cfg(unix)]
     assert_eq!(mode(&f.sp.refused), 0o700);
 }
@@ -266,9 +266,9 @@ fn refuse_for_cli_sends_no_notice() {
     let f = fx();
     let id = outbox_file(&f, "cli@a");
     let mut n = 0;
-    refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }).unwrap();
+    refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }, now()).unwrap();
     assert_eq!(n, 0);
-    assert_eq!((count(&f.sp), refused_count(&f.sp)), (0, 1));
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
 }
 
 #[test] // the notice is a local M§5 message from `zygo`
@@ -278,7 +278,7 @@ fn notify_can_deliver_the_notice_from_zygo() {
     refuse(&f.sp, id, &aws_ids(), &mut |to: &str, subject: &str, body: &str| {
         let m = Message::new("zygo", to, subject, body, now()).map_err(std::io::Error::other)?;
         deliver(&f.sp.mail, KEY, to, &m, 500).map_err(std::io::Error::other)
-    }).unwrap();
+    }, now()).unwrap();
     let l = list(&f.sp.mail, KEY).unwrap();
     assert_eq!(l.len(), 1);
     assert_eq!((l[0].from.as_str(), l[0].subject.clone()), ("zygo", format!("not sent: {id}")));
@@ -291,18 +291,18 @@ fn refuse_again_after_a_partial_move_notifies_once() {
     fs::create_dir_all(&f.sp.refused).unwrap();
     fs::hard_link(f.sp.outbox.join(format!("{id}.json")), f.sp.refused.join(format!("{id}.json"))).unwrap();
     let mut n = 0;
-    refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }).unwrap();
+    refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }, now()).unwrap();
     assert_eq!(n, 1);
-    assert_eq!((count(&f.sp), refused_count(&f.sp)), (0, 1));
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
 }
 
 #[test]
 fn refuse_of_a_missing_file_changes_nothing() {
     let f = fx();
     let mut n = 0;
-    let e = refuse(&f.sp, Ulid::from_parts(1, 1), &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }).unwrap_err();
+    let e = refuse(&f.sp, Ulid::from_parts(1, 1), &aws_ids(), &mut |_: &str, _: &str, _: &str| { n += 1; Ok(()) }, now()).unwrap_err();
     assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
-    assert_eq!((n, refused_count(&f.sp)), (0, 0));
+    assert_eq!((n, refused_count(&f.sp).unwrap()), (0, 0));
 }
 
 #[test] // S§9 last paragraph, S§15 `mail/outbox/` row
@@ -344,4 +344,129 @@ fn sweep_with_no_outbox_does_nothing() {
     let f = fx();
     sweep(&f.sp, Duration::from_secs(1), now());
     assert!(!f.sp.outbox.exists());
+}
+
+fn no_notice(n: &mut u32) -> impl FnMut(&str, &str, &str) -> std::io::Result<()> + '_ {
+    move |_: &str, _: &str, _: &str| { *n += 1; Ok(()) }
+}
+
+fn set_age(p: &Path, age_secs: u64) {
+    fs::File::options().write(true).open(p).unwrap().set_modified(now() - Duration::from_secs(age_secs)).unwrap();
+}
+
+#[cfg(unix)]
+#[test] // S§19 #20: an outbox that cannot be read is no count of 0
+fn unreadable_outbox_count_is_an_error() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: `geteuid` takes no argument and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: the test runs as root, which reads a mode-0000 folder");
+        return;
+    }
+    let f = fx();
+    outbox_file(&f, "alice@a");
+    outbox_file(&f, "alice@a");
+    fs::create_dir_all(&f.sp.refused).unwrap();
+    fs::set_permissions(&f.sp.refused, fs::Permissions::from_mode(0o000)).unwrap();
+    let refused = refused_count(&f.sp);
+    fs::set_permissions(&f.sp.refused, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&f.sp.outbox, fs::Permissions::from_mode(0o000)).unwrap();
+    let (c, p) = (count(&f.sp), pending(&f.sp));
+    fs::set_permissions(&f.sp.outbox, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(c.is_err() && p.is_err() && refused.is_err(), "{c:?} {p:?} {refused:?}");
+    assert_eq!(count(&f.sp).unwrap(), 2);
+}
+
+#[test] // S§8.6 "kept on this machine": refused/ age counts from the refusal
+fn refused_file_ages_from_the_refusal() {
+    let f = fx();
+    let id = outbox_file(&f, "alice@a");
+    set_age(&f.sp.outbox.join(format!("{id}.json")), 40 * 86400);
+    let mut n = 0;
+    refuse(&f.sp, id, &aws_ids(), &mut no_notice(&mut n), now()).unwrap();
+    sweep(&f.sp, Duration::from_secs(30 * 86400), now());
+    assert_eq!(refused_count(&f.sp).unwrap(), 1);
+}
+
+#[test] // a refused/ file with other bytes is never taken for the outbox file
+fn refuse_onto_a_different_refused_file_keeps_the_outbox_file() {
+    let f = fx();
+    let id = outbox_file(&f, "alice@a");
+    let src = f.sp.outbox.join(format!("{id}.json"));
+    let dst = f.sp.refused.join(format!("{id}.json"));
+    let before = fs::read(&src).unwrap();
+    fs::create_dir_all(&f.sp.refused).unwrap();
+    fs::write(&dst, b"other").unwrap();
+    let mut n = 0;
+    assert!(refuse(&f.sp, id, &aws_ids(), &mut no_notice(&mut n), now()).is_err());
+    assert_eq!(n, 0);
+    assert_eq!(fs::read(&src).unwrap(), before);
+    assert_eq!(fs::read(&dst).unwrap(), b"other");
+}
+
+#[cfg(unix)]
+#[test] // the folder check of send_remote holds for pending and sweep too
+fn linked_outbox_is_refused_by_pending_and_not_swept() {
+    let f = fx();
+    let outside = f._t.path().join("outside");
+    let (old_refused, old_tmp) = (outside.join("refused/a.json"), outside.join("tmp/a.json"));
+    put(&old_refused, 10 * 365 * 86400);
+    put(&old_tmp, 10 * 365 * 86400);
+    put(&outside.join(format!("{}.json", Ulid::from_parts(1, 1))), 0);
+    std::os::unix::fs::symlink(&outside, &f.sp.outbox).unwrap();
+    assert!(pending(&f.sp).is_err());
+    assert!(count(&f.sp).is_err() && refused_count(&f.sp).is_err());
+    sweep(&f.sp, Duration::from_secs(1), now());
+    assert!(old_refused.exists() && old_tmp.exists());
+}
+
+#[test] // M§5 body limit stays; nothing is written
+fn body_over_the_limit_is_refused() {
+    let f = fx();
+    let e = send(&f, Some("alice"), &addr("bob", "b"), &"b".repeat(BODY_MAX + 1)).unwrap_err();
+    assert_eq!(e, SendError::Io("zygo: body is larger than 1 MiB".into()));
+    assert!(!f.sp.outbox.exists());
+}
+
+#[test] // S§8.6: the pass covers every field, the subject too
+fn secret_in_the_subject_is_refused() {
+    let f = fx();
+    let subject = format!("key {}", aws());
+    let e = send_remote_with(&f.sp, Ok(&on()), Some("alice"), &addr("bob", "b"), &subject, "hi", &builtin(), &f.root, now(), &far()).unwrap_err();
+    assert_eq!(e, SendError::Secret(aws_ids()));
+    assert!(!f.sp.outbox.exists());
+}
+
+#[test] // a file that does not parse is moved and gets no notice
+fn refuse_of_an_unparsable_file_moves_it_without_notice() {
+    let f = fx();
+    let id = Ulid::from_parts(1, 1);
+    put(&f.sp.outbox.join(format!("{id}.json")), 0);
+    let mut n = 0;
+    refuse(&f.sp, id, &aws_ids(), &mut no_notice(&mut n), now()).unwrap();
+    assert_eq!(n, 0);
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
+}
+
+#[test] // the move is done before the notice; a failed notice is the caller's error
+fn notify_error_after_the_move_keeps_the_file_refused() {
+    let f = fx();
+    let id = outbox_file(&f, "alice@a");
+    let e = refuse(&f.sp, id, &aws_ids(), &mut |_: &str, _: &str, _: &str| Err(std::io::Error::other("no inbox")), now()).unwrap_err();
+    assert_eq!(e.to_string(), "no inbox");
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
+}
+
+#[test] // M§5 FILE_MAX: a file over it is not read whole; it is moved with no notice, as a file that does not parse
+fn refuse_of_a_file_over_the_read_limit_moves_it_without_notice() {
+    let f = fx();
+    let mut m = Message::new("alice@a", "bob@b", "status", "hello", now()).unwrap();
+    m.body = "b".repeat(FILE_MAX as usize);
+    let id: Ulid = m.id.parse().unwrap();
+    fs::create_dir_all(&f.sp.outbox).unwrap();
+    fs::write(f.sp.outbox.join(format!("{id}.json")), serde_json::to_vec(&m).unwrap()).unwrap();
+    let mut n = 0;
+    refuse(&f.sp, id, &aws_ids(), &mut no_notice(&mut n), now()).unwrap();
+    assert_eq!(n, 0);
+    assert_eq!((count(&f.sp).unwrap(), refused_count(&f.sp).unwrap()), (0, 1));
 }
