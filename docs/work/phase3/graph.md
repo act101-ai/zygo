@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | DR-13 | `work_verdict`: `head`, `base`, `dispositions` input and the `dispositions` guard | DR-7, DR-8, DR-9, DR-12 | TODO | judgment | — |
 | DR-14 | End-to-end gate: the stop path, the merged-node keep and no stored text | DR-5, DR-13 | TODO | implementation | — |
 | DR-15 | Live check: PD2 and PD3 on the pinned Claude Code (operator, by hand) | SX-8 | TODO | mechanical | — |
-| OS-6 | Carry computation for one event over its context's requests | DR-1 | DONE | judgment | 32286a7 2ac0b35 · carry 19p/0f; floor green · PR #30 |
 | OS-10 | `shape` module: step names, shaper names and byte bounds | DR-1 | DONE | mechanical | 9f2cd74 · shape tests 3 passed; floor green · PR #31 |
 | OS-16 | Shaping fixture harness: byte-exact files, capture script, format and secret checks | DR-1 | DONE | implementation | a09ce9f ee1a671 3686f01 bca8cad def8f45 3b71a13 701d9e1 · shaping_fixtures 22 pass; floor green · PR #32 |
 | MS-1 | Bounded git runner: whole and stream modes, public in zygo-work | DR-1 | DONE | judgment | e7d5023 821a65f 7017674 ab87c30 · git_runner 17/0, zygo-work ok; floor green · PR #33 |
@@ -227,6 +226,7 @@ Session text (T, SX nodes):
 | OS-3 | Bounded usage-store open for the hook and the MCP server | OS-2 | TODO | judgment | — |
 | OS-7 | Savings read: net figures, per-context carry, breakdown and ratio | OS-2, OS-6 | TODO | judgment | — |
 | OS-12 | Clean step: ANSI escapes and carriage-return progress | OS-11 | TODO | implementation | — |
+| OS-40 | Command parse: more wrappers and file printers, eval, `$(<f)`, bare shell stage | OS-11 | DONE | implementation | 5ba7eb02 · shape_command 43 passed · PR #59 |
 | OS-23 | Premise PO1: where a failed Bash call's output arrives, and what replaces it (operator, live Claude Code) | OS-22, ML-17 | TODO | mechanical | — |
 | WD-3 | Workspace approvals in `approvals.toml` | WD-2 | TODO | judgment | — |
 | SX-6 | OpenCode plugin transform: `--event subagent` for non-main `zygo/` models (T§7.2 item 1) | SX-2 | DONE | implementation | c3a465e9 · opencode 43p + 8 ignored node tests pass; floor green · PR #54 |
@@ -389,3 +389,4 @@ Session text (T, SX nodes):
 | 2026-11-24 | OS-18 DONE: diff, json and log fixtures; operator ratified the O§8.1 diff must_keep rule; review round 1 fixed 6 findings; floor: workspace 2652 passed, 0 failed · PR #55 |
 | 2026-11-24 | OS-20 done: 3 pytest cases (passing 12 files, failing-verbose -v 2 failed, collection-error with --continue-on-collection-errors); review round 1 fixed floor-reachability and must_keep; PR #57 |
 | 2026-11-24 | WD-5 done: config keys job, pool, [workspace] pool, [limits] max_members (default 8); review round fixed .zygo.toml max_members invalidating the file (repo_file::from_text); floor green (ws 2681 passed); PR #58. |
+| 2026-11-24 | OS-40 done; O§7.1/O§7.2 command forms widened (pipeline newline, backtick/`0<`/`$(<f)`, `eval --`, `builtin` wrapper, `-c` option scan, redirect-only file printer); review: 6 confirmed fixed, 1 kept as safe; floor green (ws 2695 passed) |
