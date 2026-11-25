@@ -642,7 +642,7 @@ fn plugin_text_matches_the_fixtures() {
     assert_eq!(hooks, 4);
     for t in [
         "directory", "\"--agent\", \"opencode\"", "10000", "permissionDecision", "updatedToolOutput", "output.output =", "output.system.push",
-        "output.context.push", "ZYGO_MAIN_ROLE", "input.model", "stdin.on(\"error\"", "\"guard\"", "\"trim\"", "\"work\"", "\"session-start\"", "\"pre-compact\"",
+        "output.context.push", "ZYGO_MAIN_ROLE", "input.model", "stdin.on(\"error\"", "\"guard\"", "\"trim\"", "\"work\"", "\"session-start\"", "\"pre-compact\"", "\"subagent\"",
     ] {
         assert!(TEMPLATE.contains(t), "{t}");
     }
@@ -667,7 +667,7 @@ struct NodeRun {
 }
 
 #[cfg(unix)]
-fn node_run(fx: &Fx, name: &str, mode: &str, role: &str, big: bool) -> NodeRun {
+fn node_run(fx: &Fx, name: &str, mode: &str, role: Option<&str>, big: bool) -> NodeRun {
     use std::os::unix::fs::PermissionsExt;
     let dir = fx.root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
@@ -682,7 +682,7 @@ case "$2:$STUB_MODE" in
   guard:deny) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"R1"}}' ;;
   trim:ok) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":{"stdout":"VIEW"}}}' ;;
   trim:utf8) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":{"stdout":"'; cat "$d/stdout.txt"; printf '%s' '"}}}' ;;
-  session-start:ok) printf TEXT ;;
+  session-start:ok) printf 'TEXT%s' "$6" ;;
   pre-compact:ok) printf KEEP ;;
 esac
 "#;
@@ -713,7 +713,11 @@ console.log(JSON.stringify(res));
     )
     .unwrap();
     let mut cmd = std::process::Command::new("node");
-    cmd.arg("driver.mjs").current_dir(&dir).env("ZYGO_MAIN_ROLE", role).env("STUB_MODE", mode).env_remove("ZYGO_WORKSPACE");
+    cmd.arg("driver.mjs").current_dir(&dir).env("STUB_MODE", mode).env_remove("ZYGO_WORKSPACE");
+    match role {
+        Some(r) => cmd.env("ZYGO_MAIN_ROLE", r),
+        None => cmd.env_remove("ZYGO_MAIN_ROLE"),
+    };
     if big {
         cmd.env("BIG", "1");
     }
@@ -736,17 +740,17 @@ fn plugin_behaves_under_node() {
     let fx = fx();
     let sys = |r: &Value, k: &str| r["system"][k].clone();
 
-    let r = node_run(&fx, "deny", "deny", "lead", false);
+    let r = node_run(&fx, "deny", "deny", Some("lead"), false);
     assert_eq!(r.result.unwrap()["threw"], "R1");
 
-    let r = node_run(&fx, "ok", "ok", "lead", false);
+    let r = node_run(&fx, "ok", "ok", Some("lead"), false);
     let v = r.result.clone().unwrap();
     assert_eq!(v["threw"], Value::Null);
     assert_eq!(v["after"], "VIEW");
     assert_eq!(sys(&v, "lead/zygo"), json!(["TEXT"]));
-    for k in ["code/zygo", "read/zygo", "lead/other"] {
-        assert_eq!(sys(&v, k), json!([]), "{k}");
-    }
+    assert_eq!(sys(&v, "code/zygo"), json!(["TEXTsubagent"]));
+    assert_eq!(sys(&v, "read/zygo"), json!(["TEXTsubagent"]));
+    assert_eq!(sys(&v, "lead/other"), json!([]));
     assert_eq!(v["compact"], json!(["KEEP"]));
     let calls: Vec<&str> = r.calls.lines().collect();
     assert_eq!(&calls[..3], ["hook guard --agent opencode", "hook trim --agent opencode", "hook work --agent opencode"]);
@@ -757,15 +761,8 @@ fn plugin_behaves_under_node() {
     assert_eq!(stdin["input"]["tool"], "bash");
     assert_eq!(stdin["output"]["args"]["command"], "x");
 
-    let r = node_run(&fx, "norole", "ok", "", false);
-    let v = r.result.unwrap();
-    for k in ["lead/zygo", "code/zygo", "read/zygo", "lead/other"] {
-        assert_eq!(sys(&v, k), json!([]), "{k}");
-    }
-    assert!(!r.calls.contains("session-start"));
-
     for (name, mode) in [("fail", "fail"), ("missing", "missing")] {
-        let v = node_run(&fx, name, mode, "lead", false).result.unwrap();
+        let v = node_run(&fx, name, mode, Some("lead"), false).result.unwrap();
         assert_eq!(v["threw"], Value::Null, "{mode}");
         assert_eq!(v["after"], "orig", "{mode}");
         assert_eq!(v["compact"], json!([]), "{mode}");
@@ -774,7 +771,7 @@ fn plugin_behaves_under_node() {
         }
     }
 
-    let v = node_run(&fx, "noread", "noread", "lead", true).result.unwrap();
+    let v = node_run(&fx, "noread", "noread", Some("lead"), true).result.unwrap();
     assert_eq!(v["threw"], Value::Null);
     assert_eq!(v["after"], 1 << 20);
 
@@ -782,10 +779,87 @@ fn plugin_behaves_under_node() {
     let euro = "\u{20ac}".repeat(50_000);
     std::fs::create_dir_all(fx.root.join("utf8")).unwrap();
     std::fs::write(fx.root.join("utf8/stdout.txt"), &euro).unwrap();
-    let v = node_run(&fx, "utf8", "utf8", "lead", false).result.unwrap();
+    let v = node_run(&fx, "utf8", "utf8", Some("lead"), false).result.unwrap();
     let after = v["after"].as_str().unwrap();
     assert!(!after.contains('\u{fffd}'), "U+FFFD in the trim view");
     assert_eq!(after, euro);
+}
+
+#[cfg(unix)]
+const MAIN_CALL: &str = "hook session-start --agent opencode";
+#[cfg(unix)]
+const SUB_CALL: &str = "hook session-start --agent opencode --event subagent";
+
+#[cfg(unix)]
+fn session_starts(r: &NodeRun) -> Vec<&str> {
+    r.calls.lines().filter(|l| l.starts_with("hook session-start")).collect()
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_other_zygo_role_calls_event_subagent() {
+    if no_node("subagent_transform_other_zygo_role_calls_event_subagent") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run(&fx, "sx-sub", "ok", Some("lead"), false);
+    let v = r.result.clone().unwrap();
+    assert_eq!(v["system"]["code/zygo"], json!(["TEXTsubagent"]));
+    assert_eq!(v["system"]["read/zygo"], json!(["TEXTsubagent"]));
+    assert_eq!(session_starts(&r)[1..], [SUB_CALL, SUB_CALL]);
+    let stdin: Value = serde_json::from_slice(&std::fs::read(r.dir.join("stdin-session-start.json")).unwrap()).unwrap();
+    assert_eq!(stdin, json!({"input": {"model": {"id": "read", "providerID": "zygo"}}, "output": {"system": []}, "cwd": "/r"}));
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_main_role_calls_without_event() {
+    if no_node("subagent_transform_main_role_calls_without_event") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run(&fx, "sx-main", "ok", Some("lead"), false);
+    assert_eq!(r.result.clone().unwrap()["system"]["lead/zygo"], json!(["TEXT"]));
+    assert_eq!(session_starts(&r)[0], MAIN_CALL);
+    assert_eq!(session_starts(&r).iter().filter(|l| **l == MAIN_CALL).count(), 1);
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_other_provider_calls_nothing() {
+    if no_node("subagent_transform_other_provider_calls_nothing") {
+        return;
+    }
+    let fx = fx();
+    let r = node_run(&fx, "sx-other", "ok", Some("lead"), false);
+    assert_eq!(r.result.clone().unwrap()["system"]["lead/other"], json!([]));
+    assert_eq!(session_starts(&r), [MAIN_CALL, SUB_CALL, SUB_CALL]);
+}
+
+// T§7.2 item 1, T§17 check 10
+#[cfg(unix)]
+#[test]
+#[ignore = "timing: each stub zygo call under node has the plugin's fixed 10 s timeout"]
+fn subagent_transform_unset_main_role_calls_event_subagent() {
+    if no_node("subagent_transform_unset_main_role_calls_event_subagent") {
+        return;
+    }
+    let fx = fx();
+    for (name, role) in [("sx-unset", None), ("sx-empty", Some(""))] {
+        let r = node_run(&fx, name, "ok", role, false);
+        let v = r.result.clone().unwrap();
+        for k in ["lead/zygo", "code/zygo", "read/zygo"] {
+            assert_eq!(v["system"][k], json!(["TEXTsubagent"]), "{name} {k}");
+        }
+        assert_eq!(v["system"]["lead/other"], json!([]), "{name}");
+        assert_eq!(session_starts(&r), [SUB_CALL, SUB_CALL, SUB_CALL], "{name}");
+    }
 }
 
 // ---- Task 4: delivery ----

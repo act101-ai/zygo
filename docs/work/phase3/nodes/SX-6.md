@@ -25,7 +25,7 @@
 
 ### Steps
 
-- [ ] 1. Write the failing tests in `crates/zygo-launch/tests/opencode.rs`.
+- [x] 1. Write the failing tests in `crates/zygo-launch/tests/opencode.rs`.
   - In `plugin_text_matches_the_fixtures` (`:643-645`) add the token `"\"subagent\""` to the list.
   - `node_run`: change `role: &str` to `role: Option<&str>`; set the variable with `match role { Some(r) => cmd.env("ZYGO_MAIN_ROLE", r), None => cmd.env_remove("ZYGO_MAIN_ROLE") }` in place of `.env("ZYGO_MAIN_ROLE", role)`; change the stub line `session-start:ok) printf TEXT ;;` to `session-start:ok) printf 'TEXT%s' "$6" ;;`. Callers at `:739, :742, :768, :777, :785` pass `Some("lead")`.
   - `plugin_behaves_under_node`: replace the loop at `:748-750` with `assert_eq!(sys(&v, "code/zygo"), json!(["TEXTsubagent"])); assert_eq!(sys(&v, "read/zygo"), json!(["TEXTsubagent"])); assert_eq!(sys(&v, "lead/other"), json!([]));`; delete the `norole` block (`:760-765`).
@@ -75,8 +75,8 @@
     }
     ```
   - Check: `cargo test -q -p zygo-launch --test opencode -- subagent_transform --list 2>/dev/null | grep -c ': test$'` prints `4`.
-- [ ] 2. See them fail. `cargo test -p zygo-launch --test opencode -- --include-ignored subagent_transform plugin_behaves_under_node plugin_text_matches_the_fixtures` → `plugin_text_matches_the_fixtures` fails on `"subagent"`; `subagent_transform_other_zygo_role_calls_event_subagent`, `subagent_transform_other_provider_calls_nothing`, `subagent_transform_unset_main_role_calls_event_subagent` and `plugin_behaves_under_node` fail (`code/zygo` is `[]`); `subagent_transform_main_role_calls_without_event` passes (it pins today's main-role call).
-- [ ] 3. Implement in `crates/zygo-launch/assets/opencode-plugin.js:185-190`. The hook keeps its key and `async (input, output)` signature:
+- [x] 2. See them fail. `cargo test -p zygo-launch --test opencode -- --include-ignored subagent_transform plugin_behaves_under_node plugin_text_matches_the_fixtures` → `plugin_text_matches_the_fixtures` fails on `"subagent"`; `subagent_transform_other_zygo_role_calls_event_subagent`, `subagent_transform_other_provider_calls_nothing`, `subagent_transform_unset_main_role_calls_event_subagent` and `plugin_behaves_under_node` fail (`code/zygo` is `[]`); `subagent_transform_main_role_calls_without_event` passes (it pins today's main-role call).
+- [x] 3. Implement in `crates/zygo-launch/assets/opencode-plugin.js:185-190`. The hook keeps its key and `async (input, output)` signature:
   ```js
   // T§7.2 item 1: every `zygo/` model; the main role as today, any other role (or no main role) `--event subagent`.
   "experimental.chat.system.transform": async (input, output) => {
@@ -88,8 +88,8 @@
   },
   ```
   Check: `git diff --stat` names only `opencode-plugin.js` and `tests/opencode.rs`.
-- [ ] 4. See them pass. The step-2 command → `test result: ok. 6 passed; 0 failed`.
-- [ ] 5. Commit `crates/zygo-launch/assets/opencode-plugin.js` and `crates/zygo-launch/tests/opencode.rs` with the message `SX-6: OpenCode transform gives the mechanics text on non-main zygo models`, then a blank line and the trailers `Zygo-Session: 01M87GS3GVFD3PYEFC74AYVBY7` and `Zygo-Work: phase3:SX-6`, each on its own line.
+- [x] 4. See them pass. The step-2 command → `test result: ok. 6 passed; 0 failed`.
+- [x] 5. Commit `crates/zygo-launch/assets/opencode-plugin.js` and `crates/zygo-launch/tests/opencode.rs` with the message `SX-6: OpenCode transform gives the mechanics text on non-main zygo models`, then a blank line and the trailers `Zygo-Session: 01M87GS3GVFD3PYEFC74AYVBY7` and `Zygo-Work: phase3:SX-6`, each on its own line.
 
 ### Consumes
 
