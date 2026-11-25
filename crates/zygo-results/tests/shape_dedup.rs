@@ -94,3 +94,49 @@ fn fixture_build_repeated_warning() {
 fn fixture_already_repeated_gives_none() {
     assert_eq!(dedup(&fixture("already-repeated", "stdout")), None);
 }
+
+// Review round 2 (F2): edge inputs.
+
+#[test]
+fn empty_text_gives_none() {
+    assert_eq!(dedup(""), None);
+    assert_eq!(dedup("\n"), None);
+}
+
+#[test]
+fn counted_line_that_does_not_parse_gives_none() {
+    assert_eq!(dedup("x [repeated 99999999999999999999999 times]\n"), None);
+    assert_eq!(dedup("x [repeated 007 times]\n"), None);
+    assert_eq!(
+        dedup("x [repeated 99999999999999999999999 times]\nx\nx\nx\n"),
+        None
+    );
+    assert_eq!(dedup("x [repeated 007 times]\nx\nx\nx\n"), None);
+}
+
+#[test]
+fn partial_marker_is_counted_and_expands_back() {
+    let x = "foo [repeated 12\n".repeat(3);
+    let out = dedup(&x).unwrap();
+    assert!(
+        out.lines()
+            .any(|l| l == "foo [repeated 12 [repeated 3 times]")
+    );
+    assert_eq!(expand(&out), x);
+}
+
+#[test]
+fn round_trip_unusual_lines() {
+    for line in ["héllo ✓\n", "x\r\n", "\u{200b}\n"] {
+        let x = line.repeat(3);
+        let out = dedup(&x).unwrap();
+        assert_eq!(expand(&out), x, "{x:?}");
+    }
+}
+
+#[test]
+fn expand_without_marker_is_unchanged() {
+    for x in ["", "\n", "a\nb\nc\n", "a\na\na", "x [repeated  times]\n"] {
+        assert_eq!(expand(x), x, "{x:?}");
+    }
+}
