@@ -1,7 +1,7 @@
 # WD-8 — Member record fields `launch.job` and `launch.definition`
 
 **Spec:** `docs/specs/2026-11-24-workspace-definition-design.md` R§7.4 (`member.launch.definition = { commit, digest }`), R§9.3 effect 2 (`member.launch.job`; absent for no job), R§12
-**Files:** `crates/zygo-workspace/src/state.rs`, `crates/zygo-workspace/tests/state.rs`
+**Files:** `crates/zygo-workspace/src/state.rs`, `crates/zygo-workspace/tests/state.rs`, `crates/zygo-config/src/repo_def/check.rs`, `crates/zygo-config/tests/repo_def_check.rs`
 **Consumes:** `Pin` (WD-4)
 **Produces:** `state::Launch.job: Option<String>`, `state::Launch.definition: Option<zygo_config::repo_def::Pin>` (each `#[serde(default, skip_serializing_if = "Option::is_none")]`)
 **Acceptance:** `test "$(cargo test -q -p zygo-workspace --test state -- launch_definition --list 2>/dev/null | grep -c ': test$')" -ge 2 && cargo test -p zygo-workspace --test state` → every count holds (at least 2 named `launch_definition…` in zygo-workspace `state`; a count of 0 fails before any run), then all pass. New tests: a record with both fields round-trips; a record written without them loads with both `None` and serializes with neither key.
@@ -28,7 +28,7 @@ Consumers (names match): WD-11, WD-14 and WD-18 consume `state::Launch.job (WD-8
 
 ### Steps
 
-- [ ] **1. Write the failing tests.** In `crates/zygo-workspace/tests/state.rs`, add `use zygo_config::repo_def::Pin;` after line 7 (`use zygo_core::Agent;`), and add these two tests after `first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write`:
+- [x] **1. Write the failing tests.** In `crates/zygo-workspace/tests/state.rs`, add `use zygo_config::repo_def::Pin;` after line 7 (`use zygo_core::Agent;`), and add these two tests after `first_started_at_set_is_written_as_unix_seconds_and_kept_by_a_write`:
 
 ```rust
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -80,9 +80,9 @@ fn launch_definition_and_job_absent_read_as_none_and_are_not_written() {
 
   Check: the file has 2 test names that start with `launch_definition`.
 
-- [ ] **2. Run and see them fail.** `cargo test -p zygo-workspace --test state -- launch_definition` → compile error `no field 'job' on type 'Launch'` and `no field 'definition' on type 'Launch'` (E0609).
+- [x] **2. Run and see them fail.** `cargo test -p zygo-workspace --test state -- launch_definition` → compile error `no field 'job' on type 'Launch'` and `no field 'definition' on type 'Launch'` (E0609).
 
-- [ ] **3. Implement.** In `crates/zygo-workspace/src/state.rs`, in `pub struct Launch`, after the `events_off` field and before `#[serde(flatten)] pub extra: Extra`, add:
+- [x] **3. Implement.** In `crates/zygo-workspace/src/state.rs`, in `pub struct Launch`, after the `events_off` field and before `#[serde(flatten)] pub extra: Extra`, add:
 
 ```rust
     /// W§7.2 member.launch.job (R§9.3 effect 2): "orchestrator" or "worker"; absent for no job.
@@ -97,9 +97,11 @@ fn launch_definition_and_job_absent_read_as_none_and_are_not_written() {
 
   Check: `cargo build --workspace --all-targets` → no error.
 
-- [ ] **4. Run and see pass.** `sh /private/tmp/claude-501/-Users-kagemartin-Work-zygo/3ea42e92-d626-4dbb-aa82-d5cb3dcdbb49/scratchpad/wd8acc.sh .` → exit 0 (count ≥ 2, then every `state` test passes, including the unchanged `json_has_the_fields_of_w7_2`, `none_is_absent_and_absent_reads_as_default` and `every_struct_keeps_unknown_fields`). Then `cargo test -p zygo-workspace` and `cargo test -p zygo` → all pass (the crates that build `state::Launch`).
+- [x] **4. Run and see pass.** `sh /private/tmp/claude-501/-Users-kagemartin-Work-zygo/3ea42e92-d626-4dbb-aa82-d5cb3dcdbb49/scratchpad/wd8acc.sh .` → exit 0 (count ≥ 2, then every `state` test passes, including the unchanged `json_has_the_fields_of_w7_2`, `none_is_absent_and_absent_reads_as_default` and `every_struct_keeps_unknown_fields`). Then `cargo test -p zygo-workspace` and `cargo test -p zygo` → all pass (the crates that build `state::Launch`).
 
-- [ ] **5. Commit.** Stage only `crates/zygo-workspace/src/state.rs` and `crates/zygo-workspace/tests/state.rs`; message `WD-8: member record launch.job and launch.definition`, with the `Zygo-Session` and `Zygo-Work` trailer lines that the implementer's brief names at the end, each on its own line. Check: `git show --stat HEAD` lists those two files only.
+- [x] **5. Commit.** Stage only `crates/zygo-workspace/src/state.rs` and `crates/zygo-workspace/tests/state.rs`; message `WD-8: member record launch.job and launch.definition`, with the `Zygo-Session` and `Zygo-Work` trailer lines that the implementer's brief names at the end, each on its own line. Check: `git show --stat HEAD` lists those two files only.
+
+- [x] **6. Review fix (AU78).** The Files line was extended with `crates/zygo-config/src/repo_def/check.rs` and `crates/zygo-config/tests/repo_def_check.rs` for AU78: `Pin` gets a flattened `extra` map and `Pin::new(commit, digest)`, and `every_struct_keeps_unknown_fields` covers `/members/kabcdefgh/launch/definition`.
 
 ### Notes for later nodes (no change here)
 
