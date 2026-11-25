@@ -207,8 +207,9 @@ pub fn make_identity(sp: &SyncPaths) -> std::io::Result<String> {
     Ok(v)
 }
 
-/// S§8.2: the cached public check. A missing field takes its default, which makes the cache stale (no URL hash
-/// matches, `at` 0), so the check runs again.
+/// S§8.2: the cached public check. A missing `url_sha256` or `at` takes its default, which makes the cache stale
+/// (no URL hash matches, `at` 0), so the check runs again. A missing `verdict` is `""`, which `check_state`
+/// refuses, so `load` refuses the file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PublicCache {
@@ -305,7 +306,8 @@ fn check_state(s: &State) -> io::Result<()> {
 }
 
 /// S§8.3: the state. A missing file is the default; a link, a read error or a file that is not a JSON object of
-/// this form is an error, so the S§7.5 twin check never runs on a silent default.
+/// this form is an error, or a file that holds a value `check_state` refuses (S§8.3: one rule set at read and at
+/// write), so the S§7.5 twin check never runs on a silent default.
 pub fn load(sp: &SyncPaths) -> std::io::Result<State> {
     let Some(b) = read_regular(&sp.state)? else {
         return Ok(State::default());
@@ -318,7 +320,9 @@ pub fn load(sp: &SyncPaths) -> std::io::Result<State> {
             "state.json is not a JSON object",
         ));
     }
-    serde_json::from_value(v).map_err(bad)
+    let s: State = serde_json::from_value(v).map_err(bad)?;
+    check_state(&s).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    Ok(s)
 }
 
 /// The caller holds `mail/sync/lock`: the pass under the lock is the only writer of `state.json` (S§15).
