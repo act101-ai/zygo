@@ -70,7 +70,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 |----|------|---------|-------|------------|------|
 | CF-1 | Conformance input model and check: `Agent::ALL`, registry and grade parsing with the input rules, evidence kinds, check items 1-9 on fixture inputs | — | DONE | judgment | PR #87 merged 74562e3b; acceptance 65 check_/input_ tests pass @ 3aceaac3; CI run 45605170068 green (ubuntu, macos, windows) |
 | CF-2 | Conformance derived values: cell, tier and total score, bar, rollup, release state, on fixture inputs | CF-1 | DONE | implementation | PR #100 merged 3e98ae7c; acceptance 15 derive_ tests, conformance 84 pass @ 11c0dd70; CI run 45610449986 green (ubuntu, macos, windows) |
-| CF-3 | Conformance outputs: feature matrix, rollup and score in Markdown and JSON, the write mode and check item 10, on fixture inputs | CF-2 | IN-PROGRESS | implementation | — |
+| CF-3 | Conformance outputs: feature matrix, rollup and score in Markdown and JSON, the write mode and check item 10, on fixture inputs | CF-2 | DONE | implementation | PR #102 merged 1c147219; acceptance 25 render_ tests, conformance 109 pass @ 80118dc2; CI run 45618690411 green (ubuntu, macos, windows) |
 | CF-4 | Registry `capabilities.toml`, grade files for Claude Code and OpenCode, generated `docs/conformance.md` and `.json`, the tree test, CI paths, old scripts deleted (PR stops for the operator, K-D26) | CF-3 | TODO | judgment | — |
 | PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | TODO | judgment | — |
 | PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | TODO | judgment | — |
@@ -116,3 +116,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | Audit of the CC nodes (3 critical, 6 important, 5 minor) fixed as ruled: K-C7, K-D3, items 23-24 amended (lead); boundary exception list (operator, K-D53); CC-13 split (sweep, opaque kind); 17 CC nodes, 37 nodes. |
 | 2026-11-25 | CF-1 DONE: gate 3 rounds; round 3 review findings F1, F3-F7 fixed, F2 rejected (reason in `nodes/CF-1.md`); two implementer-found defects fixed; PR #87 merged `74562e3b`. |
 | 2026-11-25 | CF-2 DONE: gate 2 rounds; round 1 F1-F4 fixed (F4: K§6.2.4 failing-core sentence, author's call), round 2 N1-N2 fixed; PR #100 merged `3e98ae7c`. |
+| 2026-11-25 | CF-3 DONE: gate 3 rounds; round 1 F1-F6 fixed, round 2 D1-D5 fixed (one md_text escape rule, cell URL as a link), round 3 no findings; PR #102 merged `1c147219`. |
