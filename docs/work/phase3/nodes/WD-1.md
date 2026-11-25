@@ -90,7 +90,7 @@ Contract change: `Read::Absent { full_ref: String }` became `Read::Absent { full
 
 ### Steps
 
-- [ ] **Step 1 — failing tests.** Create `crates/zygo-config/tests/repo_def_read.rs` with the helpers and tests below. Add `pub mod repo_def;` after `pub mod repo_file;` in `crates/zygo-config/src/lib.rs`, and create `crates/zygo-config/src/repo_def/mod.rs` with `mod read;` and `pub use read::{read_at, read_default, Files, GitRunner, Read, SystemGit, PROFILES_MAX, PROFILE_MAX, WORKSPACE_MAX};`, and `crates/zygo-config/src/repo_def/read.rs` with the Interfaces items, each function body `todo!()` and `impl GitRunner for SystemGit` body `todo!()`.
+- [x] **Step 1 — failing tests.** Create `crates/zygo-config/tests/repo_def_read.rs` with the helpers and tests below. Add `pub mod repo_def;` after `pub mod repo_file;` in `crates/zygo-config/src/lib.rs`, and create `crates/zygo-config/src/repo_def/mod.rs` with `mod read;` and `pub use read::{read_at, read_default, Files, GitRunner, Read, SystemGit, PROFILES_MAX, PROFILE_MAX, WORKSPACE_MAX};`, and `crates/zygo-config/src/repo_def/read.rs` with the Interfaces items, each function body `todo!()` and `impl GitRunner for SystemGit` body `todo!()`.
 
   Helpers:
 
@@ -385,11 +385,11 @@ Contract change: `Read::Absent { full_ref: String }` became `Read::Absent { full
 
   Check: the file compiles (`cargo test -p zygo-config --test repo_def_read --no-run` exits 0).
 
-- [ ] **Step 2 — see them fail.** Run `cargo test -p zygo-config --test repo_def_read`. Pass: every test fails at a `todo!()` (and none fails on a fixture `git` assertion).
+- [x] **Step 2 — see them fail.** Run `cargo test -p zygo-config --test repo_def_read`. Pass: every test fails at a `todo!()` (and none fails on a fixture `git` assertion).
 
-- [ ] **Step 3 — `SystemGit`.** In `crates/zygo-config/src/repo_file.rs`: make `fn git_out` (line 170) `pub(crate)`; make `struct GitOut` (line 150) and its fields `pub(crate)`; widen `GitOut` in place by replacing `code: Option<i32>` with `status: std::process::ExitStatus` (line 221 stores `status`; the uses at lines 160, 229 and 232 read `o.status.code()`). An exit code alone cannot become a portable `ExitStatus` (and a signal death, code `None`, cannot be rebuilt), so the field is widened, not converted. In `read.rs`, `impl GitRunner for SystemGit`: `crate::repo_file::git_out(top, args, deadline).map(|o| Output { status: o.status, stdout: o.out, stderr: o.err }).map_err(str::to_owned)`. The `GitRunner` signature is unchanged. No timing test (no wall-clock tests in CI); every other test runs through it.
+- [x] **Step 3 — `SystemGit`.** In `crates/zygo-config/src/repo_file.rs`: make `fn git_out` (line 170) `pub(crate)`; make `struct GitOut` (line 150) and its fields `pub(crate)`; widen `GitOut` in place by replacing `code: Option<i32>` with `status: std::process::ExitStatus` (line 221 stores `status`; the uses at lines 160, 229 and 232 read `o.status.code()`). An exit code alone cannot become a portable `ExitStatus` (and a signal death, code `None`, cannot be rebuilt), so the field is widened, not converted. In `read.rs`, `impl GitRunner for SystemGit`: `crate::repo_file::git_out(top, args, deadline).map(|o| Output { status: o.status, stdout: o.out, stderr: o.err }).map_err(str::to_owned)`. The `GitRunner` signature is unchanged. No timing test (no wall-clock tests in CI); every other test runs through it.
 
-- [ ] **Step 4 — `read_default` and `read_at`.** In `read.rs`, with private helpers. Algorithm (R§6.1, R§17):
+- [x] **Step 4 — `read_default` and `read_at`.** In `read.rs`, with private helpers. Algorithm (R§6.1, R§17):
 
   ```text
   read_default(top, git):
@@ -428,6 +428,6 @@ Contract change: `Read::Absent { full_ref: String }` became `Read::Absent { full
 
   Entry parse of a listing: split stdout at `\0` (drop the empty tail); each record splits at its first `\t` into meta and path; meta is four ASCII fields `mode type oid size`, size `-` or a `u64`; oid an object id. Any other shape: Unread `git ls-tree: failed`.
 
-- [ ] **Step 5 — see them pass.** Run `cargo test -p zygo-config --test repo_def_read`. Pass: 14 tests, 0 failed, 0 ignored. Then `cargo test -p zygo-config`: all pass; `cargo build -p zygo-config --tests` prints no warning from `repo_def/` or `tests/repo_def_read.rs`.
+- [x] **Step 5 — see them pass.** Run `cargo test -p zygo-config --test repo_def_read`. Pass: 14 tests, 0 failed, 0 ignored. Then `cargo test -p zygo-config`: all pass; `cargo build -p zygo-config --tests` prints no warning from `repo_def/` or `tests/repo_def_read.rs`.
 
-- [ ] **Step 6 — commit.** `git add crates/zygo-config/src/lib.rs crates/zygo-config/src/repo_file.rs crates/zygo-config/src/repo_def crates/zygo-config/tests/repo_def_read.rs`, then commit with subject `WD-1: git read of .zygo/ from the default branch and at a pinned commit` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:WD-1`, each on its own line. Check: `git show --stat HEAD` lists exactly those five files and the message carries no Co-Authored-By or "Generated with" line.
+- [x] **Step 6 — commit.** `git add crates/zygo-config/src/lib.rs crates/zygo-config/src/repo_file.rs crates/zygo-config/src/repo_def crates/zygo-config/tests/repo_def_read.rs`, then commit with subject `WD-1: git read of .zygo/ from the default branch and at a pinned commit` and the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:WD-1`, each on its own line. Check: `git show --stat HEAD` lists exactly those five files and the message carries no Co-Authored-By or "Generated with" line.
