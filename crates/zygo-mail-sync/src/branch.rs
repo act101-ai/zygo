@@ -99,9 +99,17 @@ pub fn ensure_worktree(main_root: &Path, wt: &Path, commit: &str, deadline: Inst
 /// without the branch ("couldn't find remote ref", any case) is `NoBranch` (S§6.4).
 pub fn fetch(cwd: &Path, remote: &str, branch: &str, deadline: Instant) -> Result<Fetched, BranchError> {
     let spec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
-    git::run(cwd, &["fetch", "--no-write-fetch-head", "--", remote, &spec], deadline)
+    let w = git::run(cwd, &["fetch", "--no-write-fetch-head", "--", remote, &spec], deadline)
         .map_err(|e| BranchError::Git(e, "fetch"))?;
-    Err(BranchError::Io("not built".into()))
+    if !w.ok {
+        if git::has_text(&w.err, &["couldn't find remote ref"]) {
+            return Ok(Fetched::NoBranch);
+        }
+        return Err(BranchError::Git(RunError::Failed, "fetch"));
+    }
+    let tip = format!("refs/remotes/{remote}/{branch}^{{commit}}");
+    let out = run_git(cwd, &["rev-parse", "--verify", &tip], "rev-parse", deadline)?;
+    Ok(Fetched::Tip(id_out(&out, "rev-parse")?))
 }
 
 /// S§6.4: makes the root commit whose tree is the one entry `ZYGO-MAIL` = [`MARKER`], points the worktree at it
