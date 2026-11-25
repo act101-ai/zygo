@@ -135,8 +135,20 @@ pub struct LegendEntry {
 pub struct Member {
     pub ws_id: String,
     pub pane: String,
+    /// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view. A value
+    /// that is not a string reads as none (AU78, ML-7 review round 1, F5).
+    #[serde(default, deserialize_with = "lenient_name", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(flatten)]
     pub extra: UnknownFields,
+}
+
+/// A string is kept; any other JSON value reads as none (the form of `MemberRecord.name` in zygo-workspace).
+fn lenient_name<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

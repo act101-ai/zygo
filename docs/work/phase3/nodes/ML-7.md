@@ -41,7 +41,7 @@ Produces (exact):
 
 Steps:
 
-- [ ] 1. In `crates/zygo-core/tests/core_basics.rs`, after `session_view_workspace_round_trips_and_is_none_for_an_old_file`, add:
+- [x] 1. In `crates/zygo-core/tests/core_basics.rs`, after `session_view_workspace_round_trips_and_is_none_for_an_old_file`, add:
   ```rust
   #[test] // M§9a: `name` on the member marker; a marker without it still loads
   fn session_view_member_name_is_optional_and_round_trips() {
@@ -59,11 +59,11 @@ Steps:
       assert_eq!(json["workspace"]["member"], serde_json::json!({"ws_id": "w1", "pane": "p1", "name": "elena"}));
   }
   ```
-- [ ] 2. Run `cargo test -p zygo-core --test core_basics -- view_member_name`. Check: E0609/E0560, no field `name` on `Member`.
-- [ ] 3. In `session_view.rs:135-140`, add to `Member` before `extra`: `/// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view.` `#[serde(default, skip_serializing_if = "Option::is_none")] pub name: Option<String>,`
-- [ ] 4. Run `cargo test -p zygo-core --test core_basics`. Check: all pass, `session_view_member_name_is_optional_and_round_trips` among them.
-- [ ] 5. Commit `crates/zygo-core/src/session_view.rs` and `crates/zygo-core/tests/core_basics.rs`, message `ML-7: member name in the session view marker` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-7:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
-- [ ] 6. In the `tests` module of `crates/zygo/src/cmd/mod.rs` (`:604`), add (import `super::Cmd` and `clap::CommandFactory`):
+- [x] 2. Run `cargo test -p zygo-core --test core_basics -- view_member_name`. Check: E0609/E0560, no field `name` on `Member`.
+- [x] 3. In `session_view.rs:135-140`, add to `Member` before `extra`: `/// The member name (M§6, M§9a), written by the launcher; none for an unnamed member and in an older view.` `#[serde(default, skip_serializing_if = "Option::is_none")] pub name: Option<String>,`
+- [x] 4. Run `cargo test -p zygo-core --test core_basics`. Check: all pass, `session_view_member_name_is_optional_and_round_trips` among them.
+- [x] 5. Commit `crates/zygo-core/src/session_view.rs` and `crates/zygo-core/tests/core_basics.rs`, message `ML-7: member name in the session view marker` with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase3:ML-7:implement`, each on its own line. Check: `git show --stat HEAD` lists those two files.
+- [x] 6. In the `tests` module of `crates/zygo/src/cmd/mod.rs` (`:604`), add (import `super::Cmd` and `clap::CommandFactory`):
   ```rust
   #[test] // M§6: `--name <n>` on both launch verbs; DR-4 carried item: the help names `new`
   fn launch_name_parses_for_both_agents_and_help_lists_decision_new() {
@@ -76,10 +76,10 @@ Steps:
       assert!(Cli::command().render_help().to_string().contains("Decision records: new, ls, show, deps, check"));
   }
   ```
-- [ ] 7. Run `cargo test -p zygo --lib launch_name_parses`. Check: E0609, no field `name` on `Launch`.
-- [ ] 8. In `mod.rs`, add to `Launch` after `config_dir`: `/// Member name in a workspace pane (M§6)` `#[arg(long)] pub(crate) name: Option<String>,`; to `LaunchOpenCode` after `yolo`: `#[arg(long)] pub(crate) name: Option<String>,`; change `mod.rs:361` to `/// Decision records: new, ls, show, deps, check`. Add `name: None` to the literals at `ws.rs:422` and `ws.rs:436` (`ws run` takes the name from the record, step 13), `claude.rs:94` and `opencode.rs:65`. Check: `cargo build -p zygo` compiles.
-- [ ] 9. Run `cargo test -p zygo --lib`. Check: all pass.
-- [ ] 10. In the `tests` module of `crates/zygo/src/cmd/member.rs` (import `zygo_workspace::state::Pane`), add:
+- [x] 7. Run `cargo test -p zygo --lib launch_name_parses`. Check: E0609, no field `name` on `Launch`.
+- [x] 8. In `mod.rs`, add to `Launch` after `config_dir`: `/// Member name in a workspace pane (M§6)` `#[arg(long)] pub(crate) name: Option<String>,`; to `LaunchOpenCode` after `yolo`: `#[arg(long)] pub(crate) name: Option<String>,`; change `mod.rs:361` to `/// Decision records: new, ls, show, deps, check`. Add `name: None` to the literals at `ws.rs:422` and `ws.rs:436` (`ws run` takes the name from the record, step 13), `claude.rs:94` and `opencode.rs:65`. Check: `cargo build -p zygo` compiles.
+- [x] 9. Run `cargo test -p zygo --lib`. Check: all pass.
+- [x] 10. In the `tests` module of `crates/zygo/src/cmd/member.rs` (import `zygo_workspace::state::Pane`), add:
   ```rust
   #[test] // M§6, AU84: a name held by another key's record or pane entry; its own key and a bad stored name hold none
   fn name_holder_reads_other_keys_by_au84() {
@@ -106,10 +106,10 @@ Steps:
       assert!(kept(&w, "kbbbbbbbb", Agent::ClaudeCode, Some("abc")).is_none());
   }
   ```
-- [ ] 11. Run `cargo test -p zygo --lib -- name_holder kept_is`. Check: E0425, `name_holder` and `kept` not found.
-- [ ] 12. In `member.rs` before `join`, add `name_holder` (the first `ws.members` entry with key ≠ `key` and `valid_name() == Some(name)`, else the first `ws.panes` entry with key ≠ `key` and `valid_name() == Some(name)`; its key) and `kept` (`own?`, then `ws.members.get(key)` filtered by `agent_session.as_deref() == Some(own) && launch.kind == kind`). In `join` replace `member.rs:814-815` by `let keep = kept(ws, key, launch.kind, own).is_some();`. Run `cargo test -p zygo --lib`. Check: all pass, the existing `join_*` tests unchanged.
-- [ ] 13. Commit `crates/zygo/src/cmd/{mod,member,ws,claude,opencode}.rs`, message `ML-7: --name flag, name_holder, kept`, same trailers. Check: `git show --stat HEAD` lists those five files.
-- [ ] 14. In `crates/zygo/tests/workspace_member.rs`, add after `errors_log` the constants and tests below. Common shape: `let (out, env) = h.stub(Agent::ClaudeCode, "a");`, launch by `hand(&h, &pane, args, &pairs(&env))` or `h.zygo(..)` under `Guarded::spawn(..).output(..)`; tmux cases begin `let Some(h) = Harness::new() else { return };` and carry `#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]`; no-tmux launches carry `#[ignore = "timing: the agent launch has 2 s launcher probes"]`.
+- [x] 11. Run `cargo test -p zygo --lib -- name_holder kept_is`. Check: E0425, `name_holder` and `kept` not found.
+- [x] 12. In `member.rs` before `join`, add `name_holder` (the first `ws.members` entry with key ≠ `key` and `valid_name() == Some(name)`, else the first `ws.panes` entry with key ≠ `key` and `valid_name() == Some(name)`; its key) and `kept` (`own?`, then `ws.members.get(key)` filtered by `agent_session.as_deref() == Some(own) && launch.kind == kind`). In `join` replace `member.rs:814-815` by `let keep = kept(ws, key, launch.kind, own).is_some();`. Run `cargo test -p zygo --lib`. Check: all pass, the existing `join_*` tests unchanged.
+- [x] 13. Commit `crates/zygo/src/cmd/{mod,member,ws,claude,opencode}.rs`, message `ML-7: --name flag, name_holder, kept`, same trailers. Check: `git show --stat HEAD` lists those five files.
+- [x] 14. In `crates/zygo/tests/workspace_member.rs`, add after `errors_log` the constants and tests below. Common shape: `let (out, env) = h.stub(Agent::ClaudeCode, "a");`, launch by `hand(&h, &pane, args, &pairs(&env))` or `h.zygo(..)` under `Guarded::spawn(..).output(..)`; tmux cases begin `let Some(h) = Harness::new() else { return };` and carry `#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]`; no-tmux launches carry `#[ignore = "timing: the agent launch has 2 s launcher probes"]`.
   ```rust
   const NAME_NEEDS_PANE: &str = "zygo: --name needs a pane of a workspace; nothing started\n";
   fn taken(n: &str, key: &str) -> String { format!("zygo: name {n} belongs to pane {key}; nothing started\n") }
@@ -126,8 +126,16 @@ Steps:
   - `the_callback_refuses_a_member_name_taken_since_the_check`: `refused_in_callback(&h, &["claude", "--name", "elena"], &mut |h, _| { insert KEY = named(ClaudeCode, Ended, None, None, "elena") with update_existing })`: code 1, `text(&o.stderr).matches(&taken("elena", KEY)).count() == 1`, `!text(&o.stderr).contains(NOT_SAVED)`, no `argv.json`, `member(&h, &key).is_none()`.
   - `member_name_outside_a_workspace_pane_exits_1_and_starts_nothing` (`Harness::no_tmux()`): for `kind` in `[ClaudeCode, OpenCode]`, `h.zygo(&[verb, "--name", "elena"], &[pairs(&env).., no_check()])` with no `TMUX`: code 1, `text(&o.stderr) == NAME_NEEDS_PANE`, no `argv.json`, `!h.store(WS_ID).dir().exists()`.
   - `an_accepted_hand_resume_keeps_the_member_name_without_name`: `first = workspace_session(&h, Some(KEY), Some(WS_ID))`; `up_state(&h, &[(KEY, named(ClaudeCode, Resumable, Some("abc"), Some(OLD_ZS), "elena"))], ..)`; `hand(&h, &first, &["claude", "--", "--resume", "abc"], ..)`: exit 0, `view(&out)["workspace"]["member"]["name"] == "elena"`, `member(&h, KEY).unwrap().name == Some("elena".into())`.
-- [ ] 15. Run `cargo test -p zygo --test workspace_member -- member_name --include-ignored`. Check: it compiles (the CLI flag exists) and the 7 tests fail: `--name` reaches no marker or check yet (an exit 0 v1 or member launch where 1 is expected, a view without `name`).
-- [ ] 16. In `member.rs`: add `pub name: Option<String>` to `MemberCtx` and `HandJoin`; at `:64` set `name: m.name.clone()` in the `Member`; add the three line constants of the author's calls. `hand_start` gets `name: Option<String>` after `launch`; after the `conflict` check at `:932-934` it returns `HandStart::Refused(<taken line>)` when `name_holder(&ws, &key, n)` is `Some`; the `MemberCtx` at `:938` gets `name: name.clone().or_else(|| kept(&ws, &key, launch.kind, own.as_deref()).and_then(|r| r.valid_name().map(String::from)))` and `HandJoin { own_session: own, name }`. `launch_hand` gets `name: Option<String>`: first, a `Some(n)` with `!valid_member_name(n)` prints the bad line and returns 1; then `HandStart::V1` with `name.is_some()` prints `NAME_NEEDS_PANE` and returns 1. `hand_write` returns `Result<Workspace, HandErr>`: in its closure, before `join`, a holder sets `stop = Some(<taken line>)` and bails; after `join` succeeds and `h.name` is `Some(n)`, `ws.members.get_mut(&self.pane)` gets `name = Some(n.clone())`. In `Callback::run`, `Err(HandErr::Stop(line))` prints `line` and returns `Err(anyhow::Error::new(StopLaunch(line)))`; `Err(HandErr::NotSaved(reason))` keeps the current not-saved path. In `ws.rs:256` add `name: rec.valid_name().map(String::from)`. In `claude.rs:21` and `opencode.rs:21` pass `l.name.clone()` / `a.name.clone()` to `launch_hand`. Check: `cargo build -p zygo` compiles.
-- [ ] 17. Run `cargo test -p zygo --test workspace_member -- member_name --include-ignored`. Check: 7 passed (tmux cases print the skip reason when tmux 3.2 or later is missing).
-- [ ] 18. Run the Acceptance, then `cargo fmt --check` and `cargo clippy -p zygo -p zygo-core --all-targets -- -D warnings`. Check: counts 1 and 7; `core_basics`, `zygo --lib` and `workspace_member` with `--include-ignored` all pass; fmt and clippy report nothing.
-- [ ] 19. Commit `crates/zygo/src/cmd/{member,ws,claude,opencode}.rs` and `crates/zygo/tests/workspace_member.rs`, message `ML-7: hand start --name and the member name in the view`, same trailers. Check: `git show --stat HEAD` lists those five files.
+- [x] 15. Run `cargo test -p zygo --test workspace_member -- member_name --include-ignored`. Check: it compiles (the CLI flag exists) and the 7 tests fail: `--name` reaches no marker or check yet (an exit 0 v1 or member launch where 1 is expected, a view without `name`).
+- [x] 16. In `member.rs`: add `pub name: Option<String>` to `MemberCtx` and `HandJoin`; at `:64` set `name: m.name.clone()` in the `Member`; add the three line constants of the author's calls. `hand_start` gets `name: Option<String>` after `launch`; after the `conflict` check at `:932-934` it returns `HandStart::Refused(<taken line>)` when `name_holder(&ws, &key, n)` is `Some`; the `MemberCtx` at `:938` gets `name: name.clone().or_else(|| kept(&ws, &key, launch.kind, own.as_deref()).and_then(|r| r.valid_name().map(String::from)))` and `HandJoin { own_session: own, name }`. `launch_hand` gets `name: Option<String>`: first, a `Some(n)` with `!valid_member_name(n)` prints the bad line and returns 1; then `HandStart::V1` with `name.is_some()` prints `NAME_NEEDS_PANE` and returns 1. `hand_write` returns `Result<Workspace, HandErr>`: in its closure, before `join`, a holder sets `stop = Some(<taken line>)` and bails; after `join` succeeds and `h.name` is `Some(n)`, `ws.members.get_mut(&self.pane)` gets `name = Some(n.clone())`. In `Callback::run`, `Err(HandErr::Stop(line))` prints `line` and returns `Err(anyhow::Error::new(StopLaunch(line)))`; `Err(HandErr::NotSaved(reason))` keeps the current not-saved path. In `ws.rs:256` add `name: rec.valid_name().map(String::from)`. In `claude.rs:21` and `opencode.rs:21` pass `l.name.clone()` / `a.name.clone()` to `launch_hand`. Check: `cargo build -p zygo` compiles.
+- [x] 17. Run `cargo test -p zygo --test workspace_member -- member_name --include-ignored`. Check: 7 passed (tmux cases print the skip reason when tmux 3.2 or later is missing).
+- [x] 18. Run the Acceptance, then `cargo fmt --check` and `cargo clippy -p zygo -p zygo-core --all-targets -- -D warnings`. Check: counts 1 and 7; `core_basics`, `zygo --lib` and `workspace_member` with `--include-ignored` all pass; fmt and clippy report nothing.
+- [x] 19. Commit `crates/zygo/src/cmd/{member,ws,claude,opencode}.rs` and `crates/zygo/tests/workspace_member.rs`, message `ML-7: hand start --name and the member name in the view`, same trailers. Check: `git show --stat HEAD` lists those five files.
+
+## Review round 1
+
+- F1 (high): with `--name`, a refusal of the callback's locked write (`HandErr::NotSaved`) printed the not-saved line and went on as a v1 launch. Now it prints that line and returns `StopLaunch` (exit 1, no agent). Test: `a_callback_refusal_with_member_name_exits_1_and_starts_nothing` (`crates/zygo/tests/workspace_member.rs`).
+- F2 (medium): `name_holder` also read `ws.panes[].name`, which mail does not resolve and `join` does not update. Now it reads `ws.members` only. Test: `name_holder_reads_other_keys_by_au84` (`crates/zygo/src/cmd/member.rs`; a pane entry with no record now holds no name).
+- F3 (low): with `--name`, a not-saved line (or the AU98 line) of `hand_start` was followed by the needs-a-pane line. `hand_start` now gives `HandStart::V1Said` after a printed line; with `--name` that exits 1 with the one line. Test: `member_name_after_a_not_saved_line_prints_only_that_line` (`crates/zygo/tests/workspace_member.rs`).
+- F4 (low): the marker name was chosen before the lock and the record's name after `join`, so a race could make them differ. The locked write is now `hand_join`: it checks the marker name (`HandJoin.marker`) with `name_holder` under the lock (a holder gives `HandErr::Stop`), runs `join`, then sets the record's name to the marker name (none when the marker has none). Test: `hand_join_writes_the_marker_member_name_to_a_replaced_record` (`crates/zygo/src/cmd/member.rs`).
+- F5 (low): a non-string `workspace.member.name` made `SessionView::load` fail. `Member.name` now has a lenient deserializer (a string is kept, any other value reads as none). Test: `session_view_member_name_that_is_not_a_string_reads_as_none` (`crates/zygo-core/tests/core_basics.rs`).
