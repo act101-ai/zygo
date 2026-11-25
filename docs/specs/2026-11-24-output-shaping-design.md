@@ -351,7 +351,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 **(author)**
 
 - **Place.** `fixtures/shaping/<shaper>/<case>/`, with `meta.json`, `stdout`, `stderr`, `must_keep` and `view`. `meta.json`: `{ "command": …, "exit": <int>, "event": "PostToolUse" | "PostToolUseFailure", "agent": "claude-code" | "opencode", "tool": "<program> <version>", "captured_on": "<date>", "source": "<what was run, where>" }`. `view` is the expected view, with the id written as 26 `0` characters.
-- **`must_keep`** **(lead)**: the lines of the raw text, one per line, that each view of this case must hold: for each failing test, its name line and each line of its assertion or panic text; for a log, each `ERROR` line; for a diff, each `diff --git` line. The person who captures the case writes it by reading the raw output. A case whose `meta.json` has a failing test (exit not 0, or a runner summary with failures) and an empty `must_keep` fails the CI test.
+- **`must_keep`** **(lead)**: the lines of the raw text, one per line, that each view of this case must hold: for each failing test, its name line and each line of its assertion or panic text; for a log, each `ERROR` line; for a diff, each `diff --git` line of the file sections that the diff view (O§7.7) shows whole under the cap. The person who captures the case writes it by reading the raw output. A case whose `meta.json` has a failing test (exit not 0, or a runner summary with failures) and an empty `must_keep` fails the CI test.
 - **Byte-exact.** `.gitattributes` gets `fixtures/shaping/** -text`. The current rule `* text=auto eol=lf` would change `\r\n` in a capture.
 - **Real output.** Each case is the output of a real run, not typed by hand. The required cases:
 
@@ -573,3 +573,9 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 - **PO2** Claude Code 2.1.328: a Bash `updatedToolOutput` with `stderr` set to `""` removes the original stderr from what the model sees (Q4, `docs/premises.md:35`, verified `stdout` only). Result decides O§7.8.
 - **PO3** OpenCode 1.18.16 (the version of Q7, `docs/premises.md:38`): `tool.execute.after` for `bash` gives stdout and stderr together in `output.output`.
 - **PO4** On both agents, the text that the model sees for a `result_view` reply is the reply text plus at most a fixed wrapper, so the reply's byte count is the read-back size within that wrapper.
+
+## Change log
+
+| Date | Section | Decided by | Reason |
+|---|---|---|---|
+| 2026-11-24 | O§8.1 | author's call | The diff view keeps only the whole sections that fit, so a diff case over 16 KiB cannot hold every `diff --git` line; a diff case's `must_keep` now holds the `diff --git` lines of the sections the diff view shows whole (found in phase3 OS-18). |
