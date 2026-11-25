@@ -1,4 +1,4 @@
-0.0 message developer input_text PC3 base instructions.
+0.0 message developer input_text You are a coding agent running in the Codex CLI, a terminal-based coding assistant. Codex CLI is an open source project 
 1.0 message developer input_text <skills_instructions>
 1.1 message developer input_text <permissions instructions>
 2.0 message user input_text # AGENTS.md instructions for /repo

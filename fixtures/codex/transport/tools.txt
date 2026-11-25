@@ -1,3 +1,5 @@
-tools=function:exec_command,function:write_stdin,function:request_user_input,custom:apply_patch,function:view_image,namespace:multi_agent_v1,function:get_goal,function:create_goal,function:update_goal,web_search:-
+tools=function:exec_command,function:write_stdin,function:request_user_input,function:view_image,namespace:multi_agent_v1,function:get_goal,function:create_goal,function:update_goal,web_search:-
 shell_tool=exec_command
-apply_patch=custom
+apply_patch=none
+p_tools=function:exec_command,function:write_stdin,function:request_user_input,custom:apply_patch,function:view_image,namespace:multi_agent_v1,function:get_goal,function:create_goal,function:update_goal,web_search:-
+p_apply_patch=custom

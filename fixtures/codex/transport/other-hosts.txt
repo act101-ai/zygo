@@ -1,4 +1,4 @@
-4 ab.chatgpt.com:443 refused
-9 api.github.com:443 refused
-9 chatgpt.com:443 refused
-9 github.com:443 refused
+5 ab.chatgpt.com:443 refused
+10 api.github.com:443 refused
+10 chatgpt.com:443 refused
+10 github.com:443 refused

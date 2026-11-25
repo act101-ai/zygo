@@ -145,6 +145,12 @@ stub run (below). All run on stubs only.
   SIGTERM; round 3: none left.
 - G8 (nit), fixed: list `d` is labelled `file=` (ids from the catalog file); `b`, `c` keep `served=` (the
   provider's `/models` reply). Test: `d: … file=gpt-mock,gpt-mock-file bundled=-`.
+- Real rerun, recorded: Codex's item ids `msg_<uuid>`, `fco_<uuid>`, `ctco_<uuid>` (UUIDv7) stay unscrubbed in
+  the four `requests/*.json`: `scrub.py`'s UUID rule needs a word boundary, and `_` is a word character. Outside
+  PC-3's Files; PC-11 (scrub gaps) fixes `scrub.py` and re-scrubs the committed fixtures in place.
+- Real rerun, recorded: `turn-with-reasoning.json` (run `c`, the resume of run `b`) holds run `b`'s history with
+  Codex's rejection `unsupported custom tool call: apply_patch` (runs `b`, `c` offer no apply_patch without a
+  catalog); the applied apply_patch output is in `after-custom-tool-call-output.json` (run `p`).
 - Also: run `p` makes ten runs (`run_versions=` ten times in a stub run, not nine as step 4 says).
 
 ### Round 3 steps
@@ -156,7 +162,7 @@ stub run (below). All run on stubs only.
   `CODEX_FX` empty; isolation as before with ten runs, `TZ`, `daemon=none`; `connect.txt` empty; `stub-args.txt`
   `app-server`; five `failed` lines dated in UTC; `authored.txt` one line per class; run `a`'s config without a
   catalog, run `p`'s with `catalog-patch.json`; no key helper and no process left.
-- [ ] T4. Real rerun (the lead releases it, after PC-5): the checks of R5; `tools.txt` `p_apply_patch=custom`;
+- [x] T4. Real rerun (2026-11-25, after the merge of `origin/phase-4` at 974bd8e9: exit 0; `p_apply_patch=custom`, so 0.172.0 accepts `default_reasoning_level: null`; `base_instructions_as_run_b=yes reasoning_as_run_b=yes`; injected-items `0.0` is Codex's base prompt; every record sends `reasoning: {"summary":"auto"}`; all five verified): the checks of R5; `tools.txt` `p_apply_patch=custom`;
   `authored.txt` `base_instructions_as_run_b=yes reasoning_as_run_b=yes`; injected-items `0.0` is Codex's base
   prompt; Observed rewritten; Acceptance exit 0; commit, push.
 

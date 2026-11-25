@@ -1,0 +1,4 @@
+first-turn: run=b catalog=none
+after-function-call-output: run=b catalog=none
+after-custom-tool-call-output: run=p catalog=models/catalog-patch.json set=apply_patch_tool_type:freeform copied_from_run_b=base_instructions,default_reasoning_level:null,supported_reasoning_levels:[] required_not_in_request=slug,display_name,description,shell_type,visibility,supported_in_api,priority,support_verbosity,truncation_policy,experimental_supported_tools base_instructions_as_run_b=yes reasoning_as_run_b=yes
+turn-with-reasoning: run=c catalog=none
