@@ -914,4 +914,23 @@ pin_codex "$D" "$D/$UCSCH"
 run "$D"
 expect_fail 'forbidden content (Windows home path): fixtures/codex/CONFIG.schema.json:1:C:\Users\bob'
 
+# PC-13: the Claude Code environment block lines in fixtures/claude-code and fixtures/opencode.
+CASE="PC-13: a shell name in a Claude Code environment block"
+D=$(mk pc13shell)
+printf '%s\n' 'x\n - Shell: zsh\n' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_fail 'forbidden content (shell name): fixtures/claude-code/plant.txt:1:x\n - Shell: zsh\n'
+
+CASE="PC-13: an OS version in an OpenCode fixture"
+D=$(mk pc13os)
+printf '%s\n' ' - OS Version: Darwin 25.6.0' > "$D/fixtures/opencode/plant.txt"
+run "$D"
+expect_fail 'forbidden content (OS version): fixtures/opencode/plant.txt:1: - OS Version: Darwin 25.6.0'
+
+CASE="PC-13: masked lines, prose and a shell key pass"
+D=$(mk pc13ok)
+printf '%s\n' 'x\n - Shell: (omitted)\n - OS Version: (os omitted)\n' 'Shell: zsh is the default' '"shell": "/bin/zsh"' > "$D/fixtures/claude-code/plant.txt"
+run "$D"
+expect_ok
+
 echo "test-check-premises: ok ($N cases)"
