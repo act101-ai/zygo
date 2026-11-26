@@ -40,6 +40,7 @@ pub(crate) fn launch_opts(a: &LaunchOpenCode, env: Env, cwd: PathBuf, paths: Pat
     o.server = a.server.clone();
     o.compact = compact;
     o.yolo = a.yolo;
+    o.definition = a.definition.clone();
     Ok(o)
 }
 
@@ -68,6 +69,7 @@ mod tests {
             compact: compact.map(String::from),
             yolo: true,
             name: None,
+            definition: None,
             rest: vec!["run".into(), "x".into()],
         }
     }

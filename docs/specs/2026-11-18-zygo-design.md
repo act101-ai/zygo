@@ -555,11 +555,11 @@ overrides = { review = "gpt-6-sol", code = "claude-sonnet-5-5" }   # role → ca
 disabled = ["design"]                                               # bundle roles hidden from the lead
 ```
 
-It cannot set `prompt`, custom roles, `plugins` or `features`, and it cannot define a provider: it names roles and models from the user's catalog only. It is not a layer of §6.1: the approved repository profiles are added to the merged config after the layers, with the source `workspace-files`. A repository profile whose name a user profile or a team preset has is not used, and is never merged key by key with it.
+It cannot set `prompt`, custom roles, `plugins` or `features`, and it cannot define a provider: it names roles and models from the user's catalog only. It is not a layer of §6.1: the approved repository profiles are added to the merged config after the layers, with the source `workspace-files`.
 
 ### 11.2 Selection
 
-`--profile <name>` wins; `--profile none` disables; else `user.default_profile`; else none. A user profile with the same name as a team preset shadows it. `zygo profile list | show <name> | use <name>` (sets `default_profile`).
+`--profile <name>` wins; `--profile none` disables; else `user.default_profile`; else none. Order of sources for one name: the user profile, then the team preset, then the repository profile (§11.1). A user profile with the same name as a team preset shadows it; a repository profile whose name a user profile or a team preset has is not used, and is never merged key by key with it. A workspace member resolves a repository profile from its pin, the read commit and digest saved in its member record (workspace definition design R§7.4): a later start of that member does not read the default branch, and a pin that is gone, not approved or not read stops the launch. `zygo profile list | show <name> | use <name>` (sets `default_profile`).
 
 ### 11.3 Validation (at session creation, by the proxy that will serve)
 
@@ -585,6 +585,8 @@ It cannot set `prompt`, custom roles, `plugins` or `features`, and it cannot def
 ### 12.1 Purpose and risk
 
 A user with a claude.ai subscription runs Claude Code on that subscription's login and model choice, and still gets redaction, the result store, the soft context window, cache handling, hooks, MCP tools, plugins, work units and the session text. **Local mode only (author):** the subscription credential goes from the agent to the in-process proxy on loopback and from there to the vendor; it never passes through a shared server. Serve mode refuses a passthrough session (`403 zygo_passthrough_local_only`). The README states that the vendor's consumer terms restrict routing subscription credentials through third-party software and that the user's own account carries that risk.
+
+A workspace pool member (workspace definition design R§9.5) starts with `--passthrough` on the config directory that the pool gives it, and no profile applies to it **(operator, 2026-11-24)**. §12.3 and §12.4 do not change.
 
 ### 12.2 Credential types
 
@@ -1139,3 +1141,6 @@ Each item is a test or a command whose output decides it. "Mock upstream" = an H
 | 2026-11-25 | §11.1 | operator (workspace definition design R§8, R§14 row §11.1: the source); author's call (node WD-13) for the text | Profiles also come from the repository's approved `.zygo/profiles/`, with `overrides` and `disabled` only, added after the layers with the source `workspace-files`. |
 | 2026-11-25 | §11.3 | workspace definition design R§8, R§14 row §11.3; author's call (node WD-13) for the text | A repository profile gets the same rules after the R§6.3 shape rules at read; the launcher reads only for a name not in user or team config, with the not-approved and invalid lines; passthrough applies no profile. |
 | 2026-11-25 | §11.3 | author's call (node WD-13) | a named profile that does not apply is reported, as R§9.5 does for up; the not-read line of the launcher's read is listed with the other two; the not-found line is written in full. |
+| 2026-11-26 | §11.1 | author's call (node WD-14) | The precedence sentence moves to §11.2 (WD-13 review L6). |
+| 2026-11-26 | §11.2 | workspace definition design R§7.4, R§8, R§14 row §11.2; author's call (node WD-14) for the text | Order of sources for one name: user, team preset, repository; a member resolves a repository profile from its pin. |
+| 2026-11-26 | §12.1 | operator (workspace definition design R§9.5, R§14 row §12) | A pool member starts with --passthrough; §12.3 and §12.4 do not change. |

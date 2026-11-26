@@ -390,9 +390,31 @@ fn read_at_refuses_a_non_id() {
     for bad in ["main", "-x", "", "refs/heads/main", upper.as_str(), short.as_str()] {
         let rec = Rec::default();
         assert_eq!(repo_def::read_at(&f.c, bad, &rec),
-                   Read::Unread { why: format!("pinned commit {bad} is not an object id") });
+                   Read::Unread { why: format!("pinned commit {} is not an object id", repo_def::short(bad)) });
         assert!(rec.args().is_empty(), "{bad}: git called");
     }
+}
+
+#[test] // R§6.5 `short`; review F5: at most 12 characters, also when byte 12 is inside a character
+fn short_is_at_most_12_characters() {
+    // Byte 12 is inside `é` (bytes 11 and 12).
+    let s = format!("{}é{}", "a".repeat(11), "x".repeat(100_000));
+    let got = repo_def::short(&s);
+    assert!(got.chars().count() <= 12, "short gave {} characters", got.chars().count());
+    assert_eq!(got, format!("{}é", "a".repeat(11)));
+    assert_eq!(repo_def::short("abc"), "abc");
+    assert_eq!(repo_def::short(&"f".repeat(64)), "f".repeat(12));
+}
+
+#[test] // review F5: the unread reason of a non-id pin prints at most 12 characters of it
+fn read_at_of_a_huge_non_id_has_a_short_reason() {
+    let f = base();
+    let bad = "z".repeat(1 << 20);
+    let rec = Rec::default();
+    let Read::Unread { why } = repo_def::read_at(&f.c, &bad, &rec) else { panic!("not unread") };
+    assert!(why.len() < 1024, "the reason has {} bytes", why.len());
+    assert_eq!(why, format!("pinned commit {} is not an object id", "z".repeat(12)));
+    assert!(rec.args().is_empty(), "git called");
 }
 
 #[test] // R§6.1 results: a failed git call is unread, naming the call

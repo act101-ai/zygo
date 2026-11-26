@@ -127,7 +127,7 @@ pub fn read_default(top: &Path, git: &dyn GitRunner) -> Read {
 /// R§7.4: R§6.1 steps 3-5 at the saved commit, with no default-branch lookup.
 pub fn read_at(top: &Path, commit: &str, git: &dyn GitRunner) -> Read {
     if !is_oid(commit) {
-        return Read::Unread { why: format!("pinned commit {} is not an object id", esc(commit)) };
+        return Read::Unread { why: format!("pinned commit {} is not an object id", esc(super::short(commit))) };
     }
     steps(top, git, None, commit.to_string(), Instant::now() + BUDGET)
 }

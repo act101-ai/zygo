@@ -44,6 +44,7 @@ pub(crate) fn launch_opts(l: &Launch, mut env: Env, cwd: PathBuf, paths: Paths) 
     o.server = l.server.clone();
     o.compact = compact;
     o.yolo = l.yolo;
+    o.definition = l.definition.clone();
     Ok(o)
 }
 
@@ -99,6 +100,7 @@ mod tests {
             yolo: true,
             config_dir: None,
             name: None,
+            definition: None,
             rest: vec!["-p".into(), "hi".into()],
         }
     }

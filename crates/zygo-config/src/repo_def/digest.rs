@@ -19,7 +19,10 @@ pub fn digest(files: &Files) -> String {
     hex::encode(h.finalize())
 }
 
-/// The first 12 characters, for one-line messages (R§6.5).
+/// At most the first 12 characters, for one-line messages (R§6.5); a character is never split.
 pub fn short(digest: &str) -> &str {
-    digest.get(..12).unwrap_or(digest)
+    match digest.char_indices().nth(12) {
+        Some((end, _)) => &digest[..end],
+        None => digest,
+    }
 }
