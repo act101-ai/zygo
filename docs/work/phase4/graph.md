@@ -112,6 +112,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-16 | Base-spec notes: §8.1 (phase 3 features), §8.4 (`ZYGO_AGENT` ids, client denylist rows), §8.8 (superseded) | BS-1, CC-12, CC-15 | TODO | mechanical | — |
 | TF-1 | Tests: a child that exits before reading stdin does not fail the test (BrokenPipe) | — | DONE | mechanical | PR #193 merged 245bae26; acceptance exit 0 on merged tree (compact_cmd 6 passed, 19 ignored); CI run 45810685136 green on 1082c520 |
 | TF-2 | CI runs the premise test scripts | PC-13 | PLANNED | mechanical | — |
+| TF-3 | check-premises.sh: no bash warning on a binary file in the name scan | TF-2 | PLANNED | implementation | — |
 
 ## Log
 
@@ -192,3 +193,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | RS-16 PLANNED: premise fails in part; the Responses arm sent a call's block as it streamed, so it now holds it to output_item.done, drops it at content_filter, within HOLD_MAX. K§6.4.3 obl. 5, 9 rewritten (author's call). 4 tests. No TF-2/BS-1 overlap. |
 | 2026-11-26 | RS-16 DONE: 3 review rounds; Messages clients get no zygo_calls_dropped, record refusal_call_dropped; Responses-upstream mapper holds a call to a completed done, drops it at content_filter; JSON path matches; non-conforming interleave recorded; PR #204 merged f1634542. |
 | 2026-11-26 | BS-1 PLANNED: premise holds (count 0); 2 dated notes on one line each (§7.6 :295, §8.1 :324) cite K§12; code facts checked (routes.rs, resolve.rs, forward.rs); dialect_models stays v2; acceptance grep clause already passes (:354); starts after TF-2. |
+| 2026-11-26 | Operator, 2026-11-26: the run is unsupervised for 24-48 hours; install build tools as needed, coordinate with the other zygo agent, make and record decisions as the author's call; the operator reviews them after. Operator stops in this graph (CF-4, CC-12, boundary exception list, phase-4 to main) stand. |
+| 2026-11-26 | TF-2 round 2: G1-G6 fixed (83af5701), G6 rest, G7, G8 rejected (nodes/TF-2.md); merged phase-4 (223dc2f0). |
+| 2026-11-26 | TF-3 added, PLANNED (author's call): under bash ≥4.4 name_scan (check-premises.sh:431) passes a binary file's NUL through a command substitution, the stderr warning fails test-check-premises H1; fix with tr as scan; 3 bash cases; edge TF-2 → TF-3. |
+| 2026-11-26 | BS-1 scope (author's call): a §7.4 note too; resolution does not read dialect_models (resolve.rs), it stays v2. |
+| 2026-11-26 | CC-0 stays BLOCKED: origin/phase-3 is not in main (1334 commits, checked 2026-11-26); merging it is the operator's. |
