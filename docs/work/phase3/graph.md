@@ -193,7 +193,6 @@ Session text (T, SX nodes):
 |----|------|---------|-------|------------|------|
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
-| MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | DONE | judgment | plan 677eb448 · node eee53a92, e5e55c30 · acceptance pass (gotest 19 passed) · PR #182 |
 | OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
 | OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | TODO | judgment | — |
@@ -241,7 +240,7 @@ Session text (T, SX nodes):
 | FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
 | FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
-| FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | TODO | mechanical | — |
+| FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -415,3 +414,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-18 DONE: M12 head line names zygo once (`${ZV:-zygo ?}`), stub-agent selftest case; live selftest ok (77). FX-20 added: live-detach.sh PW15 record line doubles the word zygo (FX-18 review F3) · PR #187 |
 | 2026-11-26 | SX-4 DONE: hook trim takes the subagent's re-inject flag first and adds additionalContext once (T§9.2 item 2); review F1 (run entry test), F3 (stat error) and a doc nit fixed; F2 refuted (any remove/print order has a kill window; at-most-once holds). |
 | 2026-11-26 | FX-19 DONE: PO2 row and O§7.8/O§17 restated to what the 2.1.332 run observed (stderr merged into stdout; stderr "" removal of non-empty stderr not observed); review F1, F4 fixed; author's call (lead), awaiting operator ratification. |
+| 2026-11-26 | FX-20 DONE: live-detach.sh PW15 record line and result text name zygo once (`launch ${ZV:-zygo ?}`); stub-agent selftest cases for a version and an empty version; live selftest ok (85). Review F1 refuted (clap prints "zygo <version>"), F2 fixed (empty-version case) · PR #194 |
