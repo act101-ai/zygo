@@ -430,6 +430,24 @@ fn trim_guard(e: &Env, b: &[u8]) -> (String, i32) { guarded(&|b| trim::trim_in(&
     assert_eq!(trim_rows(&e)[0].4.as_deref(), Some(b.as_str()));
     assert_eq!(result_ids(&e).len(), 2);                               // both results stored
 }
+#[test] fn trim_row_written_after_a_released_lock_on_a_rollback_journal_database() {   // O§7.11, O-C10; O§8.4: no clock
+    let e = env(true);
+    std::fs::create_dir_all(db(&e).parent().unwrap()).unwrap();
+    let c = rusqlite::Connection::open(db(&e)).unwrap();
+    c.execute_batch(TRIMS_97D8767).unwrap();
+    c.execute_batch("PRAGMA user_version = 1").unwrap();
+    c.execute_batch("BEGIN EXCLUSIVE").unwrap();                       // rollback journal: readers wait too
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        c.execute_batch("COMMIT").unwrap();
+    });
+    let input = parse(&bytes(&bash(&lines(5000)))).unwrap();
+    let o = out(trim::trim_in_with(&input, &e.dir, &db(&e), &trim::TrimOpts { db_bound: Duration::from_secs(5), ..Default::default() }));
+    release.join().unwrap();
+    assert!(updated(&o)["stdout"].as_str().unwrap().contains("[zygo trimmed this output: 5000 lines, 105000 bytes;"));
+    let n: i64 = rusqlite::Connection::open(db(&e)).unwrap().query_row("SELECT count(*) FROM trims", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1);                                                  // the row is there: the hook waited
+}
 #[test] fn trim_result_store_failure_error_is_fixed_text() {
     let e = env(true);
     std::fs::write(e.dir.results(), b"in the way").unwrap();           // results path is a file: put fails

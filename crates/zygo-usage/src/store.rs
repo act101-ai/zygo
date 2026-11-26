@@ -64,8 +64,8 @@ fn insert_error(conn: &Connection, e: &UpstreamErrorRow) -> Result<()> {
 /// The schema version this build writes to `PRAGMA user_version`.
 pub const SCHEMA_VERSION: i64 = 1;
 
-/// The longest wait, in elapsed time, of each usage-store statement in the trim hook and the MCP server's read-back write
-/// (O§7.11, O-C10).
+/// The longest wait, in elapsed time, on a busy usage database: in total for one trim-hook call, and for each
+/// statement of the MCP server's read-back write (O§7.11, O-C10).
 pub const HOOK_DB_BOUND: Duration = Duration::from_millis(100);
 
 /// The sleep of the bounded open's busy handler at each busy count, the last one repeated (O§7.11: a mechanic, not a
@@ -78,19 +78,28 @@ const BUSY_SLEEPS_MS: [u64; 7] = [1, 2, 5, 10, 15, 20, 25];
 pub struct BusyWait {
     bound: Duration,
     start: Option<Instant>,
+    /// True: the clock restarts at each busy count 0 (one bound for each statement); false: one bound for the connection.
+    restart: bool,
 }
 
 impl BusyWait {
+    /// For each statement: the clock restarts at each busy count 0.
     pub fn new(bound: Duration) -> BusyWait {
-        BusyWait { bound, start: None }
+        BusyWait { bound, start: None, restart: true }
     }
 
-    /// The busy call `count` of a lock cycle at `now`: `Some(sleep)` retries after `sleep`, `None` gives up. The clock
-    /// restarts at each busy count 0, which SQLite passes at the first busy call of each step. A busy call during a
+    /// For one call: the clock starts at the first busy call and never restarts.
+    pub fn total(bound: Duration) -> BusyWait {
+        BusyWait { bound, start: None, restart: false }
+    }
+
+    /// The busy call `count` of a lock cycle at `now`: `Some(sleep)` retries after `sleep`, `None` gives up. With `new`,
+    /// the clock restarts at each busy count 0, which SQLite passes at the first busy call of each step; with `total`, it
+    /// starts at the first busy call and never restarts. A busy call during a
     /// prepare can carry the previous step's count and keep its start; it then gives up sooner, never later than the
     /// bound. No sleep passes the bound.
     pub fn next(&mut self, count: i32, now: Instant) -> Option<Duration> {
-        if count == 0 {
+        if count == 0 && self.restart {
             self.start = Some(now);
         }
         let start = *self.start.get_or_insert(now);
@@ -220,17 +229,27 @@ impl Store {
         Ok(Store { conn })
     }
 
-    /// The bounded open of the trim hook and the MCP server's read-back write (O§7.11): each statement waits at most
+    /// The bounded open of the MCP server's read-back write (O§7.11): each statement waits at most
     /// `bound` of elapsed time on a busy database (its own busy handler, [`BusyWait`], not SQLite's busy timeout), with no retry loop
     /// (SQLite's own WAL-read retry is not governed by the busy handler). No database file,
     /// directory, schema or column is created (O§6.5 item 3), so the open takes no write lock; SQLite may create the `-wal`
     /// and `-shm` side files of an existing WAL database on first read. A database of another schema version is an error.
     pub fn open_bounded(path: &Path, bound: Duration) -> Result<Store> {
+        Store::open_with_wait(path, BusyWait::new(bound))
+    }
+
+    /// The bounded open of the trim hook (O§7.11, O-C10): as [`Store::open_bounded`], but the total wait of all statements
+    /// on the connection is at most `bound` of elapsed time from the first busy call ([`BusyWait::total`]). For a store that
+    /// lives for one call.
+    pub fn open_bounded_total(path: &Path, bound: Duration) -> Result<Store> {
+        Store::open_with_wait(path, BusyWait::total(bound))
+    }
+
+    fn open_with_wait(path: &Path, mut wait: BusyWait) -> Result<Store> {
         let mut conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        let mut wait = BusyWait::new(bound);
         conn.busy_handler(Some(move |count: i32| match wait.next(count, Instant::now()) {
             Some(sleep) => {
                 std::thread::sleep(sleep);
