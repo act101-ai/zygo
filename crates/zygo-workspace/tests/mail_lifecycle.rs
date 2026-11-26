@@ -861,7 +861,8 @@ fn lifecycle_up_reset_removes_the_dropped_maildirs() {
     assert!(maildirs(&l.o.paths, &l.id).iter().all(|k| ws.members.contains_key(k)), "{:?}", maildirs(&l.o.paths, &l.id));
 }
 
-#[test] // F3: `up` on a running session removes a maildir with no record that a failed removal left
+#[test] // F3, R1-4: `up` on a running session removes a maildir with no record that a failed removal left, through the
+// best-effort prune of `repair` in phase `up` (step 5 runs it for every existing state; step 6 adds no prune)
 #[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
 fn lifecycle_up_on_a_running_session_prunes_an_orphan_maildir() {
     let _g = serial();
