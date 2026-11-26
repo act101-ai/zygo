@@ -163,6 +163,11 @@ fn fixture_cargo_color_has_no_esc() {
     let (out, steps) = got(&raw, false);
     assert_eq!(steps, vec![ColorCodesRemoved]);
     assert!(!out.contains('\x1b'));
+    // FX-16 (F4): `ESC ( B` leaves no `B`
+    assert!(!out.contains("okB"));
+    assert_eq!(out.lines().count(), raw.lines().count());
+    let summary = "test result: ok. 120 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
+    assert!(out.lines().any(|o| o == summary));
     for l in fixture("cargo-test-color", "must_keep").lines() {
         assert!(out.lines().any(|o| o == l), "{l}");
     }
@@ -210,4 +215,63 @@ fn trailing_carriage_return_overwrites_nothing() {
         ("line one\nline two\n".into(), vec![ProgressLinesRemoved])
     );
     assert_eq!(got("a\rb\r\n", false), ("b\n".into(), vec![ProgressLinesRemoved]));
+}
+
+#[test]
+fn charset_designation_is_removed() {
+    // FX-16 (F4): `ESC (` or `ESC )` plus one final byte 0x30-0x7E
+    color("ok\x1b(B", "ok");
+    color("a\x1b)0b", "ab");
+    color("\x1b[32mok\x1b(B\x1b[m\n", "ok\n");
+}
+
+#[test]
+fn esc_before_esc_is_removed_alone() {
+    // FX-16 (F5): the second `ESC` starts its own sequence
+    color("\x1b\x1b[31mx", "x");
+    color("a\x1b\x1b\x1b]0;t\x07b", "ab");
+    color("a\x1b\x1b\x1b(Bb", "ab");
+}
+
+#[test]
+fn charset_designation_never_takes_a_line_end_or_an_esc() {
+    color("a\x1b(\nb", "a\nb");
+    assert_eq!(got("a\x1b(\r\nb", true), ("a\r\nb".into(), vec![ColorCodesRemoved]));
+    color("a\x1b(\x1b[31mb", "ab");
+    color("a\x1b(", "a");
+}
+
+#[test]
+fn charset_designation_takes_only_a_final_byte() {
+    // FX-16 review 2 F1/F5: only a final byte 0x30-0x7E goes with `ESC (` or `ESC )`;
+    // anything else stays (O-C9: when a shaper is unsure, it keeps)
+    color("a\x1b(éb", "aéb");
+    color("a\x1b(😀b", "a😀b");
+    color("a\x1b)éb", "aéb");
+    // U+009B then starts its own 8-bit CSI
+    color("a\x1b(\u{9b}31mb", "ab");
+    // ECMA-35 allows intermediate bytes 0x20-0x2F between `(`/`)` and the final byte; clean does not take
+    // them: only `ESC (` goes, and the intermediate and the final byte stay as text, which keeps more text
+    // (O-C9); node FX-21 tracks this
+    color("a\x1b( b", "a b");
+}
+
+#[test]
+fn charset_designation_final_byte_range_ends() {
+    // FX-16 review 3 F3: 0x7E is the last final byte, so `ESC ( ~` goes whole (3 bytes)
+    color("a\x1b(~b", "ab");
+    // 0x7F is above the final-byte range: only `ESC (` goes
+    color("\x1b(\x7fx", "\u{7f}x");
+    // 0x2F is an intermediate byte, not a final byte: only `ESC (` goes (node FX-21)
+    color("\x1b(/", "/");
+}
+
+#[test]
+fn charset_designation_before_a_line_end_esc_or_text_end() {
+    // FX-16 review F3: before `\n`, `\r`, `ESC` or the text end only `ESC )` goes
+    color("a\x1b)\nb", "a\nb");
+    assert_eq!(got("a\x1b)\r\nb", true), ("a\r\nb".into(), vec![ColorCodesRemoved]));
+    assert_eq!(got("a\x1b)\r\nb", false), ("a\nb".into(), vec![ColorCodesRemoved, ProgressLinesRemoved]));
+    color("a\x1b)\x1b[31mb", "ab");
+    color("a\x1b)", "a");
 }

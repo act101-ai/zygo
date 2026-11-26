@@ -214,7 +214,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 | FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
@@ -228,11 +227,12 @@ Session text (T, SX nodes):
 | FX-13 | Member record and maildir lifecycle: no maildir without a record; every record removal removes it | ML-14, ML-2, ML-11, ML-12, WD-14 | TODO | judgment | — |
 | FX-14 | `zygo up` team read: CLI test of `with_team`, team-layer warnings only, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code | WD-11, WD-12, ML-12 | DONE | implementation | 64d9685c, 3dc62442, 34467d50 · up_definition, workspace_restore, serve_cli, cmd::up all pass ; floor green · PR #162 |
 | FX-15 | `zygo doctor` pool lines skip the members `zygo up` skips | WD-12 | DONE | implementation | 0b4ee021, f046b2b7 · definition_doctor 17/0 ; floor green · PR #129 |
-| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
+| FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | DONE | implementation | 19fbf580^..b0212f6c · acceptance pass (shape_clean 29 passed) · PR #209 |
 | FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
 | FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
+| FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | TODO | implementation | — |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -424,3 +424,6 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-16 unblocked: the "ratification first" gate in its contract was written by an agent without operator approval; deleted |
 | 2026-11-26 | Operator: unsupervised run of 24-48 h; authorized to install build tools and to coordinate with the other zygo agent; make and record decisions so the work completes autonomously; decisions are reviewed after the fact. gh-stack v0.3.0 installed for workflow (2) |
 | 2026-11-26 | MS-15 DONE: review R1 F1-F6, R2 F1-F3, R3 R2-1 fixed (operator commands stop in a twin state, S§7.6); R2-2 recorded (single-call rm not observable on unix); author's call: drop_host runs only the twin check · PR #190 |
+| 2026-11-26 | FX-16 DONE: clean removes ESC ( / ESC ) plus one final byte 0x30-0x7E, else only 2 bytes; lone ESC alone before a line end or ESC; review R1-R3 fixed (R3 F1 trailer recorded in DDR-01M8CMTAGQEDD71MNHY0CZJC76); cargo-test-color recaptured (120 tests), graded libtest-passing · PR #209 |
+| 2026-11-26 | FX-21 added: FX-16 review R1 F4, R3 F2: ESC *, ESC +, ESC $ multi-byte and intermediates before the final byte leave residue (O§7.4, O-C9) |
+| 2026-11-26 | Author's call (lead): FX-16 review R1 F1 first rejected, then fixed: the OS-43 change-log row grades a view by its own shaper, so the clean color case meets the libtest-passing floor; recorded in O§8.2 |

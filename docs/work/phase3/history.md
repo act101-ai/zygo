@@ -125,6 +125,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | DROPPED(the server cannot know what an agent keeps above its cut: OpenCode config limits and whole lines; Claude Code API token count; review of 90e88962) | judgment | b14a4225 · 6217a6ff · round 1 discarded (90e88962) · PR #207 |
 | OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4, OS-46 | DROPPED(premise false: O§8.2 floors are per shaper, a clean view has no 8 KiB floor; a cut under the threshold breaks O-C9; review of 0fd61644) | judgment | 8883d724 · 65cdeb63 · round 1 discarded (0fd61644) · PR #195 |
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
+| FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 
 ## Log
 

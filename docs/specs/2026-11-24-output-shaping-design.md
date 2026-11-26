@@ -237,7 +237,7 @@ Build order **(operator)**: steps 1-2, then step 4, then step 3. The work graph 
 
 ### 7.4 Clean
 
-- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), a charset designation (`ESC (` or `ESC )` plus one character, 3 bytes in all), and any other `ESC` plus its next character. A lone `ESC` is removed alone: at the end of the text, and before another `ESC`, which then starts its own sequence. OSC 8 hyperlinks keep their visible text.
+- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), a charset designation (`ESC (` or `ESC )` plus one final byte `0x30-0x7E`, 3 bytes in all; when the next byte is not such a byte, only `ESC (` or `ESC )` is removed), and any other `ESC` plus its next character. A lone `ESC` is removed alone: at the end of the text, before a line end (`\n` or `\r`), and before another `ESC`, which then starts its own sequence. OSC 8 hyperlinks keep their visible text.
 - Unless O§7.3 "text that the model may reuse" applies: `\r\n` becomes `\n`; in each line, a `\r` overwrites, so only the text after the last `\r` is kept. This removes progress bars and spinners.
 - Clean removes no line.
 
@@ -387,13 +387,13 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 
 ### 8.2 Minimum saving per shaper
 
-**(author)** A CI test checks, on each case of the shaper, `1 − view_bytes ÷ raw_bytes` against the floor. The floors are below what these shapers give on such output, so a regression trips them and normal variance does not.
+**(author)** A CI test checks each case against the row of the shaper that gives its view: `1 − view_bytes ÷ raw_bytes` against the row's floor, and the row's Plus. A case in the O§8.1 clean row also meets the clean row's Plus, whatever row gives its view (`clean/cargo-test-color` gets the libtest view, so it is checked against the "libtest, passing" row and the clean row's Plus). The floors are below what these shapers give on such output, so a regression trips them and normal variance does not.
 
 | Shaper | Floor | Plus |
 |---|---|---|
 | clean | 5 % | no `ESC` byte in the view; no `\r` unless O§7.3 "text that the model may reuse" applies |
 | dedup | 50 % on the repeated-warning case | O§7.5 expansion gives the cleaned text |
-| libtest, passing | 80 % | each `test result:` line is in the view |
+| libtest, passing | 80 % | each `test result:` line of the raw text after clean (O§7.4) is in the view |
 | libtest, pytest, go test, failing | 30 % | each `must_keep` line is in the view |
 | diff, json, log | view ≤ 8 KiB | each `must_keep` line holds: a view line equals it, or, in the log view, a view line equals `<n>: ` followed by it; an empty `must_keep` line makes the case invalid |
 | none | 0 (no change) | the hook output is empty |
@@ -602,7 +602,7 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-24 | O§7.1, O§7.2 | operator | The parse missed commands that print a file: the wrappers `timeout` and `stdbuf`, the printers `egrep`, `fgrep`, `zcat`, `gawk`, `batcat`, `tac`, `git grep`, `git blame` and `$(<f)`, an `eval` string, and a shell that runs a script from a pipe; the lists and the unsure parse now hold them (found in phase3 OS-11 review). |
 | 2026-11-24 | O§7.1, glossary | author's call | review of OS-40: newline after a pipe, backtick and 0< substitutions, eval --, builtin, -c only among leading options (the arguments of `-o`, `+o`, `-O`, `+O` skipped), redirect-only stage in zsh |
 | 2026-11-25 | O§6.6 | author's call | the sample block's key amounts did not sum to its total, and its Read key kept out more bytes than were read back; replaced with figures a store can produce (OS-8). |
-| 2026-11-25 | O§7.4 | author's call (pending operator ratification under O§15 item 2) | OS-12 review F4/F5: charset designations and ESC ESC left residue |
+| 2026-11-25 | O§7.4 | author's call | OS-12 review F4/F5: charset designations and ESC ESC left residue |
 | 2026-11-25 | O§7.7, O§8.1, O§8.2, O§8.3 item 4 | author's call (lead) | OS-29 plan open items: diff marker text, diff preamble not shown, log level words and line numbers, log with no level line, a `must_keep` line holds when a view line equals it or, in the log view, equals `<n>: ` followed by it, and an empty `must_keep` line is invalid (O§8.1 Bless, O§8.2, O§8.3 item 4; OS-29 review R3); `VIEW_CAP_BYTES` cite moved to `view.rs:6` |
 | 2026-11-25 | O§7.3 | author's call | kind sniffed on stdout: the combined text with a [stderr] part never sniffs as JSON, so the reuse protection was lost |
 | 2026-11-25 | O§7.7 | author's call (lead) | kind views left no room for the shaped marker, so a view near 8 KiB broke the O§8.2 view ≤ 8 KiB floor (OS-28 plan, OS-29 F3) |
@@ -630,3 +630,5 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-26 | O§6.4 | author's call (lead) | OS-44 dropped: the server cannot know what an agent keeps above its cut (OpenCode whole lines and config limits; Claude Code API token count, remote limit, characters); the Size limit stays, stated as permanent; citations refreshed |
 | 2026-11-26 | O§7.6, O§8.5 | author's call (lead) | OS-38 measurement: O§8.5 budget 2 (4 MiB input, p95 ≤ 100 ms) failed under load (libtest p95 105.87 and 106.64 ms); the runner view was about 90 % of steps 1-4; its cost is cut with output unchanged (OS-47); no rule, number or threshold changes |
 | 2026-11-26 | O§8.2 | author's call (lead) | OS-43 dropped: O§8.2 checks a view against its own shaper's floor, so a clean-shaped log under the threshold has the 5 % clean floor, not "view ≤ 8 KiB"; a kind view under the threshold drops failure lines (O-C9) and ERROR lines (O§8.1 must_keep); O§7.3 step 4 stays "only over the threshold" |
+| 2026-11-26 | O§7.4 | author's call (lead) | FX-16 review F2, review round 2 F1/F5/F7, review round 3 F2/F5: a charset designation is `ESC (` or `ESC )` plus one final byte `0x30-0x7E` (ECMA-35), 3 bytes in all; a byte after `ESC (` or `ESC )` that is not a final byte `0x30-0x7E` is not taken as part of the designation: only `ESC (` or `ESC )` goes and that byte stays, so no non-ASCII character of real text is removed and no UTF-8 character is split; a line end stays; a following `ESC` or `U+009B` starts its own sequence; ECMA-35 allows intermediate bytes `0x20-0x2F` between `(`/`)` and the final byte, and clean does not take them (only `ESC (` or `ESC )` goes, and the intermediates and the final byte stay as text), which keeps more text (O-C9; node FX-21); a lone `ESC` before a line end is removed alone (O§7.4 "Clean removes no line"; O-C9 "when a shaper is unsure, it keeps"; O§15 item 2 decision record DDR-01M8CMTAGQEDD71MNHY0CZJC76) |
+| 2026-11-26 | O§8.1, O§8.2 | author's call (lead) | FX-16 review F1: with the charset residue gone the clean/cargo-test-color case gets the libtest view, so it is checked against the libtest-passing row (its own shaper, as the OS-43 row states); the 60-test capture gave 71 % and was re-captured from the libtest/passing crate (120 tests) with color; the summary-line check compares the raw lines after clean; review round 2 F3/F4: a case in the O§8.1 clean row also meets the clean row's Plus whatever row gives its view |
