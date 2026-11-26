@@ -635,7 +635,7 @@ fn plugin_text_matches_the_fixtures() {
         if stem == "plugin-init" {
             continue;
         }
-        let hook = stem.split_once("-bash").map_or(stem, |(h, _)| h);
+        let hook = stem.strip_suffix("-bash").or_else(|| stem.strip_suffix("-bash-stderr")).unwrap_or(stem);
         assert!(TEMPLATE.contains(&format!("\"{hook}\"")), "{hook}");
         hooks.insert(hook.to_string());
     }
