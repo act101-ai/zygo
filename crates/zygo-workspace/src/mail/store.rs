@@ -389,7 +389,10 @@ pub fn sweep(mail_dir: &Path, keep: Duration, now: SystemTime) {
     }
 }
 
-/// Deletes the maildir of `key` (`forget-pane`, M§5); a missing one is no error.
+/// Deletes the maildir of `key`; a missing one is no error. It takes no `mail/lock` and reads no member record, so it
+/// has no production caller: production removals use [`super::remove_maildir`] and [`super::prune`] (M§5 P1). It
+/// stays `pub` and hidden because the integration tests (`tests/mail_store.rs`, `tests/mail_lifecycle.rs`) call it.
+#[doc(hidden)]
 pub fn remove_pane(mail_dir: &Path, key: &str) -> std::io::Result<()> {
     if !valid_pane_key(key) {
         return Err(std::io::Error::new(ErrorKind::InvalidInput, "invalid pane key"));
