@@ -203,3 +203,22 @@ Review round 2 of PR #165 at a516e20c (2 important, 2 nits). Each fix is test-fi
   - Acceptance: exit 0, with 18 tests in `responses_forward`.
   - `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
   - Workspace: 2434 passed, 2 failed, 778 ignored. The 2 failures are the known `zygo --test guard_hook` environment failures under /private/tmp.
+
+### Round 3 review dispositions
+
+Review round 3 of PR #165 at 18492aeb (H1-H7), the last review round. Code fixes are test-first: each new test failed before its fix, except where noted.
+
+- H1 (fixed in fb537ff0): `Streamed::line` holds the `data` lines of an error event split over lines (its `event` is `error`, or its first `data` line names `"error"`) until the blank line. It joins them as SSE does and reads the joined event on the parsed path: the key is removed from the decoded message, then `pc14_form`. Each held line goes on to the encoder as an SSE comment (`:`), which the encoder ignores; the blank line carries the rewritten `data` line. Lines of other events are not held, so text deltas pass unchanged and with no delay. Held data over `HOLD_MAX` is dropped and the stream fails with `upstream event too long`: that is the message the encoder already gives for this input (held event data, not one line), so the client sees no change. Test `split_error_event_escaped_key` (key with its first byte as `t`; before the fix the key reached the client). Test `split_error_event_over_hold_max` (no echo of the held text) passed before the fix too: it guards the limit. The round-2 G3 raw-substring branch stays for one case the joined path does not hold: a keyed `data` line that is no JSON, in an event with no `event: error` line and whose first `data` line does not name `"error"`. `split_error_event_without_key` passes and now goes through the joined path.
+- H2 (fixed in fb537ff0, with H1): test `split_prompt_too_long_pc14`. A split `invalid_request_error` event `prompt is too long: …` gets the code `context_length_exceeded` and a message of at most 512 characters with no Cc, Cf, Zl or Zp character. Before the fix the code was `invalid_request_error`.
+- H3 (rejected): the drain is proven by `encoder_failure_row_has_final_usage`. With `tokio::spawn(drain(f))` replaced by `drop(f)` that test fails (row `(100, 30, 5, 1)`, want `(100, 30, 5, 4242)`; run again in this round). The two G1 tests prove the client release, not the drain.
+- H4 (recorded): DDR-01M8B3A7JCGK6YAE2VZ7P6QZ3C (`docs/decisions/DDR-01M8B3A7JCGK6YAE2VZ7P6QZ3C.md`, kind `accepted-limit`, class `none`), in 98dd5bcb.
+- H5 (fixed in 4c063f4b): K§6.4.3 stream obligation 6 states that the client body ends at the terminal event; the Anthropic-route drain in a detached task through the tee, to the end, a read error or the per-read idle timeout; the chat route's stop at the mapper's terminal or error event; that the client gets nothing more; and the one usage row with the counts read.
+- H6 (fixed in 4c063f4b): the K§6.4.4 sentence applies the 512-character cap and the Cc/Cf/Zl/Zp replacement to the `prompt is too long` form and the `max_tokens` limit form, before and inside the stream. The change log is in date order (the one 2026-11-26 line moved to the end; no line removed) with the new 2026-11-25 line.
+- H7 (fixed in 13d49e93): tests `namespaced_call_mapped_back` (`multi_agent_v1__spawn_agent` returns as `function_call` with name `spawn_agent` and namespace `multi_agent_v1`, streamed and not streamed) and `streamed_request_json_answer_completed_and_row` (ends with `response.completed`, row `(100, 30, 5, 42)`). Both are coverage tests and passed at once. `usage_rows` waits with no total limit: `usage_written` lives in `serve.rs` and takes a `Duration`, so its signature is unchanged; the harness calls it in a loop with a 1 s wait per call until it returns true.
+- Results (round 3 dispositions):
+  - Check `cargo test -p zygo-proxy --locked`: 521 passed, 0 failed, 15 ignored.
+  - Acceptance: exit 0, with 23 tests in `responses_forward`.
+  - `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings`: clean.
+  - Workspace `--no-fail-fast`: 2454 passed, 2 failed, 778 ignored. The 2 failures are the known `zygo --test guard_hook` ones (`binary_guard_not_a_repository_writes_no_line`, `binary_guard_slow_rev_parse_says_unread_once`).
+  - `git diff origin/phase-4 --stat -- crates/zygo-proxy/tests/`: only `responses_forward.rs` and `support/responses.rs`.
+  - `responses_forward`: 20 runs, 0 failures.
