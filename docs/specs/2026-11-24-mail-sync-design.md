@@ -215,7 +215,7 @@ In a twin state (S§7.5) `--take-host` and `--drop-host` stop with the twin line
 |---|---|---|
 | `mail_send` and `zygo mail send` to a remote address | the sync child, after the outbox write | none (the `again` mark merges bursts, S§8.3) |
 | Member hook events `session` (main loop), `prompt`, `stop`, `tool-end` (W§9.1, `crates/zygo-hooks/src/workspace.rs:36-37`) | the sync child | `[mail] sync_gap` (S§8.4) |
-| `zygo mail watch` with sync on | a sync in its own process before its first look at `new/`, then before the first look after each `sync_gap` (start to start; a last start later than now counts as due, as S§8.4), until it returns. The sync runs as the child does (S§8.3: no wait for the lock, nothing printed, a stop gives one `errors.log` line), because the stdout of `watch` carries message lines only | `sync_gap` |
+| `zygo mail watch` with sync on | the sync child, started before its first look at `new/` and then before the first look after each `sync_gap` (start to start, kept by the watch; a last start later than now counts as due, as S§8.4; `mail/sync/last_start` is not read or written), until it returns. The watch does not wait for the child, so no sync delays a look or the `--timeout`; mail that the child imports shows at the next look after the import. A child that does not start gives one `errors.log` line. A config that does not load, or sync off, starts no child | `sync_gap` |
 | `zygo mail sync [--name <workspace>] [--prune] [--take-host] [--new-identity] [--drop-host <host>] [--yes]` | a sync in its own process, with output | none |
 
 The hook starts the child as it starts the snapshot child today (`start_snapshot_child`, `crates/zygo-hooks/src/workspace.rs:484-513`): stdin, stdout and stderr to the null device, cwd `/`, a new session (`setsid`), no wait. A child that does not start gives one `errors.log` line. The hook prints nothing more and changes no decision (S-C1).
@@ -485,7 +485,7 @@ Each row is one case, walked end to end.
 - **M§6** Gains the address grammar (S§7.2) and the reserved name `zygo`.
 - **M-C4** Holds for `mail/`. Synced mail also exists in the repository's object store and on the remote (S§13 limit 3, S-C7).
 - **M-C6** Holds: a cloned repository cannot send mail. Member names come from user config or from approved repository files (workspace definition design R§7). The side branch delivers mail only after the user-config opt-in (S-G6).
-- **M§8, M§8a** `mail_send` takes addresses; `mail_list` returns remote addresses; item 8 gains one clause (S§10.4). `zygo mail sync` is a new verb; `zygo mail ls` shows a sync line and the outbox and refused counts; `zygo mail watch` syncs (S§8.1).
+- **M§8, M§8a** `mail_send` takes addresses; `mail_list` returns remote addresses; item 8 gains one clause (S§10.4). `zygo mail sync` is a new verb; `zygo mail ls` shows a sync line and the outbox and refused counts; `zygo mail watch` starts the sync child (S§8.1).
 - **M§11** Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11).
 - **W§7.1** Gains the cache path `$HOME/.cache/zygo/workspaces/<id>/mail-sync/` and the state paths `mail/outbox/` and `mail/sync/`.
 - **W§12** `zygo ws forget` asks when the outbox is not empty and removes the sync worktree (S§7.6, S§14).
@@ -503,7 +503,7 @@ P3-1 is not built. "The mail module" is the place where the P3-1 build puts the 
 | `crates/zygo-hooks/src/workspace.rs` | The rate-limited spawn of the sync child on `session`, `prompt`, `stop` and `tool-end` (S§8.1, S§8.4), on the pattern of `start_snapshot_child` (`:484-513`). |
 | `crates/zygo-hooks/src/mail.rs` | The item 8 clause (S§10.4). |
 | `crates/zygo-mcp/src/tools/` (mail tools of P3-1) | Addresses, the send-time pass, remote addresses in `mail_list`, the description sentence. |
-| `crates/zygo/src/cmd/` (mail command of P3-1) | `zygo mail sync` and its options, the hidden `--ws-id <id> --background` form (AU44), the sync in `watch`, the sync line in `ls`, `esc` for remote values. |
+| `crates/zygo/src/cmd/` (mail command of P3-1) | `zygo mail sync` and its options, the hidden `--ws-id <id> --background` form (AU44), the start of the sync child in `watch`, the sync line in `ls`, `esc` for remote values. |
 | `crates/zygo/src/cmd/mod.rs` | The results sweep is skipped for `mail sync --background`, as for `ws` (AU71): it runs on hook events. |
 | `crates/zygo/src/cmd/doctor.rs` | The twin line (S§7.5). |
 | `crates/zygo-workspace/src/admin.rs` | `ws forget`: the question, the worktree removal (S§7.6, S§14). |
@@ -584,3 +584,4 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-26 · S§7.5 · author's call (lead) · MS-18 plan: `zygo doctor` runs no fetch, so "while the condition holds" had no test; the condition is now the recorded result of the last pass (`last_error` `twin`, cleared by a pass that ends without a stop, `sync.rs`) for the workspace of the session or folder.
 - 2026-11-26 · S§10.3 · author's call (lead) · MS-18 plan: the `zygo mail ls` sync line had no fixed form and no off cases; the line, its values and each off case are fixed (S§7.1 line with no host; no line with sync not set, so a workspace without sync lists as before).
 - 2026-11-26 · S§10.5 · author's call (lead) · MS-18 plan: `zygo mail read` also prints a remote `from` and `subject`, and the body; it escapes each (ML-12, `read_text`), so the section names it.
+- 2026-11-26 · S§8.1 · author's call (lead) · MS-18 review F1/F3: the watch ran the sync in its own process between looks, so a hanging fetch held the look loop up to the pass deadline (120 s) per pass, against M§13 #7 and `--timeout`, and a panic printed its text and exited 101; the watch now starts the sync child at its start and each `sync_gap`, does not wait for it, and imported mail shows at the next look.

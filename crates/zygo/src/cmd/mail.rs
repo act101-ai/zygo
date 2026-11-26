@@ -182,19 +182,9 @@ pub fn run(a: MailArgs) -> i32 {
                     return finish(Err(UsageError("zygo mail watch: no member for this pane; pass a name".into()).into()))
                 }
             };
-            // S§8.1 row 3 (P2, D6): with sync on, a silent `Mode::Child` sync before the first look and then each
-            // `sync_gap`, start to start; a config that does not load or sync off makes the step do nothing.
-            let settings = user_config(&paths).ok().and_then(|c| sync_for(&c, &ws.name).ok());
+            // S§8.1 row 3 (review F1/F3): the sync child of this binary at start and each `sync_gap`; no wait.
             let env = sync_env(paths.clone());
-            let mut last: Option<SystemTime> = None;
-            let mut step = || {
-                let Some(s) = &settings else { return };
-                let now = env.clock.now();
-                if watch_sync_due(last, now, s.sync_gap) {
-                    last = Some(now);
-                    let _ = zygo_mail_sync::sync::run(&env, &ws.id, Mode::Child);
-                }
-            };
+            let mut step = watch_sync_step(&env, &ws);
             watch_with(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock(), &mut step)
         }
         Some(MailCmd::Sync(_)) => unreachable!("taken above"),
@@ -319,8 +309,8 @@ pub fn watch(dir: &Path, key: &str, timeout: Duration, poll: Duration, now: &dyn
     watch_with(dir, key, timeout, poll, now, out, &mut || {})
 }
 
-/// [`watch`] with `sync()` before each look at `new/` (mail sync design S§8.1 row 3): the `zygo mail watch` step that
-/// syncs at start and then each `sync_gap` when sync is on.
+/// [`watch`] with `sync()` before each look at `new/` (mail sync design S§8.1 row 3): in `zygo mail watch` the step
+/// of [`watch_sync_step`], which starts the sync child at start and then each `sync_gap` when sync is on.
 pub fn watch_with(
     dir: &Path,
     key: &str,
@@ -353,6 +343,30 @@ pub fn watch_with(
             return 1;
         }
         std::thread::sleep(poll);
+    }
+}
+
+/// S§8.1 row 3 (MS-18 review F1/F3): the step of `zygo mail watch` for [`watch_with`]. With sync on for `ws` in the
+/// user config of `env.paths`, it starts the sync child (`env.spawner`; `zygo mail sync --ws-id <id> --background` in
+/// production) before the first look and then before the first look after each `sync_gap`, start to start, by
+/// [`watch_sync_due`] on `env.clock`. It does not wait for the child, so a slow or hanging sync never holds a look,
+/// and the child's import shows at a later look. It reads and writes no `mail/sync/last_start`: that file is the hook
+/// rate limit (S§8.4), and `spawn::trigger` with a gap would skip the start of a watch after a recent hook start. A
+/// child that does not start gives one `errors.log` line, as `trigger` does. A config that does not load, or sync off,
+/// makes the step do nothing; the config is read once, when the step is made.
+pub fn watch_sync_step<'a>(env: &'a Env, ws: &'a Workspace) -> impl FnMut() + 'a {
+    let settings = user_config(&env.paths).ok().and_then(|c| sync_for(&c, &ws.name).ok());
+    let store = Store::open(&env.paths, &ws.id);
+    let mut last: Option<SystemTime> = None;
+    move || {
+        let Some(s) = &settings else { return };
+        let now = env.clock.now();
+        if watch_sync_due(last, now, s.sync_gap) {
+            last = Some(now);
+            if let Err(e) = env.spawner.spawn_sync(&ws.id) {
+                store.log_error(&format!("mail watch: cannot start the mail sync child: {e}"));
+            }
+        }
     }
 }
 
