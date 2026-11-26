@@ -201,17 +201,7 @@ impl Delivery {
 /// folder is `InvalidInput` and is not followed.
 fn checked_mail(store: &Store) -> std::io::Result<Option<PathBuf>> {
     let mail = store.dir().join("mail");
-    match fs::symlink_metadata(&mail) {
-        Ok(m) if m.file_type().is_symlink() => {
-            Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is a link; it is not followed", mail.display())))
-        }
-        Ok(m) if !m.is_dir() => {
-            Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", mail.display())))
-        }
-        Ok(_) => Ok(Some(mail)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
-    }
+    Ok(store::real_dir(&mail)?.then_some(mail))
 }
 
 /// Takes `mail/lock` exclusive (at most `bound`) and reads the state under it; `Ok(None)` when the state is gone. A

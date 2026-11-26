@@ -336,6 +336,69 @@ fn lifecycle_read_does_not_make_a_removed_maildir_again() {
     assert!(gone(&mail.join("kaaaaaaaa")));
 }
 
+/// `<dir>/new/<id>.json`, one message file outside `mail/`; returns its path.
+fn outside_message(dir: &Path) -> PathBuf {
+    fs::create_dir_all(dir.join("new")).unwrap();
+    let m = Message::new("cli", "x", "s", "b", at(T0)).unwrap();
+    let f = dir.join("new").join(format!("{}.json", m.id));
+    fs::write(&f, serde_json::to_vec(&m).unwrap()).unwrap();
+    f
+}
+
+#[test] // F1: a read does not follow a link at mail/<key>; the files it points to stay
+fn lifecycle_read_refuses_a_link_at_the_maildir() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mail = mail_dir(&p, id);
+    fs::create_dir_all(&mail).unwrap();
+    let outside = t.join("outside");
+    let f = outside_message(&outside);
+    std::os::unix::fs::symlink(&outside, mail.join("kaaaaaaaa")).unwrap();
+    let r = mail_store::read(&mail, "kaaaaaaaa", 10);
+    assert!(matches!(r, Err(MailError::Io(_))), "{r:?}");
+    assert!(f.is_file());
+    assert!(gone(&outside.join("cur")));
+}
+
+#[test] // F1: a read does not follow a link at mail/<key>/new; the files it points to stay
+fn lifecycle_read_refuses_a_link_at_new() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mail = mail_dir(&p, id);
+    fs::create_dir_all(mail.join("kaaaaaaaa")).unwrap();
+    let outside = t.join("outside");
+    let f = outside_message(&outside);
+    std::os::unix::fs::symlink(outside.join("new"), mail.join("kaaaaaaaa/new")).unwrap();
+    let r = mail_store::read(&mail, "kaaaaaaaa", 10);
+    assert!(matches!(r, Err(MailError::Io(_))), "{r:?}");
+    assert!(f.is_file());
+    assert!(gone(&mail.join("kaaaaaaaa/cur")));
+}
+
+#[test] // F1: a read of a missing maildir or a missing new/ returns nothing and makes no folder
+fn lifecycle_read_of_a_missing_maildir_makes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let id = THIRD;
+    stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mail = mail_dir(&p, id);
+    fs::create_dir_all(&mail).unwrap();
+    assert_eq!(mail_store::read(&mail, "kaaaaaaaa", 10).unwrap(), Vec::<Message>::new());
+    assert!(gone(&mail.join("kaaaaaaaa")));
+    fs::create_dir_all(mail.join("kaaaaaaaa")).unwrap();
+    assert_eq!(mail_store::read(&mail, "kaaaaaaaa", 10).unwrap(), Vec::<Message>::new());
+    assert!(gone(&mail.join("kaaaaaaaa/new")) && gone(&mail.join("kaaaaaaaa/cur")));
+}
+
 // ---- step 6: path b4 through `repair` ----
 
 /// A tmux stand-in that answers `-V` with 3.4 and every other call with "no server" (as `tests/up.rs` `gone_tmux`).

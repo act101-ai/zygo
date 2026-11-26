@@ -92,6 +92,22 @@ pub(crate) fn make_leaf(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// `dir` checked with `symlink_metadata` (no link follow): `Ok(true)` for a real folder, `Ok(false)` when it is
+/// missing; a link or an entry that is not a folder is `InvalidInput`.
+pub(crate) fn real_dir(dir: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.file_type().is_symlink() => {
+            Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is a link; it is not followed", dir.display())))
+        }
+        Ok(m) if !m.is_dir() => {
+            Err(std::io::Error::new(ErrorKind::InvalidInput, format!("{} is not a folder", dir.display())))
+        }
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// `mail/`, `mail/<key>/` and its three folders, each `0700` (M-C4).
 fn make_dirs(mail_dir: &Path, md: &Path) -> std::io::Result<()> {
     super::ensure_mail_root(mail_dir)?;
@@ -249,21 +265,36 @@ pub fn deliver(mail_dir: &Path, key: &str, label: &str, msg: &Message, max_unrea
 /// another reader, and an id already in `cur/` is a duplicate, removed from `new/` and not returned. A moved file
 /// gets the read time as its modification time, so the sweep ages it from its read. A moved file that cannot be
 /// read or parsed stays in `cur/` for the sweep. An error before the first move is returned; after it, `read` stops
-/// and returns what it has.
+/// and returns what it has. `mail/`, `mail/<key>/`, `new/` and `cur/` are never followed as links: a link or an
+/// entry that is not a folder at any of them is an `Io` error; a missing `mail/`, `mail/<key>/` or `new/` has no
+/// messages and nothing is made; only `cur/` is made, when `new/` has a message.
 pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, MailError> {
     let md = maildir(mail_dir, key)?;
     let (new, cur) = (md.join("new"), md.join("cur"));
     let mut out = Vec::new();
     let mut moved = false;
+    // No link is followed (M-C4): `mail/`, `mail/<key>/` and `new/` are checked without a follow; a missing one has
+    // no messages and nothing is made.
+    for dir in [mail_dir, md.as_path(), new.as_path()] {
+        if !real_dir(dir)? {
+            return Ok(Vec::new());
+        }
+    }
     let ids = ids(&new)?;
     if !ids.is_empty() {
         // M§5 P1: a read never makes mail/<key>/. Only cur/ is made, in a maildir that exists; a maildir removed since
         // the listing has nothing to return.
         let state_dir = mail_dir.parent().unwrap_or(mail_dir);
         crate::up::fire(state_dir, "mail_read_before_dirs").map_err(|e| std::io::Error::other(e.to_string()))?;
-        match make_leaf(&cur) {
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-            r => r?,
+        match real_dir(&md) {
+            Ok(false) => return Ok(Vec::new()),
+            r => r.map(|_| ())?,
+        }
+        if !real_dir(&cur)? {
+            match make_leaf(&cur) {
+                Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+                r => r?,
+            }
         }
     }
     for id in ids {
