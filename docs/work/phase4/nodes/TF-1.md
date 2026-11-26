@@ -1,7 +1,7 @@
 # TF-1 — Tests: a child that exits before reading stdin does not fail the test (BrokenPipe)
 
 **Spec:** none (test-harness defect); Global constraints "No test … may pass or fail by wall-clock time"
-**Files:** `crates/zygo/tests/common/mod.rs`, `crates/zygo/tests/common/e2e.rs`, `crates/zygo/tests/compact_cmd.rs`, `crates/zygo/tests/results_sweep.rs`, `crates/zygo/tests/mcp_stdio.rs`, `crates/zygo/tests/cli_surface.rs`, `crates/zygo/tests/session_verbs.rs`, `crates/zygo/tests/cli_pipe.rs`, `crates/zygo/tests/statusline_cmd.rs`, `crates/zygo/tests/statusline_git.rs`, `crates/zygo/tests/slash_parity.rs`, `crates/zygo/tests/hook_session.rs`, `crates/zygo/tests/guard_hook.rs`, `crates/zygo/tests/hook_trim.rs`, `crates/zygo/tests/work_hook.rs`, `crates/zygo/tests/workspace_run.rs`, `crates/zygo/tests/update.rs`, `crates/zygo/tests/workspace_restore.rs`
+**Files:** `crates/zygo/tests/common/mod.rs`, `crates/zygo/tests/common/e2e.rs`, `crates/zygo/tests/compact_cmd.rs`, `crates/zygo/tests/results_sweep.rs`, `crates/zygo/tests/mcp_stdio.rs`, `crates/zygo/tests/cli_surface.rs`, `crates/zygo/tests/session_verbs.rs`, `crates/zygo/tests/cli_pipe.rs`, `crates/zygo/tests/statusline_cmd.rs`, `crates/zygo/tests/statusline_git.rs`, `crates/zygo/tests/slash_parity.rs`, `crates/zygo/tests/hook_session.rs`, `crates/zygo/tests/guard_hook.rs`, `crates/zygo/tests/hook_trim.rs`, `crates/zygo/tests/work_hook.rs`, `crates/zygo/tests/workspace_run.rs`, `crates/zygo/tests/update.rs`, `crates/zygo/tests/workspace_restore.rs`, `crates/zygo-plugins/tests/sync.rs`
 **Consumes:** —
 **Produces:** `common::write_stdin`, a stdin write that ignores `ErrorKind::BrokenPipe` and only that error; every child-stdin write in `crates/zygo/tests` goes through it
 **Acceptance:** first, a test that fails first: `write_stdin` called with a child that has already exited must not panic; then `CARGO_INCREMENTAL=0 cargo test -p zygo --locked --test compact_cmd` → exit 0; no sleeps or timing assertions
@@ -43,3 +43,10 @@ Capability: `mechanical` (one helper, one test, the same one-line change at each
 - The change removed `use std::io::Write;` from 13 places (12 files and `mcp_call` in `common/e2e.rs`) where the replaced site was its only user (`-D warnings` rejects the unused import).
 - Step 7: `--test compact_cmd` 5 passed, 19 ignored. `--tests`: 384 passed, 2 failed, 301 ignored; the 2 failures are the known `guard_hook` ones (`binary_guard_not_a_repository_writes_no_line`, `binary_guard_slow_rev_parse_says_unread_once`; `guard_hook.rs:73`, a checkout under `/private/tmp` has no directory outside the temp roots).
 - Step 8: commit bdd45bf6 on `phase-4--TF-1`. `cargo clippy -p zygo --all-targets -- -D warnings` is clean; `cargo test --workspace --no-fail-fast` fails only in the `guard_hook` target, with the same 2 tests.
+
+## Round 1 review
+
+- F1 (fixed, 05f27df9): `crates/zygo-plugins/tests/sync.rs` `bad_commit` wrote to `git mktree`'s stdin with `write_all(...).unwrap()`. That crate has no shared test helper, so the site now ignores only `ErrorKind::BrokenPipe` inline (the match shape of `common::write_stdin`) and then drops the handle; the test still reads git's output. `sync.rs` is added to Files.
+- F2 (fixed, 05f27df9): `compact_cmd.rs` `stdin_write_error_other_than_broken_pipe_panics` (`#[should_panic]`) passes `write_stdin` a writer whose `write` returns `ErrorKind::Other`; it panics.
+- F3 (fixed, 05f27df9): the `write_stdin` doc comment (`common/mod.rs:62`) now says the child gets EOF only when an owned handle is passed; a caller that passes `&mut` must drop the handle itself.
+- Checks: `--test compact_cmd` 6 passed, 19 ignored; `zygo-plugins --test sync` 95 passed, 9 ignored; `cargo clippy -p zygo -p zygo-plugins --all-targets -- -D warnings` clean.
