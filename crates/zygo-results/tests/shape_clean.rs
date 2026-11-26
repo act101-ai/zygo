@@ -240,3 +240,21 @@ fn charset_designation_never_takes_a_line_end_or_an_esc() {
     color("a\x1b(\x1b[31mb", "ab");
     color("a\x1b(", "a");
 }
+
+#[test]
+fn charset_designation_takes_one_whole_character() {
+    // FX-16 review F2/F3: a non-ASCII character after `ESC (` is removed whole, never split
+    color("a\x1b(éb", "ab");
+    color("a\x1b(😀b", "ab");
+    color("a\x1b)éb", "ab");
+}
+
+#[test]
+fn charset_designation_before_a_line_end_esc_or_text_end() {
+    // FX-16 review F3: before `\n`, `\r`, `ESC` or the text end only `ESC )` goes
+    color("a\x1b)\nb", "a\nb");
+    assert_eq!(got("a\x1b)\r\nb", true), ("a\r\nb".into(), vec![ColorCodesRemoved]));
+    assert_eq!(got("a\x1b)\r\nb", false), ("a\nb".into(), vec![ColorCodesRemoved, ProgressLinesRemoved]));
+    color("a\x1b)\x1b[31mb", "ab");
+    color("a\x1b)", "a");
+}
