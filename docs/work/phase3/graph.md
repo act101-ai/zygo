@@ -214,7 +214,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
 | FX-7 | Exec-failure relaunch test runs in a child process (environ swap breaks parallel PATH lookups) | — | DONE | implementation | 365436c6 · zygo lib ws/work/plugins 22p, down 8p; --include-ignored 54p; floor green · PR #97 |
@@ -231,7 +230,7 @@ Session text (T, SX nodes):
 | FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
 | FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
 | FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
-| FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | TODO | implementation | — |
+| FX-21 | Clean removes the other designation forms: `ESC *`, `ESC +`, `ESC $` multi-byte, and intermediates before the final byte | FX-16 | DONE | implementation | 569e61a9^..9ac65902 · acceptance pass (shape_clean 35 passed) · PR #211 |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -428,3 +427,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | Author's call (lead): FX-16 review R1 F1 first rejected, then fixed: the OS-43 change-log row grades a view by its own shaper, so the clean color case meets the libtest-passing floor; recorded in O§8.2 |
 | 2026-11-26 | MS-17 plan: premise drift: S§6.6 CI note recorded by the pass under the lock (Report.ci_note); S§8.2 unknown line printed at the end of a sync that does not stop; Files widened (sync.rs, plugins.rs, cli_surface.rs, spec) |
 | 2026-11-26 | MS-17 DONE: zygo mail sync verb, options, hidden --background form; review R1 F1 (shared admin::named name rule) F2 (CI note) F3 (one panic line) T1 fixed, T2 recorded; R2 R1-B fixed (S§6.6), R1-A recorded · PR #210 |
+| 2026-11-26 | FX-21 DONE: clean removes an nF escape (ESC, 1-4 intermediates 0x20-0x2F, final 0x30-0x7E) whole, else only ESC; replaces FX-16's ESC ( / ESC ) arm (DDR-01M8CRQH44Y37WS3MAAV2G0DP4 depends on the FX-16 record); review R1 F1-F5 fixed · PR #211 |
+| 2026-11-26 | Author's call (lead), for operator review: O§15 item 2 "hiding" and O-C9 read as text a terminal would display; FX-21 removes bytes FX-16 kept only where a terminal consumes them as one nF escape (DDR-01M8CRQH44Y37WS3MAAV2G0DP4) |
