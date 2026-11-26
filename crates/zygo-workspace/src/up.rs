@@ -1416,6 +1416,11 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                     say(err, &no_build_plan_line(&name));
                 }
                 let _ = snapshot::after_write(&opts.paths, &Tmux::new(opts.tmux.clone(), w.tmux_socket.clone()), &id, snapshot::OP_WAIT);
+                // M§5 P1: after the undo write, which put the `plan.forget` records back, the maildirs of the fresh
+                // records that `take_back_plan` dropped go.
+                if let Err(e) = mail::prune(&store, MAIL_LOCK_WAIT) {
+                    say(err, &not_pruned_line(&e));
+                }
             }
             Err(e) => say(err, &format!("zygo: state not cleaned: {e}")),
         }
