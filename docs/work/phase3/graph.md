@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | TODO | mechanical | — |
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
@@ -403,3 +402,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | MS-16 DONE: sync child start and rate limit; member hooks start it. Review fixes: session-start trigger for Claude Code; a future last_start counts as due; S§8.4 rewritten (author's call) · PR #148 |
 | 2026-11-25 | OS-29 DONE: kind views diff/json/log (step 4); review 7: F1 (view larger than input → None), F2 (plain-diff hunk counts), F4 (must_keep whole-line rule), F7 tests fixed; F3 (8 KiB incl. marker → OS-28), F5, F6 carried · PR #153 |
 | 2026-11-25 | MS-13 DONE (PR #150): sync pass with outbox, lock, wake and secret check; review R1-R7 fixed; lock tests made deterministic (spawn guard: fork-held flock fds made the retake busy). |
+| 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
