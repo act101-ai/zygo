@@ -860,6 +860,12 @@ fn g5_text_sub_keys() {
 }
 
 #[test]
+fn g6_echo_replaces_format_and_separator_characters() {
+    let item = json!({"type":"x\u{202e}gnp.exe\u{2028}y\u{2029}\u{200b}\u{feff}z"});
+    assert_400(err(rq(&body(json!([user("go"), item])))), "unknown input item type: x?gnp.exe?y???z");
+}
+
+#[test]
 fn f9_other_hosted_items_dropped() {
     let b = body(json!([user("go"), {"type":"local_shell_call","id":"l","status":"completed"},
         {"type":"mcp_call","id":"m"}, asst("a")]));
