@@ -5,7 +5,7 @@
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"7df067045f42b3f712a0349f6561193ff69ac6b7\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795662460536,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"ece10c3e2bf600bff212e695621a427ee88e289e\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795708037891,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
     "session-id": "00000000-0000-4000-8000-000000000001",
     "thread-id": "00000000-0000-4000-8000-000000000001",
@@ -15,7 +15,7 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:53803",
+    "host": "127.0.0.1:51199",
     "content-length": "41926"
   },
   "credential_headers": [
@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_placeholder0038",
+        "id": "msg_placeholder0016",
         "role": "developer",
         "content": [
           {
@@ -39,7 +39,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0039",
+        "id": "msg_placeholder0017",
         "role": "developer",
         "content": [
           {
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0040",
+        "id": "msg_placeholder0018",
         "role": "user",
         "content": [
           {
@@ -65,7 +65,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0041",
+        "id": "msg_placeholder0019",
         "role": "user",
         "content": [
           {
@@ -76,7 +76,7 @@
       },
       {
         "type": "reasoning",
-        "id": "rs_00000000000000000000000006_0",
+        "id": "rs_00000000000000000000000009_0",
         "summary": [
           {
             "type": "summary_text",
@@ -89,16 +89,16 @@
       {
         "type": "function_call",
         "status": "completed",
-        "id": "fc_00000000000000000000000006_1",
+        "id": "fc_00000000000000000000000009_1",
         "name": "exec_command",
         "arguments": "{\"cmd\": \"echo pc12-tracer-r\"}",
         "call_id": "toolu_pc12_r"
       },
       {
         "type": "function_call_output",
-        "id": "fco_placeholder0005",
+        "id": "fco_placeholder0007",
         "call_id": "toolu_pc12_r",
-        "output": "Chunk ID: af2bd3\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-r\n"
+        "output": "Chunk ID: 778f13\nWall time: 0.0000 seconds\nProcess exited with code 0\nOriginal token count: 4\nOutput:\npc12-tracer-r\n"
       }
     ],
     "tools": [
@@ -559,12 +559,12 @@
     "prompt_cache_key": "00000000-0000-4000-8000-000000000001",
     "client_metadata": {
       "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-      "session_id": "00000000-0000-4000-8000-000000000001",
-      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
       "thread_id": "00000000-0000-4000-8000-000000000001",
       "turn_id": "00000000-0000-4000-8000-000000000003",
+      "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
       "root_turn_id": "00000000-0000-4000-8000-000000000003",
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"7df067045f42b3f712a0349f6561193ff69ac6b7\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795662460536,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}"
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"ece10c3e2bf600bff212e695621a427ee88e289e\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795708037891,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+      "session_id": "00000000-0000-4000-8000-000000000001"
     }
   },
   "reply": "r-2"

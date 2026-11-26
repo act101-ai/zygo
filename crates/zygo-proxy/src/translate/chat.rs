@@ -3,6 +3,7 @@
 use serde_json::{json, Map, Value};
 use zygo_config::Dialect;
 
+use super::sse::CALLS_DROPPED;
 use super::{
     chat_stop, copy, input_of, json_schema, message, messages, parts, s, system, texts, tool_choice, tools, usage_of, Choice, Drops,
     Part, Target,
@@ -121,19 +122,30 @@ fn image(url: String) -> Value {
     json!({"type":"image_url","image_url":{"url":url}})
 }
 
+/// A chat body as a Messages body. At `finish_reason` `content_filter` the tool calls (their arguments may be cut) are
+/// dropped and counted in `CALLS_DROPPED`, as the chat stream mapper does.
 pub(crate) fn response(resp: &Value, t: &Target) -> Value {
     let choice = resp.get("choices").and_then(|c| c.get(0)).unwrap_or(&Value::Null);
     let m = choice.get("message").unwrap_or(&Value::Null);
+    let finish = s(choice, "finish_reason");
     let mut content = Vec::new();
     if let Some(x) = s(m, "content").filter(|x| !x.is_empty()) {
         content.push(json!({"type":"text","text":x}));
     }
-    let mut tool = false;
+    let (mut tool, mut dropped) = (false, 0);
     for c in m.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+        if finish == Some("content_filter") {
+            dropped += 1;
+            continue;
+        }
         tool = true;
         let f = c.get("function").unwrap_or(&Value::Null);
         content.push(json!({"type":"tool_use","id":s(c, "id").unwrap_or(""),"name":s(f, "name").unwrap_or(""),"input":input_of(s(f, "arguments"))}));
     }
-    let stop = chat_stop(s(choice, "finish_reason"), tool);
-    message(resp, t, content, stop, usage_of(resp.get("usage"), Dialect::OpenaiChat))
+    let stop = chat_stop(finish, tool);
+    let mut out = message(resp, t, content, stop, usage_of(resp.get("usage"), Dialect::OpenaiChat));
+    if dropped > 0 {
+        out[CALLS_DROPPED] = json!(dropped);
+    }
+    out
 }

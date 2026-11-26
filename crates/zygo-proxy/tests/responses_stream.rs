@@ -9,9 +9,9 @@ use zygo_config::Dialect;
 use zygo_proxy::pipeline::Adjustment;
 use zygo_proxy::tee::HOLD_MAX;
 use zygo_proxy::translate::reasoning::decode_thinking;
-use zygo_proxy::translate::responses_client::{request, response, Calls, Encoder};
-use zygo_proxy::translate::sse::SseEvent;
-use zygo_proxy::translate::{translate_response, Target};
+use zygo_proxy::translate::responses_client::{request, response, Calls, Encoder, REFUSAL_TEXT};
+use zygo_proxy::translate::sse::{message_events, SseEvent, StreamMapper};
+use zygo_proxy::translate::{translate_request, translate_response, Target};
 
 fn tgt() -> Target {
     Target { provider: "p-ant".into(), upstream_model: "up-ant".into() }
@@ -745,7 +745,6 @@ fn f3_f6_custom_tool_input_past_hold_max_fails() {
 fn f4_stop_reasons() {
     for (reason, event, status, detail) in [
         ("model_context_window_exceeded", "response.incomplete", "incomplete", Some("max_output_tokens")),
-        ("refusal", "response.incomplete", "incomplete", Some("content_filter")),
         ("pause_turn", "response.completed", "completed", None),
         ("end_turn", "response.completed", "completed", None),
         ("stop_sequence", "response.completed", "completed", None),
@@ -767,6 +766,425 @@ fn f4_stop_reasons() {
                 None => assert!(resp.get("incomplete_details").is_none(), "{reason}"),
             }
         }
+    }
+}
+
+// ---- RS-12: a refusal ends with a text item Codex does not retry (K§6.4.3 stream obligation 5, PC19) ----
+
+#[test]
+fn refusal_maps_to_completed_with_text_item() {
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["pc"]));
+    ev.extend(end("refusal"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    let tail: Vec<String> = types(&evs)[evs.len() - 7..].to_vec();
+    assert_eq!(
+        tail,
+        [
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed"
+        ]
+    );
+    let items = items_done(&evs);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["content"], json!([{"type":"output_text","text":"pc","annotations":[]}]));
+    assert_eq!(
+        norm(&items[1]),
+        json!({"type":"message","role":"assistant","status":"completed",
+            "content":[{"type":"output_text","text":REFUSAL_TEXT,"annotations":[]}]})
+    );
+    let n = evs.len();
+    for ev in &evs[n - 7..n - 1] {
+        assert_eq!(ev.data["output_index"], json!(1), "{}", ev.event);
+    }
+    assert_eq!(evs[n - 5].data["delta"], REFUSAL_TEXT);
+    assert_eq!(evs[n - 4].data["text"], REFUSAL_TEXT);
+    let r = &evs[n - 1].data["response"];
+    assert_eq!(r["status"], "completed");
+    assert!(r.get("incomplete_details").is_none());
+    assert_eq!(r["output"], json!([]));
+    assert_eq!(r["usage"]["output_tokens"], 7);
+    assert_eq!(terminals(&evs).len(), 1);
+    assert!(e.ended());
+    assert_eq!(e.adjustments(), vec![]);
+    // No content block: the refusal item alone, at output_index 0.
+    let mut ev0 = vec![message_start()];
+    ev0.extend(end("refusal"));
+    let items0 = items_done(&run(&mut enc(), &ev0));
+    assert_eq!(items0.len(), 1);
+    assert_eq!(items0[0]["content"][0]["type"], "output_text");
+    // Non-streamed: the same items, completed.
+    let msg = json!({"content":[{"type":"text","text":"pc"}],"stop_reason":"refusal","usage":{"output_tokens":7}});
+    let (r, codes) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["status"], "completed");
+    assert!(r.get("incomplete_details").is_none());
+    assert_eq!(norm(&r["output"]), norm(&Value::Array(items)));
+    assert_eq!(codes, vec![]);
+}
+
+#[test]
+fn refusal_echo_maps_to_assistant_text() {
+    // Codex's turn-2 request after the chosen ending (run 1): the refused turn comes back in the history.
+    let mut body = record("encoder/requests/rfc-next.json");
+    body["max_output_tokens"] = json!(100);
+    // The encoder's refusal item is the item Codex sent back: reverting the encoder ending fails here.
+    let echoed = body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|it| it["role"] == "assistant" && it.to_string().contains(REFUSAL_TEXT))
+        .expect("the refusal item in the history")
+        .clone();
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["pc12 refused"]));
+    ev.extend(end("refusal"));
+    let items = items_done(&run(&mut enc(), &ev));
+    assert_eq!(norm(items.last().unwrap()), norm(&echoed));
+    // Messages form: the refusal text is assistant text.
+    let (m, _) = request(&body, &tgt(), None).unwrap();
+    let text = m["messages"].to_string();
+    assert!(text.contains("pc12-turn-rfc-end"), "{text}");
+    let assistant_has = |msgs: &Value| {
+        msgs.as_array().unwrap().iter().any(|x| x["role"] == "assistant" && x["content"].to_string().contains(REFUSAL_TEXT))
+    };
+    assert!(assistant_has(&m["messages"]), "{text}");
+    // Chat form: the same text in an assistant message.
+    let (c, _) = translate_request(&m, Dialect::OpenaiChat, &other()).unwrap();
+    assert!(assistant_has(&c["messages"]), "{}", c["messages"]);
+}
+
+// ---- RS-12 round 1 review: a refusal after a call item ends in response.failed invalid_prompt (rfd) ----
+
+/// The one terminal event of `evs`: `response.failed` with code `invalid_prompt` and `REFUSAL_TEXT`; no completed
+/// status and no refusal text item.
+fn assert_rfd(evs: &[SseEvent]) {
+    assert_sequence(evs);
+    let t = terminals(evs);
+    assert_eq!(t.len(), 1, "{:?}", types(evs));
+    assert_eq!(evs.last().unwrap().event, "response.failed", "{:?}", types(evs));
+    let r = &evs.last().unwrap().data["response"];
+    assert_eq!(r["status"], "failed");
+    assert_eq!(r["error"], json!({"code":"invalid_prompt","message":REFUSAL_TEXT}));
+    assert!(!evs.iter().any(|e| e.event == "response.completed"));
+    assert!(!items_done(evs).iter().any(|i| i.to_string().contains(REFUSAL_TEXT)), "{:?}", items_done(evs));
+}
+
+/// A call open at the refusal (at `oi`) is dropped as on every other failure path (PC18 `xt`): no done event of it
+/// (no `function_call_arguments.done`, no `custom_tool_call_input.*`, no `output_item.done`), and the event just after
+/// its last added or delta event is the one terminal event.
+fn assert_open_call_dropped(evs: &[SseEvent], oi: u64) {
+    let done = ["response.function_call_arguments.done", "response.custom_tool_call_input.delta",
+        "response.custom_tool_call_input.done", "response.output_item.done"];
+    let of_call: Vec<&SseEvent> = evs.iter().filter(|e| e.data["output_index"] == oi).collect();
+    assert!(!of_call.is_empty(), "{:?}", types(evs));
+    assert!(!of_call.iter().any(|e| done.contains(&e.event.as_str())), "{:?}", types(evs));
+    assert!(!items_done(evs).iter().any(|i| i["id"] == of_call[0].data["item"]["id"]), "{:?}", items_done(evs));
+    let n = evs.len();
+    assert_eq!(evs[n - 2].data["output_index"], oi, "{:?}", types(evs));
+    assert_eq!(terminals(evs).len(), 1, "{:?}", types(evs));
+}
+
+/// A call closed before the refusal keeps its done events: `function_call_arguments.done`, then `output_item.done`,
+/// of the call at `oi`, just before the terminal event.
+fn assert_closed_call_kept(evs: &[SseEvent], oi: u64, args: &str) {
+    let n = evs.len();
+    assert_eq!(evs[n - 3].event, "response.function_call_arguments.done", "{:?}", types(evs));
+    assert_eq!(evs[n - 3].data["arguments"], args);
+    assert_eq!(evs[n - 3].data["output_index"], oi);
+    assert_eq!(evs[n - 2].event, "response.output_item.done");
+    assert_eq!(evs[n - 2].data["output_index"], oi);
+    assert_eq!(evs[n - 2].data["item"]["type"], "function_call");
+    assert_eq!(evs[n - 2].data["item"]["arguments"], args);
+}
+
+#[test]
+fn rfd_refusal_after_complete_tool_use() {
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["pc"]));
+    ev.extend(tool_block(1, "toolu_1", "exec_command", &["{\"cmd\":", "\"ls\"}"]));
+    ev.extend(end("refusal"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_rfd(&evs);
+    let items = items_done(&evs);
+    assert_eq!(items.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["message", "function_call"]);
+    assert_eq!(items[1]["arguments"], "{\"cmd\":\"ls\"}");
+    assert!(e.ended());
+    assert_eq!(e.held(), 0);
+}
+
+#[test]
+fn rfd_refusal_mid_tool_use_drops_the_open_call() {
+    let mut ev = vec![message_start(), start(0, json!({"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}))];
+    ev.push(delta(0, json!({"type":"input_json_delta","partial_json":"{\"cmd\":"})));
+    ev.extend(end("refusal"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_rfd(&evs);
+    assert_open_call_dropped(&evs, 0);
+    assert_eq!(evs[evs.len() - 2].event, "response.function_call_arguments.delta");
+    assert!(items_done(&evs).is_empty(), "{:?}", items_done(&evs));
+    assert_eq!(e.held(), 0);
+    // A custom tool call open at the refusal: dropped, then the same ending.
+    let calls = Calls::of(&json!({"tools":[{"type":"custom","name":"apply_patch"}]}));
+    let mut ev = vec![message_start(), start(0, json!({"type":"tool_use","id":"toolu_p","name":"apply_patch","input":{}}))];
+    ev.push(delta(0, json!({"type":"input_json_delta","partial_json":"{\"input\":\"*** Be"})));
+    ev.extend(end("refusal"));
+    let evs = run(&mut Encoder::new("role-x", &tgt(), calls), &ev);
+    assert_rfd(&evs);
+    assert_open_call_dropped(&evs, 0);
+    assert_eq!(evs[evs.len() - 2].event, "response.output_item.added");
+    // A call closed before the refusal stays as sent; the call open at the refusal is dropped.
+    let mut ev = vec![message_start()];
+    ev.extend(tool_block(0, "toolu_1", "exec_command", &["{\"cmd\":\"ls\"}"]));
+    ev.push(start(1, json!({"type":"tool_use","id":"toolu_2","name":"exec_command","input":{}})));
+    ev.push(delta(1, json!({"type":"input_json_delta","partial_json":"{\"cmd\":"})));
+    ev.extend(end("refusal"));
+    let evs = run(&mut enc(), &ev);
+    assert_rfd(&evs);
+    assert_open_call_dropped(&evs, 1);
+    let items = items_done(&evs);
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!((&items[0]["call_id"], &items[0]["arguments"]), (&json!("toolu_1"), &json!("{\"cmd\":\"ls\"}")));
+}
+
+// ---- RS-12 round 3 review H1, H2: chat content_filter drops the held calls; the ending stays rfd ----
+
+/// Cut arguments of a chat call that `content_filter` stopped.
+const CUT: &str = "{\"cmd\":";
+
+/// A chat stream: text "pc", one call with `CUT` arguments, then `finish_reason` `content_filter`.
+fn chat_filtered_stream() -> String {
+    let chunk = |delta: Value, finish: Value| {
+        json!({"id":"c1","object":"chat.completion.chunk","model":"up","choices":[{"index":0,"delta":delta,"finish_reason":finish}]})
+    };
+    let call = json!({"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":CUT}});
+    let chunks = [
+        chunk(json!({"role":"assistant","content":"pc"}), Value::Null),
+        chunk(json!({"tool_calls":[call]}), Value::Null),
+        chunk(json!({}), json!("content_filter")),
+    ];
+    let mut up: String = chunks.iter().map(|c| format!("data: {c}\n\n")).collect();
+    up.push_str("data: [DONE]\n\n");
+    up
+}
+
+/// The same answer as one chat JSON body.
+fn chat_filtered_body() -> Value {
+    let call = json!({"id":"call_1","type":"function","function":{"name":"exec_command","arguments":CUT}});
+    json!({"id":"c1","object":"chat.completion","model":"up","choices":[{"index":0,
+        "message":{"role":"assistant","content":"pc","tool_calls":[call]},"finish_reason":"content_filter"}]})
+}
+
+/// No call item and no cut arguments in any event.
+fn assert_no_call(evs: &[SseEvent]) {
+    assert!(!evs.iter().any(|e| e.event.contains("function_call")), "{:?}", types(evs));
+    assert!(!evs.iter().any(|e| e.data["item"]["type"] == "function_call"), "{:?}", types(evs));
+    assert!(!evs.iter().any(|e| e.data.to_string().contains("call_1")), "{:?}", types(evs));
+}
+
+#[test]
+fn rfd_chat_content_filter_mid_call_drops_the_held_call() {
+    let mut m = StreamMapper::new(Dialect::OpenaiChat, &tgt());
+    let mut msgs = m.push(chat_filtered_stream().as_bytes());
+    msgs.extend(m.finish_events());
+    assert!(msgs.iter().any(|e| e.data["delta"]["stop_reason"] == "refusal"), "{msgs:?}");
+    assert!(!msgs.iter().any(|e| e.data["content_block"]["type"] == "tool_use"), "{msgs:?}");
+    let bytes: Vec<u8> = msgs.iter().flat_map(SseEvent::to_bytes).collect();
+    let mut e = enc();
+    let evs = e.push(&bytes);
+    assert_rfd(&evs);
+    assert_no_call(&evs);
+    let items = items_done(&evs);
+    assert_eq!(items.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["message"]);
+    assert_eq!(items[0]["content"][0]["text"], "pc");
+    assert_eq!(e.adjustments(), vec![adj("refusal_call_dropped:1")]);
+}
+
+#[test]
+fn rfd_chat_content_filter_json_body_drops_the_call() {
+    let msg = translate_response(&chat_filtered_body(), Dialect::OpenaiChat, &tgt());
+    assert!(!msg["content"].as_array().unwrap().iter().any(|b| b["type"] == "tool_use"), "{msg}");
+    // Non-streamed: status failed (rfd), no function_call in output, the code recorded.
+    let (r, codes) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["status"], "failed");
+    assert_eq!(r["error"], json!({"code":"invalid_prompt","message":REFUSAL_TEXT}));
+    let output = r["output"].as_array().unwrap();
+    assert_eq!(output.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["message"]);
+    assert!(!r.to_string().contains(CUT), "{r}");
+    assert_eq!(codes, vec![adj("refusal_call_dropped:1")]);
+    // The body as a stream (a streamed request answered in JSON): the same ending, items and code.
+    let bytes: Vec<u8> = message_events(&msg).iter().flat_map(SseEvent::to_bytes).collect();
+    let mut e = enc();
+    let evs = e.push(&bytes);
+    assert_rfd(&evs);
+    assert_no_call(&evs);
+    assert_eq!(norm(&Value::Array(items_done(&evs))), norm(&r["output"]));
+    assert_eq!(e.adjustments(), vec![adj("refusal_call_dropped:1")]);
+    // The same answer streamed by the chat upstream: the same items.
+    let mut m = StreamMapper::new(Dialect::OpenaiChat, &tgt());
+    let mut msgs = m.push(chat_filtered_stream().as_bytes());
+    msgs.extend(m.finish_events());
+    let bytes: Vec<u8> = msgs.iter().flat_map(SseEvent::to_bytes).collect();
+    assert_eq!(norm(&Value::Array(items_done(&enc().push(&bytes)))), norm(&r["output"]));
+}
+
+// ---- RS-12 round 3 review H4 ----
+
+#[test]
+fn rfd_text_open_at_refusal_after_closed_call() {
+    let mut ev = vec![message_start()];
+    ev.extend(tool_block(0, "toolu_1", "exec_command", &["{\"cmd\":\"ls\"}"]));
+    ev.push(start(1, json!({"type":"text","text":""})));
+    ev.push(delta(1, json!({"type":"text_delta","text":"so"})));
+    ev.extend(end("refusal"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_rfd(&evs);
+    let n = evs.len();
+    let tail: Vec<&str> = evs[n - 4..].iter().map(|e| e.event.as_str()).collect();
+    assert_eq!(tail, ["response.output_text.done", "response.content_part.done", "response.output_item.done", "response.failed"]);
+    assert_eq!(evs[n - 4].data["text"], "so");
+    let items = items_done(&evs);
+    assert_eq!(items.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["function_call", "message"]);
+    assert_eq!(items[1]["content"][0]["text"], "so");
+    assert!(e.ended());
+    assert_eq!(e.held(), 0);
+}
+
+#[test]
+fn rfd_refusal_after_tool_call_json_body() {
+    let msg = json!({"id":"msg_1","type":"message","role":"assistant","model":"up-ant","content":[
+        {"type":"text","text":"pc"},{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{"cmd":"ls"}}],
+        "stop_reason":"refusal","usage":{"output_tokens":7}});
+    let bytes: Vec<u8> = message_events(&msg).iter().flat_map(SseEvent::to_bytes).collect();
+    let evs = enc().push(&bytes);
+    assert_rfd(&evs);
+    // A JSON body holds whole blocks only: message_events closes each call before message_delta, so it is kept.
+    assert_closed_call_kept(&evs, 1, "{\"cmd\":\"ls\"}");
+    // Non-streamed: status failed, the closed call kept, no refusal text item.
+    let (r, _) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["status"], "failed");
+    assert_eq!(r["error"], json!({"code":"invalid_prompt","message":REFUSAL_TEXT}));
+    assert!(r.get("incomplete_details").is_none());
+    let types: Vec<&str> = r["output"].as_array().unwrap().iter().map(|i| i["type"].as_str().unwrap()).collect();
+    assert_eq!(types, ["message", "function_call"]);
+    assert_eq!(r["usage"]["output_tokens"], 7);
+}
+
+// ---- RS-12 round 2 review G7 ----
+
+#[test]
+fn refusal_after_dropped_server_tool_stays_rfc() {
+    let srv = json!({"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"q"}});
+    let mut ev = vec![message_start(), start(0, srv.clone()), stop(0)];
+    ev.extend(text_block(1, &["pc"]));
+    ev.extend(end("refusal"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    assert_eq!(terminals(&evs).len(), 1);
+    assert_eq!(evs.last().unwrap().event, "response.completed");
+    let items = items_done(&evs);
+    assert_eq!(items.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["message", "message"]);
+    assert_eq!(items[1]["content"][0]["text"], REFUSAL_TEXT);
+    assert_eq!(e.adjustments(), vec![adj("server_tool_dropped")]);
+    // Non-streamed: the same items, completed.
+    let msg = json!({"content":[srv,{"type":"text","text":"pc"}],"stop_reason":"refusal","usage":{"output_tokens":7}});
+    let (r, codes) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["status"], "completed");
+    assert!(r.get("error").is_none());
+    assert_eq!(norm(&r["output"]), norm(&Value::Array(items)));
+    assert_eq!(codes, vec![adj("server_tool_dropped")]);
+}
+
+#[test]
+fn rfd_usage_equals_other_endings_usage() {
+    let usage_of = |reason: &str| {
+        let mut ev = vec![message_start()];
+        ev.extend(tool_block(0, "toolu_1", "exec_command", &["{}"]));
+        ev.extend(end(reason));
+        evs_usage(&run(&mut enc(), &ev))
+    };
+    let rfd = usage_of("refusal");
+    assert_eq!(rfd, json!({"input_tokens":17,"input_tokens_details":{"cached_tokens":5},"output_tokens":7,
+        "total_tokens":24}));
+    for reason in ["tool_use", "end_turn", "max_tokens"] {
+        assert_eq!(usage_of(reason), rfd, "{reason}");
+    }
+}
+
+fn evs_usage(evs: &[SseEvent]) -> Value {
+    assert_eq!(terminals(evs).len(), 1);
+    evs.last().unwrap().data["response"]["usage"].clone()
+}
+
+// ---- RS-12 round 1 review F4, F5 ----
+
+#[test]
+fn refusal_text_far_under_hold_max() {
+    assert!(REFUSAL_TEXT.len() < 128);
+    assert!(REFUSAL_TEXT.len() * 1024 < HOLD_MAX);
+}
+
+#[test]
+fn refusal_after_reasoning_completes_with_text_item() {
+    let mut ev = vec![
+        message_start(),
+        start(0, json!({"type":"thinking","thinking":"","signature":""})),
+        delta(0, json!({"type":"thinking_delta","thinking":"t1"})),
+        delta(0, json!({"type":"signature_delta","signature":"sig1"})),
+        stop(0),
+    ];
+    ev.extend(end("refusal"));
+    let evs = run(&mut enc(), &ev);
+    assert_sequence(&evs);
+    assert_eq!(terminals(&evs).len(), 1);
+    assert_eq!(evs.last().unwrap().event, "response.completed");
+    let items = items_done(&evs);
+    assert_eq!(items.iter().map(|i| i["type"].as_str().unwrap()).collect::<Vec<_>>(), ["reasoning", "message"]);
+    assert_eq!(items[1]["content"][0]["text"], REFUSAL_TEXT);
+    let n = evs.len();
+    for ev in &evs[n - 7..n - 1] {
+        assert_eq!(ev.data["output_index"], json!(1), "{}", ev.event);
+    }
+}
+
+#[test]
+fn refusal_empty_item_at_output_index_0() {
+    let mut ev = vec![message_start()];
+    ev.extend(end("refusal"));
+    let evs = run(&mut enc(), &ev);
+    assert_sequence(&evs);
+    assert_eq!(types(&evs)[2..evs.len() - 1].len(), 6, "{:?}", types(&evs));
+    for ev in &evs[2..evs.len() - 1] {
+        assert_eq!(ev.data["output_index"], json!(0), "{}", ev.event);
+    }
+    assert_eq!(evs.last().unwrap().event, "response.completed");
+}
+
+#[test]
+fn refusal_item_id_differs_and_matches_across_its_events() {
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["pc"]));
+    ev.extend(end("refusal"));
+    let evs = run(&mut enc(), &ev);
+    let items = items_done(&evs);
+    let (text_id, refusal_id) = (items[0]["id"].as_str().unwrap(), items[1]["id"].as_str().unwrap());
+    assert_ne!(text_id, refusal_id);
+    let n = evs.len();
+    let tail = &evs[n - 7..n - 1];
+    assert_eq!(tail[0].data["item"]["id"], refusal_id);
+    assert_eq!(tail[5].data["item"]["id"], refusal_id);
+    for ev in &tail[1..5] {
+        assert_eq!(ev.data["item_id"], refusal_id, "{}", ev.event);
     }
 }
 

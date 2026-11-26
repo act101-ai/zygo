@@ -29,6 +29,10 @@ const CALL_COST: usize = 64;
 /// The most `partial_json`, `text` or `thinking` bytes in one delta that `message_events`, the chat mapper and the
 /// null-restore filter send (K§6.4.3 stream obligation 8).
 pub const INPUT_DELTA_MAX: usize = 64 << 10;
+/// The count of chat tool calls dropped at `finish_reason` `content_filter` (their arguments may be cut; K§6.4.3
+/// stream obligation 5): a top-level key of the Messages body and of `message_delta`, absent when none. The Responses
+/// encoder reads it so that the refusal still ends in `response.failed`, with adjustment `refusal_call_dropped:<n>`.
+pub const CALLS_DROPPED: &str = "zygo_calls_dropped";
 
 struct Open {
     key: Key,
@@ -69,6 +73,8 @@ pub struct StreamMapper {
     /// `held` plus the partial line (`buf`, `data`) is at most HOLD_MAX.
     calls: Vec<Call>,
     held: usize,
+    /// chat: the calls dropped at `content_filter` (`CALLS_DROPPED`).
+    dropped: usize,
     /// chat: the `finish_reason` and the last usage.
     finish: Option<String>,
     usage: Value,
@@ -94,6 +100,7 @@ impl StreamMapper {
             tool: false,
             calls: Vec::new(),
             held: 0,
+            dropped: 0,
             finish: None,
             usage: usage(0, 0, 0),
         }
@@ -331,15 +338,18 @@ impl StreamMapper {
             }
         }
         if let Some(fr) = s(c, "finish_reason") {
+            self.finish = Some(fr.into());
             self.close(out);
             self.calls_out(out);
-            self.finish = Some(fr.into());
         }
     }
 
     /// The held chat tool calls, each as one whole `tool_use` block; its arguments in `input_json_delta` pieces of
-    /// `deltas`.
+    /// `deltas`. At `finish_reason` `content_filter` none: they are counted in `dropped` (`CALLS_DROPPED`).
     fn calls_out(&mut self, out: &mut Vec<SseEvent>) {
+        if self.finish.as_deref() == Some("content_filter") {
+            self.dropped += std::mem::take(&mut self.calls).len();
+        }
         for c in std::mem::take(&mut self.calls) {
             self.open((1, c.index), json!({"type":"tool_use","id":c.id,"name":c.name,"input":{}}), out);
             for d in deltas("input_json_delta", "partial_json", &c.args) {
@@ -418,7 +428,11 @@ impl StreamMapper {
         self.start(out);
         self.close(out);
         self.calls_out(out);
-        out.push(ev("message_delta", json!({"type":"message_delta","delta":{"stop_reason":stop,"stop_sequence":null},"usage":usage})));
+        let mut d = json!({"type":"message_delta","delta":{"stop_reason":stop,"stop_sequence":null},"usage":usage});
+        if self.dropped > 0 {
+            d[CALLS_DROPPED] = json!(self.dropped);
+        }
+        out.push(ev("message_delta", d));
         out.push(ev("message_stop", json!({"type":"message_stop"})));
         self.ended = true;
     }
@@ -450,6 +464,8 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
     start["content"] = json!([]);
     start["stop_reason"] = Value::Null;
     start["usage"] = json!({"input_tokens":0,"output_tokens":0});
+    // The body's `CALLS_DROPPED` goes on message_delta, as the chat mapper sends it.
+    let dropped = start.as_object_mut().and_then(|o| o.remove(CALLS_DROPPED));
     let mut out = vec![ev("message_start", json!({"type":"message_start","message":start}))];
     for (i, b) in m.get("content").and_then(Value::as_array).into_iter().flatten().enumerate() {
         let (first, deltas) = match s(b, "type") {
@@ -471,7 +487,11 @@ pub fn message_events(m: &Value) -> Vec<SseEvent> {
         out.extend(deltas.into_iter().map(|d| ev("content_block_delta", json!({"type":"content_block_delta","index":i,"delta":d}))));
         out.push(ev("content_block_stop", json!({"type":"content_block_stop","index":i})));
     }
-    out.push(ev("message_delta", json!({"type":"message_delta","delta":{"stop_reason":m["stop_reason"],"stop_sequence":null},"usage":m["usage"]})));
+    let mut d = json!({"type":"message_delta","delta":{"stop_reason":m["stop_reason"],"stop_sequence":null},"usage":m["usage"]});
+    if let Some(n) = dropped {
+        d[CALLS_DROPPED] = n;
+    }
+    out.push(ev("message_delta", d));
     out.push(ev("message_stop", json!({"type":"message_stop"})));
     out
 }
