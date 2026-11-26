@@ -250,8 +250,20 @@ fn charset_designation_takes_only_a_final_byte() {
     color("a\x1b)éb", "aéb");
     // U+009B then starts its own 8-bit CSI
     color("a\x1b(\u{9b}31mb", "ab");
-    // 0x20 is below 0x30
+    // ECMA-35 allows intermediate bytes 0x20-0x2F between `(`/`)` and the final byte; clean does not take
+    // them: only `ESC (` goes, and the intermediate and the final byte stay as text, which keeps more text
+    // (O-C9); node FX-21 tracks this
     color("a\x1b( b", "a b");
+}
+
+#[test]
+fn charset_designation_final_byte_range_ends() {
+    // FX-16 review 3 F3: 0x7E is the last final byte, so `ESC ( ~` goes whole (3 bytes)
+    color("a\x1b(~b", "ab");
+    // 0x7F is above the final-byte range: only `ESC (` goes
+    color("\x1b(\x7fx", "\u{7f}x");
+    // 0x2F is an intermediate byte, not a final byte: only `ESC (` goes (node FX-21)
+    color("\x1b(/", "/");
 }
 
 #[test]

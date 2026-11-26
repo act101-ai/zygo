@@ -765,6 +765,18 @@ fn clean_case_view_with_esc_fails_the_clean_plus() {
     assert!(p.iter().any(|l| l.contains("the view holds ESC")), "{p:?}");
 }
 
+#[test]
+fn clean_case_view_with_cr_fails_the_clean_plus() {
+    // FX-16 review 3 F4: a stray `\r` in a clean-row case view fails the clean row's Plus when reuse does not apply
+    let (c, g) = got("clean", "cargo-test-color");
+    assert!(!reuse(&c));
+    let f = floor_of(&c);
+    assert_eq!(problems(&c, f, &g), Vec::<String>::new());
+    let b = Got { view: g.view.replacen('\n', "\r\n", 1), ..g.clone() };
+    let p = problems(&c, f, &b);
+    assert!(p.iter().any(|l| l.contains("the view holds CR")), "{p:?}");
+}
+
 /// The view `trim_in` builds for `c`'s raw text when the hook runs on it: `shape::run` as `trim.rs` calls it,
 /// then the O§7.8 shaped marker with the id masked; `None` when the size view would run.
 fn runner_view(c: &Case) -> Option<String> {
