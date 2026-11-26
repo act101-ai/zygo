@@ -316,3 +316,20 @@ fn help_shows_the_options_and_hides_the_child_form() { // T5
     let mail = out(&a.zygo(&["mail", "--help"], &[]).output().unwrap());
     assert!(mail.lines().any(|l| l.trim_start().starts_with("sync ")), "{mail}");
 }
+
+#[test] // S§6.6 (as rewritten): the note at the first zygo mail sync of a workspace only; a child does not use it up
+fn ci_note_prints_at_the_first_cli_sync_only() { // T10
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    let o = zygo(&a, &["mail", "sync", "--ws-id", WS_ID, "--background"], &[], None);
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(0), String::new(), String::new()));
+    assert!(tip_paths(&r).contains(&"registry/a.json".to_string())); // the child's pass ended
+    assert!(!load(&sp(&a)).unwrap().ci_note_shown);
+    let o = sync(&a);
+    assert!(out(&o).starts_with(&format!("{CI_NOTE}\n")), "{}", out(&o));
+    assert_eq!(out(&o).matches(CI_NOTE).count(), 1, "{}", out(&o));
+    assert!(load(&sp(&a)).unwrap().ci_note_shown);
+    assert!(!out(&sync(&a)).contains(CI_NOTE));
+    let b = machine(&r, "b", &[(BOB, "bob")]);
+    assert!(out(&sync(&b)).contains(CI_NOTE)); // once per workspace
+}

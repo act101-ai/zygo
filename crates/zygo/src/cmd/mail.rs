@@ -42,6 +42,9 @@ const WATCH_POLL: Duration = Duration::from_millis(500);
 /// S§8.3 step 3, D4: the CLI line when another sync of the workspace still holds the lock after `LOCK_WAIT`.
 const BUSY_LINE: &str = "zygo: another mail sync of this workspace holds the lock; try again";
 
+/// S§6.6 Limit, D4: the once-per-workspace note at the first `zygo mail sync` whose first pass ended.
+const CI_NOTE: &str = "zygo: each mail sync push can start CI and webhooks on the forge. The commits hold [skip ci]; webhooks, other workflow events and CI systems that do not read [skip ci] still run. Exclude zygo/** in such CI configs.";
+
 #[derive(Args)]
 pub struct MailArgs {
     #[command(subcommand)]
@@ -419,9 +422,12 @@ fn sync_cli(env: &Env, ws: &Workspace, a: &SyncArgs, input: &mut dyn BufRead, ou
     }
 }
 
-/// D1: each note on `err` as it is (fixed text, or text `public::classify` already scrubbed and escaped), then the
-/// summary on `out`. Write errors are ignored.
+/// D1: the CI note on `out` when `r.ci_note` (S§6.6); each note on `err` as it is (fixed text, or text
+/// `public::classify` already scrubbed and escaped); then the summary on `out`. Write errors are ignored.
 fn print_report(r: &Report, out: &mut dyn Write, err: &mut dyn Write) {
+    if r.ci_note {
+        let _ = writeln!(out, "{CI_NOTE}");
+    }
     for n in &r.notes {
         let _ = writeln!(err, "{n}");
     }

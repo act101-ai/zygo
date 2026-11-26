@@ -47,6 +47,8 @@ pub struct Report {
     pub pushed: usize,
     pub delivered: usize,
     pub notes: Vec<String>,
+    /// S§6.6: this `Mode::Cli` sync is the first of its workspace whose first pass ended; the CLI prints the note.
+    pub ci_note: bool,
 }
 
 /// What a caller asks of one sync beyond S§8.3.
@@ -160,6 +162,9 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
             state::take_again(&c.sp).map_err(|_| stop("again"))?;
             pass(&c, &mut report, first, first && opts.prune)?;
             report.passes += 1;
+            if mode == Mode::Cli && first {
+                ci_note(&c.sp, &mut report)?;
+            }
             first = false;
             env.seam.at("before_release")?;
             Ok::<(), Fail>(())
@@ -173,6 +178,19 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
             return Ok(report);
         }
     }
+}
+
+/// S§6.6, S§15: after the first pass of a `Mode::Cli` sync ends, under the lock (the only writer of `state.json`):
+/// when `ci_note_shown` is false, it is set and saved, and `report.ci_note` is set, so the note prints once per
+/// workspace. A child never calls this, so a child sync does not use the note up.
+fn ci_note(sp: &SyncPaths, report: &mut Report) -> Result<(), Fail> {
+    let mut st = state::load(sp).map_err(|_| stop("state"))?;
+    if !st.ci_note_shown {
+        st.ci_note_shown = true;
+        state::save(sp, &st).map_err(|_| stop("state"))?;
+        report.ci_note = true;
+    }
+    Ok(())
 }
 
 impl Ctx<'_> {
