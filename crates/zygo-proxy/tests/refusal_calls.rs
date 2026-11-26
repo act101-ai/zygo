@@ -10,6 +10,7 @@ use support::{Harness, MODEL};
 use zygo_config::Dialect::{self, Openai as O, OpenaiChat as C};
 use zygo_core::Agent;
 use zygo_proxy::tee::HOLD_MAX;
+use zygo_proxy::translate::{StreamMapper, Target};
 
 const M: &str = "anthropic/v1/messages";
 const SSE: &str = "text/event-stream";
@@ -73,11 +74,16 @@ fn usage_raw() -> Value {
     json!({"prompt_tokens":120,"completion_tokens":7,"total_tokens":127})
 }
 
-/// The last usage row holds `refusal_call_dropped:1`.
-fn assert_row_code(h: &Harness) {
+/// The `refusal_call_dropped:` codes of the last usage row.
+fn row_codes(h: &Harness) -> Vec<String> {
     let rows = h.usage_rows();
     let a = &rows.last().expect("a usage row").adjustments;
-    assert!(a.contains(&"refusal_call_dropped:1".to_owned()), "{a:?}");
+    a.iter().filter(|x| x.starts_with("refusal_call_dropped:")).cloned().collect()
+}
+
+/// The last usage row holds `refusal_call_dropped:1` exactly once, and no other `refusal_call_dropped:` code.
+fn assert_row_code(h: &Harness) {
+    assert_eq!(row_codes(h), ["refusal_call_dropped:1"]);
 }
 
 /// A Messages SSE body: no key, no tool_use block, no call id, stop_reason refusal.
@@ -104,7 +110,14 @@ fn assert_json_dropped(b: &[u8]) {
 /// A Responses stream: a `message` item with text "hel", then a `function_call` item `call_1` with one argument
 /// delta `CUT` and no `output_item.done`, then `last`.
 fn responses_cut_call(last: Value) -> Vec<u8> {
-    sse(&[
+    let mut evs = responses_open_call();
+    evs.push(last);
+    sse(&evs)
+}
+
+/// The events of `responses_cut_call` before `last`.
+fn responses_open_call() -> Vec<Value> {
+    vec![
         json!({"type":"response.created","sequence_number":0,"response":{"id":"resp_up","object":"response","model":"up-rs","status":"in_progress","output":[],"usage":null}}),
         json!({"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"message","id":"msg_up","role":"assistant","content":[]}}),
         json!({"type":"response.content_part.added","sequence_number":2,"output_index":0,"content_index":0,"item_id":"msg_up","part":{"type":"output_text","text":""}}),
@@ -112,8 +125,7 @@ fn responses_cut_call(last: Value) -> Vec<u8> {
         json!({"type":"response.output_item.done","sequence_number":4,"output_index":0,"item":{"type":"message","id":"msg_up","role":"assistant","content":[{"type":"output_text","text":"hel"}]}}),
         json!({"type":"response.output_item.added","sequence_number":5,"output_index":1,"item":{"type":"function_call","id":"fc_up","call_id":"call_1","name":"exec_command","arguments":""}}),
         json!({"type":"response.function_call_arguments.delta","sequence_number":6,"output_index":1,"item_id":"fc_up","delta":CUT}),
-        last,
-    ])
+    ]
 }
 
 #[test] // chat stream, call held at content_filter
@@ -218,4 +230,138 @@ fn messages_client_responses_upstream_content_filter_json_drops_call() {
     assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
     assert_json_dropped(&b);
     assert_row_code(&h);
+}
+
+/// A Responses mapper for a Messages client, as `forward.rs` builds it.
+fn mapper() -> StreamMapper {
+    StreamMapper::new(O, &Target { provider: "p-oai".into(), upstream_model: "up-oai".into() }).calls_dropped_key(false)
+}
+
+/// `response.created` and a `function_call` item `call_1` named `name` at output index 0.
+fn open_call(name: &str) -> Vec<Value> {
+    vec![
+        json!({"type":"response.created","sequence_number":0,"response":{"id":"resp_up","object":"response","model":"up-rs","status":"in_progress","output":[],"usage":null}}),
+        json!({"type":"response.output_item.added","sequence_number":1,"output_index":0,
+               "item":{"type":"function_call","id":"fc_up","call_id":"call_1","name":name,"arguments":""}}),
+    ]
+}
+
+fn arg_delta(d: &str) -> Value {
+    json!({"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_up","delta":d})
+}
+
+#[test] // F1: empty argument deltas add nothing to a held call: the held bytes and the pending call stay flat
+fn responses_held_call_empty_deltas_stay_flat() {
+    let mut m = mapper();
+    let first = m.push(&sse(&open_call("exec_command")));
+    assert_eq!(first.iter().map(|e| e.event.as_str()).collect::<Vec<_>>(), ["message_start"]);
+    let (base, pending) = m.held_state();
+    assert_eq!(pending, 1);
+    let empty: Vec<Value> = (0..100_000).map(|_| arg_delta("")).collect();
+    assert!(m.push(&sse(&empty)).is_empty());
+    // No argument byte is held: the count is the call's fixed cost alone, and one call waits, not 100,000 events.
+    assert_eq!(m.held_state(), (base, 1));
+    let out = m.push(&sse(&[
+        json!({"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":""}}),
+        json!({"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":3}}}),
+    ]));
+    let names: Vec<&str> = out.iter().map(|e| e.event.as_str()).collect();
+    assert_eq!(names, ["content_block_start", "content_block_stop", "message_delta", "message_stop"]);
+    assert_eq!(m.held_state(), (0, 0));
+}
+
+#[test] // F1: many 1-byte argument deltas that take a held call past HOLD_MAX end the stream; nothing of the call is sent
+fn responses_held_call_one_byte_deltas_over_hold_max_errors() {
+    // The name holds all but 10,000 bytes of HOLD_MAX, so that 1-byte deltas cross the bound in a few thousand events.
+    let name = "n".repeat(HOLD_MAX - 10_000);
+    let mut evs = open_call(&name);
+    evs.extend((0..20_000).map(|_| arg_delta("a")));
+    let mut m = mapper();
+    let out = m.push(&sse(&evs));
+    let names: Vec<&str> = out.iter().map(|e| e.event.as_str()).collect();
+    assert_eq!(names, ["message_start", "error"]);
+    assert_eq!(out[1].data["error"]["message"], "upstream tool call too long");
+    assert!(m.ended());
+}
+
+#[test] // F2: a JSON body at content_filter keeps a completed call and drops a call still in progress
+fn messages_client_responses_upstream_content_filter_json_keeps_completed_call() {
+    let h = start(O);
+    h.reply_with(
+        200,
+        JSON,
+        serde_json::to_vec(&json!({"id":"resp_up","object":"response","model":"up-rs","status":"incomplete",
+            "incomplete_details":{"reason":"content_filter"},
+            "output":[
+                {"type":"function_call","id":"fc_0","call_id":"call_0","name":"exec_command","arguments":"{\"cmd\":\"ls\"}","status":"completed"},
+                {"type":"function_call","id":"fc_up","call_id":"call_1","name":"exec_command","arguments":CUT,"status":"in_progress"}
+            ],
+            "usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}))
+        .unwrap(),
+    );
+    let (s, _, b) = h.post(M, &client_body(false));
+    let text = String::from_utf8_lossy(&b);
+    assert_eq!(s, 200, "{text}");
+    assert!(!contains(&b, KEY) && !contains(&b, b"call_1"), "{text}");
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["stop_reason"], "refusal", "{text}");
+    assert_eq!(v["content"], json!([{"type":"tool_use","id":"call_0","name":"exec_command","input":{"cmd":"ls"}}]), "{text}");
+    assert_row_code(&h);
+}
+
+/// A Messages SSE body that ends in an `error` event with `message`, after the text "hel", with nothing of `call_1`.
+fn assert_stream_error(b: &[u8], message: &str) {
+    let text = String::from_utf8_lossy(b);
+    assert!(contains(b, b"\"hel\""), "{text}");
+    assert!(!contains(b, b"tool_use") && !contains(b, b"input_json_delta") && !contains(b, b"call_1"), "{text}");
+    let evs = events(b);
+    let (name, data) = evs.last().expect("an event");
+    assert_eq!((name.as_str(), &data["error"]["message"]), ("error", &json!(message)), "{text}");
+}
+
+#[test] // F4: an upstream error event while a call is held: the call is not sent, then the error
+fn messages_client_responses_upstream_error_while_held_drops_call() {
+    let h = start(O);
+    h.reply_with(200, SSE, responses_cut_call(json!({"type":"error","sequence_number":7,"code":"server_error","message":"boom"})));
+    let (s, _, b) = h.post(M, &client_body(true));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    assert_stream_error(&b, "boom");
+}
+
+#[test] // F4: the upstream stream ends while a call is held: the call is not sent, then the error
+fn messages_client_responses_upstream_early_end_while_held_drops_call() {
+    let h = start(O);
+    h.reply_with(200, SSE, sse(&responses_open_call()));
+    let (s, _, b) = h.post(M, &client_body(true));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    assert_stream_error(&b, "upstream stream ended early");
+}
+
+#[test] // F4: a call closed by its output_item.done before content_filter stays sent, whole
+fn messages_client_responses_upstream_closed_call_before_content_filter_is_sent() {
+    let h = start(O);
+    let mut evs = responses_open_call();
+    evs.push(json!({"type":"response.function_call_arguments.delta","sequence_number":7,"output_index":1,"item_id":"fc_up","delta":"\"ls\"}"}));
+    evs.push(json!({"type":"response.output_item.done","sequence_number":8,"output_index":1,
+        "item":{"type":"function_call","id":"fc_up","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"ls\"}","status":"completed"}}));
+    evs.push(json!({"type":"response.incomplete","sequence_number":9,
+        "response":{"id":"resp_up","object":"response","model":"up-rs","status":"incomplete",
+        "incomplete_details":{"reason":"content_filter"},"output":[],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}));
+    h.reply_with(200, SSE, sse(&evs));
+    let (s, _, b) = h.post(M, &client_body(true));
+    let text = String::from_utf8_lossy(&b);
+    assert_eq!(s, 200, "{text}");
+    assert!(!contains(&b, KEY), "{text}");
+    let evs = events(&b);
+    let start = evs.iter().find(|(n, d)| n == "content_block_start" && d["content_block"]["type"] == "tool_use").expect("a tool_use block");
+    assert_eq!(start.1["content_block"]["id"], "call_1", "{text}");
+    let args: String = evs
+        .iter()
+        .filter(|(_, d)| d["delta"]["type"] == "input_json_delta")
+        .map(|(_, d)| d["delta"]["partial_json"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(args, "{\"cmd\":\"ls\"}", "{text}");
+    let md = evs.iter().find(|(n, _)| n == "message_delta").expect("a message_delta");
+    assert_eq!(md.1["delta"]["stop_reason"], "refusal", "{text}");
+    assert!(row_codes(&h).is_empty(), "{:?}", row_codes(&h));
 }

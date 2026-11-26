@@ -45,16 +45,16 @@ pub fn take_calls_dropped(v: &mut Value) -> u64 {
 struct Open {
     key: Key,
     index: u32,
-    /// A delta was sent.
+    /// A delta was sent (on a held block: a non-empty `partial_json` was added).
     delta: bool,
-    /// A Responses `function_call` block: its start and deltas wait in `pending` until it closes.
+    /// A Responses `function_call` block: it waits in `pending` until it closes.
     held: bool,
 }
 
 /// A chat tool call, held until the choice finishes: chat deltas of several calls may interleave, and an Anthropic
-/// block must start, get its deltas and stop before the next one starts.
+/// block must start, get its deltas and stop before the next one starts. Also the held Responses `function_call`.
 struct Call {
-    /// The delta's `index`, else its position in `tool_calls` (several calls can share it).
+    /// chat: the delta's `index`, else its position in `tool_calls` (several calls can share it). Responses: unused.
     index: u64,
     id: String,
     name: String,
@@ -80,12 +80,12 @@ pub struct StreamMapper {
     open: Option<Open>,
     tool: bool,
     /// chat: the tool calls in order of first delta, and their held bytes (CALL_COST + id + name + arguments per call);
-    /// Responses: the held `function_call` block's bytes (CALL_COST + id + name + `partial_json`). `held` plus the
+    /// Responses: the held `function_call` block's bytes (CALL_COST + id + name + arguments). `held` plus the
     /// partial line (`buf`, `data`) is at most HOLD_MAX.
     calls: Vec<Call>,
     held: usize,
-    /// Responses: the held `function_call` block's `content_block_start` and deltas.
-    pending: Vec<SseEvent>,
+    /// Responses: the held `function_call` block: its id, name and arguments joined in one string.
+    pending: Option<Call>,
     /// The calls dropped at a refusal (`CALLS_DROPPED`).
     dropped: usize,
     /// `end` writes `CALLS_DROPPED` on `message_delta` (off for a Messages client).
@@ -115,7 +115,7 @@ impl StreamMapper {
             tool: false,
             calls: Vec::new(),
             held: 0,
-            pending: Vec::new(),
+            pending: None,
             dropped: 0,
             dropped_key: true,
             finish: None,
@@ -139,6 +139,12 @@ impl StreamMapper {
     /// The calls dropped at a refusal so far (K§6.4.3 stream obligation 5).
     pub fn calls_dropped(&self) -> u64 {
         self.dropped as u64
+    }
+
+    /// Test accessor: the held byte count (`held`) and the number of calls that wait in `pending` (0 or 1).
+    #[doc(hidden)]
+    pub fn held_state(&self) -> (usize, usize) {
+        (self.held, usize::from(self.pending.is_some()))
     }
 
     /// A terminal or error event was emitted.
@@ -414,17 +420,19 @@ impl StreamMapper {
             "content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}})));
     }
 
-    /// Closes the open block and opens `block` under `key`. A Responses `tool_use` block is held: its start waits in
-    /// `pending` (K§6.4.3 stream obligation 5).
+    /// Closes the open block and opens `block` under `key`. A Responses `tool_use` block is held: its id and name wait
+    /// in `pending`, sent by `close` (K§6.4.3 stream obligation 5).
     fn open(&mut self, key: Key, block: Value, out: &mut Vec<SseEvent>) {
         self.start(out);
         self.close(out);
         let held = self.from == Dialect::Openai && block["type"] == "tool_use";
         if held {
-            self.held += CALL_COST + s(&block, "id").map_or(0, str::len) + s(&block, "name").map_or(0, str::len);
+            let (id, name) = (s(&block, "id").unwrap_or("").to_string(), s(&block, "name").unwrap_or("").to_string());
+            self.held += CALL_COST + id.len() + name.len();
+            self.pending = Some(Call { index: 0, id, name, args: String::new() });
+        } else {
+            out.push(ev("content_block_start", json!({"type":"content_block_start","index":self.next,"content_block":block})));
         }
-        let e = ev("content_block_start", json!({"type":"content_block_start","index":self.next,"content_block":block}));
-        if held { self.pending.push(e) } else { out.push(e) }
         self.open = Some(Open { key, index: self.next, delta: false, held });
         self.next += 1;
     }
@@ -441,24 +449,31 @@ impl StreamMapper {
         self.open.as_ref().is_some_and(|o| o.key == key && o.delta)
     }
 
-    /// A delta on the open block; on a held block it waits in `pending`.
+    /// A delta on the open block. On a held block its `partial_json` is appended to the held arguments and counted in
+    /// `held`; an empty or missing one adds nothing.
     fn delta(&mut self, d: Value, out: &mut Vec<SseEvent>) {
         if let Some(o) = &mut self.open {
-            o.delta = true;
-            let held = o.held;
-            if held {
-                self.held += s(&d, "partial_json").map_or(0, str::len);
+            if !o.held {
+                o.delta = true;
+                out.push(ev("content_block_delta", json!({"type":"content_block_delta","index":o.index,"delta":d})));
+            } else if let (Some(c), Some(a)) = (&mut self.pending, s(&d, "partial_json").filter(|a| !a.is_empty())) {
+                o.delta = true;
+                c.args.push_str(a);
+                self.held += a.len();
             }
-            let e = ev("content_block_delta", json!({"type":"content_block_delta","index":o.index,"delta":d}));
-            if held { self.pending.push(e) } else { out.push(e) }
         }
     }
 
-    /// Closes the open block; a held block's start and deltas go out first.
+    /// Closes the open block. A held block goes out whole first: its `content_block_start`, then its arguments in
+    /// `input_json_delta` pieces of `deltas`.
     fn close(&mut self, out: &mut Vec<SseEvent>) {
         if let Some(o) = self.open.take() {
-            if o.held {
-                out.append(&mut self.pending);
+            if let Some(c) = self.pending.take().filter(|_| o.held) {
+                let b = json!({"type":"tool_use","id":c.id,"name":c.name,"input":{}});
+                out.push(ev("content_block_start", json!({"type":"content_block_start","index":o.index,"content_block":b})));
+                for d in deltas("input_json_delta", "partial_json", &c.args) {
+                    out.push(ev("content_block_delta", json!({"type":"content_block_delta","index":o.index,"delta":d})));
+                }
                 self.held = 0;
             }
             out.push(ev("content_block_stop", json!({"type":"content_block_stop","index":o.index})));
@@ -470,7 +485,7 @@ impl StreamMapper {
     fn drop_held(&mut self) {
         if self.open.as_ref().is_some_and(|o| o.held) {
             self.open = None;
-            self.pending.clear();
+            self.pending = None;
             self.held = 0;
             self.dropped += 1;
         }

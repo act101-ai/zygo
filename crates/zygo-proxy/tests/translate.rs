@@ -598,8 +598,8 @@ fn resp_events(sig: &str) -> Vec<SseEvent> {
         text_d(1, "lo"),
         block_stop(1),
         block_start(2, json!({"type":"tool_use","id":"call_9","name":"get","input":{}})),
-        json_d(2, "{\"a\""),
-        json_d(2, ":1}"),
+        // RS-16: a Responses function_call is held until it closes, then sent with its arguments joined.
+        json_d(2, "{\"a\":1}"),
         block_stop(2),
         msg_delta("tool_use", [60, 40, 0, 7]),
         msg_stop(),

@@ -124,9 +124,9 @@ fn output(b: &Value, t: &Target, d: &mut Drops) -> Value {
     }
 }
 
-/// A Responses body as a Messages body. At `incomplete` with reason `content_filter` the `function_call` items (their
-/// arguments may be cut) are dropped and counted in `CALLS_DROPPED`, as the stream mapper does (K§6.4.3 stream
-/// obligation 5).
+/// A Responses body as a Messages body. At `incomplete` with reason `content_filter` each `function_call` item whose
+/// `status` is not `completed` (its arguments may be cut) is dropped and counted in `CALLS_DROPPED`; a completed call
+/// is kept, as the stream mapper keeps a closed call (K§6.4.3 stream obligation 5).
 pub(crate) fn response(resp: &Value, t: &Target) -> Value {
     let reason = resp.get("incomplete_details").and_then(|d| s(d, "reason"));
     let filtered = responses_stop(s(resp, "status"), reason, false) == "refusal";
@@ -148,7 +148,7 @@ pub(crate) fn response(resp: &Value, t: &Target) -> Value {
                     }
                 }
             }
-            Some("function_call") if filtered => dropped += 1,
+            Some("function_call") if filtered && s(item, "status") != Some("completed") => dropped += 1,
             Some("function_call") => {
                 tool = true;
                 content.push(json!({"type":"tool_use","id":s(item, "call_id").unwrap_or(""),"name":s(item, "name").unwrap_or(""),
