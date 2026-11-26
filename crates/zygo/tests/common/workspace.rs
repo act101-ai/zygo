@@ -60,11 +60,13 @@ fn joined(h: Reader) -> Vec<u8> {
 /// Every user config of the harness holds it (FX-23).
 pub use super::NO_MARKETPLACE;
 
-/// No line of the stderr `err` of `what` comes from a marketplace sync (FX-23): no line names a marketplace (`marketplace
-/// act101: tag … moved`, a failed fetch) and none is the sync summary `plugins: offline` or `plugins: partial` (an
-/// offline sync prints only the summary). So the run did no marketplace sync and reached no network.
+/// No line of the stderr `err` of `what` comes from a marketplace sync (FX-23): no line is a per-marketplace sync line
+/// (it starts with `marketplace `: `marketplace act101: tag … moved`, a failed fetch) and none is the offline sync
+/// summary `plugins: offline` (an offline sync prints only the summary). `plugins: partial` is not a sync line (a
+/// snapshot prints it too), so it is not matched (FX-23 review F4). The drop check of [`Harness`] (the
+/// `marketplaces` folder) is the primary signal; this check adds the stderr of the captured runs.
 pub fn no_marketplace_line(err: &str, what: &str) {
-    let sync = |l: &str| l.contains("marketplace") || l.ends_with("plugins: offline") || l.ends_with("plugins: partial");
+    let sync = |l: &str| l.starts_with("marketplace ") || l == "plugins: offline";
     assert!(!err.lines().any(sync), "{what}: a marketplace sync ran (FX-23):\n{err}");
 }
 

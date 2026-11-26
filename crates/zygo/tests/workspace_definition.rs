@@ -915,3 +915,16 @@ fn fx23_harness_config_keeps_the_top_level_keys_of_the_body() {
     let main_role: Vec<&str> = out.lines().filter(|l| l.starts_with("main_role ")).collect();
     assert_eq!(main_role, ["main_role = \"boss\"  # user"]);
 }
+
+/// FX-23 review F4: the stderr check matches only sync output: a line that starts with `marketplace ` and the exact
+/// offline summary `plugins: offline`. `plugins: partial` and other lines that name a marketplace pass.
+#[test]
+fn fx23_the_stderr_check_matches_only_sync_lines() {
+    for ok in ["plugins: partial", "zygo: marketplace team is not configured", "loadout uses marketplace plugins", "x plugins: offline"] {
+        no_marketplace_line(ok, "ok");
+    }
+    for sync in ["marketplace act101: tag v1 moved; run zygo marketplace update act101 --accept", "plugins: offline"] {
+        let r = std::panic::catch_unwind(|| no_marketplace_line(&format!("zygo: ok\n{sync}\n"), "sync"));
+        assert!(r.is_err(), "{sync}");
+    }
+}
