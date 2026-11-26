@@ -251,7 +251,7 @@ Build order **(operator)**: steps 1-2, then step 4, then step 3. The work graph 
 
 **(author)** The first runners: `cargo test` (libtest output), `pytest` and `go test`. Others (`cargo nextest`, `jest`, `vitest`, `mocha`, `rspec`) wait until these three are measured (O§13).
 
-Each runner view is a blacklist **(lead)**: it hides only the noise forms listed in its row, and keeps every other line, in order. Thus `--nocapture` output, `note:` lines, `error: test failed, to rerun pass …`, signal and crash text (`process didn't exit successfully`, `SIGSEGV`, `panicked at`), compile errors and warnings all stay. A hidden form must match the whole line.
+Each runner view is a blacklist **(lead)**: it hides only the noise forms listed in its row, and keeps every other line, in order. Thus `--nocapture` output, `note:` lines, `error: test failed, to rerun pass …`, signal and crash text (`process didn't exit successfully`, `SIGSEGV`, `panicked at`), compile errors and warnings all stay. A hidden form must match the whole line. In the hidden forms, `\s` is an ASCII space or tab, and a line that ends in CR matches no form.
 
 A runner view is tried when a segment of the command names the runner, and it is used only when the text has the runner's summary. The command picks the parser; the output confirms it. A wrapper segment `make test`, `just test`, `npm test`, `pnpm test` or `yarn test` tries the three runners in the table's order.
 
@@ -263,7 +263,7 @@ A runner view is tried when a segment of the command names the runner, and it is
 
 **Failure section** of each runner: the lines that a view keeps whole for each failed test.
 
-- libtest: the line `test <name> ... FAILED`, the `---- <name> stdout ----` block to the next `---- ` header or `failures:` line, and the `failures:` name list. None of these match a hidden form.
+- libtest: the line `test <name> ... FAILED`, the `---- <name> stdout ----` block to the next `---- ` header or `failures:` line, and the `failures:` name list. No hidden form applies to a line inside a failure section, also when the line has a hidden form (trybuild output, a test that runs cargo), because O-C9 keeps it. A libtest test binary's hidden test lines end at its `test result:` line or at the next cargo binary line `^\s+(Running|Doc-tests) `, so a binary that crashed before its summary gets its own count line.
 - pytest: the `FAILURES` and `ERRORS` sections and the `short test summary info` section, to the next `=`-line header. None of these match a hidden form.
 - go test: every line from the test's `=== RUN <name>` to its `--- FAIL: <name>` line and the indented lines after it, including all output lines that the rules below give to that test.
 
@@ -592,3 +592,6 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-25 | O§7.4 | author's call (pending operator ratification under O§15 item 2) | OS-12 review F4/F5: charset designations and ESC ESC left residue |
 | 2026-11-25 | O§7.7, O§8.1, O§8.2, O§8.3 item 4 | author's call (lead) | OS-29 plan open items: diff marker text, diff preamble not shown, log level words and line numbers, log with no level line, a `must_keep` line holds when a view line equals it or, in the log view, equals `<n>: ` followed by it, and an empty `must_keep` line is invalid (O§8.1 Bless, O§8.2, O§8.3 item 4; OS-29 review R3); `VIEW_CAP_BYTES` cite moved to `view.rs:6` |
 | 2026-11-25 | O§7.2, O§17 PO2 | author's call (lead) | PO2 live run on 2.1.332: stderr arrives merged into stdout; premise verified |
+| 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F1: failure sections can hold lines of a hidden form (trybuild, tests that run cargo); O-C9 keeps them |
+| 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F4: Unicode and CR whitespace matched the hidden forms; ASCII only hides less (O§15 item 2 decision record) |
+| 2026-11-25 | O§7.6 | author's call (lead) | OS-30 review F2: a crashed test binary's count absorbed the next binary's test lines; a cargo binary line now ends the group |
