@@ -306,9 +306,9 @@ pub fn cli(h: &Harness, args: &[&str], extra: &[(&str, &OsStr)]) -> Output {
     run_in(h, &h.repo(), args, extra, true)
 }
 
-/// Writes `root/config.toml`.
+/// Writes `root/config.toml`: the harness head `NO_MARKETPLACE`, then `body` ([`Harness::config`], FX-23).
 pub fn config(h: &Harness, body: &str) {
-    std::fs::write(h.root().join("config.toml"), body).unwrap();
+    h.config(body);
 }
 
 /// The state `id`.
