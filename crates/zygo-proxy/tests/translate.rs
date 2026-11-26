@@ -26,12 +26,13 @@ use zygo_proxy::redact_stage::RedactLimits;
 use zygo_proxy::server::StartOpts;
 use zygo_proxy::session::{ManualClock, SessionGrant, SessionRequest};
 use zygo_proxy::tee::{COPY_MAX, HOLD_MAX};
-use zygo_proxy::translate::reasoning::{decode, encode, without_zygo_thinking, Signature};
+use zygo_proxy::translate::reasoning::{decode, decode_thinking, encode, without_zygo_thinking, Signature};
+use zygo_proxy::translate::responses_client::{response, Calls, Encoder};
 use zygo_proxy::{Proxy, ProxyHandle};
 use zygo_redact::DeadlinePolicy;
 use zygo_usage::{RequestRow, Store};
 use zygo_proxy::translate::{
-    translate_error, translate_request, translate_response, SseEvent, StreamMapper, Target, DOC_OMITTED,
+    message_events, translate_error, translate_request, translate_response, SseEvent, StreamMapper, Target, DOC_OMITTED,
 };
 
 fn tgt() -> Target {
@@ -1572,4 +1573,87 @@ fn res_sse_no_index_calls_in_separate_chunks() {
         block_start(0, json!({"type":"tool_use","id":"c1","name":"a","input":{}})), json_d(0, "{\"x\":1}"), block_stop(0),
         block_start(1, json!({"type":"tool_use","id":"c2","name":"b","input":{}})), json_d(1, "{\"y\":2}"), block_stop(1),
         msg_delta("tool_use", [0, 0, 0, 0]), msg_stop()]);
+}
+
+/// A Messages body with `content`, as an Anthropic upstream sends it.
+fn msg_body(content: Value) -> Value {
+    json!({"id":"msg_1","type":"message","role":"assistant","model":"up","content":content,
+        "stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":2}})
+}
+
+/// `message_events` of `m` through the Responses encoder: its events and its adjustment codes.
+fn encoded(m: &Value) -> (Vec<SseEvent>, Vec<String>) {
+    let bytes: Vec<u8> = message_events(m).iter().flat_map(SseEvent::to_bytes).collect();
+    let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+    let mut out = e.push(&bytes);
+    out.extend(e.finish());
+    (out, e.adjustments().into_iter().map(|a| a.0).collect())
+}
+
+#[test] // K§6.4.3 stream obligation 2: a redacted_thinking block of a JSON body keeps its block and its item
+fn message_events_keeps_redacted_thinking() {
+    let red = json!({"type":"redacted_thinking","data":"EmwKAhgB"});
+    let m = msg_body(json!([red.clone(), {"type":"text","text":"hi"}]));
+    let evs = message_events(&m);
+    let names: Vec<&str> = evs.iter().map(|e| e.event.as_str()).collect();
+    assert_eq!(names, ["message_start", "content_block_start", "content_block_stop", "content_block_start",
+        "content_block_delta", "content_block_stop", "message_delta", "message_stop"]);
+    assert_eq!(evs[1].data, json!({"type":"content_block_start","index":0,"content_block":red}));
+    assert_eq!(evs[2].data, json!({"type":"content_block_stop","index":0}));
+    assert_eq!(evs[3].data["content_block"], json!({"type":"text","text":""}));
+    assert_eq!(evs[4].data["delta"], json!({"type":"text_delta","text":"hi"}));
+    let (out, codes) = encoded(&m);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 2);
+    assert_eq!((&items[0]["type"], &items[0]["summary"]), (&json!("reasoning"), &json!([])));
+    assert_eq!(decode_thinking(items[0]["encrypted_content"].as_str().unwrap(), &tgt()), Some(red));
+    assert_eq!(items[1]["type"], "message");
+    assert_eq!(items[1]["content"][0]["text"], "hi");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+#[test] // K§6.4.3 stream obligation 3: server tool blocks of a JSON body are dropped with server_tool_dropped
+fn message_events_drops_server_tool_blocks() {
+    let use_ = json!({"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"q"}});
+    let res = json!({"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]});
+    let m = msg_body(json!([use_.clone(), res.clone(), {"type":"text","text":"hi"}]));
+    let evs = message_events(&m);
+    let starts: Vec<&Value> = evs.iter().filter(|e| e.event == "content_block_start").map(|e| &e.data["content_block"]).collect();
+    assert_eq!(starts, [&use_, &res, &json!({"type":"text","text":""})]);
+    let deltas: Vec<&Value> = evs.iter().filter(|e| e.event == "content_block_delta").map(|e| &e.data).collect();
+    assert_eq!(deltas, [&json!({"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"hi"}})]);
+    let (out, codes) = encoded(&m);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["content"][0]["text"], "hi");
+    assert!(!out.iter().any(|e| e.data.to_string().contains("srvtoolu_1")));
+    assert_eq!(out.last().unwrap().event, "response.completed");
+    assert_eq!(codes, ["server_tool_dropped"]);
+}
+
+#[test] // RS-10: unknown block types and blocks with no `type` take the fallback arm: no empty message item, same items as the JSON path
+fn message_events_unknown_blocks_match_json_path() {
+    let m = msg_body(json!([
+        {"type":"mcp_tool_use","id":"mcptoolu_1","name":"n","server_name":"s","input":{}},
+        {"type":"mcp_tool_result","tool_use_id":"mcptoolu_1","is_error":false,"content":[]},
+        {"type":"container_upload","file_id":"file_1"},
+        {"type":"future_block_v9","x":1},
+        {},
+        {"type":"text","text":"hi"},
+    ]));
+    let (out, codes) = encoded(&m);
+    let without_id = |i: &Value| {
+        let mut i = i.clone();
+        i.as_object_mut().unwrap().remove("id");
+        i
+    };
+    let items: Vec<Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| without_id(&e.data["item"])).collect();
+    assert!(!items.iter().any(|i| i["type"] == "message" && i["content"][0]["text"] == ""), "{items:?}");
+    let (r, json_codes) = response(&m, "role-x", &tgt(), &Calls::default());
+    let json_items: Vec<Value> = r["output"].as_array().unwrap().iter().map(without_id).collect();
+    assert_eq!(items, json_items);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["content"][0]["text"], "hi");
+    assert_eq!(codes, json_codes.into_iter().map(|a| a.0).collect::<Vec<_>>());
+    assert_eq!(out.last().unwrap().event, "response.completed");
 }
