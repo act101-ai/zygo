@@ -29,16 +29,26 @@ const CALL_COST: usize = 64;
 /// The most `partial_json`, `text` or `thinking` bytes in one delta that `message_events`, the chat mapper and the
 /// null-restore filter send (K§6.4.3 stream obligation 8).
 pub const INPUT_DELTA_MAX: usize = 64 << 10;
-/// The count of chat tool calls dropped at `finish_reason` `content_filter` (their arguments may be cut; K§6.4.3
-/// stream obligation 5): a top-level key of the Messages body and of `message_delta`, absent when none. The Responses
-/// encoder reads it so that the refusal still ends in `response.failed`, with adjustment `refusal_call_dropped:<n>`.
+/// The count of tool calls dropped at a refusal (their arguments may be cut; K§6.4.3 stream obligation 5): chat calls
+/// at `finish_reason` `content_filter`, and a Responses `function_call` still open at a refusal. A top-level key of
+/// the Messages body and of `message_delta`, absent when none. The Responses encoder reads it so that the refusal
+/// still ends in `response.failed`, with adjustment `refusal_call_dropped:<n>`. A Messages client never gets it
+/// (`StreamMapper::calls_dropped_key(false)`, `take_calls_dropped`).
 pub const CALLS_DROPPED: &str = "zygo_calls_dropped";
+
+/// Removes the top-level `CALLS_DROPPED` key of a Messages body or `message_delta` and returns its count; 0 when
+/// absent or `v` is not an object.
+pub fn take_calls_dropped(v: &mut Value) -> u64 {
+    v.as_object_mut().and_then(|o| o.remove(CALLS_DROPPED)).and_then(|n| n.as_u64()).unwrap_or(0)
+}
 
 struct Open {
     key: Key,
     index: u32,
     /// A delta was sent.
     delta: bool,
+    /// A Responses `function_call` block: its start and deltas wait in `pending` until it closes.
+    held: bool,
 }
 
 /// A chat tool call, held until the choice finishes: chat deltas of several calls may interleave, and an Anthropic
@@ -70,11 +80,16 @@ pub struct StreamMapper {
     open: Option<Open>,
     tool: bool,
     /// chat: the tool calls in order of first delta, and their held bytes (CALL_COST + id + name + arguments per call);
-    /// `held` plus the partial line (`buf`, `data`) is at most HOLD_MAX.
+    /// Responses: the held `function_call` block's bytes (CALL_COST + id + name + `partial_json`). `held` plus the
+    /// partial line (`buf`, `data`) is at most HOLD_MAX.
     calls: Vec<Call>,
     held: usize,
-    /// chat: the calls dropped at `content_filter` (`CALLS_DROPPED`).
+    /// Responses: the held `function_call` block's `content_block_start` and deltas.
+    pending: Vec<SseEvent>,
+    /// The calls dropped at a refusal (`CALLS_DROPPED`).
     dropped: usize,
+    /// `end` writes `CALLS_DROPPED` on `message_delta` (off for a Messages client).
+    dropped_key: bool,
     /// chat: the `finish_reason` and the last usage.
     finish: Option<String>,
     usage: Value,
@@ -100,7 +115,9 @@ impl StreamMapper {
             tool: false,
             calls: Vec::new(),
             held: 0,
+            pending: Vec::new(),
             dropped: 0,
+            dropped_key: true,
             finish: None,
             usage: usage(0, 0, 0),
         }
@@ -111,6 +128,17 @@ impl StreamMapper {
         self.estimate = estimate;
         self.key = key.map(str::to_string);
         self
+    }
+
+    /// `on` = `end` writes `CALLS_DROPPED` on `message_delta` (the default); a Messages client gets `false`.
+    pub fn calls_dropped_key(mut self, on: bool) -> StreamMapper {
+        self.dropped_key = on;
+        self
+    }
+
+    /// The calls dropped at a refusal so far (K§6.4.3 stream obligation 5).
+    pub fn calls_dropped(&self) -> u64 {
+        self.dropped as u64
     }
 
     /// A terminal or error event was emitted.
@@ -255,6 +283,9 @@ impl StreamMapper {
                 let b = json!({"type":"tool_use","id":"","name":"","input":{}});
                 self.ensure((oi, 0), b, out);
                 self.delta(json!({"type":"input_json_delta","partial_json":s(v, "delta").unwrap_or("")}), out);
+                if self.held > HOLD_MAX {
+                    self.emit_error(error_body("api_error", "upstream tool call too long"), out);
+                }
             }
             "response.output_item.done" => match s(item, "type") {
                 Some("reasoning") => {
@@ -383,12 +414,18 @@ impl StreamMapper {
             "content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}})));
     }
 
-    /// Closes the open block and opens `block` under `key`.
+    /// Closes the open block and opens `block` under `key`. A Responses `tool_use` block is held: its start waits in
+    /// `pending` (K§6.4.3 stream obligation 5).
     fn open(&mut self, key: Key, block: Value, out: &mut Vec<SseEvent>) {
         self.start(out);
         self.close(out);
-        out.push(ev("content_block_start", json!({"type":"content_block_start","index":self.next,"content_block":block})));
-        self.open = Some(Open { key, index: self.next, delta: false });
+        let held = self.from == Dialect::Openai && block["type"] == "tool_use";
+        if held {
+            self.held += CALL_COST + s(&block, "id").map_or(0, str::len) + s(&block, "name").map_or(0, str::len);
+        }
+        let e = ev("content_block_start", json!({"type":"content_block_start","index":self.next,"content_block":block}));
+        if held { self.pending.push(e) } else { out.push(e) }
+        self.open = Some(Open { key, index: self.next, delta: false, held });
         self.next += 1;
     }
 
@@ -404,17 +441,38 @@ impl StreamMapper {
         self.open.as_ref().is_some_and(|o| o.key == key && o.delta)
     }
 
-    /// A delta on the open block.
+    /// A delta on the open block; on a held block it waits in `pending`.
     fn delta(&mut self, d: Value, out: &mut Vec<SseEvent>) {
         if let Some(o) = &mut self.open {
             o.delta = true;
-            out.push(ev("content_block_delta", json!({"type":"content_block_delta","index":o.index,"delta":d})));
+            let held = o.held;
+            if held {
+                self.held += s(&d, "partial_json").map_or(0, str::len);
+            }
+            let e = ev("content_block_delta", json!({"type":"content_block_delta","index":o.index,"delta":d}));
+            if held { self.pending.push(e) } else { out.push(e) }
         }
     }
 
+    /// Closes the open block; a held block's start and deltas go out first.
     fn close(&mut self, out: &mut Vec<SseEvent>) {
         if let Some(o) = self.open.take() {
+            if o.held {
+                out.append(&mut self.pending);
+                self.held = 0;
+            }
             out.push(ev("content_block_stop", json!({"type":"content_block_stop","index":o.index})));
+        }
+    }
+
+    /// A held open block (a Responses `function_call` with no `output_item.done`) is dropped, not sent with cut
+    /// arguments, and counted in `dropped` (K§6.4.3 stream obligation 5).
+    fn drop_held(&mut self) {
+        if self.open.as_ref().is_some_and(|o| o.held) {
+            self.open = None;
+            self.pending.clear();
+            self.held = 0;
+            self.dropped += 1;
         }
     }
 
@@ -426,10 +484,13 @@ impl StreamMapper {
 
     fn end(&mut self, stop: &str, usage: Value, out: &mut Vec<SseEvent>) {
         self.start(out);
+        if stop == "refusal" {
+            self.drop_held();
+        }
         self.close(out);
         self.calls_out(out);
         let mut d = json!({"type":"message_delta","delta":{"stop_reason":stop,"stop_sequence":null},"usage":usage});
-        if self.dropped > 0 {
+        if self.dropped > 0 && self.dropped_key {
             d[CALLS_DROPPED] = json!(self.dropped);
         }
         out.push(ev("message_delta", d));

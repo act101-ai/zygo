@@ -4,6 +4,7 @@ use serde_json::{json, Map, Value};
 use zygo_config::Dialect;
 
 use super::reasoning::encode;
+use super::sse::CALLS_DROPPED;
 use super::{
     copy, input_of, json_schema, message, messages, parts, responses_stop, s, system, texts, tool_choice, tools, usage_of, Choice,
     Drops, Part, Target,
@@ -123,9 +124,14 @@ fn output(b: &Value, t: &Target, d: &mut Drops) -> Value {
     }
 }
 
+/// A Responses body as a Messages body. At `incomplete` with reason `content_filter` the `function_call` items (their
+/// arguments may be cut) are dropped and counted in `CALLS_DROPPED`, as the stream mapper does (K§6.4.3 stream
+/// obligation 5).
 pub(crate) fn response(resp: &Value, t: &Target) -> Value {
+    let reason = resp.get("incomplete_details").and_then(|d| s(d, "reason"));
+    let filtered = responses_stop(s(resp, "status"), reason, false) == "refusal";
     let mut content = Vec::new();
-    let mut tool = false;
+    let (mut tool, mut dropped) = (false, 0);
     for item in resp.get("output").and_then(Value::as_array).into_iter().flatten() {
         match s(item, "type") {
             Some("reasoning") => {
@@ -142,6 +148,7 @@ pub(crate) fn response(resp: &Value, t: &Target) -> Value {
                     }
                 }
             }
+            Some("function_call") if filtered => dropped += 1,
             Some("function_call") => {
                 tool = true;
                 content.push(json!({"type":"tool_use","id":s(item, "call_id").unwrap_or(""),"name":s(item, "name").unwrap_or(""),
@@ -150,7 +157,10 @@ pub(crate) fn response(resp: &Value, t: &Target) -> Value {
             _ => {}
         }
     }
-    let reason = resp.get("incomplete_details").and_then(|d| s(d, "reason"));
     let stop = responses_stop(s(resp, "status"), reason, tool);
-    message(resp, t, content, stop, usage_of(resp.get("usage"), Dialect::Openai))
+    let mut out = message(resp, t, content, stop, usage_of(resp.get("usage"), Dialect::Openai));
+    if dropped > 0 {
+        out[CALLS_DROPPED] = json!(dropped);
+    }
+    out
 }
