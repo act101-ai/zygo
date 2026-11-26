@@ -426,3 +426,25 @@ fn mail_to_a_renamed_host_from_a_stale_cache_is_refused() {
     assert_eq!(n["subject"], format!("not sent: {id}"));
     assert_eq!(n["body"], format!("zygo did not send message {id} to bob@b: host b has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/."));
 }
+
+#[test] // S§8.3 step 11, S§7.6 Rename: a file pushed before a crash and before the rename is deleted, not refused
+fn pushed_mail_to_a_since_renamed_host_is_not_refused() {
+    let (r, a, b) = pair();
+    let id = send(&a, "alice", ("bob", "b"));
+    let queued = a.sp().outbox.join(format!("{id}.json"));
+    let bytes = fs::read(&queued).unwrap();
+    sync(&a);
+    assert!(file(&r, &format!("bob@b/{id}.json")).is_some());
+    fs::write(&queued, &bytes).unwrap(); // a crash after the push, before the outbox delete
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    sync(&a);
+    assert!(!queued.exists());
+    assert!(!a.sp().refused.join(format!("{id}.json")).exists());
+    assert!(!a.errors().contains("no-host"), "{}", a.errors());
+    assert!(!fs::read_dir(a.sp().mail.join(ALICE).join("new")).map_or(false, |d| {
+        d.map(|e| fs::read(e.unwrap().path()).unwrap())
+            .any(|b| serde_json::from_slice::<Value>(&b).unwrap()["from"] == "zygo")
+    }));
+}

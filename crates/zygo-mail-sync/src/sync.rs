@@ -428,35 +428,30 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
 /// that cannot be read (a link, a FIFO, over `FILE_MAX`, not JSON, or a `to` that is no address) moves to
 /// `refused/`, with one log line, and takes no cap slot. So does a file whose `to` host has no registry in `meta`, the
 /// fetched tip (review F1: a stale member cache after a rename), with the check `no-host` and the notice to the
-/// sender; a bootstrap tip (`None`) holds no registry yet and refuses nothing (S§19 #8). A file
-/// whose path is at the tip was pushed before and is deleted now. Else, while the pass deadline holds, the secret pass: clear, an add of its bytes at
-/// `<to>/<ULID>.json` (and the file in the returned list, deleted after the push); a finding, the move to
-/// `refused/` and the notice to the sender, whose keys go into `notified`; could not run, the file stays.
+/// sender, after the tip check; a bootstrap tip (`None`) holds no registry yet and refuses nothing (S§19 #8). A
+/// file whose path is at the tip was pushed before and is deleted now. Else, while the pass deadline holds, the
+/// secret pass: clear, an add of its bytes at `<to>/<ULID>.json` (and the file in the returned list, deleted after
+/// the push); a finding, the move to `refused/` and the notice to the sender, whose keys go into `notified`; could
+/// not run, the file stays.
 fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Instant, SystemTime),
     notified: &mut Vec<String>) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
     let (sp, wt) = (&c.sp, &c.sp.worktree);
-    let mut items = Vec::new();
+    let (mut items, mut no_host) = (Vec::new(), Vec::new());
     for (id, p) in outbox_entries(sp).map_err(|_| stop("outbox"))? {
         if items.len() == OUTBOX_CAP {
             break;
         }
         match read_message(&p) {
-            Some((bytes, value, to)) => {
-                let h = to.split_once('@').map_or("", |(_, h)| h);
-                if meta.is_none_or(|m| m.registries.contains_key(h)) {
-                    items.push((id, p, bytes, value, format!("{to}/{id}.json"), to));
-                    continue;
-                }
-                c.log(&format!("mail sync: outbox {id}: no-host"));
-                let body = format!("zygo did not send message {id} to {to}: host {h} has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/.");
-                refuse(c, id, &[], Some(&body), notified);
+            Some((_, _, to)) if meta.is_some_and(|m| !m.registries.contains_key(host_of(&to))) => {
+                no_host.push((id, p, format!("{to}/{id}.json"), to));
             }
+            Some((bytes, value, to)) => items.push((id, p, bytes, value, format!("{to}/{id}.json"), to)),
             None => refuse_unread(c, id, &p),
         }
     }
-    let wanted: BTreeSet<&String> = items.iter().map(|i| &i.4).collect();
+    let wanted: BTreeSet<&String> = items.iter().map(|i| &i.4).chain(no_host.iter().map(|i| &i.2)).collect();
     let mut at_tip = BTreeSet::new();
-    let folders: BTreeSet<&String> = items.iter().map(|i| &i.5).collect();
+    let folders: BTreeSet<&String> = items.iter().map(|i| &i.5).chain(no_host.iter().map(|i| &i.3)).collect();
     for to in folders {
         branch::ls(wt, tip, Some(&format!("{to}/")), deadline, &mut |e| {
             if wanted.contains(&e.path) {
@@ -464,6 +459,17 @@ fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Ins
             }
             Flow::Go
         })?;
+    }
+    // A file pushed before (the tip check) is deleted before the host check, so it gets no wrong notice.
+    for (id, p, path, to) in no_host {
+        if at_tip.contains(&path) {
+            let _ = std::fs::remove_file(&p);
+            continue;
+        }
+        c.log(&format!("mail sync: outbox {id}: no-host"));
+        let h = host_of(&to);
+        let body = format!("zygo did not send message {id} to {to}: host {h} has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/.");
+        refuse(c, id, &[], Some(&body), notified);
     }
     let (mut changes, mut sent) = (Vec::new(), Vec::new());
     for (id, p, bytes, value, path, _) in items {
@@ -490,6 +496,9 @@ fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Ins
     }
     Ok((changes, sent))
 }
+
+/// The host part of the address `to`.
+fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
 
 /// S§8.6 "At commit": moves `outbox/<id>.json` to `refused/` and sends the notice to its sender, whose keys go into
 /// `notified`; `body` replaces the secret-pass notice body (`ids`) for another reason. A failed move or notice
