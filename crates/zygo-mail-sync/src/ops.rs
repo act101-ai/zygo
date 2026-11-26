@@ -13,7 +13,7 @@ use crate::env::Env;
 use crate::identity::{read_meta, TipMeta};
 use crate::registry::{Ack, Registry, MEMBERS_MAX};
 use crate::state;
-use crate::sync::{self, own_blobs, own_names, stop, Ctx, Fail, Mode, Opts, Report, SyncError, MARKER_LINE,
+use crate::sync::{self, own_blobs, own_names, promote, stop, Ctx, Fail, Mode, Opts, Report, SyncError, MARKER_LINE,
     MAX_ATTEMPTS, MOVED_LINE, PASS_DEADLINE};
 
 /// S§8.3 steps 6-7: the fetched tip, in the worktree, with its registries and acks; `None` when there is no branch.
@@ -33,9 +33,11 @@ fn fetch_tip(c: &Ctx, deadline: Instant) -> Result<Option<(String, TipMeta)>, Fa
 }
 
 /// S§8.3 steps 13-15 (D2): one commit on the fetched tip, pushed without force. `build` gives the tree-ish to
-/// start from (the tip, or a tree made from it) and the changes on it, or `None` for no write. The own blobs of the
-/// commit are `pending` before the push and `pushed` after it. A moved branch fetches and builds again, at most
-/// [`MAX_ATTEMPTS`] times, then [`MOVED_LINE`]. No branch writes nothing.
+/// start from (the tip, or a tree made from it) and the changes on it, or `None` for no write. Only the own blobs
+/// that the changes add are `pending` before the push and `pushed` after it: a blob that another workspace with this
+/// identity wrote is never recorded, so the next pass still stops with the twin line (S§7.5, S§19 #11). A pending blob
+/// at the fetched tip is recorded as pushed first, as the pass does. A moved branch fetches and builds again, at
+/// most [`MAX_ATTEMPTS`] times, then [`MOVED_LINE`]. No branch writes nothing.
 fn write(c: &Ctx, identity: &str, deadline: Instant,
     build: &mut dyn FnMut(&str, &TipMeta) -> Result<Option<(String, Vec<Change>)>, Fail>) -> Result<(), Fail> {
     let wt = &c.sp.worktree;
@@ -43,8 +45,14 @@ fn write(c: &Ctx, identity: &str, deadline: Instant,
         let Some((tip, meta)) = fetch_tip(c, deadline)? else { return Ok(()) };
         let Some((base, changes)) = build(&tip, &meta)? else { return Ok(()) };
         let commit = branch::commit(wt, &base, Some(&tip), &changes, deadline)?;
+        let added: BTreeSet<&str> = changes.iter()
+            .filter_map(|ch| if let Change::Add { path, .. } = ch { Some(path.as_str()) } else { None })
+            .collect();
         let mut st = state::load(&c.sp).map_err(|_| stop("state"))?;
-        st.pending = own_blobs(&read_meta(wt, &commit, deadline, &mut |_| {})?, identity);
+        promote(&mut st, &meta, identity);
+        st.pending = own_blobs(&read_meta(wt, &commit, deadline, &mut |_| {})?, identity).into_iter()
+            .filter(|(path, _)| added.contains(path.as_str()))
+            .collect();
         state::save(&c.sp, &st).map_err(|_| stop("state"))?;
         match branch::push(wt, &c.s.remote, &c.s.branch, &commit, None, deadline)? {
             Pushed::Accepted => {

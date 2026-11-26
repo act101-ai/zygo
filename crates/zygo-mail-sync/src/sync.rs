@@ -22,7 +22,7 @@ use crate::prune::{self, Pruned};
 use crate::public;
 use crate::secret::{self, Outcome};
 use crate::registry::{write_cache, Ack, MemberCache, Registry, ACK_ENTRIES_MAX, MEMBERS_MAX};
-use crate::state::{self, SyncPaths};
+use crate::state::{self, State, SyncPaths};
 
 /// S§8.3 step 4: the deadline of one pass.
 pub const PASS_DEADLINE: Duration = Duration::from_secs(120);
@@ -289,18 +289,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         let mut st = state::load(sp).map_err(|_| stop("state"))?;
         identity::check(&meta, host, &identity, &st, &env.paths, c.ws_id)
             .map_err(|s| Fail::Stop { line: s.line(), check: s.check_name() })?;
-        // An own file at the tip whose blob is the pending one was pushed by a run that stopped before it recorded
-        // it (S§7.5 "the blob id that it last pushed"; MS-11 F9).
-        let tip_own = own_blobs(&meta, &identity);
-        let mut promoted = false;
-        for (path, blob) in &tip_own {
-            if st.pending.get(path) == Some(blob) {
-                st.pending.remove(path);
-                st.pushed.insert(path.clone(), blob.clone());
-                promoted = true;
-            }
-        }
-        if promoted {
+        if promote(&mut st, &meta, &identity) {
             state::save(sp, &st).map_err(|_| stop("state"))?;
         }
         let mut cache = MemberCache::default();
@@ -610,6 +599,20 @@ fn wake(c: &Ctx, keys: &[String]) {
 /// The valid ack of host `h` with this identity at the tip.
 fn own_ack<'m>(meta: &'m TipMeta, h: &str, identity: &str) -> Option<&'m Ack> {
     meta.acks.get(h).and_then(|r| r.value.as_ref().ok()).filter(|a| a.identity == identity)
+}
+
+/// S§7.5 "the blob id that it last pushed" (MS-11 F9): an own file at the tip whose blob is the pending one was
+/// pushed by a run that stopped before it recorded it; it moves from `pending` to `pushed`. Whether one moved.
+pub(crate) fn promote(st: &mut State, meta: &TipMeta, identity: &str) -> bool {
+    let mut promoted = false;
+    for (path, blob) in own_blobs(meta, identity) {
+        if st.pending.get(&path) == Some(&blob) {
+            st.pending.remove(&path);
+            st.pushed.insert(path, blob);
+            promoted = true;
+        }
+    }
+    promoted
 }
 
 /// S§7.5: the branch path and blob id of each valid registry and ack file of this identity.

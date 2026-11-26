@@ -548,3 +548,19 @@ fn rename_over_member_limit_keeps_old_ack_and_delivers() {
     assert_eq!(delivered, 1);
     assert!(new_ids(&b, BOB).contains(&format!("{id}.json")));
 }
+
+#[test] // S§7.5 Twin, S§19 #11 (review round 2 F2): a drop does not record the twin's blobs as its own
+fn drop_host_does_not_mask_a_twin() {
+    let (_r, a, _b, _c) = twin();
+    assert_eq!(drop_host(&env(&a), WS_ID, "b", &mut |_| true), Ok(Some(0)));
+    assert_eq!(stopped(run(&env(&a), WS_ID, Mode::Cli).unwrap_err()), (TWIN.to_string(), "twin"));
+}
+
+#[test] // S§7.5 Twin, S§19 #11 (review round 2 F2): a take-host that writes does not record the twin's blobs as its own
+fn take_host_does_not_mask_a_twin() {
+    let (r, a, _b, _c) = twin();
+    a.config(Some("a3"), "");
+    assert_eq!(stopped(take_host(&env(&a), WS_ID).unwrap_err()), (TWIN.to_string(), "twin"));
+    assert_eq!(json(&r, "registry/a3.json")["identity"], ident(&a)); // it wrote its own files
+    assert_eq!(stopped(run(&env(&a), WS_ID, Mode::Cli).unwrap_err()), (TWIN.to_string(), "twin"));
+}
