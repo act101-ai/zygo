@@ -398,7 +398,7 @@ res "R5 run-all own dir kept after TERM to the process group" 143 r5
 # --- X: Codex runs (node PC-2): codex_env, run_codex, codex_record --------------------------------
 # Each X case: N2_AGENTS=codex, CODEX_FX=$T/fx-<case>, a stub codex (mkcx); no real agent runs.
 DK="dummy-""key"
-CX_NAMES="ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH SHELL TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME "
+CX_NAMES="ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME "
 mkbin "$T/cxonly" 0
 rm "$T/cxonly/opencode"
 mkbin "$T/cx171" 1 0.171.9
@@ -451,7 +451,7 @@ x2() {
 res "X2 no dir made when codex is not on PATH" 1 x2
 
 X3ACT="new_run x; start_mock; $(mockrec X3); run_codex exec hi; python3 -I '$T/connect.py' \"\$(cat \"\$RUN/port\")\"; stop_mock; codex_record base; exit 0"
-c=X3; cxprep $c caller; XENV="$XENV TERM=dumb TZ=America/Los_Angeles SHELL=/bin/zsh"; child $c 0 "$X3ACT"; run $c; killmock $c
+c=X3; cxprep $c caller; XENV="$XENV TERM=dumb TZ=America/Los_Angeles"; child $c 0 "$X3ACT"; run $c; killmock $c
 x3() {
   E=$T/keep-X3/x/home/stub-env.txt
   [ -f "$E" ] || { why="no $E"; return 1; }
@@ -461,7 +461,6 @@ x3() {
   [ "$(envval "$E" CODEX_HOME)" = "$T/keep-X3/x/home/.codex" ] || { why="CODEX_HOME=$(envval "$E" CODEX_HOME)"; return 1; }
   [ "$(envval "$E" TERM)" = xterm-256color ] || { why="TERM=$(envval "$E" TERM) (the caller's TERM is dumb)"; return 1; }
   [ "$(envval "$E" TZ)" = UTC ] || { why="TZ=$(envval "$E" TZ) (the caller's TZ is America/Los_Angeles)"; return 1; }
-  [ "$(envval "$E" SHELL)" = /bin/sh ] || { why="SHELL=$(envval "$E" SHELL) (the caller's SHELL is /bin/zsh)"; return 1; }
   P=$(envval "$E" HTTPS_PROXY)
   printf '%s\n' "$P" | grep -Eqx 'http://127\.0\.0\.1:[0-9]+' || { why="HTTPS_PROXY=$P"; return 1; }
   [ "$(envval "$E" HTTP_PROXY)" = "$P" ] && [ "$(envval "$E" ALL_PROXY)" = "$P" ] || { why="HTTP_PROXY or ALL_PROXY is not $P"; return 1; }
@@ -542,8 +541,8 @@ res "X13 codex_record refuses a bad part name" 1 x13
 
 # --- Review round 1 (F1-F11) -------------------------------------------------------------------
 # X14 (F1): EXTRA_ENV may not set a name codex_env sets, a proxy or CA name in either case, any
-# XDG_* or CODEX_* name, TMPDIR, TZ (PC-10), SHELL (PC-11). The check comes before the mock check, so no mock runs.
-for w in CODEX_HOME=x PATH=x TERM=x TZ=x tz=x SHELL=x shell=x TMPDIR=x MOCK_API_KEY=x HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= \
+# XDG_* or CODEX_* name, TMPDIR, TZ (PC-10). The check comes before the mock check, so no mock runs.
+for w in CODEX_HOME=x PATH=x TERM=x TZ=x tz=x TMPDIR=x MOCK_API_KEY=x HTTPS_PROXY= HTTP_PROXY= ALL_PROXY= \
   https_proxy=x http_proxy=x all_proxy=x 'NO_PROXY=*' 'no_proxy=*' SSL_CERT_FILE=x SSL_CERT_DIR=x \
   CURL_CA_BUNDLE=x REQUESTS_CA_BUNDLE=x XDG_CONFIG_HOME=x XDG_RUNTIME_DIR=x CODEX_SQLITE_HOME=x; do
   c=X14; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='$w'; run_codex exec hi"; run $c
@@ -574,7 +573,7 @@ for v in '../../../owner/.codex' 'x@/owner/.codex' '~x' 'a\b' 'a..b'; do
   rm -rf "$T/keep-X15b"
 done
 # X15c (G2): a name that is not on the allow-list (EXTRA_ENV_ALLOW in lib.sh) is refused.
-for w in ZDOTDIR=x OK1=1; do
+for w in ZDOTDIR=x SHELL=zsh OK1=1; do
   c=X15c; cxprep $c caller; child $c 0 "new_run x; EXTRA_ENV='$w'; run_codex exec hi"; run $c
   res "X15c EXTRA_ENV name ${w%%=*} is not on the allow-list" 1 out_has X15c "premises: EXTRA_ENV name ${w%%=*} is not in EXTRA_ENV_ALLOW"
   rm -rf "$T/keep-X15c"
@@ -763,7 +762,7 @@ run $c; killmock $c
 x29() {
   f=$T/fx-X29/runs/base/isolation.txt
   grep -qx 'codex_version=0.172.0' "$f" 2>/dev/null || { why="isolation.txt: $(tr '\n' '|' <"$f" 2>/dev/null)"; return 1; }
-  grep -qx "env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH RUST_BACKTRACE RUST_LOG SHELL TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME" "$f" ||
+  grep -qx "env_names=ALL_PROXY CODEX_HOME HOME HTTPS_PROXY HTTP_PROXY MOCK_API_KEY PATH RUST_BACKTRACE RUST_LOG TERM TMPDIR TZ XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME" "$f" ||
     { why="isolation.txt: $(tr '\n' '|' <"$f")"; return 1; }
 }
 res "X29 runs in \$(...) and in a pipeline are recorded" 0 x29
@@ -1176,6 +1175,19 @@ done
 c=X50; cxprep $c caller
 child $c 0 "new_run x; start_mock; $(mockrec X50); run_codex exec hi; stop_mock; (cd \"\$RUN\" && codex_record base)"; run $c; killmock $c
 res "X50 codex_record from a subshell in the run folder passes" 0 isolation_is X50 0.172.0
+
+# S1 (PC-11 review round 1 F2): scrub shares one Codex item-id map across a part's files: the same id
+# gets the same placeholder in two files, a different id a different one.
+I1=da690f77-7707-5fdf-97a5-850943e7a34c I2=8e32dd58-d565-50b3-83f4-72b17fc59ae7
+printf '{"a":"msg_%s"}\n' "$I1" >"$T/S1a.json"
+printf '{"a":"msg_%s","b":"msg_%s"}\n' "$I2" "$I1" >"$T/S1b.json"
+c=S1; prep $c own; ERR=$T/$c.err
+child $c 0 "new_run x; scrub '$T/S1a.json' >'$T/S1a.out'; new_run y; scrub '$T/S1b.json' >'$T/S1b.out'; exit 0"; run $c
+s1() {
+  grep -qF '"a": "msg_placeholder0001"' "$T/S1a.out" && grep -qF '"a": "msg_placeholder0002"' "$T/S1b.out" &&
+    grep -qF '"b": "msg_placeholder0001"' "$T/S1b.out" || { why="$(tr '\n' ' ' <"$T/S1a.out")| $(tr '\n' ' ' <"$T/S1b.out")"; return 1; }
+}
+res "S1 scrub maps Codex item ids with one map per part" 0 s1
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
 echo "lib tests: $bad failed"

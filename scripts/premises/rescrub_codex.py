@@ -10,7 +10,10 @@ Usage:
 
 Every regular file under fixtures/codex is read, sorted. VERBATIM files (the verbatim schema,
 pinned by sha256 in scripts/check-premises.sh) are never scrubbed or written, but are still
-scanned for LEAKS.
+scanned for LEAKS. Each capture folder (the first folder under fixtures/codex, or the root's own
+files) has one id map (scrub.py SCRUB_IDMAP): an id gets the same placeholder in all its files.
+--check runs scrub.py with SCRUB_FIXED=1: the user name is the first word of N2_FORBIDDEN_NAMES
+(default "user") and no host names, so the result is the same on every machine.
 """
 import os
 import re
@@ -31,6 +34,7 @@ LEAKS = {
     "marketplace os": re.compile(r"marketplace-(?:macos|linux|windows)-"),
     "login shell command": re.compile(r"/bin/(?:zsh|bash|fish|sh|dash|ksh|tcsh|csh) -lc"),
     "macos env": re.compile(r"__CF[A-Za-z_]"),
+    "time-bearing id": re.compile(r"(?<![A-Za-z0-9_])[a-z]{1,8}_(?!0{10})[0-7][0-9A-HJKMNP-TV-Z]{25}(?![0-9A-Za-z])"),
 }
 
 
@@ -38,9 +42,13 @@ def leaks(text: str) -> list:
     return [k for k, p in LEAKS.items() if p.search(text)]
 
 
-def scrubbed(path: str, run: str) -> str:
+def scrubbed(path: str, run: str, env: dict) -> str:
     return subprocess.run([sys.executable, "-I", SCRUB, run, path], check=True,
-                          capture_output=True, text=True).stdout
+                          capture_output=True, text=True, env=env).stdout
+
+
+def group(rel: str) -> str:
+    return rel.split(os.sep, 1)[0] if os.sep in rel else "."
 
 
 def files() -> list:
@@ -58,7 +66,12 @@ def main(argv: list) -> int:
         sys.stderr.write("usage: rescrub_codex.py --check | --write\n")
         return 2
     write = argv[1] == "--write"
+    env = dict(os.environ)
+    if not write:
+        env.update(SCRUB_FIXED="1", SCRUB_USER=(os.environ.get("N2_FORBIDDEN_NAMES", "").split() or ["user"])[0],
+                   SCRUB_HOSTS="")
     rels = files()
+    groups = sorted({group(r) for r in rels})
     fix = 0
     wrote = 0
     with tempfile.TemporaryDirectory() as run:
@@ -68,7 +81,8 @@ def main(argv: list) -> int:
                 text = f.read()
             found = leaks(text)
             if rel not in VERBATIM:
-                new = scrubbed(p, run)
+                env["SCRUB_IDMAP"] = os.path.join(run, "ids-%d.json" % groups.index(group(rel)))
+                new = scrubbed(p, run, env)
                 if new != text:
                     if write:
                         with open(p, "w", encoding="utf-8") as f:

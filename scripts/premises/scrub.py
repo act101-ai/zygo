@@ -47,6 +47,15 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
   env names, with an "=<value>", -> "(os env omitted)"; each tool "description" in a request body,
   also of tools nested in a namespace tool, and in a top-level tool listing (a list of tools, as in
   the harness listing files) -> "[omitted]"; parameter descriptions kept.
+- PC-11 review round 1: SCRUB_IDMAP=<file>: the Codex item ids and the ULIDs below share one map
+  with every other scrub that names the same file (one map per capture folder or part): the same id
+  gets the same placeholder in every file, different ids always different ones (without it, one map
+  per file). A time-bearing ULID after a lower-case prefix (resp_<ulid>, msg_<ulid>_0, fc_<ulid>_1)
+  -> a ULID of time 0, "0"*22 + "<n>" (4 digits), so a response and its items stay paired. The
+  login shell is masked only in an exec command field ("command", "cmd") and in the <shell> tag of an
+  environment_context block. SCRUB_FIXED=1: the user name from SCRUB_USER (default "user"), the host
+  names from SCRUB_HOSTS (blank-separated, default none), and no rule for the home or checkout path,
+  so the result does not depend on the machine.
 """
 import getpass
 import json
@@ -58,7 +67,8 @@ import sys
 
 run, path = sys.argv[1], sys.argv[2]
 run = os.path.realpath(run)
-user = getpass.getuser()
+FIXED = os.environ.get("SCRUB_FIXED") == "1"
+user = (os.environ.get("SCRUB_USER") or "user") if FIXED else getpass.getuser()
 home = os.path.expanduser("~")
 
 
@@ -83,7 +93,7 @@ def host_names():
 
 
 # The machine's host names, full and short.
-HOSTS = host_names()
+HOSTS = sorted(set(os.environ.get("SCRUB_HOSTS", "").split()), key=len, reverse=True) if FIXED else host_names()
 # Left boundary of a key, id or name: no word character before it, or a JSON backslash escape
 # (\n, \t, \r, \b, \f, \uXXXX) right before it in nested JSON text.
 B = r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrtbf])|(?<=\\u[0-9A-Fa-f]{4}))"
@@ -108,8 +118,9 @@ for sub, repl in (("home", "/home/user"), ("repo", "/repo"), ("", "/tmp/run")):
     for f in forms(src):
         PAIRS.append((f, repl))
 # The zygo checkout that holds these scripts -> /zygo (before the home rule).
-PAIRS.append((os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "/zygo"))
-PAIRS.append((home, "/home/user"))
+if not FIXED:
+    PAIRS.append((os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "/zygo"))
+    PAIRS.append((home, "/home/user"))
 # Claude Code also names directories after a path with every other character as "-".
 for src, repl in ((os.path.join(run, "repo"), "-repo"), (os.path.join(run, "home"), "-home-user"), (run, "-tmp-run")):
     for f in forms(src):
@@ -120,13 +131,29 @@ for src, repl in ((os.path.join(run, "repo"), "-repo"), (os.path.join(run, "home
 UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
 SES = re.compile(r"\bses_[A-Za-z0-9]{20,}")
 IDS = {}
+# The kinds that SCRUB_IDMAP shares across files: Codex item ids and ULIDs.
+SHARED = ("msg", "fco", "ctco", "ulid")
+IDMAP = os.environ.get("SCRUB_IDMAP", "")
+if IDMAP and os.path.exists(IDMAP):
+    with open(IDMAP, encoding="utf-8") as _f:
+        IDS.update((k, tuple(v)) for k, v in json.load(_f).items() if v[0] in SHARED)
 
 
 def ids(kind, v):
     if v not in IDS:
         n = sum(1 for k in IDS.values() if k[0] == kind) + 1
-        IDS[v] = (kind, "00000000-0000-4000-8000-%012d" % n if kind == "uuid" else "%s_placeholder%04d" % (kind, n))
+        IDS[v] = (kind, "00000000-0000-4000-8000-%012d" % n if kind == "uuid" else
+                  "0" * 22 + "%04d" % n if kind == "ulid" else "%s_placeholder%04d" % (kind, n))
     return IDS[v][1]
+
+
+def save_ids():
+    if not IDMAP:
+        return
+    tmp = "%s.%d" % (IDMAP, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({k: list(v) for k, v in IDS.items() if v[0] in SHARED}, f)
+    os.replace(tmp, IDMAP)
 
 
 # Each path pair also matches with any "/" doubled (a TMPDIR that ends in "/": .../T//tmp.X), and
@@ -155,8 +182,18 @@ ITEM_ID = re.compile(B + r"(msg|fco|ctco)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 SANDBOX = re.compile(r"(\\?\"sandbox\\?\"\s*:\s*\\?\")(?:seatbelt|landlock|linux_seccomp|seccomp|bwrap|bubblewrap|"
                      r"windows_sandbox|restricted_token|windows_restricted_token|elevated)(?=\\?\")")
 MARKETPLACE = re.compile(r"marketplace-(?:macos|linux|windows)-[A-Za-z0-9_-]+")
-# PC-11: the owner's login shell in a recorded command ("/bin/zsh -lc '...'").
-LOGIN_SHELL = re.compile(r"(?:/[^\s\"'\\/]+)*/(?:zsh|bash|fish|sh|dash|ksh|mksh|tcsh|csh) -lc\b")
+# PC-11: the owner's login shell at the start of an exec command field ("command":"/bin/zsh -lc '...'",
+# plain or JSON-escaped; in a parsed object, LEAD_SHELL on a "command" or "cmd" value). Elsewhere kept.
+SHELL_PATH = r"(?:/[^\s\"'\\/]+)*/(?:zsh|bash|fish|sh|dash|ksh|mksh|tcsh|csh) -lc\b"
+CMD_KEYS = ("command", "cmd")
+CMD_SHELL = re.compile(r"(\\?\"(?:%s)\\?\"\s*:\s*\\?\")%s" % ("|".join(CMD_KEYS), SHELL_PATH))
+LEAD_SHELL = re.compile(r"^" + SHELL_PATH)
+# PC-11: an environment_context block (the bracket forms of <timezone>), where SHELL_TAG applies.
+ENV_CTX = re.compile(r"(?:<|\\u003[cC]|&lt;)environment_context(?:>|\\u003[eE]|&gt;).*?"
+                     r"(?:(?:<|\\u003[cC]|&lt;)\\?/environment_context|\Z)", re.S)
+# Review round 1 F3: a time-bearing ULID after a lower-case id prefix (resp_, msg_, fc_, rs_); a
+# placeholder (time 0) is not matched again.
+ULID = re.compile(B + r"([a-z]{1,8}_)(?!0{10})([0-7][0-9A-HJKMNP-TV-Z]{25})(?![0-9A-Za-z])")
 # PC-11: macOS __CF* env names (__CF_USER_TEXT_ENCODING=0x<uid>:... holds the user id).
 CF_ENV = re.compile(B + r"__CF[A-Za-z_]*(?:=[^\s\"'\\]*)?")
 
@@ -170,10 +207,10 @@ def s(text):
     text = UNAME.sub("(os omitted)", text)
     text = SANDBOX.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = MARKETPLACE.sub("marketplace-os-omitted", text)
-    text = LOGIN_SHELL.sub("(shell omitted) -lc", text)
+    text = CMD_SHELL.sub(lambda m: m.group(1) + "(shell omitted) -lc", text)
     text = TIMEZONE.sub(lambda m: m.group(0) if m.group(2).replace("\\/", "/").strip().lower() in UTC_NAMES
                         else m.group(1) + "(omitted)" + m.group(3), text)
-    text = SHELL_TAG.sub(lambda m: m.group(1) + "(omitted)" + m.group(2), text)
+    text = ENV_CTX.sub(lambda b: SHELL_TAG.sub(lambda m: m.group(1) + "(omitted)" + m.group(2), b.group(0)), text)
     text = re.sub(r"(/private)?/var/folders/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"/private/var/[^\s\"'`)]*", "/tmp/x", text)
     text = re.sub(r"(?i)[A-Za-z]:(?:\\\\|\\|/)Users(?:\\\\|\\|/)" + WNAME, lambda m: "/home/user", text)
@@ -187,6 +224,7 @@ def s(text):
     text = re.sub(r"Attribution for git commits.*?(?=</system-reminder>)", "Harness text.\n", text, flags=re.S)
     text = CF_ENV.sub("(os env omitted)", text)
     text = ITEM_ID.sub(lambda m: ids(m.group(1), m.group(0)), text)
+    text = ULID.sub(lambda m: m.group(1) + ids("ulid", m.group(2)), text)
     text = UUID.sub(lambda m: ids("uuid", m.group(0)), text)
     text = SES.sub(lambda m: ids("ses", m.group(0)), text)
     text = re.sub(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*", lambda m: "[jwt omitted]", text)
@@ -203,7 +241,9 @@ def s(text):
 
 def walk(o):
     if isinstance(o, dict):
-        return {s(k): "(os omitted)" if k in OS_KEYS and isinstance(v, str) else walk(v) for k, v in o.items()}
+        return {s(k): "(os omitted)" if k in OS_KEYS and isinstance(v, str) else
+                LEAD_SHELL.sub("(shell omitted) -lc", s(v)) if k in CMD_KEYS and isinstance(v, str) else walk(v)
+                for k, v in o.items()}
     if isinstance(o, list):
         return [walk(v) for v in o]
     if isinstance(o, str):
@@ -230,6 +270,7 @@ try:
     data = json.loads(raw)
 except ValueError:
     sys.stdout.write(s(raw))
+    save_ids()
     sys.exit(0)
 
 if isinstance(data, dict) and "headers" in data and isinstance(data.get("headers"), dict):
@@ -247,3 +288,4 @@ if is_tool_listing(data):
     omit_tool_descriptions(data)
 json.dump(walk(data), sys.stdout, indent=2, ensure_ascii=False)
 sys.stdout.write("\n")
+save_ids()
