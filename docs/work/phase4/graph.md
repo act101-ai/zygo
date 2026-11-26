@@ -97,7 +97,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-10 | Messages events from a JSON body keep redacted_thinking and drop server-tool blocks (no empty text blocks) | RS-4 | PLANNED | implementation | — |
 | RS-11 | Responses text.format json_schema toward Anthropic and chat upstreams (Codex thread titles) | RS-1, RS-2, RS-4, RS-9, PC-5 | PLANNED | judgment | — |
 | RS-12 | Refusal ending for the Responses client: measure Codex's handling, then map refusal so Codex does not retry it | RS-4, PC-12, RS-11, PC-11, PC-7 | TODO | judgment | — |
-| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11, RS-12 | TODO | mechanical | — |
+| RS-13 | Streamed JSON answer: message_events sends a tool_use input in input_json_delta pieces of at most 64 KiB, so it stays within HOLD_MAX (K§6.4.3 stream obligation 8) | RS-10, RS-11 | TODO | implementation | — |
+| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11, RS-12, RS-13 | TODO | mechanical | — |
 | CC-0 | Take `main` (with phase 3) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1 | BLOCKED(operator: phase 3 merged into main) | implementation | — |
 | CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
@@ -161,3 +162,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | RS-10 PLANNED: message_events passes non-text blocks whole, the encoder drops server tools (server_tool_dropped to the row) and keeps redacted_thinking; only the Responses client on an Anthropic upstream reaches it (premise corrected); Acceptance adds responses_forward. |
 | 2026-11-25 | RS-11 PLANNED: text.format json_schema maps to Messages output_config.format (facts, schema rules, chat response_format already handle it), not a forced tool (Opus 5.5/Sonnet 5.5/Fable 5.1+ refuse forced tool_choice); K§6.4.3 obligation 11 added (author's call); no new edge. |
 | 2026-11-25 | RS-5 PLANNED: 11 tests; Files + resolve.rs (RS-3's candidate cut) and responses_route.rs (interim test removed); spec K§6.4.2 C3/K§6.4.3 final text: response.incomplete usage, include rule, namespace tools unflattened, openai first (author's call). No edge added. |
+| 2026-11-25 | RS-13 added (author's call): RS-10 review F3, a streamed JSON answer's tool_use input is escaped twice in one input_json_delta and passes HOLD_MAX; fix in message_events (sse.rs), 64 KiB pieces; K§6.4.3 obligation 8; edges RS-10, RS-11; BS-1 waits on it. |
