@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
@@ -406,3 +405,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-30 DONE: libtest runner view and dispatch as pipeline step 3; review round 2 fixed F1-F4 (failure sections, binary boundary, dedup lines, ASCII/CR whitespace); F5 is FX-16; F6 fixed in the OS-36 contract. |
 | 2026-11-25 | FX-14 DONE: `zygo up` prints only team-layer warnings; CLI test of `with_team`, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code. 2 rounds; review F1, F2 fixed; F3 nit kept; F4 (max_members range) is new node FX-17 · PR #162 |
 | 2026-11-25 | FX-17 added from FX-14 review F4: `zygo up` takes `[limits] max_members` from the team or user layer with no 1-32 range check; contract reuses the `config check` rule via the `check_jobs` path (check.rs:119-120, up.rs:797-808) |
+| 2026-11-25 | OS-25 DONE: PO3 verified on OpenCode 1.18.16 (live-shaping.sh po3, mock upstream): output.output holds stdout then stderr. Review R1-R3: run-opencode.sh keeps fixtures it does not write; test name match exact; spec records PO3. F2 (no PO arm in check-premises) awaits operator OK. |
