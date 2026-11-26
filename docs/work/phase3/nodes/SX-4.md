@@ -44,7 +44,7 @@ Produces: `zygo hook trim` output field `hookSpecificOutput.additionalContext` =
 
 ### Steps
 
-- [ ] **Step 1: write the tests.** Append to `crates/zygo-hooks/tests/reinject.rs`. Add `std::path::PathBuf`, `zygo_core::{overrides::Overrides, session_view::SessionView}` and `zygo_hooks::{session_text::mechanics, trim::{self, TrimOpts}}` to the imports. Helpers:
+- [x] **Step 1: write the tests.** Append to `crates/zygo-hooks/tests/reinject.rs`. Add `std::path::PathBuf`, `zygo_core::{overrides::Overrides, session_view::SessionView}` and `zygo_hooks::{session_text::mechanics, trim::{self, TrimOpts}}` to the imports. Helpers:
 
   ```rust
   /// Results, navigation and units on; shape off; threshold 16384, head 60, tail 20.
@@ -96,9 +96,9 @@ Produces: `zygo hook trim` output field `hookSpecificOutput.additionalContext` =
 
   Child: `#[test] #[ignore] fn trim_child_case()` returns at once without `CHILD`; else `d = SessionDir::new(root/"s")`, `db = root/"usage.db"`, runs `guarded(&|b| trim::trim_in_with(&HookInput::parse(Agent::ClaudeCode, b)?, &d, &db, &TrimOpts::default()), &stdin)` on `PostToolUse-Bash-sub` and asserts `(String::new(), 0)`. The parent spawns it as `child` does, with `--exact trim_child_case`, and checks `trim_child_case ... ok`.
 
-- [ ] **Step 2: run red.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test reinject -- trim` → compiles; 10 fail: the seven `…_gives_mechanics_once` tests, `trim_over_threshold_merges_view_and_mechanics`, `trim_store_failure_still_gives_mechanics` (no `additionalContext`, flag kept) and `trim_flag_remove_failure_gives_no_text` (no stderr line). The other five pass (they pin today's behavior).
+- [x] **Step 2: run red.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test reinject -- trim` → compiles; 10 fail: the seven `…_gives_mechanics_once` tests, `trim_over_threshold_merges_view_and_mechanics`, `trim_store_failure_still_gives_mechanics` (no `additionalContext`, flag kept) and `trim_flag_remove_failure_gives_no_text` (no stderr line). The other five pass (they pin today's behavior).
 
-- [ ] **Step 3: implement.** In `crates/zygo-hooks/src/trim.rs`:
+- [x] **Step 3: implement.** In `crates/zygo-hooks/src/trim.rs`:
   - `run`: delete the `target(input).is_none()` return (`:25-27`); the body is the `SessionDir::from_env` line and `trim_in(...)`.
   - Move today's body of `trim_in_with` unchanged into `fn trim_out(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: &TrimOpts) -> anyhow::Result<HookOutput>`.
   - Add `fn with_context(out: HookOutput, m: Option<String>) -> HookOutput`: `None` → `out`; `HookOutput::None` → `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": m}}`; `HookOutput::Json(v)` → `v["hookSpecificOutput"]["additionalContext"] = m`.
@@ -121,8 +121,8 @@ Produces: `zygo hook trim` output field `hookSpecificOutput.additionalContext` =
     ```
   - `trim_in_with` (signature unchanged): `let m = take_flag(input, dir)?;` then `trim_out(...)`: `Ok(out)` → `Ok(with_context(out, m))`; `Err(e)` with `m` `Some` → `error_line(&format!("{e:#}"))` and `Ok(with_context(HookOutput::None, m))`; `Err(e)` with no `m` → `Err(e)`. Doc line: `T§9.2 item 2: the flag first, then the trim of §10.1, O§7.8.`
 
-- [ ] **Step 4: run green.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test reinject` → all pass (15 `trim…`, 6 `pre_compact…`; 3 ignored children). `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks` → all pass; `git diff --stat` shows no change to any other test file.
+- [x] **Step 4: run green.** `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test reinject` → all pass (15 `trim…`, 6 `pre_compact…`; 3 ignored children). `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks` → all pass; `git diff --stat` shows no change to any other test file.
 
-- [ ] **Step 5: commit.** `git add crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/reinject.rs`, subject `SX-4: hook trim gives the mechanics text once after a subagent's compaction`, blank line, `Zygo-Session: <implementing session>` and `Zygo-Work: phase3:SX-4`, each on its own line. No Claude attribution. Check: `git show --stat HEAD` lists only those 2 files.
+- [x] **Step 5: commit.** `git add crates/zygo-hooks/src/trim.rs crates/zygo-hooks/tests/reinject.rs`, subject `SX-4: hook trim gives the mechanics text once after a subagent's compaction`, blank line, `Zygo-Session: <implementing session>` and `Zygo-Work: phase3:SX-4`, each on its own line. No Claude attribution. Check: `git show --stat HEAD` lists only those 2 files.
 
 - [ ] **Step 6: verify (node Acceptance).** `test "$(env -u ZYGO_SESSION_DIR cargo test -q -p zygo-hooks --test reinject -- trim --list 2>/dev/null | grep -c ': test$')" -ge 10 && env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks --test reinject -- trim` → exit 0; the list count is 16 (15 tests and `trim_child_case`), the run shows 15 passed, 1 ignored. Then `env -u ZYGO_SESSION_DIR cargo test -p zygo-hooks` → all pass. CI repeats it on ubuntu, macOS and Windows.
