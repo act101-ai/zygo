@@ -125,12 +125,42 @@ fn write_object(cwd: &Path, tmp: &Path, kind: &str, bytes: &[u8], deadline: Inst
     id_out(&out, "hash-object")
 }
 
-/// The most paths that one `hash-object` or `update-index` call of [`commit`] carries: it bounds the argv length.
-const BATCH: usize = 200;
+/// The most characters that the variable arguments of one `hash-object` or `update-index` call of [`commit`] add up
+/// to (each counted by [`arg_len`]). Windows `CreateProcessW` takes at most 32 767 characters on a command line; this
+/// budget keeps well under it, with room for the git path, the fixed arguments and the `-c` overrides.
+const ARGV_BUDGET: usize = 16_000;
 
-/// Writes each of `bodies` as a git blob through its own `0600` temp file in `tmp` and one `git hash-object -t blob
-/// -w --no-filters` in `cwd`; returns the ids in order. A wrong count or id is `Git(Failed, "hash-object")`. The
-/// temp files are deleted on every path.
+/// The most body bytes that one chunk of adds of [`commit`] holds in temp files at once. A body above it goes alone.
+const BODY_BUDGET: usize = 64 << 20;
+
+/// The command-line characters of the argument `a`: its length plus 3 (a separator and Windows quotes).
+fn arg_len(a: &str) -> usize { a.len() + 3 }
+
+/// The command-line characters of one `--cacheinfo 100644,<id>,<path>`, with the longest (SHA-256) id.
+fn cacheinfo_len(path: &str) -> usize { arg_len("--cacheinfo") + arg_len("100644,,") + 64 + path.len() }
+
+/// `items` cut, in order, into runs whose `len` sum stays within [`ARGV_BUDGET`] and whose `bytes` sum stays within
+/// [`BODY_BUDGET`]. A run ends before the item that would pass either budget; an item that passes one alone is a run
+/// of its own. No run is empty.
+fn chunks<T>(items: &[T], len: impl Fn(&T) -> usize, bytes: impl Fn(&T) -> usize) -> Vec<&[T]> {
+    let (mut out, mut start, mut l, mut b) = (Vec::new(), 0, 0, 0);
+    for (i, it) in items.iter().enumerate() {
+        let (il, ib) = (len(it), bytes(it));
+        if i > start && (l + il > ARGV_BUDGET || b + ib > BODY_BUDGET) {
+            out.push(&items[start..i]);
+            (start, l, b) = (i, 0, 0);
+        }
+        (l, b) = (l + il, b + ib);
+    }
+    if start < items.len() {
+        out.push(&items[start..]);
+    }
+    out
+}
+
+/// Writes each of `bodies` as a git blob through its own `0600` temp file in `tmp` and `git hash-object -t blob -w
+/// --no-filters` in `cwd`, one call per [`chunks`] run of the temp paths; returns the ids in order. A wrong count or
+/// id is `Git(Failed, "hash-object")`. The temp files are deleted on every path.
 fn write_blobs<'a>(cwd: &Path, tmp: &Path, bodies: impl Iterator<Item = &'a [u8]>, deadline: Instant)
     -> Result<Vec<String>, BranchError> {
     let mut files = Vec::new();
@@ -140,16 +170,19 @@ fn write_blobs<'a>(cwd: &Path, tmp: &Path, bodies: impl Iterator<Item = &'a [u8]
         // Closed here (no fd per body); the path is still deleted on drop.
         files.push(f.into_temp_path());
     }
-    let mut args = vec!["hash-object", "-t", "blob", "-w", "--no-filters", "--"];
-    for f in &files {
-        args.push(path_str(f)?);
-    }
-    let out = run_git(cwd, &args, "hash-object", deadline)?;
+    let paths = files.iter().map(|f| path_str(f)).collect::<Result<Vec<_>, _>>()?;
     let fail = || BranchError::Git(RunError::Failed, "hash-object");
-    let ids: Vec<String> = std::str::from_utf8(&out).map_err(|_| fail())?.lines()
-        .map(|l| oid(l).map(String::from).map_err(|_| fail())).collect::<Result<_, _>>()?;
-    if ids.len() != files.len() {
-        return Err(fail());
+    let mut ids = Vec::with_capacity(paths.len());
+    for run in chunks(&paths, |p| arg_len(p), |_| 0) {
+        let mut args = vec!["hash-object", "-t", "blob", "-w", "--no-filters", "--"];
+        args.extend(run);
+        let out = run_git(cwd, &args, "hash-object", deadline)?;
+        let got: Vec<String> = std::str::from_utf8(&out).map_err(|_| fail())?.lines()
+            .map(|l| oid(l).map(String::from).map_err(|_| fail())).collect::<Result<_, _>>()?;
+        if got.len() != run.len() {
+            return Err(fail());
+        }
+        ids.extend(got);
     }
     Ok(ids)
 }
@@ -286,14 +319,17 @@ pub fn has_marker(wt: &Path, tip: &str, deadline: Instant) -> Result<bool, Branc
 }
 
 /// S§6.3 use, S§6.5: the tree of `base` with `changes`, committed in the worktree's own index with `parent` (none: a
-/// root); the worktree `HEAD` moves to the new commit, which is returned.
+/// root); the worktree `HEAD` moves to the new commit, which is returned. Of the changes with the same path string
+/// only the last is applied; all removes are applied before all adds. When the paths are distinct as git sees them
+/// (no `./x` or `x//y` spelling of another path) and applying the changes one at a time in order succeeds, the tree
+/// is the same as that one-at-a-time result. Removes first can succeed where in-order fails (`[Add "a", Remove
+/// "a/b"]` with `a/b` in `base`). The git calls are cut by [`chunks`]; a failed call leaves `HEAD` as it was.
 pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], deadline: Instant)
     -> Result<String, BranchError> {
     oid(base)?;
     parent.map(oid).transpose()?;
     run_git(wt, &["read-tree", base], "read-tree", deadline)?;
-    // The last change of a path wins, as when the changes are applied one at a time. The removes go first: then
-    // no add meets an entry that a later remove takes away, and the tree is the same as one change at a time.
+    // Only the last change of each path string is applied; the removes go first, then the adds.
     fn path_of(ch: &Change) -> &str {
         match ch {
             Change::Add { path, .. } | Change::Remove { path } => path,
@@ -307,14 +343,14 @@ pub fn commit(wt: &Path, base: &str, parent: Option<&str>, changes: &[Change], d
             Change::Remove { path } => removes.push(path.as_str()),
         }
     }
-    for chunk in removes.chunks(BATCH) {
+    for chunk in chunks(&removes, |p| arg_len(p), |_| 0) {
         let mut args = vec!["update-index", "--force-remove", "--"];
         args.extend(chunk);
         run_git(wt, &args, "update-index", deadline)?;
     }
     // `tmp_dir` removes left temp files: it runs once, before any temp file of this commit exists.
     let tmp = if adds.is_empty() { wt } else { tmp_dir(wt)? };
-    for chunk in adds.chunks(BATCH) {
+    for chunk in chunks(&adds, |&(p, _)| cacheinfo_len(p), |&(_, b)| b.len()) {
         let ids = write_blobs(wt, tmp, chunk.iter().map(|&(_, b)| b), deadline)?;
         let infos: Vec<String> = chunk.iter().zip(&ids).map(|(&(path, _), b)| format!("100644,{b},{path}")).collect();
         let mut args = vec!["update-index", "--add"];
@@ -377,4 +413,43 @@ pub fn set_tracking(wt: &Path, remote: &str, branch: &str, commit: &str, deadlin
 pub fn remove_worktree(main_root: &Path, wt: &Path, deadline: Instant) -> Result<(), BranchError> {
     run_git(main_root, &["worktree", "remove", "--force", "--", path_str(wt)?], "worktree remove", deadline)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `len` and `bytes` sums of each run of `items` (pairs of `len`, `bytes`).
+    fn sums(items: &[(usize, usize)]) -> Vec<(usize, usize, usize)> {
+        chunks(items, |x| x.0, |x| x.1).iter()
+            .map(|r| (r.len(), r.iter().map(|x| x.0).sum(), r.iter().map(|x| x.1).sum())).collect()
+    }
+
+    #[test]
+    fn no_run_passes_the_argv_budget() {
+        // 300 `--cacheinfo` arguments of 97-character message paths.
+        let len = cacheinfo_len(&"p".repeat(97));
+        let items = vec![(len, 0); 300];
+        let runs = sums(&items);
+        assert!(runs.len() > 1);
+        assert!(runs.iter().all(|&(n, l, _)| n > 0 && l <= ARGV_BUDGET), "{runs:?}");
+        assert_eq!(runs.iter().map(|r| r.0).sum::<usize>(), 300);
+    }
+
+    #[test]
+    fn no_run_passes_the_body_budget_but_a_large_body_goes_alone() {
+        let mib = 1 << 20;
+        let items = [(10, 8 * mib); 20].into_iter().chain([(10, BODY_BUDGET + 1), (10, 1)]).collect::<Vec<_>>();
+        let runs = sums(&items);
+        assert_eq!(runs.iter().map(|r| r.0).collect::<Vec<_>>(), [8, 8, 4, 1, 1]);
+        assert!(runs.iter().all(|&(n, _, b)| b <= BODY_BUDGET || n == 1), "{runs:?}");
+    }
+
+    #[test]
+    fn an_empty_list_has_no_run_and_order_is_kept() {
+        assert!(chunks(&[] as &[usize], |_| 1, |_| 0).is_empty());
+        let items: Vec<usize> = (0..5000).collect();
+        let flat: Vec<usize> = chunks(&items, |_| 100, |_| 0).concat();
+        assert_eq!(flat, items);
+    }
 }
