@@ -338,6 +338,63 @@ fn lifecycle_prune_removes_only_keys_without_a_record() {
     assert!(target.join("kbbbbbbbb/new").is_dir());
 }
 
+#[test] // F5: prune and remove_maildir remove nothing when the state under the lock is invalid, newer or unreadable
+fn lifecycle_removal_with_a_bad_state_removes_nothing() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None)]);
+    put(&p, id, "kaaaaaaaa", 1);
+    put(&p, id, "kbbbbbbbb", 1);
+    let file = store.dir().join("workspace.json");
+    let good = fs::read(&file).unwrap();
+    let mut newer: serde_json::Value = serde_json::from_slice(&good).unwrap();
+    newer["version"] = serde_json::json!(2);
+    let cases: [(&str, Vec<u8>, u32); 3] = [
+        ("invalid", b"{ not json".to_vec(), 0o600),
+        ("newer", serde_json::to_vec(&newer).unwrap(), 0o600),
+        ("unreadable", good.clone(), 0o000),
+    ];
+    for (what, bytes, mode) in cases {
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&file, &bytes).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(mode)).unwrap();
+        if mode == 0 && fs::read(&file).is_ok() {
+            continue; // root reads a 0000 file: no unreadable state here
+        }
+        assert!(prune(&store, MAIL_LOCK_WAIT).is_err(), "{what}");
+        assert!(remove_maildir(&store, "kbbbbbbbb", MAIL_LOCK_WAIT).is_err(), "{what}");
+        assert_eq!(unread(&p, id, "kaaaaaaaa"), 1, "{what}");
+        assert_eq!(unread(&p, id, "kbbbbbbbb"), 1, "{what}");
+    }
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(&file, &good).unwrap();
+    assert_eq!(prune(&store, MAIL_LOCK_WAIT).unwrap(), ["kbbbbbbbb"]);
+}
+
+#[test] // F5: a send while a removal holds mail/lock exclusive is refused with the Busy line and delivers nothing
+#[ignore = "timing: send waits MAIL_LOCK_WAIT (2 s) for mail/lock"]
+fn lifecycle_send_while_a_removal_holds_the_lock_is_busy() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", Some("lead")), ("kbbbbbbbb", Some("bob"))]);
+    let stale = read(&store);
+    let mail = mail_dir(&p, id);
+    fs::create_dir_all(&mail).unwrap();
+    let held = fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(mail.join("lock")).unwrap();
+    fs4::FileExt::try_lock(&held).unwrap();
+    let e = send(&p, &stale, None, "bob", "s", "b", &MailConfig::default(), at(T0)).unwrap_err();
+    assert!(matches!(e, MailError::Busy), "{e:?}");
+    assert_eq!(e.to_string(), "zygo: mail is busy; try again");
+    assert!(gone(&mail.join("kbbbbbbbb")));
+    drop(held);
+    let r = send(&p, &stale, None, "bob", "s", "b", &MailConfig::default(), at(T0)).unwrap();
+    assert_eq!(r.sent.len(), 1);
+}
+
 // ---- step 5: path c (`read`) ----
 
 #[test] // c: a maildir removed while a read runs is not made again by that read
