@@ -46,13 +46,15 @@ static PY_PROGRESS: LazyLock<Regex> =
 static PY_VERBOSE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\S+::\S+ (PASSED|SKIPPED|XFAIL|XPASS)([ \t].*)?$").unwrap());
 
-/// The header that opens a pytest failure section (O§7.6).
+/// The header that opens a pytest failure section, or the `-rP` `PASSES` section (O§7.6).
 static PY_FAILURE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^=+ (FAILURES|ERRORS|short test summary info) =+$").unwrap());
+    LazyLock::new(|| Regex::new(r"^=+ (FAILURES|ERRORS|PASSES|short test summary info) =+$").unwrap());
 
-/// The last line of `text`, without the `\n` characters at its end (O§7.6 "a last line").
+/// The last line of `text`, without one final `\n` (O§7.6 "a last line"). A text that ends in a blank line
+/// has an empty last line.
 fn last_line(text: &str) -> &str {
-    text.trim_end_matches('\n').rsplit('\n').next().unwrap_or("")
+    let t = text.strip_suffix('\n').unwrap_or(text);
+    t.rsplit('\n').next().unwrap_or("")
 }
 
 /// Whether `line` matches a whole-line hidden form of the row of `r` (O§7.6). `line` is one line of the text
@@ -173,7 +175,7 @@ pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
 /// The pytest view of `text` (O§7.6): hides the progress lines with no `F` and no `E` and the `-v` lines of
 /// passed, skipped, xfailed and xpassed tests, keeps every other line verbatim and in order, and writes
 /// `[zygo: <n> passed or skipped progress lines hidden]` at the place of the first hidden line. The failure
-/// section is sticky: from the first `FAILURES`, `ERRORS` or `short test summary info` header to the end of
+/// section is sticky: from the first `FAILURES`, `ERRORS`, `PASSES` or `short test summary info` header to the end of
 /// the text no line is hidden (O-C9). `None` when the last line is not the summary, nothing is hidden, or the
 /// view is not shorter than `text` (O§7.3 "No step adds content").
 pub fn pytest(text: &str) -> Option<(String, Vec<Step>)> {

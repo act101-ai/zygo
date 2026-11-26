@@ -71,7 +71,7 @@ const P: &str = concat!(
     "tests/test_i.py::test_two SKIPPED (no db)                                [ 67%]\n",
     "tests/test_i.py::test_three XFAIL (bug 7)                                [ 70%]\n",
     "tests/test_i.py::test_four XPASS (bug 8)                                 [ 72%]\n",
-    "tests/test_i.py::test_five XPASS(strict) (bug 9)                         [ 75%]\n",
+    "tests/test_i.py::test_five FAILED                                        [ 75%]\n",
     "tests/test_i.py::test_six FAILED                                         [ 77%]\n",
     "tests/test_i.py::test_seven ERROR                                        [ 80%]\n",
     "\n",
@@ -98,7 +98,7 @@ const P_VIEW: &str = concat!(
     " tests/test_f.py ..\n",
     "tests/test_g.pyc ..\n",
     "tests/test_h.py ..  [ 64%] extra\n",
-    "tests/test_i.py::test_five XPASS(strict) (bug 9)                         [ 75%]\n",
+    "tests/test_i.py::test_five FAILED                                        [ 75%]\n",
     "tests/test_i.py::test_six FAILED                                         [ 77%]\n",
     "tests/test_i.py::test_seven ERROR                                        [ 80%]\n",
     "\n",
@@ -247,7 +247,7 @@ fn progress_lines_with_f_or_e_stay() {
     for l in [
         "tests/test_b.py ....F.....                                               [ 50%]",
         "tests/test_d.py E                                                        [ 62%]",
-        "tests/test_i.py::test_five XPASS(strict) (bug 9)                         [ 75%]",
+        "tests/test_i.py::test_five FAILED                                        [ 75%]",
     ] {
         assert!(!hidden_by(Pytest, l), "{l:?}");
     }
@@ -360,7 +360,10 @@ fn text_without_a_last_summary_line_gives_none() {
         assert_eq!(pytest(&t), None, "{t:?}");
         assert_eq!(view(&t, &[Pytest]), None, "{t:?}");
     }
-    assert_eq!(pytest(&format!("{raw}\n\n")).map(|x| x.1), Some(vec![Passed]));
+    for t in [format!("{raw}\n"), format!("{raw}\n\n\n")] {
+        assert_eq!(pytest(&t), None, "{t:?}");
+        assert_eq!(view(&t, &[Pytest]), None, "{t:?}");
+    }
 }
 
 #[test]
@@ -400,4 +403,58 @@ fn last_line_without_newline_stays_verbatim() {
     let (raw, _) = case("passing");
     let t = raw.strip_suffix('\n').unwrap();
     assert_eq!(pytest(t).unwrap().0, pytest(&raw).unwrap().0.strip_suffix('\n').unwrap());
+}
+
+/// Review R2 F1 (O-C9): with live output (`-s`, `--capture=no`, `--capture=tee-sys`) a failing test's prints sit
+/// among the progress lines, so the pytest view does not apply; the stored name stays.
+#[test]
+fn live_output_flags_turn_the_pytest_view_off() {
+    let (raw, _) = case("failing-verbose");
+    let printed = raw.replacen(
+        "tests/test_calc.py::test_total FAILED",
+        "inner/test_db.py ss\ntests/test_calc.py::test_total FAILED",
+        1,
+    );
+    assert_ne!(printed, raw);
+    for t in [&raw, &printed] {
+        for cmd in ["pytest -v -s", "pytest -sv", "pytest -vs", "pytest -v --capture=no", "pytest -v --capture no",
+                    "pytest -v --capture=tee-sys", "python3 -m pytest -v -s", "uv run pytest -s -v",
+                    "cd py && pytest -s", "pytest -v; pytest -s", "pytest -v $FLAGS"] {
+            let p = parse(cmd);
+            assert!(!p.runners.contains(&Pytest), "{cmd}");
+            let out = shape::run(t, &ShapeInput { parsed: Some(p), kind: Kind::Text, threshold: 16384 });
+            assert_eq!(out, Shaped { text: t.to_string(), steps: vec![], shaper: None, size_view: false }, "{cmd}");
+        }
+        for cmd in ["pytest -v", "pytest -v --capture=fd", "pytest -v -rs", "pytest -v -k test_s", "python3 -m pytest -v"] {
+            let p = parse(cmd);
+            assert_eq!(p.runners, vec![Pytest], "{cmd}");
+            let out = shape::run(t, &ShapeInput { parsed: Some(p), kind: Kind::Text, threshold: 16384 });
+            assert_eq!(out.shaper, Some(Shaper::Pytest), "{cmd}");
+        }
+    }
+    assert_eq!(parse("pytest -s").name, "pytest");
+    assert_eq!(parse("python3 -m pytest --capture=no").name, parse("python3 -m pytest").name);
+}
+
+/// Review R2 F4 (O-C9): the `-rP` `PASSES` section holds captured output of passed tests; it is kept whole.
+#[test]
+fn passes_section_is_kept_whole() {
+    let t = concat!(
+        "collected 3 items\n",
+        "\n",
+        "tests/test_a.py ...                                                      [100%]\n",
+        "\n",
+        "==================================== PASSES ====================================\n",
+        "___________________________________ test_one ___________________________________\n",
+        "----------------------------- Captured stdout call -----------------------------\n",
+        "inner/test_x.py ..                                                       [100%]\n",
+        "inner/test_x.py::test_y PASSED                                           [100%]\n",
+        "============================== 3 passed in 0.01s ===============================\n",
+    );
+    let want = t.replacen(
+        "tests/test_a.py ...                                                      [100%]\n",
+        "[zygo: 1 passed or skipped progress lines hidden]\n",
+        1,
+    );
+    assert_eq!(pytest(t), Some((want, vec![Passed])));
 }
