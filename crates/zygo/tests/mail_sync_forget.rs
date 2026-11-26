@@ -23,7 +23,7 @@ use common::workspace::{ready_exe, Harness, WS_ID};
 
 const ALICE: &str = "kaaaaaaaa";
 const BOB: &str = "kbbbbbbbb";
-const PROMPT: &str = "zygo: 2 unsent messages will be deleted. Forget the workspace? [y/N]";
+const PROMPT: &str = "zygo: 2 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N]";
 /// The `sent_at` of each test message: fixed, so no test reads a clock (review focus 75).
 const SENT: u64 = 1_790_000_000;
 

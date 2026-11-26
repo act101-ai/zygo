@@ -154,14 +154,15 @@ pub fn dispatch(args: WsArgs) -> i32 {
 /// removal deletes its `.git` file, its index and git's entry; the same 10 s as the S§8.2 probe.
 const WORKTREE_REMOVE_BOUND: Duration = Duration::from_secs(10);
 
-/// S§7.6 step 2: the question of `zygo ws forget`.
-pub(crate) fn forget_prompt(n: usize) -> String {
-    format!("zygo: {n} unsent messages will be deleted. Forget the workspace? [y/N]")
+/// S§7.6 step 2: the question of `zygo ws forget`: `n` messages in `mail/outbox/` and `r` in `mail/outbox/refused/`
+/// (review F5).
+pub(crate) fn forget_prompt(n: usize, r: usize) -> String {
+    format!("zygo: {n} unsent messages and {r} refused messages will be deleted. Forget the workspace? [y/N]")
 }
 
 /// S§7.6 steps 2-3, S§6.3 Remove (MS-21): the `before_remove` step of `zygo ws forget`, which `admin::forget` runs
-/// after its checks with `op.lock` and the sync lock held. It counts the outbox (one that cannot be read is an `Err`);
-/// when it is not empty it asks [`forget_prompt`] on `err` (`yes`: the question and ` y (--yes)`), and an answer that
+/// after its checks with `op.lock` and the sync lock held. It counts the outbox and its refused messages (a folder
+/// that cannot be read is an `Err`); when either count is not 0 it asks [`forget_prompt`] on `err` (`yes`: the question and ` y (--yes)`), and an answer that
 /// is not `y` or `yes`, or the end of input, is `Ok(false)`. Then [`remove_sync_worktree`]; a failed removal is an
 /// `Err`. An `Err` is the reason that `admin::forget` prints after `zygo: cannot forget <name>: `.
 pub(crate) fn forget_mail(
@@ -170,13 +171,14 @@ pub(crate) fn forget_mail(
     let sp = SyncPaths::new(paths, &ws.id).map_err(|e| e.to_string())?;
     // S§7.6 step 1 (review F3): a `mail/` that is a link or not a folder is no mail, and it is not followed.
     let no_mail = std::fs::symlink_metadata(&sp.mail).is_ok_and(|m| !m.is_dir());
-    let n = if no_mail {
-        0
+    let unreadable = |e: std::io::Error| format!("the outbox cannot be read: {}", esc(&e.to_string()));
+    let (n, r) = if no_mail {
+        (0, 0)
     } else {
-        outbox::count(&sp).map_err(|e| format!("the outbox cannot be read: {}", esc(&e.to_string())))?
+        (outbox::count(&sp).map_err(unreadable)?, outbox::refused_count(&sp).map_err(unreadable)?)
     };
-    if n > 0 {
-        let prompt = forget_prompt(n);
+    if n > 0 || r > 0 {
+        let prompt = forget_prompt(n, r);
         if yes {
             let _ = writeln!(err, "{prompt} y (--yes)");
         } else {
@@ -813,9 +815,12 @@ mod tests {
         assert!(c.definition_out.is_none() && o.definition_out.is_none());
     }
 
-    #[test] // S§7.6 step 2 (MS-21): the question text
+    #[test] // S§7.6 step 2 (MS-21, review F5): the question text, with both counts
     fn forget_prompt_is_the_spec_text() {
-        assert_eq!(forget_prompt(2), "zygo: 2 unsent messages will be deleted. Forget the workspace? [y/N]");
+        assert_eq!(
+            forget_prompt(2, 3),
+            "zygo: 2 unsent messages and 3 refused messages will be deleted. Forget the workspace? [y/N]"
+        );
     }
 
     #[cfg(unix)]
@@ -857,11 +862,27 @@ mod tests {
         for f in ["01ARZ3NDEKTSV4RRFFQ69G5FAV.json", "01ARZ3NDEKTSV4RRFFQ69G5FAW.json"] {
             std::fs::write(outbox.join(f), b"{}").unwrap();
         }
-        let q = "zygo: 2 unsent messages will be deleted. Forget the workspace? [y/N]";
+        let q = "zygo: 2 unsent messages and 0 refused messages will be deleted. Forget the workspace? [y/N]";
         assert_eq!(ask(&p, &ws, false, "n\n"), (Ok(false), format!("{q} "), 2));
         assert_eq!(ask(&p, &ws, false, ""), (Ok(false), format!("{q} "), 0));
         assert_eq!(ask(&p, &ws, false, "y\n"), (Ok(true), format!("{q} "), 2));
         assert_eq!(ask(&p, &ws, true, "n\n"), (Ok(true), format!("{q} y (--yes)\n"), 0));
+    }
+
+    #[cfg(unix)]
+    #[test] // S§7.6 step 2 (MS-21 review F5): an empty outbox with refused messages asks too, with both counts
+    fn forget_mail_asks_for_refused_messages() {
+        let td = tempfile::tempdir().unwrap();
+        let p = temp_paths(td.path());
+        let ws = Workspace::new(WS);
+        let refused = zygo_mail_sync::state::SyncPaths::new(&p, WS).unwrap().refused;
+        std::fs::create_dir_all(&refused).unwrap();
+        for f in ["01ARZ3NDEKTSV4RRFFQ69G5FAV.json", "01ARZ3NDEKTSV4RRFFQ69G5FAW.json", "01ARZ3NDEKTSV4RRFFQ69G5FAX.json"] {
+            std::fs::write(refused.join(f), b"{}").unwrap();
+        }
+        let q = "zygo: 0 unsent messages and 3 refused messages will be deleted. Forget the workspace? [y/N]";
+        assert_eq!(ask(&p, &ws, false, "n\n"), (Ok(false), format!("{q} "), 2));
+        assert_eq!(ask(&p, &ws, true, ""), (Ok(true), format!("{q} y (--yes)\n"), 0));
     }
 
     #[cfg(unix)]
