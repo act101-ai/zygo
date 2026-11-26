@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb, dba2a089, 5dd04b76; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
 | OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | DONE | implementation | 8f22ddd9, 453a297c, 68d99c41 · PR #167 |
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
@@ -201,7 +200,7 @@ Session text (T, SX nodes):
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
-| MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
+| MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
 | OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
 | OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | TODO | judgment | — |
@@ -411,5 +410,6 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-42 added: wrapper dispatch and unseen pytest live output (OS-31 review F2, R2 report); OS-35 now depends on it |
 | 2026-11-25 | FX-17 DONE (kept, round 1). Review 4: F1 and F2 (test gaps: other check errors; team warnings before the range line) fixed; F3 and F4 refuted (spec R§9.4 :271 fallback; existing exit 11 load error) · PR #169 |
 | 2026-11-25 | ML-18 DONE: end-to-end mail on tmux with stub agents. Review findings 6: 4 confirmed and fixed, 2 refuted · PR #171 |
+| 2026-11-25 | MS-20 DONE: review round 1: 7 findings, 4 confirmed (F2 consumer contracts FX-9/WD-18, F4 duplicate remote addresses, F6 two tests, F7 S§10.4/S§17 text), 3 refuted (F1 mail_list remote is MS-19, F3 per-request rebuild is FX-9, F5 cache size cap would be a new rule) · PR #177 |
 | 2026-11-26 | OS-34 DONE, kept, round 1. Fixed F1 (test follows the PO2 row to failed), F3 (no prose assertion). F2 → FX-19 (PO2 run had stderr merged into stdout). Refuted F4 (fixed acceptance; --exact used), F5 (no failure) · PR #184 |
 | 2026-11-26 | FX-19 added: PO2 row states what its run observed (OS-34 review F2); OS-42 and MS-25 now depend on it (shared files: output-shaping spec, premises.md) |
