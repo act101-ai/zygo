@@ -102,7 +102,12 @@ Test helpers: in `crates/zygo-proxy/tests/responses_request.rs` next to `fixture
   - `Calls`: field `namespaced: HashMap<String, (String, String)>`. `Calls::of` fills it from each `tools[]` `namespace` entry with a string `name` (its nested `function` entries with a string `name`), then from each `input[]` `function_call` with string `name` and `namespace` (`entry().or_insert`); malformed entries are skipped (`request` refuses them). `Calls::item`: when `self.namespaced.get(name)` is `Some((ns, n))`, the `function_call` item has `"name": n, "namespace": ns`; this lookup comes before `is_custom`. Update the doc comments of `Calls`, `Calls::of`, `Calls::item` and the `tool_use` bullet of the `Encoder` sequence comment (a flat name returns with `name` and `namespace`).
   Check: `cargo test -p zygo-proxy --locked --test responses_request --test responses_stream` passes.
 - [x] 5. **Commit** `feat(proxy): flatten Codex namespace tools and map calls back (RS-9)` with the `Zygo-Session` and `Zygo-Work: phase4:RS-9` trailers.
-- [ ] 6. **Acceptance.** With `CARGO_INCREMENTAL=0`, run the node's Acceptance line alone: both counts ≥ 1, both targets pass, the workspace run exits 0 apart from the known `zygo --test guard_hook` environment failures. Then `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings` and `cargo fmt --check` exit 0.
+- [x] 6. **Acceptance.** With `CARGO_INCREMENTAL=0`, run the node's Acceptance line alone: both counts ≥ 1, both targets pass, the workspace run exits 0 apart from the known `zygo --test guard_hook` environment failures. Then `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings` exits 0. (Plan corrected: `cargo fmt --check` is not a gate here. The repo has no rustfmt config, and the base files fail default rustfmt already, e.g. `responses_client.rs` at `ed27cfc5`.)
+
+### Execution notes (2026-11-25, round 1)
+
+- Step 2 deviation: 3 of the 13 agents bodies (`pc6-a-0004`, `pc6-b-0008`, `pc6-c-0012`, the subagents' own requests) send no `multi_agent_v1` entry. `namespace_tools_flatten_agents_fixture_anthropic_and_chat` checks those bodies only for validity and for no `tools_dropped:namespace` code. It asserts that at least 10 bodies carry the namespace.
+- Acceptance: both counts ≥ 1. `responses_request` 54 passed; `responses_stream` 32 passed. The workspace run exits 101 on only `zygo --test guard_hook` `binary_guard_not_a_repository_writes_no_line` and `binary_guard_slow_rev_parse_says_unread_once` (the known environment failures). With `--no-fail-fast`: 2394 passed, 2 failed (those two), 778 ignored; 123 targets ok. Clippy on `zygo-proxy` with `-D warnings`: 0 warnings.
 
 ### Review focus
 
