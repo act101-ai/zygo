@@ -659,7 +659,7 @@ pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
 /// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
 /// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
 /// After a rename (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit,
-/// and the ack of an old own host with no file left at the tip.
+/// and the ack of an old own host with no file left at the tip whose registry it deletes or that has none.
 fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, BTreeSet<Ulid>>,
     acked: &[Ulid]) -> Vec<Change> {
     let host = c.s.host.as_str();
@@ -687,7 +687,10 @@ fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &
         let tip_ack = own_ack(meta, h, identity);
         let old = tip_ack.map(|a| a.imported.clone()).unwrap_or_default();
         let at = files.get(h).unwrap_or(&none);
-        if h != host && at.is_empty() {
+        // The old ack goes only with or after the old registry: `own_hosts` finds an old host by its ack (S-G5).
+        let reg_stays = over
+            && meta.registries.get(h).is_some_and(|r| r.value.as_ref().is_ok_and(|v| v.identity == identity));
+        if h != host && at.is_empty() && !reg_stays {
             out.push(Change::Remove { path: format!("ack/{h}.json") });
             continue;
         }

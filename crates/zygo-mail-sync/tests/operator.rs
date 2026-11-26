@@ -528,3 +528,23 @@ fn deadline_stops_the_no_host_refusals() {
     assert_eq!(err, SyncError::Stopped { line: "zygo: mail sync stopped (deadline); the outbox is kept".into(), check: "deadline" });
     assert!(ids.iter().any(|id| a.sp().outbox.join(format!("{id}.json")).is_file()));
 }
+
+#[test] // S§7.6 Rename, S-G5, review focus 47 (review round 2 F1): the old ack stays while the old registry stays
+fn rename_over_member_limit_keeps_old_ack_and_delivers() {
+    let (r, a, b) = pair();
+    let m = many(257);
+    let mut members = refs(&m);
+    members.push((BOB, "bob"));
+    b.workspace(&members);
+    b.config(Some("b2"), "");
+    sync(&b);
+    sync(&a);
+    let id = send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    assert!(file(&r, &format!("bob@b/{id}.json")).is_some());
+    let delivered = sync(&b).delivered + sync(&b).delivered;
+    assert!(file(&r, "registry/b.json").is_some());
+    assert!(file(&r, "ack/b.json").is_some(), "the old ack is gone while the old registry stays");
+    assert_eq!(delivered, 1);
+    assert!(new_ids(&b, BOB).contains(&format!("{id}.json")));
+}
