@@ -626,6 +626,57 @@ fn split_error_event_over_hold_max() {
     assert_eq!(d["response"]["error"], json!({"code":"api_error","message":"upstream event too long"}));
 }
 
+#[test] // review round 3 H7, RS-9: an upstream call to a flat namespaced name returns with its name and namespace
+fn namespaced_call_mapped_back() {
+    let h = start(A);
+    let body = codex_request("after-custom-tool-call-output");
+    let flat = "multi_agent_v1__spawn_agent";
+    let args = json!({"message":"go"});
+    let want = |items: &[Value]| {
+        let fc = items.iter().find(|i| i["type"] == "function_call").expect("a function_call item");
+        assert_eq!((&fc["name"], &fc["namespace"]), (&json!("spawn_agent"), &json!("multi_agent_v1")), "{fc}");
+        assert_eq!(serde_json::from_str::<Value>(fc["arguments"].as_str().unwrap()).unwrap(), args);
+    };
+    h.reply_with(200, SSE, msg_sse(&[
+        message_start(),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_ns","name":flat,"input":{}}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":args.to_string()}}),
+        stop(0),
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":42}}),
+        json!({"type":"message_stop"}),
+    ]));
+    let (s, _, b) = h.post(R, &body);
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let evs = events(&b);
+    assert_eq!(terminals(&evs)[0].0, "response.completed");
+    want(&done_items(&evs));
+
+    h.reply_with(200, JSON, serde_json::to_vec(&json!({"id":"msg_up","type":"message","role":"assistant","model":"up-rs",
+        "content":[{"type":"tool_use","id":"toolu_ns","name":flat,"input":args}],"stop_reason":"tool_use","stop_sequence":null,
+        "usage":{"input_tokens":100,"cache_read_input_tokens":30,"cache_creation_input_tokens":5,"output_tokens":42}})).unwrap());
+    let (s, _, b) = h.post(R, &with_stream(body, false));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let r: Value = serde_json::from_slice(&b).unwrap();
+    want(r["output"].as_array().unwrap());
+}
+
+#[test] // review round 3 H7: a streamed request answered with a JSON 2xx ends with response.completed and its usage row
+fn streamed_request_json_answer_completed_and_row() {
+    let h = start(A);
+    h.reply_with(200, JSON, serde_json::to_vec(&MSG_JSON(false)).unwrap());
+    let (s, hd, b) = h.post(R, &with_stream(codex_request("after-custom-tool-call-output"), true));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    assert!(hv(&hd, "content-type").starts_with(SSE), "{hd:?}");
+    let evs = events(&b);
+    let t = terminals(&evs);
+    assert_eq!(t.len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.completed");
+    assert_eq!(t[0].1["response"]["usage"], msg_usage());
+    let rows = h.usage_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(counts(&rows[0]), (100, 30, 5, 42));
+}
+
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client
 fn injected_null_removed_for_responses_client() {
     let h = start(C);

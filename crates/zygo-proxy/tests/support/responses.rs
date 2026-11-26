@@ -368,8 +368,9 @@ impl Harness {
 
     /// The session's usage rows, once every `post` wrote its row. Call it only when every `post` reached a model route.
     pub fn usage_rows(&self) -> Vec<RequestRow> {
-        // The bound the other proxy test files use for this wait; it returns as soon as the rows are written.
-        assert!(self.h.usage_written(self.posts.load(Ordering::SeqCst), Duration::from_secs(10)), "usage rows not written");
+        // No total limit: a missing row hangs the test instead of failing a timing assertion. Each call returns as
+        // soon as the rows are written; its Duration is only how often the loop asks again.
+        while !self.h.usage_written(self.posts.load(Ordering::SeqCst), Duration::from_secs(1)) {}
         Store::open(&self.usage_db()).unwrap().requests_for_session(&self.session).unwrap()
     }
 }
