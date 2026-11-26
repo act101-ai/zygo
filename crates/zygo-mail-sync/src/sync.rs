@@ -22,7 +22,7 @@ use crate::prune::{self, Pruned};
 use crate::public;
 use crate::secret::{self, Outcome};
 use crate::registry::{write_cache, Ack, MemberCache, Registry, ACK_ENTRIES_MAX, MEMBERS_MAX};
-use crate::state::{self, SyncPaths};
+use crate::state::{self, State, SyncPaths};
 
 /// S§8.3 step 4: the deadline of one pass.
 pub const PASS_DEADLINE: Duration = Duration::from_secs(120);
@@ -78,7 +78,7 @@ impl SyncError {
 }
 
 /// S§8.3 step 7: the line of a tip without the marker.
-const MARKER_LINE: &str = "zygo: the side branch is not a zygo mail branch";
+pub(crate) const MARKER_LINE: &str = "zygo: the side branch is not a zygo mail branch";
 /// S§8.2: the line of a public remote.
 const PUBLIC_LINE: &str = "zygo: the remote can be read without a login; mail sync refused";
 /// S§11: the line of a `remote` that `git remote` does not list.
@@ -87,25 +87,25 @@ const REMOTE_LINE: &str = "zygo: no such remote";
 const GATE_RECORD_LINE: &str = "zygo: mail sync cannot run: the workspace record cannot be read";
 const GATE_CONFIG_LINE: &str = "zygo: mail sync cannot run: the config does not load";
 /// S§8.3 step 15: the line after the fifth move of the branch.
-const MOVED_LINE: &str = "zygo: the side branch moved 5 times during the sync; try again";
+pub(crate) const MOVED_LINE: &str = "zygo: the side branch moved 5 times during the sync; try again";
 /// S§9 Push: the note of a forced prune whose lease failed.
 const PRUNE_MOVED_NOTE: &str = "prune skipped: the branch moved; run again";
 /// The poll of a lock that another holder has, as the workspace lock helper.
 const LOCK_POLL: Duration = Duration::from_millis(5);
 
 /// One sync: the seams, the paths, the workspace record and the settings in force.
-struct Ctx<'a> {
-    env: &'a Env,
-    ws_id: &'a str,
-    sp: SyncPaths,
-    store: Store,
-    ws: Workspace,
-    cfg: Config,
-    s: SyncSettings,
+pub(crate) struct Ctx<'a> {
+    pub(crate) env: &'a Env,
+    pub(crate) ws_id: &'a str,
+    pub(crate) sp: SyncPaths,
+    pub(crate) store: Store,
+    pub(crate) ws: Workspace,
+    pub(crate) cfg: Config,
+    pub(crate) s: SyncSettings,
 }
 
 /// Why a pass stopped: a stop with its CLI line and check name, or a test seam.
-enum Fail {
+pub(crate) enum Fail {
     Stop { line: String, check: &'static str },
     Crash(&'static str),
 }
@@ -119,7 +119,7 @@ impl From<BranchError> for Fail {
 }
 
 /// A stop with the author's line (Open O6): the check name and that the outbox is kept.
-fn stop(check: &'static str) -> Fail {
+pub(crate) fn stop(check: &'static str) -> Fail {
     Fail::Stop { line: format!("zygo: mail sync stopped ({check}); the outbox is kept"), check }
 }
 
@@ -192,7 +192,7 @@ impl Ctx<'_> {
         }
     }
 
-    fn log(&self, line: &str) { self.store.log_error(line) }
+    pub(crate) fn log(&self, line: &str) { self.store.log_error(line) }
 }
 
 /// S§8.3 step 1: the workspace record, the config (layers 1-4, the main worktree as the repository) and the sync
@@ -210,6 +210,23 @@ fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
         .config;
     let s = sync_for(&cfg, &ws.name).map_err(SyncError::Off)?;
     Ok(Ctx { env, ws_id, sp, store, ws, cfg, s })
+}
+
+/// S§8.3 steps 1 and 3, S§15: `f` under the gate and the CLI lock. A lock held by another after the CLI wait is
+/// `Busy`; a stop of `f` is logged and recorded as a stop of a pass. S§8.3 step 17: after the release, a mark that
+/// a sync met the lock meanwhile runs the sync, as a child (a held lock: its holder sees the mark); its result is
+/// in `errors.log` and `state.json` only.
+pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T, Fail>) -> Result<T, SyncError> {
+    let c = gate(env, ws_id)?;
+    let out = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
+        Ok(Some(_lock)) => f(&c).map_err(|e| c.stopped(e, true)),
+        Ok(None) => return Err(SyncError::Busy),
+        Err(f) => return Err(c.stopped(f, false)),
+    };
+    if c.sp.again.exists() {
+        let _ = run_with(env, ws_id, Mode::Child, &Opts::default());
+    }
+    out
 }
 
 /// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each
@@ -257,12 +274,12 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
     let identity = state::make_identity(sp).map_err(|_| stop("identity"))?;
     let mut attempts = 0;
     let (base, base_meta) = loop {
-        let tip = match branch::fetch(root, remote, branch_name, deadline)? {
+        let (tip, fetched) = match branch::fetch(root, remote, branch_name, deadline)? {
             Fetched::Tip(t) => {
                 branch::ensure_worktree(root, wt, &t, deadline)?;
-                t
+                (t, true)
             }
-            Fetched::NoBranch => branch::bootstrap(root, wt, deadline)?,
+            Fetched::NoBranch => (branch::bootstrap(root, wt, deadline)?, false),
         };
         env.seam.at("after_fetch")?;
         if !branch::has_marker(wt, &tip, deadline)? {
@@ -272,18 +289,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         let mut st = state::load(sp).map_err(|_| stop("state"))?;
         identity::check(&meta, host, &identity, &st, &env.paths, c.ws_id)
             .map_err(|s| Fail::Stop { line: s.line(), check: s.check_name() })?;
-        // An own file at the tip whose blob is the pending one was pushed by a run that stopped before it recorded
-        // it (S§7.5 "the blob id that it last pushed"; MS-11 F9).
-        let tip_own = own_blobs(&meta, &identity);
-        let mut promoted = false;
-        for (path, blob) in &tip_own {
-            if st.pending.get(path) == Some(blob) {
-                st.pending.remove(path);
-                st.pushed.insert(path.clone(), blob.clone());
-                promoted = true;
-            }
-        }
-        if promoted {
+        if promote(&mut st, &meta, &identity) {
             state::save(sp, &st).map_err(|_| stop("state"))?;
         }
         let mut cache = MemberCache::default();
@@ -309,7 +315,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         keys.dedup();
         wake(c, &keys);
         let mut notified = Vec::new();
-        let (mut changes, sent) = outbox(c, &tip, (deadline, pass_end), &mut notified)?;
+        let (mut changes, sent) = outbox(c, &tip, fetched.then_some(&meta), (deadline, pass_end), &mut notified)?;
         notified.sort();
         notified.dedup();
         wake(c, &notified);
@@ -387,7 +393,7 @@ fn prune_step(c: &Ctx, report: &mut Report, base: &str, meta: &TipMeta, identity
 /// S§8.3 step 5, S§8.2, S§11: the remote is one that `git remote` lists, then the public check of its URLs. `Public`
 /// stops the sync before any fetch; `Unknown` is a note and the sync runs. It loads and saves `state.json` itself,
 /// so the pass loads the state after it.
-fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> Result<(), Fail> {
+pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> Result<(), Fail> {
     let root = &c.ws.main_root;
     let w = crate::git::run(root, &["remote"], deadline).map_err(|_| stop("remote"))?;
     if !w.ok {
@@ -409,26 +415,33 @@ fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> Result<(), F
 
 /// S§8.3 step 11, S§8.6 "At commit": the outbox files in ULID order, at most [`OUTBOX_CAP`] readable ones. A file
 /// that cannot be read (a link, a FIFO, over `FILE_MAX`, not JSON, or a `to` that is no address) moves to
-/// `refused/`, with one log line, and takes no cap slot. A file whose path is at the tip was pushed before and is
-/// deleted now. Else, while the pass deadline holds, the secret pass: clear, an add of its bytes at
-/// `<to>/<ULID>.json` (and the file in the returned list, deleted after the push); a finding, the move to
-/// `refused/` and the notice to the sender, whose keys go into `notified`; could not run, the file stays.
-fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notified: &mut Vec<String>)
-    -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
+/// `refused/`, with one log line, and takes no cap slot. So does a file whose `to` host no machine reads at `meta`,
+/// the fetched tip ([`read_host`]; review F1: a stale member cache after a rename): when its path is at the tip it
+/// is deleted, else, while the pass deadline holds, it moves with the check `no-host` and the notice to the sender;
+/// a bootstrap tip (`None`) holds no registry yet and refuses nothing (S§19 #8). A
+/// file whose path is at the tip was pushed before and is deleted now. Else, while the pass deadline holds, the
+/// secret pass: clear, an add of its bytes at `<to>/<ULID>.json` (and the file in the returned list, deleted after
+/// the push); a finding, the move to `refused/` and the notice to the sender, whose keys go into `notified`; could
+/// not run, the file stays.
+fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Instant, SystemTime),
+    notified: &mut Vec<String>) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
     let (sp, wt) = (&c.sp, &c.sp.worktree);
-    let mut items = Vec::new();
+    let (mut items, mut no_host) = (Vec::new(), Vec::new());
     for (id, p) in outbox_entries(sp).map_err(|_| stop("outbox"))? {
         if items.len() == OUTBOX_CAP {
             break;
         }
         match read_message(&p) {
+            Some((_, _, to)) if meta.is_some_and(|m| !read_host(m, host_of(&to))) => {
+                no_host.push((id, p, format!("{to}/{id}.json"), to));
+            }
             Some((bytes, value, to)) => items.push((id, p, bytes, value, format!("{to}/{id}.json"), to)),
             None => refuse_unread(c, id, &p),
         }
     }
-    let wanted: BTreeSet<&String> = items.iter().map(|i| &i.4).collect();
+    let wanted: BTreeSet<&String> = items.iter().map(|i| &i.4).chain(no_host.iter().map(|i| &i.2)).collect();
     let mut at_tip = BTreeSet::new();
-    let folders: BTreeSet<&String> = items.iter().map(|i| &i.5).collect();
+    let folders: BTreeSet<&String> = items.iter().map(|i| &i.5).chain(no_host.iter().map(|i| &i.3)).collect();
     for to in folders {
         branch::ls(wt, tip, Some(&format!("{to}/")), deadline, &mut |e| {
             if wanted.contains(&e.path) {
@@ -436,6 +449,20 @@ fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notif
             }
             Flow::Go
         })?;
+    }
+    // A file pushed before (the tip check) is deleted before the host check, so it gets no wrong notice.
+    for (id, p, path, to) in no_host {
+        if at_tip.contains(&path) {
+            let _ = std::fs::remove_file(&p);
+            continue;
+        }
+        if Instant::now() >= deadline || c.env.clock.now() >= pass_end {
+            return Err(stop("deadline"));
+        }
+        c.log(&format!("mail sync: outbox {id}: no-host"));
+        let h = host_of(&to);
+        let body = format!("zygo did not send message {id} to {to}: host {h} has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/.");
+        refuse(c, id, &[], Some(&body), notified);
     }
     let (mut changes, mut sent) = (Vec::new(), Vec::new());
     for (id, p, bytes, value, path, _) in items {
@@ -453,20 +480,7 @@ fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notif
             }
             Outcome::Finding(ids) => {
                 c.log(&format!("mail sync: outbox {id}: refused: {}", ids.join(", ")));
-                let now = c.env.clock.now();
-                let mut notify = |sender: &str, subject: &str, body: &str| -> std::io::Result<()> {
-                    let fail = |_| std::io::Error::other("notice not delivered");
-                    for t in names::resolve(&c.ws, sender, None).map_err(fail)? {
-                        let label = t.name.clone().unwrap_or_else(|| t.key.clone());
-                        let msg = Message::new("zygo", &label, subject, body, now).map_err(fail)?;
-                        store::deliver(&sp.mail, &t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
-                        notified.push(t.key);
-                    }
-                    Ok(())
-                };
-                if crate::outbox::refuse(sp, id, &ids, &mut notify, now).is_err() {
-                    c.log(&format!("mail sync: outbox {id}: notice"));
-                }
+                refuse(c, id, &ids, None, notified);
             }
             Outcome::CouldNotRun(check) => {
                 c.log(&format!("mail sync: outbox {id}: secret check could not run: {check}"));
@@ -474,6 +488,35 @@ fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notif
         }
     }
     Ok((changes, sent))
+}
+
+/// No-host review F1, F2: some machine reads `*@<h>/` at `meta`, the fetched tip: `h` has a valid registry (S§7.3),
+/// or a valid ack, which keeps an old host an own host of its renamed workspace (S§7.6 "Rename", S§8.5).
+fn read_host(meta: &TipMeta, h: &str) -> bool {
+    meta.registries.get(h).is_some_and(|r| r.value.is_ok()) || meta.acks.get(h).is_some_and(|a| a.value.is_ok())
+}
+
+/// The host part of the address `to`.
+fn host_of(to: &str) -> &str { to.split_once('@').map_or("", |(_, h)| h) }
+
+/// S§8.6 "At commit": moves `outbox/<id>.json` to `refused/` and sends the notice to its sender, whose keys go into
+/// `notified`; `body` replaces the secret-pass notice body (`ids`) for another reason. A failed move or notice
+/// writes the log line `notice`.
+fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Vec<String>) {
+    let now = c.env.clock.now();
+    let mut notify = |sender: &str, subject: &str, secret_body: &str| -> std::io::Result<()> {
+        let fail = |_| std::io::Error::other("notice not delivered");
+        for t in names::resolve(&c.ws, sender, None).map_err(fail)? {
+            let label = t.name.clone().unwrap_or_else(|| t.key.clone());
+            let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
+            store::deliver(&c.sp.mail, &t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
+            notified.push(t.key);
+        }
+        Ok(())
+    };
+    if crate::outbox::refuse(&c.sp, id, ids, &mut notify, now).is_err() {
+        c.log(&format!("mail sync: outbox {id}: notice"));
+    }
 }
 
 /// Each entry of `mail/outbox/` named `<ULID>.json` that is not a folder (regular files, links, FIFOs and others),
@@ -558,8 +601,22 @@ fn own_ack<'m>(meta: &'m TipMeta, h: &str, identity: &str) -> Option<&'m Ack> {
     meta.acks.get(h).and_then(|r| r.value.as_ref().ok()).filter(|a| a.identity == identity)
 }
 
+/// S§7.5 "the blob id that it last pushed" (MS-11 F9): an own file at the tip whose blob is the pending one was
+/// pushed by a run that stopped before it recorded it; it moves from `pending` to `pushed`. Whether one moved.
+pub(crate) fn promote(st: &mut State, meta: &TipMeta, identity: &str) -> bool {
+    let mut promoted = false;
+    for (path, blob) in own_blobs(meta, identity) {
+        if st.pending.get(&path) == Some(&blob) {
+            st.pending.remove(&path);
+            st.pushed.insert(path, blob);
+            promoted = true;
+        }
+    }
+    promoted
+}
+
 /// S§7.5: the branch path and blob id of each valid registry and ack file of this identity.
-fn own_blobs(meta: &TipMeta, identity: &str) -> BTreeMap<String, String> {
+pub(crate) fn own_blobs(meta: &TipMeta, identity: &str) -> BTreeMap<String, String> {
     let regs = meta.registries.iter()
         .filter(|(_, r)| matches!(&r.value, Ok(v) if v.identity == identity))
         .map(|(h, r)| (format!("registry/{h}.json"), r.blob.clone()));
@@ -593,24 +650,38 @@ fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
     Ok(out)
 }
 
+/// S§7.3: the valid member names of `ws`, sorted, without duplicates: the `members` of the own registry.
+pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
+    let mut names: Vec<String> = ws.members.values().filter_map(|m| m.valid_name().map(String::from)).collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host when it
 /// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
 /// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
+/// After a rename (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit,
+/// and the ack of an old own host with no file left at the tip whose registry it deletes or that has none.
 fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, BTreeSet<Ulid>>,
     acked: &[Ulid]) -> Vec<Change> {
     let host = c.s.host.as_str();
-    let mut names: Vec<String> = c.ws.members.values().filter_map(|m| m.valid_name().map(String::from)).collect();
-    names.sort();
-    names.dedup();
+    let names = own_names(&c.ws);
+    let over = names.len() > MEMBERS_MAX;
     let mut out = Vec::new();
     let same = meta.registries.get(host).and_then(|r| r.value.as_ref().ok())
         .is_some_and(|r| r.identity == identity && r.members == names);
     if !same {
-        if names.len() > MEMBERS_MAX {
+        if over {
             c.log("mail sync: own file over limit: members");
         } else {
             let bytes = Registry { host: host.into(), identity: identity.into(), members: names }.to_bytes();
             out.push(Change::Add { path: format!("registry/{host}.json"), bytes });
+        }
+    }
+    for (h, r) in meta.registries.iter().filter(|_| !over) {
+        if h != host && r.value.as_ref().is_ok_and(|v| v.identity == identity) {
+            out.push(Change::Remove { path: format!("registry/{h}.json") });
         }
     }
     let acked: BTreeSet<Ulid> = acked.iter().copied().collect();
@@ -619,6 +690,13 @@ fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &
         let tip_ack = own_ack(meta, h, identity);
         let old = tip_ack.map(|a| a.imported.clone()).unwrap_or_default();
         let at = files.get(h).unwrap_or(&none);
+        // The old ack goes only with or after the old registry: `own_hosts` finds an old host by its ack (S-G5).
+        let reg_stays = over
+            && meta.registries.get(h).is_some_and(|r| r.value.as_ref().is_ok_and(|v| v.identity == identity));
+        if h != host && at.is_empty() && !reg_stays {
+            out.push(Change::Remove { path: format!("ack/{h}.json") });
+            continue;
+        }
         let new: BTreeSet<Ulid> = old.union(&acked).filter(|u| at.contains(u)).copied().collect();
         if new == old && !(h == host && tip_ack.is_none()) {
             continue;

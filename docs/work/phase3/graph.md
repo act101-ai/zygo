@@ -191,7 +191,7 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
+| MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | e8f19e67..5bc5249b · acceptance pass (operator 22 passed) · PR #190 |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
@@ -214,7 +214,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
 | FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
 | FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
@@ -423,3 +422,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-44 DROPPED: kept_bytes modelled each agent's cut, but OpenCode keeps whole lines under user-config limits and Claude Code cuts by an API token count and keeps characters; no premise states what is kept; O§6.4 Size limit stated as permanent · PR #207 |
 | 2026-11-26 | OS-43 DROPPED: O§8.2 floors are per shaper, so the clean-shaped log case has no 8 KiB floor; the log view under the threshold dropped failure and ERROR lines (O-C9, O§8.1); spec re-plan withdrawn · PR #195 |
 | 2026-11-26 | FX-16 unblocked: the "ratification first" gate in its contract was written by an agent without operator approval; deleted |
+| 2026-11-26 | Operator: unsupervised run of 24-48 h; authorized to install build tools and to coordinate with the other zygo agent; make and record decisions so the work completes autonomously; decisions are reviewed after the fact. gh-stack v0.3.0 installed for workflow (2) |
+| 2026-11-26 | MS-15 DONE: review R1 F1-F6, R2 F1-F3, R3 R2-1 fixed (operator commands stop in a twin state, S§7.6); R2-2 recorded (single-call rm not observable on unix); author's call: drop_host runs only the twin check · PR #190 |
