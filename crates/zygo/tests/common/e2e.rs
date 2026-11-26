@@ -958,3 +958,20 @@ pub fn assert_no_mail_text(h: &Harness, id: &str, markers: &[&str]) -> Vec<PathB
     }
     read
 }
+
+/// M-G6 (no daemon): the `ps -axo pid=,command=` lines whose command holds `h.root()`, except a tmux process (its
+/// first word ends in `/tmux` or is `tmux`). After `down` it is empty: no process for mail outlives the verbs.
+pub fn root_processes(h: &Harness) -> Vec<String> {
+    let o = Command::new("ps").args(["-axo", "pid=,command="]).stdin(Stdio::null()).output().unwrap();
+    assert!(o.status.success(), "ps: {}", text(&o.stderr));
+    let root = h.root().to_str().unwrap();
+    text(&o.stdout)
+        .lines()
+        .filter(|l| l.contains(root))
+        .filter(|l| {
+            let first = l.split_whitespace().nth(1).unwrap_or_default();
+            first != "tmux" && !first.ends_with("/tmux")
+        })
+        .map(str::to_string)
+        .collect()
+}

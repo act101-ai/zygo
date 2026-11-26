@@ -54,11 +54,13 @@ fn team(h: &Harness) -> Team {
     Team { id, ws, elena, bob }
 }
 
-/// The M§13 #8 scan in two parts: while the members run, then after `down`.
+/// The M§13 #8 scan in two parts: while the members run, then after `down`; then M-G6: no process but tmux still
+/// runs with the harness root in its command line.
 fn scan_end(h: &Harness, t: &Team, m: &[&str]) {
     assert_no_mail_text(h, &t.id, m);
     down(h, &t.ws.name);
     assert_no_mail_text(h, &t.id, m);
+    assert_eq!(root_processes(h), Vec::<String>::new(), "M-G6: no daemon");
 }
 
 #[test]
@@ -124,7 +126,12 @@ fn m13_2_send_by_name_reaches_the_right_member_after_every_pane_id_changed() {
         got["messages"].as_array().unwrap().iter().map(|m| (m["from"].as_str().unwrap(), m["subject"].as_str().unwrap())).collect();
     assert_eq!(pairs, [("cli", "ML18-S2-cli"), ("bob", "ML18-S2-mcp")]);
     assert_eq!(got["messages"][0]["id"].as_str(), Some(id.as_str()));
-    scan_end(&h, &t, &["ML18-S2-cli", "ML18-B2-cli", "ML18-S2-mcp", "ML18-B2-mcp"]);
+    // M-G3 through MCP: an MCP send wakes the idle member `bob`, never woken before (`zygo-mcp/src/tools/mail.rs:41-43`).
+    let r = mail_tool(&h, &t.elena, "mail_send", json!({"to": "bob", "subject": "ML18-S2-mcpb", "body": "ML18-B2-mcpb"}));
+    assert_eq!((r["sent"][0]["to"].as_str(), r["refused"].as_array().map(Vec::len)), (Some("bob"), Some(0)), "{r}");
+    assert!(until(Duration::from_secs(2), || wakes(&h, &pb) == 1), "{}", capture(&h, &pb));
+    assert!(!capture(&h, &pb).contains("ML18-"), "no mail text is typed (M-G4)");
+    scan_end(&h, &t, &["ML18-S2-cli", "ML18-B2-cli", "ML18-S2-mcp", "ML18-B2-mcp", "ML18-S2-mcpb", "ML18-B2-mcpb"]);
 }
 
 #[test]
@@ -176,7 +183,10 @@ fn m13_5_an_idle_member_is_woken_within_2_s_and_once_per_30_s() {
     mail_send_cli(&h, "elena", "ML18-S5a", "ML18-B5a");
     assert!(until(Duration::from_secs(2), || wakes(&h, &pe) == 1), "{}", capture(&h, &pe));
     assert!(t0.elapsed() <= Duration::from_secs(2), "woken after {:?}", t0.elapsed());
+    let woke = Instant::now();
     let first = json_file(&wake_file(&h, &t.id, &t.elena));
+    // At least 5 s after the wake, so a short gap (such as 2 s) would wake again; still inside the 30 s `wake_gap`.
+    std::thread::sleep(Duration::from_secs(5).saturating_sub(woke.elapsed()));
     mail_send_cli(&h, "elena", "ML18-S5b", "ML18-B5b");
     assert!(t0.elapsed() < Duration::from_secs(30));
     std::thread::sleep(Duration::from_secs(1));
@@ -270,8 +280,15 @@ fn m13_8_no_mail_text_outside_the_maildirs() {
         (&["ls"], 0),
         (&["workspace"], 0),
     ] {
+        let t0 = Instant::now();
         let o = cli(&h, args, &[]);
+        let el = t0.elapsed();
         assert_eq!(o.status.code(), Some(code), "{args:?}: {}{}", text(&o.stdout), text(&o.stderr));
+        if args.get(1) == Some(&"watch") {
+            // Exit 1 at the timeout, not from a read error (`cmd/mail.rs:177-180` also exits 1, with a message).
+            assert!(el >= Duration::from_secs(1), "{el:?}");
+            assert_eq!(text(&o.stderr), "");
+        }
     }
     const M: [&str; 4] = ["ML18-S8-mcp", "ML18-B8-mcp", "ML18-S8-all", "ML18-B8-all"];
     let live = assert_no_mail_text(&h, &t.id, &M);
@@ -283,4 +300,5 @@ fn m13_8_no_mail_text_outside_the_maildirs() {
     down(&h, &t.ws.name);
     let after = assert_no_mail_text(&h, &t.id, &M);
     assert!(after.contains(&h.store(&t.id).dir().join("workspace.json")), "{after:?}");
+    assert_eq!(root_processes(&h), Vec::<String>::new(), "M-G6: no daemon");
 }
