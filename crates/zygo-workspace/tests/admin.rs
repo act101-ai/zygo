@@ -210,9 +210,29 @@ fn invalid_doc(id: &str, name: Value, socket: Option<&Path>) -> Value {
 fn text(b: Vec<u8>) -> String { String::from_utf8(b).unwrap() }
 
 fn forget_run(p: &Paths, tmux: &Path, env: Option<&str>, name: &str) -> (i32, String, String) {
+    forget_with(p, tmux, env, name, &mut |_: &Workspace| Ok(true))
+}
+
+/// `admin::forget` with the `before_remove` step `before` (S§7.6, MS-21).
+fn forget_with(
+    p: &Paths, tmux: &Path, env: Option<&str>, name: &str, before: &mut dyn FnMut(&Workspace) -> Result<bool, String>,
+) -> (i32, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = admin::forget(p, tmux, env.map(OsStr::new), name, &mut out, &mut err);
+    let code = admin::forget(p, tmux, env.map(OsStr::new), name, before, &mut out, &mut err);
     (code, text(out), text(err))
+}
+
+/// Makes `mail/sync/` of workspace `id` (the folder the first sync makes) and returns it.
+fn sync_dir(p: &Paths, id: &str) -> PathBuf {
+    let d = mail_dir(p, id).join("sync");
+    fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// Whether a new open of the existing file `path` can take its lock now; the lock ends at once.
+fn lock_free(path: &Path) -> bool {
+    let f = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+    fs4::FileExt::try_lock(&f).is_ok()
 }
 
 fn pane_run(p: &Paths, tmux: &Path, name: Option<&str>, cwd: &Path, key: &str) -> (i32, String, String) {
@@ -2035,6 +2055,112 @@ fn mail_forget_leaves_no_mail_folder() {
     assert!(fs::symlink_metadata(mail_dir(&p, ID)).is_err());
     assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err());
     assert_eq!(mail_store::unread(&mail_dir(&p, OTHER), "kaaaaaaaa").unwrap(), 1);
+}
+
+// ---- MS-21: the before_remove step (mail sync design S§7.6, S§14) ----
+
+#[test] // S§7.6 steps 1-4, S§14: before_remove runs after the checks, under the sync lock, before any delete
+fn forget_runs_before_remove_under_the_sync_lock_before_any_delete() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    result(&p, ID, "kaaaaaaaa");
+    let lock = sync_dir(&p, ID).join("lock");
+    let state = p.workspaces_dir().join(ID).join("workspace.json");
+    let mut seen = Vec::new();
+    let mut before = |ws: &Workspace| {
+        seen.push((ws.id.clone(), ws.main_root.clone(), state.exists(), cache(&p, ID).exists(), lock_free(&lock)));
+        Ok(true)
+    };
+    assert_eq!(forget_with(&p, &t.join("none"), None, "app", &mut before), (0, "zygo: forgot app\n".to_string(), String::new()));
+    assert_eq!(seen, vec![(ID.to_string(), t.join("r/app"), true, true, false)]);
+    assert!(fs::symlink_metadata(p.workspaces_dir().join(ID)).is_err() && !cache(&p, ID).exists());
+}
+
+#[test] // S§7.6 step 2: a "no" keeps everything, exit 0; with no mail/sync/ no lock file is made
+fn forget_keeps_everything_when_before_remove_says_no() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    result(&p, ID, "kaaaaaaaa");
+    mail_to(&p, ID, "kaaaaaaaa", 1);
+    let bytes = state_bytes(&p, ID);
+    assert_eq!(
+        forget_with(&p, &t.join("none"), None, "app", &mut |_: &Workspace| Ok(false)),
+        (0, "zygo: app not forgotten\n".to_string(), String::new())
+    );
+    assert_eq!(state_bytes(&p, ID), bytes);
+    assert!(cache(&p, ID).join("results/kaaaaaaaa/r1").exists());
+    assert_eq!(mail_store::unread(&mail_dir(&p, ID), "kaaaaaaaa").unwrap(), 1);
+    assert!(fs::symlink_metadata(mail_dir(&p, ID).join("sync")).is_err());
+}
+
+#[test] // S§7.6 steps 2-3: an Err of before_remove refuses with exit 1 and its reason; nothing deleted
+fn forget_refuses_with_the_reason_of_before_remove() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    result(&p, ID, "kaaaaaaaa");
+    let bytes = state_bytes(&p, ID);
+    assert_eq!(
+        forget_with(&p, &t.join("none"), None, "app", &mut |_: &Workspace| Err("the outbox cannot be read: x".to_string())),
+        (1, String::new(), "zygo: cannot forget app: the outbox cannot be read: x\n".to_string())
+    );
+    assert_eq!(state_bytes(&p, ID), bytes);
+    assert!(cache(&p, ID).join("results/kaaaaaaaa/r1").exists());
+}
+
+#[test] // S§7.6 step 1: a sync that holds mail/sync/lock refuses at once; before_remove does not run
+fn forget_refuses_while_a_mail_sync_holds_its_lock() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    ws_state(&p, ID, "app", &t.join("r/app"), |_| {});
+    let held = hold(sync_dir(&p, ID).join("lock"));
+    let bytes = state_bytes(&p, ID);
+    let mut calls = 0;
+    assert_eq!(
+        forget_with(&p, &t.join("none"), None, "app", &mut |_: &Workspace| {
+            calls += 1;
+            Ok(true)
+        }),
+        (1, String::new(), "zygo: a mail sync runs for app; try again\n".to_string())
+    );
+    assert_eq!((calls, state_bytes(&p, ID)), (0, bytes));
+    drop(held);
+    assert_eq!(forget_run(&p, &t.join("none"), None, "app"), (0, "zygo: forgot app\n".to_string(), String::new()));
+}
+
+#[test] // S§7.6 last paragraph: a state that cannot be read gets before_remove with its raw absolute main_root
+fn forget_of_an_invalid_state_passes_its_raw_main_root() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let gone = t.join("gone/s");
+    put_raw(&p.workspaces_dir().join("e100000000000001"), &invalid_doc("e100000000000001", json!("app"), Some(&gone)));
+    let mut rel = invalid_doc("e200000000000002", json!("bee"), Some(&gone));
+    rel["main_root"] = json!("x/rel");
+    put_raw(&p.workspaces_dir().join("e200000000000002"), &rel);
+    let mut seen = Vec::new();
+    for id in ["e100000000000001", "e200000000000002"] {
+        let mut before = |ws: &Workspace| {
+            seen.push((ws.id.clone(), ws.main_root.clone()));
+            Ok(true)
+        };
+        assert_eq!(forget_with(&p, &t.join("none"), None, id, &mut before), (0, format!("zygo: forgot {id}\n"), String::new()));
+    }
+    assert_eq!(
+        seen,
+        vec![("e100000000000001".to_string(), PathBuf::from("/x")), ("e200000000000002".to_string(), PathBuf::new())]
+    );
 }
 
 #[test] // M§5, W§5, AU84: a key that fails ^k[a-z2-7]{8}$ exits 1 before any path is built
