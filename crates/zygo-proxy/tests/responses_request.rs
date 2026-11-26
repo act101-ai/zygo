@@ -520,3 +520,23 @@ fn text_format_rules() {
     b["text"] = json!({"format":{"type":"json_schema","name":"o","schema":{}}});
     assert_400(err(request(&b, &tgt(), Some(&facts()))), "text.format: only type text is accepted toward this upstream");
 }
+
+// ---- review round 1 findings ----
+
+fn rq(b: &Value) -> Result<(Value, Vec<String>), ZygoError> {
+    request(b, &tgt(), Some(&facts())).map(|(m, a)| (m, a.into_iter().map(|x| x.0).collect()))
+}
+
+const NO_USER_FIRST: &str = "input: the conversation must start with a user message";
+
+#[test]
+fn f1_conversation_must_start_with_user() {
+    for input in [
+        json!([dev("D"), asst("a"), user("u")]),
+        json!([dev("D"), fc("c1", "f", "{}"), fco("c1", "r")]),
+        json!([]),
+        json!([dev("D")]),
+    ] {
+        assert_400(err(rq(&body(input.clone()))), NO_USER_FIRST);
+    }
+}
