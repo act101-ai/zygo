@@ -205,7 +205,8 @@ Session text (T, SX nodes):
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
 | OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
-| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45 | TODO | lookup | — |
+| OS-47 | Runner view cost on large inputs, output unchanged | — | PLANNED | judgment | — |
+| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45, OS-47 | TODO | lookup | — |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | TODO | implementation | — |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
@@ -417,3 +418,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-37 DONE: 4 O§8.5 budget tests and the child process, ignored in CI; sized inputs keep each case's shaping path; shape-on and shape-off rows asserted; review F1-F3, F5 fixed, F4 wording, F5 timeout refuted · PR #200 |
 | 2026-11-26 | OS-45 added: OS-38 run failed O§8.5 budget 4 (lock held p95 159.27 ms > 150 ms); SQLite busy_timeout counts requested sleep, macOS sleeps ~1.5x, breaking O-C10; OS-38 now depends on OS-45 |
 | 2026-11-26 | OS-45 DONE: bounded open uses its own elapsed-time busy handler; lock-held hook p95 159.27 → 128.05 ms (release, macOS); review F1, F2, F4 fixed; F3 (O-C10 per call on a non-WAL db) open for a new row · PR #203 |
+| 2026-11-26 | OS-47 added: OS-38 rerun failed O§8.5 budget 2 under load (libtest 4 MiB p95 105.87 / 106.64 ms, p50 62-73 ms); runner view is ~90% of steps 1-4; OS-38 now depends on OS-47 |
