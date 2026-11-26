@@ -1,6 +1,6 @@
 //! Responses client → Messages, and Messages SSE (and JSON) → Responses SSE (and JSON) (K§6.4.3, K§6.7).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{json, Map, Value};
 use zygo_config::Facts;
@@ -11,6 +11,7 @@ use super::sse::SseEvent;
 use super::{input_of, s, Target, DOC_OMITTED};
 use crate::errors::ZygoError;
 use crate::pipeline::Adjustment;
+use crate::session::sha256;
 use crate::tee::HOLD_MAX;
 
 /// Top-level fields this translator maps (K§6.4.3).
@@ -353,6 +354,11 @@ fn item(c: &mut Conv, it: &Value, t: &Target, d: &mut Drops) -> Result<(), ZygoE
         "message" => message(c, it, d)?,
         "function_call" => {
             let (id, name, args) = (field(it, ty, "call_id")?, field(it, ty, "name")?, field(it, ty, "arguments")?);
+            let name = match it.get("namespace") {
+                None | Some(Value::Null) => name.to_owned(),
+                Some(Value::String(ns)) => flat_name(ns, name),
+                Some(_) => return Err(bad("function_call: namespace must be a string")),
+            };
             c.call("function_call", id)?;
             c.push("assistant", json!({"type":"tool_use","id":id,"name":name,"input":input_of(Some(args))}));
         }
@@ -449,7 +455,61 @@ fn data_url(u: &str) -> Option<(&str, &str)> {
     u.strip_prefix("data:")?.split_once(";base64,")
 }
 
-/// Tool definitions (obligations 4, 6): `function` and `custom` map; another type is counted and dropped.
+/// The Messages and chat tool name of the tool `name` inside the `namespace` tool `ns` (K§6.4.3 request obligation 6):
+/// `<ns>__<name>` when that is 1-64 characters of `[A-Za-z0-9_-]`; else that string with each other character
+/// replaced by `_`, cut to 47 characters, then `_` and the first 16 hex digits of SHA-256 of `ns`, U+0000, `name`.
+/// A pure function of the pair, so a definition and a history call agree with no proxy state; it is never parsed
+/// back (`Calls` holds the reverse table).
+pub fn flat_name(ns: &str, name: &str) -> String {
+    let plain = format!("{ns}__{name}");
+    let ok = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    if plain.len() <= 64 && plain.chars().all(ok) {
+        return plain;
+    }
+    let mut cut: String = plain.chars().map(|c| if ok(c) { c } else { '_' }).take(47).collect();
+    let h = hex::encode(sha256(&format!("{ns}\u{0}{name}")));
+    cut.push('_');
+    cut.push_str(&h[..16]);
+    cut
+}
+
+/// Push the Messages tool `name` onto `out`; a name already sent → 400 (obligation 6).
+fn add_tool(out: &mut Vec<Value>, name: &str, schema: Value, desc: Option<&Value>) -> Result<(), ZygoError> {
+    if out.iter().any(|t: &Value| s(t, "name") == Some(name)) {
+        return Err(bad("tools: two tools have the same name"));
+    }
+    let mut x = json!({"name": name, "input_schema": schema});
+    if let Some(desc) = desc.filter(|v| v.is_string()) {
+        x["description"] = desc.clone();
+    }
+    out.push(x);
+    Ok(())
+}
+
+/// A function tool's `parameters`, else `{"type":"object"}`.
+fn parameters(tool: &Value) -> Value {
+    tool.get("parameters").filter(|p| p.is_object()).cloned().unwrap_or_else(|| json!({"type":"object"}))
+}
+
+/// A `namespace` tool's nested `function` tools under their flat names (obligation 6); another nested type is
+/// counted and dropped.
+fn namespace(tool: &Value, out: &mut Vec<Value>, d: &mut Drops) -> Result<(), ZygoError> {
+    let ns = field(tool, "namespace tool", "name")?;
+    let nested = tool.get("tools").and_then(Value::as_array).ok_or_else(|| bad("namespace tool: missing tools"))?;
+    for x in nested {
+        match s(x, "type").ok_or_else(|| bad("tool: missing type"))? {
+            "function" => {
+                let n = field(x, "function tool", "name")?;
+                add_tool(out, &flat_name(ns, n), parameters(x), x.get("description"))?;
+            }
+            other => *d.tools.entry(code_type(other).into()).or_default() += 1,
+        }
+    }
+    Ok(())
+}
+
+/// Tool definitions (obligations 4, 6): `function` and `custom` map; a `namespace` flattens; another type is counted
+/// and dropped.
 fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
     let list = match req.get("tools") {
         None | Some(Value::Null) => return Ok(Vec::new()),
@@ -460,7 +520,7 @@ fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
     for tool in list {
         let ty = s(tool, "type").ok_or_else(|| bad("tool: missing type"))?;
         let schema = match ty {
-            "function" => tool.get("parameters").filter(|p| p.is_object()).cloned().unwrap_or_else(|| json!({"type":"object"})),
+            "function" => parameters(tool),
             "custom" => {
                 let mut input = json!({"type":"string"});
                 if let Some(def) = tool
@@ -474,21 +534,17 @@ fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
                 d.custom = true;
                 json!({"type":"object","properties":{"input":input},"required":["input"]})
             }
+            "namespace" => {
+                namespace(tool, &mut out, d)?;
+                continue;
+            }
             other => {
-                // The `namespace` drop is RS-9's to replace (flatten into function tools).
                 *d.tools.entry(code_type(other).into()).or_default() += 1;
                 continue;
             }
         };
         let name = field(tool, &format!("{ty} tool"), "name")?;
-        if out.iter().any(|t: &Value| s(t, "name") == Some(name)) {
-            return Err(bad("tools: two tools have the same name"));
-        }
-        let mut x = json!({"name": name, "input_schema": schema});
-        if let Some(desc) = tool.get("description").filter(|v| v.is_string()) {
-            x["description"] = desc.clone();
-        }
-        out.push(x);
+        add_tool(&mut out, name, schema, tool.get("description"))?;
     }
     Ok(out)
 }
@@ -534,7 +590,7 @@ fn history_tools(messages: &[(&'static str, Vec<Value>)], tools: &[Value]) -> Ve
 }
 
 /// `tool_choice` with `parallel_tool_calls` (obligation 7), against the `tools` sent: with none, both are omitted and
-/// `required` is a 400; a named tool must be one of them.
+/// `required` is a 400; a named tool must be one of them (`namespace` + `name` names the flat name).
 fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError> {
     let mut tc = match req.get("tool_choice") {
         None | Some(Value::Null) => None,
@@ -543,7 +599,8 @@ fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError>
             (Some("none"), _, _) => json!({"type":"none"}),
             (Some("required"), _, _) => json!({"type":"any"}),
             (None, Some("function" | "custom"), Some(name)) => {
-                if !tools.iter().any(|t| s(t, "name") == Some(name)) {
+                let name = s(v, "namespace").map_or_else(|| name.to_owned(), |ns| flat_name(ns, name));
+                if !tools.iter().any(|t| s(t, "name") == Some(name.as_str())) {
                     return Err(bad("tool_choice: the named tool is not among the sent tools"));
                 }
                 json!({"type":"tool","name":name})
@@ -573,30 +630,55 @@ fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError>
 pub struct Calls {
     /// The names of the client's `custom` tools: a call of one returns as a `custom_tool_call` item.
     custom: HashSet<String>,
+    /// Flat name → (namespace, name) of each tool inside a client `namespace` tool: a call of one returns as a
+    /// `function_call` item with `name` and `namespace` (never found by splitting the flat name).
+    namespaced: HashMap<String, (String, String)>,
 }
 
 impl Calls {
     /// The string `name` of each `tools[]` entry of type `custom` and of each `input[]` item of type
     /// `custom_tool_call` (a custom tool the request declares only from its history, K§6.4.3 request obligation 6);
-    /// anything else is ignored.
+    /// the flat name of each nested `function` of a `tools[]` entry of type `namespace` and of each `input[]`
+    /// `function_call` with a string `namespace`; anything else (malformed entries `request` refuses) is ignored.
     pub fn of(req: &Value) -> Calls {
         let list = |k: &str| req.get(k).and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
         let of_type = |ty: &'static str| move |v: &&Value| s(v, "type") == Some(ty);
         let tools = list("tools").iter().filter(of_type("custom"));
         let history = list("input").iter().filter(of_type("custom_tool_call"));
-        Calls { custom: tools.chain(history).filter_map(|t| s(t, "name")).map(str::to_owned).collect() }
+        let custom = tools.chain(history).filter_map(|t| s(t, "name")).map(str::to_owned).collect();
+        let mut namespaced = HashMap::new();
+        let mut add = |ns: &str, n: &str| {
+            namespaced.entry(flat_name(ns, n)).or_insert_with(|| (ns.to_owned(), n.to_owned()));
+        };
+        for t in list("tools").iter().filter(of_type("namespace")) {
+            let Some(ns) = s(t, "name") else { continue };
+            let nested = t.get("tools").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+            for n in nested.iter().filter(of_type("function")).filter_map(|x| s(x, "name")) {
+                add(ns, n);
+            }
+        }
+        for it in list("input").iter().filter(of_type("function_call")) {
+            if let (Some(ns), Some(n)) = (s(it, "namespace"), s(it, "name")) {
+                add(ns, n);
+            }
+        }
+        Calls { custom, namespaced }
     }
 
     fn is_custom(&self, name: &str) -> bool {
         self.custom.contains(name)
     }
 
-    /// The only builder of a call item (RS-9 extends it): a `tool_use` with id `call_id`, name `name` and arguments
-    /// `args` (JSON text) as a `function_call` item, or a `custom_tool_call` item for a client `custom` tool. `None`
-    /// gives the `output_item.added` form.
+    /// The only builder of a call item: a `tool_use` with id `call_id`, name `name` and arguments `args` (JSON text)
+    /// as a `function_call` item, with the nested `name` and the `namespace` when `name` is the flat name of a client
+    /// namespaced tool, or a `custom_tool_call` item for a client `custom` tool. `None` gives the
+    /// `output_item.added` form.
     fn item(&self, ulid: &str, oi: usize, call_id: &str, name: &str, args: Option<&str>) -> Value {
         let status = if args.is_some() { "completed" } else { "in_progress" };
-        if self.is_custom(name) {
+        if let Some((ns, n)) = self.namespaced.get(name) {
+            json!({"type":"function_call","id":item_id("fc", ulid, oi),"call_id":call_id,"name":n,"namespace":ns,
+                "arguments":args.unwrap_or(""),"status":status})
+        } else if self.is_custom(name) {
             let input = args.map_or_else(String::new, custom_input);
             json!({"type":"custom_tool_call","id":item_id("ctc", ulid, oi),"call_id":call_id,"name":name,
                 "input":input,"status":status})
@@ -815,7 +897,8 @@ impl Block {
 ///      `reasoning_unmarked:<n>`.
 ///    - `tool_use`: `response.output_item.added`; per non-empty `input_json_delta`
 ///      `response.function_call_arguments.delta {iid, oi, delta}`; at stop `response.function_call_arguments.done
-///      {iid, oi, arguments}`, `response.output_item.done`.
+///      {iid, oi, arguments}`, `response.output_item.done`. A flat name of a client namespaced tool returns with
+///      the nested `name` and the `namespace` (K§6.4.3 stream obligation 2).
 ///    - `tool_use` of a client `custom` tool (in `tools` or a `custom_tool_call` of `input`):
 ///      `response.output_item.added`; at stop
 ///      `response.custom_tool_call_input.delta {iid, oi, delta: input}`, `response.custom_tool_call_input.done

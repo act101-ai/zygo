@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 
 use regex::Regex;
 use serde_json::{json, Value};
+use zygo_config::Dialect;
 use zygo_proxy::pipeline::Adjustment;
 use zygo_proxy::tee::HOLD_MAX;
 use zygo_proxy::translate::reasoning::decode_thinking;
 use zygo_proxy::translate::responses_client::{request, response, Calls, Encoder};
 use zygo_proxy::translate::sse::SseEvent;
-use zygo_proxy::translate::Target;
+use zygo_proxy::translate::{translate_response, Target};
 
 fn tgt() -> Target {
     Target { provider: "p-ant".into(), upstream_model: "up-ant".into() }
@@ -808,4 +809,101 @@ fn note_error_message_cut_as_echo() {
     let want: String = format!("a?b?c?{}", "x".repeat(58));
     assert_eq!(want.chars().count(), 64);
     assert_eq!(evs.last().unwrap().data["response"]["error"]["message"], want);
+}
+
+// ---- RS-9: namespaced calls map back (K§6.4.3 stream obligation 2) ----
+
+/// The `body` of `fixtures/codex/<rel>`.
+fn record(rel: &str) -> Value {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex").join(rel);
+    let rec: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
+    rec["body"].clone()
+}
+
+/// A Messages JSON response with one `tool_use` named `name`.
+fn tool_msg(id: &str, name: &str) -> Value {
+    json!({"content":[{"type":"tool_use","id":id,"name":name,"input":{}}],"stop_reason":"tool_use","usage":{}})
+}
+
+#[test]
+fn namespace_call_maps_back_stream() {
+    let body = record("agents/requests/pc6-a-0002.json");
+    let calls = Calls::of(&body);
+    let mut ev = vec![message_start()];
+    ev.extend(tool_block(0, "toolu_s", "multi_agent_v1__spawn_agent", &["{\"agent_type\":", "\"explorer\"}"]));
+    ev.extend(end("tool_use"));
+    let evs = run(&mut Encoder::new("role-x", &tgt(), calls), &ev);
+    assert_sequence(&evs);
+    assert_eq!(
+        types(&evs[2..evs.len() - 1]),
+        vec![
+            "response.output_item.added",
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+            "response.output_item.done",
+        ]
+    );
+    assert_eq!(evs[2].data["item"]["name"], "spawn_agent");
+    assert_eq!(evs[2].data["item"]["namespace"], "multi_agent_v1");
+    let done = items_done(&evs).remove(0);
+    assert_eq!(
+        norm(&done),
+        json!({"type":"function_call","call_id":"toolu_s","name":"spawn_agent","namespace":"multi_agent_v1",
+            "arguments":"{\"agent_type\":\"explorer\"}","status":"completed"})
+    );
+    assert!(done["id"].as_str().unwrap().starts_with("fc_"));
+
+    // Round trip: the item, sent back in history, is a call of the flat name.
+    let mut req = body.clone();
+    req["max_output_tokens"] = json!(100);
+    let input = req["input"].as_array_mut().unwrap();
+    input.push(done);
+    input.push(json!({"type":"function_call_output","call_id":"toolu_s","output":"ok"}));
+    let (m, codes) = request(&req, &tgt(), None).unwrap();
+    let call = m["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|x| x["content"].as_array().unwrap().clone())
+        .find(|b| b["type"] == "tool_use" && b["id"] == "toolu_s")
+        .unwrap();
+    assert_eq!(call["name"], "multi_agent_v1__spawn_agent");
+    assert!(!codes.iter().any(|c| c.0.starts_with("tools_from_history:")), "{codes:?}");
+}
+
+#[test]
+fn namespace_call_maps_back_json_and_chat() {
+    let mcp = Calls::of(&record("mcp/requests/pc9-call-0033.json"));
+    let (r, _) = response(&tool_msg("toolu_c", "mcp__zygo__compact"), "role-x", &tgt(), &mcp);
+    assert_eq!(r["output"][0]["type"], "function_call");
+    assert_eq!(r["output"][0]["name"], "compact");
+    assert_eq!(r["output"][0]["namespace"], "mcp__zygo");
+
+    let agents = Calls::of(&record("agents/requests/pc6-a-0002.json"));
+    let chat = json!({"id":"c1","model":"up","choices":[{"index":0,"message":{"role":"assistant","content":null,
+        "tool_calls":[{"id":"call_1","type":"function","function":{"name":"multi_agent_v1__wait_agent","arguments":"{}"}}]},
+        "finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1}});
+    let msg = translate_response(&chat, Dialect::OpenaiChat, &tgt());
+    let (r, _) = response(&msg, "role-x", &tgt(), &agents);
+    let item = r["output"].as_array().unwrap().iter().find(|x| x["type"] == "function_call").unwrap().clone();
+    assert_eq!(item["name"], "wait_agent");
+    assert_eq!(item["namespace"], "multi_agent_v1");
+    assert_eq!(item["call_id"], "call_1");
+}
+
+#[test]
+fn namespace_call_maps_back_from_history_only() {
+    let mut body = record("mcp/requests/pc9-call-0033.json");
+    body["tools"] = json!([]);
+    let calls = Calls::of(&body);
+    let (r, _) = response(&tool_msg("toolu_c", "mcp__zygo__compact"), "role-x", &tgt(), &calls);
+    assert_eq!(r["output"][0]["name"], "compact");
+    assert_eq!(r["output"][0]["namespace"], "mcp__zygo");
+    let (r, _) = response(&tool_msg("toolu_e", "exec_command"), "role-x", &tgt(), &calls);
+    assert_eq!(r["output"][0]["name"], "exec_command");
+    assert!(r["output"][0].get("namespace").is_none(), "{}", r["output"][0]);
+    let (r, _) = response(&tool_msg("toolu_s", "multi_agent_v1__spawn_agent"), "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["output"][0]["name"], "multi_agent_v1__spawn_agent");
+    assert!(r["output"][0].get("namespace").is_none(), "{}", r["output"][0]);
 }
