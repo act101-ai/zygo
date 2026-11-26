@@ -660,3 +660,27 @@ fn f7_short_form_only_without_type() {
         assert_400(err(rq(&body(json!([user("go"), item])))), "input item: type must be a string");
     }
 }
+
+#[test]
+fn f8_tool_call_pairing() {
+    let ctc = |id: &str| json!({"type":"custom_tool_call","call_id":id,"name":"apply_patch","input":"p"});
+    let ctco = |id: &str| json!({"type":"custom_tool_call_output","call_id":id,"output":"ok"});
+    let no_out = "no output before the next user message or the end of input";
+    let cases = [
+        (json!([user("go"), fco("c9", "r")]), "function_call_output: no earlier matching call".to_string()),
+        (json!([user("go"), fc("c1", "f", "{}"), ctco("c1")]), "custom_tool_call_output: no earlier matching call".into()),
+        (json!([user("go"), ctc("c1"), fco("c1", "r")]), "function_call_output: no earlier matching call".into()),
+        (json!([user("go"), fc("c1", "f", "{}"), fco("c1", "r"), fco("c1", "r")]), "function_call_output: no earlier matching call".into()),
+        (json!([user("go"), fc("c1", "f", "{}"), fco("c1", "r"), fc("c1", "f", "{}"), fco("c1", "r")]), "function_call: duplicate call_id".into()),
+        (json!([user("go"), fc("c1", "f", "{}"), ctc("c1"), fco("c1", "r")]), "custom_tool_call: duplicate call_id".into()),
+        (json!([user("go"), fc("c1", "f", "{}"), user("x"), fco("c1", "r")]), format!("function_call: {no_out}")),
+        (json!([user("go"), fc("c1", "f", "{}")]), format!("function_call: {no_out}")),
+        (json!([user("go"), ctc("c2")]), format!("custom_tool_call: {no_out}")),
+    ];
+    for (input, message) in cases {
+        assert_400(err(rq(&body(input.clone()))), &message);
+    }
+    // A developer item between a call and its output is not a user message.
+    let (m, _) = rq(&body(json!([user("go"), ctc("c2"), dev("D"), ctco("c2"), user("next")]))).unwrap();
+    assert_valid(&m);
+}
