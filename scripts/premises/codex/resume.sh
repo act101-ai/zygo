@@ -406,11 +406,26 @@ def screen(n, part):
     return ANSI.sub("", t).replace("\r", "")
 
 
+PANEL = "Warnings ·"  # the warnings panel's title, as F2 shows it
+
+
+def warnings(d, n):
+    """Write tui-<n>-warnings.txt only when the screen from F2 on holds the panel; else no file
+    (the key echo alone is not evidence). Returns captured or not captured."""
+    t = screen(n, 1)
+    if PANEL not in t:
+        return "not captured"
+    put(d, "tui-%s-warnings.txt" % n, t)
+    return "captured"
+
+
 put(ws, "tui-c.txt", screen("c", 0))
-put(ws, "tui-c-warnings.txt", screen("c", 1))
+panel = {"c": warnings(ws, "c")}
 for n in "ef":
     put(up, "tui-%s.txt" % n, screen(n, 0))
-    put(up, "tui-%s-warnings.txt" % n, screen(n, 1))
+    panel[n] = warnings(up, n)
+s = dict(list((k, v) for k, v in s.items() if k != "pc10") + [("warnings_panel", panel["c"]), ("pc10", s["pc10"])])
+put(ws, "summary.txt", "".join("%s=%s\n" % kv for kv in s.items()))
 ce, cf = connects("e"), connects("f")
 put(up, "connect-e.txt", "".join(x + "\n" for x in ce))
 put(up, "connect-f.txt", "".join(x + "\n" for x in cf))
@@ -475,6 +490,8 @@ u = {
     "tui_start_connects": hosts(ce),
     "control_config_key": mf.group(1) if mf else "absent",
     "control_exit": exits.get("f", "none"),
+    "warnings_panel": panel["e"],
+    "control_warnings_panel": panel["f"],
     "control_connects": hosts(cf),
     "exec_connects": hosts(exec_lines),
 }
@@ -496,8 +513,11 @@ put(up, "summary.txt", "".join("%s=%s\n" % kv for kv in u.items()))
 # scrub: equal placeholders are equal ids across all of this part's fixtures. "uuid-NNNN" is not a
 # UUID, so scrub's per-file numbering leaves it alone. A UUID in the run folder's own path is left
 # as it is, so scrub still maps that path (to /tmp/run, /home/user, /repo). The bounds are hex-only,
-# not \b, so an id behind a word prefix (Codex's msg_<uuid> item ids) is mapped too.
-UUID = re.compile(r"(?<![0-9A-Fa-f-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9A-Fa-f-])")
+# not \b, so an id behind a word prefix (Codex's msg_<uuid> item ids) is mapped too. Before it may
+# stand: no hex digit and no "-"; or a "-" after a non-hex character; or a "-" after a rollout time
+# stamp (rollout-<date>T<hh>-<mm>-<ss>-<uuid>.jsonl). A match never starts inside the stamp's digits.
+UUID = re.compile(r"(?:(?<![0-9A-Fa-f-])|(?<=[^0-9A-Fa-f]-)|(?<=T\d\d-\d\d-\d\d-))"
+                  r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9A-Fa-f-])")
 keep = set(UUID.findall(run + " " + os.path.realpath(run)))
 umap = {}
 
