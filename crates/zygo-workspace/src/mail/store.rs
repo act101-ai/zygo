@@ -267,9 +267,9 @@ pub fn deliver(mail_dir: &Path, key: &str, label: &str, msg: &Message, max_unrea
 /// read or parsed stays in `cur/` for the sweep. An error before the first move is returned; after it, `read` stops
 /// and returns what it has. `mail/`, `mail/<key>/`, `new/` and `cur/` are never followed as links: a link or an
 /// entry that is not a folder at any of them is an `Io` error; a missing `mail/`, `mail/<key>/` or `new/` has no
-/// messages and nothing is made; only `cur/` is made, when `new/` has a message. The list and the moves run under
-/// `mail/lock` held shared (M§5 P1), so no removal of `mail/<key>/` runs between them; [`read_within`] with
-/// [`MAIL_LOCK_WAIT`].
+/// messages and nothing is made; only `cur/` is made, when `new/` has a message, and an existing `cur/` is set to
+/// `0700` then (M-C4). The list and the moves run under `mail/lock` held shared (M§5 P1), so no removal of
+/// `mail/<key>/` runs between them; [`read_within`] with [`MAIL_LOCK_WAIT`].
 pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, MailError> {
     read_within(mail_dir, key, max, MAIL_LOCK_WAIT)
 }
@@ -307,11 +307,11 @@ pub fn read_within(mail_dir: &Path, key: &str, max: usize, bound: Duration) -> R
             Ok(false) => return Ok(Vec::new()),
             r => r.map(|_| ())?,
         }
-        if !real_dir(&cur)? {
-            match make_leaf(&cur) {
-                Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-                r => r?,
-            }
+        // A link at cur/ is refused; a missing cur/ is made, and an existing one is set to 0700 (M-C4).
+        real_dir(&cur)?;
+        match make_leaf(&cur) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            r => r?,
         }
     }
     for id in ids {

@@ -507,6 +507,22 @@ fn lifecycle_read_refuses_a_link_at_cur() {
     assert_eq!(unread(&p, id, "kaaaaaaaa"), 1);
 }
 
+#[test] // R1-5: a read that moves a message sets an existing cur/ to 0700 (M-C4)
+fn lifecycle_read_sets_an_existing_cur_to_0700() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let id = THIRD;
+    stored(&p, id, &[("kaaaaaaaa", None)]);
+    put(&p, id, "kaaaaaaaa", 1);
+    let mail = mail_dir(&p, id);
+    let cur = mail.join("kaaaaaaaa/cur");
+    fs::set_permissions(&cur, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(mode(&cur), 0o755);
+    assert_eq!(mail_store::read(&mail, "kaaaaaaaa", 10).unwrap().len(), 1);
+    assert_eq!(mode(&cur), 0o700);
+}
+
 #[test] // F2: a read takes mail/lock shared: a removal that holds it exclusive makes the read Busy, and a removal
 // cannot run while a read lists and moves
 fn lifecycle_read_and_removal_exclude_each_other() {
