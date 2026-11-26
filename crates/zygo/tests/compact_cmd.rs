@@ -201,6 +201,22 @@ fn stdin_write_to_an_exited_child_is_not_an_error() {
     common::write_stdin(stdin, &vec![b'x'; 1 << 20]);
 }
 
+/// TF-1: `write_stdin` ignores `BrokenPipe` and only that error; any other write error panics.
+#[test]
+#[should_panic(expected = "write to the child's stdin")]
+fn stdin_write_error_other_than_broken_pipe_panics() {
+    struct Failing;
+    impl std::io::Write for Failing {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("not a broken pipe")) // ErrorKind::Other
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    common::write_stdin(Failing, b"x");
+}
+
 #[test]
 #[ignore = "timing: the 4.5 s slash hook deadline (zygo hook prompt)"]
 fn slash_compact_600k_sets_the_override() {

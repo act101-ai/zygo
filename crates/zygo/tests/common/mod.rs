@@ -59,9 +59,10 @@ pub fn stub_control(dir: &Path, step: &str) -> std::io::Result<()> {
     std::fs::OpenOptions::new().create(true).append(true).open(dir.join("steps"))?.write_all(format!("{step}\n").as_bytes())
 }
 
-/// Writes `bytes` to a child's stdin and then drops `w` (EOF to the child). A child can exit before it reads its
-/// stdin; the write then fails with `BrokenPipe`, which this ignores. Any other error panics. The caller still
-/// asserts the child's output and exit status.
+/// Writes `bytes` to a child's stdin and then drops `w`. The child gets EOF only when `w` is an owned handle;
+/// a caller that passes `&mut` must drop the handle itself. A child can exit before it reads its stdin; the
+/// write then fails with `BrokenPipe`, which this ignores. Any other error panics. The caller still asserts the
+/// child's output and exit status.
 pub fn write_stdin(mut w: impl std::io::Write, bytes: &[u8]) {
     match w.write_all(bytes) {
         Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("write to the child's stdin: {e}"),
