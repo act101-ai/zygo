@@ -1,0 +1,10 @@
+{
+  "agents": "project",
+  "hooks": "both",
+  "hooks_lines": [
+    "project",
+    "home"
+  ],
+  "result": "verified",
+  "why": "measured (no pass value): agent descriptions in the first request, hook markers written"
+}

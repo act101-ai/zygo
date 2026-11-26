@@ -1,0 +1,45 @@
+{
+  "shell": "exec_command",
+  "shell_arg": "cmd",
+  "shell_array": false,
+  "patch": "not-shown: no patch tool in the request",
+  "patch_kind": "",
+  "spawn": "spawn_agent",
+  "spawn_arg": "message",
+  "spawn_namespace": "multi_agent_v1",
+  "mcp": "probe_tool",
+  "mcp_namespace": "mcp__probe",
+  "all_tools": [
+    "create_goal",
+    "exec_command",
+    "get_goal",
+    "list_mcp_resource_templates",
+    "list_mcp_resources",
+    "mcp__probe/probe_tool",
+    "multi_agent_v1/close_agent",
+    "multi_agent_v1/resume_agent",
+    "multi_agent_v1/send_input",
+    "multi_agent_v1/spawn_agent",
+    "multi_agent_v1/wait_agent",
+    "read_mcp_resource",
+    "request_user_input",
+    "update_goal",
+    "view_image",
+    "write_stdin"
+  ],
+  "hook_tool_names": {
+    "shell": [
+      "Bash"
+    ],
+    "patch": [],
+    "mcp": [
+      "mcp__probe__probe_tool"
+    ],
+    "spawn": [
+      "Bash",
+      "spawn_agent"
+    ]
+  },
+  "result": "verified",
+  "why": "tool names read from pc5-probe's first request"
+}

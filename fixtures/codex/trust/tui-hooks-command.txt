@@ -1,0 +1,50 @@
+
+  >_ OpenAI Codex (v0.172.0)
+     /repo
+
+
+› zp-pc4-tui
+
+
+• zp-tui-reply
+
+  Worked for <1s • 8:11 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Hooks
+  Lifecycle hooks from config and enabled plugins.
+
+  Issues
+  ⚠ loading hooks from both /tmp/run/cxh-pc4-tui/hooks.json and
+  /tmp/run/cxh-pc4-tui/config.toml; prefer a single representation for this layer
+  ⚠ loading hooks from both /repo/.codex/hooks.json and
+  /repo/.codex/config.toml; prefer a single representation for this layer
+
+  Event                 Installed   Active      Description
+
+› PreToolUse            0           0           Before a tool executes
+  PermissionRequest     0           0           When permission is requested
+  PostToolUse           0           0           After a tool executes
+  PreCompact            0           0           Before context compaction
+  PostCompact           0           0           After context compaction
+  SessionStart          8           8           When a new session starts
+  SessionEnd            0           0           Right before a session ends
+  UserPromptSubmit      1           1           When the user submits a prompt
+↓
+
+  enter details · esc close
