@@ -31,7 +31,7 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 
 ## 3. Non-goals
 
-- Mail between workspaces, machines or OS users. Mail between machines is phase-3 item P3-2: sync on a side branch (`docs/roadmap/phase-3.md`) **(operator, 2026-11-22)**.
+- Mail between workspaces or OS users. Mail between machines is the mail sync design (`docs/specs/2026-11-24-mail-sync-design.md`, phase-3 items P3-2 to P3-4): a side branch of the repository's remote **(operator, 2026-11-22)**.
 - Network delivery, read receipts, threads, priorities, or an order other than the ULID order.
 - A workflow (a fixed lead/worker protocol, merge rules, review steps). Mail is a primitive.
 - Triggers and automatic actions on mail, other than the wake of M§7.
@@ -42,9 +42,9 @@ The operator asked for a durable mailbox in zygo **(operator, 2026-11-22)**. Wor
 - **M-C1** W-C1 to W-C9 apply. C6 applies to each new hook branch: a mail error never breaks the agent.
 - **M-C2** Mail is content. It is an exception to W-C7: it lives only under `mail/` (M§5), never in `workspace.json`, never in `activity.json`, a log or a usage row. C3 is not changed: the proxy stores no body; mail is written by the mail tool and the CLI, not by the proxy.
 - **M-C3** Every write is atomic (W-C4): write and `fsync` in `tmp/`, then hard-link into `new/` (a link refuses to replace an existing name), `fsync` `new/`, then remove the `tmp/` name.
-- **M-C4** Only the OS user that owns the workspace state can read or write mail (dir `0700`, files `0600`, as AU2).
+- **M-C4** Only the OS user that owns the workspace state can read or write mail (dir `0700`, files `0600`, as AU2). This holds for `mail/`. Synced mail also exists in the repository's object store and on the remote (mail sync design S§13 limit 3, S-C7).
 - **M-C5** No mail text reaches a tmux argument (W-C8). The wake text is fixed (M§7).
-- **M-C6** A cloned repository cannot send mail or name a member (W-C5): names come from user config only.
+- **M-C6** A cloned repository cannot send mail or name a member (W-C5): names come from user config only. The side branch delivers mail only after the user-config opt-in (mail sync design S-G6).
 
 ## 5. Store
 
@@ -227,3 +227,4 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-25 | M§7.1 | author's call (ML-10 review) | The Stop block is for a member with `[features] mail` on, which has `mail_read`, and it does not block in `draining` or `stopping`, so `down` does not wait for unread mail (M§9). |
 | 2026-11-25 | M§7.2 | author's call (ML-10 review) | The prompt and SessionStart lines are for a member with `[features] mail` on, which has `mail_read` (M§8, M§8a). |
 | 2026-11-25 | M§9 | author's call (ML-10 review) | The resume-note bullet said the note adds a second unread line; SessionStart gives only the M§7.2 line, after the note. |
+| 2026-11-25 | M§3, M-C4, M-C6 | mail sync design S§16 | Mail between machines is now the mail sync design; M-C4 holds for `mail/`, and synced mail is also in the object store and on the remote; M-C6 holds: the side branch delivers only after the user-config opt-in. |

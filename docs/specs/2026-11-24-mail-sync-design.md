@@ -244,7 +244,8 @@ One sync of one workspace. The lock rule closes the lost-wakeup race **(lead)**:
 8. **Member cache** (S§7.3).
 9. **Import** (S§8.5).
 10. **Wake** (S§10.1) the members that got mail in step 9.
-11. **Outbox.** For each file in `mail/outbox/` in ULID order, at most 1000 per pass:
+11. **Outbox.** For each file in `mail/outbox/` in ULID order, at most 1000 readable files per pass:
+    - it cannot be read (a link, a FIFO or another entry that is not a regular file, larger than 8 MiB, not JSON, or a `to` that is not an address): move it to `mail/outbox/refused/` as it is, without following a link, with one `errors.log` line that names its ULID and the check `read`. It takes no place in the 1000;
     - its path `<to>/<ULID>.json` is at the tip: it was pushed before (a crash after a push); delete it from the outbox;
     - else run the secret pass (S§8.6): clear, add the blob at that path; a finding, move it to `mail/outbox/refused/` and send the notice; could not run, leave it in the outbox.
 12. **Own files.** Write the own registry (S§7.3) and the own acks (S§7.4) when they change; delete an old own registry or an empty old ack (S§7.6 "Rename").
@@ -555,3 +556,4 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-25 · S§8.3 · author's call · load/save disagree on a bad entry: a state.json with one value outside the rules loaded, and then every later save failed, so the pass could never write its state again; the read now refuses such a file as it refuses a non-object.
 - 2026-11-25 · S§8.5 · author's call · a file staged by a crash during the write is deleted and imported again, not delivered.
 - 2026-11-25 · S§8.5 · author's call · reading a folder stops at its target's inbox room, so one full inbox does not stop import for the others.
+- 2026-11-25 · S§8.3 · author's call (lead) · MS-13 review F2: an outbox file that cannot be read stayed in the outbox and took a place in the 1000 of each pass, so 1000 such files stopped every later message; it now moves to `mail/outbox/refused/` with one `read` line and takes no place.

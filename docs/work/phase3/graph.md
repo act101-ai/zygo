@@ -200,7 +200,6 @@ Session text (T, SX nodes):
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | TODO | judgment | — |
-| RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | DONE | implementation | fab29ce1, 72c3d03a, da38c41a · zygo-hooks 247/0 ; floor green · PR #118 |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
@@ -212,7 +211,7 @@ Session text (T, SX nodes):
 | WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | DONE | judgment | b00e2819, ffe10789, 777c51d6, d5c92329, 93add253 · repo_profile 15/0 ; floor green · PR #121 |
 | WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
-| MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
+| MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
@@ -403,3 +402,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-13 DONE: dedup step folds runs of equal consecutive lines, lossless. Review round 2 added 5 edge-input tests; F1 (expand count limit) rejected, needs an operator-approved threshold; F3 rejected · PR #139 |
 | 2026-11-25 | ML-6 DONE: wake of an idle member after a send (M§7.3); Files widened with state.rs (Store::live_session, plan drift D1); after_send_with for injected probe and clock (MS-13); keys woken in parallel; lock waits, no added gate. Review: 9 findings, 8 fixed, 1 in part · PR #143 |
 | 2026-11-25 | ML-10 DONE: Stop block (once, not while draining/stopping), prompt and SessionStart line, OpenCode per-request line; all off when [features] mail is off; unreadable mail/ changes no decision. Spec M§7.1, M§7.2, M§9 rewritten (author's call). Review: 6 fixed · PR #144 |
+| 2026-11-25 | MS-13 DONE (PR #150): sync pass with outbox, lock, wake and secret check; review R1-R7 fixed; lock tests made deterministic (spawn guard: fork-held flock fds made the retake busy). |
