@@ -9,19 +9,21 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, bail};
 use clap::{Args, Subcommand};
-use zygo_config::SyncOff;
+use zygo_config::{sync_for, Config, SyncOff};
 use zygo_core::esc;
 use zygo_core::verbs::MAIL_SLASH_ARGS;
 use zygo_core::paths::Paths;
+use zygo_mail_sync::address::{resolve_to, To};
 use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
 use zygo_mail_sync::ops;
+use zygo_mail_sync::outbox::send_remote_with;
 use zygo_mail_sync::public::LsRemote;
-use zygo_mail_sync::spawn::ChildSpawner;
+use zygo_mail_sync::spawn::{trigger, ChildSpawner};
 use zygo_mail_sync::state::SyncPaths;
 use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::identity::{valid_ws_id, workspace_id};
-use zygo_workspace::mail::{self, mail_dir, names, store, wake, MailError, BODY_MAX};
+use zygo_workspace::mail::{self, mail_dir, names, store, MailError, BODY_MAX};
 use zygo_workspace::state::{list_all, Store, Workspace};
 use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
@@ -55,7 +57,7 @@ pub struct MailArgs {
 
 #[derive(Subcommand)]
 pub enum MailCmd {
-    /// Send a message to a member name, a pane key or all
+    /// Send a message to a member name, a pane key, all, or <name>@<host>
     Send {
         to: String,
         #[arg(long)]
@@ -191,30 +193,104 @@ pub fn run(a: MailArgs) -> i32 {
                     return 1;
                 }
             };
+            let (mut o, mut e) = (Vec::new(), Vec::new());
             let subject = subject.unwrap_or_default();
-            let r = match mail::send(&paths, &ws, pane.as_deref(), &to, &subject, &body, &cfg.mail, SystemTime::now()) {
-                Ok(r) => r,
-                Err(e) => {
-                    print_err(&format!("{e}\n"));
-                    return 1;
-                }
-            };
-            let mut text = String::new();
-            for s in &r.sent {
-                let label = ws.members.get(&s.key).and_then(|m| m.valid_name()).unwrap_or(&s.key);
-                text.push_str(&format!("sent {} to {}\n", esc(&s.id), esc(label)));
+            let code = send_cli(&sync_env(paths.clone()), &ws, pane.as_deref(), &to, &subject, &body, &cfg, &mut o, &mut e);
+            if !o.is_empty() {
+                print_out(&String::from_utf8_lossy(&o));
             }
-            if !text.is_empty() {
-                print_out(&text);
+            if !e.is_empty() {
+                print_err(&String::from_utf8_lossy(&e));
             }
-            let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
-            wake::after_send(&paths, &ws, &tmux_program(), &keys, &cfg.mail);
-            for x in &r.refused {
-                print_err(&format!("{}; to {}\n", x.error, member(&ws, &x.key)));
-            }
-            if r.refused.is_empty() { 0 } else { 1 }
+            code
         }
     }
+}
+
+/// `zygo mail send` after the body is read (M§8; mail sync design S§7.2, S§8.1 row 1, S§8.6 "At send"). A `to` with
+/// `@` is resolved against the host in force (none with sync off): a refused form is its line; `<name>@<own host>`
+/// is the local send of `<name>`; a remote address goes through the S§7.2 rules and the send-time secret pass into
+/// the outbox, then one sync child starts with no gap. A `to` with no `@` is the local send (ML-4), and its wake goes
+/// through `env.wake`. The lines go to `out` and `err`; the result is the exit code.
+#[allow(clippy::too_many_arguments)]
+pub fn send_cli(
+    env: &Env,
+    ws: &Workspace,
+    pane: Option<&str>,
+    to: &str,
+    subject: &str,
+    body: &str,
+    cfg: &Config,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let now = env.clock.now();
+    let mut to = to.to_string();
+    if to.contains('@') {
+        let settings = sync_for(cfg, &ws.name);
+        let own: Vec<String> = settings.iter().map(|s| s.host.clone()).collect();
+        match resolve_to(&to, &own) {
+            Err(e) => {
+                let _ = writeln!(err, "{}", e.line());
+                return 1;
+            }
+            Ok(To::Local(n)) => to = n,
+            Ok(To::All) => to = "all".into(),
+            Ok(To::Remote(a)) => {
+                let sp = match SyncPaths::new(&env.paths, &ws.id) {
+                    Ok(sp) => sp,
+                    Err(e) => {
+                        let _ = writeln!(err, "{}", MailError::Io(e));
+                        return 1;
+                    }
+                };
+                let from = pane.and_then(|k| ws.members.get(k)).and_then(|m| m.valid_name());
+                let sent = send_remote_with(
+                    &sp,
+                    settings.as_ref(),
+                    from,
+                    &a,
+                    subject,
+                    body,
+                    &cfg.redaction,
+                    &ws.main_root,
+                    now,
+                    &env.secret_policy,
+                );
+                return match sent {
+                    Err(e) => {
+                        let _ = writeln!(err, "{}", e.line());
+                        1
+                    }
+                    Ok(id) => {
+                        let _ = writeln!(out, "sent {id} to {}@{}", esc(&a.name), esc(&a.host));
+                        let store = Store::open(&env.paths, &ws.id);
+                        trigger(env, &ws.id, None, &|t| store.log_error(&format!("mail send: {t}")));
+                        0
+                    }
+                };
+            }
+        }
+    }
+    let r = match mail::send(&env.paths, ws, pane, &to, subject, body, &cfg.mail, now) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 1;
+        }
+    };
+    for s in &r.sent {
+        let label = ws.members.get(&s.key).and_then(|m| m.valid_name()).unwrap_or(&s.key);
+        let _ = writeln!(out, "sent {} to {}", esc(&s.id), esc(label));
+    }
+    let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
+    if !keys.is_empty() {
+        env.wake.wake(&env.paths, ws, &keys, &cfg.mail, now);
+    }
+    for x in &r.refused {
+        let _ = writeln!(err, "{}; to {}", x.error, member(ws, &x.key));
+    }
+    if r.refused.is_empty() { 0 } else { 1 }
 }
 
 /// `zygo mail watch` (M-G5, M§8): each `poll`, the count of files in `new/` of `key` under `dir`; when a file has
