@@ -1,11 +1,11 @@
 {
-  "seq": 19,
+  "seq": 47,
   "method": "POST",
   "path": "/v1/responses",
   "headers": {
     "x-codex-beta-features": "remote_compaction_v2",
     "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"9887ab383b410cdfc09da91ce310e249d4fb6a37\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795707488603,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+    "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"cold_resume\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"ece10c3e2bf600bff212e695621a427ee88e289e\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795708088111,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
     "x-client-request-id": "00000000-0000-4000-8000-000000000001",
     "session-id": "00000000-0000-4000-8000-000000000001",
     "thread-id": "00000000-0000-4000-8000-000000000001",
@@ -15,8 +15,8 @@
     "originator": "codex_exec",
     "user-agent": "codex_exec/0.172.0 (os omitted) xterm-256color (codex_exec; 0.172.0)",
     "accept-encoding": "zstd,gzip",
-    "host": "127.0.0.1:63117",
-    "content-length": "41176"
+    "host": "127.0.0.1:51199",
+    "content-length": "41719"
   },
   "credential_headers": [
     "authorization"
@@ -28,7 +28,7 @@
     "input": [
       {
         "type": "message",
-        "id": "msg_placeholder0047",
+        "id": "msg_placeholder0086",
         "role": "developer",
         "content": [
           {
@@ -39,12 +39,12 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0048",
+        "id": "msg_placeholder0087",
         "role": "developer",
         "content": [
           {
             "type": "input_text",
-            "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.\n### Skill roots\n- `r0` = `/home/user/.codex/skills/.system`\n### Available skills\n- imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. (file: r0/imagegen/SKILL.md)\n- openai-docs: API first-timers, Codex/Work Q&A. If the user already has an OpenAI API integration, skip this skill for API questions and use the developer docs. Read this skill before answering how Codex or ChatGPT Work behaves, where to find a feature, or how to configure or troubleshoot this app or coding agent. This includes conversation history, model and cache behavior, instruction precedence, permissions, and tool availability. Use for API onboarding only when the user is connecting to the OpenAI API for the first time. Skip action requests, such as scheduling an automation, and tasks fully answered by supplied text or data. (file: r0/openai-docs/SKILL.md)\n- skill-creator: Create or update a Codex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)\n- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: r0/skill-installer/SKILL.md)\n</skills_instructions>"
+            "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.\n### Skill roots\n- `r0` = `/tmp/run/cx-def/skills/.system`\n### Available skills\n- imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. (file: r0/imagegen/SKILL.md)\n- openai-docs: API first-timers, Codex/Work Q&A. If the user already has an OpenAI API integration, skip this skill for API questions and use the developer docs. Read this skill before answering how Codex or ChatGPT Work behaves, where to find a feature, or how to configure or troubleshoot this app or coding agent. This includes conversation history, model and cache behavior, instruction precedence, permissions, and tool availability. Use for API onboarding only when the user is connecting to the OpenAI API for the first time. Skip action requests, such as scheduling an automation, and tasks fully answered by supplied text or data. (file: r0/openai-docs/SKILL.md)\n- skill-creator: Create or update a Codex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)\n- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: r0/skill-installer/SKILL.md)\n</skills_instructions>"
           },
           {
             "type": "input_text",
@@ -54,7 +54,7 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0049",
+        "id": "msg_placeholder0088",
         "role": "user",
         "content": [
           {
@@ -65,12 +65,49 @@
       },
       {
         "type": "message",
-        "id": "msg_placeholder0050",
+        "id": "msg_placeholder0089",
         "role": "user",
         "content": [
           {
             "type": "input_text",
-            "text": "pc12-turn-ic-end"
+            "text": "pc12-turn-rfz-end"
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "status": "completed",
+        "id": "msg_00000000000000000000000006_0",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "pc12 refused",
+            "annotations": []
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "status": "completed",
+        "id": "msg_00000000000000000000000006_1",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "The upstream model refused this request (stop_reason: refusal).",
+            "annotations": []
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "id": "msg_placeholder0090",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "pc12-next-rfz-end"
           }
         ]
       }
@@ -533,13 +570,13 @@
     "prompt_cache_key": "00000000-0000-4000-8000-000000000001",
     "client_metadata": {
       "turn_id": "00000000-0000-4000-8000-000000000003",
+      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"cold_resume\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"ece10c3e2bf600bff212e695621a427ee88e289e\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795708088111,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
+      "thread_id": "00000000-0000-4000-8000-000000000001",
       "session_id": "00000000-0000-4000-8000-000000000001",
       "root_turn_id": "00000000-0000-4000-8000-000000000003",
-      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0",
-      "x-codex-turn-metadata": "{\"installation_id\":\"00000000-0000-4000-8000-000000000002\",\"session_id\":\"00000000-0000-4000-8000-000000000001\",\"thread_id\":\"00000000-0000-4000-8000-000000000001\",\"agent_name\":\"/root\",\"turn_id\":\"00000000-0000-4000-8000-000000000003\",\"window_id\":\"00000000-0000-4000-8000-000000000001:0\",\"window_number\":0,\"context_window_id\":\"00000000-0000-4000-8000-000000000004\",\"request_kind\":\"turn\",\"history_initialization\":\"new\",\"root_turn_id\":\"00000000-0000-4000-8000-000000000003\",\"thread_source\":\"user\",\"turn_trigger\":\"exec\",\"sandbox\":\"(os omitted)\",\"sandbox_mode\":\"workspace-write\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"workspaces\":{\"/repo\":{\"latest_git_commit_hash\":\"9887ab383b410cdfc09da91ce310e249d4fb6a37\",\"has_changes\":true}},\"turn_started_at_unix_ms\":1795707488603,\"analytics_enabled\":true,\"model\":\"gpt-mock\"}",
       "x-codex-installation-id": "00000000-0000-4000-8000-000000000002",
-      "thread_id": "00000000-0000-4000-8000-000000000001"
+      "x-codex-window-id": "00000000-0000-4000-8000-000000000001:0"
     }
   },
-  "reply": "ic"
+  "reply": "rfz-n"
 }
