@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo::cmd::mail::{send_cli, watch_sync_due, watch_sync_step, watch_with};
+use zygo::cmd::mail::{send_cli, watch_sync_step, watch_with};
 use zygo_config::{Config, LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
@@ -450,18 +450,6 @@ fn watch_starts_the_sync_child_and_shows_its_import_at_a_later_look() {
     assert_eq!((w.status.code(), out(&w)), (Some(0), format!("{id} alice@a \\u{{1b}}[2Jhi\n")), "{}", err(&w));
 }
 
-#[test] // W2: S§8.1 row 3 (rewritten), the S§8.4 rule
-fn watch_sync_due_is_true_at_gap_and_false_below_it() {
-    let gap = Duration::from_secs(60);
-    assert!(watch_sync_due(None, at(T0), gap));
-    assert!(watch_sync_due(Some(at(T0)), at(T0 + 60), gap));
-    assert!(watch_sync_due(Some(at(T0)), at(T0 + 61), gap));
-    assert!(!watch_sync_due(Some(at(T0)), at(T0 + 59), gap));
-    assert!(!watch_sync_due(Some(at(T0)), at(T0) + Duration::from_millis(59_999), gap));
-    assert!(!watch_sync_due(Some(at(T0)), at(T0), gap));
-    assert!(watch_sync_due(Some(at(T0)), at(T0 - 1), gap)); // a clock set back
-}
-
 #[test] // W3: S§8.1 row 3 (rewritten): the step runs before each look at new/
 fn watch_with_runs_the_sync_step_before_each_look() {
     let x = setup();
@@ -512,22 +500,37 @@ fn watch_steps(x: &X, looks: u64, fail: bool) -> Watched {
 }
 fn starts(w: &Watched) -> Vec<u64> { w.seen.lock().unwrap().clone() }
 
-#[test] // W5: S§8.1 row 3 (review F1/F3): one child at start and one after sync_gap (60 s), none between
-fn watch_starts_the_sync_child_at_start_and_after_each_sync_gap() {
+#[test] // W5: S§8.1 row 3, S§8.4 (review round 2 F1): the per-workspace rate limit of `mail/sync/last_start`
+fn watch_starts_the_sync_child_under_the_workspace_rate_limit() {
     let x = setup();
-    let w = watch_steps(&x, 7, false); // looks at T0, T0 + 10 s, .., T0 + 60 s
-    assert_eq!(w.code, 1);
+    assert_eq!(read_last_start(&x.sp), None);
+    let w = watch_steps(&x, 6, false); // looks at T0, T0 + 10 s, .., T0 + 50 s
+    assert_eq!((w.code, starts(&w)), (1, vec![1])); // one start at T0, none until T0 + sync_gap (60 s)
+    assert_eq!(read_last_start(&x.sp), Some(T0)); // written for the hooks and the other watches
+    let w = watch_steps(&x, 6, false); // a watch started again at T0: the start of T0 is recent
+    assert_eq!(starts(&w), Vec::<u64>::new());
+    assert_eq!(read_last_start(&x.sp), Some(T0));
+    let x = setup();
+    let w = watch_steps(&x, 7, false); // looks at T0, .., T0 + 60 s
     assert_eq!(starts(&w), vec![1, 7]); // after the reads of T0 and T0 + 60 s
-    assert_eq!(read_last_start(&x.sp), None); // the watch keeps its own last start; the hook file is not written
+    assert_eq!(read_last_start(&x.sp), Some(T0 + 60));
+    assert!(errors(&x).is_empty());
+    let x = setup();
+    write_last_start(&x.sp, T0).unwrap(); // a hook started a child at T0: it syncs already
+    let w = watch_steps(&x, 7, false);
+    assert_eq!(starts(&w), vec![7]); // no start at T0; the next at T0 + sync_gap
+    assert_eq!(read_last_start(&x.sp), Some(T0 + 60));
     assert!(errors(&x).is_empty());
 }
 
-#[test] // W6: S§8.1 row 3 (review F1/F3): the looks go on after each start; the start does not wait for the child
+#[test] // W6: S§8.1 row 3 (review F1/F3): the looks go on after each start; the step does not wait for the child
+// (the production `ChildSpawner` does not wait: `spawn_reaped`, tested in zygo-mail-sync)
 fn watch_looks_go_on_after_each_start() {
     let x = setup();
     let w = watch_steps(&x, 13, false); // the counting seam returns at once
     assert_eq!((w.code, w.reads.load(Ordering::SeqCst)), (1, 13)); // one clock read per look: all 13 looks ran
     assert_eq!(starts(&w), vec![1, 7, 13]);
+    let x = setup();
     zygo_workspace::mail::send(&x.h.paths, &x.w, None, "elena", SUBJECT, BODY, &MailConfig::default(), at(T0)).unwrap();
     let w = watch_steps(&x, 7, false);
     assert_eq!((w.code, starts(&w)), (0, vec![1])); // the first look after the start shows the mail
@@ -542,14 +545,17 @@ fn watch_with_sync_off_or_a_bad_config_starts_no_child() {
         let w = watch_steps(&x, 3, false);
         assert_eq!((w.code, starts(&w), w.reads.load(Ordering::SeqCst)), (1, vec![], 0), "{text:?}");
     }
+    assert_eq!(read_last_start(&x.sp), None);
     assert!(errors(&x).is_empty());
 }
 
-#[test] // W8: S§8.1 row 3 (review F1/F3): a child that does not start gives one errors.log line per start; the looks go on
+#[test] // W8: S§8.1 row 3, S§8.4 (review round 2 F1): a child that does not start gives one errors.log line per start;
+// `last_start` is written before the start, as for a hook; the looks go on
 fn watch_child_that_does_not_start_writes_one_errors_log_line_per_start() {
     let x = setup();
     let w = watch_steps(&x, 7, true);
     assert_eq!((w.code, w.reads.load(Ordering::SeqCst), starts(&w)), (1, 7, vec![1, 7]));
+    assert_eq!(read_last_start(&x.sp), Some(T0 + 60));
     let log = errors(&x);
     assert_eq!(log.matches("mail watch: cannot start the mail sync child: seam: no child").count(), 2, "{log}");
 }
