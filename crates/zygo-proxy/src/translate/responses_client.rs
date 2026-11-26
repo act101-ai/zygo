@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use zygo_config::Facts;
 
 use super::reasoning::decode_thinking;
-use super::{copy, input_of, s, Target, DOC_OMITTED};
+use super::{input_of, s, Target, DOC_OMITTED};
 use crate::errors::ZygoError;
 use crate::pipeline::Adjustment;
 
@@ -97,8 +97,27 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
     check_fields(req)?;
     let model = req.get("model").filter(|v| v.is_string()).ok_or_else(|| bad("model must be a string"))?;
     let max_tokens = max_tokens(req, facts)?;
-    if req.get("text").and_then(|x| x.get("format")).is_some_and(|f| !f.is_null() && s(f, "type") != Some("text")) {
+    let effort = typed(req, "reasoning", "an object", Value::is_object)?
+        .map(|r| typed(r, "effort", "a string", Value::is_string).map_err(|_| bad("reasoning.effort must be a string")))
+        .transpose()?
+        .flatten();
+    let format = typed(req, "text", "an object", Value::is_object)?
+        .map(|x| typed(x, "format", "an object", Value::is_object).map_err(|_| bad("text.format must be an object")))
+        .transpose()?
+        .flatten();
+    if format.is_some_and(|f| s(f, "type") != Some("text")) {
         return Err(bad("text.format: only type text is accepted toward this upstream"));
+    }
+    typed(req, "parallel_tool_calls", "a boolean", Value::is_boolean)?;
+    let mut scalars = Vec::new();
+    for (k, what, ok) in [
+        ("temperature", "a number", Value::is_number as fn(&Value) -> bool),
+        ("top_p", "a number", Value::is_number),
+        ("stream", "a boolean", Value::is_boolean),
+    ] {
+        if let Some(v) = typed(req, k, what, ok)? {
+            scalars.push((k, v.clone()));
+        }
     }
     let mut d = Drops::default();
     let mut c = Conv { leading: true, ..Conv::default() };
@@ -131,8 +150,8 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
     let messages = c.messages.into_iter().map(|(role, content)| json!({"role": role, "content": content})).collect();
     out.insert("messages".into(), Value::Array(messages));
     out.insert("max_tokens".into(), json!(max_tokens));
-    for k in ["temperature", "top_p", "stream"] {
-        copy(req, &mut out, k, k);
+    for (k, v) in scalars {
+        out.insert(k.into(), v);
     }
     if !tools.is_empty() {
         out.insert("tools".into(), Value::Array(tools));
@@ -140,7 +159,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
     if let Some(tc) = choice {
         out.insert("tool_choice".into(), tc);
     }
-    if let Some(e) = req.get("reasoning").and_then(|r| r.get("effort")).filter(|e| e.is_string()) {
+    if let Some(e) = effort {
         out.insert("output_config".into(), json!({"effort": e}));
     }
     Ok((Value::Object(out), d.codes()))
@@ -148,6 +167,15 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
 
 fn bad(message: impl Into<String>) -> ZygoError {
     ZygoError::bad_request(message)
+}
+
+/// `v[k]` when present and not null; a value that fails `ok` → `400 "<k> must be <what>"`.
+fn typed<'a>(v: &'a Value, k: &str, what: &str, ok: fn(&Value) -> bool) -> Result<Option<&'a Value>, ZygoError> {
+    match v.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(x) if ok(x) => Ok(Some(x)),
+        Some(_) => Err(bad(format!("{k} must be {what}"))),
+    }
 }
 
 fn text(x: &str) -> Value {
