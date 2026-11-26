@@ -4,8 +4,8 @@
 #   PC17  K§6.4.3 stream obligations 1-5 and 7 (ping dropped): the extra output_item.added,
 #         content_part, *.delta and *.done events and a response.completed whose output is []; per
 #         case one served shape, each completing the turn, running its tools and coming back in the
-#         next request as sent (field by field; the only key Codex may add is "content": null on a
-#         reasoning item): t text; st text after a dropped server tool (obligation 3,
+#         next request as sent (field by field; Codex may add only "content" and "encrypted_content"
+#         on a reasoning item, each null and absent from the sent item): t text; st text after a dropped server tool (obligation 3,
 #         server_tool_dropped); f function_call; p custom_tool_call (the freeform apply_patch of
 #         catalog-patch.json); r reasoning with the zygo mark + function_call; m text + function_call
 #         (the message item echo); rt redacted_thinking (reasoning, summary [], mark only) +
@@ -374,13 +374,15 @@ def items(rec):
 CALLS = ("function_call", "custom_tool_call")
 def echo(item, rec):
     """(echoed, extra keys) for the input entry that echoes item: same type and call_id (calls) or id; every key
-    of item with an equal value; the only extra key allowed is "content": null on a reasoning item."""
+    of item with an equal value; the only extra keys allowed are "content" and "encrypted_content" on a reasoning
+    item, each with the value null and only when item lacks it (absent and null mean the same, lead's decision)."""
     key = "call_id" if item.get("type") in CALLS else "id"
     for x in items(rec):
         if x.get("type") == item.get("type") and x.get(key) == item.get(key):
             extra = sorted(set(x) - set(item))
             same = all(k in x and x[k] == v for k, v in item.items())
-            allowed = item.get("type") == "reasoning" and extra in ([], ["content"]) and x.get("content") is None
+            allowed = item.get("type") == "reasoning" and all(
+                k in ("content", "encrypted_content") and x[k] is None for k in extra)
             return same and (not extra or allowed), extra
     return False, []
 def output_of(rec, ty, call_id):
