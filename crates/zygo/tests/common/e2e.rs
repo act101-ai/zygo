@@ -880,3 +880,81 @@ pub fn copy_prelude(h: &Harness, file: &str, dir: &str) -> String {
     let d = h.root().join(dir).display().to_string();
     format!("/bin/mkdir -p '{d}'; /bin/cp \"$ZYGO_SESSION_DIR/{file}\" '{d}/'\"$ZYGO_SESSION\"'.json' 2>/dev/null")
 }
+
+// ---- ML-18 helpers (workspace mail): added items only; no item above is moved or changed ----
+
+use zygo_workspace::mail::{mail_dir, store};
+
+/// The wake text of M§7.3 step 2.
+pub const WAKE: &str = "zygo: you have mail; read it with mail_read";
+
+/// Writes `body` to `root/input/<name>` (makes `input/`) and returns the path. assert_no_mail_text skips `input/`.
+pub fn body_file(h: &Harness, name: &str, body: &str) -> PathBuf {
+    let dir = h.root().join("input");
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join(name);
+    std::fs::write(&p, body).unwrap();
+    p
+}
+
+/// `zygo mail send <to> --subject <subject> --file <body_file(h, subject, body)>` through `cli`: asserts exit 0 and
+/// stdout `sent <id> to <to>\n` with an id of 26 characters; returns the id.
+pub fn mail_send_cli(h: &Harness, to: &str, subject: &str, body: &str) -> String {
+    let f = body_file(h, subject, body);
+    let o = cli(h, &["mail", "send", to, "--subject", subject, "--file", f.to_str().unwrap()], &[]);
+    assert_eq!(o.status.code(), Some(0), "mail send: {}{}", text(&o.stdout), text(&o.stderr));
+    let out = text(&o.stdout);
+    let id = out
+        .strip_prefix("sent ")
+        .and_then(|r| r.strip_suffix(&format!(" to {to}\n")))
+        .unwrap_or_else(|| panic!("mail send stdout: {out:?}"));
+    assert_eq!(id.len(), 26, "{out:?}");
+    id.to_string()
+}
+
+/// `mcp_call(h, &sdir(h, key), tool, args)`: asserts `result.isError == false` and returns
+/// `result.content[0].text` parsed as JSON (the call the member `key`'s agent makes).
+pub fn mail_tool(h: &Harness, key: &str, tool: &str, args: Value) -> Value {
+    let r = mcp_call(h, &sdir(h, key), tool, args);
+    assert_eq!(r["result"]["isError"], false, "{tool}: {r}");
+    let t = r["result"]["content"][0]["text"].as_str().unwrap_or_else(|| panic!("{tool}: {r}"));
+    serde_json::from_str(t).unwrap_or_else(|e| panic!("{tool}: {e}: {t}"))
+}
+
+/// `store::unread(&mail_dir(&h.paths, id), key)`, unwrapped.
+pub fn unread(h: &Harness, id: &str, key: &str) -> usize {
+    store::unread(&mail_dir(&h.paths, id), key).unwrap()
+}
+
+/// `mail_dir(&h.paths, id)/<key>/wake.json`.
+pub fn wake_file(h: &Harness, id: &str, key: &str) -> PathBuf {
+    mail_dir(&h.paths, id).join(key).join("wake.json")
+}
+
+/// The times WAKE shows in `capture(h, pane)`.
+pub fn wakes(h: &Harness, pane: &str) -> usize {
+    capture(h, pane).matches(WAKE).count()
+}
+
+/// M§13 #8: every regular file under `h.root()` (walkdir, links not followed), except the subtrees
+/// `mail_dir(&h.paths, id)` and `root/input`, holds none of `markers` as a byte substring; panics with the path and
+/// the marker. Returns the paths it read.
+pub fn assert_no_mail_text(h: &Harness, id: &str, markers: &[&str]) -> Vec<PathBuf> {
+    let skip = [mail_dir(&h.paths, id), h.root().join("input")];
+    let mut read = Vec::new();
+    let walk = walkdir::WalkDir::new(h.root()).follow_links(false).into_iter();
+    for e in walk.filter_entry(|e| !skip.iter().any(|s| e.path() == s.as_path())) {
+        // A launcher may remove its session folder during the walk.
+        let Ok(e) = e else { continue };
+        if !e.file_type().is_file() {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(e.path()) else { continue };
+        for m in markers {
+            let m = m.as_bytes();
+            assert!(!bytes.windows(m.len()).any(|w| w == m), "{} holds {}", e.path().display(), String::from_utf8_lossy(m));
+        }
+        read.push(e.path().to_path_buf());
+    }
+    read
+}
