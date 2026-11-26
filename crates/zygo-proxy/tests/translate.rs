@@ -416,6 +416,13 @@ fn err(t: &str, m: &str) -> Value {
     json!({"type":"error","error":{"type":t,"message":m}})
 }
 
+/// Anthropic's other overflow text: input plus `max_tokens` over the context window (RS-3 review round 1, F1).
+#[allow(non_snake_case)]
+fn CTX_ANTH_LIMIT() -> Value {
+    json!({"type":"error","error":{"type":"invalid_request_error",
+        "message":"input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000, decrease input length or `max_tokens` and try again"}})
+}
+
 #[test]
 fn res_json_context_errors() {
     let cases = [
@@ -425,6 +432,7 @@ fn res_json_context_errors() {
         (400, json!({"object":"error","message":"This model's maximum context length is 32768 tokens. However, you requested 33000 tokens (32000 in the messages, 1000 in the completion). Please reduce the length of the messages or completion.","type":"BadRequestError","param":null,"code":400}), 1, "prompt is too long: 33000 tokens > 32768 maximum"),
         (400, json!({"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error","n_prompt_tokens":5000,"n_ctx":4096}}), 1, "prompt is too long: 5000 tokens > 4096 maximum"),
         (413, CTX_RESP(), 5000, "prompt is too long: 5000 tokens > 4999 maximum"),
+        (400, CTX_ANTH_LIMIT(), 1, "prompt is too long: 212000 tokens > 200000 maximum"),
     ];
     for (status, body, estimate, m) in cases {
         let (s, v) = translate_error(StatusCode::from_u16(status).unwrap(), body.to_string().as_bytes(), estimate, None);
@@ -1251,6 +1259,17 @@ fn wire_round_trip_tool_loop() {
         {"type":"function_call","call_id":"call_9","name":"get","arguments":"{\"a\":1}"},
         {"type":"function_call_output","call_id":"call_9","output":"42"}]));
     assert!(!adj(&r.1).contains("thinking_dropped"));
+}
+
+#[test]
+fn wire_context_error_anthropic_limit_text() {
+    let t = setup();
+    let g = grant(&t, false);
+    t.up.script("/r1", vec![json_reply(400, CTX_ANTH_LIMIT())]);
+    let r = post(&t, &g, &msgs("test-fb", json!([user(json!("hi"))])));
+    assert_eq!(r.0, 400);
+    assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), err("invalid_request_error", "prompt is too long: 212000 tokens > 200000 maximum"));
+    assert_eq!(t.up.count("/r2"), 0);
 }
 
 #[test]

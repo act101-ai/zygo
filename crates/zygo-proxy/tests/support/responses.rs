@@ -102,6 +102,8 @@ pub struct Harness {
     h: ProxyHandle,
     token: String,
     session: String,
+    /// The provider key's value (built at run time).
+    key: String,
     /// `post` calls: each reaches a model route and writes one usage row.
     posts: AtomicU64,
 }
@@ -130,7 +132,7 @@ fn dialect_name(d: Dialect) -> &'static str {
 
 impl Harness {
     /// A proxy on a `ManualClock` with one session of `agent` and one mock upstream of dialect `upstream`; the config
-    /// is the role `code` → `MODEL` served by `PROVIDER`, then `extra_toml`.
+    /// is the role `code` → `MODEL` served by `PROVIDER` with the key `keychain:k-rs`, then `extra_toml`.
     pub fn start(upstream: Dialect, agent: Agent, extra_toml: &str) -> Harness {
         let d = TempDir::new().unwrap();
         let body = if upstream == Dialect::Anthropic {
@@ -139,20 +141,20 @@ impl Harness {
             br#"{"error":{"type":"invalid_request_error","message":"rs3 mock"}}"#.to_vec()
         };
         let up = Upstream::start((400, "application/json".into(), body));
-        let key = if upstream == Dialect::Anthropic { "" } else { "key = \"keychain:k-rs\"\n" };
         let toml = format!(
             "[role.code]\nmodel = \"{MODEL}\"\n\n[[model]]\nid = \"{MODEL}\"\n[model.facts]\nreasoning = \"always\"\n\
              effort_levels = [\"low\", \"medium\", \"high\"]\nmax_output_tokens = {MAX_OUTPUT}\ncontext_window = 200000\n\
              sampling = true\nvision = true\nstructured_output = \"native\"\nforced_tool_choice = true\n\n\
              [[model.provider]]\nname = \"{PROVIDER}\"\nbase_url = \"http://127.0.0.1:{}\"\ndialects = [\"{}\"]\n\
-             upstream_model = \"{UPSTREAM_MODEL}\"\n{key}\n{extra_toml}",
+             upstream_model = \"{UPSTREAM_MODEL}\"\nkey = \"keychain:k-rs\"\n\n{extra_toml}",
             up.addr.port(),
             dialect_name(upstream),
         );
         std::fs::write(d.path().join("config.toml"), toml).unwrap();
         let cfg = load(&LoadContext { paths: paths(&d), repo: None, team: None }).unwrap();
         // Built at run time (no credential-shaped literal).
-        let keys = Keys([("k-rs".to_string(), Secret::new(format!("test-key-k-rs-{}", ulid())))].into_iter().collect());
+        let key = format!("test-key-k-rs-{}", ulid());
+        let keys = Keys([("k-rs".to_string(), Secret::new(key.clone()))].into_iter().collect());
         let o = StartOpts {
             clock: ManualClock::new(),
             keys: Arc::new(keys),
@@ -178,7 +180,12 @@ impl Harness {
                 known_plugins: Default::default(),
             })
             .unwrap();
-        Harness { d, up, h, token: g.token, session: g.session, posts: AtomicU64::new(0) }
+        Harness { d, up, h, token: g.token, session: g.session, key, posts: AtomicU64::new(0) }
+    }
+
+    /// The value of the provider's key (`keychain:k-rs`).
+    pub fn provider_key(&self) -> &str {
+        &self.key
     }
 
     pub fn token(&self) -> &str {

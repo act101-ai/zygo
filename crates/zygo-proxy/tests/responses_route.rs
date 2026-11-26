@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
 use support::{codex_request, Harness, MAX_OUTPUT, MODEL, PROVIDER, UPSTREAM_MODEL};
-use zygo_config::Dialect::{Anthropic as A, OpenaiChat as C};
+use zygo_config::Dialect::{Anthropic as A, Openai as O, OpenaiChat as C};
 use zygo_core::Agent;
 use zygo_proxy::translate::responses_client::{IGNORED, NO_STATE, REFUSED};
 
@@ -122,6 +122,7 @@ fn captured_requests_reach_anthropic_as_messages() {
         }
         let uh = h.upstream_headers().pop().unwrap();
         assert_eq!(hv(&uh, "anthropic-version"), "2023-06-01", "{f}");
+        assert_eq!(hv(&uh, "x-api-key"), h.provider_key(), "{f}");
         assert!(uh.get("authorization").is_none(), "{f}");
         assert!(!uh.keys().any(|k| k.as_str().starts_with("x-zygo-")), "{f}");
         clean_adjustments(&rh);
@@ -145,8 +146,8 @@ fn captured_requests_reach_chat_as_chat() {
             assert!(v.get(k).is_none(), "{f}: {k}");
         }
         let uh = h.upstream_headers().pop().unwrap();
-        let auth = hv(&uh, "authorization");
-        assert!(!auth.is_empty() && auth != format!("Bearer {}", h.token()), "{f}");
+        assert_eq!(hv(&uh, "authorization"), format!("Bearer {}", h.provider_key()), "{f}");
+        assert!(uh.get("x-api-key").is_none() && uh.get("anthropic-version").is_none(), "{f}");
         clean_adjustments(&rh);
     }
 }
@@ -239,4 +240,84 @@ fn attribution_row_for_responses_route() {
     assert_eq!(r.agent, "claude-code");
     assert_eq!(r.role_served.as_deref(), Some("code"));
     assert_eq!((r.model.as_str(), r.provider.as_str(), r.status), (MODEL, PROVIDER, 400));
+}
+
+#[test]
+fn over_long_prompt_anthropic_limit_text_pc14() {
+    let h = start(A);
+    h.reply_with(
+        400,
+        "application/json",
+        br#"{"type":"error","error":{"type":"invalid_request_error","message":"input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000, decrease input length or `max_tokens` and try again"}}"#.to_vec(),
+    );
+    let (s, _, b) = h.post(R, &codex_request("first-turn"));
+    assert_eq!(s, 400);
+    pc14(&b, "prompt is too long: 212000 tokens > 200000 maximum");
+}
+
+/// Until RS-5 builds the same-dialect path (`store` := false, Responses usage), `openai` is no candidate.
+#[test]
+fn openai_only_provider_is_no_candidate() {
+    let h = start(O);
+    let (s, _, b) = h.post(R, &codex_request("first-turn"));
+    assert_eq!((s.as_u16(), oai_err(&b)["type"].clone()), (400, json!("zygo_no_provider")));
+    assert!(h.upstream_bodies().is_empty());
+}
+
+fn identity<'a>(h: &'a Harness, bearer: &'a str) -> Vec<(&'a str, &'a str)> {
+    vec![("authorization", bearer), ("x-zygo-session", h.session_id())]
+}
+
+#[test]
+fn client_anthropic_version_kept() {
+    let h = start(A);
+    let bearer = format!("Bearer {}", h.token());
+    let mut hd = identity(&h, &bearer);
+    hd.push(("anthropic-version", "2023-01-01"));
+    h.post_as(R, &hd, &codex_request("first-turn"));
+    let uh = h.upstream_headers().pop().expect("one upstream request");
+    let v: Vec<_> = uh.get_all("anthropic-version").iter().map(|v| v.to_str().unwrap().to_string()).collect();
+    assert_eq!(v, ["2023-01-01"]);
+}
+
+#[test]
+fn chat_candidate_gets_no_anthropic_version() {
+    let h = start(C);
+    let bearer = format!("Bearer {}", h.token());
+    let mut hd = identity(&h, &bearer);
+    hd.push(("anthropic-version", "2023-01-01"));
+    for headers in [identity(&h, &bearer), hd] {
+        h.post_as(R, &headers, &codex_request("first-turn"));
+        let uh = h.upstream_headers().pop().expect("one upstream request");
+        assert!(uh.get("anthropic-version").is_none(), "{uh:?}");
+    }
+}
+
+#[test]
+fn body_over_limit_openai_shape() {
+    let h = start(A);
+    let body = json!({"model": MODEL, "input": "x".repeat((32 << 20) + 1)});
+    let (s, _, b) = h.post(R, &body);
+    assert_eq!((s.as_u16(), oai_err(&b)["type"].clone()), (413, json!("zygo_body_too_large")));
+    assert!(h.upstream_bodies().is_empty());
+}
+
+#[test]
+fn non_object_body_openai_shape() {
+    let h = start(A);
+    let (s, _, b) = h.post(R, &json!([1, 2]));
+    let e = oai_err(&b);
+    assert_eq!((s.as_u16(), e["type"].clone()), (400, json!("zygo_bad_request")), "{e}");
+    assert!(h.upstream_bodies().is_empty());
+}
+
+#[test]
+fn anthropic_route_errors_keep_anthropic_shape() {
+    let h = start(A);
+    let (s, _, b) = h.post_as("anthropic/v1/messages", &[], &json!({"model": MODEL, "max_tokens": 8, "messages": []}));
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!((s.as_u16(), v["type"].clone(), v["error"]["type"].clone()), (401, json!("error"), json!("zygo_token_invalid")));
+    let (s, _, b) = h.post("anthropic/v1/messages", &json!({"model": "no-such-model", "max_tokens": 8, "messages": []}));
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!((s.as_u16(), v["type"].clone(), v["error"]["type"].clone()), (400, json!("error"), json!("zygo_unknown_model")));
 }
