@@ -244,6 +244,35 @@ fn forget_refuses_when_git_cannot_remove_the_worktree() {
     assert_eq!(worktrees(&a.repo()).iter().filter(|e| is_sync(e, &a)).count(), 1);
 }
 
+#[test] // S§7.6 steps 1-2 (MS-21 review F3): `mail` as a link or as a file is not followed: no mail, no question, no lock;
+        // forget goes on and makes or changes nothing under the link's target
+fn forget_does_not_follow_a_mail_link_or_file() {
+    for as_link in [true, false] {
+        let h = Harness::no_tmux();
+        seed_down(&h, &[(ALICE, "alice")]);
+        let elsewhere = h.root().join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("sync")).unwrap();
+        std::fs::create_dir_all(elsewhere.join("outbox")).unwrap();
+        std::fs::write(elsewhere.join("outbox/01ARZ3NDEKTSV4RRFFQ69G5FAV.json"), b"{}").unwrap();
+        if as_link {
+            std::os::unix::fs::symlink(&elsewhere, state(&h).join("mail")).unwrap();
+        } else {
+            std::fs::write(state(&h).join("mail"), b"x").unwrap();
+        }
+        let o = zygo(&h, &["ws", "forget", "app"], None);
+        assert_eq!(code_out_err(&o), (Some(0), "zygo: forgot app\n".to_string(), String::new()), "link: {as_link}");
+        assert!(std::fs::symlink_metadata(state(&h)).is_err(), "link: {as_link}");
+        let names = |d: &Path| {
+            let mut v: Vec<String> = std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(names(&elsewhere), vec!["outbox".to_string(), "sync".to_string()]);
+        assert!(names(&elsewhere.join("sync")).is_empty());
+        assert_eq!(names(&elsewhere.join("outbox")), vec!["01ARZ3NDEKTSV4RRFFQ69G5FAV.json".to_string()]);
+    }
+}
+
 #[test] // S§7.6 step 2, S§19 #20: an outbox that cannot be read refuses; unsent mail is never taken for none
 fn forget_refuses_an_outbox_that_cannot_be_read() {
     let h = Harness::no_tmux();

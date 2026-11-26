@@ -181,7 +181,13 @@ pub(crate) fn forget_mail(
     paths: &Paths, ws: &Workspace, yes: bool, input: &mut dyn BufRead, err: &mut dyn Write,
 ) -> Result<bool, String> {
     let sp = SyncPaths::new(paths, &ws.id).map_err(|e| e.to_string())?;
-    let n = outbox::count(&sp).map_err(|e| format!("the outbox cannot be read: {}", esc(&e.to_string())))?;
+    // S§7.6 step 1 (review F3): a `mail/` that is a link or not a folder is no mail, and it is not followed.
+    let no_mail = std::fs::symlink_metadata(&sp.mail).is_ok_and(|m| !m.is_dir());
+    let n = if no_mail {
+        0
+    } else {
+        outbox::count(&sp).map_err(|e| format!("the outbox cannot be read: {}", esc(&e.to_string())))?
+    };
     if n > 0 {
         let prompt = forget_prompt(n);
         if yes {
