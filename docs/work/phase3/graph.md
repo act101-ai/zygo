@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | DONE | implementation | plan 8ca46aed · node 133f55bc, 37bd93c8 · acceptance pass (workspace_mail 7 passed, --include-ignored) · PR #171 |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb, dba2a089, 5dd04b76; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
@@ -410,3 +409,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | OS-42 added: wrapper dispatch and unseen pytest live output (OS-31 review F2, R2 report); OS-35 now depends on it |
 | 2026-11-25 | FX-17 DONE (kept, round 1). Review 4: F1 and F2 (test gaps: other check errors; team warnings before the range line) fixed; F3 and F4 refuted (spec R§9.4 :271 fallback; existing exit 11 load error) · PR #169 |
 | 2026-11-25 | ML-18 DONE: end-to-end mail on tmux with stub agents. Review findings 6: 4 confirmed and fixed, 2 refuted · PR #171 |
+| 2026-11-26 | SX-5 DONE, kept, round 1. Fixed F2 (step 9 ran 0 tests: workspace_down all #[ignore] timing; recorded). Refuted F1 (SubagentStart without agent_id: spec T§6.3 item 2 covers agent_id input only; a guard is a new check), F3 (settings order only) · PR #181 |
