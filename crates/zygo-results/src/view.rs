@@ -4,6 +4,10 @@ use crate::shape::Step;
 use crate::store::Stored;
 
 pub const VIEW_CAP_BYTES: usize = 8 * 1024;
+/// Bytes of the longest O§7.8 shaped marker line with its `\n`: the 139 fixed bytes of the `shaped_view` format,
+/// every `Step` name once with its `, ` (162), two numbers of at most 7 digits (the shaped path needs the raw text
+/// ≤ `SHAPE_MAX_BYTES`) and the 26-character id. A kind view gets `VIEW_CAP_BYTES` less this (O§7.7).
+pub const SHAPED_MARKER_ROOM: usize = 341;
 pub const LINE_CAP_CHARS: usize = 400;
 
 pub(crate) fn cut(line: &str) -> String {
