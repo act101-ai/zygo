@@ -471,7 +471,7 @@ PY
 }
 
 # n2_extra_check: each EXTRA_ENV word is NAME=value; no name codex_env sets or that moves Codex's
-# state, trust or network (PATH TERM TZ HOME TMPDIR MOCK_API_KEY, any *_PROXY or NO_PROXY in either
+# state, trust or network (PATH TERM TZ SHELL HOME TMPDIR MOCK_API_KEY, any *_PROXY or NO_PROXY in either
 # case, SSL_CERT_*, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE, any XDG_*, any CODEX_* not in
 # EXTRA_ENV_ALLOW); then every name must be in EXTRA_ENV_ALLOW, and every value may hold only
 # A-Za-z0-9_.:@%+,=- and no "..": no /, \ or ~, so no value names a path.
@@ -481,7 +481,7 @@ n2_extra_check() {
     case "$_cx_w" in *=*) ;; *) _cx_n="" ;; esac
     case "$_cx_n" in '' | [0-9]* | *[!A-Za-z0-9_]*) echo "premises: EXTRA_ENV word '$_cx_w' is not NAME=value"; exit 1 ;; esac
     case "$(printf '%s' "$_cx_n" | tr a-z A-Z)" in
-      PATH | TERM | TZ | HOME | TMPDIR | MOCK_API_KEY | *_PROXY | NO_PROXY | SSL_CERT_* | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | XDG_*)
+      PATH | TERM | TZ | SHELL | HOME | TMPDIR | MOCK_API_KEY | *_PROXY | NO_PROXY | SSL_CERT_* | CURL_CA_BUNDLE | REQUESTS_CA_BUNDLE | XDG_*)
         echo "premises: EXTRA_ENV may not set $_cx_n"; exit 1 ;;
       CODEX_*)
         case " $EXTRA_ENV_ALLOW " in *" $_cx_n "*) ;; *) echo "premises: EXTRA_ENV may not set $_cx_n"; exit 1 ;; esac ;;
@@ -500,7 +500,8 @@ n2_extra_check() {
 # (after a mock restart, a part removes or rewrites its config.toml); sets CODEX_ENV: env -i with
 # scratch HOME, CODEX_HOME, XDG and TMPDIR folders, the dummy key as MOCK_API_KEY, and HTTPS_PROXY,
 # HTTP_PROXY and ALL_PROXY at the mock (K§6.3.7), TERM the constant xterm-256color, TZ the constant
-# UTC (PC-10: no host timezone in a request). Every call,
+# UTC (PC-10: no host timezone in a request), SHELL the constant /bin/sh (PC-11: Codex does not
+# read the owner's login shell). Every call,
 # after its fresh copy: CODEX_VERSION (that copy's --version) >= CODEX_MIN.
 codex_env() {
   CX_HOME=${CX_HOME:-$H/.codex}
@@ -527,7 +528,7 @@ codex_env() {
       'wire_api = "responses"' >"$_cx_cf"
     mv -f "$_cx_cf" "$CX_HOME/config.toml"
   fi
-  CODEX_ENV="env -i PATH=$(dirname "$CODEX_EXE"):/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin TERM=xterm-256color TZ=UTC HOME=$H CODEX_HOME=$CX_HOME XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share XDG_CACHE_HOME=$H/.cache XDG_STATE_HOME=$H/.local/state TMPDIR=$RUN/tmp MOCK_API_KEY=$DUMMY_KEY HTTPS_PROXY=$MOCK_URL HTTP_PROXY=$MOCK_URL ALL_PROXY=$MOCK_URL"
+  CODEX_ENV="env -i PATH=$(dirname "$CODEX_EXE"):/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin TERM=xterm-256color TZ=UTC SHELL=/bin/sh HOME=$H CODEX_HOME=$CX_HOME XDG_CONFIG_HOME=$H/.config XDG_DATA_HOME=$H/.local/share XDG_CACHE_HOME=$H/.cache XDG_STATE_HOME=$H/.local/state TMPDIR=$RUN/tmp MOCK_API_KEY=$DUMMY_KEY HTTPS_PROXY=$MOCK_URL HTTP_PROXY=$MOCK_URL ALL_PROXY=$MOCK_URL"
   _cx_v=$($CODEX_ENV "$CODEX_EXE" --version | head -n 1)
   _cx_v=${_cx_v##* }
   case "$_cx_v" in
