@@ -192,7 +192,7 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | DONE | judgment | e8f19e67..5bc5249b · acceptance pass (operator 22 passed) · PR #190 |
-| MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
+| MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | DONE | implementation | 0167648d..826c59f6 · acceptance pass (mail_sync_cli 14 passed, cli_surface 21 passed) · PR #210 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
 | OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
@@ -214,7 +214,6 @@ Session text (T, SX nodes):
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
 | OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
-| FX-3 | Test stdin helpers tolerate a child that exits before it reads stdin (statusline BrokenPipe flake) | — | DONE | implementation | 1636973 · compact_cmd 5p + statusline_cmd 4p; floor green · PR #46 |
 | FX-4 | Proxy rows-bound test waits for the written row before the complete-flag GET (Windows flake) | — | DONE | mechanical | bbe99ca · serve 51p; floor green · PR #50 |
 | FX-5 | Piped send test asserts send-then-read fails (Linux foreign-reader flake) | — | DONE | mechanical | 460b7cf · decision_git 35p, piped_epipe 1p; floor green · PR #51 |
 | FX-6 | Dead-port test helpers: a port no parallel test can take (CI run 45557591675) | — | DONE | implementation | 690ea805 · zygo lib 38/compact_cmd 5/session_verbs 11/serve_cli 4/workspace_member 2/serve_client 40 passed · PR #65 |
@@ -427,3 +426,5 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-16 DONE: clean removes ESC ( / ESC ) plus one final byte 0x30-0x7E, else only 2 bytes; lone ESC alone before a line end or ESC; review R1-R3 fixed (R3 F1 trailer recorded in DDR-01M8CMTAGQEDD71MNHY0CZJC76); cargo-test-color recaptured (120 tests), graded libtest-passing · PR #209 |
 | 2026-11-26 | FX-21 added: FX-16 review R1 F4, R3 F2: ESC *, ESC +, ESC $ multi-byte and intermediates before the final byte leave residue (O§7.4, O-C9) |
 | 2026-11-26 | Author's call (lead): FX-16 review R1 F1 first rejected, then fixed: the OS-43 change-log row grades a view by its own shaper, so the clean color case meets the libtest-passing floor; recorded in O§8.2 |
+| 2026-11-26 | MS-17 plan: premise drift: S§6.6 CI note recorded by the pass under the lock (Report.ci_note); S§8.2 unknown line printed at the end of a sync that does not stop; Files widened (sync.rs, plugins.rs, cli_surface.rs, spec) |
+| 2026-11-26 | MS-17 DONE: zygo mail sync verb, options, hidden --background form; review R1 F1 (shared admin::named name rule) F2 (CI note) F3 (one panic line) T1 fixed, T2 recorded; R2 R1-B fixed (S§6.6), R1-A recorded · PR #210 |
