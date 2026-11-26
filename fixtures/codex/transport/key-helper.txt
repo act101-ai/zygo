@@ -1,0 +1,6 @@
+helper_runs=1
+helper_runs_other=2
+requests=4
+with_helper_token=4
+no_credential=0
+token=MOCK_ALT_KEY, built at run time (records: credential=alt; the env_key runs: credential=primary)

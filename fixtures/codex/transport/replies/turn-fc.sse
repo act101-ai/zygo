@@ -1,0 +1,9 @@
+event: response.created
+data: {"type": "response.created", "response": {"id": "resp_pc3_fc", "object": "response", "model": "{{MODEL}}", "status": "in_progress", "output": []}}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "output_index": 0, "item": {"type": "function_call", "id": "fc_pc3_1", "call_id": "call_pc3_1", "name": "exec_command", "arguments": "{\"cmd\": \"echo pc3-tracer\"}", "status": "completed"}}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"id": "resp_pc3_fc", "object": "response", "model": "{{MODEL}}", "status": "completed", "output": [{"type": "function_call", "id": "fc_pc3_1", "call_id": "call_pc3_1", "name": "exec_command", "arguments": "{\"cmd\": \"echo pc3-tracer\"}", "status": "completed"}], "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}}}
+

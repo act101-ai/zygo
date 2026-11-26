@@ -1,0 +1,5 @@
+models_requests=3 /v1/models?client_version=0.172.0
+exec_models_requests=3
+b: models_request=1 listed=yes driver=0 served=gpt-mock,gpt-mock-listed bundled=gpt-6.2-sol,gpt-6.2-astra,gpt-6.1-terra,gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
+c: models_request=2 listed=no driver=0 served=- bundled=gpt-6.2-sol,gpt-6.2-astra,gpt-6.1-terra,gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
+d: models_request=0 listed=yes driver=0 file=gpt-mock,gpt-mock-file bundled=-

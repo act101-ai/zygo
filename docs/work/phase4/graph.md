@@ -75,7 +75,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | OC-1 | OpenCode: session token out of the environment and config (apiKey from the token file), providers limited to zygo | — | DONE | judgment | PR #128 merged 53eabe25; acceptance exit 0 on merged tree; CI run 45693613400 green (ubuntu, macos, windows) |
 | PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | DONE | judgment | PR #91 merged adac6bc0; acceptance exit 0 @ 54039f94 (test-check-premises 50 cases); CI run 45678686867 green (ubuntu, macos, windows) |
 | PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | DONE | judgment | PR #126 merged 1206befa; acceptance exit 0 @ 4784e06b (real codex 0.172.0 run, ~/.codex unchanged); CI run 45698780636 green (ubuntu, macos, windows) |
-| PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | TODO | implementation | — |
+| PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | DONE | implementation | PR #137 merged 0d665799; acceptance exit 0 @ e554d2ca (real codex 0.172.0; PC1 PC2 PC7 PC13 PC14 verified); CI run 45725231426 green (ubuntu, macos, windows) |
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2, PC-10 | TODO | implementation | — |
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | TODO | implementation | — |
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | TODO | implementation | — |
@@ -135,3 +135,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | PC-10 DONE: gate 3 rounds; TZ=UTC, OS and timezone scrub, daemon-socket guard, leftover-process check, refused-path records, second mock key; limits recorded (nodes/PC-10.md); PR #141 merged a1c0ce8a. |
 | 2026-11-25 | PC-9 DONE: gate 2 rounds + nit round; evidence paths must be plain repo paths (no symlinked dir), ver_test copies cited evidence; G5 case-variant limit recorded (nodes/PC-9.md); PR #136 merged 256e5cae. |
 | 2026-11-25 | PC-11 added (author's call): Codex captures keep platformOs, the login shell, macOS writable roots and namespace tool descriptions (PC-3 review G3); scrub and re-scrub in place before PC-7. |
+| 2026-11-25 | PC-3 DONE: gate 3 rounds; recaptured on the PC-10 harness; apply_patch via a minimal catalog (run p) only; item-id/platformOs/shell scrub gaps to PC-11; PR #137 merged 0d665799. |
