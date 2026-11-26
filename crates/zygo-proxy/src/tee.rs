@@ -69,6 +69,32 @@ pub struct Tee {
     split: Option<CacheSplit>,
     /// A streamed line gave a usage object.
     read_any: bool,
+    /// The provider key `scrub_errors` replaces in error events (K§6.4.4 (2)).
+    key: Option<Secret>,
+    /// The current event's `event` field: `Some(true)` for `error` / `response.failed`, `Some(false)` for another
+    /// name, `None` before one. A blank line resets it.
+    event: Option<bool>,
+    /// An over-long error line ended the output (`scrub_errors`).
+    cut: bool,
+}
+
+/// `b` with each occurrence of `key` replaced by `scrub`'s `[REDACTED]` (read as UTF-8, U+FFFD for each invalid
+/// sequence); `None` when `key` is `None` or empty, or does not occur in `b`.
+pub(crate) fn scrub_bytes(b: &[u8], key: Option<&str>) -> Option<Vec<u8>> {
+    let k = key.filter(|k| !k.is_empty())?;
+    if !b.windows(k.len()).any(|w| w == k.as_bytes()) {
+        return None;
+    }
+    Some(scrub(&String::from_utf8_lossy(b), Some(k)).into_bytes())
+}
+
+/// A `data` payload (after `data:` and one optional space) of an event with no `event` field is an error line: whole
+/// JSON whose `type` is `error` or `response.failed`, or not whole JSON (part of a split `data`).
+fn error_line(d: &[u8]) -> bool {
+    match serde_json::from_slice::<Value>(d.trim_ascii()) {
+        Ok(v) => matches!(v.get("type").and_then(Value::as_str), Some("error" | "response.failed")),
+        Err(_) => true,
+    }
 }
 
 /// The usage object of one SSE line, and whether it starts the numbers (`message_start` `message.usage`) or
@@ -188,6 +214,9 @@ impl Tee {
             usage: Usage::default(),
             split: None,
             read_any: false,
+            key: None,
+            event: None,
+            cut: false,
         }
     }
 
@@ -218,6 +247,48 @@ impl Tee {
         self.line_mode
     }
 
+    /// Line mode (K§6.4.4 (2)): each `data` line of an error event (`event: error` or `event: response.failed`), and
+    /// each `error_line` of an event with no `event` field, that holds `key` gets it replaced (`scrub_bytes`) before
+    /// `on_line`. A `data` line over HOLD_MAX in such an event ends the output: it and every later byte are not
+    /// returned (`cut`); later whole lines are still read for usage. No effect without line mode.
+    pub fn scrub_errors(&mut self, key: Secret) {
+        self.key = Some(key);
+    }
+
+    /// `scrub_errors` ended the output at an over-long error line.
+    pub fn cut(&self) -> bool {
+        self.cut
+    }
+
+    /// With a key: tracks the event's name, and replaces the key in an error `data` line (K§6.4.4 (2)).
+    fn scrub_line(&mut self, line: &mut Vec<u8>) {
+        let Some(key) = self.key.as_ref() else { return };
+        if line.is_empty() || line == b"\r" {
+            self.event = None;
+            return;
+        }
+        if let Some(n) = line.strip_prefix(b"event:") {
+            let n = n.trim_ascii();
+            self.event = Some(n == b"error" || n == b"response.failed");
+            return;
+        }
+        let Some(d) = line.strip_prefix(b"data:") else { return };
+        let d = d.strip_prefix(b" ").unwrap_or(d);
+        if (self.event == Some(true) || (self.event.is_none() && error_line(d)))
+            && let Some(s) = scrub_bytes(line, Some(key.expose()))
+        {
+            *line = s;
+        }
+    }
+
+    /// The over-long line that starts with `held` then `seg` is a `data` line that `scrub_errors` cuts.
+    fn cuts(&self, seg: &[u8]) -> bool {
+        let n = self.held.len().min(5);
+        let mut head = self.held[..n].to_vec();
+        head.extend_from_slice(&seg[..(5 - n).min(seg.len())]);
+        self.key.is_some() && self.event != Some(false) && head.starts_with(b"data:")
+    }
+
     /// Unarmed: `chunk` itself. Armed: the whole lines completed by `chunk`, each through `on_line`; a held partial
     /// line over HOLD_MAX is returned unchanged with the rest of that line and never reaches `on_line`.
     pub fn push(&mut self, chunk: Bytes, on_line: &mut dyn FnMut(&mut SseLine)) -> Bytes {
@@ -236,12 +307,16 @@ impl Tee {
             self.scan(&chunk, None);
             return chunk;
         }
+        if self.cut {
+            self.scan(&chunk, None);
+            return Bytes::new();
+        }
         let mut out = Vec::with_capacity(chunk.len() + self.held.len());
         self.scan(&chunk, Some((&mut out, on_line)));
         Bytes::from(out)
     }
 
-    /// The held tail, unchanged.
+    /// The held tail, unchanged except for `scrub_errors`; nothing after a cut.
     pub fn finish(&mut self, _on_line: &mut dyn FnMut(&mut SseLine)) -> Bytes {
         if !self.streamed {
             if !self.copy_over
@@ -264,8 +339,12 @@ impl Tee {
             }
             return Bytes::new();
         }
-        let tail = std::mem::take(&mut self.held);
-        if self.line_mode { Bytes::from(tail) } else { Bytes::new() }
+        let mut tail = std::mem::take(&mut self.held);
+        if !self.line_mode || self.cut {
+            return Bytes::new();
+        }
+        self.scrub_line(&mut tail);
+        Bytes::from(tail)
     }
 
     pub fn usage(&self) -> Usage {
@@ -294,6 +373,11 @@ impl Tee {
             let whole = nl.is_some();
             if !self.over && self.held.len() + seg.len() - usize::from(whole) > HOLD_MAX {
                 self.over = true;
+                if armed.is_some() && self.cuts(seg) {
+                    // K§6.4.4 (2): the line and every later byte are only read for usage.
+                    self.cut = true;
+                    armed = None;
+                }
                 if let Some((out, _)) = armed.as_mut() {
                     out.extend_from_slice(&self.held);
                 }
@@ -314,6 +398,7 @@ impl Tee {
             let mut line = SseLine(std::mem::take(&mut self.held));
             self.read(&line.0);
             if let Some((out, on_line)) = armed.as_mut() {
+                self.scrub_line(&mut line.0);
                 on_line(&mut line);
                 out.extend_from_slice(&line.0);
                 out.push(b'\n');
@@ -729,5 +814,78 @@ mod tests {
         assert_eq!(clean("a\u{0}b\u{202E}c\u{200B}d\u{2028}e\u{2029}f\u{FEFF}g\u{AD}h\u{E0001}i\u{7F}j"), "a b c d e f g h i j");
         assert_eq!(clean("\u{e9}\u{6f22} x"), "\u{e9}\u{6f22} x");
         assert_eq!(clean(&"z".repeat(400)).chars().count(), ERROR_TEXT_MAX);
+    }
+
+    #[test]
+    fn scrub_bytes_replaces_only_a_present_key() {
+        assert_eq!(scrub_bytes(b"a K3Y b K3Y", Some("K3Y")), Some(b"a [REDACTED] b [REDACTED]".to_vec()));
+        assert_eq!(scrub_bytes(b"a b", Some("K3Y")), None);
+        assert_eq!(scrub_bytes(b"a K3Y", None), None);
+        assert_eq!(scrub_bytes(b"a K3Y", Some("")), None);
+        // Not UTF-8: read as on the translated path (K§6.4.4 (3)).
+        assert_eq!(scrub_bytes(b"\xff K3Y", Some("K3Y")), Some("\u{FFFD} [REDACTED]".as_bytes().to_vec()));
+        assert_eq!(scrub_bytes(b"\xff b", Some("K3Y")), None);
+    }
+
+    /// K§6.4.4 (2): named error events and unnamed error lines are scrubbed; other events are not; a blank line resets.
+    #[test]
+    fn scrub_errors_replaces_the_key_in_error_events_only() {
+        let input = "event: error\ndata: {\"m\":\"K3Y\"}\n\n\
+                     event: response.failed\ndata: {\"m\":\"K3Y\"}\n\n\
+                     event: content_block_delta\ndata: {\"m\":\"K3Y\"}\n\n\
+                     data: {\"type\":\"error\",\"m\":\"K3Y\"}\n\n\
+                     data: {\"type\":\"message_delta\",\"m\":\"K3Y\"}\n\n\
+                     data: {\"type\":\"error\",\ndata: \"m\":\"K3Y\"}\n\n\
+                     event: ping\n\ndata: {\"m\":\"K3Y\"}\n\n";
+        let want = "event: error\ndata: {\"m\":\"[REDACTED]\"}\n\n\
+                    event: response.failed\ndata: {\"m\":\"[REDACTED]\"}\n\n\
+                    event: content_block_delta\ndata: {\"m\":\"K3Y\"}\n\n\
+                    data: {\"type\":\"error\",\"m\":\"[REDACTED]\"}\n\n\
+                    data: {\"type\":\"message_delta\",\"m\":\"K3Y\"}\n\n\
+                    data: {\"type\":\"error\",\ndata: \"m\":\"[REDACTED]\"}\n\n\
+                    event: ping\n\ndata: {\"m\":\"K3Y\"}\n\n";
+        let mut t = Tee::new(true);
+        t.arm_line_mode();
+        t.scrub_errors(Secret::new("K3Y".to_string()));
+        let mut out = t.push(Bytes::from(input), &mut |_| {}).to_vec();
+        out.extend_from_slice(&t.finish(&mut |_| {}));
+        assert_eq!(String::from_utf8(out).unwrap(), want);
+        assert!(!t.cut());
+    }
+
+    /// K§6.4.4 (2): an error `data` line left without its newline at the end of the stream is scrubbed too.
+    #[test]
+    fn scrub_errors_replaces_the_key_in_the_tail() {
+        let mut t = Tee::new(true);
+        t.arm_line_mode();
+        t.scrub_errors(Secret::new("K3Y".to_string()));
+        let mut out = t.push(Bytes::from("event: error\ndata: {\"m\":\"K3Y\"}"), &mut |_| {}).to_vec();
+        out.extend_from_slice(&t.finish(&mut |_| {}));
+        assert_eq!(String::from_utf8(out).unwrap(), "event: error\ndata: {\"m\":\"[REDACTED]\"}");
+    }
+
+    /// K§6.4.4 (2): an over-long `data` line in an error or unnamed event ends the output before it, in one chunk or
+    /// split across chunks; later lines are read for usage only. In another event it passes.
+    #[test]
+    fn scrub_errors_cuts_an_over_long_error_line() {
+        let usage = "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n\n";
+        for (name, cut) in
+            [("event: error\n", true), ("event: response.failed\n", true), ("", true), ("event: content_block_delta\n", false)]
+        {
+            for step in [usize::MAX, 1 << 20] {
+                let all = format!("{name}data: {}\n\n{usage}", "x".repeat(HOLD_MAX));
+                let mut t = Tee::new(true);
+                t.arm_line_mode();
+                t.scrub_errors(Secret::new("K3Y".to_string()));
+                let mut out = Vec::new();
+                for c in all.as_bytes().chunks(step) {
+                    out.extend_from_slice(&t.push(Bytes::copy_from_slice(c), &mut |_| {}));
+                }
+                out.extend_from_slice(&t.finish(&mut |_| {}));
+                assert_eq!(t.cut(), cut, "{name:?} {step}");
+                assert!(out == if cut { name.as_bytes().to_vec() } else { all.into_bytes() }, "{name:?} {step}");
+                assert_eq!(t.usage().output, 5, "{name:?} {step}");
+            }
+        }
     }
 }

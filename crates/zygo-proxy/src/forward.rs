@@ -32,7 +32,9 @@ use crate::provider::{loopback, unavailable, Candidate};
 use crate::resolve::Resolved;
 use crate::server::App;
 use crate::session::{InFlight, SessionState};
-use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX, HOLD_MAX};
+use crate::tee::{
+    scrub_bytes, CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX, HOLD_MAX,
+};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
     facts, is_response, responses_client, message_events, reasoning, schema, scrub, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
@@ -540,6 +542,12 @@ async fn run(
         Box::pin(resp.bytes_stream())
     } else if !translated && armed {
         restored_body(resp, &nulls, &mut headers).await.map_err(|e| read_failed(slot, c, &adjustments, e))?
+    } else if !translated && !status.is_success() && key.is_some_and(|k| !k.is_empty()) {
+        // An untranslated non-2xx body is read whole and loses the provider key (K§6.4.4 (1)).
+        let bytes = read_capped(resp).await.map_err(|e| read_failed(slot, c, &adjustments, e))?;
+        let out = scrub_bytes(&bytes, key).map_or(bytes, Bytes::from);
+        headers.insert(CONTENT_LENGTH, HeaderValue::from(out.len()));
+        futures_util::stream::once(async move { Ok(out) }).boxed()
     } else if !translated {
         Box::pin(resp.bytes_stream())
     } else if status.is_success() && streamed {
@@ -608,9 +616,14 @@ async fn run(
     }
     // Only an SSE upstream body is rewritten (§10.2.6): not a whole body sent to the client as SSE.
     // A Responses stream is read in lines too: its upstream `error` lines are rewritten before the encoder (K§6.4.4).
-    let lines = ctx.line_mode || matches!(encode, Some(Encode::Stream(_)));
+    // An untranslated stream with a provider key is read in lines too: its error events lose the key (K§6.4.4 (2)).
+    let keyed = !translated && key.is_some_and(|k| !k.is_empty());
+    let lines = ctx.line_mode || keyed || matches!(encode, Some(Encode::Stream(_)));
     if lines && status.is_success() && sse_upstream {
         tee.arm_line_mode();
+    }
+    if keyed && let Some(k) = c.key.clone() {
+        tee.scrub_errors(k);
     }
     if tee.line_mode() {
         headers.remove(CONTENT_LENGTH);
@@ -1496,6 +1509,11 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
             tokio::spawn(drain(f));
             return None;
         }
+        // An over-long error line ended the client body (K§6.4.4 (2)); the rest is read for the usage row.
+        if f.tee.cut() {
+            tokio::spawn(drain(f));
+            return None;
+        }
         match f.step().await {
             Ok(b) if b.is_empty() => {}
             r => return Some((r, f)),
@@ -1529,7 +1547,12 @@ impl Flow {
                         pipeline.on_response_line(rctx, l)
                     }
                 }
-                _ => pipeline.on_response_line(rctx, l),
+                // Line mode armed by the provider key alone (K§6.4.4 (2)) does not run the line stages.
+                _ => {
+                    if *window {
+                        pipeline.on_response_line(rctx, l)
+                    }
+                }
             }
         };
         let out = match next {
