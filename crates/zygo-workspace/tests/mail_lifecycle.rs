@@ -21,7 +21,9 @@ use zygo_workspace::identity::workspace_id;
 use zygo_workspace::mail::{
     mail_dir, prune, remove_maildir, send, store as mail_store, Delivery, MailError, Message, MAIL_LOCK_WAIT,
 };
-use zygo_workspace::state::{MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
+use zygo_workspace::mux::tmux::Tmux;
+use zygo_workspace::repair;
+use zygo_workspace::state::{BuildPlan, MemberRecord, MemberState, Pane, PaneKind, Phase, Store, Workspace};
 use zygo_workspace::up;
 
 const S5: Duration = Duration::from_secs(5);
@@ -327,6 +329,45 @@ fn lifecycle_read_does_not_make_a_removed_maildir_again() {
     up::testing::hook(store.dir(), "mail_read_before_dirs", None);
     assert_eq!(got.unwrap(), Vec::<Message>::new());
     assert!(gone(&mail.join("kaaaaaaaa")));
+}
+
+// ---- step 6: path b4 through `repair` ----
+
+/// A tmux stand-in that answers `-V` with 3.4 and every other call with "no server" (as `tests/up.rs` `gone_tmux`).
+fn gone_tmux(dir: &Path) -> PathBuf {
+    let body = "for a in \"$@\"; do if [ \"$a\" = -V ]; then echo 'tmux 3.4'; exit 0; fi; done\n\
+                echo 'no server running on /tmp/zygo-none/s' >&2\nexit 1";
+    script(dir, "gtmux", body)
+}
+
+#[test] // b4: repair takes back a dead loadout build and removes the maildir of each fresh record it drops
+fn lifecycle_repair_take_back_removes_the_maildir() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None), ("kbbbbbbbb", None)]);
+    store
+        .update(S5, &mut |ws| {
+            ws.phase = Phase::Building;
+            ws.build_plan = Some(BuildPlan::Loadout);
+            ws.fresh_members = vec!["kaaaaaaaa".into(), "kbbbbbbbb".into()];
+            ws.members.get_mut("kbbbbbbbb").unwrap().agent_session = Some("c-1".into());
+            Ok(())
+        })
+        .unwrap();
+    put(&p, id, "kaaaaaaaa", 1);
+    put(&p, id, "kbbbbbbbb", 1);
+    let mux = Tmux::new(gone_tmux(t), None);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    repair::repair(&store, &mux, &t.join("zygo"), &mut out, &mut err).unwrap();
+    assert_eq!((text(out), text(err)), (String::new(), String::new()));
+    let ws = read(&store);
+    assert_eq!(ws.phase, Phase::Down);
+    assert_eq!(ws.members.keys().collect::<Vec<_>>(), ["kbbbbbbbb"]);
+    assert!(gone(&mail_dir(&p, id).join("kaaaaaaaa")));
+    assert_eq!(unread(&p, id, "kbbbbbbbb"), 1);
 }
 
 // ---- step 4: path a3 (`forget-pane`) ----
