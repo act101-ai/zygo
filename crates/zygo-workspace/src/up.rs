@@ -1231,6 +1231,9 @@ fn build(opts: &UpOpts, target: Target, out: &mut dyn Write, err: &mut dyn Write
                 hold: false,
             };
             b6.release_all(&name, err);
+            // M§5 P1: a maildir that a failed removal left goes now, best effort; an error or a held lock leaves it
+            // for the next removal.
+            let _ = mail::prune(&store, MAIL_LOCK_WAIT);
             let socket = match saved_socket {
                 Some(s) => s,
                 None => mux6.socket_path(&session).map_err(tmux_err)?,

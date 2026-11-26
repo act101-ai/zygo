@@ -86,12 +86,15 @@ pub(crate) fn repair_failure(e: &anyhow::Error) -> (i32, String) {
 ///
 /// After a repair that wrote, the maildirs of the records it dropped are removed under `mail/lock` (M§5 P1): the
 /// loadout take-back of a dead build and the panes that did not fit drop records. A removal that fails prints one line
-/// to `err`; the next removal tries again.
+/// to `err`; the next removal tries again. In phase `up` or `down` it runs the same removal, best effort (an error or a
+/// held lock is ignored and leaves the next removal to try again), so a maildir that a failed removal left does not
+/// stay.
 pub fn repair(store: &Store, mux: &dyn Multiplexer, zygo: &Path, _out: &mut dyn Write, err: &mut dyn Write) -> anyhow::Result<()> {
     let Some(ws) = store.read()? else {
         return Ok(());
     };
     if matches!(ws.phase, Phase::Up | Phase::Down) {
+        let _ = mail::prune(store, MAIL_LOCK_WAIT);
         return Ok(());
     }
     repair_phase(store, mux, zygo, ws, err)?;

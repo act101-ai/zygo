@@ -480,6 +480,52 @@ fn lifecycle_repair_take_back_removes_the_maildir() {
     assert_eq!(unread(&p, id, "kbbbbbbbb"), 1);
 }
 
+#[test] // F3: repair in phase up or down removes a maildir with no record that a failed removal left
+fn lifecycle_repair_in_up_or_down_prunes_an_orphan_maildir() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mux = Tmux::new(gone_tmux(t), None);
+    let mail = mail_dir(&p, id);
+    for phase in [Phase::Up, Phase::Down] {
+        set(&store, |ws| ws.phase = phase);
+        put(&p, id, "kaaaaaaaa", 1);
+        put(&p, id, "kzzzzzzzz", 1);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        repair::repair(&store, &mux, &t.join("zygo"), &mut out, &mut err).unwrap();
+        assert_eq!((text(out), text(err)), (String::new(), String::new()), "{phase:?}");
+        assert!(gone(&mail.join("kzzzzzzzz")), "{phase:?}");
+        assert_eq!(read(&store).phase, phase);
+        assert!(!gone(&mail.join("kaaaaaaaa")), "{phase:?}");
+    }
+}
+
+#[test] // F3: the prune of repair in phase up is best effort: a held mail/lock leaves the orphan, with no line and no
+// error, for the next removal
+#[ignore = "timing: repair waits MAIL_LOCK_WAIT (2 s) for mail/lock"]
+fn lifecycle_repair_in_up_leaves_an_orphan_while_mail_lock_is_held() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let t = td.path();
+    let p = paths(t);
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None)]);
+    let mux = Tmux::new(gone_tmux(t), None);
+    put(&p, id, "kzzzzzzzz", 1);
+    let held = Delivery::begin(&store, MAIL_LOCK_WAIT).unwrap();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    repair::repair(&store, &mux, &t.join("zygo"), &mut out, &mut err).unwrap();
+    assert_eq!((text(out), text(err)), (String::new(), String::new()));
+    assert_eq!(unread(&p, id, "kzzzzzzzz"), 1);
+    drop(held);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    repair::repair(&store, &mux, &t.join("zygo"), &mut out, &mut err).unwrap();
+    assert!(gone(&mail_dir(&p, id).join("kzzzzzzzz")));
+}
+
 // ---- steps 7 and 8: `up` (copied from tests/up.rs) ----
 
 /// The zygo stand-in of `tests/up.rs` (D25): `ws run` copies the state to `<dir>/runs/<key>.json`, waits `delay`,
@@ -673,6 +719,30 @@ fn lifecycle_up_reset_removes_the_dropped_maildirs() {
         assert!(gone(&mail_dir(&l.o.paths, &l.id).join(k)), "{k}");
     }
     assert!(maildirs(&l.o.paths, &l.id).iter().all(|k| ws.members.contains_key(k)), "{:?}", maildirs(&l.o.paths, &l.id));
+}
+
+#[test] // F3: `up` on a running session removes a maildir with no record that a failed removal left
+#[ignore = "timing: real tmux under the fixed 2 s tmux bound and the 2 s cwd wait"]
+fn lifecycle_up_on_a_running_session_prunes_an_orphan_maildir() {
+    let _g = serial();
+    let Some(_) = require_tmux() else { return };
+    let l = live("0");
+    let store = l.store();
+    saved(
+        &store,
+        &l.repo,
+        vec![win(0, None, "tiled", 200, 50)],
+        vec![pane("kaaaaaaaa", 0, 0, PaneKind::ClaudeCode, &l.repo)],
+        vec![("kaaaaaaaa", member(Agent::ClaudeCode, MemberState::Resumable, Some("c-1")))],
+    );
+    let (code, out, err) = run(&l.o);
+    assert_eq!((code, out.as_str()), (0, "zygo: app is up\n"), "{err}");
+    assert_eq!(read(&store).phase, Phase::Up);
+    put(&l.o.paths, &l.id, "kzzzzzzzz", 1);
+    let (code, _, err) = run(&l.o);
+    assert_eq!(code, 0, "{err}");
+    assert!(gone(&mail_dir(&l.o.paths, &l.id).join("kzzzzzzzz")));
+    assert!(read(&store).members.contains_key("kaaaaaaaa"));
 }
 
 #[test] // b2: a restore drops a bare record and its maildir; a failed restore's undo puts the record back and keeps it
