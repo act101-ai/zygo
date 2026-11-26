@@ -89,6 +89,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | ML-10 | Delivery by hooks: Stop block, prompt line, SessionStart line, OpenCode per-request line | ML-9, ML-17 | DONE | judgment | 5f0212b1, 3643f93d, 1efbd8a3, bc17d413, 9946594d, 9fe2d6ef, 9a57d777, 68c3fa62 · acc 14 mail_ tests, 26/26 · PR #144 |
 | RT-3 | Run-time HUD segment in compact and verbose, with its place in the width-removal order | RT-2, ML-15 | DONE | implementation | fab29ce1, 72c3d03a, da38c41a · zygo-hooks 247/0 ; floor green · PR #118 |
 | ML-11 | MCP tools `mail_send`, `mail_read`, `mail_list` | ML-6, ML-7 | DONE | implementation | ec5fda7c, 590b9c00 · acc 17/17, 42/42 · PR #146 |
+| OS-29 | Kind views for diff, json and log (pipeline step 4) | OS-15, OS-18 | DONE | judgment | node commits 2438240c, 89da3536; acceptance: shape_kind_view 24/24, shape_pipeline 17/17; floor ws 3424/0 |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | DONE | mechanical | node commits 9633f4b9, 3b88581f; acceptance: grep -c "^\| PO2 \|" docs/premises.md → 1, po2-result.json present; floor ws 3394/0 |
 
 ## Log
