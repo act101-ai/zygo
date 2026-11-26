@@ -97,7 +97,7 @@ The M§5 file, version 1, with no new field. Two values change form **(author)**
 - **Make.** `git worktree add --force --detach --no-checkout <path> <commit>`, run in the main worktree (`main_root`, W§7.2). `--force` makes the worktree again when the user deleted its folder: `git help worktree` (`--force`): "add refuses to create a new worktree when … <path> is already assigned to some worktree but is missing … This option overrides these safeguards." zygo never runs `git worktree prune`, because it acts on every worktree of the repository **(lead)**.
 - **Use.** Every later git call runs with the worktree as its current folder. zygo uses only the worktree's own index and `HEAD`: `read-tree`, `update-index --add --cacheinfo` and `--remove`, `write-tree`, `commit-tree`, `update-ref --no-deref HEAD`. It never checks out a file. Reason: a checkout writes paths that the remote chose; a link in the tree could redirect a later write (S-C5).
 - **Per-worktree state.** `git help worktree` (REFS): "In general, all pseudo refs are per-worktree and all refs starting with refs/ are shared." Thus the worktree's `HEAD` and index are its own. `FETCH_HEAD` is a pseudo ref too, but zygo also fetches with `--no-write-fetch-head` (`git help fetch`), so no `FETCH_HEAD` is written in any worktree.
-- **Remove.** Only by path: `git worktree remove --force <path>`, at `zygo ws forget` (S§14).
+- **Remove.** Only at `zygo ws forget` (S§7.6, S§14), only by path, and only when the worktree folder exists and the main worktree (`main_root`) is a folder: `git worktree remove --force -- <path>` in the main worktree, under the S§8.7 runner with a 10 s deadline. A failure refuses the forget (S§7.6). With no worktree folder, zygo runs no git: git keeps an entry for a folder that the user deleted and lists it as `prunable`, and the next `worktree add --force` at that path (Make) takes the entry over; the workspace id, and so the path, is the same for a new workspace of the same repository (W§5). With no main worktree folder (a moved or deleted repository), zygo runs no git; a moved repository keeps a `prunable` entry for the old path. zygo never runs `git worktree prune`, here too.
 - The worktree is listed by `git worktree list` in each checkout, detached. W§11 `branch:` resolution does not match it, because it has no branch.
 
 ### 6.4 Bootstrap (first use)
@@ -205,7 +205,13 @@ In a twin state (S§7.5) `--take-host` and `--drop-host` stop with the twin line
 - **`zygo mail sync --new-identity`.** For a twin. It makes a new identity and clears the recorded blob ids. Then the pass runs as a first sync: with a new host (the old one belongs to the twin) it registers; with the same host it stops with the collision line. It deletes nothing.
 - **Rename.** A changed `host` in config. The old registry file (this identity) is deleted at the next pass, so no new mail goes to the old addresses. The old `ack/<old>.json` stays, so the old host stays an own host: the pass still imports mail that waits under `*@<old>/`. When the new registry would pass 256 members, the pass does not write it and does not delete the old registry; while the old registry stays, the old ack stays too, so the mail that senders push to the old addresses is imported. When the tip has no `*@<old>/` file and the pass deletes the old registry in the same commit, or the tip has no old registry of this identity, the pass deletes `ack/<old>.json`. A sender whose member cache still lists `<name>@<old>` pushes new mail there while `ack/<old>.json` stays, and the pass imports it; after the ack is deleted, the sender's pass moves that mail to `mail/outbox/refused/` and sends it a notice (S§8.3 step 11). No mail is lost.
 - **`zygo mail sync --drop-host <host>`.** For a host that will never sync again. It counts the files under `*@<host>/` that its ack does not list, prints `zygo: <n> messages wait for host <host>; they will be deleted. Delete them? [y/N]`, and on yes deletes `registry/<host>.json`, `ack/<host>.json` and each `*@<host>/` file in one commit. A dropped host that runs again registers again at its next pass; the deleted mail is gone. This is the only path by which a machine deletes another host's files without that host's ack (S-C8).
-- **`zygo ws forget`.** When the outbox is not empty: `zygo: <n> unsent messages will be deleted. Forget the workspace? [y/N]`. It also deletes the imported log; S§7.5 "Collision" covers the next sync of a new workspace for the same repository.
+- **`zygo ws forget [--yes]`.** These steps come after the W§12 checks (`op.lock`, live launcher, session) and before anything is deleted, in this order:
+  1. When `mail/sync/` is a real folder, `forget` takes `mail/sync/lock` at once (no wait). A lock that a sync holds refuses with `zygo: a mail sync runs for <name>; try again` (exit 1, nothing deleted). `forget` keeps the lock until the state and the cache are gone, so no pass uses the worktree meanwhile.
+  2. It counts the outbox. An outbox that cannot be read refuses with `zygo: cannot forget <name>: the outbox cannot be read: <error>` (exit 1, nothing deleted): unsent mail is never taken for none. When the count is not 0, it asks on stderr `zygo: <n> unsent messages will be deleted. Forget the workspace? [y/N]`; `--yes` answers yes and prints the question followed by ` y (--yes)`. Any answer but `y` or `yes`, and the end of input, prints `zygo: <name> not forgotten` and exits 0 with nothing deleted. An empty outbox asks nothing.
+  3. It removes the sync worktree (S§6.3). A failure refuses with `zygo: cannot forget <name>: the mail sync worktree <path> was not removed: <reason>` (exit 1, nothing deleted).
+  4. W§12 as before: the state folder (with `mail/`, so the outbox and the imported log go with it), then the workspace cache.
+
+  A state that cannot be read (W§12) gets the same steps; the main worktree is the `main_root` of its raw JSON when that is an absolute path, else none (no git). S§7.5 "Collision" covers the next sync of a new workspace for the same repository.
 
 ## 8. Sync (P3-2)
 
@@ -459,7 +465,7 @@ Each row is one case, walked end to end.
 | Secret check could not run at commit | The message stays in the outbox (S§8.6). |
 | Sync child does not start | One `errors.log` line. The next trigger tries again. |
 | Worktree folder deleted | `worktree add --force` makes it again (S§6.3). |
-| `zygo ws forget` | Asks when the outbox is not empty (S§7.6), then `git worktree remove --force <path>`, then W§12 as today. |
+| `zygo ws forget` | The W§12 checks; the sync lock; the question when the outbox is not empty (S§7.6); `git worktree remove --force -- <path>` (S§6.3); then the state and the cache as W§12. The worktree goes before the cache: the cache removal deletes the worktree folder, and git would then still list the worktree. |
 
 ## 15. Owners of state
 
@@ -469,7 +475,7 @@ Each row is one case, walked end to end.
 | `<name>@<host>/<ULID>.json` | added by the sender's pass; removed only by a prune after `ack/<host>.json` lists it, or by `--drop-host` |
 | `registry/<host>.json`, `ack/<host>.json` | the workspace whose identity is in them; `--drop-host` |
 | `ZYGO-MAIL` | the pass that makes the branch |
-| Sync worktree, its index and `HEAD` | the pass that holds `mail/sync/lock` |
+| Sync worktree, its index and `HEAD` | the pass that holds `mail/sync/lock`; `zygo ws forget` removes the worktree while it holds that lock (S§7.6) |
 | `mail/outbox/` | `mail_send` and `zygo mail send` add; the pass under the lock deletes or moves to `refused/`; the sweep deletes old `refused/` and `tmp/` files |
 | `mail/sync/incoming/`, `mail/sync/imported` | the pass under the lock |
 | `mail/sync/state.json`, `mail/sync/members.json` | the pass under the lock |
@@ -579,3 +585,7 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-26 · S§6.6 · author's call (lead) · MS-17 review round 2: note paragraph states each multi-pass case as built; the lock-error case keeps the note recorded (R1-A recorded).
 - 2026-11-26 · S§7.2 · author's call (lead) · MS-19 plan: a send runs no git (S§7.3) and an older own host is known only at the tip, so at send the local host is the host in force and `<name>@<older host>` meets the member cache rule; the two refusal lines of a `to` with `@` that is not an address are fixed, so the tool and the CLI print the same text.
 - 2026-11-26 · S§10.4 · author's call (lead) · MS-19 plan: the `mail_list` sentence named no key and no sync-off case; `mail_list` returns `remote`, each address once, empty with sync off or a config that does not load, as the item 8 clause.
+- 2026-11-26 · S§6.3 · author's call (lead) · MS-21 plan: the forget's cache removal deletes the worktree folder, so the removal must come first, and it must not need git when there is nothing to remove; Remove now names its conditions (worktree folder exists, main worktree is a folder), its deadline and its failure, and why a stale `prunable` entry is harmless (`worktree add --force` at the same path; git 2.56.1).
+- 2026-11-26 · S§7.6 · author's call (lead) · MS-21 plan: the forget bullet named only the question; it now gives the step order after the W§12 checks, the sync lock, `--yes`, the "no" answer (exit 0, nothing deleted), the unreadable-outbox and removal refusals, and the state that cannot be read.
+- 2026-11-26 · S§14 · author's call (lead) · MS-21 plan: the row put the question before the W§12 checks; the checks come first (no question for a workspace that runs), and the worktree goes before the cache.
+- 2026-11-26 · S§15 · author's call (lead) · MS-21 plan: `zygo ws forget` removes the sync worktree under `mail/sync/lock`, so the row names it.
