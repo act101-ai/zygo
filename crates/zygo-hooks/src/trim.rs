@@ -98,8 +98,9 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
-/// O§7.8: whether the agent shows a cleared `stderr` as empty. True, as the PO2 row of `docs/premises.md` (verified,
-/// Claude Code 2.1.332): the hook shapes both streams, sets `stderr` to "" and counts both; false selects "When PO2 fails".
+/// O§7.8: whether a hook output with `stderr` "" leaves the model no stderr text. True, as the PO2 row of
+/// `docs/premises.md` (verified, Claude Code 2.1.332, where the hook input carries stderr in `stdout`): the hook
+/// shapes both streams, sets `stderr` to "" and counts both; false selects "When PO2 fails".
 pub const PO2_STDERR_CLEARED: bool = true;
 
 /// O§7.13: whether a `PostToolUseFailure` hook output replaces the text the model sees after a failed Bash call.
@@ -110,7 +111,7 @@ pub const PO1_HOLDS: bool = false;
 /// Options of the trim hook.
 #[derive(Debug, Clone, Copy)]
 pub struct TrimOpts {
-    /// O§7.11: how long the usage write waits on a busy database before the row is dropped.
+    /// O§7.11, O-C10: how long the usage write may wait in total, on a busy database, before the row is dropped.
     pub db_bound: Duration,
     /// O§7.8: true shapes stdout and stderr together and clears `stderr`; false shapes stdout only.
     pub stderr_cleared: bool,
@@ -304,7 +305,7 @@ fn trim_out(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: &TrimOpt
         shaper: Some(p.shaper.as_str().into()),
     };
     // C6, O§7.11: busy past the bound or broken: no row, the view stands.
-    if zygo_usage::Store::open_bounded(usage_db, opts.db_bound).and_then(|u| u.insert_trim(&row)).is_err() {
+    if zygo_usage::Store::open_bounded_total(usage_db, opts.db_bound).and_then(|u| u.insert_trim(&row)).is_err() {
         note("usage store unavailable");
     }
     let cwd = input.raw.get("cwd").and_then(Value::as_str).unwrap_or(".");

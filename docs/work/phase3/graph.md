@@ -192,27 +192,19 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
-| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | PLANNED | judgment | — |
-| MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | DONE | judgment | plan d2642ab4; node 51e0a828, ba8f8542, af8c6af8, f0cb91a7, f7a2bd2a; prune 18 passed; PR #179 |
-| MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
-| OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | DONE | judgment | plan 677eb448 · node eee53a92, e5e55c30 · acceptance pass (gotest 19 passed) · PR #182 |
-| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
-| OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | TODO | judgment | — |
+| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4, OS-46 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
-| OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | DONE | mechanical | plan bba3b8b4 · node 9cd2b7fa, 399ed252, 7b268ebc · acceptance pass (po2_ 3 passed; shaping_hook 29 passed) · PR #184 |
-| WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
-| OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | TODO | judgment | — |
-| SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
-| OS-36 | The never-worse check over every case and the built inputs | OS-35 | TODO | judgment | — |
-| OS-37 | On-demand latency test, ignored in CI | OS-35 | TODO | implementation | — |
+| OS-36 | The never-worse check over every case and the built inputs | OS-35 | DONE | judgment | 1fb09e17 · a4501591 · 65a63246 · acceptance pass (never_worse 22, shaping 36) · PR #201 |
+| OS-37 | On-demand latency test, ignored in CI | OS-35 | DONE | implementation | 98d82be5 · b5c27cbd · 77c6726f · acceptance pass (shaping_latency 5 ignored) · PR #200 |
 | WD-14 | Pinned launches: resume and `ws run` resolve the profile from the pin | WD-12, WD-13, MS-17, FX-7 | TODO | judgment | — |
 | MS-18 | CLI send/read/ls/watch with addresses; escaped text; doctor twin line | MS-17, ML-13, MS-19, WD-17, FX-15 | TODO | implementation | — |
 | MS-21 | `zygo ws forget`: outbox question and sync worktree removal | MS-17, WD-12, WD-14 | TODO | implementation | — |
 | MS-25 | Record premises SP1-SP6 and the pinned git version | MS-14, MS-23, MS-24, OS-26, FX-19 | TODO | mechanical | — |
-| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37 | TODO | lookup | — |
+| OS-45 | Bound the usage-store wait in elapsed time | — | DONE | judgment | fb717aba · aecf74d2 · a0378951 · acceptance pass (busy_wait 7, zygo-usage, zygo-hooks, readbacks) · PR #203 |
+| OS-38 | Measure the latency budget on the operator's machine (operator, release build) | OS-37, OS-45 | TODO | lookup | — |
 | WD-19 | Hooks, MCP server and status line read nothing from `.zygo/` | WD-14 | TODO | implementation | — |
 | WD-21 | PR1 live check (operator): two pool members send two logins | WD-14, ML-19 | TODO | mechanical | — |
 | WD-22 | PR2 live check (operator): per-session settings act the same on a pool directory | WD-14, WD-21 | TODO | mechanical | — |
@@ -222,6 +214,7 @@ Session text (T, SX nodes):
 | WD-20 | User docs: workspace files, approval, members, pool, passthrough | WD-12, WD-15, WD-16, WD-17 | TODO | mechanical | — |
 | SX-7 | Base-spec amendments §8.5, §8.6 item 7, §8.6 last paragraph, §8.7 N33, §10.6 (T§13) | SX-4, SX-5, SX-6, WD-16 | TODO | implementation | — |
 | OS-39 | Base spec text for output shaping and saving accounting | OS-8, OS-26, OS-34, SX-7 | TODO | mechanical | — |
+| OS-46 | Bound the hook's usage-store wait per Bash call | — | DONE | judgment | 75339a21 · d6be5653 · c727ff0e · 68f8e48c · acceptance pass (busy_wait_total/open_bounded_total 7, rollback_journal 1, zygo-usage, zygo-hooks, readbacks) · PR #205 |
 | SX-10 | Record ST1-ST4: fixtures, premise rows, `check-premises.sh` ST arm, code change per result (T§12.1 items 1-5) | SX-7, SX-9, MS-25, OS-39 | TODO | judgment | — |
 | FX-1 | Process-group kill tests: anonymous pipe in place of a FIFO (Darwin FIFO lost wakeup) | — | DONE | implementation | 38ca329 · git_runner 17 + decision_git 34 pass; floor green · PR #40 |
 | FX-2 | Decision writer lock: unlock before the close (a forked child keeps a closed flock) | — | DONE | implementation | 8a6191d c4584c2 · decisions::edit 4 pass; floor green · PR #42 |
@@ -241,8 +234,8 @@ Session text (T, SX nodes):
 | FX-16 | Clean removes charset designations (`ESC ( B`) and the escape after a lone `ESC` (`ESC ESC [31m`) | OS-12 | TODO | implementation | — |
 | FX-17 | `zygo up` refuses a `[limits] max_members` outside 1-32 from the team or user layer (`config check` rule, `check_jobs` path) | FX-14, WD-11 | DONE | implementation | plan 7a124777 · node da3062c7, e437fde9 · acceptance pass (workspace_restore 7 passed, cmd::up 16 passed) · PR #169 |
 | FX-18 | live-mail.sh fixture head line doubles the word zygo | ML-19 | DONE | mechanical | plan 02a12d2d · node fad4e150 · acceptance pass (sh scripts/premises/live-selftest.sh: live selftest: ok (77)) · PR #187 |
-| FX-19 | PO2 row states what its run observed | OS-34 | TODO | mechanical | — |
-| FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | TODO | mechanical | — |
+| FX-19 | PO2 row states what its run observed | OS-34 | DONE | mechanical | plan b2c8ca97 · node b5fa4c27, efbcccae · acceptance pass (check-premises ok; po2_ 3 passed) · PR #188 |
+| FX-20 | live-detach.sh PW15 record head line doubles the word zygo | — | DONE | mechanical | 96868305 · c98ea5fa · cc948a96 · acceptance pass (live selftest: ok (85)) · PR #194 |
 | WD-23 | `config check`: `job` only on an agent pane (`claude-code`, `opencode`); R§9.1 text and change log | WD-5, MS-3 | DONE | implementation | 20cc6480 · definition_keys 14/14, config_layers 90/0 (16 ignored); floor green · PR #75 |
 | WD-24 | `loadout show` and `config show` pass pane `job` through `hide_secrets` (W§12) | WD-5 | DONE | mechanical | 9b719fa8 · cmd::loadout+config 32p; floor green · PR #66 |
 | DR-16 | Unreadable `docs/decisions`: own error and line (`cannot read docs/decisions`), not "not a directory"; D§6.8 | DR-2, DR-3, DR-7 | DONE | implementation | c50a3dc9 · acc 5/0; floor green · PR #84 |
@@ -415,3 +408,14 @@ Session text (T, SX nodes):
 | 2026-11-26 | FX-19 added: PO2 row states what its run observed (OS-34 review F2); OS-42 and MS-25 now depend on it (shared files: output-shaping spec, premises.md) |
 | 2026-11-26 | FX-18 DONE: M12 head line names zygo once (`${ZV:-zygo ?}`), stub-agent selftest case; live selftest ok (77). FX-20 added: live-detach.sh PW15 record line doubles the word zygo (FX-18 review F3) · PR #187 |
 | 2026-11-26 | SX-4 DONE: hook trim takes the subagent's re-inject flag first and adds additionalContext once (T§9.2 item 2); review F1 (run entry test), F3 (stat error) and a doc nit fixed; F2 refuted (any remove/print order has a kill window; at-most-once holds). |
+| 2026-11-26 | FX-19 DONE: PO2 row and O§7.8/O§17 restated to what the 2.1.332 run observed (stderr merged into stdout; stderr "" removal of non-empty stderr not observed); review F1, F4 fixed; author's call (lead), awaiting operator ratification. |
+| 2026-11-26 | FX-20 DONE: live-detach.sh PW15 record line and result text name zygo once (`launch ${ZV:-zygo ?}`); stub-agent selftest cases for a version and an empty version; live selftest ok (85). Review F1 refuted (clap prints "zygo <version>"), F2 fixed (empty-version case) · PR #194 |
+| 2026-11-26 | WD-18 DONE: item 8 lists each member's job and ends with the member's job sentence (R§9.3); review F1 (mail sync M-C6 restatement) and F2 part 1 (non-JOBS value) fixed in spec text; F2 part 2 refuted (one orchestrator per loadout, check.rs:241) |
+| 2026-11-26 | OS-42 DONE: no view hides another runner's failure section; a wrapper at any depth, a PYTEST_ADDOPTS word, -p no:capture or an -o addopts override turns the pytest view off; O§7.6 (lead) awaiting operator ratification · PR #196 |
+| 2026-11-26 | OS-35 DONE: 20 fixture views through the hook, id masked; floors, row bytes, recovery and bless guard tested; PO1-failed cases checked as none, their failing floor on the runner view; review F1-F6, F8 fixed, F7, F9 refuted · PR #198 |
+| 2026-11-26 | OS-36 DONE: O§8.3 never-worse check over every case and 11 built inputs; bless refuses a failing view; item 5 rejects hidden failure-section lines; review F1, F3, F4 fixed, F2 refuted (contract oracle) · PR #201 |
+| 2026-11-26 | OS-37 DONE: 4 O§8.5 budget tests and the child process, ignored in CI; sized inputs keep each case's shaping path; shape-on and shape-off rows asserted; review F1-F3, F5 fixed, F4 wording, F5 timeout refuted · PR #200 |
+| 2026-11-26 | OS-45 added: OS-38 run failed O§8.5 budget 4 (lock held p95 159.27 ms > 150 ms); SQLite busy_timeout counts requested sleep, macOS sleeps ~1.5x, breaking O-C10; OS-38 now depends on OS-45 |
+| 2026-11-26 | OS-45 DONE: bounded open uses its own elapsed-time busy handler; lock-held hook p95 159.27 → 128.05 ms (release, macOS); review F1, F2, F4 fixed; F3 (O-C10 per call on a non-WAL db) open for a new row · PR #203 |
+| 2026-11-26 | OS-46 added: OS-45 review F3; O-C10 bounds each Bash call but O§7.11 bounds each statement, so on a rollback-journal db the hook's read and write can each wait HOOK_DB_BOUND |
+| 2026-11-26 | OS-46 DONE: hook uses open_bounded_total (one wait budget per Bash call); MCP keeps per-statement open; OS-43 now depends on OS-46 (both change trim.rs); review F1-F6, F8 fixed, F7 recorded here · PR #205 |

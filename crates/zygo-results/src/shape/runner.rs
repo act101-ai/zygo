@@ -18,6 +18,9 @@ static SUMMARY: LazyLock<Regex> =
 static TEST_HIDDEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^test \S+ \.\.\. (ok|ignored|ignored, .*)$").unwrap());
 
+/// The libtest line of a failed test: part of its failure section (O§7.6).
+static TEST_FAILED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^test \S+ \.\.\. FAILED$").unwrap());
+
 /// The cargo progress form
 /// `^\s+(Compiling|Checking|Fresh|Downloaded|Downloading|Locking|Updating|Blocking) \S.*$` (O§7.6),
 /// with `\s` as ASCII space or tab.
@@ -102,14 +105,60 @@ fn has_summary(r: Runner, text: &str) -> bool {
     }
 }
 
+/// One flag per `split_inclusive('\n')` line of `text`: whether the line is inside a failure section of the
+/// runner `r` (O§7.6). Libtest: a `test <name> ... FAILED` line, the block from a `---- ` line to the next
+/// `failures:` line, and the `failures:` name list (a `failures:` line and the `    <name>` lines after it).
+/// Pytest: from the first failure header to the end. Go test: a line of a failing test or of a test with no
+/// result line.
+fn section(r: Runner, text: &str) -> Vec<bool> {
+    match r {
+        Runner::Libtest => {
+            let (mut block, mut list) = (false, false);
+            text.split_inclusive('\n')
+                .map(|line| {
+                    let bare = line.strip_suffix('\n').unwrap_or(line);
+                    let name = bare
+                        .strip_prefix("    ")
+                        .is_some_and(|n| !n.is_empty() && !n.contains(char::is_whitespace));
+                    list = bare == "failures:" || (list && name);
+                    if bare.starts_with("---- ") {
+                        block = true;
+                    } else if bare == "failures:" {
+                        block = false;
+                    }
+                    block || list || TEST_FAILED.is_match(bare)
+                })
+                .collect()
+        }
+        Runner::Pytest => {
+            let mut on = false;
+            text.split_inclusive('\n')
+                .map(|line| {
+                    on |= PY_FAILURE.is_match(line.strip_suffix('\n').unwrap_or(line));
+                    on
+                })
+                .collect()
+        }
+        Runner::Gotest => go_lines(text).into_iter().map(|g| g == GoLine::Kept).collect(),
+    }
+}
+
 /// The runner view of `text` (O§7.6): the first runner in `runners` whose summary is in `text` decides;
-/// its view (or its "no change") is the result. `None` when no runner has its summary in `text`.
+/// its view (or its "no change") is the result. No line with `keep` set is hidden (O§7.6, another runner's
+/// failure section): `keep` is the failure sections of the other runners of the table. `None` when no runner
+/// has its summary in `text`.
 pub fn view(text: &str, runners: &[Runner]) -> Option<(String, Vec<Step>, Shaper)> {
     let r = runners.iter().copied().find(|&r| has_summary(r, text))?;
+    let mut keep = vec![false; text.split_inclusive('\n').count()];
+    for o in [Runner::Libtest, Runner::Pytest, Runner::Gotest].into_iter().filter(|&o| o != r) {
+        for (k, s) in keep.iter_mut().zip(section(o, text)) {
+            *k |= s;
+        }
+    }
     match r {
-        Runner::Libtest => libtest(text).map(|(v, s)| (v, s, Shaper::Libtest)),
-        Runner::Pytest => pytest(text).map(|(v, s)| (v, s, Shaper::Pytest)),
-        Runner::Gotest => gotest(text).map(|(v, s)| (v, s, Shaper::Gotest)),
+        Runner::Libtest => libtest_kept(text, &keep).map(|(v, s)| (v, s, Shaper::Libtest)),
+        Runner::Pytest => pytest_kept(text, &keep).map(|(v, s)| (v, s, Shaper::Pytest)),
+        Runner::Gotest => gotest_kept(text, &keep).map(|(v, s)| (v, s, Shaper::Gotest)),
     }
 }
 
@@ -128,6 +177,11 @@ enum Piece<'a> {
 /// `failures:` line) is hidden (O-C9). `None` when the text has no summary,
 /// nothing is hidden, or the view is not shorter than `text` (O§7.3 "No step adds content").
 pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
+    libtest_kept(text, &[])
+}
+
+/// `libtest`, where no line with `keep` set is hidden (O§7.6, another runner's failure section).
+fn libtest_kept(text: &str, keep: &[bool]) -> Option<(String, Vec<Step>)> {
     if !SUMMARY.is_match(text) {
         return None;
     }
@@ -136,14 +190,15 @@ pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
     let mut open = false;
     let mut build = 0usize;
     let mut failure = false;
-    for line in text.split_inclusive('\n') {
+    for (i, line) in text.split_inclusive('\n').enumerate() {
+        let kept = keep.get(i) == Some(&true);
         let bare = line.strip_suffix('\n').unwrap_or(line);
         if bare.starts_with("---- ") {
             failure = true;
         } else if bare == "failures:" {
             failure = false;
         }
-        if failure || !hidden_by(Runner::Libtest, bare) {
+        if failure || kept || !hidden_by(Runner::Libtest, bare) {
             pieces.push(Piece::Line(line));
             if SUMMARY.is_match(bare) || BINARY.is_match(bare) {
                 open = false;
@@ -201,18 +256,24 @@ pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
 /// the text no line is hidden (O-C9). `None` when the last line is not the summary, nothing is hidden, or the
 /// view is not shorter than `text` (O§7.3 "No step adds content").
 pub fn pytest(text: &str) -> Option<(String, Vec<Step>)> {
+    pytest_kept(text, &[])
+}
+
+/// `pytest`, where no line with `keep` set is hidden (O§7.6, another runner's failure section).
+fn pytest_kept(text: &str, keep: &[bool]) -> Option<(String, Vec<Step>)> {
     if !has_summary(Runner::Pytest, text) {
         return None;
     }
     let mut pieces: Vec<Option<&str>> = Vec::new();
     let mut hidden = 0usize;
     let mut failure = false;
-    for line in text.split_inclusive('\n') {
+    for (i, line) in text.split_inclusive('\n').enumerate() {
+        let kept = keep.get(i) == Some(&true);
         let bare = line.strip_suffix('\n').unwrap_or(line);
         if PY_FAILURE.is_match(bare) {
             failure = true;
         }
-        if failure || !hidden_by(Runner::Pytest, bare) {
+        if failure || kept || !hidden_by(Runner::Pytest, bare) {
             pieces.push(Some(line));
         } else {
             if hidden == 0 {
@@ -334,6 +395,11 @@ pub fn gotest_passed_lines(text: &str) -> Vec<usize> {
 /// the place of the first hidden `[no test files]` line. `None` when the text has no summary, nothing is hidden,
 /// or the view is not shorter than `text` (O§7.3 "No step adds content").
 pub fn gotest(text: &str) -> Option<(String, Vec<Step>)> {
+    gotest_kept(text, &[])
+}
+
+/// `gotest`, where no line with `keep` set is hidden (O§7.6, another runner's failure section).
+fn gotest_kept(text: &str, keep: &[bool]) -> Option<(String, Vec<Step>)> {
     if !has_summary(Runner::Gotest, text) {
         return None;
     }
@@ -344,14 +410,15 @@ pub fn gotest(text: &str) -> Option<(String, Vec<Step>)> {
     }
     let mut pieces = Vec::new();
     let (mut tests, mut no_tests) = (0usize, 0usize);
-    for (line, g) in text.split_inclusive('\n').zip(go_lines(text)) {
+    for (i, (line, g)) in text.split_inclusive('\n').zip(go_lines(text)).enumerate() {
+        let kept = keep.get(i) == Some(&true);
         let bare = line.strip_suffix('\n').unwrap_or(line);
-        if g == GoLine::Passed {
+        if g == GoLine::Passed && !kept {
             if tests == 0 {
                 pieces.push(P::Passed);
             }
             tests += 1;
-        } else if g == GoLine::Free && hidden_by(Runner::Gotest, bare) {
+        } else if g == GoLine::Free && !kept && hidden_by(Runner::Gotest, bare) {
             if no_tests == 0 {
                 pieces.push(P::NoTests);
             }

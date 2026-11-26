@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::BTreeMap, path::{Path, PathBuf}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use rusqlite::Connection;
 use zygo_usage::*;
 
@@ -824,12 +824,215 @@ fn readbacks_schema_generated_column_counts_as_present() {
 // ---- OS-3: bounded open (O§7.11, O-C10) ----
 
 #[test]
-fn open_bounded_sets_busy_timeout_to_the_bound() {
+fn open_bounded_replaces_the_sqlite_busy_timeout() {
+    // O§7.11: the open's own handler; sqlite3_busy_handler sets busyTimeout to 0, so SQLite's requested-time handler is off
     let t = Tmp::new();
     drop(Store::open(&t.db()).unwrap());
     assert_eq!(store::HOOK_DB_BOUND, Duration::from_millis(100));
     assert_eq!(Store::open_bounded(&t.db(), Duration::ZERO).unwrap().busy_timeout_ms().unwrap(), 0);
-    assert_eq!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_timeout_ms().unwrap(), 100);
+    assert_eq!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_timeout_ms().unwrap(), 0);
+}
+
+// ---- OS-45: the wait is bounded in elapsed time (O§7.11, O-C10); each instant is an offset from one origin (O§8.4) ----
+
+#[test]
+fn busy_wait_gives_up_at_bound_zero_without_a_sleep() {
+    let t0 = Instant::now();
+    assert_eq!(store::BusyWait::new(Duration::ZERO).next(0, t0), None);
+}
+
+#[test]
+fn busy_wait_gives_up_when_elapsed_reaches_the_bound() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let mut w = store::BusyWait::new(store::HOOK_DB_BOUND);
+    assert_eq!(w.next(0, t0), Some(ms(1)));
+    assert_eq!(w.next(1, t0 + ms(2)), Some(ms(2)));
+    // OS-38: at SQLite's 8th call 78 ms were requested but about 145 ms had passed
+    assert_eq!(w.next(7, t0 + ms(145)), None);
+    assert_eq!(w.next(2, t0 + store::HOOK_DB_BOUND), None);
+}
+
+#[test]
+fn busy_wait_never_asks_a_sleep_past_the_bound() {
+    let t0 = Instant::now();
+    let b = store::HOOK_DB_BOUND;
+    for count in 1..40 {
+        for e in 0..=110u64 {
+            let mut w = store::BusyWait::new(b);
+            assert!(w.next(0, t0).is_some());
+            let elapsed = Duration::from_millis(e);
+            let got = w.next(count, t0 + elapsed);
+            if elapsed >= b {
+                assert_eq!(got, None, "count {count}, elapsed {e} ms");
+            } else {
+                let d = got.unwrap_or_else(|| panic!("count {count}, elapsed {e} ms: gave up before the bound"));
+                assert!(!d.is_zero() && elapsed + d <= b, "count {count}, elapsed {e} ms, sleep {d:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn busy_wait_restarts_its_clock_at_count_zero() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let mut w = store::BusyWait::new(store::HOOK_DB_BOUND);
+    assert_eq!(w.next(0, t0), Some(ms(1)));
+    assert_eq!(w.next(5, t0 + ms(99)), Some(ms(1))); // step 20 ms, 1 ms left
+    // a new busy statement: SQLite sets the count to 0 at each run (sqlite3VdbeExec), so the clock restarts
+    assert_eq!(w.next(0, t0 + ms(500)), Some(ms(1)));
+    assert_eq!(w.next(1, t0 + ms(502)), Some(ms(2)));
+}
+
+#[test]
+fn busy_wait_open_bounded_waits_for_a_released_lock() {
+    // The real handler waits for a released lock: the bound is `Duration::MAX`, so no deadline can fail the test
+    // (O§8.4); the lock is released only after the insert is about to run, so the insert almost surely meets it.
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap(); // another process holds the write lock
+    let (go, ready) = std::sync::mpsc::channel::<()>();
+    let release = std::thread::spawn(move || {
+        ready.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        raw.execute_batch("COMMIT").unwrap();
+    });
+    let s = Store::open_bounded(&t.db(), Duration::MAX).unwrap();
+    go.send(()).unwrap();
+    let r = s.insert_trim(&trim("S1", 5, 1000, 100));
+    release.join().unwrap();
+    r.expect("the bounded insert must wait for the released lock");
+    assert_eq!(count(&t.db(), "trims"), 1);
+}
+
+#[test]
+fn busy_wait_open_bounded_insert_is_busy_when_the_lock_is_never_released() {
+    // The lock is never released, so the outcome does not depend on time: only the error kind is asserted.
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    let s = Store::open_bounded(&t.db(), Duration::from_millis(50)).unwrap();
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let e = s.insert_trim(&trim("S1", 5, 1000, 100)).expect_err("a lock held past the bound must fail the insert");
+    let code = e.downcast_ref::<rusqlite::Error>().and_then(|e| e.sqlite_error_code());
+    assert_eq!(code, Some(rusqlite::ErrorCode::DatabaseBusy), "{e}");
+    raw.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(count(&t.db(), "trims"), 0);
+}
+
+#[test]
+fn busy_wait_clocks_are_per_store() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let (mut a, mut b) = (store::BusyWait::new(store::HOOK_DB_BOUND), store::BusyWait::new(store::HOOK_DB_BOUND));
+    assert_eq!(a.next(0, t0), Some(ms(1)));
+    assert_eq!(b.next(0, t0 + ms(90)), Some(ms(1)));
+    assert_eq!(a.next(3, t0 + ms(95)), Some(ms(5))); // a: 95 ms passed, step 10 ms, 5 ms left
+    assert_eq!(b.next(3, t0 + ms(95)), Some(ms(10))); // b: 5 ms passed
+    assert_eq!(a.next(4, t0 + ms(100)), None);
+    assert_eq!(b.next(4, t0 + ms(100)), Some(ms(15)));
+}
+
+// ---- OS-46: the hook's wait is bounded in total for one call (O§7.11, O-C10); instants are offsets (O§8.4) ----
+
+#[test]
+fn busy_wait_total_gives_up_at_bound_zero_without_a_sleep() {
+    let t0 = Instant::now();
+    assert_eq!(store::BusyWait::total(Duration::ZERO).next(0, t0), None);
+}
+
+#[test]
+fn busy_wait_total_keeps_its_clock_across_statements() {
+    let ms = Duration::from_millis;
+    let t0 = Instant::now();
+    let mut w = store::BusyWait::total(store::HOOK_DB_BOUND);
+    assert_eq!(w.next(0, t0), Some(ms(1))); // the open's read waits
+    assert_eq!(w.next(1, t0 + ms(40)), Some(ms(2)));
+    // the insert: SQLite passes count 0 again, but the call's clock does not restart
+    assert_eq!(w.next(0, t0 + ms(60)), Some(ms(1)));
+    assert_eq!(w.next(4, t0 + ms(95)), Some(ms(5))); // step 15 ms, 5 ms left
+    assert_eq!(w.next(0, t0 + store::HOOK_DB_BOUND), None);
+    assert_eq!(w.next(0, t0 + ms(500)), None); // a later statement: the call's bound stays spent
+}
+
+#[test]
+fn busy_wait_total_never_asks_a_sleep_past_the_bound() {
+    let t0 = Instant::now();
+    let b = store::HOOK_DB_BOUND;
+    for count in 0..40 {
+        for e in 0..=110u64 {
+            let mut w = store::BusyWait::total(b);
+            assert!(w.next(0, t0).is_some());
+            let elapsed = Duration::from_millis(e);
+            let got = w.next(count, t0 + elapsed);
+            if elapsed >= b {
+                assert_eq!(got, None, "count {count}, elapsed {e} ms");
+            } else {
+                let d = got.unwrap_or_else(|| panic!("count {count}, elapsed {e} ms: gave up before the bound"));
+                assert!(!d.is_zero() && elapsed + d <= b, "count {count}, elapsed {e} ms, sleep {d:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn open_bounded_total_never_restarts_its_wait() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert!(!Store::open_bounded_total(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_wait_restarts());
+}
+
+#[test]
+fn open_bounded_restarts_its_wait_per_step() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert!(Store::open_bounded(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_wait_restarts());
+}
+
+#[test]
+fn open_bounded_total_replaces_the_sqlite_busy_timeout() {
+    let t = Tmp::new();
+    drop(Store::open(&t.db()).unwrap());
+    assert_eq!(Store::open_bounded_total(&t.db(), store::HOOK_DB_BOUND).unwrap().busy_timeout_ms().unwrap(), 0);
+}
+
+#[test]
+fn open_bounded_total_waits_for_a_released_lock_on_a_rollback_journal_database() {
+    // The total open waits for a released lock: the bound is `Duration::MAX`, so no deadline can fail the test
+    // (O§8.4); the lock is released only after the open is about to run, so its read almost surely meets it.
+    let t = Tmp::new();
+    old_db(&t.db()); // journal_mode delete
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN EXCLUSIVE").unwrap(); // blocks readers too in rollback-journal mode
+    let (go, ready) = std::sync::mpsc::channel::<()>();
+    let release = std::thread::spawn(move || {
+        ready.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        raw.execute_batch("COMMIT").unwrap();
+    });
+    go.send(()).unwrap();
+    let r = Store::open_bounded_total(&t.db(), Duration::MAX).and_then(|s| s.insert_trim(&trim("S4", 8, 4000, 400)));
+    release.join().unwrap();
+    r.expect("the total open must wait for the released lock");
+    assert_eq!(count(&t.db(), "trims"), 2);
+}
+
+#[test]
+fn open_bounded_total_is_busy_when_the_lock_is_never_released_on_a_rollback_journal_database() {
+    // The lock is never released, so the outcome does not depend on time: only the error kind is asserted.
+    let t = Tmp::new();
+    old_db(&t.db());
+    let raw = Connection::open(t.db()).unwrap();
+    raw.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let e = Store::open_bounded_total(&t.db(), Duration::from_millis(50))
+        .and_then(|s| s.insert_trim(&trim("S4", 8, 4000, 400)))
+        .expect_err("a lock held past the bound must fail the call");
+    let code = e.downcast_ref::<rusqlite::Error>().and_then(|e| e.sqlite_error_code());
+    assert_eq!(code, Some(rusqlite::ErrorCode::DatabaseBusy), "{e}");
+    raw.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(count(&t.db(), "trims"), 1);
 }
 
 #[test]

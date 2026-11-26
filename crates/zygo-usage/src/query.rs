@@ -226,7 +226,7 @@ mod tests {
     fn bytes_trimmed_runs_the_indexed_statement() { // H§7.4: one indexed SUM per call
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
-        let s = Store { conn };
+        let s = Store { conn, busy_restart: true };
         for (session, stored, view) in [("A", 1000, 100), ("B", 300, 0), ("C", 50, 0)] {
             s.insert_trim(&TrimRow { ts: 1, session: session.into(), agent_id: None, tool: "Bash".into(),
                                      kind: "head".into(), stored_bytes: stored, view_bytes: view,

@@ -112,6 +112,15 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | DONE | mechanical | plan 0cbac05c · node b16ce79f, f13fe09b · acceptance LIVE M12 verified (agent 2.1.332): 3 of 3 ; check-premises ok · PR #178 |
+| MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | DONE | judgment | plan d2642ab4; node 51e0a828, ba8f8542, af8c6af8, f0cb91a7, f7a2bd2a; prune 18 passed; PR #179 |
+| MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
+| OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | DONE | judgment | plan 677eb448 · node eee53a92, e5e55c30 · acceptance pass (gotest 19 passed) · PR #182 |
+| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
+| OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32, FX-19 | DONE | judgment | 6d559322 · 30a091c8 · d286417c · acceptance pass (dispatch 9, libtest 20, pytest 18) · PR #196 |
+| OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | DONE | mechanical | plan bba3b8b4 · node 9cd2b7fa, 399ed252, 7b268ebc · acceptance pass (po2_ 3 passed; shaping_hook 29 passed) · PR #184 |
+| WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | DONE | implementation | plan 97283bcc · node 445b4399, 875618e6, f4fcd2fd, dbff60d9 · acceptance pass (job_ 8 listed; session_text 51 passed) · PR #189 |
+| OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | DONE | judgment | 3a9dbffb · 3c10f93d · f788f46d · acceptance pass (shaping 14) · PR #198 |
+| SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
 
 ## Log
 
