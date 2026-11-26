@@ -636,7 +636,7 @@ async fn run(
         usage: Usage::default(),
         compact_call: false,
     };
-    let flow = Flow { upstream, mapper, restore, tee, encode, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
+    let flow = Flow { upstream, mapper, restore, tee, encode, window: ctx.line_mode, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
     let mut out = Response::new(Body::from_stream(futures_util::stream::unfold(flow, next_chunk)));
     *out.status_mut() = status;
     *out.headers_mut() = headers;
@@ -1431,6 +1431,8 @@ struct Flow {
     tee: Tee,
     /// After the tee: a translated 2xx to a Responses client.
     encode: Option<Encode>,
+    /// The window stage armed line mode at request time (§10.2.6): a Responses stream's lines also reach the line stages (K§6.4.5).
+    window: bool,
     rctx: ResponseCtx,
     pipeline: Arc<Pipeline>,
     pending: Pending,
@@ -1513,14 +1515,19 @@ impl Flow {
     async fn step(&mut self) -> Result<Bytes, std::io::Error> {
         let f = self;
         let next = f.upstream.next().await;
-        let Flow { tee, rctx, pipeline, mapper, restore, encode, done, failed, .. } = f;
+        let Flow { tee, rctx, pipeline, mapper, restore, encode, window, done, failed, .. } = f;
         // The stages see the upstream numbers up to and including this line.
         let mut on_line = |l: &mut SseLine| {
             rctx.usage.observe(rctx.lines, &l.0);
             match encode {
-                // A Responses stream: its error lines only. The line stages are armed on the Messages route only
-                // (`window.rs:130`).
-                Some(Encode::Stream(s)) => s.line(l),
+                // A Responses stream: its error lines (K§6.4.4), then the line stages when the window stage armed them
+                // (K§6.4.5).
+                Some(Encode::Stream(s)) => {
+                    s.line(l);
+                    if *window {
+                        pipeline.on_response_line(rctx, l)
+                    }
+                }
                 _ => pipeline.on_response_line(rctx, l),
             }
         };

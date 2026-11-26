@@ -9,13 +9,14 @@ use serde::de::{Deserializer, MapAccess, Visitor};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
-use zygo_config::{Facts, ModelRow};
+use zygo_config::{Dialect, Facts, ModelRow};
 use zygo_core::Agent;
 
 use crate::errors::ZygoError;
 use crate::pipeline::{Adjustment, ModelRoute, RequestCtx, ResponseCtx, Stage};
 use crate::session::{SessionState, WindowArg};
 use crate::tee::{SseLine, Usage};
+use crate::translate::responses_client::flat_name;
 
 /// Claude Code's assumed window for an unrecognized id (§10.2.2).
 pub const UNRECOGNIZED_WINDOW: u64 = 1_000_000;
@@ -124,59 +125,109 @@ pub fn effective(s: &SessionState, served: &ModelRow, agent_window: u64) -> Opti
 pub struct WindowStage;
 
 impl Stage for WindowStage {
-    /// Common conditions (§10.2.2): Messages, Claude Code (§10.2.5), not a compaction request, the served model has a
-    /// context window. The proxy step adds a 2xx SSE upstream response.
+    /// Common conditions (§10.2.2): Messages or Responses (K§6.4.5), Claude Code (§10.2.5), not a compaction request,
+    /// the served model has a context window. The proxy step adds a 2xx SSE upstream response.
     fn on_request(&self, ctx: &mut RequestCtx) -> Result<(), ZygoError> {
-        ctx.line_mode = ctx.route == ModelRoute::Messages
+        ctx.line_mode = matches!(ctx.route, ModelRoute::Messages | ModelRoute::Responses)
             && ctx.session.agent == Agent::ClaudeCode
             && !ctx.headers.contains_key("x-claude-code-compaction")
             && ctx.resolved.as_ref().and_then(|r| ctx.cfg.config.catalog.get(&r.model)).and_then(context_window).is_some();
         Ok(())
     }
 
-    /// Called only in line mode. A compact `tool_use` start is noted; a `message_delta` is rewritten once when any
-    /// trigger fires, and each fired trigger's code is recorded once (§10.2.3).
+    /// Called only in line mode. A compact tool call start is noted; the terminal usage line is rewritten once when
+    /// any trigger fires, and each fired trigger's code is recorded once (§10.2.3). The lines are Responses lines
+    /// when `ctx.lines` is `Openai` (K§6.4.5), else Messages lines.
     fn on_response_line(&self, ctx: &mut ResponseCtx, line: &mut SseLine) {
         if !ctx.status.is_success() {
             return;
         }
-        let Some(d) = line.0.strip_prefix(b"data:") else { return };
-        let has = |p: &[u8]| d.windows(p.len()).any(|w| w == p);
-        if !has(b"content_block_start") && !has(b"message_delta") {
-            return;
+        match ctx.lines {
+            Dialect::Openai => responses_line(ctx, line),
+            _ => messages_line(ctx, line),
         }
-        let Ok(v) = serde_json::from_slice::<Value>(d) else { return };
-        match v.get("type").and_then(Value::as_str) {
-            Some("content_block_start") => {
-                let b = &v["content_block"];
-                if b["type"] == "tool_use" && b["name"].as_str().is_some_and(compact_tool) {
-                    ctx.compact_call = true;
-                }
+    }
+}
+
+/// A Messages line: a compact `tool_use` start is noted, or the `message_delta` usage is rewritten (§10.2.3).
+fn messages_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
+    let Some(d) = line.0.strip_prefix(b"data:") else { return };
+    let has = |p: &[u8]| d.windows(p.len()).any(|w| w == p);
+    if !has(b"content_block_start") && !has(b"message_delta") {
+        return;
+    }
+    let Ok(v) = serde_json::from_slice::<Value>(d) else { return };
+    match v.get("type").and_then(Value::as_str) {
+        Some("content_block_start") => {
+            let b = &v["content_block"];
+            if b["type"] == "tool_use" && b["name"].as_str().is_some_and(compact_tool) {
+                ctx.compact_call = true;
             }
-            Some("message_delta") => {
-                let Some(row) = ctx.cfg.config.catalog.get(&ctx.resolved.model) else { return };
-                let Some(cw) = context_window(row) else { return };
-                let aw = agent_window_for(ctx.resolved.one_m, &ctx.headers, row);
-                let s = safety(cw, aw);
-                let p = prompt(ctx.usage);
-                let main = ctx.headers.get("x-claude-code-request-class").is_some_and(|c| c == "main");
-                let t0 = s.is_some_and(|s| p > s);
-                let t1 = main
-                    && v["delta"]["stop_reason"] == "end_turn"
-                    && soft_threshold(ctx.session.compact(), row, s).is_some_and(|t| p > t);
-                let t2 = ctx.compact_call;
-                if !(t0 || t1 || t2) {
-                    return;
-                }
-                let Some(out) = rewrite_usage(&line.0, ctx.usage, window(cw, aw)) else { return };
-                line.0 = out;
-                for (fired, code) in [(t0, "context_safety"), (t1, "context_signal"), (t2, "context_compact")] {
-                    if fired && !ctx.adjustments.iter().any(|a| a.0 == code) {
-                        ctx.adjustments.push(Adjustment(code.into()));
-                    }
-                }
+        }
+        Some("message_delta") => {
+            let Some((window, fired)) = triggers(ctx, v["delta"]["stop_reason"] == "end_turn") else { return };
+            let Some(out) = rewrite_usage(&line.0, ctx.usage, window) else { return };
+            line.0 = out;
+            record(ctx, fired);
+        }
+        _ => {}
+    }
+}
+
+/// A Responses line (K§6.4.5): a compact `function_call` item start is noted, or the `response.completed` or
+/// `response.incomplete` usage is rewritten.
+fn responses_line(ctx: &mut ResponseCtx, line: &mut SseLine) {
+    let Some(d) = line.0.strip_prefix(b"data:") else { return };
+    let has = |p: &[u8]| d.windows(p.len()).any(|w| w == p);
+    if !has(b"response.output_item.added") && !has(b"response.completed") && !has(b"response.incomplete") {
+        return;
+    }
+    let Ok(v) = serde_json::from_slice::<Value>(d) else { return };
+    match v.get("type").and_then(Value::as_str) {
+        Some("response.output_item.added") => {
+            let item = &v["item"];
+            let Some(name) = item["name"].as_str().filter(|_| item["type"] == "function_call") else { return };
+            let name = match item["namespace"].as_str() {
+                Some(ns) => Cow::Owned(flat_name(ns, name)),
+                None => Cow::Borrowed(name),
+            };
+            if compact_tool(&name) {
+                ctx.compact_call = true;
             }
-            _ => {}
+        }
+        Some(ty @ ("response.completed" | "response.incomplete")) => {
+            let calls = v["response"]["output"]
+                .as_array()
+                .is_some_and(|o| o.iter().any(|i| i["type"] == "function_call" || i["type"] == "custom_tool_call"));
+            let Some((window, fired)) = triggers(ctx, ty == "response.completed" && !calls) else { return };
+            let Some(out) = rewrite_responses_usage(&line.0, ctx.usage, window) else { return };
+            line.0 = out;
+            record(ctx, fired);
+        }
+        _ => {}
+    }
+}
+
+/// The rewrite target and which of triggers 0, 1 and 2 fired (§10.2.3); `end_turn` is trigger 1's end of turn.
+/// `None` without a served row or a context window, or when no trigger fired.
+fn triggers(ctx: &ResponseCtx, end_turn: bool) -> Option<(u64, [bool; 3])> {
+    let row = ctx.cfg.config.catalog.get(&ctx.resolved.model)?;
+    let cw = context_window(row)?;
+    let aw = agent_window_for(ctx.resolved.one_m, &ctx.headers, row);
+    let s = safety(cw, aw);
+    let p = prompt(ctx.usage);
+    let main = ctx.headers.get("x-claude-code-request-class").is_some_and(|c| c == "main");
+    let t0 = s.is_some_and(|s| p > s);
+    let t1 = main && end_turn && soft_threshold(ctx.session.compact(), row, s).is_some_and(|t| p > t);
+    let t2 = ctx.compact_call;
+    (t0 || t1 || t2).then_some((window(cw, aw), [t0, t1, t2]))
+}
+
+/// Each fired trigger's code, recorded once (§10.2.3).
+fn record(ctx: &mut ResponseCtx, fired: [bool; 3]) {
+    for (fired, code) in fired.into_iter().zip(["context_safety", "context_signal", "context_compact"]) {
+        if fired && !ctx.adjustments.iter().any(|a| a.0 == code) {
+            ctx.adjustments.push(Adjustment(code.into()));
         }
     }
 }
@@ -238,7 +289,7 @@ type Edit = (usize, usize, String);
 
 /// The edits that set `vals` in object `o`, whose `{` is at `start`: each present value replaced, the absent fields
 /// inserted after `{`. `None` when `o` repeats a key.
-fn edit_obj(o: &Obj, start: usize, off: &dyn Fn(&RawValue) -> usize, vals: &[(&str, u64); 3], edits: &mut Vec<Edit>) -> Option<()> {
+fn edit_obj(o: &Obj, start: usize, off: &dyn Fn(&RawValue) -> usize, vals: &[(&str, u64)], edits: &mut Vec<Edit>) -> Option<()> {
     let mut seen = HashSet::new();
     if !o.0.iter().all(|(k, _)| seen.insert(k.as_ref())) {
         return None;
@@ -285,6 +336,50 @@ pub fn rewrite_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec<u8>> {
         edit_obj(&lo, off(last), &off, &vals, &mut edits)?;
     }
     // The edits never overlap: applied from the end, each offset still holds.
+    edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+    let mut out = line.to_string();
+    for (a, b, text) in edits {
+        out.replace_range(a..b, &text);
+    }
+    Some(out.into_bytes())
+}
+
+/// The `response.completed` or `response.incomplete` data line with `response.usage` set by K§6.4.5 so that the
+/// client's measure equals `window`: `input_tokens_details.cached_tokens` := max(window − input − cache_write,
+/// cache_read), `input_tokens` := input + cache_write + cached_tokens, `total_tokens` := input_tokens + u.output;
+/// a missing field inserted; every other byte kept. `None` (line unchanged): not UTF-8, no `data:` prefix, another
+/// `type`, no `response.usage` object, `input_tokens_details` not an object, or an edited object repeats a key.
+pub fn rewrite_responses_usage(line: &[u8], u: Usage, window: u64) -> Option<Vec<u8>> {
+    let line = std::str::from_utf8(line).ok()?;
+    let top: Obj = serde_json::from_str(line.strip_prefix("data:")?).ok()?;
+    let ty = serde_json::from_str::<String>(top.raw("type")?.get()).ok()?;
+    if ty != "response.completed" && ty != "response.incomplete" {
+        return None;
+    }
+    let resp = top.raw("response").filter(|r| r.get().starts_with('{'))?;
+    let ro: Obj = serde_json::from_str(resp.get()).ok()?;
+    let usage = ro.raw("usage").filter(|r| r.get().starts_with('{'))?;
+    let uo: Obj = serde_json::from_str(usage.get()).ok()?;
+    let base = line.as_ptr() as usize;
+    let off = |r: &RawValue| r.get().as_ptr() as usize - base;
+    let cached = window.saturating_sub(u.input).saturating_sub(u.cache_write).max(u.cache_read);
+    let input = u.input.saturating_add(u.cache_write).saturating_add(cached);
+    let total = input.saturating_add(u.output);
+    let mut edits = Vec::new();
+    let details = uo.raw("input_tokens_details");
+    if let Some(det) = details {
+        let det = Some(det).filter(|r| r.get().starts_with('{'))?;
+        let dobj: Obj = serde_json::from_str(det.get()).ok()?;
+        edit_obj(&dobj, off(det), &off, &[("cached_tokens", cached)], &mut edits)?;
+    }
+    edit_obj(&uo, off(usage), &off, &[("input_tokens", input), ("total_tokens", total)], &mut edits)?;
+    if details.is_none() {
+        // Pushed last, so it lands before any text `edit_obj` inserted after the same `{`; that text has no trailing
+        // comma only when `usage` was empty, and then it is never empty.
+        let at = off(usage) + 1;
+        edits.push((at, at, format!("\"input_tokens_details\":{{\"cached_tokens\":{cached}}},")));
+    }
+    // The edits never overlap: applied from the end (equal offsets in push order), each offset still holds.
     edits.sort_by_key(|e| std::cmp::Reverse(e.0));
     let mut out = line.to_string();
     for (a, b, text) in edits {
