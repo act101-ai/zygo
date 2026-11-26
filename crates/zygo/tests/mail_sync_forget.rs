@@ -195,6 +195,36 @@ fn forget_after_the_repository_moved_runs_no_git() {
     assert!(left.iter().any(|e| is_sync(e, &a) && e.contains("\nprunable")), "{left:?}");
 }
 
+#[test] // S§6.3 Remove (MS-21 review F2): a link at `<cache>/<id>/mail-sync` or at `<cache>/<id>` is removed as a link
+        // and no git runs, so another worktree of the repository that the link names keeps its files and its entry
+fn forget_removes_a_worktree_link_and_never_the_worktree_it_names() {
+    let r = remote();
+    for link_at_id in [false, true] {
+        let a = machine(&r, "a", &[(ALICE, "alice")]);
+        let repo = a.repo();
+        let other = a.root().join("x/mail-sync");
+        git(&repo, &["worktree", "add", "-q", "-b", "other", other.to_str().unwrap()]);
+        let wt = sp(&a).worktree;
+        let id_dir = wt.parent().unwrap().to_path_buf();
+        let link = if link_at_id {
+            std::fs::create_dir_all(id_dir.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(other.parent().unwrap(), &id_dir).unwrap();
+            id_dir.clone()
+        } else {
+            std::fs::create_dir_all(&id_dir).unwrap();
+            std::os::unix::fs::symlink(&other, &wt).unwrap();
+            wt.clone()
+        };
+        let o = zygo(&a, &["ws", "forget", "app", "--yes"], None);
+        assert_eq!(code_out_err(&o), (Some(0), "zygo: forgot app\n".to_string(), String::new()), "link at id: {link_at_id}");
+        assert!(std::fs::symlink_metadata(&link).is_err(), "link at id: {link_at_id}");
+        assert!(other.join("README").is_file() && other.join(".git").is_file(), "link at id: {link_at_id}");
+        let listed = worktrees(&repo);
+        let entry = listed.iter().find(|e| e.starts_with(&format!("worktree {}\n", other.display())));
+        assert!(entry.is_some_and(|e| !e.contains("\nprunable")), "link at id: {link_at_id}: {listed:?}");
+    }
+}
+
 #[test] // S§7.6 step 3: a removal that fails refuses with its reason; nothing deleted, the worktree still listed
 fn forget_refuses_when_git_cannot_remove_the_worktree() {
     let r = remote();

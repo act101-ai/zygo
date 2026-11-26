@@ -194,16 +194,27 @@ pub(crate) fn forget_mail(
             }
         }
     }
-    if std::fs::symlink_metadata(&sp.worktree).is_ok() && ws.main_root.is_dir() {
-        remove_worktree(&ws.main_root, &sp.worktree, Instant::now() + WORKTREE_REMOVE_BOUND).map_err(|e| {
-            format!(
-                "the mail sync worktree {} was not removed: {}",
-                esc(&sp.worktree.display().to_string()),
-                esc(&branch_reason(&e))
-            )
-        })?;
-    }
+    remove_sync_worktree(&sp, &ws.main_root)?;
     Ok(true)
+}
+
+/// S§6.3 Remove (MS-21): removes the sync worktree `<cache>/<id>/mail-sync`. No link is followed (review F2): a link
+/// at `<cache>/<id>` or at `mail-sync` is removed as a link (`remove_file`) and no git runs, so git never acts on a
+/// worktree that the link names. git runs only when `mail-sync` exists and is no link and `main_root` is a folder.
+fn remove_sync_worktree(sp: &SyncPaths, main_root: &Path) -> Result<(), String> {
+    let not_removed =
+        |reason: &str| format!("the mail sync worktree {} was not removed: {}", shown(&sp.worktree), esc(reason));
+    let id_dir = sp.worktree.parent().unwrap_or(&sp.worktree);
+    for p in [id_dir, sp.worktree.as_path()] {
+        if std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()) {
+            return std::fs::remove_file(p).map_err(|e| not_removed(&e.to_string()));
+        }
+    }
+    if std::fs::symlink_metadata(&sp.worktree).is_ok() && main_root.is_dir() {
+        remove_worktree(main_root, &sp.worktree, Instant::now() + WORKTREE_REMOVE_BOUND)
+            .map_err(|e| not_removed(&branch_reason(&e)))?;
+    }
+    Ok(())
 }
 
 /// A path for a stderr line, escaped (C6).
