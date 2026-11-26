@@ -225,8 +225,9 @@ fn forget_removes_a_worktree_link_and_never_the_worktree_it_names() {
     }
 }
 
-#[test] // S§7.6 step 3: a removal that fails refuses with its reason; nothing deleted, the worktree still listed
-fn forget_refuses_when_git_cannot_remove_the_worktree() {
+#[test] // S§6.3 Remove, S§7.6 step 3 (MS-21 review F4): git that cannot remove the worktree is not a refusal: the folder
+        // goes by the filesystem, the forget ends, and git keeps a prunable entry (no prune runs)
+fn forget_removes_the_worktree_folder_when_git_cannot() {
     let r = remote();
     let a = machine(&r, "a", &[(ALICE, "alice")]);
     sync(&a);
@@ -235,13 +236,25 @@ fn forget_refuses_when_git_cannot_remove_the_worktree() {
     std::fs::write(&g, "#!/bin/sh\nexit 1\n").unwrap();
     std::fs::set_permissions(&g, std::fs::Permissions::from_mode(0o755)).unwrap();
     ready_exe(&g);
-    let bytes = std::fs::read(state(&a).join("workspace.json")).unwrap();
     let o = zygo(&a, &["ws", "forget", "app", "--yes"], None);
-    let line = format!("zygo: cannot forget app: the mail sync worktree {} was not removed: git failed\n", sp(&a).worktree.display());
-    assert_eq!(code_out_err(&o), (Some(1), String::new(), line));
-    assert_eq!(std::fs::read(state(&a).join("workspace.json")).unwrap(), bytes);
-    assert!(sp(&a).worktree.join(".git").exists());
-    assert_eq!(worktrees(&a.repo()).iter().filter(|e| is_sync(e, &a)).count(), 1);
+    assert_eq!(code_out_err(&o), (Some(0), "zygo: forgot app\n".to_string(), String::new()));
+    assert!(std::fs::symlink_metadata(state(&a)).is_err());
+    assert!(std::fs::symlink_metadata(sp(&a).worktree).is_err());
+    let left = worktrees(&a.repo());
+    assert!(left.iter().any(|e| is_sync(e, &a) && e.contains("\nprunable")), "{left:?}");
+}
+
+#[test] // S§6.3 Remove, S§7.6 step 3 (MS-21 review F4): a regular file at `mail-sync` is removed by the filesystem
+fn forget_removes_a_regular_file_at_the_worktree_path() {
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    let wt = sp(&a).worktree;
+    std::fs::create_dir_all(wt.parent().unwrap()).unwrap();
+    std::fs::write(&wt, b"x").unwrap();
+    let o = zygo(&a, &["ws", "forget", "app", "--yes"], None);
+    assert_eq!(code_out_err(&o), (Some(0), "zygo: forgot app\n".to_string(), String::new()));
+    assert!(std::fs::symlink_metadata(&wt).is_err() && std::fs::symlink_metadata(state(&a)).is_err());
+    assert_eq!(worktrees(&a.repo()).len(), 1);
 }
 
 #[test] // S§7.6 steps 1-2 (MS-21 review F3): `mail` as a link or as a file is not followed: no mail, no question, no lock;

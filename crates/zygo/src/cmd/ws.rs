@@ -16,10 +16,9 @@ use zygo_launch::env::Env;
 use zygo_launch::launcher::AgentSession;
 use zygo_launch::opencode::OpenCode;
 use zygo_launch::AgentAdapter;
-use zygo_mail_sync::branch::{remove_worktree, BranchError};
+use zygo_mail_sync::branch::remove_worktree;
 use zygo_mail_sync::outbox;
 use zygo_mail_sync::state::SyncPaths;
-use zygo_work::repo::RunError;
 use zygo_workspace::admin;
 use zygo_workspace::identity::{valid_pane_key, valid_ws_id};
 use zygo_workspace::mux::tmux::Tmux;
@@ -160,23 +159,11 @@ pub(crate) fn forget_prompt(n: usize) -> String {
     format!("zygo: {n} unsent messages will be deleted. Forget the workspace? [y/N]")
 }
 
-/// S§7.6 step 3: the reason of a removal error; it holds no git output (S-C2).
-fn branch_reason(e: &BranchError) -> String {
-    match e {
-        BranchError::Git(RunError::NotRun, _) => "git could not run".into(),
-        BranchError::Git(RunError::TimedOut, _) => "git timed out".into(),
-        BranchError::Git(RunError::Failed | RunError::Absent, _) => "git failed".into(),
-        BranchError::Io(s) => s.clone(),
-        BranchError::Refused(what) => format!("{what} refused"),
-    }
-}
-
 /// S§7.6 steps 2-3, S§6.3 Remove (MS-21): the `before_remove` step of `zygo ws forget`, which `admin::forget` runs
 /// after its checks with `op.lock` and the sync lock held. It counts the outbox (one that cannot be read is an `Err`);
 /// when it is not empty it asks [`forget_prompt`] on `err` (`yes`: the question and ` y (--yes)`), and an answer that
-/// is not `y` or `yes`, or the end of input, is `Ok(false)`. Then, when the worktree folder exists and `main_root` is
-/// a folder, `git worktree remove --force` (`remove_worktree`); its failure is an `Err`. An `Err` is the reason that
-/// `admin::forget` prints after `zygo: cannot forget <name>: `.
+/// is not `y` or `yes`, or the end of input, is `Ok(false)`. Then [`remove_sync_worktree`]; a failed removal is an
+/// `Err`. An `Err` is the reason that `admin::forget` prints after `zygo: cannot forget <name>: `.
 pub(crate) fn forget_mail(
     paths: &Paths, ws: &Workspace, yes: bool, input: &mut dyn BufRead, err: &mut dyn Write,
 ) -> Result<bool, String> {
@@ -206,21 +193,41 @@ pub(crate) fn forget_mail(
 
 /// S§6.3 Remove (MS-21): removes the sync worktree `<cache>/<id>/mail-sync`. No link is followed (review F2): a link
 /// at `<cache>/<id>` or at `mail-sync` is removed as a link (`remove_file`) and no git runs, so git never acts on a
-/// worktree that the link names. git runs only when `mail-sync` exists and is no link and `main_root` is a folder.
+/// worktree that the link names. A real `mail-sync` folder gets `git worktree remove --force` when `main_root` is a
+/// folder. What git does not remove (no `main_root` folder, git fails or times out, a regular file at `mail-sync`) goes
+/// by the filesystem, as the sync's own recovery (`ensure_worktree`, review F4): `remove_dir_all` (it follows no link)
+/// or `remove_file`, on that path inside `<cache>/<id>/` only. Only a failed filesystem removal is an `Err`, which
+/// names the folder.
 fn remove_sync_worktree(sp: &SyncPaths, main_root: &Path) -> Result<(), String> {
     let not_removed =
         |reason: &str| format!("the mail sync worktree {} was not removed: {}", shown(&sp.worktree), esc(reason));
     let id_dir = sp.worktree.parent().unwrap_or(&sp.worktree);
-    for p in [id_dir, sp.worktree.as_path()] {
-        if std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()) {
-            return std::fs::remove_file(p).map_err(|e| not_removed(&e.to_string()));
+    match std::fs::symlink_metadata(id_dir) {
+        Ok(m) if m.file_type().is_symlink() => return std::fs::remove_file(id_dir).map_err(|e| not_removed(&e.to_string())),
+        Ok(m) if m.is_dir() => {}
+        // No `<cache>/<id>` folder: no worktree folder in it (W§12 removes a file there with the cache).
+        _ => return Ok(()),
+    }
+    let is_dir = match std::fs::symlink_metadata(&sp.worktree) {
+        Ok(m) if m.file_type().is_symlink() => {
+            return std::fs::remove_file(&sp.worktree).map_err(|e| not_removed(&e.to_string()));
         }
+        Ok(m) => m.is_dir(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(not_removed(&e.to_string())),
+    };
+    if is_dir
+        && main_root.is_dir()
+        && remove_worktree(main_root, &sp.worktree, Instant::now() + WORKTREE_REMOVE_BOUND).is_ok()
+        && std::fs::symlink_metadata(&sp.worktree).is_err()
+    {
+        return Ok(());
     }
-    if std::fs::symlink_metadata(&sp.worktree).is_ok() && main_root.is_dir() {
-        remove_worktree(main_root, &sp.worktree, Instant::now() + WORKTREE_REMOVE_BOUND)
-            .map_err(|e| not_removed(&branch_reason(&e)))?;
+    let gone = if is_dir { std::fs::remove_dir_all(&sp.worktree) } else { std::fs::remove_file(&sp.worktree) };
+    match gone {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(not_removed(&e.to_string())),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// A path for a stderr line, escaped (C6).
@@ -811,20 +818,6 @@ mod tests {
         assert_eq!(forget_prompt(2), "zygo: 2 unsent messages will be deleted. Forget the workspace? [y/N]");
     }
 
-    #[test] // S§7.6 step 3 (MS-21): the reason of each removal error, with no git text
-    fn branch_reason_names_each_error() {
-        for (e, want) in [
-            (BranchError::Git(RunError::NotRun, "worktree remove"), "git could not run"),
-            (BranchError::Git(RunError::TimedOut, "worktree remove"), "git timed out"),
-            (BranchError::Git(RunError::Failed, "worktree remove"), "git failed"),
-            (BranchError::Git(RunError::Absent, "worktree remove"), "git failed"),
-            (BranchError::Io("path is not UTF-8: x".into()), "path is not UTF-8: x"),
-            (BranchError::Refused("object id"), "object id refused"),
-        ] {
-            assert_eq!(branch_reason(&e), want);
-        }
-    }
-
     #[cfg(unix)]
     const WS: &str = "0123456789abcdef";
 
@@ -872,21 +865,29 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test] // S§6.3 Remove, S§7.6 steps 2-3 (MS-21): git runs only with both folders; its failure and an unreadable outbox refuse
-    fn forget_mail_runs_git_only_with_both_folders_and_refuses_an_unreadable_outbox() {
+    #[test] // S§6.3 Remove, S§7.6 steps 2-3 (MS-21, review F4): a folder git cannot remove goes by the filesystem; only a
+            // failed filesystem removal refuses, with the folder named; an unreadable outbox refuses
+    fn forget_mail_removes_what_git_cannot_and_refuses_an_unreadable_outbox() {
+        use std::os::unix::fs::PermissionsExt;
         let td = tempfile::tempdir().unwrap();
         let p = temp_paths(td.path());
         let sp = zygo_mail_sync::state::SyncPaths::new(&p, WS).unwrap();
         let mut ws = Workspace::new(WS);
         ws.main_root = td.path().join("plain"); // a folder that is no repository: git fails there
         std::fs::create_dir_all(&ws.main_root).unwrap();
-        assert_eq!(ask(&p, &ws, false, ""), (Ok(true), String::new(), 0)); // no worktree folder: no git
-        std::fs::create_dir_all(&sp.worktree).unwrap();
-        ws.main_root = td.path().join("moved"); // no such folder
-        assert_eq!(ask(&p, &ws, false, ""), (Ok(true), String::new(), 0)); // no main worktree folder: no git
-        ws.main_root = td.path().join("plain");
-        let failed = format!("the mail sync worktree {} was not removed: git failed", sp.worktree.display());
-        assert_eq!(ask(&p, &ws, false, "").0, Err(failed)); // both folders: git runs and fails
+        assert_eq!(ask(&p, &ws, false, ""), (Ok(true), String::new(), 0)); // no worktree folder: nothing to do
+        for root in ["moved", "plain"] {
+            ws.main_root = td.path().join(root); // no such folder (no git), then no repository (git fails)
+            std::fs::create_dir_all(sp.worktree.join("sub")).unwrap();
+            assert_eq!(ask(&p, &ws, false, ""), (Ok(true), String::new(), 0), "{root}");
+            assert!(std::fs::symlink_metadata(&sp.worktree).is_err(), "{root}");
+        }
+        std::fs::create_dir_all(sp.worktree.join("sub")).unwrap();
+        std::fs::set_permissions(&sp.worktree, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let r = ask(&p, &ws, false, "").0;
+        std::fs::set_permissions(&sp.worktree, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let prefix = format!("the mail sync worktree {} was not removed: ", sp.worktree.display());
+        assert!(r.as_ref().is_err_and(|e| e.starts_with(&prefix) && e.contains("ermission denied")), "{r:?}");
         std::fs::create_dir_all(&sp.mail).unwrap();
         std::fs::write(&sp.outbox, b"").unwrap();
         let unreadable = format!("the outbox cannot be read: {} is not a folder", sp.outbox.display());
