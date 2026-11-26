@@ -3,25 +3,28 @@
 # (method K§6.3.7)?
 #   PC17  K§6.4.3 stream obligations 1-5 and 7 (ping dropped): the extra output_item.added,
 #         content_part, *.delta and *.done events and a response.completed whose output is []; per
-#         case one served shape, each completing the turn, running its tools and coming back in the
-#         next request as sent (field by field; Codex may add only "content" and "encrypted_content"
-#         on a reasoning item, each null and absent from the sent item): t text; st text after a dropped server tool (obligation 3,
-#         server_tool_dropped); f function_call; p custom_tool_call (the freeform apply_patch of
-#         catalog-patch.json); r reasoning with the zygo mark + function_call; m text + function_call
-#         (the message item echo); rt redacted_thinking (reasoning, summary [], mark only) +
-#         function_call; ru reasoning with no encrypted_content (a mark over MARK_MAX,
-#         reasoning_unmarked) + function_call; ff two function_calls in one response
-#   PC18  K§6.4.3 stream obligations 5, 6 and 9 (each response.failed end), with request_max_retries =
-#         stream_max_retries = 0: i response.incomplete max_output_tokens; ic response.incomplete
-#         content_filter (stop_reason refusal); x response.failed after an upstream error; xt
-#         response.failed after a half-open function_call (no tool runs). Each must end the turn with
-#         the reason in Codex's turn.failed message
-#   Recorded, not graded: i-def and x-def, the i and x shapes with Codex's default retries (no retry
-#         keys, as a zygo launch): the number of upstream requests and how the turn ends
+#         case one served shape, each completing the turn, running its tools and coming back exactly
+#         once in the next request as sent (field by field; Codex may add only "content" and
+#         "encrypted_content" on a reasoning item, each null and absent from the sent item): t text; st
+#         text after a dropped server tool (obligation 3, server_tool_dropped); f function_call; p
+#         custom_tool_call (the freeform apply_patch of catalog-patch.json); r reasoning with the zygo
+#         mark + function_call; m text + function_call (the message item echo); rt redacted_thinking
+#         (reasoning, summary [], mark only) + function_call; ru reasoning with no encrypted_content (a
+#         mark over MARK_MAX, reasoning_unmarked) + function_call; ff two function_calls in one response
+#   PC18  K§6.4.3 stream obligations 5 and 6, with request_max_retries = stream_max_retries = 0: i
+#         response.incomplete max_output_tokens; ic response.incomplete content_filter (stop_reason
+#         refusal); x response.failed after an upstream error; xt response.failed after a half-open
+#         function_call (no tool runs). Each: exactly 1 request, a non-zero exit, and Codex's
+#         turn.failed message equal to the expected text (PC12_REASON in the verdict). Obligation 9's
+#         endings (upstream ... too long) are not served
+#   Recorded, not graded ("recorded" lines in result.txt): i-def, x-def, ic-def, xt-def, the i, x, ic
+#         and xt shapes with Codex's default retries (no retry keys, as a zygo launch): the number of
+#         upstream requests and how the turn ends
 # The served SSE is what the encoder at HEAD makes, at run time: crates/zygo-proxy/examples/
 # responses_encode.rs reads authored Messages SSE ($RUN/anthropic) and writes $RUN/sse; the served
 # files are checked against the encoder's documented sequence before Codex starts (a miss: exit 1).
-# result.txt records the commit and the dirty state of the tree the example was built from.
+# result.txt records the commit of the tree the example was built from (encoder_commit), the last
+# commit of this part (part_commit) and whether either differs from its commit (encoder_tree).
 # Writes fixtures/codex/encoder/ (anthropic/, responses/, requests/, exec/, result.txt; anthropic/
 # unmarked.sse is 3.2 MB and is left out: its size and sha256 are in result.txt) and
 # fixtures/codex/runs/encoder/ (isolation.txt, connect.txt, observed.txt), built in $RUN/fx and
@@ -111,7 +114,8 @@ with open(os.path.join(run, "encoder-src.txt"), "a") as f:
 # Rules: each case's prompt is pc12-turn-<case>-end (no case's prompt is part of another's).
 FIRST = [("t", "text"), ("st", "server"), ("f", "fc"), ("p", "patch"), ("r", "reason"), ("m", "msgcall"),
          ("rt", "redacted"), ("ru", "unmarked"), ("ff", "twofc"), ("i", "incomplete"), ("x", "failed"),
-         ("ic", "refusal"), ("xt", "halfcall"), ("i-def", "incomplete"), ("x-def", "failed")]
+         ("ic", "refusal"), ("xt", "halfcall"), ("i-def", "incomplete"), ("x-def", "failed"),
+         ("ic-def", "refusal"), ("xt-def", "halfcall")]
 rules = []
 for c in ("f", "p", "r", "m", "rt", "ru", "ff"):
     out = "custom_tool_call_output" if c == "p" else "function_call_output"
@@ -122,10 +126,15 @@ with open(os.path.join(run, "rules.json"), "w") as f:
     f.write("\n")
 PY
 
-# The tree the example is built from: its commit and whether crates/ or Cargo.* differ from it.
+# The tree the example is built from: its commit, this part's last commit, and whether crates/,
+# Cargo.*, rust-toolchain.toml or this part differ from the checkout's HEAD.
+_pc12_spec="crates Cargo.toml Cargo.lock scripts/premises/codex/encoder.sh"
+[ ! -e "$REPO_DIR/rust-toolchain.toml" ] || _pc12_spec="$_pc12_spec rust-toolchain.toml"
 {
   echo "encoder_commit=$(git -C "$REPO_DIR" rev-parse HEAD)"
-  if [ -z "$(git -C "$REPO_DIR" status --porcelain -- crates Cargo.toml Cargo.lock)" ]; then
+  echo "part_commit=$(git -C "$REPO_DIR" log -1 --format=%H -- scripts/premises/codex/encoder.sh)"
+  # shellcheck disable=SC2086 # a list of paths
+  if [ -z "$(git -C "$REPO_DIR" status --porcelain -- $_pc12_spec)" ]; then
     echo "encoder_tree=clean"
   else
     echo "encoder_tree=dirty"
@@ -143,6 +152,7 @@ for _pc12_f in "$RUN"/anthropic/*.sse; do
     { echo "codex encoder: responses_encode failed on $_pc12_n.sse:"; cat "$RUN/sse/$_pc12_n.adj"; exit 1; }
 done
 
+# pc12_served begin
 # The served-file check: each file is the encoder's documented sequence (responses_client.rs, Encoder).
 python3 -I - "$RUN" <<'PY' || exit 1
 import json, os, sys
@@ -239,6 +249,21 @@ def check(name):
     if name == "halfcall" and not any(d["type"] == "response.output_item.added" and d["item"].get("type") == "function_call"
                                       for d in ev):
         raise Miss("no function_call output_item.added")
+    # Obligation 4: output_index counts the added items from 0; every event of an item carries its output_index
+    # and its item id (item.id on output_item.*, item_id on the others).
+    ids = {}
+    for n, d in enumerate(ev):
+        if d["type"] == "response.output_item.added":
+            if d.get("output_index") != len(ids) or not isinstance(d.get("item"), dict) or not d["item"].get("id"):
+                raise Miss("event %d: output_item.added output_index %r, not %d, or no item id" % (n, d.get("output_index"), len(ids)))
+            ids[len(ids)] = d["item"]["id"]
+        elif "output_index" in d or "item_id" in d or d["type"] == "response.output_item.done":
+            oi = d.get("output_index")
+            if oi not in ids:
+                raise Miss("event %d (%s): output_index %r has no output_item.added before it" % (n, d["type"], oi))
+            got = d["item"].get("id") if d["type"] == "response.output_item.done" else d.get("item_id")
+            if got != ids[oi]:
+                raise Miss("event %d (%s): item id %r, not %r of output_index %d" % (n, d["type"], got, ids[oi], oi))
 for name in EXPECT:
     try:
         check(name)
@@ -246,6 +271,7 @@ for name in EXPECT:
         print("codex encoder: served %s.sse: %s" % (name, x))
         sys.exit(1)
 PY
+# pc12_served end
 
 # Codex's configs, both with the catalog that offers the freeform apply_patch: $H/.codex with no retry
 # (the graded cases) and $RUN/cx-def with Codex's default retries (no retry keys, as a zygo launch).
@@ -295,7 +321,7 @@ pc12_run() {
   pc12_ps "$1"
 }
 for _pc12_c in t st f p r m rt ru ff i x ic xt; do pc12_run "$_pc12_c" "$H/.codex"; done
-for _pc12_c in i-def x-def; do pc12_run "$_pc12_c" "$RUN/cx-def"; done
+for _pc12_c in i-def x-def ic-def xt-def; do pc12_run "$_pc12_c" "$RUN/cx-def"; done
 stop_mock
 
 # The isolation record goes to the run folder's fixture tree too (moved at the end).
@@ -310,18 +336,28 @@ CODEX_FX=$_pc12_fx
 # $RUN/out/runs/encoder/observed.txt. A case with no request: the two "codex encoder:" lines, exit 1.
 _pc12_vs=0
 python3 -I - "$RUN" "$RUN/out" "$(TZ=UTC date +%Y-%m-%d)" <<'PY' || _pc12_vs=$?
-import glob, json, os, re, sys
+import glob, json, os, re, sys, traceback
+def crashed(ty, value, tb):
+    first = (str(value).splitlines() or [""])[0]
+    print("codex encoder: verdict failed: %s: %s" % (ty.__name__, first))
+    traceback.print_exception(ty, value, tb)
+sys.excepthook = crashed
 run, out, day = sys.argv[1:4]
 PC17 = ["t", "st", "f", "p", "r", "m", "rt", "ru", "ff"]
 PC18 = ["i", "x", "ic", "xt"]
-RECORDED = ["i-def", "x-def"]
+RECORDED = ["i-def", "x-def", "ic-def", "xt-def"]
 CASES = PC17 + PC18 + RECORDED
 TEXT = {"t": ["pc12 text reply"], "st": ["pc12 after server tool"]}
 TYPES = {"f": ["function_call"], "p": ["custom_tool_call"], "r": ["reasoning", "function_call"],
          "m": ["message", "function_call"], "rt": ["reasoning", "function_call"], "ru": ["reasoning", "function_call"],
          "ff": ["function_call", "function_call"]}
 MSGS = {"m": ["pc12 before call", "pc12 done m"]}
-REASON = {"i": "max_output_tokens", "i-def": "max_output_tokens", "ic": "content_filter"}
+# PC12_REASON: Codex 0.172.0's exact turn.failed message per ending (the round 2 real runs); the graded cases
+# must equal it.
+PC12_REASON = {"i": "Incomplete response returned, reason: max_output_tokens",
+               "ic": "stream disconnected before completion: Incomplete response returned, reason: content_filter",
+               "x": "stream disconnected before completion: pc12 upstream failure",
+               "xt": "stream disconnected before completion: pc12 upstream failure"}
 def rd(p, default=""):
     try:
         with open(p, errors="replace") as f:
@@ -375,16 +411,18 @@ CALLS = ("function_call", "custom_tool_call")
 def echo(item, rec):
     """(echoed, extra keys) for the input entry that echoes item: same type and call_id (calls) or id; every key
     of item with an equal value; the only extra keys allowed are "content" and "encrypted_content" on a reasoning
-    item, each with the value null and only when item lacks it (absent and null mean the same, lead's decision)."""
+    item, each with the value null and only when item lacks it (absent and null mean the same, lead's decision). The
+    entry must be the only one with that type and call_id or id (a duplicate or a second, altered copy fails)."""
     key = "call_id" if item.get("type") in CALLS else "id"
-    for x in items(rec):
-        if x.get("type") == item.get("type") and x.get(key) == item.get(key):
-            extra = sorted(set(x) - set(item))
-            same = all(k in x and x[k] == v for k, v in item.items())
-            allowed = item.get("type") == "reasoning" and all(
-                k in ("content", "encrypted_content") and x[k] is None for k in extra)
-            return same and (not extra or allowed), extra
-    return False, []
+    found = [x for x in items(rec) if x.get("type") == item.get("type") and x.get(key) == item.get(key)]
+    if not found:
+        return False, []
+    x = found[0]
+    extra = sorted(set(x) - set(item))
+    same = all(k in x and x[k] == v for k, v in item.items())
+    allowed = item.get("type") == "reasoning" and all(
+        k in ("content", "encrypted_content") and x[k] is None for k in extra)
+    return len(found) == 1 and same and (not extra or allowed), extra
 def output_of(rec, ty, call_id):
     return [x.get("output") for x in items(rec) if x.get("type") == ty and x.get("call_id") == call_id]
 res, ok, missing = {}, {}, []
@@ -425,18 +463,15 @@ for c in CASES:
     elif c in PC18 + RECORDED:
         tf = [d for d in ls if d.get("type") == "turn.failed"]
         reason = (tf[-1].get("error") or {}).get("message") if tf else None
-        want = REASON.get(c)
-        if want is None:
-            want = next(((e.get("response") or {}).get("error", {}).get("message") for e in (served(rs[0]) if rs else [])
-                         if e.get("type") == "response.failed"), None)
-        good = last == "turn.failed" and isinstance(reason, str) and bool(want) and want in reason
-        if c == "xt":
+        want = PC12_REASON.get(c.replace("-def", ""))
+        good = last == "turn.failed" and reason == want and rc not in ("0", "none") and len(rs) == 1
+        if c.startswith("xt"):
             good = good and not any(isinstance(d.get("item"), dict) and d["item"].get("type") == "command_execution"
                                     for d in ls)
     ok[c] = good
-    res[c] = "%s: ok=%s rc=%s requests=%d last=%s msgs=%s echo=%s extra=%s reason=%s" % (
-        c, "yes" if good else "no", rc, len(rs), last, json.dumps(msgs), ech, extra,
-        json.dumps(reason) if reason is not None else "-")
+    res[c] = "%s: %s rc=%s requests=%d last=%s msgs=%s echo=%s extra=%s reason=%s" % (
+        c, "recorded" if c in RECORDED else "ok=" + ("yes" if good else "no"), rc, len(rs), last, json.dumps(msgs), ech,
+        extra, json.dumps(reason) if reason is not None else "-")
 pc17 = "verified" if all(ok[c] for c in PC17) else "failed"
 pc18 = "verified" if all(ok[c] for c in PC18) else "failed"
 iso = rd(os.path.join(run, "fx", "runs", "encoder", "isolation.txt"))
@@ -451,7 +486,7 @@ put("runs/encoder/observed.txt", "\n".join([
                                         ("text", "server", "fc", "patch", "reason", "msgcall", "redacted", "unmarked", "twofc")]
         + ["requests/%s-2.json" % c for c in ("f", "p", "r", "m", "rt", "ru", "ff")] + ["exec/t.jsonl", "exec/st.jsonl"]),
     obs("PC18", pc18, ["result.txt"] + ["responses/%s.sse" % n for n in ("incomplete", "refusal", "failed", "halfcall")]
-        + ["exec/%s.jsonl" % c for c in ("i", "x", "ic", "xt", "i-def", "x-def")])]) + "\n")
+        + ["exec/%s.jsonl" % c for c in ("i", "x", "ic", "xt", "i-def", "x-def", "ic-def", "xt-def")])]) + "\n")
 if missing:
     print("codex encoder: fixtures not replaced; this run's are in %s/fx" % run)
     print("codex encoder: missing cases: %s" % " ".join(missing))
