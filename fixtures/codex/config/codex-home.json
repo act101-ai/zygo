@@ -1,0 +1,7 @@
+{
+  "model_seen": "zp-model-codexhome",
+  "dotcodex_model": "zp-model-dotcodex",
+  "codex_home_model": "zp-model-codexhome",
+  "result": "verified",
+  "why": "the CODEX_HOME config won over the scratch ~/.codex config"
+}

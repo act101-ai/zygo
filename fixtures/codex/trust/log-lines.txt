@@ -1,0 +1,11 @@
+pc4-bypass: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.
+pc4-bypass: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.
+pc4-untrusted: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.
+pc4-untrusted: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.
+pc4-untrusted: warning: loading hooks from both /tmp/run/cxh-pc4-untrusted/hooks.json and /tmp/run/cxh-pc4-untrusted/config.toml; prefer a single representation for this layer
+pc4-trust: warning: loading hooks from both /tmp/run/cxh-pc4-trust/hooks.json and /tmp/run/cxh-pc4-trust/config.toml; prefer a single representation for this layer
+pc4-trust-new: warning: loading hooks from both /tmp/run/cxh-pc4-trust-new/hooks.json and /tmp/run/cxh-pc4-trust-new/config.toml; prefer a single representation for this layer
+pc4-feature-default: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.
+pc4-feature-default: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.
+pc4-feature-legacy: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.
+pc4-feature-legacy: warning: `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this invocation.

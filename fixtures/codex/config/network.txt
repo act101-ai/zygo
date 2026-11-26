@@ -1,0 +1,73 @@
+all refused CONNECT lines: 127.0.0.1:52881 x14, 127.0.0.1:55573 POST /mcp x1, ab.chatgpt.com:443 x61, api.github.com:443 x66, chatgpt.com:443 x64, github.com:443 x64, raw.githubusercontent.com:443 x1
+== pc3-home: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-cd: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-url-cli: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-url-proj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-url-both: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-prov-cli: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-prov-proj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-prov-both: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-auth-cli: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-auth-proj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-auth-both: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-main-cli: connect 127.0.0.1:52881 x7, ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 7
+  ERROR codex_api::endpoint::responses_websocket: failed to connect to Responses WebSocket stage=Unknown
+  ERROR codex_api::endpoint::responses_websocket: failed to connect to Responses WebSocket stage=Unknown
+  ERROR codex_api::endpoint::responses_websocket: failed to connect to Responses WebSocket stage=Unknown
+== pc3-main-proj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-main-both: connect 127.0.0.1:52881 x7, ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 7
+  ERROR codex_api::endpoint::responses_websocket: failed to connect to Responses WebSocket stage=Unknown
+  ERROR codex_api::endpoint::responses_websocket: failed to connect to Responses WebSocket stage=Unknown
+  ERROR codex_api::endpoint::responses_websocket: failed to connect to Responses WebSocket stage=Unknown
+== pc3-agents: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-hooks: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-none: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-bypass: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-untrusted: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-trust: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-trust-new: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-log: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-feature-default: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-feature-legacy: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-tui: connect 127.0.0.1:55573 POST /mcp x1, ab.chatgpt.com:443 x1, api.github.com:443 x3, chatgpt.com:443 x1, github.com:443 x1, raw.githubusercontent.com:443 x1; responses_websocket lines 0
+== pc4-tui-after: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-ctl-neg: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc4-prewritten: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== strict-control: connect none; responses_websocket lines 0
+== strict-control-off: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== strict-1: connect none; responses_websocket lines 0
+== strict-2: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-probe: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-env-cli: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-env-proj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-env-both: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-compact-cli: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-compact-proj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-compact-both: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-compact-v2: connect api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-window-cli: connect api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-window-proj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc3-window-both: connect api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-shell: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-mcp: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-sub: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-mcp-noapprove: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-match: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-ctx-start: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-ctx-prompt: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-stop-block: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-deny: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-deny-block: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-post-block: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-rep-shell-str: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-rep-shell-obj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-rep-shell-mcp: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-rep-mcp-str: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-rep-mcp-obj: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc5-rep-mcp-mcp: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc12-default: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc12-all: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc12-exclude: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc12-case: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc12-core: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0
+== pc12-none: connect ab.chatgpt.com:443 x1, api.github.com:443 x1, chatgpt.com:443 x1, github.com:443 x1; responses_websocket lines 0

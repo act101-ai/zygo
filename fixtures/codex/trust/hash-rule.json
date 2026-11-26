@@ -1,0 +1,175 @@
+{
+  "scenario": "pc4-tui",
+  "records": [
+    {
+      "key": "/tmp/run/cxh-pc4-tui/hooks.json:session_start:0:0",
+      "trusted_hash": "sha256:94c3b802ff31763dd08af518b0d06009606df4f2046163dcc8941d2ee49fc430",
+      "event": "SessionStart",
+      "group": 0,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo home-json >>/tmp/run/trust-pc4-tui"
+      }
+    },
+    {
+      "key": "/tmp/run/cxh-pc4-tui/hooks.json:session_start:1:0",
+      "trusted_hash": "sha256:0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a",
+      "event": "SessionStart",
+      "group": 1,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      }
+    },
+    {
+      "key": "/tmp/run/cxh-pc4-tui/hooks.json:session_start:2:0",
+      "trusted_hash": "sha256:65811a568587ace310741849194530e52f2eaa7e1017a1c561afdc4c5a6dc3c6",
+      "event": "SessionStart",
+      "group": 2,
+      "handler_index": 0,
+      "matcher": "zpm",
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      }
+    },
+    {
+      "key": "/tmp/run/cxh-pc4-tui/hooks.json:session_start:3:0",
+      "trusted_hash": "sha256:1a1a967297c9ad94b17a24f2a9d73d79b48c54833367fcdae0cf526cff6580bf",
+      "event": "SessionStart",
+      "group": 3,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui",
+        "timeout": 30
+      }
+    },
+    {
+      "key": "/tmp/run/cxh-pc4-tui/hooks.json:user_prompt_submit:0:0",
+      "trusted_hash": "sha256:f1cb9569547b5a00d9a0afce76b07ea7ecdfc1ab8a83927217de47d5a4870abe",
+      "event": "UserPromptSubmit",
+      "group": 0,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      }
+    },
+    {
+      "key": "/tmp/run/cxh-pc4-tui/config.toml:session_start:0:0",
+      "trusted_hash": "sha256:67961ac180de7d8043bc2ca96f6ab979a8986229f8a38a4859feea49f54cc416",
+      "event": "SessionStart",
+      "group": 0,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo home-inline >>/tmp/run/trust-pc4-tui"
+      }
+    },
+    {
+      "key": "/repo/.codex/hooks.json:session_start:0:0",
+      "trusted_hash": "sha256:6d682ffea869604fcac02c0ce6018ecf976091d843a54034b08e7a9f1c068061",
+      "event": "SessionStart",
+      "group": 0,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo project-json >>/tmp/run/trust-pc4-tui"
+      }
+    },
+    {
+      "key": "/repo/.codex/hooks.json:session_start:1:0",
+      "trusted_hash": "sha256:0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a",
+      "event": "SessionStart",
+      "group": 1,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      }
+    },
+    {
+      "key": "/repo/.codex/config.toml:session_start:0:0",
+      "trusted_hash": "sha256:ebd8448c4c4b5ef6998188a400d1ff891e1babba4f7994cf973f5b75bdce9cf5",
+      "event": "SessionStart",
+      "group": 0,
+      "handler_index": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo project-inline >>/tmp/run/trust-pc4-tui"
+      }
+    }
+  ],
+  "candidates_per_record": 59383,
+  "rule": null,
+  "rules_matching_all": [],
+  "same_command_records": [
+    {
+      "key": "hooks.json:session_start:1:0",
+      "event": "SessionStart",
+      "group": 1,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      },
+      "hash": "0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a"
+    },
+    {
+      "key": "hooks.json:session_start:2:0",
+      "event": "SessionStart",
+      "group": 2,
+      "matcher": "zpm",
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      },
+      "hash": "65811a568587ace310741849194530e52f2eaa7e1017a1c561afdc4c5a6dc3c6"
+    },
+    {
+      "key": "hooks.json:session_start:3:0",
+      "event": "SessionStart",
+      "group": 3,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui",
+        "timeout": 30
+      },
+      "hash": "1a1a967297c9ad94b17a24f2a9d73d79b48c54833367fcdae0cf526cff6580bf"
+    },
+    {
+      "key": "hooks.json:user_prompt_submit:0:0",
+      "event": "UserPromptSubmit",
+      "group": 0,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      },
+      "hash": "f1cb9569547b5a00d9a0afce76b07ea7ecdfc1ab8a83927217de47d5a4870abe"
+    },
+    {
+      "key": "hooks.json:session_start:1:0",
+      "event": "SessionStart",
+      "group": 1,
+      "matcher": null,
+      "handler": {
+        "type": "command",
+        "command": "echo zp-var >>/tmp/run/var-pc4-tui"
+      },
+      "hash": "0300424cb70daec7e1a284f497402bf1009eb59d1ddab6f62b4dafc3b767ce5a"
+    }
+  ]
+}
