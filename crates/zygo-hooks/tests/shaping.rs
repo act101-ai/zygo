@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use zygo_core::{
     Agent,
-    hook::{HookInput, guarded},
+    hook::HookInput,
     session_dir::SessionDir,
     session_view::SessionView,
 };
@@ -29,6 +29,8 @@ enum Floor {
     NoChange,
     /// O§8.2 has no row for a passing pytest or go test run.
     NoRow,
+    /// A Claude Code `PostToolUseFailure` case in `CASES`; checked as `FAILED_CC`.
+    FailedCc,
 }
 
 /// O§7.13 "If PO1 fails", O§8.2: a Claude Code `PostToolUseFailure` case.
@@ -43,10 +45,10 @@ const CASES: &[(&str, &str, Floor)] = &[
     ("dedup", "already-repeated", Floor::NoChange),
     ("dedup", "build-repeated-warning", Floor::DedupWarning),
     ("diff", "git-diff-repo", Floor::Capped),
-    ("failure", "cargo-test-failing", FAILED_CC),
-    ("failure", "short", FAILED_CC),
-    ("gotest", "failing-parallel", FAILED_CC),
-    ("gotest", "panic", FAILED_CC),
+    ("failure", "cargo-test-failing", Floor::FailedCc),
+    ("failure", "short", Floor::FailedCc),
+    ("gotest", "failing-parallel", Floor::FailedCc),
+    ("gotest", "panic", Floor::FailedCc),
     ("gotest", "passing-verbose", Floor::NoRow),
     ("json", "cargo-metadata", Floor::Capped),
     // no runner summary
@@ -55,8 +57,8 @@ const CASES: &[(&str, &str, Floor)] = &[
     ("libtest", "passing", Floor::LibtestPassing),
     ("libtest", "signal-crash", Floor::Failing),
     ("log", "errors-in-middle", Floor::Capped),
-    ("pytest", "collection-error", FAILED_CC),
-    ("pytest", "failing-verbose", FAILED_CC),
+    ("pytest", "collection-error", Floor::FailedCc),
+    ("pytest", "failing-verbose", Floor::FailedCc),
     ("pytest", "passing", Floor::NoRow),
 ];
 
@@ -88,6 +90,12 @@ fn required_cases_present() {
     assert!(CASES.iter().filter(|(s, _, _)| *s == "pytest" || *s == "gotest").count() >= 6);
     // the none row's inputs
     assert_eq!(bash_fixtures().len(), 6);
+    // F8: a case is listed as a failed Claude Code call exactly when its meta.json says so
+    for c in shaping::cases(None) {
+        let listed = CASES.iter().any(|(s, n, f)| *s == c.shaper && *n == c.name && *f == Floor::FailedCc);
+        let is = c.meta["agent"] == "claude-code" && c.meta["event"] == "PostToolUseFailure";
+        assert_eq!(listed, is, "{}/{}: listed as FailedCc {listed}, meta says {is}", c.shaper, c.name);
+    }
 }
 
 /// A temporary session as `shaping_hook.rs` builds it: `results`, `shape`, the default threshold; a fresh usage db.
@@ -119,14 +127,16 @@ fn env(agent: Agent) -> Env {
     Env { _t: t, dir, db, agent }
 }
 
-/// The hook stdout of `input` through `guarded`, with the PO2 branch and no panic seam set explicitly; the exit code is 0.
+/// The hook stdout of `input`, with the PO2 branch and no panic seam set explicitly. Calls `trim_in_with`
+/// directly: `guarded` would turn an error or a panic into "no change" and swaps the process panic hook.
 fn run(e: &Env, input: &[u8]) -> String {
     // explicit: `TrimOpts::default()` reads `ZYGO_TEST_SHAPE_PANIC`
     let opts = TrimOpts { db_bound: zygo_usage::store::HOOK_DB_BOUND, stderr_cleared: trim::PO2_STDERR_CLEARED, shape_panic: false };
-    let (out, code) = guarded(&|b| trim::trim_in_with(&HookInput::parse(e.agent, b)?, &e.dir, &e.db, &opts), input);
-    assert_eq!(code, 0);
-    out
+    trim::trim_in_with(&HookInput::parse(e.agent, input).unwrap(), &e.dir, &e.db, &opts).unwrap().to_stdout()
 }
+
+/// (stored_bytes, view_bytes, shaper, result_id) of a `trims` row.
+type Row = (u64, u64, String, Option<String>);
 
 /// The stored result ids.
 fn ids(e: &Env) -> Vec<String> {
@@ -135,11 +145,11 @@ fn ids(e: &Env) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// (stored_bytes, view_bytes, shaper) of each `trims` row, by rowid.
-fn rows(e: &Env) -> Vec<(u64, u64, String)> {
+/// (stored_bytes, view_bytes, shaper, result_id) of each `trims` row, by rowid.
+fn rows(e: &Env) -> Vec<Row> {
     let c = rusqlite::Connection::open(&e.db).unwrap();
-    let mut q = c.prepare("SELECT stored_bytes, view_bytes, shaper FROM trims ORDER BY rowid").unwrap();
-    q.query_map([], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64, r.get::<_, Option<String>>(2)?.unwrap_or_default())))
+    let mut q = c.prepare("SELECT stored_bytes, view_bytes, shaper, result_id FROM trims ORDER BY rowid").unwrap();
+    q.query_map([], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64, r.get::<_, Option<String>>(2)?.unwrap_or_default(), r.get(3)?)))
         .unwrap()
         .map(Result::unwrap)
         .collect()
@@ -198,8 +208,8 @@ struct Got {
     view: String,
     /// `updatedToolOutput.stderr` when it is a string.
     stderr_out: Option<String>,
-    /// (stored_bytes, view_bytes, shaper) of the one `trims` row.
-    row: Option<(u64, u64, String)>,
+    /// (stored_bytes, view_bytes, shaper, result_id) of the one `trims` row.
+    row: Option<Row>,
     /// (stored id, `Store::get(..).data`).
     stored: Option<(String, Vec<u8>)>,
 }
@@ -209,7 +219,7 @@ fn floor_of(c: &Case) -> Floor {
     CASES
         .iter()
         .find(|(s, n, _)| *s == c.shaper && *n == c.name)
-        .map(|(_, _, f)| *f)
+        .map(|(_, _, f)| if *f == Floor::FailedCc { FAILED_CC } else { *f })
         .unwrap_or_else(|| panic!("{}/{}: not in CASES", c.shaper, c.name))
 }
 
@@ -258,6 +268,25 @@ fn raw_text(c: &Case) -> Vec<u8> {
     r
 }
 
+/// `text` without its color codes: each `ESC [ <digits and ;> m` sequence. `zygo-results` has no public strip function.
+fn no_color(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("\x1b[") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let n = after.bytes().take_while(|b| b.is_ascii_digit() || *b == b';').count();
+        if after.as_bytes().get(n) == Some(&b'm') {
+            rest = &after[n + 1..];
+        } else {
+            out.push('\x1b');
+            rest = &rest[i + 1..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// O§7.3: the case's text is reuse text.
 fn reuse(c: &Case) -> bool {
     let cmd = c.meta["command"].as_str().unwrap_or("");
@@ -267,6 +296,7 @@ fn reuse(c: &Case) -> bool {
 
 /// Each way `g` misses the case's O§8.1 and O§8.2 checks (Decisions 4-6); empty when it meets them.
 fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
+    let f = if f == Floor::FailedCc { FAILED_CC } else { f };
     let at = format!("{}/{}", c.shaper, c.name);
     let mut p = vec![];
     let mk = std::fs::read(c.dir.join("must_keep")).unwrap();
@@ -290,12 +320,27 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
         }
         return p;
     }
-    let (Some((s, v, shaper)), Some((_, data))) = (&g.row, &g.stored) else {
+    let (Some((s, v, shaper, row_id)), Some((id, data))) = (&g.row, &g.stored) else {
         p.push(format!("{at}: no hook view, row or stored result"));
         return p;
     };
     if g.out.is_empty() {
         p.push(format!("{at}: no hook output"));
+    }
+    // O§7.8, O§7.9: stored_bytes is the raw text (stdout only in the PO2-fail branch on Claude Code), view_bytes the view
+    let counted = if trim::PO2_STDERR_CLEARED || c.meta["agent"] == "opencode" { raw.len() } else { c.stdout.len() };
+    if *s != counted as u64 {
+        p.push(format!("{at}: row stored_bytes {s} is not the {counted} bytes of the raw text (O§7.8)"));
+    }
+    // the mask keeps the length: an id and ZERO_ID are both 26 bytes
+    if *v != g.view.len() as u64 {
+        p.push(format!("{at}: row view_bytes {v} is not the {} bytes of the view (O§7.8)", g.view.len()));
+    }
+    if row_id.as_deref() != Some(id.as_str()) {
+        p.push(format!("{at}: row result_id {row_id:?} is not the stored id (O§7.9)"));
+    }
+    if !g.view.contains(ZERO_ID) {
+        p.push(format!("{at}: the view does not name the stored id (O§16 item 2)"));
     }
     if *data != raw {
         p.push(format!("{at}: the stored result differs from the raw text (O§8.4)"));
@@ -327,6 +372,10 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
             if g.view.contains('\r') && !reuse(c) {
                 p.push(format!("{at}: the view holds CR and the text is not reuse text (O§8.2)"));
             }
+            // O§8.1 clean row: the CRLF `git diff --color=always` case stays byte-equal except the color codes
+            if c.name == "git-diff-color-crlf" && g.view.split_once('\n').map(|(_, b)| b) != Some(no_color(&raw_s).as_str()) {
+                p.push(format!("{at}: the view after the marker is not the raw text byte-equal except the color codes (O§8.1)"));
+            }
         }
         Floor::DedupWarning => {
             floor(50, &mut p);
@@ -350,7 +399,7 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
                 p.push(format!("{at}: view of {v} bytes is over the {} byte cap (O§8.2)", zygo_results::view::VIEW_CAP_BYTES));
             }
         }
-        Floor::NoChange | Floor::NoRow => {}
+        Floor::NoChange | Floor::NoRow | Floor::FailedCc => {}
     }
     p
 }
@@ -448,5 +497,107 @@ fn case_views_match_goldens() {
     for c in shaping::cases(None) {
         p.extend(settle(&c, floor_of(&c), &run_case(&c), bless));
     }
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+#[test]
+#[should_panic]
+fn run_fails_on_a_hook_error() {
+    // F1: a hook error is a test failure, not "no change"
+    run(&env(Agent::ClaudeCode), b"not json");
+}
+
+/// The case `shaper/name` and its hook result.
+fn got(shaper: &str, name: &str) -> (Case, Got) {
+    let c = shaping::cases(Some(shaper)).into_iter().find(|c| c.name == name).unwrap();
+    let g = run_case(&c);
+    (c, g)
+}
+
+#[test]
+fn problems_name_a_row_that_does_not_match_the_view() {
+    // O§7.8, O§7.9: the row's numbers and id are those of the stored raw text and the view
+    let (c, g) = got("libtest", "failing-nocapture");
+    assert_eq!(problems(&c, Floor::Failing, &g), Vec::<String>::new());
+    let mut b = g.clone();
+    b.row.as_mut().unwrap().0 += 1;
+    assert!(problems(&c, Floor::Failing, &b).iter().any(|l| l.contains("stored_bytes")), "{:?}", problems(&c, Floor::Failing, &b));
+    let mut b = g.clone();
+    b.row.as_mut().unwrap().1 -= 1;
+    assert!(problems(&c, Floor::Failing, &b).iter().any(|l| l.contains("view_bytes")), "{:?}", problems(&c, Floor::Failing, &b));
+    let mut b = g.clone();
+    b.row.as_mut().unwrap().3 = Some(ZERO_ID.into());
+    assert!(problems(&c, Floor::Failing, &b).iter().any(|l| l.contains("result_id")), "{:?}", problems(&c, Floor::Failing, &b));
+}
+
+#[test]
+fn problems_name_a_view_without_the_id() {
+    // O§16 item 2: recovery reads the id from the view
+    let (c, g) = got("libtest", "failing-nocapture");
+    let b = Got { view: g.view.replace(ZERO_ID, &"1".repeat(26)), ..g.clone() };
+    let p = problems(&c, Floor::Failing, &b);
+    assert!(p.iter().any(|l| l.contains("does not name the stored id")), "{p:?}");
+    assert!(!settle(&c, Floor::Failing, &b, false).is_empty());
+}
+
+#[test]
+fn problems_name_a_crlf_diff_view_that_changed_more_than_color() {
+    // O§8.1 clean row: `git diff --color=always` with a CRLF file stays byte-equal except the color codes
+    let (c, g) = got("clean", "git-diff-color-crlf");
+    assert_eq!(problems(&c, Floor::Clean, &g), Vec::<String>::new());
+    let b = Got { view: g.view.replacen("\r\n", " \n", 1), ..g.clone() };
+    let p = problems(&c, Floor::Clean, &b);
+    assert!(p.iter().any(|l| l.contains("byte-equal")), "{p:?}");
+}
+
+/// The view `trim_in` builds for `c`'s raw text when the hook runs on it: `shape::run` as `trim.rs` calls it,
+/// then the O§7.8 shaped marker with the id masked; `None` when the size view would run.
+fn runner_view(c: &Case) -> Option<String> {
+    use zygo_results::shape::{command, run, ShapeInput};
+    let raw = String::from_utf8(raw_text(c)).unwrap();
+    let cmd = c.meta["command"].as_str().unwrap();
+    let si = ShapeInput { parsed: Some(command::parse(cmd)), kind: zygo_results::kind::sniff(&c.stdout), threshold: SessionView::default().trim_threshold_bytes };
+    let sh = run(&raw, &si);
+    let s = zygo_results::Stored {
+        id: ZERO_ID.into(),
+        tool: "Bash".into(),
+        bytes: raw.len() as u64,
+        lines: raw.lines().count() as u64,
+        kind: si.kind,
+        created_at: 0,
+        session: None,
+        data: vec![],
+    };
+    (!sh.size_view).then(|| zygo_results::view::shaped_view(&sh.steps, &sh.text, &s))
+}
+
+#[test]
+fn failed_cc_runner_views_meet_the_failing_floor() {
+    // O§8.2 "libtest, pytest, go test, failing" while PO1 fails: the pytest and go test failing cases are checked on
+    // the runner view of their raw text, as `trim_in` would shape it on a `PostToolUse` call
+    let mut p = vec![];
+    let mut n = 0;
+    for c in shaping::cases(None) {
+        if !(c.shaper == "gotest" || c.shaper == "pytest") || !CASES.iter().any(|(s, m, f)| *s == c.shaper && *m == c.name && *f == Floor::FailedCc) {
+            continue;
+        }
+        n += 1;
+        let at = format!("{}/{}", c.shaper, c.name);
+        let Some(v) = runner_view(&c) else {
+            p.push(format!("{at}: no runner view"));
+            continue;
+        };
+        let s = raw_text(&c).len() as u64;
+        if !meets(s, v.len() as u64, 30) {
+            p.push(format!("{at}: saving {} of {s} bytes is under the 30 % floor (O§8.2)", s as i64 - v.len() as i64));
+        }
+        let lines: Vec<&str> = v.split('\n').collect();
+        for m in &c.must_keep {
+            if !holds(&lines, m, false) {
+                p.push(format!("{at}: must_keep line not in the runner view: {m:?}"));
+            }
+        }
+    }
+    assert_eq!(n, 4);
     assert!(p.is_empty(), "{}", p.join("\n"));
 }
