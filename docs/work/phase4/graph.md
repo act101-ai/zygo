@@ -68,7 +68,6 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | DONE | judgment | PR #91 merged adac6bc0; acceptance exit 0 @ 54039f94 (test-check-premises 50 cases); CI run 45678686867 green (ubuntu, macos, windows) |
 | PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | DONE | judgment | PR #126 merged 1206befa; acceptance exit 0 @ 4784e06b (real codex 0.172.0 run, ~/.codex unchanged); CI run 45698780636 green (ubuntu, macos, windows) |
 | PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | DONE | implementation | PR #137 merged 0d665799; acceptance exit 0 @ e554d2ca (real codex 0.172.0; PC1 PC2 PC7 PC13 PC14 verified); CI run 45725231426 green (ubuntu, macos, windows) |
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2, PC-10 | DONE | implementation | PR #155 merged d4ac5d2f; acceptance: real codex 0.172.0 run @ 685d55ef (PC3 PC12 verified; PC4 partial, replay only, Observed failed; PC5 failed on the replacement shape); CI run 45781607906 green on f16762a7 |
@@ -114,7 +113,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-14 | Opaque client kind `pub struct Agent(Kind)` and the `trybuild` compile-fail cases | CC-13 | TODO | judgment | — |
 | CC-15 | Boundary check `client_boundary` (K§6.1.4) with its exception list | CC-14 | TODO | judgment | — |
 | CC-16 | Base-spec notes: §8.1 (phase 3 features), §8.4 (`ZYGO_AGENT` ids, client denylist rows), §8.8 (superseded) | BS-1, CC-12, CC-15 | TODO | mechanical | — |
-| TF-1 | Tests: a child that exits before reading stdin does not fail the test (BrokenPipe) | — | PLANNED | mechanical | — |
+| TF-1 | Tests: a child that exits before reading stdin does not fail the test (BrokenPipe) | — | DONE | mechanical | PR #193 merged 245bae26; acceptance exit 0 on merged tree (compact_cmd 6 passed, 19 ignored); CI run 45810685136 green on 1082c520 |
 
 ## Log
 
@@ -184,3 +183,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | PC-11 DONE: 2 review rounds; 121 Codex fixtures re-scrubbed, per-folder id maps, time-0 ULIDs; shell rule scoped to command fields and environment_context; privacy gate covers Codex leak classes; SHELL=/bin/sh reverted; Claude Code/OpenCode leaks became PC-13; PR #186 6fb78bc7. |
 | 2026-11-26 | PC-13 PLANNED: 8 files hit (Shell, OS Version); rescrub_codex.py extended by folder arg, layout-only diffs ignored (6 files), Codex 288 unchanged; debug-skill.txt shell kept (upstream text); test-check-premises already fails on PC-12's Codex header, repaired in PC-13; no edge. |
 | 2026-11-26 | TF-1 added, PLANNED: CI run 45806142357 ubuntu, compact_cmd.rs:153 stdin write got BrokenPipe (child exited first); 29 child-stdin writes in crates/zygo/tests move to common::write_stdin (ignores only BrokenPipe); CC-8 now depends on TF-1 (shared test files). |
+| 2026-11-26 | TF-1 DONE: 1 review round; 29 child-stdin writes plus 1 in zygo-plugins ignore only BrokenPipe through common::write_stdin (zygo-plugins inline); a should_panic test for other errors; PR #193 merged 245bae26. |
