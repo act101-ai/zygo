@@ -13,6 +13,7 @@ use zygo_core::esc;
 use zygo_core::verbs::MAIL_SLASH_ARGS;
 use zygo_core::paths::Paths;
 use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
+use zygo_mail_sync::ops;
 use zygo_mail_sync::public::LsRemote;
 use zygo_mail_sync::spawn::ChildSpawner;
 use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
@@ -82,6 +83,7 @@ pub enum MailCmd {
 
 // `zygo mail sync` (S§8.1 row 4); a plain comment, so the about text is the doc of `MailCmd::Sync`.
 #[derive(Args)]
+#[command(group(clap::ArgGroup::new("op").multiple(false).args(["prune", "take_host", "new_identity", "drop_host"])))]
 pub struct SyncArgs {
     /// Workspace name; default: the workspace of this session or folder
     #[arg(long)]
@@ -89,11 +91,23 @@ pub struct SyncArgs {
     /// Prune the side branch in this sync
     #[arg(long)]
     pub prune: bool,
+    /// Take the mail host name for this workspace (after the collision line)
+    #[arg(long)]
+    pub take_host: bool,
+    /// Make a new mail identity for this workspace (after the twin line)
+    #[arg(long)]
+    pub new_identity: bool,
+    /// Delete the waiting mail, registry and ack of a host that will never sync again
+    #[arg(long, value_name = "host")]
+    pub drop_host: Option<String>,
+    /// Answer yes to the question of --drop-host
+    #[arg(long, requires = "drop_host")]
+    pub yes: bool,
     /// The hidden child form (S§8.1 child row, AU44): the workspace id the hook passes.
     #[arg(long, hide = true, requires = "background")]
     pub ws_id: Option<String>,
     /// The hidden child form (S§8.1 child row, AU44): silent, `Mode::Child`.
-    #[arg(long, hide = true, requires = "ws_id", conflicts_with_all = ["name", "prune"])]
+    #[arg(long, hide = true, requires = "ws_id", conflicts_with_all = ["name", "prune", "take_host", "new_identity", "drop_host", "yes"])]
     pub background: bool,
 }
 
@@ -354,9 +368,46 @@ fn sync_background(paths: Paths, ws_id: &str) -> i32 {
     }
 }
 
-/// S§8.2, S§8.3 (D1, D2): one `Mode::Cli` sync of `ws`, its lines on `out` and `err`; the exit code.
-fn sync_cli(env: &Env, ws: &Workspace, a: &SyncArgs, _input: &mut dyn BufRead, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    match run_with(env, &ws.id, Mode::Cli, &Opts { prune: a.prune }) {
+/// S§7.6, S§8.2, S§8.3 (D1, D2, D5): `--drop-host` asks on `err` and reads the answer from `input`, and runs no
+/// sync; `--take-host` and `--new-identity` run their operation and the sync; else one `Mode::Cli` sync of `ws`.
+/// The lines go to `out` and `err`; the result is the exit code.
+fn sync_cli(env: &Env, ws: &Workspace, a: &SyncArgs, input: &mut dyn BufRead, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if let Some(host) = &a.drop_host {
+        let dropped = {
+            let mut ask = |prompt: &str| -> bool {
+                if a.yes {
+                    let _ = writeln!(err, "{prompt} y (--yes)");
+                    return true;
+                }
+                let _ = write!(err, "{prompt} ");
+                let _ = err.flush();
+                super::plugins::confirm(input)
+            };
+            ops::drop_host(env, &ws.id, host, &mut ask)
+        };
+        return match dropped {
+            Ok(None) => {
+                let _ = writeln!(out, "zygo: host {} not dropped", esc(host));
+                0
+            }
+            Ok(Some(n)) => {
+                let _ = writeln!(out, "zygo: host {} dropped; {n} messages deleted", esc(host));
+                0
+            }
+            Err(e) => {
+                print_error(&e, &ws.name, err);
+                e.exit_code(Mode::Cli)
+            }
+        };
+    }
+    let done = if a.take_host {
+        ops::take_host(env, &ws.id)
+    } else if a.new_identity {
+        ops::new_identity(env, &ws.id)
+    } else {
+        run_with(env, &ws.id, Mode::Cli, &Opts { prune: a.prune })
+    };
+    match done {
         Ok(r) => {
             print_report(&r, out, err);
             0

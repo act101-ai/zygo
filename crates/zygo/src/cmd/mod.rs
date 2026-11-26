@@ -729,4 +729,37 @@ mod tests {
         assert!(!super::skips_sweep(&cmd(&["zygo", "mail", "ls"])));
         assert!(!super::skips_sweep(&cmd(&["zygo", "status"])));
     }
+
+    #[test] // S§8.1 row 4, AU44: the options of zygo mail sync and the hidden child form
+    fn mail_sync_args_parse() { // U1
+        use super::mail::{MailArgs, MailCmd, SyncArgs};
+        let sync = |a: &[&str]| -> Result<SyncArgs, clap::Error> {
+            let argv: Vec<&str> = ["zygo", "mail", "sync"].iter().chain(a).copied().collect();
+            match Cli::try_parse_from(argv)?.command {
+                Cmd::Mail(MailArgs { sub: Some(MailCmd::Sync(s)) }) => Ok(s),
+                _ => panic!("not mail sync"),
+            }
+        };
+        let s = sync(&[]).unwrap();
+        assert!(s.name.is_none() && !s.prune && !s.take_host && !s.new_identity && s.drop_host.is_none() && !s.yes);
+        assert!(s.ws_id.is_none() && !s.background);
+        let s = sync(&["--name", "app", "--prune"]).unwrap();
+        assert_eq!((s.name.as_deref(), s.prune), (Some("app"), true));
+        let s = sync(&["--drop-host", "b", "--yes"]).unwrap();
+        assert_eq!((s.drop_host.as_deref(), s.yes), (Some("b"), true));
+        assert!(sync(&["--take-host"]).unwrap().take_host);
+        assert!(sync(&["--new-identity"]).unwrap().new_identity);
+        let s = sync(&["--ws-id", "0123456789abcdef", "--background"]).unwrap();
+        assert_eq!((s.ws_id.as_deref(), s.background), (Some("0123456789abcdef"), true));
+        for bad in [
+            &["--yes"][..], &["--prune", "--take-host"], &["--take-host", "--new-identity"],
+            &["--new-identity", "--drop-host", "b"], &["--prune", "--drop-host", "b"],
+            &["--ws-id", "0123456789abcdef"], &["--background"],
+            &["--ws-id", "0123456789abcdef", "--background", "--name", "app"],
+            &["--ws-id", "0123456789abcdef", "--background", "--take-host"],
+            &["--ws-id", "0123456789abcdef", "--background", "--drop-host", "b"],
+        ] {
+            assert!(sync(bad).is_err(), "{bad:?}");
+        }
+    }
 }

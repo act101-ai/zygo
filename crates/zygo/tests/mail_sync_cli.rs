@@ -263,3 +263,56 @@ fn background_panic_prints_nothing_and_skips_the_results_sweep() { // T12
     assert_eq!(log.lines().count(), 1, "{log}");
     assert!(log.ends_with(" mail sync: stopped: panic\n"), "{log}");
 }
+
+#[test] // S§7.6, S§19 #20 (drop part), D5: the count and the question; n deletes nothing; --yes deletes
+fn drop_host_counts_asks_and_yes_deletes() { // T8
+    let r = remote();
+    let (a, b) = (machine(&r, "a", &[(ALICE, "alice")]), machine(&r, "b", &[(BOB, "bob")]));
+    sync(&a);
+    sync(&b);
+    sync(&a);
+    for _ in 0..3 { send(&a, "a", "alice", ("bob", "b")); }
+    sync(&a);
+    let prompt = "zygo: 3 messages wait for host b; they will be deleted. Delete them? [y/N]";
+    let before = tip_paths(&r);
+    let o = zygo(&a, &["mail", "sync", "--drop-host", "b"], &[], Some(b"n\n"));
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(0), "zygo: host b not dropped\n".to_string(), format!("{prompt} ")));
+    assert_eq!(tip_paths(&r), before);
+    let o = zygo(&a, &["mail", "sync", "--drop-host", "b", "--yes"], &[], None);
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(0), "zygo: host b dropped; 3 messages deleted\n".to_string(), format!("{prompt} y (--yes)\n")));
+    let after = tip_paths(&r);
+    assert!(after.iter().all(|p| !p.starts_with("bob@b/") && p != "registry/b.json" && p != "ack/b.json"), "{after:?}");
+    assert!(after.contains(&"registry/a.json".to_string()));
+}
+
+#[test] // S§7.6, S§19 #9 (CLI part): the collision line; --take-host syncs; --new-identity with a new host syncs
+fn take_host_and_new_identity_run_the_sync() { // T9
+    let r = remote();
+    let x1 = machine(&r, "x", &[(ALICE, "alice")]);
+    sync(&x1);
+    let x2 = machine(&r, "x", &[(ALICE, "alice")]);
+    let o = zygo(&x2, &["mail", "sync"], &[], None);
+    assert_eq!((o.status.code(), err(&o)), (Some(1), format!("{COLLISION}\n")));
+    let o = zygo(&x2, &["mail", "sync", "--take-host"], &[], None);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(out(&o).ends_with("zygo: mail sync: 0 sent, 0 delivered\n"), "{}", out(&o));
+    let o = zygo(&x1, &["mail", "sync"], &[], None);
+    assert_eq!((o.status.code(), err(&o)), (Some(1), format!("{COLLISION}\n")));
+    config(&x1, Some("x1"), "");
+    let o = zygo(&x1, &["mail", "sync", "--new-identity"], &[], None);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(tip_paths(&r).contains(&"registry/x1.json".to_string()));
+}
+
+#[test] // S§8.1 row 4, AU44: the user options are in the help, the hidden form is not; zygo mail lists sync
+fn help_shows_the_options_and_hides_the_child_form() { // T5
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    let help = out(&a.zygo(&["mail", "sync", "--help"], &[]).output().unwrap());
+    for f in ["--name", "--prune", "--take-host", "--new-identity", "--drop-host", "--yes"] {
+        assert!(help.contains(f), "{f}: {help}");
+    }
+    assert!(!help.contains("--ws-id") && !help.contains("--background"), "{help}");
+    let mail = out(&a.zygo(&["mail", "--help"], &[]).output().unwrap());
+    assert!(mail.lines().any(|l| l.trim_start().starts_with("sync ")), "{mail}");
+}
