@@ -364,7 +364,7 @@ A host that is idle for months keeps its mail on the branch, and the branch grow
 
 ### 10.4 Agent text
 
-M§8a item 8 gains one clause when sync is on and the member cache is not empty, after the member list: `Other machines: <address>, <address>, …; mail them by the full address.` At most 64 addresses, then `and <n> more; mail_list lists all`. `mail_list` returns the remote addresses from the member cache. The tool description of `mail_send` adds: "To a member on another machine, use `<name>@<host>`." No message text goes into this text (M§8a).
+M§8a item 8 gains one clause when sync is on for the workspace and the member cache is not empty, after the member list, before "Send with": `Other machines: <address>, <address>, …; mail them by the full address.` Each address is `<name>@<host>`, in host order, then names as stored, each address once; the addresses are joined with `, `. At most 64 addresses; when there are more, the last of the 64 is followed by `, and <n> more; mail_list lists all`, before `; mail them by the full address.`, where `<n>` is the number of addresses left out. Sync off, a config that does not load, or an empty cache gives no clause. `mail_list` returns the remote addresses from the member cache. The tool description of `mail_send` adds: "To a member on another machine, use `<name>@<host>`." No message text goes into this text (M§8a).
 
 ### 10.5 Output of remote values
 
@@ -492,7 +492,7 @@ P3-1 is not built. "The mail module" is the place where the P3-1 build puts the 
 | `crates/zygo-work/src/repo.rs:61-75` | Make `run_bounded_out` reachable from the mail module (or copy it), and add the stream mode (S§8.7). |
 | `crates/zygo-redact` | No change. Called from the mail module (S§8.6). |
 | `crates/zygo-hooks/src/workspace.rs` | The rate-limited spawn of the sync child on `session`, `prompt`, `stop` and `tool-end` (S§8.1, S§8.4), on the pattern of `start_snapshot_child` (`:484-513`). |
-| `crates/zygo-hooks/src/session_text.rs` | The item 8 clause (S§10.4). |
+| `crates/zygo-hooks/src/mail.rs` | The item 8 clause (S§10.4). |
 | `crates/zygo-mcp/src/tools/` (mail tools of P3-1) | Addresses, the send-time pass, remote addresses in `mail_list`, the description sentence. |
 | `crates/zygo/src/cmd/` (mail command of P3-1) | `zygo mail sync` and its options, the hidden `--ws-id <id> --background` form (AU44), the sync in `watch`, the sync line in `ls`, `esc` for remote values. |
 | `crates/zygo/src/cmd/mod.rs` | The results sweep is skipped for `mail sync --background`, as for `ws` (AU71): it runs on hook events. |
@@ -559,3 +559,4 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-25 · S§8.4 · author's call · a last_start later than now no longer stops hook starts until the clock passes it (MS-16 review F2).
 - 2026-11-25 · S§8.3 · author's call (lead) · MS-13 review F2: an outbox file that cannot be read stayed in the outbox and took a place in the 1000 of each pass, so 1000 such files stopped every later message; it now moves to `mail/outbox/refused/` with one `read` line and takes no place.
 - 2026-11-25 · S§9 · author's call (lead) · a prune failure other than a lost lease skips the prune and does not fail the pass (MS-14 review F1).
+- 2026-11-25 · S§10.4, S§17 · author's call (lead) · Clause form fixed to the M§8a text of MS-20; each address once; clause code in mail.rs (ML-9 put item 8 there).
