@@ -337,3 +337,116 @@ fn view_tries_runners_in_order() {
         assert_eq!(view(&raw, rs), None, "{rs:?}");
     }
 }
+
+/// A failing run whose failure section holds lines of the hidden forms (trybuild, a test that runs cargo).
+const C: &str = concat!(
+    "   Compiling x v0.1.0 (/repo)\n",
+    "running 7 tests\n",
+    "test t::a ... ok\n", "test t::b ... ok\n", "test t::c ... ok\n",
+    "test t::d ... ok\n", "test t::e ... ok\n", "test t::f ... ok\n",
+    "test ui ... FAILED\n",
+    "\n",
+    "failures:\n",
+    "\n",
+    "---- ui stdout ----\n",
+    "test tests/ui/one.rs ... ok\n",
+    "test tests/ui/two.rs ... mismatch\n",
+    "    Updating index failed: connection refused\n",
+    "   Compiling probe v0.1.0 (/repo)\n",
+    "\n",
+    "failures:\n",
+    "    ui\n",
+    "\n",
+    "test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+);
+const C_VIEW: &str = concat!(
+    "[zygo: 1 build progress lines hidden]\n",
+    "running 7 tests\n",
+    "[zygo: 6 passed and 0 ignored test lines hidden]\n",
+    "test ui ... FAILED\n",
+    "\n",
+    "failures:\n",
+    "\n",
+    "---- ui stdout ----\n",
+    "test tests/ui/one.rs ... ok\n",
+    "test tests/ui/two.rs ... mismatch\n",
+    "    Updating index failed: connection refused\n",
+    "   Compiling probe v0.1.0 (/repo)\n",
+    "\n",
+    "failures:\n",
+    "    ui\n",
+    "\n",
+    "test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+);
+
+/// A binary that crashed before its summary, then a second binary.
+const D: &str = concat!(
+    "running 6 tests\n",
+    "test a::t1 ... ok\n", "test a::t2 ... ok\n", "test a::t3 ... ok\n", "test a::t4 ... ok\n", "test a::t5 ... ok\n",
+    "error: test failed, to rerun pass `--lib`\n",
+    "     Running tests/it.rs (target/debug/deps/it-0123456789abcdef)\n",
+    "running 5 tests\n",
+    "test b::t1 ... ok\n", "test b::t2 ... ok\n", "test b::t3 ... ok\n", "test b::t4 ... ok\n", "test b::t5 ... ok\n",
+    "\n",
+    "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+);
+const D_VIEW: &str = concat!(
+    "running 6 tests\n",
+    "[zygo: 5 passed and 0 ignored test lines hidden]\n",
+    "error: test failed, to rerun pass `--lib`\n",
+    "     Running tests/it.rs (target/debug/deps/it-0123456789abcdef)\n",
+    "running 5 tests\n",
+    "[zygo: 5 passed and 0 ignored test lines hidden]\n",
+    "\n",
+    "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+);
+
+#[test]
+fn failure_section_lines_are_never_hidden() {
+    // O§7.6 failure section, O-C9 (OS-30 review F1)
+    assert_eq!(libtest(C), Some((C_VIEW.to_string(), vec![Passed, Build])));
+}
+
+#[test]
+fn a_binary_boundary_ends_the_test_group() {
+    // O§7.6 "each test binary": a crashed binary's count does not absorb the next binary (OS-30 review F2)
+    assert_eq!(libtest(D), Some((D_VIEW.to_string(), vec![Passed])));
+    let doc = D.replace("     Running tests/it.rs (target/debug/deps/it-0123456789abcdef)", "   Doc-tests x");
+    let want = D_VIEW.replace("     Running tests/it.rs (target/debug/deps/it-0123456789abcdef)", "   Doc-tests x");
+    assert_eq!(libtest(&doc), Some((want, vec![Passed])));
+}
+
+#[test]
+fn review_inputs_keep_the_line_rules() {
+    // O§8.3 item 5 and the count rule on the round-2 inputs
+    for raw in [C, D] {
+        let v = libtest(raw).unwrap().0;
+        for l in removed(raw, &v) {
+            assert!(hidden_by(Libtest, l), "{l:?}");
+        }
+    }
+}
+
+#[test]
+fn hidden_forms_take_only_ascii_blanks_and_no_cr() {
+    // O§7.6: `\s` is ASCII space or tab; a line ending in CR matches no form (OS-30 review F4)
+    for l in [
+        "\u{a0}Compiling x v1",
+        "\u{2003}Checking y",
+        "\rCompiling x v1",
+        "\x0bFresh y v1",
+        "   Compiling x v1\r",
+        "test a ... ok\r",
+        "test a ... ignored, slow\r",
+    ] {
+        assert!(!hidden_by(Libtest, l), "{l:?}");
+    }
+    assert!(hidden_by(Libtest, "\t Compiling x v1"));
+}
+
+#[test]
+fn dedup_counted_lines_are_never_hidden() {
+    // O§7.5 counted form stays (OS-30 review F3)
+    assert!(!hidden_by(Libtest, "    Blocking waiting for file lock on build directory [repeated 5 times]"));
+    assert!(!hidden_by(Libtest, "test a ... ignored, x [repeated 3 times]"));
+}

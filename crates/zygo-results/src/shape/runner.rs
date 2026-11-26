@@ -18,13 +18,25 @@ static TEST_HIDDEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^test \S+ \.\.\. (ok|ignored|ignored, .*)$").unwrap());
 
 /// The cargo progress form
-/// `^\s+(Compiling|Checking|Fresh|Downloaded|Downloading|Locking|Updating|Blocking) \S.*$` (O§7.6).
+/// `^\s+(Compiling|Checking|Fresh|Downloaded|Downloading|Locking|Updating|Blocking) \S.*$` (O§7.6),
+/// with `\s` as ASCII space or tab.
 static PROGRESS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s+(Compiling|Checking|Fresh|Downloaded|Downloading|Locking|Updating|Blocking) \S.*$").unwrap()
+    Regex::new(r"^[ \t]+(Compiling|Checking|Fresh|Downloaded|Downloading|Locking|Updating|Blocking) \S.*$").unwrap()
 });
 
-/// Whether `line` (one line without its `\n`) matches a whole-line hidden form of the row of `r` (O§7.6).
+/// A cargo test binary line `^\s+(Running|Doc-tests) ` (O§7.6): it ends the test lines of the binary before it.
+static BINARY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[ \t]+(Running|Doc-tests) ").unwrap());
+
+/// The dedup counted form `<line> [repeated <n> times]` (O§7.5).
+static COUNTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" \[repeated [0-9]+ times\]$").unwrap());
+
+/// Whether `line` matches a whole-line hidden form of the row of `r` (O§7.6). `line` is one line of the text
+/// that step 3 sees (after clean, O§7.4, and dedup, O§7.5), without its `\n`. A line that ends in `\r` or
+/// in the dedup counted form matches no form.
 pub fn hidden_by(r: Runner, line: &str) -> bool {
+    if line.ends_with('\r') || COUNTED.is_match(line) {
+        return false;
+    }
     match r {
         Runner::Libtest => TEST_HIDDEN.is_match(line) || PROGRESS.is_match(line),
         Runner::Pytest | Runner::Gotest => false,
@@ -59,7 +71,9 @@ enum Piece<'a> {
 /// The libtest view of `text` (O§7.6): hides the passed and ignored test lines and the cargo progress lines,
 /// keeps every other line verbatim and in order, and writes `[zygo: <p> passed and <i> ignored test lines
 /// hidden]` at the place of the first hidden test line of each test binary and `[zygo: <n> build progress
-/// lines hidden]` at the place of the first hidden progress line. `None` when the text has no summary,
+/// lines hidden]` at the place of the first hidden progress line. A test binary's hidden test lines end at its
+/// summary line or at the next binary line. No line of a failure section (from a `---- ` header to the next
+/// `failures:` line) is hidden (O-C9). `None` when the text has no summary,
 /// nothing is hidden, or the view is not shorter than `text` (O§7.3 "No step adds content").
 pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
     if !SUMMARY.is_match(text) {
@@ -69,9 +83,20 @@ pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
     let mut groups: Vec<(usize, usize)> = Vec::new();
     let mut open = false;
     let mut build = 0usize;
+    let mut failure = false;
     for line in text.split_inclusive('\n') {
         let bare = line.strip_suffix('\n').unwrap_or(line);
-        if let Some(c) = TEST_HIDDEN.captures(bare) {
+        if bare.starts_with("---- ") {
+            failure = true;
+        } else if bare == "failures:" {
+            failure = false;
+        }
+        if failure || !hidden_by(Runner::Libtest, bare) {
+            pieces.push(Piece::Line(line));
+            if SUMMARY.is_match(bare) || BINARY.is_match(bare) {
+                open = false;
+            }
+        } else if let Some(c) = TEST_HIDDEN.captures(bare) {
             if !open {
                 groups.push((0, 0));
                 pieces.push(Piece::Tests(groups.len() - 1));
@@ -88,11 +113,6 @@ pub fn libtest(text: &str) -> Option<(String, Vec<Step>)> {
                 pieces.push(Piece::Build);
             }
             build += 1;
-        } else {
-            pieces.push(Piece::Line(line));
-            if SUMMARY.is_match(bare) {
-                open = false;
-            }
         }
     }
     if groups.is_empty() && build == 0 {

@@ -339,3 +339,19 @@ fn compile_error_gets_no_runner_view() {
     let out = shape::run(&raw, &input(Some("cargo test"), Kind::Text, T));
     assert_eq!(out, Shaped { text: raw.clone(), steps: vec![], shaper: None, size_view: false });
 }
+
+#[test]
+fn runner_view_keeps_the_dedup_line() {
+    // O§7.5 then O§7.6: a counted line is never hidden, so `repeated lines counted` stays true (OS-30 review F3)
+    let block = "    Blocking waiting for file lock on build directory";
+    let raw = format!("{block}\n").repeat(5)
+        + "   Compiling x v1\n"
+        + &(0..20).map(|i| format!("test t::case_{i:03} ... ok\n")).collect::<String>()
+        + "\ntest result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    let out = shape::run(&raw, &input(Some("cargo test"), Kind::Text, T));
+    let counted = format!("{block} [repeated 5 times]");
+    assert!(out.text.lines().any(|l| l == counted), "{:?}", out.text);
+    assert!(out.text.lines().any(|l| l == "[zygo: 1 build progress lines hidden]"), "{:?}", out.text);
+    assert_eq!(out.steps, vec![Counted, Step::PassedTestsHidden, Step::BuildProgressHidden]);
+    assert_eq!(out.shaper, Some(Shaper::Libtest));
+}
