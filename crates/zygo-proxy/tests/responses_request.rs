@@ -684,3 +684,74 @@ fn f8_tool_call_pairing() {
     let (m, _) = rq(&body(json!([user("go"), ctc("c2"), dev("D"), ctco("c2"), user("next")]))).unwrap();
     assert_valid(&m);
 }
+
+#[test]
+fn f9_empty_text_blocks_dropped() {
+    let b = body(json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":""},{"type":"input_text","text":"go"}]},
+        asst(""),
+        dev(""),
+        user("u"),
+        fc("c1", "f", "{}"),
+        {"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":""},{"type":"input_text","text":"r"}]},
+        {"type":"message","role":"user","content":[]}
+    ]));
+    let (m, _) = rq(&b).unwrap();
+    assert_eq!(
+        m["messages"],
+        json!([
+            {"role":"user","content":[text("go"), text("u")]},
+            {"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"f","input":{}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":[text("r")]}]}
+        ])
+    );
+    assert_400(err(rq(&body(json!("")))), NO_USER_FIRST);
+    // A user message left with no block is dropped, so the conversation starts with the assistant.
+    assert_400(err(rq(&body(json!([user(""), asst("a")])))), NO_USER_FIRST);
+}
+
+#[test]
+fn f9_output_array_maps_parts() {
+    let b = body(json!([user("go"), fc("c1", "f", "{}"),
+        {"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"r"},
+            {"type":"input_image","image_url":"https://e.x/i.png"}]}]));
+    let (m, _) = rq(&b).unwrap();
+    assert_eq!(
+        m["messages"][2]["content"][0],
+        json!({"type":"tool_result","tool_use_id":"c1","content":[text("r"),
+            {"type":"image","source":{"type":"url","url":"https://e.x/i.png"}}]})
+    );
+}
+
+#[test]
+fn f9_parallel_false_without_tool_choice() {
+    let mut b = body(json!([user("go")]));
+    b["tools"] = json!([{"type":"function","name":"f","parameters":{"type":"object"}}]);
+    b["parallel_tool_calls"] = json!(false);
+    let (m, _) = rq(&b).unwrap();
+    assert_eq!(m["tool_choice"], json!({"type":"auto","disable_parallel_tool_use":true}));
+}
+
+#[test]
+fn f9_item_and_part_errors() {
+    let long = "é".repeat(100);
+    let cut = "é".repeat(64);
+    let cases = [
+        (json!({"type":long}), format!("unknown input item type: {cut}")),
+        (json!({"type":"message","role":"user","content":[{"type":long}]}), format!("unknown content part type: {cut}")),
+        (json!({"content":[]}), "input item: missing type".to_string()),
+        (json!({"type":"message","role":"tool","content":[]}), "message: unknown role: tool".to_string()),
+    ];
+    for (item, message) in cases {
+        assert_400(err(rq(&body(json!([user("go"), item])))), &message);
+    }
+}
+
+#[test]
+fn f9_other_hosted_items_dropped() {
+    let b = body(json!([user("go"), {"type":"local_shell_call","id":"l","status":"completed"},
+        {"type":"mcp_call","id":"m"}, asst("a")]));
+    let (_, codes) = rq(&b).unwrap();
+    assert!(codes.contains(&"items_dropped:local_shell_call:1".to_string()), "{codes:?}");
+    assert!(codes.contains(&"items_dropped:mcp_call:1".to_string()), "{codes:?}");
+}
