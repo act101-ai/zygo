@@ -219,7 +219,7 @@ fn trailing_carriage_return_overwrites_nothing() {
 
 #[test]
 fn charset_designation_is_removed() {
-    // FX-16 (F4): `ESC (` or `ESC )` plus one character
+    // FX-16 (F4): `ESC (` or `ESC )` plus one final byte 0x30-0x7E
     color("ok\x1b(B", "ok");
     color("a\x1b)0b", "ab");
     color("\x1b[32mok\x1b(B\x1b[m\n", "ok\n");
@@ -242,11 +242,16 @@ fn charset_designation_never_takes_a_line_end_or_an_esc() {
 }
 
 #[test]
-fn charset_designation_takes_one_whole_character() {
-    // FX-16 review F2/F3: a non-ASCII character after `ESC (` is removed whole, never split
-    color("a\x1b(éb", "ab");
-    color("a\x1b(😀b", "ab");
-    color("a\x1b)éb", "ab");
+fn charset_designation_takes_only_a_final_byte() {
+    // FX-16 review 2 F1/F5: only a final byte 0x30-0x7E goes with `ESC (` or `ESC )`;
+    // anything else stays (O-C9: when a shaper is unsure, it keeps)
+    color("a\x1b(éb", "aéb");
+    color("a\x1b(😀b", "a😀b");
+    color("a\x1b)éb", "aéb");
+    // U+009B then starts its own 8-bit CSI
+    color("a\x1b(\u{9b}31mb", "ab");
+    // 0x20 is below 0x30
+    color("a\x1b( b", "a b");
 }
 
 #[test]

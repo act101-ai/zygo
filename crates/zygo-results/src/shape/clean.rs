@@ -60,13 +60,12 @@ fn esc_len(text: &str, i: usize, osc_stop_cache: &mut Option<usize>) -> usize {
     let b = text.as_bytes();
     match b.get(i + 1) {
         None | Some(b'\n' | b'\r' | &ESC) => 1,
-        // Charset designation: `ESC (` or `ESC )` plus one character; never a line end or an `ESC`.
-        Some(b'(' | b')') => {
-            2 + match text[i + 2..].chars().next() {
-                None | Some('\n' | '\r' | '\x1b') => 0,
-                Some(c) => c.len_utf8(),
-            }
-        }
+        // Charset designation (ECMA-35): `ESC (` or `ESC )` plus one final byte 0x30-0x7E.
+        // Any other next byte stays (O-C9), so a line end, an `ESC` or real text is never taken.
+        Some(b'(' | b')') => match b.get(i + 2) {
+            Some(0x30..=0x7E) => 3,
+            _ => 2,
+        },
         Some(b'[') => csi_end(b, i + 2).map_or(2, |end| end - i),
         Some(b']') => {
             let body = i + 2;
