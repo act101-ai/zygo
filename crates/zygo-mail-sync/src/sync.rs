@@ -78,7 +78,7 @@ impl SyncError {
 }
 
 /// S§8.3 step 7: the line of a tip without the marker.
-const MARKER_LINE: &str = "zygo: the side branch is not a zygo mail branch";
+pub(crate) const MARKER_LINE: &str = "zygo: the side branch is not a zygo mail branch";
 /// S§8.2: the line of a public remote.
 const PUBLIC_LINE: &str = "zygo: the remote can be read without a login; mail sync refused";
 /// S§11: the line of a `remote` that `git remote` does not list.
@@ -87,25 +87,25 @@ const REMOTE_LINE: &str = "zygo: no such remote";
 const GATE_RECORD_LINE: &str = "zygo: mail sync cannot run: the workspace record cannot be read";
 const GATE_CONFIG_LINE: &str = "zygo: mail sync cannot run: the config does not load";
 /// S§8.3 step 15: the line after the fifth move of the branch.
-const MOVED_LINE: &str = "zygo: the side branch moved 5 times during the sync; try again";
+pub(crate) const MOVED_LINE: &str = "zygo: the side branch moved 5 times during the sync; try again";
 /// S§9 Push: the note of a forced prune whose lease failed.
 const PRUNE_MOVED_NOTE: &str = "prune skipped: the branch moved; run again";
 /// The poll of a lock that another holder has, as the workspace lock helper.
 const LOCK_POLL: Duration = Duration::from_millis(5);
 
 /// One sync: the seams, the paths, the workspace record and the settings in force.
-struct Ctx<'a> {
-    env: &'a Env,
-    ws_id: &'a str,
-    sp: SyncPaths,
-    store: Store,
-    ws: Workspace,
-    cfg: Config,
-    s: SyncSettings,
+pub(crate) struct Ctx<'a> {
+    pub(crate) env: &'a Env,
+    pub(crate) ws_id: &'a str,
+    pub(crate) sp: SyncPaths,
+    pub(crate) store: Store,
+    pub(crate) ws: Workspace,
+    pub(crate) cfg: Config,
+    pub(crate) s: SyncSettings,
 }
 
 /// Why a pass stopped: a stop with its CLI line and check name, or a test seam.
-enum Fail {
+pub(crate) enum Fail {
     Stop { line: String, check: &'static str },
     Crash(&'static str),
 }
@@ -119,7 +119,7 @@ impl From<BranchError> for Fail {
 }
 
 /// A stop with the author's line (Open O6): the check name and that the outbox is kept.
-fn stop(check: &'static str) -> Fail {
+pub(crate) fn stop(check: &'static str) -> Fail {
     Fail::Stop { line: format!("zygo: mail sync stopped ({check}); the outbox is kept"), check }
 }
 
@@ -192,7 +192,7 @@ impl Ctx<'_> {
         }
     }
 
-    fn log(&self, line: &str) { self.store.log_error(line) }
+    pub(crate) fn log(&self, line: &str) { self.store.log_error(line) }
 }
 
 /// S§8.3 step 1: the workspace record, the config (layers 1-4, the main worktree as the repository) and the sync
@@ -210,6 +210,18 @@ fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
         .config;
     let s = sync_for(&cfg, &ws.name).map_err(SyncError::Off)?;
     Ok(Ctx { env, ws_id, sp, store, ws, cfg, s })
+}
+
+/// S§8.3 steps 1 and 3, S§15: `f` under the gate and the CLI lock, which drops at return. A lock held by another
+/// after the CLI wait is `Busy`; a stop of `f` is logged and recorded as a stop of a pass.
+pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T, Fail>) -> Result<T, SyncError> {
+    let c = gate(env, ws_id)?;
+    let _lock = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
+        Ok(Some(l)) => l,
+        Ok(None) => return Err(SyncError::Busy),
+        Err(f) => return Err(c.stopped(f, false)),
+    };
+    f(&c).map_err(|e| c.stopped(e, true))
 }
 
 /// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each
@@ -387,7 +399,7 @@ fn prune_step(c: &Ctx, report: &mut Report, base: &str, meta: &TipMeta, identity
 /// S§8.3 step 5, S§8.2, S§11: the remote is one that `git remote` lists, then the public check of its URLs. `Public`
 /// stops the sync before any fetch; `Unknown` is a note and the sync runs. It loads and saves `state.json` itself,
 /// so the pass loads the state after it.
-fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> Result<(), Fail> {
+pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> Result<(), Fail> {
     let root = &c.ws.main_root;
     let w = crate::git::run(root, &["remote"], deadline).map_err(|_| stop("remote"))?;
     if !w.ok {
@@ -559,7 +571,7 @@ fn own_ack<'m>(meta: &'m TipMeta, h: &str, identity: &str) -> Option<&'m Ack> {
 }
 
 /// S§7.5: the branch path and blob id of each valid registry and ack file of this identity.
-fn own_blobs(meta: &TipMeta, identity: &str) -> BTreeMap<String, String> {
+pub(crate) fn own_blobs(meta: &TipMeta, identity: &str) -> BTreeMap<String, String> {
     let regs = meta.registries.iter()
         .filter(|(_, r)| matches!(&r.value, Ok(v) if v.identity == identity))
         .map(|(h, r)| (format!("registry/{h}.json"), r.blob.clone()));
@@ -593,6 +605,14 @@ fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
     Ok(out)
 }
 
+/// S§7.3: the valid member names of `ws`, sorted, without duplicates: the `members` of the own registry.
+pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
+    let mut names: Vec<String> = ws.members.values().filter_map(|m| m.valid_name().map(String::from)).collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host when it
 /// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
 /// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
@@ -601,9 +621,7 @@ fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
 fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, BTreeSet<Ulid>>,
     acked: &[Ulid]) -> Vec<Change> {
     let host = c.s.host.as_str();
-    let mut names: Vec<String> = c.ws.members.values().filter_map(|m| m.valid_name().map(String::from)).collect();
-    names.sort();
-    names.dedup();
+    let names = own_names(&c.ws);
     let mut out = Vec::new();
     let same = meta.registries.get(host).and_then(|r| r.value.as_ref().ok())
         .is_some_and(|r| r.identity == identity && r.members == names);
