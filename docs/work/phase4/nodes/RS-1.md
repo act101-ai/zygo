@@ -147,3 +147,28 @@ Produced:
 4. Review focus 7 → `ob9_unknown_or_incomplete_item_400`, `each_refused_field_400`, `text_format_rules`; review focus 8 → `mark_*`, `ob5_unmarked_or_foreign_reasoning_dropped`.
 5. Proportion: no step carries a function body; the plan gives signatures, constants, messages and assertions.
 6. Live code: every path, symbol and line cited above was opened at 0d665799.
+
+## Review round 1 findings
+
+Review of PR #152 at d9092120: 1 important, 8 nits. Round 2 merged origin/phase-4 at 06272761 (RS-9 added), then wrote a failing test and a fix for each finding. The K§6.4.3 text changed for each rule (`612cae4b`, one change-log line). Errors.rs's contract comment now allows the echoed name (F3).
+
+- [x] **F1 (important)** — the conversation could be empty or start with the assistant, and such a request failed at the upstream with no fallback. Now: `400 "input: the conversation must start with a user message"`. Test `f1_conversation_must_start_with_user` (`[developer, assistant, user]`, `[developer, function_call, function_call_output]`, `[]`, `[developer]`). Commits `5bc47c47` (test), `f8c6df1d` (fix).
+- [x] **F2** — a client tool type went into an adjustment code as sent. Now a type of 1-32 characters from `[a-z0-9_]` is kept and any other is `other` (`code_type`, used for `tools_dropped` and `items_dropped`). Test `f2_dropped_type_in_code_is_safe` (newline, comma and colon, non-ASCII, 33 characters). Commits `294f05d5`, `e411ef7f`.
+- [x] **F3** — echoed names could hold control characters. `cut` now takes 64 characters and replaces each control character with `?`. The `errors.rs` contract comment states that a 400 may echo a client field or type name, cut and cleaned this way. Test `f3_echoed_names_have_no_control_characters` (the reviewer's `\u{1b}[31m\r\nX-Injected: 1` as a field name, item type, role and part type). Commits `0071c71f`, `5f689745`.
+- [x] **F4** — `decode_thinking` returned the block with every key. It now rebuilds the block from its known keys only. Test `f4_decoded_block_keeps_known_keys_only` (`cache_control` and an extra key). Commits `b89073e3`, `b8ffa52c`.
+- [x] **F5** — with no tool left to send, `tool_choice` and the parallel flag are omitted, and `required` gives `400 "tool_choice: required, but no tool is sent"`. A named tool that is not sent (also one inside a dropped namespace) gives `400 "tool_choice: the named tool is not among the sent tools"`. Test `f5_tool_choice_against_sent_tools`. `ob7_mapped_fields_then_facts`'s `choice` helper now sends tool `f`. Commits `f39cb1f9`, `ed03f7d7`.
+- [x] **F6** — a mapped field of the wrong JSON type gives a typed 400: `stream`, `parallel_tool_calls` must be a boolean; `temperature`, `top_p` a number; `reasoning`, `text`, `text.format` an object; `reasoning.effort` a string. `null` counts as absent. Test `f6_mapped_field_of_wrong_type_400`. Commits `bc373def`, `b43cb126`.
+- [x] **F7** — the message short form now applies only when `type` is absent; a non-string `type` gives `400 "input item: type must be a string"`. Test `f7_short_form_only_without_type`. Commits `ec8d97be`, `35f9c09e`.
+- [x] **F8** — tool-call pairing (`Conv::call`, `Conv::output`, `Conv::all_answered`). These cases each give a 400:
+  - a duplicate `call_id` among calls → `"<call type>: duplicate call_id"`;
+  - an output with no earlier unanswered call of its kind with the same `call_id` → `"<output type>: no earlier matching call"`;
+  - a call with no output before the next `user` message or the end of `input` → `"<call type>: no output before the next user message or the end of input"`.
+
+  A `developer` item between a call and its output stays allowed (as in `ob3_function_calls_grouped`). Test `f8_tool_call_pairing`; the four fixtures still translate. Commits `da5628bd`, `d18aee65`.
+- [x] **F9** — empty text blocks are dropped everywhere (message parts, a string `input`, tool-output parts), and a message left with no block is dropped, so F1 then applies. Tests:
+  - `f9_empty_text_blocks_dropped` (fails before the fix);
+  - added tests for cases the reviewer listed: `f9_output_array_maps_parts`, `f9_parallel_false_without_tool_choice`, `f9_item_and_part_errors` (the 64-character cut on a multi-byte item type and part type, `input item: missing type`, `message: unknown role: tool`), `f9_other_hosted_items_dropped` (`local_shell_call`, `mcp_call`).
+
+  Commits `3f339d0a`, `827d5519`.
+
+Round 2 results: Acceptance exit 0 (`responses_request` 41 tests, `translate` 48). `cargo test -p zygo-proxy --locked` passes. `cargo clippy -p zygo-proxy --locked --all-targets -- -D warnings` is clean. `cargo test --workspace --locked --no-fail-fast` fails only on the 2 known `zygo --test guard_hook` tests under /private/tmp.
