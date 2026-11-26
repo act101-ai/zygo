@@ -121,6 +121,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | DONE | implementation | plan 97283bcc · node 445b4399, 875618e6, f4fcd2fd, dbff60d9 · acceptance pass (job_ 8 listed; session_text 51 passed) · PR #189 |
 | OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | DONE | judgment | 3a9dbffb · 3c10f93d · f788f46d · acceptance pass (shaping 14) · PR #198 |
 | SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
+| OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | DROPPED(the server cannot know what an agent keeps above its cut: OpenCode config limits and whole lines; Claude Code API token count; review of 90e88962) | judgment | b14a4225 · 6217a6ff · round 1 discarded (90e88962) · PR #207 |
 
 ## Log
 
