@@ -85,8 +85,10 @@ impl BusyWait {
         BusyWait { bound, start: None }
     }
 
-    /// The busy call `count` of a lock cycle at `now`: `Some(sleep)` retries after `sleep`, `None` gives up. SQLite
-    /// passes count 0 at the first busy call of each statement run, which restarts the clock. No sleep passes the bound.
+    /// The busy call `count` of a lock cycle at `now`: `Some(sleep)` retries after `sleep`, `None` gives up. The clock
+    /// restarts at each busy count 0, which SQLite passes at the first busy call of each step. A busy call during a
+    /// prepare can carry the previous step's count and keep its start; it then gives up sooner, never later than the
+    /// bound. No sleep passes the bound.
     pub fn next(&mut self, count: i32, now: Instant) -> Option<Duration> {
         if count == 0 {
             self.start = Some(now);
