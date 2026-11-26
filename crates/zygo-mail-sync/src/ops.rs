@@ -87,3 +87,19 @@ pub fn take_host(env: &Env, ws_id: &str) -> Result<Report, SyncError> {
     })?;
     sync::run_with(env, ws_id, Mode::Cli, &Opts::default())
 }
+
+/// S§7.6 `zygo mail sync --new-identity` (D6): deletes `mail/sync/identity` and clears the recorded blob ids
+/// (`pushed`, `pending`) under the lock, then the sync, whose pass makes the new identity. It deletes no branch file.
+pub fn new_identity(env: &Env, ws_id: &str) -> Result<Report, SyncError> {
+    sync::locked(env, ws_id, |c| {
+        match std::fs::remove_file(&c.sp.identity) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(stop("identity")),
+            _ => {}
+        }
+        let mut st = state::load(&c.sp).map_err(|_| stop("state"))?;
+        st.pushed.clear();
+        st.pending.clear();
+        state::save(&c.sp, &st).map_err(|_| stop("state"))
+    })?;
+    sync::run_with(env, ws_id, Mode::Cli, &Opts::default())
+}

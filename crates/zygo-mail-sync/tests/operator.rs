@@ -14,7 +14,7 @@ use zygo_config::{LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_mail_sync::address::Address;
 use zygo_mail_sync::env::{self, Env, Spawner, Verdict, Wake};
-use zygo_mail_sync::ops::take_host;
+use zygo_mail_sync::ops::{new_identity, take_host};
 use zygo_mail_sync::outbox::SendError;
 use zygo_mail_sync::state;
 use zygo_mail_sync::sync::{run, run_with, Mode, Opts, Report, SyncError};
@@ -205,4 +205,48 @@ fn take_host_on_a_public_remote_stops_before_any_fetch() {
     assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
     assert!(!x2.root.join(".git/refs/remotes/origin/zygo").exists());
     assert!(!x2.wt.exists());
+}
+
+/// The twin line of S§7.5, as `identity.rs:22` holds it.
+const TWIN: &str = "zygo: another workspace writes with this mail identity (copied state?); run zygo mail sync --new-identity here, and set another [mail] host";
+
+/// S§19 #11 set-up: [`pair`], then machine C (host `a`, `alice`) with copies of A's `mail/sync/identity` and
+/// `state.json`; B sends to `alice@a`, C imports it and writes `ack/a.json`; A's next sync stops with the twin line.
+fn twin() -> (Remote, Machine, Machine, Machine) {
+    let (r, a, b) = pair();
+    let c = machine(&r, "a", &[(ALICE, "alice")]);
+    for d in [c.sp().mail, c.sp().sync] {
+        zygo_workspace::mail::ensure_mail_root(&d).unwrap();
+    }
+    fs::copy(a.sp().identity, c.sp().identity).unwrap();
+    fs::copy(a.sp().state, c.sp().state).unwrap();
+    send(&b, "bob", ("alice", "a"));
+    sync(&b);
+    assert_eq!(sync(&c).delivered, 1);
+    assert_eq!(stopped(run(&env(&a), WS_ID, Mode::Cli).unwrap_err()), (TWIN.to_string(), "twin"));
+    (r, a, b, c)
+}
+
+#[test] // S§19 #11 --new-identity part, S§7.6 --new-identity
+fn new_identity_with_a_new_host_syncs_and_deletes_nothing() {
+    let (r, a, _b, _c) = twin();
+    let (old, before) = (ident(&a), (file(&r, "registry/a.json"), file(&r, "ack/a.json")));
+    a.config(Some("a2"), "");
+    assert_eq!(new_identity(&env(&a), WS_ID).unwrap().passes, 1);
+    let new = ident(&a);
+    assert_ne!(new, old);
+    assert_eq!(json(&r, "registry/a2.json")["identity"], new);
+    assert_eq!((file(&r, "registry/a.json"), file(&r, "ack/a.json")), before);
+    let pushed: BTreeSet<String> = state::load(&a.sp()).unwrap().pushed.into_keys().collect();
+    assert_eq!(pushed, BTreeSet::from(["ack/a2.json".to_string(), "registry/a2.json".to_string()]));
+}
+
+#[test] // S§7.6 --new-identity: with the same host the pass stops with the collision line
+fn new_identity_with_the_same_host_stops_at_the_collision() {
+    let (r, a, _b, _c) = twin();
+    let (old, reg) = (ident(&a), file(&r, "registry/a.json"));
+    let e = new_identity(&env(&a), WS_ID).unwrap_err();
+    assert_eq!(stopped(e), (COLLISION.to_string(), "collision"));
+    assert_ne!(ident(&a), old);
+    assert_eq!(file(&r, "registry/a.json"), reg);
 }
