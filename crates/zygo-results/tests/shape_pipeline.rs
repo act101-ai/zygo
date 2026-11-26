@@ -1,4 +1,8 @@
+use std::path::PathBuf;
 use zygo_results::Kind;
+use zygo_results::kind::sniff;
+use zygo_results::shape::kind_view::kind_view;
+use zygo_results::view::VIEW_CAP_BYTES;
 use zygo_results::shape::{self, clean::clean, command::parse, ShapeInput, Shaped, Shaper, Step, SHAPE_MAX_BYTES};
 use Step::{ColorCodesRemoved as Color, ProgressLinesRemoved as Progress, RepeatedLinesCounted as Counted};
 
@@ -179,4 +183,64 @@ fn unchanged_text_has_no_shaper_unless_over_threshold() {
     let raw: String = (0..50).map(|i| format!("line {i}\n")).collect();
     let out = shape(&raw, &input(None, Kind::Text, 100));
     assert_eq!(out, Shaped { text: raw.clone(), steps: vec![], shaper: Some(Shaper::Size), size_view: true });
+}
+
+/// The `stdout` of an OS-18 case.
+fn stdout(dir: &str, name: &str) -> String {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/shaping").join(dir).join(name).join("stdout");
+    String::from_utf8(std::fs::read(p).unwrap()).unwrap()
+}
+
+#[test]
+fn kind_view_runs_over_the_threshold() {
+    // O§7.3 step 4; a kind view adds lines, so these tests call `shape::run`, not `shape()`
+    for (dir, name, step, shaper) in [
+        ("diff", "git-diff-repo", Step::DiffFilesListed, Shaper::Diff),
+        ("json", "cargo-metadata", Step::JsonOutlined, Shaper::Json),
+        ("log", "errors-in-middle", Step::LogErrorsKept, Shaper::Log),
+    ] {
+        let raw = stdout(dir, name);
+        let k = sniff(raw.as_bytes());
+        let out = shape::run(&raw, &input(None, k, T));
+        assert_eq!(out.text, kind_view(&raw, k, VIEW_CAP_BYTES).unwrap().0, "{name}");
+        assert_eq!(out.steps, vec![step], "{name}");
+        assert_eq!(out.shaper, Some(shaper), "{name}");
+        assert!(!out.size_view, "{name}");
+    }
+}
+
+#[test]
+fn kind_view_not_run_at_the_threshold() {
+    let raw = stdout("diff", "git-diff-repo");
+    let out = shape::run(&raw, &input(None, Kind::Diff, raw.len() as u64));
+    assert_eq!(out, Shaped { text: raw.clone(), steps: vec![], shaper: None, size_view: false });
+}
+
+#[test]
+fn kind_view_follows_clean() {
+    let raw: String = (1..=60)
+        .map(|i| if i == 30 { "\x1b[31m2026-11-25 10:30:00 ERROR boom\x1b[0m\n".to_string() } else { format!("\x1b[2m2026-11-25 10:{i:02}:00 INFO step {i}\x1b[0m\n") })
+        .collect();
+    let out = shape::run(&raw, &input(None, Kind::Log, 100));
+    assert_eq!(out.steps, vec![Color, Step::LogErrorsKept]);
+    assert_eq!(out.shaper, Some(Shaper::Log));
+    assert!(out.text.lines().any(|l| l == "30: 2026-11-25 10:30:00 ERROR boom"), "{:?}", out.text);
+    assert!(out.size_view);
+}
+
+#[test]
+fn kind_view_none_leaves_the_size_view() {
+    let raw = format!("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1,3000 @@\n{}", "+line\n".repeat(3000));
+    let out = shape::run(&raw, &input(None, Kind::Diff, T));
+    assert_eq!(out, Shaped { text: raw.clone(), steps: vec![], shaper: Some(Shaper::Size), size_view: true });
+}
+
+#[test]
+fn no_kind_view_for_jsonl_tree_text() {
+    let raw = stdout("log", "errors-in-middle");
+    for k in [Kind::Text, Kind::Tree, Kind::Jsonl] {
+        let out = shape::run(&raw, &input(None, k, T));
+        assert!(!out.steps.iter().any(|s| matches!(s, Step::LogErrorsKept | Step::DiffFilesListed | Step::JsonOutlined)), "{k:?}");
+        assert!(out.size_view, "{k:?}");
+    }
 }
