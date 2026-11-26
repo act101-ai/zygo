@@ -1,7 +1,7 @@
 # RS-1 — Responses → Messages request translator and the zygo mark on reasoning items
 
 **Spec:** docs/specs/2026-11-25-client-model-design.md K§6.4.3 (top-level field lists; request obligations 1-10), K§6.7 (Responses requests), K§10 (field mapping and the mark are the builder's, inside the obligations), K§11 items 11 and 12; K-D21, K-D31, K-D49
-**Files:** `crates/zygo-proxy/src/translate/responses_client.rs` (new), `crates/zygo-proxy/src/translate/reasoning.rs`, `crates/zygo-proxy/src/translate/mod.rs`, `crates/zygo-proxy/tests/responses_request.rs` (new), `docs/specs/2026-11-25-client-model-design.md` (K§6.4.3 and its change-log line, step 1)
+**Files:** `crates/zygo-proxy/src/translate/responses_client.rs` (new), `crates/zygo-proxy/src/translate/reasoning.rs`, `crates/zygo-proxy/src/translate/mod.rs`, `crates/zygo-proxy/tests/responses_request.rs` (new), `crates/zygo-proxy/tests/data/compaction-request.json` (new, round 3: a verbatim copy of PC-5's `fixtures/codex/compaction/requests/pc8-live-high-0022.json` from `origin/phase-4--PC-5`), `crates/zygo-proxy/src/errors.rs` (contract comment, rounds 2-3), `docs/specs/2026-11-25-client-model-design.md` (K§6.4.3 and its change-log line, step 1)
 **Consumes:** `fixtures/codex/requests/` (PC-3)
 **Produces:** `translate::responses_client::check_fields(req: &Value) -> Result<(), ZygoError>` (the three top-level lists; refused and unknown fields → `400 zygo_bad_request` naming the field), `translate::responses_client::request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value, Vec<Adjustment>), ZygoError>` (Responses body → Messages body for target `t`; `facts` = the resolved model's catalog facts, the source of `max_tokens` when the client gives none), `translate::reasoning::encode_thinking(t: &Target, block: &Value) -> String` (a `thinking` or `redacted_thinking` block as the zygo-marked `encrypted_content` of a Responses `reasoning` item), `translate::reasoning::decode_thinking(v: &str, t: &Target) -> Option<Value>` (the block back; `None` unless it decodes, fits the size bound and names `t`'s provider and upstream model)
 **Acceptance:** `test "$(cargo test -q -p zygo-proxy --test responses_request -- --list 2>/dev/null | grep -c ': test$')" -ge 16 && cargo test -p zygo-proxy --locked --test responses_request && cargo test -p zygo-proxy --locked --test translate` → at least 16 tests in `responses_request` (a count of 0 fails), then both targets pass on ubuntu, macOS and Windows CI: each `fixtures/codex/requests/*.json` body translates to a valid Messages request (K§11 item 11; "valid" as defined below); one case per request obligation 1-10; an unknown top-level field → 400 naming it; each ignore-list field accepted and absent from the Messages body; each refused field → the stated 400 (K§11 item 12); a marked value that does not decode, is over the bound, or names another provider or model is dropped with an adjustment code; the existing reasoning round trip (`translate` target) is unchanged
@@ -172,3 +172,38 @@ Review of PR #152 at d9092120: 1 important, 8 nits. Round 2 merged origin/phase-
   Commits `3f339d0a`, `827d5519`.
 
 Round 2 results: Acceptance exit 0 (`responses_request` 41 tests, `translate` 48). `cargo test -p zygo-proxy --locked` passes. `cargo clippy -p zygo-proxy --locked --all-targets -- -D warnings` is clean. `cargo test --workspace --locked --no-fail-fast` fails only on the 2 known `zygo --test guard_hook` tests under /private/tmp.
+
+## Review round 2 findings
+
+Review at e3aaa925: 1 important, 5 nits. In round 3, origin/phase-4 had not moved (06272761 was already merged). Each finding was fixed with a failing test first; none is left open. The K§6.4.3 text and one change-log line are in `c08d4c94`, with the `errors.rs` contract comment.
+
+- [x] **G1 (important)** — tool history with no tool left to send. Anthropic refuses `tool_use` blocks whose name no sent tool defines.
+  - `history_tools` declares one tool per distinct `tool_use` name that no sent tool defines, in first-use order: `{"name", "description":"history only", "input_schema":{"type":"object"}}`, with adjustment code `tools_from_history:<n>`.
+  - When the sent list was empty, `tool_choice` becomes `{"type":"none"}`. When tools were sent, `tool_choice` is unchanged.
+  - The F5 rules still apply to the client's `tool_choice` against the tools the client sent. So `required` with only history tools stays a 400.
+  - Tests:
+    - `g1_compaction_request_declares_history_tools`, on PC-5's compaction body, copied to `tests/data/compaction-request.json`;
+    - `g1_no_tools_with_history`;
+    - `g1_dropped_namespace_tool_called_in_history`.
+  - Commits `6792cc89` (test), `7cbeb809` (fix).
+  - Side effect: `turn-with-reasoning.json` calls `apply_patch` and sends no `custom` tool, so it now declares `apply_patch` from history.
+- [x] **G2** — `adjacency` checks the translated messages:
+  - a thinking block after a `tool_use` in the same assistant message → `400 "input: a reasoning item follows a tool call in the same assistant turn"`;
+  - an assistant message with `tool_use` blocks not followed at once by a user message holding a `tool_result` for each → `400 "input: each tool call's output must come in the next user turn, before other assistant content"`.
+
+  Test `g2_tool_adjacency`:
+  - 400 cases, the reviewer's orders: reasoning between a call and its output; reasoning between two outputs; assistant text between two outputs; a developer item between two parallel calls.
+  - Still translate: parallel outputs in both orders; a developer item between a call and its output; a custom pair; custom and function calls in parallel; a hosted item between a call and its output; reasoning, a call and its output, then reasoning and assistant text.
+  - Not counted as a 400: the reviewer's "assistant text between call and output" gives `A[tool_use, text] U[tool_result]`, which is valid Messages. It still translates.
+
+  Commits `54b747cb`, `2dbdee08`.
+- [x] **G3** — the user-message pairing check now runs after empty-message dropping. Test `g3_pairing_after_empty_message_dropped`. Commits `9493edd6`, `9e30692f`.
+- [x] **G4** — two sent tools with the same name → `400 "tools: two tools have the same name"`. Test `g4_duplicate_tool_names_400`. Commits `f9057778`, `823f4896`.
+- [x] **G5** — K§6.4.3 listed `text.verbosity` as mapped, but Messages has no counterpart. Corrected to "checked and not sent":
+  - a value other than `low`, `medium`, `high` → `400 "text.verbosity must be one of low, medium, high"`; `null` is absent;
+  - another `text` key → `400 "unknown field: text.<key>"`.
+
+  Test `g5_text_sub_keys`. Commits `0b2e693f`, `119484b2`.
+- [x] **G6** — `cut` also replaces Unicode Cf, Zl and Zp characters with `?`. The list is written by hand (std has no category lookup) and checked against Python's Unicode 13 database, plus the Unicode 14-15 additions U+0890-0891 and U+13439-1343F. Test `g6_echo_replaces_format_and_separator_characters` (U+202E, U+2028, U+2029, U+200B, U+FEFF). Commits `949ae268`, `8e79f962`.
+
+Round 3 results: Acceptance exit 0 (`responses_request` 49 tests, `translate` 48). `cargo test -p zygo-proxy --locked` passes. `cargo clippy -p zygo-proxy --locked --all-targets -- -D warnings` is clean. `cargo test --workspace --locked --no-fail-fast` fails only on the 2 known `zygo --test guard_hook` tests under /private/tmp. Builds used `CARGO_INCREMENTAL=0`.
