@@ -5,12 +5,14 @@
 //! hour of secret-pass budget; the binary runs the stub agents of `Harness` only. No agent runs.
 mod common;
 
+use std::cell::Cell;
 use std::ffi::OsStr;
+use std::path::Path;
 use std::process::Output;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use zygo::cmd::mail::send_cli;
+use zygo::cmd::mail::{send_cli, watch_sync_due, watch_with};
 use zygo_config::{Config, LoadContext, MailConfig};
 use zygo_core::paths::Paths;
 use zygo_core::Agent;
@@ -18,6 +20,7 @@ use zygo_mail_sync::env::{Clock, Env, NoSeam, Probe, Spawner, Verdict, Wake};
 use zygo_mail_sync::outbox::pending;
 use zygo_mail_sync::registry::{write_cache, MemberCache};
 use zygo_mail_sync::state::{read_last_start, save, write_last_start, PublicCache, State, SyncPaths};
+use zygo_mail_sync::sync::{run_with, Mode, Opts, Report};
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::mail::{mail_dir, Message};
 use zygo_workspace::state::{MemberRecord, Workspace};
@@ -53,9 +56,9 @@ fn not_local(v: &str) -> String {
 
 struct Fixed(SystemTime);
 impl Clock for Fixed { fn now(&self) -> SystemTime { self.0 } }
-/// A send runs no public check.
+/// No public check runs: a send runs none, and the sync of a `file://` remote maps it to a local path (S§8.2).
 struct NoProbe;
-impl Probe for NoProbe { fn probe(&self, _: &str) -> Verdict { panic!("a send runs no public check") } }
+impl Probe for NoProbe { fn probe(&self, _: &str) -> Verdict { panic!("no public check runs in these tests") } }
 /// The spawn seam: each start records the number of outbox files at that moment; `fail` makes the start an error.
 struct Spawns { sp: SyncPaths, seen: Arc<Mutex<Vec<usize>>>, fail: bool }
 impl Spawner for Spawns {
@@ -311,4 +314,152 @@ fn ls_sync_line_off_cases() {
     assert_eq!(ls(&x), MEMBERS);
     config(&x, "[mail\n");
     assert_eq!(ls(&x), MEMBERS);
+}
+
+/// `git -c user.name=t -c user.email=t@t.invalid -c commit.gpgSign=false <args>` in `dir`; panics on a non-zero
+/// exit; the stdout without its trailing newline. (Copied from `tests/mail_sync_cli.rs`.)
+fn git(dir: &Path, args: &[&str]) -> String {
+    let o = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t.invalid", "-c", "commit.gpgSign=false"])
+        .args(args).current_dir(dir).output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", err(&o));
+    out(&o).trim_end().to_string()
+}
+
+/// A bare repository `bare.git` with one commit on `main` (pushed from a seed clone), and its `file://` URL.
+/// (Copied from `tests/mail_sync_cli.rs`.)
+struct Remote { _t: tempfile::TempDir, url: String }
+fn remote() -> Remote {
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().canonicalize().unwrap();
+    git(&p, &["init", "-q", "--bare", "bare.git"]);
+    let url = format!("file://{}", p.join("bare.git").display());
+    git(&p, &["clone", "-q", &url, "seed"]);
+    std::fs::write(p.join("seed/README"), "x\n").unwrap();
+    git(&p.join("seed"), &["add", "README"]);
+    git(&p.join("seed"), &["commit", "-q", "-m", "seed"]);
+    git(&p.join("seed"), &["push", "-q", "origin", "HEAD:refs/heads/main"]);
+    Remote { _t: t, url }
+}
+
+/// One machine: a scratch home whose `repo` is a clone of `r`, `git` linked into `bin`, the config of `host` with
+/// `[mail.workspace.app]` `sync = "zygo/mail"`, and the workspace `app` (`WS_ID`) with the members
+/// `(pane key, name)`. (Copied from `tests/mail_sync_cli.rs`, its `config` call inlined.)
+fn machine(r: &Remote, host: &str, members: &[(&str, &str)]) -> Harness {
+    let h = Harness::no_tmux();
+    git(h.root(), &["clone", "-q", &r.url, "repo"]);
+    std::os::unix::fs::symlink(which::which("git").unwrap(), h.bin.join("git")).unwrap();
+    let text = format!("[mail]\nhost = \"{host}\"\n[mail.workspace.app]\nsync = \"zygo/mail\"\n");
+    std::fs::write(h.root().join("config.toml"), text).unwrap();
+    h.seed(WS_ID, &mut |w| {
+        for (k, n) in members {
+            w.members.insert(k.to_string(), MemberRecord { name: Some(n.to_string()), ..MemberRecord::new(Agent::ClaudeCode) });
+        }
+    });
+    h
+}
+
+/// No child starts in an in-process sync.
+struct NoSpawn;
+impl Spawner for NoSpawn { fn spawn_sync(&self, _: &str) -> std::io::Result<()> { Ok(()) } }
+/// The wake of an in-process sync does nothing (MS-13 tests the wake).
+struct NoWake;
+impl Wake for NoWake { fn wake(&self, _: &Paths, _: &Workspace, _: &[String], _: &MailConfig, _: SystemTime) {} }
+
+/// One in-process sync of machine `h` (`run_with`, `Mode::Cli`) with the fixed clock and an hour of secret-pass
+/// budget, as the zygo-mail-sync tests run it. The binary sync takes the 200 ms default, which a slow machine can
+/// miss at the commit-time secret check (global constraint: no deadline test in CI).
+fn sync_in(h: &Harness) -> Report {
+    let env = Env {
+        paths: h.paths.clone(), clock: Box::new(Fixed(at(T0))), probe: Box::new(NoProbe), seam: Box::new(NoSeam),
+        spawner: Box::new(NoSpawn), wake: Box::new(NoWake), secret_policy: far(),
+    };
+    run_with(&env, WS_ID, Mode::Cli, &Opts::default()).unwrap()
+}
+
+/// Machines `b` (`bob`) and `a` (`alice`) on one remote, each synced in process; then `alice` sends `bob@b` the
+/// subject `\x1b[2Jhi` through `send_cli` (one child through the counting seam), and `a` pushes it in process.
+/// Returns (remote, b, a, the message id).
+fn sent_to_bob() -> (Remote, Harness, Harness, String) {
+    let r = remote();
+    let b = machine(&r, "b", &[(BOB, "bob")]);
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    sync_in(&b); // makes the branch; registers b
+    sync_in(&a); // a's member cache now holds bob@b
+    let wa = a.store(WS_ID).read().unwrap().unwrap();
+    let spa = SyncPaths::new(&a.paths, WS_ID).unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let env = Env {
+        paths: a.paths.clone(), clock: Box::new(Fixed(at(T0))), probe: Box::new(NoProbe), seam: Box::new(NoSeam),
+        spawner: Box::new(Spawns { sp: spa.clone(), seen: Arc::clone(&seen), fail: false }),
+        wake: Box::new(Woke(Arc::default())), secret_policy: far(),
+    };
+    let (mut o, mut e) = (Vec::new(), Vec::new());
+    let code = send_cli(&env, &wa, Some(ALICE), "bob@b", "\u{1b}[2Jhi", BODY, &cfg(&a.paths), &mut o, &mut e);
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&e));
+    let id = pending(&spa).unwrap()[0].0.to_string();
+    assert_eq!(*seen.lock().unwrap(), vec![1]);
+    assert_eq!(sync_in(&a).pushed, 1); // pushes the message
+    (r, b, a, id)
+}
+
+/// The file names in `mail/<key>/new/` of `h`; empty when absent.
+fn new_of(h: &Harness, key: &str) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(mail_dir(&h.paths, WS_ID).join(key).join("new")) else { return Vec::new() };
+    rd.map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect()
+}
+
+/// The binary `zygo mail watch bob --timeout 0s` and then `zygo mail read --name bob` on `b`: each prints the
+/// subject `\x1b[2Jhi` of message `id` escaped and no ESC byte.
+fn watch_and_read_escape(b: &Harness, id: &str) {
+    let w = zygo(b, &["mail", "watch", "bob", "--timeout", "0s"], &[]);
+    assert_eq!(w.status.code(), Some(0), "{}", err(&w));
+    assert_eq!(out(&w), format!("{id} alice@a \\u{{1b}}[2Jhi\n"));
+    assert!(!w.stdout.contains(&0x1b));
+    let rd = zygo(b, &["mail", "read", "--name", "bob"], &[]);
+    assert_eq!(out(&rd), format!("{id} alice@a 2023-11-14T22:13:20Z \\u{{1b}}[2Jhi\n  {BODY}\n"));
+    assert!(!rd.stdout.contains(&0x1b));
+}
+
+#[test] // W1: S§19 #28, S§10.5 (rewritten): watch and read print a remote subject escaped (an imported message)
+fn watch_and_read_print_an_imported_remote_subject_escaped() {
+    let (_r, b, _a, id) = sent_to_bob();
+    assert_eq!(sync_in(&b).delivered, 1); // imported in process before the binary runs
+    watch_and_read_escape(&b, &id);
+}
+
+#[test] // W4: S§8.1 row 3 (rewritten): the binary watch syncs before its first look (the import shows in the same run)
+fn watch_syncs_at_start_and_shows_the_import_in_the_same_run() {
+    let (_r, b, _a, id) = sent_to_bob();
+    assert!(new_of(&b, BOB).is_empty()); // nothing imported before the watch
+    // b's start sync has an empty outbox: no commit-time secret check runs, so no deadline decides the result.
+    watch_and_read_escape(&b, &id);
+}
+
+#[test] // W2: S§8.1 row 3 (rewritten), the S§8.4 rule
+fn watch_sync_due_is_true_at_gap_and_false_below_it() {
+    let gap = Duration::from_secs(60);
+    assert!(watch_sync_due(None, at(T0), gap));
+    assert!(watch_sync_due(Some(at(T0)), at(T0 + 60), gap));
+    assert!(watch_sync_due(Some(at(T0)), at(T0 + 61), gap));
+    assert!(!watch_sync_due(Some(at(T0)), at(T0 + 59), gap));
+    assert!(!watch_sync_due(Some(at(T0)), at(T0) + Duration::from_millis(59_999), gap));
+    assert!(!watch_sync_due(Some(at(T0)), at(T0), gap));
+    assert!(watch_sync_due(Some(at(T0)), at(T0 - 1), gap)); // a clock set back
+}
+
+#[test] // W3: S§8.1 row 3 (rewritten): the step runs before each look at new/
+fn watch_with_runs_the_sync_step_before_each_look() {
+    let x = setup();
+    let dir = mail_dir(&x.h.paths, WS_ID);
+    let base = Instant::now(); // an origin only: each call of `now` adds 1 s, so no test time is read
+    let calls = Cell::new(0u64);
+    let now = || { let n = calls.get(); calls.set(n + 1); base + Duration::from_secs(n) };
+    let (mut steps, mut o) = (0, Vec::new());
+    assert_eq!(watch_with(&dir, ELENA, Duration::from_secs(3), Duration::ZERO, &now, &mut o, &mut || steps += 1), 1);
+    assert_eq!((steps, o.len()), (3, 0)); // looks at +1 s, +2 s, +3 s (the timeout)
+    zygo_workspace::mail::send(&x.h.paths, &x.w, None, "elena", SUBJECT, BODY, &MailConfig::default(), at(T0)).unwrap();
+    let mut steps = 0;
+    assert_eq!(watch_with(&dir, ELENA, Duration::from_secs(3), Duration::ZERO, &now, &mut o, &mut || steps += 1), 0);
+    assert_eq!(steps, 1);
 }

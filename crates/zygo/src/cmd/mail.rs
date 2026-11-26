@@ -182,7 +182,20 @@ pub fn run(a: MailArgs) -> i32 {
                     return finish(Err(UsageError("zygo mail watch: no member for this pane; pass a name".into()).into()))
                 }
             };
-            watch(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock())
+            // S§8.1 row 3 (P2, D6): with sync on, a silent `Mode::Child` sync before the first look and then each
+            // `sync_gap`, start to start; a config that does not load or sync off makes the step do nothing.
+            let settings = user_config(&paths).ok().and_then(|c| sync_for(&c, &ws.name).ok());
+            let env = sync_env(paths.clone());
+            let mut last: Option<SystemTime> = None;
+            let mut step = || {
+                let Some(s) = &settings else { return };
+                let now = env.clock.now();
+                if watch_sync_due(last, now, s.sync_gap) {
+                    last = Some(now);
+                    let _ = zygo_mail_sync::sync::run(&env, &ws.id, Mode::Child);
+                }
+            };
+            watch_with(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock(), &mut step)
         }
         Some(MailCmd::Sync(_)) => unreachable!("taken above"),
         Some(MailCmd::Send { to, subject, file, stdin }) => {
@@ -303,8 +316,23 @@ pub fn send_cli(
 /// (its text on stderr), or when the write to `out` fails (A7). The count comes before the clock, so mail already in
 /// `new/` returns 0 even with a zero timeout (A4).
 pub fn watch(dir: &Path, key: &str, timeout: Duration, poll: Duration, now: &dyn Fn() -> Instant, out: &mut dyn Write) -> i32 {
+    watch_with(dir, key, timeout, poll, now, out, &mut || {})
+}
+
+/// [`watch`] with `sync()` before each look at `new/` (mail sync design S§8.1 row 3): the `zygo mail watch` step that
+/// syncs at start and then each `sync_gap` when sync is on.
+pub fn watch_with(
+    dir: &Path,
+    key: &str,
+    timeout: Duration,
+    poll: Duration,
+    now: &dyn Fn() -> Instant,
+    out: &mut dyn Write,
+    sync: &mut dyn FnMut(),
+) -> i32 {
     let start = now();
     loop {
+        sync();
         match store::unread(dir, key).and_then(|n| if n > 0 { store::list(dir, key).map(Some) } else { Ok(None) }) {
             Err(e) => {
                 print_err(&format!("{e}\n"));
@@ -326,6 +354,12 @@ pub fn watch(dir: &Path, key: &str, timeout: Duration, poll: Duration, now: &dyn
         }
         std::thread::sleep(poll);
     }
+}
+
+/// S§8.1 row 3, the S§8.4 rule: `true` when no sync ran in this watch (`last` is `None`), when `now - last >= gap`,
+/// or when `now` is earlier than `last` (a clock set back).
+pub fn watch_sync_due(last: Option<SystemTime>, now: SystemTime, gap: Duration) -> bool {
+    last.is_none_or(|l| now.duration_since(l).map_or(true, |d| d >= gap))
 }
 
 /// `/zygo:mail [ls [<name>]]` (D2): lists only; any other args are a usage error and read nothing.
