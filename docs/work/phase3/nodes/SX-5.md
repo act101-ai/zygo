@@ -58,7 +58,7 @@ No test sets an env var, opens the keychain or reads a clock. All tests are plat
 
 **Cycle 1: tests**
 
-- [ ] 1. In `crates/zygo-launch/tests/claude_code.rs`, after `non_member_settings_hold_no_workspace_hook` (ends line 1754), add:
+- [x] 1. In `crates/zygo-launch/tests/claude_code.rs`, after `non_member_settings_hold_no_workspace_hook` (ends line 1754), add:
 
   ```rust
   #[test] // T§17 check 1, T§6.3 item 1: every launch that is not a member; review focus 72
@@ -112,27 +112,27 @@ No test sets an env var, opens the keychain or reads a clock. All tests are plat
   }
   ```
 
-- [ ] 2. Edit the existing tests in `crates/zygo-launch/tests/claude_code.rs`:
+- [x] 2. Edit the existing tests in `crates/zygo-launch/tests/claude_code.rs`:
   - line 1697 (`no_workspace_hook`): the list becomes `["Stop", "StopFailure", "SessionEnd"]`.
   - line 1734 (`member_settings_hold_every_workspace_hook`): `assert_eq!(hook_commands(&s, "SubagentStart"), [(None, format!("{z} hook session-start")), (None, ws("subagent-start"))], "{work_units}");`
 
-- [ ] 3. Add the plain-launch entry to the exact `hooks` expectations:
+- [x] 3. Add the plain-launch entry to the exact `hooks` expectations:
   - `crates/zygo-launch/tests/fixtures/claude_code/settings.json`: after the `"SubagentStop"` line, add `  "SubagentStart":[{"hooks":[{"type":"command","command":"<ZYGO> hook session-start"}]}],`
   - `crates/zygo-launch/tests/fixtures/claude_code/settings-passthrough.json`: after the `"SubagentStop"` array, add a `"SubagentStart"` array with one object `{"hooks": [{"type": "command", "command": "<ZYGO> hook session-start"}]}`, in the file's indented style.
   - `crates/zygo-launch/tests/stub_launch.rs:453`: after `"SubagentStop": [h(None, "work")],` add `"SubagentStart": [h(None, "session-start")],`.
 
-- [ ] 4. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-launch --test claude_code -- subagent_start zygo_role_prompt member_settings_hold_every_workspace_hook settings_env_agents_and_mcp_match_fixtures passthrough_drops_model_rows` → pass: it compiles; `zygo_role_prompt_is_role_prompt_space_mechanics` passes; the two `subagent_start_*` tests, `member_settings_hold_every_workspace_hook`, `settings_env_agents_and_mcp_match_fixtures` and `passthrough_drops_model_rows_and_adds_the_token_header` fail on the `SubagentStart` value (plain launch: `Null` against the one-entry array; member: one entry against two).
+- [x] 4. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-launch --test claude_code -- subagent_start zygo_role_prompt member_settings_hold_every_workspace_hook settings_env_agents_and_mcp_match_fixtures passthrough_drops_model_rows` → pass: it compiles; `zygo_role_prompt_is_role_prompt_space_mechanics` passes; the two `subagent_start_*` tests, `member_settings_hold_every_workspace_hook`, `settings_env_agents_and_mcp_match_fixtures` and `passthrough_drops_model_rows_and_adds_the_token_header` fail on the `SubagentStart` value (plain launch: `Null` against the one-entry array; member: one entry against two).
 
 **Cycle 2: the registration**
 
-- [ ] 5. In `crates/zygo-launch/src/claude_code.rs`, `fn hooks(&self, ctx: &LaunchCtx) -> Value` (line 462; signature unchanged): delete line 497 from the `if member` block, and insert `SubagentStart` for every launch as a list, in the form of the `prompt` list (lines 517-521): first `entry(None, "session-start")`, then, when `member`, `entry(None, "workspace --event subagent-start")`. Comment it `// T§6.3 item 1: every launch; a member's workspace entry comes second.` No matcher, no `--event` on the `session-start` entry. No other entry changes (`PostToolUseFailure` keeps no `trim`, review focus 24).
+- [x] 5. In `crates/zygo-launch/src/claude_code.rs`, `fn hooks(&self, ctx: &LaunchCtx) -> Value` (line 462; signature unchanged): delete line 497 from the `if member` block, and insert `SubagentStart` for every launch as a list, in the form of the `prompt` list (lines 517-521): first `entry(None, "session-start")`, then, when `member`, `entry(None, "workspace --event subagent-start")`. Comment it `// T§6.3 item 1: every launch; a member's workspace entry comes second.` No matcher, no `--event` on the `session-start` entry. No other entry changes (`PostToolUseFailure` keeps no `trim`, review focus 24).
 
-- [ ] 6. Run the node's acceptance check: `env -u ZYGO_SESSION_DIR sh -c 'test "$(cargo test -q -p zygo-launch --test claude_code -- subagent_start --list 2>/dev/null | grep -c ": test$")" -ge 2 && test "$(cargo test -q -p zygo-launch --test claude_code -- zygo_role_prompt --list 2>/dev/null | grep -c ": test$")" -ge 1 && cargo test -p zygo-launch --test claude_code -- subagent_start zygo_role_prompt'` → exit 0; counts 2 and 1; 3 tests pass.
+- [x] 6. Run the node's acceptance check: `env -u ZYGO_SESSION_DIR sh -c 'test "$(cargo test -q -p zygo-launch --test claude_code -- subagent_start --list 2>/dev/null | grep -c ": test$")" -ge 2 && test "$(cargo test -q -p zygo-launch --test claude_code -- zygo_role_prompt --list 2>/dev/null | grep -c ": test$")" -ge 1 && cargo test -p zygo-launch --test claude_code -- subagent_start zygo_role_prompt'` → exit 0; counts 2 and 1; 3 tests pass.
 
-- [ ] 7. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-launch --test claude_code` → all pass (includes `po1_failed_bash_has_no_trim_entry` for review focus 24, `user_agents_merge_and_win_by_name` (line 606) for T-C2, `non_member_settings_hold_no_workspace_hook`, `member_settings_hold_every_workspace_hook`, both fixture tests).
+- [x] 7. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-launch --test claude_code` → all pass (includes `po1_failed_bash_has_no_trim_entry` for review focus 24, `user_agents_merge_and_win_by_name` (line 606) for T-C2, `non_member_settings_hold_no_workspace_hook`, `member_settings_hold_every_workspace_hook`, both fixture tests).
 
-- [ ] 8. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-launch` → all pass (includes `stub_launch` `claude_code_flags_settings_agents_and_mcp_match_the_spec` and `premise`, which checks each settings event against `fixtures/claude-code/settings-schema.json`; `SubagentStart` is in it, `tests/claude_code.rs:1705-1707`). tmux-dependent tests skip with a printed reason when tmux 3.2 is absent.
+- [x] 8. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo-launch` → all pass (includes `stub_launch` `claude_code_flags_settings_agents_and_mcp_match_the_spec` and `premise`, which checks each settings event against `fixtures/claude-code/settings-schema.json`; `SubagentStart` is in it, `tests/claude_code.rs:1705-1707`). tmux-dependent tests skip with a printed reason when tmux 3.2 is absent.
 
-- [ ] 9. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --test workspace_down` → all pass or skip with the printed tmux reason (member stub runs now call `hook session-start` before `hook workspace --event subagent-start` on `SubagentStart`; activity state is written only by the workspace entry).
+- [x] 9. Run `env -u ZYGO_SESSION_DIR cargo test -p zygo --test workspace_down` → all pass or skip with the printed tmux reason (member stub runs now call `hook session-start` before `hook workspace --event subagent-start` on `SubagentStart`; activity state is written only by the workspace entry).
 
-- [ ] 10. Commit the six files (`crates/zygo-launch/src/claude_code.rs`, `crates/zygo-launch/tests/claude_code.rs`, `crates/zygo-launch/tests/stub_launch.rs`, the two fixtures, this node file with steps ticked): `git commit -m "SX-5: register SubagentStart -> hook session-start on every launch"` with one more `-m` that holds the two trailer lines the implementer's handoff gives: `Zygo-Session:` with that session's id, and `Zygo-Work: phase3:SX-5`. No other trailer, no Claude attribution.
+- [x] 10. Commit the six files (`crates/zygo-launch/src/claude_code.rs`, `crates/zygo-launch/tests/claude_code.rs`, `crates/zygo-launch/tests/stub_launch.rs`, the two fixtures, this node file with steps ticked): `git commit -m "SX-5: register SubagentStart -> hook session-start on every launch"` with one more `-m` that holds the two trailer lines the implementer's handoff gives: `Zygo-Session:` with that session's id, and `Zygo-Work: phase3:SX-5`. No other trailer, no Claude attribution.

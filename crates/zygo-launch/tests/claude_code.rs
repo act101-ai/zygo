@@ -1694,7 +1694,7 @@ fn no_workspace_hook(s: &Value) {
     for event in s["hooks"].as_object().unwrap().keys() {
         assert!(!hook_commands(s, event).iter().any(|(_, cmd)| cmd.contains("hook workspace")), "{event}");
     }
-    for e in ["Stop", "StopFailure", "SubagentStart", "SessionEnd"] {
+    for e in ["Stop", "StopFailure", "SessionEnd"] {
         assert!(s["hooks"].get(e).is_none(), "{e}");
     }
 }
@@ -1731,7 +1731,7 @@ fn member_settings_hold_every_workspace_hook() {
         assert_eq!(hook_commands(&s, "SessionStart"), [(None, format!("{z} hook session-start --event member"))], "{work_units}");
         assert_eq!(hook_commands(&s, "Stop"), [(None, ws("stop"))], "{work_units}");
         assert_eq!(hook_commands(&s, "StopFailure"), [(None, ws("stop"))], "{work_units}");
-        assert_eq!(hook_commands(&s, "SubagentStart"), [(None, ws("subagent-start"))], "{work_units}");
+        assert_eq!(hook_commands(&s, "SubagentStart"), [(None, format!("{z} hook session-start")), (None, ws("subagent-start"))], "{work_units}");
         let sub: BTreeSet<(Option<String>, String)> = hook_commands(&s, "SubagentStop").into_iter().collect();
         let mut want = BTreeSet::from([(None, ws("subagent-stop"))]);
         if work_units {
@@ -1750,6 +1750,56 @@ fn non_member_settings_hold_no_workspace_hook() {
         assert!(c.view.workspace.is_none());
         cc(&fx).build(&c).unwrap();
         no_workspace_hook(&settings(&fx));
+    }
+}
+
+#[test] // T§17 check 1, T§6.3 item 1: every launch that is not a member; review focus 72
+fn subagent_start_plain_launch_is_one_session_start_entry() {
+    for (units, passthrough) in [(true, false), (false, false), (true, true), (false, true)] {
+        let fx = fx();
+        let cc = cc(&fx);
+        let mut c = ctx(&fx, "");
+        c.view.work_units = units;
+        c.passthrough = passthrough;
+        assert!(c.view.workspace.is_none());
+        cc.build(&c).unwrap();
+        let s = settings(&fx);
+        let cmd = format!("{} hook session-start", shell_quote(&cc.zygo));
+        assert_eq!(s["hooks"]["SubagentStart"], json!([{"hooks": [{"type": "command", "command": cmd}]}]), "units {units} passthrough {passthrough}");
+    }
+}
+
+#[test] // T§17 check 1, T§6.3 item 1: member order `session-start`, then `workspace --event subagent-start`; no matcher, no `--event` on the first; review focus 72
+fn subagent_start_member_launch_is_session_start_then_workspace() {
+    for work_units in [true, false] {
+        let fx = fx();
+        let cc = cc(&fx);
+        cc.build(&member_ctx(&fx, work_units)).unwrap();
+        let s = settings(&fx);
+        let z = shell_quote(&cc.zygo);
+        assert_eq!(
+            s["hooks"]["SubagentStart"],
+            json!([
+                {"hooks": [{"type": "command", "command": format!("{z} hook session-start")}]},
+                {"hooks": [{"type": "command", "command": format!("{z} hook workspace --event subagent-start")}]}
+            ]),
+            "{work_units}"
+        );
+    }
+}
+
+#[test] // T§17 check 9, T§6.3 item 3, T§8.4: the launch-time prompt is unchanged
+fn zygo_role_prompt_is_role_prompt_space_mechanics() {
+    let fx = fx();
+    let c = ctx(&fx, "");
+    let spec = cc(&fx).build(&c).unwrap();
+    let m = mechanics(&c.view);
+    assert!(!m.is_empty());
+    let a = agents_of(&spec.args);
+    let names: BTreeSet<&str> = a.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(names, BTreeSet::from(["zygo-code", "zygo-design", "zygo-probe", "zygo-read"]));
+    for (name, p) in [("zygo-code", "P-code"), ("zygo-design", "P-design"), ("zygo-probe", "P-probe"), ("zygo-read", "P-read")] {
+        assert_eq!(a[name]["prompt"], json!(format!("{p} {m}")), "{name}");
     }
 }
 
