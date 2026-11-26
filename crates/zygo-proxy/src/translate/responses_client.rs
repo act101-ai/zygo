@@ -1066,8 +1066,9 @@ impl Encoder {
     }
 
     /// Messages SSE bytes in, Responses events out. Each byte is scanned once. Only a partial line is copied whole;
-    /// a complete line is read from `chunk`. Before any byte is held, the held total is checked against `HOLD_MAX`
-    /// (obligation 9).
+    /// a complete line is read from `chunk`. Before any byte is held, it is checked against `HOLD_MAX` (obligation 9):
+    /// the partial line, the current event's `data` and the open block summed; while a tool call is open, its
+    /// arguments alone, and the partial line plus `data` alone.
     pub fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
         let mut out = Vec::new();
         let mut rest = chunk;
