@@ -34,7 +34,7 @@ use crate::session::{InFlight, SessionState};
 use crate::tee::{CacheSplit, ErrorCapture, SseLine, Tee, Ticket, Usage, UsageSink, COPY_MAX, ERROR_BODY_MAX};
 use crate::translate::schema::{NullMap, RestoreFilter};
 use crate::translate::{
-    facts, is_response, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
+    facts, is_response, responses_client, message_events, reasoning, schema, translate_error, translate_request, translate_response, SseEvent, StreamMapper,
     Target,
 };
 use crate::window;
@@ -168,12 +168,15 @@ impl ModelRoute {
         match self {
             ModelRoute::Messages => "/anthropic/v1/messages",
             ModelRoute::CountTokens => "/anthropic/v1/messages/count_tokens",
+            ModelRoute::Responses => "/openai/v1/responses",
         }
     }
     fn upstream_path(self) -> &'static str {
         match self {
             ModelRoute::Messages => "/v1/messages",
             ModelRoute::CountTokens => "/v1/messages/count_tokens",
+            // Its path on an `anthropic` upstream: the Messages body the request side builds (K§6.4.3).
+            ModelRoute::Responses => "/v1/messages",
         }
     }
 }
@@ -308,7 +311,7 @@ pub(crate) async fn handle(app: Arc<App>, s: Arc<SessionState>, route: ModelRout
                 p.row.status = e.status.as_u16();
                 p.row.latency_ms = ms(&app, start);
             }
-            e.into_response()
+            e.response(route.dialect())
         }
     }
 }
@@ -330,12 +333,16 @@ async fn run(
     let (raw, permit) = read_charged(app, req).await?;
     let repeated = key_scan(&raw)?;
     let body: Value = serde_json::from_slice(&raw).map_err(|_| ZygoError::bad_request("invalid JSON body"))?;
+    // The Responses field lists before any stage (K§11 item 12).
+    if route == ModelRoute::Responses {
+        responses_client::check_fields(&body)?;
+    }
     let name = body.get("model").and_then(Value::as_str).ok_or_else(|| ZygoError::bad_request("model must be a string"))?.to_string();
     let mut ctx = RequestCtx {
         session: s.clone(),
         cfg: app.served().cfg.clone(),
         route,
-        dialect: Dialect::Anthropic,
+        dialect: route.dialect(),
         headers,
         raw,
         body,

@@ -45,7 +45,7 @@ pub(crate) fn router(app: Arc<App>) -> Router {
         .route("/anthropic/v1/messages", post(messages))
         .route("/anthropic/v1/messages/count_tokens", post(count_tokens))
         .route("/anthropic/v1/models", get(models))
-        .route("/openai/v1/responses", post(not_in_v1))
+        .route("/openai/v1/responses", post(responses))
         .route("/openai/v1/chat/completions", post(not_in_v1))
         .route("/openai/v1/models", get(not_in_v1))
         .fallback(not_found)
@@ -254,7 +254,7 @@ async fn settings(State(app): State<Arc<App>>, id: Result<Path<String>, PathReje
 async fn model_route(app: Arc<App>, route: ModelRoute, req: Request) -> Response {
     match model_identity(req.headers(), &app.sessions) {
         Ok(s) => forward::handle(app, s, route, req).await,
-        Err(e) => e.into_response(),
+        Err(e) => e.response(route.dialect()),
     }
 }
 
@@ -264,6 +264,10 @@ async fn messages(State(app): State<Arc<App>>, req: Request) -> Response {
 
 async fn count_tokens(State(app): State<Arc<App>>, req: Request) -> Response {
     model_route(app, ModelRoute::CountTokens, req).await
+}
+
+async fn responses(State(app): State<Arc<App>>, req: Request) -> Response {
+    model_route(app, ModelRoute::Responses, req).await
 }
 
 async fn models(State(app): State<Arc<App>>, h: HeaderMap) -> Reply {

@@ -102,7 +102,7 @@ Produced:
   ```
   Run `cargo test -p zygo-proxy --test responses_route`; pass = every test fails (the route answers `404 zygo_route_not_in_v1`). Commit `test(proxy): RS-3 Responses route tests and harness`.
 
-- [ ] 3. **Route and error shape.**
+- [x] 3. **Route and error shape.**
   - `pipeline.rs`: variant `ModelRoute::Responses`; `impl ModelRoute { pub fn dialect(self) -> Dialect }` (`Responses` → `Openai`, others → `Anthropic`).
   - `errors.rs`: `pub fn response(&self, d: Dialect) -> Response` = `(status, Json(self.body(d)))`.
   - `routes.rs`: `/openai/v1/responses` → `post(responses)`, `async fn responses(State(app): State<Arc<App>>, req: Request) -> Response` calling `model_route(app, ModelRoute::Responses, req)`; `model_route`'s `Err(e)` arm → `e.response(route.dialect())`.
