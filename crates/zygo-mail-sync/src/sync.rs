@@ -47,6 +47,8 @@ pub struct Report {
     pub pushed: usize,
     pub delivered: usize,
     pub notes: Vec<String>,
+    /// S§6.6: this `Mode::Cli` sync is the first of its workspace that ends without a stop; the CLI prints the note.
+    pub ci_note: bool,
 }
 
 /// What a caller asks of one sync beyond S§8.3.
@@ -148,6 +150,8 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
     }
     let mut report = Report::default();
     let mut first = true;
+    // S§6.6: a `Mode::Cli` sync has not yet looked at the CI note.
+    let mut note_open = mode == Mode::Cli;
     loop {
         let lock = match take_lock(&c.sp, mode, &*env.clock) {
             Ok(Some(f)) => f,
@@ -161,10 +165,19 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
             pass(&c, &mut report, first, first && opts.prune)?;
             report.passes += 1;
             first = false;
+            // S§6.6: the note goes with the last pass, the one that finds no mark under the lock.
+            if note_open && !c.sp.again.exists() {
+                note_open = false;
+                ci_note(&c.sp, &mut report)?;
+            }
             env.seam.at("before_release")?;
             Ok::<(), Fail>(())
         })();
         if let Err(f) = held {
+            // A mark came after the look and this later pass stopped: the sync is not Ok, so the note is not used up.
+            if report.ci_note {
+                unsee_ci_note(&c.sp);
+            }
             return Err(c.stopped(f, true));
         }
         drop(lock);
@@ -172,6 +185,28 @@ pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Repor
         if !c.sp.again.exists() {
             return Ok(report);
         }
+    }
+}
+
+/// S§6.6, S§15: after a pass of a `Mode::Cli` sync ends with no mark, under the lock (the only writer of
+/// `state.json`): when `ci_note_shown` is false, it is set and saved, and `report.ci_note` is set, so the note prints
+/// once per workspace. A child never calls this, so a child sync does not use the note up.
+fn ci_note(sp: &SyncPaths, report: &mut Report) -> Result<(), Fail> {
+    let mut st = state::load(sp).map_err(|_| stop("state"))?;
+    if !st.ci_note_shown {
+        st.ci_note_shown = true;
+        state::save(sp, &st).map_err(|_| stop("state"))?;
+        report.ci_note = true;
+    }
+    Ok(())
+}
+
+/// S§6.6, S§15: under the lock, a later pass of the sync that recorded the note stopped; `ci_note_shown` goes back
+/// to false so the next sync that ends without a stop prints the note. A read or write error keeps the file as it is.
+fn unsee_ci_note(sp: &SyncPaths) {
+    if let Ok(mut st) = state::load(sp) {
+        st.ci_note_shown = false;
+        let _ = state::save(sp, &st);
     }
 }
 

@@ -538,6 +538,36 @@ enum Found {
     Link(String),
 }
 
+/// D14, Round 2 R1: the readable workspace of `all` (from [`list_all`]) whose name is `name` and whose state folder is
+/// a real folder (as `list_all` and `sweep` count them); `Ok(None)` when there is none. More than one is the line
+/// `zygo: more than one workspace has the name <name>; <tail>` (exit 1): `in_checkout` gives the tail
+/// `run in its checkout` (`ws forget-pane`, `ws name`, `zygo mail sync --name`), else `forget it by id: <ids>`.
+pub fn named<'a>(
+    paths: &Paths,
+    all: &'a [(String, Result<Workspace, StateError>)],
+    name: &str,
+    in_checkout: bool,
+) -> Result<Option<&'a Workspace>, String> {
+    let named: Vec<&Workspace> = all
+        .iter()
+        .filter_map(|(_, r)| r.as_ref().ok().filter(|w| w.name == name))
+        .filter(|w| state_kind(paths, &w.id) == Kind::Real)
+        .collect();
+    match named[..] {
+        [] => Ok(None),
+        [ws] => Ok(Some(ws)),
+        _ => {
+            let tail = if in_checkout {
+                "run in its checkout".to_string()
+            } else {
+                let ids: Vec<&str> = named.iter().map(|w| w.id.as_str()).collect();
+                format!("forget it by id: {}", ids.join(", "))
+            };
+            Err(format!("zygo: more than one workspace has the name {}; {tail}", esc(name)))
+        }
+    }
+}
+
 /// D14: the id first, then the readable states by name, then a newer state by its JSON `name`. `for_pane` gives the
 /// `forget-pane` form of the line for a shared name.
 fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
@@ -557,32 +587,13 @@ fn find(paths: &Paths, arg: &str, for_pane: bool) -> Result<Found, Exit> {
         }
     }
     let all = list_all(paths);
-    // Round 2 R1: only a real state folder is a candidate (as `list_all` and `sweep` count them).
-    let mut named: Vec<&Workspace> = all
-        .iter()
-        .filter_map(|(_, r)| r.as_ref().ok().filter(|w| w.name == arg))
-        .filter(|w| state_kind(paths, &w.id) == Kind::Real)
-        .collect();
-    match named.len() {
-        0 => {}
-        1 => {
-            let ws = named.remove(0);
-            // The file grew after `list_all` read it (FIX-17 Round 2 F1: refused, as by id).
-            let dir = paths.workspaces_dir().join(&ws.id);
-            if too_large(&dir) {
-                return Err(fail(format!("zygo: {}", too_large_err(&dir))));
-            }
-            return Ok(Found::Readable(Box::new(ws.clone())));
+    if let Some(ws) = named(paths, &all, arg, for_pane).map_err(fail)? {
+        // The file grew after `list_all` read it (FIX-17 Round 2 F1: refused, as by id).
+        let dir = paths.workspaces_dir().join(&ws.id);
+        if too_large(&dir) {
+            return Err(fail(format!("zygo: {}", too_large_err(&dir))));
         }
-        _ => {
-            let tail = if for_pane {
-                "run in its checkout".to_string()
-            } else {
-                let ids: Vec<&str> = named.iter().map(|w| w.id.as_str()).collect();
-                format!("forget it by id: {}", ids.join(", "))
-            };
-            return Err(fail(format!("zygo: more than one workspace has the name {}; {tail}", esc(arg))));
-        }
+        return Ok(Found::Readable(Box::new(ws.clone())));
     }
     for (id, r) in &all {
         let Err(StateError::Newer { .. }) = r else { continue };
