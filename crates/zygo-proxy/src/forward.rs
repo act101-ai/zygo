@@ -389,6 +389,14 @@ async fn run(
         p.row.role_requested = requested;
     }
     r?;
+    // With an `openai` candidate, before any candidate is tried: one answer whichever candidate serves (K§6.4.3
+    // Responses → Responses). With none, `include` is safe to ignore.
+    if route == ModelRoute::Responses
+        && ctx.candidates.iter().any(|c| c.dialect == Dialect::Openai)
+        && ctx.body.get("include").is_some_and(|i| !i.is_null() && !i.is_array())
+    {
+        return Err(ZygoError::bad_request("include must be an array"));
+    }
     app.sessions.accept(s)?;
     pending(slot).in_flight = Some(InFlight::begin(s, &app.clock));
     let resolved = ctx.resolved.clone().expect("stage 2 resolved the request");
@@ -507,6 +515,9 @@ async fn run(
     // COPY_MAX, with the in-flight charge still held) and mapped.
     let sse_upstream = streamed;
     let translated = c.dialect != ctx.dialect;
+    // A translated body reaches the tee as Messages events or a Messages body: the mapper output, an Anthropic
+    // upstream, or `translate_response` (K§6.4.2 C3).
+    let form = if translated { Dialect::Anthropic } else { c.dialect };
     let key = c.key.as_ref().map(|k| k.expose());
     let estimate = string_bytes(&ctx.body).div_ceil(BYTES_PER_TOKEN);
     let mut headers = response_headers(resp.headers(), translated, s.team_label.is_some());
@@ -588,7 +599,7 @@ async fn run(
         pins().insert(model, c.provider.name.clone());
     }
     drop(permit);
-    let mut tee = Tee::new(streamed);
+    let mut tee = Tee::new(streamed).with_lines(form);
     // Passthrough, not 2xx: the copy stays after `finish` for the upstream_errors capture (§14, FIX-10).
     if s.passthrough && !status.is_success() {
         tee.keep_body();
@@ -618,6 +629,7 @@ async fn run(
         resolved,
         provider: c.provider.name.clone(),
         dialect: c.dialect,
+        lines: form,
         adjustments,
         usage: Usage::default(),
         compact_call: false,
@@ -879,6 +891,9 @@ fn attempt_body(
 ) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
     let family = if c.dialect == Dialect::Anthropic { Family::Anthropic } else { Family::Openai };
     let rules: Vec<SchemaRule> = rw.rules.iter().filter(|r| r.family == family).cloned().collect();
+    if client == Dialect::Openai && c.dialect == Dialect::Openai {
+        return responses_same(body, raw, changed, c);
+    }
     if client == Dialect::Openai && c.dialect != client {
         return responses_attempt(body, raw, c, rw, &rules);
     }
@@ -921,6 +936,42 @@ fn attempt_body(
         return Ok((b, adj, NullMap::default()));
     }
     let (b, adj) = model_body(body, raw, changed, c)?;
+    Ok((b, adj, NullMap::default()))
+}
+
+/// The reasoning item content Codex needs on the next turn when nothing is stored upstream (K§6.4.3).
+const ENCRYPTED_REASONING: &str = "reasoning.encrypted_content";
+
+/// A Responses body toward an openai candidate (K§6.4.3 Responses → Responses): store := false, include gains
+/// reasoning.encrypted_content, then model_body. body is left as it was.
+fn responses_same(
+    body: &mut Value,
+    raw: &Bytes,
+    changed: bool,
+    c: &Candidate,
+) -> Result<(Bytes, Vec<Adjustment>, NullMap), ZygoError> {
+    let store_ok = body.get("store") == Some(&Value::Bool(false));
+    // `run` refused any other JSON type before the first candidate.
+    let include = match body.get("include").and_then(Value::as_array) {
+        None => Some(json!([ENCRYPTED_REASONING])),
+        Some(a) if a.iter().any(|v| v.as_str() == Some(ENCRYPTED_REASONING)) => None,
+        Some(a) => {
+            let mut a = a.clone();
+            a.push(json!(ENCRYPTED_REASONING));
+            Some(Value::Array(a))
+        }
+    };
+    if store_ok && include.is_none() {
+        let (b, adj) = model_body(body, raw, changed, c)?;
+        return Ok((b, adj, NullMap::default()));
+    }
+    let mut v = body.clone();
+    let obj = v.as_object_mut().ok_or_else(|| ZygoError::bad_request("the body must be a JSON object"))?;
+    obj.insert("store".into(), Value::Bool(false));
+    if let Some(i) = include {
+        obj.insert("include".into(), i);
+    }
+    let (b, adj) = model_body(&mut v, raw, true, c)?;
     Ok((b, adj, NullMap::default()))
 }
 
@@ -1413,6 +1464,10 @@ impl Drop for Flow {
         if let Some(Encode::Stream(s)) = &self.encode {
             self.rctx.adjustments.extend(s.enc.adjustments());
         }
+        // A 2xx Responses stream with no usage read: the zero counts are marked (K§6.4.2 C3).
+        if self.rctx.status.is_success() && self.tee.usage_unread() {
+            self.rctx.adjustments.push(Adjustment("usage_unread".into()));
+        }
         // Codes a line stage added (§10.2.3) reach the row, not the headers.
         self.pending.row.adjustments = names(&self.rctx.adjustments);
     }
@@ -1452,7 +1507,7 @@ impl Flow {
         let Flow { tee, rctx, pipeline, mapper, restore, encode, done, failed, .. } = f;
         // The stages see the upstream numbers up to and including this line.
         let mut on_line = |l: &mut SseLine| {
-            rctx.usage.observe(&l.0);
+            rctx.usage.observe(rctx.lines, &l.0);
             match encode {
                 // A Responses stream: its error lines only. The line stages are armed on the Messages route only
                 // (`window.rs:130`).

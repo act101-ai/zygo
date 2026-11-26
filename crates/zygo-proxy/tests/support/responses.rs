@@ -2,7 +2,7 @@
 //! The Responses route harness (K§6.4): a proxy on a `ManualClock` with one session and one mock upstream on
 //! 127.0.0.1. Included by each Responses test file with `#[path = "support/responses.rs"] mod support;`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -37,11 +37,14 @@ pub const MAX_OUTPUT: u64 = 32000;
 type Got = (String, HeaderMap, Vec<u8>);
 type Reply = (u16, String, Vec<u8>);
 type Hold = Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>;
+type Queue = Arc<Mutex<VecDeque<Reply>>>;
 
 struct Upstream {
     addr: SocketAddr,
     got: Arc<Mutex<Vec<Got>>>,
     reply: Arc<Mutex<Reply>>,
+    /// Replies used once each, in order, before `reply` (`reply_seq`).
+    queue: Queue,
     /// Set: the reply ends before its `content-length` (`reply_cut`).
     cut: Arc<AtomicBool>,
     /// Set: the next reply's connection stays open after the body until the test releases it (`reply_held`).
@@ -57,11 +60,12 @@ impl Upstream {
         let reply = Arc::new(Mutex::new(reply));
         let cut: Arc<AtomicBool> = Arc::default();
         let hold: Hold = Arc::default();
+        let queue: Queue = Arc::default();
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.set_nonblocking(true).unwrap();
         let addr = l.local_addr().unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let (g2, r2, c2, h2) = (got.clone(), reply.clone(), cut.clone(), hold.clone());
+        let (g2, r2, c2, h2, q2) = (got.clone(), reply.clone(), cut.clone(), hold.clone(), queue.clone());
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
             rt.block_on(async move {
@@ -69,9 +73,9 @@ impl Upstream {
                 let serve = async {
                     loop {
                         let Ok((s, _)) = l.accept().await else { continue };
-                        let (g3, r3, c3, h3) = (g2.clone(), r2.clone(), c2.clone(), h2.clone());
+                        let (g3, r3, c3, h3, q3) = (g2.clone(), r2.clone(), c2.clone(), h2.clone(), q2.clone());
                         tokio::spawn(async move {
-                            let _ = exchange(s, &g3, &r3, &c3, &h3).await;
+                            let _ = exchange(s, &g3, &r3, &q3, &c3, &h3).await;
                         });
                     }
                 };
@@ -81,15 +85,22 @@ impl Upstream {
                 }
             });
         });
-        Upstream { addr, got, reply, cut, hold, _stop: tx }
+        Upstream { addr, got, reply, queue, cut, hold, _stop: tx }
     }
 }
 
 /// One request read from `s` (its head, then `content-length` body bytes) and recorded; then the reply with
-/// `connection: close`. Cut: `content-length` is one byte more than the body sent, and the connection closes after the
-/// body, so the proxy reads the body and then a read error (an early end), with no timer. Held: the connection closes
-/// only when the test releases it.
-async fn exchange(mut s: tokio::net::TcpStream, got: &Mutex<Vec<Got>>, reply: &Mutex<Reply>, cut: &AtomicBool, hold: &Hold) -> std::io::Result<()> {
+/// `connection: close`. The reply is the front of `queue`, else `reply`. Cut: `content-length` is one byte more than
+/// the body sent, and the connection closes after the body, so the proxy reads the body and then a read error (an
+/// early end), with no timer. Held: the connection closes only when the test releases it.
+async fn exchange(
+    mut s: tokio::net::TcpStream,
+    got: &Mutex<Vec<Got>>,
+    reply: &Mutex<Reply>,
+    queue: &Mutex<VecDeque<Reply>>,
+    cut: &AtomicBool,
+    hold: &Hold,
+) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut buf = Vec::new();
     let mut chunk = [0u8; 16 * 1024];
@@ -123,7 +134,8 @@ async fn exchange(mut s: tokio::net::TcpStream, got: &Mutex<Vec<Got>>, reply: &M
     }
     body.truncate(len);
     got.lock().unwrap().push((path, headers, body));
-    let (status, ctype, b) = reply.lock().unwrap().clone();
+    let next = queue.lock().unwrap().pop_front();
+    let (status, ctype, b) = next.unwrap_or_else(|| reply.lock().unwrap().clone());
     let reason = StatusCode::from_u16(status).ok().and_then(|c| c.canonical_reason()).unwrap_or("Status");
     let declared = b.len() + usize::from(cut.load(Ordering::SeqCst));
     let head = format!("HTTP/1.1 {status} {reason}\r\ncontent-type: {ctype}\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n");
@@ -194,15 +206,25 @@ fn dialect_name(d: Dialect) -> &'static str {
 
 impl Harness {
     /// A proxy on a `ManualClock` with one session of `agent` and one mock upstream of dialect `upstream`; the config
-    /// is the role `code` → `MODEL` served by `PROVIDER` with the key `keychain:k-rs`, then `extra_toml`.
+    /// is the role `code` → `MODEL` served by `PROVIDER` with the key `keychain:k-rs`, then `extra_toml`, in which
+    /// `{UPSTREAM}` is the mock's base URL (a second `[[model.provider]]` of `MODEL` on the same mock).
     pub fn start(upstream: Dialect, agent: Agent, extra_toml: &str) -> Harness {
         Harness::start_with_profile(upstream, agent, extra_toml, None)
     }
 
     /// As `start`, with the session's `profile`.
     pub fn start_with_profile(upstream: Dialect, agent: Agent, extra_toml: &str, profile: Option<Profile>) -> Harness {
+        Harness::start_inner(&[upstream], agent, extra_toml, profile)
+    }
+
+    /// As `start`, with a provider that lists `dialects` in this order.
+    pub fn start_dialects(dialects: &[Dialect], agent: Agent, extra_toml: &str) -> Harness {
+        Harness::start_inner(dialects, agent, extra_toml, None)
+    }
+
+    fn start_inner(dialects: &[Dialect], agent: Agent, extra_toml: &str, profile: Option<Profile>) -> Harness {
         let d = TempDir::new().unwrap();
-        let body = if upstream == Dialect::Anthropic {
+        let body = if dialects[0] == Dialect::Anthropic {
             br#"{"type":"error","error":{"type":"invalid_request_error","message":"rs3 mock"}}"#.to_vec()
         } else {
             br#"{"error":{"type":"invalid_request_error","message":"rs3 mock"}}"#.to_vec()
@@ -212,10 +234,11 @@ impl Harness {
             "[role.code]\nmodel = \"{MODEL}\"\n\n[[model]]\nid = \"{MODEL}\"\n[model.facts]\nreasoning = \"always\"\n\
              effort_levels = [\"low\", \"medium\", \"high\"]\nmax_output_tokens = {MAX_OUTPUT}\ncontext_window = 200000\n\
              sampling = true\nvision = true\nstructured_output = \"native\"\nforced_tool_choice = true\n\n\
-             [[model.provider]]\nname = \"{PROVIDER}\"\nbase_url = \"http://127.0.0.1:{}\"\ndialects = [\"{}\"]\n\
-             upstream_model = \"{UPSTREAM_MODEL}\"\nkey = \"keychain:k-rs\"\n\n{extra_toml}",
+             [[model.provider]]\nname = \"{PROVIDER}\"\nbase_url = \"http://127.0.0.1:{}\"\ndialects = [{}]\n\
+             upstream_model = \"{UPSTREAM_MODEL}\"\nkey = \"keychain:k-rs\"\n\n{}",
             up.addr.port(),
-            dialect_name(upstream),
+            dialects.iter().map(|d| format!("\"{}\"", dialect_name(*d))).collect::<Vec<_>>().join(", "),
+            extra_toml.replace("{UPSTREAM}", &format!("http://127.0.0.1:{}", up.addr.port())),
         );
         std::fs::write(d.path().join("config.toml"), toml).unwrap();
         let cfg = load(&LoadContext { paths: paths(&d), repo: None, team: None }).unwrap();
@@ -331,12 +354,22 @@ impl Harness {
         self.up.got.lock().unwrap().iter().map(|g| serde_json::from_slice(&g.2).expect("upstream body is JSON")).collect()
     }
 
+    /// Each upstream request body as received.
+    pub fn upstream_raw(&self) -> Vec<Vec<u8>> {
+        self.up.got.lock().unwrap().iter().map(|g| g.2.clone()).collect()
+    }
+
     pub fn upstream_paths(&self) -> Vec<String> {
         self.up.got.lock().unwrap().iter().map(|g| g.0.clone()).collect()
     }
 
     pub fn upstream_headers(&self) -> Vec<HeaderMap> {
         self.up.got.lock().unwrap().iter().map(|g| g.1.clone()).collect()
+    }
+
+    /// Replies to the next requests, one each in order; later requests get the `reply_with` reply.
+    pub fn reply_seq(&self, replies: Vec<(u16, &str, Vec<u8>)>) {
+        *self.up.queue.lock().unwrap() = replies.into_iter().map(|(s, c, b)| (s, c.to_string(), b)).collect();
     }
 
     /// The mock's reply to every later request.

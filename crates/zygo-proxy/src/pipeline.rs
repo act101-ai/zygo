@@ -91,6 +91,9 @@ pub struct ResponseCtx {
     pub provider: String,
     /// The upstream dialect.
     pub dialect: Dialect,
+    /// The form of the body the tee and the response stages read: Openai only for a Responses upstream answering a
+    /// Responses client (K§6.4.2 C3), else Anthropic.
+    pub lines: Dialect,
     pub adjustments: Vec<Adjustment>,
     /// Upstream numbers, before any rewrite.
     pub usage: Usage,
@@ -106,6 +109,7 @@ impl fmt::Debug for ResponseCtx {
             .field("resolved", &self.resolved)
             .field("provider", &self.provider)
             .field("dialect", &self.dialect)
+            .field("lines", &self.lines)
             .field("adjustments", &self.adjustments)
             .field("usage", &self.usage)
             .field("compact_call", &self.compact_call)
