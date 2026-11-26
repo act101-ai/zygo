@@ -358,6 +358,15 @@ cx_scan 'marketplace-(macos|linux|windows)-[A-Za-z0-9_-]' 'marketplace OS name'
 # A time-bearing ULID after a lower-case prefix (resp_, msg_, fc_; scrub.py ULID); a placeholder of
 # time 0 is dropped. A bare ULID has no rule (Codex ids carry a prefix; ordinary hashes would match).
 cx_scan "${L}[a-z]{1,8}_[0-7][0-9A-HJKMNP-TV-Z]{25}([^0-9A-Za-z]|\$)" 'time-bearing id' '' 's/[a-z]{1,8}_0{10}[0-9A-HJKMNP-TV-Z]{16}//g'
+# env_scan <ERE> <label>: as cx_scan without i and drop, over fixtures/claude-code and fixtures/opencode
+# (PC-13: the Claude Code environment block lines, the scope of scrub.py's ENV_SHELL and ENV_OS: at a
+# line start or after a JSON "\n" escape; a masked "(...)" value passes). The verbatim files are exempt.
+env_scan() {
+  hit=$(grep -rn -aE -- "$1" fixtures/claude-code fixtures/opencode 2>/dev/null | grep -av -E -- "$VX" | tr '\000' ' ' | head -n 1)
+  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
+}
+env_scan '(^|\\n)[[:blank:]]*- Shell: [^(]' 'shell name'
+env_scan '(^|\\n)[[:blank:]]*- OS Version: [^(]' 'OS version'
 
 # name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
 # it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless
