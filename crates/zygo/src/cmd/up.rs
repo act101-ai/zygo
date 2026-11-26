@@ -261,7 +261,10 @@ mod tests {
             zygo_config::load(&zygo_config::LoadContext { paths: ctx.paths.clone(), repo: None, team: None }).unwrap()
         };
         // A file-only store: no OS store (Decision 3).
-        let store = zygo_config::keys::Auto::new(None, zygo_config::keys::FileStore::new(ctx.paths.data_dir.join("keys.toml")));
+        let keys = ctx.paths.data_dir.join("keys.toml");
+        let store = || -> Box<dyn zygo_config::keys::SecretStore> {
+            Box::new(zygo_config::keys::Auto::new(None, zygo_config::keys::FileStore::new(keys.clone())))
+        };
         let read = |u: &zygo_config::Merged| with_team(&ctx, u, crate::cmd::verbs::team_with(&ctx, "up", &store));
         // `from_config`: no server, no team layer, no line.
         let (c, lines) = read(&user(""));
@@ -290,5 +293,34 @@ mod tests {
         let (c, lines) = read(&u);
         assert_eq!((c.limits.max_members, lines.len()), (3, 1), "{lines:?}");
         assert!(lines[0].starts_with("zygo up: team config not read (user config ") && lines[0].ends_with(TAIL), "{lines:?}");
+    }
+
+    /// FX-14 R1: `verbs::team_with` builds the secret store only after `base` loads and only when `[server] url` is
+    /// set (the store is read only then, `zygo-launch/src/serve_client.rs:304`). A factory that records its calls
+    /// stands in for `default_store`; no OS store. Kills: a store (an OS keychain probe) built before `base` or with no
+    /// server.
+    #[test]
+    fn team_read_builds_the_store_only_after_base_and_with_a_server() {
+        let t = tempfile::tempdir().unwrap();
+        let ctx = crate::cmd::compact::tests::ctx(t.path(), None);
+        let called = std::cell::Cell::new(0);
+        let keys = ctx.paths.data_dir.join("keys.toml");
+        let store = || -> Box<dyn zygo_config::keys::SecretStore> {
+            called.set(called.get() + 1);
+            Box::new(zygo_config::keys::Auto::new(None, zygo_config::keys::FileStore::new(keys.clone())))
+        };
+        // `base` fails: no store.
+        std::fs::write(&ctx.paths.config_file, "[limits\n").unwrap();
+        assert!(crate::cmd::verbs::team_with(&ctx, "up", &store).is_err());
+        assert_eq!(called.get(), 0);
+        // No `[server]`: no team layer, no store.
+        std::fs::write(&ctx.paths.config_file, "").unwrap();
+        assert!(crate::cmd::verbs::team_with(&ctx, "up", &store).unwrap().is_none());
+        assert_eq!(called.get(), 0);
+        // A server: the store is built once.
+        let closed = super::dead_port::closed_url();
+        std::fs::write(&ctx.paths.config_file, format!("[server]\nurl = \"{closed}\"\n")).unwrap();
+        assert!(crate::cmd::verbs::team_with(&ctx, "up", &store).is_err());
+        assert_eq!(called.get(), 1);
     }
 }

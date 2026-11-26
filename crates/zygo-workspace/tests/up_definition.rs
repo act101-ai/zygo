@@ -644,6 +644,8 @@ fn up_all_with_a_repository_default_plans_solo() {
     let err = text(err);
     assert_eq!(code, 1, "{err}");
     assert!(err.starts_with("zygo: up --all reads no repository workspace files; using solo\n"), "{err}");
+    // The 1: `up_target` fails on the gone tmux and `run_all` skips `app` (`zygo-workspace/src/up.rs:1747`).
+    assert!(err.ends_with("zygo: tmux: no server running on /tmp/zygo-none/s\nzygo: app skipped\n"), "{err}");
     assert!(f.git.calls().is_empty(), "{:?}", f.git.calls());
     assert_eq!(f.planned().loadout, "solo");
 }
