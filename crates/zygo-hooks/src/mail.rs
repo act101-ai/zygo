@@ -2,6 +2,9 @@
 //! node ML-10).
 use serde_json::json;
 use zygo_core::esc;
+use zygo_core::paths::Paths;
+use zygo_mail_sync::registry::read_cache;
+use zygo_mail_sync::state::SyncPaths;
 use zygo_workspace::mail::names;
 use zygo_workspace::state::Workspace;
 
@@ -48,6 +51,18 @@ pub fn session_item_with(ws: &Workspace, own_key: &str, remote: &[String]) -> Op
     let names: Vec<String> = names.iter().map(|n| esc(n)).collect();
     let other = other_machines(remote).map_or(String::new(), |c| format!(" {c}"));
     Some(format!("Workspace mail: {first}. Members: `{}`.{other} {MAIL_TAIL}", names.join(", ")))
+}
+
+/// The remote addresses of item 8 (S§10.4, S§7.3): from `mail/sync/members.json` when sync is on for `ws_name`; reads
+/// config and the cache only, runs no git. A config that does not load, sync off or a bad id: none, and no line (S-C1).
+pub(crate) fn remote_addresses(paths: &Paths, ws_id: &str, ws_name: &str) -> Vec<String> {
+    let Ok(m) = zygo_config::load(&zygo_config::LoadContext { paths: paths.clone(), repo: None, team: None }) else {
+        return Vec::new();
+    };
+    if zygo_config::sync_for(&m.config, ws_name).is_err() {
+        return Vec::new();
+    }
+    SyncPaths::new(paths, ws_id).map_or_else(|_| Vec::new(), |sp| read_cache(&sp).addresses())
 }
 
 /// The delivery line of `n` unread messages (M§7.2): the prompt line, the SessionStart line and the Stop reason.
