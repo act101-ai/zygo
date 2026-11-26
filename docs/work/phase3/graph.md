@@ -192,7 +192,7 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
-| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | TODO | judgment | — |
+| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4 | PLANNED | judgment | — |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | DONE | judgment | plan d2642ab4; node 51e0a828, ba8f8542, af8c6af8, f0cb91a7, f7a2bd2a; prune 18 passed; PR #179 |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | DONE | judgment | plan 677eb448 · node eee53a92, e5e55c30 · acceptance pass (gotest 19 passed) · PR #182 |
