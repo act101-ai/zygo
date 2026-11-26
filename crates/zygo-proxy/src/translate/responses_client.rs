@@ -165,8 +165,8 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
     }
     adjacency(&c.messages)?;
     let mut tools = tools(req, &mut d)?;
-    table(req)?;
-    let mut choice = tool_choice(req, &tools)?;
+    let kinds = table(req)?;
+    let mut choice = tool_choice(req, &tools, &kinds)?;
     let from_history = history_tools(&c.messages, &tools);
     if !from_history.is_empty() {
         if tools.is_empty() {
@@ -592,18 +592,28 @@ fn history_tools(messages: &[(&'static str, Vec<Value>)], tools: &[Value]) -> Ve
 }
 
 /// `tool_choice` with `parallel_tool_calls` (obligation 7), against the `tools` sent: with none, both are omitted and
-/// `required` is a 400; a named tool must be one of them (`namespace` + `name` names the flat name).
-fn tool_choice(req: &Value, tools: &[Value]) -> Result<Option<Value>, ZygoError> {
+/// `required` is a 400; a named tool must be one of them. `{type: function, name, namespace}` names a sent nested tool
+/// by its pair (`kinds`, the request's `table`): a plain or custom tool of the flat name is not it.
+fn tool_choice(req: &Value, tools: &[Value], kinds: &HashMap<String, ToolKind>) -> Result<Option<Value>, ZygoError> {
     let mut tc = match req.get("tool_choice") {
         None | Some(Value::Null) => None,
         Some(v) => Some(match (v.as_str(), s(v, "type"), s(v, "name")) {
             (Some("auto"), _, _) => json!({"type":"auto"}),
             (Some("none"), _, _) => json!({"type":"none"}),
             (Some("required"), _, _) => json!({"type":"any"}),
-            (None, Some("function" | "custom"), Some(name)) => {
+            (None, Some(ty @ ("function" | "custom")), Some(name)) => {
                 let name = match v.get("namespace") {
                     None | Some(Value::Null) => name.to_owned(),
-                    Some(Value::String(ns)) => flat_name(ns, name),
+                    Some(Value::String(_)) if ty == "custom" => {
+                        return Err(bad("tool_choice: a custom tool has no namespace"))
+                    }
+                    Some(Value::String(ns)) => {
+                        let flat = flat_name(ns, name);
+                        if kinds.get(&flat) != Some(&ToolKind::Namespaced(ns.clone(), name.to_owned())) {
+                            return Err(bad("tool_choice: the named tool is not among the sent tools"));
+                        }
+                        flat
+                    }
                     Some(_) => return Err(bad("tool_choice: namespace must be a string")),
                 };
                 if !tools.iter().any(|t| s(t, "name") == Some(name.as_str())) {

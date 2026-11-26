@@ -1110,3 +1110,41 @@ fn namespace_tools_flatten_resumed_plain_history_call() {
         assert!(!codes.iter().any(|c| c.starts_with("tools_from_history:")), "{codes:?}");
     }
 }
+
+// ---- RS-9 review round 2 findings ----
+
+#[test]
+fn namespace_tools_flatten_tool_choice_selects_only_a_sent_pair() {
+    let not_sent = "tool_choice: the named tool is not among the sent tools";
+    let choose = |tools: Value, tc: Value| {
+        let mut b = body(json!([user("go")]));
+        b["tools"] = tools;
+        b["tool_choice"] = tc;
+        b
+    };
+    let named = json!({"type":"function","name":"compact","namespace":"mcp__zygo"});
+    // G1: the flat name belongs to a plain or custom tool, not to the pair.
+    for tools in [json!([{"type":"function","name":"mcp__zygo__compact"}]), json!([{"type":"custom","name":"mcp__zygo__compact"}])] {
+        assert_400(err(rq(&choose(tools, named.clone()))), not_sent);
+    }
+    // The pair is only in the history: not sent.
+    let mut b = choose(json!([{"type":"function","name":"f"}]), named.clone());
+    b["input"] = json!([user("go"), {"type":"function_call","call_id":"c1","name":"compact","namespace":"mcp__zygo","arguments":"{}"},
+        fco("c1", "r"), user("next")]);
+    assert_400(err(rq(&b)), not_sent);
+    // The sent pair.
+    let sent = json!([{"type":"namespace","name":"mcp__zygo","tools":[{"type":"function","name":"compact"}]}]);
+    let (m, _) = rq(&choose(sent.clone(), named)).unwrap();
+    assert_eq!(m["tool_choice"], json!({"type":"tool","name":"mcp__zygo__compact"}));
+
+    // G2: a custom choice with a namespace (namespaces hold only function tools), whatever is sent.
+    let custom_ns = "tool_choice: a custom tool has no namespace";
+    let tc = json!({"type":"custom","name":"compact","namespace":"mcp__zygo"});
+    for tools in [sent.clone(), json!([{"type":"custom","name":"mcp__zygo__compact"}])] {
+        assert_400(err(rq(&choose(tools, tc.clone()))), custom_ns);
+    }
+    // A null namespace is absent.
+    let tc = json!({"type":"custom","name":"c","namespace":null});
+    let (m, _) = rq(&choose(json!([{"type":"custom","name":"c"}]), tc)).unwrap();
+    assert_eq!(m["tool_choice"], json!({"type":"tool","name":"c"}));
+}
