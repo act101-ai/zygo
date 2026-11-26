@@ -137,7 +137,10 @@ pub mod testing {
     /// removed), `forget_before_cache` (after the state rename, before the cache removal; an error there is the cache
     /// error), `forget_before_tombstone_remove` (after the rename), `forget_pane_before_op_lock`,
     /// `forget_pane_before_cache`, `forget_pane_remove_results` and `forget_pane_remove_program` (right before the
-    /// removal of that cache; an error there is that cache's error).
+    /// removal of that cache; an error there is that cache's error); the mail points of FX-13 (M§5 P1):
+    /// `mail_delivery_after_read` (in `mail::Delivery::begin`, after the state read under `mail/lock`; an error there
+    /// is the delivery's `Io` error) and `mail_read_before_dirs` (in `mail::store::read`, before it makes `cur/`; the
+    /// state folder is the parent of `mail/`; an error there is the read's `Io` error).
     /// An `Err(text)` of the hook becomes `MuxError::Failed { message: text }` at that point; at `before_undo` it is
     /// the undo's write error.
     pub fn hook(dir: &Path, point: &'static str, f: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>) {

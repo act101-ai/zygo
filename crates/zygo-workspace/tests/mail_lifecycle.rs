@@ -306,6 +306,29 @@ fn lifecycle_prune_removes_only_keys_without_a_record() {
     assert!(target.join("kbbbbbbbb/new").is_dir());
 }
 
+// ---- step 5: path c (`read`) ----
+
+#[test] // c: a maildir removed while a read runs is not made again by that read
+fn lifecycle_read_does_not_make_a_removed_maildir_again() {
+    let _s = serial();
+    let td = TempDir::new().unwrap();
+    let p = paths(td.path());
+    let id = THIRD;
+    let store = stored(&p, id, &[("kaaaaaaaa", None)]);
+    put(&p, id, "kaaaaaaaa", 1);
+    let mail = mail_dir(&p, id);
+    let hm = mail.clone();
+    up::testing::hook(
+        store.dir(),
+        "mail_read_before_dirs",
+        Some(Box::new(move || mail_store::remove_pane(&hm, "kaaaaaaaa").map_err(|e| e.to_string()))),
+    );
+    let got = mail_store::read(&mail, "kaaaaaaaa", 10);
+    up::testing::hook(store.dir(), "mail_read_before_dirs", None);
+    assert_eq!(got.unwrap(), Vec::<Message>::new());
+    assert!(gone(&mail.join("kaaaaaaaa")));
+}
+
 // ---- step 4: path a3 (`forget-pane`) ----
 
 #[test] // a3: forget-pane waits for mail/lock while a delivery holds it, leaves the maildir, and the next run removes it

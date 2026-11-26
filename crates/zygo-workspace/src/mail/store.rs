@@ -257,7 +257,14 @@ pub fn read(mail_dir: &Path, key: &str, max: usize) -> Result<Vec<Message>, Mail
     let mut moved = false;
     let ids = ids(&new)?;
     if !ids.is_empty() {
-        make_dirs(mail_dir, &md)?;
+        // M§5 P1: a read never makes mail/<key>/. Only cur/ is made, in a maildir that exists; a maildir removed since
+        // the listing has nothing to return.
+        let state_dir = mail_dir.parent().unwrap_or(mail_dir);
+        crate::up::fire(state_dir, "mail_read_before_dirs").map_err(|e| std::io::Error::other(e.to_string()))?;
+        match make_leaf(&cur) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            r => r?,
+        }
     }
     for id in ids {
         if out.len() >= max {
