@@ -413,12 +413,16 @@ pub fn sync_env(paths: Paths) -> Env {
         clock: Box::new(SystemClock),
         probe: Box::new(LsRemote),
         seam: Box::new(NoSeam),
-        spawner: Box::new(ChildSpawner {
-            zygo: super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize)),
-        }),
+        spawner: Box::new(production_spawner()),
         wake: Box::new(TmuxWake { tmux: tmux_program() }),
         secret_policy: DeadlinePolicy::default(),
     }
+}
+
+/// The spawner of [`sync_env`] (S§8.1; MS-18 review round 2 F2): `<zygo> mail sync --ws-id <id> --background`, where
+/// `<zygo>` is this binary by the binary rule of `ws run`.
+fn production_spawner() -> ChildSpawner {
+    ChildSpawner { zygo: super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize)) }
 }
 
 /// S§8.3 step 1 (D3): the CLI line of sync off for workspace `ws_name`.
@@ -795,6 +799,19 @@ mod tests {
         let e = super::sync_env(p.clone());
         assert_eq!(e.paths, p);
         assert_eq!(e.secret_policy, zygo_redact::secret::DeadlinePolicy::default());
+    }
+
+    /// MS-18 review round 2 F2: the spawner of `sync_env`, which `zygo mail watch` (and send and sync) use, is the
+    /// child `<zygo> mail sync --ws-id <id> --background` of this binary, by the binary rule of `ws run`.
+    #[test]
+    fn production_spawner_starts_mail_sync_of_the_workspace() {
+        let sp = super::production_spawner();
+        let zygo = super::super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize));
+        assert_eq!(sp.zygo, zygo);
+        let cmd = sp.command("ws-1");
+        assert_eq!(cmd.get_program(), zygo.as_os_str());
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(args, ["mail", "sync", "--ws-id", "ws-1", "--background"]);
     }
 
     /// D2, D4 (review round 1, T1): a CLI sync that finds the lock held after the wait prints `BUSY_LINE` and exits 1.
