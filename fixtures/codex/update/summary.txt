@@ -1,0 +1,23 @@
+config_key=absent
+schema_default=true
+tui_start_exit=0
+tui_start_connects=raw.githubusercontent.com:443,github.com:443,api.github.com:443,chatgpt.com:443,api.github.com:443,127.0.0.1:49377,ab.chatgpt.com:443
+control_config_key=false
+control_exit=0
+warnings_panel=captured
+control_warnings_panel=captured
+control_connects=raw.githubusercontent.com:443,github.com:443,api.github.com:443,chatgpt.com:443,127.0.0.1:49452,ab.chatgpt.com:443
+exec_connects=github.com:443,api.github.com:443,chatgpt.com:443,ab.chatgpt.com:443,github.com:443,api.github.com:443,chatgpt.com:443,ab.chatgpt.com:443,github.com:443,api.github.com:443,ab.chatgpt.com:443,chatgpt.com:443
+connect_counts_c=ab.chatgpt.com:443=1,api.github.com:443=2,chatgpt.com:443=1,github.com:443=1,raw.githubusercontent.com:443=1
+connect_counts_e=ab.chatgpt.com:443=1,api.github.com:443=2,chatgpt.com:443=1,github.com:443=1,raw.githubusercontent.com:443=1
+connect_counts_f=ab.chatgpt.com:443=1,api.github.com:443=1,chatgpt.com:443=1,github.com:443=1,raw.githubusercontent.com:443=1
+connect_counts_a=ab.chatgpt.com:443=1,api.github.com:443=1,chatgpt.com:443=1,github.com:443=1
+connect_counts_b=ab.chatgpt.com:443=1,api.github.com:443=1,chatgpt.com:443=1,github.com:443=1
+connect_counts_d=ab.chatgpt.com:443=1,api.github.com:443=1,chatgpt.com:443=1,github.com:443=1
+release_source_hosts=api.github.com:443
+release_source_excess=api.github.com:443=+1
+release_source_request=seen
+release_source_path=not visible (CONNECT)
+release_source_proposed=registry.npmjs.org
+release_source_matches_proposed=no
+pc16=verified

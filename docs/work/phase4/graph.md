@@ -78,16 +78,17 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | DONE | implementation | PR #137 merged 0d665799; acceptance exit 0 @ e554d2ca (real codex 0.172.0; PC1 PC2 PC7 PC13 PC14 verified); CI run 45725231426 green (ubuntu, macos, windows) |
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2, PC-10 | TODO | implementation | — |
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | TODO | implementation | — |
-| PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | TODO | implementation | — |
+| PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | DONE | implementation | PR #138 merged 7ecef460; acceptance exit 0 @ 86ddb8e3 (real codex 0.172.0; PC10 PC16 verified); CI run 45735047521 green (ubuntu, macos, windows) |
 | PC-7 | `docs/premises.md` and `docs/live-checks.md`: `Codex` headers, rows PC1-PC16, LC-CX1, Codex method lines | PC-1, PC-3, PC-4, PC-5, PC-6, OC-1, PC-11 | TODO | mechanical | — |
 | PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | DONE | implementation | PR #127 merged 73a4ff40; acceptance exit 0 on merged tree (test-check-premises 99 cases); CI run 45704926916 green (ubuntu, macos, windows) |
 | PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | DONE | mechanical | PR #136 merged 256e5cae; acceptance exit 0 on merged tree (ver_test 62, test-check-premises 102); CI run 45716799629 green (ubuntu, macos, windows) |
 | PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | DONE | implementation | PR #141 merged a1c0ce8a; acceptance exit 0 on merged tree (scrub 70, lib 156, mock 56); CI run 45716982108 green (ubuntu, macos, windows) |
-| PC-11 | Scrub: platformOs, login shell and macOS writable roots in Codex captures; namespace tool descriptions; re-scrub committed Codex fixtures | PC-3, PC-4, PC-5, PC-6 | TODO | implementation | — |
-| RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | TODO | judgment | — |
+| PC-11 | Scrub: platformOs, login shell and macOS writable roots in Codex captures; namespace tool descriptions; re-scrub committed Codex fixtures | PC-3, PC-4, PC-5, PC-6, PC-12 | TODO | implementation | — |
+| PC-12 | Codex premise: the Responses event sequence zygo's encoder emits (empty terminal output, extra item and delta events) is accepted | PC-10, RS-2 | TODO | judgment | — |
+| RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | DONE | judgment | PR #152 merged fe18f3dd; acceptance exit 0 on merged tree (responses_request 49, translate 48); CI run 45733206649 green (ubuntu, macos, windows) |
 | RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | TODO | judgment | — |
 | RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | TODO | judgment | — |
-| RS-4 | Response side for Anthropic and chat upstreams: stream order with the encoder after the tee, non-streaming path, errors after the first event | RS-2, RS-3 | TODO | judgment | — |
+| RS-4 | Response side for Anthropic and chat upstreams: stream order with the encoder after the tee, non-streaming path, errors after the first event | RS-2, RS-3, PC-12 | TODO | judgment | — |
 | RS-5 | Responses → Responses passthrough, `ResponseCtx.lines`, the tee's `response.completed` usage parse | RS-4 | TODO | judgment | — |
 | RS-6 | Cache markers at forward time on the Anthropic upstream body of a Responses client | RS-5 | TODO | judgment | — |
 | RS-7 | Window rewrite for a Responses client, Anthropic and Responses upstreams | RS-5 | TODO | judgment | — |
@@ -138,3 +139,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | PC-11 added (author's call): Codex captures keep platformOs, the login shell, macOS writable roots and namespace tool descriptions (PC-3 review G3); scrub and re-scrub in place before PC-7. |
 | 2026-11-25 | PC-3 DONE: gate 3 rounds; recaptured on the PC-10 harness; apply_patch via a minimal catalog (run p) only; item-id/platformOs/shell scrub gaps to PC-11; PR #137 merged 0d665799. |
 | 2026-11-25 | RS-9 added (author's call): RS-1 drops Codex namespace tools (multi_agent_v1 subagent tools) on Anthropic/chat upstreams; RS-9 flattens them and maps calls back from PC-5's captures. Remote-compaction items noted for P4-9. |
+| 2026-11-26 | RS-1 DONE: gate 3 rounds; K§6.4.3 field/tool/item classes (client_metadata ignored; namespace dropped → RS-9); user-first, pairing, adjacency, history-only tools for compaction; PR #152 merged fe18f3dd. |
+| 2026-11-26 | PC-6 DONE: gate 3 rounds; PC10 verified; PC16 verified by a controlled count (+1 api.github.com CONNECT, key on vs off); item 52 now cites the P4-11 zygo-launch row for Codex; K§6.5.4 records the measured source; PR #138 merged 7ecef460. |
+| 2026-11-26 | PC-12 added (author's call): confirm against real Codex that the encoder's event sequence (empty terminal output, extra events) is accepted, before RS-4 wires it in. |
+| 2026-11-26 | RS-1 Files corrected: the PC-5 compaction fixture was read, not changed. |
+| 2026-11-26 | PC-11 now depends on PC-12 (author's call): PC-12 adds premise rows and encoder fixtures that PC-11 re-scrubs and PC-7 reads. |

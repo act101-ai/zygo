@@ -1,0 +1,5 @@
+Warnings · 1 of 4 · StartupModelmetadatafor`gpt-mock`notfound.Defaultingtofallbackmetadata;thiscandegradeperformanceandcauseissues. kkeep & ext · esc dismiss & close·⌃ocopy·←/→warning›Ask Codex to do anythinggpt-mock default·/repo·Reply ok. pc10-tracer-three←for agets · ? for shortcuts                       ⚠3 warnings·f2toview ›Shutting down...gpt-mock default· /repo·Reply ok. pc10-tracer-threeToken usage: total=33 input=30 output=3
+To continue this session, run:
+  codex resume uuid-0003
+Or run codex resume and select Reply ok. pc10-tracer-three.
+^C^C
