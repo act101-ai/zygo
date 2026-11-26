@@ -244,12 +244,14 @@ ENV_OS = re.compile(r"(?m)(" + ENV_NL + ENV_IND + OS_KEY + ":" + ENV_WS + ENV_Q 
 # JSON key, plain or \"-escaped, or a header line; any case); x-stainless-os (the OS family) is kept.
 # Review round 2 G5: the whole value (a token, or a parenthesis then a token) becomes the key's own
 # placeholder, so a wrong placeholder or one with text after it is rewritten. Review round 3 H1: a
-# quoted value (plain or \"-escaped) is replaced up to its closing quote; an unquoted one up to the first
-# ",", blank or line end (groups: 1 the key and separator, 2 the key, 3 the opening quote).
+# quoted value (plain or \"-escaped) is replaced up to its closing quote; an unquoted one up to the line
+# end, a quote or a backslash (a header line inside a JSON string); a "," or a blank does not end it, so
+# text after a value is lost (fails closed). Groups: 1 the key and separator, 2 the key, 3 the opening
+# quote.
 STAINLESS = {"x-stainless-arch": "(arch omitted)", "x-stainless-runtime-version": "(version omitted)"}
 STAINLESS_RE = re.compile(r"(\\?[\"']?((?i:x-stainless-(?:arch|runtime-version)))\\?[\"']?\s*[:=]\s*)"
                           r"(?:(\\?[\"'])(?:(?!\3)(?:\\[^\r\n]|[^\\\r\n]))*"
-                          r"|(?:\([^)\r\n\"'\\]*\)|[^\s\"',\\])[^\s\"',\\]*)")
+                          r"|[^\s\"'\\][^\r\n\"'\\]*)")
 # PC-13 review round 1 F7: the process id in a Claude Code messaging socket path (review round 3 H5:
 # also with escaped slashes).
 CC_SOCK = re.compile(r"(/cc-socks\\*/)[0-9]+(\.sock)")

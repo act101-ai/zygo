@@ -71,10 +71,6 @@ ENV_IND = r"(?:[ \t]|\\t)*"
 ENV_WS = r"(?:[ \t\u00a0]|\\t|\\u00[aA]0)*"
 ENV_Q = r"(?:\\?[\"'])?"
 ENV_END = r"(?:$|[\r\n\\\"'])"
-# Review round 3 H1: an unquoted Stainless value ends at a ",", a blank or the line end (scrub.py
-# STAINLESS_RE), so its placeholder may also be followed by a "," or a blank. The shell and OS lines
-# keep ENV_END.
-XS_END = r"(?:$|[\r\n\\\"', \t])"
 # Review round 3 H3: the host values of scrub.py SHELL_VAL and OS_VAL.
 SHELL_DIR = (r"(?:(?:/usr(?:/local)?)?/bin/|/opt/homebrew/bin/|/home/linuxbrew/\.linuxbrew/bin/|"
              r"/run/current-system/sw/bin/|/nix/store/[0-9a-z]+-[^/\s\"'\\]+/bin/)")
@@ -90,9 +86,9 @@ ENV_LEAKS = {
                              r"(?!\(omitted\)" + ENV_END + r")[^\s\\\"']"),
     "os version": re.compile(r"(?m)" + ENV_NL + ENV_IND + OS_KEY + ":" + ENV_WS + ENV_Q +
                              r"(?!\(os omitted\)" + ENV_END + r")[^\s\\\"']"),
-    "arch": re.compile(r"(?m)(?i:x-stainless-arch)" + XS_SEP + r"(?!\(arch omitted\)" + XS_END + r")[^\s\"',\\]"),
+    "arch": re.compile(r"(?m)(?i:x-stainless-arch)" + XS_SEP + r"(?!\(arch omitted\)" + ENV_END + r")[^\s\"',\\]"),
     "runtime version": re.compile(r"(?m)(?i:x-stainless-runtime-version)" + XS_SEP +
-                                  r"(?!\(version omitted\)" + XS_END + r")[^\s\"',\\]"),
+                                  r"(?!\(version omitted\)" + ENV_END + r")[^\s\"',\\]"),
     "socket pid": re.compile(r"/cc-socks\\*/[0-9]+\.sock"),
 }
 

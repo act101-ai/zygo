@@ -413,12 +413,8 @@ env_scan "${ENL}${EIN}O$(ci 's version'):$EWS$EQ$OSV" 'OS version'
 XSA="$(ci x-stainless-arch)"'(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
 XSR="$(ci x-stainless-runtime-version)"'(\\?["'"'"'])?[[:space:]]*[:=][[:space:]]*(\\?["'"'"'])?'
 XSV='[^"'"'"'\\[:space:],]'
-# Review round 3 H1: an unquoted Stainless value ends at a ",", a blank or the line end (scrub.py
-# STAINLESS_RE), so its placeholder may also be followed by a "," or a blank (XEND, rescrub XS_END).
-# The shell and OS lines keep EEND.
-XEND='([,[:blank:]"'"'"'\\'"$CR"']|$)'
-env_scan "$XSA$XSV" 'Stainless arch' "s/$XSA"'\(arch omitted\)'"$XEND/\\3/g"
-env_scan "$XSR$XSV" 'Stainless runtime version' "s/$XSR"'\(version omitted\)'"$XEND/\\3/g"
+env_scan "$XSA$XSV" 'Stainless arch' "s/$XSA"'\(arch omitted\)'"$EEND/\\3/g"
+env_scan "$XSR$XSV" 'Stainless runtime version' "s/$XSR"'\(version omitted\)'"$EEND/\\3/g"
 # The pid of a Claude Code messaging socket (scrub.py CC_SOCK; review round 2 G7; round 3 H5: also
 # with escaped slashes).
 env_scan '/cc-socks\\*/[0-9]+\.sock' 'socket pid'
