@@ -57,7 +57,7 @@ pub fn mark_upstream(body: &mut Value) -> bool
 
 ### Steps
 
-- [ ] **1. Unit tests for `mark_upstream`.** Append to `crates/zygo-proxy/src/cache.rs`:
+- [x] **1. Unit tests for `mark_upstream`.** Append to `crates/zygo-proxy/src/cache.rs`:
 
 ```rust
 #[cfg(test)]
@@ -105,7 +105,7 @@ mod tests {
 }
 ```
 
-- [ ] **2. Route tests.** Create `crates/zygo-proxy/tests/responses_cache.rs`:
+- [x] **2. Route tests.** Create `crates/zygo-proxy/tests/responses_cache.rs`:
 
 ```rust
 //! RS-6: cache markers at forward time on the Anthropic upstream body of a Responses client (K§6.4.2 row cache
@@ -173,21 +173,21 @@ fn chat_upstream_no_markers() {
 }
 ```
 
-- [ ] **3. See them fail.** `cargo test -p zygo-proxy --lib cache::tests` → does not compile (`mark_upstream` not found). `cargo test -p zygo-proxy --test responses_cache` → `anthropic_upstream_markers_when_on` and `opencode_default_marks_anthropic_upstream` fail (no `cache_control` in the body); the two "no markers" tests pass.
+- [x] **3. See them fail.** `cargo test -p zygo-proxy --lib cache::tests` → does not compile (`mark_upstream` not found). `cargo test -p zygo-proxy --test responses_cache` → `anthropic_upstream_markers_when_on` and `opencode_default_marks_anthropic_upstream` fail (no `cache_control` in the body); the two "no markers" tests pass.
 
-- [ ] **4. `mark_upstream`.** In `crates/zygo-proxy/src/cache.rs`, add `pub fn mark_upstream(body: &mut Value) -> bool` with the doc comment above. Rule: `has_marker(body)` → `false`; a `system` that is a JSON string is replaced in place by `[{"type":"text","text":<that string>}]`; then both `mark_last(body, "system")` and `mark_last(body, "tools")` run, and the result is their OR (as `on_request` does at `:38-40`). Leave `CacheStage` as it is.
+- [x] **4. `mark_upstream`.** In `crates/zygo-proxy/src/cache.rs`, add `pub fn mark_upstream(body: &mut Value) -> bool` with the doc comment above. Rule: `has_marker(body)` → `false`; a `system` that is a JSON string is replaced in place by `[{"type":"text","text":<that string>}]`; then both `mark_last(body, "system")` and `mark_last(body, "tools")` run, and the result is their OR (as `on_request` does at `:38-40`). Leave `CacheStage` as it is.
 
-- [ ] **5. Wire it in `forward.rs`.**
+- [x] **5. Wire it in `forward.rs`.**
   - Add `use crate::cache;` with the other `crate::` imports (`:27-41`).
   - `struct Rewrite` (`:875`): add the field `markers: bool`, doc ``/// `[cache] insert_markers.<agent>` for the session's agent (§10.4); read only toward an `anthropic` candidate of a Responses client (K§6.4.2).``
   - `run`, the `Rewrite` literal (`:423-427`): add `markers: cfg.config.cache.insert_markers.get(s.agent.as_str()).copied().unwrap_or(false),`
   - `responses_attempt`, the Anthropic branch (`} else { (m, Vec::new()) }`, `:1003-1005`): `if rw.markers { cache::mark_upstream(&mut m); }` before `(m, Vec::new())`. Add to its doc comment: "to `anthropic`, the §10.4 markers when `rw.markers` (K§6.4.2), last, so they sit on the final `system` text".
 
-- [ ] **6. See them pass.** `cargo test -p zygo-proxy --lib cache::tests` → 4 passed. `cargo test -p zygo-proxy --test responses_cache` → 4 passed.
+- [x] **6. See them pass.** `cargo test -p zygo-proxy --lib cache::tests` → 4 passed. `cargo test -p zygo-proxy --test responses_cache` → 4 passed.
 
-- [ ] **7. Acceptance.** `test "$(cargo test -q -p zygo-proxy --test responses_cache -- --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-proxy --locked` → exit 0 (count 4; the cache tests in `request_path`, `redaction_e2e` and `responses_passthrough` pass unchanged). Also `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings` → no warning.
+- [x] **7. Acceptance.** `test "$(cargo test -q -p zygo-proxy --test responses_cache -- --list 2>/dev/null | grep -c ': test$')" -ge 3 && cargo test -p zygo-proxy --locked` → exit 0 (count 4; the cache tests in `request_path`, `redaction_e2e` and `responses_passthrough` pass unchanged). Also `cargo clippy -p zygo-proxy --all-targets --locked -- -D warnings` → no warning.
 
-- [ ] **8. Commit** `feat(proxy): RS-6 cache markers on the Anthropic upstream body of a Responses client`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-6`.
+- [x] **8. Commit** `feat(proxy): RS-6 cache markers on the Anthropic upstream body of a Responses client`, with the trailers `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-6`.
 
 ### Author's checks
 
