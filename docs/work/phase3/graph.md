@@ -201,7 +201,7 @@ Session text (T, SX nodes):
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | DONE | mechanical | plan 0cbac05c · node b16ce79f, f13fe09b · acceptance LIVE M12 verified (agent 2.1.332): 3 of 3 ; check-premises ok · PR #178 |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | DONE | mechanical | plan fb76dfa8 · node 0febbe3b, 7e7d53a3, e63e4c6c, 8d5469a7 · acceptance pass (mail_sync_text 12 passed, session_text 43 passed) · PR #177 |
-| OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
+| OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | DONE | judgment | plan 677eb448 · node eee53a92, e5e55c30 · acceptance pass (gotest 19 passed) · PR #182 |
 | OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
 | OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
@@ -412,3 +412,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-18 DONE: end-to-end mail on tmux with stub agents. Review findings 6: 4 confirmed and fixed, 2 refuted · PR #171 |
 | 2026-11-25 | ML-19 DONE (live run by the lead, override "YOU BUILD YOU TEST"). R1: 9 findings; 6 confirmed (F1 Method bullets, F2 line 3 M§14, F4 plan deviations, F6 beta's turn stopped by cleanup, F8 bounds, F9 exit-1 list); F3 → FX-18; 2 refuted (F5 operator override, F7 new checks) · PR #178 |
 | 2026-11-25 | MS-20 DONE: review round 1: 7 findings, 4 confirmed (F2 consumer contracts FX-9/WD-18, F4 duplicate remote addresses, F6 two tests, F7 S§10.4/S§17 text), 3 refuted (F1 mail_list remote is MS-19, F3 per-request rebuild is FX-9, F5 cache size cap would be a new rule) · PR #177 |
+| 2026-11-26 | OS-32 DONE, kept, round 1. Fixed F1 (panic/race/teardown after a passed test hidden; O-C9), F2 (unparsed mark), F3 (go test rules 1-3 rewritten, lead's call, O§15 decision record). Refuted F4 (fixed step set), F5, F6 (OS-36 seam) · PR #182 |
