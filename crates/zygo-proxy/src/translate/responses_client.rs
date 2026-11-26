@@ -70,12 +70,12 @@ const ECHO_MAX: usize = 64;
 
 /// A client name or type as an error message may echo it: its first `ECHO_MAX` characters, each control (Cc), format
 /// (Cf), line separator (Zl) or paragraph separator (Zp) character replaced with `?`.
-pub(crate) fn cut(x: &str) -> String {
+fn cut(x: &str) -> String {
     x.chars().take(ECHO_MAX).map(|c| if c.is_control() || is_format_or_separator(c) { '?' } else { c }).collect()
 }
 
 /// Unicode 15.1 general categories Cf, Zl and Zp (std has no category lookup).
-fn is_format_or_separator(c: char) -> bool {
+pub(crate) fn is_format_or_separator(c: char) -> bool {
     matches!(c as u32,
         0x00AD | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F | 0x0890..=0x0891 | 0x08E2 | 0x180E
         | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB

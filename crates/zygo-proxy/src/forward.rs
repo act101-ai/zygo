@@ -604,17 +604,29 @@ async fn run(
 /// An upstream error on a translated Responses request, before the first byte (K§6.4.4, K-D50): `translate_error`'s
 /// status and error in the OpenAI shape; a context-limit refusal in the shape Codex recovers from (PC14,
 /// `fixtures/codex/errors/context-400.json`): a `prompt is too long` message (Anthropic's own text, or `translate_error`'s
-/// mapping), or Anthropic's full `max_tokens` limit form with its message under the echo rule (K§6.7). That form is
+/// mapping), or Anthropic's full `max_tokens` limit form with its message cleaned (`pc14_message`). That form is
 /// mapped here only: every other client gets it unchanged (Claude Code parses it).
 fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value) {
     let (s, m) = translate_error(status, body, estimate, key);
     let message = m["error"]["message"].as_str().unwrap_or_default();
     if s == StatusCode::BAD_REQUEST && (message.starts_with("prompt is too long") || anthropic_limit_form(message)) {
-        let message = if message.starts_with("prompt is too long") { message.to_string() } else { responses_client::cut(message) };
+        let message = if message.starts_with("prompt is too long") { message.to_string() } else { pc14_message(message) };
         let e = json!({"message": message, "type": "invalid_request_error", "param": "input", "code": "context_length_exceeded"});
         return (s, json!({ "error": e }));
     }
     (s, json!({ "error": m["error"] }))
+}
+
+/// The most characters of an upstream message in the PC14 shape: the limit form's numbers survive (K§6.4.4).
+const PC14_MESSAGE_MAX: usize = 512;
+
+/// The upstream message, its first `PC14_MESSAGE_MAX` characters, each control (Cc), format (Cf), line separator (Zl)
+/// or paragraph separator (Zp) character replaced with `?` (K§6.4.4).
+fn pc14_message(m: &str) -> String {
+    m.chars()
+        .take(PC14_MESSAGE_MAX)
+        .map(|c| if c.is_control() || responses_client::is_format_or_separator(c) { '?' } else { c })
+        .collect()
 }
 
 /// Anthropic's refusal when input plus `max_tokens` is over the window, in full (the form Claude Code parses).
