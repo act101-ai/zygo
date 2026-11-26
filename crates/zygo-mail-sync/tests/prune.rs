@@ -8,10 +8,10 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{blob, commit_tree, far, git, git_in, plain, tip_file, tree_literally, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{advance, blob, commit_tree, far, git, git_in, plain, tip_file, tree_literally, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::Value;
 use ulid::Ulid;
 use zygo_config::{LoadContext, MailConfig};
@@ -21,12 +21,14 @@ use zygo_mail_sync::branch::{self, BranchError, Fetched};
 use zygo_mail_sync::env::{self, Crash, Env, Seam, Spawner, Verdict, Wake};
 use zygo_mail_sync::identity::{read_meta, TipMeta};
 use zygo_mail_sync::prune::{self, Pruned, COMMITS_DUE, OWN_ACK_DUE};
-use zygo_mail_sync::sync::{run, Mode, Report};
+use zygo_mail_sync::sync::{run, run_with, Mode, Opts, Report, SyncError};
 use zygo_redact::DeadlinePolicy;
 use zygo_workspace::state::Workspace;
 
 /// 2023-11-14T22:13:20Z.
 const T0: u64 = 1_700_000_000;
+/// One year, in seconds (S§19 #18).
+const YEAR: u64 = 365 * 86_400;
 const BRANCH: &str = "zygo/mail";
 
 /// The commit count of `refs/heads/zygo/mail` in the bare repository.
@@ -87,6 +89,11 @@ struct Hook(Mutex<HookFn>);
 impl Hook {
     fn none() -> Hook { Hook::new(|_| Ok(())) }
     fn new(f: impl FnMut(&'static str) -> Result<(), Crash> + Send + 'static) -> Hook { Hook(Mutex::new(Box::new(f))) }
+    /// `Err(Crash(point))` at the first call at `point`.
+    fn crash_at(point: &'static str) -> Hook {
+        let mut done = false;
+        Hook::new(move |p| if p == point && !done { done = true; Err(Crash(p)) } else { Ok(()) })
+    }
 }
 impl Seam for Hook {
     fn at(&self, p: &'static str) -> Result<(), Crash> { (self.0.lock().unwrap())(p) }
@@ -121,6 +128,11 @@ fn env_at(m: &Machine, seam: Hook, secs: u64) -> Env {
 
 /// One CLI sync of `m` at `T0`.
 fn sync(m: &Machine) -> Report { run(&env_at(m, Hook::none(), T0), WS_ID, Mode::Cli).unwrap() }
+
+/// One CLI sync of `m` with `zygo mail sync --prune`, the clock at `secs`.
+fn prune_now(m: &Machine, secs: u64) -> Report {
+    run_with(&env_at(m, Hook::none(), secs), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap()
+}
 
 /// One message from member `from` to `to.0@to.1` through the send path (MS-9), at `T0` plus a counter.
 fn send(m: &Machine, from: &str, to: (&str, &str), body: &str) -> Ulid {
@@ -168,11 +180,16 @@ fn machines_with(a_extra: &str, b_extra: &str) -> (Remote, Machine, Machine) {
 fn pair() -> (Remote, Machine, Machine) { machines_with("", "") }
 
 /// The `imported` array of the ack file `path` at the tip; empty when absent.
-#[allow(dead_code)]
 fn imported(r: &Remote, path: &str) -> BTreeSet<String> {
     let Some(b) = tip_file(r, BRANCH, path) else { return BTreeSet::new() };
     let v: Value = serde_json::from_slice(&b).unwrap();
     v["imported"].as_array().unwrap().iter().map(|u| u.as_str().unwrap().to_string()).collect()
+}
+
+/// The file names in `mail/<key>/new/` of `m`; empty when absent.
+fn new_ids(m: &Machine, key: &str) -> BTreeSet<String> {
+    let Ok(d) = fs::read_dir(m.sp().mail.join(key).join("new")) else { return BTreeSet::new() };
+    d.map(|e| e.unwrap().file_name().into_string().unwrap()).collect()
 }
 
 /// Whether `<addr>/<id>.json` is at the remote tip.
@@ -212,6 +229,11 @@ fn edit_tip(r: &Remote, adds: &[(&str, &[u8])], removes: &[&str]) {
     let tree = g(&["write-tree"]);
     let c = commit_tree(&r.bare, &tree, Some(&tip));
     git(&r.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &c]);
+}
+
+#[test]
+fn t1b_opts_default_is_no_forced_prune() {
+    assert_eq!(Opts::default(), Opts { prune: false });
 }
 
 #[test] // S§14 "A and B prune at the same time"; S§9 Tree, Push
@@ -280,4 +302,188 @@ fn t12_force_push_only_to_a_zygo_branch_whose_base_has_the_marker() {
     assert_eq!(prune::run(&a.wt, "origin", BRANCH, &tip, &meta, far()), Ok(Pruned::Done { removed: 0 }));
     assert_ne!(r.tip(BRANCH), Some(tip));
     assert_eq!(count(&r), 1);
+}
+
+#[test] // S§19 #17a, S§9 Base, S§8.3 step 16, review focus 10 (base older than this pass's own push)
+fn t3_prune_after_push_keeps_the_pushed_message() {
+    let (r, a, b) = pair();
+    let u0 = send(&a, "alice", ("bob", "b"), "zero");
+    sync(&a);
+    sync(&b);
+    assert!(imported(&r, "ack/b.json").contains(&u0.to_string()));
+    grow(&r.bare, "refs/heads/zygo/mail", 999 - count(&r));
+    let before = r.tip(BRANCH);
+    sync(&a); // nothing to push; 999 commits: not due
+    assert_eq!((r.tip(BRANCH), count(&r)), (before, 999));
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    assert_eq!(sync(&a).pushed, 1); // the push makes 1000 commits: the same pass prunes
+    assert_eq!(count(&r), 1);
+    assert!(at_tip(&r, "bob@b", u1));
+    assert!(!at_tip(&r, "bob@b", u0));
+    assert_eq!(tip_file(&r, BRANCH, "ZYGO-MAIL").unwrap(), b"1\n");
+    for p in ["registry/a.json", "registry/b.json", "ack/a.json", "ack/b.json"] {
+        assert!(tip_file(&r, BRANCH, p).is_some(), "{p}");
+    }
+    assert_eq!(git(&r.bare, &["log", "-1", "--format=%s", "refs/heads/zygo/mail"]), "zygo mail [skip ci]");
+    sync(&b);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{u0}.json"), format!("{u1}.json")]));
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u1.to_string()]));
+}
+
+#[test] // S§19 #17b, S§14 "A prunes while B pushes" (B's push after A's base)
+fn t4_a_push_before_the_prune_push_loses_the_lease() {
+    let (r, a, _b) = pair();
+    grow(&r.bare, "refs/heads/zygo/mail", 999 - count(&r));
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    let r = Arc::new(r);
+    let (r2, moved) = (r.clone(), Arc::new(Mutex::new(None)));
+    let m2 = moved.clone();
+    let h = Hook::new(move |p| {
+        if p == "before_prune_push" {
+            *m2.lock().unwrap() = Some(advance(&r2, BRANCH));
+        }
+        Ok(())
+    });
+    assert_eq!(run(&env_at(&a, h, T0), WS_ID, Mode::Cli).unwrap().pushed, 1);
+    let other = moved.lock().unwrap().clone().expect("the prune was due");
+    assert_eq!(r.tip(BRANCH), Some(other));
+    assert_eq!(count(&r), 1001);
+    assert!(at_tip(&r, "bob@b", u1));
+    sync(&a); // the next pass tries again
+    assert_eq!(count(&r), 1);
+    assert!(at_tip(&r, "bob@b", u1));
+}
+
+#[test] // S§14 "Crash during a prune": the branch is the base or the new root
+fn t5_crash_during_a_prune_leaves_the_base() {
+    let (r, a, _b) = pair();
+    grow(&r.bare, "refs/heads/zygo/mail", 999 - count(&r));
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    let e = run(&env_at(&a, Hook::crash_at("before_prune_push"), T0), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: stopped at seam before_prune_push".into(), check: "seam" });
+    assert_eq!(count(&r), 1000);
+    assert!(at_tip(&r, "bob@b", u1));
+    assert!(!a.sp().outbox.join(format!("{u1}.json")).exists());
+    sync(&a);
+    assert_eq!(count(&r), 1);
+    assert!(at_tip(&r, "bob@b", u1));
+}
+
+#[test] // S§14 "A prunes while B pushes" (A's prune lands first; B builds on the new root)
+fn t7_a_prune_that_lands_first_makes_the_push_build_on_the_new_root() {
+    let (r, a, b) = pair();
+    let u0 = send(&a, "alice", ("bob", "b"), "zero");
+    sync(&a);
+    sync(&b);
+    let ib = send(&b, "bob", ("alice", "a"), "from b");
+    let a = Arc::new(a);
+    let a2 = a.clone();
+    let mut n = 0;
+    let h = Hook::new(move |p| {
+        if p == "before_push" {
+            n += 1;
+            if n == 1 {
+                run_with(&env_at(&a2, Hook::none(), T0), WS_ID, Mode::Cli, &Opts { prune: true }).unwrap();
+            }
+        }
+        Ok(())
+    });
+    assert_eq!(run(&env_at(&b, h, T0), WS_ID, Mode::Cli).unwrap().pushed, 1);
+    assert_eq!(count(&r), 2);
+    assert!(at_tip(&r, "alice@a", ib));
+    assert!(!at_tip(&r, "bob@b", u0));
+}
+
+#[test] // S§19 #18, S-C8, S§14 "Different keep on A and B", "B idle for months", S§10.3
+fn t8_prune_keeps_what_no_ack_lists_whatever_the_clock_or_keep() {
+    let (r, a, b) = machines_with("keep = \"1d\"\n", "keep = \"90d\"\n");
+    let u0 = send(&b, "bob", ("alice", "a"), "to a");
+    sync(&b); // B is idle from here
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    let u2 = send(&a, "alice", ("bob", "b"), "two");
+    sync(&a);
+    assert!(imported(&r, "ack/a.json").contains(&u0.to_string()));
+    prune_now(&a, T0 + YEAR);
+    assert_eq!(count(&r), 1);
+    assert!(!at_tip(&r, "alice@a", u0));
+    assert!(at_tip(&r, "bob@b", u1) && at_tip(&r, "bob@b", u2));
+    for p in ["registry/a.json", "registry/b.json", "ack/a.json", "ack/b.json"] {
+        assert!(tip_file(&r, BRANCH, p).is_some(), "{p}");
+    }
+    run(&env_at(&b, Hook::none(), T0 + YEAR), WS_ID, Mode::Cli).unwrap();
+    run(&env_at(&b, Hook::none(), T0 + YEAR), WS_ID, Mode::Cli).unwrap();
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{u1}.json"), format!("{u2}.json")]));
+    assert_eq!(imported(&r, "ack/b.json"), BTreeSet::from([u1.to_string(), u2.to_string()]));
+    run(&env_at(&a, Hook::none(), T0 + YEAR), WS_ID, Mode::Cli).unwrap();
+    assert!(imported(&r, "ack/a.json").is_empty()); // S§7.4: the owner drops the pruned ULID
+}
+
+#[test] // S§19 #15 prune part
+fn t9_a_message_a_full_inbox_did_not_ack_survives_a_prune() {
+    let (r, a, b) = machines_with("", "max_unread = 1\n");
+    let new = b.sp().mail.join(BOB).join("new");
+    fs::create_dir_all(&new).unwrap();
+    let old = format!("{}.json", Ulid::from_parts(T0 * 1000, 1));
+    fs::write(new.join(&old), b"{}").unwrap();
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    sync(&a);
+    sync(&b);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([old.clone()]));
+    assert!(!imported(&r, "ack/b.json").contains(&u1.to_string()));
+    prune_now(&a, T0);
+    assert_eq!(count(&r), 1);
+    assert!(at_tip(&r, "bob@b", u1));
+    let cur = b.sp().mail.join(BOB).join("cur");
+    fs::create_dir_all(&cur).unwrap();
+    fs::rename(new.join(&old), cur.join(&old)).unwrap(); // bob reads
+    sync(&b);
+    sync(&b);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{u1}.json")]));
+}
+
+#[test] // S§19 #14 push-crash part, S§14 "Crash after A's push, before the outbox delete", S-G5
+fn t10_crash_after_push_then_prune_gives_no_second_delivery() {
+    let (r, a, b) = pair();
+    let u1 = send(&a, "alice", ("bob", "b"), "one");
+    run(&env_at(&a, Hook::crash_at("before_outbox_delete"), T0), WS_ID, Mode::Cli).unwrap_err();
+    assert!(a.sp().outbox.join(format!("{u1}.json")).is_file());
+    sync(&b);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{u1}.json")]));
+    prune_now(&b, T0);
+    assert!(!at_tip(&r, "bob@b", u1));
+    sync(&b);
+    assert!(!imported(&r, "ack/b.json").contains(&u1.to_string()));
+    assert_eq!(sync(&a).pushed, 1); // the path is not at the tip: A adds it again
+    assert!(at_tip(&r, "bob@b", u1));
+    assert!(!a.sp().outbox.join(format!("{u1}.json")).exists());
+    sync(&b);
+    assert_eq!(new_ids(&b, BOB), BTreeSet::from([format!("{u1}.json")])); // zero more deliveries
+    assert!(imported(&r, "ack/b.json").contains(&u1.to_string())); // acked again
+    prune_now(&b, T0);
+    assert!(!at_tip(&r, "bob@b", u1)); // a later prune removes it
+}
+
+#[test] // S§20 SP5 (as a CI test)
+fn sp5_plain_fetch_after_a_prune() {
+    let (r, a, b) = pair();
+    send(&a, "alice", ("bob", "b"), "zero");
+    sync(&a);
+    sync(&b);
+    let old = git(&b.root, &["rev-parse", "refs/remotes/origin/zygo/mail"]);
+    prune_now(&a, T0);
+    let root = r.tip(BRANCH).unwrap();
+    assert_ne!(old, root);
+    fs::write(a.root.join("work.txt"), "w\n").unwrap();
+    git(&a.root, &["add", "work.txt"]);
+    git(&a.root, &["commit", "-q", "-m", "work"]);
+    git(&a.root, &["push", "-q", "origin", "HEAD:refs/heads/main"]);
+    let work = git(&a.root, &["rev-parse", "HEAD"]);
+    let o = plain(&b.root).arg("fetch").output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(git(&b.root, &["rev-parse", "refs/remotes/origin/zygo/mail"]), root);
+    let o = plain(&b.root).args(["pull", "-q"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(git(&b.root, &["symbolic-ref", "HEAD"]), "refs/heads/main");
+    assert_eq!(git(&b.root, &["rev-parse", "HEAD"]), work);
+    assert_eq!(git(&b.root, &["status", "--porcelain"]), "");
 }

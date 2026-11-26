@@ -1,6 +1,6 @@
 //! The sync of one workspace (mail sync design S§8.3): gate, mark, lock, passes, push retry, release and look again.
 //! A pass imports (S§8.5), wakes (S§10.1), commits the outbox after the secret pass (S§8.6 "At commit") and the own
-//! files (S§7.3, S§7.4), and pushes. Every `errors.log` line holds a ULID, pattern ids or a check name only (S-C2).
+//! files (S§7.3, S§7.4), pushes, and prunes (S§9). Every `errors.log` line holds a ULID, pattern ids or a check name only (S-C2).
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
@@ -18,6 +18,7 @@ use crate::branch::{self, BranchError, Change, Fetched, Pushed};
 use crate::env::{Clock, Crash, Env, Verdict};
 use crate::identity::{self, own_hosts, read_meta, TipMeta};
 use crate::import::{self, Target};
+use crate::prune::{self, Pruned};
 use crate::public;
 use crate::secret::{self, Outcome};
 use crate::registry::{write_cache, Ack, MemberCache, Registry, ACK_ENTRIES_MAX, MEMBERS_MAX};
@@ -46,6 +47,13 @@ pub struct Report {
     pub pushed: usize,
     pub delivered: usize,
     pub notes: Vec<String>,
+}
+
+/// What a caller asks of one sync beyond S§8.3.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Opts {
+    /// `zygo mail sync --prune` (S§9 When): the first pass prunes at step 16 even when not due.
+    pub prune: bool,
 }
 
 /// Why a sync did not run to its end. `Stopped.line` is the CLI line; only `check` goes to `errors.log` (S-C2).
@@ -127,6 +135,11 @@ fn branch_check(e: &BranchError) -> &'static str {
 /// S§8.3: one sync of workspace `ws_id`: gate (step 1), mark (step 2), then passes under the lock (steps 3-16)
 /// until the look after a release finds no mark (step 17).
 pub fn run(env: &Env, ws_id: &str, mode: Mode) -> Result<Report, SyncError> {
+    run_with(env, ws_id, mode, &Opts::default())
+}
+
+/// [`run`] with `opts`: `prune` forces the prune of the first pass (S§9 When).
+pub fn run_with(env: &Env, ws_id: &str, mode: Mode, opts: &Opts) -> Result<Report, SyncError> {
     let c = gate(env, ws_id)?;
     if state::mark_again(&c.sp).is_err() {
         return Err(c.stopped(stop("again"), false));
@@ -143,7 +156,7 @@ pub fn run(env: &Env, ws_id: &str, mode: Mode) -> Result<Report, SyncError> {
         };
         let held = (|| {
             state::take_again(&c.sp).map_err(|_| stop("again"))?;
-            pass(&c, &mut report, first)?;
+            pass(&c, &mut report, first, first && opts.prune)?;
             report.passes += 1;
             first = false;
             env.seam.at("before_release")?;
@@ -227,8 +240,8 @@ fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<Fil
     }
 }
 
-/// S§8.3 steps 5-15 (step 16 is MS-14's), with one deadline of [`PASS_DEADLINE`].
-fn pass(c: &Ctx, report: &mut Report, first: bool) -> Result<(), Fail> {
+/// S§8.3 steps 5-16, with one deadline of [`PASS_DEADLINE`].
+fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), Fail> {
     let (env, sp, root, wt) = (c.env, &c.sp, &c.ws.main_root, &c.sp.worktree);
     let (remote, branch_name, host) = (c.s.remote.as_str(), c.s.branch.as_str(), c.s.host.as_str());
     let deadline = Instant::now() + PASS_DEADLINE;
@@ -241,7 +254,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool) -> Result<(), Fail> {
     }
     let identity = state::make_identity(sp).map_err(|_| stop("identity"))?;
     let mut attempts = 0;
-    loop {
+    let (base, base_meta) = loop {
         let tip = match branch::fetch(root, remote, branch_name, deadline)? {
             Fetched::Tip(t) => {
                 branch::ensure_worktree(root, wt, &t, deadline)?;
@@ -301,10 +314,11 @@ fn pass(c: &Ctx, report: &mut Report, first: bool) -> Result<(), Fail> {
         let files = own_files(wt, &tip, &own, deadline)?;
         changes.extend(own_changes(c, &meta, &identity, &own, &files, &imp.acked));
         if changes.is_empty() {
-            break;
+            break (tip, meta);
         }
         let commit = branch::commit(wt, &tip, Some(&tip), &changes, deadline)?;
-        st.pending = own_blobs(&read_meta(wt, &commit, deadline, &mut |_| {})?, &identity);
+        let commit_meta = read_meta(wt, &commit, deadline, &mut |_| {})?;
+        st.pending = own_blobs(&commit_meta, &identity);
         state::save(sp, &st).map_err(|_| stop("state"))?;
         env.seam.at("before_push")?;
         match branch::push(wt, remote, branch_name, &commit, None, deadline)? {
@@ -318,7 +332,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool) -> Result<(), Fail> {
                     let _ = std::fs::remove_file(p);
                 }
                 report.pushed += sent.len();
-                break;
+                break (commit, commit_meta);
             }
             // S§8.3 step 15: a new fetch, and steps 7-13 again on the new tip; no wait, no merge or rebase.
             Pushed::Moved => {
@@ -329,11 +343,29 @@ fn pass(c: &Ctx, report: &mut Report, first: bool) -> Result<(), Fail> {
             }
             Pushed::Other(_) => return Err(stop("push")),
         }
-    }
+    };
+    prune_step(c, &base, &base_meta, &identity, forced, deadline)?;
     let mut st = state::load(sp).map_err(|_| stop("state"))?;
     st.last_ok = Some(env.clock.now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()));
     st.last_error = None;
     state::save(sp, &st).map_err(|_| stop("state"))
+}
+
+/// S§8.3 step 16, S§9 When and Base: the prune of `base` (this pass's push, else the fetched tip) when forced, when
+/// the longest valid own ack of this identity has more than [`prune::OWN_ACK_DUE`] entries, or at
+/// [`prune::COMMITS_DUE`] commits. A lost lease is no error and writes no line: the next pass tries again (S§9).
+fn prune_step(c: &Ctx, base: &str, meta: &TipMeta, identity: &str, forced: bool, deadline: Instant)
+    -> Result<Pruned, Fail> {
+    let own_len = own_hosts(meta, identity, &c.s.host).iter()
+        .filter_map(|h| own_ack(meta, h, identity))
+        .map(|a| a.imported.len())
+        .max()
+        .unwrap_or(0);
+    if !prune::due(&c.sp.worktree, base, own_len, forced, deadline)? {
+        return Ok(Pruned::NotDue);
+    }
+    c.env.seam.at("before_prune_push")?;
+    Ok(prune::run(&c.sp.worktree, &c.s.remote, &c.s.branch, base, meta, deadline)?)
 }
 
 /// S§8.3 step 5, S§8.2, S§11: the remote is one that `git remote` lists, then the public check of its URLs. `Public`
