@@ -105,7 +105,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-5 | MCP tool naming and `compact` tool listing (concern 5) read the descriptor | CC-4 | TODO | implementation | — |
 | CC-6 | Hook output and session text delivery (concerns 3, 4) read the descriptor | CC-5 | TODO | implementation | — |
 | CC-7 | Argument grammar and session flags (concern 7) read the descriptor | CC-6 | TODO | implementation | — |
-| CC-8 | Pane kind, resume kind, turn events, workspace definition kinds (concern 8); `PaneKind` = `Agent(Agent)` or `Shell` | CC-7 | TODO | judgment | — |
+| CC-8 | Pane kind, resume kind, turn events, workspace definition kinds (concern 8); `PaneKind` = `Agent(Agent)` or `Shell` | CC-7, TF-1 | TODO | judgment | — |
 | CC-9 | Launch layer: `adapter_for` registry, adapters under `client/`, plugin delivery and env rows (concerns 6, 11), `Plugins` removed | CC-8 | TODO | judgment | — |
 | CC-10 | CLI shims under `cmd/client/`; binary-crate client sites read the registry (concern 10) | CC-9 | TODO | implementation | — |
 | CC-11 | Preview gate at launch for every entry point, loadout check, hidden help and doctor (K§6.2.7) | CC-10 | TODO | judgment | — |
@@ -114,6 +114,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-14 | Opaque client kind `pub struct Agent(Kind)` and the `trybuild` compile-fail cases | CC-13 | TODO | judgment | — |
 | CC-15 | Boundary check `client_boundary` (K§6.1.4) with its exception list | CC-14 | TODO | judgment | — |
 | CC-16 | Base-spec notes: §8.1 (phase 3 features), §8.4 (`ZYGO_AGENT` ids, client denylist rows), §8.8 (superseded) | BS-1, CC-12, CC-15 | TODO | mechanical | — |
+| TF-1 | Tests: a child that exits before reading stdin does not fail the test (BrokenPipe) | — | PLANNED | mechanical | — |
 
 ## Log
 
@@ -182,3 +183,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | RS-14 DONE: 3 review rounds; KeyScrub over every 2xx body (translated too) and untranslated non-2xx bodies replaced line classing; keyed headers dropped; encoded body refused, status and retry-after kept; trimmed key; escaped/split-delta residue recorded; PR #185 merged ec76093a. |
 | 2026-11-26 | PC-11 DONE: 2 review rounds; 121 Codex fixtures re-scrubbed, per-folder id maps, time-0 ULIDs; shell rule scoped to command fields and environment_context; privacy gate covers Codex leak classes; SHELL=/bin/sh reverted; Claude Code/OpenCode leaks became PC-13; PR #186 6fb78bc7. |
 | 2026-11-26 | PC-13 PLANNED: 8 files hit (Shell, OS Version); rescrub_codex.py extended by folder arg, layout-only diffs ignored (6 files), Codex 288 unchanged; debug-skill.txt shell kept (upstream text); test-check-premises already fails on PC-12's Codex header, repaired in PC-13; no edge. |
+| 2026-11-26 | TF-1 added, PLANNED: CI run 45806142357 ubuntu, compact_cmd.rs:153 stdin write got BrokenPipe (child exited first); 29 child-stdin writes in crates/zygo/tests move to common::write_stdin (ignores only BrokenPipe); CC-8 now depends on TF-1 (shared test files). |
