@@ -1,6 +1,8 @@
 //! Streamed responses (§7.6): Responses and chat/completions SSE events as Messages SSE events. A partial event is
 //! held up to HOLD_MAX (§10.2.6); every byte is scanned once (C5).
 
+use std::collections::HashSet;
+
 use serde_json::{json, Value};
 use zygo_config::Dialect;
 
@@ -88,8 +90,9 @@ pub struct StreamMapper {
     /// Responses: the held `function_call` block: its id, name and arguments joined in one string.
     pending: Option<Call>,
     /// Responses: the `output_index` of each `function_call` block already sent; a later done or delta for it is
-    /// ignored.
-    sent: Vec<u64>,
+    /// ignored when the event carries `output_index`. One entry per call sent, bounded by the calls in one response
+    /// (K§6.4.3 stream obligation 9).
+    sent: HashSet<u64>,
     /// The calls dropped at a refusal (`CALLS_DROPPED`).
     dropped: usize,
     /// `end` writes `CALLS_DROPPED` on `message_delta` (off for a Messages client).
@@ -120,7 +123,7 @@ impl StreamMapper {
             calls: Vec::new(),
             held: 0,
             pending: None,
-            sent: Vec::new(),
+            sent: HashSet::new(),
             dropped: 0,
             dropped_key: true,
             finish: None,
@@ -249,6 +252,8 @@ impl StreamMapper {
     fn responses(&mut self, v: &Value, out: &mut Vec<SseEvent>) {
         let n = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
         let (oi, ci) = (n("output_index"), n("content_index"));
+        // The event is for a call already sent; only an event with `output_index` can say so.
+        let sent = v.get("output_index").and_then(Value::as_u64).is_some_and(|i| self.sent.contains(&i));
         let item = v.get("item").unwrap_or(&Value::Null);
         let text = json!({"type":"text","text":""});
         let thinking = json!({"type":"thinking","thinking":"","signature":""});
@@ -291,7 +296,7 @@ impl StreamMapper {
                 self.close_key((oi, ci), out);
             }
             // A late delta for a call already sent is ignored.
-            "response.function_call_arguments.delta" if self.sent.contains(&oi) => {}
+            "response.function_call_arguments.delta" if sent => {}
             "response.function_call_arguments.delta" => {
                 let b = json!({"type":"tool_use","id":"","name":"","input":{}});
                 self.ensure((oi, 0), b, out);
@@ -310,9 +315,10 @@ impl StreamMapper {
                     self.close(out);
                 }
                 // A late done for a call already sent is ignored.
-                Some("function_call") if self.sent.contains(&oi) => {}
+                Some("function_call") if sent => {}
                 // Sent only when `completed`; else it stays held, as an open call: dropped at a refusal, sent at any
-                // other end (as `responses::response` does).
+                // other end (as `responses::response` does), or sent when another output item starts (the JSON body
+                // would drop it at a later refusal; an accepted limit, DDR-01M8CE0JMGSVYFYKASBVRHY5VX).
                 Some("function_call") => {
                     let args = s(item, "arguments").unwrap_or("");
                     if !self.got((oi, 0)) && !args.is_empty() {
@@ -488,7 +494,7 @@ impl StreamMapper {
                     out.push(ev("content_block_delta", json!({"type":"content_block_delta","index":o.index,"delta":d})));
                 }
                 self.held = 0;
-                self.sent.push(o.key.0);
+                self.sent.insert(o.key.0);
             }
             out.push(ev("content_block_stop", json!({"type":"content_block_stop","index":o.index})));
         }

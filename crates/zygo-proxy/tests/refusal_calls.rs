@@ -498,3 +498,46 @@ fn responses_held_call_long_arguments_cut_on_char_boundary() {
         at += p.len();
     }
 }
+
+/// The events of one `function_call` item `call_<i>` with arguments `{"n":<i>}`, done with status `completed`, at
+/// output index `oi`; no `output_index` key when `oi` is `None`.
+fn whole_call(i: u64, oi: Option<u64>) -> Vec<Value> {
+    let args = format!("{{\"n\":{i}}}");
+    let mut evs = vec![
+        json!({"type":"response.output_item.added","item":{"type":"function_call","call_id":format!("call_{i}"),"name":"exec_command","arguments":""}}),
+        json!({"type":"response.function_call_arguments.delta","delta":args}),
+        json!({"type":"response.output_item.done","item":{"type":"function_call","call_id":format!("call_{i}"),"name":"exec_command","arguments":args,"status":"completed"}}),
+    ];
+    if let Some(oi) = oi {
+        for e in &mut evs {
+            e["output_index"] = json!(oi);
+        }
+    }
+    evs
+}
+
+/// The `n` calls of `whole_call(i, oi(i))` in one stream: each block carries its own id and its whole arguments.
+fn assert_calls_whole(n: u64, oi: impl Fn(u64) -> Option<u64>) {
+    let mut evs = vec![open_call("x").remove(0)];
+    for i in 0..n {
+        evs.extend(whole_call(i, oi(i)));
+    }
+    evs.push(completed());
+    let mut m = mapper();
+    let out = m.push(&sse(&evs));
+    let ids: Vec<Value> = tool_starts(&out).iter().map(|b| b["id"].clone()).collect();
+    assert_eq!(ids, (0..n).map(|i| json!(format!("call_{i}"))).collect::<Vec<_>>());
+    let want: String = (0..n).map(|i| format!("{{\"n\":{i}}}")).collect();
+    assert_eq!(json_pieces(&out).concat(), want);
+    assert_eq!(names(&out).last(), Some(&"message_stop"));
+}
+
+#[test] // round 3 review H2: two calls with no output_index: the sent guard does not apply; both keep their arguments
+fn responses_calls_without_output_index_keep_arguments() {
+    assert_calls_whole(2, |_| None);
+}
+
+#[test] // round 3 review H3: many calls, each at its own output_index, all sent whole (`sent` is a set)
+fn responses_many_calls_keep_arguments() {
+    assert_calls_whole(2_000, Some);
+}
