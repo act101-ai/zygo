@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use bytes::{Bytes, BytesMut};
 use futures_util::{Stream, StreamExt};
-use http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
+use http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER};
 use http::{HeaderMap, StatusCode};
 use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{json, Value};
@@ -195,6 +195,13 @@ fn upstream_path(route: ModelRoute, d: Dialect) -> &'static str {
 
 fn upstream_too_large() -> ZygoError {
     ZygoError::new(StatusCode::BAD_GATEWAY, "zygo_upstream_too_large", "upstream response over 4 MiB")
+}
+
+/// An encoded upstream body with a provider key set: the key cannot be found in it (K§6.4.4). A non-2xx keeps the
+/// upstream `status`; a 2xx is a 502.
+fn upstream_encoded(status: StatusCode) -> ZygoError {
+    let s = if status.is_success() { StatusCode::BAD_GATEWAY } else { status };
+    ZygoError::new(s, "zygo_upstream_encoded", "upstream response body has a content-encoding")
 }
 
 fn upstream_bad_response() -> ZygoError {
@@ -520,11 +527,32 @@ async fn run(
     // A translated body reaches the tee as Messages events or a Messages body: the mapper output, an Anthropic
     // upstream, or `translate_response` (K§6.4.2 C3).
     let form = if translated { Dialect::Anthropic } else { c.dialect };
-    let key = c.key.as_ref().map(|k| k.expose());
+    // The configured key without ASCII whitespace at its ends: what an upstream echoes (K§6.4.4).
+    let key = c.key.as_ref().map(|k| k.expose().trim_ascii());
     let estimate = string_bytes(&ctx.body).div_ceil(BYTES_PER_TOKEN);
     let mut headers = response_headers(resp.headers(), translated, s.team_label.is_some());
     let mut adjustments = ctx.adjustments;
     adjustments.extend(extra);
+    // With a provider key (K§6.4.4): a header that holds it is dropped, on every path; an encoded body is refused,
+    // as the key cannot be found in it.
+    let keyed = key.is_some_and(|k| !k.is_empty());
+    if let Some(k) = key.filter(|_| keyed) {
+        if drop_keyed(&mut headers, k) {
+            adjustments.push(Adjustment("key_header_dropped".into()));
+        }
+        if resp.headers().get_all(CONTENT_ENCODING).iter().any(|v| !v.as_bytes().trim_ascii().eq_ignore_ascii_case(b"identity")) {
+            // The upstream `retry-after` (a 429 or 5xx) is kept on the reply.
+            let e = read_failed(slot, c, &adjustments, upstream_encoded(status));
+            let p = pending(slot);
+            p.row.status = e.status.as_u16();
+            p.row.latency_ms = ms(app, start);
+            let mut out = e.response(route.dialect());
+            if let Some(v) = headers.get(RETRY_AFTER) {
+                out.headers_mut().insert(RETRY_AFTER, v.clone());
+            }
+            return Ok(out);
+        }
+    }
     let mut mapper = None;
     // Injected nulls are removed on the way back (§7.6): a Messages 2xx, or a translated Responses 2xx, with a
     // non-empty map.
@@ -534,21 +562,54 @@ async fn run(
     // The Messages body of a translated 2xx read whole: a Responses client's Response object is built from it.
     let mut msg = None;
     let mut restore = None;
-    let upstream: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>> = if !translated && armed && streamed {
+    // An untranslated 2xx JSON body with injected nulls: restored whole, then the key is replaced (below).
+    let restore_whole = !translated && armed && !streamed;
+    // With a provider key, every other 2xx upstream body, translated or not, loses the key in every byte as it is
+    // read, before any stage reads it: the translator, the mapper, the restore filter, the encoder, the tee and the
+    // line stages (K§6.4.4 (4)). Its length is no longer known.
+    let mut raw: Upstream = Box::pin(resp.bytes_stream());
+    if let Some(k) = key.and_then(KeyScrub::new).filter(|_| status.is_success() && !restore_whole) {
+        headers.remove(CONTENT_LENGTH);
+        raw = key_scrubbed(raw, k);
+    }
+    let upstream: Upstream = if !translated && armed && streamed {
         restore = Some(RestoreFilter::new(nulls));
         headers.remove(CONTENT_LENGTH);
-        Box::pin(resp.bytes_stream())
-    } else if !translated && armed {
-        restored_body(resp, &nulls, &mut headers).await.map_err(|e| read_failed(slot, c, &adjustments, e))?
+        raw
+    } else if restore_whole {
+        let s = restored_body(raw, &nulls, &mut headers).await.map_err(|e| read_failed(slot, c, &adjustments, e))?;
+        match key.and_then(KeyScrub::new) {
+            Some(k) => {
+                headers.remove(CONTENT_LENGTH);
+                key_scrubbed(s, k)
+            }
+            None => s,
+        }
+    } else if !translated && !status.is_success() && keyed {
+        // An untranslated non-2xx body with a provider key is read whole (at most COPY_MAX) and loses the key (K§6.4.4).
+        let bytes = read_capped(raw).await.map_err(|e| read_failed(slot, c, &adjustments, e))?;
+        let out = match key.and_then(KeyScrub::new) {
+            Some(mut k) => {
+                let mut out = k.push(&bytes);
+                out.extend_from_slice(&k.finish());
+                Bytes::from(out)
+            }
+            None => bytes,
+        };
+        headers.insert(CONTENT_LENGTH, HeaderValue::from(out.len()));
+        futures_util::stream::once(async move { Ok(out) }).boxed()
+    } else if !translated && !streamed && keyed {
+        // An untranslated 2xx that is not SSE, with a provider key (K§6.4.4 (4)).
+        keyed_body(raw, &mut headers).await.map_err(|e| read_failed(slot, c, &adjustments, e))?
     } else if !translated {
-        Box::pin(resp.bytes_stream())
+        raw
     } else if status.is_success() && streamed {
         // An Anthropic upstream already sends Messages SSE (a Responses client): no mapper (K§6.4.2).
         mapper = (c.dialect != Dialect::Anthropic).then(|| StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key));
         restore = armed.then(|| RestoreFilter::new(nulls));
-        Box::pin(resp.bytes_stream())
+        raw
     } else {
-        let bytes = read_capped(resp).await.map_err(|e| read_failed(slot, c, &adjustments, e))?;
+        let bytes = read_capped(raw).await.map_err(|e| read_failed(slot, c, &adjustments, e))?;
         // A 2xx that is no response body of the upstream dialect never reaches the client (§7.3, §7.6).
         let v = if status.is_success() {
             // An Anthropic upstream (a Responses client) answers in the Messages form already.
@@ -588,7 +649,7 @@ async fn run(
         let t = Target::of(c);
         let calls = calls.unwrap_or_default();
         if streamed {
-            Some(Encode::Stream(Box::new(Streamed::new(&client_model, &t, calls, c.key.clone()))))
+            Some(Encode::Stream(Box::new(Streamed::new(&client_model, &t, calls, key.map(Secret::new)))))
         } else {
             let (r, codes) = responses_client::response(msg.as_ref().unwrap_or(&Value::Null), &client_model, &t, &calls);
             adjustments.extend(codes);
@@ -1154,10 +1215,12 @@ async fn discard<S: Stream<Item = Result<Bytes, axum::Error>> + Unpin>(s: &mut S
     }
 }
 
+/// An upstream response body as read (K§6.4.4: with a provider key, through `KeyScrub`).
+type Upstream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
+
 /// A whole upstream body of at most COPY_MAX bytes (§14), else `502 zygo_upstream_too_large`.
-async fn read_capped(resp: reqwest::Response) -> Result<Bytes, ZygoError> {
+async fn read_capped(mut s: Upstream) -> Result<Bytes, ZygoError> {
     let mut buf = BytesMut::new();
-    let mut s = resp.bytes_stream();
     while let Some(c) = s.next().await {
         let c = c.map_err(|_| unavailable())?;
         if buf.len() + c.len() > COPY_MAX {
@@ -1168,14 +1231,117 @@ async fn read_capped(resp: reqwest::Response) -> Result<Bytes, ZygoError> {
     Ok(buf.freeze())
 }
 
+/// The text that replaces the provider key (K§6.4.4), as `translate::scrub` writes it.
+const REDACTED: &[u8] = b"[REDACTED]";
+
+/// The first position of `needle` (not empty) in `hay`.
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    let mut at = 0;
+    while hay.len() - at >= needle.len() {
+        let p = hay[at..=hay.len() - needle.len()].iter().position(|&b| b == needle[0])?;
+        if hay[at + p..].starts_with(needle) {
+            return Some(at + p);
+        }
+        at += p + 1;
+    }
+    None
+}
+
+/// Each occurrence of the provider key in a body read in chunks replaced with `[REDACTED]` (K§6.4.4), whatever the
+/// framing; every other byte unchanged. Of the last `key.len() - 1` bytes read, the longest tail that is the start
+/// of the key is held back, as a key split across chunks starts there; `finish` returns it. Any other byte goes on at
+/// once, so an event end is not held.
+struct KeyScrub {
+    key: Vec<u8>,
+    held: Vec<u8>,
+}
+
+impl KeyScrub {
+    /// `None` for an empty key.
+    fn new(key: &str) -> Option<KeyScrub> {
+        (!key.is_empty()).then(|| KeyScrub { key: key.as_bytes().to_vec(), held: Vec::new() })
+    }
+
+    /// The held bytes and `chunk`, keys replaced, less the new held tail. With nothing held, `chunk` is not copied
+    /// first: a whole body pushed at once costs one more body, the output.
+    fn push(&mut self, chunk: &[u8]) -> Vec<u8> {
+        let joined;
+        let buf: &[u8] = if self.held.is_empty() {
+            chunk
+        } else {
+            joined = [std::mem::take(&mut self.held).as_slice(), chunk].concat();
+            &joined
+        };
+        let mut out = Vec::with_capacity(buf.len());
+        let mut i = 0;
+        while let Some(p) = find(&buf[i..], &self.key) {
+            out.extend_from_slice(&buf[i..i + p]);
+            out.extend_from_slice(REDACTED);
+            i += p + self.key.len();
+        }
+        let from = i.max(buf.len().saturating_sub(self.key.len() - 1));
+        let keep = (from..buf.len()).find(|&j| self.key.starts_with(&buf[j..])).unwrap_or(buf.len());
+        out.extend_from_slice(&buf[i..keep]);
+        self.held = buf[keep..].to_vec();
+        out
+    }
+
+    /// The held tail: a proper start of the key, so no key.
+    fn finish(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.held)
+    }
+}
+
+/// `s` through `k`, its held tail at the end; a read error ends it without the tail.
+fn key_scrubbed(s: Upstream, k: KeyScrub) -> Upstream {
+    futures_util::stream::unfold(Some((s, k)), |st| async move {
+        let (mut s, mut k) = st?;
+        match s.next().await {
+            Some(Ok(c)) => {
+                let out = Bytes::from(k.push(&c));
+                Some((Ok(out), Some((s, k))))
+            }
+            Some(Err(e)) => Some((Err(e), None)),
+            None => Some((Ok(Bytes::from(k.finish())), None)),
+        }
+    })
+    .boxed()
+}
+
+/// An untranslated 2xx body that is not SSE, with a provider key (K§6.4.4 (4)), its key already replaced (`s`): read
+/// up to COPY_MAX; a whole body is sent with its new `content-length`; a longer one goes on as a stream, without it.
+async fn keyed_body(mut s: Upstream, headers: &mut HeaderMap) -> Result<Upstream, ZygoError> {
+    let mut buf = BytesMut::new();
+    while let Some(c) = s.next().await {
+        buf.extend_from_slice(&c.map_err(|_| unavailable())?);
+        if buf.len() > COPY_MAX {
+            let head = buf.freeze();
+            return Ok(futures_util::stream::once(async move { Ok(head) }).chain(s).boxed());
+        }
+    }
+    headers.insert(CONTENT_LENGTH, HeaderValue::from(buf.len()));
+    let out = buf.freeze();
+    Ok(futures_util::stream::once(async move { Ok(out) }).boxed())
+}
+
+/// Drops each header whose value holds `key`, or whose name holds it in lower case (names arrive in lower case)
+/// (K§6.4.4 (1)); true when one was dropped.
+fn drop_keyed(h: &mut HeaderMap, key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    let mut out = HeaderMap::with_capacity(h.len());
+    for (n, v) in h.iter() {
+        if find(v.as_bytes(), key.as_bytes()).is_none() && find(n.as_str().as_bytes(), lower.as_bytes()).is_none() {
+            out.append(n.clone(), v.clone());
+        }
+    }
+    let dropped = out.len() != h.len();
+    *h = out;
+    dropped
+}
+
 /// An untranslated non-streamed 2xx with injected nulls (§7.6): read up to COPY_MAX; a whole JSON body from which a
 /// null was removed is sent serialized again, without `content-length`. Else the read bytes, then the rest unchanged.
-async fn restored_body(
-    resp: reqwest::Response,
-    nulls: &NullMap,
-    headers: &mut HeaderMap,
-) -> Result<Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>, ZygoError> {
-    let mut s = resp.bytes_stream();
+async fn restored_body(mut s: Upstream, nulls: &NullMap, headers: &mut HeaderMap) -> Result<Upstream, ZygoError> {
     let mut buf = BytesMut::new();
     let mut whole = true;
     while let Some(c) = s.next().await {
@@ -1587,5 +1753,69 @@ mod tests {
         assert_eq!(serialized(Ok(b"{}".to_vec())).unwrap(), Bytes::from_static(b"{}"));
         let e = serialized(Err(<serde_json::Error as serde::ser::Error>::custom("x"))).unwrap_err();
         assert_eq!((e.status, e.code), (StatusCode::SERVICE_UNAVAILABLE, "zygo_redaction_unavailable"));
+    }
+
+    /// `input` through a `KeyScrub` of `key`, cut into chunks at `cuts`.
+    fn scrubbed(key: &str, input: &[u8], cuts: &[usize]) -> Vec<u8> {
+        let mut k = KeyScrub::new(key).unwrap();
+        let mut out = Vec::new();
+        let mut at = 0;
+        for &c in cuts.iter().chain([input.len()].iter()) {
+            out.extend_from_slice(&k.push(&input[at..c]));
+            at = c;
+        }
+        out.extend_from_slice(&k.finish());
+        out
+    }
+
+    /// K§6.4.4: a key split across two chunks at every byte offset is replaced; the other bytes are unchanged, also
+    /// bytes that are no UTF-8, bare CRs and a key prefix at the end.
+    #[test]
+    fn key_scrub_finds_a_key_split_at_every_offset() {
+        let key = "sk-ant-api03-Ab_1-xyz";
+        let k = key.as_bytes();
+        let (head, mid, end): (&[u8], &[u8], &[u8]) = (b"\xffdata: \r", b"\n\xc3\xa9", b" sk-ant-api03-Ab_");
+        let input = [head, k, mid, k, k, end].concat();
+        let want = [head, REDACTED, mid, REDACTED, REDACTED, end].concat();
+        for cut in 0..=input.len() {
+            assert_eq!(scrubbed(key, &input, &[cut]), want, "cut {cut}");
+        }
+        let every: Vec<usize> = (1..input.len()).collect();
+        assert_eq!(scrubbed(key, &input, &every), want);
+        assert_eq!(scrubbed(key, b"no key here", &[3]), b"no key here");
+        assert!(KeyScrub::new("").is_none());
+    }
+
+    /// K§6.4.4: only a tail that starts the key is held, never longer than the key less one byte; an event end is not
+    /// held.
+    #[test]
+    fn key_scrub_holds_only_a_start_of_the_key() {
+        let mut k = KeyScrub::new("K3Y9").unwrap();
+        assert_eq!(k.push(&[b'x'; 100]).len(), 100);
+        assert_eq!(k.push(b"data: {}\n\n"), b"data: {}\n\n");
+        assert_eq!(k.push(b"abK3"), b"ab");
+        assert_eq!(k.push(b"Y9 tail"), b"[REDACTED] tail");
+        assert_eq!(k.push(b"K3YK3"), b"K3Y");
+        assert_eq!(k.held, b"K3");
+        assert_eq!(k.push(b"Y"), b"");
+        assert_eq!(k.push(b"x"), b"K3Yx");
+        assert_eq!(k.push(b"xK"), b"x");
+        assert_eq!(k.finish(), b"K");
+    }
+
+    /// K§6.4.4: a header value that holds the key is dropped, and a header whose name holds it in lower case (round 2
+    /// G6); the others are kept.
+    #[test]
+    fn drop_keyed_drops_only_values_with_the_key() {
+        let mut h = HeaderMap::new();
+        h.append("x-a", HeaderValue::from_static("Bearer K3Y"));
+        h.append("x-a", HeaderValue::from_static("other"));
+        h.append("x-b", HeaderValue::from_static("kept"));
+        h.append("x-k3y-name", HeaderValue::from_static("v"));
+        assert!(drop_keyed(&mut h, "K3Y"));
+        assert_eq!(h.get_all("x-a").iter().collect::<Vec<_>>(), [&HeaderValue::from_static("other")]);
+        assert_eq!(h["x-b"], "kept");
+        assert!(h.get("x-k3y-name").is_none());
+        assert!(!drop_keyed(&mut h, "K3Y"));
     }
 }
