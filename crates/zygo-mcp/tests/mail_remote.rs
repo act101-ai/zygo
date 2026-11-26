@@ -292,3 +292,36 @@ fn no_message_text_in_any_tool_error() {
         assert!(!e.contains(SUBJECT) && !e.contains(BODY), "{to}: {e}");
     }
 }
+
+#[test] // R13: S§10.4 (rewritten), S§19 #27 mail_list part
+fn mail_list_returns_the_remote_addresses_of_the_member_cache() {
+    let x = setup(LEAD);
+    let l = |x: &X| tool(&tools(x), "mail_list").call(json!({})).unwrap();
+    assert_eq!(l(&x)["remote"], json!(["bob@b"]));
+    cache(&x.sp, &[("c", &["carol"]), ("b", &["bob", "bob", "dan"])]);
+    let v = l(&x);
+    assert_eq!(v["remote"], json!(["bob@b", "dan@b", "carol@c"]));
+    assert_eq!(v["unread"], 0);
+    assert_eq!(v["messages"], json!([]));
+    assert_eq!(v["members"], json!([{"key": ANON, "name": null}, {"key": ELENA, "name": "elena"}, {"key": LEAD, "name": "lead"}]));
+    fs::remove_file(&x.sp.members).unwrap();
+    assert_eq!(l(&x)["remote"], json!([]));
+}
+
+#[test] // R14: S§10.4 (rewritten): sync off gives no remote address
+fn mail_list_remote_is_empty_with_sync_off() {
+    let x = setup(LEAD);
+    fs::write(&x.p.config_file, "").unwrap();
+    assert_eq!(tool(&tools(&x), "mail_list").call(json!({})).unwrap()["remote"], json!([]));
+    fs::write(&x.p.config_file, "[mail\n").unwrap(); // R12 list part: a config that does not load
+    assert_eq!(tool(&tools(&x), "mail_list").call(json!({})).unwrap()["remote"], json!([]));
+}
+
+#[test] // R15: S§10.4: the mail_send description sentence
+fn mail_send_description_holds_the_remote_sentence() {
+    let x = setup(LEAD);
+    let d = tool(&tools(&x), "mail_send").def().description;
+    assert_eq!(d, SEND_TEXT);
+    assert!(d.contains("To a member on another machine, use `<name>@<host>`."));
+    assert!(d.ends_with(mail::NO_POLL));
+}

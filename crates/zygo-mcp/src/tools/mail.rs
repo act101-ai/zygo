@@ -12,6 +12,7 @@ use zygo_mail_sync::address::{resolve_to, To};
 use zygo_mail_sync::env::{Env, NoSeam, Spawner, SystemClock, TmuxWake};
 use zygo_mail_sync::outbox::send_remote_with;
 use zygo_mail_sync::public::LsRemote;
+use zygo_mail_sync::registry::read_cache;
 use zygo_mail_sync::spawn::{trigger, ChildSpawner};
 use zygo_mail_sync::state::SyncPaths;
 use zygo_redact::DeadlinePolicy;
@@ -162,6 +163,23 @@ impl Mail {
         zygo_config::load(&LoadContext { paths: self.paths.clone(), repo: None, team: None }).ok().map(|m| m.config)
     }
 
+    /// S§10.4: the addresses of the member cache, each once in host order; none when the config does not load or
+    /// sync is off for this workspace.
+    fn remote(&self, ws: &Workspace) -> Vec<String> {
+        let Some(cfg) = self.config() else { return Vec::new() };
+        if sync_for(&cfg, &ws.name).is_err() {
+            return Vec::new();
+        }
+        let Ok(sp) = SyncPaths::new(&self.paths, &self.ws_id) else { return Vec::new() };
+        let mut out: Vec<String> = Vec::new();
+        for a in read_cache(&sp).addresses() {
+            if !out.contains(&a) {
+                out.push(a);
+            }
+        }
+        out
+    }
+
     /// S§7.2: a `to` without `@` is local (M§8). A `to` with `@` resolves against the host in force with sync on;
     /// a remote address goes through the S§7.2 rules and the S§8.6 send-time pass into the outbox, then the sync
     /// child starts with no gap (S§8.1 row 1).
@@ -234,7 +252,7 @@ impl Tool for MailSend {
     fn def(&self) -> ToolDef {
         def(
             "mail_send",
-            "Send mail to members of this workspace. to is a member name, a pane key, or all (every other member). Returns the message ids. ",
+            "Send mail to members of this workspace. to is a member name, a pane key, or all (every other member). To a member on another machine, use `<name>@<host>`. Returns the message ids. ",
             json!({"type":"object","properties":{"to":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"}},"required":["to","subject","body"],"additionalProperties":false}),
         )
     }
@@ -316,6 +334,6 @@ impl Tool for MailList {
             .map(|s| json!({"id": s.id, "from": s.from, "subject": s.subject}))
             .collect();
         let members: Vec<Value> = names::members(&ws).into_iter().map(|t| json!({"key": t.key, "name": t.name})).collect();
-        Ok(json!({"unread": unread, "messages": messages, "members": members}))
+        Ok(json!({"unread": unread, "messages": messages, "members": members, "remote": m.remote(&ws)}))
     }
 }
