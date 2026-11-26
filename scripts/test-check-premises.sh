@@ -122,10 +122,11 @@ run() {
     tick check
 }
 
-# run_names <dir> <names>: as run, with N2_FORBIDDEN_NAMES set to the names for the script.
+# run_names <dir> <names> [<shell>]: as run, with N2_FORBIDDEN_NAMES set to the names for the script,
+# run by the shell (default sh).
 run_names() {
     tick other
-    OUT=$(N2_FORBIDDEN_NAMES="$2" sh "$1/scripts/check-premises.sh" 2>&1)
+    OUT=$(N2_FORBIDDEN_NAMES="$2" "${3:-sh}" "$1/scripts/check-premises.sh" 2>&1)
     RC=$?
     N=$((N + 1))
     tick check
@@ -916,6 +917,27 @@ CASE="H1: a binary file with a forbidden name"
 D=$(mk h1_name)
 printf 'a\0b alice\n' > "$D/$BINF"
 run_names "$D" alice
+expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
+
+# bash >=4.4 writes a warning to stderr when a command substitution reads a NUL byte; under bash the
+# scan of a binary file gives only the failure line (TF-3). The e-mail and API key cases guard the
+# tr that scan has now.
+CASE="TF-3: under bash, a binary file with an e-mail address"
+D=$(mk tf3_mail)
+printf 'a\0b bob@corp.com\n' > "$D/$BINF"
+run_names "$D" '' bash
+expect_fail_prefix "forbidden content (e-mail address): $BINF:1:a"
+
+CASE="TF-3: under bash, a binary file with an API key"
+D=$(mk tf3_key)
+printf 'a\0b sk-ant-x\n' > "$D/$BINF"
+run_names "$D" '' bash
+expect_fail_prefix "forbidden content (API key): $BINF:1:a"
+
+CASE="TF-3: under bash, a binary file with a forbidden name"
+D=$(mk tf3_name)
+printf 'a\0b alice\n' > "$D/$BINF"
+run_names "$D" alice bash
 expect_fail "forbidden name from N2_FORBIDDEN_NAMES: $BINF:1"
 
 # The exemption is the exact path, also for a rule that matches any case: a case variant of the

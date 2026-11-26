@@ -422,13 +422,15 @@ env_scan '/cc-socks\\*/[0-9]+\.sock' 'socket pid'
 # name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
 # it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless
 # given (host names: A-Za-z0-9_-, as in scrub.py). A hit line ("path:line:text") that matches the
-# exempt ERE is dropped, as in scan. The message names the file and line, never the name.
+# exempt ERE is dropped, as in scan. The message names the file and line, never the name. A NUL in a
+# hit line becomes a blank first, as in scan, so no shell sees a NUL in the command substitution
+# (bash >=4.4 warns on stderr; TF-3).
 name_scan() {
   e=$(printf '%s' "$2" | sed 's/[][\.*^$+?(){}|/]/\\&/g')
   wc=${3:-A-Za-z0-9_}
   rx="(^|[^$wc]|\\\\[nrtbf])$e([^$wc]|\$)"
   # shellcheck disable=SC2086
-  hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | head -n 1)
+  hit=$( (grep -rnaiE -- "$rx" $SCOPE "$P" 2>/dev/null; printf '%s\n' "$NOTES" | grep -aiE -- "$rx") | grep -av -E -- "${4:-^\$}" | tr '\000' ' ' | head -n 1)
   [ -z "$hit" ] || fail "$1: $(printf '%s\n' "$hit" | head -n 1 | cut -d: -f1-2)"
 }
 for w in ${N2_FORBIDDEN_NAMES:-}; do name_scan "forbidden name from N2_FORBIDDEN_NAMES" "$w" A-Za-z0-9_ "$VX"; done
