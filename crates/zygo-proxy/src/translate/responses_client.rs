@@ -128,6 +128,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
         Some(_) => return Err(bad("instructions must be a string")),
     }
     match req.get("input") {
+        Some(Value::String(x)) if x.is_empty() => {}
         Some(Value::String(x)) => c.push("user", text(x)),
         Some(Value::Array(items)) => {
             for it in items {
@@ -181,6 +182,11 @@ fn typed<'a>(v: &'a Value, k: &str, what: &str, ok: fn(&Value) -> bool) -> Resul
 
 fn text(x: &str) -> Value {
     json!({"type":"text","text":x})
+}
+
+/// A text block with empty text: dropped everywhere (K§6.4.3 obligation 2).
+fn is_empty_text(b: &Value) -> bool {
+    s(b, "type") == Some("text") && s(b, "text") == Some("")
 }
 
 /// The string field `k` of an item of type `ty`, or `400 "<ty>: missing <k>"`.
@@ -326,7 +332,11 @@ fn item(c: &mut Conv, it: &Value, t: &Target, d: &mut Drops) -> Result<(), ZygoE
             c.output(ty, id)?;
             let content = match it.get("output") {
                 Some(Value::String(x)) => Value::String(x.clone()),
-                Some(Value::Array(parts)) => Value::Array(parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?),
+                Some(Value::Array(parts)) => {
+                    let mut blocks: Vec<Value> = parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?;
+                    blocks.retain(|b| !is_empty_text(b));
+                    Value::Array(blocks)
+                }
                 _ => return Err(bad(format!("{ty}: missing output"))),
             };
             c.push("user", json!({"type":"tool_result","tool_use_id":id,"content":content}));
@@ -344,13 +354,17 @@ fn item(c: &mut Conv, it: &Value, t: &Target, d: &mut Drops) -> Result<(), ZygoE
 /// A `message` item: leading `developer`/`system` text to the system text, a later one as user text in place.
 fn message(c: &mut Conv, it: &Value, d: &mut Drops) -> Result<(), ZygoError> {
     let role = field(it, "message", "role")?;
-    let blocks: Vec<Value> = match it.get("content") {
+    let mut blocks: Vec<Value> = match it.get("content") {
         Some(Value::String(x)) => vec![text(x)],
         Some(Value::Array(parts)) => parts.iter().map(|p| part(p, d)).collect::<Result<_, _>>()?,
         _ => return Err(bad("message: missing content")),
     };
     if role == "user" {
         c.all_answered()?;
+    }
+    blocks.retain(|b| !is_empty_text(b));
+    if blocks.is_empty() && matches!(role, "user" | "assistant" | "developer" | "system") {
+        return Ok(());
     }
     let role = match role {
         "developer" | "system" => {
