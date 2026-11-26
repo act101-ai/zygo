@@ -1,0 +1,20 @@
+{
+  "input": {
+    "tool": "bash",
+    "sessionID": "ses_placeholder0001",
+    "callID": "toolu_po3_00_bash",
+    "args": {
+      "command": "printf 'out-line\\n'; printf 'err-line\\n' >&2",
+      "description": "po3"
+    }
+  },
+  "output": {
+    "title": "printf 'out-line\\n'; printf 'err-line\\n' >&2",
+    "metadata": {
+      "output": "out-line\nerr-line\n",
+      "exit": 0,
+      "truncated": false
+    },
+    "output": "out-line\nerr-line\n"
+  }
+}

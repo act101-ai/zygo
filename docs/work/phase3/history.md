@@ -93,6 +93,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | MS-9 | Outbox: send-time rules, refusal and notice, counts, local retention | MS-6, MS-7, MS-8, ML-4 | DONE | judgment | e7987782, f30700e9, bec4c680 · outbox 29/0 ; floor green · PR #111 |
 | ML-12 | CLI `zygo mail send\|read\|ls`, slash `/zygo:mail`, mail sweep at command start | ML-6, ML-7, DR-3 | DONE | implementation | d19e88f5, 0b457de5 · acc 12/12, 1/1, 234/234 · PR #149 |
 | OS-24 | Premise PO2: an empty `stderr` in `updatedToolOutput` removes the stderr (operator, live Claude Code) | OS-23 | DONE | mechanical | node commits 9633f4b9, 3b88581f; acceptance: grep -c "^\| PO2 \|" docs/premises.md → 1, po2-result.json present; floor ws 3394/0 |
+| OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | DONE | mechanical | plan 4eaccaa2 · node 306d2bbf, 69416146 · acceptance `grep -c "^\| PO3 \|" docs/premises.md && test -s fixtures/...after-bash-stderr.json` → 1, exit 0 · PR #160 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
 
 ## Log

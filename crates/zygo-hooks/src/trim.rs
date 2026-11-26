@@ -9,6 +9,9 @@ use zygo_core::overrides::Overrides;
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;
+use zygo_results::kind::sniff;
+use zygo_results::shape::{self, command, ShapeInput, Shaped, Shaper, MIN_SAVING_BYTES, SHAPE_MAX_BYTES};
+use zygo_results::view::{shaped_view, size_view};
 use zygo_results::{view, Kind, Store, Stored};
 use zygo_usage::TrimRow;
 use zygo_work::hooks::units_on_session;
@@ -95,16 +98,29 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
+/// O§7.8 "When PO2 fails": whether the agent shows a cleared `stderr` as empty. OS-34 sets it to the PO2 result.
+pub const PO2_STDERR_CLEARED: bool = true;
+
 /// Options of the trim hook.
 #[derive(Debug, Clone, Copy)]
 pub struct TrimOpts {
     /// O§7.11: how long the usage write waits on a busy database before the row is dropped.
     pub db_bound: Duration,
+    /// O§7.8: true shapes stdout and stderr together and clears `stderr`; false shapes stdout only.
+    pub stderr_cleared: bool,
+    /// Test seam: steps 1-4 panic (`ZYGO_TEST_SHAPE_PANIC=1`).
+    #[cfg(feature = "test-hooks")]
+    pub shape_panic: bool,
 }
 
 impl Default for TrimOpts {
     fn default() -> Self {
-        TrimOpts { db_bound: zygo_usage::store::HOOK_DB_BOUND }
+        TrimOpts {
+            db_bound: zygo_usage::store::HOOK_DB_BOUND,
+            stderr_cleared: PO2_STDERR_CLEARED,
+            #[cfg(feature = "test-hooks")]
+            shape_panic: std::env::var_os("ZYGO_TEST_SHAPE_PANIC").is_some_and(|v| v == "1"),
+        }
     }
 }
 
@@ -113,38 +129,123 @@ pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::
     trim_in_with(input, dir, usage_db, &TrimOpts::default())
 }
 
-/// §10.1: store a result over the threshold in the session's results directory and return the head/tail view in its place.
+/// The O§7.2 raw text: `stdout`, then `[stderr]` and `stderr` on a line of their own when `stderr` is not empty.
+fn compose(stdout: &str, stderr: &str) -> String {
+    let mut raw = stdout.to_string();
+    if !stderr.is_empty() {
+        if !raw.is_empty() && !raw.ends_with('\n') {
+            raw.push('\n');
+        }
+        raw.push_str("[stderr]\n");
+        raw.push_str(stderr);
+    }
+    raw
+}
+
+/// O§7.10: steps 1-4 under `catch_unwind`; a panic gives the raw text with only the size view.
+#[cfg_attr(not(feature = "test-hooks"), allow(unused_variables))]
+fn shape_guarded(src: &str, si: &ShapeInput, opts: &TrimOpts) -> Shaped {
+    let steps = || {
+        #[cfg(feature = "test-hooks")]
+        if opts.shape_panic {
+            panic!("forced by ZYGO_TEST_SHAPE_PANIC");
+        }
+        shape::run(src, si)
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(steps)).unwrap_or_else(|_| size_only(src, si.threshold))
+}
+
+/// Step 5 only, on `src` (O§7.3 above `SHAPE_MAX_BYTES`, O§7.10 on a panic).
+fn size_only(src: &str, threshold: u64) -> Shaped {
+    let over = src.len() as u64 > threshold;
+    Shaped { text: src.to_string(), steps: vec![], shaper: over.then_some(Shaper::Size), size_view: over }
+}
+
+/// A result that may get a view: the stored raw text, the counted bytes, and the shaping result (`None` on the shape-off path).
+struct Pending {
+    raw: String,
+    counted: u64,
+    shaped: Option<Shaped>,
+    command: Option<String>,
+    shaper: Shaper,
+    clear_stderr: bool,
+    /// The kind sniffed on stdout (O§7.3); `None` on the shape-off path, where the stored kind is that of stdout.
+    kind: Option<Kind>,
+}
+
+/// O§7.1, O§7.2, O§9: routes the call to the shape-on or shape-off path; `None` when the output stays as it is.
+fn pending(input: &HookInput, text: String, sv: &SessionView, threshold: u64, opts: &TrimOpts) -> Option<Pending> {
+    let bash = input.tool_name.as_deref().is_some_and(|t| t.eq_ignore_ascii_case("bash"));
+    let cmd = input.tool_input.as_ref().and_then(|t| t.get("command")).and_then(Value::as_str);
+    let parsed = cmd.filter(|_| bash).map(command::parse);
+    let command = bash.then(|| parsed.as_ref().map_or_else(|| "other".to_string(), |p| p.name.clone()));
+    if !bash || !sv.shape || parsed.as_ref().is_some_and(|p| p.file_printer) {
+        if text.len() as u64 <= threshold {
+            return None;
+        }
+        return Some(Pending { counted: text.len() as u64, raw: text, shaped: None, command, shaper: Shaper::Size, clear_stderr: false, kind: None });
+    }
+    // Only a string `stderr` is read and cleared; any other value stays in the output as it is.
+    let stderr = input.raw.get("tool_response").and_then(|r| r.get("stderr")).and_then(Value::as_str);
+    let raw = compose(&text, stderr.unwrap_or(""));
+    let src = if opts.stderr_cleared { raw.as_str() } else { text.as_str() };
+    let si = ShapeInput { parsed, kind: sniff(text.as_bytes()), threshold };
+    // O§7.3: the bound is on the raw text in both branches.
+    let shaped = if raw.len() > SHAPE_MAX_BYTES { size_only(src, threshold) } else { shape_guarded(src, &si, opts) };
+    let shaper = shaped.shaper?;
+    let counted = src.len() as u64;
+    let clear_stderr = opts.stderr_cleared && stderr.is_some();
+    Some(Pending { raw, counted, shaped: Some(shaped), command, shaper, clear_stderr, kind: Some(si.kind) })
+}
+
+/// O§7.8: the view of `p` with the marker of `s`, the stored raw text.
+fn view_for(p: &Pending, s: &Stored, cfg: &ResultsConfig) -> String {
+    match &p.shaped {
+        None => view(s, cfg),
+        Some(sh) if sh.size_view => size_view(&sh.text, s, cfg),
+        Some(sh) => shaped_view(&sh.steps, &sh.text, s),
+    }
+}
+
+/// Shape off: the view is smaller than the text. Shape on: the O§7.8 use rule, on the final view.
+fn used(p: &Pending, tool: &str, cfg: &ResultsConfig) -> bool {
+    // The marker length does not depend on the id's value, so a placeholder id sizes the view.
+    let preview = Stored { id: "0".repeat(26), tool: tool.to_string(), bytes: p.raw.len() as u64, lines: p.raw.lines().count() as u64,
+        kind: Kind::Text, created_at: 0, session: None, data: p.raw.as_bytes().to_vec() };
+    let pv = view_for(p, &preview, cfg).len() as u64;
+    if p.shaped.is_none() { pv < p.counted } else { p.counted.saturating_sub(pv) >= MIN_SAVING_BYTES as u64 }
+}
+
+/// §10.1, O§7.8: store a result in the session's results directory and return its shaped or head/tail view in its place.
 pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: &TrimOpts) -> anyhow::Result<HookOutput> {
     let Some((tool, text)) = target(input) else { return Ok(HookOutput::None) };
     let sv = SessionView::load(dir)?;
     // §17.1: `overrides.json` is read on every call.
     let ov = Overrides::load(dir);
     let threshold = ov.results_threshold.unwrap_or(sv.trim_threshold_bytes);
-    if !ov.results.unwrap_or(sv.results) || text.len() as u64 <= threshold {
+    if !ov.results.unwrap_or(sv.results) {
         return Ok(HookOutput::None);
     }
+    let Some(p) = pending(input, text, &sv, threshold, opts) else { return Ok(HookOutput::None) };
     let cfg = ResultsConfig { trim_threshold_bytes: threshold, head_lines: sv.head_lines, tail_lines: sv.tail_lines, shape: sv.shape };
-    // The marker length does not depend on the id's value, so a placeholder id sizes the view.
-    let preview = Stored { id: "0".repeat(26), tool: tool.clone(), bytes: text.len() as u64, lines: text.lines().count() as u64,
-        kind: Kind::Text, created_at: 0, session: None, data: text.as_bytes().to_vec() };
-    if view(&preview, &cfg).len() >= text.len() {
+    if !used(&p, &tool, &cfg) {
         return Ok(HookOutput::None);
     }
     // C3: the store's own error text holds paths, so the error is a fixed text.
-    let stored = Store::put(&dir.results(), &tool, Some(&sv.session), text.as_bytes()).map_err(|_| anyhow::anyhow!("cannot store the tool result"))?;
-    let v = view(&stored, &cfg);
+    let stored = Store::put(&dir.results(), &tool, Some(&sv.session), p.raw.as_bytes()).map_err(|_| anyhow::anyhow!("cannot store the tool result"))?;
+    let v = view_for(&p, &stored, &cfg);
     let ts = time::OffsetDateTime::now_utc().unix_timestamp();
     let row = TrimRow {
         ts,
         session: sv.session,
         agent_id: input.agent_id.clone(),
         tool: tool.clone(),
-        kind: stored.kind.as_str().into(),
-        stored_bytes: stored.bytes,
+        kind: p.kind.unwrap_or(stored.kind).as_str().into(),
+        stored_bytes: p.counted,
         view_bytes: v.len() as u64,
         result_id: Some(stored.id.clone()),
-        command: None,
-        shaper: Some("size".into()),
+        command: p.command.clone(),
+        shaper: Some(p.shaper.as_str().into()),
     };
     // C6, O§7.11: busy past the bound or broken: no row, the view stands.
     if zygo_usage::Store::open_bounded(usage_db, opts.db_bound).and_then(|u| u.insert_trim(&row)).is_err() {
@@ -162,9 +263,13 @@ pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: 
             note("work log unavailable");
         }
     let resp = input.raw.get("tool_response").cloned().unwrap_or(Value::Null);
+    let mut updated = with_view(&tool, &resp, &v);
+    if p.clear_stderr {
+        updated["stderr"] = json!("");
+    }
     Ok(HookOutput::Json(json!({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
-        "updatedToolOutput": with_view(&tool, &resp, &v),
+        "updatedToolOutput": updated,
     }})))
 }
 
