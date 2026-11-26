@@ -141,6 +141,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
     if c.messages.first().is_none_or(|(role, _)| *role != "user") {
         return Err(bad("input: the conversation must start with a user message"));
     }
+    adjacency(&c.messages)?;
     let mut tools = tools(req, &mut d)?;
     let mut choice = tool_choice(req, &tools)?;
     let from_history = history_tools(&c.messages, &tools);
@@ -465,6 +466,33 @@ fn tools(req: &Value, d: &mut Drops) -> Result<Vec<Value>, ZygoError> {
         out.push(x);
     }
     Ok(out)
+}
+
+/// Messages tool adjacency (K§6.4.3 obligation 3): an assistant message with `tool_use` blocks has no thinking block
+/// after its first `tool_use`, and the next message is a user message with a `tool_result` for each of them.
+fn adjacency(messages: &[(&'static str, Vec<Value>)]) -> Result<(), ZygoError> {
+    for (i, (role, content)) in messages.iter().enumerate() {
+        if *role != "assistant" {
+            continue;
+        }
+        let Some(first) = content.iter().position(|b| s(b, "type") == Some("tool_use")) else { continue };
+        if content[first..].iter().any(|b| matches!(s(b, "type"), Some("thinking" | "redacted_thinking"))) {
+            return Err(bad("input: a reasoning item follows a tool call in the same assistant turn"));
+        }
+        let answered = |id: &str| match messages.get(i + 1) {
+            Some(("user", next)) => {
+                next.iter().any(|b| s(b, "type") == Some("tool_result") && s(b, "tool_use_id") == Some(id))
+            }
+            _ => false,
+        };
+        let ids = content.iter().filter(|b| s(b, "type") == Some("tool_use")).filter_map(|b| s(b, "id"));
+        if !ids.into_iter().all(answered) {
+            return Err(bad(
+                "input: each tool call's output must come in the next user turn, before other assistant content",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// One tool per distinct `tool_use` name in `messages` that `tools` does not define, in first-use order (K§6.4.3
