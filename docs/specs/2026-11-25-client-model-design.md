@@ -521,6 +521,8 @@ Messages is the pivot **(author, K-D21)**:
 - **Responses client → Anthropic upstream.** New request translator Responses → Messages. New response translator Messages SSE (and JSON) → Responses SSE (and JSON).
 - **Responses client → chat upstream.** Responses → Messages (new) → chat (existing `translate/chat.rs`); chat SSE → Messages SSE (existing `translate/sse.rs`) → Responses SSE (new). Two linear passes (K-C2).
 
+Candidates of a Responses client **(lead)**: per provider, the first dialect it speaks of `anthropic`, then `openai-chat`. A provider that speaks only `openai` is no candidate, and a model with no candidate answers `400 zygo_no_provider`, until P4-4's same-dialect node (RS-5) builds the Responses upstream path (`store` := `false`, Responses usage in the tee); that node puts `openai` first.
+
 Top-level request fields **(lead)**. Each top-level field is in exactly one list; an unknown field gives `400 zygo_bad_request` that names it:
 
 - **Mapped:** `model`, `instructions`, `input`, `tools`, `tool_choice`, `parallel_tool_calls`, `max_output_tokens`, `temperature`, `top_p`, `reasoning`, `stream`, `text` (only `text.format` of type `text` and `text.verbosity`; another format → 400 toward a non-Responses upstream; another `text` key → 400 that names it). `text.verbosity` must be `low`, `medium` or `high`; toward a Messages or chat upstream it is checked and not sent, as Messages has no counterpart.
@@ -554,7 +556,7 @@ Stream obligations (Messages SSE → Responses SSE):
 
 #### 6.4.4 Errors before the stream
 
-An upstream error before the first byte to the client keeps its HTTP status and gets the OpenAI error body (`errors.rs:34-41`) **(lead)**. An over-long prompt reaches a Responses client in the shape that PC14 records, so Codex runs its own recovery. `response.failed` is used only after the stream started (K§6.4.3 stream obligation 6).
+An upstream error before the first byte to the client keeps its HTTP status and gets the OpenAI error body (`errors.rs:34-41`) **(lead)**. An over-long prompt reaches a Responses client in the shape that PC14 records, so Codex runs its own recovery. Over-long means a refusal that §7.6 maps to `prompt is too long`, Anthropic's own `prompt is too long: …` text, or Anthropic's `` input length and `max_tokens` exceed context limit: <input> + <max_tokens> > <limit> `` text (`n` = input + max_tokens, `max` = limit) **(lead)**; the last form joins the §7.6 context-limit mapping for every client (K§12). `response.failed` is used only after the stream started (K§6.4.3 stream obligation 6).
 
 #### 6.4.5 Window rewrite for a Responses client
 
@@ -932,6 +934,7 @@ P4-11 (client updates):
 - **§8.4**: `ZYGO_AGENT` takes each registry id (`claude-code`, `opencode`, `codex`); each client adds its own denylist rows.
 - **§8.8**: superseded by K§6.8 flow 6.
 - **§7.6 v2**: the Responses client route is built (K§6.4); the chat client route and the `openai-chat` client pair stay v2.
+- **§7.6 context-limit errors** (RS-3 review round 1): Anthropic's `exceed context limit: <input> + <max_tokens> > <limit>` text is a context-limit refusal; `n` = input + max_tokens, `max` = limit.
 - **§7.2, §8.4, §8.7** (OC-1, operator 2026-11-25): OpenCode's provider key is a `{file:…}` reference to the session's `token` file, the inline config holds no token, and it sets `enabled_providers = ["zygo"]` and a `disabled_providers` that keeps every earlier list without `zygo`.
 - **H§6.2, H§6.7** (HUD design): segment 16 and its place first in each drop list.
 - **U** (auto-update design): the throttle state has one owner, `zygo_core::update_state`, shared with the background check; U's prompt, skips and rule are unchanged.
@@ -963,3 +966,4 @@ P4-11 (client updates):
 - 2026-11-25: the K§6.3.7 PC16 row states what P4-3 measures (author's call, PC-6 review round 1 F3): Codex's own default against the mock with no zygo between (K-D25), the release-source request against a control run with the key `false` and the `exec` runs; the measurement under a zygo launch is P4-9's and P4-11's.
 - 2026-11-25: K§11 item 52, the K§6.3.8 A-22 row, the PC16 row's Feeds and the K§6.9 P4-10/P4-11 note amended (author's call, PC-6 review round 2 G2): for Codex, A-22.2 cites the P4-11 premise row for Codex under a zygo launch, not PC16, which measures Codex's own default with no zygo between (K-D25); the PU rows and A-22.2's criterion text are unchanged.
 - 2026-11-25: K§6.5.4 release source gains the measured result for Codex (author's call, PC-6 review round 2 G3): inferred as `api.github.com:443` from PC16's controlled count difference, path not visible; `registry.npmjs.org` not seen; P4-11 verifies before use.
+- 2026-11-25: K§6.4.3 candidates of a Responses client (`anthropic`, then `openai-chat`; `openai` from RS-5), K§6.4.4 over-long forms and the K§12 §7.6 context-limit line (lead, RS-3 review round 1 F1, F2).

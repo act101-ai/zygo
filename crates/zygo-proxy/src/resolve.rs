@@ -75,19 +75,17 @@ pub fn resolve(name: &str, dialect: Dialect, s: &SessionState, cfg: &Merged) -> 
     Ok(Resolved { requested: base.to_string(), one_m, role, model, candidates, adjustments, notional_prices: None })
 }
 
-/// The dialect sent upstream: the client's when the provider speaks it, else a translation pair (§7.6, K§6.4.3):
-/// `anthropic` → `openai`, else `openai-chat`; `openai` → `anthropic`, else `openai-chat` (Messages is the pivot: one
-/// pass before two, K-C2); `openai-chat` → none.
+/// The dialect sent upstream, the first the provider speaks (§7.6, K§6.4.3): `anthropic` client → `anthropic`, else
+/// `openai`, else `openai-chat`; `openai` client → `anthropic`, else `openai-chat` (Messages is the pivot: one pass
+/// before two, K-C2); `openai-chat` client → `openai-chat`. RS-5 re-enables the `openai` candidate for an `openai`
+/// client with `store` := false and Responses usage parsing.
 pub(crate) fn upstream_dialect(p: &Provider, client: Dialect) -> Option<Dialect> {
-    if p.dialects.contains(&client) {
-        return Some(client);
-    }
-    let pairs: &[Dialect] = match client {
-        Dialect::Anthropic => &[Dialect::Openai, Dialect::OpenaiChat],
+    let order: &[Dialect] = match client {
+        Dialect::Anthropic => &[Dialect::Anthropic, Dialect::Openai, Dialect::OpenaiChat],
         Dialect::Openai => &[Dialect::Anthropic, Dialect::OpenaiChat],
-        Dialect::OpenaiChat => &[],
+        Dialect::OpenaiChat => &[Dialect::OpenaiChat],
     };
-    pairs.iter().copied().find(|d| p.dialects.contains(d))
+    order.iter().copied().find(|d| p.dialects.contains(d))
 }
 
 /// Stage 2 (§7.3).

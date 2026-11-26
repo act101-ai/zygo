@@ -603,7 +603,8 @@ async fn run(
 
 /// An upstream error on a translated Responses request, before the first byte (K§6.4.4, K-D50): `translate_error`'s
 /// status and error in the OpenAI shape; a context-limit refusal in the shape Codex recovers from (PC14,
-/// `fixtures/codex/errors/context-400.json`).
+/// `fixtures/codex/errors/context-400.json`). Both Anthropic overflow texts reach the check as `prompt is too long`:
+/// Anthropic's own text as sent, the `exceed context limit` text as `context_error` maps it.
 fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value) {
     let (s, m) = translate_error(status, body, estimate, key);
     let message = m["error"]["message"].as_str().unwrap_or_default();

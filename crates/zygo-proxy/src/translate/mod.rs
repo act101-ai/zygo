@@ -113,13 +113,17 @@ pub(crate) fn scrub(m: &str, key: Option<&str>) -> String {
     }
 }
 
-/// A context-limit refusal as `prompt is too long: <n> tokens > <max> maximum` (§7.6 and its note); `None` when `err`
+/// Anthropic's overflow text when input plus `max_tokens` is over the window (lower case).
+const ANTHROPIC_LIMIT: &str = "exceed context limit";
+
+/// A context-limit refusal as `prompt is too long: <n> tokens > <max> maximum` (§7.6 and its note; K§6.4.4: Anthropic's
+/// `exceed context limit: <input> + <max_tokens> > <limit>` gives `n` = the sum, `max` = the limit); `None` when `err`
 /// is another error.
 pub(crate) fn context_error(err: &Value, estimate: u64) -> Option<Value> {
     let m = s(err, "message").unwrap_or("").to_lowercase();
     let hit = s(err, "code") == Some("context_length_exceeded")
         || s(err, "type") == Some("exceed_context_size_error")
-        || ["maximum context length", "context window", "context size"].iter().any(|p| m.contains(p));
+        || ["maximum context length", "context window", "context size", ANTHROPIC_LIMIT].iter().any(|p| m.contains(p));
     if !hit {
         return None;
     }
@@ -128,14 +132,22 @@ pub(crate) fn context_error(err: &Value, estimate: u64) -> Option<Value> {
         let digits: String = m[i..].chars().take_while(char::is_ascii_digit).collect();
         digits.parse::<u64>().ok()
     };
+    // Anthropic: "input length and `max_tokens` exceed context limit: <input> + <max_tokens> > <limit>, …".
+    let sum = m.find(ANTHROPIC_LIMIT).and_then(|i| {
+        let (a, r) = m[i + ANTHROPIC_LIMIT.len()..].trim_start_matches([':', ' ']).split_once(" + ")?;
+        let (b, r) = r.split_once(" > ")?;
+        let limit: String = r.chars().take_while(char::is_ascii_digit).collect();
+        Some((a.parse::<u64>().ok()?.saturating_add(b.parse().ok()?), limit.parse::<u64>().ok()?))
+    });
     let n = err
         .get("n_prompt_tokens")
         .and_then(Value::as_u64)
+        .or(sum.map(|s| s.0))
         .or_else(|| after("resulted in "))
         .or_else(|| after("requested "))
         .unwrap_or(estimate);
     // A known `max`: `n` is at least `max + 1`, so the message always reads `n > max`.
-    let (n, max) = match err.get("n_ctx").and_then(Value::as_u64).or_else(|| after("maximum context length is ")) {
+    let (n, max) = match err.get("n_ctx").and_then(Value::as_u64).or(sum.map(|s| s.1)).or_else(|| after("maximum context length is ")) {
         Some(max) => (n.max(max.saturating_add(1)), max),
         None => (n, n.saturating_sub(1)),
     };
