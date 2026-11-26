@@ -1875,3 +1875,41 @@ fn message_events_short_text_one_delta() {
         json!({"type":"text_delta","text":"hi"}),
     ]);
 }
+
+#[test] // RS-15 round 1 review F3: a thinking block cut into pieces sends its signature_delta after all of them
+fn thinking_signature_after_all_pieces() {
+    let m = msg_body(json!([thinking(&"x".repeat(3 * INPUT_DELTA_MAX), "sig")]));
+    let d: Vec<Value> = message_events(&m).into_iter().filter(|e| e.event == "content_block_delta").map(|e| e.data["delta"]["type"].clone()).collect();
+    assert_eq!(d, ["thinking_delta", "thinking_delta", "thinking_delta", "signature_delta"]);
+}
+
+#[test] // RS-15 round 1 review F4, K§6.4.3 stream obligation 8: control characters escape 6 ×, and the stream still completes
+fn control_char_text_within_event_max_completes() {
+    let text = "\u{1}".repeat(300_000);
+    // Every event at most 6 × INPUT_DELTA_MAX + 256 bytes, the longest over 2 × (the `\u0001` escape), more than one
+    // text_delta; returns the events as bytes.
+    let checked = |evs: &[SseEvent]| -> Vec<u8> {
+        let longest = evs.iter().map(|e| e.to_bytes().len()).max().unwrap();
+        assert!(longest <= 6 * INPUT_DELTA_MAX + 256 && longest > 2 * INPUT_DELTA_MAX, "{longest}");
+        assert!(evs.iter().filter(|e| e.data["delta"]["type"] == "text_delta").count() > 1);
+        evs.iter().flat_map(SseEvent::to_bytes).collect()
+    };
+    // The Responses encoder ends in response.completed with one message item that holds the whole text.
+    let completes = |bytes: &[u8]| {
+        let mut e = Encoder::new("role-x", &tgt(), Calls::default());
+        let mut out = e.push(bytes);
+        out.extend(e.finish());
+        assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+        let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["content"][0]["text"], json!(text));
+    };
+    // message_events: a JSON body with one text block.
+    completes(&checked(&message_events(&msg_body(json!([{"type":"text","text":text}])))));
+    // The chat mapper: one upstream chunk whose `content` is the whole text.
+    let sse = chat_delta(json!({"role":"assistant","content":text}), Value::Null) + &chat_delta(json!({}), json!("stop")) + DONE;
+    let mut c = chat();
+    let mut evs = c.push(sse.as_bytes());
+    evs.extend(c.finish_events());
+    completes(&checked(&evs));
+}
