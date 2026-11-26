@@ -96,6 +96,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | DONE | mechanical | plan 4eaccaa2 · node 306d2bbf, 69416146 · acceptance `grep -c "^\| PO3 \|" docs/premises.md && test -s fixtures/...after-bash-stderr.json` → 1, exit 0 · PR #160 |
 | MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
+| OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | DONE | mechanical | plan a8ac4f72 · commits 3e4c8baa, 0b4b6865 · PR #170 |
 
 ## Log
 

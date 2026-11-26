@@ -192,7 +192,6 @@ Session text (T, SX nodes):
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
-| OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | DONE | implementation | abea1612, 74976374 · acc 5/5 · PR #140 |
@@ -204,6 +203,7 @@ Session text (T, SX nodes):
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
 | OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | TODO | implementation | — |
+| OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | TODO | judgment | — |
 | OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
@@ -406,3 +406,4 @@ Session text (T, SX nodes):
 | 2026-11-25 | FX-14 DONE: `zygo up` prints only team-layer warnings; CLI test of `with_team`, R§9.4 sentence, `verbs::team` server tests, `up --all` exit code. 2 rounds; review F1, F2 fixed; F3 nit kept; F4 (max_members range) is new node FX-17 · PR #162 |
 | 2026-11-25 | FX-17 added from FX-14 review F4: `zygo up` takes `[limits] max_members` from the team or user layer with no 1-32 range check; contract reuses the `config check` rule via the `check_jobs` path (check.rs:119-120, up.rs:797-808) |
 | 2026-11-25 | OS-25 DONE: PO3 verified on OpenCode 1.18.16 (live-shaping.sh po3, mock upstream): output.output holds stdout then stderr. Review R1-R3: run-opencode.sh keeps fixtures it does not write; test name match exact; spec records PO3. F2 (no PO arm in check-premises) awaits operator OK. |
+| 2026-11-25 | OS-26 DONE: PO4 verified on Claude Code 2.1.332 and OpenCode 1.18.16 (wrapper 0 bytes up to 5199-byte replies); review findings 5: 3 confirmed and fixed, 2 refuted; new node OS-44 for read-back bytes above the agent's cut limits · PR #170 |
