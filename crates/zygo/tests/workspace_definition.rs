@@ -426,3 +426,300 @@ fn l11_a_pin_outside_a_checkout_stops() { // R§7.4 bullet 4 (rewritten)
     assert!(r.seen.is_none() && !r.called);
     assert_eq!(count(&r.err, &pin_line(&pin, NO_LONGER)), 1, "{}", r.err);
 }
+
+/// `bin/git`: appends each call (`$*`) to `<root>/git.log`; with `fail_ls_tree`, an `ls-tree` call exits 1 with no
+/// output; else it runs the git of the test's `PATH` (the harness `PATH` is `bin` only). The log starts empty.
+fn fake_git(h: &Harness, fail_ls_tree: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let real = which::which("git").unwrap();
+    let fail = if fail_ls_tree { "for a in \"$@\"; do [ \"$a\" = ls-tree ] && exit 1; done\n" } else { "" };
+    let body = format!("#!/bin/sh\necho \"$*\" >> '{}'\n{fail}exec '{}' \"$@\"\n", h.root().join("git.log").display(), real.display());
+    let p = h.bin.join("git");
+    let _ = std::fs::remove_file(&p);
+    std::fs::write(&p, body).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    ready_exe(&p);
+    let _ = std::fs::remove_file(h.root().join("git.log"));
+}
+
+fn git_log(h: &Harness) -> String {
+    std::fs::read_to_string(h.root().join("git.log")).unwrap_or_default()
+}
+
+/// panes[] = KEY (Claude Code) in `app`; members[KEY] = `m`; the workspace's checkout is `app`.
+fn seed_member(h: &Harness, app: &Path, m: &MemberRecord) {
+    h.seed(WS_ID, &mut |w| {
+        w.common_dir = app.join(".git");
+        w.main_root = app.to_path_buf();
+        w.panes = vec![Pane { key: KEY.into(), cwd: app.to_path_buf(), kind: PaneKind::ClaudeCode, ..Default::default() }];
+        w.members.clear();
+        w.members.insert(KEY.into(), m.clone());
+    });
+}
+
+/// The record `up` writes for a repository member with profile `rust` and job `worker` (`up.rs:681-701`), after a
+/// stop: resumable.
+fn pinned(pin: Option<&Pin>) -> MemberRecord {
+    let mut m = MemberRecord::new(Agent::ClaudeCode);
+    m.state = MemberState::Resumable;
+    m.agent_session = Some("abc".into());
+    m.zygo_session = Some(OLD_ZS.into());
+    m.launch.profile = Some("rust".into());
+    m.launch.job = Some("worker".into());
+    m.launch.definition = pin.cloned();
+    m
+}
+
+/// `zygo ws run --ws-id WS_ID --pane KEY` with the stub environment `env`, through `Guarded`.
+fn ws_run(h: &Harness, env: &[(&'static str, OsString)]) -> Output {
+    let extra: Vec<(&str, &OsStr)> = env.iter().map(|(k, v)| (*k, v.as_os_str())).collect();
+    Guarded::spawn(h.zygo(&["ws", "run", "--ws-id", WS_ID, "--pane", KEY], &extra)).output("ws run")
+}
+
+/// The session view that the stub with output folder `out` received.
+fn view(out: &Path) -> Value {
+    serde_json::from_str(json_file(&out.join("session.json"))["view.json"].as_str().unwrap()).unwrap()
+}
+
+/// The session view of the last stub start of the pane `key` (E-tests).
+fn view_of(h: &Harness, key: &str) -> Value {
+    view(&out(h, key))
+}
+
+fn member_of(h: &Harness) -> MemberRecord {
+    h.store(WS_ID).read().unwrap().unwrap().members[KEY].clone()
+}
+
+fn state_bytes(h: &Harness) -> Vec<u8> {
+    std::fs::read(h.store(WS_ID).dir().join("workspace.json")).unwrap()
+}
+
+/// The R§6.1 step 2 default-branch lookup of the definition read (`read.rs:80`), as `bin/git` logs it.
+const DEFAULT_LOOKUP: &str = "symbolic-ref --quiet refs/remotes/origin/HEAD";
+
+#[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
+fn b1_ws_run_resumes_with_the_pinned_profile_and_keeps_job_and_pin() { // R§7.4 bullets 3, 7; R§9.3 effect 2; R§10 `ws run`; review focus 33
+    for approve_new in [true, false] {
+        let h = Harness::no_tmux();
+        let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+        let pin0 = approve(&app, &h.paths.approvals_file);
+        commit_default(&app, NEWER);
+        if approve_new {
+            approve(&app, &h.paths.approvals_file);
+        }
+        seed_member(&h, &app, &pinned(Some(&pin0)));
+        fake_git(&h, false);
+        let (out, env) = h.stub(Agent::ClaudeCode, "a");
+        let o = ws_run(&h, &env);
+        let v = view(&out);
+        assert_eq!((v["profile"].clone(), v["disabled_roles"].clone()), (json!("rust"), json!(["design"])), "{}", text(&o.stderr));
+        let log = git_log(&h);
+        assert!(!log.contains(DEFAULT_LOOKUP), "{log}");
+        assert!(log.lines().any(|l| l.contains("ls-tree") && l.contains(&pin0.commit)), "{log}");
+        let m = member_of(&h);
+        assert_eq!((m.launch.job.as_deref(), m.launch.definition.as_ref()), (Some("worker"), Some(&pin0)));
+    }
+}
+
+#[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
+fn b2_a_failing_pinned_listing_stops_ws_run_and_keeps_the_record() { // R§7.4 bullet 5 (rewritten); R§18 item 16
+    let h = Harness::no_tmux();
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let pin = approve(&app, &h.paths.approvals_file);
+    seed_member(&h, &app, &pinned(Some(&pin)));
+    fake_git(&h, true);
+    let before = state_bytes(&h);
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let err = text(&ws_run(&h, &env).stderr);
+    assert_eq!(count(&err, &pin_line(&pin, "were not read (git ls-tree: failed)")), 1, "{err}");
+    assert_eq!(count(&err, "zygo: the claude launch failed before the agent started (exit 1)"), 1, "{err}");
+    assert!(!out.join("argv.json").exists(), "the agent started");
+    assert_eq!(state_bytes(&h), before);
+}
+
+#[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
+fn b3_a_pruned_pin_stops_ws_run_and_keeps_the_record() { // R§7.4 bullet 4; R§11 row; R§18 item 16
+    let h = Harness::no_tmux();
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let pin = approve(&app, &h.paths.approvals_file);
+    prune(&app, &pin.commit);
+    seed_member(&h, &app, &pinned(Some(&pin)));
+    fake_git(&h, false);
+    let before = state_bytes(&h);
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let err = text(&ws_run(&h, &env).stderr);
+    assert_eq!(count(&err, &pin_line(&pin, NO_LONGER)), 1, "{err}");
+    assert!(!out.join("argv.json").exists(), "the agent started");
+    assert_eq!(state_bytes(&h), before);
+}
+
+#[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
+fn b4_a_pool_member_with_a_gone_pin_starts_with_no_pinned_read() { // R§7.4 bullet 6; R§9.5; R§18 item 16
+    let h = Harness::no_tmux();
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let pin = approve(&app, &h.paths.approvals_file);
+    prune(&app, &pin.commit);
+    let pool = h.root().join("pool/a");
+    std::fs::create_dir_all(&pool).unwrap();
+    let mut m = pinned(Some(&pin));
+    m.launch.passthrough = true;
+    m.launch.config_dir = Some(pool.display().to_string());
+    m.config_dir = Some(pool.clone());
+    seed_member(&h, &app, &m);
+    fake_git(&h, false);
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let err = text(&ws_run(&h, &env).stderr);
+    assert!(out.join("argv.json").exists(), "the agent did not start: {err}");
+    assert_eq!(count(&err, "zygo: profile rust does not apply in passthrough"), 1, "{err}");
+    assert!(view(&out)["profile"].is_null());
+    let log = git_log(&h);
+    assert!(!log.lines().any(|l| l.contains("ls-tree") && l.contains(&pin.commit)), "{log}");
+}
+
+#[test]
+#[ignore = "timing: the agent launch has 2 s launcher probes"]
+fn b5_a_first_start_saves_the_pin_of_its_read_and_keeps_it() { // R§7.4 bullet 2 (rewritten); R§12 row (rewritten)
+    let h = Harness::no_tmux();
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let pin0 = approve(&app, &h.paths.approvals_file);
+    let mut m = MemberRecord::new(Agent::ClaudeCode);
+    m.launch.profile = Some("rust".into()); // a user-loadout member: no pin
+    seed_member(&h, &app, &m);
+    fake_git(&h, false);
+    let (out, env) = h.stub(Agent::ClaudeCode, "a");
+    let o = ws_run(&h, &env);
+    assert_eq!(view(&out)["disabled_roles"], json!(["design"]), "{}", text(&o.stderr));
+    assert_eq!(member_of(&h).launch.definition.as_ref(), Some(&pin0));
+    commit_default(&app, NEWER);
+    approve(&app, &h.paths.approvals_file);
+    let o = ws_run(&h, &env);
+    assert_eq!(view(&out)["disabled_roles"], json!(["design"]), "{}", text(&o.stderr));
+    assert_eq!(member_of(&h).launch.definition.as_ref(), Some(&pin0));
+}
+
+#[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn e1_a_fresh_up_pins_each_member_and_a_restore_sends_the_pinned_profile() { // R§7.4 bullets 1-3, 7; R§10 `up` (a restore); R§18 item 16
+    for approve_new in [true, false] {
+        let Some(h) = Harness::new() else { return };
+        git_repo_at(&h, &h.repo());
+        per_pane_claude(&h, "");
+        let app = repo_at(
+            h.root(),
+            &[(".zygo/workspace.toml", "version = 1\n[members.worker-1]\nprofile = \"rust\"\n"), (".zygo/profiles/rust.toml", RUST)],
+        );
+        let pin0 = approve(&app, &h.paths.approvals_file);
+        let o = run_in(&h, &app, &["up", "--no-attach"], &[], true);
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+        let (id, ws) = only_state(&h);
+        let k = agent_key(&ws, |m| m.name.as_deref() == Some("worker-1"));
+        assert_eq!(state(&h, &id).members[&k].launch.definition.as_ref(), Some(&pin0));
+        assert!(wait_starts(&h, &k, 1));
+        assert_eq!((view_of(&h, &k)["profile"].clone(), view_of(&h, &k)["disabled_roles"].clone()), (json!("rust"), json!(["design"])));
+        commit_default(&app, NEWER);
+        if approve_new {
+            approve(&app, &h.paths.approvals_file);
+        }
+        down(&h, &ws.name);
+        let o = up(&h, &ws.name, &[]);
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+        assert!(wait_starts(&h, &k, 2));
+        assert_eq!((view_of(&h, &k)["profile"].clone(), view_of(&h, &k)["disabled_roles"].clone()), (json!("rust"), json!(["design"])));
+        assert_eq!(state(&h, &id).members[&k].launch.definition.as_ref(), Some(&pin0));
+        down(&h, &ws.name);
+    }
+}
+
+#[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn e2_a_hand_start_with_a_repository_profile_gets_the_pin_and_keeps_it() { // R§7.4 bullet 2 (rewritten); R§18 item 16
+    let Some(h) = Harness::new() else { return };
+    git_repo_at(&h, &h.repo());
+    per_pane_claude(&h, "");
+    let app = repo_at(h.root(), &[(".zygo/profiles/rust.toml", RUST)]);
+    let pin0 = approve(&app, &h.paths.approvals_file);
+    config(&h, "[loadout.l14]\n[[loadout.l14.window]]\n[[loadout.l14.window.pane]]\nkind = \"shell\"\n");
+    let o = run_in(&h, &app, &["up", "--loadout", "l14", "--no-attach"], &[], true);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let (id, ws) = only_state(&h);
+    let script = hand_script(&h, "hand", &["claude", "--profile", "rust"], &[("ZYGO_WORKSPACE", OsStr::new(&id))]);
+    let at = app.display().to_string();
+    let pane = h.tmux(&["split-window", "-P", "-F", "#{pane_id}", "-c", &at, "-t", &format!("={}:", ws.tmux_session), &script]);
+    std::fs::write(h.root().join("hand.go"), "").unwrap();
+    let hand_err = || std::fs::read_to_string(h.root().join("hand.err")).unwrap_or_default();
+    let mut k = String::new();
+    assert!(
+        until(BOUND, || {
+            k = h.tmux(&["show-options", "-p", "-qv", "-t", &pane, "@zygo-pane"]).trim().to_string();
+            !k.is_empty()
+        }),
+        "{}",
+        hand_err()
+    );
+    assert!(wait_starts(&h, &k, 1), "{}", hand_err());
+    assert_eq!(view_of(&h, &k)["disabled_roles"], json!(["design"]));
+    assert!(
+        until(BOUND, || state(&h, &id).members.get(&k).is_some_and(|m| m.launch.definition.as_ref() == Some(&pin0))),
+        "{}",
+        hand_err()
+    );
+    commit_default(&app, NEWER);
+    approve(&app, &h.paths.approvals_file);
+    down(&h, &ws.name);
+    let o = up(&h, &ws.name, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    assert!(wait_starts(&h, &k, 2));
+    assert_eq!(view_of(&h, &k)["disabled_roles"], json!(["design"]));
+    assert_eq!(state(&h, &id).members[&k].launch.definition.as_ref(), Some(&pin0));
+    down(&h, &ws.name);
+}
+
+#[test]
+#[ignore = "timing: tmux e2e: 2 s tmux calls, 2 s launcher probes and lock waits"]
+fn e3_item_15_a_pool_member_with_a_profile() { // R§18 item 15 (stub launch part); R§9.5 "Launch"; R§14 row §12
+    let Some(h) = Harness::new() else { return };
+    git_repo_at(&h, &h.repo());
+    per_pane_claude(&h, "");
+    let app = repo_at(
+        h.root(),
+        &[(".zygo/workspace.toml", "version = 1\n[members.worker-1]\nprofile = \"rust\"\npool = true\n"), (".zygo/profiles/rust.toml", RUST)],
+    );
+    approve(&app, &h.paths.approvals_file);
+    let headers = |k: &str| stub_env(&h, k)["ANTHROPIC_CUSTOM_HEADERS"].as_str().unwrap_or_default().to_string();
+    // No pool: no passthrough; the `rust` profile is sent.
+    let o = run_in(&h, &app, &["up", "--no-attach"], &[], true);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o.stderr));
+    let (id, ws) = only_state(&h);
+    let k = agent_key(&ws, |m| m.name.as_deref() == Some("worker-1"));
+    assert!(wait_starts(&h, &k, 1));
+    assert_eq!((view_of(&h, &k)["profile"].clone(), view_of(&h, &k)["disabled_roles"].clone()), (json!("rust"), json!(["design"])));
+    let m = state(&h, &id).members[&k].clone();
+    assert!(!m.launch.passthrough && m.launch.config_dir.is_none());
+    assert!(!headers(&k).contains("X-Zygo-Token"), "{}", headers(&k));
+    down(&h, &ws.name);
+    // A pool: passthrough on the pool directory; no profile.
+    let pool = h.root().join("pool");
+    std::fs::create_dir_all(pool.join("a")).unwrap();
+    config(&h, &format!("[workspace]\npool = \"{}\"\n", pool.display()));
+    let o = run_in(&h, &app, &["up", "--reset", "--no-attach"], &[], true);
+    let err = text(&o.stderr);
+    assert_eq!(o.status.code(), Some(0), "{err}");
+    assert!(
+        err.lines().any(|l| l.starts_with("zygo: worker-1 run in passthrough on pool ")
+            && l.ends_with("; profile rust of worker-1 does not apply in passthrough")),
+        "{err}"
+    );
+    let (id, ws) = only_state(&h);
+    let k2 = agent_key(&ws, |m| m.name.as_deref() == Some("worker-1"));
+    assert!(wait_starts(&h, &k2, if k2 == k { 2 } else { 1 }));
+    let m = state(&h, &id).members[&k2].clone();
+    assert!(m.launch.passthrough);
+    assert_eq!(m.config_dir.as_deref(), Some(pool.join("a").as_path()));
+    assert!(view_of(&h, &k2)["profile"].is_null());
+    assert!(headers(&k2).contains("X-Zygo-Token"), "{}", headers(&k2));
+    down(&h, &ws.name);
+}
