@@ -235,13 +235,17 @@ def compaction(out, caps):
     the turn tracer, and whether the input carries a tool output. Per capture: compaction requests
     by request_kind (or a /responses/compact path) and by the tracer; the condition (cold_resume
     when a request resumes the session, else live); and whether a compaction came before the next
-    request (turn 2 on a cold resume, the tool-output follow-up in a live session)."""
+    request: turn 2 on a cold resume; in a live session the first request after the first one that
+    is not a compaction and has the first one's turn_id (the follow-up; after a compaction its input
+    is the compacted history, so it need not carry the tool output: next_tool_output says)."""
     rows = []
     for capture, cap in pairs(caps):
         n = n_prompt = 0
-        cold = False
         first_comp = nxt = None
         rs = recs(cap)
+        turn0 = meta(rs[0]).get("turn_id") if rs else None
+        cold = any(meta(r).get("history_initialization") == "cold_resume" for r in rs)
+        nxt_tool = "none"
         for i, r in enumerate(rs):
             b = body(r)
             m = meta(r)
@@ -254,7 +258,6 @@ def compaction(out, caps):
             tool_out = "function_call_output" in types
             kind = m.get("request_kind") or "none"
             comp = kind == "compaction" or "/responses/compact" in str(r.get("path", ""))
-            cold = cold or m.get("history_initialization") == "cold_resume"
             rows.append("%s %s %s %s model=%s request_kind=%s history=%s compact_prompt=%s turn=%s tool_output=%s input_items=%d item_types=%s" % (
                 capture, r["_seq"], r.get("method"), r.get("path"), b.get("model") or "none", kind,
                 m.get("history_initialization") or "none", "yes" if prompt else "no", t.group(1) if t else "none",
@@ -263,12 +266,14 @@ def compaction(out, caps):
             n_prompt += prompt
             if comp and first_comp is None:
                 first_comp = i
-            if nxt is None and i > 0 and not comp and ((t and t.group(1) == "turn2") or tool_out):
+            if nxt is None and i > 0 and not comp and (
+                    (t and t.group(1) == "turn2") if cold else (turn0 is None or m.get("turn_id") == turn0)):
                 nxt = i
+                nxt_tool = "yes" if tool_out else "no"
         before = "yes" if first_comp is not None and nxt is not None and first_comp < nxt else "no"
-        rows.append("%s: compaction_requests=%d compact_prompt_requests=%d condition=%s next_request=%s compacted_before_next=%s" % (
+        rows.append("%s: compaction_requests=%d compact_prompt_requests=%d condition=%s next_request=%s next_tool_output=%s compacted_before_next=%s" % (
             capture, n, n_prompt, "cold_resume" if cold else ("live" if rs else "none"),
-            ("turn2" if cold else "tool_followup") if nxt is not None else "absent", before))
+            ("turn2" if cold else "followup") if nxt is not None else "absent", nxt_tool, before))
     lines(out, rows)
 
 
