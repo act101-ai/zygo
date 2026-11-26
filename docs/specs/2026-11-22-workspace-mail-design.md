@@ -103,9 +103,9 @@ A busy member is not woken; M§7.1 delivers to it. A member whose launcher is no
 
 | Tool | Input | Effect |
 |---|---|---|
-| `mail_send` | `to` (name, pane key or `all`), `subject`, `body` | M§5 send, then M§7.3 wake. Returns the ids. |
+| `mail_send` | `to` (name, pane key, `all`, or `<name>@<host>`, mail sync design S§7.2), `subject`, `body` | M§5 send, then M§7.3 wake; to a remote address: the S§8.6 send-time pass, the outbox write, then the sync child (mail sync design S§8.1). Returns the ids. |
 | `mail_read` | `max` (default 10) | M§5 read, oldest first. Returns the messages. |
-| `mail_list` | — | Unread count and the subjects of `new/`, without a read. |
+| `mail_list` | — | Unread count and the subjects of `new/`, without a read; `remote`: the addresses of the member cache (mail sync design S§10.4). |
 
 CLI (W§12 additions):
 
@@ -234,3 +234,4 @@ Mail sync between machines adds `[mail] host`, `[mail] sync_gap` and the per-wor
 | 2026-11-25 | M§3, M-C4, M-C6 | mail sync design S§16 | Mail between machines is now the mail sync design; M-C4 holds for `mail/`, and synced mail is also in the object store and on the remote; M-C6 holds: the side branch delivers only after the user-config opt-in. |
 | 2026-11-25 | M§8a | author's call (lead) | Mail sync design S§16 and S§10.4: item 8 gains the "Other machines" clause after the member list, at most 64 addresses (MS-20). |
 | 2026-11-26 | M-C6, M§8a | author's call (lead) | Workspace definition design R§14 and R§9.3: member names also come from approved repository files (R§7); item 8 lists each member's job in brackets and ends with the member's job sentence, after the mail tail, so the S§10.4 clause keeps its place (WD-18). M-C6 keeps the S-G6 side-branch sentence from the mail sync design S§16 row. |
+| 2026-11-26 | M§8 | mail sync design S§16 | mail_send takes addresses and runs the send-time pass; mail_list returns the remote addresses (S§7.2, S§8.6, S§10.4; MS-19). |
