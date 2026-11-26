@@ -430,7 +430,8 @@ pub fn read_last_start(sp: &SyncPaths) -> Option<u64> {
     std::str::from_utf8(&b).ok()?.trim().parse::<u64>().ok()
 }
 
-/// S§8.4: writes the start time in its own file, atomically; the hook path is its only writer.
+/// S§8.4: writes the start time in its own file, atomically; `spawn::trigger` with a gap (the hooks and `zygo mail
+/// watch`) is its only writer.
 pub fn write_last_start(sp: &SyncPaths, unix: u64) -> std::io::Result<()> {
     write_file(sp, &sp.last_start, unix.to_string().as_bytes())
 }

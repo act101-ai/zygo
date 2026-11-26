@@ -151,7 +151,7 @@ A send to a remote address is refused:
 - when the last public check said `public` (S§8.2);
 - when the address is not in the member cache (S§7.3), with the known addresses (as M§10).
 
-A member with no name has no address and gets no remote mail. `zygo mail read`, `zygo mail ls <name>` and `zygo mail watch <name>` take local members only; a local address works there as its bare name; a remote address is refused.
+A member with no name has no address and gets no remote mail. The sender of `zygo mail send` is the member of `ZYGO_PANE`; with no `ZYGO_PANE` it is `cli`, which has no address (M§8). `zygo mail read --name <n>`, `zygo mail ls <n>` and `zygo mail watch <n>` take local members only: a value with no `@` follows M§8; `<name>@<local host>` (the local host as at send) works as `<name>`; any other value with `@` (a remote address, a reserved name, a bad form, or any address when sync is off or the config does not load) is refused with `zygo: <value> is not a local address; zygo mail read, ls and watch take a member of this machine` (exit 1). These verbs read config and files only and run no git.
 
 ### 7.3 Registry
 
@@ -191,7 +191,7 @@ A member with no name has no address and gets no remote mail. `zygo mail read`, 
 
 When a local workspace state (another `<id>` under `workspaces/`) holds that identity, the line also names that workspace: the repository moved (W§5: a new common dir gives a new workspace id), and the old state still exists.
 
-**Twin.** Two workspaces with one identity: a state folder that was copied (a backup restored on a second machine, a home folder moved while the first machine still runs). The pass records in `mail/sync/state.json` the blob id of each own registry and ack file that it last pushed, and the blob id that it is about to push (before the push). A tip whose own file holds this identity and has a blob id that is neither of those two was written by another workspace with this identity. The pass stops with `zygo: another workspace writes with this mail identity (copied state?); run zygo mail sync --new-identity here, and set another [mail] host` and imports nothing. `zygo doctor` prints the same line while the condition holds.
+**Twin.** Two workspaces with one identity: a state folder that was copied (a backup restored on a second machine, a home folder moved while the first machine still runs). The pass records in `mail/sync/state.json` the blob id of each own registry and ack file that it last pushed, and the blob id that it is about to push (before the push). A tip whose own file holds this identity and has a blob id that is neither of those two was written by another workspace with this identity. The pass stops with `zygo: another workspace writes with this mail identity (copied state?); run zygo mail sync --new-identity here, and set another [mail] host` and imports nothing. `zygo doctor` prints the same line while `state.json` `last_error` is `twin` (the check name of this stop) for the workspace of the session or folder (`ZYGO_WORKSPACE`, else the checkout of the current folder, as the mail verbs); a pass that ends without a stop clears `last_error`. `zygo doctor` runs no sync and no fetch for this line.
 
 - **Limit.** A twin is found only at the first pass after the other copy writes one of these files. Until then, both copies can deliver the same message (S§13 limit 5).
 
@@ -221,7 +221,7 @@ In a twin state (S§7.5) `--take-host` and `--drop-host` stop with the twin line
 |---|---|---|
 | `mail_send` and `zygo mail send` to a remote address | the sync child, after the outbox write | none (the `again` mark merges bursts, S§8.3) |
 | Member hook events `session` (main loop), `prompt`, `stop`, `tool-end` (W§9.1, `crates/zygo-hooks/src/workspace.rs:36-37`) | the sync child | `[mail] sync_gap` (S§8.4) |
-| `zygo mail watch` with sync on | a sync in its own process, at start and then each `sync_gap` until it returns | `sync_gap` |
+| `zygo mail watch` with sync on | the sync child, asked for at the start of the watch and before each look at `new/` under the S§8.4 rate limit (`mail/sync/last_start`, `sync_gap`), until it returns: a watch that starts within `sync_gap` of another start (a hook, another watch) starts no child, as that child already syncs. The watch never waits for the child, so no sync delays a look or the `--timeout`; mail that the child imports shows at a later look. A child that does not start, or a `last_start` that cannot be written, gives one `errors.log` line. A config that does not load, or sync off, starts no child | `[mail] sync_gap` (S§8.4) |
 | `zygo mail sync [--name <workspace>] [--prune] [--take-host] [--new-identity] [--drop-host <host>] [--yes]` | a sync in its own process, with output | none |
 
 The hook starts the child as it starts the snapshot child today (`start_snapshot_child`, `crates/zygo-hooks/src/workspace.rs:484-513`): stdin, stdout and stderr to the null device, cwd `/`, a new session (`setsid`), no wait. A child that does not start gives one `errors.log` line. The hook prints nothing more and changes no decision (S-C1).
@@ -285,7 +285,7 @@ Reasons **(author)**:
 
 ### 8.4 Rate limit
 
-**(author)** A hook starts the sync child only when `now - last_start` is `[mail] sync_gap` (default `60s`) or more, or when `last_start` is later than `now` (a clock set back, or a corrupt file). `last_start` is the Unix time in its own file, `mail/sync/last_start`; the hook reads it and writes the new value (atomic) before the spawn. A separate file keeps the hook and the sync from writing one file. Two hooks that read at the same time can both start a child; the lock and mark of S§8.3 make the second one a mark or a second pass. The clock is a parameter (S-C9).
+**(author)** A hook or a `zygo mail watch` starts the sync child only when `now - last_start` is `[mail] sync_gap` (default `60s`) or more, or when `last_start` is later than `now` (a clock set back, or a corrupt file). `last_start` is the Unix time in its own file, `mail/sync/last_start`; the starter (the hook or the watch) reads it and writes the new value (atomic) before the spawn. A separate file keeps the hook and the sync from writing one file. Two starters (hooks or watches) that read at the same time can both start a child; the lock and mark of S§8.3 make the second one a mark or a second pass. The clock is a parameter (S-C9).
 
 ### 8.5 Import (P3-4 receive side)
 
@@ -374,7 +374,7 @@ A fetch on machine B runs only in a sync on B (S§8.1). Thus remote mail reaches
 
 **(author)** When every member on B is idle, no watcher runs on B, and no person types on B, nothing on B fetches. Mail for B waits on the remote, with no upper bound, until one of the four events happens on B. It is kept: a prune does not remove mail that B has not acknowledged (S§9). zygo adds no daemon, timer, `cron` entry or tmux status command to close this gap (W-G6, S§12). A team that needs B to answer while it is idle keeps a `zygo mail watch` running on B (for example a lead under a bounded Monitor tool, M§8), or sends a person to B.
 
-A host that is idle for months keeps its mail on the branch, and the branch grows by that mail (S§13 limit 2). `zygo mail ls` shows `last sync <time>` for this machine. The operator removes a host that will not return with `--drop-host` (S§7.6).
+A host that is idle for months keeps its mail on the branch, and the branch grows by that mail (S§13 limit 2). `zygo mail ls` with no name (and `/zygo:mail`) ends with one sync line for this workspace. With sync on: `mail sync: last sync <time>, <n> in the outbox, <m> refused`, then `, last error <check>` while `state.json` holds one; `<time>` is `last_ok` in RFC 3339 UTC, `never` when there is none; a value that cannot be read is `-`. With `sync` set and no host: the S§7.1 line. With another S§11 form error: the off line that `zygo mail sync` prints for it. With no `sync` key for the workspace, or a config that does not load: no line. The operator removes a host that will not return with `--drop-host` (S§7.6).
 
 ### 10.4 Agent text
 
@@ -382,7 +382,7 @@ M§8a item 8 gains one clause when sync is on for the workspace and the member c
 
 ### 10.5 Output of remote values
 
-A remote `from` or `subject` reaches a terminal in `zygo mail watch` and `zygo mail ls <name>`. Both print each such value through `zygo_core::esc` (C0, C1 and bidi controls escaped). Reason: remote text is untrusted (S-C5); a raw escape sequence could change the terminal.
+A remote `from` or `subject` reaches a terminal in `zygo mail watch`, `zygo mail ls <name>` and `zygo mail read`, which also prints the body. Each prints each such value, and each body line, through `zygo_core::esc` (C0, C1 and bidi controls escaped). Reason: remote text is untrusted (S-C5); a raw escape sequence could change the terminal.
 
 ## 11. Configuration
 
@@ -491,7 +491,7 @@ Each row is one case, walked end to end.
 - **M§6** Gains the address grammar (S§7.2) and the reserved name `zygo`.
 - **M-C4** Holds for `mail/`. Synced mail also exists in the repository's object store and on the remote (S§13 limit 3, S-C7).
 - **M-C6** Holds: a cloned repository cannot send mail. Member names come from user config or from approved repository files (workspace definition design R§7). The side branch delivers mail only after the user-config opt-in (S-G6).
-- **M§8, M§8a** `mail_send` takes addresses; `mail_list` returns remote addresses; item 8 gains one clause (S§10.4). `zygo mail sync` is a new verb; `zygo mail ls` shows a sync line and the outbox and refused counts; `zygo mail watch` syncs (S§8.1).
+- **M§8, M§8a** `mail_send` takes addresses; `mail_list` returns remote addresses; item 8 gains one clause (S§10.4). `zygo mail sync` is a new verb; `zygo mail ls` shows a sync line and the outbox and refused counts; `zygo mail watch` starts the sync child (S§8.1).
 - **M§11** Gains `host`, `sync_gap` and `[mail.workspace.<name>]` (S§11).
 - **W§7.1** Gains the cache path `$HOME/.cache/zygo/workspaces/<id>/mail-sync/` and the state paths `mail/outbox/` and `mail/sync/`.
 - **W§12** `zygo ws forget` asks when the outbox or its refused folder is not empty and removes the sync worktree (S§7.6, S§14).
@@ -509,7 +509,7 @@ P3-1 is not built. "The mail module" is the place where the P3-1 build puts the 
 | `crates/zygo-hooks/src/workspace.rs` | The rate-limited spawn of the sync child on `session`, `prompt`, `stop` and `tool-end` (S§8.1, S§8.4), on the pattern of `start_snapshot_child` (`:484-513`). |
 | `crates/zygo-hooks/src/mail.rs` | The item 8 clause (S§10.4). |
 | `crates/zygo-mcp/src/tools/` (mail tools of P3-1) | Addresses, the send-time pass, remote addresses in `mail_list`, the description sentence. |
-| `crates/zygo/src/cmd/` (mail command of P3-1) | `zygo mail sync` and its options, the hidden `--ws-id <id> --background` form (AU44), the sync in `watch`, the sync line in `ls`, `esc` for remote values. |
+| `crates/zygo/src/cmd/` (mail command of P3-1) | `zygo mail sync` and its options, the hidden `--ws-id <id> --background` form (AU44), the start of the sync child in `watch`, the sync line in `ls`, `esc` for remote values. |
 | `crates/zygo/src/cmd/mod.rs` | The results sweep is skipped for `mail sync --background`, as for `ws` (AU71): it runs on hook events. |
 | `crates/zygo/src/cmd/doctor.rs` | The twin line (S§7.5). |
 | `crates/zygo-workspace/src/admin.rs` | `ws forget`: the question, the worktree removal (S§7.6, S§14). |
@@ -585,6 +585,14 @@ Each check is a test or a command. A "machine" in a test is one `HOME` with its 
 - 2026-11-26 · S§6.6 · author's call (lead) · MS-17 review round 2: note paragraph states each multi-pass case as built; the lock-error case keeps the note recorded (R1-A recorded).
 - 2026-11-26 · S§7.2 · author's call (lead) · MS-19 plan: a send runs no git (S§7.3) and an older own host is known only at the tip, so at send the local host is the host in force and `<name>@<older host>` meets the member cache rule; the two refusal lines of a `to` with `@` that is not an address are fixed, so the tool and the CLI print the same text.
 - 2026-11-26 · S§10.4 · author's call (lead) · MS-19 plan: the `mail_list` sentence named no key and no sync-off case; `mail_list` returns `remote`, each address once, empty with sync off or a config that does not load, as the item 8 clause.
+- 2026-11-26 · S§7.2 · author's call (lead) · MS-18 plan: the read, ls and watch refusal of a value with `@` had no line and no rule for sync off; one fixed line now covers every value with `@` that is not a local address, and the CLI sender rule (`ZYGO_PANE`, else `cli`) is stated here, as S§7.2 refusal 1 uses it.
+- 2026-11-26 · S§8.1 · author's call (lead) · MS-18 plan: the stdout of `zygo mail watch` carries message lines for a bounded tool; a `Mode::Cli` sync would print its lines and the once-only S§6.6 note there (MS-17 interface note) and wait 30 s for the lock; the watch sync runs as the child does, before a look, start to start.
+- 2026-11-26 · S§7.5 · author's call (lead) · MS-18 plan: `zygo doctor` runs no fetch, so "while the condition holds" had no test; the condition is now the recorded result of the last pass (`last_error` `twin`, cleared by a pass that ends without a stop, `sync.rs`) for the workspace of the session or folder.
+- 2026-11-26 · S§10.3 · author's call (lead) · MS-18 plan: the `zygo mail ls` sync line had no fixed form and no off cases; the line, its values and each off case are fixed (S§7.1 line with no host; no line with sync not set, so a workspace without sync lists as before).
+- 2026-11-26 · S§10.5 · author's call (lead) · MS-18 plan: `zygo mail read` also prints a remote `from` and `subject`, and the body; it escapes each (ML-12, `read_text`), so the section names it.
+- 2026-11-26 · S§8.1 · author's call (lead) · MS-18 review F1/F3: the watch ran the sync in its own process between looks, so a hanging fetch held the look loop up to the pass deadline (120 s) per pass, against M§13 #7 and `--timeout`, and a panic printed its text and exited 101; the watch now starts the sync child at its start and each `sync_gap`, does not wait for it, and imported mail shows at the next look.
+- 2026-11-26 · S§8.1 · author's call (lead) · MS-18 review round 2 F1: per-workspace rate limit. The watch kept its own last start, so watches started again or in several panes started children far more often than the S§8.4 rate limit intends; the watch now asks for the child under the S§8.4 rule (`last_start`, `sync_gap`), shared with the hooks, at its start and before each look.
+- 2026-11-26 · S§8.4 · author's call (lead) · names the watch as a rate-limited starter: S§8.1 row 3 asks for the child under this rule, so the rule, the `last_start` read and write, and the two-reader case each name a hook or a watch.
 - 2026-11-26 · S§6.3 · author's call (lead) · MS-21 plan: the forget's cache removal deletes the worktree folder, so the removal must come first, and it must not need git when there is nothing to remove; Remove now names its conditions (worktree folder exists, main worktree is a folder), its deadline and its failure, and why a stale `prunable` entry is harmless (`worktree add --force` at the same path; git 2.56.1).
 - 2026-11-26 · S§7.6 · author's call (lead) · MS-21 plan: the forget bullet named only the question; it now gives the step order after the W§12 checks, the sync lock, `--yes`, the "no" answer (exit 0, nothing deleted), the unreadable-outbox and removal refusals, and the state that cannot be read.
 - 2026-11-26 · S§14 · author's call (lead) · MS-21 plan: the row put the question before the W§12 checks; the checks come first (no question for a workspace that runs), and the worktree goes before the cache.

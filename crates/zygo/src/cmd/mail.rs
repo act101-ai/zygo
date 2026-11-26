@@ -9,19 +9,21 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, bail};
 use clap::{Args, Subcommand};
-use zygo_config::SyncOff;
+use zygo_config::{sync_for, Config, SyncOff};
 use zygo_core::esc;
 use zygo_core::verbs::MAIL_SLASH_ARGS;
 use zygo_core::paths::Paths;
+use zygo_mail_sync::address::{resolve_to, To};
 use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
 use zygo_mail_sync::ops;
+use zygo_mail_sync::outbox::{count, refused_count, send_remote_with};
 use zygo_mail_sync::public::LsRemote;
-use zygo_mail_sync::spawn::ChildSpawner;
-use zygo_mail_sync::state::SyncPaths;
+use zygo_mail_sync::spawn::{trigger, ChildSpawner};
+use zygo_mail_sync::state::{load as load_sync_state, SyncPaths};
 use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::identity::{valid_ws_id, workspace_id};
-use zygo_workspace::mail::{self, mail_dir, names, store, wake, MailError, BODY_MAX};
+use zygo_workspace::mail::{self, mail_dir, names, store, MailError, BODY_MAX};
 use zygo_workspace::state::{list_all, Store, Workspace};
 use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
@@ -41,6 +43,10 @@ const SLASH_GIT_BOUND: Duration = Duration::from_secs(2);
 /// The poll of `zygo mail watch` (A6): a send is seen within 1 s (M§13 #7).
 const WATCH_POLL: Duration = Duration::from_millis(500);
 
+/// S§7.1: the `zygo mail ls` line when sync is set for the workspace and `[mail] host` is not (the config check holds
+/// the same text without `zygo: `, `crates/zygo-config/src/check.rs:15`).
+const NO_HOST_LINE: &str = "zygo: set [mail] host to turn on mail sync; zygo does not publish the system host name";
+
 /// S§8.3 step 3, D4: the CLI line when another sync of the workspace still holds the lock after `LOCK_WAIT`.
 const BUSY_LINE: &str = "zygo: another mail sync of this workspace holds the lock; try again";
 
@@ -55,7 +61,7 @@ pub struct MailArgs {
 
 #[derive(Subcommand)]
 pub enum MailCmd {
-    /// Send a message to a member name, a pane key or all
+    /// Send a message to a member name, a pane key, all, or <name>@<host>
     Send {
         to: String,
         #[arg(long)]
@@ -139,9 +145,9 @@ pub fn run(a: MailArgs) -> i32 {
         Some(MailCmd::Ls { name }) => finish(ls_text(&paths, &ws, name.as_deref())),
         Some(MailCmd::Read { name, max }) => {
             let keys = match (name, pane) {
-                (Some(n), _) => match names::resolve(&ws, &n, None) {
+                (Some(n), _) => match member_arg(&paths, &ws, &n).and_then(|m| names::resolve(&ws, &m, None).map_err(Into::into)) {
                     Ok(t) => t.into_iter().map(|t| t.key).collect(),
-                    Err(e) => return finish(Err(e.into())),
+                    Err(e) => return finish(Err(e)),
                 },
                 (None, Some(k)) => vec![k],
                 (None, None) => {
@@ -166,17 +172,21 @@ pub fn run(a: MailArgs) -> i32 {
                 return 2;
             };
             let key = match (name, pane) {
-                (Some(n), _) => match names::resolve(&ws, &n, None) {
+                (Some(n), _) => match member_arg(&paths, &ws, &n).and_then(|m| names::resolve(&ws, &m, None).map_err(Into::into)) {
                     Ok(mut t) if t.len() == 1 => t.remove(0).key,
                     Ok(_) => return finish(Err(UsageError(format!("zygo mail watch: {n} is not one member")).into())),
-                    Err(e) => return finish(Err(e.into())),
+                    Err(e) => return finish(Err(e)),
                 },
                 (None, Some(k)) => k,
                 (None, None) => {
                     return finish(Err(UsageError("zygo mail watch: no member for this pane; pass a name".into()).into()))
                 }
             };
-            watch(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock())
+            // S§8.1 row 3, S§8.4 (review F1/F3, round 2 F1): the sync child of this binary under the `last_start` rate
+            // limit, before each look; no wait.
+            let env = sync_env(paths.clone());
+            let mut step = watch_sync_step(&env, &ws);
+            watch_with(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock(), &mut step)
         }
         Some(MailCmd::Sync(_)) => unreachable!("taken above"),
         Some(MailCmd::Send { to, subject, file, stdin }) => {
@@ -191,30 +201,104 @@ pub fn run(a: MailArgs) -> i32 {
                     return 1;
                 }
             };
+            let (mut o, mut e) = (Vec::new(), Vec::new());
             let subject = subject.unwrap_or_default();
-            let r = match mail::send(&paths, &ws, pane.as_deref(), &to, &subject, &body, &cfg.mail, SystemTime::now()) {
-                Ok(r) => r,
-                Err(e) => {
-                    print_err(&format!("{e}\n"));
-                    return 1;
-                }
-            };
-            let mut text = String::new();
-            for s in &r.sent {
-                let label = ws.members.get(&s.key).and_then(|m| m.valid_name()).unwrap_or(&s.key);
-                text.push_str(&format!("sent {} to {}\n", esc(&s.id), esc(label)));
+            let code = send_cli(&sync_env(paths.clone()), &ws, pane.as_deref(), &to, &subject, &body, &cfg, &mut o, &mut e);
+            if !o.is_empty() {
+                print_out(&String::from_utf8_lossy(&o));
             }
-            if !text.is_empty() {
-                print_out(&text);
+            if !e.is_empty() {
+                print_err(&String::from_utf8_lossy(&e));
             }
-            let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
-            wake::after_send(&paths, &ws, &tmux_program(), &keys, &cfg.mail);
-            for x in &r.refused {
-                print_err(&format!("{}; to {}\n", x.error, member(&ws, &x.key)));
-            }
-            if r.refused.is_empty() { 0 } else { 1 }
+            code
         }
     }
+}
+
+/// `zygo mail send` after the body is read (M§8; mail sync design S§7.2, S§8.1 row 1, S§8.6 "At send"). A `to` with
+/// `@` is resolved against the host in force (none with sync off): a refused form is its line; `<name>@<own host>`
+/// is the local send of `<name>`; a remote address goes through the S§7.2 rules and the send-time secret pass into
+/// the outbox, then one sync child starts with no gap. A `to` with no `@` is the local send (ML-4), and its wake goes
+/// through `env.wake`. The lines go to `out` and `err`; the result is the exit code.
+#[allow(clippy::too_many_arguments)]
+pub fn send_cli(
+    env: &Env,
+    ws: &Workspace,
+    pane: Option<&str>,
+    to: &str,
+    subject: &str,
+    body: &str,
+    cfg: &Config,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let now = env.clock.now();
+    let mut to = to.to_string();
+    if to.contains('@') {
+        let settings = sync_for(cfg, &ws.name);
+        let own: Vec<String> = settings.iter().map(|s| s.host.clone()).collect();
+        match resolve_to(&to, &own) {
+            Err(e) => {
+                let _ = writeln!(err, "{}", e.line());
+                return 1;
+            }
+            Ok(To::Local(n)) => to = n,
+            Ok(To::All) => to = "all".into(),
+            Ok(To::Remote(a)) => {
+                let sp = match SyncPaths::new(&env.paths, &ws.id) {
+                    Ok(sp) => sp,
+                    Err(e) => {
+                        let _ = writeln!(err, "{}", MailError::Io(e));
+                        return 1;
+                    }
+                };
+                let from = pane.and_then(|k| ws.members.get(k)).and_then(|m| m.valid_name());
+                let sent = send_remote_with(
+                    &sp,
+                    settings.as_ref(),
+                    from,
+                    &a,
+                    subject,
+                    body,
+                    &cfg.redaction,
+                    &ws.main_root,
+                    now,
+                    &env.secret_policy,
+                );
+                return match sent {
+                    Err(e) => {
+                        let _ = writeln!(err, "{}", e.line());
+                        1
+                    }
+                    Ok(id) => {
+                        let _ = writeln!(out, "sent {id} to {}@{}", esc(&a.name), esc(&a.host));
+                        let store = Store::open(&env.paths, &ws.id);
+                        trigger(env, &ws.id, None, &|t| store.log_error(&format!("mail send: {t}")));
+                        0
+                    }
+                };
+            }
+        }
+    }
+    let r = match mail::send(&env.paths, ws, pane, &to, subject, body, &cfg.mail, now) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = writeln!(err, "{e}");
+            return 1;
+        }
+    };
+    for s in &r.sent {
+        let label = ws.members.get(&s.key).and_then(|m| m.valid_name()).unwrap_or(&s.key);
+        let _ = writeln!(out, "sent {} to {}", esc(&s.id), esc(label));
+    }
+    let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
+    if !keys.is_empty() {
+        env.wake.wake(&env.paths, ws, &keys, &cfg.mail, now);
+    }
+    for x in &r.refused {
+        let _ = writeln!(err, "{}; to {}", x.error, member(ws, &x.key));
+    }
+    if r.refused.is_empty() { 0 } else { 1 }
 }
 
 /// `zygo mail watch` (M-G5, M§8): each `poll`, the count of files in `new/` of `key` under `dir`; when a file has
@@ -223,8 +307,23 @@ pub fn run(a: MailArgs) -> i32 {
 /// (its text on stderr), or when the write to `out` fails (A7). The count comes before the clock, so mail already in
 /// `new/` returns 0 even with a zero timeout (A4).
 pub fn watch(dir: &Path, key: &str, timeout: Duration, poll: Duration, now: &dyn Fn() -> Instant, out: &mut dyn Write) -> i32 {
+    watch_with(dir, key, timeout, poll, now, out, &mut || {})
+}
+
+/// [`watch`] with `sync()` before each look at `new/` (mail sync design S§8.1 row 3): in `zygo mail watch` the step
+/// of [`watch_sync_step`], which asks for the sync child under the S§8.4 rate limit when sync is on.
+pub fn watch_with(
+    dir: &Path,
+    key: &str,
+    timeout: Duration,
+    poll: Duration,
+    now: &dyn Fn() -> Instant,
+    out: &mut dyn Write,
+    sync: &mut dyn FnMut(),
+) -> i32 {
     let start = now();
     loop {
+        sync();
         match store::unread(dir, key).and_then(|n| if n > 0 { store::list(dir, key).map(Some) } else { Ok(None) }) {
             Err(e) => {
                 print_err(&format!("{e}\n"));
@@ -245,6 +344,25 @@ pub fn watch(dir: &Path, key: &str, timeout: Duration, poll: Duration, now: &dyn
             return 1;
         }
         std::thread::sleep(poll);
+    }
+}
+
+/// S§8.1 row 3, S§8.4 (MS-18 review F1/F3, round 2 F1): the step of `zygo mail watch` for [`watch_with`]. With sync
+/// on for `ws` in the user config of `env.paths`, it asks for the sync child before each look through
+/// `spawn::trigger` with `sync_gap`: the per-workspace rate limit of `mail/sync/last_start`, shared with the hooks and
+/// with every other watch, so a watch started within `sync_gap` of another start (a hook, another pane, a watch
+/// started again) starts no child. It does not wait for the child (`env.spawner`; in production `ChildSpawner`,
+/// whose `spawn_reaped` returns at once), so a slow or hanging sync never holds a look, and the child's import shows
+/// at a later look. A child that does not start, or a `last_start` that cannot be written, gives one `errors.log`
+/// line, as `trigger` does. A config that does not load, or sync off, makes the step do nothing; the config is read
+/// once, when the step is made.
+pub fn watch_sync_step<'a>(env: &'a Env, ws: &'a Workspace) -> impl FnMut() + 'a {
+    let gap = user_config(&env.paths).ok().and_then(|c| sync_for(&c, &ws.name).ok()).map(|s| s.sync_gap);
+    let store = Store::open(&env.paths, &ws.id);
+    move || {
+        if let Some(gap) = gap {
+            trigger(env, &ws.id, Some(gap), &|t| store.log_error(&format!("mail watch: {t}")));
+        }
     }
 }
 
@@ -295,12 +413,16 @@ pub fn sync_env(paths: Paths) -> Env {
         clock: Box::new(SystemClock),
         probe: Box::new(LsRemote),
         seam: Box::new(NoSeam),
-        spawner: Box::new(ChildSpawner {
-            zygo: super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize)),
-        }),
+        spawner: Box::new(production_spawner()),
         wake: Box::new(TmuxWake { tmux: tmux_program() }),
         secret_policy: DeadlinePolicy::default(),
     }
+}
+
+/// The spawner of [`sync_env`] (S§8.1; MS-18 review round 2 F2): `<zygo> mail sync --ws-id <id> --background`, where
+/// `<zygo>` is this binary by the binary rule of `ws run`.
+fn production_spawner() -> ChildSpawner {
+    ChildSpawner { zygo: super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize)) }
 }
 
 /// S§8.3 step 1 (D3): the CLI line of sync off for workspace `ws_name`.
@@ -465,7 +587,12 @@ fn print_error(e: &SyncError, ws_name: &str, err: &mut dyn Write) {
 
 /// The workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`, with the error texts of `zygo workspace`
 /// (`admin::status`). A state folder that is a link reads as none.
-fn workspace_of(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>, git_bound: Duration) -> anyhow::Result<Workspace> {
+pub(crate) fn workspace_of(
+    paths: &Paths,
+    cwd: &Path,
+    zygo_workspace: Option<&OsStr>,
+    git_bound: Duration,
+) -> anyhow::Result<Workspace> {
     let (id, by_env) = match zygo_workspace {
         Some(v) => {
             let id = v
@@ -500,11 +627,12 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
                 lines.push(format!("{} {} {unread}", esc(&t.key), t.name.as_deref().map_or_else(|| "-".to_string(), esc)));
             }
             if lines.is_empty() {
-                return Ok("no members".into());
+                lines.push("no members".into());
             }
+            lines.extend(sync_line(paths, ws));
         }
         Some(n) => {
-            for t in names::resolve(ws, n, None)? {
+            for t in names::resolve(ws, &member_arg(paths, ws, n)?, None)? {
                 for s in store::list(&dir, &t.key)? {
                     lines.push(format!("{} {} {}", esc(&s.id), esc(&s.from), esc(&s.subject)));
                 }
@@ -515,6 +643,62 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
         }
     }
     Ok(lines.join("\n"))
+}
+
+/// `secs` since the Unix epoch as RFC 3339 UTC (the `sent_at` form of M§5); `None` out of range.
+fn rfc3339(secs: u64) -> Option<String> {
+    time::OffsetDateTime::from_unix_timestamp(i64::try_from(secs).ok()?)
+        .ok()?
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
+}
+
+/// S§10.3, S§7.1 (P3): the last line of `zygo mail ls`. Sync set: `mail sync: last sync <time>, <n> in the outbox,
+/// <m> refused[, last error <check>]`, with `<time>` RFC 3339 UTC or `never`, and `-` for a value that cannot be
+/// read. No host: the S§7.1 line; another form error: its `off_line`. Sync not set, or a config that does not load:
+/// no line. Reads config and files only (no git).
+fn sync_line(paths: &Paths, ws: &Workspace) -> Option<String> {
+    let cfg = user_config(paths).ok()?;
+    match sync_for(&cfg, &ws.name) {
+        Err(SyncOff::NotOn) => None,
+        Err(SyncOff::NoHost) => Some(NO_HOST_LINE.into()),
+        Err(o) => Some(off_line(o, &ws.name)),
+        Ok(_) => {
+            let sp = SyncPaths::new(paths, &ws.id).ok()?;
+            let st = load_sync_state(&sp);
+            let last = match &st {
+                Ok(s) => match s.last_ok {
+                    None => "never".to_string(),
+                    Some(t) => rfc3339(t).unwrap_or_else(|| "-".into()),
+                },
+                Err(_) => "-".into(),
+            };
+            let n = count(&sp).map_or_else(|_| "-".to_string(), |n| n.to_string());
+            let m = refused_count(&sp).map_or_else(|_| "-".to_string(), |n| n.to_string());
+            let mut line = format!("mail sync: last sync {last}, {n} in the outbox, {m} refused");
+            if let Ok(s) = &st
+                && let Some(c) = &s.last_error
+            {
+                line.push_str(&format!(", last error {}", esc(c)));
+            }
+            Some(line)
+        }
+    }
+}
+
+/// S§7.2 (P1, D4): the member value of `read`, `ls` and `watch`. A value with no `@` is kept as it is; a value with
+/// `@` is resolved against the host in force (none with sync off or a config that does not load), and only
+/// `<name>@<own host>` is taken, as `<name>`; any other value with `@` is the not-local error. Only a value with `@`
+/// loads the config, so a local listing never fails on config.
+fn member_arg(paths: &Paths, ws: &Workspace, n: &str) -> anyhow::Result<String> {
+    if !n.contains('@') {
+        return Ok(n.to_string());
+    }
+    let own = user_config(paths).ok().and_then(|c| sync_for(&c, &ws.name).ok()).map(|s| vec![s.host]).unwrap_or_default();
+    match resolve_to(n, &own) {
+        Ok(To::Local(name)) => Ok(name),
+        _ => Err(anyhow!("zygo: {n} is not a local address; zygo mail read, ls and watch take a member of this machine")),
+    }
 }
 
 /// `<key> (<name>)`, or `<key>` for a member with no valid name.
@@ -615,6 +799,19 @@ mod tests {
         let e = super::sync_env(p.clone());
         assert_eq!(e.paths, p);
         assert_eq!(e.secret_policy, zygo_redact::secret::DeadlinePolicy::default());
+    }
+
+    /// MS-18 review round 2 F2: the spawner of `sync_env`, which `zygo mail watch` (and send and sync) use, is the
+    /// child `<zygo> mail sync --ws-id <id> --background` of this binary, by the binary rule of `ws run`.
+    #[test]
+    fn production_spawner_starts_mail_sync_of_the_workspace() {
+        let sp = super::production_spawner();
+        let zygo = super::super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize));
+        assert_eq!(sp.zygo, zygo);
+        let cmd = sp.command("ws-1");
+        assert_eq!(cmd.get_program(), zygo.as_os_str());
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(args, ["mail", "sync", "--ws-id", "ws-1", "--background"]);
     }
 
     /// D2, D4 (review round 1, T1): a CLI sync that finds the lock held after the wait prints `BUSY_LINE` and exits 1.
