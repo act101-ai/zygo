@@ -48,11 +48,11 @@ fn unix_secs(now: SystemTime) -> u64 {
     now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// S§8.4: `true` when no `last_start` is read, or when `now - last_start >= gap`. A `last_start` later than `now`
-/// is not due.
+/// S§8.4: `true` when no `last_start` is read, when `now - last_start >= gap`, or when `last_start` is later than
+/// `now` (a clock set back, or a corrupt file).
 pub fn due(sp: &SyncPaths, now: SystemTime, gap: Duration) -> bool {
     let Some(last) = read_last_start(sp) else { return true };
-    unix_secs(now).checked_sub(last).is_some_and(|d| d >= gap.as_secs())
+    unix_secs(now).checked_sub(last).is_none_or(|d| d >= gap.as_secs())
 }
 
 /// S§8.1, S§8.4: starts the sync child of `ws_id`. With `Some(gap)` (the hook path) it starts one only when [`due`],

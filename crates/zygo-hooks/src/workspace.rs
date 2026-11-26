@@ -704,10 +704,21 @@ fn bind_note(c: &Ctx, id: &str) {
 /// `new/` holds mail (M§7.2); empty parts are left out. Claude Code: the whole hook
 /// output is written to `out` and flushed first (a write error returns `Err` with nothing written to any file), then
 /// the member record is written (D8, D9), then the note inputs are removed from the view when it held them; the result
-/// is `None`. OpenCode adds the session text to every model request, so the result is `Some(output)` and nothing is
-/// written: the plugin's `session` call owns the record and the note rule (D10).
+/// is `None`; for the main loop the mail sync child then starts by the gap, and a child that does not start changes no
+/// output (S§8.1 row 2, S§8.4, S-C1). OpenCode adds the session text to every model request, so the result is
+/// `Some(output)` and nothing is written: the plugin's `session` call owns the record, the note rule (D10) and the
+/// sync start.
 pub fn session_start(
     payload: &Value, dir: &SessionDir, view: &SessionView, paths: &Paths, zygo: &Path, out: &mut dyn Write, text: &str,
+) -> anyhow::Result<Option<String>> {
+    session_start_with_sync(payload, dir, view, paths, zygo, out, text, &sync_env(paths, zygo))
+}
+
+/// `session_start` with the mail sync seams `sync` (S-C9): the clock and the spawn of the sync child.
+#[allow(clippy::too_many_arguments)]
+pub fn session_start_with_sync(
+    payload: &Value, dir: &SessionDir, view: &SessionView, paths: &Paths, zygo: &Path, out: &mut dyn Write, text: &str,
+    sync: &Env,
 ) -> anyhow::Result<Option<String>> {
     // The OpenCode call runs per model request: a marker that fails its check writes no line there (D6).
     let log = matches!(view.agent, Agent::ClaudeCode);
@@ -738,6 +749,11 @@ pub fn session_start(
             record_session(&c, payload_id(payload, "session_id"), zygo);
             if inputs.is_some() {
                 clear_note(&c);
+            }
+            // S§8.1 row 2, S§10.2 item 2: this is the member `session` event of Claude Code (W§9.1); the main loop
+            // starts the sync child by the gap, after the output is written (S-C1).
+            if main_loop(payload) {
+                start_sync(&c, sync);
             }
             Ok(None)
         }

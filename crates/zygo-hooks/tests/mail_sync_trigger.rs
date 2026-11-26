@@ -18,7 +18,7 @@ use tempfile::TempDir;
 use zygo_core::hook::{guarded, HookOutput};
 use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
-use zygo_core::session_view::{Member, SessionView, ViewWorkspace};
+use zygo_core::session_view::{Member, ResumeNote, SessionView, ViewWorkspace};
 use zygo_core::Agent;
 use zygo_hooks::workspace;
 use zygo_mail_sync::env::{Clock, Env, NoSeam, Probe, Spawner, Verdict};
@@ -211,6 +211,30 @@ fn sub_session() -> Value {
     json!({"agent_id": "a1"})
 }
 
+/// The Claude Code member part of `SessionStart` (`session-start --event member`, W§9.1) with the session text
+/// `TEXT`: the result and the bytes written to stdout.
+fn session_start(f: &Fx, payload: &Value, sync: &Env) -> (Option<String>, Vec<u8>) {
+    let v = SessionView::load(&f.dir).unwrap();
+    let mut out = Vec::new();
+    let r = workspace::session_start_with_sync(payload, &f.dir, &v, &f.paths, &f.zygo, &mut out, "TEXT", sync).unwrap();
+    (r, out)
+}
+
+/// Puts resume note inputs into the view of `f` (W§9.4).
+fn note_on(f: &Fx) {
+    let mut v = SessionView::load(&f.dir).unwrap();
+    v.workspace.as_mut().unwrap().resume_note =
+        Some(ResumeNote { clean_stop: true, closed_units: vec!["u1".into()], ..Default::default() });
+    v.save(&f.dir).unwrap();
+}
+
+/// Makes `mail/sync` a regular file, so the write of `mail/sync/last_start` fails.
+fn block_last_start(f: &Fx) {
+    let mail = mail_dir(&f.paths, ID);
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(&mail).unwrap();
+    fs::write(mail.join("sync"), "").unwrap();
+}
+
 // ---- Rate limit (S§19 #22, S§8.4) ----
 
 #[test] // S§19 #22, S§8.1 the `tool-end` reason
@@ -254,6 +278,52 @@ fn session_outside_the_main_loop_starts_no_child() {
     hook(&f, "session", &sub_session(), &env_at(&f, T, &s)).unwrap();
     assert_eq!(s.count(), 0);
     assert!(!sp(&f).last_start.exists());
+}
+
+#[test] // S§8.1 row 2, S§10.2 item 2, W§9.1: Claude Code `SessionStart` is the member `session` event (review F1)
+fn claude_code_session_start_starts_a_child_by_the_gap() {
+    let f = fx(Agent::ClaudeCode, ON);
+    let s = spawns(&f, false);
+    let (r, out) = session_start(&f, &session(), &env_at(&f, T, &s));
+    assert_eq!(r, None);
+    assert!(!out.is_empty());
+    assert_eq!(s.count(), 1);
+    assert_eq!(read_last_start(&sp(&f)), Some(T));
+    session_start(&f, &session(), &env_at(&f, T + 59, &s));
+    assert_eq!(s.count(), 1);
+    session_start(&f, &session(), &env_at(&f, T + 60, &s));
+    assert_eq!(s.count(), 2);
+    assert!(errors(&f).is_empty());
+}
+
+#[test] // S§8.1 row 1: `session` (main loop) (review F1)
+fn a_subagent_session_start_starts_no_child() {
+    let f = fx(Agent::ClaudeCode, ON);
+    let s = spawns(&f, false);
+    session_start(&f, &sub_session(), &env_at(&f, T, &s));
+    assert_eq!(s.count(), 0);
+    assert!(!sp(&f).last_start.exists());
+}
+
+#[test] // S§8.1, lead decision 5: only `session` is limited to the main loop (review F8)
+fn a_subagent_tool_end_starts_a_child_by_the_gap() {
+    let f = fx(Agent::ClaudeCode, ON);
+    let s = spawns(&f, false);
+    let sub = json!({"agent_id": "a1"});
+    for (secs, n) in [(T, 1), (T + 59, 1), (T + 60, 2)] {
+        assert!(hook(&f, "tool-end", &sub, &env_at(&f, secs, &s)).unwrap().is_none());
+        assert_eq!(s.count(), n, "at T + {}", secs - T);
+    }
+}
+
+#[test] // S§8.4: a `last_start` later than now (a clock set back, or a corrupt file) does not stop hook starts (review F2)
+fn a_last_start_later_than_now_does_not_stop_the_start() {
+    let f = fx(Agent::ClaudeCode, ON);
+    write_last_start(&sp(&f), 99_999_999_999).unwrap();
+    let s = spawns(&f, false);
+    hook(&f, "tool-end", &tool_end(), &env_at(&f, T, &s)).unwrap();
+    assert_eq!(s.count(), 1);
+    assert_eq!(read_last_start(&sp(&f)), Some(T));
 }
 
 #[test] // S§8.4, S§11 `sync_gap`
@@ -364,9 +434,63 @@ fn an_unwritable_last_start_gives_one_line_and_no_child() {
     assert!(e[0].starts_with("workspace hook tool-end: cannot write mail/sync/last_start: "), "{e:?}");
 }
 
+#[test] // S-C1: a failed `last_start` write under the ML-10 `stop_block` and the prompt delivery line (review F8)
+fn a_failed_last_start_write_changes_no_mail_output() {
+    for (event, payload) in [("prompt", prompt()), ("stop", stop())] {
+        let a = fx(Agent::ClaudeCode, OFF);
+        let b = fx(Agent::ClaudeCode, ON);
+        block_last_start(&b);
+        for f in [&a, &b] {
+            mail_on(f);
+            put_new(f, 2);
+        }
+        let sa = spawns(&a, false);
+        let sb = spawns(&b, false);
+        let off = guarded_hook(&a, event, &payload, &env_at(&a, T, &sa));
+        let on = guarded_hook(&b, event, &payload, &env_at(&b, T, &sb));
+        assert_eq!(off, on, "{event}");
+        assert_eq!(on.1, 0, "{event}");
+        match event {
+            "prompt" => assert!(on.0.contains(L2), "{event}: {}", on.0),
+            _ => assert_eq!(serde_json::from_str::<Value>(&on.0).unwrap(), json!({"decision": "block", "reason": L2})),
+        }
+        assert_eq!(sb.count(), 0, "{event}");
+        assert!(errors(&a).is_empty(), "{event}");
+        let e = errors(&b);
+        assert_eq!(e.len(), 1, "{event}: {e:?}");
+        assert!(e[0].starts_with(&format!("workspace hook {event}: cannot write mail/sync/last_start: ")), "{e:?}");
+    }
+}
+
+#[test] // S-C1 for the Claude Code session start: stdout, result and the resume note do not change (review F1)
+fn a_failed_spawn_at_session_start_changes_nothing_but_one_error_line() {
+    let a = fx(Agent::ClaudeCode, OFF);
+    let b = fx(Agent::ClaudeCode, ON);
+    for f in [&a, &b] {
+        note_on(f);
+        mail_on(f);
+        put_new(f, 2);
+    }
+    let sa = spawns(&a, false);
+    let sb = spawns(&b, true);
+    let off = session_start(&a, &session(), &env_at(&a, T, &sa));
+    let on = session_start(&b, &session(), &env_at(&b, T, &sb));
+    assert_eq!(off, on);
+    let text = String::from_utf8(on.1).unwrap();
+    assert!(text.contains(L2), "{text}");
+    assert!(text.contains("u1"), "{text}");
+    let note = |f: &Fx| SessionView::load(&f.dir).unwrap().workspace.unwrap().resume_note;
+    assert_eq!(note(&a), None);
+    assert_eq!(note(&b), None);
+    assert_eq!(sa.count(), 0);
+    assert_eq!(sb.count(), 1);
+    assert!(errors(&a).is_empty());
+    assert_eq!(errors(&b), vec!["workspace hook session-start: cannot start the mail sync child: refused".to_string()]);
+}
+
 // ---- `spawn` ----
 
-#[test] // S§8.4: `now - last_start >= sync_gap`
+#[test] // S§8.4: `now - last_start >= sync_gap`, or `last_start` later than `now`
 fn due_follows_now_minus_last_start() {
     let t = TempDir::new().unwrap();
     let p = paths(t.path());
@@ -376,9 +500,10 @@ fn due_follows_now_minus_last_start() {
     assert!(!due(&sp, at(T + 59), GAP));
     assert!(due(&sp, at(T + 60), GAP));
     assert!(due(&sp, at(T), Duration::ZERO));
+    // Review F2: a `last_start` later than `now` (a clock set back, or a corrupt file) is due.
     write_last_start(&sp, T + 100).unwrap();
-    assert!(!due(&sp, at(T), GAP));
-    assert!(!due(&sp, at(T), Duration::ZERO));
+    assert!(due(&sp, at(T), GAP));
+    assert!(due(&sp, at(T), Duration::ZERO));
     fs::write(&sp.last_start, "x").unwrap();
     assert!(due(&sp, at(T), GAP));
 }
