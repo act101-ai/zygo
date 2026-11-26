@@ -1,0 +1,12 @@
+event: response.created
+data: {"type": "response.created", "response": {"id": "resp_pc3_final", "object": "response", "model": "{{MODEL}}", "status": "in_progress", "output": []}}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "output_index": 0, "item": {"type": "reasoning", "id": "rs_pc3_2", "summary": [{"type": "summary_text", "text": "pc3 reasoning two"}], "encrypted_content": "pc3-opaque-reasoning-2"}}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "output_index": 1, "item": {"type": "message", "id": "msg_pc3_final", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "pc3 done", "annotations": []}]}}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"id": "resp_pc3_final", "object": "response", "model": "{{MODEL}}", "status": "completed", "output": [{"type": "reasoning", "id": "rs_pc3_2", "summary": [{"type": "summary_text", "text": "pc3 reasoning two"}], "encrypted_content": "pc3-opaque-reasoning-2"}, {"type": "message", "id": "msg_pc3_final", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "pc3 done", "annotations": []}]}], "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}}}
+
