@@ -1706,3 +1706,19 @@ fn message_events_large_tool_input_within_hold_max() {
     assert_eq!(items[0]["arguments"], input.to_string());
     assert!(codes.is_empty(), "{codes:?}");
 }
+
+#[test] // RS-13 round 1 review F1, K§6.4.3 stream obligation 8: a body of `"` as close to COPY_MAX as fits still completes
+fn message_events_tool_input_near_copy_max_completes() {
+    let body = |n: usize| msg_body(json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{"a":"\"".repeat(n)}}]));
+    let base = serde_json::to_vec(&body(0)).unwrap().len();
+    let m = body((COPY_MAX - base) / 2);
+    let size = serde_json::to_vec(&m).unwrap().len();
+    assert!(size <= COPY_MAX && size + 2 > COPY_MAX, "{size}");
+    let (want, _) = response(&m, "role-x", &tgt(), &Calls::default());
+    let (out, codes) = encoded(&m);
+    assert_eq!(out.last().unwrap().event, "response.completed", "{:?}", out.last().unwrap().data);
+    let items: Vec<&Value> = out.iter().filter(|e| e.event == "response.output_item.done").map(|e| &e.data["item"]).collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["arguments"], want["output"][0]["arguments"]);
+    assert!(codes.is_empty(), "{codes:?}");
+}

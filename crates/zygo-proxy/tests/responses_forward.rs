@@ -738,6 +738,37 @@ fn streamed_json_answer_keeps_large_tool_input() {
     assert_eq!(got["arguments"], want);
 }
 
+#[test] // RS-13 round 1 review F1, K§6.4.3 stream obligation 8: a JSON 2xx of `"` as close to COPY_MAX as fits reaches a streamed request whole
+fn streamed_json_answer_near_copy_max_keeps_tool_input() {
+    let h = start(A);
+    let body = |n: usize| {
+        let mut m = MSG_JSON(false);
+        m["content"] = json!([{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{"a":"\"".repeat(n)}}]);
+        serde_json::to_vec(&m).unwrap()
+    };
+    let base = body(0).len();
+    let up = body((COPY_MAX - base) / 2);
+    assert!(up.len() <= COPY_MAX && up.len() + 2 > COPY_MAX, "{}", up.len());
+    let req = codex_request("after-custom-tool-call-output");
+
+    h.reply_with(200, JSON, up.clone());
+    let (s, _, b) = h.post(R, &with_stream(req.clone(), false));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b[..b.len().min(512)]));
+    let r: Value = serde_json::from_slice(&b).unwrap();
+    let fc = r["output"].as_array().unwrap().iter().find(|i| i["type"] == "function_call").expect("a function_call item");
+    let want = fc["arguments"].clone();
+
+    h.reply_with(200, JSON, up);
+    let (s, _, b) = h.post(R, &with_stream(req, true));
+    assert_eq!(s, 200);
+    let evs = events(&b);
+    assert_eq!(terminals(&evs).len(), 1, "{:?}", names(&evs));
+    assert_eq!(evs.last().unwrap().0, "response.completed", "{:?}", terminals(&evs));
+    let items = done_items(&evs);
+    let got = items.iter().find(|i| i["type"] == "function_call").expect("a function_call item");
+    assert_eq!(got["arguments"], want);
+}
+
 #[test] // base §7.6: an injected null is removed on the way back to a Responses client
 fn injected_null_removed_for_responses_client() {
     let h = start(C);

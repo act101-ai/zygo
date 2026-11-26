@@ -1160,15 +1160,23 @@ impl Encoder {
     }
 
     /// Whether `extra` more bytes of the partial line, the current event's `data` and the open block can be held
-    /// within `HOLD_MAX` (obligation 9). If not, everything held is freed and `response.failed` names the largest held
-    /// part.
+    /// within `HOLD_MAX` (obligation 9). A tool call's arguments are bounded alone, and the partial line and `data`
+    /// that carry its next delta are bounded alone: neither counts toward the other. If not, everything held is freed
+    /// and `response.failed` names the largest held part.
     fn hold(&mut self, extra: [usize; 3], out: &mut Vec<SseEvent>) -> bool {
         let block = self.open.as_ref();
-        let [line, data, held] = [
+        let [mut line, mut data, mut held] = [
             self.buf.len() + extra[0],
             self.data.as_ref().map_or(0, Vec::len) + extra[1],
             block.map_or(0, Block::held) + extra[2],
         ];
+        if block.is_some_and(|b| matches!(b.kind, Kind::Call { .. })) {
+            if extra[2] > 0 {
+                [line, data] = [0, 0];
+            } else {
+                held = 0;
+            }
+        }
         if line.saturating_add(data).saturating_add(held) <= HOLD_MAX {
             return true;
         }
