@@ -596,6 +596,8 @@ fn own_files(wt: &Path, tip: &str, own: &[String], deadline: Instant)
 /// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host when it
 /// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
 /// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
+/// After a rename (S§7.6 "Rename") it deletes the registry of an old own host and the ack of an old own host with no
+/// file left at the tip.
 fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, BTreeSet<Ulid>>,
     acked: &[Ulid]) -> Vec<Change> {
     let host = c.s.host.as_str();
@@ -613,12 +615,21 @@ fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &
             out.push(Change::Add { path: format!("registry/{host}.json"), bytes });
         }
     }
+    for (h, r) in &meta.registries {
+        if h != host && r.value.as_ref().is_ok_and(|v| v.identity == identity) {
+            out.push(Change::Remove { path: format!("registry/{h}.json") });
+        }
+    }
     let acked: BTreeSet<Ulid> = acked.iter().copied().collect();
     let none = BTreeSet::new();
     for h in own {
         let tip_ack = own_ack(meta, h, identity);
         let old = tip_ack.map(|a| a.imported.clone()).unwrap_or_default();
         let at = files.get(h).unwrap_or(&none);
+        if h != host && at.is_empty() {
+            out.push(Change::Remove { path: format!("ack/{h}.json") });
+            continue;
+        }
         let new: BTreeSet<Ulid> = old.union(&acked).filter(|u| at.contains(u)).copied().collect();
         if new == old && !(h == host && tip_ack.is_none()) {
             continue;
