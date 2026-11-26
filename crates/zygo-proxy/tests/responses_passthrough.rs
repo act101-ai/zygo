@@ -437,3 +437,63 @@ fn failed_usage_recorded() {
     assert_eq!(counts(&rows[0]), (60, 30, 0, 4));
     assert!(!rows[0].adjustments.iter().any(|a| a == "usage_unread"), "{:?}", rows[0].adjustments);
 }
+
+/// RS-5 round 3 review H1, K§6.4.3: the `include` type check sees an `openai` candidate that is not first (provider
+/// order: `anthropic` first, then `openai`); 400 before any upstream request.
+#[test]
+fn include_not_array_400_with_openai_second() {
+    let h = Harness::start(Dialect::Anthropic, Agent::ClaudeCode, &second_openai_provider());
+    h.reply_with(200, JSON, message_json());
+    let (s, _, b) = h.post(R, &with_include(json!("x")));
+    assert_eq!(s.as_u16(), 400, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(oai_err(&b), json!({"type":"zygo_bad_request","message":"include must be an array"}));
+    assert!(h.upstream_paths().is_empty(), "{:?}", h.upstream_paths());
+}
+
+/// PC-5's Codex thread-title request (`text.format` `json_schema`), as one JSON body.
+fn title_request() -> Value {
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex/compaction/requests/pc8-tui-high-0028.json");
+    let v: Value = serde_json::from_slice(&std::fs::read(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))).unwrap();
+    let mut b = v["body"].clone();
+    b["stream"] = json!(false);
+    assert_eq!(b["text"]["format"]["type"], "json_schema", "fixture shape");
+    b
+}
+
+/// RS-5 round 3 review H2 (a), seam with RS-11: toward an `openai` candidate `text` passes unchanged and the body is
+/// not translated.
+#[test]
+fn text_format_passes_to_openai_candidate() {
+    let h = start();
+    let req = title_request();
+    h.reply_with(200, JSON, serde_json::to_vec(&resp_json()).unwrap());
+    let (s, _, b) = h.post(R, &req);
+    assert_eq!(s.as_u16(), 200, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(h.upstream_paths(), ["/v1/responses"]);
+    let up = &h.upstream_bodies()[0];
+    assert_eq!(up["text"], req["text"]);
+    assert_eq!(up["input"], req["input"]);
+    assert!(up.get("output_config").is_none() && up.get("messages").is_none() && up.get("max_tokens").is_none(), "{up}");
+}
+
+/// RS-5 round 3 review H2 (b), seam with RS-11: after the `openai` candidate answers 5xx, the `anthropic` candidate
+/// gets `output_config.format` `json_schema` built from the client's schema (string lengths move into `description`).
+#[test]
+fn text_format_fallback_to_anthropic_maps_schema() {
+    let h = Harness::start(Dialect::Openai, Agent::ClaudeCode, &second_provider());
+    let req = title_request();
+    let err = br#"{"error":{"type":"server_error","message":"busy"}}"#.to_vec();
+    h.reply_seq(vec![(500, JSON, err)]);
+    h.reply_with(200, JSON, message_json());
+    let (s, _, b) = h.post(R, &req);
+    assert_eq!(s.as_u16(), 200, "{}", String::from_utf8_lossy(&b));
+    assert_eq!(h.upstream_paths(), ["/v1/responses", "/v1/messages"]);
+    let ups = h.upstream_bodies();
+    assert_eq!(ups[0]["text"], req["text"]);
+    let mut want_schema = req["text"]["format"]["schema"].clone();
+    want_schema["properties"]["title"] = json!({"type":"string","description":"{\"minLength\":1,\"maxLength\":36}"});
+    assert_eq!(ups[1]["output_config"]["format"], json!({"type":"json_schema","schema":want_schema}), "{}", ups[1]);
+    assert!(ups[1].get("text").is_none(), "{}", ups[1]);
+    let rows = h.usage_rows();
+    assert_eq!((rows[0].status, rows[0].provider.as_str()), (200, SECOND));
+}
