@@ -86,7 +86,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | PC-11 | Scrub: platformOs, login shell and macOS writable roots in Codex captures; namespace tool descriptions; re-scrub committed Codex fixtures | PC-3, PC-4, PC-5, PC-6, PC-12 | TODO | implementation | — |
 | PC-12 | Codex premise: the Responses event sequence zygo's encoder emits (empty terminal output, extra item and delta events) is accepted | PC-10, RS-2 | TODO | judgment | — |
 | RS-1 | Responses → Messages request translator and the zygo mark on reasoning items (`translate/responses_client.rs`, `translate/reasoning.rs`) | PC-3 | DONE | judgment | PR #152 merged fe18f3dd; acceptance exit 0 on merged tree (responses_request 49, translate 48); CI run 45733206649 green (ubuntu, macos, windows) |
-| RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | TODO | judgment | — |
+| RS-2 | Messages → Responses encoder: SSE stream and JSON response (`translate/responses_client.rs`) | RS-1 | DONE | judgment | PR #156 merged 1ad733f0; acceptance exit 0 on merged tree (responses_stream 29); CI run 45738657210 green (ubuntu, macos, windows) |
 | RS-3 | `POST /openai/v1/responses` route, test harness, request side of forward, errors before the first byte, redaction on `input` | RS-1 | TODO | judgment | — |
 | RS-4 | Response side for Anthropic and chat upstreams: stream order with the encoder after the tee, non-streaming path, errors after the first event | RS-2, RS-3, PC-12 | TODO | judgment | — |
 | RS-5 | Responses → Responses passthrough, `ResponseCtx.lines`, the tee's `response.completed` usage parse | RS-4 | TODO | judgment | — |
@@ -145,3 +145,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | RS-1 Files corrected: the PC-5 compaction fixture was read, not changed. |
 | 2026-11-26 | PC-11 now depends on PC-12 (author's call): PC-12 adds premise rows and encoder fixtures that PC-11 re-scrubs and PC-7 reads. |
 | 2026-11-26 | PC-5 DONE: gate 3 rounds; PC8 verified on end-of-turn compaction in one live TUI process (plus cold resume and mid-turn); PC15 failed (skills.config path selects, does not add); TUI /mcp POST is Codex's codex_tui MCP client; PR #147 merged 08774771. |
+| 2026-11-26 | RS-2 DONE: gate 1 round + nit round; Messages→Responses encoder and JSON form; custom_tool_call for client custom tools; marks bounded by MARK_MAX; HOLD_MAX holds within a push; stop-reason mapping; event sequence documented for PC-12; PR #156 merged 1ad733f0. |
