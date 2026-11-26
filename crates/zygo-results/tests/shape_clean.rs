@@ -163,6 +163,11 @@ fn fixture_cargo_color_has_no_esc() {
     let (out, steps) = got(&raw, false);
     assert_eq!(steps, vec![ColorCodesRemoved]);
     assert!(!out.contains('\x1b'));
+    // FX-16 (F4): `ESC ( B` leaves no `B`
+    assert!(!out.contains("okB"));
+    assert_eq!(out.lines().count(), raw.lines().count());
+    let summary = "test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s";
+    assert!(out.lines().any(|o| o == summary));
     for l in fixture("cargo-test-color", "must_keep").lines() {
         assert!(out.lines().any(|o| o == l), "{l}");
     }
@@ -210,4 +215,28 @@ fn trailing_carriage_return_overwrites_nothing() {
         ("line one\nline two\n".into(), vec![ProgressLinesRemoved])
     );
     assert_eq!(got("a\rb\r\n", false), ("b\n".into(), vec![ProgressLinesRemoved]));
+}
+
+#[test]
+fn charset_designation_is_removed() {
+    // FX-16 (F4): `ESC (` or `ESC )` plus one character
+    color("ok\x1b(B", "ok");
+    color("a\x1b)0b", "ab");
+    color("\x1b[32mok\x1b(B\x1b[m\n", "ok\n");
+}
+
+#[test]
+fn esc_before_esc_is_removed_alone() {
+    // FX-16 (F5): the second `ESC` starts its own sequence
+    color("\x1b\x1b[31mx", "x");
+    color("a\x1b\x1b\x1b]0;t\x07b", "ab");
+    color("a\x1b\x1b\x1b(Bb", "ab");
+}
+
+#[test]
+fn charset_designation_never_takes_a_line_end_or_an_esc() {
+    color("a\x1b(\nb", "a\nb");
+    assert_eq!(got("a\x1b(\r\nb", true), ("a\r\nb".into(), vec![ColorCodesRemoved]));
+    color("a\x1b(\x1b[31mb", "ab");
+    color("a\x1b(", "a");
 }

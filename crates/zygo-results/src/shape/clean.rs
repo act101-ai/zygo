@@ -54,10 +54,19 @@ fn strip_escapes(text: &str) -> Option<String> {
 }
 
 /// Bytes to remove for the `ESC` at `i`: at least the `ESC`.
+/// A lone `ESC` (at the text end, or before `\n`, `\r` or another `ESC`) is 1 byte;
+/// the next `ESC` then starts its own sequence.
 fn esc_len(text: &str, i: usize, osc_stop_cache: &mut Option<usize>) -> usize {
     let b = text.as_bytes();
     match b.get(i + 1) {
-        None | Some(b'\n' | b'\r') => 1,
+        None | Some(b'\n' | b'\r' | &ESC) => 1,
+        // Charset designation: `ESC (` or `ESC )` plus one character; never a line end or an `ESC`.
+        Some(b'(' | b')') => {
+            2 + match text[i + 2..].chars().next() {
+                None | Some('\n' | '\r' | '\x1b') => 0,
+                Some(c) => c.len_utf8(),
+            }
+        }
         Some(b'[') => csi_end(b, i + 2).map_or(2, |end| end - i),
         Some(b']') => {
             let body = i + 2;
