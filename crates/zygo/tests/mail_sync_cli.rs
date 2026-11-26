@@ -201,3 +201,65 @@ fn printed_urls_carry_no_userinfo() { // T4
         assert!(!text.contains("s3cret") && !text.contains("u1:"), "{text}");
     }
 }
+
+#[test] // S§8.3 steps 1-3, S§8.1 child row: the child is silent and exits 0 when the lock is held, when off, for a bad id
+fn background_is_silent_and_exits_0_when_the_lock_is_held() { // T6
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    let s = sp(&a);
+    for d in [&s.mail, &s.sync] { zygo_workspace::mail::ensure_mail_root(d).unwrap(); }
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&s.lock).unwrap();
+    fs4::FileExt::try_lock(&f).unwrap();
+    let o = zygo(&a, &["mail", "sync", "--ws-id", WS_ID, "--background"], &[], None);
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(0), String::new(), String::new()));
+    assert!(s.again.exists()); // S§8.3 step 2: the holder sees the mark
+    drop(f);
+    assert!(tip_paths(&r).is_empty());
+    std::fs::write(a.root().join("config.toml"), "").unwrap();
+    for id in [WS_ID, "../x"] {
+        let o = zygo(&a, &["mail", "sync", "--ws-id", id, "--background"], &[], None);
+        assert_eq!((o.status.code(), out(&o), err(&o)), (Some(0), String::new(), String::new()), "{id}");
+    }
+    assert_eq!(errors(&a), "");
+}
+
+#[test] // S§8.3, S-C2: a child's stop goes to errors.log as its check name; the CLI prints the line
+fn background_errors_go_to_errors_log_as_check_names() { // T7
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    config(&a, Some("a"), "remote = \"nope\"\n");
+    let o = zygo(&a, &["mail", "sync", "--ws-id", WS_ID, "--background"], &[], None);
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(1), String::new(), String::new()));
+    let log = errors(&a);
+    assert!(log.lines().last().unwrap().ends_with(" mail sync: stopped: remote"), "{log}");
+    assert!(!log.contains("nope"), "{log}");
+    let o = zygo(&a, &["mail", "sync"], &[], None);
+    assert_eq!((o.status.code(), err(&o)), (Some(1), "zygo: no such remote\n".to_string()));
+}
+
+#[test] // S§17 row cmd/mod.rs, AU71: no results sweep for mail sync --background; zygo mail sync sweeps
+fn results_sweep_skips_the_background_form_only() { // T11
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    std::fs::write(a.root().join("config.toml"), "").unwrap();
+    let old = stale(&a, "old-s");
+    let o = zygo(&a, &["mail", "sync", "--ws-id", WS_ID, "--background"], &[], None);
+    assert_eq!(o.status.code(), Some(0));
+    assert!(old.join("results/f0").exists());
+    let o = zygo(&a, &["mail", "sync"], &[], None);
+    assert_eq!(o.status.code(), Some(1)); // sync off, after the sweep
+    assert!(!old.exists());
+}
+
+#[test] // review focus 53, AU71, AU44, C6: a panic in the child prints nothing, skips the sweep, logs one check name
+fn background_panic_prints_nothing_and_skips_the_results_sweep() { // T12
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    let old = stale(&a, "old-s");
+    let o = zygo(&a, &["mail", "sync", "--ws-id", WS_ID, "--background"], &[("ZYGO_TEST_PANIC_SYNC", OsStr::new("1"))], None);
+    assert_eq!((o.status.code(), out(&o), err(&o)), (Some(101), String::new(), String::new()));
+    assert!(old.join("results/f0").exists());
+    let log = errors(&a);
+    assert_eq!(log.lines().count(), 1, "{log}");
+    assert!(log.ends_with(" mail sync: stopped: panic\n"), "{log}");
+}

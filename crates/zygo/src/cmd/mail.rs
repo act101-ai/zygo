@@ -89,6 +89,12 @@ pub struct SyncArgs {
     /// Prune the side branch in this sync
     #[arg(long)]
     pub prune: bool,
+    /// The hidden child form (S§8.1 child row, AU44): the workspace id the hook passes.
+    #[arg(long, hide = true, requires = "background")]
+    pub ws_id: Option<String>,
+    /// The hidden child form (S§8.1 child row, AU44): silent, `Mode::Child`.
+    #[arg(long, hide = true, requires = "ws_id", conflicts_with_all = ["name", "prune"])]
+    pub background: bool,
 }
 
 /// `zygo mail`: the OP5 check first; bare `zygo mail` is `zygo mail ls` (D1).
@@ -302,6 +308,9 @@ fn workspace_named(paths: &Paths, name: &str) -> anyhow::Result<Workspace> {
 
 /// `zygo mail sync` (S§8.1 row 4): the workspace of `--name`, else of this session or folder; then the sync.
 fn sync_run(a: SyncArgs) -> i32 {
+    if a.background {
+        return sync_background(Paths::from_env(), a.ws_id.as_deref().unwrap_or_default());
+    }
     let paths = Paths::from_env();
     let ws = match &a.name {
         Some(n) => workspace_named(&paths, n),
@@ -319,6 +328,30 @@ fn sync_run(a: SyncArgs) -> i32 {
     };
     let (stdin, stdout, stderr) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
     sync_cli(&sync_env(paths), &ws, &a, &mut stdin.lock(), &mut stdout.lock(), &mut stderr.lock())
+}
+
+/// `zygo mail sync --ws-id <id> --background` (S§8.1 child row, S§8.3; AU44, D7): one `Mode::Child` sync that
+/// prints nothing on any path. A panic prints nothing either: the hook in place first writes the one `errors.log` line
+/// `mail sync: stopped: panic` (C6, S-C2) when `ws_id` is a workspace id whose state folder is a real folder, else
+/// nothing. An id that fails `valid_ws_id` stops at the gate (check `workspace`): exit 0, nothing written. The exit
+/// code is that of `SyncError::exit_code(Mode::Child)`.
+fn sync_background(paths: Paths, ws_id: &str) -> i32 {
+    let real = valid_ws_id(ws_id)
+        && std::fs::symlink_metadata(paths.workspaces_dir().join(ws_id)).is_ok_and(|m| m.is_dir());
+    let store = real.then(|| Store::open(&paths, ws_id));
+    std::panic::set_hook(Box::new(move |_| {
+        if let Some(s) = &store {
+            s.log_error("mail sync: stopped: panic");
+        }
+    }));
+    #[cfg(feature = "test-hooks")]
+    if std::env::var_os("ZYGO_TEST_PANIC_SYNC").is_some() {
+        panic!("test panic in mail sync --background");
+    }
+    match run_with(&sync_env(paths), ws_id, Mode::Child, &Opts::default()) {
+        Ok(_) => 0,
+        Err(e) => e.exit_code(Mode::Child),
+    }
 }
 
 /// S§8.2, S§8.3 (D1, D2): one `Mode::Cli` sync of `ws`, its lines on `out` and `err`; the exit code.

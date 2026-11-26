@@ -545,6 +545,16 @@ fn start_check(rest: &[String]) -> Option<i32> {
     }
 }
 
+/// The commands that run no results sweep and no mail sweep at their start: hooks and `zygo mcp` (time-bounded; C6),
+/// `zygo ws` (AU71) and the sync child `zygo mail sync --background` (AU71; mail sync design S§17 row `cmd/mod.rs`).
+fn skips_sweep(c: &Cmd) -> bool {
+    match c {
+        Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_) => true,
+        Cmd::Mail(mail::MailArgs { sub: Some(mail::MailCmd::Sync(s)) }) => s.background,
+        _ => false,
+    }
+}
+
 /// Entry point of the binary; returns the process exit code.
 pub fn run() -> i32 {
     set_slash_dispatch(slash);
@@ -562,8 +572,9 @@ pub fn run() -> i32 {
         }
     };
     // §10.1 and its N71 note: results of ended sessions are swept at the next `zygo` command, except hooks,
-    // `zygo mcp` (time-bounded; C6) and `zygo ws` (AU71). I/O errors are ignored; the mail sweep (M§5) runs under the same rule.
-    if !matches!(cli.command, Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_)) {
+    // `zygo mcp` (time-bounded; C6), `zygo ws` and `zygo mail sync --background` (AU71; mail sync design S§17).
+    // I/O errors are ignored; the mail sweep (M§5) runs under the same rule.
+    if !skips_sweep(&cli.command) {
         let p = Paths::from_env();
         zygo_results::sweep(&p.cache_dir, &p.workspace_cache_dir(), SystemTime::now());
         // OP5: native Windows has no workspace features, so it has no mail sweep (the cfg of `op5`).
@@ -706,5 +717,16 @@ mod tests {
         let Some(MailCmd::Ls { name }) = mail(&["ls", "bob"]).unwrap().sub else { panic!() };
         assert_eq!(name.as_deref(), Some("bob"));
         assert!(mail(&[]).unwrap().sub.is_none());
+    }
+
+    #[test] // AU71, S§17 row cmd/mod.rs: the sweep rule
+    fn sweep_skips_hooks_mcp_ws_and_mail_sync_background() { // U2
+        let cmd = |a: &[&str]| Cli::try_parse_from(a).unwrap().command;
+        assert!(super::skips_sweep(&cmd(&["zygo", "mail", "sync", "--ws-id", "0123456789abcdef", "--background"])));
+        assert!(super::skips_sweep(&cmd(&["zygo", "ws", "forget", "app"])));
+        assert!(super::skips_sweep(&cmd(&["zygo", "mcp"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "mail", "sync"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "mail", "ls"])));
+        assert!(!super::skips_sweep(&cmd(&["zygo", "status"])));
     }
 }
