@@ -15,6 +15,8 @@
 - `tests/support/responses.rs` is included by each Responses test file with `#[path = "support/responses.rs"] mod support;`, the form of `crates/zygo-launch/tests/premise.rs:4-5`; `tests/support/` holds no `main.rs`, so Cargo builds no target from it. Later RS nodes that change it depend on this node through their edges.
 - Test hooks: the proxy's `test-hooks` feature (`crates/zygo-proxy/Cargo.toml:40-43`) and `ManualClock`; no sleep, no wall-clock bound (Global constraints).
 
+- Lead's decisions (2026-11-25): the Files and Produces changes of this plan are accepted. Usage-row wait: no new or widened wall-clock bound in CI tests. The usage writer has no explicit flush or drain inside Files (`UsageSink::wait` is reached only through `ProxyHandle::usage_written`, `server.rs:322`; `ProxyHandle::shutdown`, `server.rs:308`, consumes the handle), so `Harness::usage_rows` reuses `usage_written(n, Duration::from_secs(10))`, the helper and bound the existing tests use (`tests/translate.rs:1114`); no 60 s bound.
+
 ## Plan
 
 Base: `origin/phase-4` at fe18f3dd (RS-1 merged). Branch `phase-4--RS-3`. Every commit ends with the lines `Zygo-Session: <session>` and `Zygo-Work: phase4:RS-3`; no attribution. Builds use `CARGO_INCREMENTAL=0`.
@@ -51,7 +53,7 @@ Produced:
 
 ### Steps
 
-- [ ] 1. **Harness.** Create `crates/zygo-proxy/tests/support/responses.rs`, first line `#![allow(dead_code)]` (each test file uses part of it). Contents:
+- [x] 1. **Harness.** Create `crates/zygo-proxy/tests/support/responses.rs`, first line `#![allow(dead_code)]` (each test file uses part of it). Contents:
   - Mock upstream as `tests/redaction_e2e.rs:32-71` (127.0.0.1:0, own runtime thread, stop on drop), recording `(path with query, HeaderMap, body bytes)` per request and answering the current reply. The reply starts as status 400, `content-type: application/json`, body `{"type":"error","error":{"type":"invalid_request_error","message":"rs3 mock"}}` for `Dialect::Anthropic`, else `{"error":{"type":"invalid_request_error","message":"rs3 mock"}}`; `reply_with` replaces it for all later requests.
   - `start`: a `TempDir`; `config.toml` = the text below, then `extra_toml`; `load(&LoadContext { paths, repo: None, team: None })` with `Paths` as `tests/translate.rs:1010-1023`; `Proxy::start_local_with(cfg, StartOpts { clock: ManualClock::new(), keys: Arc::new(<one key "k-rs", value built at run time as translate.rs:981-983>), usage_db: Some(<tmp>/data/usage.db), redact_limits: Some(<generous: 60 s base, ZERO per MiB, 60 s content budget>), ..Default::default() })`; `create_session(SessionRequest { agent, agent_version: "2.1.328".into(), profile: None, passthrough: false, repo: None, work: None, stored_values: vec![], known_plugins: Default::default() })`. TOML (`{DIALECT}` = `anthropic` | `openai` | `openai-chat`; `{KEY}` = `key = "keychain:k-rs"` for a non-`anthropic` dialect, else empty):
     ```toml
@@ -79,11 +81,11 @@ Produced:
     ```
   - `post(path, body)`: headers `authorization: Bearer <token>`, `x-zygo-session: <id>`, `content-type: application/json` (the Codex form, PC1/PC2); counts one model post. `post_as(path, headers, body)`: exactly `headers` plus `content-type`; counts nothing. `get(path)`: the two identity headers. Each blocks on a current-thread runtime as `tests/translate.rs:1082-1098`, with a `no_proxy` client; `path` is joined to `ProxyHandle::url()`.
   - `upstream_bodies` parses each recorded body as JSON (panics on a non-JSON body); `upstream_paths`, `upstream_headers` return the recorded values in order.
-  - `usage_rows`: `assert!(h.usage_written(<model posts>, Duration::from_secs(60)), "usage rows not written")` (in-process writer thread; returns as soon as the rows are written; the 60 s bound is only a hang guard, Global constraints), then `Store::open(<db>).requests_for_session(<id>)`. Doc: call it only when every `post` reached a model route.
+  - `usage_rows`: `assert!(h.usage_written(<model posts>, Duration::from_secs(10)), "usage rows not written")` (the existing wait and bound of every other proxy test file, unchanged; lead's decision 2026-11-25), then `Store::open(<db>).requests_for_session(<id>)`. Doc: call it only when every `post` reached a model route.
   - `codex_request(name)`: `fixtures/codex/requests/<name>.json` from `CARGO_MANIFEST_DIR/../../`, its `body` value.
   - Check: step 2 compiles against it.
 
-- [ ] 2. **Failing tests.** Create `crates/zygo-proxy/tests/responses_route.rs` with `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, and a helper `fn oai_err(b: &[u8]) -> Value` that parses the body, asserts it is an object with key `error` and no key `type`, and returns `error`. Tests (`A` = `Dialect::Anthropic`, `C` = `Dialect::OpenaiChat`, agent `Agent::ClaudeCode`, extra `""` unless stated):
+- [x] 2. **Failing tests.** Create `crates/zygo-proxy/tests/responses_route.rs` with `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, and a helper `fn oai_err(b: &[u8]) -> Value` that parses the body, asserts it is an object with key `error` and no key `type`, and returns `error`. Tests (`A` = `Dialect::Anthropic`, `C` = `Dialect::OpenaiChat`, agent `Agent::ClaudeCode`, extra `""` unless stated):
   ```rust
   identity_missing_session_header_openai_shape   // A; post_as(R, [authorization Bearer token], first-turn) → 401, oai_err.type == "zygo_token_invalid"; upstream_bodies empty
   identity_wrong_bearer_or_session_openai_shape  // A; [Bearer "wrong-token", x-zygo-session id] → 401 "zygo_token_invalid"; [Bearer token, x-zygo-session "no-such-session"] → 401 "zygo_session_unknown"; upstream empty
