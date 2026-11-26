@@ -117,7 +117,7 @@ Produced:
   - In the attempt loop, when `ctx.dialect == Openai && c.dialect == Anthropic` and the outbound map has no `anthropic-version`, insert `anthropic-version: 2023-06-01` (`const ANTHROPIC_VERSION`).
   - Check: `captured_requests_reach_*` and `redaction_acts_on_input` pass. Commit `feat(proxy): RS-3 Responses request side at forward time`.
 
-- [ ] 6. **Errors before the first byte.** In `forward.rs`:
+- [x] 6. **Errors before the first byte.** In `forward.rs`:
   - `fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value)`: `translate_error(...)` gives `(s, m)`; when `s == 400` and `m.error.message` starts with `"prompt is too long"` → `(400, {"error":{"message":<that message>,"type":"invalid_request_error","param":"input","code":"context_length_exceeded"}})` (PC14); else `(s, {"error": m.error})`.
   - In `run`'s read-whole branch (`:513-527`) call it in place of `translate_error` when `ctx.dialect == Openai`.
   - Before the stream is built (after `:496`): `ctx.dialect == Openai && translated && status.is_success()` → `Err(read_failed(slot, c, &adjustments, upstream_bad_response()))` (removed by RS-4; no test claims it).

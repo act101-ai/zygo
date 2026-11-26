@@ -509,6 +509,10 @@ async fn run(
     let mut adjustments = ctx.adjustments;
     adjustments.extend(extra);
     let mut mapper = None;
+    // The Responses encoder of a translated 2xx is RS-4's: until then no such answer reaches the client.
+    if ctx.dialect == Dialect::Openai && translated && status.is_success() {
+        return Err(read_failed(slot, c, &adjustments, upstream_bad_response()));
+    }
     // Injected nulls are removed on the way back (§7.6): a Messages 2xx with a non-empty map.
     let armed = route == ModelRoute::Messages && status.is_success() && !nulls.is_empty();
     let mut restore = None;
@@ -535,7 +539,11 @@ async fn run(
             }
             m
         } else {
-            let (s, v) = translate_error(status, &bytes, estimate, key);
+            let (s, v) = if ctx.dialect == Dialect::Openai {
+                responses_error(status, &bytes, estimate, key)
+            } else {
+                translate_error(status, &bytes, estimate, key)
+            };
             status = s;
             v
         };
@@ -591,6 +599,19 @@ async fn run(
     *out.status_mut() = status;
     *out.headers_mut() = headers;
     Ok(out)
+}
+
+/// An upstream error on a translated Responses request, before the first byte (K§6.4.4, K-D50): `translate_error`'s
+/// status and error in the OpenAI shape; a context-limit refusal in the shape Codex recovers from (PC14,
+/// `fixtures/codex/errors/context-400.json`).
+fn responses_error(status: StatusCode, body: &[u8], estimate: u64, key: Option<&str>) -> (StatusCode, Value) {
+    let (s, m) = translate_error(status, body, estimate, key);
+    let message = m["error"]["message"].as_str().unwrap_or_default();
+    if s == StatusCode::BAD_REQUEST && message.starts_with("prompt is too long") {
+        let e = json!({"message": message, "type": "invalid_request_error", "param": "input", "code": "context_length_exceeded"});
+        return (s, json!({ "error": e }));
+    }
+    (s, json!({ "error": m["error"] }))
 }
 
 /// A read error on the served response (Round 2, F6), or a translated 2xx that is not a response (Round 3, D4): the
