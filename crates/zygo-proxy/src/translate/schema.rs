@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde_json::{json, Map, Value};
 use zygo_config::{RuleSeverity, SchemaRule};
 
-use super::sse::input_deltas;
+use super::sse::deltas;
 use super::{s, SseEvent};
 use crate::pipeline::Adjustment;
 use crate::tee::HOLD_MAX;
@@ -518,8 +518,8 @@ impl Hold {
 }
 
 /// Removes injected nulls from a Messages response stream: holds one block's deltas until its `content_block_stop`;
-/// a block from which a null was removed gets the compact JSON in place of its deltas (a tool's in `INPUT_DELTA_MAX`
-/// pieces, a text block's in one delta).
+/// a block from which a null was removed gets the compact JSON in place of its deltas, in pieces of at most
+/// `INPUT_DELTA_MAX` bytes (`input_json_delta` for a tool, `text_delta` for a text block).
 pub struct RestoreFilter {
     tools: BTreeMap<String, Trie>,
     output: Option<Trie>,
@@ -566,17 +566,17 @@ impl RestoreFilter {
         Some(Hold { index: d.get("index")?.clone(), tool, events: Vec::new(), bytes: Vec::new(), others: Vec::new(), first: None, text: String::new(), size: 0 })
     }
 
-    /// The deltas that replace the block's deltas: a tool's arguments in `input_deltas` pieces (K§6.4.3 stream
-    /// obligation 8), else one text delta; `None` when no null was removed.
+    /// The deltas that replace the block's deltas: a tool's arguments in `input_json_delta` pieces, else the text in
+    /// `text_delta` pieces, both of `deltas` (K§6.4.3 stream obligation 8); `None` when no null was removed.
     fn rebuilt(&self, h: &Hold) -> Option<Vec<SseEvent>> {
         let t = match &h.tool {
             Some(n) => self.tools.get(n)?,
             None => self.output.as_ref()?,
         };
         let x = t.strip_text(&h.text)?;
-        let deltas = if h.tool.is_some() { input_deltas(&x) } else { vec![json!({"type":"text_delta","text":x})] };
+        let d = if h.tool.is_some() { deltas("input_json_delta", "partial_json", &x) } else { deltas("text_delta", "text", &x) };
         let ev = |delta| SseEvent { event: "content_block_delta".into(), data: json!({"type":"content_block_delta","index":h.index,"delta":delta}) };
-        Some(deltas.into_iter().map(ev).collect())
+        Some(d.into_iter().map(ev).collect())
     }
 
     /// Translated streams: one Messages event in, the events to send out.

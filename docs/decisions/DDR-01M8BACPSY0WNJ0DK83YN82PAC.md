@@ -3,7 +3,7 @@ id = "DDR-01M8BACPSY0WNJ0DK83YN82PAC"
 kind = "accepted-limit"
 status = "open"
 class = "none"
-title = "A streamed request's JSON 2xx body becomes Messages SSE events with a fixed cost per block, up to about 59 x COPY_MAX"
+title = "A streamed JSON 2xx body becomes Messages SSE events at a cost per block and per 64 KiB piece, up to about 59 x COPY_MAX"
 unit = "phase4:RS-13"
 round = 3
 role = "code"
@@ -24,12 +24,14 @@ JSON envelope and `index`. That text costs a fixed number of bytes per block bey
 when sent whole; else its text, thinking, signature, id, name or input):
 
 - a block of another type (sent whole in its start, no delta), for example `{}`: 163 bytes + 2 x the digits of the index;
-- a text block: 302 bytes + 3 x the digits;
-- a thinking block: 333 bytes + 3 x the digits, and 124 + the digits more with a signature;
+- a text block: 302 bytes + 3 x the digits, and 114 bytes + the digits for each further 64 KiB piece of its text
+  (since RS-15);
+- a thinking block: 333 bytes + 3 x the digits, and 122 bytes + the digits for each further 64 KiB piece of its
+  thinking (since RS-15), and 124 + the digits more with a signature;
 - a tool_use block: 337 bytes + 3 x the digits, and 128 bytes + the digits for each further 64 KiB piece of its input.
 
 So the event bytes are about the block content (at most 2 x for a tool input, which is escaped once more) plus that
-overhead times the number of blocks, and are not bounded by a small multiple of `COPY_MAX`. K§6.4.3 stream obligation
+overhead times the number of blocks and pieces, and are not bounded by a small multiple of `COPY_MAX`. K§6.4.3 stream obligation
 9 said "at most about 2 x `COPY_MAX`" with a peak of "about 3 x `HOLD_MAX`"; that was false. Per byte of body, the
 reviewer measured over 100,000 blocks: `{}` blocks 58x, empty text blocks 12x, empty tool_use blocks 7.3x. For a body
 of `COPY_MAX`, from the format strings: 1,398,101 `{}` blocks give 248,037,859 event bytes (59.1 x `COPY_MAX`, about
@@ -49,7 +51,10 @@ It is accepted now because:
 - The memory is held for one step only: the chunk is sent to the tee and the encoder, and freed when it is sent
   (`futures_util::stream::once`, `crates/zygo-proxy/src/forward.rs:571`). It does not grow with the time of the stream.
 - The behaviour predates RS-13: `message_events` built the whole event list before RS-13 (since zygo 0.1.0, commit
-  `da682dd8`). RS-13 changed only how a tool_use input is cut, which adds 128 bytes + the digits of the index per further 64 KiB piece.
+  `da682dd8`). RS-13 changed how a tool_use input is cut, which adds 128 bytes + the digits of the index per further
+  64 KiB piece. RS-15 cuts text and thinking the same way (K§6.4.3 stream obligation 9), which adds 114 bytes + the
+  digits per further 64 KiB piece of text and 122 bytes + the digits per further piece of thinking. These piece costs
+  are small next to 64 KiB of content, so the worst case stays the `{}` blocks: about 59 x `COPY_MAX`.
 
 ## Alternatives rejected
 
@@ -65,6 +70,9 @@ It is accepted now because:
 
 - `crates/zygo-proxy/src/translate/sse.rs:444-472`: `message_events`, one start, the deltas and one stop per block.
 - `crates/zygo-proxy/src/translate/sse.rs:19-21`: `SseEvent::to_bytes`, `event: <name>\ndata: <compact JSON>\n\n`.
+- RS-15 (at commit `3a48877a`): `deltas` and `block_deltas` (`crates/zygo-proxy/src/translate/sse.rs:481-493`) cut a
+  text or thinking block into pieces of at most `INPUT_DELTA_MAX` (64 KiB); each piece is one `content_block_delta`.
+  The 114 + d and 122 + d piece costs come from that event's format string.
 - `crates/zygo-proxy/src/forward.rs:563-571`: the streamed JSON branch builds all events into one chunk.
 - The per-block counts above come from those format strings; the reviewer's 58x, 12x and 7.3x come from 100,000-block
   bodies (RS-13 round 3 review H1).
