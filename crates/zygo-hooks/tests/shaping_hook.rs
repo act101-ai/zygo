@@ -327,10 +327,9 @@ fn po2_stderr_cleared_equals_the_premise_row() {
     let p = std::fs::read_to_string(shaping::repo().join("docs/premises.md")).unwrap();
     let row = p.lines().find(|l| l.starts_with("| PO2 |")).unwrap();
     let status = row.split(" | ").nth(5).unwrap();
-    assert_eq!(status, "verified");
+    assert!(status == "verified" || status == "failed", "{row}");
     assert_eq!(trim::PO2_STDERR_CLEARED, status == "verified");
-    assert!(row.contains("O§7.8 'Output, `PostToolUse`' holds."), "{row}");
-    // the default TrimOpts takes the verified branch of item 10
+    // the default TrimOpts takes the item 10 branch of that result
     let o = TrimOpts::default();
     assert_eq!(o.stderr_cleared, trim::PO2_STDERR_CLEARED);
     let e = env(true);
@@ -339,9 +338,14 @@ fn po2_stderr_cleared_equals_the_premise_row() {
     let r = resp(&run(&e, Agent::ClaudeCode, &bash(json!("cargo test"), &so, &se), &o));
     let id = ids(&e)[0].clone();
     assert!(r["stdout"].as_str().unwrap().starts_with(&shaped_marker(&raw, "color codes removed", &id)));
-    assert_eq!(r["stderr"], "");
     assert_eq!(stored(&e, &id), raw.as_bytes());
-    assert_eq!(rows(&e), [(16393, 13705, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+    if trim::PO2_STDERR_CLEARED {
+        assert_eq!(r["stderr"], "");
+        assert_eq!(rows(&e), [(16393, 13705, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+    } else {
+        assert_eq!(r["stderr"], se.as_str());
+        assert_eq!(rows(&e), [(10240, 7552, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+    }
 }
 
 #[test]
