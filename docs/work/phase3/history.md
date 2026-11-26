@@ -108,6 +108,8 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | DONE | implementation | plan 8ca46aed · node 133f55bc, 37bd93c8 · acceptance pass (workspace_mail 7 passed, --include-ignored) · PR #171 |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb, dba2a089, 5dd04b76; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
+| OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | DONE | implementation | 8f22ddd9, 453a297c, 68d99c41 · PR #167 |
+| OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
 
 ## Log
 
