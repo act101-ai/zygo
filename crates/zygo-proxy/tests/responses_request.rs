@@ -571,3 +571,16 @@ fn f3_echoed_names_have_no_control_characters() {
         assert_400(err(rq(&body(json!([user("go"), item])))), &message);
     }
 }
+
+#[test]
+fn f4_decoded_block_keeps_known_keys_only() {
+    let extra = json!({"cache_control":{"type":"ephemeral"},"extra":1});
+    for (b, want) in [(think(), think()), (redacted(), redacted())] {
+        let mut b = b.clone();
+        for (k, v) in extra.as_object().unwrap() {
+            b[k] = v.clone();
+        }
+        let v = raw_mark(&json!({"provider":"p-ant","model":"up-ant","block":b}));
+        assert_eq!(decode_thinking(&v, &tgt()), Some(want));
+    }
+}
