@@ -29,6 +29,18 @@ pub struct Adjustment(pub String);
 pub enum ModelRoute {
     Messages,
     CountTokens,
+    /// `POST /openai/v1/responses` (K§6.4).
+    Responses,
+}
+
+impl ModelRoute {
+    /// The client's dialect on this route.
+    pub fn dialect(self) -> Dialect {
+        match self {
+            ModelRoute::Responses => Dialect::Openai,
+            ModelRoute::Messages | ModelRoute::CountTokens => Dialect::Anthropic,
+        }
+    }
 }
 
 pub struct RequestCtx {
