@@ -16,6 +16,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | DONE | implementation | PR #137 merged 0d665799; acceptance exit 0 @ e554d2ca (real codex 0.172.0; PC1 PC2 PC7 PC13 PC14 verified); CI run 45725231426 green (ubuntu, macos, windows) |
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2, PC-10 | DONE | implementation | PR #155 merged d4ac5d2f; acceptance: real codex 0.172.0 run @ 685d55ef (PC3 PC12 verified; PC4 partial, replay only, Observed failed; PC5 failed on the replacement shape); CI run 45781607906 green on f16762a7 |
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | DONE | implementation | PR #147 merged 08774771; acceptance exit 0 @ 6cbfc673 (real codex 0.172.0; PC6 PC8 PC9 PC11 verified, PC15 failed); CI run 45735709999 green (ubuntu, macos, windows) |
+| PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | DONE | implementation | PR #127 merged 73a4ff40; acceptance exit 0 on merged tree (test-check-premises 99 cases); CI run 45704926916 green (ubuntu, macos, windows) |
 
 ## Log
 

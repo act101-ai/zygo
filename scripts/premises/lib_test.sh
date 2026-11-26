@@ -7,6 +7,7 @@
 # No agent, no network; CI runs it on ubuntu and macOS. Each child runs with PATH = a dir of stub
 # claude, opencode and codex programs and links to the few tools lib.sh needs, and TMPDIR = a dir of
 # its own.
+# Do not run two copies at once on one host (G2c/G2d and the n2_procs cases fail closed on the other run's helpers).
 set -u
 unset N2_SCRATCH N2_SCRATCH_OWN
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -21,11 +22,15 @@ T=$(mktemp -d)
 # They stop each process a case starts that can outlive it: a pid in $T/*.dpid (stub daemons,
 # servers) and a process group in $T/*.pgid (sigrun, R5, B4: the group holds the child shell and
 # what it started). A case removes its file once it has stopped the process. G1 sources the same
-# file in a driver of its own.
+# file in a driver of its own. A .pgid record is written right after the fork, before the child's
+# setpgrp: stopall also sends TERM to the recorded pid itself, so a child that has no group yet ends
+# before it can form one (J6). A trap that runs between the fork and the record still misses it.
+# G1 and J6 also record their driver ($T/<case>-drv.dpid) and the driver's helper in $T, so a
+# signal to lib_test during G1 or J6 stops them too.
 cat >"$T/stop.sh" <<'EOF'
 stopall() {
   for p in $(cat "$T"/*.dpid 2>/dev/null); do kill "$p" 2>/dev/null; done
-  for g in $(cat "$T"/*.pgid 2>/dev/null); do kill -s TERM -- "-$g" 2>/dev/null; done
+  for g in $(cat "$T"/*.pgid 2>/dev/null); do kill -s TERM -- "-$g" 2>/dev/null; kill -s TERM "$g" 2>/dev/null; done
   chmod -R u+rwx "$T"; rm -rf "$T"
 }
 trap stopall EXIT
@@ -135,6 +140,7 @@ waitin() {
 # perl resets INT to its default first: a background command of a non-interactive shell starts with
 # INT ignored, and a shell cannot trap a signal that was ignored when it started. The child leads a
 # process group of its own ($T/<case>.pgid), so lib_test's traps stop it and its helper (G1).
+# <signal> STOPALL (J3a): check the record (pgrec) and stop the child as lib_test's traps do (stoprec).
 sigrun() {
   # shellcheck disable=SC2086
   perl -e '$SIG{INT} = "DEFAULT"; setpgrp(0, 0); exec @ARGV or die' \
@@ -142,7 +148,13 @@ sigrun() {
   bp=$!
   echo "$bp" >"$T/$1.pgid"
   if waitready "$T/$1.ready" "$bp"; then
-    kill -s "$2" "$(cat "$T/$1.pid")"
+    if [ "$2" != STOPALL ]; then
+      kill -s "$2" "$(cat "$T/$1.pid")"
+    elif pgrec "$1" "$bp"; then
+      stoprec "$1"; ok "$1 sigrun records the child's process group; the traps' stopall ends it"
+    else
+      no "$1 sigrun records the child's process group; the traps' stopall ends it" "$why"; kill -s TERM -- "-$bp"
+    fi
     wait "$bp"
     rc=$?
   else
@@ -156,6 +168,16 @@ sigrun() {
 }
 # endgrp <pgid file>: TERM to the recorded process group (what is left of it), then remove the file.
 endgrp() { kill -s TERM -- "-$(cat "$1")" 2>/dev/null; rm -f "$1"; }
+# pgrec <case> <pid> (J3): $T/<case>.pgid names <pid>, and <pid> leads a live process group of its own.
+pgrec() {
+  [ "$(cat "$T/$1.pgid" 2>/dev/null)" = "$2" ] || { why="$T/$1.pgid holds '$(cat "$T/$1.pgid" 2>/dev/null)', want $2"; return 1; }
+  [ "$(ps -o pgid= -p "$2" | tr -d ' ')" = "$2" ] || { why="pid $2 does not lead a live process group"; return 1; }
+}
+# stoprec <case> (J3): stop what $T/<case>.pgid records as lib_test's traps do: a shell sources
+# $T/stop.sh with T = a folder that holds only a copy of the record, and exits (its EXIT trap).
+stoprec() {
+  mkdir "$T/stop-$1" && cp "$T/$1.pgid" "$T/stop-$1/" && T="$T/stop-$1" "$SH" -c '. "$0"; exit 0' "$T/stop.sh"
+}
 # piperun <case>: run $T/<case>.sh with stdout to a pipe whose reader has exited; sets rc.
 # perl resets PIPE to its default first: an ignored SIGPIPE is inherited (GitHub's Linux runner starts
 # jobs with it ignored), and dash cannot undo an ignore it started with; the child then gets EPIPE.
@@ -408,7 +430,11 @@ perl -e 'setpgrp(0, 0); exec @ARGV or die' env PATH="$CP" TMPDIR="$T/tmp-$c" "$S
 bp=$!
 echo "$bp" >"$T/$c.pgid"
 if waitready "$T/R5.ready" "$bp"; then
-  kill -s TERM -- "-$bp"
+  if pgrec $c "$bp"; then
+    stoprec $c; ok "J3b R5 records run-all's process group; the traps' stopall ends it"
+  else
+    no "J3b R5 records run-all's process group; the traps' stopall ends it" "$why"; kill -s TERM -- "-$bp"
+  fi
   wait "$bp"
   rc=$?
 else
@@ -951,7 +977,16 @@ bp=$!
 echo "$bp" >"$T/$c.pgid"
 # The server writes B4.ready after it has accepted base.sh's request and sent the partial body: by
 # then base.sh has made its schema temporary and set its trap, and curl is reading the body.
-if waitready "$T/$c.ready" "$bp"; then kill -s TERM -- "-$bp"; wait "$bp"; rc=$?; else NR=1; kill -s KILL -- "-$bp" 2>/dev/null; wait "$bp"; rc=$?; fi
+if waitready "$T/$c.ready" "$bp"; then
+  if pgrec $c "$bp"; then
+    stoprec $c; ok "J3c B4 records base.sh's process group; the traps' stopall ends it"
+  else
+    no "J3c B4 records base.sh's process group; the traps' stopall ends it" "$why"; kill -s TERM -- "-$bp"
+  fi
+  wait "$bp"; rc=$?
+else
+  NR=1; kill -s KILL -- "-$bp" 2>/dev/null; wait "$bp"; rc=$?
+fi
 endgrp "$T/$c.pgid"
 kill "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null; rm -f "$T/$c-srv.dpid"
 res "B4 a TERM during the schema fetch leaves no partial file" 143 no_partial B4
@@ -1258,6 +1293,9 @@ res "W5 start_web: a server that dies says web did not start, exit 1" 1 w5
 # W6: sigrun's not-ready branch: a child that exits 0 without the ready file sets NR=1, signals nothing.
 c=W6; prep $c own; ERR=$T/$c.err; child $c 0 'exit 0'; sigrun $c TERM
 if [ "$NR" = 1 ] && [ "$rc" = 0 ]; then ok "W6 sigrun: a child that exits before it is ready sets NR=1"; else no "W6 sigrun: a child that exits before it is ready sets NR=1" "NR=$NR rc=$rc"; fi
+# J3a: sigrun's process group record, checked and used by stop.sh while the child waits on its helper.
+c=J3a; prep $c own; ERR=$T/$c.err; child $c 0 "$(sigact $c)"; sigrun $c STOPALL
+res "J3a own dir kept after the traps' stopall stops sigrun's process group" 143 kept_n $c 143
 # W7, W8 (TF-2): the mock and the web server start with no host name lookup: they run with a
 # socket.getfqdn that raises (http.server's server_bind calls it, and it can stall on a runner).
 cat >"$T/nofqdn.py" <<'PY'
@@ -1363,24 +1401,24 @@ gone() {
 # G1 (TERM, INT): a driver sources $T/stop.sh (lib_test's own traps), starts a process group as the
 # cases do (a sh that waits on a helper that runs until it is signalled) and records it as they do,
 # then waits. lib_test signals the driver; when the driver has ended, lib_test sends WINCH to the
-# helper. The helper writes the name of the first signal it handles and exits: SIGTERM when the
-# driver's trap stopped it, SIGWINCH when the trap left it running. Pending signals are handled in
-# signal number order (TERM 15 before WINCH 28, on Linux and macOS), so no wait is timed.
+# helper. The helper writes the name of the first signal it gets and exits: SIGTERM when the
+# driver's trap stopped it, SIGWINCH when the trap left it running. It blocks TERM and WINCH and
+# takes one with sigwait: with both pending, the lower number (TERM 15 before WINCH 28, on Linux and
+# macOS), and no later signal can overwrite the name (J2). So no wait is timed. lib_test records the
+# driver ($T/<case>-drv.dpid) and the driver records the helper's group in $T too ($T/<case>-h.pgid),
+# so lib_test's own traps stop them if lib_test is signalled during G1.
 cat >"$T/g1h.py" <<'PY'
 import os, signal, sys
 got, pidf = sys.argv[1:3]
-def on(n, f):
-    with open(got + ".tmp", "w") as fh:
-        fh.write(signal.Signals(n).name)
-    os.rename(got + ".tmp", got)
-    sys.exit(0)
-signal.signal(signal.SIGTERM, on)
-signal.signal(signal.SIGWINCH, on)
+sigs = {signal.SIGTERM, signal.SIGWINCH}
+signal.pthread_sigmask(signal.SIG_BLOCK, sigs)
 with open(pidf + ".tmp", "w") as f:
     f.write(str(os.getpid()))
 os.rename(pidf + ".tmp", pidf)
-while True:
-    signal.pause()
+n = signal.sigwait(sigs)
+with open(got + ".tmp", "w") as fh:
+    fh.write(signal.Signals(n).name)
+os.rename(got + ".tmp", got)
 PY
 for s in TERM INT; do
   c=G1$s
@@ -1389,7 +1427,7 @@ for s in TERM INT; do
     echo "T='$T/$c-d'; mkdir -p \"\$T\""
     echo ". '$T/stop.sh'"
     echo "perl -e 'setpgrp(0, 0); exec @ARGV or die' sh -c 'python3 -I \"\$1\" \"\$2\" \"\$3\" & wait' sh '$T/g1h.py' '$T/$c.got' '$T/$c.hpid' &"
-    echo "g=\$!; echo \"\$g\" >\"\$T/$c.pgid\"; echo \"\$g\" >'$T/$c.gpid'"
+    echo "g=\$!; echo \"\$g\" >\"\$T/$c.pgid\"; echo \"\$g\" >'$T/$c-h.pgid'"
     echo "while [ ! -f '$T/$c.hpid' ]; do kill -0 \"\$g\" 2>/dev/null || exit 3; sleep 0.1; done"
     echo ": >'$T/$c.ready'"
     echo "wait"
@@ -1397,12 +1435,13 @@ for s in TERM INT; do
   # perl resets INT to its default (a background command starts with INT ignored).
   perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die' "$SH" "$T/$c.sh" >"$T/$c.out" 2>"$T/$c.err" &
   gp=$!
+  echo "$gp" >"$T/$c-drv.dpid"
   if waitready "$T/$c.ready" "$gp"; then
     kill -s $s "$gp"; wait "$gp"; grc=$?
     hp=$(cat "$T/$c.hpid")
     kill -s WINCH "$hp" 2>/dev/null
     waitready "$T/$c.got" "$hp"
-    gone "$hp"; gone "$(cat "$T/$c.gpid")"
+    gone "$hp"; gone "$(cat "$T/$c-h.pgid")"
     got=$(cat "$T/$c.got" 2>/dev/null)
     if [ "$grc" = "$want" ] && [ "$got" = SIGTERM ] && [ ! -e "$T/$c-d" ]; then
       ok "$c the traps stop a case's process group on $s (exit $want)"
@@ -1413,7 +1452,54 @@ for s in TERM INT; do
     wait "$gp"
     no "$c the traps stop a case's process group on $s (exit $want)" "the driver exited before it was ready; stderr: $(tr '\n' '|' <"$T/$c.err")"
   fi
+  endgrp "$T/$c-h.pgid"; rm -f "$T/$c-drv.dpid"
 done
+# J2: the G1 helper names the first signal it gets when a later one is pending with it: the helper is
+# stopped, gets TERM and then WINCH, and is continued. It must name SIGTERM.
+c=J2
+python3 -I "$T/g1h.py" "$T/$c.got" "$T/$c.hpid" &
+hp=$!
+echo "$hp" >"$T/$c.dpid"
+if waitready "$T/$c.hpid" "$hp"; then
+  kill -s STOP "$hp"; kill -s TERM "$hp"; kill -s WINCH "$hp"; kill -s CONT "$hp"
+  wait "$hp"
+  got=$(cat "$T/$c.got" 2>/dev/null)
+  if [ "$got" = SIGTERM ]; then ok "J2 the G1 helper names the first of two pending signals"; else no "J2 the G1 helper names the first of two pending signals" "the helper wrote ${got:-nothing}"; fi
+else
+  no "J2 the G1 helper names the first of two pending signals" "the helper exited before it was ready"
+fi
+rm -f "$T/$c.dpid"
+# J6: stopall signals a recorded pid that does not (yet) lead a process group. The driver records
+# the pid of a helper in its own process group (as a case does before the child's setpgrp runs) and
+# waits; lib_test TERMs the driver, waits for it, then sends WINCH to the helper. The helper names
+# SIGTERM when stopall signalled it, SIGWINCH when it did not.
+c=J6
+{
+  echo "T='$T/$c-d'; mkdir -p \"\$T\""
+  echo ". '$T/stop.sh'"
+  echo "python3 -I '$T/g1h.py' '$T/$c.got' '$T/$c.hpid' &"
+  echo "echo \$! >\"\$T/$c.pgid\""
+  echo "while [ ! -f '$T/$c.hpid' ]; do kill -0 \$! 2>/dev/null || exit 3; sleep 0.1; done"
+  echo ": >'$T/$c.ready'"
+  echo "wait"
+} >"$T/$c.sh"
+"$SH" "$T/$c.sh" >"$T/$c.out" 2>"$T/$c.err" &
+gp=$!
+echo "$gp" >"$T/$c-drv.dpid"
+if waitready "$T/$c.ready" "$gp"; then
+  hp=$(cat "$T/$c.hpid")
+  echo "$hp" >"$T/$c.dpid"
+  kill -s TERM "$gp"; wait "$gp"
+  kill -s WINCH "$hp" 2>/dev/null
+  waitready "$T/$c.got" "$hp"
+  gone "$hp"
+  got=$(cat "$T/$c.got" 2>/dev/null)
+  if [ "$got" = SIGTERM ]; then ok "J6 the traps signal a recorded pid that leads no process group"; else no "J6 the traps signal a recorded pid that leads no process group" "the helper got ${got:-nothing}"; fi
+else
+  wait "$gp"
+  no "J6 the traps signal a recorded pid that leads no process group" "the driver exited before it was ready; stderr: $(tr '\n' '|' <"$T/$c.err")"
+fi
+rm -f "$T/$c-drv.dpid" "$T/$c.dpid"
 
 # G2: n2_mark and the start time n2_scan reads use one clock. Real processes, the real n2_mark (in
 # new_run), the real ps. A process that started before new_run is skipped; one that started after it
@@ -1517,15 +1603,24 @@ mkdir -p "$T/psdst"
 printf '#!/bin/sh\ncase "$*" in *lstart=*) ;; *) exec %s "$@" ;; esac\n%s "$@" | exec python3 -I %s %s 1793515200\n' \
   "'$(command -v ps)'" "'$(command -v ps)'" "'$T/g3ps.py'" "'$T/lsofx.pid'" >"$T/psdst/ps"
 chmod +x "$T/psdst/ps"
-c=G3; cxprep $c caller; CP=$T/psdst:$T/lsofg:$T/bin; XENV="$XENV TZ=America/New_York"
-child $c 0 "N2_PROC='$T/noproc'; new_run x; N2_PART_MARK=1793514600; N2D_READY='$T/$c.ready' '$T/dmn/codex' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" 'G3 stub'); cat '$T/$c.dpid' >'$T/lsofx.pid'; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
-run $c
+# G3b (J4): the same mark and start with TZ=Europe/Berlin, east of UTC (CET, UTC+1 on that day): a
+# conversion in the local time zone (time.mktime) makes the start an hour earlier, before the mark.
 g3() {
-  [ "$(cat "$T/G3.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/G3.dpid"), .*: no working folder from lsof)\$" "$T/G3.out" ||
-    { why="rc $(cat "$T/G3.rc"), stdout: $(tr '\n' '|' <"$T/G3.out")"; return 1; }
+  [ "$(cat "$T/$c.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $(cat "$T/$c.dpid"), .*: no working folder from lsof)\$" "$T/$c.out" ||
+    { why="rc $(cat "$T/$c.rc"), stdout: $(tr '\n' '|' <"$T/$c.out")"; return 1; }
 }
-res "G3 lsof path: a start in the repeated DST hour after the mark is not before it" 0 g3
-kill "$(cat "$T/G3.dpid")" 2>/dev/null; rm -f "$T/G3.dpid" "$T/lsofx.pid"
+for c in G3 G3b; do
+  if [ $c = G3 ]; then
+    tz=America/New_York; d="G3 lsof path: a start in the repeated DST hour after the mark is not before it"
+  else
+    tz=Europe/Berlin; d="G3b lsof path, TZ=Europe/Berlin (east of UTC): a start after the mark is not before it"
+  fi
+  cxprep $c caller; CP=$T/psdst:$T/lsofg:$T/bin; XENV="$XENV TZ=$tz"
+  child $c 0 "N2_PROC='$T/noproc'; new_run x; N2_PART_MARK=1793514600; N2D_READY='$T/$c.ready' '$T/dmn/codex' & echo \$! >'$T/$c.dpid'; $(waitin "$T/$c.ready" "$T/$c.dpid" "$c stub"); cat '$T/$c.dpid' >'$T/lsofx.pid'; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+  res "$d" 0 g3
+  kill "$(cat "$T/$c.dpid")" 2>/dev/null; rm -f "$T/$c.dpid" "$T/lsofx.pid"
+done
 
 # G4: an N2_PART_MARK from the environment is not used (lib.sh unsets it; new_run sets it).
 c=G4; prep $c own; ERR=$T/$c.err; PRE="export N2_PART_MARK=9999999999"

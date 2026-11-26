@@ -70,7 +70,6 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 |----|------|---------|-------|------------|------|
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | DONE | implementation | PR #138 merged 7ecef460; acceptance exit 0 @ 86ddb8e3 (real codex 0.172.0; PC10 PC16 verified); CI run 45735047521 green (ubuntu, macos, windows) |
 | PC-7 | `docs/premises.md` and `docs/live-checks.md`: `Codex` headers, rows PC1-PC16, LC-CX1, Codex method lines | PC-1, PC-3, PC-4, PC-5, PC-6, OC-1, PC-11, PC-13 | DONE | mechanical | PR #199 merged 7d143eaf; acceptance exit 0 on merged tree (check-premises ok; PC1-PC16 rows 16; Codex headers in premises and live-checks; LC-CX1 row; minimum_agent_versions_match_premises ok); CI run 45845601705 green on aea80371 |
-| PC-8 | check-premises.sh: the name scan exempts the verbatim schemas; an indented table row is not a premise row | PC-1 | DONE | implementation | PR #127 merged 73a4ff40; acceptance exit 0 on merged tree (test-check-premises 99 cases); CI run 45704926916 green (ubuntu, macos, windows) |
 | PC-9 | `scripts/premises/ver_test.sh`: its repo copy includes every evidence path the premise rows cite | PC-1 | DONE | mechanical | PR #136 merged 256e5cae; acceptance exit 0 on merged tree (ver_test 62, test-check-premises 102); CI run 45716799629 green (ubuntu, macos, windows) |
 | PC-10 | Premise harness privacy: TZ=UTC for Codex runs; scrub OS in user agents and double-slash scratch paths | PC-2 | DONE | implementation | PR #141 merged a1c0ce8a; acceptance exit 0 on merged tree (scrub 70, lib 156, mock 56); CI run 45716982108 green (ubuntu, macos, windows) |
 | PC-11 | Scrub: platformOs, login shell and macOS writable roots in Codex captures; namespace tool descriptions; re-scrub committed Codex fixtures | PC-3, PC-4, PC-5, PC-6, PC-12 | DONE | implementation | PR #186 merged 6fb78bc7; acceptance exit 0 on merged tree (rescrub --check 288 files, scrub 100, lib 157, check-premises ok, fixture grep empty); CI run 45796466819 green on 738aaa3f |
@@ -111,8 +110,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-15 | Boundary check `client_boundary` (K§6.1.4) with its exception list | CC-14 | TODO | judgment | — |
 | CC-16 | Base-spec notes: §8.1 (phase 3 features), §8.4 (`ZYGO_AGENT` ids, client denylist rows), §8.8 (superseded) | BS-1, CC-12, CC-15 | TODO | mechanical | — |
 | TF-1 | Tests: a child that exits before reading stdin does not fail the test (BrokenPipe) | — | DONE | mechanical | PR #193 merged 245bae26; acceptance exit 0 on merged tree (compact_cmd 6 passed, 19 ignored); CI run 45810685136 green on 1082c520 |
-| TF-2 | CI runs the premise test scripts | PC-13 | PLANNED | mechanical | — |
-| TF-3 | check-premises.sh: no bash warning on a binary file in the name scan | TF-2 | PLANNED | implementation | — |
+| TF-2 | CI runs the premise test scripts | PC-13 | DONE | mechanical | PR #197 merged 80a4f52b; acceptance exit 0 on merged tree (lib tests ok (183), scrub 156, rescrub 172, check-premises ok P1 … PC19, ci.yml names 5 scripts); CI run 45888172612 green on d10d771a (test ubuntu/macos/windows, premises ubuntu/macos) |
+| TF-3 | check-premises.sh: no bash warning on a binary file in the name scan | TF-2 | IN-PROGRESS | implementation | .worktrees/phase4/TF-3 (branch phase-4--TF-3) |
 
 ## Log
 
@@ -198,3 +197,5 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | TF-3 added, PLANNED (author's call): under bash ≥4.4 name_scan (check-premises.sh:431) passes a binary file's NUL through a command substitution, the stderr warning fails test-check-premises H1; fix with tr as scan; 3 bash cases; edge TF-2 → TF-3. |
 | 2026-11-26 | BS-1 scope (author's call): a §7.4 note too; resolution does not read dialect_models (resolve.rs), it stays v2. |
 | 2026-11-26 | CC-0 stays BLOCKED: origin/phase-3 is not in main (1334 commits, checked 2026-11-26); merging it is the operator's. |
+| 2026-11-26 | TF-2 DONE: 3 review rounds; round 2 G1-G6 fixed, G6 rest/G7/G8 rejected; round 3 H2-H6 fixed (63af9148), H1 rejected (two lib_test runs at once fail closed by design; header says so); PR #197 merged 80a4f52b. |
+| 2026-11-26 | TF-3 IN-PROGRESS, stacked on TF-2 then retargeted to phase-4 after #197 merged. |
