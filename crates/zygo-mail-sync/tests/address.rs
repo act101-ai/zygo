@@ -133,3 +133,9 @@ fn ulid_file_refuses_other_names() {
         assert_eq!(ulid_file(s), None, "{s:?}");
     }
 }
+
+#[test] // A1: S§7.2 (rewritten): the lines of a `to` with `@` that is not an address
+fn each_addr_error_has_its_line() {
+    assert_eq!(AddrError::Reserved.line(), "zygo: all, cli and zygo have no address; send to <name> or <name>@<host>");
+    assert_eq!(AddrError::BadForm.line(), "zygo: not an address; send to a member name, a pane key, all, or <name>@<host>");
+}
