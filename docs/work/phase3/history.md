@@ -122,6 +122,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | DONE | judgment | 3a9dbffb · 3c10f93d · f788f46d · acceptance pass (shaping 14) · PR #198 |
 | SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | DONE | judgment | plan 5441dd4c · node d37419f1, 927b1246, 86db8ba5 · acceptance pass (trim 17 listed; reinject trim 17 passed; zygo-hooks 344 passed) · PR #191 |
 | OS-44 | Read-back bytes count what the agent kept, not the reply sent | OS-26, OS-5 | DROPPED(the server cannot know what an agent keeps above its cut: OpenCode config limits and whole lines; Claude Code API token count; review of 90e88962) | judgment | b14a4225 · 6217a6ff · round 1 discarded (90e88962) · PR #207 |
+| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4, OS-46 | DROPPED(premise false: O§8.2 floors are per shaper, a clean view has no 8 KiB floor; a cut under the threshold breaks O-C9; review of 0fd61644) | judgment | 8883d724 · 65cdeb63 · round 1 discarded (0fd61644) · PR #195 |
 
 ## Log
 

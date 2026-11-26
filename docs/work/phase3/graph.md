@@ -191,7 +191,6 @@ Session text (T, SX nodes):
 
 | ID | Node | Depends | State | Capability | Refs |
 |----|------|---------|-------|------------|------|
-| OS-43 | Cap every shaped view at 8 KiB, kind view or not | OS-41, SX-4, OS-46 | PLANNED | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
@@ -419,3 +418,4 @@ Session text (T, SX nodes):
 | 2026-11-26 | OS-46 added: OS-45 review F3; O-C10 bounds each Bash call but O§7.11 bounds each statement, so on a rollback-journal db the hook's read and write can each wait HOOK_DB_BOUND |
 | 2026-11-26 | OS-46 DONE: hook uses open_bounded_total (one wait budget per Bash call); MCP keeps per-statement open; OS-43 now depends on OS-46 (both change trim.rs); review F1-F6, F8 fixed, F7 recorded here · PR #205 |
 | 2026-11-26 | OS-44 DROPPED: kept_bytes modelled each agent's cut, but OpenCode keeps whole lines under user-config limits and Claude Code cuts by an API token count and keeps characters; no premise states what is kept; O§6.4 Size limit stated as permanent · PR #207 |
+| 2026-11-26 | OS-43 DROPPED: O§8.2 floors are per shaper, so the clean-shaped log case has no 8 KiB floor; the log view under the threshold dropped failure and ERROR lines (O-C9, O§8.1); spec re-plan withdrawn · PR #195 |
