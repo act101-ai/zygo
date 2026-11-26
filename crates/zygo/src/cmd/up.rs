@@ -50,7 +50,7 @@ pub fn run(a: &UpArgs) -> i32 {
     };
     // R§9.4, R§12: the team layer gives `[limits] max_members` only.
     let verb = VerbCtx { slash: false, save: false, session_dir: SessionDir::from_env(), paths: paths.clone() };
-    let (config, lines) = with_team(&verb, merged.config.clone());
+    let (config, lines) = with_team(&verb, &merged, super::verbs::team(&verb, "up"));
     for l in &lines {
         print_err(&format!("{l}\n"));
     }
@@ -73,17 +73,24 @@ pub fn run(a: &UpArgs) -> i32 {
 /// `cmd/doctor.rs`).
 fn default_loadout_set(m: &Merged) -> bool { m.source_of("workspace.default_loadout") == Layer::User }
 
-/// R§9.4, R§12: `user` with the team `[limits] max_members`, and the lines `run` prints on stderr: the team-merged
-/// warnings, as the launcher prints them (`zygo-launch/src/launcher.rs:306-308`); or, when the team layer cannot be
-/// read or the team-merged config does not load, one line, and the user config only (as `zygo doctor`,
+/// R§9.4, R§12: the user config of `user` with the team `[limits] max_members` of the team read `team`, and the lines
+/// `run` prints on stderr: the warnings the team layer causes, as the launcher prints them
+/// (`zygo-launch/src/launcher.rs:306-308`): the team-merged warnings that `user` does not have, less `MODEL_IGNORED`
+/// (a user-layer warning; `zygo hook` drops it the same way, `zygo-work/src/hooks.rs:74-76`); or, when the team layer
+/// cannot be read or the team-merged config does not load, one line, and the user config only (as `zygo doctor`,
 /// `cmd/doctor.rs:414-426`): `up` needs no team server.
-fn with_team(verb: &VerbCtx, user: Config) -> (Config, Vec<String>) {
-    let why = match super::verbs::team(verb, "up") {
-        Ok(None) => return (user, vec![]),
+fn with_team(verb: &VerbCtx, user: &Merged, team: anyhow::Result<Option<toml::Table>>) -> (Config, Vec<String>) {
+    let why = match team {
+        Ok(None) => return (user.config.clone(), vec![]),
         Ok(Some(t)) => match zygo_config::load(&LoadContext { paths: verb.paths.clone(), repo: None, team: Some(t) }) {
             Ok(m) => {
-                let lines = m.warnings.iter().map(|w| format!("zygo: {w}")).collect();
-                return (with_team_max_members(user, Some(&m.config)), lines);
+                let lines = m
+                    .warnings
+                    .iter()
+                    .filter(|w| w.as_str() != zygo_config::MODEL_IGNORED && !user.warnings.contains(w))
+                    .map(|w| format!("zygo: {w}"))
+                    .collect();
+                return (with_team_max_members(user.config.clone(), Some(&m.config)), lines);
             }
             Err(e) => e.to_string(),
         },
@@ -92,7 +99,7 @@ fn with_team(verb: &VerbCtx, user: Config) -> (Config, Vec<String>) {
             s.strip_prefix("zygo up: ").unwrap_or(&s).to_string()
         }
     };
-    (user, vec![format!("zygo up: team config not read ({}); [limits] max_members from user config", zygo_core::esc(&why))])
+    (user.config.clone(), vec![format!("zygo up: team config not read ({}); [limits] max_members from user config", zygo_core::esc(&why))])
 }
 
 /// R§9.4, R§12: `user` with `[limits] max_members` from the team-merged config `team` (which has the user layer over
@@ -125,6 +132,10 @@ fn opts(a: &UpArgs, cwd: PathBuf, zygo: PathBuf, paths: Paths, config: Config, e
         git: None,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/dead_port/mod.rs"]
+mod dead_port;
 
 #[cfg(test)]
 mod tests {
@@ -183,27 +194,27 @@ mod tests {
         assert_eq!(c.limits.max_members, 6);
     }
 
-    /// R§9.4, R§12, R5: the team read of `run`, driven through the session `team.toml` of `verbs::team`. A team
-    /// `max_members` is taken, with the team-merged warnings as the launcher prints them; a team layer that cannot be
-    /// read or loaded gives the user config and one line (as `zygo doctor`). Kills: `run` loading with `team: None`
-    /// only, a refusal on a team error, and dropped team warnings.
+    /// R§9.4, R§12, R5: `with_team` through the session `team.toml` of `verbs::team`: a team `max_members` is taken
+    /// with the team-layer warning; a team layer that cannot be read or loaded gives the user config and one line (as
+    /// `zygo doctor`). Kills: a refusal on a team error and a dropped team warning. That `run` calls `with_team` is
+    /// proven by `up_reads_the_team_max_members_of_the_session` (`crates/zygo/tests/workspace_restore.rs`).
     #[test]
     fn team_read_of_run() {
         let t = tempfile::tempdir().unwrap();
         let dir = crate::cmd::verbs::tests::sd(t.path());
         let ctx = crate::cmd::compact::tests::ctx(t.path(), Some(&dir));
-        let user = || zygo_config::load(&zygo_config::LoadContext { paths: ctx.paths.clone(), repo: None, team: None }).unwrap().config;
-        let default = user().limits.max_members;
+        let user = || zygo_config::load(&zygo_config::LoadContext { paths: ctx.paths.clone(), repo: None, team: None }).unwrap();
+        let default = user().config.limits.max_members;
         // No team layer: the user config, no line.
-        assert_eq!(with_team(&ctx, user()).1, Vec::<String>::new());
+        assert_eq!(with_team(&ctx, &user(), crate::cmd::verbs::team(&ctx, "up")).1, Vec::<String>::new());
         // A team value, and the AU22 warning of a team `[loadout]`.
         std::fs::write(dir.join("team.toml"), "[limits]\nmax_members = 4\n[loadout.x]\n").unwrap();
-        let (c, lines) = with_team(&ctx, user());
+        let (c, lines) = with_team(&ctx, &user(), crate::cmd::verbs::team(&ctx, "up"));
         assert_eq!(c.limits.max_members, 4);
         assert_eq!(lines, ["zygo: [loadout] and [workspace] are read from user config only; ignored"]);
         // A team layer that cannot be read.
         std::fs::write(dir.join("team.toml"), "[limits\n").unwrap();
-        let (c, lines) = with_team(&ctx, user());
+        let (c, lines) = with_team(&ctx, &user(), crate::cmd::verbs::team(&ctx, "up"));
         assert_eq!(c.limits.max_members, default);
         assert_eq!(
             lines,
@@ -211,9 +222,105 @@ mod tests {
         );
         // A team layer that does not load.
         std::fs::write(dir.join("team.toml"), "[limits]\nmax_members = \"x\"\n").unwrap();
-        let (c, lines) = with_team(&ctx, user());
+        let (c, lines) = with_team(&ctx, &user(), crate::cmd::verbs::team(&ctx, "up"));
         assert_eq!(c.limits.max_members, default);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("zygo up: team config not read (") && lines[0].ends_with("); [limits] max_members from user config"), "{lines:?}");
+    }
+
+    /// R§9.4, FX-14 (2): `up` prints the warnings the team layer causes, not the user-layer ones (`layers.rs:330-332`,
+    /// `MODEL_IGNORED` `layers.rs:499`). Kills: printing every team-merged warning.
+    #[test]
+    fn team_read_prints_only_team_layer_warnings() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = crate::cmd::verbs::tests::sd(t.path());
+        let ctx = crate::cmd::compact::tests::ctx(t.path(), Some(&dir));
+        let model = "[[model]]\nid = \"m1\"\n[model.facts]\nreasoning = \"always\"\neffort_levels = [\"low\", \"high\"]\ncontext_window = 200000\nmax_output_tokens = 64000\n\
+                     [[model.provider]]\nname = \"p\"\nbase_url = \"https://p.example.invalid\"\nupstream_model = \"u\"\ndialects = [\"anthropic\"]\nkey = \"env:ZYGO_FX14_KEY\"\n";
+        std::fs::write(&ctx.paths.config_file, format!("[[marketplace]]\nname = \"act101\"\nsource = \"github:other/x\"\n{model}")).unwrap();
+        std::fs::write(dir.join("team.toml"), "[limits]\nmax_members = 4\n[loadout.x]\n[statusline]\nstyle = \"x\"\n").unwrap();
+        let user = zygo_config::load(&zygo_config::LoadContext { paths: ctx.paths.clone(), repo: None, team: None }).unwrap();
+        assert_eq!(user.warnings, ["config: user marketplace[0]: a user entry cannot change the built-in source; ignored"]);
+        let (c, lines) = with_team(&ctx, &user, crate::cmd::verbs::team(&ctx, "up"));
+        assert_eq!(c.limits.max_members, 4);
+        assert_eq!(lines, [
+            "zygo: config: [statusline] in team config ignored; only user config may set them",
+            "zygo: [loadout] and [workspace] are read from user config only; ignored",
+        ]);
+    }
+
+    /// R§9.4, FX-14 (4): the server branch of `verbs::team` (`verbs.rs:118-127`) as `up` uses it: the user
+    /// `max_members`, and one line or none. Kills: a team error that refuses, drops the line or loses the user value.
+    #[test]
+    fn team_read_of_the_server_branch() {
+        const TAIL: &str = "); [limits] max_members from user config";
+        let t = tempfile::tempdir().unwrap();
+        let ctx = crate::cmd::compact::tests::ctx(t.path(), None);
+        let user = |cfg: &str| {
+            std::fs::write(&ctx.paths.config_file, format!("[limits]\nmax_members = 3\n{cfg}")).unwrap();
+            zygo_config::load(&zygo_config::LoadContext { paths: ctx.paths.clone(), repo: None, team: None }).unwrap()
+        };
+        // A file-only store: no OS store (Decision 3).
+        let keys = ctx.paths.data_dir.join("keys.toml");
+        let store = || -> Box<dyn zygo_config::keys::SecretStore> {
+            Box::new(zygo_config::keys::Auto::new(None, zygo_config::keys::FileStore::new(keys.clone())))
+        };
+        let read = |u: &zygo_config::Merged| with_team(&ctx, u, crate::cmd::verbs::team_with(&ctx, "up", &store));
+        // `from_config`: no server, no team layer, no line.
+        let (c, lines) = read(&user(""));
+        assert_eq!((c.limits.max_members, lines), (3, vec![]));
+        // `from_config` refused: no token.
+        let closed = super::dead_port::closed_url();
+        let (c, lines) = read(&user(&format!("[server]\nurl = \"{closed}\"\n")));
+        assert_eq!(c.limits.max_members, 3);
+        assert_eq!(lines, [format!("zygo up: team config not read (serve mode needs a team token: [server] token is not set or names an empty value{TAIL}")]);
+        // Server unreachable: the closed port, token `keychain:fx14` from the keys file (Decision 3).
+        std::fs::create_dir_all(&ctx.paths.data_dir).unwrap();
+        std::fs::write(ctx.paths.data_dir.join("keys.toml"), "fx14 = \"t\"\n").unwrap();
+        let (c, lines) = read(&user(&format!("[server]\nurl = \"{closed}\"\ntoken = \"keychain:fx14\"\n")));
+        assert_eq!((c.limits.max_members, lines.len()), (3, 1), "{lines:?}");
+        assert!(lines[0].starts_with("zygo up: team config not read (server unreachable: ") && lines[0].ends_with(TAIL), "{lines:?}");
+        // Team config refused: a loopback server that answers 401.
+        let body = serde_json::json!({ "error": { "type": "bad_token", "message": "no" } }).to_string();
+        let sd = crate::cmd::compact::tests::canned_session(t.path(), "S1", 401, body);
+        let url = std::fs::read_to_string(zygo_core::session_dir::SessionDir::new(sd).url()).unwrap();
+        let (c, lines) = read(&user(&format!("[server]\nurl = \"{url}\"\ntoken = \"keychain:fx14\"\n")));
+        assert_eq!(c.limits.max_members, 3);
+        assert_eq!(lines, [format!("zygo up: team config not read (team config refused: bad_token: no{TAIL}")]);
+        // A `base` load that fails (Decision 5).
+        let u = user("");
+        std::fs::write(&ctx.paths.config_file, "[limits\n").unwrap();
+        let (c, lines) = read(&u);
+        assert_eq!((c.limits.max_members, lines.len()), (3, 1), "{lines:?}");
+        assert!(lines[0].starts_with("zygo up: team config not read (user config ") && lines[0].ends_with(TAIL), "{lines:?}");
+    }
+
+    /// FX-14 R1: `verbs::team_with` builds the secret store only after `base` loads and only when `[server] url` is
+    /// set (the store is read only then, `zygo-launch/src/serve_client.rs:304`). A factory that records its calls
+    /// stands in for `default_store`; no OS store. Kills: a store (an OS keychain probe) built before `base` or with no
+    /// server.
+    #[test]
+    fn team_read_builds_the_store_only_after_base_and_with_a_server() {
+        let t = tempfile::tempdir().unwrap();
+        let ctx = crate::cmd::compact::tests::ctx(t.path(), None);
+        let called = std::cell::Cell::new(0);
+        let keys = ctx.paths.data_dir.join("keys.toml");
+        let store = || -> Box<dyn zygo_config::keys::SecretStore> {
+            called.set(called.get() + 1);
+            Box::new(zygo_config::keys::Auto::new(None, zygo_config::keys::FileStore::new(keys.clone())))
+        };
+        // `base` fails: no store.
+        std::fs::write(&ctx.paths.config_file, "[limits\n").unwrap();
+        assert!(crate::cmd::verbs::team_with(&ctx, "up", &store).is_err());
+        assert_eq!(called.get(), 0);
+        // No `[server]`: no team layer, no store.
+        std::fs::write(&ctx.paths.config_file, "").unwrap();
+        assert!(crate::cmd::verbs::team_with(&ctx, "up", &store).unwrap().is_none());
+        assert_eq!(called.get(), 0);
+        // A server: the store is built once.
+        let closed = super::dead_port::closed_url();
+        std::fs::write(&ctx.paths.config_file, format!("[server]\nurl = \"{closed}\"\n")).unwrap();
+        assert!(crate::cmd::verbs::team_with(&ctx, "up", &store).is_err());
+        assert_eq!(called.get(), 1);
     }
 }
