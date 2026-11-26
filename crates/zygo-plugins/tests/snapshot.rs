@@ -29,7 +29,7 @@ fn embedded_has_one_command_per_verb() {
         let t = file(&format!("commands/{}.md", v.name));
         assert!(t.contains("disable-model-invocation: true"), "{}", v.name);
         assert!(t.contains("description: \""), "{}", v.name);
-        if v.name != "down" {
+        if v.name != "down" && v.name != "mail" {
             assert!(t.contains(&format!("zygo {} $ARGUMENTS", v.name)), "{}", v.name);
         }
     }
@@ -44,6 +44,12 @@ fn embedded_has_one_command_per_verb() {
     assert!(down.contains("disable-model-invocation: true"), "{down}");
     assert!(down.contains("If this text reaches you, /zygo:down did not run: tell the user that it failed. Do not run zygo down in a shell: it stops the workspace of the current folder, not the workspace of this session."), "{down}");
     assert!(!down.contains("$ARGUMENTS"), "{down}");
+    let mail = file("commands/mail.md");
+    // M§8: `/zygo:mail` lists only; the fallback runs only `zygo mail ls`, and send and read stay MCP tools.
+    assert!(mail.contains("argument-hint: \"[ls [<name>]]\"\n"), "{mail}");
+    assert!(mail.contains("zygo mail ls $ARGUMENTS"), "{mail}");
+    assert!(!mail.contains("zygo mail $ARGUMENTS"), "{mail}");
+    assert!(mail.contains("send and read are MCP tools"), "{mail}");
     assert!(!file("commands/ls.md").contains("argument-hint"));
     assert!(!file("commands/workspace.md").contains("argument-hint"));
 }

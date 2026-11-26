@@ -566,7 +566,10 @@ pub fn run() -> i32 {
     if !matches!(cli.command, Cmd::Hook { .. } | Cmd::Mcp { .. } | Cmd::Ws(_)) {
         let p = Paths::from_env();
         zygo_results::sweep(&p.cache_dir, &p.workspace_cache_dir(), SystemTime::now());
-        mail::sweep(&p, SystemTime::now());
+        // OP5: native Windows has no workspace features, so it has no mail sweep (the cfg of `op5`).
+        if !cfg!(windows) {
+            mail::sweep(&p, SystemTime::now());
+        }
     }
     let command = match cli.command {
         Cmd::Ws(a) => return ws::dispatch(a),

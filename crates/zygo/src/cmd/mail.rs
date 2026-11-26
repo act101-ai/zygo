@@ -3,11 +3,12 @@
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, bail};
 use clap::{Args, Subcommand};
 use zygo_core::esc;
+use zygo_core::verbs::MAIL_SLASH_ARGS;
 use zygo_core::paths::Paths;
 use zygo_workspace::identity::{valid_ws_id, workspace_id};
 use zygo_workspace::mail::{self, mail_dir, names, store, wake, MailError, BODY_MAX};
@@ -23,8 +24,9 @@ use super::{
 /// The text when neither `ZYGO_WORKSPACE` nor the checkout of the current folder names a workspace (as `zygo workspace`).
 const NO_WORKSPACE: &str = "no workspace for this session or folder";
 
-/// The usage line of `/zygo:mail` (D2).
-const SLASH_USAGE: &str = "usage: /zygo:mail [ls [<name>]]";
+/// The git bound of the `/zygo:mail` checkout lookup: the bound of `admin::status`, so `/zygo:mail` fits the 4.5 s
+/// hook bound as `/zygo:workspace` does (`crates/zygo-workspace/src/admin.rs:29-30`, W§12). The CLI keeps `GIT_BOUND`.
+const SLASH_GIT_BOUND: Duration = Duration::from_secs(2);
 
 #[derive(Args)]
 pub struct MailArgs {
@@ -67,7 +69,7 @@ pub fn run(a: MailArgs) -> i32 {
         Ok(c) => c,
         Err(code) => return code,
     };
-    let ws = match workspace_of(&paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref()) {
+    let ws = match workspace_of(&paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref(), GIT_BOUND) {
         Ok(w) => w,
         Err(e) => return finish(Err(e)),
     };
@@ -86,7 +88,17 @@ pub fn run(a: MailArgs) -> i32 {
                     return finish(Err(UsageError("zygo mail read: no member for this pane; pass --name".into()).into()))
                 }
             };
-            finish(read_text(&paths, &ws, &keys, max))
+            let (text, failed) = read_text(&paths, &ws, &keys, max);
+            if !text.is_empty() {
+                print_out(&format!("{text}\n"));
+            }
+            match failed {
+                Some(e) => {
+                    print_err(&format!("{e}\n"));
+                    1
+                }
+                None => 0,
+            }
         }
         Some(MailCmd::Send { to, subject, file, stdin }) => {
             let cfg = match user_config_or_exit(&paths, "mail") {
@@ -119,7 +131,7 @@ pub fn run(a: MailArgs) -> i32 {
             let keys: Vec<String> = r.sent.iter().map(|s| s.key.clone()).collect();
             wake::after_send(&paths, &ws, &tmux_program(), &keys, &cfg.mail);
             for x in &r.refused {
-                print_err(&format!("{}\n", x.error));
+                print_err(&format!("{}; to {}\n", x.error, member(&ws, &x.key)));
             }
             if r.refused.is_empty() { 0 } else { 1 }
         }
@@ -133,29 +145,35 @@ pub fn verb(ctx: &VerbCtx, args: &[String]) -> anyhow::Result<String> {
         [] => None,
         [l] if l == "ls" => None,
         [l, n] if l == "ls" => Some(n.as_str()),
-        _ => return Err(UsageError(SLASH_USAGE.into()).into()),
+        _ => return Err(UsageError(format!("usage: /zygo:mail {MAIL_SLASH_ARGS}")).into()),
     };
     let cwd = std::env::current_dir().map_err(|e| anyhow!(cwd_error(&e)))?;
-    let ws = workspace_of(&ctx.paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref())?;
+    let ws = workspace_of(&ctx.paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref(), SLASH_GIT_BOUND)?;
     ls_text(&ctx.paths, &ws, name)
 }
 
 /// The command-start mail sweep (M§5, AU71): `cur/` files older than `[mail] keep` in each workspace. A user config
-/// that does not load or a `keep` that does not parse gives no sweep (Open 2). Every error is ignored.
+/// that does not load or a `keep` that does not parse gives no sweep (Open 2). A workspace folder or a `mail/` folder
+/// that is a link is not opened (as `admin.rs:410`). Every error is ignored.
 pub(crate) fn sweep(paths: &Paths, now: SystemTime) {
     let Ok(cfg) = user_config(paths) else { return };
     let Some(keep) = zygo_config::parse_duration(&cfg.mail.keep) else { return };
     let Ok(entries) = std::fs::read_dir(paths.workspaces_dir()) else { return };
+    let real_dir = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
     for e in entries.flatten() {
         let name = e.file_name();
         let Some(id) = name.to_str().filter(|s| valid_ws_id(s)) else { continue };
-        store::sweep(&mail_dir(paths, id), keep, now);
+        let dir = mail_dir(paths, id);
+        if !real_dir(&paths.workspaces_dir().join(id)) || !real_dir(&dir) {
+            continue;
+        }
+        store::sweep(&dir, keep, now);
     }
 }
 
 /// The workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`, with the error texts of `zygo workspace`
 /// (`admin::status`). A state folder that is a link reads as none.
-fn workspace_of(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> anyhow::Result<Workspace> {
+fn workspace_of(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>, git_bound: Duration) -> anyhow::Result<Workspace> {
     let (id, by_env) = match zygo_workspace {
         Some(v) => {
             let id = v
@@ -165,7 +183,7 @@ fn workspace_of(paths: &Paths, cwd: &Path, zygo_workspace: Option<&OsStr>) -> an
             (id.to_string(), true)
         }
         None => {
-            let (co, _, _) = find_checkout(cwd, GIT_BOUND).map_err(|_| anyhow!(NO_WORKSPACE))?;
+            let (co, _, _) = find_checkout(cwd, git_bound).map_err(|_| anyhow!(NO_WORKSPACE))?;
             (workspace_id(&co.common_dir), false)
         }
     };
@@ -207,27 +225,43 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
     Ok(lines.join("\n"))
 }
 
+/// `<key> (<name>)`, or `<key>` for a member with no valid name.
+fn member(ws: &Workspace, key: &str) -> String {
+    match ws.members.get(key).and_then(|m| m.valid_name()) {
+        Some(n) => format!("{} ({})", esc(key), esc(n)),
+        None => esc(key),
+    }
+}
+
 /// `read` (D3, D4): at most `max` messages in all over `keys`, each as `<id> <from> <sent_at> <subject>` and its
-/// body lines indented by two spaces.
-fn read_text(paths: &Paths, ws: &Workspace, keys: &[String], max: usize) -> anyhow::Result<String> {
+/// body lines indented by two spaces. A member that fails stops the read: the text has the messages already read
+/// (moved to `cur/`), and the error names the member.
+fn read_text(paths: &Paths, ws: &Workspace, keys: &[String], max: usize) -> (String, Option<String>) {
     let dir = mail_dir(paths, &ws.id);
     let mut lines = Vec::new();
     let mut left = max;
+    let mut failed = None;
     for k in keys {
         if left == 0 {
             break;
         }
-        let got = store::read(&dir, k, left)?;
+        let got = match store::read(&dir, k, left) {
+            Ok(g) => g,
+            Err(e) => {
+                failed = Some(format!("{e}; mail of {}", member(ws, k)));
+                break;
+            }
+        };
         left = left.saturating_sub(got.len());
         for m in got {
             lines.push(format!("{} {} {} {}", esc(&m.id), esc(&m.from), esc(&m.sent_at), esc(&m.subject)));
             lines.extend(m.body.lines().map(|l| format!("  {}", esc(l))));
         }
     }
-    if lines.is_empty() {
-        return Ok("no new messages".into());
+    if lines.is_empty() && failed.is_none() {
+        return ("no new messages".into(), None);
     }
-    Ok(lines.join("\n"))
+    (lines.join("\n"), failed)
 }
 
 /// The body of `send` (D5): the file, else stdin when `stdin`, else empty. At most `BODY_MAX + 1` bytes are read; a
@@ -267,6 +301,13 @@ mod tests {
             assert!(e.downcast_ref::<UsageError>().is_some(), "{a:?}");
             assert_eq!(e.to_string(), "usage: /zygo:mail [ls [<name>]]", "{a:?}");
         }
+    }
+
+    /// M2: the slash checkout lookup has the 2 s bound of `admin::status`, so `/zygo:mail` fits the 4.5 s hook bound.
+    #[test]
+    fn slash_git_bound_is_that_of_workspace_status() {
+        assert_eq!(super::SLASH_GIT_BOUND, std::time::Duration::from_secs(2));
+        assert!(super::SLASH_GIT_BOUND < zygo_workspace::up::GIT_BOUND);
     }
 }
 

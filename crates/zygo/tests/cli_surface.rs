@@ -133,7 +133,7 @@ fn verbs_match_spec() {
         ("ls", ""),
         ("workspace", ""),
         ("decision", "ls|show|deps|check …"),
-        ("mail", "[ls [<name>]]"),
+        ("mail", "send|read|ls …"),
     ];
     let specs = zygo_core::verbs::VERB_SPECS;
     assert_eq!(specs.len(), want.len());

@@ -231,6 +231,93 @@ mod unix {
         assert!(exists(&new_old), "the sweep touched new/");
     }
 
+    /// Old `cur/` and `tmp/` files of `KEY` under the mail folder `m`, made with mode 0700; returns the files.
+    fn old_mail_at(m: &Path) -> Vec<PathBuf> {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut out = Vec::new();
+        for (sub, name) in [("cur", "01J0000000000000000000000A.json"), ("tmp", "01J0000000000000000000000B.json")] {
+            let d = m.join(KEY).join(sub);
+            std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&d).unwrap();
+            let p = d.join(name);
+            std::fs::write(&p, "{}").unwrap();
+            set_mtime(&p, SystemTime::now() - 400 * DAY);
+            out.push(p);
+        }
+        out
+    }
+
+    #[test] // H1: a workspace folder or a `mail/` folder that is a link is never opened (admin.rs:410)
+    fn sweep_does_not_follow_a_linked_workspace_or_mail_folder() {
+        let h = Harness::no_tmux();
+        let control = file_at(&h, "cur", "01J0000000000000000000000A.json");
+        set_mtime(&control, SystemTime::now() - 400 * DAY);
+        let wss = h.paths.workspaces_dir();
+        let t1 = h.root().join("target-ws");
+        let mut kept = old_mail_at(&t1.join("mail"));
+        std::os::unix::fs::symlink(&t1, wss.join("1111111111111111")).unwrap();
+        let t2 = h.root().join("target-mail");
+        kept.extend(old_mail_at(&t2));
+        std::fs::create_dir_all(wss.join("2222222222222222")).unwrap();
+        std::os::unix::fs::symlink(&t2, wss.join("2222222222222222").join("mail")).unwrap();
+        let o = zygo_plain(&h, &["help"]);
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        assert!(!exists(&control), "help did not sweep");
+        for p in &kept {
+            assert!(exists(p), "the sweep followed a link to {}", p.display());
+        }
+    }
+
+    #[test] // M1: the messages already moved to `cur/` are printed; the failed member is named
+    fn read_over_members_prints_what_it_has_when_a_later_member_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        let id1 = put(&h, &w, "elena", "s1", "b1", 1);
+        put(&h, &w, "bob", "s2", "b2", 2);
+        let new = dir(&h).join(KEY2).join("new");
+        std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let o = run(&h, &["mail", "read", "--name", "all"], &[]);
+        std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+        let text = out(&o);
+        assert!(text.starts_with(&format!("{id1} cli ")), "{text}");
+        assert!(text.contains("  b1\n"), "{text}");
+        assert!(err(&o).contains("mail of kbbbbbbbb (bob)"), "{}", err(&o));
+        assert_eq!(store::unread(&dir(&h), KEY).unwrap(), 0);
+    }
+
+    #[test] // L1: a refused send names the target key and member name
+    fn refused_send_names_the_member() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        put(&h, &w, "elena", "s1", "b1", 1);
+        config(&h, "[mail]\nmax_unread = 1\n");
+        let o = run(&h, &["mail", "send", "elena", "--subject", "s"], &[]);
+        assert_eq!(o.status.code(), Some(1), "{}", err(&o));
+        assert_eq!(err(&o), "zygo: elena has 1 unread messages; to kaaaaaaaa (elena)\n");
+    }
+
+    /// The `/zygo:mail` reply through `cmd::mail::verb`.
+    fn slash(h: &Harness, args: &[&str]) -> String {
+        // Every caller sets the same value; the other tests run zygo with a cleared environment.
+        unsafe { std::env::set_var("ZYGO_WORKSPACE", WS_ID) };
+        let ctx = zygo::cmd::verbs::VerbCtx { slash: true, save: false, session_dir: None, paths: h.paths.clone() };
+        let a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        zygo::cmd::mail::verb(&ctx, &a).unwrap()
+    }
+
+    #[test] // M§8: `/zygo:mail ls` and `/zygo:mail ls <name>` reply as `zygo mail ls`
+    fn slash_ls_replies_with_counts_and_subjects() {
+        let h = Harness::no_tmux();
+        let w = ws(&h);
+        let id1 = put(&h, &w, "elena", "s1", "b1", 1);
+        assert_eq!(slash(&h, &[]), "kaaaaaaaa elena 1\nkbbbbbbbb bob 0");
+        assert_eq!(slash(&h, &["ls"]), "kaaaaaaaa elena 1\nkbbbbbbbb bob 0");
+        assert_eq!(slash(&h, &["ls", "elena"]), format!("{id1} cli s1"));
+        assert_eq!(slash(&h, &["ls", "bob"]), "no new messages");
+        assert_eq!(store::unread(&dir(&h), KEY).unwrap(), 1);
+    }
+
     #[test] // Open 2
     fn sweep_skips_a_keep_that_does_not_parse() {
         let h = Harness::no_tmux();

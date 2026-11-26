@@ -40,10 +40,13 @@ static SPECS: [VerbSpec; 19] = [
     VerbSpec { name: "ls", args: "", summary: "One line per workspace with its state", scope: Scope::None },
     VerbSpec { name: "workspace", args: "", summary: "Status of this session's or this folder's workspace", scope: Scope::None },
     VerbSpec { name: "decision", args: "ls|show|deps|check …", summary: "Decision records; /zygo:decision replies with the shell command", scope: Scope::None },
-    VerbSpec { name: "mail", args: "[ls [<name>]]", summary: "Unread mail of this workspace's members; /zygo:mail lists only", scope: Scope::None },
+    VerbSpec { name: "mail", args: "send|read|ls …", summary: "Unread mail of this workspace's members; /zygo:mail lists only", scope: Scope::None },
 ];
 
 pub static VERB_SPECS: &[VerbSpec] = &SPECS;
 
 /// The arguments of `/zygo:down` (W§12, OP11): only `--now`. The `down` spec's `args` are those of `zygo down`.
 pub const DOWN_SLASH_ARGS: &str = "[--now]";
+
+/// The arguments of `/zygo:mail` (M§8): it lists only. The `mail` spec's `args` are those of `zygo mail`.
+pub const MAIL_SLASH_ARGS: &str = "[ls [<name>]]";
