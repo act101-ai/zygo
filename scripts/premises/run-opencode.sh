@@ -5,8 +5,11 @@
 # `opencode debug config`, `agent list`, `mcp list`, `debug skill` and an `opencode run` capture.
 . "$(dirname "$0")/lib.sh"
 FX="$REPO_DIR/fixtures/opencode"
-rm -rf "$FX/plugin-hooks" "$FX/requests" "$FX/sse"
+rm -rf "$FX/sse"
 mkdir -p "$FX/plugin-hooks" "$FX/requests" "$FX/sse"
+# live-shaping.sh owns the other files of plugin-hooks/ and requests/; delete only what this script writes.
+find "$FX/plugin-hooks" -type f ! -name 'tool.execute.after-bash-stderr.json' -exec rm -f {} +
+rm -f "$FX/requests"/run-*.json
 new_run OC
 start_mock
 OCDIR="$RUN/ocdir"

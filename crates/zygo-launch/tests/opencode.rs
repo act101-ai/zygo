@@ -629,18 +629,18 @@ fn plugin_text_matches_the_fixtures() {
     assert_eq!(TEMPLATE.matches("__ZYGO_PATH__").count(), 1);
     assert!(TEMPLATE.contains("export const ZygoPlugin = async"));
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/opencode/plugin-hooks");
-    let mut hooks = 0;
+    let mut hooks = BTreeSet::new();
     for e in std::fs::read_dir(dir).unwrap() {
         let name = e.unwrap().file_name().to_string_lossy().into_owned();
         let stem = name.strip_suffix(".json").unwrap();
         if stem == "plugin-init" {
             continue;
         }
-        let hook = stem.strip_suffix("-bash").unwrap_or(stem);
+        let hook = stem.strip_suffix("-bash").or_else(|| stem.strip_suffix("-bash-stderr")).unwrap_or(stem);
         assert!(TEMPLATE.contains(&format!("\"{hook}\"")), "{hook}");
-        hooks += 1;
+        hooks.insert(hook.to_string());
     }
-    assert_eq!(hooks, 4);
+    assert_eq!(hooks.len(), 4);
     for t in [
         "directory", "\"--agent\", \"opencode\"", "10000", "permissionDecision", "updatedToolOutput", "output.output =", "output.system.push",
         "output.context.push", "ZYGO_MAIN_ROLE", "input.model", "stdin.on(\"error\"", "\"guard\"", "\"trim\"", "\"work\"", "\"session-start\"", "\"pre-compact\"", "\"subagent\"",
