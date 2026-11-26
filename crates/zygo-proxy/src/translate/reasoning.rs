@@ -48,6 +48,41 @@ pub fn decode(sig: &str) -> Option<Signature> {
     serde_json::from_slice(&raw).ok()
 }
 
+/// The mark on a Responses reasoning item's `encrypted_content` (K§6.7), the reverse of `PREFIX`: it carries an
+/// Anthropic `thinking` or `redacted_thinking` block. A `zygo1t:` value never passes `strip_prefix("zygo1:")`.
+pub const THINKING_PREFIX: &str = "zygo1t:";
+
+/// The K§6.7 size bound on a marked value, in bytes; the value of `tee::HOLD_MAX`.
+pub const MARK_MAX: usize = 4 << 20;
+
+/// `zygo1t:` + base64 of `{"provider","model","block"}`.
+pub fn encode_thinking(t: &Target, block: &Value) -> String {
+    let p = serde_json::json!({"provider": t.provider, "model": t.upstream_model, "block": block});
+    format!("{THINKING_PREFIX}{}", STANDARD.encode(serde_json::to_vec(&p).unwrap_or_default()))
+}
+
+/// The block back. `None` when `v` is over `MARK_MAX`, has no `THINKING_PREFIX`, is not base64 of a JSON object,
+/// names another provider or upstream model than `t`, or holds neither a `thinking` block (string `thinking` and
+/// `signature`) nor a `redacted_thinking` block (string `data`).
+pub fn decode_thinking(v: &str, t: &Target) -> Option<Value> {
+    if v.len() > MARK_MAX {
+        return None;
+    }
+    let raw = STANDARD.decode(v.strip_prefix(THINKING_PREFIX)?).ok()?;
+    let mut p: Value = serde_json::from_slice(&raw).ok()?;
+    let str_of = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
+    if str_of(&p, "provider")? != t.provider || str_of(&p, "model")? != t.upstream_model {
+        return None;
+    }
+    let block = p.get_mut("block")?.take();
+    let ok = match block.get("type").and_then(Value::as_str)? {
+        "thinking" => str_of(&block, "thinking").is_some() && str_of(&block, "signature").is_some(),
+        "redacted_thinking" => str_of(&block, "data").is_some(),
+        _ => false,
+    };
+    ok.then_some(block)
+}
+
 /// A `thinking` block whose signature has the zygo prefix, whether or not it decodes.
 pub(crate) fn is_zygo(b: &Value) -> bool {
     b.get("type").and_then(Value::as_str) == Some("thinking")
