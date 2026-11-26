@@ -274,12 +274,12 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
     let identity = state::make_identity(sp).map_err(|_| stop("identity"))?;
     let mut attempts = 0;
     let (base, base_meta) = loop {
-        let tip = match branch::fetch(root, remote, branch_name, deadline)? {
+        let (tip, fetched) = match branch::fetch(root, remote, branch_name, deadline)? {
             Fetched::Tip(t) => {
                 branch::ensure_worktree(root, wt, &t, deadline)?;
-                t
+                (t, true)
             }
-            Fetched::NoBranch => branch::bootstrap(root, wt, deadline)?,
+            Fetched::NoBranch => (branch::bootstrap(root, wt, deadline)?, false),
         };
         env.seam.at("after_fetch")?;
         if !branch::has_marker(wt, &tip, deadline)? {
@@ -326,7 +326,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool, forced: bool) -> Result<(), F
         keys.dedup();
         wake(c, &keys);
         let mut notified = Vec::new();
-        let (mut changes, sent) = outbox(c, &tip, (deadline, pass_end), &mut notified)?;
+        let (mut changes, sent) = outbox(c, &tip, fetched.then_some(&meta), (deadline, pass_end), &mut notified)?;
         notified.sort();
         notified.dedup();
         wake(c, &notified);
@@ -426,12 +426,14 @@ pub(crate) fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> R
 
 /// S§8.3 step 11, S§8.6 "At commit": the outbox files in ULID order, at most [`OUTBOX_CAP`] readable ones. A file
 /// that cannot be read (a link, a FIFO, over `FILE_MAX`, not JSON, or a `to` that is no address) moves to
-/// `refused/`, with one log line, and takes no cap slot. A file whose path is at the tip was pushed before and is
-/// deleted now. Else, while the pass deadline holds, the secret pass: clear, an add of its bytes at
+/// `refused/`, with one log line, and takes no cap slot. So does a file whose `to` host has no registry in `meta`, the
+/// fetched tip (review F1: a stale member cache after a rename), with the check `no-host` and the notice to the
+/// sender; a bootstrap tip (`None`) holds no registry yet and refuses nothing (S§19 #8). A file
+/// whose path is at the tip was pushed before and is deleted now. Else, while the pass deadline holds, the secret pass: clear, an add of its bytes at
 /// `<to>/<ULID>.json` (and the file in the returned list, deleted after the push); a finding, the move to
 /// `refused/` and the notice to the sender, whose keys go into `notified`; could not run, the file stays.
-fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notified: &mut Vec<String>)
-    -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
+fn outbox(c: &Ctx, tip: &str, meta: Option<&TipMeta>, (deadline, pass_end): (Instant, SystemTime),
+    notified: &mut Vec<String>) -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
     let (sp, wt) = (&c.sp, &c.sp.worktree);
     let mut items = Vec::new();
     for (id, p) in outbox_entries(sp).map_err(|_| stop("outbox"))? {
@@ -439,7 +441,16 @@ fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notif
             break;
         }
         match read_message(&p) {
-            Some((bytes, value, to)) => items.push((id, p, bytes, value, format!("{to}/{id}.json"), to)),
+            Some((bytes, value, to)) => {
+                let h = to.split_once('@').map_or("", |(_, h)| h);
+                if meta.is_none_or(|m| m.registries.contains_key(h)) {
+                    items.push((id, p, bytes, value, format!("{to}/{id}.json"), to));
+                    continue;
+                }
+                c.log(&format!("mail sync: outbox {id}: no-host"));
+                let body = format!("zygo did not send message {id} to {to}: host {h} has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/.");
+                refuse(c, id, &[], Some(&body), notified);
+            }
             None => refuse_unread(c, id, &p),
         }
     }
@@ -470,20 +481,7 @@ fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notif
             }
             Outcome::Finding(ids) => {
                 c.log(&format!("mail sync: outbox {id}: refused: {}", ids.join(", ")));
-                let now = c.env.clock.now();
-                let mut notify = |sender: &str, subject: &str, body: &str| -> std::io::Result<()> {
-                    let fail = |_| std::io::Error::other("notice not delivered");
-                    for t in names::resolve(&c.ws, sender, None).map_err(fail)? {
-                        let label = t.name.clone().unwrap_or_else(|| t.key.clone());
-                        let msg = Message::new("zygo", &label, subject, body, now).map_err(fail)?;
-                        store::deliver(&sp.mail, &t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
-                        notified.push(t.key);
-                    }
-                    Ok(())
-                };
-                if crate::outbox::refuse(sp, id, &ids, &mut notify, now).is_err() {
-                    c.log(&format!("mail sync: outbox {id}: notice"));
-                }
+                refuse(c, id, &ids, None, notified);
             }
             Outcome::CouldNotRun(check) => {
                 c.log(&format!("mail sync: outbox {id}: secret check could not run: {check}"));
@@ -491,6 +489,26 @@ fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notif
         }
     }
     Ok((changes, sent))
+}
+
+/// S§8.6 "At commit": moves `outbox/<id>.json` to `refused/` and sends the notice to its sender, whose keys go into
+/// `notified`; `body` replaces the secret-pass notice body (`ids`) for another reason. A failed move or notice
+/// writes the log line `notice`.
+fn refuse(c: &Ctx, id: Ulid, ids: &[String], body: Option<&str>, notified: &mut Vec<String>) {
+    let now = c.env.clock.now();
+    let mut notify = |sender: &str, subject: &str, secret_body: &str| -> std::io::Result<()> {
+        let fail = |_| std::io::Error::other("notice not delivered");
+        for t in names::resolve(&c.ws, sender, None).map_err(fail)? {
+            let label = t.name.clone().unwrap_or_else(|| t.key.clone());
+            let msg = Message::new("zygo", &label, subject, body.unwrap_or(secret_body), now).map_err(fail)?;
+            store::deliver(&c.sp.mail, &t.key, &label, &msg, c.cfg.mail.max_unread).map_err(fail)?;
+            notified.push(t.key);
+        }
+        Ok(())
+    };
+    if crate::outbox::refuse(&c.sp, id, ids, &mut notify, now).is_err() {
+        c.log(&format!("mail sync: outbox {id}: notice"));
+    }
 }
 
 /// Each entry of `mail/outbox/` named `<ULID>.json` that is not a folder (regular files, links, FIFOs and others),

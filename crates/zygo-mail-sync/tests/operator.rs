@@ -403,3 +403,26 @@ fn rename_over_member_limit_keeps_old_registry() {
     assert_eq!(file(&r, "registry/b2.json"), None);
     assert!(file(&r, "registry/b.json").is_some());
 }
+
+#[test] // S§8.3 step 11, S§7.6 Rename, S-G5 (review F1): mail to a host with no registry at the tip is refused, not stranded
+fn mail_to_a_renamed_host_from_a_stale_cache_is_refused() {
+    let (r, a, b) = pair();
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b.json"), None);
+    let id = send(&a, "alice", ("bob", "b")); // A has not synced: its member cache still lists bob@b
+    sync(&a);
+    assert!(a.sp().refused.join(format!("{id}.json")).is_file());
+    assert!(!a.sp().outbox.join(format!("{id}.json")).exists());
+    assert_eq!(file(&r, &format!("bob@b/{id}.json")), None);
+    let log = a.errors();
+    let line = log.lines().find(|l| l.contains(&id.to_string())).unwrap();
+    assert!(line.ends_with(&format!("mail sync: outbox {id}: no-host")), "{line}");
+    let notes: Vec<Value> = fs::read_dir(a.sp().mail.join(ALICE).join("new")).unwrap()
+        .map(|e| serde_json::from_slice(&fs::read(e.unwrap().path()).unwrap()).unwrap())
+        .collect();
+    let n = notes.iter().find(|m| m["from"] == "zygo").unwrap();
+    assert_eq!(n["to"], "alice");
+    assert_eq!(n["subject"], format!("not sent: {id}"));
+    assert_eq!(n["body"], format!("zygo did not send message {id} to bob@b: host b has no registry on the side branch. The message is kept on this machine in mail/outbox/refused/."));
+}
