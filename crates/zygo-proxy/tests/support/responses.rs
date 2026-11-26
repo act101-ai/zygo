@@ -72,10 +72,13 @@ impl Upstream {
                         g3.lock().unwrap().push((path, headers, body));
                         let (status, ctype, b) = r3.lock().unwrap().clone();
                         let body = if c3.load(Ordering::SeqCst) {
-                            axum::body::Body::from_stream(futures_util::stream::iter([
-                                Ok::<Bytes, std::io::Error>(Bytes::from(b)),
-                                Err(std::io::Error::other("cut")),
-                            ]))
+                            // The yield lets hyper send the head and `b` before the error ends the connection.
+                            let cut = futures_util::stream::once(async {
+                                tokio::task::yield_now().await;
+                                Err(std::io::Error::other("cut"))
+                            });
+                            let first = futures_util::stream::iter([Ok::<Bytes, std::io::Error>(Bytes::from(b))]);
+                            axum::body::Body::from_stream(futures_util::StreamExt::chain(first, cut))
                         } else {
                             axum::body::Body::from(b)
                         };

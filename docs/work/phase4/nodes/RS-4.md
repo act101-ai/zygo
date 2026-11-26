@@ -11,6 +11,9 @@
 - Stream order per K§6.4.2: upstream Messages SSE → tee → `Encoder`; chat SSE → existing `StreamMapper` (`translate/sse.rs:48`) → tee → `Encoder`. Today the mapper output goes into the tee at `forward.rs:1098-1110`; the encoder goes after the tee, so a later window rewrite on `message_delta` reaches the client inside `response.completed` (RS-7).
 - The translated non-streaming paths are measured as today, on the Messages form (K§6.4.2).
 - `tests/support/responses.rs` is in Files for any helper this node adds to the harness of RS-3.
+- Base §7.6 null removal now covers the translated Responses route (author's call, RS-4 step 5c).
+- Lead's decision: the `message_events` defect (`redacted_thinking` and `server_tool_use` become empty text blocks when an upstream answers a streaming request with JSON) is a separate node, RS-10, which the lead adds. RS-4 does not fix it.
+- Lead's decision: RS-4 merges only after PC-12 is DONE (graph edge). Implementation proceeds now.
 
 ## Plan
 
@@ -42,7 +45,7 @@ Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (
 
 ### Steps
 
-- [x] 1. **Harness.** In `tests/support/responses.rs`, add to `Upstream` the field `cut: Arc<AtomicBool>`. When the field is set, the mock sends the reply body as `Body::from_stream(futures_util::stream::iter([Ok::<Bytes, std::io::Error>(body), Err(std::io::Error::other("cut"))]))`, so that the proxy sees a read error after the first bytes. Add `pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>)`, which sets the reply and `cut = true`. `reply_with` sets `cut = false`. Pass: `cargo test -p zygo-proxy --test responses_route --locked` passes unchanged.
+- [x] 1. **Harness.** In `tests/support/responses.rs`, add to `Upstream` the field `cut: Arc<AtomicBool>`. When the field is set, the mock sends the reply body as `Body::from_stream(futures_util::stream::iter([Ok::<Bytes, std::io::Error>(body), Err(std::io::Error::other("cut"))]))`, so that the proxy sees a read error after the first bytes. (Fixed during implementation: with `stream::iter`, hyper ends the connection before it flushes the head, and the proxy sees a send error and answers 503. The error item now comes from `stream::once(async { tokio::task::yield_now().await; Err(..) })` chained after the first chunk, so hyper flushes the head and the bytes before the error. There is no timer. The file passed 60 runs out of 60.) Add `pub fn reply_cut(&self, status: u16, content_type: &str, body: Vec<u8>)`, which sets the reply and `cut = true`. `reply_with` sets `cut = false`. Pass: `cargo test -p zygo-proxy --test responses_route --locked` passes unchanged.
 
 - [x] 2. **Failing tests.** Write `crates/zygo-proxy/tests/responses_forward.rs`. Its header is `#[path = "support/responses.rs"] mod support;`, `const R: &str = "openai/v1/responses";`, and each harness is `Harness::start(<A|C>, Agent::ClaudeCode, "")`. Helpers, which hold no logic under test:
   - `msg_sse(evs: &[Value]) -> Vec<u8>`: `event: <type>\ndata: <compact json>\n\n` for each event.
@@ -104,9 +107,9 @@ Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (
 
 - [x] 3. Run `cargo test -p zygo-proxy --test responses_forward --locked`. Expect failure: tests 1-6 and 8-10 fail on the RS-3 placeholder 502 or on the Anthropic body check. Test 7 may already pass, because RS-3 built that path; it stays as the contract's case. (Run 2026-11-26: 8 failed, 2 passed. Tests 7 and 10 pass already: the RS-3 placeholder gives the same 502 `zygo_upstream_bad_response` body that test 10 asks for. Test 10 stays to keep that answer after the placeholder goes.)
 
-- [ ] 4. Commit the tests and the harness helper: `test(proxy): RS-4 Responses response side tests`. Trailers: `Zygo-Session: <session>`, `Zygo-Work: phase4:RS-4`.
+- [x] 4. Commit the tests and the harness helper: `test(proxy): RS-4 Responses response side tests`. Trailers: `Zygo-Session: <session>`, `Zygo-Work: phase4:RS-4`.
 
-- [ ] 5. **Implement in `crates/zygo-proxy/src/forward.rs`:**
+- [x] 5. **Implement in `crates/zygo-proxy/src/forward.rs`:**
   - a. In `run`, inside the `route == ModelRoute::Responses` block (`:339-341`), build `calls` from the client's body as received, before any stage: `let calls = (route == ModelRoute::Responses).then(|| responses_client::Calls::of(&body));`. After `name` (`:342`), add `let client_model = name.clone();`, the name the client sent (stream obligation 1).
   - b. Remove the placeholder guard at `:512-515`.
   - c. `armed` (`:517`) becomes `status.is_success() && !nulls.is_empty() && (route == ModelRoute::Messages || (route == ModelRoute::Responses && translated))`. The same-dialect Responses path (RS-5) stays unarmed.
@@ -130,9 +133,9 @@ Produces: nothing for later nodes. RS-5 builds on the `Encode` field of `Flow` (
   - h. `Some(Err(_))` (`:1212-1216`) with `Some(Encode::Stream(e))`: let `b = e.fail("api_error", "upstream response failed")`, or `e.finish()` when `!e.ended()` after that. Set `done = failed = true` and return `Ok(b)`, so that a started stream ends with one terminal event (stream obligation 6). With no encoder, the code is unchanged.
   - i. In `Flow::drop`, before `self.pending.row.adjustments = …` (`:1180`), extend `self.rctx.adjustments` with `e.adjustments()` when `encode` is `Stream(e)`. `server_tool_dropped` and `reasoning_unmarked:<n>` then reach the row.
 
-- [ ] 6. Run `cargo test -p zygo-proxy --test responses_forward --locked`. Pass: all 10 tests pass. Then run `cargo test -p zygo-proxy --test responses_route --test responses_stream --test translate --test serve --locked`. Pass: all pass unchanged.
+- [x] 6. Run `cargo test -p zygo-proxy --test responses_forward --locked`. Pass: all 10 tests pass. Then run `cargo test -p zygo-proxy --test responses_route --test responses_stream --test translate --test serve --locked`. Pass: all pass unchanged.
 
-- [ ] 7. In this file's Planning notes, add one line: "Base §7.6 null removal now covers the translated Responses route (author's call, RS-4 step 5c)." Commit `forward.rs` and this file: `feat(proxy): RS-4 Responses response side for Anthropic and chat upstreams`, with the same trailers. Push `phase-4--RS-4`.
+- [x] 7. In this file's Planning notes, add one line: "Base §7.6 null removal now covers the translated Responses route (author's call, RS-4 step 5c)." Commit `forward.rs` and this file: `feat(proxy): RS-4 Responses response side for Anthropic and chat upstreams`, with the same trailers. Push `phase-4--RS-4`.
 
 - [ ] 8. Run the Acceptance check alone as one command (it is the Check line). Pass: exit 0, and `--list` counts at least 6.
 

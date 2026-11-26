@@ -339,7 +339,11 @@ async fn run(
     if route == ModelRoute::Responses {
         responses_client::check_fields(&body)?;
     }
+    // The client's tools as received, for the call items of the answer (K§6.4.3 stream obligation 2).
+    let calls = (route == ModelRoute::Responses).then(|| responses_client::Calls::of(&body));
     let name = body.get("model").and_then(Value::as_str).ok_or_else(|| ZygoError::bad_request("model must be a string"))?.to_string();
+    // The name the client sent: the Response's `model` (stream obligation 1).
+    let client_model = name.clone();
     let mut ctx = RequestCtx {
         session: s.clone(),
         cfg: app.served().cfg.clone(),
@@ -509,12 +513,13 @@ async fn run(
     let mut adjustments = ctx.adjustments;
     adjustments.extend(extra);
     let mut mapper = None;
-    // The Responses encoder of a translated 2xx is RS-4's: until then no such answer reaches the client.
-    if ctx.dialect == Dialect::Openai && translated && status.is_success() {
-        return Err(read_failed(slot, c, &adjustments, upstream_bad_response()));
-    }
-    // Injected nulls are removed on the way back (§7.6): a Messages 2xx with a non-empty map.
-    let armed = route == ModelRoute::Messages && status.is_success() && !nulls.is_empty();
+    // Injected nulls are removed on the way back (§7.6): a Messages 2xx, or a translated Responses 2xx, with a
+    // non-empty map.
+    let armed = status.is_success()
+        && !nulls.is_empty()
+        && (route == ModelRoute::Messages || (route == ModelRoute::Responses && translated));
+    // The Messages body of a translated 2xx read whole: a Responses client's Response object is built from it.
+    let mut msg = None;
     let mut restore = None;
     let upstream: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>> = if !translated && armed && streamed {
         restore = Some(RestoreFilter::new(nulls));
@@ -525,18 +530,25 @@ async fn run(
     } else if !translated {
         Box::pin(resp.bytes_stream())
     } else if status.is_success() && streamed {
-        mapper = Some(StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key));
+        // An Anthropic upstream already sends Messages SSE (a Responses client): no mapper (K§6.4.2).
+        mapper = (c.dialect != Dialect::Anthropic).then(|| StreamMapper::new(c.dialect, &Target::of(c)).errors(estimate, key));
         restore = armed.then(|| RestoreFilter::new(nulls));
         Box::pin(resp.bytes_stream())
     } else {
         let bytes = read_capped(resp).await.map_err(|e| read_failed(slot, c, &adjustments, e))?;
         // A 2xx that is no response body of the upstream dialect never reaches the client (§7.3, §7.6).
         let v = if status.is_success() {
-            let v = serde_json::from_slice::<Value>(&bytes).ok().filter(|v| is_response(v, c.dialect)).ok_or_else(|| read_failed(slot, c, &adjustments, upstream_bad_response()))?;
-            let mut m = translate_response(&v, c.dialect, &Target::of(c));
+            // An Anthropic upstream (a Responses client) answers in the Messages form already.
+            let anthropic = c.dialect == Dialect::Anthropic;
+            let v = serde_json::from_slice::<Value>(&bytes)
+                .ok()
+                .filter(|v| if anthropic { is_message(v) } else { is_response(v, c.dialect) })
+                .ok_or_else(|| read_failed(slot, c, &adjustments, upstream_bad_response()))?;
+            let mut m = if anthropic { v } else { translate_response(&v, c.dialect, &Target::of(c)) };
             if armed {
                 nulls.restore_message(&mut m);
             }
+            msg = (ctx.dialect == Dialect::Openai).then(|| m.clone());
             m
         } else {
             let (s, v) = if ctx.dialect == Dialect::Openai {
@@ -557,6 +569,20 @@ async fn run(
             serde_json::to_vec(&v).unwrap_or_default()
         };
         futures_util::stream::once(async move { Ok(Bytes::from(out)) }).boxed()
+    };
+    // A translated 2xx to a Responses client: the encoder after the tee, or the whole Response object (K§6.4.2 C3).
+    let encode = if ctx.dialect == Dialect::Openai && translated && status.is_success() {
+        let t = Target::of(c);
+        let calls = calls.unwrap_or_default();
+        if streamed {
+            Some(Encode::Stream(Box::new(responses_client::Encoder::new(&client_model, &t, calls))))
+        } else {
+            let (r, codes) = responses_client::response(msg.as_ref().unwrap_or(&Value::Null), &client_model, &t, &calls);
+            adjustments.extend(codes);
+            Some(Encode::Whole(Bytes::from(serde_json::to_vec(&r).unwrap_or_default())))
+        }
+    } else {
+        None
     };
     if pin {
         pins().insert(model, c.provider.name.clone());
@@ -594,7 +620,7 @@ async fn run(
         usage: Usage::default(),
         compact_call: false,
     };
-    let flow = Flow { upstream, mapper, restore, tee, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
+    let flow = Flow { upstream, mapper, restore, tee, encode, rctx, pipeline: app.pipeline.clone(), pending: p, done: false, failed: false, body_len };
     let mut out = Response::new(Body::from_stream(futures_util::stream::unfold(flow, next_chunk)));
     *out.status_mut() = status;
     *out.headers_mut() = headers;
@@ -1131,13 +1157,44 @@ async fn charge(sem: &Arc<Semaphore>, n: u32, deadline: tokio::time::Instant) ->
     }
 }
 
+/// A translated 2xx to a Responses client, after the tee (K§6.4.2 C3): the stream encoder, or a whole answer's
+/// Response object, sent when the upstream body ends.
+enum Encode {
+    Stream(Box<responses_client::Encoder>),
+    Whole(Bytes),
+}
+
+/// The tee's Messages bytes as the client's bytes: unchanged with no encoder; the encoder's Responses events (and its
+/// last ones at `end`); a whole Response object at `end` only.
+fn encoded(encode: &mut Option<Encode>, out: Bytes, end: bool) -> Bytes {
+    match encode {
+        None => out,
+        Some(Encode::Stream(e)) => {
+            let mut evs = e.push(&out);
+            if end {
+                evs.extend(e.finish());
+            }
+            Bytes::from(evs.iter().flat_map(SseEvent::to_bytes).collect::<Vec<u8>>())
+        }
+        Some(Encode::Whole(b)) if end => std::mem::take(b),
+        Some(Encode::Whole(_)) => Bytes::new(),
+    }
+}
+
+/// A Messages body (an Anthropic upstream's 2xx to a Responses client).
+fn is_message(v: &Value) -> bool {
+    v.get("type").and_then(Value::as_str) == Some("message") && v.get("content").is_some_and(Value::is_array)
+}
+
 /// The response body: upstream chunks through the mapper (a translated stream, §7.6) and the restore filter (injected
-/// nulls, §7.6), then the tee; the usage row is written when it is dropped (stream end or client disconnect, §14).
+/// nulls, §7.6), then the tee, then the Responses encoder (a Responses client, K§6.4.2); the usage row is written when it is dropped (stream end or client disconnect, §14).
 struct Flow {
     upstream: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
     mapper: Option<StreamMapper>,
     restore: Option<RestoreFilter>,
     tee: Tee,
+    /// After the tee: a translated 2xx to a Responses client.
+    encode: Option<Encode>,
     rctx: ResponseCtx,
     pipeline: Arc<Pipeline>,
     pending: Pending,
@@ -1176,6 +1233,10 @@ impl Drop for Flow {
                 .map(Secret::new);
             self.pending.upstream_error = Some(ErrorCapture { head, credential, session: self.pending.session.clone() });
         }
+        // The encoder's codes (K§6.4.3 obligations 2, 3) reach the row.
+        if let Some(Encode::Stream(e)) = &self.encode {
+            self.rctx.adjustments.extend(e.adjustments());
+        }
         // Codes a line stage added (§10.2.3) reach the row, not the headers.
         self.pending.row.adjustments = names(&self.rctx.adjustments);
     }
@@ -1184,7 +1245,7 @@ impl Drop for Flow {
 async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)> {
     while !f.done {
         let next = f.upstream.next().await;
-        let Flow { tee, rctx, pipeline, mapper, restore, .. } = &mut f;
+        let Flow { tee, rctx, pipeline, mapper, restore, encode, done, failed, .. } = &mut f;
         // The stages see the upstream numbers up to and including this line.
         let mut on_line = |l: &mut SseLine| {
             rctx.usage.observe(&l.0);
@@ -1203,14 +1264,22 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
                     // A terminal or error event: the upstream is no longer read.
                     if m.ended() {
                         out.extend_from_slice(&tee.finish(&mut on_line));
-                        f.done = true;
+                        *done = true;
                     }
                     out.freeze()
                 }
             },
             Some(Err(_)) => {
-                f.done = true;
-                f.failed = true;
+                *done = true;
+                *failed = true;
+                // A started Responses stream ends with one terminal event (K§6.4.3 stream obligation 6).
+                if let Some(Encode::Stream(e)) = encode {
+                    let mut evs = e.fail("api_error", "upstream response failed");
+                    if !e.ended() {
+                        evs.extend(e.finish());
+                    }
+                    return Some((Ok(Bytes::from(evs.iter().flat_map(SseEvent::to_bytes).collect::<Vec<u8>>())), f));
+                }
                 return Some((Err(std::io::Error::other("upstream response failed")), f));
             }
             None => {
@@ -1222,10 +1291,16 @@ async fn next_chunk(mut f: Flow) -> Option<(Result<Bytes, std::io::Error>, Flow)
                     out.extend_from_slice(&tee.push(Bytes::from(r.finish_raw()), &mut on_line));
                 }
                 out.extend_from_slice(&tee.finish(&mut on_line));
-                f.done = true;
+                *done = true;
                 out.freeze()
             }
         };
+        let out = encoded(encode, out, *done);
+        // The encoder's terminal event: the upstream is no longer read.
+        if !*done && matches!(encode, Some(Encode::Stream(e)) if e.ended()) {
+            tee.finish(&mut on_line);
+            *done = true;
+        }
         f.rctx.usage = f.tee.usage();
         if !out.is_empty() {
             return Some((Ok(out), f));
