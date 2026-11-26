@@ -274,12 +274,24 @@ fn own_host_address_works_as_the_bare_name_in_ls_read_and_watch() {
     let r = zygo_workspace::mail::send(&x.h.paths, &x.w, None, "elena", SUBJECT, BODY, &MailConfig::default(), at(T0)).unwrap();
     let id = r.sent[0].id.clone();
     let line = format!("{id} cli {SUBJECT}\n");
+    // Review round 2 F3: the own host needs sync on (S§7.2), so the binary watch is held by the rate limit (S§8.4)
+    // and starts no background child.
+    let last = recent_start(&x.sp);
     for args in [&["mail", "ls", "elena@a"][..], &["mail", "ls", "elena"][..], &["mail", "watch", "elena@a", "--timeout", "0s"][..]] {
         let o = zygo(&x.h, args, &[]);
         assert_eq!((o.status.code(), out(&o)), (Some(0), line.clone()), "{args:?}: {}", err(&o));
     }
     let o = zygo(&x.h, &["mail", "read", "--name", "elena@a"], &[]);
     assert_eq!((o.status.code(), out(&o)), (Some(0), format!("{id} cli 2023-11-14T22:13:20Z {SUBJECT}\n  {BODY}\n")), "{}", err(&o));
+    assert_eq!(read_last_start(&x.sp), Some(last)); // a start writes its own time first
+}
+
+/// Review round 2 F3: writes `mail/sync/last_start` 1 s before the system time and returns it, so a binary watch
+/// within the 60 s `sync_gap` starts no child (S§8.4); a start would write a later time, so the value shows a start.
+fn recent_start(sp: &SyncPaths) -> u64 {
+    let last = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() - 1;
+    write_last_start(sp, last).unwrap();
+    last
 }
 
 /// `zygo mail ls` (exit 0): its stdout.
@@ -437,7 +449,10 @@ fn watch_and_read_escape(b: &Harness, id: &str) {
 fn watch_and_read_print_an_imported_remote_subject_escaped() {
     let (_r, b, _a, id) = sent_to_bob();
     assert_eq!(sync_in(&b).delivered, 1); // imported in process before the binary runs
+    let sp = SyncPaths::new(&b.paths, WS_ID).unwrap();
+    let last = recent_start(&sp); // review round 2 F3: the binary watch starts no background child
     watch_and_read_escape(&b, &id);
+    assert_eq!(read_last_start(&sp), Some(last)); // a start writes its own time first
 }
 
 #[test] // W4: S§8.1 row 3 (rewritten, review F1/F3): the binary watch starts the real child; its import shows at a later look
