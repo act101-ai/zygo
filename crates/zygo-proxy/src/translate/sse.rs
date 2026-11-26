@@ -436,10 +436,10 @@ impl StreamMapper {
 
 /// A Messages body as the Messages SSE events that build it: one delta per text or thinking block; a tool_use input
 /// as compact JSON in `input_json_delta` pieces of at most `INPUT_DELTA_MAX` bytes, cut on a char boundary, so that
-/// each event stays within `HOLD_MAX` (K§6.4.3 stream obligation 8); any other block (of another type or with no `type`) goes out whole in its content_block_start with no delta; the
-/// usage on message_delta. The Responses encoder keeps redacted_thinking from that arm and drops server-tool and
-/// unknown blocks; a Messages client never reaches it, because its translated bodies hold only text, thinking and
-/// tool_use.
+/// each event stays within `HOLD_MAX` (K§6.4.3 stream obligation 8); any other block (of another type or with no
+/// `type`) goes out whole in its content_block_start with no delta; the usage on message_delta. The Responses encoder
+/// keeps redacted_thinking from that arm and drops server-tool and unknown blocks; a Messages client never reaches
+/// it, because its translated bodies hold only text, thinking and tool_use.
 pub fn message_events(m: &Value) -> Vec<SseEvent> {
     let mut start = m.clone();
     start["content"] = json!([]);
