@@ -95,16 +95,29 @@ fn target(input: &HookInput) -> Option<(String, String)> {
     Some((tool.to_owned(), text))
 }
 
+/// O§7.8 "When PO2 fails": whether the agent shows a cleared `stderr` as empty. OS-34 sets it to the PO2 result.
+pub const PO2_STDERR_CLEARED: bool = true;
+
 /// Options of the trim hook.
 #[derive(Debug, Clone, Copy)]
 pub struct TrimOpts {
     /// O§7.11: how long the usage write waits on a busy database before the row is dropped.
     pub db_bound: Duration,
+    /// O§7.8: true shapes stdout and stderr together and clears `stderr`; false shapes stdout only.
+    pub stderr_cleared: bool,
+    /// Test seam: steps 1-4 panic (`ZYGO_TEST_SHAPE_PANIC=1`).
+    #[cfg(feature = "test-hooks")]
+    pub shape_panic: bool,
 }
 
 impl Default for TrimOpts {
     fn default() -> Self {
-        TrimOpts { db_bound: zygo_usage::store::HOOK_DB_BOUND }
+        TrimOpts {
+            db_bound: zygo_usage::store::HOOK_DB_BOUND,
+            stderr_cleared: PO2_STDERR_CLEARED,
+            #[cfg(feature = "test-hooks")]
+            shape_panic: std::env::var_os("ZYGO_TEST_SHAPE_PANIC").is_some_and(|v| v == "1"),
+        }
     }
 }
 

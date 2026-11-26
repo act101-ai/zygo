@@ -416,7 +416,7 @@ fn trim_guard(e: &Env, b: &[u8]) -> (String, i32) { guarded(&|b| trim::trim_in(&
     let input = parse(&bytes(&bash(&lines(5000)))).unwrap();
     let lock = rusqlite::Connection::open(db(&e)).unwrap();
     lock.execute_batch("BEGIN IMMEDIATE").unwrap();                     // a second connection holds the write lock
-    let locked = out(trim::trim_in_with(&input, &e.dir, &db(&e), &trim::TrimOpts { db_bound: Duration::ZERO }));
+    let locked = out(trim::trim_in_with(&input, &e.dir, &db(&e), &trim::TrimOpts { db_bound: Duration::ZERO, ..Default::default() }));
     lock.execute_batch("ROLLBACK").unwrap();
     drop(lock);
     assert!(trim_rows(&e).is_empty());                                 // no row
