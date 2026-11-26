@@ -85,7 +85,7 @@ impl Wake for Woke {
 struct X { h: Harness, w: Workspace, sp: SyncPaths, seen: Arc<Mutex<Vec<usize>>>, woke: Arc<Mutex<Vec<Vec<String>>>> }
 fn setup() -> X {
     let h = Harness::no_tmux();
-    std::fs::write(h.root().join("config.toml"), SYNC_ON).unwrap();
+    h.config(SYNC_ON);
     let w = h.seed(WS_ID, &mut |w| {
         for (k, n) in [(ALICE, Some("alice")), (ELENA, Some("elena")), (ANON, None)] {
             w.members.insert(k.to_string(), MemberRecord { name: n.map(String::from), ..MemberRecord::new(Agent::ClaudeCode) });
@@ -95,7 +95,7 @@ fn setup() -> X {
     cache(&sp, &[("b", &["bob"])]);
     X { h, w, sp, seen: Arc::default(), woke: Arc::default() }
 }
-fn config(x: &X, text: &str) { std::fs::write(x.h.root().join("config.toml"), text).unwrap(); }
+fn config(x: &X, text: &str) { x.h.config(text); }
 fn cache(sp: &SyncPaths, hosts: &[(&str, &[&str])]) {
     let mut c = MemberCache::default();
     for (h, ns) in hosts {
@@ -374,7 +374,7 @@ fn machine(r: &Remote, host: &str, members: &[(&str, &str)]) -> Harness {
     git(h.root(), &["clone", "-q", &r.url, "repo"]);
     std::os::unix::fs::symlink(which::which("git").unwrap(), h.bin.join("git")).unwrap();
     let text = format!("[mail]\nhost = \"{host}\"\n[mail.workspace.app]\nsync = \"zygo/mail\"\n");
-    std::fs::write(h.root().join("config.toml"), text).unwrap();
+    h.config(&text);
     h.seed(WS_ID, &mut |w| {
         for (k, n) in members {
             w.members.insert(k.to_string(), MemberRecord { name: Some(n.to_string()), ..MemberRecord::new(Agent::ClaudeCode) });
