@@ -147,7 +147,8 @@ pub struct LaunchOpts {
     /// commit and digest, never by a default-branch read; a pin that is gone, not approved or unread stops the launch.
     pub definition: Option<Pin>,
     /// R§7.4: set to the pin of this launch's own default-branch read when that read is approved and gives the
-    /// requested profile; never set by a pinned launch. The member callback reads it before its start write.
+    /// requested profile, and that profile passes `validate` and is applied; never set by a pinned launch. The member
+    /// callback reads it before its start write.
     pub definition_out: Option<Arc<Mutex<Option<Pin>>>>,
     /// `Some`: the built-in layer is this table (`load_with_builtin`).
     #[cfg(feature = "test-hooks")]
@@ -350,6 +351,8 @@ impl Launcher {
             }
             n => n,
         };
+        // R§7.4 bullet 2: the pin of a default-branch read goes to the caller only when its profile is applied.
+        let mut read_pin = None;
         if let Some(n) = name {
             if !cfg.config.profile.contains_key(&n) {
                 // A name that no profile can have reads nothing.
@@ -367,9 +370,7 @@ impl Launcher {
                     }
                 } else {
                     repository_profile(&opts, &cfg, &n, top.as_deref(), common_dir.as_deref()).map(|(m, pin)| {
-                        if let Some(o) = &opts.definition_out {
-                            *o.lock().unwrap_or_else(|e| e.into_inner()) = Some(pin);
-                        }
+                        read_pin = Some(pin);
                         m
                     })
                 };
@@ -386,6 +387,9 @@ impl Launcher {
                         Ok(m) => {
                             cfg = m;
                             profile = Some(p);
+                            if let (Some(o), Some(pin)) = (&opts.definition_out, read_pin.take()) {
+                                *o.lock().unwrap_or_else(|e| e.into_inner()) = Some(pin);
+                            }
                         }
                         Err(e) => out.line(&format!("zygo: {e}; launching without the profile")),
                     },

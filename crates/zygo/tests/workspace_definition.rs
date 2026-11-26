@@ -444,6 +444,19 @@ fn l11_a_pin_outside_a_checkout_stops() { // R§7.4 bullet 4 (rewritten)
     assert_eq!(count(&r.err, &pin_line(&pin, NO_LONGER)), 1, "{}", r.err);
 }
 
+#[test]
+fn l12_a_read_profile_that_validate_refuses_gives_no_pin() { // R§7.4 bullet 2 (a first start that applied the profile), R§12 row; review F2
+    let fx = fx();
+    commit_default(&fx.app, "overrides = { code = \"no-such-model\" }\n");
+    approve(&fx.app, &fx.paths.approvals_file);
+    let cell: Arc<Mutex<Option<Pin>>> = Arc::default();
+    let r = run(&fx, Arc::new(Rec::default()), |o| o.definition_out = Some(cell.clone()));
+    assert_eq!(r.code, 2, "{}", r.err);
+    assert!(r.err.lines().any(|l| l.starts_with("zygo: ") && l.ends_with("; launching without the profile")), "{}", r.err);
+    assert!(r.seen.expect("build ran").0.is_none(), "no profile was sent");
+    assert_eq!(cell.lock().unwrap().clone(), None, "a profile that was not applied gives no pin: {}", r.err);
+}
+
 /// `bin/git`: appends each call (`$*`) to `<root>/git.log`; with `fail_ls_tree`, an `ls-tree` call exits 1 with no
 /// output; else it runs the git of the test's `PATH` (the harness `PATH` is `bin` only). The log starts empty.
 fn fake_git(h: &Harness, fail_ls_tree: bool) {
