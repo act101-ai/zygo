@@ -326,6 +326,27 @@ scan '[A-Za-z]:(\\\\|\\|/)Users(\\\\|\\|/)' "$VX" 'Windows home path' i
 scan "${L}gh[pousr]_[A-Za-z0-9]{20,}" '' 'GitHub token'
 scan 'github_pat_[A-Za-z0-9_]{20,}' '' 'GitHub token'
 scan 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.' '' 'JWT'
+# cx_scan <ERE> <label> [i] [<drop sed -E script>]: as scan, over fixtures/codex only (PC-11 leak
+# classes of Codex captures); the verbatim files are exempt.
+cx_scan() {
+  o=-aE; [ "${3:-}" != i ] || o=-aiE
+  # shellcheck disable=SC2086
+  hit=$(grep -rn $o -- "$1" fixtures/codex 2>/dev/null | grep -av -E -- "$VX" | tr '\000' ' ' |
+    while IFS= read -r ln; do
+      [ -z "${4:-}" ] || printf '%s\n' "$ln" | sed -E "$4" | grep -q $o -- "$1" || continue
+      printf '%s\n' "$ln"
+    done | head -n 1)
+  [ -z "$hit" ] || fail "forbidden content ($2): $(printf '%s\n' "$hit" | head -n 1 | cut -c1-160)"
+}
+# TAG <shell> in its three bracket forms (plain, <..>, &lt;..&gt;).
+TAG='(<|\\u003[cC]|&lt;)shell(>|\\u003[eE]|&gt;)'
+cx_scan '/private/tmp' 'macOS temporary path'
+cx_scan 'seatbelt' 'macOS sandbox name' i
+cx_scan "$TAG" 'login shell tag' '' "s/$TAG\\(omitted\\)//g"
+cx_scan '/bin/(zsh|bash|fish|sh|dash|ksh|mksh|tcsh|csh) -lc' 'login shell command'
+cx_scan '\\?"platformOs\\?"[[:space:]]*:[[:space:]]*\\?"' 'OS name' '' 's/\\?"platformOs\\?"[[:space:]]*:[[:space:]]*\\?"\(os omitted\)//g'
+cx_scan '(msg|fco|ctco)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' 'Codex item id'
+cx_scan '__CF_' 'macOS env name'
 
 # name_scan <label> <name> [<word characters>] [<exempt ERE>]: the name as a whole word (any case;
 # it may hold spaces), also right after a JSON backslash escape. Word characters: A-Za-z0-9_ unless
