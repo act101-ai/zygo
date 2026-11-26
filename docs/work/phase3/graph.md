@@ -195,7 +195,6 @@ Session text (T, SX nodes):
 | OS-25 | Premise PO3: OpenCode `output.output` holds stdout and stderr (operator, live OpenCode) | OS-24 | TODO | mechanical | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
 | ML-13 | `zygo mail watch` | ML-12 | TODO | implementation | — |
-| MS-11 | Tip metadata, own hosts, collision and twin checks | MS-6, MS-10 | DONE | judgment | 53f75bbc 95931099 eaf0f3ee 71ba6b9c · identity 17/0 ; floor green · PR #113 |
 | MS-12 | Import: candidates, checks, crash-safe delivery | MS-6, MS-10, ML-2, ML-4 | DONE | judgment | 68fa626f, dc8f3ad4, cf388671 · import 23/0 ; floor green · PR #114 |
 | MS-16 | Sync child start and rate limit; member hooks start it | MS-3, MS-5, ML-10, DR-5, OS-4 | DONE | implementation | ea149eab, ad7d3736 · acc 18/18, 26/26 · PR #148 |
 | OS-27 | Shape-off baseline: hook output and stored file of the `97d8767` behavior | OS-9, OS-17, OS-18, OS-19, OS-20, OS-21 | DONE | implementation | abea1612, 74976374 · acc 5/5 · PR #140 |
@@ -206,18 +205,19 @@ Session text (T, SX nodes):
 | ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | TODO | implementation | — |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | TODO | judgment | — |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | TODO | judgment | — |
-| OS-31 | pytest runner view | OS-30, OS-20 | TODO | judgment | — |
+| OS-31 | pytest runner view | OS-30, OS-20 | DONE | judgment | 86aaac5a, 1b22b0ca, f6759d10, 7544ce89 · acceptance 18 passed · PR #166 |
 | WD-12 | `zygo up`: pool check, assignment and passthrough at a fresh build | WD-9, WD-11 | DONE | judgment | bae5b7af, 11d71492 · up_definition 35/0 ; floor green · PR #125 |
 | ML-19 | Live acceptance #12: a member mails by name with no prompt about mail (operator run) | ML-18, SX-8, DR-15 | TODO | mechanical | — |
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | TODO | judgment | — |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
+| OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32 | TODO | judgment | — |
 | OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | TODO | mechanical | — |
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
 | MS-17 | `zygo mail sync` verb, options, hidden background form | MS-15, MS-16, ML-12, ML-13 | TODO | implementation | — |
-| OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32 | TODO | judgment | — |
+| OS-35 | Fixture views through the hook: goldens, floors, recovery, bless guard | OS-34, OS-32, OS-42 | TODO | judgment | — |
 | SX-4 | `hook trim` takes the flag and adds `additionalContext` = mechanics text, once (T§9.2 item 2) | SX-1, SX-3, OS-34 | TODO | judgment | — |
 | MS-19 | MCP mail tools: addresses, send-time pass, remote mail_list | MS-17, ML-11, WD-18 | TODO | implementation | — |
 | MS-23 | Live premise SP1: hook-started child outlives the hook | MS-17 | TODO | lookup | — |
@@ -403,3 +403,5 @@ Session text (T, SX nodes):
 | 2026-11-25 | ML-12 DONE: zygo mail send\|read\|ls, /zygo:mail, mail sweep at command start. Review fixes: the sweep skips linked folders, a partial read prints what it has, a 2 s slash bound, a list-only fallback body, help args · PR #149 |
 | 2026-11-25 | OS-24 DONE: PO2 verified on Claude Code 2.1.332 (stderr arrives merged into stdout; the replaced stdout removed err-line); hook fixture + empty shape-off golden added; review 7: F1/F2/F4-F7 fixed (first reading "not shown" reversed), F3 refuted · PR #151 |
 | 2026-11-25 | OS-30 DONE: libtest runner view and dispatch as pipeline step 3; review round 2 fixed F1-F4 (failure sections, binary boundary, dedup lines, ASCII/CR whitespace); F5 is FX-16; F6 fixed in the OS-36 contract. |
+| 2026-11-25 | OS-31 DONE: pytest runner view; review R2 fixed F1 (-s live output), F3 (last line), F4 (PASSES kept), F5 (change log); F2 is OS-42 · PR #166 |
+| 2026-11-25 | OS-42 added: wrapper dispatch and unseen pytest live output (OS-31 review F2, R2 report); OS-35 now depends on it |
