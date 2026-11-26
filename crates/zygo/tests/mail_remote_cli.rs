@@ -571,3 +571,25 @@ fn doctor_prints_the_twin_line_only_while_last_error_is_twin() {
     save(&x.sp, &State { last_ok: Some(T0), ..Default::default() }).unwrap();
     assert_eq!(twins(WS_ID), 0);
 }
+
+#[test] // D2: S§7.5 (rewritten), review F2: with no ZYGO_WORKSPACE the workspace is the checkout of the current folder
+fn doctor_prints_the_twin_line_for_the_checkout_of_the_current_folder() {
+    let h = Harness::no_tmux();
+    std::os::unix::fs::symlink(which::which("git").unwrap(), h.bin.join("git")).unwrap();
+    git(&h.repo(), &["init", "-q"]);
+    let id = zygo_workspace::identity::workspace_id(&h.repo().join(".git").canonicalize().unwrap());
+    h.seed(&id, &mut |_| {});
+    let sp = SyncPaths::new(&h.paths, &id).unwrap();
+    let twins = |cwd: &Path| {
+        // `Harness::env` sets no ZYGO_WORKSPACE.
+        let o = h.zygo(&["doctor"], &[]).current_dir(cwd).output().unwrap();
+        assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+        out(&o).lines().filter(|l| *l == TWIN).count()
+    };
+    assert_eq!(twins(&h.repo()), 0); // no state.json
+    save(&sp, &State { last_error: Some("twin".into()), ..Default::default() }).unwrap();
+    assert_eq!(twins(&h.repo()), 1);
+    assert_eq!(twins(h.root()), 0); // not a checkout: no workspace, no line, exit 0
+    save(&sp, &State { last_ok: Some(T0), ..Default::default() }).unwrap();
+    assert_eq!(twins(&h.repo()), 0);
+}
