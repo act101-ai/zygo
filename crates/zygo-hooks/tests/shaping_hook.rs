@@ -24,10 +24,15 @@ struct Env {
 
 /// A session with `results = true`, the default threshold, head and tail, and `shape`; the usage db is ready.
 fn env(shape: bool) -> Env {
+    env_at(shape, SessionView::default().trim_threshold_bytes, 60, 20)
+}
+
+/// As `env`, with the trim threshold, head and tail lines given.
+fn env_at(shape: bool, threshold: u64, head_lines: u32, tail_lines: u32) -> Env {
     let t = tempfile::tempdir().unwrap();
     let dir = SessionDir::new(t.path().join("s"));
     dir.create().unwrap();
-    SessionView { session: "sess-1".into(), agent: Agent::ClaudeCode, results: true, shape, ..Default::default() }
+    SessionView { session: "sess-1".into(), agent: Agent::ClaudeCode, results: true, shape, trim_threshold_bytes: threshold, head_lines, tail_lines, ..Default::default() }
         .save(&dir)
         .unwrap();
     let db = t.path().join("usage.db");
@@ -345,4 +350,137 @@ fn shaper_panic_gives_size_view_of_raw_text() {
     assert!(ids(&e).is_empty() && rows(&e).is_empty());
     let got = run(&e, Agent::ClaudeCode, &small, &TrimOpts::default());
     assert!(resp(&got)["stdout"].as_str().unwrap().starts_with("[zygo shaped this output: color codes removed."));
+}
+
+// ---- Round 2 ----
+
+/// The `kind` of each `trims` row, by rowid.
+fn kinds(e: &Env) -> Vec<String> {
+    let c = rusqlite::Connection::open(&e.db).unwrap();
+    let mut q = c.prepare("SELECT kind FROM trims ORDER BY rowid").unwrap();
+    q.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+}
+
+/// The §10.1 size view of `text` with the marker of the stored raw text `raw` (id masked), default head and tail.
+fn size_view_of(text: &str, raw: &str) -> String {
+    size_view_with(text, raw, 60, 20)
+}
+
+/// As `size_view_of`, with `head` and `tail` lines.
+fn size_view_with(text: &str, raw: &str, head_lines: u32, tail_lines: u32) -> String {
+    let s = zygo_results::Stored { id: ZERO_ID.into(), tool: "Bash".into(), bytes: raw.len() as u64, lines: raw.lines().count() as u64, kind: zygo_results::Kind::Text, created_at: 0, session: None, data: vec![] };
+    let cfg = zygo_config::ResultsConfig { trim_threshold_bytes: 0, head_lines, tail_lines, shape: true };
+    zygo_results::view::size_view(text, &s, &cfg)
+}
+
+#[test]
+fn json_stdout_with_stderr_keeps_reuse_protection() {
+    // R2, O§7.3: the kind is sniffed on stdout, so a JSON stdout is reuse text in both branches.
+    // The JSON is under SNIFF_BYTES (4 KiB), so the stderr part is inside the sniffed head; a low threshold and
+    // 3 head lines make the size view apply with no step 1-4 change.
+    let line = format!("  \"{}\",\n", "x".repeat(1000));
+    let json = format!("[\n{}  1\n]\n", line.repeat(3));
+    assert!(json.len() < 4 * 1024);
+    for cleared in [true, false] {
+        let e = env_at(true, 100, 3, 1);
+        let opts = TrimOpts { stderr_cleared: cleared, ..Default::default() };
+        let got = run(&e, Agent::ClaudeCode, &bash(json!("curl localhost/x"), &json, "warn\n"), &opts);
+        let raw = format!("{json}[stderr]\nwarn\n");
+        let src = if cleared { raw.as_str() } else { json.as_str() };
+        assert_eq!(masked(&e, &resp(&got)["stdout"].as_str().unwrap().to_string()), size_view_with(src, &raw, 3, 1), "cleared {cleared}");
+        assert_eq!(kinds(&e), ["json"], "cleared {cleared}");
+        assert_eq!(rows(&e)[0].4.as_deref(), Some("size"), "cleared {cleared}");
+    }
+}
+
+#[test]
+fn non_string_stderr_is_left_in_the_output() {
+    // R3: only a string stderr is cleared
+    for v in [json!(12345), json!(["warn"])] {
+        let e = env(true);
+        let mut input = bash(json!("echo x"), &colored(70), "");
+        input["tool_response"]["stderr"] = v.clone();
+        let r = resp(&run(&e, Agent::ClaudeCode, &input, &TrimOpts::default()));
+        assert!(r["stdout"].as_str().unwrap().starts_with("[zygo shaped this output: color codes removed."), "{v}");
+        assert_eq!(r["stderr"], v);
+    }
+}
+
+#[test]
+fn po2_fail_bound_is_on_the_raw_text() {
+    // R4, O§7.3 line 221 and O§7.8 "When PO2 fails": raw over 4 MiB gets step 5 only, on stdout
+    let so = colored(3 * 1024 * 1024 / 29);
+    let se: String = (0..2 * 1024 * 1024 / 32).map(|i| format!("   Compiling crate_{i:06} v0.1.0\n")).collect();
+    let raw = format!("{so}[stderr]\n{se}");
+    assert!(so.len() <= 4 * 1024 * 1024 && raw.len() > 4 * 1024 * 1024);
+    let e = env(true);
+    let opts = TrimOpts { stderr_cleared: false, ..Default::default() };
+    let r = resp(&run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &so, &se), &opts));
+    let view = r["stdout"].as_str().unwrap().to_string();
+    assert_eq!(masked(&e, &view), size_view_of(&so, &raw));
+    assert_eq!(r["stderr"], se.as_str());
+    let id = ids(&e)[0].clone();
+    assert_eq!(rows(&e), [(so.len() as i64, view.len() as i64, Some(id), Some("other".to_string()), Some("size".to_string()))]);
+}
+
+#[test]
+fn opencode_shaped_output_gains_no_stderr_key() {
+    // G1, O§7.2 OpenCode, O§7.8 output
+    let e = env(true);
+    let mut v = fixture("opencode/plugin-hooks/tool.execute.after-bash.json");
+    v["output"]["output"] = json!(colored(707));
+    v["output"]["metadata"]["output"] = json!(colored(707));
+    let r = resp(&run(&e, Agent::OpenCode, &v, &TrimOpts::default()));
+    assert!(r["stdout"].as_str().unwrap().starts_with("[zygo shaped this output: color codes removed."));
+    assert!(r.get("stderr").is_none(), "{r}");
+}
+
+#[test]
+fn shaper_panic_with_stderr_gives_size_view_of_raw_text() {
+    // G2, O§7.10
+    let e = env(true);
+    let panic = TrimOpts { shape_panic: true, ..Default::default() };
+    let so = colored(3532);
+    let raw = format!("{so}[stderr]\nwarn\n");
+    let r = resp(&run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &so, "warn\n"), &panic));
+    assert_eq!(masked(&e, &r["stdout"].as_str().unwrap().to_string()), size_view_of(&raw, &raw));
+    assert_eq!(r["stderr"], "");
+    assert_eq!(stored(&e, &ids(&e)[0]), raw.as_bytes());
+}
+
+#[test]
+fn empty_stdout_with_stderr_has_no_leading_newline() {
+    // G3, O§7.2: no newline before `[stderr]` when stdout is empty
+    let e = env(true);
+    let se: String = (0..1000).map(|i| format!("warning {i:04}: unused\n")).collect();
+    assert!(se.len() > 16384);
+    let r = resp(&run(&e, Agent::ClaudeCode, &bash(json!("echo x"), "", &se), &TrimOpts::default()));
+    let raw = format!("[stderr]\n{se}");
+    assert_eq!(stored(&e, &ids(&e)[0]), raw.as_bytes());
+    assert_eq!(masked(&e, &r["stdout"].as_str().unwrap().to_string()), size_view_of(&raw, &raw));
+    assert_eq!(r["stderr"], "");
+}
+
+/// 81 distinct plain lines whose §10.1 size view saves exactly `saving` bytes (one middle line is dropped).
+fn size_saving_input(saving: usize) -> String {
+    let head: String = (0..60).map(|i| format!("head {i:02}\n")).collect();
+    let tail: String = (0..20).map(|i| format!("tail {i:02}\n")).collect();
+    (1..4000)
+        .map(|m| format!("{head}{}\n{tail}", "m".repeat(m)))
+        .find(|t| t.len() as i64 - size_view_of(t, t).len() as i64 == saving as i64)
+        .unwrap()
+}
+
+#[test]
+fn size_view_use_rule_boundary() {
+    // G4, O§7.8 use rule on the size-view path (no step 1-4 applies)
+    let raw = size_saving_input(255);
+    let e = env_at(true, 100, 60, 20);
+    assert_eq!(run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &raw, ""), &TrimOpts::default()), "");
+    assert!(ids(&e).is_empty() && rows(&e).is_empty());
+    let raw = size_saving_input(256);
+    let got = run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &raw, ""), &TrimOpts::default());
+    assert!(resp(&got)["stdout"].as_str().unwrap().contains("[zygo trimmed this output: 81 lines,"));
+    let id = ids(&e)[0].clone();
+    assert_eq!(rows(&e), [(raw.len() as i64, raw.len() as i64 - 256, Some(id), Some("other".to_string()), Some("size".to_string()))]);
 }

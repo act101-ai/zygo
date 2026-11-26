@@ -10,7 +10,7 @@ use zygo_core::paths::Paths;
 use zygo_core::session_dir::SessionDir;
 use zygo_core::session_view::SessionView;
 use zygo_results::kind::sniff;
-use zygo_results::shape::{self, command, ShapeInput, Shaped, Shaper, MIN_SAVING_BYTES};
+use zygo_results::shape::{self, command, ShapeInput, Shaped, Shaper, MIN_SAVING_BYTES, SHAPE_MAX_BYTES};
 use zygo_results::view::{shaped_view, size_view};
 use zygo_results::{view, Kind, Store, Stored};
 use zygo_usage::TrimRow;
@@ -152,10 +152,13 @@ fn shape_guarded(src: &str, si: &ShapeInput, opts: &TrimOpts) -> Shaped {
         }
         shape::run(src, si)
     };
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(steps)).unwrap_or_else(|_| {
-        let over = src.len() as u64 > si.threshold;
-        Shaped { text: src.to_string(), steps: vec![], shaper: over.then_some(Shaper::Size), size_view: over }
-    })
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(steps)).unwrap_or_else(|_| size_only(src, si.threshold))
+}
+
+/// Step 5 only, on `src` (O§7.3 above `SHAPE_MAX_BYTES`, O§7.10 on a panic).
+fn size_only(src: &str, threshold: u64) -> Shaped {
+    let over = src.len() as u64 > threshold;
+    Shaped { text: src.to_string(), steps: vec![], shaper: over.then_some(Shaper::Size), size_view: over }
 }
 
 /// A result that may get a view: the stored raw text, the counted bytes, and the shaping result (`None` on the shape-off path).
@@ -166,6 +169,8 @@ struct Pending {
     command: Option<String>,
     shaper: Shaper,
     clear_stderr: bool,
+    /// The kind sniffed on stdout (O§7.3); `None` on the shape-off path, where the stored kind is that of stdout.
+    kind: Option<Kind>,
 }
 
 /// O§7.1, O§7.2, O§9: routes the call to the shape-on or shape-off path; `None` when the output stays as it is.
@@ -178,17 +183,19 @@ fn pending(input: &HookInput, text: String, sv: &SessionView, threshold: u64, op
         if text.len() as u64 <= threshold {
             return None;
         }
-        return Some(Pending { counted: text.len() as u64, raw: text, shaped: None, command, shaper: Shaper::Size, clear_stderr: false });
+        return Some(Pending { counted: text.len() as u64, raw: text, shaped: None, command, shaper: Shaper::Size, clear_stderr: false, kind: None });
     }
-    let resp = input.raw.get("tool_response");
-    let raw = compose(&text, resp.and_then(|r| r.get("stderr")).and_then(Value::as_str).unwrap_or(""));
+    // Only a string `stderr` is read and cleared; any other value stays in the output as it is.
+    let stderr = input.raw.get("tool_response").and_then(|r| r.get("stderr")).and_then(Value::as_str);
+    let raw = compose(&text, stderr.unwrap_or(""));
     let src = if opts.stderr_cleared { raw.as_str() } else { text.as_str() };
-    let si = ShapeInput { parsed, kind: sniff(raw.as_bytes()), threshold };
-    let shaped = shape_guarded(src, &si, opts);
+    let si = ShapeInput { parsed, kind: sniff(text.as_bytes()), threshold };
+    // O§7.3: the bound is on the raw text in both branches.
+    let shaped = if raw.len() > SHAPE_MAX_BYTES { size_only(src, threshold) } else { shape_guarded(src, &si, opts) };
     let shaper = shaped.shaper?;
     let counted = src.len() as u64;
-    let clear_stderr = opts.stderr_cleared && resp.is_some_and(|r| r.get("stderr").is_some());
-    Some(Pending { raw, counted, shaped: Some(shaped), command, shaper, clear_stderr })
+    let clear_stderr = opts.stderr_cleared && stderr.is_some();
+    Some(Pending { raw, counted, shaped: Some(shaped), command, shaper, clear_stderr, kind: Some(si.kind) })
 }
 
 /// O§7.8: the view of `p` with the marker of `s`, the stored raw text.
@@ -233,7 +240,7 @@ pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: 
         session: sv.session,
         agent_id: input.agent_id.clone(),
         tool: tool.clone(),
-        kind: stored.kind.as_str().into(),
+        kind: p.kind.unwrap_or(stored.kind).as_str().into(),
         stored_bytes: p.counted,
         view_bytes: v.len() as u64,
         result_id: Some(stored.id.clone()),

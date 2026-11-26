@@ -228,7 +228,7 @@ Such a call keeps the §10.1 size view, with stdout only (as today). A pipeline 
 
 Each step takes text and gives text or "no change". No step adds content: it removes characters or lines that it recognizes (O-C9), or adds a count or a fixed note. Then O§7.8 decides if the view is used.
 
-**Text that the model may reuse** **(lead)**: when a segment runs `git diff`, `git show`, `git log` with `-p` or `--patch`, `git format-patch --stdout` or `diff`, or when the sniffed kind of the raw text (`kind.rs:51`) is `diff`, `json` or `jsonl`, steps 1 and 2 only remove ANSI escape sequences: no `\r` change and no dedup. Failure prevented: a patch or a JSON value that the agent copies or applies differs from the real one.
+**Text that the model may reuse** **(lead)**: when a segment runs `git diff`, `git show`, `git log` with `-p` or `--patch`, `git format-patch --stdout` or `diff`, or when the sniffed kind of `stdout` (`kind.rs:51`; OpenCode: `output.output`) is `diff`, `json` or `jsonl`, steps 1 and 2 only remove ANSI escape sequences: no `\r` change and no dedup. Failure prevented: a patch or a JSON value that the agent copies or applies differs from the real one.
 
 Above `SHAPE_MAX_BYTES`, only step 5 runs, on the raw text. Failure prevented: a hook that runs for seconds on a huge output; the OpenCode plugin hook has a 10 s timeout (§8.7). The bound is in bytes, not time, so the result does not depend on machine speed.
 
@@ -590,3 +590,4 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-24 | O§7.1, glossary | author's call | review of OS-40: newline after a pipe, backtick and 0< substitutions, eval --, builtin, -c only among leading options (the arguments of `-o`, `+o`, `-O`, `+O` skipped), redirect-only stage in zsh |
 | 2026-11-25 | O§6.6 | author's call | the sample block's key amounts did not sum to its total, and its Read key kept out more bytes than were read back; replaced with figures a store can produce (OS-8). |
 | 2026-11-25 | O§7.4 | author's call (pending operator ratification under O§15 item 2) | OS-12 review F4/F5: charset designations and ESC ESC left residue |
+| 2026-11-25 | O§7.3 | author's call | kind sniffed on stdout: the combined text with a [stderr] part never sniffs as JSON, so the reuse protection was lost |
