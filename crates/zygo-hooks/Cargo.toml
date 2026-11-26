@@ -10,6 +10,7 @@ test-hooks = []
 [dependencies]
 zygo-core.workspace = true
 zygo-config.workspace = true
+zygo-mail-sync.workspace = true
 zygo-proxy.workspace = true
 zygo-results.workspace = true
 zygo-usage.workspace = true
