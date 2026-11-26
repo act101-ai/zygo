@@ -1207,7 +1207,16 @@ fn text_format_json_schema_to_output_config() {
     b["text"] = json!({"format":{"type":"json_schema","name":"o","schema":s,"strict":true,"description":"d"},"verbosity":"low"});
     let (m, codes) = tr(&b);
     assert_eq!(m["output_config"], json!({"format":{"type":"json_schema","schema":s}}));
-    assert!(codes.is_empty(), "{codes:?}");
+    assert_eq!(codes, ["text_format_dropped:description", "text_format_dropped:strict"]);
+    // `strict: false` is recorded too; `name` alone, or `strict` and `description` null, record nothing.
+    b["text"]["format"]["strict"] = json!(false);
+    b["text"]["format"].as_object_mut().unwrap().remove("description");
+    assert_eq!(tr(&b).1, ["text_format_dropped:strict"]);
+    b["text"]["format"]["strict"] = Value::Null;
+    b["text"]["format"]["description"] = Value::Null;
+    assert!(tr(&b).1.is_empty(), "{:?}", tr(&b).1);
+    b["text"]["format"]["strict"] = json!(true);
+    b["text"]["format"]["description"] = json!("d");
     b["reasoning"] = json!({"effort":"high"});
     let want = json!({"effort":"high","format":{"type":"json_schema","schema":s}});
     assert_eq!(tr(&b).0["output_config"], want);
@@ -1233,6 +1242,8 @@ fn text_format_json_schema_field_rules() {
         (json!({"type":"json_schema","schema":{},"description":1}), "text.format.description must be a string"),
         (json!({"type":"json_schema","schema":{},"strict":"yes"}), "text.format.strict must be a boolean"),
         (json!({"type":"json_schema","schema":{},"extra":1}), "unknown field: text.format.extra"),
+        (json!({"type":"text","extra":1}), "unknown field: text.format.extra"),
+        (json!({"type":"text","schema":{}}), "unknown field: text.format.schema"),
     ];
     for (f, msg) in cases {
         let mut b = body(json!([user("go")]));
@@ -1241,5 +1252,7 @@ fn text_format_json_schema_field_rules() {
     }
     let mut b = body(json!([user("go")]));
     b["text"] = json!({"format":{"type":"json_schema","schema":{},"name":null,"strict":null,"description":null}});
-    assert_eq!(rq(&b).unwrap().0["output_config"], json!({"format":{"type":"json_schema","schema":{}}}));
+    let (m, codes) = rq(&b).unwrap();
+    assert_eq!(m["output_config"], json!({"format":{"type":"json_schema","schema":{}}}));
+    assert!(codes.is_empty(), "{codes:?}");
 }

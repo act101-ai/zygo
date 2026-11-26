@@ -127,7 +127,7 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
         .map(|x| typed(x, "format", "an object", Value::is_object).map_err(|_| bad("text.format must be an object")))
         .transpose()?
         .flatten();
-    let output_format = output_format(format)?;
+    let (output_format, format_codes) = output_format(format)?;
     typed(req, "parallel_tool_calls", "a boolean", Value::is_boolean)?;
     let mut scalars = Vec::new();
     for (k, what, ok) in [
@@ -201,22 +201,28 @@ pub fn request(req: &Value, t: &Target, facts: Option<&Facts>) -> Result<(Value,
         }
         out.insert("output_config".into(), Value::Object(oc));
     }
-    Ok((Value::Object(out), d.codes()))
+    let mut codes = d.codes();
+    codes.extend(format_codes);
+    Ok((Value::Object(out), codes))
 }
 
-/// The Messages `output_config.format` for a type-checked `text.format` (K§6.4.3 request obligation 11): `None` for
-/// an absent format or type `text`; `{type: json_schema, schema}` for type `json_schema`, whose `name`, `strict` and
-/// `description` are checked, then not sent; any other type → 400.
-fn output_format(format: Option<&Value>) -> Result<Option<Value>, ZygoError> {
-    let Some(f) = format else { return Ok(None) };
-    match s(f, "type") {
-        Some("text") => return Ok(None),
-        Some("json_schema") => {}
+/// The Messages `output_config.format` for a type-checked `text.format` (K§6.4.3 request obligation 11), with its
+/// adjustment codes: `None` for an absent format or type `text` (no key but `type`); `{type: json_schema, schema}` for
+/// type `json_schema`, whose `name`, `strict` and `description` are checked, then not sent, with
+/// `text_format_dropped:description` and `text_format_dropped:strict` for a non-null value; any other type → 400.
+fn output_format(format: Option<&Value>) -> Result<(Option<Value>, Vec<Adjustment>), ZygoError> {
+    let Some(f) = format else { return Ok((None, Vec::new())) };
+    let allowed: &[&str] = match s(f, "type") {
+        Some("text") => &["type"],
+        Some("json_schema") => &["type", "name", "schema", "strict", "description"],
         _ => return Err(bad("text.format: only types text and json_schema are accepted toward this upstream")),
-    }
+    };
     let obj = f.as_object().into_iter().flat_map(|o| o.keys());
-    if let Some(k) = obj.into_iter().find(|k| !matches!(k.as_str(), "type" | "name" | "schema" | "strict" | "description")) {
+    if let Some(k) = obj.into_iter().find(|k| !allowed.contains(&k.as_str())) {
         return Err(bad(format!("unknown field: text.format.{}", cut(k))));
+    }
+    if s(f, "type") == Some("text") {
+        return Ok((None, Vec::new()));
     }
     let schema = match f.get("schema") {
         None | Some(Value::Null) => return Err(bad("text.format: missing schema")),
@@ -231,7 +237,13 @@ fn output_format(format: Option<&Value>) -> Result<Option<Value>, ZygoError> {
     if f.get("strict").is_some_and(|v| !v.is_null() && !v.is_boolean()) {
         return Err(bad("text.format.strict must be a boolean"));
     }
-    Ok(Some(json!({"type": "json_schema", "schema": schema})))
+    // Messages has no counterpart for these: a value the client set is recorded, not sent.
+    let codes = ["description", "strict"]
+        .into_iter()
+        .filter(|k| f.get(*k).is_some_and(|v| !v.is_null()))
+        .map(|k| Adjustment(format!("text_format_dropped:{k}")))
+        .collect();
+    Ok((Some(json!({"type": "json_schema", "schema": schema})), codes))
 }
 
 fn bad(message: impl Into<String>) -> ZygoError {
