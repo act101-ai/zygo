@@ -1,10 +1,10 @@
-//! OS-35: each shaping case through the trim hook: goldens, floors, store recovery, bless guard
-//! (O§8.1, O§8.2, O§8.4, O§16 items 1 and 2).
+//! OS-35, OS-36: each shaping case through the trim hook: goldens, floors, store recovery, bless guard, never-worse check
+//! (O§8.1, O§8.2, O§8.3, O§8.4, O§16 items 1, 2 and 3).
 mod common {
     pub mod shaping;
 }
 use common::shaping::{self, Case};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use zygo_core::{
@@ -13,7 +13,10 @@ use zygo_core::{
     session_dir::SessionDir,
     session_view::SessionView,
 };
+use zygo_config::ResultsConfig;
 use zygo_hooks::trim::{self, TrimOpts};
+use zygo_results::shape::{clean::clean, command::Runner, dedup::dedup, runner, MIN_SAVING_BYTES, SHAPE_MAX_BYTES};
+use zygo_results::view::size_view;
 
 /// The masked result id (O§8.1).
 const ZERO_ID: &str = "00000000000000000000000000";
@@ -98,6 +101,11 @@ fn required_cases_present() {
     }
 }
 
+/// The `ResultsConfig` of `env`: the default threshold, head 60, tail 20, shape on (§10.1).
+fn results_cfg() -> ResultsConfig {
+    ResultsConfig { trim_threshold_bytes: SessionView::default().trim_threshold_bytes, head_lines: 60, tail_lines: 20, shape: true }
+}
+
 /// A temporary session as `shaping_hook.rs` builds it: `results`, `shape`, the default threshold; a fresh usage db.
 struct Env {
     _t: tempfile::TempDir,
@@ -116,8 +124,8 @@ fn env(agent: Agent) -> Env {
         results: true,
         shape: true,
         trim_threshold_bytes: SessionView::default().trim_threshold_bytes,
-        head_lines: 60,
-        tail_lines: 20,
+        head_lines: results_cfg().head_lines,
+        tail_lines: results_cfg().tail_lines,
         ..Default::default()
     }
     .save(&dir)
@@ -268,6 +276,38 @@ fn raw_text(c: &Case) -> Vec<u8> {
     r
 }
 
+/// The text the hook shapes for `c` (O§7.8): the raw text when PO2_STDERR_CLEARED or OpenCode, else stdout.
+fn shaped_src(c: &Case) -> String {
+    let b = if trim::PO2_STDERR_CLEARED || c.meta["agent"] == "opencode" { raw_text(c) } else { c.stdout.clone() };
+    String::from_utf8_lossy(&b).into_owned()
+}
+
+/// An O§8.3 built input: a Claude Code `PostToolUse` case named `built/<name>` in its own temp folder,
+/// `meta` = {"command", "exit": 0, "event": "PostToolUse", "agent": "claude-code"}, empty `stderr` and `must_keep` file.
+fn built(name: &str, command: Value, stdout: Vec<u8>) -> (tempfile::TempDir, Case) {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("built").join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = json!({"command": command, "exit": 0, "event": "PostToolUse", "agent": "claude-code"});
+    std::fs::write(dir.join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+    std::fs::write(dir.join("stdout"), &stdout).unwrap();
+    std::fs::write(dir.join("stderr"), b"").unwrap();
+    std::fs::write(dir.join("must_keep"), b"").unwrap();
+    let c = Case { dir, shaper: "built".into(), name: name.into(), meta, stdout, stderr: vec![], must_keep: vec![] };
+    (t, c)
+}
+
+/// `running {n} tests`, then `test t{i:04} ... ok` for i in 0..n, a blank line, then
+/// `test result: ok. {n} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s`; each line ends in `\n`.
+fn libtest_text(n: usize) -> Vec<u8> {
+    let mut s = format!("running {n} tests\n");
+    for i in 0..n {
+        s.push_str(&format!("test t{i:04} ... ok\n"));
+    }
+    s.push_str(&format!("\ntest result: ok. {n} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"));
+    s.into_bytes()
+}
+
 /// `text` without its color codes: each `ESC [ <digits and ;> m` sequence. `zygo-results` has no public strip function.
 fn no_color(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -298,11 +338,7 @@ fn reuse(c: &Case) -> bool {
 fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
     let f = if f == Floor::FailedCc { FAILED_CC } else { f };
     let at = format!("{}/{}", c.shaper, c.name);
-    let mut p = vec![];
-    let mk = std::fs::read(c.dir.join("must_keep")).unwrap();
-    if mk.starts_with(b"\n") || mk.windows(2).any(|w| w == b"\n\n") {
-        p.push(format!("{at}: empty must_keep line (O§8.1)"));
-    }
+    let mut p = never_worse(c, g);
     let raw = raw_text(c);
     let raw_s = String::from_utf8_lossy(&raw).into_owned();
     if f == Floor::NoChange {
@@ -320,40 +356,15 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
         }
         return p;
     }
-    let (Some((s, v, shaper, row_id)), Some((id, data))) = (&g.row, &g.stored) else {
+    let (Some((s, v, _, row_id)), Some((id, _))) = (&g.row, &g.stored) else {
         p.push(format!("{at}: no hook view, row or stored result"));
         return p;
     };
     if g.out.is_empty() {
         p.push(format!("{at}: no hook output"));
     }
-    // O§7.8, O§7.9: stored_bytes is the raw text (stdout only in the PO2-fail branch on Claude Code), view_bytes the view
-    let counted = if trim::PO2_STDERR_CLEARED || c.meta["agent"] == "opencode" { raw.len() } else { c.stdout.len() };
-    if *s != counted as u64 {
-        p.push(format!("{at}: row stored_bytes {s} is not the {counted} bytes of the raw text (O§7.8)"));
-    }
-    // the mask keeps the length: an id and ZERO_ID are both 26 bytes
-    if *v != g.view.len() as u64 {
-        p.push(format!("{at}: row view_bytes {v} is not the {} bytes of the view (O§7.8)", g.view.len()));
-    }
     if row_id.as_deref() != Some(id.as_str()) {
         p.push(format!("{at}: row result_id {row_id:?} is not the stored id (O§7.9)"));
-    }
-    if !g.view.contains(ZERO_ID) {
-        p.push(format!("{at}: the view does not name the stored id (O§16 item 2)"));
-    }
-    if *data != raw {
-        p.push(format!("{at}: the stored result differs from the raw text (O§8.4)"));
-    }
-    let mut lines: Vec<&str> = g.view.split('\n').collect();
-    if let Some(e) = g.stderr_out.as_deref().filter(|e| !e.is_empty()) {
-        lines.extend(e.split('\n'));
-    }
-    let log = shaper == "log";
-    for m in &c.must_keep {
-        if !holds(&lines, m, log) {
-            p.push(format!("{at}: must_keep line not in the view: {m:?}"));
-        }
     }
     if trim::PO2_STDERR_CLEARED && c.meta["agent"] != "opencode" && !c.stderr.is_empty() && g.stderr_out.as_deref() != Some("") {
         p.push(format!("{at}: stderr is not cleared (O§7.8)"));
@@ -402,6 +413,181 @@ fn problems(c: &Case, f: Floor, g: &Got) -> Vec<String> {
         Floor::NoChange | Floor::NoRow | Floor::FailedCc => {}
     }
     p
+}
+
+/// The 1-based numbers and texts of the lines of `text` (split at `\n`) that `body` does not keep, in order.
+/// `body` is `text` with lines removed and O§7.6 count lines added; a count line starts with `[zygo: ` and
+/// ends with ` hidden]`. `None` when a line of `body` is neither the next kept line of `text` nor a count line.
+fn hidden_lines<'a>(text: &'a str, body: &str) -> Option<Vec<(usize, &'a str)>> {
+    let t: Vec<&'a str> = text.split('\n').collect();
+    let (mut i, mut hidden) = (0, vec![]);
+    for b in body.split('\n') {
+        loop {
+            if t.get(i) == Some(&b) {
+                i += 1;
+                break;
+            }
+            if b.starts_with("[zygo: ") && b.ends_with(" hidden]") {
+                break;
+            }
+            let l = t.get(i)?;
+            hidden.push((i + 1, *l));
+            i += 1;
+        }
+    }
+    hidden.extend(t[i..].iter().enumerate().map(|(k, l)| (i + k + 1, *l)));
+    Some(hidden)
+}
+
+/// The 1-based numbers of the lines of `text` (split at `\n`) inside a libtest or pytest failure section (O§7.6
+/// "Failure section"), from the spec's definitions, not the runner's code. libtest: each `test <name> ... FAILED`
+/// line, each `---- <name> stdout ----` block to the next `---- ` header or `failures:` line, each `failures:` line
+/// and the indented name list after it. pytest: every line from the first `FAILURES`, `ERRORS`, `PASSES` or
+/// `short test summary info` header to the end of the text.
+fn failure_section_lines(text: &str) -> BTreeSet<usize> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut s = BTreeSet::new();
+    let header = regex::Regex::new(r"^=+ (FAILURES|ERRORS|PASSES|short test summary info) =+$").unwrap();
+    if let Some(i) = lines.iter().position(|l| header.is_match(l)) {
+        s.extend(i + 1..=lines.len());
+    }
+    let failed = regex::Regex::new(r"^test .+ \.\.\. FAILED$").unwrap();
+    let block = regex::Regex::new(r"^---- .+ stdout ----$").unwrap();
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        let (opens, more): (bool, fn(&str) -> bool) = if block.is_match(l) {
+            (true, |x| !x.starts_with("---- ") && x != "failures:")
+        } else if l == "failures:" {
+            (true, |x| x.starts_with("    "))
+        } else {
+            (failed.is_match(l), |_| false)
+        };
+        if opens {
+            s.insert(i + 1);
+        }
+        i += 1;
+        while opens && i < lines.len() && more(lines[i]) {
+            s.insert(i + 1);
+            i += 1;
+        }
+    }
+    s
+}
+
+/// O§8.3 items 2-6 (Decision 3) on what the hook gave for `c`; empty when the view is never worse.
+/// Item 1 is `run`: an `Err` or a panic fails the test.
+fn never_worse(c: &Case, g: &Got) -> Vec<String> {
+    never_worse_counted(c, g).0
+}
+
+/// `never_worse`, and the number of hidden lines item 5 checked: `None` when item 5 did not run.
+fn never_worse_counted(c: &Case, g: &Got) -> (Vec<String>, Option<usize>) {
+    let at = format!("{}/{}", c.shaper, c.name);
+    let mut p = vec![];
+    let mk = std::fs::read(c.dir.join("must_keep")).unwrap();
+    if mk.starts_with(b"\n") || mk.windows(2).any(|w| w == b"\n\n") {
+        p.push(format!("{at}: empty must_keep line (O§8.1, O§8.3 item 4)"));
+    }
+    let raw = raw_text(c);
+    // item 6 (O§7.3, O-C1): above SHAPE_MAX_BYTES the view is the size view of the raw text
+    if raw.len() > SHAPE_MAX_BYTES {
+        let s = zygo_results::Stored {
+            id: ZERO_ID.into(),
+            tool: "Bash".into(),
+            bytes: raw.len() as u64,
+            lines: String::from_utf8_lossy(&raw).lines().count() as u64,
+            kind: zygo_results::Kind::Text,
+            created_at: 0,
+            session: None,
+            data: vec![],
+        };
+        if g.view != size_view(&shaped_src(c), &s, &results_cfg()) {
+            p.push(format!("{at}: above SHAPE_MAX_BYTES the view is not the size view of the raw text (O§8.3 item 6)"));
+        }
+    }
+    // empty output is "no change"
+    if g.out.is_empty() {
+        return (p, None);
+    }
+    let (Some((s, v, shaper, _)), Some((_, data))) = (&g.row, &g.stored) else {
+        p.push(format!("{at}: a view and no trims row or stored result (O§8.3 items 2, 3)"));
+        return (p, None);
+    };
+    // O§7.8, O§7.9: stored_bytes is the raw text (stdout only in the PO2-fail branch on Claude Code), view_bytes the view
+    let counted = shaped_src(c).len();
+    if *s != counted as u64 {
+        p.push(format!("{at}: row stored_bytes {s} is not the {counted} bytes of the raw text (O§7.8)"));
+    }
+    // the mask keeps the length: an id and ZERO_ID are both 26 bytes
+    if *v != g.view.len() as u64 {
+        p.push(format!("{at}: row view_bytes {v} is not the {} bytes of the view (O§7.8)", g.view.len()));
+    }
+    // item 2 (O-C4, O§7.8 use rule)
+    if v > s {
+        p.push(format!("{at}: view of {v} bytes is larger than the {s} stored bytes (O§8.3 item 2)"));
+    } else if s - v < MIN_SAVING_BYTES as u64 {
+        p.push(format!("{at}: saving {} of {s} bytes is under MIN_SAVING_BYTES {MIN_SAVING_BYTES} (O§8.3 item 2)", s - v));
+    }
+    // item 3
+    if !g.view.contains(ZERO_ID) {
+        p.push(format!("{at}: the view does not name the stored id (O§8.3 item 3, O§16 item 2)"));
+    }
+    if *data != raw {
+        p.push(format!("{at}: the stored result differs from the raw text (O§8.3 item 3)"));
+    }
+    // item 4 (O-C9)
+    let mut lines: Vec<&str> = g.view.split('\n').collect();
+    if let Some(e) = g.stderr_out.as_deref().filter(|e| !e.is_empty()) {
+        lines.extend(e.split('\n'));
+    }
+    let log = shaper == "log";
+    for m in &c.must_keep {
+        if !holds(&lines, m, log) {
+            p.push(format!("{at}: must_keep line not in the view: {m:?}"));
+        }
+    }
+    // item 5 (O§7.6, O-C9): only when the runner is the last step (spec gap 1)
+    let r = match shaper.as_str() {
+        "libtest" => Runner::Libtest,
+        "pytest" => Runner::Pytest,
+        "gotest" => Runner::Gotest,
+        _ => return (p, None),
+    };
+    if !g.view.starts_with("[zygo shaped this output: ") {
+        p.push(format!("{at}: the {shaper} row's view has no shaped marker, so item 5 cannot follow it (O§8.3 item 5, spec gap 1)"));
+        return (p, None);
+    }
+    let checked = {
+        let src = shaped_src(c);
+        let mut t = clean(&src, reuse(c)).map_or(src, |(t, _)| t);
+        if !reuse(c) {
+            if let Some(d) = dedup(&t) {
+                t = d;
+            }
+        }
+        let body = g.view.split_once('\n').map_or("", |(_, b)| b);
+        match hidden_lines(&t, body) {
+            None => {
+                p.push(format!("{at}: the {shaper} view holds a line that is not in the text it shaped (O§8.3 item 5)"));
+                None
+            }
+            Some(h) => {
+                let passed = if r == Runner::Gotest { runner::gotest_passed_lines(&t) } else { vec![] };
+                // O§7.6: no hidden form applies inside a libtest or pytest failure section, whichever runner's view it is
+                let kept = failure_section_lines(&t);
+                for &(n, line) in &h {
+                    if kept.contains(&n) {
+                        p.push(format!("{at}: line {n} hidden by the {shaper} view is in a failure section (O§8.3 item 5, O§7.6): {line:?}"));
+                    } else if !runner::hidden_by(r, line) && !passed.contains(&n) {
+                        p.push(format!("{at}: line {n} hidden by the {shaper} view matches no hidden form of its row (O§8.3 item 5): {line:?}"));
+                    }
+                }
+                Some(h.len())
+            }
+        }
+    };
+    (p, checked)
 }
 
 #[test]
@@ -600,4 +786,207 @@ fn failed_cc_runner_views_meet_the_failing_floor() {
     }
     assert_eq!(n, 4);
     assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+#[test]
+fn never_worse_aligns_hidden_lines() {
+    assert_eq!(hidden_lines("a\nt1\nt2\nb\n", "a\n[zygo: 2 passed and 0 ignored test lines hidden]\nb\n"), Some(vec![(2, "t1"), (3, "t2")]));
+    assert_eq!(hidden_lines("a\nb\n", "a\nb\n"), Some(vec![]));
+    assert_eq!(hidden_lines("a\nb\nc", "a"), Some(vec![(2, "b"), (3, "c")]));
+    assert_eq!(hidden_lines("a\nb\n", "a\nz\nb\n"), None);
+}
+
+#[test]
+fn never_worse_holds_for_every_case() {
+    // O§8.3, O§16 item 3: every case; `required_cases_present` keeps the set equal to CASES
+    let (mut p, mut runner_views, mut hidden) = (vec![], 0, 0);
+    for c in shaping::cases(None) {
+        let (q, checked) = never_worse_counted(&c, &run_case(&c));
+        if let Some(n) = checked {
+            runner_views += 1;
+            hidden += n;
+        }
+        p.extend(q);
+    }
+    assert!(runner_views > 0, "item 5 checked no runner view");
+    assert!(hidden > 0, "item 5 checked no hidden line");
+    assert!(p.is_empty(), "{}", p.join("\n"));
+}
+
+#[test]
+fn never_worse_names_a_saving_under_256_bytes() {
+    // O§8.3 item 2, O-C4: 256 passes, 255 does not
+    let (c, g) = got("libtest", "failing-nocapture");
+    let with = |saving: u64| {
+        let mut b = g.clone();
+        let r = b.row.as_mut().unwrap();
+        r.1 = r.0 - saving;
+        never_worse(&c, &b)
+    };
+    assert!(!with(256).iter().any(|l| l.contains("O§8.3 item 2")), "{:?}", with(256));
+    assert!(with(255).iter().any(|l| l.contains("O§8.3 item 2")), "{:?}", with(255));
+}
+
+#[test]
+fn never_worse_names_a_stored_text_that_differs() {
+    // O§8.3 item 3
+    let (c, g) = got("libtest", "failing-nocapture");
+    let mut b = g.clone();
+    b.stored.as_mut().unwrap().1[0] ^= 1;
+    assert!(never_worse(&c, &b).iter().any(|l| l.contains("O§8.3 item 3")), "{:?}", never_worse(&c, &b));
+}
+
+#[test]
+fn never_worse_names_a_missing_must_keep_line() {
+    // O§8.3 item 4, O-C9
+    let (c, g) = got("libtest", "failing-nocapture");
+    let m = c.must_keep[0].clone();
+    assert!(never_worse(&c, &hiding(&g, &m)).iter().any(|l| l.contains(&format!("must_keep line not in the view: {m:?}"))));
+}
+
+#[test]
+fn never_worse_names_a_hidden_line_of_no_hidden_form() {
+    // O§8.3 item 5: `running 122 tests` is not a libtest hidden form (O§7.6)
+    let (c, g) = got("libtest", "failing-nocapture");
+    assert_eq!(never_worse(&c, &g), Vec::<String>::new());
+    let p = never_worse(&c, &hiding(&g, "running 122 tests"));
+    assert!(p.iter().any(|l| l.contains("O§8.3 item 5") && l.contains("running 122 tests")), "{p:?}");
+}
+
+#[test]
+fn never_worse_refuses_bless_of_a_view_that_fails_it() {
+    // O§8.1: bless refuses a view that fails an O§8.3 check
+    let (_t, c) = copy_case(None);
+    let g = run_case(&c);
+    let p = settle(&c, Floor::Failing, &hiding(&g, "running 122 tests"), true);
+    assert!(p.iter().any(|l| l.contains("O§8.3 item 5")), "{p:?}");
+    assert!(!c.dir.join("view").exists());
+}
+
+#[test]
+fn never_worse_names_a_size_view_that_differs() {
+    // O§8.3 item 6: above SHAPE_MAX_BYTES (4,194,304) the view is the size view of the raw text
+    assert_eq!(SHAPE_MAX_BYTES, 4_194_304);
+    let (_t, c) = built("5-mib-output", json!("cargo test"), (0..327_680u32).flat_map(|i| format!("line {i:010}\n").into_bytes()).collect());
+    let g = run_case(&c);
+    assert_eq!(never_worse(&c, &g), Vec::<String>::new());
+    let b = Got { view: g.view.replacen("line 0000000000", "line 0000000001", 1), ..g.clone() };
+    assert!(never_worse(&c, &b).iter().any(|l| l.contains("O§8.3 item 6")), "{:?}", never_worse(&c, &b));
+}
+
+#[test]
+fn never_worse_empty_output() {
+    // O§8.3 built input: empty output
+    let (_t, c) = built("empty-output", json!("true"), vec![]);
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_one_line() {
+    // O§8.3 built input: one line
+    let (_t, c) = built("one-line", json!("echo one"), b"one line\n".to_vec());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_three_equal_blank_lines() {
+    // O§8.3 built input: 3 equal blank lines
+    let (_t, c) = built("three-equal-blank-lines", json!("printf x"), b"\n\n\n".to_vec());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_lone_esc() {
+    // O§8.3 built input: a lone ESC
+    let (_t, c) = built("lone-esc", json!("printf x"), b"\x1b".to_vec());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_osc_with_no_end() {
+    // O§8.3 built input: an OSC with no end, over the 4 KiB OSC bound (O§7.4)
+    let (_t, c) = built("osc-with-no-end", json!("printf x"), [&b"\x1b]0;"[..], &b"a".repeat(5000), b"\n"].concat());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_5_mib_output() {
+    // O§8.3 built input: a 5 MiB output
+    let (_t, c) = built("5-mib-output", json!("cargo test"), (0..327_680u32).flat_map(|i| format!("line {i:010}\n").into_bytes()).collect());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_test_result_line_with_no_tests() {
+    // O§8.3 built input: a `test result:` line with no tests
+    let (_t, c) = built("test-result-line-with-no-tests", json!("cargo test"), b"test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n".to_vec());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_command_not_a_string() {
+    // O§8.3 built input: a command that is not a string
+    let (_t, c) = built("command-not-a-string", json!(42), libtest_text(1000));
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_command_with_an_unclosed_quote() {
+    // O§8.3 built input: a command with an unclosed quote
+    let (_t, c) = built("command-with-an-unclosed-quote", json!("cargo test 'x"), libtest_text(1000));
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_10000_deep_json_array() {
+    // O§8.3 built input: a 10,000-deep JSON array
+    let (_t, c) = built("10000-deep-json-array", json!("jq -c . deep.json"), [b"[".repeat(10_000), b"]".repeat(10_000), b"\n".to_vec()].concat());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+#[test]
+fn never_worse_400000_character_line() {
+    // O§8.3 built input: a 400,000-character line
+    let (_t, c) = built("400000-character-line", json!("echo"), [b"a".repeat(400_000), b"\n".to_vec()].concat());
+    assert_eq!(never_worse(&c, &run_case(&c)), Vec::<String>::new());
+}
+
+/// O§7.6 failure section: libtest output whose `---- x stdout ----` block holds a line of a hidden form
+/// (trybuild-like), with 1000 passed test lines to hide and a `test result:` summary.
+fn libtest_with_failure_section() -> Vec<u8> {
+    let mut s = String::from("running 1001 tests\n");
+    for i in 0..1000 {
+        s.push_str(&format!("test t{i:04} ... ok\n"));
+    }
+    s.push_str("test x ... FAILED\n\nfailures:\n\n---- x stdout ----\ntest y ... ok\nassertion failed\n\nfailures:\n    x\n\n");
+    s.push_str("test result: FAILED. 1000 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n");
+    s.into_bytes()
+}
+
+#[test]
+fn never_worse_failure_section_line_of_a_hidden_form() {
+    // O§8.3 item 5, O§7.6: the hook keeps a line of a hidden form inside a libtest failure section
+    let (_t, c) = built("failure-section", json!("cargo test"), libtest_with_failure_section());
+    let g = run_case(&c);
+    assert!(g.view.split('\n').any(|l| l == "test y ... ok"), "{}", g.view);
+    let (p, checked) = never_worse_counted(&c, &g);
+    assert_eq!(p, Vec::<String>::new());
+    assert!(checked.is_some_and(|n| n > 0), "{checked:?}");
+}
+
+#[test]
+fn never_worse_names_a_hidden_failure_section_line() {
+    // O§8.3 item 5, O§7.6: a view that hides `test y ... ok` inside `---- x stdout ----` fails item 5
+    let (_t, c) = built("failure-section", json!("cargo test"), libtest_with_failure_section());
+    let p = never_worse(&c, &hiding(&run_case(&c), "test y ... ok"));
+    assert!(p.iter().any(|l| l.contains("in a failure section") && l.contains("test y ... ok")), "{p:?}");
+}
+
+#[test]
+fn never_worse_finds_failure_sections() {
+    // O§7.6 "Failure section", libtest and pytest
+    let lt = "test a ... ok\ntest x ... FAILED\n\nfailures:\n\n---- x stdout ----\ntest y ... ok\n\nfailures:\n    x\n\ntest result: FAILED.";
+    assert_eq!(failure_section_lines(lt).into_iter().collect::<Vec<_>>(), vec![2, 4, 6, 7, 8, 9, 10]);
+    let py = "a.py ..\n==== FAILURES ====\nb.py ..\n== 1 failed in 0.1s ==";
+    assert_eq!(failure_section_lines(py).into_iter().collect::<Vec<_>>(), vec![2, 3, 4]);
 }
