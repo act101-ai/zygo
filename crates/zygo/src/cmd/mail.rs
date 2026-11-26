@@ -43,7 +43,7 @@ const WATCH_POLL: Duration = Duration::from_millis(500);
 /// S§8.3 step 3, D4: the CLI line when another sync of the workspace still holds the lock after `LOCK_WAIT`.
 const BUSY_LINE: &str = "zygo: another mail sync of this workspace holds the lock; try again";
 
-/// S§6.6 Limit, D4: the once-per-workspace note at the first `zygo mail sync` whose first pass ended.
+/// S§6.6 Limit, D4: the once-per-workspace note at the first `zygo mail sync` that ends without a stop.
 const CI_NOTE: &str = "zygo: each mail sync push can start CI and webhooks on the forge. The commits hold [skip ci]; webhooks, other workflow events and CI systems that do not read [skip ci] still run. Exclude zygo/** in such CI configs.";
 
 #[derive(Args)]

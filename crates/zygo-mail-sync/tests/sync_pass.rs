@@ -20,7 +20,7 @@ use zygo_core::paths::Paths;
 use zygo_mail_sync::address::Address;
 use zygo_mail_sync::env::{self, Crash, Env, Seam, Spawner, Verdict, Wake};
 use zygo_mail_sync::registry::{read_cache, write_cache, MemberCache};
-use zygo_mail_sync::state::{load, make_identity, mark_again, SyncPaths};
+use zygo_mail_sync::state::{load, make_identity, mark_again, save, SyncPaths};
 use zygo_mail_sync::sync::{run, Mode, SyncError, LOCK_WAIT, MAX_ATTEMPTS, OUTBOX_CAP, PASS_DEADLINE};
 use zygo_redact::DeadlinePolicy;
 use zygo_workspace::mail::wake::{after_send_with, Probe as IdleProbe, WAKE_TEXT};
@@ -747,6 +747,35 @@ fn mark_during_the_pass_runs_a_second_pass() {
     let id2 = late.lock().unwrap().unwrap();
     assert!(tip_file(&r, BRANCH, &format!("bob@b/{id2}.json")).is_some());
     assert!(!a.sp().again.exists());
+}
+
+#[test] // S§6.6 (MS-17 review round 1, F2): a CLI sync whose later pass stops does not use the CI note up
+fn ci_note_is_kept_when_a_later_pass_stops() {
+    let _g = exclusive();
+    let (r, a, _b) = pair();
+    let mut st = load(&a.sp()).unwrap();
+    st.ci_note_shown = false;
+    save(&a.sp(), &st).unwrap();
+    let a = Arc::new(a);
+    let (a2, r) = (a.clone(), Arc::new(r));
+    let r2 = r.clone();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let h = counting(Arc::default(), move |p, n| {
+        if p == "before_release" && n == 1 {
+            send(&a2, "alice", ("bob", "b"), "late");
+            mark_again(&a2.sp()).unwrap();
+            released.store(true, Ordering::SeqCst);
+        }
+        if p == "before_push" && released.load(Ordering::SeqCst) {
+            advance(&r2, BRANCH);
+        }
+    });
+    let e = run(&hook_env(&a, h), WS_ID, Mode::Cli).unwrap_err();
+    assert!(matches!(e, SyncError::Stopped { check: "moved", .. }), "{e:?}");
+    assert!(!load(&a.sp()).unwrap().ci_note_shown);
+    assert!(sync(&a).ci_note);
+    assert!(load(&a.sp()).unwrap().ci_note_shown);
+    assert!(!sync(&a).ci_note);
 }
 
 #[test] // S§19 #16b, review focus 9
