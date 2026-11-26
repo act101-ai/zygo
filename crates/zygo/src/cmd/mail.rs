@@ -1,9 +1,9 @@
-//! zygo mail send|read|ls and /zygo:mail (M§8; owner: node ML-12); the command-start mail sweep (M§5, AU71).
+//! zygo mail send|read|ls|watch and /zygo:mail (M§8; owner: nodes ML-12, ML-13); the command-start mail sweep (M§5, AU71).
 
 use std::ffi::OsStr;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, bail};
 use clap::{Args, Subcommand};
@@ -27,6 +27,9 @@ const NO_WORKSPACE: &str = "no workspace for this session or folder";
 /// The git bound of the `/zygo:mail` checkout lookup: the bound of `admin::status`, so `/zygo:mail` fits the 4.5 s
 /// hook bound as `/zygo:workspace` does (`crates/zygo-workspace/src/admin.rs:29-30`, W§12). The CLI keeps `GIT_BOUND`.
 const SLASH_GIT_BOUND: Duration = Duration::from_secs(2);
+
+/// The poll of `zygo mail watch` (A6): a send is seen within 1 s (M§13 #7).
+const WATCH_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Args)]
 pub struct MailArgs {
@@ -57,6 +60,12 @@ pub enum MailCmd {
     },
     /// Unread counts per member, or the new messages of one
     Ls { name: Option<String> },
+    /// Wait for new mail of this pane's member, or of <name>; print one line per message
+    Watch {
+        name: Option<String>,
+        #[arg(long, default_value = "25m")]
+        timeout: String,
+    },
 }
 
 /// `zygo mail`: the OP5 check first; bare `zygo mail` is `zygo mail ls` (D1).
@@ -100,6 +109,24 @@ pub fn run(a: MailArgs) -> i32 {
                 None => 0,
             }
         }
+        Some(MailCmd::Watch { name, timeout }) => {
+            let Some(d) = zygo_config::parse_duration(&timeout) else {
+                print_err(&format!("zygo: bad --timeout value {}: use <n>s, <n>m, <n>h or <n>d\n", esc(&timeout)));
+                return 2;
+            };
+            let key = match (name, pane) {
+                (Some(n), _) => match names::resolve(&ws, &n, None) {
+                    Ok(mut t) if t.len() == 1 => t.remove(0).key,
+                    Ok(_) => return finish(Err(UsageError(format!("zygo mail watch: {n} is not one member")).into())),
+                    Err(e) => return finish(Err(e.into())),
+                },
+                (None, Some(k)) => k,
+                (None, None) => {
+                    return finish(Err(UsageError("zygo mail watch: no member for this pane; pass a name".into()).into()))
+                }
+            };
+            watch(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock())
+        }
         Some(MailCmd::Send { to, subject, file, stdin }) => {
             let cfg = match user_config_or_exit(&paths, "mail") {
                 Ok(c) => c,
@@ -135,6 +162,37 @@ pub fn run(a: MailArgs) -> i32 {
             }
             if r.refused.is_empty() { 0 } else { 1 }
         }
+    }
+}
+
+/// `zygo mail watch` (M-G5, M§8): each `poll`, the count of files in `new/` of `key` under `dir`; when a file has
+/// landed, one line `<id> <from> <subject>` per message that parses on `out` (none when no file parses), exit 0,
+/// nothing moved. Exit 1 when `timeout` has passed since the first `now()` with no file (no line), on a read error
+/// (its text on stderr), or when the write to `out` fails (A7). The count comes before the clock, so mail already in
+/// `new/` returns 0 even with a zero timeout (A4).
+pub fn watch(dir: &Path, key: &str, timeout: Duration, poll: Duration, now: &dyn Fn() -> Instant, out: &mut dyn Write) -> i32 {
+    let start = now();
+    loop {
+        match store::unread(dir, key).and_then(|n| if n > 0 { store::list(dir, key).map(Some) } else { Ok(None) }) {
+            Err(e) => {
+                print_err(&format!("{e}\n"));
+                return 1;
+            }
+            Ok(Some(l)) => {
+                let text: String =
+                    l.iter().map(|s| format!("{} {} {}\n", esc(&s.id), esc(&s.from), esc(&s.subject))).collect();
+                if let Err(e) = out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+                    print_err(&format!("zygo mail watch: cannot write: {}\n", esc(&e.to_string())));
+                    return 1;
+                }
+                return 0;
+            }
+            Ok(None) => {}
+        }
+        if now().duration_since(start) >= timeout {
+            return 1;
+        }
+        std::thread::sleep(poll);
     }
 }
 
@@ -308,6 +366,12 @@ mod tests {
     fn slash_git_bound_is_that_of_workspace_status() {
         assert_eq!(super::SLASH_GIT_BOUND, std::time::Duration::from_secs(2));
         assert!(super::SLASH_GIT_BOUND < zygo_workspace::up::GIT_BOUND);
+    }
+
+    /// M§13 #7: a send is seen within 1 s, so the CLI poll is at most 1 s. Nothing waits.
+    #[test]
+    fn watch_poll_is_at_most_1s() {
+        assert!(super::WATCH_POLL <= std::time::Duration::from_secs(1));
     }
 }
 
