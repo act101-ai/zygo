@@ -103,6 +103,7 @@ Closed node rows and Log entries moved from graph.md, verbatim. Append-only.
 | OS-30 | Runner views: dispatch and the libtest view (pipeline step 3) | OS-29, OS-19 | DONE | judgment | 974fef24 plan; 6f4959d7, d1f02107, eef74481; shape_runner_libtest 20/20, shape_pipeline 24/24; PR #158 |
 | WD-11 | `zygo up`: loadout choice, checked read, pin, member maximum | WD-7, WD-8, WD-10, ML-14, MS-5 | DONE | judgment | a1f4eb0c, f16c93f8, 767b954a, e0905dec, 8cd02ad7, 6fe57c61, e6fca6e4 · up_definition 17/0 ; floor green · PR #120 |
 | WD-13 | Launcher: repository profile by a default-branch read (not pinned) | WD-7, DR-13, OS-9 | DONE | judgment | b00e2819, ffe10789, 777c51d6, d5c92329, 93add253 · repo_profile 15/0 ; floor green · PR #121 |
+| WD-17 | `zygo doctor` lines: workspace files, pool, member maximum | WD-7, WD-9 | DONE | implementation | d31d6c56, 8a15ab61, 2ec94a9a, 3a944a2d · definition_doctor 15/0 ; floor green · PR #119 |
 
 ## Log
 
