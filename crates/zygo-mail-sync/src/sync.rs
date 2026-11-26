@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ulid::Ulid;
 use zygo_config::{sync_for, Config, LoadContext, SyncOff, SyncSettings};
@@ -57,11 +57,13 @@ pub enum SyncError {
 }
 
 impl SyncError {
-    /// S§8.3 steps 1 and 3: the gate and the lock give exit 0 to a child and 1 to the CLI; every stop gives 1
+    /// S§8.3 steps 1 and 3: the gate (sync off, or a workspace record or config that cannot be read: checks
+    /// `workspace` and `config`) and the lock give exit 0 to a child and 1 to the CLI; every other stop gives 1
     /// (S§7.5, S§8.3 steps 7 and 15).
     pub fn exit_code(&self, mode: Mode) -> i32 {
         match (self, mode) {
             (SyncError::Off(_) | SyncError::Busy, Mode::Child) => 0,
+            (SyncError::Stopped { check: "workspace" | "config", .. }, Mode::Child) => 0,
             _ => 1,
         }
     }
@@ -73,6 +75,9 @@ const MARKER_LINE: &str = "zygo: the side branch is not a zygo mail branch";
 const PUBLIC_LINE: &str = "zygo: the remote can be read without a login; mail sync refused";
 /// S§11: the line of a `remote` that `git remote` does not list.
 const REMOTE_LINE: &str = "zygo: no such remote";
+/// S§8.3 step 1: the CLI lines of a gate failure (author's text; review F5).
+const GATE_RECORD_LINE: &str = "zygo: mail sync cannot run: the workspace record cannot be read";
+const GATE_CONFIG_LINE: &str = "zygo: mail sync cannot run: the config does not load";
 /// S§8.3 step 15: the line after the fifth move of the branch.
 const MOVED_LINE: &str = "zygo: the side branch moved 5 times during the sync; try again";
 /// The poll of a lock that another holder has, as the workspace lock helper.
@@ -129,7 +134,13 @@ pub fn run(env: &Env, ws_id: &str, mode: Mode) -> Result<Report, SyncError> {
     let mut report = Report::default();
     let mut first = true;
     loop {
-        let lock = take_lock(&c.sp, mode, &*env.clock)?;
+        let lock = match take_lock(&c.sp, mode, &*env.clock) {
+            Ok(Some(f)) => f,
+            // A pass ran: the holder of the lock owns the mark and runs the next pass (S§8.3 step 17).
+            Ok(None) if report.passes > 0 => return Ok(report),
+            Ok(None) => return Err(SyncError::Busy),
+            Err(f) => return Err(c.stopped(f, false)),
+        };
         let held = (|| {
             state::take_again(&c.sp).map_err(|_| stop("again"))?;
             pass(&c, &mut report, first)?;
@@ -170,26 +181,26 @@ impl Ctx<'_> {
 }
 
 /// S§8.3 step 1: the workspace record, the config (layers 1-4, the main worktree as the repository) and the sync
-/// settings. Sync off is `Off` with nothing written.
+/// settings. A gate failure takes no action, so nothing is written, not even an `errors.log` line: sync off is
+/// `Off`; a workspace record or a config that cannot be read is `Stopped` with check `workspace` or `config`, which
+/// [`SyncError::exit_code`] gives exit 0 for a child.
 fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
     let store = Store::open(&env.paths, ws_id);
-    let early = |check: &'static str| {
-        store.log_error(&format!("mail sync: stopped: {check}"));
-        let Fail::Stop { line, check } = stop(check) else { unreachable!() };
-        SyncError::Stopped { line, check }
-    };
-    let sp = SyncPaths::new(&env.paths, ws_id).map_err(|_| early("workspace"))?;
-    let Ok(Some(ws)) = store.read() else { return Err(early("workspace")) };
+    let record = || SyncError::Stopped { line: GATE_RECORD_LINE.into(), check: "workspace" };
+    let sp = SyncPaths::new(&env.paths, ws_id).map_err(|_| record())?;
+    let Ok(Some(ws)) = store.read() else { return Err(record()) };
     let ctx = LoadContext { paths: env.paths.clone(), repo: Some(ws.main_root.clone()), team: None };
-    let cfg = zygo_config::load(&ctx).map_err(|_| early("config"))?.config;
+    let cfg = zygo_config::load(&ctx)
+        .map_err(|_| SyncError::Stopped { line: GATE_CONFIG_LINE.into(), check: "config" })?
+        .config;
     let s = sync_for(&cfg, &ws.name).map_err(SyncError::Off)?;
     Ok(Ctx { env, ws_id, sp, store, ws, cfg, s })
 }
 
-/// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another: `Busy` at once for a child; the CLI tries each
-/// 5 ms until [`LOCK_WAIT`] has passed on the injected clock.
-fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<File, SyncError> {
-    let fail = || SyncError::Stopped { line: "zygo: mail sync stopped (lock); the outbox is kept".into(), check: "lock" };
+/// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each
+/// 5 ms until [`LOCK_WAIT`] has passed on the injected clock. A folder, open or lock error is the `lock` stop.
+fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<Option<File>, Fail> {
+    let fail = || stop("lock");
     for d in [&sp.mail, &sp.sync] {
         zygo_workspace::mail::ensure_mail_root(d).map_err(|_| fail())?;
     }
@@ -204,11 +215,11 @@ fn take_lock(sp: &SyncPaths, mode: Mode, clock: &dyn Clock) -> Result<File, Sync
     let start = clock.now();
     loop {
         match fs4::FileExt::try_lock(&f) {
-            Ok(()) => return Ok(f),
+            Ok(()) => return Ok(Some(f)),
             Err(fs4::TryLockError::Error(_)) => return Err(fail()),
             Err(fs4::TryLockError::WouldBlock) => {
                 if mode == Mode::Child || clock.now() >= start + LOCK_WAIT {
-                    return Err(SyncError::Busy);
+                    return Ok(None);
                 }
                 std::thread::sleep(LOCK_POLL);
             }
@@ -221,6 +232,8 @@ fn pass(c: &Ctx, report: &mut Report, first: bool) -> Result<(), Fail> {
     let (env, sp, root, wt) = (c.env, &c.sp, &c.ws.main_root, &c.sp.worktree);
     let (remote, branch_name, host) = (c.s.remote.as_str(), c.s.branch.as_str(), c.s.host.as_str());
     let deadline = Instant::now() + PASS_DEADLINE;
+    // The same deadline on the injected clock (S-C9), checked before each secret check of the outbox step.
+    let pass_end = env.clock.now() + PASS_DEADLINE;
     let mut log = |l: &str| c.log(l);
     import::finish_incoming(sp, &sp.mail).map_err(|_| stop("incoming"))?;
     if first {
@@ -281,7 +294,7 @@ fn pass(c: &Ctx, report: &mut Report, first: bool) -> Result<(), Fail> {
         keys.dedup();
         wake(c, &keys);
         let mut notified = Vec::new();
-        let (mut changes, sent) = outbox(c, &tip, deadline, &mut notified)?;
+        let (mut changes, sent) = outbox(c, &tip, (deadline, pass_end), &mut notified)?;
         notified.sort();
         notified.dedup();
         wake(c, &notified);
@@ -346,26 +359,33 @@ fn public_check(c: &Ctx, report: &mut Report, deadline: Instant) -> Result<(), F
     }
 }
 
-/// S§8.3 step 11, S§8.6 "At commit": the first [`OUTBOX_CAP`] outbox files in ULID order. A file whose path is at
-/// the tip was pushed before and is deleted now. Else the secret pass: clear, an add of its bytes at
+/// S§8.3 step 11, S§8.6 "At commit": the outbox files in ULID order, at most [`OUTBOX_CAP`] readable ones. A file
+/// that cannot be read (a link, a FIFO, over `FILE_MAX`, not JSON, or a `to` that is no address) moves to
+/// `refused/`, with one log line, and takes no cap slot. A file whose path is at the tip was pushed before and is
+/// deleted now. Else, while the pass deadline holds, the secret pass: clear, an add of its bytes at
 /// `<to>/<ULID>.json` (and the file in the returned list, deleted after the push); a finding, the move to
-/// `refused/` and the notice to the sender, whose keys go into `notified`; could not run, the file stays. A file
-/// that does not read or parse stays, with one log line (Open O4).
-fn outbox(c: &Ctx, tip: &str, deadline: Instant, notified: &mut Vec<String>)
+/// `refused/` and the notice to the sender, whose keys go into `notified`; could not run, the file stays.
+fn outbox(c: &Ctx, tip: &str, (deadline, pass_end): (Instant, SystemTime), notified: &mut Vec<String>)
     -> Result<(Vec<Change>, Vec<PathBuf>), Fail> {
     let (sp, wt) = (&c.sp, &c.sp.worktree);
     let mut items = Vec::new();
-    for (id, p) in crate::outbox::pending(sp).map_err(|_| stop("outbox"))?.into_iter().take(OUTBOX_CAP) {
+    for (id, p) in outbox_entries(sp).map_err(|_| stop("outbox"))? {
+        if items.len() == OUTBOX_CAP {
+            break;
+        }
         match read_message(&p) {
             Some((bytes, value, to)) => items.push((id, p, bytes, value, format!("{to}/{id}.json"), to)),
-            None => c.log(&format!("mail sync: outbox {id}: read")),
+            None => refuse_unread(c, id, &p),
         }
     }
+    let wanted: BTreeSet<&String> = items.iter().map(|i| &i.4).collect();
     let mut at_tip = BTreeSet::new();
     let folders: BTreeSet<&String> = items.iter().map(|i| &i.5).collect();
     for to in folders {
         branch::ls(wt, tip, Some(&format!("{to}/")), deadline, &mut |e| {
-            at_tip.insert(e.path);
+            if wanted.contains(&e.path) {
+                at_tip.insert(e.path);
+            }
             Flow::Go
         })?;
     }
@@ -374,6 +394,9 @@ fn outbox(c: &Ctx, tip: &str, deadline: Instant, notified: &mut Vec<String>)
         if at_tip.contains(&path) {
             let _ = std::fs::remove_file(&p);
             continue;
+        }
+        if Instant::now() >= deadline || c.env.clock.now() >= pass_end {
+            return Err(stop("deadline"));
         }
         match secret::check(&value, &c.cfg.redaction, &c.ws.main_root, &c.env.secret_policy) {
             Outcome::Clear => {
@@ -403,6 +426,52 @@ fn outbox(c: &Ctx, tip: &str, deadline: Instant, notified: &mut Vec<String>)
         }
     }
     Ok((changes, sent))
+}
+
+/// Each entry of `mail/outbox/` named `<ULID>.json` that is not a folder (regular files, links, FIFOs and others),
+/// in ULID order. `mail/` and `outbox/` must be folders, not links; a missing one is no entry.
+fn outbox_entries(sp: &SyncPaths) -> std::io::Result<Vec<(Ulid, PathBuf)>> {
+    for d in [&sp.mail, &sp.outbox] {
+        match std::fs::symlink_metadata(d) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a folder")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        }
+    }
+    let mut v = Vec::new();
+    for e in std::fs::read_dir(&sp.outbox)? {
+        let e = e?;
+        if e.file_type()?.is_dir() {
+            continue;
+        }
+        if let Some(u) = e.file_name().to_str().and_then(address::ulid_file) {
+            v.push((u, e.path()));
+        }
+    }
+    v.sort_by_key(|(u, _)| *u);
+    Ok(v)
+}
+
+/// Review F2: moves the outbox entry `p` that cannot be read into `refused/` as it is (a rename: a link is moved,
+/// never followed, and an existing `refused/` name is never replaced), with one log line, check `read`. A regular
+/// file gets the time of the move, so the `refused/` sweep counts from it (S§9). A failed move leaves it in place.
+fn refuse_unread(c: &Ctx, id: Ulid, p: &Path) {
+    c.log(&format!("mail sync: outbox {id}: read"));
+    let dst = c.sp.refused.join(format!("{id}.json"));
+    if zygo_workspace::mail::ensure_mail_root(&c.sp.refused).is_err() || std::fs::symlink_metadata(&dst).is_ok() {
+        return;
+    }
+    if std::fs::rename(p, &dst).is_ok() && std::fs::symlink_metadata(&dst).is_ok_and(|m| m.is_file()) {
+        let mut o = OpenOptions::new();
+        o.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+        }
+        let _ = o.open(&dst).and_then(|f| f.set_modified(c.env.clock.now()));
+    }
 }
 
 /// The bytes of the outbox file `p` (a regular file, no link followed, at most `FILE_MAX` bytes), its JSON value and

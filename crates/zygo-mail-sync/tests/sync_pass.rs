@@ -679,8 +679,7 @@ fn unlisted_remote_stops() {
 #[test] // S§8.3 steps 2 and 3, S§14 "Two syncs on one machine"
 fn child_skips_and_cli_waits_for_a_held_lock() {
     let (_r, a, _b) = pair();
-    let held = fs::OpenOptions::new().read(true).write(true).open(a.sp().lock).unwrap();
-    fs4::FileExt::try_lock(&held).unwrap();
+    let held = take(&a.sp().lock);
     assert_eq!(run(&plain_env(&a), WS_ID, Mode::Child).unwrap_err(), SyncError::Busy);
     assert!(a.sp().again.exists());
     let stepping = env(&a, Hook::none(), Clock::stepping(T0, 10), Verdict::Local, StubWake::busy(), far_policy());
@@ -716,13 +715,15 @@ fn mark_during_the_pass_runs_a_second_pass() {
 fn starter_between_release_and_look_is_never_lost() {
     let (r, a, _b) = pair();
     let a = Arc::new(a);
-    // A starter that runs between the release and the look takes the free lock and runs the pass itself.
+    // A starter that runs between the release and the look takes the free lock and runs the pass itself. It is a
+    // CLI run on a fixed clock, so it waits for a lock that a forked git child of another test still holds (see
+    // [`take`]).
     let (a2, inner, late) = (a.clone(), Arc::new(Mutex::new(None)), Arc::new(Mutex::new(None)));
     let (inner2, late2) = (inner.clone(), late.clone());
     let h = counting(Arc::default(), move |p, n| {
         if p == "after_release" && n == 1 {
             *late2.lock().unwrap() = Some(send(&a2, "alice", ("bob", "b"), "late"));
-            *inner2.lock().unwrap() = Some(run(&plain_env(&a2), WS_ID, Mode::Child));
+            *inner2.lock().unwrap() = Some(run(&plain_env(&a2), WS_ID, Mode::Cli));
         }
     });
     let rep = run(&hook_env(&a, h), WS_ID, Mode::Child).unwrap();
@@ -770,7 +771,220 @@ fn idle_member_is_woken_once_busy_member_is_not() {
     assert_eq!(run(&b_env(false, &busy), WS_ID, Mode::Cli).unwrap().delivered, 1);
     assert!(busy.lock().unwrap().is_empty());
     // The M§7.1 Stop block of a busy member reads this count (zygo-hooks, ML-10 tests the block on it; Open O2).
-    let n = zygo_workspace::mail::store::unread(&b.sp().mail, BOB).unwrap();
-    assert_eq!(n, 3);
-    assert_eq!(format!("zygo: {n} new messages; read them with mail_read"), "zygo: 3 new messages; read them with mail_read");
+    assert_eq!(zygo_workspace::mail::store::unread(&b.sp().mail, BOB).unwrap(), 3);
+    assert!(include_str!("../../zygo-hooks/src/mail.rs").contains("new messages; read them with mail_read"));
+}
+
+/// Each outbox file name in `dir`, as ULIDs; empty when the folder is missing.
+fn ulids_in(dir: &Path) -> BTreeSet<Ulid> {
+    let Ok(d) = fs::read_dir(dir) else { return BTreeSet::new() };
+    d.filter_map(|e| zygo_mail_sync::address::ulid_file(e.unwrap().file_name().to_str()?)).collect()
+}
+
+#[test] // R1 (review F2), S§8.3 step 11
+fn unreadable_outbox_files_are_refused_and_take_no_cap_slot() {
+    let (r, a, _b) = pair();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.outbox).unwrap();
+    let mut bad = BTreeSet::new();
+    for i in 0..1000u64 {
+        let u = Ulid::from_parts(1_000 + i, 0);
+        let bytes: &[u8] = if i % 2 == 0 { b"not json" } else { br#"{"to":"not an address"}"# };
+        fs::write(sp.outbox.join(format!("{u}.json")), bytes).unwrap();
+        bad.insert(u);
+    }
+    let id = send(&a, "alice", ("bob", "b"), "hello");
+    assert_eq!(sync(&a).pushed, 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_some());
+    assert_eq!(ulids_in(&sp.refused), bad);
+    assert!(ulids_in(&sp.outbox).is_empty());
+    let first = bad.first().unwrap();
+    let log = a.errors();
+    assert_eq!(log.lines().filter(|l| l.contains(&first.to_string())).count(), 1);
+    assert!(log.contains(&format!("mail sync: outbox {first}: read")));
+}
+
+#[test] // R1 (review F2): a link is moved, never followed; a FIFO is moved without a wait
+fn link_or_fifo_in_the_outbox_is_moved_not_followed() {
+    use std::os::unix::fs::FileTypeExt;
+    let (_r, a, _b) = pair();
+    let sp = a.sp();
+    fs::create_dir_all(&sp.outbox).unwrap();
+    let target = a.dir.path().join("target.json");
+    fs::write(&target, "target").unwrap();
+    let (ul, uf) = (Ulid::from_parts(1_000, 1), Ulid::from_parts(1_000, 2));
+    std::os::unix::fs::symlink(&target, sp.outbox.join(format!("{ul}.json"))).unwrap();
+    let fifo = std::ffi::CString::new(sp.outbox.join(format!("{uf}.json")).to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    sync(&a);
+    let moved = fs::symlink_metadata(sp.refused.join(format!("{ul}.json"))).unwrap();
+    assert!(moved.file_type().is_symlink());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "target");
+    assert!(fs::symlink_metadata(sp.refused.join(format!("{uf}.json"))).unwrap().file_type().is_fifo());
+    assert!(ulids_in(&sp.outbox).is_empty());
+    let log = a.errors();
+    assert!(log.contains(&format!("mail sync: outbox {ul}: read")) && log.contains(&format!("mail sync: outbox {uf}: read")));
+}
+
+/// Takes the lock of `path`, waiting for it: a git child that another test's thread forks while this lock is held
+/// keeps the `flock` until its `exec`, so a lock just released can be busy for that moment. No time is read.
+fn take(path: &Path) -> fs::File {
+    let f = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+    loop {
+        match fs4::FileExt::try_lock(&f) {
+            Ok(()) => return f,
+            Err(fs4::TryLockError::WouldBlock) => std::thread::yield_now(),
+            Err(fs4::TryLockError::Error(e)) => panic!("{e}"),
+        }
+    }
+}
+
+#[test] // R2 (review F3), S§8.3 step 17: the mark's owner runs the next pass
+fn busy_lock_after_a_pass_ends_the_cli_run_with_its_report() {
+    let (_r, a, _b) = pair();
+    let a = Arc::new(a);
+    let (a2, held) = (a.clone(), Arc::new(Mutex::new(None)));
+    let held2 = held.clone();
+    let h = counting(Arc::default(), move |p, n| {
+        if p == "after_release" && n == 1 {
+            *held2.lock().unwrap() = Some(take(&a2.sp().lock));
+            mark_again(&a2.sp()).unwrap();
+        }
+    });
+    let e = env(&a, h, Clock::stepping(T0, 10), Verdict::Local, StubWake::busy(), far_policy());
+    assert_eq!(run(&e, WS_ID, Mode::Cli).unwrap().passes, 1);
+    assert!(a.sp().again.exists());
+    drop(held);
+}
+
+#[test] // R3 (review F4): a lock failure is a stop with its errors.log line
+fn lock_failure_is_logged_for_a_child() {
+    let (_r, a, _b) = pair();
+    let sp = a.sp();
+    fs::remove_file(&sp.lock).unwrap();
+    std::os::unix::fs::symlink(a.dir.path().join("elsewhere"), &sp.lock).unwrap();
+    let e = run(&plain_env(&a), WS_ID, Mode::Child).unwrap_err();
+    assert!(matches!(e, SyncError::Stopped { check: "lock", .. }), "{e:?}");
+    assert!(a.errors().contains("mail sync: stopped: lock"));
+}
+
+#[test] // R4 (review F5), S§8.3 step 1
+fn missing_workspace_record_is_a_gate_failure() {
+    let r = Remote::new();
+    let a = Machine::new(&r);
+    a.config(Some("a"), "");
+    let e = run(&plain_env(&a), WS_ID, Mode::Child).unwrap_err();
+    assert_eq!(e.exit_code(Mode::Child), 0);
+    assert!(!a.paths.workspaces_dir().join(WS_ID).exists());
+    let e = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync cannot run: the workspace record cannot be read".into(), check: "workspace" });
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    assert!(!a.paths.workspaces_dir().join(WS_ID).exists());
+}
+
+#[test] // R4 (review F5), S§8.3 step 1
+fn config_that_does_not_load_is_a_gate_failure() {
+    let (_r, a) = one();
+    fs::write(&a.paths.config_file, "[mail\n").unwrap();
+    let e = run(&plain_env(&a), WS_ID, Mode::Child).unwrap_err();
+    assert_eq!(e.exit_code(Mode::Child), 0);
+    assert_eq!(a.errors(), "");
+    let e = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync cannot run: the config does not load".into(), check: "config" });
+    assert_eq!(e.exit_code(Mode::Cli), 1);
+    assert!(!a.sp().again.exists());
+}
+
+#[test] // R5 (review F6): only this pass's outbox paths are kept from a recipient folder of the tip
+fn many_tip_entries_under_one_recipient() {
+    let (r, a, _b) = pair();
+    let tip = r.tip(BRANCH).unwrap();
+    let idx = r.dir.path().join("many-index");
+    let g = |args: &[&str], input: Option<&[u8]>| {
+        let mut c = plain(&r.bare);
+        c.env("GIT_INDEX_FILE", &idx).args(args).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped());
+        let mut ch = c.spawn().unwrap();
+        if let Some(i) = input {
+            ch.stdin.take().unwrap().write_all(i).unwrap();
+        }
+        drop(ch.stdin.take());
+        let o = ch.wait_with_output().unwrap();
+        assert!(o.status.success());
+        String::from_utf8(o.stdout).unwrap().trim_end().to_string()
+    };
+    g(&["read-tree", &tip], None);
+    let x = blob(&r.bare, b"x");
+    let info: String = (0..2000u64).map(|i| format!("100644 {x}\tbob@b/{}.json\n", Ulid::from_parts(5_000 + i, 0))).collect();
+    g(&["update-index", "--index-info"], Some(info.as_bytes()));
+    let tree = g(&["write-tree"], None);
+    let c = commit_tree(&r.bare, &tree, Some(&tip));
+    git(&r.bare, &["update-ref", &format!("refs/heads/{BRANCH}"), &c]);
+    let id = send(&a, "alice", ("bob", "b"), "hello");
+    assert_eq!(sync(&a).pushed, 1);
+    assert!(tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_some());
+}
+
+#[test] // R5 (review F6): the pass deadline is checked before each secret check, on the injected clock
+fn deadline_mid_outbox_stops_and_keeps_the_outbox() {
+    let (r, a, _b) = pair();
+    let ids: BTreeSet<Ulid> = (0..3).map(|_| send(&a, "alice", ("bob", "b"), "hi")).collect();
+    // Each now() adds 50 s: the lock (T0), the pass start (T0+50, end T0+170), the public check (T0+100), the first
+    // secret check (T0+150) and the second (T0+200, past the end).
+    let e = env(&a, Hook::none(), Clock::stepping(T0, 50), Verdict::Local, StubWake::busy(), far_policy());
+    let err = run(&e, WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(err, SyncError::Stopped { line: "zygo: mail sync stopped (deadline); the outbox is kept".into(), check: "deadline" });
+    assert_eq!(ulids_in(&a.sp().outbox), ids);
+    assert!(ids.iter().all(|id| tip_file(&r, BRANCH, &format!("bob@b/{id}.json")).is_none()));
+}
+
+/// `n` members `(pane key, name)`: keys `k` + 8 base-32 letters of `i`, names `m<i>`.
+fn many_members(n: usize) -> Vec<(String, String)> {
+    const B32: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
+    (0..n).map(|i| {
+        let key: String = (0..8).map(|d| B32[(i >> (5 * (7 - d))) & 31] as char).collect();
+        (format!("k{key}"), format!("m{i}"))
+    }).collect()
+}
+
+#[test] // R7 (review F8), O3, MS-6 review note
+fn own_registry_over_the_limit_is_not_written() {
+    let (r, a, _b) = pair();
+    let before = tip_file(&r, BRANCH, "registry/a.json").unwrap();
+    let m = many_members(zygo_mail_sync::registry::MEMBERS_MAX + 1);
+    let refs: Vec<(&str, &str)> = m.iter().map(|(k, n)| (k.as_str(), n.as_str())).collect();
+    a.workspace(&refs);
+    sync(&a);
+    assert_eq!(tip_file(&r, BRANCH, "registry/a.json").unwrap(), before);
+    assert_eq!(a.errors().lines().filter(|l| l.ends_with("mail sync: own file over limit: members")).count(), 1);
+}
+
+#[test] // R7 (review F8): a failed state.json write is the `state` stop, and no last_error is saved
+fn failed_state_write_stops_with_check_state() {
+    let (_r, a, _b) = pair();
+    send(&a, "alice", ("bob", "b"), "hi");
+    let state = a.sp().state;
+    let s2 = state.clone();
+    let h = Hook::new(move |p| {
+        if p == "after_push" {
+            fs::remove_file(&s2).unwrap();
+            fs::create_dir(&s2).unwrap();
+            fs::write(s2.join("x"), "").unwrap();
+        }
+        Ok(())
+    });
+    let e = run(&hook_env(&a, h), WS_ID, Mode::Cli).unwrap_err();
+    assert_eq!(e, SyncError::Stopped { line: "zygo: mail sync stopped (state); the outbox is kept".into(), check: "state" });
+    assert!(a.errors().contains("mail sync: stopped: state"));
+    assert_eq!(common::names(&state), vec!["x".to_string()]);
+}
+
+#[test] // R7 (review F8), S§15: a stop with no lock held writes no state.json
+fn stop_without_the_lock_writes_no_state() {
+    let (_r, a) = one();
+    let sp = a.sp();
+    fs::create_dir_all(sp.again.join("x")).unwrap();
+    let e = run(&plain_env(&a), WS_ID, Mode::Cli).unwrap_err();
+    assert!(matches!(e, SyncError::Stopped { check: "again", .. }), "{e:?}");
+    assert!(a.errors().contains("mail sync: stopped: again"));
+    assert!(!sp.state.exists());
 }
