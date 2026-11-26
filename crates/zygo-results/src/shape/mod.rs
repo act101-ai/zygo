@@ -2,6 +2,7 @@ pub mod clean;
 pub mod command;
 pub mod dedup;
 pub mod kind_view;
+pub mod runner;
 
 /// Raw text above this size gets only the size view (O§7.3).
 pub const SHAPE_MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -61,7 +62,13 @@ pub fn run(raw: &str, input: &ShapeInput) -> Shaped {
         steps.push(Step::RepeatedLinesCounted);
         shaper = Some(Shaper::Dedup);
     }
-    // Step 3, runner view (O§7.6): OS-30.
+    // Step 3, runner view (O§7.6): when a segment names a runner and the text has its summary.
+    let runners = input.parsed.as_ref().map_or(&[][..], |p| p.runners.as_slice());
+    if let Some((t, s, k)) = runner::view(&text, runners) {
+        text = t;
+        steps.extend(s);
+        shaper = Some(k);
+    }
     // Step 4, kind view (O§7.7), only when over the threshold.
     if over(&text) && let Some((t, s, k)) = kind_view::kind_view(&text, input.kind, VIEW_CAP_BYTES) {
         text = t;
