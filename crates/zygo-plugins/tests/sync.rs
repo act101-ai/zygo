@@ -1782,7 +1782,12 @@ mod syncing {
         let ls = git(&repo.dir, &["ls-tree", "HEAD^{tree}"]);
         let mut c = std::process::Command::new("git").arg("-C").arg(&repo.dir).arg("mktree")
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
-        c.stdin.take().unwrap().write_all(format!("{ls}\n100644 blob {blob}\tGIT~1\n").as_bytes()).unwrap();
+        let mut stdin = c.stdin.take().unwrap();
+        match stdin.write_all(format!("{ls}\n100644 blob {blob}\tGIT~1\n").as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("write to git mktree's stdin: {e}"),
+            _ => {}
+        }
+        drop(stdin);
         let tree = String::from_utf8_lossy(&c.wait_with_output().unwrap().stdout).trim().to_string();
         let commit = git(&repo.dir, &["commit-tree", &tree, "-p", "HEAD", "-m", tag]);
         git(&repo.dir, &["tag", tag, &commit]);

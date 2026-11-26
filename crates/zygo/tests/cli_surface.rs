@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -165,7 +164,7 @@ fn binary_exit_zero() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        c.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        common::write_stdin(c.stdin.take().unwrap(), input.as_bytes());
         c.wait_with_output().unwrap()
     };
     let o = run(&["hook", "role-guard"], "not json");
@@ -316,7 +315,7 @@ fn run_ws(h: &std::path::Path, sd: &zygo_core::session_dir::SessionDir, args: &[
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     child.wait_with_output().unwrap()
 }
 
@@ -366,7 +365,7 @@ fn workspace_hook_needs_a_known_event() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(b"{}").unwrap();
+        common::write_stdin(child.stdin.take().unwrap(), b"{}");
         let o = child.wait_with_output().unwrap();
         assert_eq!(o.status.code(), Some(0), "{args:?}");
         assert!(o.stdout.is_empty(), "{args:?}");
@@ -513,7 +512,7 @@ fn member_session_start_refuses_a_linked_or_relative_session_folder() {
 #[cfg(unix)]
 fn run_bounded(cmd: &mut Command, stdin: &[u8]) -> std::process::Output {
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let end = Instant::now() + Duration::from_secs(5);
     loop {
         if child.try_wait().unwrap().is_some() {

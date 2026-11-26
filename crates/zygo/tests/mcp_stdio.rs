@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::process::{Command, Stdio};
 use serde_json::Value;
 use zygo_core::{session_dir::SessionDir, session_view::SessionView, Agent};
@@ -28,7 +27,7 @@ fn run_mcp(agent: &str, config: &str, view: View, input: &str) -> (Option<i32>, 
         cmd.env("ZYGO_SESSION_DIR", &sd.root);
     }
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();   // dropped here: EOF
+    common::write_stdin(child.stdin.take().unwrap(), input.as_bytes());   // dropped here: EOF
     let out = child.wait_with_output().unwrap();
     let lines = String::from_utf8(out.stdout).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     (out.status.code(), lines, String::from_utf8(out.stderr).unwrap())

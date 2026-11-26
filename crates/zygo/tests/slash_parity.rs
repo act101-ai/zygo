@@ -1,7 +1,6 @@
 //! N42 acceptance (§17.1, §20 #17a–#17c): every verb in `VERBS` as `/zygo:<verb>` (through `zygo hook prompt`) and as `zygo <verb>`.
 
 use std::collections::BTreeSet;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -108,7 +107,7 @@ fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, St
         };
     }
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
 }

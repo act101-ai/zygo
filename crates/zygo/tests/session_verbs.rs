@@ -1,6 +1,8 @@
 //! N49 acceptance (§17.1, §20 #17b): the session setting verbs `results`, `redaction`, `guards`, `units` and
 //! `compact-tool`, slash and CLI.
 
+mod common;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -81,7 +83,7 @@ struct Env<'a> {
 
 fn zygo(home: &Path, args: &[&str], env: &Env, stdin: &[u8]) -> (i32, String, String) {
     let mut child = spawn(home, args, env);
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    common::write_stdin(child.stdin.take().unwrap(), stdin);
     let out = child.wait_with_output().unwrap();
     (out.status.code().unwrap(), String::from_utf8(out.stdout).unwrap(), String::from_utf8(out.stderr).unwrap())
 }
