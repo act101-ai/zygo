@@ -1,0 +1,12 @@
+event: response.created
+data: {"type": "response.created", "response": {"id": "resp_pc3_patch", "object": "response", "model": "{{MODEL}}", "status": "in_progress", "output": []}}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "output_index": 0, "item": {"type": "reasoning", "id": "rs_pc3_1", "summary": [{"type": "summary_text", "text": "pc3 reasoning one"}], "encrypted_content": "pc3-opaque-reasoning-1"}}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "output_index": 1, "item": {"type": "custom_tool_call", "id": "ctc_pc3_1", "call_id": "call_pc3_2", "name": "apply_patch", "input": "*** Begin Patch\n*** Add File: pc3.txt\n+pc3 patch line\n*** End Patch\n", "status": "completed"}}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"id": "resp_pc3_patch", "object": "response", "model": "{{MODEL}}", "status": "completed", "output": [{"type": "reasoning", "id": "rs_pc3_1", "summary": [{"type": "summary_text", "text": "pc3 reasoning one"}], "encrypted_content": "pc3-opaque-reasoning-1"}, {"type": "custom_tool_call", "id": "ctc_pc3_1", "call_id": "call_pc3_2", "name": "apply_patch", "input": "*** Begin Patch\n*** Add File: pc3.txt\n+pc3 patch line\n*** End Patch\n", "status": "completed"}], "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11}}}
+
