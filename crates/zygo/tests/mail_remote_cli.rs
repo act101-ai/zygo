@@ -275,3 +275,40 @@ fn own_host_address_works_as_the_bare_name_in_ls_read_and_watch() {
     let o = zygo(&x.h, &["mail", "read", "--name", "elena@a"], &[]);
     assert_eq!((o.status.code(), out(&o)), (Some(0), format!("{id} cli 2023-11-14T22:13:20Z {SUBJECT}\n  {BODY}\n")), "{}", err(&o));
 }
+
+/// `zygo mail ls` (exit 0): its stdout.
+fn ls(x: &X) -> String {
+    let o = zygo(&x.h, &["mail", "ls"], &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    out(&o)
+}
+const MEMBERS: &str = "kaaaaaaaa alice 0\nkeeeeeeee elena 0\nknnnnnnnn - 0\n";
+
+#[test] // L1: S§10.3 (rewritten): the sync line
+fn ls_ends_with_the_sync_line() {
+    let x = setup();
+    assert_eq!(ls(&x), format!("{MEMBERS}mail sync: last sync never, 0 in the outbox, 0 refused\n"));
+    save(&x.sp, &State { last_ok: Some(T0), ..Default::default() }).unwrap();
+    std::fs::create_dir_all(&x.sp.refused).unwrap();
+    for (d, n) in [(&x.sp.outbox, 1u128), (&x.sp.outbox, 2), (&x.sp.refused, 3)] {
+        std::fs::write(d.join(format!("{}.json", ulid::Ulid::from_parts(T0 * 1000, n))), "{}").unwrap();
+    }
+    assert_eq!(ls(&x), format!("{MEMBERS}mail sync: last sync 2023-11-14T22:13:20Z, 2 in the outbox, 1 refused\n"));
+    save(&x.sp, &State { last_ok: Some(T0), last_error: Some("fetch".into()), ..Default::default() }).unwrap();
+    assert_eq!(ls(&x), format!("{MEMBERS}mail sync: last sync 2023-11-14T22:13:20Z, 2 in the outbox, 1 refused, last error fetch\n"));
+    std::fs::write(&x.sp.state, "[]").unwrap(); // not an object: `load` refuses it
+    assert_eq!(ls(&x), format!("{MEMBERS}mail sync: last sync -, 2 in the outbox, 1 refused\n"));
+}
+
+#[test] // L2: S§7.1, S§10.3 (rewritten): the off cases
+fn ls_sync_line_off_cases() {
+    let x = setup();
+    config(&x, "[mail.workspace.app]\nsync = \"zygo/mail\"\n");
+    assert_eq!(ls(&x), format!("{MEMBERS}{NO_HOST}\n"));
+    config(&x, "[mail]\nhost = \"a\"\n[mail.workspace.app]\nsync = \"main\"\n");
+    assert_eq!(ls(&x), format!("{MEMBERS}{BAD_BRANCH}\n"));
+    config(&x, "[mail]\nhost = \"a\"\n");
+    assert_eq!(ls(&x), MEMBERS);
+    config(&x, "[mail\n");
+    assert_eq!(ls(&x), MEMBERS);
+}

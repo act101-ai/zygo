@@ -16,10 +16,10 @@ use zygo_core::paths::Paths;
 use zygo_mail_sync::address::{resolve_to, To};
 use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
 use zygo_mail_sync::ops;
-use zygo_mail_sync::outbox::send_remote_with;
+use zygo_mail_sync::outbox::{count, refused_count, send_remote_with};
 use zygo_mail_sync::public::LsRemote;
 use zygo_mail_sync::spawn::{trigger, ChildSpawner};
-use zygo_mail_sync::state::SyncPaths;
+use zygo_mail_sync::state::{load as load_sync_state, SyncPaths};
 use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
 use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::identity::{valid_ws_id, workspace_id};
@@ -42,6 +42,10 @@ const SLASH_GIT_BOUND: Duration = Duration::from_secs(2);
 
 /// The poll of `zygo mail watch` (A6): a send is seen within 1 s (M§13 #7).
 const WATCH_POLL: Duration = Duration::from_millis(500);
+
+/// S§7.1: the `zygo mail ls` line when sync is set for the workspace and `[mail] host` is not (the config check holds
+/// the same text without `zygo: `, `crates/zygo-config/src/check.rs:15`).
+const NO_HOST_LINE: &str = "zygo: set [mail] host to turn on mail sync; zygo does not publish the system host name";
 
 /// S§8.3 step 3, D4: the CLI line when another sync of the workspace still holds the lock after `LOCK_WAIT`.
 const BUSY_LINE: &str = "zygo: another mail sync of this workspace holds the lock; try again";
@@ -576,8 +580,9 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
                 lines.push(format!("{} {} {unread}", esc(&t.key), t.name.as_deref().map_or_else(|| "-".to_string(), esc)));
             }
             if lines.is_empty() {
-                return Ok("no members".into());
+                lines.push("no members".into());
             }
+            lines.extend(sync_line(paths, ws));
         }
         Some(n) => {
             for t in names::resolve(ws, &member_arg(paths, ws, n)?, None)? {
@@ -591,6 +596,47 @@ fn ls_text(paths: &Paths, ws: &Workspace, name: Option<&str>) -> anyhow::Result<
         }
     }
     Ok(lines.join("\n"))
+}
+
+/// `secs` since the Unix epoch as RFC 3339 UTC (the `sent_at` form of M§5); `None` out of range.
+fn rfc3339(secs: u64) -> Option<String> {
+    time::OffsetDateTime::from_unix_timestamp(i64::try_from(secs).ok()?)
+        .ok()?
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
+}
+
+/// S§10.3, S§7.1 (P3): the last line of `zygo mail ls`. Sync set: `mail sync: last sync <time>, <n> in the outbox,
+/// <m> refused[, last error <check>]`, with `<time>` RFC 3339 UTC or `never`, and `-` for a value that cannot be
+/// read. No host: the S§7.1 line; another form error: its `off_line`. Sync not set, or a config that does not load:
+/// no line. Reads config and files only (no git).
+fn sync_line(paths: &Paths, ws: &Workspace) -> Option<String> {
+    let cfg = user_config(paths).ok()?;
+    match sync_for(&cfg, &ws.name) {
+        Err(SyncOff::NotOn) => None,
+        Err(SyncOff::NoHost) => Some(NO_HOST_LINE.into()),
+        Err(o) => Some(off_line(o, &ws.name)),
+        Ok(_) => {
+            let sp = SyncPaths::new(paths, &ws.id).ok()?;
+            let st = load_sync_state(&sp);
+            let last = match &st {
+                Ok(s) => match s.last_ok {
+                    None => "never".to_string(),
+                    Some(t) => rfc3339(t).unwrap_or_else(|| "-".into()),
+                },
+                Err(_) => "-".into(),
+            };
+            let n = count(&sp).map_or_else(|_| "-".to_string(), |n| n.to_string());
+            let m = refused_count(&sp).map_or_else(|_| "-".to_string(), |n| n.to_string());
+            let mut line = format!("mail sync: last sync {last}, {n} in the outbox, {m} refused");
+            if let Ok(s) = &st
+                && let Some(c) = &s.last_error
+            {
+                line.push_str(&format!(", last error {}", esc(c)));
+            }
+            Some(line)
+        }
+    }
 }
 
 /// S§7.2 (P1, D4): the member value of `read`, `ls` and `watch`. A value with no `@` is kept as it is; a value with
