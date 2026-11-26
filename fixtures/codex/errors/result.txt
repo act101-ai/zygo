@@ -1,0 +1,2 @@
+e1: exit=1 codex_words=yes requests=1
+e2: exit=1 codex_words=yes requests=1

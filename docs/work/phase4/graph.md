@@ -75,7 +75,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | OC-1 | OpenCode: session token out of the environment and config (apiKey from the token file), providers limited to zygo | — | DONE | judgment | PR #128 merged 53eabe25; acceptance exit 0 on merged tree; CI run 45693613400 green (ubuntu, macos, windows) |
 | PC-1 | `scripts/check-premises.sh` driven by data, with `scripts/test-check-premises.sh` | — | DONE | judgment | PR #91 merged adac6bc0; acceptance exit 0 @ 54039f94 (test-check-premises 50 cases); CI run 45678686867 green (ubuntu, macos, windows) |
 | PC-2 | Codex premise harness: every mock and scrub change of PC-3 to PC-6, codex-only `lib.sh` with an isolation record, `run-codex.sh`, help and schema captures | PC-1 | DONE | judgment | PR #126 merged 1206befa; acceptance exit 0 @ 4784e06b (real codex 0.172.0 run, ~/.codex unchanged); CI run 45698780636 green (ubuntu, macos, windows) |
-| PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | TODO | implementation | — |
+| PC-3 | Codex proxy-facing captures: PC1, PC2, PC7, PC13, PC14 (requests, hosts, headers, models, injected items, context error) | PC-2, PC-10 | DONE | implementation | PR #137 merged 0d665799; acceptance exit 0 @ e554d2ca (real codex 0.172.0; PC1 PC2 PC7 PC13 PC14 verified); CI run 45725231426 green (ubuntu, macos, windows) |
 | PC-4 | Codex config, trust and hook captures: PC3, PC4, PC5, PC12; the `--strict-config` run of a config with zygo's keys | PC-2, PC-10 | TODO | implementation | — |
 | PC-5 | Codex agents, compaction, MCP, status line and skills captures: PC6, PC8, PC9, PC11, PC15 | PC-2, PC-10 | TODO | implementation | — |
 | PC-6 | Codex resume and update captures: PC10, PC16 | PC-2, PC-10 | TODO | implementation | — |
@@ -92,7 +92,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-6 | Cache markers at forward time on the Anthropic upstream body of a Responses client | RS-5 | TODO | judgment | — |
 | RS-7 | Window rewrite for a Responses client, Anthropic and Responses upstreams | RS-5 | TODO | judgment | — |
 | RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | TODO | implementation | — |
-| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8 | TODO | mechanical | — |
+| RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | TODO | judgment | — |
+| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9 | TODO | mechanical | — |
 | CC-0 | Take `main` (with phase 3) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1 | BLOCKED(operator: phase 3 merged into main) | implementation | — |
 | CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
@@ -135,3 +136,5 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | PC-10 DONE: gate 3 rounds; TZ=UTC, OS and timezone scrub, daemon-socket guard, leftover-process check, refused-path records, second mock key; limits recorded (nodes/PC-10.md); PR #141 merged a1c0ce8a. |
 | 2026-11-25 | PC-9 DONE: gate 2 rounds + nit round; evidence paths must be plain repo paths (no symlinked dir), ver_test copies cited evidence; G5 case-variant limit recorded (nodes/PC-9.md); PR #136 merged 256e5cae. |
 | 2026-11-25 | PC-11 added (author's call): Codex captures keep platformOs, the login shell, macOS writable roots and namespace tool descriptions (PC-3 review G3); scrub and re-scrub in place before PC-7. |
+| 2026-11-25 | PC-3 DONE: gate 3 rounds; recaptured on the PC-10 harness; apply_patch via a minimal catalog (run p) only; item-id/platformOs/shell scrub gaps to PC-11; PR #137 merged 0d665799. |
+| 2026-11-25 | RS-9 added (author's call): RS-1 drops Codex namespace tools (multi_agent_v1 subagent tools) on Anthropic/chat upstreams; RS-9 flattens them and maps calls back from PC-5's captures. Remote-compaction items noted for P4-9. |
