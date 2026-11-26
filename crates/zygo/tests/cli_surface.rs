@@ -42,7 +42,7 @@ fn help_lists_every_command() {
 
 #[test]
 fn every_command_exists() {
-    let cmds = "claude|opencode|serve|serve token new|serve reload|status|doctor|compact|profile list|profile show|profile use|work|work report|usage|marketplace add|marketplace list|marketplace update|marketplace remove|plugins list|plugins sync|plugins enable|plugins disable|plugins approve|plugin check|keys set|keys rm|keys list|config show|config check|update|help|results|redaction|guards|units|compact-tool|statusline|mcp|hook|up|down|ls|attach|loadout list|workspace|ws forget|ws forget-pane|ws snapshot|decision|mail|mail send|mail read|mail ls";
+    let cmds = "claude|opencode|serve|serve token new|serve reload|status|doctor|compact|profile list|profile show|profile use|work|work report|usage|marketplace add|marketplace list|marketplace update|marketplace remove|plugins list|plugins sync|plugins enable|plugins disable|plugins approve|plugin check|keys set|keys rm|keys list|config show|config check|update|help|results|redaction|guards|units|compact-tool|statusline|mcp|hook|up|down|ls|attach|loadout list|workspace|ws forget|ws forget-pane|ws snapshot|decision|mail|mail send|mail read|mail ls|mail watch";
     for c in cmds.split('|') {
         let mut argv: Vec<&str> = c.split(' ').collect();
         argv.push("--help");
