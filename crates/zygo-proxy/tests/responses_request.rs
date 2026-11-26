@@ -795,6 +795,38 @@ fn g1_dropped_namespace_tool_called_in_history() {
 }
 
 #[test]
+fn g2_tool_adjacency() {
+    let rs = || reasoning(&encode_thinking(&tgt(), &think()));
+    let next = "input: each tool call's output must come in the next user turn, before other assistant content";
+    let after = "input: a reasoning item follows a tool call in the same assistant turn";
+    let bad_orders = [
+        (json!([user("u"), fc("1", "f", "{}"), rs(), fco("1", "a")]), after),
+        (json!([user("u"), rs(), fc("1", "f", "{}"), fc("2", "f", "{}"), fco("1", "a"), rs(), fco("2", "b")]), next),
+        (json!([user("u"), fc("1", "f", "{}"), fc("2", "f", "{}"), fco("1", "a"), asst("x"), fco("2", "b")]), next),
+        (json!([user("u"), fc("1", "f", "{}"), dev("d"), fc("2", "f", "{}"), fco("1", "a"), fco("2", "b")]), next),
+    ];
+    for (input, message) in bad_orders {
+        assert_400(err(rq(&body(input.clone()))), message);
+    }
+    // Codex's real orders still translate.
+    let ctc = |id: &str| json!({"type":"custom_tool_call","call_id":id,"name":"apply_patch","input":"p"});
+    let ctco = |id: &str| json!({"type":"custom_tool_call_output","call_id":id,"output":"ok"});
+    let ws = json!({"type":"web_search_call","id":"w","status":"completed"});
+    for input in [
+        json!([user("u"), fc("1", "f", "{}"), fc("2", "f", "{}"), fco("1", "a"), fco("2", "b")]),
+        json!([user("u"), fc("1", "f", "{}"), fc("2", "f", "{}"), fco("2", "b"), fco("1", "a")]),
+        json!([user("u"), fc("1", "f", "{}"), dev("d"), fco("1", "a"), user("v")]),
+        json!([user("u"), ctc("c"), ctco("c")]),
+        json!([user("u"), ctc("c"), fc("1", "f", "{}"), ctco("c"), fco("1", "a")]),
+        json!([user("u"), fc("1", "f", "{}"), ws, fco("1", "a")]),
+        json!([user("u"), rs(), fc("1", "f", "{}"), fco("1", "a"), rs(), asst("done")]),
+    ] {
+        let (m, _) = rq(&body(input.clone())).unwrap_or_else(|e| panic!("{input}: {e:?}"));
+        assert_valid(&m);
+    }
+}
+
+#[test]
 fn f9_other_hosted_items_dropped() {
     let b = body(json!([user("go"), {"type":"local_shell_call","id":"l","status":"completed"},
         {"type":"mcp_call","id":"m"}, asst("a")]));
