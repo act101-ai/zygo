@@ -130,7 +130,8 @@ impl Default for TrimOpts {
     }
 }
 
-/// §10.1: store a result over the threshold in the session's results directory and return the head/tail view in its place.
+/// §10.1: store a result over the threshold in the session's results directory and return the head/tail view in its place;
+/// first takes the subagent's re-inject flag and adds the mechanics text as `additionalContext` (T§9.2 item 2).
 pub fn trim_in(input: &HookInput, dir: &SessionDir, usage_db: &Path) -> anyhow::Result<HookOutput> {
     trim_in_with(input, dir, usage_db, &TrimOpts::default())
 }
@@ -236,23 +237,26 @@ pub fn trim_in_with(input: &HookInput, dir: &SessionDir, usage_db: &Path, opts: 
 }
 
 /// T§9.2 item 2: for a `PostToolUse` input whose `agent_id` passes `flag_path`, removes the flag and returns M.
-/// No flag, or a remove that fails, gives `None`; a failed remove writes one stderr line (T§14 item 2).
+/// No flag, or a flag that cannot be stat'ed or removed, gives `None`; a stat error other than NotFound or a failed
+/// remove writes one stderr line (T§14 item 2).
 fn take_flag(input: &HookInput, dir: &SessionDir) -> anyhow::Result<Option<String>> {
     if input.event.as_deref() != Some("PostToolUse") {
         return Ok(None);
     }
     let Some(p) = input.agent_id.as_deref().and_then(|id| flag_path(dir, id)) else { return Ok(None) };
-    if std::fs::symlink_metadata(&p).is_err() {
-        return Ok(None);
+    let cannot_remove = |e: std::io::Error| {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            error_line(&format!("trim: cannot remove {}: {e}", p.display()));
+        }
+        Ok(None)
+    };
+    if let Err(e) = std::fs::symlink_metadata(&p) {
+        return cannot_remove(e);
     }
     let v = SessionView::load(dir)?;
     match std::fs::remove_file(&p) {
         Ok(()) => Ok(Some(mechanics_with_overrides(dir, &v))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => {
-            error_line(&format!("trim: cannot remove {}: {e}", p.display()));
-            Ok(None)
-        }
+        Err(e) => cannot_remove(e),
     }
 }
 

@@ -407,35 +407,82 @@ fn trim_flag_remove_failure_gives_no_text() {
     let (t, d, db) = tenv();
     let flag = d.reinject().join(ID);
     std::fs::create_dir_all(flag.join("x")).unwrap();
-    let o = Command::new(std::env::current_exe().unwrap())
-        .args(["--ignored", "--exact", "trim_child_case", "--nocapture", "--test-threads=1"])
-        .env(CHILD, t.path())
-        .env(CASE, "under")
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(o.status.success(), "{o:?}");
-    assert!(String::from_utf8(o.stdout).unwrap().contains("trim_child_case ... ok"));
-    let err = String::from_utf8(o.stderr).unwrap();
+    let err = trim_child(t.path(), "under", &[]);
     assert!(err.starts_with(&format!("zygo hook: trim: cannot remove {}: ", flag.display())), "{err:?}");
     assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
     assert_eq!(keys(&trim_run(&d, &db, &big_bash())), ["hookEventName", "updatedToolOutput"]);
     assert!(flag.is_dir());
 }
 
-/// Child half of `trim_flag_remove_failure_gives_no_text`; returns at once without `CHILD`.
+/// Runs `case` of `trim_child_case` in a child process with `CHILD` = `root`; returns its stderr. `extra` sets more
+/// variables of the child only.
+fn trim_child(root: &Path, case: &str, extra: &[(&str, &Path)]) -> String {
+    let mut c = Command::new(std::env::current_exe().unwrap());
+    c.args(["--ignored", "--exact", "trim_child_case", "--nocapture", "--test-threads=1"])
+        .env(CHILD, root)
+        .env(CASE, case)
+        .stdin(Stdio::null());
+    for (k, v) in extra {
+        c.env(k, v);
+    }
+    let o = c.output().unwrap();
+    assert!(o.status.success(), "{case}: {o:?}");
+    assert!(String::from_utf8(o.stdout).unwrap().contains("trim_child_case ... ok"), "{case}");
+    String::from_utf8(o.stderr).unwrap()
+}
+
+/// Child half of the trim stderr and `run` tests; returns at once without `CHILD`. Case `under`: `trim_in_with` on
+/// `PostToolUse-Bash-sub` prints nothing. Case `run_image`: `trim::run` (session folder from `ZYGO_SESSION_DIR`) on
+/// `PostToolUse-Read-image-sub` prints `envelope(M)`.
 #[test]
 #[ignore]
 fn trim_child_case() {
-    let Some(root) = std::env::var_os(CHILD) else { return };
+    let (Some(root), Some(case)) = (std::env::var_os(CHILD), std::env::var(CASE).ok()) else { return };
     let d = SessionDir::new(Path::new(&root).join("s"));
     let db = Path::new(&root).join("usage.db");
-    let stdin = serde_json::to_vec(&fixture("PostToolUse-Bash-sub")).unwrap();
-    let got = guarded(
-        &|b| trim::trim_in_with(&HookInput::parse(Agent::ClaudeCode, b)?, &d, &db, &TrimOpts::default()),
-        &stdin,
-    );
-    assert_eq!(got, (String::new(), 0));
+    match case.as_str() {
+        "under" => {
+            let stdin = serde_json::to_vec(&fixture("PostToolUse-Bash-sub")).unwrap();
+            let got = guarded(
+                &|b| trim::trim_in_with(&HookInput::parse(Agent::ClaudeCode, b)?, &d, &db, &TrimOpts::default()),
+                &stdin,
+            );
+            assert_eq!(got, (String::new(), 0));
+        }
+        "run_image" => {
+            let stdin = serde_json::to_vec(&fixture("PostToolUse-Read-image-sub")).unwrap();
+            let got = guarded(&|b| trim::run(&HookInput::parse(Agent::ClaudeCode, b)?), &stdin);
+            assert_eq!(got, (envelope(&m_full()), 0));
+        }
+        other => panic!("unknown case {other}"),
+    }
+}
+
+#[test]
+fn trim_run_entry_gives_mechanics_for_non_hooked_shape() {
+    // Review F1: `trim::run` takes the flag for an input with no trim target, as `trim_in_with` does.
+    let (t, d, _db) = tenv();
+    let f = set_flag(&d);
+    let err = trim_child(t.path(), "run_image", &[("ZYGO_SESSION_DIR", &d.root), ("HOME", t.path())]);
+    assert_eq!(err, "");
+    assert!(!f.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn trim_flag_stat_failure_gives_no_text() {
+    // Review F3, T§14 item 2: a stat error other than NotFound is a flag that cannot be removed.
+    use std::os::unix::fs::PermissionsExt;
+    let (t, d, db) = tenv();
+    let flag = set_flag(&d);
+    std::fs::set_permissions(d.reinject(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let err = trim_child(t.path(), "under", &[]);
+    let big = trim_run(&d, &db, &big_bash());
+    std::fs::set_permissions(d.reinject(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(err.starts_with(&format!("zygo hook: trim: cannot remove {}: ", flag.display())), "{err:?}");
+    assert!(err.ends_with('\n') && err.lines().count() == 1, "{err:?}");
+    assert_eq!(keys(&big), ["hookEventName", "updatedToolOutput"]);
+    assert!(flag.exists());
 }
 
 #[test]
