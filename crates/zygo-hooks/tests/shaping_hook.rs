@@ -119,3 +119,210 @@ fn trim_opts_default_branch_is_po2_constant() {
     assert_eq!(o.db_bound, zygo_usage::store::HOOK_DB_BOUND);
     assert!(!o.shape_panic); // ZYGO_TEST_SHAPE_PANIC unset in CI
 }
+
+fn fixture(rel: &str) -> Value {
+    serde_json::from_slice(&std::fs::read(shaping::repo().join("fixtures").join(rel)).unwrap()).unwrap()
+}
+
+fn stored(e: &Env, id: &str) -> Vec<u8> {
+    zygo_results::Store::get(&e.dir.results(), id).unwrap().data
+}
+
+#[test]
+fn bash_fixtures_give_no_output_and_no_row() {
+    // O§16 item 5
+    let e = env(true);
+    for n in ["PostToolUse-Bash-main", "PostToolUse-Bash-sub"] {
+        assert_eq!(run(&e, Agent::ClaudeCode, &fixture(&format!("claude-code/hooks/{n}.json")), &TrimOpts::default()), "", "{n}");
+    }
+    let oc = fixture("opencode/plugin-hooks/tool.execute.after-bash.json");
+    assert_eq!(run(&e, Agent::OpenCode, &oc, &TrimOpts::default()), "");
+    assert!(rows(&e).is_empty() && ids(&e).is_empty());
+}
+
+#[test]
+fn file_printers_get_the_size_view_of_stdout_only() {
+    // O§7.1, O§16 item 7: a file printer or an unsure parse takes the shape-off path
+    let out = colored(707);
+    assert!(out.len() >= 20 * 1024);
+    for cmd in [
+        "cat f.txt",
+        "cat f.txt && true",
+        "true; head f.txt",
+        "sh -c 'sed -n 1,9p f'",
+        "bash -c \"cat f\"",
+        "(cat f)",
+        "echo $(cat f)",
+        "ls | xargs cat",
+        r"find . -name x -exec cat {} \;",
+        "cargo test 2>&1 | tail -n 80",
+        "echo \"unclosed",
+    ] {
+        let e = env(true);
+        let input = bash(json!(cmd), &out, "warn\n");
+        let got = run(&e, Agent::ClaudeCode, &input, &TrimOpts::default());
+        let id = ids(&e).first().cloned().unwrap_or_else(|| panic!("{cmd}: nothing stored"));
+        assert_eq!((masked(&e, &got), Some(stored(&e, &id))), off(&input), "{cmd}");
+        assert_eq!(resp(&got)["stderr"], "warn\n", "{cmd}");
+        assert!(resp(&got)["stdout"].as_str().unwrap().contains('\x1b'), "{cmd}");
+        assert_eq!(rows(&e)[0].4.as_deref(), Some("size"), "{cmd}");
+    }
+}
+
+#[test]
+fn command_names_are_recorded() {
+    // O§7.2, O§16 item 8 (the shaper is OS-30's)
+    let e = env(true);
+    let so = (0..1000).map(|i| format!("test tests_{i:04} ... ok\n")).collect::<String>()
+        + "\ntest result: ok. 1000 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+    assert!(!run(&e, Agent::ClaudeCode, &bash(json!("cargo test || true"), &so, ""), &TrimOpts::default()).is_empty());
+    assert_eq!(rows(&e)[0].3.as_deref(), Some("cargo test"));
+    let e = env(true);
+    let d = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -0,0 +1,2000 @@\n".to_string() + &(0..2000).map(|i| format!("+line {i:05}\n")).collect::<String>();
+    assert!(!run(&e, Agent::ClaudeCode, &bash(json!("cd x && git diff"), &d, ""), &TrimOpts::default()).is_empty());
+    assert_eq!(rows(&e)[0].3.as_deref(), Some("git diff"));
+}
+
+#[test]
+fn reuse_text_loses_only_escapes() {
+    // O§7.3, O§7.4, O§16 item 9
+    let e = env(true);
+    let mut raw = "\x1b[1mdiff --git a/f.txt b/f.txt\x1b[m\n\x1b[1m--- a/f.txt\x1b[m\n\x1b[1m+++ b/f.txt\x1b[m\n\x1b[36m@@ -0,0 +1,104 @@\x1b[m\n".to_string();
+    for i in 0..100 {
+        raw += &format!("\x1b[32m+line {i:03}\x1b[m\n");
+    }
+    raw += "\x1b[32m+crlf line\x1b[m\r\n";
+    for _ in 0..3 {
+        raw += "\x1b[32m+same line\x1b[m\n";
+    }
+    let clean = raw.replace("\x1b[1m", "").replace("\x1b[36m", "").replace("\x1b[32m", "").replace("\x1b[m", "");
+    let got = run(&e, Agent::ClaudeCode, &bash(json!("git diff --color=always"), &raw, ""), &TrimOpts::default());
+    let id = ids(&e)[0].clone();
+    assert_eq!(resp(&got)["stdout"], format!("{}\n{clean}", shaped_marker(&raw, "color codes removed", &id)));
+    assert_eq!(stored(&e, &id), raw.as_bytes());
+    // JSON is reuse text: nothing changes, so no view.
+    let e = env(true);
+    let line = format!("  \"{}\",\n", "x".repeat(300));
+    let json = format!("[\n{line}{line}{line}  1\n]\n");
+    assert_eq!(run(&e, Agent::ClaudeCode, &bash(json!("curl -s localhost/x"), &json, ""), &TrimOpts::default()), "");
+    assert!(rows(&e).is_empty() && ids(&e).is_empty());
+    // Control: the same lines in text are counted.
+    let got = run(&e, Agent::ClaudeCode, &bash(json!("curl -s localhost/x"), &format!("note\n{json}"), ""), &TrimOpts::default());
+    assert!(resp(&got)["stdout"].as_str().unwrap().contains(" [repeated 3 times]"));
+}
+
+/// 320 colored libtest lines (10240 bytes) and 192 build lines (6144 bytes).
+fn streams() -> (String, String) {
+    let so: String = (0..320).map(|i| format!("test tests_{i:04} ... \x1b[32mok\x1b[0m\n")).collect();
+    let se: String = (0..192).map(|i| format!("   Compiling crate_{i:04} v0.10.0\n")).collect();
+    assert_eq!((so.len(), se.len()), (10240, 6144));
+    (so, se)
+}
+
+#[test]
+fn stderr_cleared_branch_counts_both_streams() {
+    // O§7.2, O§7.8, O§16 item 10
+    let e = env(true);
+    let (so, se) = streams();
+    let raw = format!("{so}[stderr]\n{se}");
+    let got = run(&e, Agent::ClaudeCode, &bash(json!("cargo test"), &so, &se), &TrimOpts::default());
+    let id = ids(&e)[0].clone();
+    let r = resp(&got);
+    assert_eq!(r["stdout"], format!("{}\n{}", shaped_marker(&raw, "color codes removed", &id), raw.replace("\x1b[32m", "").replace("\x1b[0m", "")));
+    assert_eq!(r["stderr"], "");
+    assert_eq!((raw.len(), raw.lines().count()), (16393, 513));
+    assert_eq!(stored(&e, &id), raw.as_bytes());
+    assert_eq!(rows(&e), [(16393, 13705, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+}
+
+#[test]
+fn stderr_kept_branch_counts_stdout_only() {
+    // O§7.8 "When PO2 fails", O§16 item 10
+    let e = env(true);
+    let (so, se) = streams();
+    let raw = format!("{so}[stderr]\n{se}");
+    let opts = TrimOpts { stderr_cleared: false, ..Default::default() };
+    let got = run(&e, Agent::ClaudeCode, &bash(json!("cargo test"), &so, &se), &opts);
+    let id = ids(&e)[0].clone();
+    let r = resp(&got);
+    assert_eq!(r["stdout"], format!("{}\n{}", shaped_marker(&raw, "color codes removed", &id), so.replace("\x1b[32m", "").replace("\x1b[0m", "")));
+    assert_eq!(r["stderr"], se.as_str());
+    assert_eq!(stored(&e, &id), raw.as_bytes());
+    assert_eq!(rows(&e), [(10240, 7552, Some(id), Some("cargo test".to_string()), Some("clean".to_string()))]);
+}
+
+#[test]
+fn stderr_after_stdout_without_newline() {
+    // O§7.2: a `\n` before `[stderr]` when stdout does not end in one
+    let e = env(true);
+    let mut so = colored(70);
+    so.pop();
+    run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &so, "e\n"), &TrimOpts::default());
+    assert_eq!(stored(&e, &ids(&e)[0]), format!("{so}\n[stderr]\ne\n").as_bytes());
+}
+
+#[test]
+fn command_missing_shapes_and_records_other() {
+    // O§10 "Command missing or not a string"
+    let e = env(true);
+    let got = run(&e, Agent::ClaudeCode, &bash(json!(12345), &colored(70), ""), &TrimOpts::default());
+    assert!(resp(&got)["stdout"].as_str().unwrap().starts_with("[zygo shaped this output: color codes removed."));
+    assert_eq!(rows(&e)[0].3.as_deref(), Some("other"));
+}
+
+/// A 2000-byte, 1-line raw text whose shaped view saves `saving` bytes: one CSI that clean removes.
+fn saving_input(saving: usize) -> String {
+    let p = zygo_results::Stored { id: ZERO_ID.into(), tool: "Bash".into(), bytes: 2000, lines: 1, kind: zygo_results::Kind::Text, created_at: 0, session: None, data: vec![] };
+    let e = saving + zygo_results::view::shaped_view(&[zygo_results::shape::Step::ColorCodesRemoved], "", &p).len();
+    format!("\x1b[{}m{}\n", "0".repeat(e - 3), "a".repeat(2000 - e - 1))
+}
+
+#[test]
+fn saving_of_255_gives_nothing_and_256_is_used() {
+    // O§7.8 use rule, O§10 "View saves < 256 bytes"
+    let e = env(true);
+    let raw = saving_input(255);
+    assert_eq!(raw.len(), 2000);
+    assert_eq!(run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &raw, ""), &TrimOpts::default()), "");
+    assert!(ids(&e).is_empty() && rows(&e).is_empty());
+    assert!(std::fs::read_dir(e.dir.results()).map(|d| d.count() == 0).unwrap_or(true));
+    let raw = saving_input(256);
+    assert!(!run(&e, Agent::ClaudeCode, &bash(json!("echo x"), &raw, ""), &TrimOpts::default()).is_empty());
+    let id = ids(&e)[0].clone();
+    assert_eq!(rows(&e), [(2000, 1744, Some(id), Some("other".to_string()), Some("clean".to_string()))]);
+}
+
+#[test]
+fn over_4_mib_gets_only_the_size_view() {
+    // O§7.3, O§10 "Raw text over 4 MiB"
+    let e = env(true);
+    let input = bash(json!("echo x"), &colored(5 * 1024 * 1024 / 29 + 1), "");
+    let got = run(&e, Agent::ClaudeCode, &input, &TrimOpts::default());
+    assert_eq!(masked(&e, &got), off(&input).0);
+    assert!(resp(&got)["stdout"].as_str().unwrap().contains('\x1b'));
+    assert_eq!(rows(&e)[0].4.as_deref(), Some("size"));
+}
+
+#[test]
+fn store_failure_gives_fixed_error_and_no_row() {
+    // O§10 "`Store::put` fails"
+    let e = env(true);
+    std::fs::write(e.dir.results(), b"in the way").unwrap();
+    let input = bash(json!("echo x"), &colored(70), "");
+    let parsed = HookInput::parse(Agent::ClaudeCode, &serde_json::to_vec(&input).unwrap()).unwrap();
+    let err = trim::trim_in_with(&parsed, &e.dir, &e.db, &TrimOpts::default()).err().expect("an error");
+    assert_eq!(format!("{err:#}"), "cannot store the tool result");
+    assert_eq!(run(&e, Agent::ClaudeCode, &input, &TrimOpts::default()), "");
+    assert!(rows(&e).is_empty());
+}
+
+#[test]
+fn read_keeps_the_size_view() {
+    // O§7.1: only Bash is shaped
+    let e = env(true);
+    let mut v = fixture("claude-code/hooks/PostToolUse-Read-main.json");
+    v["tool_response"] = json!({"type": "text", "file": {"filePath": "/repo/f", "content": colored(707), "numLines": 707, "startLine": 1, "totalLines": 707}});
+    let c = resp(&run(&e, Agent::ClaudeCode, &v, &TrimOpts::default()))["file"]["content"].as_str().unwrap().to_string();
+    assert!(c.contains('\x1b') && c.contains("[zygo trimmed this output: 707 lines,"));
+    assert_eq!((rows(&e)[0].3.as_deref(), rows(&e)[0].4.as_deref()), (None, Some("size")));
+}
