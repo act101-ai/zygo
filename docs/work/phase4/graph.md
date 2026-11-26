@@ -94,7 +94,8 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-7 | Window rewrite for a Responses client, Anthropic and Responses upstreams | RS-5 | TODO | judgment | — |
 | RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | TODO | implementation | — |
 | RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | TODO | judgment | — |
-| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9 | TODO | mechanical | — |
+| RS-10 | Messages events from a JSON body keep redacted_thinking and drop server-tool blocks (no empty text blocks) | RS-4 | TODO | implementation | — |
+| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10 | TODO | mechanical | — |
 | CC-0 | Take `main` (with phase 3) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1 | BLOCKED(operator: phase 3 merged into main) | implementation | — |
 | CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
@@ -147,3 +148,5 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | PC-5 DONE: gate 3 rounds; PC8 verified on end-of-turn compaction in one live TUI process (plus cold resume and mid-turn); PC15 failed (skills.config path selects, does not add); TUI /mcp POST is Codex's codex_tui MCP client; PR #147 merged 08774771. |
 | 2026-11-26 | RS-2 DONE: gate 1 round + nit round; Messages→Responses encoder and JSON form; custom_tool_call for client custom tools; marks bounded by MARK_MAX; HOLD_MAX holds within a push; stop-reason mapping; event sequence documented for PC-12; PR #156 merged 1ad733f0. |
 | 2026-11-26 | RS-3 DONE: gate 3 rounds; /openai/v1/responses route, OpenAI error shape, candidates anthropic then openai-chat (openai re-enabled by RS-5); PC14 shape for Anthropic's max_tokens limit text on this route only (Claude Code keeps the original); PR #157 merged f37bba43. |
+| 2026-11-26 | PC-11 scope extended (author's call): Codex item ids, macOS sandbox/marketplace names, login shell in command strings, tool descriptions in listings, PC-12 fixtures. |
+| 2026-11-26 | RS-10 added (author's call): message_events turns redacted_thinking/server_tool_use into empty text blocks on a JSON answer to a streaming request (found by the RS-4 planner); affects the Messages client today. |
