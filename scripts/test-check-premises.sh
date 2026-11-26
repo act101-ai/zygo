@@ -42,9 +42,11 @@ edit() {
 }
 
 # add_header <dir> <line>: inserts the line after the header line that starts `tmux: `. The line goes
-# through the environment (not awk -v), so its backslashes stay as written.
+# through the environment (not awk -v), so its backslashes stay as written. PC-13: docs/premises.md has
+# a real `Codex:` header since PC-12, so the planted line first replaces the copy's header line of the
+# same name (the text up to the first `:`, then `: `) before the first `## `.
 add_header() {
-    L="$2" awk '{ print } /^tmux: / { print ENVIRON["L"] }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+    L="$2" N="${2%%:*}: " awk 'index($0, ENVIRON["N"]) == 1 && !h { next } /^## / { h = 1 } { print } /^tmux: / { print ENVIRON["L"] }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
         mv "$1/docs/premises.md.new" "$1/docs/premises.md"
     [ "$(grep -cxF -- "$2" "$1/docs/premises.md")" -eq 1 ] || fail "planted change did not apply"
 }
@@ -300,10 +302,10 @@ expect_fail "PW15-bash: expected exactly one row, found 2"
 CASE="a header line after the first ##"
 D=$(mk latehdr)
 evidence "$D"
-add_row "$D" "$(row PC1 Codex 0.172.0 verified fixtures/codex/pc1.txt)"
-printf '\n%s\n' 'Codex: 0.172.0' >> "$D/docs/premises.md"
+add_row "$D" "$(row PC1 Cursor 1.0 verified fixtures/codex/pc1.txt)"
+printf '\n%s\n' 'Cursor: 1.0' >> "$D/docs/premises.md"
 run "$D"
-expect_fail "PC1: agent 'Codex' has no header line 'Codex: <version>' before the first '## ' of docs/premises.md"
+expect_fail "PC1: agent 'Cursor' has no header line 'Cursor: <version>' before the first '## ' of docs/premises.md"
 
 CASE="a header value with extra words"
 D=$(mk hdrwords)
@@ -367,8 +369,9 @@ run "$D"
 expect_fail "PC1: result 'passed' is not verified or failed"
 
 # hdr_twice <dir> <first> <second>: inserts both header lines after the `tmux: ` line, in that order.
+# PC-13: it first drops the copy's real `Codex: ` header lines before the first `## ` (since PC-12).
 hdr_twice() {
-    awk -v a="$2" -v b="$3" '{ print } /^tmux: / { print a; print b }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
+    awk -v a="$2" -v b="$3" '/^Codex: / && !h { next } /^## / { h = 1 } { print } /^tmux: / { print a; print b }' "$1/docs/premises.md" > "$1/docs/premises.md.new" &&
         mv "$1/docs/premises.md.new" "$1/docs/premises.md"
     [ "$(grep -c '^Codex: ' "$1/docs/premises.md")" -eq 2 ] || fail "planted change did not apply"
 }
