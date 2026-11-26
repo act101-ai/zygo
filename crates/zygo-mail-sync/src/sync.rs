@@ -212,16 +212,21 @@ fn gate<'a>(env: &'a Env, ws_id: &'a str) -> Result<Ctx<'a>, SyncError> {
     Ok(Ctx { env, ws_id, sp, store, ws, cfg, s })
 }
 
-/// S§8.3 steps 1 and 3, S§15: `f` under the gate and the CLI lock, which drops at return. A lock held by another
-/// after the CLI wait is `Busy`; a stop of `f` is logged and recorded as a stop of a pass.
+/// S§8.3 steps 1 and 3, S§15: `f` under the gate and the CLI lock. A lock held by another after the CLI wait is
+/// `Busy`; a stop of `f` is logged and recorded as a stop of a pass. S§8.3 step 17: after the release, a mark that
+/// a sync met the lock meanwhile runs the sync, as a child (a held lock: its holder sees the mark); its result is
+/// in `errors.log` and `state.json` only.
 pub(crate) fn locked<T>(env: &Env, ws_id: &str, f: impl FnOnce(&Ctx) -> Result<T, Fail>) -> Result<T, SyncError> {
     let c = gate(env, ws_id)?;
-    let _lock = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
-        Ok(Some(l)) => l,
+    let out = match take_lock(&c.sp, Mode::Cli, &*env.clock) {
+        Ok(Some(_lock)) => f(&c).map_err(|e| c.stopped(e, true)),
         Ok(None) => return Err(SyncError::Busy),
         Err(f) => return Err(c.stopped(f, false)),
     };
-    f(&c).map_err(|e| c.stopped(e, true))
+    if c.sp.again.exists() {
+        let _ = run_with(env, ws_id, Mode::Child, &Opts::default());
+    }
+    out
 }
 
 /// S§8.3 step 3: the lock on `mail/sync/lock`. Held by another (`Ok(None)`): at once for a child; the CLI tries each
@@ -616,24 +621,25 @@ pub(crate) fn own_names(ws: &Workspace) -> Vec<String> {
 /// S§8.3 step 12, S§7.3, S§7.4: the own registry when the tip's differs, and the ack of each own host when it
 /// changes: (old ∪ the acknowledged ULIDs) ∩ the files of that host at the tip. The current host's ack is written
 /// when the tip has none of this identity (S§7.6). A file over its limit is not written; one line is logged (O3).
-/// After a rename (S§7.6 "Rename") it deletes the registry of an old own host and the ack of an old own host with no
-/// file left at the tip.
+/// After a rename (S§7.6 "Rename") it deletes the registry of an old own host, unless the new one is over its limit,
+/// and the ack of an old own host with no file left at the tip.
 fn own_changes(c: &Ctx, meta: &TipMeta, identity: &str, own: &[String], files: &BTreeMap<String, BTreeSet<Ulid>>,
     acked: &[Ulid]) -> Vec<Change> {
     let host = c.s.host.as_str();
     let names = own_names(&c.ws);
+    let over = names.len() > MEMBERS_MAX;
     let mut out = Vec::new();
     let same = meta.registries.get(host).and_then(|r| r.value.as_ref().ok())
         .is_some_and(|r| r.identity == identity && r.members == names);
     if !same {
-        if names.len() > MEMBERS_MAX {
+        if over {
             c.log("mail sync: own file over limit: members");
         } else {
             let bytes = Registry { host: host.into(), identity: identity.into(), members: names }.to_bytes();
             out.push(Change::Add { path: format!("registry/{host}.json"), bytes });
         }
     }
-    for (h, r) in &meta.registries {
+    for (h, r) in meta.registries.iter().filter(|_| !over) {
         if h != host && r.value.as_ref().is_ok_and(|v| v.identity == identity) {
             out.push(Change::Remove { path: format!("registry/{h}.json") });
         }

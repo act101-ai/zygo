@@ -7,7 +7,7 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use common::{git, tip_file, Machine, Remote, ALICE, BOB, WS_ID};
+use common::{blob, git, git_in, tip_file, Machine, Remote, ALICE, BOB, WS_ID};
 use serde_json::Value;
 use ulid::Ulid;
 use zygo_config::{LoadContext, MailConfig};
@@ -300,4 +300,106 @@ fn drop_host_on_a_public_remote_stops_before_any_fetch() {
     assert_eq!(e.exit_code(Mode::Cli), 1);
     assert_eq!(git(&r.bare, &["for-each-ref"]), refs0);
     assert_eq!(git(&a.root, &["for-each-ref", "refs/remotes"]), tracking0);
+}
+
+/// The paths of the remote tip, one per line, as `git ls-tree -r --name-only` quotes them.
+fn tip_paths(r: &Remote) -> Vec<String> {
+    let tip = r.tip(BRANCH).unwrap();
+    git(&r.bare, &["ls-tree", "-r", "--name-only", &tip]).lines().map(String::from).collect()
+}
+
+/// Whether a tip path, quoted or not, is under `prefix`.
+fn under(paths: &[String], prefix: &str) -> bool { paths.iter().any(|p| p.trim_start_matches('"').starts_with(prefix)) }
+
+#[test] // S§7.6 --drop-host, S-G5: new mail between the count and the answer is counted and asked about again
+fn drop_host_asks_again_when_new_mail_arrives() {
+    let (r, a, _b) = pair();
+    let c = machine(&r, "c", &[("kcarol222", "carol")]);
+    sync(&c);
+    for _ in 0..3 {
+        send(&a, "alice", ("bob", "b"));
+    }
+    sync(&a);
+    let mut asked = Vec::new();
+    let n = drop_host(&env(&a), WS_ID, "b", &mut |p: &str| {
+        if asked.is_empty() {
+            send(&c, "carol", ("bob", "b"));
+            send(&c, "carol", ("bob", "b"));
+            sync(&c);
+        }
+        asked.push(p.to_string());
+        true
+    });
+    assert_eq!(asked, vec![drop_prompt(3, "b"), drop_prompt(5, "b")]);
+    assert_eq!(n, Ok(Some(5)));
+    assert!(!under(&tip_paths(&r), "bob@b/"));
+}
+
+#[test] // S§7.6 --drop-host: each `*@<host>/` file goes, in subfolders and with names that are not UTF-8
+fn drop_host_removes_subfolders() {
+    let (r, a, _b) = pair();
+    send(&a, "alice", ("bob", "b"));
+    sync(&a);
+    let s = a.dir.path().join("scratch");
+    git(a.dir.path(), &["clone", "-q", "--no-checkout", "--branch", BRANCH, &r.url, "scratch"]);
+    git(&s, &["read-tree", "HEAD"]);
+    let y = blob(&s, b"y");
+    git(&s, &["update-index", "--add", "--cacheinfo", &format!("100644,{y},bob@b/x/y")]);
+    let mut info = format!("100644 {y}\tbob@b/").into_bytes();
+    info.extend_from_slice(b"\xff.json\0");
+    git_in(&s, &["update-index", "--add", "-z", "--index-info"], &info);
+    git(&s, &["commit", "-q", "-m", "t"]);
+    git(&s, &["push", "-q", "origin", &format!("HEAD:refs/heads/{BRANCH}")]);
+    let before = tip_paths(&r);
+    assert!(before.contains(&"bob@b/x/y".to_string()));
+    assert!(before.iter().any(|p| p.starts_with("\"bob@b/\\377")));
+    assert_eq!(drop_host(&env(&a), WS_ID, "b", &mut |_| true), Ok(Some(1)));
+    assert!(!under(&tip_paths(&r), "bob@b/"));
+}
+
+#[test] // S§8.3 steps 3 and 17: a send that met the lock of an operator command runs when it releases
+fn drop_host_runs_the_waiting_send() {
+    let (r, _a, b) = pair();
+    let u = send(&b, "bob", ("alice", "a"));
+    state::mark_again(&b.sp()).unwrap();
+    assert_eq!(drop_host(&env(&b), WS_ID, "c", &mut |_| true), Ok(Some(0)));
+    assert!(file(&r, &format!("alice@a/{u}.json")).is_some());
+}
+
+/// `n` members `(pane key, name)` with valid keys and names.
+fn many(n: usize) -> Vec<(String, String)> {
+    (0..n).map(|i| {
+        let mut k = String::from("k");
+        let mut x = i;
+        for _ in 0..8 {
+            k.push((b'a' + (x % 26) as u8) as char);
+            x /= 26;
+        }
+        (k, format!("m{i}"))
+    }).collect()
+}
+
+fn refs(v: &[(String, String)]) -> Vec<(&str, &str)> { v.iter().map(|(k, n)| (k.as_str(), n.as_str())).collect() }
+
+#[test] // S§7.6 --take-host, O3: a registry over MEMBERS_MAX is not written, so neither file is
+fn take_host_over_member_limit_writes_nothing() {
+    let r = Remote::new();
+    let x1 = machine(&r, "x", &[(ALICE, "alice")]);
+    sync(&x1);
+    let m = many(257);
+    let x2 = machine(&r, "x", &refs(&m));
+    let before = (file(&r, "registry/x.json"), file(&r, "ack/x.json"));
+    assert_eq!(stopped(take_host(&env(&x2), WS_ID).unwrap_err()).1, "collision");
+    assert_eq!((file(&r, "registry/x.json"), file(&r, "ack/x.json")), before);
+}
+
+#[test] // S§7.6 Rename, O3: when the new registry is over MEMBERS_MAX, the old one stays
+fn rename_over_member_limit_keeps_old_registry() {
+    let (r, _a, b) = pair();
+    let m = many(257);
+    b.workspace(&refs(&m));
+    b.config(Some("b2"), "");
+    sync(&b);
+    assert_eq!(file(&r, "registry/b2.json"), None);
+    assert!(file(&r, "registry/b.json").is_some());
 }
