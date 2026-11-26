@@ -1,0 +1,9 @@
+t: ok=yes rc=0 requests=1 last=turn.completed msgs=["pc12 text reply"] echo=- extra=-
+f: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done f"] echo=yes extra=-
+p: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done p"] echo=yes extra=-
+r: ok=yes rc=0 requests=2 last=turn.completed msgs=["pc12 done r"] echo=yes extra=content
+i: ok=yes rc=1 requests=1 last=turn.failed msgs=["pc12 cut"] echo=- extra=-
+x: ok=yes rc=1 requests=1 last=turn.failed msgs=[] echo=- extra=-
+PC17=verified
+PC18=verified
+codex_version=0.172.0
