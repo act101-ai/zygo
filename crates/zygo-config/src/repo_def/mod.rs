@@ -17,3 +17,25 @@ pub use loadout::{repository_loadout, REPOSITORY_LOADOUT};
 pub use read::{read_at, read_default, Files, GitRunner, Read, SystemGit, PROFILES_MAX, PROFILE_MAX, WORKSPACE_MAX};
 pub use shape::{parse, Definition, MemberDef, RepoProfile, WorkspaceFile};
 pub use store::{approve_workspace_in, is_workspace_approved_in, Stored};
+
+/// The environment variable of the test tripwire: the file that [`trap`] appends to.
+#[cfg(feature = "test-hooks")]
+pub const TRAP_ENV: &str = "ZYGO_TEST_TRAP_REPO_DEF";
+
+/// The test tripwire (WD-19 review round 1): with the `test-hooks` feature and `ZYGO_TEST_TRAP_REPO_DEF` set, each
+/// public entry that reads git objects or `.zygo/` (`read_default`, `read_at`, `check_default`, `check_pinned`,
+/// `SystemGit::git`) appends the line `repo_def:<entry>` to the file it names, then continues. A write error is
+/// ignored. A child process inherits the variable, so a detached child's read is written too. Without the feature it
+/// does nothing.
+#[cfg(feature = "test-hooks")]
+fn trap(entry: &str) {
+    use std::io::Write;
+    let Some(file) = std::env::var_os(TRAP_ENV).filter(|v| !v.is_empty()) else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+        let _ = writeln!(f, "repo_def:{entry}");
+    }
+}
+
+#[cfg(not(feature = "test-hooks"))]
+#[inline(always)]
+fn trap(_entry: &str) {}
