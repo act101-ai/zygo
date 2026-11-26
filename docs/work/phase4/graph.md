@@ -94,7 +94,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-7 | Window rewrite for a Responses client, Anthropic and Responses upstreams | RS-5 | TODO | judgment | — |
 | RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | DONE | implementation | PR #164 merged 62740dc2; acceptance exit 0 on merged tree (responses_models 7); CI run 45744874257 green (ubuntu, macos, windows) |
 | RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | DONE | judgment | PR #161 merged 01d4b522; acceptance pass on merged tree (responses_request 59, responses_stream 34; workspace: only the 2 known guard_hook failures) |
-| RS-10 | Messages events from a JSON body keep redacted_thinking and drop server-tool blocks (no empty text blocks) | RS-4 | TODO | implementation | — |
+| RS-10 | Messages events from a JSON body keep redacted_thinking and drop server-tool blocks (no empty text blocks) | RS-4 | PLANNED | implementation | — |
 | RS-11 | Responses text.format json_schema toward Anthropic and chat upstreams (Codex thread titles) | RS-1, RS-2, RS-4, RS-9, PC-5 | TODO | judgment | — |
 | RS-12 | Refusal ending for the Responses client: measure Codex's handling, then map refusal so Codex does not retry it | RS-4, PC-12, RS-11, PC-11, PC-7 | TODO | judgment | — |
 | BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11, RS-12 | TODO | mechanical | — |
@@ -158,3 +158,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-25 | RS-9 DONE: gate 3 rounds; round 1 F1-F5 fixed (F3 narrowed by lead: pre-0.172 MCP flat names bind), round 2 G1-G3 fixed; namespace tools flattened to <ns>__<name> (hash form past 64), calls map back by table; one name, one tool; PR #161 merged 01d4b522. |
 | 2026-11-25 | PC-12 DONE: gate 2 rounds; real codex 0.172.0 accepts the encoder sequence (output: [], extra events); PC17 PC18 verified; reasoning echo adds content/encrypted_content as null (lead); content_filter retried 5 times → RS-12; PR #163 merged 59b43e33. |
 | 2026-11-25 | RS-4 DONE: gate 3 rounds; client body ends at the terminal event, a detached drain writes the usage row; split upstream error events joined and scrubbed; H3 rejected, H4 recorded (DDR-01M8B3A7JCGK6YAE2VZ7P6QZ3C); PR #165 merged da0c0387. |
+| 2026-11-25 | RS-10 PLANNED: message_events passes non-text blocks whole, the encoder drops server tools (server_tool_dropped to the row) and keeps redacted_thinking; only the Responses client on an Anthropic upstream reaches it (premise corrected); Acceptance adds responses_forward. |
