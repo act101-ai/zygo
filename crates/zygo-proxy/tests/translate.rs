@@ -413,6 +413,12 @@ fn res_json_stop_reasons() {
         let r = json!({"id":"c","choices":[{"index":0,"message":m,"finish_reason":finish}]});
         assert_eq!(translate_response(&r, OpenaiChat, &tgt())["stop_reason"], json!(want), "{finish} {calls}");
     }
+    // RS-12 round 3 H2: content_filter drops the calls (their arguments may be cut) and counts them.
+    let r = json!({"id":"c","choices":[{"index":0,"message":{"role":"assistant","content":"x","tool_calls":tc},"finish_reason":"content_filter"}]});
+    let m = translate_response(&r, OpenaiChat, &tgt());
+    assert_eq!(m["stop_reason"], "refusal");
+    assert_eq!(m["content"], json!([{"type":"text","text":"x"}]));
+    assert_eq!(m["zygo_calls_dropped"], 1);
 }
 
 fn err(t: &str, m: &str) -> Value {

@@ -7,7 +7,7 @@ use zygo_config::Facts;
 use zygo_core::ids::ulid;
 
 use super::reasoning::{decode_thinking, encode_thinking, MARK_MAX};
-use super::sse::SseEvent;
+use super::sse::{SseEvent, CALLS_DROPPED};
 use super::{input_of, s, Target, DOC_OMITTED};
 use crate::errors::ZygoError;
 use crate::pipeline::Adjustment;
@@ -903,8 +903,8 @@ fn is_server_tool(ty: &str) -> bool {
 }
 
 /// The adjustment codes of one response: `server_tool_dropped` (obligation 3), `reasoning_unmarked:<n>` (obligation
-/// 2).
-fn codes(dropped: bool, unmarked: usize) -> Vec<Adjustment> {
+/// 2), `refusal_call_dropped:<n>` for the chat calls dropped at `content_filter` (`CALLS_DROPPED`, obligation 5).
+fn codes(dropped: bool, unmarked: usize, calls_dropped: u64) -> Vec<Adjustment> {
     let mut out = Vec::new();
     if dropped {
         out.push(Adjustment("server_tool_dropped".into()));
@@ -912,7 +912,15 @@ fn codes(dropped: bool, unmarked: usize) -> Vec<Adjustment> {
     if unmarked > 0 {
         out.push(Adjustment(format!("reasoning_unmarked:{unmarked}")));
     }
+    if calls_dropped > 0 {
+        out.push(Adjustment(format!("refusal_call_dropped:{calls_dropped}")));
+    }
     out
+}
+
+/// The `CALLS_DROPPED` count of a Messages body or `message_delta`; 0 when absent.
+fn calls_dropped(v: &Value) -> u64 {
+    v.get(CALLS_DROPPED).and_then(Value::as_u64).unwrap_or(0)
 }
 
 /// The `response.failed` messages of obligation 9, by the held bytes that would pass `HOLD_MAX`: a partial line, the
@@ -935,11 +943,13 @@ const EVENTS: [&str; 7] = [
 
 /// A Messages body as one Response object (stream obligation 8), with its adjustment codes; the items are those of
 /// the stream's `output_item.done` events. A body holds whole blocks only, so each call in it is closed and kept,
-/// also at a refusal; no open or cut call can reach `output`.
+/// also at a refusal; no open or cut call can reach `output`. Calls a chat `content_filter` dropped (`CALLS_DROPPED`)
+/// count as call items for the ending.
 pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, Vec<Adjustment>) {
     let ulid = ulid();
     let mut output = Vec::new();
-    let (mut dropped, mut unmarked, mut call) = (false, 0, false);
+    let cut = calls_dropped(msg);
+    let (mut dropped, mut unmarked, mut call) = (false, 0, cut > 0);
     for b in msg.get("content").and_then(Value::as_array).into_iter().flatten() {
         let oi = output.len();
         let str_of = |k: &str| s(b, k).unwrap_or("");
@@ -967,7 +977,7 @@ pub fn response(msg: &Value, model: &str, t: &Target, calls: &Calls) -> (Value, 
     let u = usage_fields(msg.get("usage"));
     let mut r = finished(response_object(&ulid, model, "completed"), s(msg, "stop_reason"), call, u);
     r["output"] = Value::Array(output);
-    (r, codes(dropped, unmarked))
+    (r, codes(dropped, unmarked, cut))
 }
 
 enum Kind {
@@ -1040,7 +1050,9 @@ impl Block {
 ///    REFUSAL_TEXT}, usage}`. A call item still open at the refusal (its arguments may be cut) gets no done events:
 ///    it is dropped as on every other failure path (PC18 `xt` measured no tool run); another open block gets its
 ///    done events first. Calls closed before the refusal stay as sent: their done events already reached the
-///    client. That Codex runs no tool of the failed response is inferred, not measured (obligation 5). On an
+///    client. A `message_delta` with `CALLS_DROPPED` (chat calls dropped at `content_filter`, never sent) counts as
+///    a call item: the refusal ends in `response.failed`, adjustment `refusal_call_dropped:<n>`. That Codex runs no
+///    tool of the failed response is inferred, not measured (obligation 5). On an
 ///    upstream `error` event (its message cut as a 400 echo),
 ///    unparsable `data`, held bytes over `HOLD_MAX` (the message names the largest held part: stream line, event,
 ///    content block, tool call), `fail` or an early end: `response.failed {response: R, status failed, error: {code,
@@ -1062,8 +1074,11 @@ pub struct Encoder {
     next_oi: usize,
     usage: Usage,
     stop_reason: Option<String>,
-    /// A call item was opened (a `refusal` then ends in `response.failed`, obligation 5).
+    /// A call item was opened, or a chat `content_filter` dropped calls (a `refusal` then ends in `response.failed`,
+    /// obligation 5).
     call: bool,
+    /// The `CALLS_DROPPED` count of `message_delta`.
+    calls_dropped: u64,
     dropped: bool,
     unmarked: usize,
 }
@@ -1085,6 +1100,7 @@ impl Encoder {
             usage: [0; 4],
             stop_reason: None,
             call: false,
+            calls_dropped: 0,
             dropped: false,
             unmarked: 0,
         }
@@ -1158,9 +1174,9 @@ impl Encoder {
     }
 
     /// `server_tool_dropped`, once, when a server tool block was dropped (obligation 3); `reasoning_unmarked:<n>` for
-    /// the reasoning items sent with no mark (obligation 2).
+    /// the reasoning items sent with no mark (obligation 2); `refusal_call_dropped:<n>` (obligation 5).
     pub fn adjustments(&self) -> Vec<Adjustment> {
-        codes(self.dropped, self.unmarked)
+        codes(self.dropped, self.unmarked, self.calls_dropped)
     }
 
     /// One line, `\r` stripped: a `data` line is held, a blank line dispatches the held event, others are ignored.
@@ -1287,6 +1303,8 @@ impl Encoder {
                 if let Some(r) = v.get("delta").and_then(|d| s(d, "stop_reason")) {
                     self.stop_reason = Some(r.to_owned());
                 }
+                self.calls_dropped += calls_dropped(&v);
+                self.call |= self.calls_dropped > 0;
                 for (have, new) in self.usage.iter_mut().zip(usage_fields(v.get("usage"))) {
                     *have = (*have).max(new);
                 }

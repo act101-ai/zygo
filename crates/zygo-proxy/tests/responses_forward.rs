@@ -720,22 +720,39 @@ fn assert_rfd(evs: &[(String, Value)]) {
     assert!(!names(evs).contains(&"response.completed"), "{:?}", names(evs));
 }
 
-// RS-12 round 2 review G1: chat content_filter after a tool call → the call's done events, then exactly one terminal
-// event, response.failed invalid_prompt. The chat mapper emits each held call whole before message_delta, so on the
-// chat path every call is closed before the refusal and none is open to drop.
+// RS-12 round 3 review H1, H2: chat content_filter while a call is held (its arguments cut) → the call is dropped, no
+// event carries it, the ending is response.failed invalid_prompt (rfd), and the row has refusal_call_dropped:1;
+// streamed or a JSON body.
 #[test]
-fn chat_refusal_keeps_closed_call_then_fails() {
+fn chat_refusal_mid_call_drops_the_call_then_fails() {
     let h = start(C);
-    let mut chunks = CHAT_CHUNKS("{\"cmd\":");
+    let cut = "{\"cmd\":";
+    let mut chunks = CHAT_CHUNKS(cut);
     chunks[3] = chunk(json!({}), json!("content_filter"));
     h.reply_with(200, SSE, chat_sse(&chunks));
     let (s, _, b) = h.post(R, &codex_request("first-turn"));
     assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
     let evs = events(&b);
     assert_rfd(&evs);
-    let n = names(&evs);
-    assert_eq!(n[n.len() - 3..n.len() - 1], ["response.function_call_arguments.done", "response.output_item.done"]);
-    assert_eq!(done_items(&evs).last().unwrap()["arguments"], "{\"cmd\":");
+    assert!(!names(&evs).iter().any(|n| n.contains("function_call")), "{:?}", names(&evs));
+    assert!(!evs.iter().any(|(_, d)| d.to_string().contains("call_1")), "{:?}", names(&evs));
+    let types: Vec<String> = done_items(&evs).iter().map(|i| i["type"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(types, ["message"]);
+    let rows = h.usage_rows();
+    assert!(rows.last().unwrap().adjustments.contains(&"refusal_call_dropped:1".to_owned()), "{:?}", rows.last().unwrap().adjustments);
+
+    let mut j = CHAT_JSON(cut);
+    j["choices"][0]["finish_reason"] = json!("content_filter");
+    h.reply_with(200, JSON, serde_json::to_vec(&j).unwrap());
+    let (s, _, b) = h.post(R, &with_stream(codex_request("first-turn"), false));
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
+    let r: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(r["status"], "failed");
+    assert_eq!(r["error"]["code"], "invalid_prompt");
+    let types: Vec<&str> = r["output"].as_array().unwrap().iter().map(|i| i["type"].as_str().unwrap()).collect();
+    assert_eq!(types, ["message"]);
+    let rows = h.usage_rows();
+    assert!(rows.last().unwrap().adjustments.contains(&"refusal_call_dropped:1".to_owned()), "{:?}", rows.last().unwrap().adjustments);
 }
 
 #[test] // RS-12 round 1 review F1: a JSON 2xx with a tool_use and stop_reason refusal → response.failed, streamed or not
