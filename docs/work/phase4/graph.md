@@ -95,7 +95,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-13 | Streamed JSON answer: message_events sends a tool_use input in input_json_delta pieces of at most 64 KiB, so it stays within HOLD_MAX (K§6.4.3 stream obligation 8) | RS-10, RS-11 | DONE | implementation | PR #175 merged 3c018348; acceptance exit 0 on merged tree (responses_forward 26, streamed_json_answer_keeps_large_tool_input listed; zygo-proxy 576 passed, 0 failed); CI run 45772464785 green on 25debc24; DDR-01M8BACPSY0WNJ0DK83YN82PAC |
 | RS-14 | Untranslated passthrough: the provider key never reaches the client (non-2xx body and in-stream error events scrubbed; K§6.4.4) | RS-5, RS-6, RS-7 | DONE | implementation | PR #185 merged ec76093a; acceptance exit 0 on merged tree (passthrough_key 25 listed; zygo-proxy 624 passed, 0 failed); CI run 45789556008 green on 6bda1630; DDR-01M8BHQNT1DP5RKYVJBCZ01HDF |
 | RS-15 | Streamed text in text_delta pieces of at most 64 KiB (null-restore filter, message_events, chat mapper), so each event stays within HOLD_MAX (K§6.4.3 stream obligation 8) | RS-13 | DONE | implementation | PR #183 merged a3a1b9f8; acceptance exit 0 on merged tree (responses_forward 28, translate 65, 3 named tests listed; zygo-proxy 592 passed, 0 failed); CI run 45777684134 green on 949ffed7 |
-| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11, RS-12, RS-13, RS-14, RS-15 | TODO | mechanical | — |
+| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11, RS-12, RS-13, RS-14, RS-15, TF-2 | TODO | mechanical | — |
 | CC-0 | Take `main` (with phase 3) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1 | BLOCKED(operator: phase 3 merged into main) | implementation | — |
 | CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
@@ -114,6 +114,7 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | CC-15 | Boundary check `client_boundary` (K§6.1.4) with its exception list | CC-14 | TODO | judgment | — |
 | CC-16 | Base-spec notes: §8.1 (phase 3 features), §8.4 (`ZYGO_AGENT` ids, client denylist rows), §8.8 (superseded) | BS-1, CC-12, CC-15 | TODO | mechanical | — |
 | TF-1 | Tests: a child that exits before reading stdin does not fail the test (BrokenPipe) | — | DONE | mechanical | PR #193 merged 245bae26; acceptance exit 0 on merged tree (compact_cmd 6 passed, 19 ignored); CI run 45810685136 green on 1082c520 |
+| TF-2 | CI runs the premise test scripts | PC-13 | PLANNED | mechanical | — |
 
 ## Log
 
@@ -184,3 +185,4 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | PC-13 PLANNED: 8 files hit (Shell, OS Version); rescrub_codex.py extended by folder arg, layout-only diffs ignored (6 files), Codex 288 unchanged; debug-skill.txt shell kept (upstream text); test-check-premises already fails on PC-12's Codex header, repaired in PC-13; no edge. |
 | 2026-11-26 | TF-1 added, PLANNED: CI run 45806142357 ubuntu, compact_cmd.rs:153 stdin write got BrokenPipe (child exited first); 29 child-stdin writes in crates/zygo/tests move to common::write_stdin (ignores only BrokenPipe); CC-8 now depends on TF-1 (shared test files). |
 | 2026-11-26 | TF-1 DONE: 1 review round; 29 child-stdin writes plus 1 in zygo-plugins ignore only BrokenPipe through common::write_stdin (zygo-plugins inline); a should_panic test for other errors; PR #193 merged 245bae26. |
+| 2026-11-26 | TF-2 added, PLANNED (PC-13 review G3): ci.yml runs no premise test; add 5 steps (ubuntu, macOS; Windows skipped), N2_FORBIDDEN_NAMES fixed word (runner hits a fixture), lib_test waits unbounded. Edges PC-13 → TF-2 → BS-1; no ci.yml overlap. |
