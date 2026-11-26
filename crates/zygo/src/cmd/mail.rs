@@ -320,13 +320,15 @@ fn off_line(off: SyncOff, ws_name: &str) -> String {
     }
 }
 
-/// D6: the readable workspace whose name is `name`.
+/// D6: the workspace whose name is `name`, resolved as `ws forget-pane --name` resolves it
+/// (`zygo_workspace::admin::named`): a readable state in a real state folder; a shared name is its line (exit 1).
 fn workspace_named(paths: &Paths, name: &str) -> anyhow::Result<Workspace> {
-    list_all(paths)
-        .into_iter()
-        .filter_map(|(_, r)| r.ok())
-        .find(|w| w.name == name)
-        .ok_or_else(|| anyhow!("zygo: no workspace named {}", esc(name)))
+    let all = list_all(paths);
+    match zygo_workspace::admin::named(paths, &all, name, true) {
+        Ok(Some(ws)) => Ok(ws.clone()),
+        Ok(None) => Err(anyhow!("zygo: no workspace named {}", esc(name))),
+        Err(line) => Err(anyhow!(line)),
+    }
 }
 
 /// `zygo mail sync` (S§8.1 row 4): the workspace of `--name`, else of this session or folder; then the sync.

@@ -169,6 +169,24 @@ fn name_option_picks_the_workspace_by_name() { // T2
     assert!(tip_paths(&r).contains(&"registry/a.json".to_string()));
 }
 
+#[test] // D6 (review round 1, F1): --name resolves as ws forget-pane does: real state folders only; a shared name stops
+fn name_option_refuses_a_shared_name_and_ignores_a_linked_state_folder() {
+    let r = remote();
+    let a = machine(&r, "a", &[(ALICE, "alice")]);
+    const OTHER: &str = "fedcba9876543210";
+    a.seed(OTHER, &mut |_| {});
+    let o = a.zygo(&["mail", "sync", "--name", "app"], &[]).output().unwrap();
+    assert_eq!((o.status.code(), out(&o), err(&o)),
+        (Some(1), String::new(), "zygo: more than one workspace has the name app; run in its checkout\n".to_string()));
+    assert!(tip_paths(&r).is_empty());
+    let moved = a.root().join("elsewhere");
+    std::fs::rename(a.paths.workspaces_dir().join(OTHER), &moved).unwrap();
+    std::os::unix::fs::symlink(&moved, a.paths.workspaces_dir().join(OTHER)).unwrap();
+    let o = a.zygo(&["mail", "sync", "--name", "app"], &[]).output().unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(tip_paths(&r).contains(&"registry/a.json".to_string()));
+}
+
 #[test] // S§8.3 step 1, D3: sync off exits 1 with its reason, prints nothing on stdout and writes nothing
 fn sync_off_exits_1_with_its_reason() { // T3
     let r = remote();
