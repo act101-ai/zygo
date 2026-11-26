@@ -268,7 +268,7 @@ Why a fixed sentence and not a repository prompt: it makes `job` mean something 
 
 **(operator)** `[limits]` in user config sets a maximum member count that a repository file cannot exceed. **(author)** The rule:
 
-- `[limits] max_members`, an integer 1-32, default 8. Set by the built-in, team and user layers. When `zygo up` cannot read the team layer, or the team-merged config does not load, it prints `zygo up: team config not read (<why>); [limits] max_members from user config` and goes on with the user config only.
+- `[limits] max_members`, an integer 1-32, default 8. Set by the built-in, team and user layers. When `zygo up` cannot read the team layer, or the team-merged config does not load, it prints `zygo up: team config not read (<why>); [limits] max_members from user config` and goes on with the user config only. When it reads the team layer, it prints only the warnings the team layer causes, each on one line after `zygo: `: `config: <tables> in team config ignored; only user config may set them` and `[loadout] and [workspace] are read from user config only; ignored`; it prints no user-layer warning.
 - `.zygo.toml` cannot set it. The repository-file load removes `limits.max_members` and prints `.zygo.toml: limits.max_members ignored; only user or team config may set it`, as it does for `guards.min_level` (`layers.rs:505-509`). Why not the "lower value" rule of the turn cap: a repository cannot raise the maximum by construction, a lower value from it has no use, and one rule needs fewer tests.
 - `zygo up` counts the agent panes of the repository loadout. Above `max_members`: exit 1 before any write, `zygo: this repository's workspace files start <n> agents; [limits] max_members is <m>; nothing started`.
 - It applies to the repository loadout only. A user loadout is the user's own.
@@ -494,3 +494,4 @@ Each check is a test in temp directories with temp git repositories (a bare "ori
 - 2026-11-25 · R§11 · author's call (node WD-11) · the row "`up` crashes during a repository build" said "no new read", which disagreed with the R§10 `zygo up` row when the repair takes the plan back
 - 2026-11-25 · R§9.4 · author's call (node WD-11) · zygo up needs no team server; refusing would block restore and up --all offline
 - 2026-11-25 · R§10 · author's call (node WD-11) · the `up --all` row did not say which loadout a workspace with no pane gets; a user default `repository` with no read was an unknown loadout and the workspace was skipped
+- 2026-11-25 · R§9.4 · author's call (node FX-14) · up printed user-layer warnings (the ignored user [[model]], the user marketplace source) as if the team read caused them
