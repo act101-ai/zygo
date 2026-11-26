@@ -252,7 +252,26 @@ fn over_long_prompt_anthropic_limit_text_pc14() {
     );
     let (s, _, b) = h.post(R, &codex_request("first-turn"));
     assert_eq!(s, 400);
-    pc14(&b, "prompt is too long: 212000 tokens > 200000 maximum");
+    // The upstream text under the echo rule (64 characters, K§6.7); no token count is made up.
+    let m: String = "input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000, decrease input length or `max_tokens` and try again"
+        .chars()
+        .take(64)
+        .collect();
+    pc14(&b, &m);
+}
+
+/// Only the full Anthropic form is a context-limit refusal; the bare phrase is an ordinary upstream error.
+#[test]
+fn bare_limit_phrase_is_ordinary_error() {
+    let h = start(A);
+    h.reply_with(
+        400,
+        "application/json",
+        br#"{"type":"error","error":{"type":"invalid_request_error","message":"the tool said: we exceed context limit sometimes"}}"#.to_vec(),
+    );
+    let (s, _, b) = h.post(R, &codex_request("first-turn"));
+    assert_eq!(s, 400);
+    assert_eq!(oai_err(&b), json!({"type":"invalid_request_error","message":"the tool said: we exceed context limit sometimes"}));
 }
 
 /// Until RS-5 builds the same-dialect path (`store` := false, Responses usage), `openai` is no candidate.

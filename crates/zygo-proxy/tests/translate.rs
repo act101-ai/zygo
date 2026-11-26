@@ -416,11 +416,21 @@ fn err(t: &str, m: &str) -> Value {
     json!({"type":"error","error":{"type":t,"message":m}})
 }
 
-/// Anthropic's other overflow text: input plus `max_tokens` over the context window (RS-3 review round 1, F1).
+/// Anthropic's other overflow text: input plus `max_tokens` over the context window. Claude Code parses it to retry
+/// with a smaller `max_tokens`, so an `anthropic` client gets it unchanged (RS-3 review round 2, G1).
+const ANTH_LIMIT: &str = "input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000, decrease input length or `max_tokens` and try again";
+/// The part Claude Code's pattern reads.
+const ANTH_LIMIT_CORE: &str = "input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000";
+
 #[allow(non_snake_case)]
 fn CTX_ANTH_LIMIT() -> Value {
-    json!({"type":"error","error":{"type":"invalid_request_error",
-        "message":"input length and `max_tokens` exceed context limit: 180000 + 32000 > 200000, decrease input length or `max_tokens` and try again"}})
+    json!({"type":"error","error":{"type":"invalid_request_error","message":ANTH_LIMIT}})
+}
+
+#[test]
+fn res_json_anthropic_limit_text_unchanged() {
+    let (s, v) = translate_error(StatusCode::BAD_REQUEST, CTX_ANTH_LIMIT().to_string().as_bytes(), 1, None);
+    assert_eq!((s, v), (StatusCode::BAD_REQUEST, err("invalid_request_error", ANTH_LIMIT)));
 }
 
 #[test]
@@ -432,7 +442,6 @@ fn res_json_context_errors() {
         (400, json!({"object":"error","message":"This model's maximum context length is 32768 tokens. However, you requested 33000 tokens (32000 in the messages, 1000 in the completion). Please reduce the length of the messages or completion.","type":"BadRequestError","param":null,"code":400}), 1, "prompt is too long: 33000 tokens > 32768 maximum"),
         (400, json!({"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error","n_prompt_tokens":5000,"n_ctx":4096}}), 1, "prompt is too long: 5000 tokens > 4096 maximum"),
         (413, CTX_RESP(), 5000, "prompt is too long: 5000 tokens > 4999 maximum"),
-        (400, CTX_ANTH_LIMIT(), 1, "prompt is too long: 212000 tokens > 200000 maximum"),
     ];
     for (status, body, estimate, m) in cases {
         let (s, v) = translate_error(StatusCode::from_u16(status).unwrap(), body.to_string().as_bytes(), estimate, None);
@@ -727,6 +736,15 @@ fn res_sse_in_stream_context_error() {
         + "data: {\"error\":{\"message\":\"This model's maximum context length is 128000 tokens. However, your messages resulted in 130532 tokens.\",\"code\":\"context_length_exceeded\"}}\n\n";
     assert_eq!(feed(&mut chat().errors(10, None), &s), [msg_start("chatcmpl-1", "up-chat"),
         err_ev("invalid_request_error", "prompt is too long: 130532 tokens > 128000 maximum")]);
+}
+
+/// Inside a translated stream, Anthropic's limit text reaches the Messages client unchanged (RS-3 review round 2, G1).
+#[test]
+fn res_sse_in_stream_anthropic_limit_text_unchanged() {
+    let s = chat_delta(json!({"role":"assistant","content":""}), Value::Null)
+        + &format!("data: {}\n\n", json!({"error":{"message":ANTH_LIMIT,"type":"invalid_request_error"}}));
+    let out = feed(&mut chat().errors(10, None), &s);
+    assert_eq!(out, [msg_start("chatcmpl-1", "up-chat"), err_ev("api_error", ANTH_LIMIT)]);
 }
 
 #[test]
@@ -1261,15 +1279,20 @@ fn wire_round_trip_tool_loop() {
     assert!(!adj(&r.1).contains("thinking_dropped"));
 }
 
+/// A chat upstream relays Anthropic's limit text: the Messages client gets it unchanged (RS-3 review round 2, G1).
 #[test]
-fn wire_context_error_anthropic_limit_text() {
+fn wire_anthropic_limit_text_unchanged_from_chat() {
     let t = setup();
     let g = grant(&t, false);
-    t.up.script("/r1", vec![json_reply(400, CTX_ANTH_LIMIT())]);
-    let r = post(&t, &g, &msgs("test-fb", json!([user(json!("hi"))])));
+    // `test-mix`: the Responses provider fails over (503) to the chat provider.
+    t.up.script("/resp", vec![json_reply(503, json!({"error":{"message":"busy"}}))]);
+    t.up.script("/chat", vec![json_reply(400, json!({"error":{"message":ANTH_LIMIT,"type":"invalid_request_error"}}))]);
+    let r = post(&t, &g, &msgs("test-mix", json!([user(json!("hi"))])));
+    assert_eq!(t.up.count("/chat"), 1);
     assert_eq!(r.0, 400);
-    assert_eq!(serde_json::from_slice::<Value>(&r.2).unwrap(), err("invalid_request_error", "prompt is too long: 212000 tokens > 200000 maximum"));
-    assert_eq!(t.up.count("/r2"), 0);
+    let v: Value = serde_json::from_slice(&r.2).unwrap();
+    assert_eq!(v, err("invalid_request_error", ANTH_LIMIT));
+    assert!(v["error"]["message"].as_str().unwrap().contains(ANTH_LIMIT_CORE));
 }
 
 #[test]
