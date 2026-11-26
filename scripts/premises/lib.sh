@@ -86,6 +86,7 @@ TOOL_PATH="$TOOL_PATH$(dirname "$(command -v node 2>/dev/null || echo /usr/bin/t
 
 # new_run <name>: fresh run dir with home/, repo/ (a git repository) and rec/.
 new_run() {
+  N2_PART_MARK=$(n2_mark)
   RUN="$N2_SCRATCH/$1"
   rm -rf "$RUN"
   mkdir -p "$RUN/home/.claude" "$RUN/home/.config" "$RUN/home/.local/share" "$RUN/home/.cache" "$RUN/repo" "$RUN/rec"
@@ -251,6 +252,19 @@ N2_DAEMON_DIRS="/private/tmp /tmp"
 # N2_PROC: the proc file system n2_scan reads. Assigned here like N2_DAEMON_DIRS; lib_test.sh points
 # it at a stub tree in one case.
 N2_PROC=/proc
+# n2_mark: the part's start mark that new_run records (N2_PART_MARK), in the clock n2_scan compares
+# process start times with: clock ticks since boot where $N2_PROC is a proc file system (the clock of
+# /proc/<pid>/stat field 22), else seconds since the epoch (the clock of ps lstart).
+n2_mark() {
+  N2_P_PROC=$N2_PROC python3 -I -c '
+import os, time
+p = os.environ["N2_P_PROC"].rstrip("/")
+if os.path.isdir(p + "/self/fd"):
+    with open(p + "/uptime") as f:
+        print(int(float(f.read().split()[0]) * os.sysconf("SC_CLK_TCK")))
+else:
+    print(int(time.time()))'
+}
 
 # n2_procs <daemon|left>: n2_scan with no root (every process of this user). Defined here, so the
 # environment cannot replace it; lib_test.sh redefines it after sourcing lib.sh.
@@ -260,9 +274,13 @@ n2_procs() { n2_scan "$1" ""; }
 # /proc/<pid>/cwd, else lsof) and the daemon socket folders; print one "premises: ..." line per
 # finding and return 1 when there is one. It fails closed (a line, return 1) when ps fails or the
 # working folders cannot be read: the lookup must give the working folder of this shell ($$) itself,
-# lsof must end within 120 s, and on /proc any error but a process that has ended counts, except
-# for a process that is not wholly this user's (TF-2: a Uid: field of /proc/<pid>/status is another
-# uid; Linux refuses its cwd, and it cannot be a process of this run). A
+# lsof (this uid's processes only: -u) must end within 120 s, and a candidate whose working folder
+# cannot be read (on /proc any error but a process that has ended; with lsof no working folder for a
+# live process that is not a zombie) counts, except (TF-2) a process that is not wholly this user's
+# (a Uid: field of /proc/<pid>/status is another uid) or one that started before the part's start
+# mark (N2_PART_MARK, set by new_run: a leftover of the run starts during the part; the runner's
+# own systemd --user, whose cwd Linux refuses, does not). Such a process keeps an unknown working
+# folder: it is still named in daemon mode. A
 # process is "of this run" when its command line holds the run folder or its working folder is
 # inside it. The scanning shell, its parents and the processes the scan starts are skipped; a
 # pipeline sibling of the caller is not (call codex_record from the part's shell, not in a
@@ -277,8 +295,8 @@ n2_procs() { n2_scan "$1" ""; }
 # No process is stopped and no file is removed. <root> (lib_test.sh only): only processes whose
 # command line or working folder holds it are named.
 n2_scan() {
-  N2_P_MODE=$1 N2_P_ROOT=$2 N2_P_RUN=$RUN N2_P_SELF=$$ N2_P_DIRS=$N2_DAEMON_DIRS N2_P_PROC=$N2_PROC python3 -I -c '
-import errno, os, re, shutil, stat, subprocess, sys
+  N2_P_MODE=$1 N2_P_ROOT=$2 N2_P_RUN=$RUN N2_P_SELF=$$ N2_P_DIRS=$N2_DAEMON_DIRS N2_P_PROC=$N2_PROC N2_P_MARK=${N2_PART_MARK:-} python3 -I -c '
+import errno, os, re, shutil, stat, subprocess, sys, time
 e = os.environ
 mode, run, root, self_pid = e["N2_P_MODE"], e["N2_P_RUN"], e["N2_P_ROOT"], int(e["N2_P_SELF"])
 pre, post = ("premises: ", "; codex not started") if mode == "daemon" else ("premises: codex_record: ", "")
@@ -347,11 +365,39 @@ def owned(pid):
     except ValueError:
         pass
     return True
+mark = int(e["N2_P_MARK"]) if e["N2_P_MARK"].isdigit() else None
+def before(pid):
+    """True when the process started before the part start mark (new_run); False when it did not,
+    or when its start or the mark is not known (fail closed). /proc: stat field 22 (clock ticks since
+    boot); else ps lstart (seconds since the epoch)."""
+    if mark is None:
+        return False
+    try:
+        if is_proc:
+            with open("%s/%d/stat" % (proc, pid)) as f:
+                return int(f.read().rsplit(")", 1)[1].split()[19]) < mark
+        return int(time.mktime(time.strptime(lstart[pid], "%a %b %d %H:%M:%S %Y"))) < mark
+    except (OSError, ValueError, IndexError, KeyError, OverflowError):
+        return False
+is_proc = os.path.isdir(proc + "/self/fd")
+lstart, zombie = {}, set()
+if not is_proc:
+    try:
+        r = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "stat=", "-o", "lstart="], capture_output=True, text=True,
+                           errors="replace", timeout=120, env=dict(e, LC_ALL="C"))
+    except (OSError, subprocess.SubprocessError) as x:
+        fail("ps failed (%s)" % x)
+    for line in r.stdout.splitlines():
+        t = line.split(None, 2)
+        if len(t) == 3 and t[0].isdigit():
+            lstart[int(t[0])] = " ".join(t[2].split())
+            if t[1].startswith("Z"):
+                zombie.add(int(t[0]))
 def cwds(pids):
     """pid -> working folder, for the candidates and this shell; fails closed."""
     pids = set(pids) | {self_pid}
     out = {}
-    if os.path.isdir(proc + "/self/fd"):
+    if is_proc:
         for pid in pids:
             try:
                 out[pid] = os.readlink("%s/%d/cwd" % (proc, pid))
@@ -359,7 +405,7 @@ def cwds(pids):
                 if x.errno == errno.ENOENT:
                     continue
                 o = owned(pid)
-                if o is None or (o is False and pid != self_pid):
+                if o is None or (o is False and pid != self_pid) or (pid != self_pid and before(pid)):
                     continue
                 fail("cannot read process working folders (pid %d, %s: %s)" % (pid, comm.get(pid, "?"), x.strerror))
     else:
@@ -367,7 +413,7 @@ def cwds(pids):
         if not lsof:
             fail("cannot read process working folders (no /proc, no lsof)")
         try:
-            r = subprocess.run([lsof, "-n", "-P", "-a", "-d", "cwd", "-p", ",".join(map(str, sorted(pids))), "-F", "pn"],
+            r = subprocess.run([lsof, "-n", "-P", "-a", "-u", str(uid), "-d", "cwd", "-F", "pn"],
                                capture_output=True, text=True, errors="replace", timeout=120)
         except subprocess.TimeoutExpired:
             fail("cannot read process working folders (lsof did not end in 120 s)")
@@ -383,6 +429,19 @@ def cwds(pids):
                 out[pid] = line[1:]
     if self_pid not in out:
         fail("cannot read process working folders (no working folder for this shell, pid %d)" % self_pid)
+    if not is_proc:
+        # A candidate with no working folder from lsof: skipped when it has ended, is a zombie or
+        # started before the part; else it fails closed, as on /proc.
+        for pid in sorted(set(pids) - set(out)):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            except OSError:
+                pass
+            if pid in zombie or before(pid):
+                continue
+            fail("cannot read process working folders (pid %d, %s: no working folder from lsof)" % (pid, comm.get(pid, "?")))
     return out
 cw = cwds(cand)
 out = []

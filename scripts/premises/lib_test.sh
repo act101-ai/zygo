@@ -1262,6 +1262,44 @@ y2() {
     { why="rc $(cat "$T/Y2.rc"), stdout: $(tr '\n' '|' <"$T/Y2.out")"; return 1; }
 }
 res "Y2 n2_scan fails closed on this user's process whose cwd cannot be read" 0 y2
+# Y3, Y4: the same unreadable process of this user, with a start time (stat field 22, clock ticks
+# since boot) before the part's start mark (N2_PART_MARK, set by new_run; here set to 1000): skipped
+# (Y3, as for the runner's own systemd --user); after it: fails closed (Y4, a leftover of the run).
+for c in Y3 Y4; do
+  mkdir -p "$T/fp-$c/self/fd" "$T/fp-$c/$YP"; : >"$T/fp-$c/$YP/cwd"
+  u=$(id -u); printf 'Name:\tcodex\nUid:\t%s\t%s\t%s\t%s\n' "$u" "$u" "$u" "$u" >"$T/fp-$c/$YP/status"
+  if [ $c = Y3 ]; then st=500; else st=2000; fi
+  printf '%s (co dex) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 %s 0 0\n' "$YP" "$st" >"$T/fp-$c/$YP/stat"
+  cxprep $c caller
+  child $c 0 "new_run x; N2_PROC='$T/fp-$c'; N2_PART_MARK=1000; python3 -I '$T/fpself.py' '$T/fp-$c/'\$\$; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+done
+y3() { [ "$(cat "$T/Y3.rc")" = 0 ] && [ ! -s "$T/Y3.out" ] || { why="rc $(cat "$T/Y3.rc"), stdout: $(tr '\n' '|' <"$T/Y3.out")"; return 1; }; }
+res "Y3 n2_scan skips this user's unreadable process that started before the part" 0 y3
+y4() {
+  [ "$(cat "$T/Y4.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid $YP, .*: Invalid argument)\$" "$T/Y4.out" ||
+    { why="rc $(cat "$T/Y4.rc"), stdout: $(tr '\n' '|' <"$T/Y4.out")"; return 1; }
+}
+res "Y4 n2_scan fails closed on this user's unreadable process that started during the part" 0 y4
+# Y5, Y6: the lsof path (N2_PROC with no self/fd), with a stub lsof that gives the working folder of
+# the scanning shell only, so every other process of this user has none. Y5: the mark is far after
+# now (every such process started before the part): skipped, the scan passes. Y6: the mark is 0
+# (every such process started during the part): the scan fails closed and names one.
+mkdir -p "$T/lsofy"
+printf '#!/bin/sh\ng=$(ps -o ppid= -p "$PPID" | tr -d " ")\nprintf "p%%s\\nn/\\n" "$g"\n' >"$T/lsofy/lsof"; chmod +x "$T/lsofy/lsof"
+for c in Y5 Y6; do
+  if [ $c = Y5 ]; then mk=$(($(date +%s) + 100000)); else mk=0; fi
+  cxprep $c caller; CP=$T/lsofy:$T/bin
+  child $c 0 "new_run x; N2_PROC='$T/noproc'; N2_PART_MARK=$mk; if n2_procs left; then echo 0 >'$T/$c.rc'; else echo 1 >'$T/$c.rc'; fi"
+  run $c
+done
+y5() { [ "$(cat "$T/Y5.rc")" = 0 ] && [ ! -s "$T/Y5.out" ] || { why="rc $(cat "$T/Y5.rc"), stdout: $(tr '\n' '|' <"$T/Y5.out")"; return 1; }; }
+res "Y5 lsof path: this user's processes with no working folder that started before the part are skipped" 0 y5
+y6() {
+  [ "$(cat "$T/Y6.rc")" = 1 ] && grep -q "^premises: codex_record: cannot read process working folders (pid [0-9]*, .*: no working folder from lsof)\$" "$T/Y6.out" ||
+    { why="rc $(cat "$T/Y6.rc"), stdout: $(tr '\n' '|' <"$T/Y6.out")"; return 1; }
+}
+res "Y6 lsof path: this user's process with no working folder that started during the part fails closed" 0 y6
 kill "$YP" 2>/dev/null; rm -f "$T/Y.dpid"
 
 if [ "$bad" -eq 0 ]; then echo "lib tests: ok ($n)"; exit 0; fi
