@@ -59,6 +59,9 @@ r"""Fixture hygiene for N2: scrub.py <run dir> <file> -> scrubbed copy on stdout
 - PC-11 review round 2: the user-name rule matches the name in any case, as a whole word (a user
   name of "user", any case, changes nothing); a Codex item id matches in any case (msg_, fco_, ctco_
   + UUID; the same id in two cases gets one placeholder).
+- PC-13: the shell name in a Claude Code environment block line (" - Shell: <name>", at a line start
+  or after a JSON \n escape) -> "(omitted)"; the " - OS Version: <os> <version>" line ->
+  "(os omitted)"; a "shell" JSON key and prose are kept.
 """
 import getpass
 import json
@@ -199,6 +202,10 @@ ENV_CTX = re.compile(r"(?:<|\\u003[cC]|&lt;)environment_context(?:>|\\u003[eE]|&
 ULID = re.compile(B + r"([a-z]{1,8}_)(?!0{10})([0-7][0-9A-HJKMNP-TV-Z]{25})(?![0-9A-Za-z])")
 # PC-11: macOS __CF* env names (__CF_USER_TEXT_ENCODING=0x<uid>:... holds the user id).
 CF_ENV = re.compile(B + r"__CF[A-Za-z_]*(?:=[^\s\"'\\]*)?")
+# PC-13: the shell name and OS version lines of a Claude Code environment block (" - Shell: zsh",
+# " - OS Version: Darwin 25.6.0"), at a line start or after a JSON "\n" escape.
+ENV_SHELL = re.compile(r"(?m)((?:^|(?<=\\n))[ \t]*- Shell: )[^\n\r\\\"]+")
+ENV_OS = re.compile(r"(?m)((?:^|(?<=\\n))[ \t]*- OS Version: )[^\n\r\\\"]+")
 
 
 def s(text):
@@ -208,6 +215,8 @@ def s(text):
     text = MAC_OS_X.sub("(os omitted)", text)
     text = OS_JSON.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = UNAME.sub("(os omitted)", text)
+    text = ENV_SHELL.sub(lambda m: m.group(1) + "(omitted)", text)
+    text = ENV_OS.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = SANDBOX.sub(lambda m: m.group(1) + "(os omitted)", text)
     text = MARKETPLACE.sub("marketplace-os-omitted", text)
     text = CMD_SHELL.sub(lambda m: m.group(1) + "(shell omitted) -lc", text)
