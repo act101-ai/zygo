@@ -278,11 +278,11 @@ A runner view is tried when a segment of the command names the runner, and it is
 
 ### 7.7 Kind views
 
-**(author)** Only for a text that is still over the threshold after steps 1-3. Each replaces the head-and-tail view, which can cut through the part that matters. Each stays within `VIEW_CAP_BYTES` (`view.rs:5`, 8 KiB). When a kind view cannot fit its first unit, it gives "no change" and step 5 runs.
+**(author)** Only for a text that is still over the threshold after steps 1-3. Each replaces the head-and-tail view, which can cut through the part that matters. Each stays within `VIEW_CAP_BYTES` (`crates/zygo-results/src/view.rs:6`, 8 KiB). When a kind view cannot fit its first unit, it gives "no change" and step 5 runs.
 
-- **diff** (`kind.rs:72-74`): first a list of the changed files, one line each, `<path> +<added> -<removed>`. Then whole file sections, in order, while they fit. Then the marker, which names how many file sections are not shown. Failure prevented: a head-and-tail cut hides which files changed.
+- **diff** (`kind.rs:72-74`): first a list of the changed files, one line each, `<path> +<added> -<removed>`. Then whole file sections, in order, while they fit; the first section that does not fit ends the walk. Then the marker `[zygo: <n> file sections not shown]`, where `<n>` is the count of file sections not shown; the marker is written also when `<n>` is 0. Text before the first file section (for example a commit header) is not shown. Failure prevented: a head-and-tail cut hides which files changed.
 - **json**: the key outline of `result_tree` (`kind.rs:89-91`, depth 3 with array lengths), cut to half the cap; then the first lines of the text to fill the cap. A parse error (including serde_json's nesting limit) gives "no change".
-- **log**: the first 20 lines; then each line whose level is `ERROR`, `WARN`, `WARNING`, `FATAL` or `CRITICAL`, or that starts with `panic` or `Traceback`, each as `<line number>: <line>`, while they fit; then the last 20 lines. Failure prevented: the error in the middle of a long log is cut out.
+- **log**: the first 20 lines; then each line that holds one of the whole words `ERROR`, `WARN`, `WARNING`, `FATAL` or `CRITICAL` anywhere in the line (case-sensitive), or that starts with `panic` or `Traceback`, each as `<line number>: <line>`, while they fit; then the last 20 lines. `<line number>` counts lines in the text after steps 1-3, not in the stored raw text. A log with no such line between the first and the last 20 lines still gives the first and the last 20 lines; the use rule (O§7.8) decides whether to use the view. Failure prevented: the error in the middle of a long log is cut out.
 - `jsonl`, `tree`, `text`: no kind view.
 
 A kind view and the size view cut lines that are not noise. They run only over the threshold, where §10.1 already cuts, and the marker names the stored raw text. This is the "fall back to the size view" of O-C9.
@@ -370,7 +370,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 | failure | the PO1 capture (O§7.13), both a short and a failing `cargo test` run on Claude Code |
 | none | each Bash fixture of `fixtures/claude-code/hooks/` (small outputs that must not change) |
 
-- **Capture.** `scripts/fixtures/capture-shaping.sh <shaper> <case> -- <command…>` runs the command in the current directory, writes `stdout`, `stderr`, an empty `must_keep` and `meta.json`, and then scrubs: it replaces `$HOME` with `/home/user`, the user name with `user`, the host name with `host`, and the scratch directory with `/repo`. It never writes `view`. The builder writes `view` with `ZYGO_BLESS=1 cargo test -p zygo-hooks --test shaping` and reviews it in the diff. **Bless refuses** to write a `view` that does not hold each `must_keep` line or that fails any other O§8.2-8.3 check; the test then fails and names the missing lines.
+- **Capture.** `scripts/fixtures/capture-shaping.sh <shaper> <case> -- <command…>` runs the command in the current directory, writes `stdout`, `stderr`, an empty `must_keep` and `meta.json`, and then scrubs: it replaces `$HOME` with `/home/user`, the user name with `user`, the host name with `host`, and the scratch directory with `/repo`. It never writes `view`. The builder writes `view` with `ZYGO_BLESS=1 cargo test -p zygo-hooks --test shaping` and reviews it in the diff. **Bless refuses** to write a `view` that does not hold each `must_keep` line (it holds when a view line equals it, or, in the log view, a view line equals `<n>: ` followed by it; an empty `must_keep` line makes the case invalid) or that fails any other O§8.2-8.3 check; the test then fails and names the missing lines.
 - **Secret check.** A CI test runs the built-in secret patterns of §16.1 over every file under `fixtures/shaping/` and fails on any finding (O§16 item 16).
 - **Size.** Each case is at most 256 KiB; the folder is at most 4 MiB.
 
@@ -384,7 +384,7 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 | dedup | 50 % on the repeated-warning case | O§7.5 expansion gives the cleaned text |
 | libtest, passing | 80 % | each `test result:` line is in the view |
 | libtest, pytest, go test, failing | 30 % | each `must_keep` line is in the view |
-| diff, json, log | view ≤ 8 KiB | each `must_keep` line is in the view |
+| diff, json, log | view ≤ 8 KiB | each `must_keep` line holds: a view line equals it, or, in the log view, a view line equals `<n>: ` followed by it; an empty `must_keep` line makes the case invalid |
 | none | 0 (no change) | the hook output is empty |
 
 A case whose raw text has no runner summary line (O§7.6), such as the libtest compile error, is checked against the `none` row: the hook makes no change, so the model gets each `must_keep` line in the raw text.
@@ -396,7 +396,7 @@ A case whose raw text has no runner summary line (O§7.6), such as the libtest c
 1. The hook does not panic, and its exit code is 0.
 2. The view is empty (no change) or `raw_bytes − view_bytes ≥ 256` with the row's numbers.
 3. When there is a view, its marker names a result id, and `Store::get` of that id gives the raw text byte for byte.
-4. Each `must_keep` line is in the view, when there is a view (O-C9).
+4. Each `must_keep` line holds, when there is a view (O-C9): a view line equals it, or, in the log view, a view line equals `<n>: ` followed by it. An empty `must_keep` line makes the case invalid.
 5. Each line that a runner view hides matches one of the hidden forms of its runner's row (O§7.6), or belongs to a passed go test by the go test rules. The test checks this line by line against the raw text.
 6. Above 4 MiB, the view equals the §10.1 size view of the raw text.
 
@@ -590,4 +590,5 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-24 | O§7.1, glossary | author's call | review of OS-40: newline after a pipe, backtick and 0< substitutions, eval --, builtin, -c only among leading options (the arguments of `-o`, `+o`, `-O`, `+O` skipped), redirect-only stage in zsh |
 | 2026-11-25 | O§6.6 | author's call | the sample block's key amounts did not sum to its total, and its Read key kept out more bytes than were read back; replaced with figures a store can produce (OS-8). |
 | 2026-11-25 | O§7.4 | author's call (pending operator ratification under O§15 item 2) | OS-12 review F4/F5: charset designations and ESC ESC left residue |
+| 2026-11-25 | O§7.7, O§8.1, O§8.2, O§8.3 item 4 | author's call (lead) | OS-29 plan open items: diff marker text, diff preamble not shown, log level words and line numbers, log with no level line, a `must_keep` line holds when a view line equals it or, in the log view, equals `<n>: ` followed by it, and an empty `must_keep` line is invalid (O§8.1 Bless, O§8.2, O§8.3 item 4; OS-29 review R3); `VIEW_CAP_BYTES` cite moved to `view.rs:6` |
 | 2026-11-25 | O§7.3 | author's call | kind sniffed on stdout: the combined text with a [stderr] part never sniffs as JSON, so the reuse protection was lost |
