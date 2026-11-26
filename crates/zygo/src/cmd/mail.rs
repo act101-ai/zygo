@@ -1,18 +1,25 @@
-//! zygo mail send|read|ls|watch and /zygo:mail (M§8; owner: nodes ML-12, ML-13); the command-start mail sweep (M§5, AU71).
+//! zygo mail send|read|ls|watch and /zygo:mail (M§8; owner: nodes ML-12, ML-13); the command-start mail sweep (M§5, AU71);
+//! zygo mail sync (mail sync design S§8.1-S§8.3; owner: node MS-17).
 
 use std::ffi::OsStr;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{anyhow, bail};
 use clap::{Args, Subcommand};
+use zygo_config::SyncOff;
 use zygo_core::esc;
 use zygo_core::verbs::MAIL_SLASH_ARGS;
 use zygo_core::paths::Paths;
+use zygo_mail_sync::env::{Env, NoSeam, SystemClock, TmuxWake};
+use zygo_mail_sync::public::LsRemote;
+use zygo_mail_sync::spawn::ChildSpawner;
+use zygo_mail_sync::sync::{run_with, Mode, Opts, Report, SyncError};
+use zygo_redact::secret::DeadlinePolicy;
 use zygo_workspace::identity::{valid_ws_id, workspace_id};
 use zygo_workspace::mail::{self, mail_dir, names, store, wake, MailError, BODY_MAX};
-use zygo_workspace::state::{Store, Workspace};
+use zygo_workspace::state::{list_all, Store, Workspace};
 use zygo_workspace::up::{find_checkout, GIT_BOUND};
 
 use super::verbs::VerbCtx;
@@ -30,6 +37,9 @@ const SLASH_GIT_BOUND: Duration = Duration::from_secs(2);
 
 /// The poll of `zygo mail watch` (A6): a send is seen within 1 s (M§13 #7).
 const WATCH_POLL: Duration = Duration::from_millis(500);
+
+/// S§8.3 step 3, D4: the CLI line when another sync of the workspace still holds the lock after `LOCK_WAIT`.
+const BUSY_LINE: &str = "zygo: another mail sync of this workspace holds the lock; try again";
 
 #[derive(Args)]
 pub struct MailArgs {
@@ -66,12 +76,28 @@ pub enum MailCmd {
         #[arg(long, default_value = "25m")]
         timeout: String,
     },
+    /// Sync this workspace's mail with the side branch of its remote
+    Sync(SyncArgs),
+}
+
+// `zygo mail sync` (S§8.1 row 4); a plain comment, so the about text is the doc of `MailCmd::Sync`.
+#[derive(Args)]
+pub struct SyncArgs {
+    /// Workspace name; default: the workspace of this session or folder
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Prune the side branch in this sync
+    #[arg(long)]
+    pub prune: bool,
 }
 
 /// `zygo mail`: the OP5 check first; bare `zygo mail` is `zygo mail ls` (D1).
 pub fn run(a: MailArgs) -> i32 {
     if let Some(code) = op5_exit() {
         return code;
+    }
+    if let Some(MailCmd::Sync(s)) = a.sub {
+        return sync_run(s);
     }
     let paths = Paths::from_env();
     let cwd = match cwd_or_exit() {
@@ -127,6 +153,7 @@ pub fn run(a: MailArgs) -> i32 {
             };
             watch(&mail_dir(&paths, &ws.id), &key, d, WATCH_POLL, &Instant::now, &mut std::io::stdout().lock())
         }
+        Some(MailCmd::Sync(_)) => unreachable!("taken above"),
         Some(MailCmd::Send { to, subject, file, stdin }) => {
             let cfg = match user_config_or_exit(&paths, "mail") {
                 Ok(c) => c,
@@ -227,6 +254,104 @@ pub(crate) fn sweep(paths: &Paths, now: SystemTime) {
         }
         store::sweep(&dir, keep, now);
     }
+}
+
+/// The production mail sync seams of the CLI (S§18; MS-18, MS-23): the system clock, the `git ls-remote` probe, no
+/// seam, the `<zygo> mail sync --ws-id <id> --background` child of this binary (the binary rule of `ws run`), the
+/// tmux wake and the default deadline policy of the secret pass (S§8.6).
+pub fn sync_env(paths: Paths) -> Env {
+    Env {
+        paths,
+        clock: Box::new(SystemClock),
+        probe: Box::new(LsRemote),
+        seam: Box::new(NoSeam),
+        spawner: Box::new(ChildSpawner {
+            zygo: super::member::zygo_binary(&std::env::current_exe().and_then(std::fs::canonicalize)),
+        }),
+        wake: Box::new(TmuxWake { tmux: tmux_program() }),
+        secret_policy: DeadlinePolicy::default(),
+    }
+}
+
+/// S§8.3 step 1 (D3): the CLI line of sync off for workspace `ws_name`.
+fn off_line(off: SyncOff, ws_name: &str) -> String {
+    let name = esc(ws_name);
+    match off {
+        SyncOff::NotOn => {
+            format!("zygo: mail sync is off for workspace {name}; set sync in [mail.workspace.{name}] of the user config")
+        }
+        SyncOff::NoHost => "zygo: mail sync is off: no mail host; set host in [mail] of the user config".into(),
+        SyncOff::BadHost => {
+            "zygo: mail sync is off: the mail host is not 1 to 32 of a-z, 0-9 and -, starting with a letter or a digit".into()
+        }
+        SyncOff::BadBranch => {
+            format!("zygo: mail sync is off: sync in [mail.workspace.{name}] is not zygo/ and 1 to 32 of a-z, 0-9 and -")
+        }
+        SyncOff::BadGap => "zygo: mail sync is off: sync_gap in [mail] is not <n>s, <n>m or <n>h".into(),
+    }
+}
+
+/// D6: the readable workspace whose name is `name`.
+fn workspace_named(paths: &Paths, name: &str) -> anyhow::Result<Workspace> {
+    list_all(paths)
+        .into_iter()
+        .filter_map(|(_, r)| r.ok())
+        .find(|w| w.name == name)
+        .ok_or_else(|| anyhow!("zygo: no workspace named {}", esc(name)))
+}
+
+/// `zygo mail sync` (S§8.1 row 4): the workspace of `--name`, else of this session or folder; then the sync.
+fn sync_run(a: SyncArgs) -> i32 {
+    let paths = Paths::from_env();
+    let ws = match &a.name {
+        Some(n) => workspace_named(&paths, n),
+        None => {
+            let cwd = match cwd_or_exit() {
+                Ok(c) => c,
+                Err(code) => return code,
+            };
+            workspace_of(&paths, &cwd, std::env::var_os("ZYGO_WORKSPACE").as_deref(), GIT_BOUND)
+        }
+    };
+    let ws = match ws {
+        Ok(w) => w,
+        Err(e) => return finish(Err(e)),
+    };
+    let (stdin, stdout, stderr) = (std::io::stdin(), std::io::stdout(), std::io::stderr());
+    sync_cli(&sync_env(paths), &ws, &a, &mut stdin.lock(), &mut stdout.lock(), &mut stderr.lock())
+}
+
+/// S§8.2, S§8.3 (D1, D2): one `Mode::Cli` sync of `ws`, its lines on `out` and `err`; the exit code.
+fn sync_cli(env: &Env, ws: &Workspace, a: &SyncArgs, _input: &mut dyn BufRead, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    match run_with(env, &ws.id, Mode::Cli, &Opts { prune: a.prune }) {
+        Ok(r) => {
+            print_report(&r, out, err);
+            0
+        }
+        Err(e) => {
+            print_error(&e, &ws.name, err);
+            e.exit_code(Mode::Cli)
+        }
+    }
+}
+
+/// D1: each note on `err` as it is (fixed text, or text `public::classify` already scrubbed and escaped), then the
+/// summary on `out`. Write errors are ignored.
+fn print_report(r: &Report, out: &mut dyn Write, err: &mut dyn Write) {
+    for n in &r.notes {
+        let _ = writeln!(err, "{n}");
+    }
+    let _ = writeln!(out, "zygo: mail sync: {} sent, {} delivered", r.pushed, r.delivered);
+}
+
+/// D2: the one stderr line of a sync that did not run to its end. Write errors are ignored.
+fn print_error(e: &SyncError, ws_name: &str, err: &mut dyn Write) {
+    let line = match e {
+        SyncError::Off(o) => off_line(*o, ws_name),
+        SyncError::Busy => BUSY_LINE.to_string(),
+        SyncError::Stopped { line, .. } => line.clone(),
+    };
+    let _ = writeln!(err, "{line}");
 }
 
 /// The workspace of `ZYGO_WORKSPACE`, else of the checkout of `cwd`, with the error texts of `zygo workspace`
@@ -372,6 +497,15 @@ mod tests {
     #[test]
     fn watch_poll_is_at_most_1s() {
         assert!(super::WATCH_POLL <= std::time::Duration::from_secs(1));
+    }
+
+    /// MS-18, MS-23: `sync_env` keeps the paths and the default secret-pass policy.
+    #[test]
+    fn sync_env_keeps_paths_and_default_policy() { // U3
+        let p = zygo_core::paths::Paths::from_env();
+        let e = super::sync_env(p.clone());
+        assert_eq!(e.paths, p);
+        assert_eq!(e.secret_policy, zygo_redact::secret::DeadlinePolicy::default());
     }
 }
 

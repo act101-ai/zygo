@@ -20,6 +20,7 @@ zygo-hooks.workspace = true
 zygo-plugins.workspace = true
 zygo-launch.workspace = true
 zygo-workspace.workspace = true
+zygo-mail-sync.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
