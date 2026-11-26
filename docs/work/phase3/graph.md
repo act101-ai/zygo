@@ -193,7 +193,6 @@ Session text (T, SX nodes):
 |----|------|---------|-------|------------|------|
 | SX-5 | Claude Code launch registers `SubagentStart` → `hook session-start` on every launch (T§6.3 item 1) | OS-33 | TODO | implementation | — |
 | OS-26 | Premise PO4: the model sees a `result_view` reply plus at most a fixed wrapper (operator, both agents) | OS-25 | TODO | mechanical | — |
-| ML-18 | End-to-end mail on tmux with stub agents | ML-10, ML-11, ML-13, ML-14 | DONE | implementation | plan 8ca46aed · node 133f55bc, 37bd93c8 · acceptance pass (workspace_mail 7 passed, --include-ignored) · PR #171 |
 | MS-13 | The sync: gate, mark, lock, passes, push retry, wake | MS-9, MS-11, MS-12, ML-6 | DONE | judgment | node commits 717f910e, ab5fc14b, 91b95bcb, dba2a089, 5dd04b76; acceptance: sync_pass 39/39; floor ws 3422/0; PR #150 |
 | OS-28 | Trim hook runs the shaping pipeline on Bash output | OS-14, OS-15, OS-27 | DONE | judgment | node commits 81332899, b442555c, 095ee7bb, 63e6f26a, fe154009, 725e2609; acceptance: shaping_hook 21/21, shaping_off 5/5, hooks_basic 60/60, hook_trim 6/6; floor ws 3432/0; PR #154 |
 | OS-41 | Kind views leave room for the shaped marker | OS-28, OS-29, OS-30 | DONE | implementation | 8f22ddd9, 453a297c, 68d99c41 · PR #167 |
@@ -204,8 +203,8 @@ Session text (T, SX nodes):
 | MS-14 | Prune: orphan rewrite of acknowledged files, lease push | MS-13 | DONE | judgment | plan d2642ab4; node 51e0a828, ba8f8542, af8c6af8, f0cb91a7, f7a2bd2a; prune 18 passed; PR #179 |
 | MS-20 | Session text: "Other machines" clause of item 8 | MS-6, MS-16, MS-13 | TODO | mechanical | — |
 | OS-32 | go test runner view with interleaved parallel output | OS-31, OS-21 | TODO | judgment | — |
+| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | DONE | judgment | plan 911576e7 · node f632354c, 662bb328, 425bb080, 03d0f9c1 · acceptance pass (hooks 4 passed, launch 1 passed) · PR #168 |
 | OS-42 | Runner dispatch under wrappers and unseen live output | OS-31, OS-32 | TODO | judgment | — |
-| OS-33 | Failed Bash calls on Claude Code, as PO1 decided | OS-28, OS-23 | TODO | judgment | — |
 | MS-15 | Operator commands: take-host, new-identity, rename, drop-host | MS-14 | TODO | judgment | — |
 | OS-34 | Set the stderr branch as PO2 decided | OS-33, OS-24 | TODO | mechanical | — |
 | WD-18 | Session text: each member's job and the job sentence | WD-11, ML-9, ML-10, MS-20 | TODO | implementation | — |
@@ -404,6 +403,7 @@ Session text (T, SX nodes):
 | 2026-11-25 | MS-13 DONE (round 3): commit batching (dba2a089) and chunking by ARGV_BUDGET 16000 / BODY_BUDGET 64 MiB with the commit contract doc and tests T1/T2 (5dd04b76). Review: 6 findings (F1, F2/F3, F4, T1, T2) · PR #150 |
 | 2026-11-25 | ML-13 DONE: zygo mail watch (exit 0 on any file in new/, 1 at timeout, default 25m, 500ms poll). Review R1-R7: wake on unparsable files, write error exits 1, help/cli_surface, duplicate-name and poll-bound tests · PR #159 |
 | 2026-11-25 | OS-25 DONE: PO3 verified on OpenCode 1.18.16 (live-shaping.sh po3, mock upstream): output.output holds stdout then stderr. Review R1-R3: run-opencode.sh keeps fixtures it does not write; test name match exact; spec records PO3. F2 (no PO arm in check-premises) awaits operator OK. |
+| 2026-11-25 | OS-33 DONE (kept, round 1): PO1 failed, so the O§7.13 "If PO1 fails" branch was taken: no trim on failed Bash. Review 3, all fixed: F1 vacuous hook fixtures (a tool_response input added); F2 step 13 clippy note; F3 trailer text · PR #168 |
 | 2026-11-25 | OS-41 DONE: shaped marker room 341 B reserved in kind views, Step::ALL holds all 8 steps, hook tests per kind. Review: 4 findings, 2 fixed, 1 refuted, 1 → OS-43 (shaped view with no kind view has no 8 KiB cap) · PR #167 |
 | 2026-11-25 | OS-31 DONE: pytest runner view; review R2 fixed F1 (-s live output), F3 (last line), F4 (PASSES kept), F5 (change log); F2 is OS-42 · PR #166 |
 | 2026-11-25 | OS-42 added: wrapper dispatch and unseen pytest live output (OS-31 review F2, R2 report); OS-35 now depends on it |
