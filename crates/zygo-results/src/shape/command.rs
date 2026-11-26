@@ -1107,26 +1107,43 @@ fn runners_of(name: &str, rest: &[Word]) -> &'static [Runner] {
 
 /// Whether the words of a pytest stage ask for live test output: `-s` (also in a short-option cluster such as
 /// `-sv`, before an option that takes a value), `--capture=no`, `--capture=tee-sys`, `--capture no`,
-/// `--capture tee-sys`, `-p no:capture` (also `-pno:capture`, `-vp no:capture`), or a dynamic word that may hold
-/// one of them (O§7.6, O-C9).
+/// `--capture tee-sys`, `-p no:capture` (also `-pno:capture`, `-vp no:capture`; the value is compared after
+/// trimming spaces), an `-o`/`--override-ini` value that sets `addopts` (whatever its value; also `-oaddopts=…`,
+/// `-vo addopts=…`, `--override-ini=addopts=…`), or a dynamic word that may hold one of them (O§7.6, O-C9).
 fn pytest_live(rest: &[Word]) -> bool {
     rest.iter().enumerate().any(|(i, w)| {
         let t = w.text.as_str();
-        w.dynamic
-            || match t.strip_prefix("--capture") {
-                Some(v) if v.is_empty() => rest
-                    .get(i + 1)
-                    .is_some_and(|n| matches!(n.text.as_str(), "no" | "tee-sys")),
-                Some(v) => matches!(v, "=no" | "=tee-sys"),
-                None => t.strip_prefix('-').filter(|c| !c.starts_with('-')).is_some_and(|c| {
-                    let lead = c.find(|ch| "kmrpcoWn".contains(ch)).unwrap_or(c.len());
-                    c[..lead].contains('s')
-                        || c[lead..].strip_prefix('p').is_some_and(|v| {
-                            let v = if v.is_empty() { rest.get(i + 1).map_or("", |n| n.text.as_str()) } else { v };
-                            v == "no:capture"
-                        })
-                }),
-            }
+        let next = || rest.get(i + 1).map_or("", |n| n.text.as_str());
+        let addopts = |v: &str| v.trim().starts_with("addopts=");
+        if w.dynamic {
+            return true;
+        }
+        if let Some(v) = t.strip_prefix("--capture") {
+            return if v.is_empty() {
+                matches!(next(), "no" | "tee-sys")
+            } else {
+                matches!(v, "=no" | "=tee-sys")
+            };
+        }
+        if let Some(v) = t.strip_prefix("--override-ini") {
+            return if v.is_empty() {
+                addopts(next())
+            } else {
+                v.strip_prefix('=').is_some_and(addopts)
+            };
+        }
+        t.strip_prefix('-').filter(|c| !c.starts_with('-')).is_some_and(|c| {
+            let lead = c.find(|ch| "kmrpcoWn".contains(ch)).unwrap_or(c.len());
+            let mut tail = c[lead..].chars();
+            let letter = tail.next();
+            let v = if tail.as_str().is_empty() { next() } else { tail.as_str() };
+            c[..lead].contains('s')
+                || match letter {
+                    Some('p') => v.trim() == "no:capture",
+                    Some('o') => addopts(v),
+                    _ => false,
+                }
+        })
     })
 }
 
@@ -1217,6 +1234,8 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, 
         return;
     }
     let name = base(&prog.text);
+    // O§7.6: a wrapper segment at any depth turns the pytest view off for the whole command.
+    acc.live_pytest |= runners_of(name, rest) == ALL_RUNNERS;
     if PRINTERS.contains(&name) {
         acc.file_printer = true;
     }
@@ -1318,7 +1337,7 @@ fn stage(words: &[Word], here: &[String], depth: usize, mode: Mode, pos: usize, 
         return;
     }
     let runners = runners_of(name, rest);
-    if runners == ALL_RUNNERS || (runners == [Runner::Pytest] && pytest_live(rest)) {
+    if runners == [Runner::Pytest] && pytest_live(rest) {
         acc.live_pytest = true;
     }
     if !runners.is_empty() {

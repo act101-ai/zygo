@@ -195,3 +195,81 @@ fn pytest_view_stays_without_a_live_output_setting() {
         assert_eq!(run(B, cmd).shaper, Some(Shaper::Pytest), "{cmd}");
     }
 }
+
+/// A passing go test that runs a failing `cargo test` (review F1).
+const GF: &str = concat!(
+    "=== RUN   TestCargoFails\n",
+    "running 1 test\n",
+    "test boom ... FAILED\n",
+    "\n",
+    "failures:\n",
+    "\n",
+    "---- boom stdout ----\n",
+    "thread 'boom' panicked at src/lib.rs:3:5:\n",
+    "explicit panic\n",
+    "\n",
+    "failures:\n",
+    "    boom\n",
+    "\n",
+    "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+    "--- PASS: TestCargoFails (0.10s)\n",
+    "PASS\n",
+    "ok  \texample.com/x\t0.2s\n",
+);
+
+/// Review F1: the libtest failure section (the `FAILED` line and the `failures:` name list, O§7.6) stays under
+/// the go test view.
+#[test]
+fn cargo_failure_inside_a_passing_go_test_stays() {
+    let out = run(GF, "go test -v ./...");
+    for line in ["test boom ... FAILED\n", "failures:\n    boom\n", "---- boom stdout ----\n"] {
+        assert!(out.text.contains(line), "{line:?} in {:?}", out.text);
+    }
+}
+
+/// Review F2: a wrapper at any depth (nested, behind a reserved word or an unlisted prefix) turns the pytest view
+/// off; the runners that the nested segment adds do not change.
+#[test]
+fn wrapper_at_any_depth_turns_the_pytest_view_off() {
+    let nested: [(&str, &[zygo_results::shape::command::Runner]); 6] = [
+        ("bash -c 'make test'", &[]),
+        ("(make test)", &[]),
+        ("{ make test; }", &[]),
+        ("env -S 'make test'", &[]),
+        ("if true; then make test; fi", &[]),
+        ("nohup make test", &[]),
+    ];
+    for (w, runners) in nested {
+        assert_eq!(parse(w).runners, runners, "{w}");
+        for cmd in [format!("pytest -x && {w}"), format!("pytest -x; {w}")] {
+            assert!(!parse(&cmd).runners.contains(&Pytest), "{cmd}");
+            let out = run(B, &cmd);
+            assert!(out.text.contains(PRINT), "{cmd}");
+            assert_eq!(out, unchanged(B), "{cmd}");
+        }
+    }
+}
+
+/// Review F3: a spaced `-p` value and an `addopts` override turn the pytest view off; another override keeps it.
+#[test]
+fn addopts_override_and_spaced_p_turn_the_pytest_view_off() {
+    for cmd in [
+        "pytest -p ' no:capture'",
+        "pytest -p 'no:capture '",
+        "pytest -o addopts=-s",
+        "pytest -o 'addopts=-v -s'",
+        "pytest -o addopts=-x",
+        "pytest -oaddopts=-s",
+        "pytest -vo addopts=-s",
+        "pytest -voaddopts=-s",
+        "pytest --override-ini=addopts=-s",
+        "pytest --override-ini addopts=-s",
+    ] {
+        assert!(!parse(cmd).runners.contains(&Pytest), "{cmd}");
+        assert_eq!(run(B, cmd), unchanged(B), "{cmd}");
+    }
+    for cmd in ["pytest -o junit_family=x", "pytest --override-ini=junit_family=x", "pytest -v -o cache_dir=addopts"] {
+        assert_eq!(parse(cmd).runners, vec![Pytest], "{cmd}");
+        assert_eq!(run(B, cmd).shaper, Some(Shaper::Pytest), "{cmd}");
+    }
+}

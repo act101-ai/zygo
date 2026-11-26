@@ -18,6 +18,9 @@ static SUMMARY: LazyLock<Regex> =
 static TEST_HIDDEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^test \S+ \.\.\. (ok|ignored|ignored, .*)$").unwrap());
 
+/// The libtest line of a failed test: part of its failure section (O§7.6).
+static TEST_FAILED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^test \S+ \.\.\. FAILED$").unwrap());
+
 /// The cargo progress form
 /// `^\s+(Compiling|Checking|Fresh|Downloaded|Downloading|Locking|Updating|Blocking) \S.*$` (O§7.6),
 /// with `\s` as ASCII space or tab.
@@ -103,21 +106,27 @@ fn has_summary(r: Runner, text: &str) -> bool {
 }
 
 /// One flag per `split_inclusive('\n')` line of `text`: whether the line is inside a failure section of the
-/// runner `r` (O§7.6). Libtest: from a `---- ` line to the next `failures:` line. Pytest: from the first
-/// failure header to the end. Go test: a line of a failing test or of a test with no result line.
+/// runner `r` (O§7.6). Libtest: a `test <name> ... FAILED` line, the block from a `---- ` line to the next
+/// `failures:` line, and the `failures:` name list (a `failures:` line and the `    <name>` lines after it).
+/// Pytest: from the first failure header to the end. Go test: a line of a failing test or of a test with no
+/// result line.
 fn section(r: Runner, text: &str) -> Vec<bool> {
     match r {
         Runner::Libtest => {
-            let mut on = false;
+            let (mut block, mut list) = (false, false);
             text.split_inclusive('\n')
                 .map(|line| {
                     let bare = line.strip_suffix('\n').unwrap_or(line);
+                    let name = bare
+                        .strip_prefix("    ")
+                        .is_some_and(|n| !n.is_empty() && !n.contains(char::is_whitespace));
+                    list = bare == "failures:" || (list && name);
                     if bare.starts_with("---- ") {
-                        on = true;
+                        block = true;
                     } else if bare == "failures:" {
-                        on = false;
+                        block = false;
                     }
-                    on
+                    block || list || TEST_FAILED.is_match(bare)
                 })
                 .collect()
         }
