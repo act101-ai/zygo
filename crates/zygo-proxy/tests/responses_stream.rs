@@ -1,0 +1,548 @@
+//! RS-2: Messages SSE (and JSON) → Responses SSE (and JSON) for a Responses client (K§6.4.3 stream obligations 1-9,
+//! K§11 items 13-16). Bytes and values only; no clock, no network.
+
+use std::collections::BTreeMap;
+
+use regex::Regex;
+use serde_json::{json, Value};
+use zygo_proxy::pipeline::Adjustment;
+use zygo_proxy::tee::HOLD_MAX;
+use zygo_proxy::translate::reasoning::decode_thinking;
+use zygo_proxy::translate::responses_client::{request, response, Calls, Encoder};
+use zygo_proxy::translate::sse::SseEvent;
+use zygo_proxy::translate::Target;
+
+fn tgt() -> Target {
+    Target { provider: "p-ant".into(), upstream_model: "up-ant".into() }
+}
+
+fn other() -> Target {
+    Target { provider: "p-oai".into(), upstream_model: "up-oai".into() }
+}
+
+/// Each event as `event: <type>\ndata: <json>\n\n`.
+fn sse(events: &[Value]) -> String {
+    events.iter().map(|e| format!("event: {}\ndata: {}\n\n", e["type"].as_str().unwrap(), e)).collect()
+}
+
+fn message_start() -> Value {
+    json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"up-ant",
+        "content":[],"stop_reason":null,"usage":{"input_tokens":10,"cache_read_input_tokens":5,
+        "cache_creation_input_tokens":2,"output_tokens":1}}})
+}
+
+fn start(i: u64, block: Value) -> Value {
+    json!({"type":"content_block_start","index":i,"content_block":block})
+}
+
+fn delta(i: u64, d: Value) -> Value {
+    json!({"type":"content_block_delta","index":i,"delta":d})
+}
+
+fn stop(i: u64) -> Value {
+    json!({"type":"content_block_stop","index":i})
+}
+
+fn text_block(i: u64, deltas: &[&str]) -> Vec<Value> {
+    let mut v = vec![start(i, json!({"type":"text","text":""}))];
+    v.extend(deltas.iter().map(|d| delta(i, json!({"type":"text_delta","text":d}))));
+    v.push(stop(i));
+    v
+}
+
+fn tool_block(i: u64, id: &str, name: &str, parts: &[&str]) -> Vec<Value> {
+    let mut v = vec![start(i, json!({"type":"tool_use","id":id,"name":name,"input":{}}))];
+    v.extend(parts.iter().map(|p| delta(i, json!({"type":"input_json_delta","partial_json":p}))));
+    v.push(stop(i));
+    v
+}
+
+fn end(reason: &str) -> Vec<Value> {
+    vec![
+        json!({"type":"message_delta","delta":{"stop_reason":reason,"stop_sequence":null},"usage":{"output_tokens":7}}),
+        json!({"type":"message_stop"}),
+    ]
+}
+
+/// Thinking, redacted thinking, text and a tool call, stop reason `tool_use`.
+fn fixture() -> Vec<Value> {
+    let mut v = vec![
+        message_start(),
+        start(0, json!({"type":"thinking","thinking":"","signature":""})),
+        delta(0, json!({"type":"thinking_delta","thinking":"t1"})),
+        delta(0, json!({"type":"signature_delta","signature":"sig1"})),
+        stop(0),
+        start(1, json!({"type":"redacted_thinking","data":"R1"})),
+        stop(1),
+    ];
+    v.extend(text_block(2, &["Hel", "lo"]));
+    v.extend(tool_block(3, "toolu_1", "exec_command", &["{\"cmd\":", "\"ls\"}"]));
+    v.extend(end("tool_use"));
+    v
+}
+
+fn enc() -> Encoder {
+    Encoder::new("role-x", &tgt(), Calls::default())
+}
+
+/// The whole input in one push.
+fn run(e: &mut Encoder, events: &[Value]) -> Vec<SseEvent> {
+    e.push(sse(events).as_bytes())
+}
+
+/// Every `id` and `item_id` key removed, recursively.
+fn norm(v: &Value) -> Value {
+    match v {
+        Value::Object(m) => {
+            Value::Object(m.iter().filter(|(k, _)| *k != "id" && *k != "item_id").map(|(k, v)| (k.clone(), norm(v))).collect())
+        }
+        Value::Array(a) => Value::Array(a.iter().map(norm).collect()),
+        x => x.clone(),
+    }
+}
+
+fn norm_all(evs: &[SseEvent]) -> Vec<(String, Value)> {
+    evs.iter().map(|e| (e.event.clone(), norm(&e.data))).collect()
+}
+
+fn types(evs: &[SseEvent]) -> Vec<String> {
+    evs.iter().map(|e| e.event.clone()).collect()
+}
+
+const TERMINAL: [&str; 3] = ["response.completed", "response.incomplete", "response.failed"];
+
+fn terminals(evs: &[SseEvent]) -> Vec<&SseEvent> {
+    evs.iter().filter(|e| TERMINAL.contains(&e.event.as_str())).collect()
+}
+
+/// `sequence_number` rises by one from 0; `data.type` is the event name.
+fn assert_sequence(evs: &[SseEvent]) {
+    for (i, e) in evs.iter().enumerate() {
+        assert_eq!(e.data["sequence_number"], json!(i), "event {i}: {}", e.event);
+        assert_eq!(e.data["type"], json!(e.event), "event {i}");
+    }
+}
+
+fn items_done(evs: &[SseEvent]) -> Vec<Value> {
+    evs.iter().filter(|e| e.event == "response.output_item.done").map(|e| e.data["item"].clone()).collect()
+}
+
+fn adj(c: &str) -> Adjustment {
+    Adjustment(c.into())
+}
+
+// ---- the stream ----
+
+#[test]
+fn stream_sequence_text_tool_thinking_redacted() {
+    let mut e = enc();
+    let evs = run(&mut e, &fixture());
+    let want: Vec<String> = [
+        "response.created",
+        "response.in_progress",
+        "output_item.added",
+        "reasoning_summary_part.added",
+        "reasoning_summary_text.delta",
+        "reasoning_summary_text.done",
+        "reasoning_summary_part.done",
+        "output_item.done",
+        "output_item.added",
+        "output_item.done",
+        "output_item.added",
+        "content_part.added",
+        "output_text.delta",
+        "output_text.delta",
+        "output_text.done",
+        "content_part.done",
+        "output_item.done",
+        "output_item.added",
+        "function_call_arguments.delta",
+        "function_call_arguments.delta",
+        "function_call_arguments.done",
+        "output_item.done",
+        "response.completed",
+    ]
+    .iter()
+    .map(|t| if t.starts_with("response.") { t.to_string() } else { format!("response.{t}") })
+    .collect();
+    assert_eq!(types(&evs), want);
+    assert_sequence(&evs);
+
+    let r = &evs[0].data["response"];
+    let id = r["id"].as_str().unwrap();
+    assert!(Regex::new("^resp_[0-9A-Z]{26}$").unwrap().is_match(id), "{id}");
+    assert_eq!(r["model"], "role-x");
+    assert_eq!(r["status"], "in_progress");
+    assert_eq!(r["object"], "response");
+    assert_eq!(r["output"], json!([]));
+    assert_eq!(evs[1].data["response"]["id"], id);
+
+    // Each item's events share output_index and item id.
+    let mut ids: BTreeMap<u64, String> = BTreeMap::new();
+    for ev in &evs[2..evs.len() - 1] {
+        let oi = ev.data["output_index"].as_u64().unwrap_or_else(|| panic!("{}: no output_index", ev.event));
+        let iid = ev.data.get("item_id").or_else(|| ev.data["item"].get("id")).and_then(Value::as_str).unwrap();
+        assert_eq!(ids.entry(oi).or_insert_with(|| iid.to_string()), iid, "{}", ev.event);
+    }
+    assert_eq!(ids.keys().copied().collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+
+    let done: Vec<&SseEvent> = evs.iter().filter(|e| e.event == "response.output_item.done").collect();
+    for (i, d) in done.iter().enumerate() {
+        assert_eq!(d.data["output_index"], json!(i));
+    }
+    let items = items_done(&evs);
+    assert_eq!(items[0]["type"], "reasoning");
+    assert_eq!(items[0]["summary"], json!([{"type":"summary_text","text":"t1"}]));
+    assert_eq!(
+        decode_thinking(items[0]["encrypted_content"].as_str().unwrap(), &tgt()),
+        Some(json!({"type":"thinking","thinking":"t1","signature":"sig1"}))
+    );
+    assert_eq!(items[1]["type"], "reasoning");
+    assert_eq!(items[1]["summary"], json!([]));
+    assert_eq!(
+        decode_thinking(items[1]["encrypted_content"].as_str().unwrap(), &tgt()),
+        Some(json!({"type":"redacted_thinking","data":"R1"}))
+    );
+    assert_eq!(items[2]["type"], "message");
+    assert_eq!(items[2]["role"], "assistant");
+    assert_eq!(items[2]["content"], json!([{"type":"output_text","text":"Hello","annotations":[]}]));
+    assert_eq!(
+        norm(&items[3]),
+        json!({"type":"function_call","call_id":"toolu_1","name":"exec_command","arguments":"{\"cmd\":\"ls\"}",
+            "status":"completed"})
+    );
+    assert!(items[3]["id"].as_str().unwrap().starts_with("fc_"));
+
+    let last = &evs.last().unwrap().data["response"];
+    assert_eq!(last["id"], id);
+    assert_eq!(last["status"], "completed");
+    assert_eq!(last["output"], json!([]));
+    assert_eq!(
+        last["usage"],
+        json!({"input_tokens":17,"input_tokens_details":{"cached_tokens":5},"output_tokens":7,"total_tokens":24})
+    );
+    assert!(e.ended());
+    assert_eq!(e.adjustments(), vec![]);
+    assert_eq!(e.held(), 0);
+}
+
+#[test]
+fn stream_chunked_equals_whole() {
+    let whole = norm_all(&run(&mut enc(), &fixture()));
+    let text = sse(&fixture());
+    let crlf = text.replace('\n', "\r\n");
+    for (bytes, n) in [(text.as_bytes(), 1), (crlf.as_bytes(), 7)] {
+        let mut e = enc();
+        let evs: Vec<SseEvent> = bytes.chunks(n).flat_map(|c| e.push(c)).collect();
+        assert_eq!(norm_all(&evs), whole, "chunk {n}");
+        assert!(e.ended());
+    }
+}
+
+#[test]
+fn stream_server_tool_dropped() {
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["a"]));
+    ev.push(start(1, json!({"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}})));
+    ev.push(delta(1, json!({"type":"input_json_delta","partial_json":"{\"query\":\"x\"}"})));
+    ev.push(stop(1));
+    ev.push(start(2, json!({"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]})));
+    ev.push(stop(2));
+    ev.extend(text_block(3, &["b"]));
+    ev.extend(end("end_turn"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    let items = items_done(&evs);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["content"][0]["text"], "a");
+    assert_eq!(items[1]["content"][0]["text"], "b");
+    let added: Vec<&SseEvent> = evs.iter().filter(|e| e.event == "response.output_item.added").collect();
+    assert_eq!(added.len(), 2);
+    let oi: Vec<Value> = evs.iter().filter_map(|e| e.data.get("output_index").cloned()).collect();
+    assert!(oi.iter().all(|v| *v == json!(0) || *v == json!(1)));
+    assert_eq!(evs.last().unwrap().event, "response.completed");
+    assert_eq!(e.adjustments(), vec![adj("server_tool_dropped")]);
+}
+
+#[test]
+fn stream_max_tokens_incomplete() {
+    let mut ev = vec![message_start()];
+    ev.extend(text_block(0, &["cut"]));
+    ev.extend(end("max_tokens"));
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    let last = evs.last().unwrap();
+    assert_eq!(last.event, "response.incomplete");
+    let r = &last.data["response"];
+    assert_eq!(r["status"], "incomplete");
+    assert_eq!(r["incomplete_details"], json!({"reason":"max_output_tokens"}));
+    assert!(r["usage"].is_object());
+    assert_eq!(terminals(&evs).len(), 1);
+    assert!(e.ended());
+}
+
+#[test]
+fn stream_error_after_text_one_failed() {
+    let ev = vec![
+        message_start(),
+        start(0, json!({"type":"text","text":""})),
+        delta(0, json!({"type":"text_delta","text":"par"})),
+        json!({"type":"error","error":{"type":"overloaded_error","message":"busy"}}),
+        json!({"type":"message_stop"}),
+    ];
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    let t = terminals(&evs);
+    assert_eq!(t.len(), 1);
+    assert_eq!(evs.last().unwrap().event, "response.failed");
+    let r = &evs.last().unwrap().data["response"];
+    assert_eq!(r["status"], "failed");
+    assert_eq!(r["error"], json!({"code":"overloaded_error","message":"busy"}));
+    assert!(e.ended());
+    assert!(e.push(sse(&[json!({"type":"message_stop"})]).as_bytes()).is_empty());
+    assert!(e.fail("x", "y").is_empty());
+    assert!(e.finish().is_empty());
+
+    let ev = vec![message_start(), json!({"type":"error","error":{"type":"Bad Type!","message":"m"}})];
+    let mut e = enc();
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    assert_eq!(evs.last().unwrap().data["response"]["error"], json!({"code":"api_error","message":"m"}));
+}
+
+#[test]
+fn stream_ping_and_unknown_dropped() {
+    let plain = norm_all(&run(&mut enc(), &fixture()));
+    let mut noisy = vec![json!({"type":"ping"}), json!({"type":"future_event"})];
+    for f in fixture() {
+        noisy.push(f);
+        noisy.push(json!({"type":"ping"}));
+        noisy.push(json!({"type":"future_event","x":1}));
+    }
+    let mut e = enc();
+    let evs = run(&mut e, &noisy);
+    assert_sequence(&evs);
+    assert_eq!(norm_all(&evs), plain);
+}
+
+#[test]
+fn stream_unparsable_after_start_fails() {
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start()]);
+    evs.extend(e.push(b"event: content_block_delta\ndata: {not json\n\n"));
+    assert_sequence(&evs);
+    assert_eq!(types(&evs), vec!["response.created", "response.in_progress", "response.failed"]);
+    assert_eq!(
+        evs[2].data["response"]["error"],
+        json!({"code":"api_error","message":"upstream event is not JSON"})
+    );
+    assert!(e.ended());
+    assert_eq!(e.held(), 0);
+}
+
+#[test]
+fn stream_error_before_start() {
+    let mut e = enc();
+    let evs = run(&mut e, &[json!({"type":"error","error":{"type":"api_error","message":"no"}})]);
+    assert_eq!(types(&evs), vec!["response.created", "response.in_progress", "response.failed"]);
+    assert_sequence(&evs);
+    assert!(e.ended());
+}
+
+#[test]
+fn stream_partial_line_over_hold_max_fails() {
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start()]);
+    evs.extend(e.push(b"data: "));
+    let chunk = vec![b'x'; 64 << 10];
+    for c in std::iter::repeat_n(&chunk, HOLD_MAX / chunk.len() + 2) {
+        evs.extend(e.push(c));
+    }
+    assert_sequence(&evs);
+    let t = terminals(&evs);
+    assert_eq!(t.len(), 1);
+    assert_eq!(t[0].event, "response.failed");
+    assert_eq!(t[0].data["response"]["error"]["message"], "upstream stream line too long");
+    assert_eq!(e.held(), 0);
+    assert!(e.ended());
+    assert!(e.push(&chunk).is_empty());
+    assert_eq!(e.held(), 0);
+}
+
+#[test]
+fn stream_tool_args_over_hold_max_fails() {
+    let mut e = enc();
+    let mut evs = run(&mut e, &[message_start(), start(0, json!({"type":"tool_use","id":"t","name":"n","input":{}}))]);
+    let part = "x".repeat(64 << 10);
+    let one = sse(&[delta(0, json!({"type":"input_json_delta","partial_json":part}))]);
+    for _ in 0..HOLD_MAX / part.len() + 2 {
+        evs.extend(e.push(one.as_bytes()));
+    }
+    assert_sequence(&evs);
+    let t = terminals(&evs);
+    assert_eq!(t.len(), 1);
+    assert_eq!(t[0].event, "response.failed");
+    assert_eq!(t[0].data["response"]["error"], json!({"code":"api_error","message":"upstream tool call too long"}));
+    assert_eq!(e.held(), 0);
+    assert!(e.ended());
+}
+
+#[test]
+fn stream_fail_and_finish() {
+    let mut e = enc();
+    assert!(e.fail("upstream_error", "gone").is_empty());
+    assert!(!e.ended());
+    let mut evs = run(&mut e, &[message_start()]);
+    evs.extend(e.fail("upstream_error", "gone"));
+    assert_sequence(&evs);
+    assert_eq!(types(&evs), vec!["response.created", "response.in_progress", "response.failed"]);
+    assert_eq!(evs[2].data["response"]["error"], json!({"code":"upstream_error","message":"gone"}));
+    assert!(e.ended());
+    assert!(e.fail("upstream_error", "again").is_empty());
+
+    let f = fixture();
+    let mut e = enc();
+    let mut evs = run(&mut e, &f[..f.len() - 1]);
+    evs.extend(e.finish());
+    assert_sequence(&evs);
+    let t = terminals(&evs);
+    assert_eq!(t.len(), 1);
+    assert_eq!(t[0].data["response"]["error"], json!({"code":"api_error","message":"upstream stream ended early"}));
+    assert!(e.ended());
+
+    let mut e = enc();
+    let evs = e.finish();
+    assert_eq!(types(&evs), vec!["response.created", "response.in_progress", "response.failed"]);
+    assert_sequence(&evs);
+}
+
+// ---- round trips through `request` ----
+
+fn user(text: &str) -> Value {
+    json!({"type":"message","role":"user","content":[{"type":"input_text","text":text}]})
+}
+
+#[test]
+fn tool_call_round_trip_keeps_call_id() {
+    let items = items_done(&run(&mut enc(), &fixture()));
+    let req = json!({"model":"role-x","max_output_tokens":100,
+        "tools":[{"type":"function","name":"exec_command","parameters":{"type":"object"}}],
+        "input":[user("hi"), items[3], {"type":"function_call_output","call_id":"toolu_1","output":"ok"}]});
+    let (m, _) = request(&req, &tgt(), None).unwrap();
+    let msgs = m["messages"].as_array().unwrap();
+    let call = &msgs[1]["content"][0];
+    assert_eq!(msgs[1]["role"], "assistant");
+    assert_eq!(call["type"], "tool_use");
+    assert_eq!(call["id"], "toolu_1");
+    assert_eq!(call["input"], json!({"cmd":"ls"}));
+    let res = &msgs[2]["content"][0];
+    assert_eq!(res["type"], "tool_result");
+    assert_eq!(res["tool_use_id"], "toolu_1");
+}
+
+#[test]
+fn custom_tool_call_round_trip() {
+    let patch = "*** Begin Patch\n*** End Patch\n";
+    let tools = json!([{"type":"custom","name":"apply_patch"}]);
+    let calls = Calls::of(&json!({"tools":tools}));
+    let mut ev = vec![message_start()];
+    let args = json!({"input":patch}).to_string();
+    ev.extend(tool_block(0, "toolu_p", "apply_patch", &[&args]));
+    ev.extend(end("tool_use"));
+    let mut e = Encoder::new("role-x", &tgt(), calls);
+    let evs = run(&mut e, &ev);
+    assert_sequence(&evs);
+    assert_eq!(
+        types(&evs[2..evs.len() - 1]),
+        vec![
+            "response.output_item.added",
+            "response.custom_tool_call_input.delta",
+            "response.custom_tool_call_input.done",
+            "response.output_item.done",
+        ]
+    );
+    assert_eq!(evs[3].data["delta"], patch);
+    assert_eq!(evs[4].data["input"], patch);
+    let item = items_done(&evs).remove(0);
+    assert_eq!(
+        norm(&item),
+        json!({"type":"custom_tool_call","call_id":"toolu_p","name":"apply_patch","input":patch,"status":"completed"})
+    );
+    assert!(item["id"].as_str().unwrap().starts_with("ctc_"));
+
+    let req = json!({"model":"role-x","max_output_tokens":100,"tools":tools,
+        "input":[user("fix it"), item, {"type":"custom_tool_call_output","call_id":"toolu_p","output":"done"}]});
+    let (m, _) = request(&req, &tgt(), None).unwrap();
+    let call = &m["messages"][1]["content"][0];
+    assert_eq!(call["type"], "tool_use");
+    assert_eq!(call["id"], "toolu_p");
+    assert_eq!(call["input"], json!({"input":patch}));
+
+    // A custom entry with no string name, and a function entry of that name, give a function call.
+    let calls = Calls::of(&json!({"tools":[{"type":"custom"},{"type":"custom","name":5},
+        {"type":"function","name":"apply_patch"}]}));
+    let msg = json!({"content":[{"type":"tool_use","id":"toolu_q","name":"apply_patch","input":{"input":"x"}}],
+        "stop_reason":"tool_use","usage":{}});
+    let (r, _) = response(&msg, "role-x", &tgt(), &calls);
+    assert_eq!(r["output"][0]["type"], "function_call");
+    assert_eq!(r["output"][0]["arguments"], "{\"input\":\"x\"}");
+}
+
+fn thinking_input() -> Value {
+    let items = items_done(&run(&mut enc(), &fixture()));
+    json!({"model":"role-x","max_output_tokens":100,"input":[user("hi"), items[0], items[1],
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}, user("next")]})
+}
+
+#[test]
+fn thinking_round_trip_same_provider_keeps_signature() {
+    let (m, codes) = request(&thinking_input(), &tgt(), None).unwrap();
+    let a = &m["messages"][1];
+    assert_eq!(a["role"], "assistant");
+    assert_eq!(a["content"][0], json!({"type":"thinking","thinking":"t1","signature":"sig1"}));
+    assert_eq!(a["content"][1], json!({"type":"redacted_thinking","data":"R1"}));
+    assert!(codes.iter().all(|c| !c.0.starts_with("reasoning_dropped")), "{codes:?}");
+}
+
+#[test]
+fn thinking_round_trip_other_provider_dropped() {
+    let (m, codes) = request(&thinking_input(), &other(), None).unwrap();
+    let a = &m["messages"][1];
+    assert_eq!(a["role"], "assistant");
+    assert!(a["content"].as_array().unwrap().iter().all(|b| b["type"] != "thinking" && b["type"] != "redacted_thinking"));
+    assert!(codes.contains(&adj("reasoning_dropped:2")), "{codes:?}");
+}
+
+// ---- the JSON form (obligation 8) ----
+
+#[test]
+fn json_response_same_content() {
+    let stream_items = items_done(&run(&mut enc(), &fixture()));
+    let mut msg = json!({"id":"msg_1","type":"message","role":"assistant","model":"up-ant","content":[
+        {"type":"thinking","thinking":"t1","signature":"sig1"},
+        {"type":"redacted_thinking","data":"R1"},
+        {"type":"text","text":"Hello"},
+        {"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}},
+        {"type":"tool_use","id":"toolu_1","name":"exec_command","input":{"cmd":"ls"}}],
+        "stop_reason":"tool_use",
+        "usage":{"input_tokens":10,"cache_read_input_tokens":5,"cache_creation_input_tokens":2,"output_tokens":7}});
+    let (r, codes) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert!(r["id"].as_str().unwrap().starts_with("resp_"));
+    assert_eq!(r["object"], "response");
+    assert_eq!(r["model"], "role-x");
+    assert_eq!(r["status"], "completed");
+    assert_eq!(norm(&r["output"]), norm(&Value::Array(stream_items)));
+    assert_eq!(
+        r["usage"],
+        json!({"input_tokens":17,"input_tokens_details":{"cached_tokens":5},"output_tokens":7,"total_tokens":24})
+    );
+    assert_eq!(codes, vec![adj("server_tool_dropped")]);
+
+    msg["stop_reason"] = json!("max_tokens");
+    let (r, _) = response(&msg, "role-x", &tgt(), &Calls::default());
+    assert_eq!(r["status"], "incomplete");
+    assert_eq!(r["incomplete_details"]["reason"], "max_output_tokens");
+}
