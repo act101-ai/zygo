@@ -92,11 +92,12 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | RS-5 | Responses → Responses passthrough, `ResponseCtx.lines`, the tee's `response.completed` usage parse | RS-4 | TODO | judgment | — |
 | RS-6 | Cache markers at forward time on the Anthropic upstream body of a Responses client | RS-5 | TODO | judgment | — |
 | RS-7 | Window rewrite for a Responses client, Anthropic and Responses upstreams | RS-5 | TODO | judgment | — |
-| RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | TODO | implementation | — |
+| RS-8 | `GET /openai/v1/models` in the PC7 shape, other PC1 paths, chat route stays 404 | RS-3 | DONE | implementation | PR #164 merged 62740dc2; acceptance exit 0 on merged tree (responses_models 7); CI run 45744874257 green (ubuntu, macos, windows) |
 | RS-9 | Codex namespace tools: flatten into function tools for Anthropic and chat upstreams, map their calls back | RS-1, RS-2, PC-5 | TODO | judgment | — |
 | RS-10 | Messages events from a JSON body keep redacted_thinking and drop server-tool blocks (no empty text blocks) | RS-4 | TODO | implementation | — |
 | RS-11 | Responses text.format json_schema toward Anthropic and chat upstreams (Codex thread titles) | RS-1, RS-2, RS-4, RS-9, PC-5 | TODO | judgment | — |
-| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11 | TODO | mechanical | — |
+| RS-12 | Refusal ending for the Responses client: measure Codex's handling, then map refusal so Codex does not retry it | RS-4, PC-12, RS-11, PC-11, PC-7 | TODO | judgment | — |
+| BS-1 | Base-spec notes: §8.1 (the registry is the capability list) and §7.6 v2 (the Responses client route is built) | CF-4, RS-5, RS-6, RS-7, RS-8, RS-9, RS-10, RS-11, RS-12 | TODO | mechanical | — |
 | CC-0 | Take `main` (with phase 3) into `phase-4` | CF-1, CF-2, CF-3, CF-4, PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, RS-1, RS-2, RS-3, RS-4, RS-5, RS-6, RS-7, RS-8, BS-1 | BLOCKED(operator: phase 3 merged into main) | implementation | — |
 | CC-1 | Client-branch inventory at the P4-6 base commit, written under Observed (K§6.9) | CC-0 | TODO | judgment | — |
 | CC-2 | `scripts/check-test-edits.sh` and its `syn` helper: the per-node test-edit check (K-C7, amended) | CC-0 | TODO | implementation | — |
@@ -152,3 +153,5 @@ Spec constraints (K = `docs/specs/2026-11-25-client-model-design.md`):
 | 2026-11-26 | PC-11 scope extended (author's call): Codex item ids, macOS sandbox/marketplace names, login shell in command strings, tool descriptions in listings, PC-12 fixtures. |
 | 2026-11-26 | RS-10 added (author's call): message_events turns redacted_thinking/server_tool_use into empty text blocks on a JSON answer to a streaming request (found by the RS-4 planner); affects the Messages client today. |
 | 2026-11-26 | RS-11 added (author's call): Codex TUI thread-title requests use text.format json_schema, which RS-1 refuses toward Anthropic/chat (found by the RS-9 round-2 reviewer on PC-5's captures). |
+| 2026-11-26 | RS-8 DONE: gate 2 rounds; /openai/v1/models in the PC7 catalog shape (roles only), OpenAI-shaped 404/405 under /openai/v1; K§6.3.1 item 2 requires Codex's base prompt and apply_patch_tool_type in the launch catalog; PR #164 merged 62740dc2. |
+| 2026-11-26 | RS-12 added (author's call): PC-12 measured that Codex retries a content_filter (refusal) ending 5 times (6 upstream requests); measure a no-retry refusal mapping and change stream obligation 5. |
