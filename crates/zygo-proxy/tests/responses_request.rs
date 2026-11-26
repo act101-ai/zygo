@@ -453,6 +453,7 @@ fn ob7_mapped_fields_then_facts() {
     }
     let choice = |tc: Value| {
         let mut b = body(json!([user("go")]));
+        b["tools"] = json!([{"type":"function","name":"f","parameters":{"type":"object"}}]);
         b["tool_choice"] = tc;
         request(&b, &tgt(), Some(&facts())).map(|(m, _)| m["tool_choice"].clone())
     };
@@ -583,4 +584,41 @@ fn f4_decoded_block_keeps_known_keys_only() {
         let v = raw_mark(&json!({"provider":"p-ant","model":"up-ant","block":b}));
         assert_eq!(decode_thinking(&v, &tgt()), Some(want));
     }
+}
+
+#[test]
+fn f5_tool_choice_against_sent_tools() {
+    // No tool left to send: tool_choice and the parallel flag are omitted; `required` is a 400.
+    for (tools, tc, parallel) in [
+        (json!(null), json!("auto"), json!(null)),
+        (json!(null), json!(null), json!(false)),
+        (json!([{"type":"web_search"}]), json!("none"), json!(false)),
+    ] {
+        let mut b = body(json!([user("go")]));
+        for (k, v) in [("tools", tools), ("tool_choice", tc), ("parallel_tool_calls", parallel)] {
+            if !v.is_null() {
+                b[k] = v;
+            }
+        }
+        let (m, _) = rq(&b).unwrap();
+        assert!(m.get("tool_choice").is_none(), "{b}");
+    }
+    for tools in [json!(null), json!([{"type":"web_search"}])] {
+        let mut b = body(json!([user("go")]));
+        if !tools.is_null() {
+            b["tools"] = tools;
+        }
+        b["tool_choice"] = json!("required");
+        assert_400(err(rq(&b)), "tool_choice: required, but no tool is sent");
+    }
+    // A named tool that is not sent, also one inside a dropped namespace.
+    let not_sent = "tool_choice: the named tool is not among the sent tools";
+    let mut b = body(json!([user("go")]));
+    b["tools"] = json!([{"type":"function","name":"f","parameters":{"type":"object"}}]);
+    b["tool_choice"] = json!({"type":"function","name":"nope"});
+    assert_400(err(rq(&b)), not_sent);
+    let mut b = fixture("first-turn.json");
+    let ns = b["tools"].as_array().unwrap().iter().find(|t| t["type"] == "namespace").unwrap().clone();
+    b["tool_choice"] = json!({"type":"function","name":ns["tools"][0]["name"]});
+    assert_400(err(rq(&b)), not_sent);
 }
