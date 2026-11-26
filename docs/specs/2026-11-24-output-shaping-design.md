@@ -237,7 +237,7 @@ Build order **(operator)**: steps 1-2, then step 4, then step 3. The work graph 
 
 ### 7.4 Clean
 
-- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), a charset designation (`ESC (` or `ESC )` plus the one character after it; before a line end (`\n` or `\r`), another `ESC` or the end of the text, only `ESC (` or `ESC )` is removed), and any other `ESC` plus its next character. A lone `ESC` is removed alone: at the end of the text, and before another `ESC`, which then starts its own sequence. OSC 8 hyperlinks keep their visible text.
+- Remove ANSI escape sequences: CSI (`ESC [`, parameter bytes `0x30-0x3F`, intermediate bytes `0x20-0x2F`, one final byte `0x40-0x7E`), the 8-bit CSI `U+009B` with the same tail, OSC (`ESC ]` to `BEL` or `ESC \`; an OSC of more than 4 KiB with no terminator: remove only `ESC ]`), a charset designation (`ESC (` or `ESC )` plus one final byte `0x30-0x7E`, 3 bytes in all; when the next byte is not such a byte, only `ESC (` or `ESC )` is removed), and any other `ESC` plus its next character. A lone `ESC` is removed alone: at the end of the text, before a line end (`\n` or `\r`), and before another `ESC`, which then starts its own sequence. OSC 8 hyperlinks keep their visible text.
 - Unless O§7.3 "text that the model may reuse" applies: `\r\n` becomes `\n`; in each line, a `\r` overwrites, so only the text after the last `\r` is kept. This removes progress bars and spinners.
 - Clean removes no line.
 
@@ -387,13 +387,13 @@ Premise PO1 (O§17) decides what the build does. Its capture is recorded as `fix
 
 ### 8.2 Minimum saving per shaper
 
-**(author)** A CI test checks, on each case of the shaper, `1 − view_bytes ÷ raw_bytes` against the floor. The floors are below what these shapers give on such output, so a regression trips them and normal variance does not.
+**(author)** A CI test checks each case against the row of the shaper that gives its view: `1 − view_bytes ÷ raw_bytes` against the row's floor, and the row's Plus. A case in the O§8.1 clean row also meets the clean row's Plus, whatever row gives its view (`clean/cargo-test-color` gets the libtest view, so it is checked against the "libtest, passing" row and the clean row's Plus). The floors are below what these shapers give on such output, so a regression trips them and normal variance does not.
 
 | Shaper | Floor | Plus |
 |---|---|---|
 | clean | 5 % | no `ESC` byte in the view; no `\r` unless O§7.3 "text that the model may reuse" applies |
 | dedup | 50 % on the repeated-warning case | O§7.5 expansion gives the cleaned text |
-| libtest, passing | 80 % | each `test result:` line is in the view |
+| libtest, passing | 80 % | each `test result:` line of the raw text after clean (O§7.4) is in the view |
 | libtest, pytest, go test, failing | 30 % | each `must_keep` line is in the view |
 | diff, json, log | view ≤ 8 KiB | each `must_keep` line holds: a view line equals it, or, in the log view, a view line equals `<n>: ` followed by it; an empty `must_keep` line makes the case invalid |
 | none | 0 (no change) | the hook output is empty |
@@ -630,5 +630,5 @@ Each is checked with a live Claude Code or OpenCode session by the premise scrip
 | 2026-11-26 | O§6.4 | author's call (lead) | OS-44 dropped: the server cannot know what an agent keeps above its cut (OpenCode whole lines and config limits; Claude Code API token count, remote limit, characters); the Size limit stays, stated as permanent; citations refreshed |
 | 2026-11-26 | O§7.6, O§8.5 | author's call (lead) | OS-38 measurement: O§8.5 budget 2 (4 MiB input, p95 ≤ 100 ms) failed under load (libtest p95 105.87 and 106.64 ms); the runner view was about 90 % of steps 1-4; its cost is cut with output unchanged (OS-47); no rule, number or threshold changes |
 | 2026-11-26 | O§8.2 | author's call (lead) | OS-43 dropped: O§8.2 checks a view against its own shaper's floor, so a clean-shaped log under the threshold has the 5 % clean floor, not "view ≤ 8 KiB"; a kind view under the threshold drops failure lines (O-C9) and ERROR lines (O§8.1 must_keep); O§7.3 step 4 stays "only over the threshold" |
-| 2026-11-26 | O§7.4 | author's call (lead) | FX-16 review F2: a designation takes one whole character, not 3 bytes, so no UTF-8 character is split; before a line end, ESC or the text end only ESC ( / ESC ) goes, so no line end is removed (O-C9: removes no line; O§15 item 2 decision record DDR-01M8CMTAGQEDD71MNHY0CZJC76) |
-| 2026-11-26 | O§8.1, O§8.2 | author's call (lead) | FX-16 review F1: with the charset residue gone the clean/cargo-test-color case gets the libtest view, so it is checked against the libtest-passing row (its own shaper, as the OS-43 row states); the 60-test capture gave 71 % and was re-captured from the libtest/passing crate (120 tests) with colour; the summary-line check compares the raw lines after clean |
+| 2026-11-26 | O§7.4 | author's call (lead) | FX-16 review F2, review round 2 F1/F5/F7: a charset designation is `ESC (` or `ESC )` plus one final byte `0x30-0x7E` (ECMA-35), 3 bytes in all; when the next byte is not such a byte, only `ESC (` or `ESC )` goes and the next byte stays, so no non-ASCII character of real text, no `U+009B`, no line end and no `ESC` is removed and no UTF-8 character is split; a lone `ESC` before a line end is removed alone (O§7.4 "Clean removes no line"; O-C9 "when a shaper is unsure, it keeps"; O§15 item 2 decision record DDR-01M8CMTAGQEDD71MNHY0CZJC76) |
+| 2026-11-26 | O§8.1, O§8.2 | author's call (lead) | FX-16 review F1: with the charset residue gone the clean/cargo-test-color case gets the libtest view, so it is checked against the libtest-passing row (its own shaper, as the OS-43 row states); the 60-test capture gave 71 % and was re-captured from the libtest/passing crate (120 tests) with color; the summary-line check compares the raw lines after clean; review round 2 F3/F4: a case in the O§8.1 clean row also meets the clean row's Plus whatever row gives its view |
